@@ -1,31 +1,31 @@
 'use client'
 
-import { logger } from '@/lib/logger';
+import { logger } from '@/lib/logger'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import {
-  XMarkIcon,
-  PlusIcon,
-  EyeIcon,
-  EyeSlashIcon,
-  ExclamationTriangleIcon,
-} from '@heroicons/react/24/outline'
-import { useAppStore, useSettingsStore, PostVisibility } from '@/lib/store'
-import type { Post } from '@/lib/types'
-import { Button } from '@/components/ui/button'
-import { IconButton } from '@/components/ui/icon-button'
+import { XMarkIcon, PlusIcon, EyeIcon, EyeSlashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
+import { LockClosedIcon, LinkIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
+import { useAppStore, useSettingsStore, type PostVisibility } from '@/lib/store'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
-import { UserAvatar } from '@/components/ui/avatar-image'
-import { extractAllTags, extractMentions } from '@/lib/post-helpers'
-import { hashtagService } from '@/lib/services/hashtag-service'
-import { mentionService } from '@/lib/services/mention-service'
-import { extractErrorMessage, isTimeoutError, categorizeError } from '@/lib/error-utils'
+import { useComposeImage } from '@/hooks/use-compose-image'
+import { useComposePoll } from '@/hooks/use-compose-poll'
+import { useComposePrivateFeed } from '@/hooks/use-compose-private-feed'
+import { useInheritedEncryption } from '@/hooks/use-inherited-encryption'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
+import { extractErrorMessage, categorizeError } from '@/lib/error-utils'
+import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
+import { planPosts, publishThread, mediaUrlForContract, CHARACTER_LIMIT } from '@/lib/compose/publish-thread'
+import { isPrivatePost } from '@/components/post/private-post-content'
+import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
+import { Spinner } from '@/components/ui/spinner'
+import { UserAvatar } from '@/components/ui/avatar-image'
+import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import {
-  PostingProgress,
+  type PostingProgress,
   PostButtonContent,
   getPostButtonState,
   PostingProgressBar,
@@ -34,31 +34,28 @@ import {
   getDialogTitle,
   getDialogDescription,
 } from './compose-sub-components'
-import { Spinner } from '@/components/ui/spinner'
-import { ThreadPostEditor, CHARACTER_LIMIT } from './thread-post-editor'
+import { ThreadPostEditor } from './thread-post-editor'
 import { VisibilitySelector, TEASER_LIMIT } from './visibility-selector'
-import { LockClosedIcon, LinkIcon } from '@heroicons/react/24/solid'
-import { isPrivatePost } from '@/components/post/private-post-content'
-import type { EncryptionSource } from '@/lib/services/post-service'
-import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { ImageAttachment } from './image-attachment'
-import {
-  PollEditor,
-  createPollDraft,
-  isPollDraftValid,
-  pollDraftEndsAt,
-  pollDraftOptions,
-  type PollDraft,
-} from './poll-editor'
-import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
+import { PollEditor, isPollDraftValid, pollDraftEndsAt, pollDraftOptions } from './poll-editor'
 import { StorageProviderModal } from './storage-provider-modal'
-import { useImageUpload } from '@/hooks/use-image-upload'
-import type { UploadResult } from '@/lib/upload'
-import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
-import { hashtagsAreInline, replyLinkageTo, threadRootIdOf } from '@/lib/contract-topology'
-import { resolveQuoteReference } from '@/lib/feed/resolve-quoted-posts'
-import { isUnconfirmed, markUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
-import { dispatchFieldRegistered } from '@/lib/services/post-field-validation'
+
+const TOGGLE = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors'
+const TOGGLE_OFF = 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+const BANNER = 'flex items-center gap-2 px-3 py-2 rounded-lg border'
+
+function Banner({ tone, children }: { tone: 'purple' | 'amber' | 'gray'; children: React.ReactNode }) {
+  const tones = {
+    purple: 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800',
+    amber: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800',
+    gray: 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700',
+  }
+  return (
+    <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className={`${BANNER} ${tones[tone]}`}>
+      {children}
+    </motion.div>
+  )
+}
 
 export function ComposeModal() {
   const {
@@ -79,123 +76,41 @@ export function ComposeModal() {
     setActiveThreadPost,
     resetThreadPosts,
   } = useAppStore()
-
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
+
   const [isPosting, setIsPosting] = useState(false)
   const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
   const [showPreview, setShowPreview] = useState(false)
-  // Author-declared sensitive flag for the top-level post being composed.
-  // Replies are never individually flagged, and in a thread only the first
-  // item is a post — so one toggle covers the whole composer.
+  // One toggle covers the composer: replies are never individually flagged and
+  // only the first item of a thread is a post. Once clicked, the profile seed
+  // below must not overwrite the choice.
   const [markSensitive, setMarkSensitive] = useState(false)
-  // Once the user clicks the toggle, the async profile seed below must not
-  // overwrite their choice — the fetch can resolve after the click.
   const sensitiveTouchedRef = useRef(false)
   const firstTextareaRef = useRef<HTMLTextAreaElement>(null)
-  const teaserTextareaRef = useRef<HTMLTextAreaElement>(null)
-
-  // Private feed state
-  const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
-  const [privateFeedLoading, setPrivateFeedLoading] = useState(true)
-  const [privateFollowerCount, setPrivateFollowerCount] = useState(0)
-
-  // Enable private feed flow state (Improvement 1)
-  const [showAddKeyModal, setShowAddKeyModal] = useState(false)
-  const [pendingVisibility, setPendingVisibility] = useState<PostVisibility | null>(null)
-  const [hasEncryptionKeyOnIdentity, setHasEncryptionKeyOnIdentity] = useState(false)
-
-  // Inherited encryption state for replies to private posts (PRD §5.5)
-  const [inheritedEncryption, setInheritedEncryption] = useState<EncryptionSource | null>(null)
-  const [inheritedEncryptionLoading, setInheritedEncryptionLoading] = useState(false)
-  const [inheritedEncryptionError, setInheritedEncryptionError] = useState(false)
-
-  // Image upload state
-  const [attachedImage, setAttachedImage] = useState<{
-    file: File
-    preview: string
-    uploadResult?: UploadResult
-  } | null>(null)
-  const [showStorageProviderModal, setShowStorageProviderModal] = useState(false)
-
-  // Poll attachment state (native polls on the Pollr contract).
-  // `createdPollId` survives a failed post attempt so pressing Post again
-  // re-uses the poll that already landed instead of creating (and paying for)
-  // a second, orphaned one.
-  const [pollDraft, setPollDraft] = useState<PollDraft | null>(null)
-  const [createdPollId, setCreatedPollId] = useState<string | null>(null)
-  // The poll broadcast succeeded but DAPI never confirmed it was queryable, so
-  // the next attempt has to check before spending YAPP on a post that embeds it.
-  const [pollUnconfirmed, setPollUnconfirmed] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const { upload, isUploading, progress, isProviderConnected, checkProvider } = useImageUpload()
 
-  // Get visibility from first post (visibility only applies to first post)
   const firstPost = threadPosts[0]
   const visibility: PostVisibility = firstPost?.visibility || 'public'
-  const isPrivatePostVisibility = visibility === 'private' || visibility === 'private-with-teaser'
+  const isPrivateVisibility = visibility === 'private' || visibility === 'private-with-teaser'
+  const setFirstPostVisibility = useCallback(
+    (v: PostVisibility) => {
+      if (firstPost) updateThreadPostVisibility(firstPost.id, v)
+    },
+    [firstPost, updateThreadPostVisibility]
+  )
 
-  // Determine if this will be encrypted (either explicit private post or inherited from parent)
-  const willBeEncrypted = isPrivatePostVisibility || inheritedEncryption !== null
+  const image = useComposeImage(isComposeOpen)
+  const privateFeed = useComposePrivateFeed(isComposeOpen, user, setFirstPostVisibility)
+  const inherited = useInheritedEncryption(isComposeOpen, replyingTo)
+  const willBeEncrypted = isPrivateVisibility || inherited.source !== null
+  // A poll post is a single, public, top-level post: the question lives on the
+  // public Pollr contract and replies/threads have nowhere to carry the embed.
+  const canAttachPoll = !replyingTo && !quotingPost && !willBeEncrypted && threadPosts.length === 1
+  const poll = useComposePoll(canAttachPoll)
 
-  // Check private feed status and encryption key status when modal opens
-  useEffect(() => {
-    if (isComposeOpen && user) {
-      setPrivateFeedLoading(true)
-      const checkPrivateFeed = async () => {
-        try {
-          const { privateFeedService, privateFeedKeyStore, identityService } = await import('@/lib/services')
-
-          // First check local state (fast) - if local keys exist, user has private feed
-          const hasLocalKeys = privateFeedKeyStore.hasFeedSeed()
-
-          // Then verify with platform (authoritative) if local keys don't exist
-          let hasPrivate = hasLocalKeys
-          if (!hasLocalKeys) {
-            hasPrivate = await privateFeedService.hasPrivateFeed(user.identityId)
-          }
-
-          setHasPrivateFeed(hasPrivate)
-
-          if (hasPrivate) {
-            // Get follower count from recipient map
-            const recipientMap = privateFeedKeyStore.getRecipientMap()
-            setPrivateFollowerCount(Object.keys(recipientMap).length)
-          } else {
-            // Reset follower count when no private feed
-            setPrivateFollowerCount(0)
-          }
-
-          // Check if user has encryption key on identity (for enabling private feed flow)
-          if (!hasPrivate) {
-            try {
-              const { hasEncryptionKeyOnIdentity } = await import('@/lib/crypto/encryption-key-lookup')
-              const identity = await identityService.getIdentity(user.identityId)
-              const hasEncKey = identity?.publicKeys
-                ? hasEncryptionKeyOnIdentity(identity.publicKeys)
-                : false
-              setHasEncryptionKeyOnIdentity(hasEncKey)
-            } catch {
-              setHasEncryptionKeyOnIdentity(false)
-            }
-          }
-        } catch (error) {
-          logger.error('Failed to check private feed status:', error)
-          setHasPrivateFeed(false)
-        } finally {
-          setPrivateFeedLoading(false)
-        }
-      }
-      checkPrivateFeed().catch(err => logger.error('Failed to check private feed:', err))
-    }
-  }, [isComposeOpen, user])
-
-  // Seed the sensitive toggle from the composer's own profile flag when the
-  // modal opens — an author who marked their profile NSFW almost always wants
-  // their posts flagged too. Only on the open transition, so a manual uncheck
-  // is never fought mid-compose.
+  // Seed the sensitive toggle from the author's own NSFW profile flag on open.
   useEffect(() => {
     if (!isComposeOpen) return
     sensitiveTouchedRef.current = false
@@ -204,972 +119,57 @@ export function ComposeModal() {
       return
     }
     let cancelled = false
-    const seedFromProfile = async () => {
-      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
-      const profile = await unifiedProfileService.getProfile(user.identityId)
-      if (!cancelled && !sensitiveTouchedRef.current) {
-        setMarkSensitive(profile?.nsfw === true)
-      }
-    }
-    seedFromProfile().catch(() => {
-      // No profile (or lookup failed) — leave the toggle off.
-    })
+    import('@/lib/services/unified-profile-service')
+      .then(({ unifiedProfileService }) => unifiedProfileService.getProfile(user.identityId))
+      .then((profile) => {
+        if (!cancelled && !sensitiveTouchedRef.current) setMarkSensitive(profile?.nsfw === true)
+      })
+      .catch(() => {
+        // No profile, or the lookup failed: leave the toggle off.
+      })
     return () => {
       cancelled = true
     }
   }, [isComposeOpen, user])
 
-  // Check for inherited encryption when replying to a post (PRD §5.5)
-  // Extracted as a callback for retry functionality
-  const checkInheritedEncryption = useCallback(async (postToCheck: Post) => {
-    setInheritedEncryptionLoading(true)
-    setInheritedEncryptionError(false)
-    try {
-      // Check if parent is a private post
-      if (isPrivatePost(postToCheck)) {
-        // Import getEncryptionSource dynamically
-        const { getEncryptionSource } = await import('@/lib/services/post-service')
-        const encryptionSource = await getEncryptionSource(postToCheck)
-        if (encryptionSource) {
-          setInheritedEncryption(encryptionSource)
-        } else {
-          // Failed to get encryption source for private post - block posting
-          setInheritedEncryptionError(true)
-          setInheritedEncryption(null)
-        }
-      } else {
-        setInheritedEncryption(null)
-      }
-    } catch (error) {
-      logger.error('Failed to check inherited encryption:', error)
-      // Error fetching encryption source for private post - block posting
-      if (isPrivatePost(postToCheck)) {
-        setInheritedEncryptionError(true)
-      }
-      setInheritedEncryption(null)
-    } finally {
-      setInheritedEncryptionLoading(false)
-    }
-  }, [])
-
   useEffect(() => {
-    if (isComposeOpen && replyingTo) {
-      // Track cancellation for stale async results
-      let cancelled = false
-
-      const doCheck = async () => {
-        setInheritedEncryptionLoading(true)
-        setInheritedEncryptionError(false)
-        try {
-          if (isPrivatePost(replyingTo)) {
-            const { getEncryptionSource } = await import('@/lib/services/post-service')
-            const encryptionSource = await getEncryptionSource(replyingTo)
-            // Check if replyingTo changed while we were fetching
-            if (cancelled) return
-            if (encryptionSource) {
-              setInheritedEncryption(encryptionSource)
-            } else {
-              setInheritedEncryptionError(true)
-              setInheritedEncryption(null)
-            }
-          } else {
-            if (cancelled) return
-            setInheritedEncryption(null)
-          }
-        } catch (error) {
-          logger.error('Failed to check inherited encryption:', error)
-          if (cancelled) return
-          if (isPrivatePost(replyingTo)) {
-            setInheritedEncryptionError(true)
-          }
-          setInheritedEncryption(null)
-        } finally {
-          if (!cancelled) {
-            setInheritedEncryptionLoading(false)
-          }
-        }
-      }
-      doCheck().catch((err) => logger.error('Failed to check inherited encryption:', err))
-
-      // Cleanup: mark as cancelled if replyingTo changes
-      return () => {
-        cancelled = true
-      }
-    } else {
-      // Reset when not replying
-      setInheritedEncryption(null)
-      setInheritedEncryptionLoading(false)
-      setInheritedEncryptionError(false)
-    }
-  }, [isComposeOpen, replyingTo])
-
-  // Focus first textarea when modal opens
-  useEffect(() => {
-    if (isComposeOpen) {
-      const timeoutId = setTimeout(() => {
-        firstTextareaRef.current?.focus()
-      }, 100)
-      return () => clearTimeout(timeoutId)
-    }
+    if (!isComposeOpen) return
+    const id = setTimeout(() => firstTextareaRef.current?.focus(), 100)
+    return () => clearTimeout(id)
   }, [isComposeOpen])
 
-  // Check upload provider status when modal opens
-  useEffect(() => {
-    if (isComposeOpen) {
-      checkProvider().catch(err => logger.error('Failed to check upload provider:', err))
-    }
-  }, [isComposeOpen, checkProvider])
-
-  // Cleanup preview URL when attachedImage changes or component unmounts
-  useEffect(() => {
-    return () => {
-      if (attachedImage?.preview) {
-        URL.revokeObjectURL(attachedImage.preview)
-      }
-    }
-  }, [attachedImage?.preview])
-
-  // Calculate totals (only for unposted posts)
   const unpostedPosts = threadPosts.filter((p) => !p.postedPostId)
-  const unpostedPostsWithContent = unpostedPosts.filter((p) => p.content.trim().length > 0)
+  const unpostedWithContent = unpostedPosts.filter((p) => p.content.trim().length > 0)
   const postedPosts = threadPosts.filter((p) => p.postedPostId)
-  const imageUrl = attachedImage?.uploadResult?.url
-  // Public posts carry the image in the mediaUrl document field (no character
-  // cost). Encrypted posts keep the URL inside the encrypted content — a
-  // plaintext mediaUrl would leak the private media — so only they still pay
-  // the append cost (\n\n separator included).
+  const imageUrl = image.attached?.uploadResult?.url
+  // Public posts carry the image in the mediaUrl field at no character cost.
+  // Encrypted posts keep the URL inside the content, so only they pay for it.
   const imageUrlExtraLength = imageUrl && willBeEncrypted ? imageUrl.length + 2 : 0
-  const firstUnpostedPostId = unpostedPostsWithContent[0]?.id
-  const hasValidContent = unpostedPostsWithContent.length > 0
+  const firstUnposted = unpostedWithContent[0]
+  const hasTeaserOverLimit = visibility === 'private-with-teaser' && !!firstPost?.teaser && firstPost.teaser.length > TEASER_LIMIT
+  const hasOverLimit = unpostedWithContent.some((p, i) => p.content.length + (i === 0 ? imageUrlExtraLength : 0) > CHARACTER_LIMIT) || hasTeaserOverLimit
+  const isOverLimitDueToImage =
+    !!firstUnposted && imageUrlExtraLength > 0 && firstUnposted.content.length <= CHARACTER_LIMIT && firstUnposted.content.length + imageUrlExtraLength > CHARACTER_LIMIT
+  const imageOverage = isOverLimitDueToImage && firstUnposted ? firstUnposted.content.length + imageUrlExtraLength - CHARACTER_LIMIT : 0
 
-  // For private-with-teaser, also check teaser limit
-  const hasTeaserOverLimit = visibility === 'private-with-teaser' &&
-    firstPost?.teaser && firstPost.teaser.length > TEASER_LIMIT
-  const hasOverLimit = unpostedPostsWithContent.some((p, index) =>
-    p.content.length + (index === 0 ? imageUrlExtraLength : 0) > CHARACTER_LIMIT
-  ) || hasTeaserOverLimit
-  const firstUnpostedPost = unpostedPostsWithContent[0]
-  const isOverLimitDueToImage = !!firstUnpostedPost &&
-    imageUrlExtraLength > 0 &&
-    firstUnpostedPost.content.length <= CHARACTER_LIMIT &&
-    firstUnpostedPost.content.length + imageUrlExtraLength > CHARACTER_LIMIT
-  const imageOverage = isOverLimitDueToImage && firstUnpostedPost
-    ? firstUnpostedPost.content.length + imageUrlExtraLength - CHARACTER_LIMIT
-    : 0
-
-  // Encrypted posts must be single posts (no threads)
   const isValidEncryptedPost = !willBeEncrypted || (unpostedPosts.length <= 1 && threadPosts.length <= 1)
-  // Block posting while checking inherited encryption for private post replies, or if check failed
-  const isInheritedEncryptionReady = !replyingTo || !isPrivatePost(replyingTo) ||
-    (!inheritedEncryptionLoading && !inheritedEncryptionError)
-  // A poll post is a single, public, top-level post: the poll question lives on the
-  // public Pollr contract, and replies/threads have nowhere to carry the embed.
-  const canAttachPoll = !replyingTo && !quotingPost && !willBeEncrypted && threadPosts.length === 1
-  const isValidPollPost = !pollDraft || isPollDraftValid(pollDraft)
-
-  const canPost = hasValidContent && !hasOverLimit && !isPosting && !isUploading && isValidEncryptedPost && isInheritedEncryptionReady && isValidPollPost
-  // Disable thread for private posts and inherited encryption replies (private posts are single posts only)
-  const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted && !pollDraft
-  // Check if image attachment is allowed (not including provider connection status)
-  const canAttachImage = !attachedImage
-
-  // Get the last posted post ID for chaining retries
-  const lastPostedId = postedPosts.length > 0
-    ? postedPosts[postedPosts.length - 1].postedPostId
-    : null
-
-  // Handle request to enable private feed when user selects a private visibility option
-  // Note: Not wrapped in useCallback because it references enablePrivateFeedAfterKeyEntry
-  // which changes when firstPost/updateThreadPostVisibility change, avoiding stale closure
-  const handleEnablePrivateFeedRequest = async (targetVisibility: PostVisibility) => {
-    if (!user) return
-
-    // Store the pending visibility so we can auto-select it after enabling
-    setPendingVisibility(targetVisibility)
-
-    if (!hasEncryptionKeyOnIdentity) {
-      // User needs to add encryption key to identity first
-      setShowAddKeyModal(true)
-    } else {
-      // User has encryption key on identity, prompt them to enter it
-      // so we can enable the private feed
-      const { useEncryptionKeyModal } = await import('@/hooks/use-encryption-key-modal')
-      useEncryptionKeyModal.getState().open('manage_private_feed', async () => {
-        // After key entry, enable the private feed
-        await enablePrivateFeedAfterKeyEntry(targetVisibility)
-      })
-    }
-  }
-
-  // Enable private feed after encryption key is ready
-  const enablePrivateFeedAfterKeyEntry = useCallback(async (targetVisibility: PostVisibility) => {
-    if (!user) return
-
-    try {
-      const { privateFeedService, privateFeedKeyStore } = await import('@/lib/services')
-      const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
-
-      // Get the encryption key bytes from secure storage (handles WIF and hex)
-      const encryptionPrivateKey = getEncryptionKeyBytes(user.identityId)
-      if (!encryptionPrivateKey) {
-        toast.error('No encryption key found. Please try again.')
-        return
-      }
-
-      // Enable private feed
-      const result = await privateFeedService.enablePrivateFeed(user.identityId, encryptionPrivateKey)
-
-      if (result.success) {
-        setHasPrivateFeed(true)
-        // Update visibility to the pending one
-        if (firstPost) {
-          updateThreadPostVisibility(firstPost.id, targetVisibility)
-        }
-        toast.success('Private feed enabled!')
-
-        // Get follower count
-        const recipientMap = privateFeedKeyStore.getRecipientMap()
-        setPrivateFollowerCount(Object.keys(recipientMap).length)
-      } else {
-        toast.error(result.error || 'Failed to enable private feed')
-      }
-    } catch (error) {
-      logger.error('Error enabling private feed:', error)
-      toast.error('Failed to enable private feed')
-    } finally {
-      setPendingVisibility(null)
-    }
-  }, [user, firstPost, updateThreadPostVisibility])
-
-  // Handle success from AddEncryptionKeyModal
-  const handleAddKeySuccess = useCallback(async () => {
-    setShowAddKeyModal(false)
-    setHasEncryptionKeyOnIdentity(true)
-
-    // Now enable the private feed with the pending visibility
-    if (pendingVisibility) {
-      await enablePrivateFeedAfterKeyEntry(pendingVisibility)
-    }
-  }, [pendingVisibility, enablePrivateFeedAfterKeyEntry])
-
-  // Handle file selection for image attachment
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    // Reset input so same file can be selected again
-    e.target.value = ''
-
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      toast.error('Only images are supported')
-      return
-    }
-
-    // Validate file size (10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error('Image must be under 10MB')
-      return
-    }
-
-    // Create preview URL
-    const preview = URL.createObjectURL(file)
-    setAttachedImage({ file, preview })
-    upload(file)
-      .then((result) => {
-        setAttachedImage(prev => (prev && prev.file === file ? { ...prev, uploadResult: result } : prev))
-      })
-      .catch((err) => {
-        logger.error('Failed to upload image:', err)
-        toast.error('Failed to upload image')
-      })
-  }, [upload])
-
-  // Handle removing the attached image
-  const handleRemoveImage = useCallback(() => {
-    if (attachedImage?.preview) {
-      URL.revokeObjectURL(attachedImage.preview)
-    }
-    setAttachedImage(null)
-  }, [attachedImage])
-
-  // Forget the poll without comment — for closing the modal after a successful
-  // post, where the poll is not orphaned.
-  const forgetPoll = useCallback(() => {
-    setPollDraft(null)
-    setCreatedPollId(null)
-    setPollUnconfirmed(false)
-  }, [])
-
-  // Detach the poll. A poll that already landed is now orphaned (the next
-  // attempt starts a fresh one), so say where the old one lives.
-  const clearPoll = useCallback(() => {
-    if (createdPollId) {
-      const pollUrl = pollrPollUrl(createdPollId)
-      toast(pollUrl ? `Your poll stays live on Pollr: ${pollUrl}` : 'Your poll document stays live on the Pollr contract.', {
-        duration: 8000,
-        icon: '📊',
-      })
-    }
-    forgetPoll()
-  }, [createdPollId, forgetPoll])
-
-  // Attach/detach a poll. The post text doubles as the poll question.
-  const handlePollToggle = useCallback(() => {
-    if (pollDraft) {
-      clearPoll()
-    } else {
-      setPollDraft(createPollDraft())
-    }
-  }, [pollDraft, clearPoll])
-
-  // Drop the poll if the compose state stops supporting one (e.g. the user
-  // switches to a private visibility or starts a reply).
-  useEffect(() => {
-    if (pollDraft && !canAttachPoll) {
-      clearPoll()
-    }
-  }, [pollDraft, canAttachPoll, clearPoll])
-
-  // Handle image button click - check provider first
-  const handleImageButtonClick = useCallback(() => {
-    if (!isProviderConnected) {
-      setShowStorageProviderModal(true)
-      return
-    }
-    fileInputRef.current?.click()
-  }, [isProviderConnected])
-
-  // Handle paste event for image upload from clipboard
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
-    const items = e.clipboardData?.items
-    if (!items) return
-
-    // Find an image item in the clipboard
-    const imageItem = Array.from(items).find(item => item.type.startsWith('image/'))
-    if (!imageItem) return
-
-    // Check if we can attach an image
-    if (attachedImage) {
-      toast.error('Only one image can be attached per post')
-      return
-    }
-    if (!isProviderConnected) {
-      setShowStorageProviderModal(true)
-      return
-    }
-
-    const file = imageItem.getAsFile()
-    if (!file) return
-
-    // Validate file type (should always be image since we checked above, but just in case)
-    if (!file.type.startsWith('image/')) {
-      toast.error('Only images are supported')
-      return
-    }
-
-    // Validate file size (10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error('Image must be under 10MB')
-      return
-    }
-
-    // Prevent browser's default paste behavior (e.g., inserting data URL into textarea)
-    e.preventDefault()
-
-    // Create preview URL and set attached image
-    const preview = URL.createObjectURL(file)
-    setAttachedImage({ file, preview })
-    upload(file)
-      .then((result) => {
-        setAttachedImage(prev => (prev && prev.file === file ? { ...prev, uploadResult: result } : prev))
-      })
-      .catch((err) => {
-        logger.error('Failed to upload image:', err)
-        toast.error('Failed to upload image')
-      })
-  }, [attachedImage, isProviderConnected, upload])
-
-  const handlePost = async () => {
-    const authedUser = requireAuth()
-    if (!authedUser || !canPost) return
-
-    setIsPosting(true)
-    setPostingProgress(null)
-
-    // Track successful posts for partial success reporting
-    interface SuccessfulPost {
-      index: number
-      postId: string
-      content: string
-      threadPostId: string // The original threadPost.id from the store
-    }
-    const successfulPosts: SuccessfulPost[] = []
-    const timeoutPosts: { index: number; threadPostId: string }[] = [] // Posts that timed out (may have succeeded)
-    let failedAtIndex: number | null = null
-    let failureError: Error | null = null
-    // Poll id for this attempt: an earlier attempt's poll if there is one, so a
-    // retry never creates a second poll.
-    let pollId: string | null = createdPollId
-
-    // Upload image first if attached (and not already uploaded)
-    let imageUrl: string | undefined
-    if (attachedImage && !attachedImage.uploadResult) {
-      try {
-        setPostingProgress({ current: 0, total: 1, status: 'Uploading image...' })
-        const result = await upload(attachedImage.file)
-        setAttachedImage(prev => prev ? { ...prev, uploadResult: result } : null)
-        imageUrl = result.url // ipfs://CID
-      } catch (err) {
-        logger.error('Failed to upload image:', err)
-        toast.error('Failed to upload image')
-        setIsPosting(false)
-        setPostingProgress(null)
-        return
-      }
-    } else if (attachedImage?.uploadResult) {
-      imageUrl = attachedImage.uploadResult.url
-    }
-
-    try {
-      const { retryPostCreation } = await import('@/lib/retry-utils')
-
-      // Check if this is a private post (explicit or inherited)
-      const isPrivate = visibility === 'private' || visibility === 'private-with-teaser'
-      const hasInheritedEncryption = inheritedEncryption !== null
-
-      // Encrypted posts keep the image URL inside the (to-be-encrypted) content;
-      // public posts carry it in the mediaUrl document field instead.
-      const mediaInEncryptedContent = !!imageUrl && (isPrivate || hasInheritedEncryption)
-      const mediaUrlField = imageUrl && !mediaInEncryptedContent
-        ? mediaUrlForContract(imageUrl)
-        : undefined
-
-      // Filter to only unposted posts with content, preserving their IDs
-      const postsToCreate = threadPosts
-        .filter((p) => p.content.trim().length > 0 && !p.postedPostId)
-        .map((p, index) => ({
-          threadPostId: p.id,
-          // Only encrypted posts still get the image URL appended to content
-          content: index === 0 && imageUrl && mediaInEncryptedContent
-            ? `${p.content.trim()}\n\n${imageUrl}`
-            : p.content.trim(),
-          teaser: p.teaser?.trim(),
-          visibility: p.visibility,
-        }))
-
-      // Guard against image URL pushing content over the limit
-      if (postsToCreate.length > 0 && postsToCreate[0].content.length > CHARACTER_LIMIT) {
-        const overBy = postsToCreate[0].content.length - CHARACTER_LIMIT
-        toast.error(`Post is ${overBy} characters over the limit once the image URL is included. Trim your text.`)
-        setIsPosting(false)
-        setPostingProgress(null)
-        return
-      }
-
-      // Enforce single-post for encrypted posts
-      if ((isPrivate || hasInheritedEncryption) && postsToCreate.length > 1) {
-        toast.error('Encrypted posts cannot be threads. Only the first post will be published.')
-        // Trim to first post only for encrypted posts
-        postsToCreate.length = 1
-      }
-
-      // Create the poll first: it costs credits only (no YAPP) and the post
-      // needs its document id for the embed triple. If this fails we abort
-      // before spending anything on the post.
-      if (pollDraft && !pollId) {
-        setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Creating poll...' })
-        try {
-          const { pollrPollService } = await import('@/lib/services')
-          const poll = await pollrPollService.createPoll(authedUser.identityId, {
-            // The post text is the question — without the appended image URL.
-            question: firstUnpostedPost?.content.trim() ?? '',
-            options: pollDraftOptions(pollDraft),
-            multiChoice: pollDraft.multiChoice,
-            endsAt: pollDraftEndsAt(pollDraft),
-          })
-          pollId = poll.id
-          setCreatedPollId(poll.id)
-
-          // The DAPI wait can time out without the document being found. Posting
-          // now would spend YAPP on a post pointing at a poll that may not
-          // exist, so stop here — the poll id is kept and a retry re-uses it.
-          if ((poll as unknown as { __createConfirmed?: boolean }).__createConfirmed === false) {
-            setPollUnconfirmed(true)
-            toast('Poll not confirmed yet — try again in a moment.', { duration: 6000, icon: '⏳' })
-            setIsPosting(false)
-            setPostingProgress(null)
-            return
-          }
-        } catch (error) {
-          logger.error('Failed to create poll:', error)
-          toast.error(`Poll creation failed: ${extractErrorMessage(error)}`)
-          setIsPosting(false)
-          setPostingProgress(null)
-          return
-        }
-      } else if (pollId && pollUnconfirmed) {
-        // The retry path for a poll whose confirmation timed out. It is not
-        // re-created (that would orphan the first one and pay twice), but it has
-        // to be visible to a query before the post embeds it — otherwise the
-        // post spends YAPP pointing at a poll that may never have landed.
-        setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Checking poll...' })
-        const { pollrPollService } = await import('@/lib/services')
-        const landed = await pollrPollService.getPoll(pollId)
-        if (!landed) {
-          toast('Poll still not confirmed — try again in a moment.', { duration: 6000, icon: '⏳' })
-          setIsPosting(false)
-          setPostingProgress(null)
-          return
-        }
-        setPollUnconfirmed(false)
-      }
-      const postEmbed = pollId ? buildPollEmbed(pollId) : undefined
-
-      // Which field carries the quote reference. A quote of a reply goes in
-      // `quotedReplyId` where the topology has one; a quote of a blog post is a
-      // cross-contract reference, so on v3 — where `quotedPostId` is
-      // refersTo-checked against `post` and would be rejected — it moves to the
-      // embed triple, which is the only reference kind that may leave the contract.
-      const { fields: quoteFields, embed: quoteEmbed } = resolveQuoteReference(quotingPost)
-
-      setPostingProgress({ current: 0, total: postsToCreate.length, status: 'Starting...' })
-
-      // Use lastPostedId for retry chaining, or replyingTo for initial post
-      let previousPostId: string | null = lastPostedId || replyingTo?.id || null
-
-      // The post at the root of whatever thread this compose is extending.
-      // Replying: the target's thread root (the target itself when it IS a post).
-      // Multi-post thread: post #0, known up front only on a retry.
-      let threadRootId: string | null = replyingTo
-        ? threadRootIdOf(replyingTo)
-        : threadPosts[0]?.postedPostId ?? null
-
-
-      for (let i = 0; i < postsToCreate.length; i++) {
-        const { threadPostId, content: postContent, teaser, visibility: postVisibility } = postsToCreate[i]
-        const isThisPostPrivate = i === 0 && isPrivate
-        const isThisReplyInherited = i === 0 && hasInheritedEncryption && !isPrivate
-
-        setPostingProgress({
-          current: i + 1,
-          total: postsToCreate.length,
-          status: isThisPostPrivate || isThisReplyInherited
-            ? `Encrypting and creating private ${isThisReplyInherited ? 'reply' : 'post'} ${i + 1}...`
-            : `Creating post ${i + 1} of ${postsToCreate.length}...`
-        })
-
-        logger.info(`Creating post ${i + 1}/${postsToCreate.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
-
-        // Determine encryption options
-        let encryptionOptions: import('@/lib/services/post-service').EncryptionOptions | undefined
-
-        if (isThisReplyInherited && inheritedEncryption) {
-          // Inherited encryption for replies to private posts (PRD §5.5)
-          encryptionOptions = {
-            type: 'inherited',
-            source: { ownerId: inheritedEncryption.ownerId, epoch: inheritedEncryption.epoch },
-          }
-        } else if (isThisPostPrivate) {
-          // Owner encryption for new private posts
-          const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
-          const encryptionPrivateKey = getEncryptionKeyBytes(authedUser.identityId) ?? undefined
-
-          encryptionOptions = {
-            type: 'owner',
-            teaser: postVisibility === 'private-with-teaser' ? teaser : undefined,
-            encryptionPrivateKey,
-          }
-        }
-
-        // Determine if this is a reply (to existing post/reply) or a top-level post
-        // - If replyingTo is set: all posts in thread are replies
-        // - If replyingTo is not set: first post is a top-level post, subsequent are replies
-        const isReply = (i === 0 && replyingTo) || (i > 0 && previousPostId)
-        // The DIRECT target: what was clicked (i === 0) or the previous item in
-        // this thread. Its owner is what notification queries key on.
-        const directTargetId = i === 0 && replyingTo ? replyingTo.id : previousPostId
-        const parentOwnerId = i === 0 && replyingTo
-          ? replyingTo.author.id
-          : previousPostId ? authedUser.identityId : undefined
-        // Both linkage fields come out of one derivation, because they are not
-        // independent — see `replyLinkageTo`.
-        const linkage = threadRootId && directTargetId
-          ? replyLinkageTo({ id: directTargetId, targetKind: 'reply', rootPostId: threadRootId })
-          : null
-
-        // This write is about to name another document — the card the user clicked
-        // Reply/Quote on, or the previous item in this thread. If THIS session
-        // created that document and never saw it confirmed, naming it now would be
-        // rejected by consensus and charged for. `isUnconfirmed` is only ever true
-        // on the DAPI-timeout path, and only on a topology that enforces
-        // references, so the happy path never reaches the probe.
-        const referenced = i === 0 ? replyingTo?.id ?? quotingPost?.id : directTargetId ?? undefined
-        if (isUnconfirmed(referenced)) {
-          setPostingProgress({
-            current: i + 1,
-            total: postsToCreate.length,
-            status: i === 0
-              ? 'Waiting for the post you are referencing to confirm...'
-              : 'Waiting for the previous post to confirm...',
-          })
-          if (!(await settleUnconfirmed(referenced))) {
-            failedAtIndex = i
-            failureError = new Error(
-              'The post this one references has not confirmed yet. Try again in a moment — nothing was lost.'
-            )
-            break
-          }
-        }
-
-        const result = await retryPostCreation(async () => {
-          // Check for sync required errors before they get wrapped by retry
-          try {
-            if (isReply && linkage && parentOwnerId) {
-              // Create a reply
-              const { replyService } = await import('@/lib/services/reply-service')
-              const reply = await replyService.createReply(
-                authedUser.identityId,
-                postContent,
-                { ...linkage, parentOwnerId },
-                {
-                  encryption: encryptionOptions,
-                  mediaUrl: i === 0 ? mediaUrlField : undefined,
-                }
-              )
-              const confirmed = (reply as unknown as { __createConfirmed?: boolean }).__createConfirmed !== false
-              return { postId: reply.id, document: reply, isReply: true, confirmed }
-            } else {
-              // Create a top-level post
-              const { postService } = await import('@/lib/services')
-              const post = await postService.createPost(authedUser.identityId, postContent, {
-                ...(i === 0 ? quoteFields : {}),
-                embed: i === 0 ? quoteEmbed ?? postEmbed : undefined,
-                encryption: encryptionOptions,
-                sensitive: markSensitive || undefined,
-                mediaUrl: i === 0 ? mediaUrlField : undefined,
-              })
-              const confirmed = (post as unknown as { __createConfirmed?: boolean }).__createConfirmed !== false
-              return { postId: post.id, document: post, isReply: false, confirmed }
-            }
-          } catch (error) {
-            // Check if this is a sync required error - handle it specially
-            const errorMsg = error instanceof Error ? error.message : String(error)
-            if (errorMsg.startsWith('SYNC_REQUIRED:')) {
-              const { useEncryptionKeyModal } = await import('@/hooks/use-encryption-key-modal')
-              useEncryptionKeyModal.getState().open('sync_state', () => {
-                toast('Please try posting again now that your keys are synced')
-              })
-              toast.error('Your private feed state needs to sync. Please enter your encryption key.')
-              // Throw a special error that we can detect
-              const syncError = new Error('SYNC_REQUIRED')
-              ;(syncError as Error & { syncRequired: boolean }).syncRequired = true
-              throw syncError
-            }
-            throw error
-          }
-        })
-
-        // Handle sync required - abort without marking as failure
-        if (!result.success && (result.error as Error & { syncRequired?: boolean })?.syncRequired) {
-          setIsPosting(false)
-          setPostingProgress(null)
-          return
-        }
-
-        if (result.success) {
-          // Get the post ID for threading
-          // Type assertion needed due to different result formats from public/private posts
-          const data = result.data as Record<string, unknown> | undefined
-          const postId = (
-            data?.postId || // Private post result format
-            data?.documentId ||
-            (data?.document as Record<string, unknown> | undefined)?.$id ||
-            (data?.document as Record<string, unknown> | undefined)?.id ||
-            data?.$id ||
-            data?.id
-          ) as string | undefined
-
-          if (postId) {
-            // Track successful post with its original threadPost ID
-            successfulPosts.push({ index: i, postId, content: postContent, threadPostId })
-
-            // Update previousPostId for thread chaining (only for public posts)
-            if (!isThisPostPrivate) {
-              previousPostId = postId
-            }
-            // Post #0 of a standalone thread is that thread's root — unless it was
-            // private, in which case it is deliberately not chained to (see
-            // `previousPostId` above), so the following posts stay top-level posts
-            // rather than becoming replies to something not everyone can read.
-            if (threadRootId === null && !isThisPostPrivate) {
-              threadRootId = postId
-            }
-            // Arm the gate only when this write went out unconfirmed. On the happy
-            // path `createDocument` already waited for execution in a block, so a
-            // confirmed parent satisfies refersTo and nothing is recorded. The
-            // record is session-wide, not loop-local: the optimistic card is
-            // already on screen and may be liked or replied to right away.
-            if ((result.data as { confirmed?: boolean } | undefined)?.confirmed === false) {
-              markUnconfirmed(isReply ? 'reply' : 'post', postId)
-            }
-
-            setPostingProgress({
-              current: i + 1,
-              total: postsToCreate.length,
-              status: isThisPostPrivate
-                ? `Private post created!`
-                : `Post ${i + 1} created, processing hashtags...`
-            })
-
-            // Create hashtag documents for this successful post
-            // For private posts, only index hashtags from the teaser (if any), not the encrypted content
-            // This prevents metadata leakage about encrypted content
-            const contentForHashtags = isThisPostPrivate
-              ? (postVisibility === 'private-with-teaser' && teaser ? teaser : '')
-              : isThisReplyInherited
-                ? '' // Inherited encryption replies have no public content
-                : postContent
-            // On the inline-hashtag topology (v4) the post itself carries its
-            // single hashtag — there is no postHashtag doctype and these
-            // fire-and-forget writes must not happen at all.
-            const hashtags = hashtagsAreInline() ? [] : extractAllTags(contentForHashtags)
-            if (hashtags.length > 0) {
-              hashtagService.createPostHashtags(postId, authedUser.identityId, hashtags)
-                .then((results) => {
-                  const successCount = results.filter((r) => r).length
-                  logger.info(`Post ${i + 1}: Created ${successCount}/${hashtags.length} hashtag documents`)
-
-                  results.forEach((success, tagIndex) => {
-                    if (success) dispatchFieldRegistered('hashtag', { postId, value: hashtags[tagIndex] })
-                  })
-                })
-                .catch((err) => {
-                  logger.error(`Post ${i + 1}: Failed to create hashtag documents:`, err)
-                })
-            }
-
-            // Create mention documents for this successful post
-            // Same privacy consideration: only index mentions from teaser for private posts
-            const contentForMentions = isThisPostPrivate
-              ? (postVisibility === 'private-with-teaser' && teaser ? teaser : '')
-              : isThisReplyInherited
-                ? '' // Inherited encryption replies have no public content
-                : postContent
-            const mentions = extractMentions(contentForMentions)
-            if (mentions.length > 0) {
-              mentionService.createPostMentionsFromUsernames(postId, authedUser.identityId, mentions)
-                .then((results) => {
-                  const successCount = results.filter((r) => r).length
-                  logger.info(`Post ${i + 1}: Created ${successCount}/${mentions.length} mention documents`)
-
-                  results.forEach((success, mentionIndex) => {
-                    if (success) dispatchFieldRegistered('mention', { postId, value: mentions[mentionIndex] })
-                  })
-                })
-                .catch((err) => {
-                  logger.error(`Post ${i + 1}: Failed to create mention documents:`, err)
-                })
-            }
-
-            // Dispatch event for first post/reply
-            if (i === 0) {
-              const eventData = result.data as Record<string, unknown> | undefined
-              const wasReply = eventData?.isReply
-              if (wasReply) {
-                window.dispatchEvent(
-                  new CustomEvent('reply-created', {
-                    detail: {
-                      reply: eventData?.document,
-                      replyId: eventData?.postId,
-                      confirmed: eventData?.confirmed !== false,
-                    },
-                  })
-                )
-              } else {
-                window.dispatchEvent(
-                  new CustomEvent('post-created', {
-                    detail: {
-                      post: eventData?.document,
-                      postId: eventData?.postId,
-                      confirmed: eventData?.confirmed !== false,
-                    },
-                  })
-                )
-              }
-            }
-          } else {
-            // Post created but no ID returned - treat as failure for threading
-            failedAtIndex = i
-            failureError = new Error(`Post ${i + 1} created but no ID returned for threading`)
-            break
-          }
-        } else {
-          // Check if this is a timeout error - the state-transition-service already
-          // tried to verify on Platform. If we still get here, it couldn't confirm.
-          // Retrying is safe — idempotency checks will prevent double-posting.
-          if (isTimeoutError(result.error)) {
-            logger.warn(`Post ${i + 1} timed out and could not be verified — may have succeeded.`)
-            timeoutPosts.push({ index: i, threadPostId })
-            continue
-          }
-
-          // Post creation failed
-          failedAtIndex = i
-          failureError = new Error(extractErrorMessage(result.error))
-          break
-        }
-      }
-
-      // Handle results based on success/failure/timeout state
-      const allSuccessful = failedAtIndex === null && timeoutPosts.length === 0
-      const hasTimeouts = timeoutPosts.length > 0
-      const successfulThreadPostIds = new Set(successfulPosts.map(p => p.threadPostId))
-
-      if (allSuccessful) {
-        // Complete success - all posts created without issues
-        setPostingProgress({ current: postsToCreate.length, total: postsToCreate.length, status: 'Complete!' })
-
-        if (postsToCreate.length > 1) {
-          toast.success(`Thread with ${postsToCreate.length} posts created!`)
-        } else {
-          toast.success('Post created successfully!')
-        }
-
-        // Dispatch thread completion event
-        if (successfulPosts.length > 1) {
-          window.dispatchEvent(
-            new CustomEvent('thread-created', {
-              detail: {
-                posts: successfulPosts,
-                totalPosts: successfulPosts.length,
-              },
-            })
-          )
-        }
-
-        handleClose()
-      } else if (hasTimeouts && failedAtIndex === null) {
-        // Some posts timed out but no hard failures
-        // Mark confirmed posts as posted, keep timed-out for retry
-        const timeoutCount = timeoutPosts.length
-        const confirmedCount = successfulPosts.length
-
-        // Mark confirmed successful posts as posted
-        successfulPosts.forEach(({ threadPostId, postId }) => {
-          markThreadPostAsPosted(threadPostId, postId)
-        })
-
-        if (confirmedCount > 0 && timeoutCount > 0) {
-          toast(
-            `${confirmedCount} post${confirmedCount > 1 ? 's' : ''} confirmed. ` +
-            `${timeoutCount} post${timeoutCount > 1 ? 's' : ''} timed out - press Post to retry.`,
-            { duration: 5000, icon: '⚠️' }
-          )
-          // Keep modal open for retry - set active to first timed-out post
-          const firstTimeout = timeoutPosts[0]
-          if (firstTimeout) {
-            setActiveThreadPost(firstTimeout.threadPostId)
-          }
-        } else if (timeoutCount > 0) {
-          toast(
-            `${timeoutCount} post${timeoutCount > 1 ? 's' : ''} timed out. ` +
-            `Press Post to retry, or check your profile.`,
-            { duration: 5000, icon: '⚠️' }
-          )
-          if (pollId) {
-            const pollUrl = pollrPollUrl(pollId)
-            toast(`Your poll is live${pollUrl ? ` on Pollr: ${pollUrl}` : ''}. Retrying re-uses it.`, {
-              duration: 8000,
-              icon: '📊',
-            })
-          }
-          // Keep modal open for retry
-        } else {
-          // All confirmed, close
-          handleClose()
-        }
-      } else if (successfulPosts.length > 0 || timeoutPosts.length > 0) {
-        // Partial failure - some posts succeeded or timed out, but at least one failed
-        window.dispatchEvent(
-          new CustomEvent('thread-partial-success', {
-            detail: {
-              successfulPosts,
-              timeoutPosts,
-              failedAtIndex,
-              totalAttempted: postsToCreate.length,
-              error: failureError?.message,
-            },
-          })
-        )
-
-        // Mark confirmed successful posts as posted (keep visible but finalized)
-        successfulPosts.forEach(({ threadPostId, postId }) => {
-          markThreadPostAsPosted(threadPostId, postId)
-        })
-
-        // Build informative message
-        const parts: string[] = []
-        if (successfulPosts.length > 0) {
-          parts.push(`${successfulPosts.length} posted`)
-        }
-        if (timeoutPosts.length > 0) {
-          parts.push(`${timeoutPosts.length} timed out`)
-        }
-        const successPart = parts.join(', ')
-
-        const ranOutOfYapp = handleInsufficientYapp(
-          failureError,
-          'You ran out of YAPP mid-thread. Buy some to post the rest.'
-        )
-        const errorMsg = ranOutOfYapp
-          ? 'not enough YAPP'
-          : failureError?.message || 'Unknown error'
-        toast.error(
-          `Thread partially created: ${successPart}. ` +
-          `Post ${(failedAtIndex ?? 0) + 1} failed: ${errorMsg}. Press Post to retry.`,
-          { duration: 6000 }
-        )
-
-        // Set active to first unposted post for retry
-        const firstUnposted = threadPosts.find(p => !successfulThreadPostIds.has(p.id))
-        if (firstUnposted) {
-          setActiveThreadPost(firstUnposted.id)
-        }
-      } else {
-        // Complete failure on first post
-        throw failureError || new Error('Post creation failed')
-      }
-    } catch (error) {
-      logger.error('Failed to create post:', error)
-      if (!handleInsufficientYapp(error, 'You need YAPP to post. Buy some to continue.')) {
-        toast.error(categorizeError(error))
-      }
-      // The poll document landed even though the post didn't — tell the user
-      // where it lives so the spend isn't silently lost. Pressing Post again
-      // re-uses this same poll.
-      if (pollId) {
-        const pollUrl = pollrPollUrl(pollId)
-        toast(`Your poll is already live${pollUrl ? ` on Pollr: ${pollUrl}` : ''}. Press Post to retry the post.`, {
-          duration: 10000,
-          icon: '📊',
-        })
-      }
-    } finally {
-      setIsPosting(false)
-      setPostingProgress(null)
-    }
-  }
+  const isInheritedEncryptionReady = !replyingTo || !isPrivatePost(replyingTo) || (!inherited.loading && !inherited.error)
+  const canPost =
+    unpostedWithContent.length > 0 &&
+    !hasOverLimit &&
+    !isPosting &&
+    !image.isUploading &&
+    isValidEncryptedPost &&
+    isInheritedEncryptionReady &&
+    (!poll.draft || isPollDraftValid(poll.draft))
+  const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted && !poll.draft
+  const lastPostedId = postedPosts.length > 0 ? postedPosts[postedPosts.length - 1].postedPostId ?? null : null
 
   const handleClose = () => {
-    // Clean up image preview URL
-    if (attachedImage?.preview) {
-      URL.revokeObjectURL(attachedImage.preview)
-    }
-    setAttachedImage(null)
+    image.remove()
     // Silent: on the success path the poll is not orphaned, and every failure
-    // path inside handlePost has already toasted the poll's Pollr link.
-    forgetPoll()
+    // path in handlePost has already toasted the poll's Pollr link.
+    poll.forget()
     setComposeOpen(false)
     setReplyingTo(null)
     setQuotingPost(null)
@@ -1179,183 +179,274 @@ export function ComposeModal() {
     setPostingProgress(null)
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault()
-      handlePost().catch(err => logger.error('Failed to post:', err))
+  const stopPosting = () => {
+    setIsPosting(false)
+    setPostingProgress(null)
+  }
+
+  const handlePost = async () => {
+    const authedUser = requireAuth()
+    if (!authedUser || !canPost) return
+    setIsPosting(true)
+    setPostingProgress(null)
+    // An earlier attempt's poll, so a retry never creates a second one.
+    let pollId: string | null = poll.createdPollId
+
+    let uploadedUrl: string | undefined
+    try {
+      setPostingProgress({ current: 0, total: 1, status: 'Uploading image...' })
+      uploadedUrl = (await image.ensureUploaded()) ?? undefined
+    } catch (err) {
+      logger.error('Failed to upload image:', err)
+      toast.error('Failed to upload image')
+      stopPosting()
+      return
+    }
+
+    try {
+      const isPrivate = isPrivateVisibility
+      const mediaInEncryptedContent = !!uploadedUrl && (isPrivate || inherited.source !== null)
+      const mediaUrlField = uploadedUrl && !mediaInEncryptedContent ? mediaUrlForContract(uploadedUrl) : undefined
+      const posts = planPosts(threadPosts, uploadedUrl, mediaInEncryptedContent)
+
+      if (posts.length > 0 && posts[0].content.length > CHARACTER_LIMIT) {
+        toast.error(`Post is ${posts[0].content.length - CHARACTER_LIMIT} characters over the limit once the image URL is included. Trim your text.`)
+        stopPosting()
+        return
+      }
+      if (willBeEncrypted && posts.length > 1) {
+        toast.error('Encrypted posts cannot be threads. Only the first post will be published.')
+        posts.length = 1
+      }
+
+      // The poll goes first: it costs credits only, and the post needs its id
+      // for the embed. A failure here aborts before anything is spent on the post.
+      if (poll.draft && !pollId) {
+        setPostingProgress({ current: 0, total: posts.length, status: 'Creating poll...' })
+        try {
+          const { pollrPollService } = await import('@/lib/services')
+          const created = await pollrPollService.createPoll(authedUser.identityId, {
+            // The post text is the question, without the appended image URL.
+            question: firstUnposted?.content.trim() ?? '',
+            options: pollDraftOptions(poll.draft),
+            multiChoice: poll.draft.multiChoice,
+            endsAt: pollDraftEndsAt(poll.draft),
+          })
+          pollId = created.id
+          poll.setCreatedPollId(created.id)
+          // Posting against a poll DAPI never confirmed would spend YAPP on a
+          // post pointing at a poll that may not exist; the id is kept for a retry.
+          if ((created as unknown as { __createConfirmed?: boolean }).__createConfirmed === false) {
+            poll.setUnconfirmed(true)
+            toast('Poll not confirmed yet — try again in a moment.', { duration: 6000, icon: '⏳' })
+            stopPosting()
+            return
+          }
+        } catch (error) {
+          logger.error('Failed to create poll:', error)
+          toast.error(`Poll creation failed: ${extractErrorMessage(error)}`)
+          stopPosting()
+          return
+        }
+      } else if (pollId && poll.unconfirmed) {
+        // Not re-created (that would orphan the first and pay twice), but it must
+        // be queryable before the post embeds it.
+        setPostingProgress({ current: 0, total: posts.length, status: 'Checking poll...' })
+        const { pollrPollService } = await import('@/lib/services')
+        if (!(await pollrPollService.getPoll(pollId))) {
+          toast('Poll still not confirmed — try again in a moment.', { duration: 6000, icon: '⏳' })
+          stopPosting()
+          return
+        }
+        poll.setUnconfirmed(false)
+      }
+
+      setPostingProgress({ current: 0, total: posts.length, status: 'Starting...' })
+      const outcome = await publishThread({
+        authorId: authedUser.identityId,
+        posts,
+        replyingTo,
+        quotingPost,
+        lastPostedId,
+        knownThreadRootId: threadPosts[0]?.postedPostId ?? null,
+        isPrivate,
+        inheritedEncryption: inherited.source,
+        pollEmbed: pollId ? buildPollEmbed(pollId) : undefined,
+        mediaUrlField,
+        markSensitive,
+        onProgress: setPostingProgress,
+      })
+      if (outcome.syncRequired) {
+        stopPosting()
+        return
+      }
+
+      const { successful, timedOut, failedAtIndex, failureError } = outcome
+      const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? 's' : ''}`
+      const markPosted = () => successful.forEach(({ threadPostId, postId }) => markThreadPostAsPosted(threadPostId, postId))
+
+      if (failedAtIndex === null && timedOut.length === 0) {
+        setPostingProgress({ current: posts.length, total: posts.length, status: 'Complete!' })
+        toast.success(posts.length > 1 ? `Thread with ${posts.length} posts created!` : 'Post created successfully!')
+        if (successful.length > 1) {
+          window.dispatchEvent(new CustomEvent('thread-created', { detail: { posts: successful, totalPosts: successful.length } }))
+        }
+        handleClose()
+      } else if (failedAtIndex === null) {
+        // Timeouts only: keep the modal open so Post retries them.
+        markPosted()
+        if (successful.length > 0) {
+          toast(`${plural(successful.length, 'post')} confirmed. ${plural(timedOut.length, 'post')} timed out - press Post to retry.`, { duration: 5000, icon: '⚠️' })
+          setActiveThreadPost(timedOut[0].threadPostId)
+        } else {
+          toast(`${plural(timedOut.length, 'post')} timed out. Press Post to retry, or check your profile.`, { duration: 5000, icon: '⚠️' })
+          if (pollId) {
+            const url = pollrPollUrl(pollId)
+            toast(`Your poll is live${url ? ` on Pollr: ${url}` : ''}. Retrying re-uses it.`, { duration: 8000, icon: '📊' })
+          }
+        }
+      } else if (successful.length > 0 || timedOut.length > 0) {
+        window.dispatchEvent(
+          new CustomEvent('thread-partial-success', {
+            detail: { successfulPosts: successful, timeoutPosts: timedOut, failedAtIndex, totalAttempted: posts.length, error: failureError?.message },
+          })
+        )
+        markPosted()
+        const parts = [successful.length > 0 && `${successful.length} posted`, timedOut.length > 0 && `${timedOut.length} timed out`].filter(Boolean)
+        const ranOutOfYapp = handleInsufficientYapp(failureError, 'You ran out of YAPP mid-thread. Buy some to post the rest.')
+        const reason = ranOutOfYapp ? 'not enough YAPP' : failureError?.message || 'Unknown error'
+        toast.error(`Thread partially created: ${parts.join(', ')}. Post ${failedAtIndex + 1} failed: ${reason}. Press Post to retry.`, { duration: 6000 })
+        const done = new Set(successful.map((p) => p.threadPostId))
+        const firstUnpostedItem = threadPosts.find((p) => !done.has(p.id))
+        if (firstUnpostedItem) setActiveThreadPost(firstUnpostedItem.id)
+      } else {
+        throw failureError || new Error('Post creation failed')
+      }
+    } catch (error) {
+      logger.error('Failed to create post:', error)
+      if (!handleInsufficientYapp(error, 'You need YAPP to post. Buy some to continue.')) toast.error(categorizeError(error))
+      // The poll landed even though the post did not; a retry re-uses it.
+      if (pollId) {
+        const url = pollrPollUrl(pollId)
+        toast(`Your poll is already live${url ? ` on Pollr: ${url}` : ''}. Press Post to retry the post.`, { duration: 10000, icon: '📊' })
+      }
+    } finally {
+      stopPosting()
     }
   }
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault()
+      handlePost().catch((err) => logger.error('Failed to post:', err))
+    }
+  }
+
+  const teaserLength = firstPost?.teaser?.length || 0
+
   return (
     <>
-    <Dialog.Root open={isComposeOpen} onOpenChange={setComposeOpen}>
-      <AnimatePresence>
-        {isComposeOpen && (
-          <Dialog.Portal forceMount>
-            <Dialog.Overlay asChild>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className={`fixed inset-0 bg-black/60 z-50 flex items-start justify-center pt-12 sm:pt-20 px-4 overflow-y-auto pb-12 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
-              >
-                <Dialog.Content asChild>
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                    transition={{ duration: 0.2, ease: 'easeOut' }}
-                    className="w-full max-w-2xl bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={handleKeyDown}
-                    onPaste={handlePaste}
-                  >
-                    {/* Accessibility */}
-                    <Dialog.Title className="sr-only">
-                      {getDialogTitle(!!replyingTo, !!quotingPost)}
-                    </Dialog.Title>
-                    <Dialog.Description className="sr-only">
-                      {getDialogDescription(!!replyingTo, !!quotingPost)}
-                    </Dialog.Description>
+      <Dialog.Root open={isComposeOpen} onOpenChange={setComposeOpen}>
+        <AnimatePresence>
+          {isComposeOpen && (
+            <Dialog.Portal forceMount>
+              <Dialog.Overlay asChild>
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className={`fixed inset-0 bg-black/60 z-50 flex items-start justify-center pt-12 sm:pt-20 px-4 overflow-y-auto pb-12 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+                >
+                  <Dialog.Content asChild>
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                      transition={{ duration: 0.2, ease: 'easeOut' }}
+                      className="w-full max-w-2xl bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={handleKeyDown}
+                      onPaste={image.onPaste}
+                    >
+                      <Dialog.Title className="sr-only">{getDialogTitle(!!replyingTo, !!quotingPost)}</Dialog.Title>
+                      <Dialog.Description className="sr-only">{getDialogDescription(!!replyingTo, !!quotingPost)}</Dialog.Description>
 
-                    {/* Header */}
-                    <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-gray-800">
-                      <div className="flex items-center gap-3">
-                        <IconButton onClick={handleClose} className="hover:bg-gray-200 dark:hover:bg-gray-800">
-                          <XMarkIcon className="h-5 w-5" />
-                        </IconButton>
-                        {user && (
-                          <UserAvatar userId={user.identityId} size="sm" alt="Your avatar" />
-                        )}
-                        {!(replyingTo && isPrivatePost(replyingTo)) && (
-                          <VisibilitySelector
-                            visibility={visibility}
-                            onVisibilityChange={(v) => {
-                              if (firstPost) {
-                                updateThreadPostVisibility(firstPost.id, v)
-                              }
-                            }}
-                            hasPrivateFeed={hasPrivateFeed}
-                            privateFeedLoading={privateFeedLoading}
-                            privateFollowerCount={privateFollowerCount}
-                            disabled={isPosting}
-                            onEnablePrivateFeedRequest={handleEnablePrivateFeedRequest}
-                          />
-                        )}
-                        {/* Sensitive toggle — replies are never individually
-                            flagged, so it only shows for top-level posts */}
-                        {!replyingTo && (
+                      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-gray-800">
+                        <div className="flex items-center gap-3">
+                          <IconButton onClick={handleClose} className="hover:bg-gray-200 dark:hover:bg-gray-800">
+                            <XMarkIcon className="h-5 w-5" />
+                          </IconButton>
+                          {user && <UserAvatar userId={user.identityId} size="sm" alt="Your avatar" />}
+                          {!(replyingTo && isPrivatePost(replyingTo)) && (
+                            <VisibilitySelector
+                              visibility={visibility}
+                              onVisibilityChange={setFirstPostVisibility}
+                              hasPrivateFeed={privateFeed.hasPrivateFeed}
+                              privateFeedLoading={privateFeed.loading}
+                              privateFollowerCount={privateFeed.followerCount}
+                              disabled={isPosting}
+                              onEnablePrivateFeedRequest={privateFeed.requestEnable}
+                            />
+                          )}
+                          {!replyingTo && (
+                            <button
+                              type="button"
+                              data-testid="sensitive-toggle"
+                              onClick={() => {
+                                sensitiveTouchedRef.current = true
+                                setMarkSensitive((v) => !v)
+                              }}
+                              disabled={isPosting}
+                              title="Mark this post as NSFW"
+                              className={`${TOGGLE} ${markSensitive ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400' : TOGGLE_OFF}`}
+                            >
+                              <ExclamationTriangleIcon className="w-3.5 h-3.5" />
+                              NSFW
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-3">
                           <button
-                            type="button"
-                            data-testid="sensitive-toggle"
-                            onClick={() => {
-                              sensitiveTouchedRef.current = true
-                              setMarkSensitive((v) => !v)
-                            }}
-                            disabled={isPosting}
-                            title="Mark this post as NSFW"
-                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                              markSensitive
-                                ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
-                                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                            onClick={() => setShowPreview(!showPreview)}
+                            className={`${TOGGLE} ${showPreview ? 'bg-yappr-100 dark:bg-yappr-900/30 text-yappr-600 dark:text-yappr-400' : TOGGLE_OFF}`}
+                          >
+                            {showPreview ? <EyeSlashIcon className="w-3.5 h-3.5" /> : <EyeIcon className="w-3.5 h-3.5" />}
+                            {showPreview ? 'Edit' : 'Preview'}
+                          </button>
+                          <Button
+                            data-testid="compose-submit-btn"
+                            onClick={handlePost}
+                            disabled={!canPost}
+                            className={`min-w-[100px] h-10 px-5 text-sm font-semibold transition-all ${
+                              canPost
+                                ? 'bg-yappr-500 hover:bg-yappr-600 shadow-lg shadow-yappr-500/25 hover:shadow-xl hover:shadow-yappr-500/30'
+                                : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                             }`}
                           >
-                            <ExclamationTriangleIcon className="w-3.5 h-3.5" />
-                            NSFW
-                          </button>
-                        )}
+                            <PostButtonContent state={getPostButtonState(isPosting, postingProgress, postedPosts.length > 0, unpostedPosts.length, !!replyingTo, threadPosts.length)} />
+                          </Button>
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-3">
-                        {/* Preview toggle */}
-                        <button
-                          onClick={() => setShowPreview(!showPreview)}
-                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                            showPreview
-                              ? 'bg-yappr-100 dark:bg-yappr-900/30 text-yappr-600 dark:text-yappr-400'
-                              : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-                          }`}
-                        >
-                          {showPreview ? (
-                            <>
-                              <EyeSlashIcon className="w-3.5 h-3.5" />
-                              Edit
-                            </>
-                          ) : (
-                            <>
-                              <EyeIcon className="w-3.5 h-3.5" />
-                              Preview
-                            </>
-                          )}
-                        </button>
-                        {/* Post button - prominent primary action */}
-                        <Button
-                          data-testid="compose-submit-btn"
-                          onClick={handlePost}
-                          disabled={!canPost}
-                          className={`min-w-[100px] h-10 px-5 text-sm font-semibold transition-all ${
-                            canPost
-                              ? 'bg-yappr-500 hover:bg-yappr-600 shadow-lg shadow-yappr-500/25 hover:shadow-xl hover:shadow-yappr-500/30 hover:scale-[1.02]'
-                              : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                          }`}
-                        >
-                          <PostButtonContent
-                            state={getPostButtonState(
-                              isPosting,
-                              postingProgress,
-                              postedPosts.length > 0,
-                              unpostedPosts.length,
-                              !!replyingTo,
-                              threadPosts.length
-                            )}
-                          />
-                        </Button>
-                      </div>
-                    </div>
+                      {isPosting && postingProgress && <PostingProgressBar progress={postingProgress} />}
+                      {replyingTo && <ReplyContext author={replyingTo.author} />}
 
-                    {/* Progress bar when posting */}
-                    {isPosting && postingProgress && (
-                      <PostingProgressBar progress={postingProgress} />
-                    )}
-
-                    {/* Reply context */}
-                    {replyingTo && <ReplyContext author={replyingTo.author} />}
-
-                    {/* Main content area */}
-                    <div ref={scrollContainerRef} className="px-5 py-4 max-h-[60vh] overflow-y-auto">
-                      {/* Full-width editors and content */}
-                      <div className="space-y-4">
-
-                          {/* Inherited encryption banner for replies to private posts (PRD §5.5) */}
-                          {inheritedEncryption && !isPrivatePostVisibility && (
-                            <motion.div
-                              initial={{ opacity: 0, y: -10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800"
-                            >
+                      <div ref={scrollContainerRef} className="px-5 py-4 max-h-[60vh] overflow-y-auto">
+                        <div className="space-y-4">
+                          {inherited.source && !isPrivateVisibility && (
+                            <Banner tone="purple">
                               <LinkIcon className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                              <span className="text-sm text-purple-700 dark:text-purple-300">
-                                Your reply will be visible to all subscribers of this private feed
-                              </span>
-                            </motion.div>
+                              <span className="text-sm text-purple-700 dark:text-purple-300">Your reply will be visible to all subscribers of this private feed</span>
+                            </Banner>
                           )}
-
-                          {/* Inherited encryption loading state */}
-                          {inheritedEncryptionLoading && replyingTo && isPrivatePost(replyingTo) && (
-                            <motion.div
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
-                            >
+                          {inherited.loading && replyingTo && isPrivatePost(replyingTo) && (
+                            <Banner tone="gray">
                               <Spinner size="sm" className="h-4 w-4 border-purple-500" />
-                              <span className="text-sm text-gray-500 dark:text-gray-400">
-                                Checking encryption inheritance...
-                              </span>
-                            </motion.div>
+                              <span className="text-sm text-gray-500 dark:text-gray-400">Checking encryption inheritance...</span>
+                            </Banner>
                           )}
-
-                          {/* Inherited encryption error state */}
-                          {inheritedEncryptionError && replyingTo && isPrivatePost(replyingTo) && (
+                          {inherited.error && replyingTo && isPrivatePost(replyingTo) && (
                             <motion.div
                               initial={{ opacity: 0 }}
                               animate={{ opacity: 1 }}
@@ -1364,86 +455,62 @@ export function ComposeModal() {
                               <div className="flex items-center gap-2">
                                 <ExclamationTriangleIcon className="w-4 h-4 text-red-600 dark:text-red-400" />
                                 <span className="text-sm text-red-700 dark:text-red-300">
-                                  Unable to determine encryption inheritance — replies to this private post cannot be posted right now
+                                  Unable to determine encryption inheritance — replies to this private post cannot be posted right now.
                                 </span>
                               </div>
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => replyingTo && checkInheritedEncryption(replyingTo)}
-                                disabled={inheritedEncryptionLoading}
+                                onClick={inherited.retry}
+                                disabled={inherited.loading}
                                 className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 shrink-0"
                               >
                                 Retry
                               </Button>
                             </motion.div>
                           )}
-
-                          {/* Private post banner */}
-                          {isPrivatePostVisibility && (
-                            <motion.div
-                              initial={{ opacity: 0, y: -10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800"
-                            >
+                          {isPrivateVisibility && (
+                            <Banner tone="amber">
                               <LockClosedIcon className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                               <span className="text-sm text-amber-700 dark:text-amber-300">
                                 {visibility === 'private'
                                   ? 'This post will be encrypted and only visible to your private followers'
                                   : 'The main content will be encrypted. Teaser will be visible to everyone.'}
                               </span>
-                            </motion.div>
+                            </Banner>
                           )}
 
-                          {/* Teaser input for private-with-teaser posts */}
                           {visibility === 'private-with-teaser' && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-neutral-900 overflow-hidden"
-                            >
-                              <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
-                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
-                                  Public Teaser (visible to everyone)
-                                </span>
-                              </div>
-                              <div className="p-4">
-                                <textarea
-                                  ref={teaserTextareaRef}
-                                  value={firstPost?.teaser || ''}
-                                  onChange={(e) => {
-                                    if (firstPost) {
-                                      updateThreadPostTeaser(firstPost.id, e.target.value)
-                                    }
-                                  }}
-                                  placeholder="Write a teaser to entice others to request access..."
-                                  className="w-full min-h-[60px] text-sm resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
-                                  maxLength={TEASER_LIMIT + 50}
-                                />
-                                <div className="flex items-center justify-end mt-2">
-                                  <span className={`text-xs ${
-                                    (firstPost?.teaser?.length || 0) > TEASER_LIMIT
-                                      ? 'text-red-500'
-                                      : (firstPost?.teaser?.length || 0) > TEASER_LIMIT - 20
-                                      ? 'text-amber-500'
-                                      : 'text-gray-400'
-                                  }`}>
-                                    {firstPost?.teaser?.length || 0}/{TEASER_LIMIT}
-                                  </span>
+                            <>
+                              <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-neutral-900 overflow-hidden"
+                              >
+                                <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
+                                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Public Teaser (visible to everyone)</span>
                                 </div>
+                                <div className="p-4">
+                                  <textarea
+                                    value={firstPost?.teaser || ''}
+                                    onChange={(e) => firstPost && updateThreadPostTeaser(firstPost.id, e.target.value)}
+                                    placeholder="Write a teaser to entice others to request access..."
+                                    className="w-full min-h-[60px] text-sm resize-none outline-none bg-transparent placeholder:text-gray-400"
+                                    maxLength={TEASER_LIMIT + 50}
+                                  />
+                                  <div className="flex items-center justify-end mt-2">
+                                    <span className={`text-xs ${teaserLength > TEASER_LIMIT ? 'text-red-500' : teaserLength > TEASER_LIMIT - 20 ? 'text-amber-500' : 'text-gray-400'}`}>
+                                      {teaserLength}/{TEASER_LIMIT}
+                                    </span>
+                                  </div>
+                                </div>
+                              </motion.div>
+                              <div className="flex items-center gap-2 mt-2">
+                                <LockClosedIcon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Private Content (encrypted)</span>
                               </div>
-                            </motion.div>
-                          )}
-
-                          {/* Private content label for private-with-teaser */}
-                          {visibility === 'private-with-teaser' && (
-                            <div className="flex items-center gap-2 mt-2">
-                              <LockClosedIcon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                              <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
-                                Private Content (encrypted)
-                              </span>
-                            </div>
+                            </>
                           )}
 
                           <AnimatePresence mode="popLayout">
@@ -1458,84 +525,52 @@ export function ComposeModal() {
                                 onActivate={() => setActiveThreadPost(post.id)}
                                 onRemove={() => removeThreadPost(post.id)}
                                 onContentChange={(content) => updateThreadPost(post.id, content)}
-                                // The first post's text is the poll's question,
-                                // and poll documents are immutable — editing it
-                                // after the poll lands would leave the two
-                                // disagreeing in the feed.
-                                locked={index === 0 && !!createdPollId}
+                                // Poll documents are immutable; once one lands the question is fixed.
+                                locked={index === 0 && !!poll.createdPollId}
                                 textareaRef={index === 0 ? firstTextareaRef : undefined}
-                                extraCharacters={post.id === firstUnpostedPostId ? imageUrlExtraLength : 0}
-                                {...(!post.postedPostId ? {
-                                  onImageClick: handleImageButtonClick,
-                                  canAttachImage,
-                                  imageTitle: attachedImage ? 'Only one image per post' : 'Attach image',
-                                  ...(canAttachPoll && index === 0 ? {
-                                    onPollClick: handlePollToggle,
-                                    pollAttached: !!pollDraft,
-                                  } : {}),
-                                } : {})}
+                                extraCharacters={post.id === firstUnposted?.id ? imageUrlExtraLength : 0}
+                                {...(!post.postedPostId
+                                  ? {
+                                      onImageClick: image.openPicker,
+                                      canAttachImage: !image.attached,
+                                      imageTitle: image.attached ? 'Only one image per post' : 'Attach image',
+                                      ...(canAttachPoll && index === 0 ? { onPollClick: poll.toggle, pollAttached: !!poll.draft } : {}),
+                                    }
+                                  : {})}
                               />
                             ))}
                           </AnimatePresence>
 
-                          {/* Poll editor */}
-                          {pollDraft && (
-                            <PollEditor
-                              draft={pollDraft}
-                              onChange={setPollDraft}
-                              onRemove={clearPoll}
-                              disabled={isPosting}
-                              // Polls are immutable, so once one lands the editor
-                              // locks and the retry re-uses it as-is.
-                              locked={!!createdPollId}
-                            />
-                          )}
+                          {poll.draft && <PollEditor draft={poll.draft} onChange={poll.setDraft} onRemove={poll.clear} disabled={isPosting} locked={!!poll.createdPollId} />}
 
-                          {/* Hidden file input - lives at modal level so the attach
-                              button works from any thread post's toolbar */}
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept="image/*"
-                            onChange={handleFileSelect}
-                            className="hidden"
-                          />
+                          {/* Modal-level so the attach button works from any thread post's toolbar. */}
+                          <input ref={image.fileInputRef} type="file" accept="image/*" onChange={image.onFileSelect} className="hidden" />
 
-                          {/* Image attachment preview */}
-                          {attachedImage && (
+                          {image.attached && (
                             <>
                               <ImageAttachment
-                                previewUrl={attachedImage.preview}
-                                isUploading={isUploading}
-                                isUploaded={!!attachedImage.uploadResult}
-                                progress={progress}
-                                onRemove={handleRemoveImage}
+                                previewUrl={image.attached.preview}
+                                isUploading={image.isUploading}
+                                isUploaded={!!image.attached.uploadResult}
+                                progress={image.progress}
+                                onRemove={image.remove}
                               />
                               {imageUrlExtraLength > 0 && (
-                                <div className={`mt-2 text-xs ${
-                                  isOverLimitDueToImage ? 'text-red-600 dark:text-red-400' : 'text-gray-500'
-                                }`}>
+                                <div className={`mt-2 text-xs ${isOverLimitDueToImage ? 'text-red-600 dark:text-red-400' : 'text-gray-500'}`}>
                                   Image URL adds {imageUrlExtraLength} characters to your private post.
-                                  {isOverLimitDueToImage && (
-                                    <span className="ml-1">
-                                      Over limit by {imageOverage}. Trim your text.
-                                    </span>
-                                  )}
+                                  {isOverLimitDueToImage && <span className="ml-1">Over limit by {imageOverage}. Trim your text.</span>}
                                 </div>
                               )}
                             </>
                           )}
 
-                          {/* Add thread post button */}
                           {canAddThread && (
                             <motion.button
                               initial={{ opacity: 0 }}
                               animate={{ opacity: 1 }}
                               onClick={() => {
                                 addThreadPost()
-                                setTimeout(() => {
-                                  scrollContainerRef.current?.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' })
-                                }, 100)
+                                setTimeout(() => scrollContainerRef.current?.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' }), 100)
                               }}
                               className="flex items-center gap-2 px-4 py-2.5 w-full rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-800 text-gray-500 hover:text-yappr-500 hover:border-yappr-300 dark:hover:border-yappr-700 transition-colors"
                             >
@@ -1544,36 +579,20 @@ export function ComposeModal() {
                             </motion.button>
                           )}
 
-                          {/* Quoted post preview */}
                           {quotingPost && <QuotedPostPreview post={quotingPost} />}
+                        </div>
                       </div>
-                    </div>
+                    </motion.div>
+                  </Dialog.Content>
+                </motion.div>
+              </Dialog.Overlay>
+            </Dialog.Portal>
+          )}
+        </AnimatePresence>
+      </Dialog.Root>
 
-                  </motion.div>
-                </Dialog.Content>
-              </motion.div>
-            </Dialog.Overlay>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
-    </Dialog.Root>
-
-      {/* Add Encryption Key Modal - shown when user needs to add encryption key to identity */}
-      <AddEncryptionKeyModal
-        isOpen={showAddKeyModal}
-        onClose={() => {
-          setShowAddKeyModal(false)
-          setPendingVisibility(null)
-        }}
-        onSuccess={handleAddKeySuccess}
-      />
-
-      {/* Storage Provider Modal - shown when trying to attach image without a provider */}
-      <StorageProviderModal
-        open={showStorageProviderModal}
-        onOpenChange={setShowStorageProviderModal}
-        onSettingsNavigate={() => setComposeOpen(false)}
-      />
+      <AddEncryptionKeyModal isOpen={privateFeed.showAddKeyModal} onClose={privateFeed.cancelAddKey} onSuccess={privateFeed.onKeyAdded} />
+      <StorageProviderModal open={image.showProviderModal} onOpenChange={image.setShowProviderModal} onSettingsNavigate={() => setComposeOpen(false)} />
     </>
   )
 }
