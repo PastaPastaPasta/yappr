@@ -30,22 +30,22 @@ describe('For You pagination', () => {
       return { documents: posts.slice(start, start + limit) };
     });
     const first = await loadForYouFeed(callbacks());
-    expect(mocks.timeline.mock.calls[0][0]).toMatchObject({ limit: 20, language: undefined });
+    expect(mocks.timeline).not.toHaveBeenCalled();
     const second = await loadForYouFeed({ ...callbacks(), startAfter: first.cursor ?? undefined });
     const third = await loadForYouFeed({ ...callbacks(), startAfter: second.cursor ?? undefined });
     expect([...first.posts, ...second.posts, ...third.posts].map(post => post.id)).toEqual(posts.map(post => post.id));
-    expect(mocks.timeline.mock.calls.map(call => call[0].startAfter)).toEqual([undefined, posts[19].id, posts[39].id]);
-    expect(mocks.composite.mock.calls[0][0].documentIds).toEqual(posts.slice(0, 20).map(post => post.id));
+    expect(mocks.timeline.mock.calls.map(call => call[0].startAfter)).toEqual([posts[19].id, posts[39].id]);
     expect(mocks.composite.mock.calls[1][0].documentIds).toEqual(posts.slice(20, 40).map(post => post.id));
     expect(third.hasMore).toBe(false);
   });
 
-  it('requires composite enrichment for every page', async () => {
-    const error = new Error('composite unavailable');
-    mocks.composite.mockRejectedValue(error);
+  it('should reuse the cursor query when composite is unavailable', async () => {
+    mocks.composite.mockResolvedValue(null);
     mocks.timeline.mockResolvedValue({ documents: posts.slice(20) });
-    await expect(loadForYouFeed({ ...callbacks(), startAfter: posts[19].id })).rejects.toBe(error);
+    const page = await loadForYouFeed({ ...callbacks(), startAfter: posts[19].id });
     expect(mocks.timeline).toHaveBeenCalledTimes(1);
+    expect(page.posts[0].author.hasDpns).toBeUndefined();
+    expect(page.posts.map(post => post.id)).toEqual(posts.slice(20).map(post => post.id));
   });
 
   it('should preserve the raw timeline cursor when the last card is a tombstone', async () => {

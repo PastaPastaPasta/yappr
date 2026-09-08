@@ -52,7 +52,6 @@ describe('composite feed page', () => {
     const page = await loadCompositeFeedPage({ language: 'en', limit: 20 });
     expect(page?.preloaded.usernames?.size).toBe(4);
     expect(page?.preloaded.usernames?.get(ownerIds[3])).toBe('name3.dash');
-    expect(page?.posts[0].hashtag).toBe('');
     const query = mocks.composite.mock.calls[0][0];
     expect(query.subQueries).toHaveLength(8);
     expect(query.subQueries[6].limit).toBe(100);
@@ -112,18 +111,34 @@ describe('composite feed page', () => {
     expect(page?.preloaded.interactions?.size).toBe(4);
   });
 
-  it('propagates composite request failures', async () => {
-    const error = new Error('composite request failed');
-    mocks.composite.mockRejectedValue(error);
+  it('should fall back without requesting composite documents on an old SDK', async () => {
+    mocks.getEvoSdk.mockResolvedValue({ documents: {} });
     const { loadCompositeFeedPage } = await import('./composite-feed-page');
-    await expect(loadCompositeFeedPage({ language: 'en', limit: 20 })).rejects.toBe(error);
-    expect(mocks.composite).toHaveBeenCalledTimes(1);
+    expect(await loadCompositeFeedPage({ language: 'en', limit: 20 })).toBeNull();
+    expect(mocks.composite).not.toHaveBeenCalled();
   });
 
-  it('rejects incomplete composite responses without seeding false absences', async () => {
+  it('should fall back on unsupported nodes and back off for a minute', async () => {
+    mocks.composite.mockRejectedValue(new Error('unsupported sub_queries'));
+    const now = Date.now();
+    const time = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const { loadCompositeFeedPage } = await import('./composite-feed-page');
+      expect(await loadCompositeFeedPage({ language: 'en', limit: 20 })).toBeNull();
+      expect(await loadCompositeFeedPage({ language: 'en', limit: 20 })).toBeNull();
+      expect(mocks.composite).toHaveBeenCalledTimes(1);
+      time.mockReturnValue(now + 60_001);
+      mocks.composite.mockResolvedValue(result());
+      expect(await loadCompositeFeedPage({ language: 'en', limit: 20 })).not.toBeNull();
+    } finally {
+      time.mockRestore();
+    }
+  });
+
+  it('should fall back without seeding false absences on an incomplete response', async () => {
     mocks.composite.mockResolvedValue({ pageDocuments: docs, subResults: [] });
     const { loadCompositeFeedPage } = await import('./composite-feed-page');
-    await expect(loadCompositeFeedPage({ language: 'en', limit: 20 })).rejects.toThrow('incomplete composite result');
+    expect(await loadCompositeFeedPage({ language: 'en', limit: 20 })).toBeNull();
     expect(mocks.seedUsernames).not.toHaveBeenCalled();
     expect(mocks.seedProfiles).not.toHaveBeenCalled();
   });
