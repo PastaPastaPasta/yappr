@@ -1,9 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowLeftIcon, DocumentDuplicateIcon, CheckIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
-import Link from 'next/link'
-import { motion } from 'framer-motion'
+import { DocumentDuplicateIcon, CheckIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
+import { InfoPage } from '@/components/layout/info-page'
 import toast from 'react-hot-toast'
 import socialContractV2 from '@/contracts/yappr-social-contract-v2.json'
 import socialContractV4 from '@/contracts/yappr-social-contract-v4.json'
@@ -47,45 +46,26 @@ export default function ContractPage() {
     .reduce((acc, doc) => acc + (doc.indices?.length || 0), 0)
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <div className="mb-8">
-          <Link 
-            href="/" 
-            className="inline-flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
-          >
-            <ArrowLeftIcon className="h-4 w-4" />
-            Back to Yappr
-          </Link>
-        </div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-lg overflow-hidden"
-        >
-          <div className="bg-gradient-yappr p-8 text-white">
-            <div className="flex items-center gap-3 mb-4">
-              <CodeBracketIcon className="h-8 w-8" />
-              <h1 className="text-3xl font-bold">Yappr Data Contract</h1>
-            </div>
-            <p className="text-lg opacity-90 mb-6">
-              Dash Platform data contract for the Yappr social media platform
-            </p>
-            <div className="flex gap-6 text-sm">
-              <div>
-                <span className="opacity-75">Version:</span> {dataContract.version}
-              </div>
-              <div>
-                <span className="opacity-75">Documents:</span> {documentCount}
-              </div>
-              <div>
-                <span className="opacity-75">Indices:</span> {totalIndices}
-              </div>
-            </div>
+    <InfoPage
+      icon={CodeBracketIcon}
+      title="Yappr Data Contract"
+      subtitle="Dash Platform data contract for the Yappr social media platform"
+      width="wide"
+      headerExtra={
+        <div className="flex gap-6 text-sm">
+          <div>
+            <span className="opacity-75">Version:</span> {dataContract.version}
           </div>
-
-          <div className="p-8">
+          <div>
+            <span className="opacity-75">Documents:</span> {documentCount}
+          </div>
+          <div>
+            <span className="opacity-75">Indices:</span> {totalIndices}
+          </div>
+        </div>
+      }
+    >
+      <div>
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold">Contract Definition</h2>
               <button
@@ -161,9 +141,7 @@ export default function ContractPage() {
                 <li>Start building your decentralized social network!</li>
               </ol>
             </div>
-          </div>
-        </motion.div>
       </div>
-    </div>
+    </InfoPage>
   )
 }

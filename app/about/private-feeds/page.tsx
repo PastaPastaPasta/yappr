@@ -1,8 +1,7 @@
 'use client'
 
-import { ArrowLeftIcon, LockClosedIcon, KeyIcon, ShieldCheckIcon, QuestionMarkCircleIcon, CpuChipIcon, ArrowPathIcon, ExclamationTriangleIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline'
-import Link from 'next/link'
-import { motion } from 'framer-motion'
+import { LockClosedIcon, KeyIcon, ShieldCheckIcon, QuestionMarkCircleIcon, CpuChipIcon, ArrowPathIcon, ExclamationTriangleIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline'
+import { InfoPage } from '@/components/layout/info-page'
 
 // Reusable Components
 function CalloutBox({
@@ -116,37 +115,13 @@ function SubSection({ title, children }: { title: string; children: React.ReactN
 
 export default function PrivateFeedsPage() {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        {/* Back link */}
-        <div className="mb-8">
-          <Link
-            href="/about"
-            className="inline-flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
-          >
-            <ArrowLeftIcon className="h-4 w-4" />
-            Back to About
-          </Link>
-        </div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-neutral-900 rounded-2xl shadow-lg overflow-hidden"
-        >
-          {/* Header */}
-          <div className="bg-gradient-yappr p-8 text-white">
-            <div className="flex items-center gap-3 mb-4">
-              <LockClosedIcon className="h-8 w-8" />
-              <h1 className="text-3xl font-bold">How Private Feeds Work</h1>
-            </div>
-            <p className="text-lg opacity-90">
-              End-to-end encrypted content sharing with efficient revocation on a public blockchain
-            </p>
-          </div>
-
-          {/* Content */}
-          <div className="p-8 space-y-10">
+    <InfoPage
+      icon={LockClosedIcon}
+      title="How Private Feeds Work"
+      subtitle="End-to-end encrypted content sharing with efficient revocation on a public blockchain"
+      back={{ href: '/about', label: 'Back to About' }}
+      spacing="loose"
+    >
             {/* Section 1: The Challenge */}
             <Section icon={QuestionMarkCircleIcon} title="The Challenge: Privacy on a Public Blockchain">
               <p>
@@ -1139,9 +1114,6 @@ export default function PrivateFeedsPage() {
               </div>
               <p className="text-sm text-gray-500 mt-6">Last updated: January 2026</p>
             </div>
-          </div>
-        </motion.div>
-      </div>
-    </div>
+    </InfoPage>
   )
 }
