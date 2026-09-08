@@ -37,9 +37,7 @@ export const IPFS_GATEWAYS: IpfsGateway[] = [
   { domain: 'ipfs.io', format: 'path' },
   // dweb.link subdomain gateway (same rainbow backend as ipfs.io)
   { domain: 'ipfs.dweb.link', format: 'subdomain' },
-  // Note: cloudflare-ipfs.com deprecated Aug 2024
-  // Note: nftstorage.link removed - now just 302-redirects to ipfs.io
-  // Note: ipfs.w3s.link removed - now just 301-redirects to dweb.link
+  // cloudflare-ipfs.com is shut down; nftstorage.link and ipfs.w3s.link only redirect to the two above.
 ]
 
 /**

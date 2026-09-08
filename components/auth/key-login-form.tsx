@@ -204,7 +204,7 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
           }
         }
 
-        // Check legacy vault contract next.
+        // Then the older vault contract.
         try {
           const { vaultService } = await import('@/lib/services/vault-service')
           if (vaultService.isConfigured()) {
@@ -215,7 +215,7 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
             }
           }
         } catch {
-          // Vault check failed — continue to legacy fallback
+          // Vault check failed; try the older contract.
         }
         try {
           if (encryptedKeyService.isConfigured()) {

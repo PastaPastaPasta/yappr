@@ -29,7 +29,7 @@ function deserializeThemeConfig(raw: unknown): BlogThemeConfig | undefined {
     }
   }
 
-  // Fallback for legacy string format
+  // Uncompressed JSON string, the shape before compression was added.
   if (typeof raw === 'string') {
     try {
       const parsed = JSON.parse(raw) as Partial<BlogThemeConfig>

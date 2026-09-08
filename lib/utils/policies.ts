@@ -42,11 +42,11 @@ export function parseStorePolicies(raw: string | undefined): StorePolicy[] {
         )
       }
     } catch {
-      // Fall through to legacy migration
+      // Not the structured form; treat it as the plain-text one below.
     }
   }
 
-  // Legacy plain text - migrate to single policy
+  // Plain text, the shape before named policies: wrap it as a single policy.
   return migrateLegacyPolicies(raw)
 }
 

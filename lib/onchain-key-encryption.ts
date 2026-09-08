@@ -221,7 +221,7 @@ export async function decryptBackupPayload(
   // Decrypt using existing function
   const decrypted = await decryptKeyFromOnchain(data, identityId, password)
 
-  // Try to parse as JSON (v2 format)
+  // An extended payload is JSON; a bare WIF string is the older shape.
   try {
     const parsed = JSON.parse(decrypted)
     if (isExtendedBackupPayload(parsed)) {
