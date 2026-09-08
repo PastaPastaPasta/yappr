@@ -17,7 +17,9 @@ import { useInheritedEncryption } from '@/hooks/use-inherited-encryption'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { extractErrorMessage, categorizeError } from '@/lib/error-utils'
 import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
-import { planPosts, publishThread, mediaUrlForContract, CHARACTER_LIMIT } from '@/lib/compose/publish-thread'
+import { planPosts, publishThread } from '@/lib/compose/publish-thread'
+import { CHARACTER_LIMIT } from '@/lib/compose/limits'
+import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -152,7 +154,7 @@ export function ComposeModal() {
     !!firstUnposted && imageUrlExtraLength > 0 && firstUnposted.content.length <= CHARACTER_LIMIT && firstUnposted.content.length + imageUrlExtraLength > CHARACTER_LIMIT
   const imageOverage = isOverLimitDueToImage && firstUnposted ? firstUnposted.content.length + imageUrlExtraLength - CHARACTER_LIMIT : 0
 
-  const isValidEncryptedPost = !willBeEncrypted || (unpostedPosts.length <= 1 && threadPosts.length <= 1)
+  const isValidEncryptedPost = !willBeEncrypted || threadPosts.length <= 1
   const isInheritedEncryptionReady = !replyingTo || !isPrivatePost(replyingTo) || (!inherited.loading && !inherited.error)
   const canPost =
     unpostedWithContent.length > 0 &&
@@ -188,13 +190,12 @@ export function ComposeModal() {
     const authedUser = requireAuth()
     if (!authedUser || !canPost) return
     setIsPosting(true)
-    setPostingProgress(null)
     // An earlier attempt's poll, so a retry never creates a second one.
     let pollId: string | null = poll.createdPollId
 
     let uploadedUrl: string | undefined
     try {
-      setPostingProgress({ current: 0, total: 1, status: 'Uploading image...' })
+      if (image.attached && !image.attached.uploadResult) setPostingProgress({ current: 0, total: 1, status: 'Uploading image...' })
       uploadedUrl = (await image.ensureUploaded()) ?? undefined
     } catch (err) {
       logger.error('Failed to upload image:', err)
@@ -211,7 +212,6 @@ export function ComposeModal() {
 
       if (posts.length > 0 && posts[0].content.length > CHARACTER_LIMIT) {
         toast.error(`Post is ${posts[0].content.length - CHARACTER_LIMIT} characters over the limit once the image URL is included. Trim your text.`)
-        stopPosting()
         return
       }
       if (willBeEncrypted && posts.length > 1) {
@@ -239,13 +239,11 @@ export function ComposeModal() {
           if ((created as unknown as { __createConfirmed?: boolean }).__createConfirmed === false) {
             poll.setUnconfirmed(true)
             toast('Poll not confirmed yet — try again in a moment.', { duration: 6000, icon: '⏳' })
-            stopPosting()
             return
           }
         } catch (error) {
           logger.error('Failed to create poll:', error)
           toast.error(`Poll creation failed: ${extractErrorMessage(error)}`)
-          stopPosting()
           return
         }
       } else if (pollId && poll.unconfirmed) {
@@ -255,7 +253,6 @@ export function ComposeModal() {
         const { pollrPollService } = await import('@/lib/services')
         if (!(await pollrPollService.getPoll(pollId))) {
           toast('Poll still not confirmed — try again in a moment.', { duration: 6000, icon: '⏳' })
-          stopPosting()
           return
         }
         poll.setUnconfirmed(false)
@@ -276,17 +273,13 @@ export function ComposeModal() {
         markSensitive,
         onProgress: setPostingProgress,
       })
-      if (outcome.syncRequired) {
-        stopPosting()
-        return
-      }
+      if (outcome.syncRequired) return
 
       const { successful, timedOut, failedAtIndex, failureError } = outcome
       const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? 's' : ''}`
       const markPosted = () => successful.forEach(({ threadPostId, postId }) => markThreadPostAsPosted(threadPostId, postId))
 
       if (failedAtIndex === null && timedOut.length === 0) {
-        setPostingProgress({ current: posts.length, total: posts.length, status: 'Complete!' })
         toast.success(posts.length > 1 ? `Thread with ${posts.length} posts created!` : 'Post created successfully!')
         if (successful.length > 1) {
           window.dispatchEvent(new CustomEvent('thread-created', { detail: { posts: successful, totalPosts: successful.length } }))
@@ -320,6 +313,7 @@ export function ComposeModal() {
         const firstUnpostedItem = threadPosts.find((p) => !done.has(p.id))
         if (firstUnpostedItem) setActiveThreadPost(firstUnpostedItem.id)
       } else {
+        // Into the catch below, which owns the YAPP and orphaned-poll messaging.
         throw failureError || new Error('Post creation failed')
       }
     } catch (error) {
@@ -496,7 +490,7 @@ export function ComposeModal() {
                                     value={firstPost?.teaser || ''}
                                     onChange={(e) => firstPost && updateThreadPostTeaser(firstPost.id, e.target.value)}
                                     placeholder="Write a teaser to entice others to request access..."
-                                    className="w-full min-h-[60px] text-sm resize-none outline-none bg-transparent placeholder:text-gray-400"
+                                    className="w-full min-h-[60px] text-sm resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
                                     maxLength={TEASER_LIMIT + 50}
                                   />
                                   <div className="flex items-center justify-end mt-2">

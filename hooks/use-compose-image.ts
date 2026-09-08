@@ -96,10 +96,8 @@ export function useComposeImage(isOpen: boolean) {
     fileInputRef.current?.click()
   }, [isProviderConnected])
 
-  const remove = useCallback(() => {
-    if (attached?.preview) URL.revokeObjectURL(attached.preview)
-    setAttached(null)
-  }, [attached])
+  // The preview-URL effect above revokes the object URL on change.
+  const remove = useCallback(() => setAttached(null), [])
 
   /** Upload now if the attachment has not finished uploading; returns the URL, or null when nothing is attached. */
   const ensureUploaded = useCallback(async (): Promise<string | null> => {

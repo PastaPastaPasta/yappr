@@ -12,8 +12,6 @@ import { hashtagsAreInline, replyLinkageTo, threadRootIdOf } from '@/lib/contrac
 import { resolveQuoteReference } from '@/lib/feed/resolve-quoted-posts'
 import { isUnconfirmed, markUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { dispatchFieldRegistered } from '@/lib/services/post-field-validation'
-import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
-import { CHARACTER_LIMIT } from '@/components/compose/thread-post-editor'
 import type { PostingProgress } from '@/components/compose/compose-sub-components'
 
 export interface PostToCreate {
@@ -83,25 +81,22 @@ interface CreatedDocument {
  * is deliberately not chained to, so what follows stays public and top-level.
  */
 export async function publishThread(input: PublishInput): Promise<PublishOutcome> {
-  const { authorId, posts, replyingTo, quotingPost, isPrivate, inheritedEncryption, pollEmbed, mediaUrlField, markSensitive, onProgress } = input
+  const { authorId, posts, replyingTo, quotingPost, lastPostedId, knownThreadRootId, isPrivate, inheritedEncryption, pollEmbed, mediaUrlField, markSensitive, onProgress } = input
   const { retryPostCreation } = await import('@/lib/retry-utils')
   const outcome: PublishOutcome = { successful: [], timedOut: [], failedAtIndex: null, failureError: null, syncRequired: false }
   const { fields: quoteFields, embed: quoteEmbed } = resolveQuoteReference(quotingPost)
 
-  let previousPostId: string | null = input.lastPostedId || replyingTo?.id || null
-  let threadRootId: string | null = replyingTo ? threadRootIdOf(replyingTo) : input.knownThreadRootId
+  let previousPostId: string | null = lastPostedId || replyingTo?.id || null
+  let threadRootId: string | null = replyingTo ? threadRootIdOf(replyingTo) : knownThreadRootId
 
   for (let i = 0; i < posts.length; i++) {
     const { threadPostId, content, teaser, visibility } = posts[i]
     const isThisPostPrivate = i === 0 && isPrivate
     const isThisReplyInherited = i === 0 && inheritedEncryption !== null && !isPrivate
     const progress = (status: string) => onProgress({ current: i + 1, total: posts.length, status })
+    const kind = isThisReplyInherited ? 'reply' : 'post'
 
-    progress(
-      isThisPostPrivate || isThisReplyInherited
-        ? `Encrypting and creating private ${isThisReplyInherited ? 'reply' : 'post'} ${i + 1}...`
-        : `Creating post ${i + 1} of ${posts.length}...`
-    )
+    progress(isThisPostPrivate || isThisReplyInherited ? `Encrypting and creating private ${kind} ${i + 1}...` : `Creating post ${i + 1} of ${posts.length}...`)
     logger.info(`Creating post ${i + 1}/${posts.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
 
     let encryption: EncryptionOptions | undefined
@@ -198,7 +193,9 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
 
     progress(isThisPostPrivate ? 'Private post created!' : `Post ${i + 1} created, processing hashtags...`)
     // Encrypted content is never indexed; only a public teaser is.
-    const indexable = isThisPostPrivate ? (visibility === 'private-with-teaser' && teaser ? teaser : '') : isThisReplyInherited ? '' : content
+    let indexable = content
+    if (isThisPostPrivate) indexable = visibility === 'private-with-teaser' && teaser ? teaser : ''
+    else if (isThisReplyInherited) indexable = ''
     registerIndexes(created.postId, authorId, indexable, i)
 
     if (i === 0) {
@@ -242,5 +239,3 @@ function registerIndexes(postId: string, authorId: string, content: string, inde
       .catch((err) => logger.error(`Post ${index + 1}: Failed to create mention documents:`, err))
   }
 }
-
-export { mediaUrlForContract, CHARACTER_LIMIT }

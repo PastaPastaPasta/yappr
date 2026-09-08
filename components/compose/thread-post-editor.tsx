@@ -9,7 +9,7 @@ import { FormatButton, CharacterCounter } from './compose-sub-components'
 import { MentionAutocomplete } from './mention-autocomplete'
 import { EmojiPicker } from './emoji-picker'
 
-const CHARACTER_LIMIT = 500
+import { CHARACTER_LIMIT } from '@/lib/compose/limits'
 
 interface ThreadPostEditorProps {
   post: ThreadPost
@@ -403,4 +403,3 @@ export function ThreadPostEditor({
   )
 }
 
-export { CHARACTER_LIMIT }
