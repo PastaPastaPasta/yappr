@@ -15,7 +15,6 @@ import {
   MoonIcon,
   SunIcon,
   ComputerDesktopIcon,
-  ExclamationTriangleIcon,
   UserGroupIcon,
   UserPlusIcon,
   LockClosedIcon,
@@ -31,7 +30,6 @@ import * as RadioGroup from '@radix-ui/react-radio-group'
 import { SettingsSwitch } from '@/components/settings/settings-switch'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import toast from 'react-hot-toast'
 import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
 import { PrivateFeedSettings } from '@/components/settings/private-feed-settings'
@@ -133,12 +131,6 @@ function SettingsPage() {
     }
   }
   
-  // Privacy settings
-  const [privacySettings, setPrivacySettings] = useState({
-    publicProfile: true,
-    showActivity: true,
-  })
-
   // Account creation date from profile
   const [accountCreatedAt, setAccountCreatedAt] = useState<Date | null>(null)
 
@@ -204,13 +196,6 @@ function SettingsPage() {
 
   const handleBack = () => {
     router.back()
-  }
-
-  // TODO: Implement account deletion
-  const handleDeleteAccount = () => {
-    if (confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-      toast.error('Account deletion is not yet implemented')
-    }
   }
 
   const renderMainSettings = () => (
@@ -313,14 +298,6 @@ function SettingsPage() {
             <KeyIcon className="h-4 w-4 mr-2" />
             Log Out
           </Button>
-          <Button
-            variant="outline"
-            className="w-full justify-start text-red-600 hover:text-red-700 hover:border-red-300"
-            onClick={handleDeleteAccount}
-          >
-            <ExclamationTriangleIcon className="h-4 w-4 mr-2" />
-            Delete Account
-          </Button>
         </div>
       </div>
     </div>
@@ -381,32 +358,6 @@ function SettingsPage() {
       <div>
         <h3 className="font-semibold mb-4">Privacy</h3>
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">Public Profile</p>
-              <p className="text-sm text-gray-500">Allow anyone to view your profile</p>
-            </div>
-            <SettingsSwitch
-              checked={privacySettings.publicProfile}
-              onCheckedChange={(checked) =>
-                setPrivacySettings(prev => ({ ...prev, publicProfile: checked }))
-              }
-            />
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">Show Activity Status</p>
-              <p className="text-sm text-gray-500">Let others see when you&apos;re active</p>
-            </div>
-            <SettingsSwitch
-              checked={privacySettings.showActivity}
-              onCheckedChange={(checked) =>
-                setPrivacySettings(prev => ({ ...prev, showActivity: checked }))
-              }
-            />
-          </div>
-
           <div className="flex items-center justify-between">
             <div>
               <p className="font-medium">Link Previews</p>

@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { DiceBearStyle } from '@/lib/services/unified-profile-service'
 
 export interface AvatarSettings {
@@ -38,8 +38,11 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Bumped per load so a slow response for a previous user cannot overwrite a newer one.
+  const requestRef = useRef(0)
 
   const loadSettings = useCallback(async () => {
+    const request = ++requestRef.current
     if (!userId) {
       setLoading(false)
       return
@@ -53,6 +56,7 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
 
       // Get profile to extract avatar settings
       const profile = await unifiedProfileService.getProfile(userId)
+      if (request !== requestRef.current) return
 
       if (profile?.avatar) {
         // Parse the avatar field to extract settings
@@ -119,10 +123,11 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
         })
       }
     } catch (err) {
+      if (request !== requestRef.current) return
       logger.error('useAvatarSettings: Error loading settings:', err)
       setError('Failed to load avatar settings')
     } finally {
-      setLoading(false)
+      if (request === requestRef.current) setLoading(false)
     }
   }, [userId])
 

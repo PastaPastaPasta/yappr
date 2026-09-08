@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { cryptoPriceService } from '@/lib/services/crypto-price-service'
 
 export interface UseCryptoPriceResult {
@@ -30,10 +30,11 @@ export function useCryptoPrice(
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fetchTrigger, setFetchTrigger] = useState(0)
-  const [skipCache, setSkipCache] = useState(false)
+  // A ref, not state: the effect reads it once per run and it must not itself re-run the effect.
+  const skipCacheRef = useRef(false)
 
   const refetch = useCallback(() => {
-    setSkipCache(true)
+    skipCacheRef.current = true
     setFetchTrigger((prev) => prev + 1)
   }, [])
 
@@ -59,6 +60,9 @@ export function useCryptoPrice(
     }
 
     let cancelled = false
+
+    const skipCache = skipCacheRef.current
+    skipCacheRef.current = false
 
     const fetchPrice = async () => {
       setIsLoading(true)
@@ -87,10 +91,7 @@ export function useCryptoPrice(
         setPriceSources([])
         setError(err instanceof Error ? err.message : 'Failed to fetch price')
       } finally {
-        if (!cancelled) {
-          setIsLoading(false)
-          setSkipCache(false)
-        }
+        if (!cancelled) setIsLoading(false)
       }
     }
 
@@ -101,7 +102,7 @@ export function useCryptoPrice(
     return () => {
       cancelled = true
     }
-  }, [fiatAmount, fiatCurrency, scheme, fetchTrigger, skipCache])
+  }, [fiatAmount, fiatCurrency, scheme, fetchTrigger])
 
   return {
     cryptoAmount,
