@@ -133,7 +133,7 @@ function CreateProfilePage() {
         throw new Error('User not authenticated')
       }
 
-      logger.info('Creating profile with data:', formData)
+      logger.debug('Creating profile with data:', formData)
 
       // Build avatar data - either custom URL or generated DiceBear settings
       let avatarData: string | undefined

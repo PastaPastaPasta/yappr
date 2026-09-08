@@ -25,7 +25,7 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
         // /devnet build reading testnet through every `useSdk()` consumer until
         // some later caller forced a reinit.
         const network = getConfiguredNetwork()
-        logger.info(`SdkProvider: Starting EvoSDK initialization for ${network}...`)
+        logger.debug(`SdkProvider: Starting EvoSDK initialization for ${network}...`)
 
         await evoSdkService.initialize({
           network,
@@ -33,7 +33,7 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
         })
 
         setIsReady(true)
-        logger.info('SdkProvider: EvoSDK initialized successfully, isReady = true')
+        logger.debug('SdkProvider: EvoSDK initialized successfully, isReady = true')
       } catch (err) {
         logger.error('SdkProvider: Failed to initialize EvoSDK:', err)
         setError(err instanceof Error ? err.message : 'Failed to initialize SDK')
@@ -44,10 +44,10 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
 
     // Only initialize in browser
     if (typeof window !== 'undefined') {
-      logger.info('SdkProvider: Running in browser, starting initialization...')
+      logger.debug('SdkProvider: Running in browser, starting initialization...')
       initializeSdk().catch((err) => logger.error('SdkProvider: initialization failed:', err))
     } else {
-      logger.info('SdkProvider: Not in browser, skipping initialization')
+      logger.debug('SdkProvider: Not in browser, skipping initialization')
     }
   }, [])
 

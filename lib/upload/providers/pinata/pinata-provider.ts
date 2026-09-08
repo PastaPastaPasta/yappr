@@ -80,10 +80,10 @@ export class PinataProvider implements UploadProvider {
       })
 
       // Validate credentials by testing the connection
-      logger.info('[Pinata] Testing connection...')
+      logger.debug('[Pinata] Testing connection...')
       try {
         await this.client.testAuthentication()
-        logger.info('[Pinata] Authentication successful')
+        logger.debug('[Pinata] Authentication successful')
       } catch (error) {
         logger.error('[Pinata] Authentication failed:', error)
         throw new UploadException(
@@ -100,7 +100,7 @@ export class PinataProvider implements UploadProvider {
       this.connectedJwt = jwt
       this.connectedGateway = gateway || null
       this.status = 'connected'
-      logger.info('[Pinata] Setup complete, status:', this.status)
+      logger.debug('[Pinata] Setup complete, status:', this.status)
     } catch (error) {
       this.status = 'error'
       this.client = null
@@ -238,7 +238,7 @@ export class PinataProvider implements UploadProvider {
       options?.onProgress?.(0)
 
       // Upload the file using public upload
-      logger.info('[Pinata] Uploading file:', file.name, file.size)
+      logger.debug('[Pinata] Uploading file:', file.name, file.size)
       options?.onProgress?.(25)
 
       const result = await this.client.upload.public.file(file)
@@ -246,7 +246,7 @@ export class PinataProvider implements UploadProvider {
       // Report completion
       options?.onProgress?.(100)
 
-      logger.info('[Pinata] Upload complete:', result.cid)
+      logger.debug('[Pinata] Upload complete:', result.cid)
 
       return {
         cid: result.cid,

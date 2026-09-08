@@ -233,7 +233,7 @@ export class CacheManager {
       })
     }
 
-    logger.info(`Cache cleanup: removed ${cleaned} expired entries`)
+    logger.debug(`Cache cleanup: removed ${cleaned} expired entries`)
     return cleaned
   }
 

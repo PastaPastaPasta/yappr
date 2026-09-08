@@ -110,7 +110,7 @@ export function getPinataGateway(identityId: string): string | null {
  */
 export function hasPinataCredentials(identityId: string): boolean {
   const hasJwt = has(`jwt_${identityId}`)
-  logger.info('[Pinata Storage] hasCredentials check:', { identityId, hasJwt })
+  logger.debug('[Pinata Storage] hasCredentials check:', { identityId, hasJwt })
   return hasJwt
 }
 
@@ -132,7 +132,7 @@ export function getPinataCredentials(identityId: string): PinataCredentials | nu
  * Store all Pinata credentials for an identity
  */
 export function storePinataCredentials(identityId: string, credentials: PinataCredentials): void {
-  logger.info('[Pinata Storage] Storing credentials for identity:', identityId)
+  logger.debug('[Pinata Storage] Storing credentials for identity:', identityId)
   storePinataJwt(identityId, credentials.jwt)
   if (credentials.gateway) {
     storePinataGateway(identityId, credentials.gateway)
@@ -140,7 +140,7 @@ export function storePinataCredentials(identityId: string, credentials: PinataCr
     // Clear any previously stored gateway when new credentials don't include one
     remove(`gateway_${identityId}`)
   }
-  logger.info('[Pinata Storage] Credentials stored successfully')
+  logger.debug('[Pinata Storage] Credentials stored successfully')
 }
 
 /**

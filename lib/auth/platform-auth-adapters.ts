@@ -183,7 +183,7 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
   void import('@/lib/services/block-service').then(async ({ blockService }) => {
     try {
       await blockService.initializeBlockData(identityId)
-      logger.info('Auth: Block data initialized')
+      logger.debug('Auth: Block data initialized')
     } catch (error) {
       logger.error('Auth: Failed to initialize block data:', error)
     }
@@ -191,20 +191,20 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
 
   void import('@/lib/services/private-feed-follower-service').then(async ({ privateFeedFollowerService }) => {
     if (!context.isSessionActive()) {
-      logger.info('Auth: Skipping private feed sync - session no longer active')
+      logger.debug('Auth: Skipping private feed sync - session no longer active')
       return
     }
 
     try {
       const result = await privateFeedFollowerService.syncFollowedFeeds()
       if (!context.isSessionActive()) {
-        logger.info('Auth: Private feed sync completed but session ended - clearing keys')
+        logger.debug('Auth: Private feed sync completed but session ended - clearing keys')
         privateFeedKeyStore.clearAllKeys()
         return
       }
 
       if (result.synced.length > 0 || result.failed.length > 0) {
-        logger.info(`Auth: Private feed sync complete - synced: ${result.synced.length}, failed: ${result.failed.length}, up-to-date: ${result.upToDate.length}`)
+        logger.debug(`Auth: Private feed sync complete - synced: ${result.synced.length}, failed: ${result.failed.length}, up-to-date: ${result.upToDate.length}`)
       }
     } catch (error) {
       logger.error('Auth: Failed to sync private feed keys:', error)

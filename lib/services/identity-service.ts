@@ -94,7 +94,7 @@ class IdentityService {
       const sdk = await getEvoSdk();
 
       // Fetch identity using EvoSDK facade
-      logger.info(`Fetching identity: ${identityId}`);
+      logger.debug(`Fetching identity: ${identityId}`);
       const identityResponse = await sdk.identities.fetch(identityId);
       
       if (!identityResponse) {
@@ -105,8 +105,8 @@ class IdentityService {
       // identity_fetch returns an object with a toJSON method
       const identity = identityResponse.toJSON();
       
-      logger.info('Raw identity response:', safeStringify(identity));
-      logger.info('Public keys from identity:', identity.publicKeys);
+      logger.debug('Raw identity response:', safeStringify(identity));
+      logger.debug('Public keys from identity:', identity.publicKeys);
 
       // Normalize public keys to ensure all fields are present
       // v3.1: SDK consistently returns camelCase — snake_case fallbacks removed
@@ -151,7 +151,7 @@ class IdentityService {
       const sdk = await getEvoSdk();
 
       // Fetch balance using EvoSDK facade (v3.1 SDK returns bigint | undefined)
-      logger.info(`Fetching balance for: ${identityId}`);
+      logger.debug(`Fetching balance for: ${identityId}`);
       const balanceResponse = await sdk.identities.balance(identityId);
 
       // Convert bigint to number, handle undefined.
@@ -164,7 +164,7 @@ class IdentityService {
         confirmedBalance = Number(balanceResponse);
       }
 
-      logger.info(`Balance for ${identityId}: ${confirmedBalance} credits`);
+      logger.debug(`Balance for ${identityId}: ${confirmedBalance} credits`);
 
       const balanceInfo: IdentityBalance = {
         confirmed: confirmedBalance,
@@ -331,8 +331,8 @@ class IdentityService {
 
       // IMPORTANT: Use IdentityPublicKeyInCreation from @dashevo/evo-sdk (not @dashevo/wasm-sdk)
       // so the WASM object shares the same linear memory as sdk.identities.update().
-      logger.info(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1`);
-      logger.info(`Public key bytes length: ${publicKeyBytes.length}`);
+      logger.debug(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1`);
+      logger.debug(`Public key bytes length: ${publicKeyBytes.length}`);
 
       // v3.1: IdentityPublicKeyInCreation takes an options object.
       // dev.8 narrowed PurposeLike/SecurityLevelLike/KeyTypeLike to require
@@ -345,7 +345,7 @@ class IdentityService {
         isReadOnly: false,
         data: publicKeyBytes,
       });
-      logger.info('IdentityPublicKeyInCreation created successfully');
+      logger.debug('IdentityPublicKeyInCreation created successfully');
 
       // Validate signing key has sufficient security level before calling SDK
       const validation = await this.validateKeySecurityLevel(signingPrivateKeyWif, identityId);
@@ -353,13 +353,13 @@ class IdentityService {
         logger.error('Signing key validation failed:', validation.error);
         return { success: false, error: validation.error };
       }
-      logger.info(`Signing key validated: keyId=${validation.keyId}, securityLevel=${validation.securityLevel}`);
+      logger.debug(`Signing key validated: keyId=${validation.keyId}, securityLevel=${validation.securityLevel}`);
 
-      logger.info(`Adding encryption key (id=${newKeyId}) to identity ${identityId}...`);
+      logger.debug(`Adding encryption key (id=${newKeyId}) to identity ${identityId}...`);
 
       // Log identity revision for debugging
       const identityJson = identity.toJSON();
-      logger.info('Identity revision before update:', identityJson.revision);
+      logger.debug('Identity revision before update:', identityJson.revision);
 
       // Create signer with the master key (for signing the update transition)
       const signer = await signerService.createSigner(signingPrivateKeyWif);
@@ -377,17 +377,17 @@ class IdentityService {
       const encryptionKeyHex = Array.from(encryptionPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
       const encryptionPrivateKeyObj = PrivateKey.fromHex(encryptionKeyHex, network);
       signer.addKey(encryptionPrivateKeyObj);
-      logger.info(`Signer now has ${signer.keyCount} keys (master + new encryption key)`);
+      logger.debug(`Signer now has ${signer.keyCount} keys (master + new encryption key)`);
 
       // Update the identity using typed API
-      logger.info('Calling sdk.identities.update...');
+      logger.debug('Calling sdk.identities.update...');
       try {
         await sdk.identities.update({
           identity,
           addPublicKeys: [newKey],
           signer
         });
-        logger.info('sdk.identities.update completed successfully');
+        logger.debug('sdk.identities.update completed successfully');
       } catch (updateError) {
         logger.error('sdk.identities.update failed:', updateError);
         if (updateError && typeof updateError === 'object') {
@@ -406,7 +406,7 @@ class IdentityService {
         throw updateError;
       }
 
-      logger.info('Encryption key added successfully');
+      logger.debug('Encryption key added successfully');
 
       // Clear cache to reflect the update
       this.clearCache(identityId);

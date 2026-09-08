@@ -28,7 +28,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
       // Check if already bookmarked
       const existing = await this.getBookmark(postId, ownerId);
       if (existing) {
-        logger.info('Post already bookmarked');
+        logger.debug('Post already bookmarked');
         return true;
       }
 
@@ -54,7 +54,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
     try {
       const bookmark = await this.getBookmark(postId, ownerId);
       if (!bookmark) {
-        logger.info('Post not bookmarked');
+        logger.debug('Post not bookmarked');
         return true;
       }
 

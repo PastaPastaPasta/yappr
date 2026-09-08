@@ -56,7 +56,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
 
       // Check if we have stored credentials
       const hasCredentials = provider.hasStoredCredentials()
-      logger.info('[Storacha] Checking credentials for identity:', user.identityId, 'hasCredentials:', hasCredentials)
+      logger.debug('[Storacha] Checking credentials for identity:', user.identityId, 'hasCredentials:', hasCredentials)
 
       if (hasCredentials) {
         try {
@@ -65,7 +65,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
           setConnectedEmail(provider.getConnectedEmail())
           setSpaceDid(provider.getSpaceDid())
           onConnectionChange?.(true)
-          logger.info('[Storacha] Successfully connected')
+          logger.debug('[Storacha] Successfully connected')
         } catch (err) {
           // Credentials may be stale
           logger.error('[Storacha] Failed to connect with stored credentials:', err)
@@ -73,7 +73,7 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
           onConnectionChange?.(false)
         }
       } else {
-        logger.info('[Storacha] No stored credentials found')
+        logger.debug('[Storacha] No stored credentials found')
         setStatus('disconnected')
         onConnectionChange?.(false)
       }

@@ -53,12 +53,12 @@ export async function loadFollowingFeed(options: {
 
       if (result.documents.length === 0 && followingCursor) {
         if (followingCursor.end < MIN_DATE) {
-          logger.info('Feed: Reached Jan 1 2025 limit, stopping search');
+          logger.debug('Feed: Reached Jan 1 2025 limit, stopping search');
           followingCursor = null;
           break;
         }
 
-        logger.info(`Feed: Empty window, auto-retrying from ${followingCursor.end.toISOString()}`);
+        logger.debug(`Feed: Empty window, auto-retrying from ${followingCursor.end.toISOString()}`);
         currentWindow = followingCursor;
       }
     } while (result.documents.length === 0 && followingCursor);

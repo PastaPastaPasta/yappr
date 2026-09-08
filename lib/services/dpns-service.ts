@@ -356,7 +356,7 @@ class DpnsService {
       );
       return null;
     }
-    logger.info(`DPNS: Matched private key to identity key: id=${result.match.keyId}, securityLevel=${getSecurityLevelName(result.match.securityLevel)}`);
+    logger.debug(`DPNS: Matched private key to identity key: id=${result.match.keyId}, securityLevel=${getSecurityLevelName(result.match.securityLevel)}`);
     return result.key;
   }
 
@@ -406,7 +406,7 @@ class DpnsService {
         throw new Error('No suitable signing key found that matches your private key. DPNS operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
       }
 
-      logger.info(`DPNS: Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
+      logger.debug(`DPNS: Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
       // Create signer and identity key for the state transition
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
@@ -415,7 +415,7 @@ class DpnsService {
       );
 
       // Register the name
-      logger.info(`Registering DPNS name: ${label}`);
+      logger.debug(`Registering DPNS name: ${label}`);
       await sdk.dpns.registerName({
         label,
         identity,

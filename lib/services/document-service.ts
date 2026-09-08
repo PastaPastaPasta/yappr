@@ -97,7 +97,7 @@ export abstract class BaseDocumentService<T> {
     try {
       const sdk = await getEvoSdk();
 
-      logger.info(`Querying ${this.documentType} documents:`, {
+      logger.debug(`Querying ${this.documentType} documents:`, {
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         ...options
@@ -113,7 +113,7 @@ export abstract class BaseDocumentService<T> {
         startAt: options.startAt,
       });
 
-      logger.info(`${this.documentType} query returned ${rawDocuments.length} documents`);
+      logger.debug(`${this.documentType} query returned ${rawDocuments.length} documents`);
 
       const documents = rawDocuments.map(doc => this.transformDocument(doc));
 
@@ -244,7 +244,7 @@ export abstract class BaseDocumentService<T> {
     }
   ): Promise<T> {
     try {
-      logger.info(`Creating ${this.documentType} document:`, data);
+      logger.debug(`Creating ${this.documentType} document:`, data);
 
       const result = await stateTransitionService.createDocument(
         this.contractId,
@@ -299,7 +299,7 @@ export abstract class BaseDocumentService<T> {
    */
   async update(documentId: string, ownerId: string, data: Record<string, unknown>): Promise<T> {
     try {
-      logger.info(`Updating ${this.documentType} document ${documentId}:`, data);
+      logger.debug(`Updating ${this.documentType} document ${documentId}:`, data);
 
       // Clear cache to ensure we get fresh revision from network
       this.cache.delete(documentId);
@@ -310,7 +310,7 @@ export abstract class BaseDocumentService<T> {
         throw new Error('Document not found');
       }
       const revision = (currentDoc as Record<string, unknown>).$revision as number || 0;
-      logger.info(`Current revision for ${this.documentType} document ${documentId}: ${revision}`);
+      logger.debug(`Current revision for ${this.documentType} document ${documentId}: ${revision}`);
 
       // Merge existing document data with partial update.
       // Document replacement requires ALL fields, not just the changed ones.
@@ -349,7 +349,7 @@ export abstract class BaseDocumentService<T> {
    */
   async delete(documentId: string, ownerId: string): Promise<boolean> {
     try {
-      logger.info(`Deleting ${this.documentType} document ${documentId}`);
+      logger.debug(`Deleting ${this.documentType} document ${documentId}`);
 
       const result = await stateTransitionService.deleteDocument(
         this.contractId,
