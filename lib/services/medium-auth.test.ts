@@ -113,7 +113,7 @@ it('serializes a wallet registration that requests MEDIUM auth and encryption ke
   const transition = IdentityUpdateTransition.fromBytes(result.transitionBytes)
   const keys = transition.toJSON().addPublicKeys ?? []
   expect(keys.map((key) => [key.purpose, key.securityLevel])).toEqual([[0, 3], [1, 3]])
-  expect(keys[0].id).toBe(6)
+  expect(keys[0]).toMatchObject({ id: 6 })
   expect(keys[0].signature).toBe('')
   expect(Buffer.from(keys[1].signature ?? '', 'base64').length).toBe(65)
   expect(transition.toStateTransition().purposeRequirement).toEqual(['AUTHENTICATION'])
