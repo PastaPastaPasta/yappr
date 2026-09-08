@@ -236,6 +236,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       const profileDoc = this.extractDocumentData(record);
       if (!profileDoc.$ownerId) continue;
       found.set(profileDoc.$ownerId, profileDoc);
+      cacheManager.delete(this.MISSING_PROFILE_CACHE, profileDoc.$ownerId);
       cacheManager.set(this.RAW_PROFILE_CACHE, profileDoc.$ownerId, profileDoc, {
         ttl: 300000,
         tags: ['profile', `user:${profileDoc.$ownerId}`]
@@ -247,6 +248,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     }
     for (const ownerId of queriedOwnerIds) {
       if (found.has(ownerId)) continue;
+      cacheManager.delete(this.RAW_PROFILE_CACHE, ownerId);
       cacheManager.set(this.MISSING_PROFILE_CACHE, ownerId, true, {
         ttl: 60000,
         tags: ['profile', `user:${ownerId}`]
