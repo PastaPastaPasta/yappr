@@ -9,6 +9,7 @@ import type { Post, ParsedPaymentUri, Store } from '@/lib/types'
 import { useSettingsStore } from '@/lib/store'
 import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { byNewestActivity, resolveUserReposts } from '@/lib/feed/resolve-user-reposts'
+import { paymentUriScheme } from '@/lib/services/unified-profile-service'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
@@ -76,12 +77,11 @@ function UserProfileContent() {
   const [nsfwAcknowledged, setNsfwAcknowledged] = useState(false)
   const showNsfwInterstitial = profile?.nsfw === true && !isOwnProfile && sensitiveContentMode !== 'show' && !nsfwAcknowledged
 
-  // Posts-tab pagination: posts and reposts have separate cursors.
+  // Posts-tab pagination. Reposts are not paginated: the service returns the
+  // whole list on the first load, so only original posts page.
   const [hasMore, setHasMore] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [lastPostId, setLastPostId] = useState<string | null>(null)
-  const [lastRepostId, setLastRepostId] = useState<string | null>(null)
-  const [hasMoreReposts, setHasMoreReposts] = useState(true)
 
   // Editing (own profile only)
   const [isEditing, setIsEditing] = useState(false)
@@ -214,8 +214,6 @@ function UserProfileContent() {
         try {
           const { repostService } = await import('@/lib/services/repost-service')
           const reposts = await repostService.getUserReposts(userId)
-          if (reposts.length > 0) setLastRepostId(reposts[reposts.length - 1].$id)
-          setHasMoreReposts(reposts.length >= PAGE_SIZE)
           merged.push(...(await resolveUserReposts(userId, reposts, profileDisplayName)))
           merged.sort(byNewestActivity)
         } catch (repostError) {
@@ -313,35 +311,15 @@ function UserProfileContent() {
   }, [profile?.paymentUris, searchParams])
 
   const loadMorePosts = useCallback(async () => {
-    const canLoadMorePosts = hasMore && lastPostId
-    const canLoadMoreReposts = hasMoreReposts && lastRepostId
-    if (!userId || isLoadingMore || (!canLoadMorePosts && !canLoadMoreReposts)) return
+    if (!userId || isLoadingMore || !hasMore || !lastPostId) return
 
     setIsLoadingMore(true)
     try {
       const { postService } = await import('@/lib/services')
-      const { repostService } = await import('@/lib/services/repost-service')
-      const fresh: Post[] = []
-      let newPostDocs: Post[] = []
-
-      if (canLoadMorePosts) {
-        const result = await postService.getUserPosts(userId, { limit: PAGE_SIZE, startAfter: lastPostId })
-        newPostDocs = result.documents || []
-        // Author display fields are already resolved for this profile.
-        fresh.push(...newPostDocs.map((post) => withAuthor(post, { username: username || '', displayName: profile?.displayName || '', avatar: '', hasDpns })))
-      }
-
-      if (canLoadMoreReposts) {
-        try {
-          const reposts = await repostService.getUserReposts(userId)
-          // An empty display name reads as "Someone reposted" on the card.
-          fresh.push(...(await resolveUserReposts(userId, reposts, profile?.displayName || '')))
-          if (reposts.length > 0) setLastRepostId(reposts[reposts.length - 1].$id)
-          setHasMoreReposts(reposts.length >= PAGE_SIZE)
-        } catch (repostError) {
-          logger.error('Failed to fetch more reposts:', repostError)
-        }
-      }
+      const result = await postService.getUserPosts(userId, { limit: PAGE_SIZE, startAfter: lastPostId })
+      const newPostDocs = result.documents || []
+      // Author display fields are already resolved for this profile.
+      const fresh = newPostDocs.map((post) => withAuthor(post, { username: username || '', displayName: profile?.displayName || '', avatar: '', hasDpns }))
 
       await attachQuotedPosts(fresh)
       setPosts((current) => {
@@ -350,18 +328,16 @@ function UserProfileContent() {
       })
       if (fresh.length > 0) enrichProgressively(fresh)
 
-      if (canLoadMorePosts) {
-        if (newPostDocs.length > 0) setLastPostId(newPostDocs[newPostDocs.length - 1].id)
-        setHasMore(newPostDocs.length >= PAGE_SIZE)
-      }
+      if (newPostDocs.length > 0) setLastPostId(newPostDocs[newPostDocs.length - 1].id)
+      setHasMore(newPostDocs.length >= PAGE_SIZE)
     } catch (error) {
       logger.error('Failed to load more posts:', error)
     } finally {
       setIsLoadingMore(false)
     }
-  }, [userId, isLoadingMore, hasMore, hasMoreReposts, lastPostId, lastRepostId, username, profile?.displayName, hasDpns, enrichProgressively])
+  }, [userId, isLoadingMore, hasMore, lastPostId, username, profile?.displayName, hasDpns, enrichProgressively])
 
-  const hasMorePosts = hasMore || hasMoreReposts
+  const hasMorePosts = hasMore
   const infiniteScroll = useInfiniteScroll({
     hasMore: hasMorePosts,
     isLoading: isLoadingMore,
@@ -422,7 +398,7 @@ function UserProfileContent() {
           ? {
               ...prev,
               ...draft,
-              paymentUris: draft.paymentUris.map((uri) => ({ scheme: uri.split(':')[0] + ':', uri })),
+              paymentUris: draft.paymentUris.map((uri) => ({ scheme: paymentUriScheme(uri), uri })),
             }
           : null
       )
