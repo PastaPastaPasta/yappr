@@ -1,6 +1,7 @@
 {
   "documentSchemas": {
     "poll": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -115,6 +116,7 @@
       "additionalProperties": false
     },
     "vote": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -174,6 +176,7 @@
       "additionalProperties": false
     },
     "multiVote": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {

@@ -4,7 +4,7 @@ import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
 import { documentBuilderService } from './document-builder-service';
 import { matchIdentityKey } from '@/lib/crypto/keys';
-import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
+import { KeyPurpose, DOCUMENT_AUTH_SECURITY_LEVELS, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_COSTS, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
@@ -182,7 +182,7 @@ class StateTransitionService {
   }
 
   /**
-   * The enabled CRITICAL or HIGH authentication key the stored private key
+   * The enabled MEDIUM, HIGH or CRITICAL authentication key the stored private key
    * corresponds to. Document operations may not be signed with MASTER.
    */
   private findMatchingSigningKey(
@@ -192,12 +192,12 @@ class StateTransitionService {
     const result = matchIdentityKey(privateKeyWif, wasmPublicKeys, {
       network: keyNetwork(),
       purpose: KeyPurpose.AUTHENTICATION,
-      allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
+      allowedSecurityLevels: DOCUMENT_AUTH_SECURITY_LEVELS,
     });
     if (!result.ok) {
       logger.error(
         result.reason === 'rejected'
-          ? `Private key matches key id=${result.match.keyId} (purpose ${getPurposeName(result.match.purpose)}, level ${getSecurityLevelName(result.match.securityLevel)}), which cannot sign this operation: CRITICAL or HIGH AUTHENTICATION required`
+          ? `Private key matches key id=${result.match.keyId} (purpose ${getPurposeName(result.match.purpose)}, level ${getSecurityLevelName(result.match.securityLevel)}), which cannot sign this operation: MEDIUM, HIGH or CRITICAL AUTHENTICATION required`
           : `Private key does not match any enabled key on this identity`
       );
       return null;
@@ -357,7 +357,7 @@ class StateTransitionService {
       const wasmPublicKeys = identity.publicKeys;
       const identityKey = this.findMatchingSigningKey(privateKeyWif, wasmPublicKeys);
       if (!identityKey) {
-        throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
+        throw new Error('No suitable signing key found that matches your stored private key. Document operations require an AUTHENTICATION key at MEDIUM, HIGH or CRITICAL security level.');
       }
 
       logger.debug(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
@@ -644,7 +644,7 @@ class StateTransitionService {
       const wasmPublicKeys = identity.publicKeys;
       const identityKey = this.findMatchingSigningKey(privateKey, wasmPublicKeys);
       if (!identityKey) {
-        throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
+        throw new Error('No suitable signing key found that matches your stored private key. Document operations require an AUTHENTICATION key at MEDIUM, HIGH or CRITICAL security level.');
       }
 
       logger.debug(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
@@ -711,7 +711,7 @@ class StateTransitionService {
       const wasmPublicKeys = identity.publicKeys;
       const identityKey = this.findMatchingSigningKey(privateKey, wasmPublicKeys);
       if (!identityKey) {
-        throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
+        throw new Error('No suitable signing key found that matches your stored private key. Document operations require an AUTHENTICATION key at MEDIUM, HIGH or CRITICAL security level.');
       }
 
       logger.debug(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
@@ -788,7 +788,7 @@ class StateTransitionService {
 
       const identityKey = this.findMatchingSigningKey(privateKeyWif, identity.publicKeys);
       if (!identityKey) {
-        throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
+        throw new Error('No suitable signing key found that matches your stored private key. Document operations require an AUTHENTICATION key at MEDIUM, HIGH or CRITICAL security level.');
       }
 
       const document = await documentBuilderService.buildDocumentForValuesDelete(

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { hash160 } from './hash'
 import { privateKeyToWif } from './wif'
 import { bytesToBase64, bytesToHex } from '@/lib/bytes'
-import { findMatchingKeyIndex, getPublicKey, matchIdentityKey, toKeyInfo } from './keys'
-import { KeyPurpose, KeyType, SecurityLevel, getPurposeName, resolveKeyPurpose, resolveSecurityLevel } from './identity-keys'
+import { findMatchingKeyIndex, getPublicKey, matchIdentityKey, toKeyInfo, findDMPublicKey } from './keys'
+import { KeyPurpose, KeyType, SecurityLevel, DOCUMENT_AUTH_SECURITY_LEVELS, isSecurityLevelAllowedForLogin, getPurposeName, resolveKeyPurpose, resolveSecurityLevel } from './identity-keys'
 
 const AUTH_PRIV = Uint8Array.from({ length: 32 }, (_, i) => i + 1)
 const OTHER_PRIV = Uint8Array.from({ length: 32 }, (_, i) => 200 - i)
@@ -157,5 +157,50 @@ describe('matchIdentityKey', () => {
     const opts = { network: 'testnet' as const, purpose: KeyPurpose.TRANSFER }
     expect(matchIdentityKey(AUTH_WIF, keys, { ...opts, keyId: 4 })).toMatchObject({ ok: true })
     expect(matchIdentityKey(AUTH_WIF, keys, { ...opts, keyId: 9 })).toMatchObject({ ok: false, reason: 'wrong-key-id', match: { keyId: 4 } })
+  })
+})
+
+describe('MEDIUM app keys', () => {
+  it.each([SecurityLevel.MEDIUM, SecurityLevel.HIGH, SecurityLevel.CRITICAL])('accepts login and document signing at level %s', (level) => {
+    expect(isSecurityLevelAllowedForLogin(level)).toBe(true)
+    expect(matchIdentityKey(AUTH_WIF, [wasmKey(5, KeyPurpose.AUTHENTICATION, level, AUTH_PUB)], {
+      network: 'testnet', purpose: KeyPurpose.AUTHENTICATION, allowedSecurityLevels: DOCUMENT_AUTH_SECURITY_LEVELS,
+    })).toMatchObject({ ok: true, match: { keyId: 5, securityLevel: level } })
+  })
+
+  it.each([SecurityLevel.MASTER, 4, -1, NaN])('rejects unsupported login level %s', (level) => {
+    expect(isSecurityLevelAllowedForLogin(level)).toBe(false)
+  })
+
+  it('does not let a MEDIUM encryption or disabled authentication key sign documents', () => {
+    const keys = [
+      wasmKey(4, KeyPurpose.ENCRYPTION, SecurityLevel.MEDIUM, AUTH_PUB),
+      wasmKey(5, KeyPurpose.AUTHENTICATION, SecurityLevel.MEDIUM, AUTH_PUB, { disabledAt: 1n }),
+    ]
+    expect(matchIdentityKey(AUTH_WIF, keys, {
+      network: 'testnet', purpose: KeyPurpose.AUTHENTICATION, allowedSecurityLevels: DOCUMENT_AUTH_SECURITY_LEVELS,
+    }).ok).toBe(false)
+  })
+
+  it('finds a MEDIUM authentication public key for DMs without using an encryption or disabled key', () => {
+    expect(findDMPublicKey([
+      wasmKey(0, KeyPurpose.AUTHENTICATION, SecurityLevel.MASTER, getPublicKey(OTHER_PRIV)),
+      wasmKey(2, KeyPurpose.AUTHENTICATION, SecurityLevel.HIGH, getPublicKey(OTHER_PRIV), { disabledAt: 1n }),
+      wasmKey(4, KeyPurpose.ENCRYPTION, SecurityLevel.MEDIUM, getPublicKey(OTHER_PRIV)),
+      wasmKey(5, KeyPurpose.AUTHENTICATION, SecurityLevel.MEDIUM, AUTH_PUB),
+    ])).toEqual(AUTH_PUB)
+  })
+
+  it('preserves the legacy HIGH DM fallback when both levels exist', () => {
+    expect(findDMPublicKey([
+      jsonKey(5, KeyPurpose.AUTHENTICATION, SecurityLevel.MEDIUM, AUTH_PUB),
+      jsonKey(2, KeyPurpose.AUTHENTICATION, SecurityLevel.HIGH, getPublicKey(OTHER_PRIV)),
+    ])).toEqual(getPublicKey(OTHER_PRIV))
+  })
+
+  it('requires an invite for a hash160-only DM recipient', () => {
+    expect(findDMPublicKey([
+      { ...jsonKey(5, KeyPurpose.AUTHENTICATION, SecurityLevel.MEDIUM, hash160(AUTH_PUB)), type: KeyType.ECDSA_HASH160 },
+    ])).toBeNull()
   })
 })

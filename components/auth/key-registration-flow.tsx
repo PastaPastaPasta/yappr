@@ -102,7 +102,7 @@ export function KeyRegistrationFlow({
               <ul className="text-xs text-gray-600 dark:text-gray-300 space-y-1">
                 <li className="flex items-center gap-2">
                   <span className="w-2 h-2 bg-green-500 rounded-full" />
-                  Authentication key (HIGH security)
+                  Authentication key (MEDIUM security)
                 </li>
                 <li className="flex items-center gap-2">
                   <span className="w-2 h-2 bg-blue-500 rounded-full" />

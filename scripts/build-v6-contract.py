@@ -123,6 +123,7 @@ def build():
     like_post_id['refersTo'] = copy.deepcopy(like_post_id['refersTo'])
     like_post_id['refersTo']['propertyAgreement'] = {'hashtag': 'hashtag'}
     beat = {
+        'signatureSecurityLevelRequirement': 3,
         'type': 'object',
         'indexOnly': True,
         'documentsMutable': False,

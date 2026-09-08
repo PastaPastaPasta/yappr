@@ -1,5 +1,6 @@
 {
   "postMention": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "indices": [
       {

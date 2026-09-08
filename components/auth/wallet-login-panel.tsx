@@ -80,7 +80,7 @@ async function shouldOfferPasskeyEnrollment(identityId: string): Promise<boolean
  * - complete: success, then `onComplete`
  * - timeout / error: check again
  *
- * A wallet login yields a HIGH key, which can post but not buy YAPP; only the
+ * A wallet login yields a MEDIUM key, which can post but not buy YAPP; only the
  * wallet holds the CRITICAL key. So when the account is ready but can't afford
  * a post, the Buy-YAPP modal opens in wallet-signing mode as this panel goes
  * away, while the wallet is still in hand.

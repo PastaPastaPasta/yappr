@@ -1,5 +1,6 @@
 {
   "loginKeyResponse": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "description": "Encrypted login key response from wallet for key exchange protocol",
     "indices": [

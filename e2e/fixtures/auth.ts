@@ -18,7 +18,7 @@ export type BotIdentity = {
   /** Index into the provisioned pool (already wrapped into range). */
   index: number
   identityId: string
-  /** AUTHENTICATION/HIGH WIF — writes require AUTHENTICATION at CRITICAL or HIGH. */
+  /** AUTHENTICATION WIF at the level selected by E2E_AUTH_KEY_LEVEL. */
   wif: string
 }
 
@@ -28,8 +28,13 @@ export const hasSeedPhrase = Boolean(process.env.E2E_SEED_PHRASE?.trim())
 export const NO_SEED_REASON =
   'E2E_SEED_PHRASE is not set — skipping the write path (no bot identity to sign state transitions with)'
 
-/** `KEY_ROLES[2]` in scripts/derive-identities.mjs is AUTHENTICATION/HIGH. */
-const AUTH_HIGH_KEY_INDEX = 2
+// Existing pools have HIGH at index 2. Fresh pools add MEDIUM at index 5;
+// opt in only after pointing the suite at MEDIUM-enabled contracts.
+const authKeyLevel = process.env.E2E_AUTH_KEY_LEVEL ?? 'HIGH'
+if (!['HIGH', 'MEDIUM'].includes(authKeyLevel)) {
+  throw new Error('E2E_AUTH_KEY_LEVEL must be HIGH or MEDIUM')
+}
+const authKeyIndex = authKeyLevel === 'MEDIUM' ? 5 : 2
 
 type DeriveModule = {
   deriveIdentityKeys: (index: number) => Array<{ keyIndex: number; wif: string }>
@@ -58,8 +63,8 @@ export async function resolveBotIdentity(): Promise<BotIdentity> {
   const requested = Number(process.env.E2E_IDENTITY_INDEX ?? 0)
   const index = (Number.isFinite(requested) ? Math.abs(Math.trunc(requested)) : 0) % pool.length
 
-  const key = deriveIdentityKeys(index).find((k) => k.keyIndex === AUTH_HIGH_KEY_INDEX)
-  if (!key) throw new Error(`Derivation produced no AUTHENTICATION/HIGH key for identity ${index}`)
+  const key = deriveIdentityKeys(index).find((k) => k.keyIndex === authKeyIndex)
+  if (!key) throw new Error(`Derivation produced no AUTHENTICATION/${authKeyLevel} key for identity ${index}`)
 
   cachedIdentity = { index, identityId: pool[index], wif: key.wif }
   return cachedIdentity

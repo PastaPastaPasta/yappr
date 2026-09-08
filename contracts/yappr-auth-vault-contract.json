@@ -1,5 +1,6 @@
 {
   "authVault": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "indices": [
       {
@@ -68,6 +69,7 @@
     }
   },
   "authVaultAccess": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "indices": [
       {
