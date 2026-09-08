@@ -73,10 +73,12 @@ class DirectMessageService {
         }
       }
 
-      // 4. Check if we need to create a conversation invite
+      // 4. Create the conversation invite if this is the first message that way.
+      // An unknown answer (lookup failed) skips creation: a missing invite
+      // costs one inbox hint, a duplicate costs credits every time.
       const existingInvite = await this.getMyInviteToRecipient(senderId, recipientId)
 
-      if (!existingInvite) {
+      if (existingInvite === null) {
         // Create conversation invite
         const senderPubKey = getPublicKeyFromPrivate(privateKey)
 
@@ -599,13 +601,11 @@ class DirectMessageService {
     }
   }
 
-  /**
-   * Get my invite to a recipient
-   */
+  /** The sender's invite to the recipient; `null` when there is none, `undefined` when the lookup failed. */
   private async getMyInviteToRecipient(
     senderId: string,
     recipientId: string
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown> | null | undefined> {
     try {
       const sdk = await getEvoSdk()
 
@@ -622,8 +622,9 @@ class DirectMessageService {
 
       const docs = this.extractDocuments(response)
       return docs[0] || null
-    } catch {
-      return null
+    } catch (error) {
+      logger.warn('Could not check for an existing conversation invite:', error)
+      return undefined
     }
   }
 
@@ -634,7 +635,7 @@ class DirectMessageService {
     senderId: string,
     recipientId: string
   ): Promise<Record<string, unknown> | null> {
-    return this.getMyInviteToRecipient(senderId, recipientId)
+    return (await this.getMyInviteToRecipient(senderId, recipientId)) ?? null
   }
 
   /**
