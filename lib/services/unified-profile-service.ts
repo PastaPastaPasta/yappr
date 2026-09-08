@@ -7,6 +7,12 @@ import { User, ParsedPaymentUri, SocialLink } from '../../types';
 import { generateAvatarDataUri } from './avatar-generator';
 import { documentToPlainObject } from './sdk-helpers';
 
+/** The `scheme:` prefix of a payment URI, lower-cased; empty when there is none. */
+export function paymentUriScheme(uri: string): string {
+  const colonIndex = uri.indexOf(':');
+  return colonIndex > 0 ? uri.substring(0, colonIndex + 1).toLowerCase() : '';
+}
+
 // Approved payment URI schemes (whitelist)
 export const APPROVED_PAYMENT_SCHEMES = [
   'dash:',           // Dash
@@ -386,7 +392,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     return uris
       .filter(uri => this.isApprovedPaymentScheme(uri))
       .map(uri => ({
-        scheme: this.extractScheme(uri),
+        scheme: paymentUriScheme(uri),
         uri,
       }));
   }
@@ -399,16 +405,6 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     return APPROVED_PAYMENT_SCHEMES.some(scheme => lowerUri.startsWith(scheme));
   }
 
-  /**
-   * Extract scheme from URI
-   */
-  private extractScheme(uri: string): string {
-    const colonIndex = uri.indexOf(':');
-    if (colonIndex > 0) {
-      return uri.substring(0, colonIndex + 1).toLowerCase();
-    }
-    return '';
-  }
 
   /**
    * Encode payment URIs to JSON string for storage

@@ -21,7 +21,11 @@ export function useComposePrivateFeed(isOpen: boolean, user: AuthUser | null, ap
   const [pendingVisibility, setPendingVisibility] = useState<PostVisibility | null>(null)
 
   useEffect(() => {
-    if (!isOpen || !user) return
+    if (!isOpen) return
+    if (!user) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     const check = async () => {
       try {
