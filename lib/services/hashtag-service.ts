@@ -74,7 +74,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       // Check if already exists (unique index on postId + hashtag)
       const existing = await this.getHashtagForPost(postId, normalizedTag);
       if (existing) {
-        logger.info('Hashtag already exists for post:', normalizedTag);
+        logger.debug('Hashtag already exists for post:', normalizedTag);
         return true;
       }
 

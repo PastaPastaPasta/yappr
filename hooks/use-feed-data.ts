@@ -253,12 +253,12 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
 
       try {
         if (activeTab === 'following' && !user?.identityId) {
-          logger.info('Feed: Skipping Following feed load - user not logged in');
+          logger.debug('Feed: Skipping Following feed load - user not logged in');
           setLoading(false);
           return;
         }
 
-        logger.info(`Feed: Loading ${activeTab} posts from Dash Platform...`, isPaginating ? '(paginating)' : '');
+        logger.debug(`Feed: Loading ${activeTab} posts from Dash Platform...`, isPaginating ? '(paginating)' : '');
 
         const cacheKey =
           activeTab === 'following'
@@ -268,7 +268,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         if (!forceRefresh && !isPaginating) {
           const cached = cacheManager.get<Post[]>('feed', cacheKey);
           if (cached) {
-            logger.info('Feed: Using cached data');
+            logger.debug('Feed: Using cached data');
             setData(cached);
             setLoading(false);
 
@@ -309,7 +309,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
           setHasMore(followingHasMore);
 
           if (followingPosts.length === 0) {
-            logger.info('Feed: No posts in this time window, cursor points to next window');
+            logger.debug('Feed: No posts in this time window, cursor points to next window');
             if (!isPaginating) {
               setData([]);
             }
@@ -330,7 +330,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
           posts = forYouResult.posts;
 
           if (posts.length === 0) {
-            logger.info('Feed: No posts found on platform');
+            logger.debug('Feed: No posts found on platform');
             if (!isPaginating) {
               setData([]);
             }
@@ -351,7 +351,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
             const existingIds = new Set((currentItems || []).map((item) => item.id));
             const newItems = sortedPosts.filter((item) => !existingIds.has(item.id));
             const allItems = [...(currentItems || []), ...newItems];
-            logger.info(
+            logger.debug(
               `Feed: Appended ${newItems.length} new items (${sortedPosts.length - newItems.length} duplicates filtered)`
             );
             return allItems;
@@ -377,7 +377,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         logger.error('Feed: Failed to load posts from platform:', error);
 
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logger.info('Feed: Falling back to empty state due to error:', errorMessage);
+        logger.debug('Feed: Falling back to empty state due to error:', errorMessage);
 
         setData([]);
 
@@ -416,7 +416,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     if (!newestPostTimestamp || isLoading) return;
 
     try {
-      logger.info('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString());
+      logger.debug('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString());
       const OVERLAP_MS = 2000;
       const sinceTimestamp = Math.max(0, newestPostTimestamp - OVERLAP_MS);
 
@@ -435,7 +435,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
 
       if (newPosts.length === 0) return;
 
-      logger.info(`Feed: Found ${newPosts.length} new posts`);
+      logger.debug(`Feed: Found ${newPosts.length} new posts`);
 
       const transformedPosts = newPosts.map((doc) => transformRawPost(doc));
       sortFeedByTimestamp(transformedPosts);
@@ -448,7 +448,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
       const uniqueNewPosts = transformedPosts.filter((post) => !existingIds.has(post.id));
 
       if (uniqueNewPosts.length > 0) {
-        logger.info(`Feed: ${uniqueNewPosts.length} unique new posts to show`);
+        logger.debug(`Feed: ${uniqueNewPosts.length} unique new posts to show`);
         setPendingNewPosts((prev) => [...uniqueNewPosts, ...prev]);
       }
     } catch (error) {

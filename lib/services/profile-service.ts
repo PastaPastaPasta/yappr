@@ -65,12 +65,12 @@ class ProfileService extends BaseDocumentService<User> {
         queryParams.startAt = options.startAt;
       }
 
-      logger.info(`Querying ${this.documentType} documents:`, queryParams);
+      logger.debug(`Querying ${this.documentType} documents:`, queryParams);
 
       // Use EvoSDK documents facade
       const response = await sdk.documents.query(queryParams);
 
-      logger.info(`${this.documentType} query result:`, response);
+      logger.debug(`${this.documentType} query result:`, response);
 
       // Handle Map response (v3 SDK)
       if (response instanceof Map) {
@@ -141,7 +141,7 @@ class ProfileService extends BaseDocumentService<User> {
    * SDK v3: System fields use $ prefix
    */
   protected transformDocument(doc: Record<string, unknown>, options?: Record<string, unknown>): User {
-    logger.info('ProfileService: transformDocument input:', doc);
+    logger.debug('ProfileService: transformDocument input:', doc);
     const profileDoc = doc as unknown as ProfileDocument;
     const cachedUsername = options?.cachedUsername as string | undefined;
 
@@ -203,12 +203,12 @@ class ProfileService extends BaseDocumentService<User> {
    */
   async getProfile(ownerId: string, cachedUsername?: string): Promise<User | null> {
     try {
-      logger.info('ProfileService: Getting profile for owner ID:', ownerId);
+      logger.debug('ProfileService: Getting profile for owner ID:', ownerId);
 
       // Check cache first
       const cached = cacheManager.get<User>(this.PROFILE_CACHE, ownerId);
       if (cached) {
-        logger.info('ProfileService: Returning cached profile for:', ownerId);
+        logger.debug('ProfileService: Returning cached profile for:', ownerId);
         // Update username if provided
         if (cachedUsername && cached.username !== cachedUsername) {
           cached.username = cachedUsername;
@@ -225,12 +225,12 @@ class ProfileService extends BaseDocumentService<User> {
         limit: 1
       });
 
-      logger.info('ProfileService: Query result:', result);
-      logger.info('ProfileService: Documents found:', result.documents.length);
+      logger.debug('ProfileService: Query result:', result);
+      logger.debug('ProfileService: Documents found:', result.documents.length);
 
       if (result.documents.length > 0) {
         const profile = result.documents[0];
-        logger.info('ProfileService: Returning profile:', profile);
+        logger.debug('ProfileService: Returning profile:', profile);
 
         // Cache the result with profile and user tags
         cacheManager.set(this.PROFILE_CACHE, ownerId, profile, {
@@ -241,7 +241,7 @@ class ProfileService extends BaseDocumentService<User> {
         return profile;
       }
 
-      logger.info('ProfileService: No profile found for owner ID:', ownerId);
+      logger.debug('ProfileService: No profile found for owner ID:', ownerId);
       return null;
     } catch (error) {
       logger.error('ProfileService: Error getting profile:', error);
@@ -436,11 +436,11 @@ class ProfileService extends BaseDocumentService<User> {
       });
 
       if (validIds.length === 0) {
-        logger.info('ProfileService: No valid identity IDs to query');
+        logger.debug('ProfileService: No valid identity IDs to query');
         return [];
       }
 
-      logger.info('ProfileService: Getting profiles for', validIds.length, 'identity IDs');
+      logger.debug('ProfileService: Getting profiles for', validIds.length, 'identity IDs');
 
       const sdk = await getEvoSdk();
 
@@ -458,7 +458,7 @@ class ProfileService extends BaseDocumentService<User> {
         const documents = Array.from(response.values())
           .filter(Boolean)
           .map((doc: unknown) => documentToPlainObject(doc) as unknown as ProfileDocument);
-        logger.info(`ProfileService: Found ${documents.length} profiles`);
+        logger.debug(`ProfileService: Found ${documents.length} profiles`);
         return documents;
       }
 
@@ -469,13 +469,13 @@ class ProfileService extends BaseDocumentService<User> {
         const documents = fallbackResponse
           .filter(Boolean)
           .map((doc: unknown) => documentToPlainObject(doc) as unknown as ProfileDocument);
-        logger.info(`ProfileService: Found ${documents.length} profiles`);
+        logger.debug(`ProfileService: Found ${documents.length} profiles`);
         return documents;
       } else if (Array.isArray(respWithDocs?.documents)) {
         const documents = respWithDocs.documents
           .filter(Boolean)
           .map((doc: unknown) => documentToPlainObject(doc) as unknown as ProfileDocument);
-        logger.info(`ProfileService: Found ${documents.length} profiles`);
+        logger.debug(`ProfileService: Found ${documents.length} profiles`);
         return documents;
       }
 

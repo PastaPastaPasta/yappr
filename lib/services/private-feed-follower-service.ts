@@ -122,7 +122,7 @@ class PrivateFeedFollowerService {
         documentData.publicKey = publicKey;
       }
 
-      logger.info('Creating FollowRequest:', { targetId: ownerId });
+      logger.debug('Creating FollowRequest:', { targetId: ownerId });
 
       const result = await stateTransitionService.createDocument(
         this.contractId,
@@ -140,7 +140,7 @@ class PrivateFeedFollowerService {
       // separate notification documents, which would fail anyway due to ownership constraints.
       // The feed owner's client will find this request when polling for notifications.
 
-      logger.info('Follow request created successfully');
+      logger.debug('Follow request created successfully');
       return { success: true };
     } catch (error) {
       logger.error('Error requesting access:', error);
@@ -180,7 +180,7 @@ class PrivateFeedFollowerService {
         return { success: false, error: result.error || 'Failed to delete follow request' };
       }
 
-      logger.info('Follow request cancelled successfully');
+      logger.debug('Follow request cancelled successfully');
       return { success: true };
     } catch (error) {
       logger.error('Error cancelling request:', error);
@@ -508,7 +508,7 @@ class PrivateFeedFollowerService {
         }
       }
 
-      logger.info(`Caught up on ${rekeyDocs.length} rekey(s) for owner ${ownerId}`);
+      logger.debug(`Caught up on ${rekeyDocs.length} rekey(s) for owner ${ownerId}`);
       return { success: true };
     } catch (error) {
       logger.error('Error catching up:', error);
@@ -761,7 +761,7 @@ class PrivateFeedFollowerService {
         logger.warn('Failed to cleanup stale follow request after recovery:', err);
       });
 
-      logger.info(`Recovered follower keys for owner ${ownerId} at epoch ${payload.grantEpoch}`);
+      logger.debug(`Recovered follower keys for owner ${ownerId} at epoch ${payload.grantEpoch}`);
       return { success: true };
     } catch (error) {
       logger.error('Error recovering follower keys:', error);
@@ -831,7 +831,7 @@ class PrivateFeedFollowerService {
             // Request was created before any revocation, meaning this user
             // was approved (which would have happened after the request)
             // and then later revoked. Return 'revoked' state.
-            logger.info(`User ${myId} appears to be revoked: request created at ${requestCreatedAt}, first revocation at ${firstRevocationAt}`);
+            logger.debug(`User ${myId} appears to be revoked: request created at ${requestCreatedAt}, first revocation at ${firstRevocationAt}`);
             return 'revoked';
           }
         }
@@ -871,7 +871,7 @@ class PrivateFeedFollowerService {
       }
 
       // Delete the stale request
-      logger.info('Cleaning up stale FollowRequest for approved user:', myId);
+      logger.debug('Cleaning up stale FollowRequest for approved user:', myId);
       const result = await stateTransitionService.deleteDocument(
         this.contractId,
         DOCUMENT_TYPES.FOLLOW_REQUEST,
@@ -883,7 +883,7 @@ class PrivateFeedFollowerService {
         return { success: false, error: result.error || 'Failed to delete stale follow request' };
       }
 
-      logger.info('Successfully cleaned up stale FollowRequest');
+      logger.debug('Successfully cleaned up stale FollowRequest');
       return { success: true };
     } catch (error) {
       logger.error('Error cleaning up stale follow request:', error);
@@ -934,11 +934,11 @@ class PrivateFeedFollowerService {
       const followedOwners = privateFeedKeyStore.getFollowedFeedOwners();
 
       if (followedOwners.length === 0) {
-        logger.info('PrivateFeedSync: No followed private feeds to sync');
+        logger.debug('PrivateFeedSync: No followed private feeds to sync');
         return { synced, failed, upToDate };
       }
 
-      logger.info(`PrivateFeedSync: Syncing ${followedOwners.length} followed private feed(s)`);
+      logger.debug(`PrivateFeedSync: Syncing ${followedOwners.length} followed private feed(s)`);
 
       // Process each feed owner in parallel (with limited concurrency)
       const CONCURRENCY_LIMIT = 3;
@@ -972,7 +972,7 @@ class PrivateFeedFollowerService {
         }
       }
 
-      logger.info(`PrivateFeedSync: Complete - synced: ${synced.length}, up-to-date: ${upToDate.length}, failed: ${failed.length}`);
+      logger.debug(`PrivateFeedSync: Complete - synced: ${synced.length}, up-to-date: ${upToDate.length}, failed: ${failed.length}`);
       return { synced, failed, upToDate };
     } catch (error) {
       logger.error('PrivateFeedSync: Error syncing feeds:', error);
@@ -1010,7 +1010,7 @@ class PrivateFeedFollowerService {
       }
 
       // Need to catch up
-      logger.info(`PrivateFeedSync: Catching up feed ${ownerId} from epoch ${cachedEpoch} to ${chainEpoch}`);
+      logger.debug(`PrivateFeedSync: Catching up feed ${ownerId} from epoch ${cachedEpoch} to ${chainEpoch}`);
       const catchUpResult = await this.catchUp(ownerId, myId);
 
       if (catchUpResult.success) {

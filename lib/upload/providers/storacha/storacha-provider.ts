@@ -156,7 +156,7 @@ export class StorachaProvider implements UploadProvider {
       // Login with email - this sends verification email and waits for click
       let account: Account
       try {
-        logger.info('[Storacha] Starting login for:', email)
+        logger.debug('[Storacha] Starting login for:', email)
         account = await Promise.race([
           this.client.login(email as `${string}@${string}`, { signal }),
           new Promise<never>((_, reject) =>
@@ -166,7 +166,7 @@ export class StorachaProvider implements UploadProvider {
             )
           )
         ])
-        logger.info('[Storacha] Login completed successfully')
+        logger.debug('[Storacha] Login completed successfully')
       } catch (error) {
         logger.error('[Storacha] Login error:', error)
         logger.error('[Storacha] Error type:', typeof error)
@@ -183,11 +183,11 @@ export class StorachaProvider implements UploadProvider {
       }
 
       // Wait for plan - user needs to select a plan on console.storacha.network
-      logger.info('[Storacha] Waiting for plan selection...')
+      logger.debug('[Storacha] Waiting for plan selection...')
       this.status = 'awaiting_plan'
       try {
         await account.plan.wait()
-        logger.info('[Storacha] Plan confirmed')
+        logger.debug('[Storacha] Plan confirmed')
       } catch (error) {
         logger.warn('[Storacha] Plan wait failed:', error)
         throw new UploadException(
@@ -198,9 +198,9 @@ export class StorachaProvider implements UploadProvider {
       }
 
       // Check for existing spaces or create new one
-      logger.info('[Storacha] Checking for existing spaces...')
+      logger.debug('[Storacha] Checking for existing spaces...')
       const spaces = this.client.spaces()
-      logger.info('[Storacha] Found spaces:', spaces.length)
+      logger.debug('[Storacha] Found spaces:', spaces.length)
       const space = spaces.find(s => s.name === SPACE_NAME)
       let spaceDid: `did:key:${string}`
 
@@ -221,17 +221,17 @@ export class StorachaProvider implements UploadProvider {
       }
 
       // Set as current space
-      logger.info('[Storacha] Setting current space:', spaceDid)
+      logger.debug('[Storacha] Setting current space:', spaceDid)
       await this.client.setCurrentSpace(spaceDid)
 
       // Export and store credentials
-      logger.info('[Storacha] Saving credentials...')
+      logger.debug('[Storacha] Saving credentials...')
       await this.saveCredentials(email, spaceDid)
-      logger.info('[Storacha] Credentials saved')
+      logger.debug('[Storacha] Credentials saved')
 
       this.connectedEmail = email
       this.status = 'connected'
-      logger.info('[Storacha] Setup complete, status:', this.status)
+      logger.debug('[Storacha] Setup complete, status:', this.status)
     } catch (error) {
       this.status = 'error'
       this.client = null
@@ -317,7 +317,7 @@ export class StorachaProvider implements UploadProvider {
       const jsonStr = JSON.stringify(exported, jsonReplacer)
       const agentDataB64 = btoa(jsonStr)
 
-      logger.info('[Storacha] Credential sizes:', {
+      logger.debug('[Storacha] Credential sizes:', {
         jsonLength: jsonStr.length,
         base64Length: agentDataB64.length,
         delegationsCount: Array.isArray(exported.delegations)
@@ -444,7 +444,7 @@ export class StorachaProvider implements UploadProvider {
         onShardStored: (meta) => {
           // Approximate progress based on shards
           // This is a rough estimate since we don't know total shards upfront
-          logger.info('Shard stored:', meta.cid.toString())
+          logger.debug('Shard stored:', meta.cid.toString())
           options?.onProgress?.(50)
         }
       })

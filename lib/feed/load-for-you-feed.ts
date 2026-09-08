@@ -32,7 +32,7 @@ export async function loadForYouFeed(options: {
 
   const currentStartAfter = options.startAfter;
 
-  logger.info(
+  logger.debug(
     'Feed: Loading posts',
     currentStartAfter ? `starting after ${currentStartAfter}` : '',
     '(iteration 1)'
@@ -45,7 +45,7 @@ export async function loadForYouFeed(options: {
   })).documents;
 
   if (firstBatchRaw.length === 0) {
-    logger.info('Feed: No posts available');
+    logger.debug('Feed: No posts available');
     options.setHasMore(false);
     return { posts: [], cursor: null, hasMore: false };
   }
@@ -57,7 +57,7 @@ export async function loadForYouFeed(options: {
   const firstBatchPosts = firstBatchRaw.filter((post) => !post.deleted).map(withLoadingAuthor);
   const firstBatchCursor = firstBatchRaw[firstBatchRaw.length - 1].id;
 
-  logger.info(`Feed: First batch has ${firstBatchPosts.length} posts`);
+  logger.debug(`Feed: First batch has ${firstBatchPosts.length} posts`);
 
   const forYouNextCursor: string | null = firstBatchCursor;
   const forYouHasMore = firstBatchRaw.length === PAGE_SIZE;
@@ -75,7 +75,7 @@ export async function loadForYouFeed(options: {
     });
 
   if (firstBatchPosts.length < MIN_NON_REPLY_POSTS && forYouHasMore) {
-    logger.info(
+    logger.debug(
       `Feed: Only ${firstBatchPosts.length} posts, will fetch more in background... (need ${MIN_NON_REPLY_POSTS})`
     );
 
@@ -91,7 +91,7 @@ export async function loadForYouFeed(options: {
         bgLastBatchSize === PAGE_SIZE
       ) {
         bgFetchIteration++;
-        logger.info(`Feed: Loading posts starting after ${bgCurrentStartAfter} (iteration ${bgFetchIteration})`);
+        logger.debug(`Feed: Loading posts starting after ${bgCurrentStartAfter} (iteration ${bgFetchIteration})`);
 
         const bgRawPosts = (await postService.getTimeline({
           limit: PAGE_SIZE,
@@ -102,7 +102,7 @@ export async function loadForYouFeed(options: {
         bgLastBatchSize = bgRawPosts.length;
 
         if (bgRawPosts.length === 0) {
-          logger.info('Feed: No more posts available (background)');
+          logger.debug('Feed: No more posts available (background)');
           options.setHasMore(false);
           break;
         }
@@ -132,7 +132,7 @@ export async function loadForYouFeed(options: {
           const newItems = bgPosts.filter((post) => !existingIds.has(post.id));
           const allItems = sortFeedByTimestamp([...currentItems, ...newItems]);
 
-          logger.info(`Feed: Background added ${newItems.length} posts (total: ${allItems.length})`);
+          logger.debug(`Feed: Background added ${newItems.length} posts (total: ${allItems.length})`);
           return allItems;
         });
 
@@ -140,12 +140,12 @@ export async function loadForYouFeed(options: {
         options.setLastPostId(bgCurrentStartAfter);
 
         if (allPostCount < MIN_NON_REPLY_POSTS && bgFetchIteration < MAX_FETCH_ITERATIONS) {
-          logger.info(`Feed: Only ${allPostCount} posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`);
+          logger.debug(`Feed: Only ${allPostCount} posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`);
         }
       }
 
       options.setHasMore(bgLastBatchSize === PAGE_SIZE);
-      logger.info(`Feed: Background fetch complete. Total posts: ${allPostCount}`);
+      logger.debug(`Feed: Background fetch complete. Total posts: ${allPostCount}`);
     };
 
     fetchMoreInBackground().catch((error) => {

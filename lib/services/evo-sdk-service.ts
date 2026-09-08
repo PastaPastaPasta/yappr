@@ -74,7 +74,7 @@ class EvoSdkService {
     }
 
     try {
-      logger.info('EvoSdkService: Creating EvoSDK instance...');
+      logger.debug('EvoSdkService: Creating EvoSDK instance...');
 
       // Create SDK with trusted mode based on network
       if (this.config.network === 'devnet') {
@@ -95,7 +95,7 @@ class EvoSdkService {
             'Devnet requires an explicit DAPI address pool — set NEXT_PUBLIC_DAPI_ADDRESSES'
           );
         }
-        logger.info(`EvoSdkService: Building devnet (${devnetName}) SDK with ${addresses.length} addresses...`);
+        logger.debug(`EvoSdkService: Building devnet (${devnetName}) SDK with ${addresses.length} addresses...`);
         this.sdk = new EvoSDK({
           network: 'devnet',
           devnetName,
@@ -107,14 +107,14 @@ class EvoSdkService {
           }
         });
       } else if (this.config.network === 'testnet') {
-        logger.info('EvoSdkService: Building testnet SDK in trusted mode...');
+        logger.debug('EvoSdkService: Building testnet SDK in trusted mode...');
         this.sdk = EvoSDK.testnetTrusted({
           settings: {
             timeoutMs: 8000,
           }
         });
       } else {
-        logger.info('EvoSdkService: Building mainnet SDK in trusted mode...');
+        logger.debug('EvoSdkService: Building mainnet SDK in trusted mode...');
         this.sdk = EvoSDK.mainnetTrusted({
           settings: {
             timeoutMs: 8000,
@@ -126,9 +126,9 @@ class EvoSdkService {
       // DAPI call (pass-through no-op while the inspector is disabled).
       instrumentSdk(this.sdk);
 
-      logger.info('EvoSdkService: Connecting to network...');
+      logger.debug('EvoSdkService: Connecting to network...');
       await this.sdk.connect();
-      logger.info('EvoSdkService: Connected successfully');
+      logger.debug('EvoSdkService: Connected successfully');
 
       // PROTOCOL-VERSION RATCHET: rs-sdk starts devnet connections at PV12 and
       // only ratchets up from verified response metadata. The v4+ contracts use
@@ -148,7 +148,7 @@ class EvoSdkService {
       await this._preloadContracts();
 
       this._isInitialized = true;
-      logger.info('EvoSdkService: SDK initialized successfully');
+      logger.debug('EvoSdkService: SDK initialized successfully');
     } catch (error) {
       logger.error('EvoSdkService: Failed to initialize SDK:', error);
       logger.error('EvoSdkService: Error details:', {
@@ -174,7 +174,7 @@ class EvoSdkService {
     if (topology === 'v2' || topology === 'v3' || !this.sdk) return;
     try {
       await this.sdk.contracts.fetch(DPNS_CONTRACT_ID);
-      logger.info('EvoSdkService: protocol-version warm-up query completed');
+      logger.debug('EvoSdkService: protocol-version warm-up query completed');
     } catch (error) {
       logger.warn('EvoSdkService: protocol-version warm-up query failed:', error);
     }
@@ -237,7 +237,7 @@ class EvoSdkService {
       contractsToFetch.push({ id: YAPPR_AUTH_VAULT_CONTRACT_ID, name: 'AuthVault' });
     }
 
-    logger.info(`EvoSdkService: Preloading ${contractsToFetch.length} contracts in one request...`);
+    logger.debug(`EvoSdkService: Preloading ${contractsToFetch.length} contracts in one request...`);
 
     // A contract that does not resolve comes back as an absent map entry rather
     // than a rejection, so one bad optional contract ID cannot sink the batch.
@@ -250,7 +250,7 @@ class EvoSdkService {
     }
 
     const missing = contractsToFetch.filter(({ id }) => !contracts.get(id));
-    logger.info(
+    logger.debug(
       `EvoSdkService: ${contractsToFetch.length - missing.length}/${contractsToFetch.length} contracts resolved`
     );
     for (const { id, name } of missing) {
@@ -324,7 +324,7 @@ class EvoSdkService {
    */
   async handleConnectionError(error: unknown): Promise<boolean> {
     if (this.isNoAvailableAddressesError(error) || this.isStaleQuorumError(error)) {
-      logger.info('EvoSdkService: Detected connection-level error (address pool exhausted or stale quorum cache), attempting to reconnect...');
+      logger.debug('EvoSdkService: Detected connection-level error (address pool exhausted or stale quorum cache), attempting to reconnect...');
       try {
         const savedConfig = this.config;
         await this.cleanup();
@@ -332,7 +332,7 @@ class EvoSdkService {
           // Wait a bit before reconnecting to avoid immediate rate limiting
           await new Promise(resolve => setTimeout(resolve, 2000));
           await this.initialize(savedConfig);
-          logger.info('EvoSdkService: Reconnected successfully');
+          logger.debug('EvoSdkService: Reconnected successfully');
           return true;
         }
       } catch (reconnectError) {

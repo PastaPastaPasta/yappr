@@ -151,11 +151,11 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       }
 
       // Revoke their access
-      logger.info(`Auto-revoking private feed access for blocked user: ${targetUserId}`)
+      logger.debug(`Auto-revoking private feed access for blocked user: ${targetUserId}`)
       const revokeResult = await privateFeedService.revokeFollower(blockerId, targetUserId)
 
       if (revokeResult.success) {
-        logger.info(`Successfully auto-revoked private feed access for: ${targetUserId}`)
+        logger.debug(`Successfully auto-revoked private feed access for: ${targetUserId}`)
         return true
       } else {
         // Log the error but don't fail the block operation

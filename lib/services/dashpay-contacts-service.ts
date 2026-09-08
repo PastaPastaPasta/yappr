@@ -156,7 +156,7 @@ class DashPayContactsService {
     }
 
     if (outgoingSet.size === 0) {
-      logger.info('DashPayContactsService: No outgoing contact requests found');
+      logger.debug('DashPayContactsService: No outgoing contact requests found');
       return [];
     }
 
@@ -172,7 +172,7 @@ class DashPayContactsService {
     }
 
     if (incomingMap.size === 0) {
-      logger.info('DashPayContactsService: No incoming contact requests found');
+      logger.debug('DashPayContactsService: No incoming contact requests found');
       return [];
     }
 
@@ -188,7 +188,7 @@ class DashPayContactsService {
       }
     });
 
-    logger.info(`DashPayContactsService: Found ${mutualContacts.length} mutual contacts`);
+    logger.debug(`DashPayContactsService: Found ${mutualContacts.length} mutual contacts`);
     return mutualContacts;
   }
 
@@ -219,7 +219,7 @@ class DashPayContactsService {
     // Check cache first
     const cached = this.cache.get(userId);
     if (cached) {
-      logger.info('DashPayContactsService: Returning cached result');
+      logger.debug('DashPayContactsService: Returning cached result');
       return cached;
     }
 
@@ -298,7 +298,7 @@ class DashPayContactsService {
       // Cache the result
       this.cache.set(userId, result);
 
-      logger.info(`DashPayContactsService: Found ${contacts.length} unfollowed contacts out of ${mutualContactIds.length} total`);
+      logger.debug(`DashPayContactsService: Found ${contacts.length} unfollowed contacts out of ${mutualContactIds.length} total`);
       return result;
     } catch (error) {
       logger.error('DashPayContactsService: Error getting unfollowed contacts:', error);

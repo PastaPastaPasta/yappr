@@ -49,7 +49,7 @@ export async function buildUnsignedDirectPurchaseTransition(
 
   const rawNonce = (await sdk.wasm.getIdentityContractNonce(buyerId, YAPPR_CONTRACT_ID)) ?? BigInt(0);
   const nonce = (rawNonce & SEQUENCE_MASK) + BigInt(1);
-  logger.info(`TokenPurchaseBuilder: nonce raw=${rawNonce} using=${nonce}`);
+  logger.debug(`TokenPurchaseBuilder: nonce raw=${rawNonce} using=${nonce}`);
 
   const base = new TokenBaseTransition({
     identityContractNonce: nonce,
@@ -72,6 +72,6 @@ export async function buildUnsignedDirectPurchaseTransition(
   stateTransition.setIdentityContractNonce(nonce);
 
   const bytes = stateTransition.toBytes();
-  logger.info(`TokenPurchaseBuilder: unsigned purchase transition bytes length: ${bytes.length}`);
+  logger.debug(`TokenPurchaseBuilder: unsigned purchase transition bytes length: ${bytes.length}`);
   return bytes;
 }

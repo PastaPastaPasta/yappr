@@ -339,7 +339,7 @@ export function PrivatePostContent({
         if (!feedSeed) {
           const encryptionPrivateKey = getEncryptionKeyBytes(user.identityId)
           if (encryptionPrivateKey) {
-            logger.info('Owner auto-recovery: no local feed seed, attempting recovery with encryption key')
+            logger.debug('Owner auto-recovery: no local feed seed, attempting recovery with encryption key')
             setState({ status: 'recovering' })
 
             // Attempt to recover owner state from chain
@@ -350,17 +350,17 @@ export function PrivatePostContent({
             )
 
             if (recoveryResult.success) {
-              logger.info('Owner auto-recovery: successfully recovered feed seed')
+              logger.debug('Owner auto-recovery: successfully recovered feed seed')
               feedSeed = privateFeedKeyStore.getFeedSeed()
             } else {
-              logger.info('Owner auto-recovery failed:', recoveryResult.error)
+              logger.debug('Owner auto-recovery failed:', recoveryResult.error)
               // Recovery failed - show locked state with no-keys reason
               setState({ status: 'locked', reason: 'no-keys' })
               return
             }
           } else {
             // Owner doesn't have encryption key - needs to enter it
-            logger.info('Owner cannot decrypt: no feed seed and no encryption key')
+            logger.debug('Owner cannot decrypt: no feed seed and no encryption key')
             setState({ status: 'locked', reason: 'no-keys' })
             return
           }
@@ -489,7 +489,7 @@ export function PrivatePostContent({
         }
         // BUG-017 fix: Check if we need to trigger key recovery due to missing wrapNonceSalt
         if (result.error?.startsWith('REKEY_RECOVERY_NEEDED:')) {
-          logger.info('BUG-017: Triggering key recovery due to missing wrapNonceSalt')
+          logger.debug('BUG-017: Triggering key recovery due to missing wrapNonceSalt')
           // Check if we have encryption key in session to auto-recover
           const encryptionKeyBytes = getEncryptionKeyBytes(user.identityId)
           if (encryptionKeyBytes) {

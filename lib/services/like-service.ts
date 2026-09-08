@@ -132,7 +132,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       // Check if already liked
       const existing = await this.getLike(postId, ownerId, kind);
       if (existing) {
-        logger.info('Post already liked');
+        logger.debug('Post already liked');
         return true;
       }
 
@@ -190,7 +190,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
 
       const like = await this.getLike(postId, ownerId, kind);
       if (!like) {
-        logger.info('Post not liked');
+        logger.debug('Post not liked');
         return true;
       }
 
@@ -430,7 +430,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       // index disagrees with the unique-index readback (which would be a bug).
       const like = await this.getLike(targetId, ownerId, kind);
       if (!like) {
-        logger.info('Post not liked');
+        logger.debug('Post not liked');
         return true;
       }
       logger.error('Unlike failed: like exists but its delete tuple could not be recovered', { targetId, kind });

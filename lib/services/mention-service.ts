@@ -81,7 +81,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
       // Check if already exists (unique index on postId + mentionedUserId)
       const existing = await this.getMentionForPost(postId, mentionedUserId);
       if (existing) {
-        logger.info('Mention already exists for post:', mentionedUserId);
+        logger.debug('Mention already exists for post:', mentionedUserId);
         return true;
       }
 

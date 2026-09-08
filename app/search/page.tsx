@@ -43,7 +43,7 @@ function SearchPageContent() {
 
   useEffect(() => {
     const currentSearchId = ++searchIdRef.current
-    logger.info(`Search: Starting search #${currentSearchId} for query: "${query}"`)
+    logger.debug(`Search: Starting search #${currentSearchId} for query: "${query}"`)
 
     const performSearch = async () => {
       const trimmedQuery = query.trim()
@@ -58,7 +58,7 @@ function SearchPageContent() {
 
       // Require at least 3 characters to search (like DashPay)
       if (trimmedQuery.length < 3) {
-        logger.info('Search: Query too short, need at least 3 characters')
+        logger.debug('Search: Query too short, need at least 3 characters')
         setUsers([])
         setHashtags([])
         setBlogPosts([])
@@ -78,7 +78,7 @@ function SearchPageContent() {
 
         // Only update state if this is still the current search
         if (currentSearchId !== searchIdRef.current) {
-          logger.info(`Search: Ignoring stale results for search #${currentSearchId}`)
+          logger.debug(`Search: Ignoring stale results for search #${currentSearchId}`)
           return
         }
 
@@ -100,24 +100,24 @@ function SearchPageContent() {
   const searchUsers = async (searchQuery: string): Promise<UserResult[]> => {
     try {
       const trimmedQuery = searchQuery.trim()
-      logger.info(`Search: searchUsers called with: "${trimmedQuery}"`)
+      logger.debug(`Search: searchUsers called with: "${trimmedQuery}"`)
 
       // Require at least 3 characters to search (like DashPay)
       if (trimmedQuery.length < 3) {
-        logger.info('Search: Query too short, need at least 3 characters')
+        logger.debug('Search: Query too short, need at least 3 characters')
         return []
       }
 
       // Search DPNS usernames by prefix
       const dpnsResults = await dpnsService.searchUsernamesWithDetails(trimmedQuery, 10)
-      logger.info(`Search: DPNS prefix search returned ${dpnsResults.length} results`)
+      logger.debug(`Search: DPNS prefix search returned ${dpnsResults.length} results`)
 
       // If prefix search returns nothing, try exact name resolution as fallback
       if (dpnsResults.length === 0) {
-        logger.info(`Search: Trying exact name resolution for "${trimmedQuery}"`)
+        logger.debug(`Search: Trying exact name resolution for "${trimmedQuery}"`)
         const exactIdentity = await dpnsService.resolveIdentity(trimmedQuery)
         if (exactIdentity) {
-          logger.info(`Search: Found exact match for "${trimmedQuery}"`)
+          logger.debug(`Search: Found exact match for "${trimmedQuery}"`)
           dpnsResults.push({
             username: `${trimmedQuery.toLowerCase().replace(/\.dash$/, '')}.dash`,
             ownerId: exactIdentity

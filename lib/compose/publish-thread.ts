@@ -97,7 +97,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
     const kind = isThisReplyInherited ? 'reply' : 'post'
 
     progress(isThisPostPrivate || isThisReplyInherited ? `Encrypting and creating private ${kind} ${i + 1}...` : `Creating post ${i + 1} of ${posts.length}...`)
-    logger.info(`Creating post ${i + 1}/${posts.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
+    logger.debug(`Creating post ${i + 1}/${posts.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
 
     let encryption: EncryptionOptions | undefined
     if (isThisReplyInherited && inheritedEncryption) {
@@ -223,7 +223,7 @@ function registerIndexes(postId: string, authorId: string, content: string, inde
     hashtagService
       .createPostHashtags(postId, authorId, hashtags)
       .then((results) => {
-        logger.info(`Post ${index + 1}: Created ${results.filter(Boolean).length}/${hashtags.length} hashtag documents`)
+        logger.debug(`Post ${index + 1}: Created ${results.filter(Boolean).length}/${hashtags.length} hashtag documents`)
         results.forEach((ok, i) => ok && dispatchFieldRegistered('hashtag', { postId, value: hashtags[i] }))
       })
       .catch((err) => logger.error(`Post ${index + 1}: Failed to create hashtag documents:`, err))
@@ -233,7 +233,7 @@ function registerIndexes(postId: string, authorId: string, content: string, inde
     mentionService
       .createPostMentionsFromUsernames(postId, authorId, mentions)
       .then((results) => {
-        logger.info(`Post ${index + 1}: Created ${results.filter(Boolean).length}/${mentions.length} mention documents`)
+        logger.debug(`Post ${index + 1}: Created ${results.filter(Boolean).length}/${mentions.length} mention documents`)
         results.forEach((ok, i) => ok && dispatchFieldRegistered('mention', { postId, value: mentions[i] }))
       })
       .catch((err) => logger.error(`Post ${index + 1}: Failed to create mention documents:`, err))

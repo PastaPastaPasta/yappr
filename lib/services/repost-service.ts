@@ -55,7 +55,7 @@ class RepostService {
     try {
       const existing = await this.getRepost(postId, ownerId);
       if (existing) {
-        logger.info('Post already reposted');
+        logger.debug('Post already reposted');
         return true;
       }
 
@@ -86,7 +86,7 @@ class RepostService {
     try {
       const repost = await this.getRepost(postId, ownerId);
       if (!repost) {
-        logger.info('Post not reposted');
+        logger.debug('Post not reposted');
         return true;
       }
       const result = await stateTransitionService.deleteDocument(

@@ -34,7 +34,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     try {
       const existing = await this.getFollow(targetUserId, followerUserId);
       if (existing) {
-        logger.info('Already following user');
+        logger.debug('Already following user');
         return { success: true };
       }
 
@@ -73,7 +73,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     try {
       const follow = await this.getFollow(targetUserId, followerUserId);
       if (!follow) {
-        logger.info('Not following user');
+        logger.debug('Not following user');
         return { success: true };
       }
 

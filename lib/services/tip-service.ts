@@ -74,7 +74,7 @@ class TipService {
       }
       return null;
     }
-    logger.info(`Matched transfer key: id=${result.match.keyId}`);
+    logger.debug(`Matched transfer key: id=${result.match.keyId}`);
     return result.key;
   }
 
@@ -158,7 +158,7 @@ class TipService {
       }
 
       // Log transfer details
-      logger.info('Transfer args:', JSON.stringify({
+      logger.debug('Transfer args:', JSON.stringify({
         senderId,
         recipientId,
         amount: amountCredits.toString(),
@@ -171,7 +171,7 @@ class TipService {
         transferKey
       );
 
-      logger.info('Calling sdk.identities.creditTransfer...');
+      logger.debug('Calling sdk.identities.creditTransfer...');
       // Cast needed: SDK has duplicate IdentityCreditTransferOptions interfaces that get merged.
       // The high-level facade only needs { identity, recipientId, amount, signer, signingKey? }.
       const result = await sdk.identities.creditTransfer({
@@ -185,7 +185,7 @@ class TipService {
       // Clear sender's balance cache so it refreshes
       identityService.clearCache(senderId);
 
-      logger.info('Tip transfer result:', result);
+      logger.debug('Tip transfer result:', result);
 
       // Create tip post as a reply to the tipped post (only if postId provided)
       // TODO: Once SDK returns transition ID, pass it for on-chain verification
@@ -286,7 +286,7 @@ class TipService {
         parentOwnerId: postOwnerId,
       });
 
-      logger.info('Tip reply created successfully');
+      logger.debug('Tip reply created successfully');
       return { posted: true };
     } catch (error) {
       // Log but don't fail the tip - the credit transfer already succeeded.
