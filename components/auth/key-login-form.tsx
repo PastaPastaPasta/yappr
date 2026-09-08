@@ -411,7 +411,7 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
       {/* Password or Private Key Input */}
       <div>
         <label htmlFor="loginCredential" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          {hasOnchainBackup ? 'Password or private key' : 'Private key (high or critical)'}
+          {hasOnchainBackup ? 'Password or private key' : 'Private key (medium, high or critical)'}
         </label>
         <motion.div
           className="relative"

@@ -92,9 +92,16 @@ export function getPurposeName(purpose: number): string {
   return PURPOSE_NAMES[purpose] ?? `UNKNOWN(${purpose})`
 }
 
-/** Login and DPNS signing accept CRITICAL or HIGH authentication keys, never MASTER. */
+/** App document signing accepts MEDIUM and the existing stronger non-MASTER keys. */
+export const DOCUMENT_AUTH_SECURITY_LEVELS: readonly number[] = [
+  SecurityLevel.CRITICAL,
+  SecurityLevel.HIGH,
+  SecurityLevel.MEDIUM,
+]
+
+/** DPNS and explicit token operations have their own, stricter requirements. */
 export function isSecurityLevelAllowedForLogin(level: number): boolean {
-  return level === SecurityLevel.CRITICAL || level === SecurityLevel.HIGH
+  return DOCUMENT_AUTH_SECURITY_LEVELS.includes(level)
 }
 
 export function isPurposeAllowedForLogin(purpose: number): boolean {

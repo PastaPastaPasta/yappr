@@ -4,7 +4,7 @@ import { isInsufficientTokenError } from '@/lib/error-utils'
 /**
  * Which signing path the Buy-YAPP modal takes once an amount is confirmed.
  * - 'local': sign with the stored login key, falling back to asking for a
- *   CRITICAL key when the login key is HIGH.
+ *   CRITICAL key when the login key is MEDIUM or HIGH.
  * - 'wallet': go straight to the dash-st: QR for a remote wallet to sign.
  *   Used right after a wallet (key-exchange) login: the wallet that just
  *   approved the login holds the CRITICAL key, and asking the user to paste

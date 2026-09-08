@@ -1,5 +1,6 @@
 {
   "vault": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "requiresIdentityEncryptionBoundedKey": 2,
     "indices": [

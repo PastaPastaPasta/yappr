@@ -1,7 +1,7 @@
 import * as secp256k1 from '@noble/secp256k1'
 import { hash160 } from './hash'
 import { wifToPrivateKey, validateWifNetwork } from './wif'
-import { KeyType, resolveKeyPurpose, resolveKeyType, resolveSecurityLevel } from './identity-keys'
+import { KeyPurpose, SecurityLevel, KeyType, resolveKeyPurpose, resolveKeyType, resolveSecurityLevel } from './identity-keys'
 import { bytesEqual, normalizeBytes } from '@/lib/bytes'
 
 export interface IdentityPublicKeyInfo {
@@ -162,4 +162,21 @@ export function matchIdentityKey<K extends IdentityKeyLike>(
     return { ok: false, reason: 'no-match' }
   }
   return { ok: true, key: found.key, match }
+}
+
+/**
+ * Fallback DM key when the peer has not published a conversation invite.
+ * Preserve the legacy HIGH-key preference; new MEDIUM-only identities also work.
+ * An invite's senderPubKey remains authoritative when several login keys exist.
+ */
+export function findDMPublicKey(keys: readonly IdentityKeyLike[]): Uint8Array | null {
+  const enabled = keys.filter((key) => !key.disabledAt).map(toKeyInfo)
+  for (const level of [SecurityLevel.HIGH, SecurityLevel.MEDIUM, SecurityLevel.CRITICAL]) {
+    const key = enabled.find((info) => info &&
+      info.purpose === KeyPurpose.AUTHENTICATION &&
+      info.type === KeyType.ECDSA_SECP256K1 &&
+      info.securityLevel === level && info.data.length === 33)
+    if (key) return key.data
+  }
+  return null
 }

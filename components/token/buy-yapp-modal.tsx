@@ -58,7 +58,7 @@ const WALLET_SIGN_TIMEOUT_MS = 300000
 export function BuyYappModal() {
   const { isOpen, reason, signing, close } = useBuyYappModal()
   // Opened for a wallet-login user: skip local signing (their login key is
-  // HIGH and can't spend) and the paste-a-CRITICAL-key screen, and go straight
+  // MEDIUM and can't spend) and the paste-a-CRITICAL-key screen, and go straight
   // to the dash-st: QR the wallet that just logged them in can approve.
   const preferWallet = signing === 'wallet'
   const { user, refreshBalance } = useAuth()
@@ -71,7 +71,7 @@ export function BuyYappModal() {
   const [pricePerToken, setPricePerToken] = useState<bigint | null>(null)
   const [loading, setLoading] = useState(false)
   const [showCosts, setShowCosts] = useState(false)
-  // CRITICAL key the user pastes when their login key is HIGH — kept in
+  // CRITICAL key the user pastes when their login key is MEDIUM or HIGH — kept in
   // component state only for the purchase, never persisted.
   const [criticalKeyWif, setCriticalKeyWif] = useState('')
   const [showKeyEntry, setShowKeyEntry] = useState(false)
@@ -164,7 +164,7 @@ export function BuyYappModal() {
       tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
       finishPurchase()
     } else if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
-      // Login key is HIGH but purchases must be signed with CRITICAL — ask for
+      // Login key is MEDIUM or HIGH but purchases must be signed with CRITICAL — ask for
       // it. If a key was already entered, it didn't match a CRITICAL key.
       setError(enteredKey ? 'That key doesn\'t match a critical key on your identity. Check it and try again.' : null)
       setShowKeyEntry(Boolean(enteredKey))

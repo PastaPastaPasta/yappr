@@ -1,5 +1,6 @@
 {
   "store": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "indices": [
       {
@@ -86,6 +87,7 @@
     "additionalProperties": false
   },
   "storeItem": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "indices": [
       {
@@ -243,6 +245,7 @@
     "additionalProperties": false
   },
   "shippingZone": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "indices": [
       {
@@ -340,6 +343,7 @@
     "additionalProperties": false
   },
   "storeOrder": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "indices": [
       {
@@ -424,6 +428,7 @@
     "additionalProperties": false
   },
   "orderStatusUpdate": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "indices": [
       {
@@ -494,6 +499,7 @@
     "additionalProperties": false
   },
   "storeReview": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "indices": [
       {
@@ -599,6 +605,7 @@
     "additionalProperties": false
   },
   "savedAddress": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "indices": [
       {

@@ -1,5 +1,6 @@
 {
   "profile": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "description": "User profile with unified identity, avatar, payment addresses, and social links",
     "indices": [

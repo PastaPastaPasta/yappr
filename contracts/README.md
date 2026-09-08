@@ -1,9 +1,31 @@
 # Yappr Data Contracts
 
-Dash Platform data contracts used by the Yappr dapp. The JSON here is the
-source of record for what was registered; deployed contract ids live in
+Dash Platform data contracts used by the Yappr dapp. These JSON files are
+templates for fresh registration; deployed contract ids live in
 `lib/constants.ts` (testnet defaults) and the `.env.*` files (per-deployment
 overrides).
+
+## Authentication keys
+
+Every document type in these templates explicitly permits MEDIUM authentication
+keys (`signatureSecurityLevelRequirement: 3`), including writes with YAPP fees.
+HIGH and CRITICAL authentication keys remain usable. The clone-based feature
+and test registration scripts apply the same setting to all fetched schemas,
+including types that are absent from older local snapshots.
+
+This setting is for the upcoming fresh deployment. Existing contract IDs retain
+their original requirements; Platform does not allow changing a document type's
+security level in place. The deployment tables below describe existing instances.
+
+Wallet key registration (`dash-st:`) now adds a MEDIUM authentication key and a
+MEDIUM encryption key. The initial `dash-key:` exchange only requests the login
+secret; its v1 format has no security-level field. Existing registered HIGH or
+CRITICAL login keys continue working.
+
+DPNS registration still requires HIGH or CRITICAL authentication. Explicit token
+operations (including buying YAPP) require CRITICAL, credit tips use TRANSFER,
+and identity updates require MASTER. These are Platform requirements, independent
+of the application document schemas.
 
 ## Social contract
 
