@@ -39,6 +39,10 @@ export function useCryptoPrice(
   }, [])
 
   useEffect(() => {
+    // Read once per run; a refetch requested while inputs were invalid must not carry over.
+    const skipCache = skipCacheRef.current
+    skipCacheRef.current = false
+
     // Reset state if inputs are invalid
     if (!fiatAmount || !fiatCurrency || !scheme || fiatAmount <= 0) {
       setCryptoAmount(null)
@@ -60,9 +64,6 @@ export function useCryptoPrice(
     }
 
     let cancelled = false
-
-    const skipCache = skipCacheRef.current
-    skipCacheRef.current = false
 
     const fetchPrice = async () => {
       setIsLoading(true)

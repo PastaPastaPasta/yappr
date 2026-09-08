@@ -601,9 +601,6 @@ class DirectMessageService {
     }
   }
 
-  /**
-   * Get my invite to a recipient
-   */
   /** The sender's invite to the recipient; `null` when there is none, `undefined` when the lookup failed. */
   private async getMyInviteToRecipient(
     senderId: string,
