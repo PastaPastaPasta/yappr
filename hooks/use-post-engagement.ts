@@ -4,12 +4,12 @@ import { useCallback, useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 import { logger } from '@/lib/logger'
 import type { Post } from '@/lib/types'
-import type { TargetKind } from '@/lib/contract-topology'
+import { canBookmark, canRepost, type TargetKind } from '@/lib/contract-topology'
 import { categorizeError, isFrozenBalanceError } from '@/lib/error-utils'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { isUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 
-interface Initial {
+export interface EngagementSnapshot {
   liked: boolean
   likes: number
   reposted: boolean
@@ -17,10 +17,10 @@ interface Initial {
   bookmarked: boolean
 }
 
-interface EngagementOptions {
-  targetKind: TargetKind
-  repostable: boolean
-  bookmarkable: boolean
+/** Frozen accounts cannot spend at all, so say that instead of offering YAPP. */
+function reportSpendError(error: unknown, buyReason: string, fallback: string) {
+  if (isFrozenBalanceError(error)) toast.error(categorizeError(error))
+  else if (!handleInsufficientYapp(error, buyReason)) toast.error(fallback)
 }
 
 /**
@@ -29,8 +29,10 @@ interface EngagementOptions {
  * consensus-checked, so a post this session created but never saw confirmed
  * is settled first; the check is a no-op off the DAPI-timeout path.
  */
-export function usePostEngagement(post: Post, viewerId: string | undefined, initial: Initial, options: EngagementOptions) {
-  const { targetKind, repostable, bookmarkable } = options
+export function usePostEngagement(post: Post, viewerId: string | undefined, initial: EngagementSnapshot, targetKind: TargetKind) {
+  // The v3 topology forbids reposting or bookmarking a reply at all.
+  const repostable = canRepost(targetKind)
+  const bookmarkable = canBookmark(targetKind)
   const [liked, setLiked] = useState(initial.liked)
   const [likes, setLikes] = useState(initial.likes)
   const [reposted, setReposted] = useState(initial.reposted)
@@ -54,12 +56,6 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       throw new Error('This post has not confirmed yet. Try again in a moment.')
     }
   }, [post.id])
-
-  /** Frozen accounts cannot spend at all, so say that instead of offering YAPP. */
-  const reportSpendError = (error: unknown, buyReason: string, fallback: string) => {
-    if (isFrozenBalanceError(error)) toast.error(categorizeError(error))
-    else if (!handleInsufficientYapp(error, buyReason)) toast.error(fallback)
-  }
 
   const toggleLike = useCallback(async () => {
     if (!viewerId || likeLoading) return
@@ -135,6 +131,8 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   }, [viewerId, bookmarkable, bookmarkLoading, bookmarked, settle, post.id])
 
   return {
+    repostable,
+    bookmarkable,
     liked,
     likes,
     reposted,

@@ -14,8 +14,8 @@ import {
   PencilSquareIcon,
 } from '@heroicons/react/24/outline'
 import { HeartIcon as HeartIconSolid, BookmarkIcon as BookmarkIconSolid } from '@heroicons/react/24/solid'
-import { formatNumber } from '@/lib/utils'
-import { cn } from '@/lib/utils'
+import { cn, formatNumber } from '@/lib/utils'
+import { stopPropagation } from '@/lib/utils/events'
 import { logger } from '@/lib/logger'
 
 function ActionTooltip({ label, children }: { label: string; children: ReactNode }) {
@@ -37,30 +37,31 @@ interface PostActionBarProps {
   postId: string
   isOwnPost: boolean
   reply: { count: number; enabled: boolean; reason?: string | null; onClick: () => void }
+  /** `allowed` false hides the Repost item; the control still shows the count and Quote. */
   repost: { count: number; active: boolean; loading: boolean; allowed: boolean; onClick: () => void }
-  quote: { onClick: () => void }
   like: { count: number; active: boolean; loading: boolean; onClick: () => void }
-  tip: { onClick: () => void }
   /** Absent where the topology has no bookmark doctype for this kind. */
   bookmark?: { active: boolean; loading: boolean; onClick: () => void }
-  share: { onClick: () => void }
+  onQuote: () => void
+  onTip: () => void
+  onShare: () => void
 }
 
-const stop = (e: React.MouseEvent) => e.stopPropagation()
-const run = (e: React.MouseEvent, action: () => void | Promise<void>) => {
+/** Stop the card click, then run the action; async failures are logged. */
+export function stopAndRun(e: React.MouseEvent, action: () => void | Promise<void>) {
   e.stopPropagation()
   Promise.resolve(action()).catch((error) => logger.error(error))
 }
 
 /** The reply / repost / like / tip / bookmark / share row under a post. */
-export function PostActionBar({ postId, isOwnPost, reply, repost, quote, like, tip, bookmark, share }: PostActionBarProps) {
+export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark, onQuote, onTip, onShare }: PostActionBarProps) {
   return (
     <div className="flex items-center justify-between mt-1 -ml-2 max-w-[485px]">
       <Tooltip.Provider>
         <ActionTooltip label={reply.reason || 'Reply'}>
           <button
             data-testid={`reply-btn-${postId}`}
-            onClick={(e) => run(e, reply.onClick)}
+            onClick={(e) => stopAndRun(e, reply.onClick)}
             disabled={!reply.enabled}
             className={cn('group flex items-center gap-1 p-2 rounded-full transition-colors', reply.enabled ? 'hover:bg-yappr-50 dark:hover:bg-yappr-950' : 'opacity-50 cursor-not-allowed')}
           >
@@ -75,7 +76,7 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, quote, like, t
           <DropdownMenu.Trigger asChild>
             <button
               data-testid={`repost-menu-btn-${postId}`}
-              onClick={stop}
+              onClick={stopPropagation}
               disabled={repost.loading}
               className={cn(
                 'group flex items-center gap-1 p-2 rounded-full transition-colors hover:bg-green-50 dark:hover:bg-green-950',
@@ -93,16 +94,16 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, quote, like, t
             <DropdownMenu.Content
               className="min-w-[160px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
               sideOffset={5}
-              onClick={stop}
+              onClick={stopPropagation}
             >
               {/* Reposting a reply has no doctype on v3, so the item is absent rather than failing. */}
               {repost.allowed && (
-                <DropdownMenu.Item onClick={(e) => run(e, repost.onClick)} className={MENU_ITEM}>
+                <DropdownMenu.Item onClick={(e) => stopAndRun(e, repost.onClick)} className={MENU_ITEM}>
                   <ArrowPathIcon className={cn('h-5 w-5', repost.active && 'text-green-500')} />
                   {repost.active ? 'Undo Repost' : 'Repost'}
                 </DropdownMenu.Item>
               )}
-              <DropdownMenu.Item onClick={(e) => run(e, quote.onClick)} className={MENU_ITEM}>
+              <DropdownMenu.Item onClick={(e) => stopAndRun(e, onQuote)} className={MENU_ITEM}>
                 <PencilSquareIcon className="h-5 w-5" />
                 Quote
               </DropdownMenu.Item>
@@ -114,7 +115,7 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, quote, like, t
           <button
             data-testid={`like-btn-${postId}`}
             aria-pressed={like.active}
-            onClick={(e) => run(e, like.onClick)}
+            onClick={(e) => stopAndRun(e, like.onClick)}
             disabled={like.loading}
             className={cn(
               'group flex items-center gap-1 p-2 rounded-full transition-colors hover:bg-red-50 dark:hover:bg-red-950',
@@ -133,10 +134,7 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, quote, like, t
 
         <ActionTooltip label={isOwnPost ? "Can't tip yourself" : 'Tip'}>
           <button
-            onClick={(e) => {
-              e.stopPropagation()
-              if (!isOwnPost) tip.onClick()
-            }}
+            onClick={(e) => stopAndRun(e, onTip)}
             disabled={isOwnPost}
             className={cn('group flex items-center gap-1 p-2 rounded-full transition-colors', isOwnPost ? 'opacity-40 cursor-not-allowed' : 'hover:bg-amber-50 dark:hover:bg-amber-950')}
           >
@@ -149,7 +147,7 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, quote, like, t
             <ActionTooltip label="Bookmark">
               <button
                 data-testid={`bookmark-btn-${postId}`}
-                onClick={(e) => run(e, bookmark.onClick)}
+                onClick={(e) => stopAndRun(e, bookmark.onClick)}
                 disabled={bookmark.loading}
                 className={cn('p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors', bookmark.loading && 'opacity-50 cursor-wait')}
               >
@@ -158,7 +156,7 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, quote, like, t
             </ActionTooltip>
           )}
           <ActionTooltip label="Share">
-            <button onClick={(e) => run(e, share.onClick)} className="p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors">
+            <button onClick={(e) => stopAndRun(e, onShare)} className="p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors">
               <ArrowUpTrayIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
             </button>
           </ActionTooltip>

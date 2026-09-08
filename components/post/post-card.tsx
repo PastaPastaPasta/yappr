@@ -1,6 +1,5 @@
 'use client'
 
-import { logger } from '@/lib/logger'
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -27,7 +26,8 @@ import { usePostEngagement } from '@/hooks/use-post-engagement'
 import { tipService } from '@/lib/services/tip-service'
 import { shouldGateSensitive } from '@/lib/sensitive-content'
 import { findPollrPollLink, getEmbeddedPollId, stripPollrPollLink } from '@/lib/poll-embed'
-import { canBookmark, canRepost, deletesAreTombstones, targetKindOf } from '@/lib/contract-topology'
+import { deletesAreTombstones, targetKindOf } from '@/lib/contract-topology'
+import { stopPropagation } from '@/lib/utils/events'
 import { IconButton } from '@/components/ui/icon-button'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { TooltipBadge } from '@/components/ui/tooltip-button'
@@ -40,13 +40,12 @@ import { PrivatePostContent, isPrivatePost } from './private-post-content'
 import { SensitiveContentGate } from './sensitive-content-gate'
 import { EmbeddedPostCard, EmbeddedPostSkeleton, EmbeddedPostUnavailable } from './embedded-post-card'
 import { GatedPostMedia } from './gated-media'
-import { PostActionBar } from './post-action-bar'
-import { PostAuthorLine, hasRealProfile, resolveUsernameState } from './post-author-line'
+import { PostActionBar, stopAndRun } from './post-action-bar'
+import { PostAuthorLine, hasRealProfile, resolveUsernameState, type UsernameState } from './post-author-line'
 
 /** What progressive loading has resolved so far for a card. */
 export interface ProgressiveEnrichment {
-  /** `undefined` while loading, `null` for an author with no DPNS name. */
-  username: string | null | undefined
+  username: UsernameState
   displayName: string | undefined
   /** True once the profile lookup completed, even when no profile exists. Omitted = already resolved. */
   profileLoaded?: boolean
@@ -85,8 +84,7 @@ function parentHandleOf(parent: Post): string {
   return hasRealProfile(displayName, id) ? displayName : `${id.slice(0, 8)}...`
 }
 
-const MENU_ITEM = 'px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none'
-const mediaGridCols = (count: number) => (count === 1 ? 'grid-cols-1' : 'grid-cols-2')
+const CARD_MENU_ITEM = 'px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none'
 
 export function PostCard({
   post,
@@ -110,8 +108,6 @@ export function PostCard({
   // forbids reposting or bookmarking a reply at all.
   const targetKind = targetKindOf(post)
   const isReply = targetKind === 'reply'
-  const repostable = canRepost(targetKind)
-  const bookmarkable = canBookmark(targetKind)
   // On v3 posts are permanent: "delete" blanks the document and flags it.
   const tombstones = deletesAreTombstones()
   const [locallyTombstoned, setLocallyTombstoned] = useState(false)
@@ -124,12 +120,10 @@ export function PostCard({
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const gateSensitive = !isTombstoned && shouldGateSensitive(post, sensitiveContentMode)
 
-  // Display values: progressive enrichment, then post data, then placeholder.
   const legacyEnrichment = post._enrichment
   const displayName = progressiveEnrichment?.displayName ?? post.author.displayName
   const avatarUrl = progressiveEnrichment?.avatarUrl ?? legacyEnrichment?.authorAvatarUrl ?? post.author.avatar
   const usernameState = resolveUsernameState(progressiveEnrichment?.username, post.author)
-  const hasProfile = hasRealProfile(displayName, post.author.id)
   // Callers that pass no progressive enrichment resolved the author before render.
   const profileLoaded = progressiveEnrichment?.profileLoaded ?? true
 
@@ -138,6 +132,7 @@ export function PostCard({
     reposts: progressiveEnrichment?.stats?.reposts ?? post.reposts,
     replies: progressiveEnrichment?.stats?.replies ?? post.replies,
     quotes: progressiveEnrichment?.stats?.quotes ?? post.quotes,
+    views: progressiveEnrichment?.stats?.views ?? post.views,
   }
   const engagement = usePostEngagement(
     post,
@@ -149,8 +144,9 @@ export function PostCard({
       reposts: stats.reposts,
       bookmarked: progressiveEnrichment?.interactions?.bookmarked ?? post.bookmarked ?? false,
     },
-    { targetKind, repostable, bookmarkable }
+    targetKind
   )
+  const { repostable, bookmarkable } = engagement
   // The repost control shows reposts plus quote-posts; where the topology
   // forbids reposting this kind there is no repost doctype to have counted.
   const totalReposts = (repostable ? engagement.reposts : 0) + stats.quotes
@@ -216,13 +212,16 @@ export function PostCard({
       setShowLikesModal(true)
       return
     }
-    if (requireAuth()) return engagement.toggleLike()
+    if (!requireAuth()) return
+    return engagement.toggleLike()
   }
   const handleRepost = () => {
-    if (requireAuth()) return engagement.toggleRepost()
+    if (!requireAuth()) return
+    return engagement.toggleRepost()
   }
   const handleBookmark = () => {
-    if (requireAuth()) return engagement.toggleBookmark()
+    if (!requireAuth()) return
+    return engagement.toggleBookmark()
   }
   const handleQuote = () => {
     if (!requireAuth()) return
@@ -240,7 +239,8 @@ export function PostCard({
   }
   const handleShare = () => copy(`${window.location.origin}/post?id=${post.id}`, 'Link copied to clipboard')
   const handleTip = () => {
-    if (requireAuth()) openTipModal(enrichedPost)
+    if (!requireAuth()) return
+    openTipModal(enrichedPost)
   }
 
   const handleDelete = () => {
@@ -272,7 +272,7 @@ export function PostCard({
       displayName,
       profileLoaded,
       avatarUrl,
-      stats: progressiveEnrichment?.stats ?? { ...stats, views: post.views },
+      stats: progressiveEnrichment?.stats ?? stats,
       interactions: progressiveEnrichment?.interactions ?? { liked: engagement.liked, reposted: engagement.reposted, bookmarked: engagement.bookmarked },
       isBlocked: progressiveEnrichment?.isBlocked ?? isBlocked,
       isFollowing: authorIsFollowing,
@@ -291,7 +291,7 @@ export function PostCard({
       className="border-b border-gray-200 dark:border-gray-800 px-4 pt-3 pb-1 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer"
     >
       {post.repostedBy && (
-        <Link href={`/user?id=${post.repostedBy.id}`} onClick={(e) => e.stopPropagation()} className="flex items-center gap-2 text-sm text-gray-500 mb-2 ml-9 hover:underline">
+        <Link href={`/user?id=${post.repostedBy.id}`} onClick={stopPropagation} className="flex items-center gap-2 text-sm text-gray-500 mb-2 ml-9 hover:underline">
           <ArrowPathIcon className="h-4 w-4" />
           <span>{post.repostedBy.username ? `@${post.repostedBy.username}` : post.repostedBy.displayName || 'Someone'} reposted</span>
         </Link>
@@ -299,7 +299,7 @@ export function PostCard({
       <div className="flex gap-3">
         {!hideAvatar && (
           <ProfileHoverCard userId={post.author.id} username={usernameState} displayName={displayName} avatarUrl={avatarUrl}>
-            <Link href={`/user?id=${post.author.id}`} onClick={(e) => e.stopPropagation()} className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 block flex-shrink-0">
+            <Link href={`/user?id=${post.author.id}`} onClick={stopPropagation} className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 block flex-shrink-0">
               <UserAvatar userId={post.author.id} size="lg" alt={displayName} preloadedUrl={avatarUrl || undefined} />
             </Link>
           </ProfileHoverCard>
@@ -314,7 +314,6 @@ export function PostCard({
                   usernameState={usernameState}
                   displayName={displayName}
                   avatarUrl={avatarUrl}
-                  hasProfile={hasProfile}
                   profileLoaded={profileLoaded}
                 />
               )}
@@ -331,20 +330,13 @@ export function PostCard({
               )}
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
-                  <IconButton data-testid={`more-btn-${post.id}`} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+                  <IconButton data-testid={`more-btn-${post.id}`} onClick={stopPropagation}>
                     <EllipsisHorizontalIcon className="h-5 w-5" />
                   </IconButton>
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50" sideOffset={5}>
-                    <DropdownMenu.Item
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        toggleFollow().catch((error) => logger.error(error))
-                      }}
-                      disabled={followLoading}
-                      className={cn(MENU_ITEM, 'disabled:opacity-50')}
-                    >
+                    <DropdownMenu.Item onClick={(e) => stopAndRun(e, toggleFollow)} disabled={followLoading} className={cn(CARD_MENU_ITEM, 'disabled:opacity-50')}>
                       {isFollowing ? 'Unfollow' : 'Follow'} {authorLabel}
                     </DropdownMenu.Item>
                     <DropdownMenu.Item
@@ -353,7 +345,7 @@ export function PostCard({
                         // The engagements page needs the kind to know which doctypes to read.
                         router.push(`/post/engagements?id=${post.id}&kind=${targetKind}`)
                       }}
-                      className={MENU_ITEM}
+                      className={CARD_MENU_ITEM}
                     >
                       View post engagements
                     </DropdownMenu.Item>
@@ -363,20 +355,13 @@ export function PostCard({
                           e.stopPropagation()
                           handleDelete()
                         }}
-                        className={cn(MENU_ITEM, 'flex items-center gap-2 text-red-500')}
+                        className={cn(CARD_MENU_ITEM, 'flex items-center gap-2 text-red-500')}
                       >
                         <TrashIcon className="h-4 w-4" />
                         Delete {isReply ? 'reply' : 'post'}
                       </DropdownMenu.Item>
                     )}
-                    <DropdownMenu.Item
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        toggleBlock().catch((error) => logger.error(error))
-                      }}
-                      disabled={blockLoading}
-                      className={cn(MENU_ITEM, 'text-red-500 disabled:opacity-50')}
-                    >
+                    <DropdownMenu.Item onClick={(e) => stopAndRun(e, toggleBlock)} disabled={blockLoading} className={cn(CARD_MENU_ITEM, 'text-red-500 disabled:opacity-50')}>
                       {isBlocked ? 'Unblock' : 'Block'} {authorLabel}
                     </DropdownMenu.Item>
                   </DropdownMenu.Content>
@@ -391,7 +376,7 @@ export function PostCard({
             ) : tipInfo ? (
               <div className="mt-2">
                 {/* TODO: drop the tooltip once the SDK exposes transition ids for on-chain verification. */}
-                <TooltipBadge label="Unverified - awaiting SDK support" className="gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-sm font-medium">
+                <TooltipBadge label="Unverified - awaiting SDK support" className="gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-sm font-medium mb-2 cursor-help">
                   <CurrencyDollarIcon className="h-4 w-4" />
                   <span>Sent a tip of {tipService.formatDash(tipService.creditsToDash(tipInfo.amount))}</span>
                 </TooltipBadge>
@@ -427,7 +412,7 @@ export function PostCard({
             {!isTombstoned && quotedPost && (isEmbeddedBlogPostLike(quotedPost) ? <EmbeddedBlogPostCard post={quotedPost} /> : <EmbeddedPostCard post={quotedPost} />)}
 
             {!isTombstoned && post.media && post.media.length > 0 && (
-              <div className={cn('mt-3 grid gap-1 rounded-xl overflow-hidden', mediaGridCols(post.media.length))}>
+              <div className={cn('mt-3 grid gap-1 rounded-xl overflow-hidden', post.media.length === 1 ? 'grid-cols-1' : 'grid-cols-2')}>
                 {post.media.map((media, index) => (
                   <div key={media.id} className={cn('relative aspect-video bg-gray-100 dark:bg-gray-900', post.media?.length === 3 && index === 0 && 'row-span-2')}>
                     <GatedPostMedia media={media} gate={mediaGate} />
@@ -454,11 +439,11 @@ export function PostCard({
             isOwnPost={isOwnPost}
             reply={{ count: stats.replies, enabled: canReplyToPrivate, reason: cantReplyReason, onClick: handleReply }}
             repost={{ count: totalReposts, active: engagement.reposted, loading: engagement.repostLoading, allowed: repostable, onClick: handleRepost }}
-            quote={{ onClick: handleQuote }}
             like={{ count: engagement.likes, active: engagement.liked, loading: engagement.likeLoading, onClick: handleLike }}
-            tip={{ onClick: handleTip }}
             bookmark={bookmarkable ? { active: engagement.bookmarked, loading: engagement.bookmarkLoading, onClick: handleBookmark } : undefined}
-            share={{ onClick: handleShare }}
+            onQuote={handleQuote}
+            onTip={handleTip}
+            onShare={handleShare}
           />
         </div>
       </div>
