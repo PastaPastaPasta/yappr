@@ -73,7 +73,7 @@ function loadPendingSTBytes(documentId: string): Uint8Array | null {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
 
-    // Support both legacy (plain base64) and new (JSON with timestamp) formats
+    // Entries are JSON with a timestamp; plain base64 is an older shape still read.
     let base64: string;
     try {
       const parsed = JSON.parse(raw) as CachedSTEntry;
@@ -136,7 +136,7 @@ function cleanupOldPendingSTs(): void {
         cachedAt = 0;
       }
 
-      // Evict entries older than 24h (or legacy entries without timestamp)
+      // Evict entries older than 24h; an entry without a timestamp is older still.
       if (cachedAt === 0 || now - cachedAt > ST_CACHE_MAX_AGE_MS) {
         keysToRemove.push(key);
         continue;
@@ -395,7 +395,6 @@ class StateTransitionService {
         logger.debug(`Rebroadcasting cached ST for ${documentId}...`);
         try {
           const cachedST = StateTransition.fromBytes(cachedBytes);
-          // v3.1: Use StateTransitionsFacade instead of direct wasm access
           await sdk.stateTransitions.broadcastStateTransition(cachedST);
           const result = await sdk.stateTransitions.waitForResponse(cachedST);
           logger.debug(`Rebroadcast succeeded for ${documentId}`, result);
@@ -445,7 +444,6 @@ class StateTransitionService {
       // DIP-30: nonce is u64 where lower 40 bits = sequence number,
       // upper 24 bits = missing revision bitset. Only increment the sequence part.
       const SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1); // 0xFFFFFFFFFF
-      // v3.1: getIdentityContractNonce returns bigint | undefined (was bigint | null)
       const currentNonce = await wasm.getIdentityContractNonce(ownerId, contractId);
       const rawNonce = currentNonce ?? BigInt(0);
       const sequenceNumber = rawNonce & SEQUENCE_MASK;
@@ -468,7 +466,6 @@ class StateTransitionService {
         logger.debug(`Attaching tokenPaymentInfo for ${documentType}: maxCost=${effectivePayment.maximumTokenCost}`);
       }
 
-      // v3.1: DocumentCreateTransition takes an options object
       const createTransition = new DocumentCreateTransition({
         document,
         identityContractNonce: newNonce,
@@ -509,7 +506,6 @@ class StateTransitionService {
         logger.debug(`Cached ${stBytes.byteLength ?? stBytes.length} ST bytes for ${documentId}`);
       }
 
-      // Broadcast via StateTransitionsFacade (v3.1)
       try {
         await sdk.stateTransitions.broadcastStateTransition(stateTransition);
         logger.debug('Broadcast succeeded, waiting for confirmation...');
@@ -525,8 +521,7 @@ class StateTransitionService {
         throw broadcastErr;
       }
 
-      // Wait for confirmation via StateTransitionsFacade (v3.1)
-      // SDK v3.1 returns typed StateTransitionProofResultType and auto-retries on deadline exceeded.
+      // The SDK auto-retries the wait on deadline exceeded.
       // indexOnly transitions never resolve as ExecutionProved — their proof is an
       // affected-state snapshot — so affectedState mode waits with the method
       // that accepts that outcome instead of failing a write that landed.

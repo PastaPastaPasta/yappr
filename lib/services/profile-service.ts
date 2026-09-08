@@ -72,7 +72,6 @@ class ProfileService extends BaseDocumentService<User> {
 
       logger.debug(`${this.documentType} query result:`, response);
 
-      // Handle Map response (v3 SDK)
       if (response instanceof Map) {
         const documents: User[] = [];
         const entries = Array.from(response.values());
@@ -89,7 +88,6 @@ class ProfileService extends BaseDocumentService<User> {
         };
       }
 
-      // Fallback: handle legacy response formats
       let result: Record<string, unknown> | unknown[] = response as Record<string, unknown>;
 
       // Handle different response formats
@@ -453,7 +451,6 @@ class ProfileService extends BaseDocumentService<User> {
         limit: 100
       });
 
-      // Handle Map response (v3 SDK)
       if (response instanceof Map) {
         const documents = Array.from(response.values())
           .filter(Boolean)

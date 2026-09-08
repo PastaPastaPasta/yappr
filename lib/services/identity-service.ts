@@ -108,8 +108,7 @@ class IdentityService {
       logger.debug('Raw identity response:', safeStringify(identity));
       logger.debug('Public keys from identity:', identity.publicKeys);
 
-      // Normalize public keys to ensure all fields are present
-      // v3.1: SDK consistently returns camelCase — snake_case fallbacks removed
+      // Normalize public keys so every field is present
       const rawPublicKeys = identity.publicKeys || [];
       const normalizedPublicKeys: IdentityPublicKey[] = rawPublicKeys.map((key: IdentityPublicKey) => ({
         id: key.id,
@@ -150,7 +149,6 @@ class IdentityService {
 
       const sdk = await getEvoSdk();
 
-      // Fetch balance using EvoSDK facade (v3.1 SDK returns bigint | undefined)
       logger.debug(`Fetching balance for: ${identityId}`);
       const balanceResponse = await sdk.identities.balance(identityId);
 
@@ -334,7 +332,6 @@ class IdentityService {
       logger.debug(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1`);
       logger.debug(`Public key bytes length: ${publicKeyBytes.length}`);
 
-      // v3.1: IdentityPublicKeyInCreation takes an options object.
       // dev.8 narrowed PurposeLike/SecurityLevelLike/KeyTypeLike to require
       // lowercase string variants (or numeric enum values).
       const newKey = new IdentityPublicKeyInCreation({

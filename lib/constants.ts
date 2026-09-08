@@ -32,14 +32,12 @@ export const YAPPR_PROFILE_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_PROFILE_C
 // preload and every isConfigured() gate treat an empty id as "not available",
 // which fails closed instead of querying an id that does not exist on-chain.
 export const YAPPR_DM_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID ?? 'J7MP9YU1aEGNAe7bjB45XdrjDLBsevFLPK1t1YwFS4ck' // Testnet - DM contract v3 (simplified readReceipt)
-// YAPPR_BLOCK_CONTRACT_ID removed - block, blockFilter, blockFollow document types now in YAPPR_CONTRACT_ID
 // DPNS is a system contract, so its id is normally identical on every chain.
 // Overridable all the same: a freshly genesised devnet can be brought up with a
 // different DPNS registration, and `/devnet` must not preload a missing id.
 export const DPNS_CONTRACT_ID = process.env.NEXT_PUBLIC_DPNS_CONTRACT_ID || 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec'
 export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID ?? '2AUBj86MGTsXP7A3ekD62YoTeDwtJe5b9MxwkWwdg6Ba' // Testnet - Storefront contract v2 (with savedAddress)
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
-// HASHTAG_CONTRACT_ID and MENTION_CONTRACT_ID removed - these document types are now in YAPPR_CONTRACT_ID
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID ?? '7UaqHGBJBbRLJ4fUWS45cnud8PPUugJWoGTt1SKwHJ2P' // Key exchange protocol contract
 export const YAPPR_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_VAULT_CONTRACT_ID ?? '7RQoHtVZaRZDSrR22s8KcbCJmwSwetJHBcFjx6FJdkJD' // Testnet - Vault contract (contract-bound encryption keys + encrypted storage)
@@ -190,15 +188,8 @@ export const INSIGHT_API_CONFIG = {
   timeoutMs: 120000
 } as const
 
-// Document types
-// Note: AVATAR, DIRECT_MESSAGE, NOTIFICATION were removed in contract migration
-// - avatar: now in unified profile contract
-// - directMessage: uses separate DM contract v3
-// - notification: derived from other document types
-// Also removed, as never-implemented, when the v2 contract was cut (80ae9780):
-// - list / listMember: no list feature ever shipped
-// - mute: `block` covers the use case, so mute was dropped by design
-// (`repost` is still a real v2 doctype — see lib/services/repost-service.ts.)
+// Document types of the social contract. Avatars live on the profile document,
+// direct messages on the DM contract, and notifications are derived client-side.
 export const DOCUMENT_TYPES = {
   PROFILE: 'profile',
   POST: 'post',

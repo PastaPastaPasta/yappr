@@ -128,7 +128,7 @@ export function KeyBackupSettings() {
             }
           }
 
-          // Check legacy vault contract next
+          // Then the older vault contract.
           if (!foundBackup && vaultConfigured) {
             const hasVaultBackup = await vaultService.hasPasswordBackup(user.identityId)
             if (runId !== latestRunIdRef.current) return
