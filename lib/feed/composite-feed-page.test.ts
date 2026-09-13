@@ -52,6 +52,7 @@ describe('composite feed page', () => {
     const page = await loadCompositeFeedPage({ language: 'en', limit: 20 });
     expect(page?.preloaded.usernames?.size).toBe(4);
     expect(page?.preloaded.usernames?.get(ownerIds[3])).toBe('name3.dash');
+    expect(page?.posts[0].hashtag).toBe('');
     const query = mocks.composite.mock.calls[0][0];
     expect(query.subQueries).toHaveLength(8);
     expect(query.subQueries[6].limit).toBe(100);

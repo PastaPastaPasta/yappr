@@ -1,4 +1,10 @@
 import { logger } from '@/lib/logger';
+import type {
+  CompositeBind,
+  CompositeDocumentsQuery,
+  CompositeDocumentsResult,
+  CompositeSubQuery,
+} from '@dashevo/wasm-sdk';
 import {
   DPNS_CONTRACT_ID,
   DPNS_DOCUMENT_TYPE,
@@ -38,49 +44,6 @@ import { transformRawPost } from './transform-raw-post';
  * need separate lookups; this is not a fixed total request count for the UI.
  */
 
-// ---- Wire types (mirror wasm-sdk's `CompositeDocumentsQuery` / `Result`) ----
-
-type WhereClause = [string, string, unknown];
-type OrderByClause = [string, 'asc' | 'desc'];
-
-interface CompositeBind {
-  source?: 'page' | number;
-  sourceProperty: string;
-  field: string;
-}
-
-interface CompositeSubQuery {
-  dataContractId?: string;
-  documentType: string;
-  kind?: 'documents' | 'counts';
-  where?: WhereClause[];
-  orderBy?: OrderByClause[];
-  limit?: number;
-  bind?: CompositeBind;
-}
-
-interface CompositeDocumentsQuery {
-  dataContractId: string;
-  documentType: string;
-  where?: WhereClause[];
-  orderBy?: OrderByClause[];
-  limit: number;
-  subQueries: CompositeSubQuery[];
-}
-
-type CompositeSubResult =
-  | { kind: 'documents'; documents: unknown[] }
-  | { kind: 'counts'; counts: Map<string, bigint> };
-
-interface CompositeDocumentsResult {
-  pageDocuments: unknown[];
-  subResults: CompositeSubResult[];
-}
-
-interface CompositeDocumentsFacade {
-  composite(query: CompositeDocumentsQuery): Promise<CompositeDocumentsResult>;
-}
-
 // ---- Query limits ----
 
 /** At most this many sub-queries per request (the platform's `MAX_SUB_QUERIES`). */
@@ -115,14 +78,35 @@ export async function loadCompositeFeedPage(
   options: CompositeFeedPageOptions
 ): Promise<CompositeFeedPage> {
   const sdk = await getEvoSdk();
-  const facade = sdk.documents as unknown as CompositeDocumentsFacade;
 
   const { query, slots } = buildFeedPageQuery(options);
-  const result = await facade.composite(query);
-  if (result.subResults.length !== query.subQueries.length) {
+  const result = await sdk.documents.composite(query);
+  validateCompositeResult(result, query);
+  return decodeFeedPage(result, slots, options);
+}
+
+/** Validate the response shape before decode can seed any derived caches. */
+function validateCompositeResult(
+  result: CompositeDocumentsResult,
+  query: CompositeDocumentsQuery
+): asserts result is CompositeDocumentsResult {
+  if (!Array.isArray(result.pageDocuments) || !Array.isArray(result.subResults) ||
+      result.subResults.length !== query.subQueries.length) {
     throw new Error('Feed: incomplete composite result');
   }
-  return decodeFeedPage(result, slots, options);
+  for (let i = 0; i < query.subQueries.length; i++) {
+    const sub = result.subResults[i];
+    const expectedKind = query.subQueries[i].kind ?? 'documents';
+    if (!sub || sub.kind !== expectedKind) {
+      throw new Error(`Feed: invalid composite result at sub-query ${i}`);
+    }
+    if (sub.kind === 'documents' && !Array.isArray(sub.documents)) {
+      throw new Error(`Feed: invalid documents result at sub-query ${i}`);
+    }
+    if (sub.kind === 'counts' && !(sub.counts instanceof Map)) {
+      throw new Error(`Feed: invalid counts result at sub-query ${i}`);
+    }
+  }
 }
 
 // ---- Query ----
@@ -199,7 +183,7 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
   if (options.currentUserId) {
     // The viewer's marks on the page: `$ownerId == me` pins the owner-first
     // index, the bound post id is its terminal, so these are value-bounded.
-    const mine: WhereClause[] = [['$ownerId', '==', options.currentUserId]];
+    const mine = [['$ownerId', '==', options.currentUserId]];
     myLikes = slot({ documentType: like.docType, where: mine, bind: fromPage('$id', like.field) });
     if (repost) {
       myReposts = slot({ documentType: repost.docType, where: mine, bind: fromPage('$id', repost.field) });
