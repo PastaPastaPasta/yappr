@@ -1,22 +1,11 @@
 #!/usr/bin/env python3
 """Builds contracts/yappr-social-contract-v6.json from the v5 contract.
 
-**This contract does not register on protocol v14.** It is the shape yappr
-wants once time-bucketed rankings exist, written in the grammar we expect that
-feature to use, so platform can point its implementation at a real application
-contract. Everything else about it is production-shaped: v6 is v5 plus three
-windowed indexes on `like`, and nothing is removed.
-
-v14 rejects it at contract validation with
-
-    a timeRange index cannot be ranked (rankedCountable / rankedSummable /
-    rankedAverageable): ranked queries have no time-bucket semantics, so the
-    ranked secondaries would be maintained but never servable
-
-which is precisely the combination this file asks for. See
-docs/V6_WINDOWED_RANKINGS.md for the queries each new index has to serve and
-why the two objections recorded in that rejection (unservable secondaries,
-overlap double-counting) do not apply when the bucket is pinned.
+This contract registers on protocol v14 builds that include ranked
+timeRange indexes (moutai runs 4.2.0-dev.9). v6 is v5 plus daily and rolling
+windowed indexes and a tagged-only `beat` doctype; nothing is removed. See
+docs/V6_WINDOWED_RANKINGS.md for the query shapes and the dev.9 retention
+semantics.
 
 The windowed indexes mirror their all-time v5 counterparts one for one — same
 properties, same terminal, same at-levels — with a bucketed `$createdAt`
@@ -42,13 +31,13 @@ DST = 'contracts/yappr-social-contract-v6.json'
 # grids cost the same as an ordinary index per write — a document lands in
 # exactly one bucket — which is why the shipping shapes below all use this
 # grid. `phase` stays 0: windows cut at UTC midnight.
-DAY = {'on': '$createdAt', 'range': 86400, 'step': 86400}
+DAY = {'on': '$createdAt', 'range': 86400, 'step': 86400, 'ttl': 604800}
 
 # Rolling 24h refreshed every 6h (overlap factor 4, cap is 24). Included as a
 # FOURTH index purely so the implementation can be tested against an
 # overlapping grid; a document is indexed under 4 bucket keys, so this index
 # costs ~4x its non-overlapping twin per write and yappr would not ship both.
-ROLLING = {'on': '$createdAt', 'range': 86400, 'step': 21600}
+ROLLING = {'on': '$createdAt', 'range': 86400, 'step': 21600, 'ttl': 604800}
 
 
 def windowed(source_index, name, time_range):
@@ -71,9 +60,8 @@ def windowed(source_index, name, time_range):
     index.pop('preallocated', None)
     # skipIfAbsent cannot survive the prepend: its trigger has to be the FIRST
     # index property, which the timeRange source now occupies. Untagged likes
-    # therefore write a null entry in the windowed hashtag index — see the
-    # "asks" section of docs/V6_WINDOWED_RANKINGS.md, where relaxing that rule
-    # to "first non-timeRange property" is the one secondary request.
+    # therefore use no hashtag windowed index; tagged likes write a companion
+    # beat document below.
     index.pop('skipIfAbsent', None)
     return index
 
@@ -115,7 +103,7 @@ def build():
     # ---- beat: the windowed hashtag rankings, written ONLY for tagged likes ----
     # An indexOnly doctype with hashtag REQUIRED, so the windowed hashtag index
     # is legal. The client writes one `beat` beside every like of a tagged post
-    # (same batch transition), and the `postId` refersTo carries the same
+    # in a second transition because moutai caps document batches at one, and the `postId` refersTo carries the same
     # propertyAgreement as `like.postId` — consensus enforces beat.hashtag ==
     # post.hashtag exactly as it does for like.hashtag. Untagged likes write no
     # beat at all, which is the skipIfAbsent economy by other means.

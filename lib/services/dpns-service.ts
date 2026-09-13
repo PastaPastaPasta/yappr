@@ -45,12 +45,27 @@ class DpnsService {
   /** identity id -> primary username */
   private reverseCache = new TtlMap<string, string>(DpnsService.CACHE_TTL_MS);
 
+  /** Cache only complete DPNS lookup results; null records a proven absence. */
+  private reverseMissCache = new TtlMap<string, true>(5 * 60 * 1000);
+
+  seedUsernames(usernames: ReadonlyMap<string, string | null>): void {
+    usernames.forEach((username, identityId) => {
+      if (username) {
+        this._cacheEntry(username, identityId);
+      } else {
+        this.reverseCache.delete(identityId);
+        this.reverseMissCache.set(identityId, true);
+      }
+    });
+  }
+
   /**
    * Helper method to cache entries in both directions
    */
   private _cacheEntry(username: string, identityId: string): void {
     this.cache.set(username.toLowerCase(), identityId);
     this.reverseCache.set(identityId, username);
+    this.reverseMissCache.delete(identityId);
   }
 
   /**
@@ -103,10 +118,9 @@ class DpnsService {
    * Uses 'in' operator for efficient single-query resolution
    * Selects the "best" username for identities with multiple names (contested first, then shortest, then alphabetically)
    *
-   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
-   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
-   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
-   * implement pagination here to handle cases where results exceed the limit.
+   * Near the shared limit, retry per identity with document cursors: empty
+   * identity branches can consume IN-query capacity too, so fewer than 100
+   * documents does not by itself prove that the batch is complete.
    */
   async resolveUsernamesBatch(identityIds: string[]): Promise<Map<string, string | null>> {
     const results = new Map<string, string | null>();
@@ -122,6 +136,8 @@ class DpnsService {
       const cached = this.reverseCache.get(id);
       if (cached !== undefined) {
         results.set(id, cached);
+      } else if (this.reverseMissCache.has(id)) {
+        results.set(id, null);
       } else {
         uncachedIds.push(id);
       }
@@ -143,7 +159,33 @@ class DpnsService {
         limit: 100
       });
 
-      const documents = extractDocuments(response);
+      let documents = extractDocuments(response);
+      if (documents.length + uncachedIds.length >= 100) {
+        // Discard the partial batch, including potentially incomplete alias
+        // sets, before choosing primary names or reporting missing authors.
+        documents = [];
+        for (const identityId of uncachedIds) {
+          let startAfter: string | undefined;
+          while (true) {
+            const page = extractDocuments(await sdk.documents.query({
+              dataContractId: DPNS_CONTRACT_ID,
+              documentTypeName: DPNS_DOCUMENT_TYPE,
+              where: [['records.identity', '==', identityId]],
+              orderBy: [['records.identity', 'asc']],
+              limit: 100,
+              ...(startAfter ? { startAfter } : {}),
+            }));
+            documents.push(...page);
+            if (page.length < 100) break;
+            const last = page[page.length - 1];
+            const next = identifierToBase58(last.$id || last.id);
+            if (!next || next === startAfter) {
+              throw new Error('DPNS: username pagination did not advance');
+            }
+            startAfter = next;
+          }
+        }
+      }
 
       // Collect ALL usernames per identity (some users have multiple)
       const usernamesByIdentity = new Map<string, string[]>();
@@ -187,6 +229,7 @@ class DpnsService {
       // Check cache
       const cached = this.reverseCache.get(identityId);
       if (cached !== undefined) return cached;
+      if (this.reverseMissCache.has(identityId)) return null;
 
       // Get all usernames for this identity and pick the primary one
       const allUsernames = await this.getAllUsernames(identityId);
@@ -582,10 +625,12 @@ class DpnsService {
     }
     if (identityId) {
       this.reverseCache.delete(identityId);
+      this.reverseMissCache.delete(identityId);
     }
     if (!username && !identityId) {
       this.cache.clear();
       this.reverseCache.clear();
+      this.reverseMissCache.clear();
     }
   }
 
@@ -595,6 +640,7 @@ class DpnsService {
   cleanupCache(): void {
     this.cache.prune();
     this.reverseCache.prune();
+    this.reverseMissCache.prune();
   }
 }
 

@@ -1,4 +1,4 @@
-# Contract v6 — windowed rankings (what yappr needs next)
+# Contract v6 — windowed rankings and retention
 
 `contracts/yappr-social-contract-v6.json` is v5 (live on moutai, `verify-v5.mjs`
 91/91) plus server-ordered **time-bounded** rankings, written in the grammar
@@ -6,17 +6,17 @@ that landed upstream on 2026-09-01. Regenerate with
 `python3 scripts/build-v6-contract.py`; `--self-test` asserts the committed
 JSON.
 
-## Status (2026-09-03) — LIVE on moutai
+## Status (2026-09-13) — LIVE on moutai dev.9
 
 | Layer | State |
 |---|---|
-| Platform | **4.2.0-dev.8** (cut by us 2026-09-02: dashpay/platform#4591 → tag `v4.2.0-dev.8`), carrying #4578 (ranked below timeRange) + #4574 (`byStart`). moutai: 13/13 masternodes on dev.8, no wipe |
-| Contract | **Registered**: `DNNibJtgEEkQkLfDZXh9xkbfdVHWu6CtJcgcpicMAuHZ` (this file's shape, verbatim). YAPP token `AwyQ6rGrrZviBoYfqykyQ8Nhau5xjsxFQsQCj8vrV9pW` |
+| Platform | **4.2.0-dev.9 / PV14**, after the 2026-09-13 Platform reset. The reset removed Platform state while Core persisted; contracts, identities, token, and seed data were recreated. |
+| Contract | **Registered**: `6WNGgXQC6jsJDJovUBWAABoQ3ujLnoQBbdYpo6F7649c` (this file's shape, with TTL on the ephemeral buckets). YAPP token `EBVgaNu12cwvnZrtgNhPi5BPmydB4DmwnJoX6fxKkY7P` |
 | Client | `.env.devnet` → v6; `windowedRankingsAvailable()`; like of a tagged post writes its `beat` as a **second transition** after the like lands (consensus caps a document batch at ONE transition — verified live: `Amount of document transitions must be less or equal to 1`); Today \| All time switch on Explore Top / trending / Creators, tag page Top, profile Top |
 | Battery | `scripts/verify-v5.mjs` gains d1–d3 (windowed like axes, beat + propertyAgreement + grid disambiguation, cold bucket) |
 | Seeder | `--topology v6`: a beat companion beside every tagged like |
-| Known dev.8 edge | a proved ranked read on a **never-populated** bucket fails proof generation instead of proving empty → **dashpay/platform#4592**. Client maps that error to an empty ranking until fixed |
-| TTL / cheaper bytes | dashpay/platform#4581 still open — not assumed |
+| Known edge | A proved ranked read on a **never-populated** bucket still needs a live check after the reset; the client maps the known cold-bucket proof error to an empty ranking. |
+| TTL | dev.9 accepts `timeRange.ttl`; all daily and rolling like/beat buckets use `604800` seconds. Cleanup happens as later writes advance storage, so expiry is not an immediate disk purge. |
 
 ## Two validation rules the dev.7 blanket rejection had been hiding
 
@@ -141,8 +141,8 @@ in the fixture as overlap test material for platform).
 At the YAPP layer nothing changes (1 YAPP/like); the credit cost is what the
 identity pays. Even the tagged case stays under the cost of a reply today.
 
-**If #4581 (TTL + ephemeral-bytes pricing) lands**, every byte under the
-windowed indexes bills to processing at 270 cr/byte instead of 27,000 —
-roughly a 100× cut on the *added* cost, pulling v6 likes back to within
-~5% of v5. The devnet would then also stop accumulating dead daily windows.
-Not required for v6; it makes v6 nearly free.
+On dev.9, TTL is part of the registered v6 shape. It bounds the retained
+windowed rows to seven days; it does not change the write-time index cost or
+make expiration synchronous with the wall clock. The permanent `beat.byPost`
+and `beat.byPostTime` indexes remain because the latter is required to locate a
+beat for deletion when a like is removed.

@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { useAsyncState } from '@/components/ui/loading-state';
 import { Post } from '@/lib/types';
 import { cacheManager } from '@/lib/cache-manager';
-import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment';
+import { useProgressiveEnrichment, type PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 import { enrichPostsWithRepostsAndQuotes } from '@/lib/feed/enrich-posts';
 import { loadFollowingFeed, type FollowingFeedWindow } from '@/lib/feed/load-following-feed';
 import { loadForYouFeed } from '@/lib/feed/load-for-you-feed';
@@ -287,6 +287,8 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         }
 
         let posts: Post[] = [];
+        // Enrichment that arrived with the posts (composite For You pages).
+        let forYouPreloaded: PreloadedEnrichment | undefined;
 
         if (activeTab === 'following' && user?.identityId) {
           let followingPosts: Post[] = [];
@@ -321,6 +323,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
           const forYouResult = await loadForYouFeed({
             startAfter: pagination?.startAfter,
             feedLanguage,
+            currentUserId: user?.identityId,
             setData,
             setHasMore,
             setLastPostId,
@@ -328,6 +331,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
           });
 
           posts = forYouResult.posts;
+          forYouPreloaded = forYouResult.preloaded;
 
           if (posts.length === 0) {
             logger.debug('Feed: No posts found on platform');
@@ -367,7 +371,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         }
 
         if (activeTab !== 'following') {
-          enrichProgressively(sortedPosts);
+          enrichProgressively(sortedPosts, forYouPreloaded);
         }
 
         if (!isPaginating && sortedPosts.length > 0) {
@@ -377,13 +381,10 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         logger.error('Feed: Failed to load posts from platform:', error);
 
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logger.debug('Feed: Falling back to empty state due to error:', errorMessage);
-
-        setData([]);
-
-        if (errorMessage.includes('Contract ID not configured') || errorMessage.includes('Not logged in')) {
-          setError(errorMessage);
-        }
+        // Keep the current page visible during refresh and pagination failures.
+        // The feed list renders this error alongside the preserved posts with a
+        // retry action, so a transient DAPI/composite failure is recoverable.
+        setError(errorMessage);
       } finally {
         setLoading(false);
       }

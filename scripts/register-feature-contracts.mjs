@@ -1,14 +1,12 @@
 /**
  * One-time, manual registration of the optional feature contracts on a devnet.
  *
- * `.env.devnet` blanks the contract ids that have no devnet copy (DM, storefront,
- * key backup, key exchange, vault, auth vault, blog, pollr) so those features
- * fail closed. This script lights them up: it clones each contract's canonical
- * on-chain schemas from testnet and republishes them on the target network under
- * the given owner, exactly like register-test-contracts.mjs does for the social
- * and profile contracts (see that script for why the clone goes through
- * `DataContract.fromJSON` on the fetched contract rather than the checked-in
- * JSON files).
+ * A wiped devnet has no feature-contract copies. This script clones each
+ * contract's canonical on-chain schemas from testnet and republishes them on
+ * the target network under the given owner, exactly like
+ * register-test-contracts.mjs does for the profile contract (see that script
+ * for why the clone goes through `DataContract.fromJSON` on the fetched
+ * contract rather than the checked-in JSON files).
  *
  * Run:
  *   NETWORK=devnet node scripts/register-feature-contracts.mjs \
@@ -81,6 +79,15 @@ function reownedContractJson(source, ownerId, identityNonce, platformVersion) {
   // were authored (and validated) under.
   if (json.config?.$formatVersion === '0') {
     json.config = { ...json.config, $formatVersion: '1', sizedIntegerTypes: false };
+  }
+  // dev.9 rejects a schema that keeps document history while allowing
+  // deletion: deletion would make the historical records unreachable. The
+  // blog and blogPost services never delete either document type, so make
+  // that invariant explicit when cloning the legacy testnet contract.
+  for (const schema of Object.values(json.documentSchemas)) {
+    if (schema.documentsKeepHistory === true && schema.canBeDeleted !== false) {
+      schema.canBeDeleted = false;
+    }
   }
   return json;
 }

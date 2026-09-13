@@ -61,6 +61,7 @@ export function FeedPostList({
     onLoadMore,
     resetKey: activeTab,
   });
+  const hasVisiblePosts = Boolean(visiblePosts && visiblePosts.length > 0);
 
   return (
     <ErrorBoundary level="component">
@@ -74,8 +75,8 @@ export function FeedPostList({
       )}
 
       <LoadingState
-        loading={isLoading || posts === null}
-        error={error}
+        loading={(isLoading || posts === null) && !hasVisiblePosts}
+        error={hasVisiblePosts ? null : error}
         isEmpty={!isLoading && visiblePosts !== null && visiblePosts.length === 0}
         onRetry={onRetry}
         loadingText="Connecting to Dash Platform..."
@@ -88,6 +89,22 @@ export function FeedPostList({
         emptyAction={<LegacyYapprLink />}
       >
         <div data-testid="feed-post-list">
+          {error && hasVisiblePosts && (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-4 border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
+            >
+              <span>{error}</span>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="shrink-0 rounded-md bg-red-600 px-3 py-1.5 font-medium text-white transition-colors hover:bg-red-700"
+              >
+                Try Again
+              </button>
+            </div>
+          )}
+
           {visiblePosts?.map((post) => (
             <ErrorBoundary key={post.id} level="component">
               <PostCard
