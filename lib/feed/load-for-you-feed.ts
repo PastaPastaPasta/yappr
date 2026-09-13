@@ -40,17 +40,12 @@ async function fetchFeedPage(options: {
     currentUserId: options.currentUserId,
   };
 
-  if (!options.startAfter) {
-    const page = await loadCompositeFeedPage(compositeOptions);
-    const last = page.rawPosts[page.rawPosts.length - 1];
-    const cursor = last ? String(last.$id) : null;
-    return { posts: page.posts, cursor, hasMore: page.hasMore, preloaded: page.preloaded };
-  }
-
-  // Composite queries have no document cursor. Use the timeline's real
-  // startAfter to select subsequent pages, including timestamp ties, then
-  // batch enrichment for those exact ids. Keep the raw cursor even when
-  // tombstones leave no visible cards or a document changes between reads.
+  // Composite page proofs on dev.9 cannot safely carry a limit on a broad
+  // non-unique timeline branch: once the branch is merged with derived
+  // sub-queries, GroveDB can return the proof's look-ahead row and reject it as
+  // "more data than limit". Use the ordinary timeline query to select the
+  // exact ids first, then composite-enrich that bounded by-id page. This also
+  // gives every page the same cursor and tie handling.
   const raw = (await postService.getTimeline({
     limit: PAGE_SIZE,
     startAfter: options.startAfter,
@@ -58,7 +53,7 @@ async function fetchFeedPage(options: {
   })).documents;
   const cursor = raw.length ? raw[raw.length - 1].id : null;
   const hasMore = raw.length === PAGE_SIZE;
-  if (options.startAfter && raw.length) {
+  if (raw.length) {
     const page = await loadCompositeFeedPage({
       ...compositeOptions,
       documentIds: raw.map(post => post.id),

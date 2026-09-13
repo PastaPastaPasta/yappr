@@ -30,11 +30,12 @@ describe('For You pagination', () => {
       return { documents: posts.slice(start, start + limit) };
     });
     const first = await loadForYouFeed(callbacks());
-    expect(mocks.timeline).not.toHaveBeenCalled();
+    expect(mocks.timeline.mock.calls[0][0]).toMatchObject({ limit: 20, language: undefined });
     const second = await loadForYouFeed({ ...callbacks(), startAfter: first.cursor ?? undefined });
     const third = await loadForYouFeed({ ...callbacks(), startAfter: second.cursor ?? undefined });
     expect([...first.posts, ...second.posts, ...third.posts].map(post => post.id)).toEqual(posts.map(post => post.id));
-    expect(mocks.timeline.mock.calls.map(call => call[0].startAfter)).toEqual([posts[19].id, posts[39].id]);
+    expect(mocks.timeline.mock.calls.map(call => call[0].startAfter)).toEqual([undefined, posts[19].id, posts[39].id]);
+    expect(mocks.composite.mock.calls[0][0].documentIds).toEqual(posts.slice(0, 20).map(post => post.id));
     expect(mocks.composite.mock.calls[1][0].documentIds).toEqual(posts.slice(20, 40).map(post => post.id));
     expect(third.hasMore).toBe(false);
   });
