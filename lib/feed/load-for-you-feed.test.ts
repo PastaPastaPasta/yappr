@@ -39,13 +39,12 @@ describe('For You pagination', () => {
     expect(third.hasMore).toBe(false);
   });
 
-  it('should reuse the cursor query when composite is unavailable', async () => {
-    mocks.composite.mockResolvedValue(null);
+  it('requires composite enrichment for every page', async () => {
+    const error = new Error('composite unavailable');
+    mocks.composite.mockRejectedValue(error);
     mocks.timeline.mockResolvedValue({ documents: posts.slice(20) });
-    const page = await loadForYouFeed({ ...callbacks(), startAfter: posts[19].id });
+    await expect(loadForYouFeed({ ...callbacks(), startAfter: posts[19].id })).rejects.toBe(error);
     expect(mocks.timeline).toHaveBeenCalledTimes(1);
-    expect(page.posts[0].author.hasDpns).toBeUndefined();
-    expect(page.posts.map(post => post.id)).toEqual(posts.slice(20).map(post => post.id));
   });
 
   it('should preserve the raw timeline cursor when the last card is a tombstone', async () => {

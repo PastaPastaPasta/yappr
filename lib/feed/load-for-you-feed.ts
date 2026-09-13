@@ -42,11 +42,9 @@ async function fetchFeedPage(options: {
 
   if (!options.startAfter) {
     const page = await loadCompositeFeedPage(compositeOptions);
-    if (page) {
-      const last = page.rawPosts[page.rawPosts.length - 1];
-      const cursor = last ? String(last.$id) : null;
-      return { posts: page.posts, cursor, hasMore: page.hasMore, preloaded: page.preloaded };
-    }
+    const last = page.rawPosts[page.rawPosts.length - 1];
+    const cursor = last ? String(last.$id) : null;
+    return { posts: page.posts, cursor, hasMore: page.hasMore, preloaded: page.preloaded };
   }
 
   // Composite queries have no document cursor. Use the timeline's real
@@ -65,9 +63,7 @@ async function fetchFeedPage(options: {
       ...compositeOptions,
       documentIds: raw.map(post => post.id),
     });
-    if (page) {
-      return { posts: page.posts, cursor, hasMore, preloaded: page.preloaded };
-    }
+    return { posts: page.posts, cursor, hasMore, preloaded: page.preloaded };
   }
 
   const posts = raw.filter(post => !post.deleted).map(withLoadingAuthor);

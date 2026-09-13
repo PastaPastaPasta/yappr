@@ -1,4 +1,3 @@
-import type { EvoSDK } from '@dashevo/evo-sdk';
 import { logger } from '@/lib/logger';
 import {
   DPNS_CONTRACT_ID,
@@ -10,7 +9,6 @@ import {
   bookmarkIndexFor,
   likeIndexFor,
   quoteFieldFor,
-  referencesAreEnforced,
   replyCountFieldFor,
   repostIndexFor,
 } from '@/lib/contract-topology';
@@ -35,8 +33,7 @@ import { transformRawPost } from './transform-raw-post';
  * pages take one document request; subsequent pages first use the timeline's
  * cursor query, then fetch those exact ids with their enrichment here.
  *
- * Requires an SDK exposing documents.composite, compatible nodes and an
- * enforced-reference contract. Older deployments use the ordinary loaders.
+ * Requires the dev.9 SDK and a dev.9 node exposing documents.composite.
  * Repost attribution, block/follow status and unseeded quoted authors still
  * need separate lookups; this is not a fixed total request count for the UI.
  */
@@ -84,26 +81,12 @@ interface CompositeDocumentsFacade {
   composite(query: CompositeDocumentsQuery): Promise<CompositeDocumentsResult>;
 }
 
-/** The evo-sdk build in use may predate the composite surface. */
-function compositeFacade(sdk: EvoSDK): CompositeDocumentsFacade | null {
-  const documents = sdk.documents as unknown as Partial<CompositeDocumentsFacade>;
-  return typeof documents.composite === 'function'
-    ? (documents as CompositeDocumentsFacade)
-    : null;
-}
-
-// ---- Availability ----
+// ---- Query limits ----
 
 /** At most this many sub-queries per request (the platform's `MAX_SUB_QUERIES`). */
 const MAX_SUB_QUERIES = 10;
 /** Total DPNS document budget across ALL page authors, not per identity. */
 const DPNS_QUERY_LIMIT = 100;
-/** After a composite failure, use the legacy loaders for this long before retrying. */
-const RETRY_BACKOFF_MS = 60_000;
-
-let unsupportedLogged = false;
-let retryAfter = 0;
-
 export interface CompositeFeedPageOptions {
   language: string;
   limit: number;
@@ -123,40 +106,23 @@ export interface CompositeFeedPage {
 }
 
 /**
- * Load one feed page through the composite surface, or `null` when the
- * surface is unavailable (older SDK, pre-v6 contract, recent failure), in
- * which case the caller falls back to the legacy per-query loaders.
+ * Load one feed page through the dev.9 composite surface.
+ *
+ * Composite support is a deployment requirement. SDK or node errors propagate
+ * to the caller so a partially enriched response cannot be rendered.
  */
 export async function loadCompositeFeedPage(
   options: CompositeFeedPageOptions
-): Promise<CompositeFeedPage | null> {
-  if (!referencesAreEnforced()) return null;
-  if (Date.now() < retryAfter) return null;
-
+): Promise<CompositeFeedPage> {
   const sdk = await getEvoSdk();
-  const facade = compositeFacade(sdk);
-  if (!facade) {
-    if (!unsupportedLogged) {
-      unsupportedLogged = true;
-      logger.info('Feed: this evo-sdk has no composite documents surface; using the legacy loaders');
-    }
-    return null;
-  }
+  const facade = sdk.documents as unknown as CompositeDocumentsFacade;
 
   const { query, slots } = buildFeedPageQuery(options);
-
-  try {
-    const result = await facade.composite(query);
-    if (result.subResults.length !== query.subQueries.length) {
-      throw new Error('Feed: incomplete composite result');
-    }
-    return await decodeFeedPage(result, slots, options);
-  } catch (error) {
-    retryAfter = Date.now() + RETRY_BACKOFF_MS;
-    logger.warn('Feed: composite page failed, falling back to the legacy loaders', error);
-    return null;
+  const result = await facade.composite(query);
+  if (result.subResults.length !== query.subQueries.length) {
+    throw new Error('Feed: incomplete composite result');
   }
-
+  return decodeFeedPage(result, slots, options);
 }
 
 // ---- Query ----
