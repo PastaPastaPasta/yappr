@@ -381,13 +381,10 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         logger.error('Feed: Failed to load posts from platform:', error);
 
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logger.debug('Feed: Falling back to empty state due to error:', errorMessage);
-
-        setData([]);
-
-        if (errorMessage.includes('Contract ID not configured') || errorMessage.includes('Not logged in')) {
-          setError(errorMessage);
-        }
+        // Keep the current page visible during refresh and pagination failures.
+        // The feed list renders this error alongside the preserved posts with a
+        // retry action, so a transient DAPI/composite failure is recoverable.
+        setError(errorMessage);
       } finally {
         setLoading(false);
       }

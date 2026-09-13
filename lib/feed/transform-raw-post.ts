@@ -2,6 +2,7 @@ import { Post } from '@/lib/types';
 import { identifierToBase58, normalizeBytes } from '@/lib/services/sdk-helpers';
 import { extractPostEmbedFields } from '@/lib/poll-embed';
 import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
+import { hashtagIsOptional } from '@/lib/contract-topology';
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
@@ -85,6 +86,7 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
   // v3 only: quotes of replies live in their own field. Absent on v2 documents.
   const rawQuotedReplyId = data.quotedReplyId || doc.quotedReplyId;
   const quotedReplyId = rawQuotedReplyId ? identifierToBase58(rawQuotedReplyId) || undefined : undefined;
+  const rawHashtag = data.hashtag ?? doc.hashtag;
 
   const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
   const rawNonce = data.nonce || doc.nonce;
@@ -141,6 +143,12 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     quotedReplyId,
     deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
     sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
+    // v5/v6 omit the untagged property on chain; normalize that absence to
+    // the client's known-untagged sentinel so index-only likes can reuse the
+    // agreement-bound value without refetching the target post.
+    hashtag: typeof rawHashtag === 'string'
+      ? rawHashtag
+      : hashtagIsOptional() ? '' : undefined,
     ...extractPostEmbedFields(data, doc),
     encryptedContent: rawEncryptedContent ? normalizeBytes(rawEncryptedContent) ?? undefined : undefined,
     epoch,
