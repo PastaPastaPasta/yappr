@@ -2,6 +2,7 @@
   "blog": {
     "type": "object",
     "documentsKeepHistory": true,
+    "canBeDeleted": false,
     "documentsMutable": true,
     "indices": [
       {
@@ -71,6 +72,7 @@
   "blogPost": {
     "type": "object",
     "documentsKeepHistory": true,
+    "canBeDeleted": false,
     "documentsMutable": true,
     "indices": [
       {
