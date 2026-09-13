@@ -428,7 +428,8 @@
           "timeRange": {
             "on": "$createdAt",
             "range": 86400,
-            "step": 86400
+            "step": 86400,
+            "ttl": 604800
           }
         },
         {
@@ -456,7 +457,8 @@
           "timeRange": {
             "on": "$createdAt",
             "range": 86400,
-            "step": 86400
+            "step": 86400,
+            "ttl": 604800
           }
         }
       ],
@@ -1469,7 +1471,8 @@
           "timeRange": {
             "on": "$createdAt",
             "range": 86400,
-            "step": 86400
+            "step": 86400,
+            "ttl": 604800
           }
         },
         {
@@ -1497,7 +1500,8 @@
           "timeRange": {
             "on": "$createdAt",
             "range": 86400,
-            "step": 21600
+            "step": 21600,
+            "ttl": 604800
           }
         },
         {
