@@ -42,13 +42,13 @@ DST = 'contracts/yappr-social-contract-v6.json'
 # grids cost the same as an ordinary index per write — a document lands in
 # exactly one bucket — which is why the shipping shapes below all use this
 # grid. `phase` stays 0: windows cut at UTC midnight.
-DAY = {'on': '$createdAt', 'range': 86400, 'step': 86400}
+DAY = {'on': '$createdAt', 'range': 86400, 'step': 86400, 'ttl': 604800}
 
 # Rolling 24h refreshed every 6h (overlap factor 4, cap is 24). Included as a
 # FOURTH index purely so the implementation can be tested against an
 # overlapping grid; a document is indexed under 4 bucket keys, so this index
 # costs ~4x its non-overlapping twin per write and yappr would not ship both.
-ROLLING = {'on': '$createdAt', 'range': 86400, 'step': 21600}
+ROLLING = {'on': '$createdAt', 'range': 86400, 'step': 21600, 'ttl': 604800}
 
 
 def windowed(source_index, name, time_range):
