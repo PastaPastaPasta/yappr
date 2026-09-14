@@ -39,7 +39,7 @@ import { transformRawPost } from './transform-raw-post';
  * pages take one document request; subsequent pages first use the timeline's
  * cursor query, then fetch those exact ids with their enrichment here.
  *
- * Requires the dev.9 SDK and a dev.9 node exposing documents.composite.
+ * Requires the dev.10 SDK and a dev.10 node exposing documents.composite.
  * Repost attribution, block/follow status and unseeded quoted authors still
  * need separate lookups; this is not a fixed total request count for the UI.
  */
@@ -69,7 +69,7 @@ export interface CompositeFeedPage {
 }
 
 /**
- * Load one feed page through the dev.9 composite surface.
+ * Load one feed page through the dev.10 composite surface.
  *
  * Composite support is a deployment requirement. SDK or node errors propagate
  * to the caller so a partially enriched response cannot be rendered.
