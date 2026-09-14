@@ -8,6 +8,7 @@
     "build:subpath": "BASE_PATH=/yappr next build",
     "build:testing": "set -a && . ./.env.testing && set +a && BASE_PATH=/testing next build",
     "build:devnet": "set -a && . ./.env.devnet && set +a && BASE_PATH=/devnet next build",
+    "contracts:snapshot": "node scripts/snapshot-contracts.mjs",
     "start": "next start",
     "lint": "next lint --dir app --dir components --dir contexts --dir hooks --dir lib --dir types --max-warnings 0",
     "lint:dead": "knip",
