@@ -2,11 +2,12 @@
 
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { PauseIcon, PlayIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline'
+import { ClipboardDocumentIcon, PauseIcon, PlayIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { useQueryInspectorStore, type FacadeFilter } from '@/lib/query-inspector/store'
 import { EntryRow } from './entry-row'
 import { EntryDetail } from './entry-detail'
 import { PanelIconButton } from './panel-icon-button'
+import { useCopy } from '@/hooks/use-copy'
 
 export function InspectorPanel() {
   const entries = useQueryInspectorStore((s) => s.entries)
@@ -22,6 +23,7 @@ export function InspectorPanel() {
   const setSelectedId = useQueryInspectorStore((s) => s.setSelectedId)
   const facadeFilter = useQueryInspectorStore((s) => s.facadeFilter)
   const setFacadeFilter = useQueryInspectorStore((s) => s.setFacadeFilter)
+  const copy = useCopy()
 
   const filterChips = useMemo(() => {
     const facades = Array.from(new Set(entries.map((e) => e.facade))).sort()
@@ -64,6 +66,12 @@ export function InspectorPanel() {
             </PanelIconButton>
             <PanelIconButton onClick={clear} label="Clear captured queries">
               <TrashIcon className="h-4 w-4" />
+            </PanelIconButton>
+            <PanelIconButton
+              onClick={() => copy(JSON.stringify(filtered, null, 2), 'Copied all captured queries')}
+              label="Copy all captured queries"
+            >
+              <ClipboardDocumentIcon className="h-4 w-4" />
             </PanelIconButton>
             <PanelIconButton onClick={() => setPanelOpen(false)} label="Close query inspector">
               <XMarkIcon className="h-4 w-4" />
