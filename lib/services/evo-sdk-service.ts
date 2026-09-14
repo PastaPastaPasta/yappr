@@ -1,8 +1,21 @@
 import { logger } from '@/lib/logger';
-import { EvoSDK } from '@dashevo/evo-sdk';
+import { DataContract, EvoSDK, PlatformVersion } from '@dashevo/evo-sdk';
+import { bundleKey, bundledContractsFor, staleContractIds } from '@/lib/contracts/bundled-contracts';
 import { instrumentSdk } from '@/lib/query-inspector/capture';
 import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL, getContractTopology } from '../constants';
 import type { AppNetwork } from '../constants';
+
+/**
+ * Contract seeding and the versions check land in a later evo-sdk than the
+ * pinned one; until then the bundle is ignored and contracts are fetched.
+ */
+type ContractsFacadeWithBundleSupport = EvoSDK['contracts'] & {
+  addKnown?: (contract: DataContract) => Promise<boolean>;
+  getLatestVersions?: (query: {
+    contractIds: string[];
+    includeContracts?: boolean;
+  }) => Promise<Map<string, { version: number } | undefined>>;
+};
 
 export interface EvoSdkConfig {
   network: AppNetwork;
@@ -237,25 +250,102 @@ class EvoSdkService {
       contractsToFetch.push({ id: YAPPR_AUTH_VAULT_CONTRACT_ID, name: 'AuthVault' });
     }
 
-    logger.debug(`EvoSdkService: Preloading ${contractsToFetch.length} contracts in one request...`);
+    // Contracts snapshotted at build time need no round trip: seed them and
+    // fetch only the rest. The bundle is revalidated off the critical path.
+    const seeded = await this._seedBundledContracts(sdk, contractsToFetch.map(({ id }) => id));
+    const toFetch = contractsToFetch.filter(({ id }) => !seeded.has(id));
+    if (toFetch.length === 0) {
+      logger.debug(`EvoSdkService: all ${contractsToFetch.length} contracts seeded from the bundle`);
+      this._revalidateBundledContracts(sdk, [...seeded]);
+      return;
+    }
+    logger.debug(
+      `EvoSdkService: Preloading ${toFetch.length} contracts in one request (${seeded.size} seeded from the bundle)...`
+    );
 
     // A contract that does not resolve comes back as an absent map entry rather
     // than a rejection, so one bad optional contract ID cannot sink the batch.
     let contracts: Map<string, unknown>;
     try {
-      contracts = await sdk.contracts.getMany(contractsToFetch.map(({ id }) => id));
+      contracts = await sdk.contracts.getMany(toFetch.map(({ id }) => id));
     } catch (error) {
       logger.warn('EvoSdkService: contract preload failed:', error);
+      this._revalidateBundledContracts(sdk, [...seeded]);
       return;
     }
 
-    const missing = contractsToFetch.filter(({ id }) => !contracts.get(id));
-    logger.debug(
-      `EvoSdkService: ${contractsToFetch.length - missing.length}/${contractsToFetch.length} contracts resolved`
-    );
+    const missing = toFetch.filter(({ id }) => !contracts.get(id));
+    logger.debug(`EvoSdkService: ${toFetch.length - missing.length}/${toFetch.length} contracts resolved`);
     for (const { id, name } of missing) {
       logger.warn(`EvoSdkService: ${name} contract (${id}) not found on network`);
     }
+    this._revalidateBundledContracts(sdk, [...seeded]);
+  }
+
+  /** The bundle for the configured network, when there is one. */
+  private async _bundle() {
+    if (!this.config) return undefined;
+    try {
+      return await bundledContractsFor(bundleKey(this.config.network, this.config.devnetName ?? DEVNET_NAME));
+    } catch (error) {
+      logger.warn('EvoSdkService: contract bundle did not load:', error);
+      return undefined;
+    }
+  }
+
+  /**
+   * Seed the SDK with every bundled contract among `ids`. Returns the ids that
+   * were seeded. A no-op when the SDK cannot seed or nothing is bundled.
+   */
+  private async _seedBundledContracts(sdk: EvoSDK, ids: readonly string[]): Promise<Set<string>> {
+    const seeded = new Set<string>();
+    const contracts = sdk.contracts as ContractsFacadeWithBundleSupport;
+    if (typeof contracts.addKnown !== 'function') return seeded;
+    const bundle = await this._bundle();
+    if (!bundle) return seeded;
+    const platformVersion = PlatformVersion.latest();
+    for (const id of ids) {
+      const entry = bundle.contracts[id];
+      if (!entry) continue;
+      try {
+        const contract = DataContract.fromBase64(entry.bytes, true, platformVersion);
+        if (await contracts.addKnown(contract)) seeded.add(id);
+      } catch (error) {
+        logger.warn(`EvoSdkService: bundled contract ${id} did not load, fetching it instead:`, error);
+      }
+    }
+    return seeded;
+  }
+
+  /**
+   * Ask the network, proved and off the critical path, whether the seeded
+   * bundle versions are still current, and refetch the ones that are not.
+   * Versions only, so the check gets cheaper as the versions proof does. A
+   * stale seed is also caught without it: the SDK drops a cached contract on
+   * the first document stamped with a newer `$contractVersion`.
+   */
+  private _revalidateBundledContracts(sdk: EvoSDK, ids: readonly string[]): void {
+    if (ids.length === 0) return;
+    const contracts = sdk.contracts as ContractsFacadeWithBundleSupport;
+    const getLatestVersions = contracts.getLatestVersions;
+    if (typeof getLatestVersions !== 'function') return;
+    void (async () => {
+      try {
+        const bundle = await this._bundle();
+        if (!bundle) return;
+        const latest = await getLatestVersions.call(contracts, { contractIds: [...ids] });
+        const stale = staleContractIds(bundle.contracts, latest, ids);
+        if (stale.length === 0) {
+          logger.debug(`EvoSdkService: ${ids.length} bundled contract(s) are current`);
+          return;
+        }
+        logger.info(`EvoSdkService: ${stale.length} bundled contract(s) are stale, refetching:`, stale);
+        // The fetch replaces the seeded entries in the SDK's cache.
+        await sdk.contracts.getMany(stale);
+      } catch (error) {
+        logger.warn('EvoSdkService: bundled contract revalidation failed:', error);
+      }
+    })();
   }
 
   /**

@@ -32,6 +32,7 @@ Everything the app needs is in the browser; there is nothing else to run. Contra
 | `npm run build:subpath` | The same, for a `/yappr` sub-path (GitHub Pages) |
 | `npm run build:testing` | Export against the test contracts in `.env.testing` under `/testing` |
 | `npm run build:devnet` | Export against `.env.devnet` under `/devnet` |
+| `npm run contracts:snapshot` | Snapshot the network's deployed contracts into `lib/contracts/bundled/` (`NETWORK=devnet`, or `NETWORK=testnet CONTRACT_IDS=…`). The app seeds the SDK from the bundle on load and revalidates it in the background once the SDK supports it |
 | `npm run lint` | ESLint over `app components contexts hooks lib types`; warnings fail |
 | `npm run test` | Vitest specs next to the pure modules in `lib/` |
 | `npm run lint:dead` | knip: unused files, exports and dependencies |
