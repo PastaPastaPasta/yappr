@@ -14,8 +14,11 @@ import { unifiedProfileService, type UnifiedProfileDocument } from '@/lib/servic
  *
  * Wave 1, in parallel:
  * - a proved top-K ranking on the like count tree (which posts to feature),
- * - the grouped `post` count by `$ownerId` (top contributors; its sum is the
- *   total post count, so no separate aggregate count).
+ * - the grouped `post` count by `$ownerId` (top contributors),
+ * - the aggregate `post` count (the platform total). The grouping cannot
+ *   stand in for it: Drive caps a grouped range-distinct count at 100 groups
+ *   and the scan fallback stops at 10,000 posts, so its sum undercounts once
+ *   the platform has more posting identities than that.
  *
  * Wave 2, in parallel:
  * - ONE composite by-id page over the featured ids carrying their engagement
@@ -27,7 +30,7 @@ import { unifiedProfileService, type UnifiedProfileDocument } from '@/lib/servic
  *   sibling has none.
  *
  * Replaces the 16-query shape (timeline of 50 + four stat counts twice +
- * per-slice profile/name lookups + a separate total) with 4 queries.
+ * per-slice profile/name lookups) with 5 queries in 2 waves.
  */
 
 export interface HomepageTopUser {
@@ -50,16 +53,15 @@ const TOP_USERS_LIMIT = 6;
 
 export async function loadHomepage(): Promise<HomepageSnapshot> {
   // Wave 1.
-  const [ranked, authorCounts] = await Promise.all([
+  const [ranked, authorCounts, totalPosts] = await Promise.all([
     topLikedPosts({ limit: RANKED_LIMIT, window: 'all' }),
     postService.getAuthorPostCounts(),
+    postService.countAllPosts(),
   ]);
 
   const featuredIds = ranked.slice(0, FEATURED_LIMIT).map((entry) => entry.postId);
   const likesById = new Map(ranked.map((entry) => [entry.postId, entry.likes]));
 
-  let totalPosts = 0;
-  for (const count of authorCounts.values()) totalPosts += count;
   const sortedAuthors = Array.from(authorCounts.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, TOP_USERS_LIMIT);
