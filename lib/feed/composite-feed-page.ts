@@ -262,7 +262,8 @@ function targetIdsOf(records: Record<string, unknown>[], field: string): Set<str
   return ids;
 }
 
-function usernamesByIdentity(records: Record<string, unknown>[], identityIds: readonly string[], pageSize: number): Map<string, string | null> {
+/** Primary DPNS name per identity from a bound `domain` lookup, or empty when the lookup may have been truncated. */
+export function usernamesByIdentity(records: Record<string, unknown>[], identityIds: readonly string[], pageSize: number): Map<string, string | null> {
   // At the cap, even returned authors may have unseen aliases that would
   // change their primary name. Leave the entire slice to normal enrichment;
   // never cache a missing name (or a partial primary name) as a proven result.
