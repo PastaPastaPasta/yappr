@@ -40,12 +40,17 @@ async function fetchFeedPage(options: {
     currentUserId: options.currentUserId,
   };
 
-  // Composite page proofs on dev.9 cannot safely carry a limit on a broad
-  // non-unique timeline branch: once the branch is merged with derived
-  // sub-queries, GroveDB can return the proof's look-ahead row and reject it as
-  // "more data than limit". Use the ordinary timeline query to select the
-  // exact ids first, then composite-enrich that bounded by-id page. This also
-  // gives every page the same cursor and tie handling.
+  // The first page uses the ordered composite query directly. Composite has
+  // no document cursor, so later pages use the timeline's cursor to select
+  // exact ids (including timestamp ties), then composite-enrich that bounded
+  // set while preserving the raw cursor.
+  if (!options.startAfter) {
+    const page = await loadCompositeFeedPage(compositeOptions);
+    const last = page.rawPosts[page.rawPosts.length - 1];
+    const cursor = last ? String(last.$id) : null;
+    return { posts: page.posts, cursor, hasMore: page.hasMore, preloaded: page.preloaded };
+  }
+
   const raw = (await postService.getTimeline({
     limit: PAGE_SIZE,
     startAfter: options.startAfter,
