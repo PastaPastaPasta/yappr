@@ -6,13 +6,14 @@ import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_
 import type { AppNetwork } from '../constants';
 
 /**
- * The contract seeding and unproved version check land in a later evo-sdk than
- * the pinned one; until then the bundle is ignored and contracts are fetched.
+ * Contract seeding and the versions check land in a later evo-sdk than the
+ * pinned one; until then the bundle is ignored and contracts are fetched.
  */
 type ContractsFacadeWithBundleSupport = EvoSDK['contracts'] & {
   addKnown?: (contract: DataContract) => Promise<boolean>;
-  getLatestVersionsUnproved?: (query: {
+  getLatestVersions?: (query: {
     contractIds: string[];
+    includeContracts?: boolean;
   }) => Promise<Map<string, { version: number } | undefined>>;
 };
 
@@ -317,29 +318,29 @@ class EvoSdkService {
   }
 
   /**
-   * Ask the network, unproved and off the critical path, whether the seeded
-   * bundle versions are still current, and refetch (proved) the ones that are
-   * not. The unproved answer is the node's word: overstating a version costs
-   * one proved fetch, understating one leaves the cached contract in place,
-   * which the SDK drops on the first document stamped with a newer version.
+   * Ask the network, proved and off the critical path, whether the seeded
+   * bundle versions are still current, and refetch the ones that are not.
+   * Versions only, so the check gets cheaper as the versions proof does. A
+   * stale seed is also caught without it: the SDK drops a cached contract on
+   * the first document stamped with a newer `$contractVersion`.
    */
   private _revalidateBundledContracts(sdk: EvoSDK, ids: readonly string[]): void {
     if (ids.length === 0) return;
     const contracts = sdk.contracts as ContractsFacadeWithBundleSupport;
-    const getLatestVersionsUnproved = contracts.getLatestVersionsUnproved;
-    if (typeof getLatestVersionsUnproved !== 'function') return;
+    const getLatestVersions = contracts.getLatestVersions;
+    if (typeof getLatestVersions !== 'function') return;
     void (async () => {
       try {
         const bundle = await this._bundle();
         if (!bundle) return;
-        const latest = await getLatestVersionsUnproved.call(contracts, { contractIds: [...ids] });
+        const latest = await getLatestVersions.call(contracts, { contractIds: [...ids] });
         const stale = staleContractIds(bundle.contracts, latest, ids);
         if (stale.length === 0) {
           logger.debug(`EvoSdkService: ${ids.length} bundled contract(s) are current`);
           return;
         }
         logger.info(`EvoSdkService: ${stale.length} bundled contract(s) are stale, refetching:`, stale);
-        // Proved: the fetch replaces the seeded entries in the SDK's cache.
+        // The fetch replaces the seeded entries in the SDK's cache.
         await sdk.contracts.getMany(stale);
       } catch (error) {
         logger.warn('EvoSdkService: bundled contract revalidation failed:', error);
