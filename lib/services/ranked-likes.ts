@@ -333,30 +333,41 @@ async function hydrateRankedCached(
 }
 
 /**
- * Turn a proved ranking into renderable posts: fetch by id, re-order to the
- * proved order with each post's `likes` set to the proved count, drop absent
- * ids and tombstones, then batch-enrich (authors, stats, viewer interactions).
+ * Turn a proved ranking into renderable posts through ONE composite by-id
+ * page: the posts, their engagement counts, quoted posts, author profiles and
+ * names (and, logged in, the viewer's marks) arrive under a single merged
+ * proof. Re-ordered to the proved ranking with each post's `likes` set to the
+ * proved count; absent ids and tombstones are dropped.
+ *
+ * Logged in, the viewer's block and follow status for the page's authors is
+ * still two batch lookups: neither is a document of the page, and the cards'
+ * relation hooks would otherwise fan out one query per author.
  */
 async function hydrateRankedPosts(ranked: RankedLikedPost[]): Promise<Post[]> {
   if (ranked.length === 0) return [];
 
-  const { postService } = await import('./post-service');
-  // skipEnrichment: enrichPostsBatch below resolves authors in batch —
-  // per-post DPNS/profile lookups here would be thrown-away duplicates.
-  const fetched = await postService.getPostsByIds(
-    ranked.map((entry) => entry.postId),
-    { skipEnrichment: true }
-  );
-  const byId = new Map(fetched.map((post) => [post.id, post]));
+  // Dynamic: composite-feed-page imports the enrichment helpers, which import
+  // the post service, which imports this module.
+  const [{ loadCompositeFeedPage }, { getCurrentUserId }] = await Promise.all([
+    import('@/lib/feed/composite-feed-page'),
+    import('./sdk-helpers'),
+  ]);
+  const currentUserId = getCurrentUserId() ?? undefined;
+  const ids = ranked.map((entry) => entry.postId);
 
-  // getPostsByIds hydrates via one proved $id-in query, so an id missing
-  // from the batch is authoritatively absent, not a suspected transient
-  // failure (query errors degrade to per-id fetches inside getPostsByIds
-  // rather than silently shrinking the page). Posts are tombstoned by
-  // edit, never removed, so a genuinely missing ranked id is an anomaly
-  // worth noting — but not a reason to withhold the page from the
-  // 60-second cache.
-  const missing = ranked.filter((entry) => !byId.has(entry.postId));
+  const page = await loadCompositeFeedPage({
+    language: 'en',
+    limit: ids.length,
+    documentIds: ids,
+    currentUserId,
+  });
+
+  // A by-ids page proves the set exactly, so an id missing from it is
+  // authoritatively absent. Posts are tombstoned by edit, never removed, so a
+  // genuinely missing ranked id is an anomaly worth noting — but not a reason
+  // to withhold the page from the 60-second cache.
+  const provenIds = new Set(page.rawPosts.map((doc) => doc.$id));
+  const missing = ranked.filter((entry) => !provenIds.has(entry.postId));
   if (missing.length > 0) {
     logger.warn(
       'topLikedPostsHydrated: ranked ids proved absent (posts should be tombstoned, never removed):',
@@ -364,14 +375,55 @@ async function hydrateRankedPosts(ranked: RankedLikedPost[]): Promise<Post[]> {
     );
   }
 
-  // Preserve the proved ranking order; carry the proved count onto the
-  // card; drop absent ids and tombstones.
-  const ordered = ranked
-    .map((entry) => {
-      const post = byId.get(entry.postId);
-      return post ? { ...post, likes: entry.likes } : undefined;
-    })
-    .filter((post): post is Post => post !== undefined && post.deleted !== true);
+  // Preserve the proved ranking order; carry the proved count onto the card;
+  // author identity comes off the page's proven profile and name lookups.
+  const byId = new Map(page.posts.map((post) => [post.id, post]));
+  const { usernames, profiles, avatars } = page.preloaded;
+  const ordered = ranked.flatMap((entry) => {
+    const post = byId.get(entry.postId);
+    if (!post) return [];
+    const authorId = post.author.id;
+    const username = usernames?.get(authorId) ?? undefined;
+    const avatar = avatars?.get(authorId) ?? '';
+    return [{
+      ...post,
+      likes: entry.likes,
+      author: {
+        ...post.author,
+        username: username || post.author.username,
+        displayName: profiles?.get(authorId)?.displayName || post.author.displayName,
+        avatar: avatar || post.author.avatar,
+        hasDpns: Boolean(username),
+      },
+      _enrichment: {
+        ...post._enrichment,
+        authorIsBlocked: false,
+        authorIsFollowing: false,
+        authorAvatarUrl: avatar,
+      },
+    }];
+  });
 
-  return postService.enrichPostsBatch(ordered);
+  if (!currentUserId || ordered.length === 0) return ordered;
+
+  const [{ blockService }, { followService }, { blockStatusCache, followStatusCache }] = await Promise.all([
+    import('./block-service'),
+    import('./follow-service'),
+    import('../caches/user-status-cache'),
+  ]);
+  const authorIds = Array.from(new Set(ordered.map((post) => post.author.id)));
+  const [blocked, following] = await Promise.all([
+    blockService.checkBlockedBatch(currentUserId, authorIds),
+    followService.getFollowStatusBatch(authorIds, currentUserId),
+  ]);
+  blockStatusCache.seed(currentUserId, blocked);
+  followStatusCache.seed(currentUserId, following);
+  return ordered.map((post) => ({
+    ...post,
+    _enrichment: {
+      ...post._enrichment,
+      authorIsBlocked: blocked.get(post.author.id) ?? false,
+      authorIsFollowing: following.get(post.author.id) ?? false,
+    },
+  }));
 }
