@@ -3,17 +3,10 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Post } from '@/lib/types'
-import { postService } from '@/lib/services/post-service'
-import { unifiedProfileService, type UnifiedProfileDocument } from '@/lib/services/unified-profile-service'
-import { dpnsService } from '@/lib/services/dpns-service'
 import { useSdk } from '@/contexts/sdk-context'
+import { loadHomepage, type HomepageSnapshot, type HomepageTopUser } from '@/lib/home/load-homepage'
 
-export interface TopUser {
-  id: string
-  username: string
-  displayName: string
-  postCount: number
-}
+export type TopUser = HomepageTopUser
 
 export interface PlatformStats {
   totalPosts: number
@@ -40,16 +33,10 @@ export interface HomepageData {
   refresh: () => void
 }
 
-// Cache for homepage data
-const cache = {
-  platformStats: null as { data: { totalPosts: number }; timestamp: number } | null,
-  featuredPosts: null as { data: Post[]; timestamp: number } | null,
-  topUsers: null as { data: TopUser[]; timestamp: number } | null,
-}
-
-const STATS_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
-const POSTS_CACHE_TTL = 2 * 60 * 1000 // 2 minutes
-const USERS_CACHE_TTL = 2 * 60 * 1000 // 2 minutes
+// One snapshot feeds all three slices: the loader proves the featured posts,
+// their authors and the top contributors together (see lib/home/load-homepage).
+let cache: { data: HomepageSnapshot; timestamp: number } | null = null
+const CACHE_TTL = 2 * 60 * 1000 // 2 minutes
 
 export function useHomepageData(): HomepageData {
   const { isReady: sdkReady } = useSdk()
@@ -74,173 +61,47 @@ export function useHomepageData(): HomepageData {
 
   const hasLoadedRef = useRef(false)
 
-  const loadPlatformStats = useCallback(async (forceRefresh = false) => {
-    // Check cache
-    if (!forceRefresh && cache.platformStats &&
-        Date.now() - cache.platformStats.timestamp < STATS_CACHE_TTL) {
-      setPlatformStats({
-        ...cache.platformStats.data,
-        loading: false,
-        error: null
-      })
+  const applySnapshot = useCallback((snapshot: HomepageSnapshot) => {
+    setPlatformStats({ totalPosts: snapshot.totalPosts, loading: false, error: null })
+    setFeaturedPosts({ posts: snapshot.featuredPosts, loading: false, error: null })
+    setTopUsers({ users: snapshot.topUsers, loading: false, error: null })
+  }, [])
+
+  const load = useCallback(async (forceRefresh = false) => {
+    if (!forceRefresh && cache && Date.now() - cache.timestamp < CACHE_TTL) {
+      applySnapshot(cache.data)
       return
     }
 
     setPlatformStats(prev => ({ ...prev, loading: true, error: null }))
-
-    try {
-      const totalPosts = await postService.countAllPosts()
-
-      const data = { totalPosts }
-      cache.platformStats = { data, timestamp: Date.now() }
-
-      setPlatformStats({
-        ...data,
-        loading: false,
-        error: null
-      })
-    } catch (error) {
-      logger.error('Error loading platform stats:', error)
-      setPlatformStats(prev => ({
-        ...prev,
-        loading: false,
-        error: 'Failed to load platform statistics'
-      }))
-    }
-  }, [])
-
-  const loadFeaturedPosts = useCallback(async (forceRefresh = false) => {
-    // Check cache
-    if (!forceRefresh && cache.featuredPosts &&
-        Date.now() - cache.featuredPosts.timestamp < POSTS_CACHE_TTL) {
-      setFeaturedPosts({
-        posts: cache.featuredPosts.data,
-        loading: false,
-        error: null
-      })
-      return
-    }
-
     setFeaturedPosts(prev => ({ ...prev, loading: true, error: null }))
-
-    try {
-      // getTopPostsByLikes enriches via enrichPostsBatch, which also resolves
-      // whatever each post quotes (post, reply, or blog-post embed).
-      const posts = await postService.getTopPostsByLikes(5)
-
-      cache.featuredPosts = { data: posts, timestamp: Date.now() }
-
-      setFeaturedPosts({
-        posts,
-        loading: false,
-        error: null
-      })
-    } catch (error) {
-      logger.error('Error loading featured posts:', error)
-      setFeaturedPosts(prev => ({
-        ...prev,
-        loading: false,
-        error: 'Failed to load featured posts'
-      }))
-    }
-  }, [])
-
-  const loadTopUsers = useCallback(async (forceRefresh = false) => {
-    // Check cache
-    if (!forceRefresh && cache.topUsers &&
-        Date.now() - cache.topUsers.timestamp < USERS_CACHE_TTL) {
-      setTopUsers({
-        users: cache.topUsers.data,
-        loading: false,
-        error: null
-      })
-      return
-    }
-
     setTopUsers(prev => ({ ...prev, loading: true, error: null }))
 
     try {
-      // Get post counts per author
-      const authorCounts = await postService.getAuthorPostCounts()
-
-      if (authorCounts.size === 0) {
-        setTopUsers({ users: [], loading: false, error: null })
-        return
-      }
-
-      // Sort by post count and take top 6
-      const sortedAuthors = Array.from(authorCounts.entries())
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 6)
-
-      const authorIds = sortedAuthors.map(([id]) => id)
-
-      // Fetch profiles and usernames in parallel
-      const [profiles, usernameMap] = await Promise.all([
-        unifiedProfileService.getProfilesByIdentityIds(authorIds),
-        dpnsService.resolveUsernamesBatch(authorIds)
-      ])
-
-      const profileMap = new Map<string, UnifiedProfileDocument>()
-      for (const profile of profiles) {
-        if (profile.$ownerId) {
-          profileMap.set(profile.$ownerId, profile)
-        }
-      }
-
-      // Build top users array
-      const users: TopUser[] = sortedAuthors.map(([authorId, postCount]) => {
-        const profile = profileMap.get(authorId)
-        const username = usernameMap.get(authorId) || authorId.substring(0, 8) + '...'
-
-        return {
-          id: authorId,
-          username,
-          displayName: profile?.displayName || username,
-          postCount
-        }
-      })
-
-      cache.topUsers = { data: users, timestamp: Date.now() }
-
-      setTopUsers({
-        users,
-        loading: false,
-        error: null
-      })
+      const snapshot = await loadHomepage()
+      cache = { data: snapshot, timestamp: Date.now() }
+      applySnapshot(snapshot)
     } catch (error) {
-      logger.error('Error loading top users:', error)
-      setTopUsers(prev => ({
-        ...prev,
-        loading: false,
-        error: 'Failed to load top users'
-      }))
+      logger.error('Error loading homepage:', error)
+      setPlatformStats(prev => ({ ...prev, loading: false, error: 'Failed to load platform statistics' }))
+      setFeaturedPosts(prev => ({ ...prev, loading: false, error: 'Failed to load featured posts' }))
+      setTopUsers(prev => ({ ...prev, loading: false, error: 'Failed to load top users' }))
     }
-  }, [])
+  }, [applySnapshot])
 
   const refresh = useCallback(() => {
     if (!sdkReady) return
-
-    // Clear cache
-    cache.platformStats = null
-    cache.featuredPosts = null
-    cache.topUsers = null
-
-    // Reload all data. Each loader reports its own failure into its slice.
-    Promise.all([loadPlatformStats(true), loadFeaturedPosts(true), loadTopUsers(true)])
-      .catch((error) => logger.error('Homepage refresh failed:', error))
-  }, [sdkReady, loadPlatformStats, loadFeaturedPosts, loadTopUsers])
+    cache = null
+    load(true).catch((error) => logger.error('Homepage refresh failed:', error))
+  }, [sdkReady, load])
 
   // Initial load - wait for SDK to be ready
   useEffect(() => {
     if (!sdkReady) return
     if (hasLoadedRef.current) return
     hasLoadedRef.current = true
-
-    // Load all data in parallel. Each loader reports its own failure into its slice.
-    Promise.all([loadPlatformStats(), loadFeaturedPosts(), loadTopUsers()])
-      .catch((error) => logger.error('Homepage load failed:', error))
-  }, [sdkReady, loadPlatformStats, loadFeaturedPosts, loadTopUsers])
+    load().catch((error) => logger.error('Homepage load failed:', error))
+  }, [sdkReady, load])
 
   return {
     platformStats,
