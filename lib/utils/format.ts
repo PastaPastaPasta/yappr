@@ -48,7 +48,7 @@ export function fromSmallestUnit(price: number, currency: string): number {
  */
 export function formatPrice(price: number, currency: string = 'USD'): string {
   if (currency === 'DASH') {
-    return `${(price / 100000000).toFixed(4)} DASH`
+    return `${(price / 100000000).toFixed(8)} DASH`
   }
   if (currency === 'BTC') {
     return `${(price / 100000000).toFixed(8)} BTC`
