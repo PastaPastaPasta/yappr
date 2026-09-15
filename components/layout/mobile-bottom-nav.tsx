@@ -31,6 +31,7 @@ import {
 } from '@heroicons/react/24/solid'
 import { cn } from '@/lib/utils'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import * as Tooltip from '@radix-ui/react-tooltip'
 
 export function MobileBottomNav() {
   const pathname = usePathname()
@@ -101,7 +102,7 @@ export function MobileBottomNav() {
       )}
 
       {/* More Menu Sheet */}
-      <div className={cn(
+      <div id="mobile-more-menu" className={cn(
         "fixed bottom-14 left-0 right-0 z-40 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
         moreMenuOpen ? "translate-y-0" : "translate-y-full pointer-events-none"
       )}>
@@ -109,6 +110,7 @@ export function MobileBottomNav() {
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold">Menu</h3>
             <button
+              aria-label="Close menu"
               onClick={() => setMoreMenuOpen(false)}
               className="p-2 -mr-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
             >
@@ -179,7 +181,7 @@ export function MobileBottomNav() {
       </div>
 
       {/* Bottom Navigation Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 safe-area-inset-bottom">
+      <nav aria-label="Mobile navigation" className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 safe-area-inset-bottom">
         <div className="flex items-center justify-around h-14">
           {/* First two nav items */}
           {navItems.slice(0, 2).map((item) => {
@@ -189,6 +191,7 @@ export function MobileBottomNav() {
               <Link
                 key={item.name}
                 href={item.href}
+                aria-label={item.name}
                 className="flex-1 flex items-center justify-center h-full"
               >
                 <Icon className={cn(
@@ -202,6 +205,7 @@ export function MobileBottomNav() {
           {/* Center Post Button (FAB style) */}
           {user ? (
             <button
+              aria-label="Create post"
               onClick={() => setComposeOpen(true)}
               className="flex items-center justify-center -mt-4 h-14 w-14 rounded-full bg-yappr-500 text-white shadow-yappr-lg active:scale-95 transition-transform"
             >
@@ -209,6 +213,7 @@ export function MobileBottomNav() {
             </button>
           ) : (
             <button
+              aria-label="Sign in to post"
               onClick={openLoginModal}
               className="flex items-center justify-center -mt-4 h-14 w-14 rounded-full bg-yappr-500 text-white shadow-yappr-lg active:scale-95 transition-transform"
             >
@@ -224,6 +229,7 @@ export function MobileBottomNav() {
               <Link
                 key={item.name}
                 href={item.href}
+                aria-label={item.name}
                 className="flex-1 flex items-center justify-center h-full"
               >
                 <Icon className={cn(
@@ -235,18 +241,32 @@ export function MobileBottomNav() {
           })}
 
           {/* More Button */}
-          <button
-            onClick={() => setMoreMenuOpen(!moreMenuOpen)}
-            className="flex-1 flex items-center justify-center h-full relative"
-          >
-            <Bars3Icon className={cn(
-              "h-7 w-7",
-              (moreMenuOpen || isMoreActive) ? "text-black dark:text-white" : "text-gray-500"
-            )} />
-            {isHydrated && unreadNotificationCount > 0 && !moreMenuOpen && (
-              <span className="absolute top-2 right-1/4 w-2 h-2 bg-yappr-500 rounded-full" />
-            )}
-          </button>
+          <Tooltip.Provider>
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
+                <button
+                  aria-label="Menu"
+                  aria-expanded={moreMenuOpen}
+                  aria-controls="mobile-more-menu"
+                  onClick={() => setMoreMenuOpen(!moreMenuOpen)}
+                  className="flex-1 flex items-center justify-center h-full relative"
+                >
+                  <Bars3Icon className={cn(
+                    "h-7 w-7",
+                    (moreMenuOpen || isMoreActive) ? "text-black dark:text-white" : "text-gray-500"
+                  )} />
+                  {isHydrated && unreadNotificationCount > 0 && !moreMenuOpen && (
+                    <span className="absolute top-2 right-1/4 w-2 h-2 bg-yappr-500 rounded-full" />
+                  )}
+                </button>
+              </Tooltip.Trigger>
+              <Tooltip.Portal>
+                <Tooltip.Content className="z-50 bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded" sideOffset={5}>
+                  Menu
+                </Tooltip.Content>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          </Tooltip.Provider>
         </div>
       </nav>
     </>
