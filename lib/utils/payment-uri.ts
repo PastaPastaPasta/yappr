@@ -19,7 +19,10 @@ export function isValidDashAddress(address: string, network: 'mainnet' | 'testne
 
 export function isValidPaymentAddress(scheme: string, address: string): boolean {
   const normalizedScheme = scheme.toLowerCase()
-  if (normalizedScheme === 'dash:') return isValidDashAddress(address, 'mainnet')
-  if (normalizedScheme === 'tdash:') return isValidDashAddress(address, 'testnet')
+  // A custom payment URI may include optional amount, label, or message fields.
+  // Validate its destination without changing or discarding the query parameters.
+  const destination = address.split('?', 1)[0]
+  if (normalizedScheme === 'dash:') return isValidDashAddress(destination, 'mainnet')
+  if (normalizedScheme === 'tdash:') return isValidDashAddress(destination, 'testnet')
   return Boolean(address.trim())
 }

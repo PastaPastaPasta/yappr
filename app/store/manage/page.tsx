@@ -242,15 +242,12 @@ function StoreManagePage() {
     setIsImporting(true)
     try {
       const profileUris = await unifiedProfileService.getPaymentUris(user.identityId)
-      const validProfileUris = (await Promise.all(profileUris.map(async (uri) => {
-        const colonIndex = uri.uri.indexOf(':')
-        const scheme = colonIndex > 0 ? uri.uri.slice(0, colonIndex + 1) : ''
-        const address = colonIndex > 0 ? uri.uri.slice(colonIndex + 1) : ''
-        return await isValidPaymentAddress(scheme, address) ? uri : null
-      }))).filter((uri): uri is NonNullable<typeof uri> => uri !== null)
+      const validProfileUris = profileUris.filter(({ scheme, uri }) =>
+        isValidPaymentAddress(scheme, uri.slice(uri.indexOf(':') + 1))
+      )
 
       if (validProfileUris.length === 0) {
-        toast('No payment addresses found on your profile', { icon: 'ℹ️' })
+        toast('No valid payment addresses found on your profile', { icon: 'ℹ️' })
         return
       }
 

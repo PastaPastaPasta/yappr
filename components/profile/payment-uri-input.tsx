@@ -60,7 +60,7 @@ export function PaymentUriInput({
   const [newUri, setNewUri] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  const handleAddUri = async () => {
+  const handleAddUri = () => {
     if (!newUri.trim()) return
 
     const parsed = parsePaymentUri(newUri)
@@ -93,7 +93,7 @@ export function PaymentUriInput({
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      void handleAddUri()
+      handleAddUri()
     }
   }
 
@@ -153,7 +153,7 @@ export function PaymentUriInput({
           />
           <button
             type="button"
-            onClick={() => void handleAddUri()}
+            onClick={handleAddUri}
             disabled={disabled || !newUri.trim()}
             className="px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600
                        disabled:opacity-50 disabled:cursor-not-allowed
