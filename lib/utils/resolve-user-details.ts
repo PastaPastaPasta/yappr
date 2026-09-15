@@ -14,39 +14,14 @@ export interface UserDetails {
  * Resolves DPNS username and profile display name for a given identity ID.
  * Returns a standardized UserDetails object.
  */
-export async function resolveUserDetails(identityId: string): Promise<UserDetails> {
-  const { dpnsService } = await import('@/lib/services/dpns-service')
-  const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
-
-  let username: string | undefined
-  let displayName = `User ${identityId.slice(-6)}`
-  let hasDpns = false
-
-  // Try to get DPNS username
-  try {
-    const resolvedUsername = await dpnsService.resolveUsername(identityId)
-    if (resolvedUsername) {
-      username = resolvedUsername
-      hasDpns = true
-    }
-  } catch {
-    // DPNS resolution is optional
-  }
-
-  // Try to get profile display name
-  try {
-    const profile = await unifiedProfileService.getProfile(identityId)
-    if (profile?.displayName) {
-      displayName = profile.displayName
-    }
-  } catch {
-    // Profile is optional
-  }
-
-  return {
-    id: identityId,
-    username,
-    displayName,
-    hasDpns,
-  }
+export async function resolveUserDetailsBatch(identityIds: string[]): Promise<Map<string, UserDetails>> {
+  const { loadIdentityBatch } = await import('@/lib/services/identity-batch')
+  const { usernames, profiles } = await loadIdentityBatch(identityIds)
+  const byOwner = new Map(profiles.map(profile => [profile.$ownerId, profile]))
+  return new Map(identityIds.map(id => [id, {
+    id,
+    username: usernames.get(id) || undefined,
+    displayName: byOwner.get(id)?.displayName || `User ${id.slice(-6)}`,
+    hasDpns: !!usernames.get(id),
+  }]))
 }

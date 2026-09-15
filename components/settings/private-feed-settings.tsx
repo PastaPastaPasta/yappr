@@ -64,7 +64,8 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
       const { identityService } = await import('@/lib/services/identity-service')
 
       // Check if user has private feed on chain
-      const hasPrivateFeed = await privateFeedService.hasPrivateFeed(user.identityId)
+      const state = await privateFeedService.getPrivateFeedState(user.identityId)
+      const hasPrivateFeed = state !== null
       setIsEnabled(hasPrivateFeed)
 
       // Check if encryption key is stored in session
@@ -78,7 +79,6 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
 
       if (hasPrivateFeed) {
         // Get state document for created date
-        const state = await privateFeedService.getPrivateFeedState(user.identityId)
         if (state?.$createdAt) {
           setEnabledDate(new Date(state.$createdAt))
         }

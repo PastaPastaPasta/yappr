@@ -16,7 +16,7 @@ export interface UseBlogFollowResult {
  * Whether the viewer follows `blogId`, with an optimistic toggle that also
  * keeps the displayed follower count in step.
  */
-export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBlogFollowResult {
+export function useBlogFollow(blogId: string, initialFollowing?: boolean, includeCount = true): UseBlogFollowResult {
   const [followerCount, setFollowerCount] = useState(0)
 
   const { isOn, isLoading, toggle } = useToggleRelation({
@@ -44,7 +44,7 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
   })
 
   useEffect(() => {
-    if (!blogId) return
+    if (!blogId || !includeCount) return
     let cancelled = false
     import('@/lib/services/blog-follow-service')
       .then(({ blogFollowService }) => blogFollowService.countBlogFollowers(blogId))
@@ -55,7 +55,7 @@ export function useBlogFollow(blogId: string, initialFollowing?: boolean): UseBl
     return () => {
       cancelled = true
     }
-  }, [blogId])
+  }, [blogId, includeCount])
 
   return { isFollowing: isOn, isLoading, followerCount, toggleFollow: toggle }
 }

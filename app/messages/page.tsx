@@ -1,5 +1,7 @@
 'use client'
 
+import { loadIdentityBatch } from '@/lib/services/identity-batch'
+
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
@@ -98,19 +100,15 @@ function MessagesPage() {
   useEffect(() => {
     if (!user || conversations.length === 0) return
 
-    const pendingUsernameIds = new Set<string>()
-    const pendingProfileIds = new Set<string>()
+    const pendingIds = new Set<string>()
 
     for (const conv of conversations) {
       const id = conv.participantId
       if (!id || participantHydrationInFlightRef.current.has(id)) continue
-      if (!conv.participantUsername) pendingUsernameIds.add(id)
-      if (!conv.participantDisplayName) pendingProfileIds.add(id)
+      if (!conv.participantUsername || !conv.participantDisplayName) pendingIds.add(id)
     }
 
-    const usernameIds = Array.from(pendingUsernameIds)
-    const profileIds = Array.from(pendingProfileIds)
-    const idsToHydrate = Array.from(new Set([...usernameIds, ...profileIds]))
+    const idsToHydrate = Array.from(pendingIds)
 
     if (idsToHydrate.length === 0) return
 
@@ -119,36 +117,25 @@ function MessagesPage() {
 
     const hydrate = async () => {
       try {
-        const [usernamesResult, profilesResult] = await Promise.allSettled([
-          usernameIds.length > 0
-            ? dpnsService.resolveUsernamesBatch(usernameIds)
-            : Promise.resolve(new Map<string, string | null>()),
-          profileIds.length > 0
-            ? unifiedProfileService.getProfilesByIdentityIds(profileIds)
-            : Promise.resolve([])
-        ])
+        const identities = await loadIdentityBatch(idsToHydrate).catch(() => null)
 
-        if (cancelled) return
+        if (cancelled || !identities) return
 
         const updates = new Map<string, { username?: string; displayName?: string }>()
 
-        if (usernamesResult.status === 'fulfilled') {
-          usernamesResult.value.forEach((username, id) => {
-            if (!username) return
-            const existing = updates.get(id) || {}
-            updates.set(id, { ...existing, username })
-          })
-        }
+        identities.usernames.forEach((username, id) => {
+          if (!username) return
+          const existing = updates.get(id) || {}
+          updates.set(id, { ...existing, username })
+        })
 
-        if (profilesResult.status === 'fulfilled') {
-          const profileMap = new Map(
-            profilesResult.value.map(profile => [profile.$ownerId, profile] as const)
-          )
-          for (const [id, profile] of Array.from(profileMap.entries())) {
-            if (!id || !profile?.displayName) continue
-            const existing = updates.get(id) || {}
-            updates.set(id, { ...existing, displayName: profile.displayName })
-          }
+        const profileMap = new Map(
+          identities.profiles.map(profile => [profile.$ownerId, profile] as const)
+        )
+        for (const [id, profile] of Array.from(profileMap.entries())) {
+          if (!id || !profile?.displayName) continue
+          const existing = updates.get(id) || {}
+          updates.set(id, { ...existing, displayName: profile.displayName })
         }
 
         if (updates.size > 0) {
@@ -505,19 +492,15 @@ function MessagesPage() {
           return
         }
 
-        const [usernamesResult, profilesResult] = await Promise.allSettled([
-          dpnsService.resolveUsernamesBatch(followerIds),
-          unifiedProfileService.getProfilesByIdentityIds(followerIds)
-        ])
+        const { usernames, profiles } = await loadIdentityBatch(followerIds).catch(() => ({
+          usernames: new Map<string, string | null>(),
+          profiles: [],
+        }))
 
         if (cancelled) return
 
-        const usernames = usernamesResult.status === 'fulfilled'
-          ? usernamesResult.value
-          : new Map<string, string | null>()
         const profileMap = new Map(
-          (profilesResult.status === 'fulfilled' ? profilesResult.value : [])
-            .map(profile => [profile.$ownerId, profile] as const)
+          profiles.map(profile => [profile.$ownerId, profile] as const)
         )
 
         setFollowerSuggestions(followerIds.map(id => {

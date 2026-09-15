@@ -1,12 +1,12 @@
 import { logger } from '@/lib/logger';
+import { queryDocumentBundle } from './document-query-bundle';
 import { getEvoSdk } from './evo-sdk-service';
-import { dpnsService } from './dpns-service';
-import { unifiedProfileService } from './unified-profile-service';
+import { loadIdentityBatch } from './identity-batch';
 import { identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
-import { likesAreIndexOnly, likeSurfacesAreSplit, replyLinkage, type TargetKind } from '../contract-topology';
+import { likesAreIndexOnly, likeSurfacesAreSplit, likeIndexFor, replyLinkage, type TargetKind } from '../contract-topology';
 
 // Constants for notification queries
 const NOTIFICATION_QUERY_LIMIT = 100;
@@ -82,11 +82,11 @@ class NotificationService {
    * Get new followers since timestamp
    * Uses the followers index: [followingId, $createdAt]
    */
-  async getNewFollowers(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+  async getNewFollowers(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
     try {
       const sdk = await getEvoSdk();
 
-      const documents = await queryDocuments(sdk, {
+      const documents = preloaded ?? await queryDocuments(sdk, {
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'follow',
         where: [
@@ -121,13 +121,13 @@ class NotificationService {
    * This fix follows the same pattern as getNewFollowers() - query the source documents directly.
    * Uses the followRequest target index: [targetId, $createdAt]
    */
-  async getPrivateFeedNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+  async getPrivateFeedNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
     try {
       const sdk = await getEvoSdk();
 
       // Query followRequest documents where this user is the target (feed owner)
       // This discovers incoming private feed access requests
-      const documents = await queryDocuments(sdk, {
+      const documents = preloaded ?? await queryDocuments(sdk, {
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'followRequest',
         where: [
@@ -158,14 +158,14 @@ class NotificationService {
    * which is a second owner-index to read and merge — and the merge must NOT run
    * on v2, where it would return the same documents twice.
    */
-  async getLikeNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+  async getLikeNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[][]): Promise<RawNotification[]> {
     try {
       const { likeService } = await import('./like-service');
       const since = new Date(sinceTimestamp);
       const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
 
       const perKind = await Promise.all(
-        kinds.map((kind) => likeService.getLikesOnMyPosts(userId, since, kind))
+        kinds.map((kind, index) => likeService.getLikesOnMyPosts(userId, since, kind, preloaded?.[index]))
       );
 
       // indexOnly likes have no stable `$id` — the create-time id and the ids
@@ -198,10 +198,10 @@ class NotificationService {
    * Get reposts of user's posts since timestamp (for notification queries).
    * Uses the postOwnerReposts index via repostService.getRepostsOfMyPosts()
    */
-  async getRepostNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+  async getRepostNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
     try {
       const { repostService } = await import('./repost-service');
-      const reposts = await repostService.getRepostsOfMyPosts(userId, new Date(sinceTimestamp));
+      const reposts = await repostService.getRepostsOfMyPosts(userId, new Date(sinceTimestamp), preloaded);
 
       return reposts
         .map(repost => ({
@@ -221,10 +221,10 @@ class NotificationService {
    * Get replies to user's content since timestamp (for notification queries).
    * Uses the parentOwnerAndTime index via replyService.getRepliesToMyContent()
    */
-  async getReplyNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+  async getReplyNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
     try {
       const { replyService } = await import('./reply-service');
-      const replies = await replyService.getRepliesToMyContent(userId, new Date(sinceTimestamp));
+      const replies = await replyService.getRepliesToMyContent(userId, new Date(sinceTimestamp), preloaded);
 
       return replies
         .map(reply => ({
@@ -250,11 +250,11 @@ class NotificationService {
    * Get new mentions since timestamp
    * Uses the byMentionedUser index: [mentionedUserId, $createdAt]
    */
-  async getNewMentions(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+  async getNewMentions(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
     try {
       const sdk = await getEvoSdk();
 
-      const documents = await queryDocuments(sdk, {
+      const documents = preloaded ?? await queryDocuments(sdk, {
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'postMention',
         where: [
@@ -294,37 +294,15 @@ class NotificationService {
       const followedBlogIds = await blogFollowService.getFollowedBlogIds(userId);
       if (followedBlogIds.length === 0) return [];
 
-      // Batch fetch recent posts from followed blogs (concurrency limit of 20)
-      const batchSize = 20;
-      const allNotifications: RawNotification[] = [];
+      const pages = await blogPostService.getPostsByBlogs(followedBlogIds, 10);
+      return Array.from(pages.entries()).flatMap(([blogId, posts]) => posts
+        .filter(post => post.createdAt.getTime() > sinceTimestamp)
+        .map(post => ({
+          id: `blogPost-${post.id}`, type: 'blogPost' as const, fromUserId: post.ownerId,
+          postId: post.id, blogId, blogPostTitle: post.title, blogPostSlug: post.slug,
+          createdAt: post.createdAt.getTime(),
+        })));
 
-      for (let i = 0; i < followedBlogIds.length; i += batchSize) {
-        const batch = followedBlogIds.slice(i, i + batchSize);
-        const results = await Promise.all(
-          batch.map(async (blogId) => {
-            try {
-              const posts = await blogPostService.getPostsByBlog(blogId, { limit: 10 });
-              return posts
-                .filter(post => post.createdAt.getTime() > sinceTimestamp)
-                .map(post => ({
-                  id: `blogPost-${post.id}`,
-                  type: 'blogPost' as const,
-                  fromUserId: post.ownerId,
-                  postId: post.id,
-                  blogId,
-                  blogPostTitle: post.title,
-                  blogPostSlug: post.slug,
-                  createdAt: post.createdAt.getTime(),
-                }));
-            } catch {
-              return [];
-            }
-          })
-        );
-        allNotifications.push(...results.flat());
-      }
-
-      return allNotifications;
     } catch (error) {
       logger.error('Error fetching blog post notifications:', error);
       return [];
@@ -344,35 +322,27 @@ class NotificationService {
     // Collect unique user IDs and post IDs
     const userIds = Array.from(new Set(rawNotifications.map(n => n.fromUserId)));
     const postIds = Array.from(new Set(
-      rawNotifications.flatMap(n => (n.postId ? [n.postId] : []))
+      rawNotifications.flatMap(n => (n.postId && n.type !== 'blogPost' && n.replyContent === undefined ? [n.postId] : []))
     ));
 
     // Batch fetch all required data in parallel with fault tolerance
     const results = await Promise.allSettled([
-      dpnsService.resolveUsernamesBatch(userIds),
-      unifiedProfileService.getProfilesByIdentityIds(userIds),
-      unifiedProfileService.getAvatarUrlsBatch(userIds),
+      loadIdentityBatch(userIds),
       postIds.length > 0 ? this.fetchPostsByIds(postIds) : Promise.resolve(new Map<string, Post>())
     ]);
 
     // Extract results with fallbacks for failures
-    const usernameMap = results[0].status === 'fulfilled'
+    const { usernames: usernameMap, profiles, avatars: avatarUrls } = results[0].status === 'fulfilled'
       ? results[0].value
-      : new Map<string, string>();
-    const profiles = results[1].status === 'fulfilled'
+      : { usernames: new Map<string, string | null>(), profiles: [], avatars: new Map<string, string>() };
+    const posts = results[1].status === 'fulfilled'
       ? results[1].value
-      : [];
-    const avatarUrls = results[2].status === 'fulfilled'
-      ? results[2].value
-      : new Map<string, string>();
-    const posts = results[3].status === 'fulfilled'
-      ? results[3].value
       : new Map<string, Post>();
 
     // Log any enrichment failures for debugging
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
-        const fetchTypes = ['usernames', 'profiles', 'avatars', 'posts'];
+        const fetchTypes = ['identities', 'posts'];
         logger.error(`Failed to fetch ${fetchTypes[index]} for notification enrichment:`, result.reason);
       }
     });
@@ -640,14 +610,27 @@ class NotificationService {
     readIds: Set<string>,
     fallbackTimestamp: number
   ): Promise<NotificationResult> {
-    const [followers, mentions, privateFeed, likes, reposts, replies, blogPosts] = await Promise.all([
-      this.getNewFollowers(userId, sinceTimestamp),
-      this.getNewMentions(userId, sinceTimestamp),
-      this.getPrivateFeedNotifications(userId, sinceTimestamp),
-      this.getLikeNotifications(userId, sinceTimestamp),
-      this.getRepostNotifications(userId, sinceTimestamp),
-      this.getReplyNotifications(userId, sinceTimestamp),
-      this.getBlogPostNotifications(userId, sinceTimestamp)
+    const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
+    const sources = [
+      ['follow', 'followingId'], ['postMention', 'mentionedUserId'], ['followRequest', 'targetId'],
+      ...kinds.map(kind => { const index = likeIndexFor(kind); if (!index.ownerField) throw new Error('Notification index has no author field'); return [index.docType, index.ownerField]; }),
+      ['repost', 'postOwnerId'], ['reply', 'parentOwnerId'],
+    ];
+    const [documents, blogPosts] = await Promise.all([
+      queryDocumentBundle(sources.map(([documentTypeName, ownerField]) => ({
+        dataContractId: YAPPR_CONTRACT_ID, documentTypeName,
+        where: [[ownerField, '==', userId], ['$createdAt', '>', sinceTimestamp]],
+        orderBy: [[ownerField, 'asc'], ['$createdAt', 'asc']], limit: NOTIFICATION_QUERY_LIMIT,
+      })), true),
+      this.getBlogPostNotifications(userId, sinceTimestamp),
+    ]);
+    const [followers, mentions, privateFeed, likes, reposts, replies] = await Promise.all([
+      this.getNewFollowers(userId, sinceTimestamp, documents[0]),
+      this.getNewMentions(userId, sinceTimestamp, documents[1]),
+      this.getPrivateFeedNotifications(userId, sinceTimestamp, documents[2]),
+      this.getLikeNotifications(userId, sinceTimestamp, documents.slice(3, 3 + kinds.length)),
+      this.getRepostNotifications(userId, sinceTimestamp, documents[3 + kinds.length]),
+      this.getReplyNotifications(userId, sinceTimestamp, documents[4 + kinds.length]),
     ]);
 
     const allRaw = [...followers, ...mentions, ...privateFeed, ...likes, ...reposts, ...replies, ...blogPosts];

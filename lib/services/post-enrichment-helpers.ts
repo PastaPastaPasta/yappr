@@ -1,6 +1,7 @@
+import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 import { logger } from '@/lib/logger';
 import { Post, User } from '../types';
-import { dpnsService } from './dpns-service';
+import { loadIdentityBatch } from './identity-batch';
 import { blockService } from './block-service';
 import { followService } from './follow-service';
 import { unifiedProfileService } from './unified-profile-service';
@@ -66,37 +67,40 @@ export async function enrichPostsBatch(
   posts: Post[],
   getBatchPostStats: (targets: readonly KindedTarget[]) => Promise<Map<string, PostStats>>,
   getBatchUserInteractions: (targets: readonly KindedTarget[]) => Promise<Map<string, PostInteractionState>>,
-  currentUserId: string | null
+  currentUserId: string | null,
+  supplied?: PreloadedEnrichment
 ): Promise<Post[]> {
   if (posts.length === 0) return posts;
 
   try {
     // Tagged with each post's kind so the batch queries hit the right doctypes
     // (a no-op on v2, where both kinds share one surface).
+    const { loadPostEnrichment } = await import('@/lib/feed/load-post-enrichment');
+    const preloaded = supplied ?? await loadPostEnrichment(posts, currentUserId ?? undefined);
     const targets = posts.map(targetOf);
     const authorIds = Array.from(new Set(posts.map((post) => post.author.id).filter(Boolean)));
 
+    const identities = loadIdentityBatch(authorIds);
     const [
       statsMap,
       interactionsMap,
-      usernameMap,
-      profiles,
+      { usernames: usernameMap, profiles, avatars: avatarUrlMap },
       blockStatusMap,
       followStatusMap,
-      avatarUrlMap,
     ] = await Promise.all([
-      getBatchPostStats(targets),
-      getBatchUserInteractions(targets),
-      dpnsService.resolveUsernamesBatch(authorIds),
-      unifiedProfileService.getProfilesByIdentityIds(authorIds),
+      getBatchPostStats(targets.filter(target => !preloaded.stats?.has(target.id))),
+      getBatchUserInteractions(targets.filter(target => !preloaded.interactions?.has(target.id))),
+      identities,
       currentUserId
         ? blockService.checkBlockedBatch(currentUserId, authorIds)
         : Promise.resolve(new Map<string, boolean>()),
       currentUserId
         ? followService.getFollowStatusBatch(authorIds, currentUserId)
         : Promise.resolve(new Map<string, boolean>()),
-      unifiedProfileService.getAvatarUrlsBatch(authorIds),
     ]);
+
+    preloaded.stats?.forEach((stats, postId) => statsMap.set(postId, { ...stats, postId }));
+    preloaded.interactions?.forEach((marks, postId) => interactionsMap.set(postId, marks));
 
     if (currentUserId) {
       blockStatusCache.seed(currentUserId, blockStatusMap);
@@ -177,11 +181,7 @@ export async function resolvePostAuthorsBatch(posts: Post[]): Promise<void> {
   if (authorIds.length === 0) return;
 
   try {
-    const [usernameMap, profiles, avatarUrls] = await Promise.all([
-      dpnsService.resolveUsernamesBatch(authorIds),
-      unifiedProfileService.getProfilesByIdentityIds(authorIds),
-      unifiedProfileService.getAvatarUrlsBatch(authorIds),
-    ]);
+    const { usernames: usernameMap, profiles, avatars: avatarUrls } = await loadIdentityBatch(authorIds);
 
     const profileMap = profileDataByOwnerId(profiles);
 

@@ -36,8 +36,7 @@ export function BlockListSettings() {
       setIsLoading(true)
       const { followService } = await import('@/lib/services/follow-service')
       const { blockService } = await import('@/lib/services/block-service')
-      const { dpnsService } = await import('@/lib/services/dpns-service')
-      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+      const { loadIdentityBatch } = await import('@/lib/services/identity-batch')
 
       // Load following list and block follows in parallel
       const [follows, blockFollows] = await Promise.all([
@@ -56,21 +55,7 @@ export function BlockListSettings() {
       // Get unique identity IDs
       const identityIds = follows.map(f => f.followingId).filter(Boolean)
 
-      // Batch fetch usernames and profiles
-      const [dpnsNames, profiles] = await Promise.all([
-        Promise.all(identityIds.map(async (id) => {
-          try {
-            const username = await dpnsService.resolveUsername(id)
-            return { id, username }
-          } catch {
-            return { id, username: null }
-          }
-        })),
-        unifiedProfileService.getProfilesByIdentityIds(identityIds)
-      ])
-
-      // Create lookup maps
-      const dpnsMap = new Map(dpnsNames.map(item => [item.id, item.username]))
+      const { usernames: dpnsMap, profiles } = await loadIdentityBatch(identityIds)
       const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
 
       // Build user list

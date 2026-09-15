@@ -9,7 +9,7 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { NoSymbolIcon } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
 import Link from 'next/link'
-import { resolveUserDetails, type UserDetails } from '@/lib/utils/resolve-user-details'
+import { resolveUserDetailsBatch, type UserDetails } from '@/lib/utils/resolve-user-details'
 
 export function BlockedUsersSettings() {
   const { user } = useAuth()
@@ -35,9 +35,8 @@ export function BlockedUsersSettings() {
         return
       }
 
-      const usersWithDetails = await Promise.all(
-        blocks.map((block) => resolveUserDetails(block.blockedId))
-      )
+      const users = await resolveUserDetailsBatch(blocks.map(block => block.blockedId))
+      const usersWithDetails = Array.from(users.values())
 
       setBlockedUsers(usersWithDetails)
     } catch (error) {

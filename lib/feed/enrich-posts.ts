@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
 import { Post } from '@/lib/types';
-import { dpnsService, unifiedProfileService } from '@/lib/services';
+import { loadIdentityBatch } from '@/lib/services/identity-batch';
 import { profileDataByOwnerId } from '@/lib/services/post-enrichment-helpers';
 import { repostService } from '@/lib/services/repost-service';
 import { attachQuotedPosts } from './resolve-quoted-posts';
@@ -33,10 +33,7 @@ export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Pr
       // lookup per reposter; failures leave names blank rather than failing
       // the feed load.
       try {
-        const [usernameMap, profiles] = await Promise.all([
-          dpnsService.resolveUsernamesBatch(reposterIds),
-          unifiedProfileService.getProfilesByIdentityIds(reposterIds),
-        ]);
+        const { usernames: usernameMap, profiles } = await loadIdentityBatch(reposterIds);
 
         const profileMap = profileDataByOwnerId(profiles);
 

@@ -90,7 +90,7 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
           <PostCard
             key={post.id}
             post={post}
-            enrichment={getPostEnrichment(post)}
+            enrichment={tab === 'top' ? undefined : getPostEnrichment(post)}
             parentPost={tab === 'replies' ? replies.parents.get(post.id) : undefined}
             parentPostLoading={tab === 'replies' && replies.parentsLoading}
           />

@@ -28,14 +28,8 @@ async function hydrateRankedUsers(rankings: RankedGroupCount[][]): Promise<Ranke
   const ids = Array.from(new Set(rankings.flat().map((entry) => entry.key)))
   if (ids.length === 0) return rankings.map(() => [])
 
-  const [{ dpnsService }, { unifiedProfileService }] = await Promise.all([
-    import('@/lib/services/dpns-service'),
-    import('@/lib/services/unified-profile-service'),
-  ])
-  const [usernameMap, profiles] = await Promise.all([
-    dpnsService.resolveUsernamesBatch(ids),
-    unifiedProfileService.getProfilesByIdentityIds(ids),
-  ])
+  const { loadIdentityBatch } = await import('@/lib/services/identity-batch')
+  const { usernames: usernameMap, profiles } = await loadIdentityBatch(ids)
   const profileMap = new Map(profiles.map((profile) => [profile.$ownerId, profile]))
 
   return rankings.map((ranking) =>

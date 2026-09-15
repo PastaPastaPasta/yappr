@@ -47,6 +47,44 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('composite feed page', () => {
+  it('uses reply surfaces and preserves caller linkage without mutating the input', async () => {
+    mocks.composite.mockImplementation(async query => ({
+      pageDocuments: [docs[0]],
+      subResults: query.subQueries.map((sub: { kind?: string }) => sub.kind === 'counts'
+        ? { kind: 'counts', counts: new Map([[docs[0].$id, BigInt(5)]]) }
+        : { kind: 'documents', documents: [] }),
+    }));
+    const { transformRawPost } = await import('./transform-raw-post');
+    const source = { ...transformRawPost(docs[0]), targetKind: 'reply' as const, rootPostId: 'root1234', parentId: 'parent1234' };
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const page = await loadCompositeFeedPage({
+      language: 'en', limit: 1, documentIds: [source.id], kind: 'reply',
+      sourcePosts: [source], currentUserId: ownerIds[0],
+    });
+    const query = mocks.composite.mock.calls[0][0];
+    expect(query.documentType).toBe('reply');
+    expect(query.subQueries.filter((sub: { kind?: string }) => sub.kind === 'counts').map((sub: { documentType: string }) => sub.documentType))
+      .toEqual(['likeReply', 'reply', 'post']);
+    expect(query.subQueries.some((sub: { documentType: string }) => ['bookmark', 'repost'].includes(sub.documentType))).toBe(false);
+    expect(page.posts[0]).toMatchObject({ targetKind: 'reply', rootPostId: 'root1234', parentId: 'parent1234', likes: 5 });
+    expect(source.likes).toBe(0);
+  });
+
+  it('retains the exact owner/tag query instead of changing its ordering', async () => {
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const pageQuery = { where: [['hashtag', '==', 'dash']] as [string, '==', string][], orderBy: [['$createdAt', 'desc']] as [string, 'desc'][] };
+    await loadCompositeFeedPage({ language: 'en', limit: 20, pageQuery });
+    expect(mocks.composite.mock.calls[0][0]).toMatchObject(pageQuery);
+  });
+
+  it('keeps an explicit ID page unordered when its caller omits orderBy', async () => {
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const pageQuery = { where: [['$id', 'in', [docs[0].$id]]] as [string, 'in', string[]][] };
+    await loadCompositeFeedPage({ language: 'en', limit: 1, pageQuery });
+    expect(mocks.composite.mock.calls[0][0].where).toEqual(pageQuery.where);
+    expect(mocks.composite.mock.calls[0][0].orderBy).toBeUndefined();
+  });
+
   it('should preload all four named authors using a total budget of 100', async () => {
     const { loadCompositeFeedPage } = await import('./composite-feed-page');
     const page = await loadCompositeFeedPage({ language: 'en', limit: 20 });

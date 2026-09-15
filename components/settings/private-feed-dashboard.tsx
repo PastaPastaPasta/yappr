@@ -16,7 +16,7 @@ import { TREE_CAPACITY, MAX_EPOCH } from '@/lib/services'
 import { formatTime } from '@/lib/utils'
 import Link from 'next/link'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
-import { resolveUserDetails } from '@/lib/utils/resolve-user-details'
+import { resolveUserDetailsBatch } from '@/lib/utils/resolve-user-details'
 
 function getEpochProgressColor(isWarning: boolean, percent: number): string {
   if (isWarning) return 'bg-gradient-to-r from-red-500 to-red-600'
@@ -102,7 +102,10 @@ export function PrivateFeedDashboard() {
       setPendingRequestCount(requests.length)
 
       // Get current epoch
-      const epoch = await privateFeedService.getLatestEpoch(user.identityId)
+      const rekeyDocs = await privateFeedService.getRekeyDocuments(user.identityId)
+      const epoch = rekeyDocs.length < 2000
+        ? Math.max(1, ...rekeyDocs.map(doc => doc.epoch))
+        : await privateFeedService.getLatestEpoch(user.identityId)
 
       // Bail out if a newer request has started
       if (currentRequestId !== requestIdRef.current) return
@@ -132,11 +135,12 @@ export function PrivateFeedDashboard() {
 
       // Add approved followers as activity (sort by grantedAt descending to get most recent)
       const sortedFollowers = [...followers].sort((a, b) => b.grantedAt - a.grantedAt)
+      const users = await resolveUserDetailsBatch(sortedFollowers.slice(0, 5).map(follower => follower.recipientId))
       for (const follower of sortedFollowers.slice(0, 5)) {
         // Bail out if a newer request has started
         if (currentRequestId !== requestIdRef.current) return
 
-        const details = await resolveUserDetails(follower.recipientId)
+        const details = users.get(follower.recipientId) ?? { id: follower.recipientId, displayName: `User ${follower.recipientId.slice(-6)}`, hasDpns: false }
 
         activity.push({
           id: `grant-${follower.recipientId}`,
@@ -151,8 +155,6 @@ export function PrivateFeedDashboard() {
       // Bail out if a newer request has started
       if (currentRequestId !== requestIdRef.current) return
 
-      // Get rekey documents for revocation activity
-      const rekeyDocs = await privateFeedService.getRekeyDocuments(user.identityId)
 
       // For revocations, we track them from rekey documents but don't have the user info directly
       // We can only show "Follower revoked" without the user details since grant is deleted

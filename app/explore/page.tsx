@@ -43,6 +43,7 @@ export default function ExplorePage() {
   const [isLoadingTop, setIsLoadingTop] = useState(false)
   /** v6: which slice the ranked surfaces show (Top posts, trending, creators). */
   const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
+  const blogsLoadedRef = useRef(false)
   const blogCacheRef = useRef<{ blogIds: string[]; blogMap: Map<string, Blog> } | null>(null)
 
   // Load the global most-liked posts when the Top tab is activated (v4 only —
@@ -98,8 +99,10 @@ export default function ExplorePage() {
     loadTrendingHashtags().catch(err => logger.error('Failed to load trending hashtags:', err))
   }, [rankingWindow])
 
-  // Load recent blog posts for discovery
+  // Discovery is lazy; search has its own blog loader.
   useEffect(() => {
+    if (activeTab !== 'blogs' || blogsLoadedRef.current) return
+    blogsLoadedRef.current = true
     const loadRecentBlogPosts = async () => {
       try {
         setIsLoadingBlogs(true)
@@ -132,7 +135,7 @@ export default function ExplorePage() {
     }
 
     loadRecentBlogPosts().catch(err => logger.error('Failed to load blog posts:', err))
-  }, [])
+  }, [activeTab])
 
   // Search posts and blog posts when query changes
   useEffect(() => {
@@ -170,7 +173,7 @@ export default function ExplorePage() {
             author: { ...post.author, username: '', displayName: '', avatar: '', hasDpns: undefined },
           }))
 
-        setSearchResults(filtered)
+        setSearchResults(await postService.enrichPostsBatch(filtered))
 
         // Search blog posts — reuse cached blog data from mount when available
         const { blogPostService } = await import('@/lib/services')

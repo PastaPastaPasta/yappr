@@ -1,9 +1,10 @@
 import { logger } from '@/lib/logger';
 import { Post } from '@/lib/types';
-import { followService, postService, unifiedProfileService } from '@/lib/services';
+import { followService, postService } from '@/lib/services';
+import { loadIdentityBatch } from '@/lib/services/identity-batch';
 import { repostService } from '@/lib/services/repost-service';
 import { attachQuotedPosts } from './resolve-quoted-posts';
-import { sortFeedByTimestamp, transformRawPost } from './transform-raw-post';
+import { sortFeedByTimestamp } from './transform-raw-post';
 
 export interface FollowingFeedWindow {
   start: Date;
@@ -21,6 +22,8 @@ export async function loadFollowingFeed(options: {
   const MIN_DATE = new Date('2025-01-01T00:00:00Z');
 
   try {
+    const followedUsers = await followService.getFollowing(options.userId);
+    const followedIds = Array.from(new Set(followedUsers.map(follow => follow.followingId).filter(Boolean)));
     let currentWindow = options.timeWindow;
     let result: Awaited<ReturnType<typeof postService.getFollowingFeed>> = {
       documents: [],
@@ -32,6 +35,7 @@ export async function loadFollowingFeed(options: {
 
     do {
       result = await postService.getFollowingFeed(options.userId, {
+        followingIds: followedIds,
         timeWindowStart: currentWindow?.start,
         timeWindowEnd: currentWindow?.end,
         windowHours: currentWindow?.windowHours,
@@ -65,40 +69,14 @@ export async function loadFollowingFeed(options: {
 
     // Tombstoned posts are dropped from the feed but still resolve at their
     // permalink (see enrich-posts). Never set on v2.
-    const posts = result.documents
-      .map((post) => transformRawPost(post as unknown as Record<string, unknown>))
-      .filter((post) => !post.deleted);
+    const posts = result.documents.filter((post) => !post.deleted);
 
     await attachQuotedPosts(posts);
 
     try {
-      const followedUsers = await followService.getFollowing(options.userId);
-      const followedIds = followedUsers
-        .map((followed) => followed.followingId || (followed as unknown as { followedId?: string }).followedId || followed.$id)
-        .filter(Boolean);
-
       if (followedIds.length > 0) {
-        const allReposts: Array<{ postId: string; reposterId: string; $createdAt: number }> = [];
-        const REPOST_BATCH_SIZE = 20;
-
-        for (let index = 0; index < followedIds.length; index += REPOST_BATCH_SIZE) {
-          const batch = followedIds.slice(index, index + REPOST_BATCH_SIZE);
-          await Promise.all(
-            batch.map(async (followedId) => {
-              try {
-                const userReposts = await repostService.getUserReposts(followedId);
-                allReposts.push(
-                  ...userReposts.map((repost) => ({
-                    ...(repost as { postId: string; $createdAt: number }),
-                    reposterId: followedId,
-                  }))
-                );
-              } catch {
-                // Ignore individual failures to keep feed rendering resilient.
-              }
-            })
-          );
-        }
+        const allReposts = (await repostService.getUserRepostsBatch(followedIds))
+          .map(repost => ({ ...repost, reposterId: repost.$ownerId }));
 
         if (allReposts.length > 0) {
           const latestRepostByPostId = new Map<string, { postId: string; reposterId: string; $createdAt: number }>();
@@ -122,23 +100,10 @@ export async function loadFollowingFeed(options: {
             const repostedPostMap = new Map(repostedPosts.map((post) => [post.id, post]));
 
             const reposterIds = Array.from(new Set(canonicalReposts.map((repost) => repost.reposterId)));
-            const reposterProfiles = new Map<string, { displayName?: string; username?: string }>();
-
-            await Promise.all(
-              reposterIds.map(async (id) => {
-                try {
-                  const profile = await unifiedProfileService.getProfileWithUsername(id);
-                  if (profile) {
-                    reposterProfiles.set(id, {
-                      displayName: profile.displayName,
-                      username: profile.username,
-                    });
-                  }
-                } catch {
-                  // Ignore profile fetch failures.
-                }
-              })
-            );
+            const { profiles, usernames } = await loadIdentityBatch(reposterIds);
+            const reposterProfiles = new Map(profiles.map(profile => [profile.$ownerId, {
+              displayName: profile.displayName, username: usernames.get(profile.$ownerId),
+            }]));
 
             for (const repost of canonicalReposts) {
               const originalPost = repostedPostMap.get(repost.postId);
@@ -154,7 +119,7 @@ export async function loadFollowingFeed(options: {
                   repostedBy: {
                     id: repost.reposterId,
                     displayName: reposterProfile?.displayName || '',
-                    username: reposterProfile?.username,
+                    username: reposterProfile?.username || usernames.get(repost.reposterId) || undefined,
                   },
                   repostTimestamp: new Date(repost.$createdAt),
                 });

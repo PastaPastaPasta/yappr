@@ -65,28 +65,17 @@ function MentionsPageContent() {
 
         const postIds = Array.from(new Set(mentionDocs.map(m => m.postId)))
 
-        // Fetch posts and validate ownership
-        const fetchedPosts: Post[] = []
-        for (const postId of postIds) {
-          try {
-            const post = await postService.get(postId)
-            if (post) {
-              // Verify mention was created by post owner (security filter)
-              const mentionDoc = mentionDocs.find(m => m.postId === postId)
-              if (mentionDoc && mentionDoc.$ownerId === post.author.id) {
-                fetchedPosts.push(post)
-              }
-            }
-          } catch (error) {
-            logger.error('Failed to fetch post:', postId, error)
-          }
-        }
+        // Fetch referenced posts in bounded `$id in [...]` batches, then keep
+        // the ownership check that prevents forged mention records surfacing.
+        const { posts, preloaded } = await postService.getPostsByIdsForDisplay(postIds)
+        const authenticMentions = new Set(mentionDocs.map(mention => `${mention.postId}:${mention.$ownerId}`))
+        const fetchedPosts: Post[] = posts.filter((post) => authenticMentions.has(`${post.id}:${post.author.id}`))
 
         // Sort by creation date (newest first)
         fetchedPosts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
 
         // Enrich posts with author data (DPNS names, displayNames, stats)
-        let enrichedPosts = await postService.enrichPostsBatch(fetchedPosts)
+        let enrichedPosts = await postService.enrichPostsBatch(fetchedPosts, preloaded)
 
         // Filter out posts from blocked users
         if (currentUser?.identityId && enrichedPosts.length > 0) {

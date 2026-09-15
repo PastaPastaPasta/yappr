@@ -17,6 +17,7 @@ import {
   quoteFieldFor,
   replyCountFieldFor,
   repostIndexFor,
+  type TargetKind,
 } from '@/lib/contract-topology';
 import type {
   PostStats,
@@ -31,6 +32,7 @@ import { resolvePostAuthorsBatch } from '@/lib/services/post-enrichment-helpers'
 import { documentToPlainObject, identifierToBase58 } from '@/lib/services/sdk-helpers';
 import { unifiedProfileService } from '@/lib/services/unified-profile-service';
 import { getPrimaryUsername } from '@/lib/utils/username';
+import type { QueryOptions } from '@/lib/services/document-service';
 import { transformRawPost } from './transform-raw-post';
 
 /**
@@ -56,6 +58,10 @@ export interface CompositeFeedPageOptions {
   /** Exact next-page ids selected by a timeline query using startAfter. */
   documentIds?: string[];
   currentUserId?: string;
+  /** Replies reuse the enrichment graph, preserving their caller-decoded linkage. */
+  kind?: TargetKind;
+  sourcePosts?: Post[];
+  pageQuery?: Pick<QueryOptions, 'where' | 'orderBy'>;
 }
 
 export interface CompositeFeedPage {
@@ -139,11 +145,12 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
     field,
   });
 
-  const like = likeIndexFor('post');
-  const repost = repostIndexFor('post');
-  const bookmark = bookmarkIndexFor('post');
-  const quoteField = quoteFieldFor('post');
-  const replyCountField = replyCountFieldFor('post');
+  const kind = options.kind ?? 'post';
+  const like = likeIndexFor(kind);
+  const repost = repostIndexFor(kind);
+  const bookmark = bookmarkIndexFor(kind);
+  const quoteField = quoteFieldFor(kind);
+  const replyCountField = replyCountFieldFor(kind);
 
   // Engagement counts: one grouped count per page id, each from the
   // `countable` index keyed by the target id alone.
@@ -158,7 +165,7 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
 
   // The posts this page quotes: a by-id JOIN through `refersTo`, so a
   // missing quoted post is a verification error rather than a hole.
-  const quotedPosts = quoteField
+  const quotedPosts = !options.sourcePosts && kind === 'post' && quoteField
     ? slot({ documentType: 'post', bind: fromPage(quoteField, '$id') })
     : -1;
 
@@ -207,11 +214,11 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
 
   const query: CompositeDocumentsQuery = {
     dataContractId: YAPPR_CONTRACT_ID,
-    documentType: 'post',
+    documentType: kind,
     where: options.documentIds
       ? [['$id', 'in', options.documentIds]]
-      : [['language', '==', options.language], ['$createdAt', '>', 0]],
-    orderBy: options.documentIds ? undefined : [['language', 'asc'], ['$createdAt', 'desc']],
+      : options.pageQuery ? options.pageQuery.where : [['language', '==', options.language], ['$createdAt', '>', 0]],
+    orderBy: options.documentIds ? undefined : options.pageQuery ? options.pageQuery.orderBy : [['language', 'asc'], ['$createdAt', 'desc']],
     limit: options.limit,
     subQueries,
   };
@@ -304,8 +311,12 @@ async function decodeFeedPage(
       return doc ? [doc] : [];
     });
   }
+  const sourceById = options.sourcePosts ? new Map(options.sourcePosts.map(post => [post.id, post])) : undefined;
   const posts = rawPosts
-    .map((doc) => transformRawPost(doc))
+    .map((doc) => {
+      const source = sourceById?.get(doc.$id as string);
+      return source ? { ...source, author: { ...source.author } } : transformRawPost(doc);
+    })
     .filter((post) => !post.deleted);
   const pageIds = rawPosts
     .map((doc) => doc.$id)
@@ -348,9 +359,9 @@ async function decodeFeedPage(
   // The viewer's marks; only meaningful when logged in.
   const preloaded: PreloadedEnrichment = { usernames, profiles, avatars, stats };
   if (options.currentUserId) {
-    const liked = targetIdsOf(documentsAt(result, slots.myLikes), likeIndexFor('post').field);
-    const reposted = targetIdsOf(documentsAt(result, slots.myReposts), repostIndexFor('post')?.field ?? 'postId');
-    const bookmarked = targetIdsOf(documentsAt(result, slots.myBookmarks), bookmarkIndexFor('post')?.field ?? 'postId');
+    const liked = targetIdsOf(documentsAt(result, slots.myLikes), likeIndexFor(options.kind ?? 'post').field);
+    const reposted = targetIdsOf(documentsAt(result, slots.myReposts), repostIndexFor(options.kind ?? 'post')?.field ?? 'postId');
+    const bookmarked = targetIdsOf(documentsAt(result, slots.myBookmarks), bookmarkIndexFor(options.kind ?? 'post')?.field ?? 'postId');
     const interactions = new Map<string, UserInteractions>();
     for (const id of pageIds) {
       interactions.set(id, { liked: liked.has(id), reposted: reposted.has(id), bookmarked: bookmarked.has(id) });

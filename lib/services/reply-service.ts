@@ -347,14 +347,14 @@ class ReplyService extends BaseDocumentService<Reply> {
    * @param userId - Identity ID of the content owner
    * @param since - Only return replies created after this timestamp (optional)
    */
-  async getRepliesToMyContent(userId: string, since?: Date): Promise<Reply[]> {
+  async getRepliesToMyContent(userId: string, since?: Date, preloaded?: Record<string, unknown>[]): Promise<Reply[]> {
     try {
       const { getEvoSdk } = await import('./evo-sdk-service');
       const sdk = await getEvoSdk();
 
       const sinceTimestamp = since?.getTime() || 0;
 
-      const response = await sdk.documents.query({
+      const response = preloaded ?? await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'reply',
         where: [

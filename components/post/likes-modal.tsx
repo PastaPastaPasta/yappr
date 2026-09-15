@@ -9,8 +9,6 @@ import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/ui/loading-state'
 import { useAsyncState } from '@/components/ui/loading-state'
 import { likeService, LikeDocument } from '@/lib/services/like-service'
-import { dpnsService } from '@/lib/services/dpns-service'
-import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import { formatTime } from '@/lib/utils'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
@@ -58,10 +56,8 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
       const ownerIds = likes.map(like => like.$ownerId).filter(Boolean)
 
       // Batch fetch DPNS usernames and profiles
-      const [usernameMap, profiles] = await Promise.all([
-        dpnsService.resolveUsernamesBatch(ownerIds),
-        unifiedProfileService.getProfilesByIdentityIds(ownerIds)
-      ])
+      const { loadIdentityBatch } = await import('@/lib/services/identity-batch')
+      const { usernames: usernameMap, profiles } = await loadIdentityBatch(ownerIds)
 
       // Create profile lookup map
       const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))

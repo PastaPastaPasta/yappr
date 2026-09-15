@@ -120,21 +120,22 @@ function UserProfileContent() {
         setIsLoading(true)
         setProfileDocumentMissing(false)
         const { unifiedProfileService, postService, followService } = await import('@/lib/services')
+        const { loadUserStats } = await import('@/lib/services/social-stats-service')
 
         let profileFetchErrored = false
-        const [profileResult, postsResult, totalPostCount] = await Promise.all([
-          unifiedProfileService.getProfile(userId).catch(() => {
-            profileFetchErrored = true
-            return null
-          }),
-          postService.getUserPosts(userId, { limit: PAGE_SIZE }).catch(() => ({ documents: [] as Post[], hasMore: false })),
-          postService.countUserPosts(userId).catch(() => 0),
+        const [statsResult, postsResult] = await Promise.all([
+          loadUserStats(userId),
+          postService.getUserPosts(userId, { limit: PAGE_SIZE, forDisplay: true }).catch(() => ({ documents: [] as Post[], preloaded: undefined })),
         ])
-        setPostCount(totalPostCount)
+        const profileResult = await unifiedProfileService.getProfile(userId).catch(() => {
+          profileFetchErrored = true
+          return null
+        })
+        setPostCount(statsResult.posts)
         // Genuinely absent, as opposed to a failed fetch.
         setProfileDocumentMissing(!profileResult && !profileFetchErrored)
 
-        const [followersCount, followingCount] = await Promise.all([followService.countFollowers(userId), followService.countFollowing(userId)])
+        const { followers: followersCount, following: followingCount } = statsResult
         const profileDisplayName = profileResult?.displayName || `User ${userId.slice(-6)}`
         setProfile(
           profileResult
@@ -193,14 +194,12 @@ function UserProfileContent() {
         try {
           const { blogService, blogPostService } = await import('@/lib/services')
           const ownerBlogs = await blogService.getBlogsByOwner(userId)
-          // Dash Platform has no count API; 100 posts is an intentional cap.
-          const results = await Promise.allSettled(
-            ownerBlogs.map(async (blog): Promise<ProfileBlog> => {
-              const blogPosts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
-              return { id: blog.id, name: blog.name, description: blog.description, postCount: blogPosts.length }
-            })
-          )
-          setBlogs(results.filter((r): r is PromiseFulfilledResult<ProfileBlog> => r.status === 'fulfilled').map((r) => r.value))
+          // Preserve the existing 100-post display cap for each blog.
+          const pages = await blogPostService.getPostsByBlogs(ownerBlogs.map(blog => blog.id), 100)
+          setBlogs(ownerBlogs.map(blog => ({
+            id: blog.id, name: blog.name, description: blog.description,
+            postCount: pages.get(blog.id)?.length ?? 0,
+          })))
         } catch (blogError) {
           logger.error('Failed to load blogs for profile:', blogError)
           setBlogs([])
@@ -223,7 +222,7 @@ function UserProfileContent() {
         await attachQuotedPosts(merged)
         if (merged.length > 0) {
           setPosts(merged)
-          enrichProgressively(merged)
+          enrichProgressively(merged, postsResult.preloaded)
         }
 
         const originals = postsResult.documents || []

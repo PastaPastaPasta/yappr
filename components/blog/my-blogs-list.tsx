@@ -30,10 +30,8 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
         if (cancelled) return
         setBlogs(result)
 
-        const countEntries = await Promise.all(result.map(async (blog) => {
-          const posts = await blogPostService.getPostsByBlog(blog.id, { limit: 100 }).catch(() => [])
-          return [blog.id, posts.length] as const
-        }))
+        const pages = await blogPostService.getPostsByBlogs(result.map(blog => blog.id), 100)
+        const countEntries = result.map(blog => [blog.id, pages.get(blog.id)?.length ?? 0])
         if (cancelled) return
 
         setCounts(Object.fromEntries(countEntries))

@@ -11,8 +11,9 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
-import { dpnsService } from '@/lib/services/dpns-service'
 import { followService } from '@/lib/services/follow-service'
+import { dpnsService } from '@/lib/services/dpns-service'
+import { loadUserStats } from '@/lib/services/social-stats-service'
 import toast from 'react-hot-toast'
 
 interface ProfileHoverCardProps {
@@ -84,17 +85,17 @@ export function ProfileHoverCard({
 
     setIsLoading(true)
     try {
-      const [profile, username, followerCount, followingCount] = await Promise.all([
-        unifiedProfileService.getProfile(userId),
-        preloadedUsername !== undefined
-          ? Promise.resolve(preloadedUsername)
-          : dpnsService.resolveUsername(userId),
-        followService.countFollowers(userId),
-        followService.countFollowing(userId)
+      const stats = await loadUserStats(userId)
+      const [profiles, usernameResult, avatars] = await Promise.all([
+        unifiedProfileService.getProfilesByIdentityIds([userId]),
+        preloadedUsername === undefined ? dpnsService.resolveUsername(userId) : Promise.resolve(preloadedUsername),
+        unifiedProfileService.getAvatarUrlsBatch([userId]),
       ])
+      const profile = profiles.find(profile => profile.$ownerId === userId)
+      const username = usernameResult
 
       const avatarUrl = preloadedAvatarUrl ||
-        (profile?.avatar) ||
+        avatars.get(userId) ||
         unifiedProfileService.getDefaultAvatarUrl(userId)
 
       setProfileData({
@@ -102,8 +103,8 @@ export function ProfileHoverCard({
         bio: profile?.bio,
         username: username,
         avatarUrl,
-        followerCount,
-        followingCount
+        followerCount: stats.followers,
+        followingCount: stats.following
       })
     } catch (error) {
       logger.error('Failed to load profile data:', error)

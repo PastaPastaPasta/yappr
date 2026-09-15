@@ -4,7 +4,7 @@ import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
-import { paginateFetchAll, documentCount } from './pagination-utils';
+import { paginateFetchAll, documentCount, groupedDocumentCount } from './pagination-utils';
 
 export interface FollowDocument {
   $id: string;
@@ -279,6 +279,34 @@ class FollowService extends BaseDocumentService<FollowDocument> {
         return 0;
       }
     });
+  }
+
+  /**
+   * Count followers for many identities with one grouped count-tree query per
+   * 100 ids. The per-id method remains the fallback when a node cannot decode
+   * grouped keys (or when a legacy contract does not expose the index).
+   */
+  async countFollowersBatch(userIds: string[]): Promise<Map<string, number>> {
+    if (userIds.length === 0) return new Map();
+    const sdk = await getEvoSdk();
+    return groupedDocumentCount(
+      sdk,
+      { dataContractId: this.contractId, documentTypeName: 'follow', groupField: 'followingId' },
+      userIds,
+      (id) => this.countFollowers(id)
+    );
+  }
+
+  /** Count following relationships for many identities in grouped batches. */
+  async countFollowingBatch(userIds: string[]): Promise<Map<string, number>> {
+    if (userIds.length === 0) return new Map();
+    const sdk = await getEvoSdk();
+    return groupedDocumentCount(
+      sdk,
+      { dataContractId: this.contractId, documentTypeName: 'follow', groupField: '$ownerId' },
+      userIds,
+      (id) => this.countFollowing(id)
+    );
   }
 
 }

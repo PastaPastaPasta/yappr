@@ -94,11 +94,16 @@ interface Enrichment {
 async function fetchEnrichment(ids: string[]): Promise<Enrichment[]> {
   const [profiles, followerCounts, followingCounts] = await Promise.all([
     unifiedProfileService.getProfilesByIdentityIds(ids),
-    Promise.all(ids.map((id) => followService.countFollowers(id))),
-    Promise.all(ids.map((id) => followService.countFollowing(id))),
+    followService.countFollowersBatch(ids),
+    followService.countFollowingBatch(ids),
   ])
   const byOwner = new Map(profiles.map((p) => [p.$ownerId, p]))
-  return ids.map((id, i) => ({ id, profile: byOwner.get(id), followersCount: followerCounts[i], followingCount: followingCounts[i] }))
+  return ids.map((id) => ({
+    id,
+    profile: byOwner.get(id),
+    followersCount: followerCounts.get(id) ?? 0,
+    followingCount: followingCounts.get(id) ?? 0,
+  }))
 }
 
 function toUser({ id, profile, followersCount, followingCount }: Enrichment, usernames: string[], isFollowing: boolean): ConnectionUser {
@@ -189,15 +194,8 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
         return
       }
 
-      const [usernames, enrichment, followStatus] = await Promise.all([
-        Promise.all(ids.map(async (id) => {
-          try {
-            return await dpnsService.getAllUsernamesSorted(id)
-          } catch (error) {
-            logger.error(`Failed to get all usernames for ${id}:`, error)
-            return []
-          }
-        })),
+      const [usernamesById, enrichment, followStatus] = await Promise.all([
+        dpnsService.getAllUsernamesSortedBatch(ids),
         fetchEnrichment(ids),
         // Everyone on a following list is followed by definition. On your own
         // followers list the button depends on whether you follow them back.
@@ -206,8 +204,8 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
           : Promise.resolve(new Map<string, boolean>()),
       ])
 
-      const users = enrichment.map((entry, i) =>
-        toUser(entry, usernames[i], kind === 'following' || (followStatus.get(entry.id) ?? false))
+      const users = enrichment.map((entry) =>
+        toUser(entry, usernamesById.get(entry.id) ?? [], kind === 'following' || (followStatus.get(entry.id) ?? false))
       )
       cacheManager.set(kind, cacheKey, users)
       setData(users)

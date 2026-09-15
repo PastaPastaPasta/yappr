@@ -1,9 +1,10 @@
+import { queryDocumentBundle } from './document-query-bundle'
+import { chunk } from './pagination-utils'
 import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service'
 import { stateTransitionService } from './state-transition-service'
 import { identityService } from './identity-service'
-import { dpnsService } from './dpns-service'
-import { unifiedProfileService } from './unified-profile-service'
+import { loadIdentityBatch } from './identity-batch'
 import {
   bytesToBase64QueryOperand,
   documentToPlainObject,
@@ -219,17 +220,42 @@ class DirectMessageService {
         }
       }
 
-      // 4. For each conversation, get latest message and read receipt
+      // Preserve each conversation's own 100-message page. A global IN page
+      // could let one busy conversation hide every other conversation.
+      const conversationIds = Array.from(conversationMap.keys())
+      const messageQueries = conversationIds.map(conversationId => ({
+        dataContractId: this.contractId, documentTypeName: 'directMessage',
+        where: [['conversationId', '==', bytesToBase64QueryOperand(bs58.decode(conversationId))], ['$createdAt', '>', 0]] as DocumentWhereClause[],
+        orderBy: [['$createdAt', 'asc']] as Array<['$createdAt', 'asc']>, limit: 100,
+      }))
+      const receiptQueries = chunk(conversationIds, 100).map(ids => ({
+        dataContractId: this.contractId, documentTypeName: 'readReceipt',
+        where: [['$ownerId', '==', userId], ['conversationId', 'in', ids.map(id => bytesToBase64QueryOperand(bs58.decode(id)))]] as DocumentWhereClause[],
+        orderBy: [['conversationId', 'asc']] as Array<['conversationId', 'asc']>, limit: ids.length,
+      }))
+      const pages = await queryDocumentBundle([...messageQueries, ...receiptQueries], true)
+      const messagesByConversation = new Map(conversationIds.map((id, index) => [id, pages[index]]))
+      const receipts = new Map(pages.slice(conversationIds.length).flat().map(doc => {
+        const data = (doc.data || doc) as Record<string, unknown>
+        return [bs58.encode(this.extractByteArray(data.conversationId)), doc]
+      }))
+      const participantIds = Array.from(new Set(Array.from(conversationMap.values()).map(data => data.participantId)))
+      const { usernames, profiles } = includeParticipantInfo
+        ? await loadIdentityBatch(participantIds)
+        : { usernames: new Map<string, string | null>(), profiles: [] }
+      const profilesByOwner = new Map(profiles.map(profile => [profile.$ownerId, profile]))
+
+      // 4. Decode previews using the messages and viewer receipts proved above.
       const conversations: Conversation[] = []
 
       for (const [convId, data] of Array.from(conversationMap.entries())) {
         try {
           // Get messages (fetch once, use for both latest and unread count)
-          const allMessages = await this.getConversationMessagesRaw(convId, 100)
+          const allMessages = messagesByConversation.get(convId) ?? []
           const latestDoc = allMessages[allMessages.length - 1] // Messages are ordered asc
 
           // Get my read receipt
-          const myReceipt = await this.getMyReadReceipt(userId, convId)
+          const myReceipt = receipts.get(convId)
 
           // Count unread messages (v3: use $updatedAt as last-read timestamp)
           const lastReadAt = (myReceipt?.$updatedAt as number) || 0
@@ -238,21 +264,8 @@ class DirectMessageService {
           ).length
 
           // Get participant username and display name
-          let participantUsername: string | undefined
-          let participantDisplayName: string | undefined
-          if (includeParticipantInfo) {
-            const [usernameResult, profileResult] = await Promise.allSettled([
-              dpnsService.resolveUsername(data.participantId),
-              unifiedProfileService.getProfile(data.participantId)
-            ])
-
-            if (usernameResult.status === 'fulfilled') {
-              participantUsername = usernameResult.value || undefined
-            }
-            if (profileResult.status === 'fulfilled') {
-              participantDisplayName = profileResult.value?.displayName
-            }
-          }
+          const participantUsername = usernames.get(data.participantId) ?? undefined
+          const participantDisplayName = profilesByOwner.get(data.participantId)?.displayName
 
           // Decrypt latest message for preview
           let lastMessage: DirectMessage | null = null

@@ -5,7 +5,8 @@ import { useEffect, useState, useRef } from 'react'
 import { ChartBarIcon } from '@heroicons/react/24/outline'
 import { formatNumber } from '@/lib/utils'
 import { useAuth } from '@/contexts/auth-context'
-import { postService, followService } from '@/lib/services'
+import { loadUserStats } from '@/lib/services/social-stats-service'
+import { postService } from '@/lib/services/post-service'
 import { cacheManager } from '@/lib/cache-manager'
 
 interface UserStats {
@@ -98,11 +99,7 @@ export function FeedStats() {
         setLoading(true)
       }
       try {
-        const [posts, followers, following] = await Promise.all([
-          postService.countUserPosts(currentIdentityId),
-          followService.countFollowers(currentIdentityId),
-          followService.countFollowing(currentIdentityId)
-        ])
+        const { posts, followers, following } = await loadUserStats(currentIdentityId)
         if (!cancelled) {
           const newStats = { posts, followers, following }
           setStats(newStats)

@@ -63,7 +63,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const { setQuotingPost, setComposeOpen } = useAppStore()
   const { requireAuth } = useRequireAuth()
   const { user } = useAuth()
-  const { isFollowing, isLoading: followLoading, toggleFollow } = useBlogFollow(blog.id)
+  const { isFollowing, isLoading: followLoading, toggleFollow } = useBlogFollow(blog.id, undefined, false)
   const isOwnBlog = user?.identityId === blog.ownerId
   const showFollowCta = user && !isOwnBlog && !isFollowing && !followLoading
   const [commentCount, setCommentCount] = useState(0)
