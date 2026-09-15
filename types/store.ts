@@ -292,8 +292,6 @@ export interface StoreOrder {
   trackingCarrier?: string
 }
 
-export type Order = StoreOrder
-
 // Order status update document (from platform)
 export interface OrderStatusUpdateDocument {
   $id: string

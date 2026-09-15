@@ -146,7 +146,7 @@ export function ProfileHoverCard({
     e.stopPropagation()
     e.preventDefault()
 
-    const authedUser = requireAuth('follow')
+    const authedUser = requireAuth()
     if (!authedUser || followLoading) return
 
     setFollowLoading(true)
@@ -188,7 +188,7 @@ export function ProfileHoverCard({
     e.stopPropagation()
     e.preventDefault()
 
-    if (!requireAuth('message')) return
+    if (!requireAuth()) return
 
     router.push(`/messages?startConversation=${userId}`)
   }

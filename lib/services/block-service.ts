@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions } from './document-service'
 import { stateTransitionService } from './state-transition-service'
-import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, toUint8Array } from './sdk-helpers'
+import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, normalizeBytes } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
 import { DOCUMENT_TYPES } from '../constants'
 import { BloomFilter, BLOOM_FILTER_VERSION } from '../bloom-filter'
@@ -151,11 +151,11 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       }
 
       // Revoke their access
-      logger.info(`Auto-revoking private feed access for blocked user: ${targetUserId}`)
+      logger.debug(`Auto-revoking private feed access for blocked user: ${targetUserId}`)
       const revokeResult = await privateFeedService.revokeFollower(blockerId, targetUserId)
 
       if (revokeResult.success) {
-        logger.info(`Successfully auto-revoked private feed access for: ${targetUserId}`)
+        logger.debug(`Successfully auto-revoked private feed access for: ${targetUserId}`)
         return true
       } else {
         // Log the error but don't fail the block operation
@@ -263,7 +263,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
       const doc = documents[0]
       const data = (doc.data || doc) as Record<string, unknown>
-      const bytes = toUint8Array(data.filterData)
+      const bytes = normalizeBytes(data.filterData)
       if (!bytes) {
         logger.error('Unknown filterData format:', typeof data.filterData)
         return null
@@ -307,7 +307,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       for (const doc of documents) {
         const data = (doc.data || doc) as Record<string, unknown>
         const ownerId = (doc.$ownerId || doc.ownerId) as string
-        const bytes = toUint8Array(data.filterData)
+        const bytes = normalizeBytes(data.filterData)
         if (!bytes) continue
 
         result.set(ownerId, new BloomFilter(bytes, (data.itemCount as number) || 0))
@@ -369,35 +369,52 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   // BLOCK FOLLOW MANAGEMENT
   // ============================================================
 
+  // In-flight dedup: on a cold session, auth initialization and feed
+  // enrichment all request the block follow document concurrently —
+  // share one query instead of firing identical ones.
+  private blockFollowInFlight = new Map<string, Promise<BlockFollowData | null>>()
+
   /**
    * Get the block follow document for a user.
+   * Concurrent calls for the same user share a single query.
    */
-  async getBlockFollow(userId: string): Promise<BlockFollowData | null> {
-    try {
-      const sdk = await getEvoSdk()
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: DOCUMENT_TYPES.BLOCK_FOLLOW,
-        where: [['$ownerId', '==', userId]],
-        limit: 1
-      })
+  getBlockFollow(userId: string): Promise<BlockFollowData | null> {
+    const existing = this.blockFollowInFlight.get(userId)
+    if (existing) return existing
 
-      const documents = normalizeSDKResponse(response)
-      if (documents.length === 0) return null
+    const promise = this.fetchBlockFollow(userId).finally(() => {
+      this.blockFollowInFlight.delete(userId)
+    })
+    this.blockFollowInFlight.set(userId, promise)
+    return promise
+  }
 
-      const doc = documents[0]
-      const data = (doc.data || doc) as Record<string, unknown>
-      const followedUserIds = this.decodeUserIdArray(data.followedBlockers)
+  /**
+   * Query the block follow document. Returns null only when the document
+   * genuinely doesn't exist; query failures throw so callers don't
+   * mistake a transient error for "no document".
+   */
+  private async fetchBlockFollow(userId: string): Promise<BlockFollowData | null> {
+    const sdk = await getEvoSdk()
+    const response = await sdk.documents.query({
+      dataContractId: this.contractId,
+      documentTypeName: DOCUMENT_TYPES.BLOCK_FOLLOW,
+      where: [['$ownerId', '==', userId]],
+      limit: 1
+    })
 
-      return {
-        $id: (doc.$id || doc.id) as string,
-        $ownerId: (doc.$ownerId || doc.ownerId) as string,
-        $revision: (doc.$revision || doc.revision) as number | undefined,
-        followedUserIds
-      }
-    } catch (error) {
-      logger.error('Error getting block follow:', error)
-      return null
+    const documents = normalizeSDKResponse(response)
+    if (documents.length === 0) return null
+
+    const doc = documents[0]
+    const data = (doc.data || doc) as Record<string, unknown>
+    const followedUserIds = this.decodeUserIdArray(data.followedBlockers)
+
+    return {
+      $id: (doc.$id || doc.id) as string,
+      $ownerId: (doc.$ownerId || doc.ownerId) as string,
+      $revision: (doc.$revision || doc.revision) as number | undefined,
+      followedUserIds
     }
   }
 
@@ -406,7 +423,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Each user ID is 32 bytes.
    */
   private decodeUserIdArray(data: unknown): string[] {
-    const bytes = toUint8Array(data)
+    const bytes = normalizeBytes(data)
     if (!bytes) return []
 
     const userIds: string[] = []
@@ -561,18 +578,25 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Get list of users whose blocks are being followed.
    */
   async getBlockFollows(userId: string): Promise<string[]> {
-    // Check cache first
+    // Check cache first — null means "never cached", while an empty
+    // array is a valid cached result (the common case) and must not
+    // trigger a refetch.
     const cached = getBlockFollowsFromCache(userId)
-    if (cached.length > 0) {
+    if (cached !== null) {
       return cached
     }
 
-    const data = await this.getBlockFollow(userId)
-    if (data) {
-      setBlockFollows(userId, data.followedUserIds)
-      return data.followedUserIds
+    try {
+      const data = await this.getBlockFollow(userId)
+      const followedUserIds = data?.followedUserIds ?? []
+      // Cache the result even when empty — only a confirmed answer
+      // reaches here, since query failures throw
+      setBlockFollows(userId, followedUserIds)
+      return followedUserIds
+    } catch (error) {
+      logger.error('Error getting block follows:', error)
+      return []
     }
-    return []
   }
 
   // ============================================================
@@ -918,13 +942,6 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     }
   }
 
-  /**
-   * Count blocked users.
-   */
-  async countUserBlocks(userId: string): Promise<number> {
-    const blocks = await this.getUserBlocks(userId)
-    return blocks.length
-  }
 }
 
 // Singleton instance

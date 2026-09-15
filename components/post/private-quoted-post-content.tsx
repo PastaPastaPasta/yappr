@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import { useRelativeTime } from '@/hooks/use-relative-time'
 import { identifierToBytes } from '@/lib/services/sdk-helpers'
 import { useAuth } from '@/contexts/auth-context'
+import { useMediaGate } from '@/hooks/use-media-gate'
 
 interface PrivateQuotedPostContentProps {
   quotedPost: Post
@@ -36,11 +37,13 @@ export function PrivateQuotedPostContent({
 }: PrivateQuotedPostContentProps) {
   const { user } = useAuth()
   const [state, setState] = useState<DecryptionState>({ status: 'idle' })
+  // No enrichment hint for quoted authors; cache/own-post checks still apply.
+  const mediaGate = useMediaGate(quotedPost.author.id)
 
   // Skip rendering teaser if it's just the lock emoji placeholder
   const teaserContent = quotedPost.content?.trim()
   const hasTeaser = teaserContent && teaserContent.length > 0 && teaserContent !== ':lock:' && teaserContent !== '🔒'
-  const createdAtLabel = useRelativeTime(quotedPost.createdAt)
+  const createdAtLabel = useRelativeTime(quotedPost.createdAt, { compact: true })
 
   // Get display name for author
   const authorDisplay = getAuthorDisplay(quotedPost.author)
@@ -213,7 +216,7 @@ export function PrivateQuotedPostContent({
           </div>
         )}
         <div className="mt-1">
-          <PostContent content={state.content} className="text-sm line-clamp-3" disableInternalPostEmbed />
+          <PostContent content={state.content} className="text-sm line-clamp-3" disableInternalPostEmbed mediaGate={mediaGate} />
         </div>
       </Link>
     )

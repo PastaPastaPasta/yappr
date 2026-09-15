@@ -4,8 +4,8 @@ import { SESSION_STORAGE_KEY } from '@/lib/storage-scope';
  * SDK helper utilities for working with the v3 EvoSDK.
  *
  * Two Platform paths matter here:
- * - Typed document writes (`new Document(...)`, `sdk.documents.replace(...)`) should receive
- *   binary properties as `Uint8Array`.
+ * - Typed document writes (`documentBuilderService`, `sdk.documents.replace(...)`) should
+ *   receive binary properties as `Uint8Array`.
  * - Raw document queries (`sdk.documents.query(...)`) receive plain query JSON, so operand
  *   shape depends on the contract field: identifier-like fields use their base58 string form,
  *   while ordinary `byteArray: true` fields may need an explicit binary encoding.
@@ -21,6 +21,9 @@ import type {
   DocumentOrderByClause,
 } from '@dashevo/wasm-sdk';
 import bs58 from 'bs58';
+import { base64ToBytes, bytesToBase64, hexToBytes, normalizeBytes } from '@/lib/bytes';
+
+export { base64ToBytes, normalizeBytes };
 
 export type { DocumentWhereClause, DocumentOrderByClause };
 
@@ -133,6 +136,18 @@ export function base58ToBytes(value: string): Uint8Array | null {
 }
 
 /**
+ * Decode a base58 identifier string into lowercase hex — the key format
+ * `sdk.documents.count`'s grouped (`groupBy`) results use for identifier
+ * properties (platform-value-encoded bytes, hex-encoded). Returns null if the
+ * value is not a valid base58 identifier.
+ */
+export function identifierToHex(value: string): string | null {
+  const bytes = base58ToBytes(value);
+  if (!bytes) return null;
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
  * Typed document write helper for required identifier-like fields.
  *
  * Use this when building `Document.properties` for create/update/replace paths.
@@ -144,12 +159,6 @@ export function requireDocumentIdentifierBytes(id: string, fieldName: string): U
   }
   return bytes
 }
-
-/**
- * Backwards-compatible alias for older call sites.
- * Prefer `requireDocumentIdentifierBytes` in new code so the typed-write intent stays obvious.
- */
-export const requireIdentifierBytes = requireDocumentIdentifierBytes
 
 const DOCUMENT_SYSTEM_IDENTIFIER_FIELDS = new Set(['$id', '$ownerId', '$dataContractId']);
 
@@ -225,137 +234,6 @@ export function documentToPlainObject(doc: unknown): Record<string, unknown> {
   );
 }
 
-/**
- * Convert an array of identifier strings to raw bytes.
- *
- * This is for low-level binary handling only. Raw queries on system identifier fields usually
- * pass the base58 strings directly (`$id`, `$ownerId`, or identifier-typed custom fields).
- *
- * Handles base58, base64, and hex formats. Filters out invalid values.
- */
-export function base58ArrayToBytes(values: string[]): Uint8Array[] {
-  const result: Uint8Array[] = [];
-  for (const v of values) {
-    if (!v || typeof v !== 'string') continue;
-
-    // Try base58 first
-    try {
-      result.push(bs58.decode(v));
-      continue;
-    } catch {
-      // Not base58
-    }
-
-    // Try base64 (SDK v3 sometimes returns identifiers as base64)
-    if (v.includes('+') || v.includes('/') || v.endsWith('=')) {
-      try {
-        const bytes = base64ToBytes(v);
-        if (bytes.length === 32) {
-          result.push(bytes);
-          continue;
-        }
-      } catch {
-        // Not base64
-      }
-    }
-
-    // Try hex
-    if (/^[0-9a-fA-F]+$/.test(v) && v.length === 64) {
-      try {
-        result.push(hexToBytes(v));
-        continue;
-      } catch {
-        // Not hex
-      }
-    }
-
-    logger.warn('sdk-helpers: Unrecognized identifier format skipped:', v.substring(0, 20) + '...');
-  }
-  return result;
-}
-
-/**
- * Convert hex string to bytes
- */
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
-  }
-  return bytes;
-}
-
-/**
- * Convert base64 string to bytes
- */
-export function base64ToBytes(base64: string): Uint8Array {
-  // Handle both browser and Node.js environments
-  if (typeof atob === 'function') {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  } else {
-    // Node.js fallback
-    return new Uint8Array(Buffer.from(base64, 'base64'));
-  }
-}
-
-/**
- * Convert various byte formats to Uint8Array.
- * Handles Uint8Array (passthrough), number[] (from JSON), and base64 strings.
- * Returns null if format is unrecognized or invalid.
- */
-export function toUint8Array(data: unknown): Uint8Array | null {
-  if (data instanceof Uint8Array) {
-    return data;
-  }
-  if (Array.isArray(data) && data.every(n => typeof n === 'number')) {
-    return new Uint8Array(data);
-  }
-  if (typeof data === 'string') {
-    try {
-      return base64ToBytes(data);
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-/**
- * Normalize bytes from SDK response to Uint8Array.
- * Handles all common SDK byte formats: Uint8Array, number[] (JSON), base64 string, and hex string.
- * Returns null on decode failure to prevent malformed data from being treated as valid.
- *
- * Used for normalizing encrypted content, nonces, and other byte array fields from SDK responses.
- */
-export function normalizeBytes(value: unknown): Uint8Array | null {
-  if (value instanceof Uint8Array) {
-    return value;
-  }
-  if (Array.isArray(value) && value.every(n => typeof n === 'number')) {
-    return new Uint8Array(value);
-  }
-  if (typeof value === 'string') {
-    // Try base64 decode first using SSR-compatible helper
-    try {
-      return base64ToBytes(value);
-    } catch {
-      // Not valid base64 - try hex
-      if (/^[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0) {
-        const bytes = new Uint8Array(value.length / 2);
-        for (let i = 0; i < bytes.length; i++) {
-          bytes[i] = parseInt(value.substr(i * 2, 2), 16);
-        }
-        return bytes;
-      }
-    }
-  }
-  return null;
-}
 
 /**
  * Get current user ID from localStorage session.
@@ -530,7 +408,7 @@ export function normalizeSDKResponse(response: unknown): Record<string, unknown>
 /**
  * Convert a base58 identifier string into raw bytes for typed `Document.properties`.
  *
- * Use this for create/update flows that end up in `new Document(...)` or
+ * Use this for create/update flows that end up in `documentBuilderService` or
  * `sdk.documents.replace(...)`.
  */
 export function identifierStringToDocumentBytes(value: string): Uint8Array {
@@ -554,23 +432,7 @@ export function identifierStringToLegacyNumberArray(value: string): number[] {
  * Identifier-like fields should stay in their base58 string form instead.
  */
 export function bytesToBase64QueryOperand(value: Uint8Array): string {
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(value).toString('base64');
-  }
-
-  let binary = '';
-  for (let i = 0; i < value.length; i++) {
-    binary += String.fromCharCode(value[i]);
-  }
-  return btoa(binary);
-}
-
-/**
- * Convert a base58 identifier string into the base64 operand used by raw queries on ordinary
- * byte-array fields that store identifier bytes but are not modeled as identifier-typed fields.
- */
-export function identifierStringToBase64QueryOperand(value: string): string {
-  return bytesToBase64QueryOperand(identifierStringToDocumentBytes(value));
+  return bytesToBase64(value);
 }
 
 /**

@@ -20,7 +20,7 @@ import {
   authVaultAccessService,
   type AuthVaultAccessDocument,
 } from '@/lib/services/auth-vault-access-service'
-import { decodeBinaryFromBase64, encodeBinaryToBase64 } from '@/lib/crypto/auth-vault'
+import { bytesToBase64 } from '@/lib/bytes'
 
 export interface AuthVaultDocument {
   $id: string
@@ -79,7 +79,7 @@ function stringOrUndefined(value: string | undefined): string | undefined {
 
 function normalizeLoginKey(value?: Uint8Array | string): string | undefined {
   if (!value) return undefined
-  return typeof value === 'string' ? value : encodeBinaryToBase64(value)
+  return typeof value === 'string' ? value : bytesToBase64(value)
 }
 
 class AuthVaultService extends BaseDocumentService<AuthVaultDocument> {
@@ -454,43 +454,6 @@ function mergeBundle(current: AuthVaultBundle, partialSecrets: MergeSecretsInput
   }
 
   return next
-}
-
-export function createAuthVaultBundle(params: {
-  identityId: string
-  network: 'testnet' | 'mainnet'
-  source: AuthVaultSource
-  loginKey?: Uint8Array | string
-  authKeyWif?: string
-  encryptionKeyWif?: string
-  transferKeyWif?: string
-}): AuthVaultBundle {
-  const loginKey = normalizeLoginKey(params.loginKey)
-  const secretKind: AuthVaultSecretKind = loginKey ? 'login-key' : 'auth-key'
-
-  return {
-    version: DEFAULT_VERSION,
-    identityId: params.identityId,
-    network: params.network,
-    secretKind,
-    loginKey,
-    authKeyWif: params.authKeyWif,
-    encryptionKeyWif: params.encryptionKeyWif,
-    transferKeyWif: params.transferKeyWif,
-    source: params.source,
-    updatedAt: Date.now(),
-  }
-}
-
-export function getLoginKeyBytesFromBundle(bundle: AuthVaultBundle): Uint8Array | null {
-  return bundle.loginKey ? decodeBinaryFromBase64(bundle.loginKey) : null
-}
-
-export function bundleContainsSecondaryKeys(bundle: AuthVaultBundle): { hasEncryptionKey: boolean; hasTransferKey: boolean } {
-  return {
-    hasEncryptionKey: Boolean(bundle.encryptionKeyWif),
-    hasTransferKey: Boolean(bundle.transferKeyWif),
-  }
 }
 
 export const authVaultService = new AuthVaultService()

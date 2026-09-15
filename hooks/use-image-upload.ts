@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
-import { getStorachaProvider, getPinataProvider, isUploadException, getUploadErrorMessage } from '@/lib/upload'
+import { getStorachaProvider, getPinataProvider, isUploadException, getUploadErrorMessage, cacheLocalImage } from '@/lib/upload'
 import type { UploadResult, UploadProvider } from '@/lib/upload'
 
 export interface UseImageUploadResult {
@@ -84,7 +84,7 @@ async function tryConnectProvider(identityId: string): Promise<UploadProvider | 
  * const handleUpload = async (file: File) => {
  *   try {
  *     const result = await upload(file)
- *     // Use result.url (ipfs://CID) here, e.g. logger.info('Uploaded:', result.url)
+ *     // Use result.url (ipfs://CID) here, e.g. logger.debug('Uploaded:', result.url)
  *   } catch (err) {
  *     // Error is also available in error state
  *   }
@@ -158,6 +158,10 @@ export function useImageUpload(): UseImageUploadResult {
       const result = await provider.uploadImage(file, {
         onProgress: (p) => setProgress(p)
       })
+
+      // Public gateways can take minutes to serve a fresh CID; keep the local
+      // bytes around so the uploader sees the image immediately.
+      cacheLocalImage(result.cid, file)
 
       setProgress(100)
       setIsProviderConnected(true)

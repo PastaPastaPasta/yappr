@@ -5,8 +5,7 @@ import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
@@ -18,7 +17,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
-import { useSettingsStore } from '@/lib/store'
+import { canRepost, type TargetKind } from '@/lib/contract-topology'
 
 type TabType = 'quotes' | 'reposts' | 'likes'
 
@@ -51,19 +50,18 @@ async function resolveEngagementUsers(
       : Promise.resolve(new Map<string, boolean>())
   ])
 
-  const profileMap = new Map(profiles.map((p: any) => [p.$ownerId || p.ownerId, p]))
+  const profileMap = new Map(profiles.map((p) => [p.$ownerId, p]))
 
   return ownerIds.map((id) => {
     const username = dpnsNamesMap.get(id) || null
     const profile = profileMap.get(id)
-    const profileData = (profile as any)?.data || profile
-    const profileDisplayName = profileData?.displayName
+    const profileDisplayName = profile?.displayName
 
     return {
       id,
       username: username || id.slice(-8),
       displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
-      bio: profileData?.bio,
+      bio: profile?.bio,
       hasDpnsName: !!username,
       hasProfile: !!profileDisplayName,
       isFollowing: followStatus.get(id) || false
@@ -76,8 +74,13 @@ function EngagementsPageContent() {
   const searchParams = useSearchParams()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const postId = searchParams.get('id')
+  // Which doctype the id belongs to. Every query on this page reads a different
+  // doctype for a reply than for a post on the v3 topology, and an id alone does
+  // not say which — so PostCard puts the kind in the link.
+  const targetKind: TargetKind = searchParams.get('kind') === 'reply' ? 'reply' : 'post'
+  const repostable = canRepost(targetKind)
+  const tabs: TabType[] = repostable ? ['quotes', 'reposts', 'likes'] : ['quotes', 'likes']
 
   const [activeTab, setActiveTab] = useState<TabType>('likes')
 
@@ -85,6 +88,10 @@ function EngagementsPageContent() {
   const quotesState = useAsyncState<EngagementUser[]>(null)
   const repostsState = useAsyncState<EngagementUser[]>(null)
   const likesState = useAsyncState<EngagementUser[]>(null)
+
+  // O(1) count-tree tab counts, loaded once independent of which tab's full
+  // list is active - avoids paginating a full list just to show a number.
+  const [tabCounts, setTabCounts] = useState<Record<TabType, number> | null>(null)
 
   const [actionInProgress, setActionInProgress] = useState<Set<string>>(new Set())
 
@@ -97,7 +104,7 @@ function EngagementsPageContent() {
     setError(null)
 
     try {
-      const likes = await likeService.getPostLikes(postId)
+      const likes = await likeService.getPostLikes(postId, targetKind)
       const ownerIds = likes.map(l => l.$ownerId).filter(Boolean)
 
       if (ownerIds.length === 0) {
@@ -113,7 +120,7 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, user?.identityId, likesState])
+  }, [postId, targetKind, user?.identityId, likesState])
 
   // Load reposts
   const loadReposts = useCallback(async () => {
@@ -151,7 +158,7 @@ function EngagementsPageContent() {
     setError(null)
 
     try {
-      const quotePosts = await postService.getQuotePosts(postId)
+      const quotePosts = await postService.getQuotePosts(postId, targetKind)
 
       if (quotePosts.length === 0) {
         setData([])
@@ -185,7 +192,7 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, user?.identityId, quotesState])
+  }, [postId, targetKind, user?.identityId, quotesState])
 
   // Load data for active tab (only if not yet loaded)
   useEffect(() => {
@@ -211,8 +218,29 @@ function EngagementsPageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, postId])
 
+  // Load tab-bar counts once, in parallel, independent of which tab is active.
+  useEffect(() => {
+    if (!postId) return
+
+    let cancelled = false
+
+    Promise.all([
+      postService.countQuotes(postId, targetKind),
+      // A kind the topology forbids reposting has no repost doctype to count.
+      repostable ? repostService.countReposts(postId) : Promise.resolve(0),
+      likeService.countLikes(postId, targetKind),
+    ]).then(([quotes, reposts, likes]) => {
+      if (cancelled) return
+      setTabCounts({ quotes, reposts, likes })
+    }).catch(err => logger.error('Failed to load engagement tab counts:', err))
+
+    return () => {
+      cancelled = true
+    }
+  }, [postId, targetKind, repostable])
+
   const handleFollow = async (userId: string) => {
-    const authedUser = requireAuth('follow')
+    const authedUser = requireAuth()
     if (!authedUser) return
 
     setActionInProgress(prev => new Set(prev).add(userId))
@@ -244,7 +272,7 @@ function EngagementsPageContent() {
   }
 
   const handleUnfollow = async (userId: string) => {
-    const authedUser = requireAuth('follow')
+    const authedUser = requireAuth()
     if (!authedUser) return
 
     setActionInProgress(prev => new Set(prev).add(userId))
@@ -319,12 +347,8 @@ function EngagementsPageContent() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <PageShell>
+          <PageHeader borderless>
             <div className="px-4 py-3">
               <div className="flex items-center gap-3">
                 <button
@@ -339,7 +363,7 @@ function EngagementsPageContent() {
 
             {/* Tabs */}
             <div className="flex border-b border-gray-200 dark:border-gray-800">
-              {(['quotes', 'reposts', 'likes'] as const).map((tab) => (
+              {tabs.map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -351,13 +375,18 @@ function EngagementsPageContent() {
                   )}
                 >
                   {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  {tabCounts !== null && tabCounts[tab] > 0 && (
+                    <span className="ml-1 text-gray-500 dark:text-gray-400 font-normal">
+                      {tabCounts[tab]}
+                    </span>
+                  )}
                   {activeTab === tab && (
                     <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-14 h-1 bg-yappr-500 rounded-full" />
                   )}
                 </button>
               ))}
             </div>
-          </header>
+          </PageHeader>
 
           <ErrorBoundary level="component">
             <LoadingState
@@ -487,11 +516,7 @@ function EngagementsPageContent() {
               </div>
             </LoadingState>
           </ErrorBoundary>
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 

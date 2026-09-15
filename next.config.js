@@ -36,7 +36,6 @@ const nextConfig = {
   output: 'export',
   images: {
     unoptimized: true,
-    domains: ['images.unsplash.com'],
   },
   webpack: (config, { isServer }) => {
     // Optimize EvoSDK bundle size

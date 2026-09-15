@@ -11,15 +11,10 @@
  * Spec: YAPPR_DET_SIGNER_SPEC.md
  */
 
-import { logger } from '@/lib/logger'
 import bs58 from 'bs58'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { KEY_EXCHANGE_CONTRACT_ID, DOCUMENT_TYPES } from '../constants'
-import {
-  deriveSharedSecret,
-  decryptLoginKey,
-  clearKeyMaterial
-} from '../crypto/key-exchange'
+import { bytesToBase64, requireBytes } from '@/lib/bytes'
 
 /**
  * Login key response document from the key exchange contract.
@@ -44,61 +39,6 @@ export interface LoginKeyResponse {
 }
 
 /**
- * Result of a successful key exchange decryption
- */
-export interface DecryptedKeyExchangeResult {
-  /** The decrypted 32-byte login key */
-  loginKey: Uint8Array
-  /** The key derivation index */
-  keyIndex: number
-  /** The wallet's ephemeral public key (for verification) */
-  walletEphemeralPubKey: Uint8Array
-  /** The identity ID discovered from the response document's $ownerId */
-  identityId: string
-}
-
-/**
- * Options for polling for a key exchange response
- */
-export interface PollOptions {
-  /** Polling interval in milliseconds (default: 3000) */
-  pollIntervalMs?: number
-  /** Timeout in milliseconds (default: 120000) */
-  timeoutMs?: number
-  /** AbortSignal for cancellation */
-  signal?: AbortSignal
-  /** Callback for each poll attempt */
-  onPoll?: () => void
-}
-
-/**
- * Runtime-safe base64 encoding/decoding helpers.
- * Uses Node's Buffer when available, falls back to browser globals.
- */
-function base64ToBytes(base64: string): Uint8Array {
-  if (typeof globalThis.Buffer !== 'undefined') {
-    return new Uint8Array(globalThis.Buffer.from(base64, 'base64'))
-  }
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  if (typeof globalThis.Buffer !== 'undefined') {
-    return globalThis.Buffer.from(bytes).toString('base64')
-  }
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
-}
-
-/**
  * Service for querying the key exchange contract.
  *
  * Extends BaseDocumentService to query loginKeyResponse documents
@@ -117,35 +57,12 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
       $id: doc.$id as string,
       $ownerId: doc.$ownerId as string,
       $revision: doc.$revision as number,
-      contractId: this.toUint8Array(doc.contractId),
-      appEphemeralPubKeyHash: this.toUint8Array(doc.appEphemeralPubKeyHash),
-      walletEphemeralPubKey: this.toUint8Array(doc.walletEphemeralPubKey),
-      encryptedPayload: this.toUint8Array(doc.encryptedPayload),
+      contractId: requireBytes(doc.contractId, 'contractId'),
+      appEphemeralPubKeyHash: requireBytes(doc.appEphemeralPubKeyHash, 'appEphemeralPubKeyHash'),
+      walletEphemeralPubKey: requireBytes(doc.walletEphemeralPubKey, 'walletEphemeralPubKey'),
+      encryptedPayload: requireBytes(doc.encryptedPayload, 'encryptedPayload'),
       keyIndex: doc.keyIndex as number
     }
-  }
-
-  /**
-   * Convert various byte array formats to Uint8Array.
-   */
-  private toUint8Array(data: unknown): Uint8Array {
-    if (data instanceof Uint8Array) {
-      return data
-    }
-    if (Array.isArray(data)) {
-      return new Uint8Array(data)
-    }
-    if (typeof data === 'string') {
-      return base64ToBytes(data)
-    }
-    // Handle Buffer-like objects
-    if (data && typeof data === 'object' && 'type' in data && 'data' in data) {
-      const bufferLike = data as { type: string; data: number[] }
-      if (bufferLike.type === 'Buffer' && Array.isArray(bufferLike.data)) {
-        return new Uint8Array(bufferLike.data)
-      }
-    }
-    throw new Error(`Cannot convert to Uint8Array: ${typeof data}`)
   }
 
   /**
@@ -176,132 +93,6 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
 
     const result = await this.query(options)
     return result.documents[0] || null
-  }
-
-  /**
-   * Poll for a response and attempt to decrypt it.
-   *
-   * Polls using the unique (contractId, appEphemeralPubKeyHash) index.
-   * Identity is discovered from the response document's $ownerId field.
-   *
-   * @param contractIdBytes - The application's contract ID (32 bytes)
-   * @param appEphemeralPubKeyHash - Hash160 of app's ephemeral public key (20 bytes)
-   * @param appEphemeralPrivateKey - The application's ephemeral private key (32 bytes)
-   * @param options - Polling options
-   * @returns The decrypted login key, metadata, and discovered identity ID
-   * @throws If timeout or cancelled
-   */
-  async pollForResponse(
-    contractIdBytes: Uint8Array,
-    appEphemeralPubKeyHash: Uint8Array,
-    appEphemeralPrivateKey: Uint8Array,
-    options: PollOptions = {}
-  ): Promise<DecryptedKeyExchangeResult> {
-    const {
-      pollIntervalMs = 3000,
-      timeoutMs = 120000,
-      signal,
-      onPoll
-    } = options
-
-    const startTime = Date.now()
-
-    while (Date.now() - startTime < timeoutMs) {
-      if (signal?.aborted) {
-        throw new Error('Cancelled')
-      }
-
-      onPoll?.()
-
-      try {
-        const response = await this.getResponse(
-          contractIdBytes,
-          appEphemeralPubKeyHash
-        )
-
-        logger.info('Key exchange: Poll result', {
-          hasResponse: !!response,
-          ownerId: response?.$ownerId
-        })
-
-        if (response) {
-          logger.info('Key exchange: Found response, attempting decryption', {
-            walletEphemeralPubKeyLength: response.walletEphemeralPubKey?.length,
-            encryptedPayloadLength: response.encryptedPayload?.length,
-            keyIndex: response.keyIndex,
-            ownerId: response.$ownerId
-          })
-
-          try {
-            const sharedSecret = deriveSharedSecret(
-              appEphemeralPrivateKey,
-              response.walletEphemeralPubKey
-            )
-
-            const loginKey = await decryptLoginKey(
-              response.encryptedPayload,
-              sharedSecret
-            )
-
-            logger.info('Key exchange: Decryption successful!', {
-              loginKeyLength: loginKey?.length,
-              keyIndex: response.keyIndex,
-              identityId: response.$ownerId
-            })
-
-            clearKeyMaterial(sharedSecret)
-
-            return {
-              loginKey,
-              keyIndex: response.keyIndex,
-              walletEphemeralPubKey: response.walletEphemeralPubKey,
-              identityId: response.$ownerId
-            }
-          } catch (decryptError) {
-            logger.info('Key exchange: Decryption failed, waiting for new response...', decryptError)
-          }
-        }
-      } catch (queryError) {
-        logger.warn('Key exchange: Poll query error:', queryError)
-      }
-
-      await this.sleep(pollIntervalMs, signal)
-    }
-
-    throw new Error('Timeout waiting for key exchange response')
-  }
-
-  /**
-   * Sleep helper that respects AbortSignal.
-   */
-  private sleep(ms: number, signal?: AbortSignal): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(new Error('Cancelled'))
-        return
-      }
-
-      const cleanup = () => {
-        if (signal) {
-          signal.removeEventListener('abort', onAbort)
-        }
-      }
-
-      const onAbort = () => {
-        clearTimeout(timeout)
-        cleanup()
-        reject(new Error('Cancelled'))
-      }
-
-      const timeout = setTimeout(() => {
-        cleanup()
-        resolve()
-      }, ms)
-
-      if (signal) {
-        signal.addEventListener('abort', onAbort)
-      }
-    })
   }
 }
 

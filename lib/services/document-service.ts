@@ -1,8 +1,10 @@
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { documentToPlainObject, queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
+import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 
 export interface QueryOptions {
   where?: DocumentWhereClause[];
@@ -79,8 +81,8 @@ export async function queryPostsSince(
 export abstract class BaseDocumentService<T> {
   protected readonly contractId: string;
   protected readonly documentType: string;
-  protected cache: Map<string, { data: T; timestamp: number }> = new Map();
-  protected readonly CACHE_TTL = 120000; // 2 minutes cache (reduced query frequency)
+  /** Documents by id, held for two minutes. */
+  protected cache = new TtlMap<string, T>(2 * 60 * 1000);
 
   constructor(documentType: string, contractId?: string) {
     this.contractId = contractId ?? YAPPR_CONTRACT_ID;
@@ -95,7 +97,7 @@ export abstract class BaseDocumentService<T> {
     try {
       const sdk = await getEvoSdk();
 
-      logger.info(`Querying ${this.documentType} documents:`, {
+      logger.debug(`Querying ${this.documentType} documents:`, {
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         ...options
@@ -111,7 +113,7 @@ export abstract class BaseDocumentService<T> {
         startAt: options.startAt,
       });
 
-      logger.info(`${this.documentType} query returned ${rawDocuments.length} documents`);
+      logger.debug(`${this.documentType} query returned ${rawDocuments.length} documents`);
 
       const documents = rawDocuments.map(doc => this.transformDocument(doc));
 
@@ -133,9 +135,7 @@ export abstract class BaseDocumentService<T> {
     try {
       // Check cache
       const cached = this.cache.get(documentId);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        return cached.data;
-      }
+      if (cached !== undefined) return cached;
 
       const sdk = await getEvoSdk();
 
@@ -154,15 +154,76 @@ export abstract class BaseDocumentService<T> {
       const transformed = this.transformDocument(docData);
 
       // Cache the result
-      this.cache.set(documentId, {
-        data: transformed,
-        timestamp: Date.now()
-      });
+      this.cache.set(documentId, transformed);
 
       return transformed;
     } catch (error) {
       logger.error(`Error getting ${this.documentType} document:`, error);
       return null;
+    }
+  }
+
+  /**
+   * Get several documents by ID in one `$id in [...]` query per 100 ids,
+   * instead of a `get()` round trip each. Fresh cache entries are served
+   * without a query; fetched documents are cached like `get()` caches them.
+   * Missing ids are simply absent from the result (order not guaranteed).
+   */
+  async getMany(documentIds: string[]): Promise<T[]> {
+    const uniqueIds = Array.from(new Set(documentIds.filter(Boolean)));
+    if (uniqueIds.length === 0) return [];
+
+    const results: T[] = [];
+    const uncachedIds: string[] = [];
+    for (const id of uniqueIds) {
+      const cached = this.cache.get(id);
+      if (cached !== undefined) {
+        results.push(cached);
+      } else {
+        uncachedIds.push(id);
+      }
+    }
+    if (uncachedIds.length === 0) return results;
+
+    try {
+      const sdk = await getEvoSdk();
+
+      await mapLimit(chunk(uncachedIds, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
+        try {
+          // Primary-key in-query: returns exactly the existing documents among
+          // `batch` (results arrive in $id byte order; orderBy is optional and
+          // omitted). Goes through the same transformDocument path as query().
+          const rawDocuments = await queryDocuments(sdk, {
+            dataContractId: this.contractId,
+            documentTypeName: this.documentType,
+            where: [['$id', 'in', batch]],
+            limit: batch.length,
+          });
+
+          for (const doc of rawDocuments) {
+            const transformed = this.transformDocument(doc);
+            const id = doc.$id as string | undefined;
+            if (id) {
+              this.cache.set(id, transformed);
+            }
+            results.push(transformed);
+          }
+        } catch (error) {
+          // Transport blip: degrade to per-id fetches for just this chunk (same
+          // shape as getPostsByIds' fallback) rather than dropping up to 100
+          // documents from the result on one failed query.
+          logger.warn(`getMany: batched $id-in ${this.documentType} query failed, falling back to per-id fetches:`, error);
+          const fetched = await mapLimit(batch, 5, (id) => this.get(id));
+          for (const doc of fetched) {
+            if (doc !== null) results.push(doc);
+          }
+        }
+      });
+
+      return results;
+    } catch (error) {
+      logger.error(`Error batch getting ${this.documentType} documents:`, error);
+      return results;
     }
   }
 
@@ -183,7 +244,7 @@ export abstract class BaseDocumentService<T> {
     }
   ): Promise<T> {
     try {
-      logger.info(`Creating ${this.documentType} document:`, data);
+      logger.debug(`Creating ${this.documentType} document:`, data);
 
       const result = await stateTransitionService.createDocument(
         this.contractId,
@@ -220,13 +281,12 @@ export abstract class BaseDocumentService<T> {
    * Subclasses can override for custom extraction logic.
    */
   protected extractContentFields(doc: T): Record<string, unknown> {
-    const systemFields = new Set([
-      'id', 'ownerId', 'createdAt', 'updatedAt',
-      '$id', '$ownerId', '$createdAt', '$updatedAt', '$revision', '$type', 'revision',
-    ]);
+    const systemFields = new Set(['id', 'ownerId', 'createdAt', 'updatedAt', 'revision']);
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(doc as Record<string, unknown>)) {
-      if (!systemFields.has(key) && value !== undefined) {
+      // Every platform system field is `$`-prefixed ($id, $revision, $formatVersion, …) and
+      // no contract declares a `$` property, so the prefix is enough to filter them all.
+      if (!key.startsWith('$') && !systemFields.has(key) && value !== undefined) {
         result[key] = value;
       }
     }
@@ -239,7 +299,7 @@ export abstract class BaseDocumentService<T> {
    */
   async update(documentId: string, ownerId: string, data: Record<string, unknown>): Promise<T> {
     try {
-      logger.info(`Updating ${this.documentType} document ${documentId}:`, data);
+      logger.debug(`Updating ${this.documentType} document ${documentId}:`, data);
 
       // Clear cache to ensure we get fresh revision from network
       this.cache.delete(documentId);
@@ -250,7 +310,7 @@ export abstract class BaseDocumentService<T> {
         throw new Error('Document not found');
       }
       const revision = (currentDoc as Record<string, unknown>).$revision as number || 0;
-      logger.info(`Current revision for ${this.documentType} document ${documentId}: ${revision}`);
+      logger.debug(`Current revision for ${this.documentType} document ${documentId}: ${revision}`);
 
       // Merge existing document data with partial update.
       // Document replacement requires ALL fields, not just the changed ones.
@@ -289,7 +349,7 @@ export abstract class BaseDocumentService<T> {
    */
   async delete(documentId: string, ownerId: string): Promise<boolean> {
     try {
-      logger.info(`Deleting ${this.documentType} document ${documentId}`);
+      logger.debug(`Deleting ${this.documentType} document ${documentId}`);
 
       const result = await stateTransitionService.deleteDocument(
         this.contractId,
@@ -326,18 +386,6 @@ export abstract class BaseDocumentService<T> {
       this.cache.delete(documentId);
     } else {
       this.cache.clear();
-    }
-  }
-
-  /**
-   * Clean up expired cache entries
-   */
-  cleanupCache(): void {
-    const now = Date.now();
-    for (const [key, value] of Array.from(this.cache.entries())) {
-      if (now - value.timestamp > this.CACHE_TTL) {
-        this.cache.delete(key);
-      }
     }
   }
 }

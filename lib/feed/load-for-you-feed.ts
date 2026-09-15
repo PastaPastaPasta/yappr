@@ -1,52 +1,117 @@
 import { logger } from '@/lib/logger';
-import { getDashPlatformClient } from '@/lib/dash-platform-client';
+import { postService } from '@/lib/services/post-service';
 import { Post } from '@/lib/types';
+import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
+import { loadCompositeFeedPage } from './composite-feed-page';
 import { enrichPostsWithRepostsAndQuotes } from './enrich-posts';
-import { sortFeedByTimestamp, transformRawPost } from './transform-raw-post';
+import { sortFeedByTimestamp } from './transform-raw-post';
+
+/**
+ * Timeline documents arrive with `createDefaultUser` placeholders
+ * (`hasDpns: false`, "Unknown User"). The feed renders before enrichment, and
+ * PostCard reads `hasDpns === undefined` as "still resolving" (skeleton) versus
+ * `false` as "no DPNS name" (identity-id button), so the placeholder is reset
+ * to the loading shape here to avoid a flash of identity ids on every card.
+ */
+function withLoadingAuthor(post: Post): Post {
+  return {
+    ...post,
+    author: { ...post.author, username: '', displayName: '', avatar: '', hasDpns: undefined },
+  };
+}
+
+const PAGE_SIZE = 20;
+
+interface FeedPage {
+  posts: Post[];
+  cursor: string | null;
+  hasMore: boolean;
+  preloaded?: PreloadedEnrichment;
+}
+
+async function fetchFeedPage(options: {
+  startAfter?: string;
+  language?: string;
+  currentUserId?: string;
+}): Promise<FeedPage> {
+  const compositeOptions = {
+    language: options.language || 'en',
+    limit: PAGE_SIZE,
+    currentUserId: options.currentUserId,
+  };
+
+  // The first page uses the ordered composite query directly. Composite has
+  // no document cursor, so later pages use the timeline's cursor to select
+  // exact ids (including timestamp ties), then composite-enrich that bounded
+  // set while preserving the raw cursor.
+  if (!options.startAfter) {
+    const page = await loadCompositeFeedPage(compositeOptions);
+    const last = page.rawPosts[page.rawPosts.length - 1];
+    const cursor = last ? String(last.$id) : null;
+    return { posts: page.posts, cursor, hasMore: page.hasMore, preloaded: page.preloaded };
+  }
+
+  const raw = (await postService.getTimeline({
+    limit: PAGE_SIZE,
+    startAfter: options.startAfter,
+    language: options.language,
+  })).documents;
+  const cursor = raw.length ? raw[raw.length - 1].id : null;
+  const hasMore = raw.length === PAGE_SIZE;
+  if (raw.length) {
+    const page = await loadCompositeFeedPage({
+      ...compositeOptions,
+      documentIds: raw.map(post => post.id),
+    });
+    return { posts: page.posts, cursor, hasMore, preloaded: page.preloaded };
+  }
+
+  const posts = raw.filter(post => !post.deleted).map(withLoadingAuthor);
+  return { posts, cursor, hasMore };
+}
 
 export async function loadForYouFeed(options: {
   startAfter?: string;
-  forceRefresh: boolean;
   feedLanguage?: string;
+  currentUserId?: string;
   setData: (updater: (prev: Post[] | null) => Post[] | null) => void;
   setHasMore: (value: boolean) => void;
   setLastPostId: (id: string) => void;
-  enrichProgressively: (posts: Post[]) => void;
-}): Promise<{ posts: Post[]; cursor: string | null; hasMore: boolean }> {
+  enrichProgressively: (posts: Post[], preloaded?: PreloadedEnrichment) => void;
+}): Promise<{ posts: Post[]; cursor: string | null; hasMore: boolean; preloaded?: PreloadedEnrichment }> {
   const MIN_NON_REPLY_POSTS = 20;
   const MAX_FETCH_ITERATIONS = 5;
-  const dashClient = getDashPlatformClient();
 
   const currentStartAfter = options.startAfter;
 
-  logger.info(
+  logger.debug(
     'Feed: Loading posts',
     currentStartAfter ? `starting after ${currentStartAfter}` : '',
     '(iteration 1)'
   );
 
-  const firstBatchRaw = await dashClient.queryPosts({
-    limit: 20,
-    forceRefresh: options.forceRefresh,
+  const firstPage = await fetchFeedPage({
     startAfter: currentStartAfter,
     language: options.feedLanguage,
+    currentUserId: options.currentUserId,
   });
 
-  if (firstBatchRaw.length === 0) {
-    logger.info('Feed: No posts available');
+  if (!firstPage.cursor) {
+    logger.debug('Feed: No posts available');
     options.setHasMore(false);
     return { posts: [], cursor: null, hasMore: false };
   }
 
-  const firstBatchPosts = firstBatchRaw.map((doc) => transformRawPost(doc as Record<string, unknown>));
-  const firstBatchCursor = (firstBatchRaw[firstBatchRaw.length - 1].$id ||
-    firstBatchRaw[firstBatchRaw.length - 1].id) as string;
+  const firstBatchPosts = firstPage.posts;
+  const firstBatchCursor = firstPage.cursor;
 
-  logger.info(`Feed: First batch has ${firstBatchPosts.length} posts`);
+  logger.debug(`Feed: First batch has ${firstBatchPosts.length} posts`);
 
   const forYouNextCursor: string | null = firstBatchCursor;
-  const forYouHasMore = firstBatchRaw.length === 20;
+  const forYouHasMore = firstPage.hasMore;
 
+  // Repost attribution ("X reposted") and whatever quotes the composite page
+  // did not already attach (quoted replies, blog quotes).
   enrichPostsWithRepostsAndQuotes(firstBatchPosts)
     .then((enrichedPosts) => {
       options.setData((current) => {
@@ -60,7 +125,7 @@ export async function loadForYouFeed(options: {
     });
 
   if (firstBatchPosts.length < MIN_NON_REPLY_POSTS && forYouHasMore) {
-    logger.info(
+    logger.debug(
       `Feed: Only ${firstBatchPosts.length} posts, will fetch more in background... (need ${MIN_NON_REPLY_POSTS})`
     );
 
@@ -68,32 +133,32 @@ export async function loadForYouFeed(options: {
       let bgCurrentStartAfter = firstBatchCursor;
       let bgFetchIteration = 1;
       let allPostCount = firstBatchPosts.length;
-      let bgLastBatchSize = firstBatchRaw.length;
+      let bgHasMore: boolean = forYouHasMore;
 
       while (
         allPostCount < MIN_NON_REPLY_POSTS &&
         bgFetchIteration < MAX_FETCH_ITERATIONS &&
-        bgLastBatchSize === 20
+        bgHasMore &&
+        bgCurrentStartAfter
       ) {
         bgFetchIteration++;
-        logger.info(`Feed: Loading posts starting after ${bgCurrentStartAfter} (iteration ${bgFetchIteration})`);
+        logger.debug(`Feed: Loading posts starting after ${bgCurrentStartAfter} (iteration ${bgFetchIteration})`);
 
-        const bgRawPosts = await dashClient.queryPosts({
-          limit: 20,
-          forceRefresh: false,
+        const bgPage = await fetchFeedPage({
           startAfter: bgCurrentStartAfter,
           language: options.feedLanguage,
+          currentUserId: options.currentUserId,
         });
 
-        bgLastBatchSize = bgRawPosts.length;
+        bgHasMore = bgPage.hasMore;
 
-        if (bgRawPosts.length === 0) {
-          logger.info('Feed: No more posts available (background)');
+        if (!bgPage.cursor) {
+          logger.debug('Feed: No more posts available (background)');
           options.setHasMore(false);
           break;
         }
 
-        const bgPosts = bgRawPosts.map((doc) => transformRawPost(doc as Record<string, unknown>));
+        const bgPosts = bgPage.posts;
 
         enrichPostsWithRepostsAndQuotes(bgPosts)
           .then((enrichedPosts) => {
@@ -109,8 +174,7 @@ export async function loadForYouFeed(options: {
 
         allPostCount += bgPosts.length;
 
-        const lastPost = bgRawPosts[bgRawPosts.length - 1];
-        bgCurrentStartAfter = (lastPost.$id || lastPost.id) as string;
+        bgCurrentStartAfter = bgPage.cursor;
 
         options.setData((currentItems) => {
           if (!currentItems) return bgPosts;
@@ -119,20 +183,22 @@ export async function loadForYouFeed(options: {
           const newItems = bgPosts.filter((post) => !existingIds.has(post.id));
           const allItems = sortFeedByTimestamp([...currentItems, ...newItems]);
 
-          logger.info(`Feed: Background added ${newItems.length} posts (total: ${allItems.length})`);
+          logger.debug(`Feed: Background added ${newItems.length} posts (total: ${allItems.length})`);
           return allItems;
         });
 
-        options.enrichProgressively(bgPosts);
-        options.setLastPostId(bgCurrentStartAfter);
+        options.enrichProgressively(bgPosts, bgPage.preloaded);
+        if (bgCurrentStartAfter) {
+          options.setLastPostId(bgCurrentStartAfter);
+        }
 
         if (allPostCount < MIN_NON_REPLY_POSTS && bgFetchIteration < MAX_FETCH_ITERATIONS) {
-          logger.info(`Feed: Only ${allPostCount} posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`);
+          logger.debug(`Feed: Only ${allPostCount} posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`);
         }
       }
 
-      options.setHasMore(bgLastBatchSize === 20);
-      logger.info(`Feed: Background fetch complete. Total posts: ${allPostCount}`);
+      options.setHasMore(bgHasMore);
+      logger.debug(`Feed: Background fetch complete. Total posts: ${allPostCount}`);
     };
 
     fetchMoreInBackground().catch((error) => {
@@ -151,5 +217,6 @@ export async function loadForYouFeed(options: {
     posts: sortedPosts,
     cursor: forYouNextCursor,
     hasMore: forYouHasMore,
+    preloaded: firstPage.preloaded,
   };
 }

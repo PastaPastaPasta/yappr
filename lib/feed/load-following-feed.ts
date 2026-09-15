@@ -2,6 +2,7 @@ import { logger } from '@/lib/logger';
 import { Post } from '@/lib/types';
 import { followService, postService, unifiedProfileService } from '@/lib/services';
 import { repostService } from '@/lib/services/repost-service';
+import { attachQuotedPosts } from './resolve-quoted-posts';
 import { sortFeedByTimestamp, transformRawPost } from './transform-raw-post';
 
 export interface FollowingFeedWindow {
@@ -52,36 +53,23 @@ export async function loadFollowingFeed(options: {
 
       if (result.documents.length === 0 && followingCursor) {
         if (followingCursor.end < MIN_DATE) {
-          logger.info('Feed: Reached Jan 1 2025 limit, stopping search');
+          logger.debug('Feed: Reached Jan 1 2025 limit, stopping search');
           followingCursor = null;
           break;
         }
 
-        logger.info(`Feed: Empty window, auto-retrying from ${followingCursor.end.toISOString()}`);
+        logger.debug(`Feed: Empty window, auto-retrying from ${followingCursor.end.toISOString()}`);
         currentWindow = followingCursor;
       }
     } while (result.documents.length === 0 && followingCursor);
 
-    const posts = result.documents.map((post) => transformRawPost(post as unknown as Record<string, unknown>));
+    // Tombstoned posts are dropped from the feed but still resolve at their
+    // permalink (see enrich-posts). Never set on v2.
+    const posts = result.documents
+      .map((post) => transformRawPost(post as unknown as Record<string, unknown>))
+      .filter((post) => !post.deleted);
 
-    try {
-      const quotedPostIds = posts
-        .filter((post) => post.quotedPostId)
-        .map((post) => post.quotedPostId as string);
-
-      if (quotedPostIds.length > 0) {
-        const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds);
-        const quotedPostMap = new Map(quotedPosts.map((post) => [post.id, post]));
-
-        for (const post of posts) {
-          if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
-            post.quotedPost = quotedPostMap.get(post.quotedPostId);
-          }
-        }
-      }
-    } catch (error) {
-      logger.error('Feed: Error fetching quoted posts for following feed:', error);
-    }
+    await attachQuotedPosts(posts);
 
     try {
       const followedUsers = await followService.getFollowing(options.userId);
@@ -154,7 +142,10 @@ export async function loadFollowingFeed(options: {
 
             for (const repost of canonicalReposts) {
               const originalPost = repostedPostMap.get(repost.postId);
-              if (originalPost && !existingPostIds.has(repost.postId)) {
+              // Repost documents outlive a tombstoned target (reposts are
+              // deletable, targets are not) — skip deleted targets here just
+              // like the direct-timeline filter above does.
+              if (originalPost && !originalPost.deleted && !existingPostIds.has(repost.postId)) {
                 existingPostIds.add(repost.postId);
                 const reposterProfile = reposterProfiles.get(repost.reposterId);
 

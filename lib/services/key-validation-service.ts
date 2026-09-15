@@ -1,15 +1,16 @@
 import { logger } from '@/lib/logger';
 import { identityService } from './identity-service'
+import { findMatchingKeyIndex, type IdentityPublicKeyInfo } from '@/lib/crypto/keys'
 import {
-  findMatchingKeyIndex,
   getSecurityLevelName,
   getPurposeName,
   isSecurityLevelAllowedForLogin,
   isPurposeAllowedForLogin,
-  type IdentityPublicKeyInfo
-} from '@/lib/crypto/keys'
+  SecurityLevel,
+} from '@/lib/crypto/identity-keys'
 import { wifToPrivateKey, validateWifNetwork } from '@/lib/crypto/wif'
 import bs58 from 'bs58'
+import { normalizeBytes } from '@/lib/bytes'
 
 export type KeyValidationErrorType =
   | 'INVALID_WIF'
@@ -47,23 +48,12 @@ function extractPublicKeyBytes(data: unknown): Uint8Array | null {
     return new Uint8Array(data)
   }
 
-  // String - try base58 first (common for Dash), then base64
+  // String - try base58 first (common for Dash), then hex/base64
   if (typeof data === 'string') {
     try {
-      // Try base58 decode
       return bs58.decode(data)
     } catch {
-      try {
-        // Try base64 decode
-        const binary = atob(data)
-        const bytes = new Uint8Array(binary.length)
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i)
-        }
-        return bytes
-      } catch {
-        return null
-      }
+      return normalizeBytes(data)
     }
   }
 
@@ -180,7 +170,7 @@ class KeyValidationService {
       const levelName = getSecurityLevelName(match.securityLevel)
       // MASTER (0) is more powerful than CRITICAL/HIGH but shouldn't be used for login
       // MEDIUM (3) and lower are insufficient
-      const errorMessage = match.securityLevel === 0
+      const errorMessage = match.securityLevel === SecurityLevel.MASTER
         ? `This is your MASTER key - keep it safe! Use a HIGH or CRITICAL authentication key instead.`
         : `This key's security level is too low (${levelName}) - need HIGH or CRITICAL`
       return {

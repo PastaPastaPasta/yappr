@@ -10,6 +10,8 @@
  * We accept any encryption key regardless of contractBounds.
  */
 
+import { KeyPurpose, KeyType } from './identity-keys'
+
 /** Minimal public key shape accepted by the helper (compatible with identity-service.ts & auth-context.tsx). */
 export interface EncryptionKeyCandidate {
   id: number
@@ -29,8 +31,8 @@ export function findEncryptionKey<T extends EncryptionKeyCandidate>(
   let fallbackKey: T | undefined
 
   for (const key of publicKeys) {
-    if (key.purpose !== 1 || key.disabledAt) continue
-    if (key.type === 0) {
+    if (key.purpose !== KeyPurpose.ENCRYPTION || key.disabledAt) continue
+    if (key.type === KeyType.ECDSA_SECP256K1) {
       return key
     }
     if (!fallbackKey) {

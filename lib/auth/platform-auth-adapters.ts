@@ -17,7 +17,7 @@ import {
   deriveYapprEncryptionKeyFromLogin,
 } from 'platform-auth'
 import { logger } from '@/lib/logger'
-import { KEY_EXCHANGE_CONTRACT_ID, YAPPR_CONTRACT_ID } from '@/lib/constants'
+import { KEY_EXCHANGE_CONTRACT_ID, YAPPR_CONTRACT_ID, getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
 import {
   clearAuthVaultDek,
@@ -54,11 +54,11 @@ import {
   getPrfAssertionForCredentials,
   selectDiscoverablePasskey,
 } from '@/lib/webauthn/passkey-prf'
-import { decodeBinaryFromBase64, wrapDekWithPassword, wrapDekWithPrf } from '@/lib/crypto/auth-vault'
+import { wrapDekWithPassword, wrapDekWithPrf } from '@/lib/crypto/auth-vault'
+import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
 import { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
 import { hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
-import { getDashPlatformClient } from '@/lib/dash-platform-client'
 import { invalidateBlockCache } from '@/lib/caches/block-cache'
 import { privateFeedKeyStore } from '@/lib/services/private-feed-key-store'
 import { extractErrorMessage } from '@/lib/error-utils'
@@ -81,23 +81,11 @@ type LegacyAuthVaultBundle = {
   updatedAt: number
 }
 
-function getConfiguredNetwork(): 'testnet' | 'mainnet' {
-  return (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
-}
-
 async function ensureSdk(): Promise<void> {
   await evoSdkService.initialize({
     network: getConfiguredNetwork(),
     contractId: YAPPR_CONTRACT_ID,
   })
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = ''
-  for (let index = 0; index < bytes.length; index += 1) {
-    binary += String.fromCharCode(bytes[index])
-  }
-  return btoa(binary)
 }
 
 function fromSessionUser(savedUser: Record<string, unknown>): AuthUser | null {
@@ -141,7 +129,7 @@ function fromLegacyBundle(bundle: LegacyAuthVaultBundle): AuthVaultBundle {
     identityId: bundle.identityId,
     network: bundle.network,
     secretKind: bundle.secretKind,
-    loginKey: bundle.loginKey ? decodeBinaryFromBase64(bundle.loginKey) : undefined,
+    loginKey: bundle.loginKey ? base64ToBytes(bundle.loginKey) : undefined,
     authKeyWif: bundle.authKeyWif,
     encryptionKeyWif: bundle.encryptionKeyWif,
     transferKeyWif: bundle.transferKeyWif,
@@ -195,7 +183,7 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
   void import('@/lib/services/block-service').then(async ({ blockService }) => {
     try {
       await blockService.initializeBlockData(identityId)
-      logger.info('Auth: Block data initialized')
+      logger.debug('Auth: Block data initialized')
     } catch (error) {
       logger.error('Auth: Failed to initialize block data:', error)
     }
@@ -203,20 +191,20 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
 
   void import('@/lib/services/private-feed-follower-service').then(async ({ privateFeedFollowerService }) => {
     if (!context.isSessionActive()) {
-      logger.info('Auth: Skipping private feed sync - session no longer active')
+      logger.debug('Auth: Skipping private feed sync - session no longer active')
       return
     }
 
     try {
       const result = await privateFeedFollowerService.syncFollowedFeeds()
       if (!context.isSessionActive()) {
-        logger.info('Auth: Private feed sync completed but session ended - clearing keys')
+        logger.debug('Auth: Private feed sync completed but session ended - clearing keys')
         privateFeedKeyStore.clearAllKeys()
         return
       }
 
       if (result.synced.length > 0 || result.failed.length > 0) {
-        logger.info(`Auth: Private feed sync complete - synced: ${result.synced.length}, failed: ${result.failed.length}, up-to-date: ${result.upToDate.length}`)
+        logger.debug(`Auth: Private feed sync complete - synced: ${result.synced.length}, failed: ${result.failed.length}, up-to-date: ${result.upToDate.length}`)
       }
     } catch (error) {
       logger.error('Auth: Failed to sync private feed keys:', error)
@@ -248,7 +236,8 @@ async function runLogoutCleanup(identityId: string): Promise<void> {
 
 export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies {
   return {
-    network: getConfiguredNetwork(),
+    // platform-auth uses this only for address/WIF encoding, so devnet maps to testnet.
+    network: keyNetwork(),
     sessionStore: {
       getSession() {
         if (typeof window === 'undefined') return null
@@ -344,11 +333,6 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
         return Boolean(legacyProfile)
       },
     },
-    clientIdentity: {
-      setIdentity(identityId) {
-        getDashPlatformClient().setIdentity(identityId)
-      },
-    },
     sideEffects: {
       runPostLogin,
       runLogoutCleanup,
@@ -366,6 +350,9 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     yapprKeyExchangeConfig: {
       appContractId: YAPPR_CONTRACT_ID,
       keyExchangeContractId: KEY_EXCHANGE_CONTRACT_ID,
+      // Protocol routing in the dash-key:/dash-st: URIs, which distinguish
+      // devnet ('d') — unlike address/WIF encoding, which keyNetwork() maps
+      // to testnet on devnets.
       network: getConfiguredNetwork(),
       label: 'Login to Yappr',
     },

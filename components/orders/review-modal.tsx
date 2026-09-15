@@ -3,13 +3,12 @@
 import { logger } from '@/lib/logger';
 import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { motion, AnimatePresence } from 'framer-motion'
+import { Modal } from '@/components/ui/modal'
 import { XMarkIcon, BuildingStorefrontIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { StarRatingInput } from '@/components/store/star-rating-input'
 import { storeReviewService } from '@/lib/services/store-review-service'
-import { useSettingsStore } from '@/lib/store'
 import toast from 'react-hot-toast'
 import type { StoreOrder, Store } from '@/lib/types'
 
@@ -31,7 +30,6 @@ export function ReviewModal({
   store,
   onSuccess
 }: ReviewModalProps) {
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [rating, setRating] = useState(0)
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
@@ -72,28 +70,7 @@ export function ReviewModal({
   }
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-      <AnimatePresence>
-        {isOpen && (
-          <Dialog.Portal forceMount>
-            <Dialog.Overlay asChild>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className={`fixed inset-0 bg-black/60 z-50 flex items-center justify-center px-4 ${
-                  potatoMode ? '' : 'backdrop-blur-sm'
-                }`}
-              >
-                <Dialog.Content asChild>
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                    transition={{ duration: 0.2, ease: 'easeOut' }}
-                    className="w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
-                    onClick={(e) => e.stopPropagation()}
-                  >
+    <Modal open={isOpen} onOpenChange={(open) => !open && handleClose()} variant="sheet" className="max-w-md">
                     {/* Header */}
                     <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
                       <Dialog.Title className="font-semibold text-gray-900 dark:text-gray-100">
@@ -203,13 +180,6 @@ export function ReviewModal({
                         )}
                       </Button>
                     </div>
-                  </motion.div>
-                </Dialog.Content>
-              </motion.div>
-            </Dialog.Overlay>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
-    </Dialog.Root>
+    </Modal>
   )
 }

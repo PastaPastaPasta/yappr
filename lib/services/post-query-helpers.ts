@@ -4,7 +4,9 @@ import { queryRawDocuments } from './document-service';
 import type { Post } from '../types';
 import type { PostStats } from './post-service';
 import { type DocumentWhereClause } from './sdk-helpers';
-import { retryAsync } from '../retry-utils';
+import { rangeDistinctCount } from './pagination-utils';
+import { getEvoSdk } from './evo-sdk-service';
+import { quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
 
 function normalizeIdentifier(value: unknown): string | null {
   if (typeof value === 'string') {
@@ -153,61 +155,52 @@ export async function fetchFollowingFeed(
   }
 }
 
-export async function fetchUniqueAuthorCount(contractId: string): Promise<number> {
-  const result = await retryAsync(
-    async () => {
-      const uniqueAuthors = new Set<string>();
-      let startAfter: string | undefined = undefined;
-      const PAGE_SIZE = 100;
+let authorCountTreeUnsupported = false;
 
-      while (true) {
-        const documents = await queryRawDocuments({
-          dataContractId: contractId,
-          documentTypeName: 'post',
-          where: [
-            ['language', '==', 'en'],
-            ['$createdAt', '>', 0],
-          ],
-          orderBy: [['language', 'asc'], ['$createdAt', 'asc']],
-          limit: PAGE_SIZE,
-          startAfter,
-        });
+/**
+ * Per-author post counts from the `byOwner` count tree, in ONE grouped count
+ * query — or null when it can't be answered, letting callers fall back to the
+ * legacy scan. Two distinct null cases:
+ *
+ * - The contract doesn't declare `rangeCountable: true` on that index (older
+ *   cuts): rangeDistinctCount reports this as null and it is remembered for
+ *   the session — the rejection is deterministic, so don't pay a doomed query
+ *   per call.
+ * - A transient failure (transport blip etc.): fall back this once, WITHOUT
+ *   latching — the next call should try the count tree again.
+ *
+ * Counts posts in EVERY language — consistent with `countAllPosts`, unlike the
+ * fallback scan below, which walks the `languageTimeline` index and so only sees
+ * `language == 'en'`.
+ *
+ * Returns AT MOST 100 authors — Drive caps a grouped range-distinct count at
+ * `DEFAULT_QUERY_LIMIT` and this query is not paginated (see
+ * `rangeDistinctCount`). Fine for "top N contributors", which only reads the
+ * head of the distribution; NOT usable as a distinct-author total, which is why
+ * the homepage no longer shows one.
+ */
+async function fetchAuthorPostCountsViaCountTree(contractId: string): Promise<Map<string, number> | null> {
+  if (authorCountTreeUnsupported) return null;
 
-        for (const doc of documents) {
-          if (doc.$ownerId) {
-            uniqueAuthors.add(doc.$ownerId as string);
-          }
-        }
-
-        if (documents.length < PAGE_SIZE) break;
-
-        const lastDoc = documents[documents.length - 1];
-        if (!lastDoc.$id) break;
-        startAfter = lastDoc.$id as string;
-      }
-
-      return uniqueAuthors.size;
-    },
-    {
-      maxAttempts: 3,
-      initialDelayMs: 1000,
-      maxDelayMs: 5000,
-      backoffMultiplier: 2,
-    }
-  );
-
-  if (!result.success || result.data === undefined) {
-    logger.error('Error counting unique authors after retries:', result.error);
-    throw result.error || new Error('Failed to count unique authors');
+  try {
+    const sdk = await getEvoSdk();
+    const result = await rangeDistinctCount(sdk, {
+      dataContractId: contractId,
+      documentTypeName: 'post',
+      groupField: '$ownerId',
+    });
+    if (result === null) authorCountTreeUnsupported = true;
+    return result;
+  } catch (error) {
+    logger.warn('fetchAuthorPostCountsViaCountTree: transient failure, falling back to scan for this call:', error);
+    return null;
   }
-
-  return result.data;
 }
 
 export async function fetchTopPostsByLikes(
   limit: number,
   getTimeline: (options: QueryOptions & { language?: string }) => Promise<DocumentResult<Post>>,
-  getBatchPostStats: (postIds: string[]) => Promise<Map<string, PostStats>>,
+  getBatchPostStats: (targets: readonly KindedTarget[]) => Promise<Map<string, PostStats>>,
   enrichPostsBatch: (posts: Post[]) => Promise<Post[]>
 ): Promise<Post[]> {
   try {
@@ -216,8 +209,7 @@ export async function fetchTopPostsByLikes(
 
     if (posts.length === 0) return [];
 
-    const postIds = posts.map((post) => post.id);
-    const statsMap = await getBatchPostStats(postIds);
+    const statsMap = await getBatchPostStats(posts.map(targetOf));
 
     const postsWithLikes = posts.map((post) => ({
       post,
@@ -235,6 +227,9 @@ export async function fetchTopPostsByLikes(
 }
 
 export async function fetchAuthorPostCounts(contractId: string): Promise<Map<string, number>> {
+  const grouped = await fetchAuthorPostCountsViaCountTree(contractId);
+  if (grouped && grouped.size > 0) return grouped;
+
   const authorCounts = new Map<string, number>();
 
   try {
@@ -279,60 +274,49 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<Map<str
   }
 }
 
+/**
+ * Posts quoting one target, newest first.
+ *
+ * `quoteField` names the property the topology stores the reference in, and the
+ * orderBy tail follows the index that field belongs to: v2's unique
+ * `quotedPostAndOwner [quotedPostId, $ownerId]`, or v3's chronological
+ * `quotesOfPost`/`quotesOfReply [<field>, $createdAt]` (v3 dropped the
+ * uniqueness — quotes are content, so the same author may quote a target twice).
+ */
 export async function fetchQuotePosts(
   quotedPostId: string,
+  quoteField: string,
   contractId: string,
   transformDocument: (doc: Record<string, unknown>) => Post,
   options: { limit?: number } = {}
 ): Promise<Post[]> {
   const limit = options.limit || 50;
+  const orderProperty = quoteListingOrderProperty();
 
   try {
     const documents = await queryRawDocuments({
       dataContractId: contractId,
       documentTypeName: 'post',
       // Use `in` for identifier byte-array fields; `==` can fail to match.
-      where: [['quotedPostId', 'in', [quotedPostId]]],
-      orderBy: [['quotedPostId', 'asc'], ['$ownerId', 'asc']],
+      where: [[quoteField, 'in', [quotedPostId]]],
+      orderBy: [
+        [quoteField, 'asc'],
+        [orderProperty, orderProperty === '$createdAt' ? 'desc' : 'asc'],
+      ],
       limit,
     });
 
     return documents
       .map((doc) => transformDocument(doc))
-      .filter((post) => post.quotedPostId === quotedPostId)
+      // Read back through the SAME field the query keyed on. Compare the literal
+      // field name: on v2 BOTH kinds resolve to 'quotedPostId' (the polymorphic
+      // field), so testing against quoteFieldFor('reply') would route every v2
+      // read through the absent quotedReplyId and empty the listing.
+      .filter((post) => (quoteField === 'quotedReplyId' ? post.quotedReplyId : post.quotedPostId) === quotedPostId)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .slice(0, limit);
   } catch (error) {
     logger.error('Error getting quote posts:', error);
-    return [];
-  }
-}
-
-export async function fetchQuotesOfMyPosts(
-  userId: string,
-  contractId: string,
-  transformDocument: (doc: Record<string, unknown>) => Post,
-  since?: Date
-): Promise<Post[]> {
-  try {
-    const sinceTimestamp = since?.getTime() || 0;
-
-    const documents = await queryRawDocuments({
-      dataContractId: contractId,
-      documentTypeName: 'post',
-      where: [
-        ['quotedPostOwnerId', '==', userId],
-        ['$createdAt', '>', sinceTimestamp],
-      ],
-      orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'asc']],
-      limit: 100,
-    });
-
-    return documents
-      .map((doc) => transformDocument(doc))
-      .filter((post) => post.content && post.content.trim() !== '');
-  } catch (error) {
-    logger.error('Error getting quotes of my posts:', error);
     return [];
   }
 }

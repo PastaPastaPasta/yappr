@@ -6,17 +6,12 @@ import {
 } from 'platform-auth'
 import { isLikelyWif, parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { scopedKey } from '@/lib/storage-scope'
-
-const getConfiguredNetwork = (): 'testnet' | 'mainnet' => {
-  if (process?.env?.NEXT_PUBLIC_NETWORK) {
-    return process.env.NEXT_PUBLIC_NETWORK === 'mainnet' ? 'mainnet' : 'testnet'
-  }
-  return 'testnet'
-}
+import { keyNetwork } from '@/lib/constants'
 
 const browserSecretStore = createBrowserSecretStore({
   prefix: scopedKey('yappr_secure_'),
-  network: getConfiguredNetwork(),
+  // Stored secrets are WIF-encoded, so this follows the key network: devnet reuses testnet's prefixes.
+  network: keyNetwork(),
   crypto: {
     parsePrivateKey,
     privateKeyToWif,
@@ -26,23 +21,16 @@ const browserSecretStore = createBrowserSecretStore({
 
 export type KeyType = BrowserStoredKeyType
 
-export default browserSecretStore.secureStorage
-
 export const {
   storePrivateKey,
   getPrivateKey,
   clearPrivateKey,
   hasPrivateKey,
-  clearAllPrivateKeys,
   storeLoginKey,
-  getLoginKey,
   getLoginKeyBytes,
-  hasLoginKey,
   clearLoginKey,
   storeAuthVaultDek,
-  getAuthVaultDek,
   getAuthVaultDekBytes,
-  hasAuthVaultDek,
   clearAuthVaultDek,
   storeEncryptionKey,
   getEncryptionKey,
@@ -54,7 +42,6 @@ export const {
   clearEncryptionKeyType,
   storeTransferKey,
   getTransferKey,
-  getTransferKeyBytes,
   hasTransferKey,
   clearTransferKey,
 } = browserSecretStore

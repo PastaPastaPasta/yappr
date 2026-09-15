@@ -1,7 +1,9 @@
 import type { EmbedBlock, EmbedRenderOptions } from './embed-types'
 import { FORBIDDEN_CSS_PATTERN } from '@/lib/blog/theme-types'
 
-const DEFAULT_IPFS_GATEWAY = 'https://ipfs.io/ipfs/'
+// Keep in sync with the first path-format entry of IPFS_GATEWAYS
+// (lib/utils/ipfs-gateway.ts) - ipfs.io rate-limits image bursts with 403s.
+const DEFAULT_IPFS_GATEWAY = 'https://gateway.pinata.cloud/ipfs/'
 
 export function escapeHtml(value: string): string {
   return value

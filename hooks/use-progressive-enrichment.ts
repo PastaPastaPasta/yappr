@@ -1,17 +1,19 @@
 import { logger } from '@/lib/logger';
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Post, User } from '@/lib/types'
+import { Post } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import { blockService } from '@/lib/services/block-service'
 import { followService } from '@/lib/services/follow-service'
-import { seedBlockStatusCache, seedFollowStatusCache } from '@/lib/caches/user-status-cache'
+import { blockStatusCache, followStatusCache } from '@/lib/caches/user-status-cache'
+import { targetOf, type KindedTarget } from '@/lib/contract-topology'
 
 export interface PostStats {
   likes: number
   reposts: number
   replies: number
+  quotes: number
   views: number
 }
 
@@ -30,6 +32,21 @@ export interface ReplyToData {
   id: string
   authorId: string
   authorUsername: string | null  // null = no DPNS
+}
+
+/**
+ * Enrichment slices that arrived with the posts themselves (a composite
+ * feed page proves the counts, profiles, names and the viewer's marks
+ * under the same root as the posts). Keys present here are merged into
+ * the state at once and excluded from the follow-up queries; keys absent
+ * are fetched as before, so partial preloads degrade gracefully.
+ */
+export interface PreloadedEnrichment {
+  usernames?: Map<string, string | null>
+  profiles?: Map<string, ProfileData>
+  avatars?: Map<string, string>
+  stats?: Map<string, PostStats>
+  interactions?: Map<string, UserInteractions>
 }
 
 export interface EnrichmentState {
@@ -68,12 +85,13 @@ interface UseProgressiveEnrichmentOptions {
 }
 
 interface UseProgressiveEnrichmentResult {
-  enrichProgressively: (posts: Post[]) => void
+  enrichProgressively: (posts: Post[], preloaded?: PreloadedEnrichment) => void
   enrichmentState: EnrichmentState
   reset: () => void
   getPostEnrichment: (post: Post) => {
     username: string | null | undefined  // undefined = loading, null = no DPNS, string = username
     displayName: string | undefined
+    profileLoaded: boolean  // true once the profile query resolved, even for authors with no profile
     avatarUrl: string | undefined
     stats: PostStats | undefined
     interactions: UserInteractions | undefined
@@ -116,7 +134,7 @@ export function useProgressiveEnrichment(
    * Start progressive enrichment for the given posts.
    * Non-blocking - returns immediately and updates state as data loads.
    */
-  const enrichProgressively = useCallback((posts: Post[]) => {
+  const enrichProgressively = useCallback((posts: Post[], preloaded?: PreloadedEnrichment) => {
     if (posts.length === 0) return
 
     // Increment request ID to invalidate any in-flight requests
@@ -125,12 +143,27 @@ export function useProgressiveEnrichment(
     // Check if this request is still valid
     const isValid = () => enrichmentIdRef.current === requestId
 
-    // Extract IDs (deduplicate to prevent "duplicate values for In query" errors)
-    const postIds = Array.from(new Set(posts.map(p => p.id).filter(Boolean)))
+    // Extract IDs (deduplicate to prevent "duplicate values for In query" errors).
+    // Each target carries its kind, so the stats/interaction queries are
+    // partitioned by interaction surface — one partition (i.e. unchanged) on v2.
+    const seenPostIds = new Set<string>()
+    const targets: KindedTarget[] = []
+    for (const post of posts) {
+      if (!post.id || seenPostIds.has(post.id)) continue
+      seenPostIds.add(post.id)
+      targets.push(targetOf(post))
+    }
     const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)))
-
-    // Set loading phase
-    setEnrichmentState(prev => ({ ...prev, phase: 'loading' }))
+    // Quoted authors are gated for media just like top-level ones, but they are
+    // NOT enriched as authors (no username/profile/avatar/block lookups) and
+    // must never be seeded as followed on the Following tab — following the
+    // quoter says nothing about who they quoted. Their follow status rides
+    // along on the real batch query only, which seeds the shared cache that
+    // useMediaGate reads, so an embedded card of someone you follow renders its
+    // media instead of a placeholder.
+    const followLookupIds = Array.from(
+      new Set([...authorIds, ...posts.map(p => p.quotedPost?.author.id).filter((id): id is string => !!id)])
+    )
 
     // Helper to merge Maps (TypeScript-compatible without downlevelIteration)
     const mergeMaps = <K, V>(prev: Map<K, V>, next: Map<K, V>): Map<K, V> => {
@@ -139,11 +172,32 @@ export function useProgressiveEnrichment(
       return merged
     }
 
+    // Set loading phase, merging whatever arrived with the posts
+    setEnrichmentState(prev => ({
+      ...prev,
+      phase: 'loading',
+      usernames: preloaded?.usernames ? mergeMaps(prev.usernames, preloaded.usernames) : prev.usernames,
+      profiles: preloaded?.profiles ? mergeMaps(prev.profiles, preloaded.profiles) : prev.profiles,
+      avatars: preloaded?.avatars ? mergeMaps(prev.avatars, preloaded.avatars) : prev.avatars,
+      stats: preloaded?.stats ? mergeMaps(prev.stats, preloaded.stats) : prev.stats,
+      interactions: preloaded?.interactions ? mergeMaps(prev.interactions, preloaded.interactions) : prev.interactions,
+    }))
+
+    // Only what the preload did not cover goes to the network
+    const notIn = <V,>(map: Map<string, V> | undefined) => (id: string) => !map?.has(id)
+    const usernameAuthorIds = authorIds.filter(notIn(preloaded?.usernames))
+    const profileAuthorIds = authorIds.filter(notIn(preloaded?.profiles))
+    const avatarAuthorIds = authorIds.filter(notIn(preloaded?.avatars))
+    const statsTargets = targets.filter(target => notIn(preloaded?.stats)(target.id))
+    const interactionTargets = targets.filter(target => notIn(preloaded?.interactions)(target.id))
+
     // Store promises so we can reuse them for completion tracking
     // This prevents duplicate queries that were happening before
 
     // Priority 1: DPNS usernames (most visible - author identity)
-    const usernamePromise = dpnsService.resolveUsernamesBatch(authorIds)
+    const usernamePromise = usernameAuthorIds.length > 0
+      ? dpnsService.resolveUsernamesBatch(usernameAuthorIds)
+      : Promise.resolve(new Map<string, string | null>())
     usernamePromise.then(usernames => {
       if (!isValid()) return
       setEnrichmentState(prev => ({
@@ -153,30 +207,52 @@ export function useProgressiveEnrichment(
     }).catch(err => logger.error('Progressive enrichment: usernames failed', err))
 
     // Priority 1: Profiles (display names)
-    const profilePromise = unifiedProfileService.getProfilesByIdentityIds(authorIds)
+    const profilePromise = profileAuthorIds.length > 0
+      ? unifiedProfileService.getProfilesByIdentityIds(profileAuthorIds)
+      : Promise.resolve([] as Awaited<ReturnType<typeof unifiedProfileService.getProfilesByIdentityIds>>)
+    // Seed queried authors that have no entry yet, so consumers can
+    // distinguish "loaded, no profile" (empty entry) from "still loading"
+    // (no entry) without clobbering profiles from earlier batches
+    const seedMissingAuthors = (profiles: Map<string, ProfileData>): Map<string, ProfileData> => {
+      const seeded = new Map(profiles)
+      for (const id of authorIds) {
+        if (!seeded.has(id)) {
+          seeded.set(id, {})
+        }
+      }
+      return seeded
+    }
+
     profilePromise.then(profiles => {
       if (!isValid()) return
       const profileMap = new Map<string, ProfileData>()
       for (const profile of profiles) {
-        const ownerId = profile.$ownerId
-        // Profile data may be nested under 'data' property or at root level
-        const profileAny = profile as any
-        const data = profileAny.data || profile
-        if (ownerId) {
-          profileMap.set(ownerId, {
-            displayName: data.displayName,
-            bio: data.bio
+        if (profile.$ownerId) {
+          profileMap.set(profile.$ownerId, {
+            displayName: profile.displayName,
+            bio: profile.bio
           })
         }
       }
       setEnrichmentState(prev => ({
         ...prev,
-        profiles: mergeMaps(prev.profiles, profileMap)
+        profiles: seedMissingAuthors(mergeMaps(prev.profiles, profileMap))
       }))
-    }).catch(err => logger.error('Progressive enrichment: profiles failed', err))
+    }).catch(err => {
+      logger.error('Progressive enrichment: profiles failed', err)
+      if (!isValid()) return
+      // Mark the authors as loaded so cards fall back to identity display
+      // instead of showing a loading skeleton forever
+      setEnrichmentState(prev => ({
+        ...prev,
+        profiles: seedMissingAuthors(prev.profiles)
+      }))
+    })
 
     // Priority 2: Avatars
-    const avatarPromise = unifiedProfileService.getAvatarUrlsBatch(authorIds)
+    const avatarPromise = avatarAuthorIds.length > 0
+      ? unifiedProfileService.getAvatarUrlsBatch(avatarAuthorIds)
+      : Promise.resolve(new Map<string, string>())
     avatarPromise.then(avatars => {
       if (!isValid()) return
       setEnrichmentState(prev => ({
@@ -186,7 +262,9 @@ export function useProgressiveEnrichment(
     }).catch(err => logger.error('Progressive enrichment: avatars failed', err))
 
     // Priority 3: Stats
-    const statsPromise = postService.getBatchPostStats(postIds)
+    const statsPromise = statsTargets.length > 0
+      ? postService.getBatchPostStats(statsTargets)
+      : Promise.resolve(new Map<string, PostStats>())
     statsPromise.then(stats => {
       if (!isValid()) return
       setEnrichmentState(prev => ({
@@ -196,8 +274,8 @@ export function useProgressiveEnrichment(
     }).catch(err => logger.error('Progressive enrichment: stats failed', err))
 
     // Priority 4: User interactions (only if logged in)
-    const interactionsPromise = currentUserId
-      ? postService.getBatchUserInteractions(postIds)
+    const interactionsPromise = currentUserId && interactionTargets.length > 0
+      ? postService.getBatchUserInteractions(interactionTargets)
       : Promise.resolve(new Map<string, UserInteractions>())
 
     if (currentUserId) {
@@ -213,7 +291,7 @@ export function useProgressiveEnrichment(
       const blockPromise = blockService.checkBlockedBatch(currentUserId, authorIds)
       blockPromise.then(blockStatus => {
         if (!isValid()) return
-        seedBlockStatusCache(currentUserId, blockStatus)
+        blockStatusCache.seed(currentUserId, blockStatus)
         setEnrichmentState(prev => ({
           ...prev,
           blockStatus: mergeMaps(prev.blockStatus, blockStatus)
@@ -222,10 +300,10 @@ export function useProgressiveEnrichment(
 
       // Priority 5: Follow status (skip if on Following tab - all authors are followed by definition)
       if (!skipFollowStatus) {
-        const followPromise = followService.getFollowStatusBatch(authorIds, currentUserId)
+        const followPromise = followService.getFollowStatusBatch(followLookupIds, currentUserId)
         followPromise.then(followStatus => {
           if (!isValid()) return
-          seedFollowStatusCache(currentUserId, followStatus)
+          followStatusCache.seed(currentUserId, followStatus)
           setEnrichmentState(prev => ({
             ...prev,
             followStatus: mergeMaps(prev.followStatus, followStatus)
@@ -235,7 +313,7 @@ export function useProgressiveEnrichment(
         // On Following tab, mark all authors as followed
         const followStatus = new Map<string, boolean>()
         authorIds.forEach(id => followStatus.set(id, true))
-        seedFollowStatusCache(currentUserId, followStatus)
+        followStatusCache.seed(currentUserId, followStatus)
         setEnrichmentState(prev => ({
           ...prev,
           followStatus: mergeMaps(prev.followStatus, followStatus)
@@ -243,17 +321,18 @@ export function useProgressiveEnrichment(
       }
     }
 
-    // Track completion using the SAME promises (no duplicate queries!)
-    Promise.all([
+    // Track completion using the SAME promises (no duplicate queries!). Each
+    // promise already reports its own failure above; here only settlement matters.
+    Promise.allSettled([
       usernamePromise,
       profilePromise,
       avatarPromise,
       statsPromise,
       interactionsPromise
-    ]).finally(() => {
+    ]).then(() => {
       if (!isValid()) return
       setEnrichmentState(prev => ({ ...prev, phase: 'complete' }))
-    })
+    }).catch(err => logger.error('Progressive enrichment: completion tracking failed', err))
 
   }, [currentUserId, skipFollowStatus])
 
@@ -274,6 +353,7 @@ export function useProgressiveEnrichment(
     return {
       username,
       displayName: enrichmentState.profiles.get(authorId)?.displayName,
+      profileLoaded: enrichmentState.profiles.has(authorId),
       avatarUrl: enrichmentState.avatars.get(authorId),
       stats: enrichmentState.stats.get(postId),
       interactions: enrichmentState.interactions.get(postId),
@@ -285,8 +365,9 @@ export function useProgressiveEnrichment(
 
   // Cleanup on unmount
   useEffect(() => {
+    const idRef = enrichmentIdRef
     return () => {
-      enrichmentIdRef.current++
+      idRef.current++
     }
   }, [])
 

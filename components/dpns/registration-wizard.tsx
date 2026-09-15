@@ -7,9 +7,10 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { identityService, IdentityPublicKey } from '@/lib/services/identity-service'
+import { identityService } from '@/lib/services/identity-service'
 import { getPrivateKey } from '@/lib/secure-storage'
-import { findMatchingKeyIndex, getSecurityLevelName, IdentityPublicKeyInfo } from '@/lib/crypto/keys'
+import { matchIdentityKey } from '@/lib/crypto/keys'
+import { KeyPurpose, SecurityLevel, getSecurityLevelName } from '@/lib/crypto/identity-keys'
 import toast from 'react-hot-toast'
 
 import { UsernameEntryStep } from './steps/username-entry-step'
@@ -17,36 +18,12 @@ import { CheckingStep } from './steps/checking-step'
 import { ReviewStep } from './steps/review-step'
 import { RegisteringStep } from './steps/registering-step'
 import { CompleteStep } from './steps/complete-step'
+import { keyNetwork } from '@/lib/constants'
 
 interface DpnsRegistrationWizardProps {
   onComplete?: () => void
   onSkip?: () => void
   hasExistingUsernames?: boolean
-}
-
-/**
- * Convert identity public keys to the format expected by findMatchingKeyIndex.
- * Handles both string (base64) and Uint8Array formats for the data field.
- */
-function convertToKeyInfo(keys: IdentityPublicKey[]): IdentityPublicKeyInfo[] {
-  return keys.map((key) => {
-    let data: Uint8Array
-    if (key.data instanceof Uint8Array) {
-      data = key.data
-    } else if (typeof key.data === 'string') {
-      // Base64 decode
-      data = Uint8Array.from(atob(key.data), (c) => c.charCodeAt(0))
-    } else {
-      data = new Uint8Array()
-    }
-    return {
-      id: key.id,
-      type: key.type,
-      purpose: key.purpose,
-      securityLevel: key.securityLevel,
-      data,
-    }
-  })
 }
 
 export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsernames }: DpnsRegistrationWizardProps): React.ReactNode {
@@ -143,24 +120,18 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         return
       }
 
-      // Determine network from environment
-      const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
-
-      // Convert identity public keys to the format expected by findMatchingKeyIndex
-      const keyInfos = convertToKeyInfo(identity.publicKeys)
-
-      // Find which key matches the user's private key
-      const matchedKey = findMatchingKeyIndex(privateKey, keyInfos, network)
-      if (!matchedKey) {
-        toast.error('Your private key does not match any key on this identity.')
-        setStep('review')
-        return
-      }
-
-      // Verify the matched key has sufficient security level for DPNS (CRITICAL or HIGH)
-      if (matchedKey.securityLevel !== 1 && matchedKey.securityLevel !== 2) {
-        const levelName = getSecurityLevelName(matchedKey.securityLevel)
-        toast.error(`Your key has ${levelName} security level. DPNS requires CRITICAL or HIGH security level.`)
+      // DPNS registration signs with a CRITICAL or HIGH authentication key.
+      const matched = matchIdentityKey(privateKey, identity.publicKeys, {
+        network: keyNetwork(),
+        purpose: KeyPurpose.AUTHENTICATION,
+        allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
+      })
+      if (!matched.ok) {
+        toast.error(
+          matched.reason === 'rejected'
+            ? `Your key has ${getSecurityLevelName(matched.match.securityLevel)} security level. DPNS requires a CRITICAL or HIGH authentication key.`
+            : 'Your private key does not match any key on this identity.'
+        )
         setStep('review')
         return
       }
@@ -168,7 +139,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       const registrations = availableUsernames.map((u) => ({
         label: u.label,
         identityId,
-        publicKeyId: matchedKey.keyId,
+        publicKeyId: matched.match.keyId,
         privateKeyWif: privateKey,
       }))
 

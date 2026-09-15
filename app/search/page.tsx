@@ -5,16 +5,16 @@ import { useState, useEffect, Suspense, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { ArrowLeftIcon, MagnifyingGlassIcon, HashtagIcon, UserIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Spinner } from '@/components/ui/spinner'
 import { BlogPostCard } from '@/components/blog/blog-post-card'
 import { formatNumber } from '@/lib/utils'
 import { dpnsService } from '@/lib/services/dpns-service'
+import { getPrimaryUsername } from '@/lib/utils/username'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { unifiedProfileService } from '@/lib/services'
-import { useSettingsStore } from '@/lib/store'
+import type { UnifiedProfileDocument } from '@/lib/services/unified-profile-service'
 import type { BlogPostWithAuthor } from '@/lib/types'
 import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
 
@@ -34,7 +34,6 @@ function SearchPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const query = searchParams.get('q') || ''
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const [users, setUsers] = useState<UserResult[]>([])
   const [hashtags, setHashtags] = useState<HashtagResult[]>([])
@@ -44,7 +43,7 @@ function SearchPageContent() {
 
   useEffect(() => {
     const currentSearchId = ++searchIdRef.current
-    logger.info(`Search: Starting search #${currentSearchId} for query: "${query}"`)
+    logger.debug(`Search: Starting search #${currentSearchId} for query: "${query}"`)
 
     const performSearch = async () => {
       const trimmedQuery = query.trim()
@@ -59,7 +58,7 @@ function SearchPageContent() {
 
       // Require at least 3 characters to search (like DashPay)
       if (trimmedQuery.length < 3) {
-        logger.info('Search: Query too short, need at least 3 characters')
+        logger.debug('Search: Query too short, need at least 3 characters')
         setUsers([])
         setHashtags([])
         setBlogPosts([])
@@ -79,7 +78,7 @@ function SearchPageContent() {
 
         // Only update state if this is still the current search
         if (currentSearchId !== searchIdRef.current) {
-          logger.info(`Search: Ignoring stale results for search #${currentSearchId}`)
+          logger.debug(`Search: Ignoring stale results for search #${currentSearchId}`)
           return
         }
 
@@ -101,24 +100,24 @@ function SearchPageContent() {
   const searchUsers = async (searchQuery: string): Promise<UserResult[]> => {
     try {
       const trimmedQuery = searchQuery.trim()
-      logger.info(`Search: searchUsers called with: "${trimmedQuery}"`)
+      logger.debug(`Search: searchUsers called with: "${trimmedQuery}"`)
 
       // Require at least 3 characters to search (like DashPay)
       if (trimmedQuery.length < 3) {
-        logger.info('Search: Query too short, need at least 3 characters')
+        logger.debug('Search: Query too short, need at least 3 characters')
         return []
       }
 
       // Search DPNS usernames by prefix
       const dpnsResults = await dpnsService.searchUsernamesWithDetails(trimmedQuery, 10)
-      logger.info(`Search: DPNS prefix search returned ${dpnsResults.length} results`)
+      logger.debug(`Search: DPNS prefix search returned ${dpnsResults.length} results`)
 
       // If prefix search returns nothing, try exact name resolution as fallback
       if (dpnsResults.length === 0) {
-        logger.info(`Search: Trying exact name resolution for "${trimmedQuery}"`)
+        logger.debug(`Search: Trying exact name resolution for "${trimmedQuery}"`)
         const exactIdentity = await dpnsService.resolveIdentity(trimmedQuery)
         if (exactIdentity) {
-          logger.info(`Search: Found exact match for "${trimmedQuery}"`)
+          logger.debug(`Search: Found exact match for "${trimmedQuery}"`)
           dpnsResults.push({
             username: `${trimmedQuery.toLowerCase().replace(/\.dash$/, '')}.dash`,
             ownerId: exactIdentity
@@ -134,7 +133,7 @@ function SearchPageContent() {
       const ownerIds = Array.from(new Set(dpnsResults.map(r => r.ownerId).filter(Boolean)))
 
       // Fetch profiles for display names
-      let profiles: any[] = []
+      let profiles: UnifiedProfileDocument[] = []
       if (ownerIds.length > 0) {
         try {
           profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
@@ -144,7 +143,7 @@ function SearchPageContent() {
       }
 
       // Create profile map
-      const profileMap = new Map(profiles.map(p => [p.$ownerId || (p as any).ownerId, p]))
+      const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
 
       // Group by owner to handle multiple usernames per owner
       const ownerToNames = new Map<string, string[]>()
@@ -156,22 +155,18 @@ function SearchPageContent() {
         }
       })
 
-      // Build results
-      const results: UserResult[] = await Promise.all(
-        Array.from(ownerToNames.entries()).map(async ([ownerId, names]) => {
-          const profile = profileMap.get(ownerId)
-          const profileData = (profile as any)?.data || profile
-          const sortedNames = await dpnsService.sortUsernamesByContested(names)
-          const primaryUsername = sortedNames[0]
+      // Build results, picking the best matched name via the canonical ordering
+      const results: UserResult[] = Array.from(ownerToNames.entries()).map(([ownerId, names]) => {
+        const profile = profileMap.get(ownerId)
+        const primaryUsername = getPrimaryUsername(names) ?? names[0]
 
-          return {
-            id: ownerId,
-            username: primaryUsername,
-            displayName: profileData?.displayName || primaryUsername,
-            bio: profileData?.bio
-          }
-        })
-      )
+        return {
+          id: ownerId,
+          username: primaryUsername,
+          displayName: profile?.displayName || primaryUsername,
+          bio: profile?.bio
+        }
+      })
 
       return results
     } catch (error) {
@@ -252,10 +247,7 @@ function SearchPageContent() {
 
   if (!query) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
-        <Sidebar />
-        <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+      <PageShell>
             <div className="p-12 text-center">
               <MagnifyingGlassIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
               <h2 className="text-xl font-semibold mb-2">Search Yappr</h2>
@@ -263,21 +255,14 @@ function SearchPageContent() {
                 Enter a search term to find users and hashtags
               </p>
             </div>
-          </main>
-        </div>
-        <RightSidebar />
-      </div>
+      </PageShell>
     )
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+    <PageShell>
           {/* Header */}
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+          <PageHeader>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => router.back()}
@@ -292,7 +277,7 @@ function SearchPageContent() {
                 </p>
               </div>
             </div>
-          </header>
+          </PageHeader>
 
           {/* Content */}
           {isLoading ? (
@@ -396,11 +381,7 @@ function SearchPageContent() {
               </section>
             </div>
           )}
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 

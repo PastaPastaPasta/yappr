@@ -15,14 +15,14 @@ import {
   MoonIcon,
   SunIcon,
   ComputerDesktopIcon,
-  ExclamationTriangleIcon,
   UserGroupIcon,
   UserPlusIcon,
   LockClosedIcon,
   CloudArrowUpIcon,
+  NoSymbolIcon,
+  CommandLineIcon,
 } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useTheme } from 'next-themes'
@@ -30,7 +30,6 @@ import * as RadioGroup from '@radix-ui/react-radio-group'
 import { SettingsSwitch } from '@/components/settings/settings-switch'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import toast from 'react-hot-toast'
 import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
 import { PrivateFeedSettings } from '@/components/settings/private-feed-settings'
@@ -41,14 +40,19 @@ import { BlockListSettings } from '@/components/settings/block-list-settings'
 import { SavedAddressesSettings } from '@/components/settings/saved-addresses-settings'
 import { StorachaSettings } from '@/components/settings/storacha-settings'
 import { PinataSettings } from '@/components/settings/pinata-settings'
+import { ModerationSettings } from '@/components/settings/moderation-settings'
+import { DeveloperSettings } from '@/components/settings/developer-settings'
+import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
-import { useSettingsStore } from '@/lib/store'
-import { CORS_PROXY_INFO } from '@/hooks/use-link-preview'
+import { useSettingsStore, type SensitiveContentMode } from '@/lib/store'
+import { CORS_PROXY_INFO } from '@/lib/link-preview/fetch'
 import { UsernameModal } from '@/components/dpns/username-modal'
 
-type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'about'
-const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'privateFeed', 'storage', 'appearance', 'about']
+type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'developer' | 'about' | 'moderation'
+const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'privateFeed', 'storage', 'appearance', 'developer', 'about', 'moderation']
+
+const MODERATION_SECTION = { id: 'moderation', label: 'Moderation', icon: NoSymbolIcon, description: 'Freeze or slash YAPP balances (token authority only)' }
 
 const settingsSections = [
   { id: 'account', label: 'Account', icon: UserIcon, description: 'Manage your account details' },
@@ -58,7 +62,14 @@ const settingsSections = [
   { id: 'privateFeed', label: 'Private Feed', icon: LockClosedIcon, description: 'Manage approved followers and private feed access' },
   { id: 'storage', label: 'Storage', icon: CloudArrowUpIcon, description: 'Connect storage for image uploads' },
   { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon, description: 'Customize how Yappr looks' },
+  { id: 'developer', label: 'Developer', icon: CommandLineIcon, description: 'Inspect Dash Platform queries and proofs' },
   { id: 'about', label: 'About', icon: InformationCircleIcon, description: 'Learn more about Yappr' },
+]
+
+const SENSITIVE_CONTENT_OPTIONS: Array<{ value: SensitiveContentMode; label: string; description: string }> = [
+  { value: 'blur', label: 'Warn first', description: 'Cover NSFW posts until you choose to show them' },
+  { value: 'show', label: 'Always show', description: 'Show NSFW posts without a warning' },
+  { value: 'hide', label: 'Hide', description: 'Remove NSFW posts from your feeds' },
 ]
 
 const NOTIFICATION_LABELS: Record<string, string> = {
@@ -85,10 +96,15 @@ function SettingsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user, logout } = useAuth()
+  const isAuthority = user?.identityId === YAPP_TOKEN_AUTHORITY_ID
+  // Moderation is authority-only; keep the visible-sections list in one place so
+  // the menu, the section title, and the render gate can't drift apart.
+  const visibleSections = isAuthority ? [...settingsSections, MODERATION_SECTION] : settingsSections
   const { theme, setTheme } = useTheme()
-  const linkPreviewsChoice = useSettingsStore((s) => s.linkPreviewsChoice)
-  const setLinkPreviewsChoice = useSettingsStore((s) => s.setLinkPreviewsChoice)
-  const linkPreviewsEnabled = linkPreviewsChoice === 'enabled'
+  const linkPreviewsEnabled = useSettingsStore((s) => s.linkPreviewsEnabled)
+  const setLinkPreviewsEnabled = useSettingsStore((s) => s.setLinkPreviewsEnabled)
+  const gateMediaFromNonFollowed = useSettingsStore((s) => s.gateMediaFromNonFollowed)
+  const setGateMediaFromNonFollowed = useSettingsStore((s) => s.setGateMediaFromNonFollowed)
   const sendReadReceipts = useSettingsStore((s) => s.sendReadReceipts)
   const setSendReadReceipts = useSettingsStore((s) => s.setSendReadReceipts)
   const notificationSettings = useSettingsStore((s) => s.notificationSettings)
@@ -97,6 +113,8 @@ function SettingsPage() {
   const setPotatoMode = useSettingsStore((s) => s.setPotatoMode)
   const feedLanguage = useSettingsStore((s) => s.feedLanguage)
   const setFeedLanguage = useSettingsStore((s) => s.setFeedLanguage)
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
+  const setSensitiveContentMode = useSettingsStore((s) => s.setSensitiveContentMode)
 
   // Derive active section from URL search params
   const sectionParam = searchParams.get('section')
@@ -113,12 +131,6 @@ function SettingsPage() {
     }
   }
   
-  // Privacy settings
-  const [privacySettings, setPrivacySettings] = useState({
-    publicProfile: true,
-    showActivity: true,
-  })
-
   // Account creation date from profile
   const [accountCreatedAt, setAccountCreatedAt] = useState<Date | null>(null)
 
@@ -156,15 +168,9 @@ function SettingsPage() {
     const fetchUsernames = async () => {
       try {
         const { dpnsService } = await import('@/lib/services/dpns-service')
-        const usernames = await dpnsService.getAllUsernames(user.identityId)
-        if (usernames.length > 0) {
-          // Sort usernames: contested first, then shortest, then alphabetically
-          // This matches the selection logic used across the app
-          const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
-          setDpnsUsernames(sortedUsernames)
-        } else {
-          setDpnsUsernames([])
-        }
+        // Canonically sorted: the first entry is the primary username
+        const usernames = await dpnsService.getAllUsernamesSorted(user.identityId)
+        setDpnsUsernames(usernames)
       } catch (error) {
         logger.error('Failed to fetch DPNS usernames:', error)
       }
@@ -180,14 +186,9 @@ function SettingsPage() {
       const { dpnsService } = await import('@/lib/services/dpns-service')
       // Clear cache to get fresh data (pass undefined for username, identityId second)
       dpnsService.clearCache(undefined, user.identityId)
-      const usernames = await dpnsService.getAllUsernames(user.identityId)
-      if (usernames.length > 0) {
-        // Sort usernames: contested first, then shortest, then alphabetically
-        const sortedUsernames = await dpnsService.sortUsernamesByContested(usernames)
-        setDpnsUsernames(sortedUsernames)
-      } else {
-        setDpnsUsernames([])
-      }
+      // Canonically sorted: the first entry is the primary username
+      const usernames = await dpnsService.getAllUsernamesSorted(user.identityId)
+      setDpnsUsernames(usernames)
     } catch (error) {
       logger.error('Failed to refresh usernames:', error)
     }
@@ -197,16 +198,9 @@ function SettingsPage() {
     router.back()
   }
 
-  // TODO: Implement account deletion
-  const handleDeleteAccount = () => {
-    if (confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-      toast.error('Account deletion is not yet implemented')
-    }
-  }
-
   const renderMainSettings = () => (
     <div className="divide-y divide-gray-200 dark:divide-gray-800">
-      {settingsSections.map((section) => (
+      {visibleSections.map((section) => (
         <button
           key={section.id}
           onClick={() => setActiveSection(section.id as SettingsSection)}
@@ -304,14 +298,6 @@ function SettingsPage() {
             <KeyIcon className="h-4 w-4 mr-2" />
             Log Out
           </Button>
-          <Button
-            variant="outline"
-            className="w-full justify-start text-red-600 hover:text-red-700 hover:border-red-300"
-            onClick={handleDeleteAccount}
-          >
-            <ExclamationTriangleIcon className="h-4 w-4 mr-2" />
-            Delete Account
-          </Button>
         </div>
       </div>
     </div>
@@ -374,38 +360,12 @@ function SettingsPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium">Public Profile</p>
-              <p className="text-sm text-gray-500">Allow anyone to view your profile</p>
-            </div>
-            <SettingsSwitch
-              checked={privacySettings.publicProfile}
-              onCheckedChange={(checked) =>
-                setPrivacySettings(prev => ({ ...prev, publicProfile: checked }))
-              }
-            />
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">Show Activity Status</p>
-              <p className="text-sm text-gray-500">Let others see when you&apos;re active</p>
-            </div>
-            <SettingsSwitch
-              checked={privacySettings.showActivity}
-              onCheckedChange={(checked) =>
-                setPrivacySettings(prev => ({ ...prev, showActivity: checked }))
-              }
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
               <p className="font-medium">Link Previews</p>
               <p className="text-sm text-gray-500">Show previews with titles, descriptions, and images for links</p>
             </div>
             <SettingsSwitch
               checked={linkPreviewsEnabled}
-              onCheckedChange={(checked) => setLinkPreviewsChoice(checked ? 'enabled' : 'disabled')}
+              onCheckedChange={setLinkPreviewsEnabled}
             />
           </div>
           {linkPreviewsEnabled && (
@@ -431,9 +391,20 @@ function SettingsPage() {
               </p>
             </div>
           )}
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Blur Media From People You Don&apos;t Follow</p>
+              <p className="text-sm text-gray-500">Images and link previews from accounts you don&apos;t follow stay hidden behind a blurred placeholder until you tap to reveal them</p>
+            </div>
+            <SettingsSwitch
+              checked={gateMediaFromNonFollowed}
+              onCheckedChange={setGateMediaFromNonFollowed}
+            />
+          </div>
         </div>
       </div>
-      
+
       <div>
         <h3 className="font-semibold mb-4">Direct Messages</h3>
         <div className="flex items-center justify-between">
@@ -446,6 +417,39 @@ function SettingsPage() {
             onCheckedChange={setSendReadReceipts}
           />
         </div>
+      </div>
+
+      {/* Sensitive Content Section */}
+      <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
+        <h3 className="font-semibold mb-1">NSFW Content</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          How to handle posts their author flagged as NSFW
+        </p>
+        <RadioGroup.Root
+          value={sensitiveContentMode}
+          onValueChange={(value) => setSensitiveContentMode(value as SensitiveContentMode)}
+          className="space-y-2"
+        >
+          {SENSITIVE_CONTENT_OPTIONS.map((option) => (
+            <div key={option.value} className="relative">
+              <RadioGroup.Item
+                value={option.value}
+                id={`sensitive-mode-${option.value}`}
+                data-testid={`sensitive-mode-${option.value}`}
+                className="peer sr-only"
+              />
+              <label
+                htmlFor={`sensitive-mode-${option.value}`}
+                className="flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all peer-data-[state=checked]:border-yappr-500 peer-data-[state=checked]:bg-yappr-50 dark:peer-data-[state=checked]:bg-yappr-950/20 border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-950"
+              >
+                <div>
+                  <p className="font-medium">{option.label}</p>
+                  <p className="text-sm text-gray-500">{option.description}</p>
+                </div>
+              </label>
+            </div>
+          ))}
+        </RadioGroup.Root>
       </div>
 
       {/* Block Lists Section */}
@@ -732,8 +736,12 @@ function SettingsPage() {
         return renderStorageSettings()
       case 'appearance':
         return renderAppearanceSettings()
+      case 'developer':
+        return <DeveloperSettings />
       case 'about':
         return renderAboutSettings()
+      case 'moderation':
+        return isAuthority ? <ModerationSettings /> : renderMainSettings()
       default:
         return renderMainSettings()
     }
@@ -741,17 +749,17 @@ function SettingsPage() {
 
   const getSectionTitle = () => {
     if (activeSection === 'main') return 'Settings'
-    const section = settingsSections.find(s => s.id === activeSection)
+    // Only surface the Moderation title to the authority (matches renderSection's
+    // gate) so a non-authority hitting ?section=moderation doesn't see a
+    // "Moderation" header over the fallback main menu.
+    const section = visibleSections.find(s => s.id === activeSection)
     return section?.label || 'Settings'
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <>
+    <PageShell>
+        <PageHeader>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={handleBack}
@@ -761,7 +769,7 @@ function SettingsPage() {
             </button>
             <h1 className="text-xl font-bold">{getSectionTitle()}</h1>
           </div>
-        </header>
+        </PageHeader>
 
         <motion.div
           key={activeSection}
@@ -772,10 +780,7 @@ function SettingsPage() {
         >
           {renderSection()}
         </motion.div>
-        </main>
-      </div>
-
-      <RightSidebar />
+    </PageShell>
 
       {/* Username Registration Modal */}
       <UsernameModal
@@ -786,7 +791,7 @@ function SettingsPage() {
         }}
         hasExistingUsernames={dpnsUsernames.length > 0}
       />
-    </div>
+    </>
   )
 }
 

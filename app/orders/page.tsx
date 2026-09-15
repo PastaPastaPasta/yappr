@@ -7,14 +7,12 @@ import {
   ArrowLeftIcon,
   ShoppingBagIcon
 } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { OrderCard, ReviewModal } from '@/components/orders'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
-import { useSettingsStore } from '@/lib/store'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { orderStatusService } from '@/lib/services/order-status-service'
 import { storeService } from '@/lib/services/store-service'
@@ -23,30 +21,12 @@ import { identityService } from '@/lib/services/identity-service'
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import type { StoreOrder, OrderStatusUpdate, Store, OrderPayload } from '@/lib/types'
-
-/**
- * Normalize key data from various formats to Uint8Array
- */
-function normalizeKeyData(data: unknown): Uint8Array | null {
-  if (!data) return null
-  if (data instanceof Uint8Array) return data
-  if (Array.isArray(data)) return new Uint8Array(data)
-  if (typeof data === 'string') {
-    try {
-      const binaryString = atob(data)
-      return Uint8Array.from(binaryString, (c) => c.charCodeAt(0))
-    } catch {
-      return null
-    }
-  }
-  return null
-}
+import { normalizeBytes } from '@/lib/bytes'
 
 function OrdersPage() {
   const router = useRouter()
   const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const [orders, setOrders] = useState<StoreOrder[]>([])
   const [orderPayloads, setOrderPayloads] = useState<Map<string, OrderPayload>>(new Map())
@@ -130,7 +110,7 @@ function OrdersPage() {
                   const sellerIdentity = await identityService.getIdentity(order.sellerId)
                   const sellerEncryptionKey = sellerIdentity ? findEncryptionKey(sellerIdentity.publicKeys) : undefined
                   const sellerPubKey = sellerEncryptionKey?.data
-                    ? normalizeKeyData(sellerEncryptionKey.data)
+                    ? normalizeBytes(sellerEncryptionKey.data)
                     : null
 
                   // Skip decryption if seller public key is missing
@@ -187,12 +167,9 @@ function OrdersPage() {
   }, [orders, refreshStatuses])
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <>
+    <PageShell>
+          <PageHeader>
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center gap-4">
                 <button
@@ -214,7 +191,7 @@ function OrdersPage() {
                 Seller Orders
               </Button>
             </div>
-          </header>
+          </PageHeader>
 
           {isLoading ? (
             <div className="p-8 text-center">
@@ -258,10 +235,7 @@ function OrdersPage() {
               })}
             </div>
           )}
-        </main>
-      </div>
-
-      <RightSidebar />
+    </PageShell>
 
       {reviewModalData && (
         <ReviewModal
@@ -278,7 +252,7 @@ function OrdersPage() {
           }}
         />
       )}
-    </div>
+    </>
   )
 }
 

@@ -1,4 +1,7 @@
 import bs58check from 'bs58check'
+import { hexToBytes, bytesToHex, isHexString } from '@/lib/bytes'
+
+export { hexToBytes, bytesToHex }
 
 // Network WIF prefixes
 export const TESTNET_WIF_PREFIX = 0xef // 239
@@ -97,52 +100,8 @@ export function privateKeyToWif(
  * Check if input looks like a hex private key (64 chars, optional 0x prefix)
  */
 export function isLikelyHex(input: string): boolean {
-  let hex = input.trim()
-
-  // Strip 0x prefix if present
-  if (hex.startsWith('0x') || hex.startsWith('0X')) {
-    hex = hex.slice(2)
-  }
-
-  // Must be exactly 64 hex characters (32 bytes)
-  return hex.length === 64 && /^[0-9a-fA-F]+$/.test(hex)
-}
-
-/**
- * Parse hex string to Uint8Array.
- * Validates input before conversion to prevent silent corruption.
- */
-export function hexToBytes(hex: string): Uint8Array {
-  let cleanHex = hex.trim()
-  if (cleanHex.startsWith('0x') || cleanHex.startsWith('0X')) {
-    cleanHex = cleanHex.slice(2)
-  }
-
-  // Validate hex string
-  if (cleanHex.length === 0) {
-    throw new Error('Empty hex string')
-  }
-  if (cleanHex.length % 2 !== 0) {
-    throw new Error('Hex string must have even length')
-  }
-  if (!/^[0-9a-fA-F]+$/.test(cleanHex)) {
-    throw new Error('Invalid hex characters')
-  }
-
-  const bytes = new Uint8Array(cleanHex.length / 2)
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(cleanHex.substr(i * 2, 2), 16)
-  }
-  return bytes
-}
-
-/**
- * Convert Uint8Array to hex string
- */
-export function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
+  // Must be exactly 64 hex characters (32 bytes), optionally 0x-prefixed
+  return isHexString(input) && hexToBytes(input).length === 32
 }
 
 export interface ParsedPrivateKey {

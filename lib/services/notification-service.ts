@@ -2,10 +2,11 @@ import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { dpnsService } from './dpns-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { normalizeSDKResponse, identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
+import { identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
+import { likesAreIndexOnly, likeSurfacesAreSplit, replyLinkage, type TargetKind } from '../contract-topology';
 
 // Constants for notification queries
 const NOTIFICATION_QUERY_LIMIT = 100;
@@ -35,12 +36,32 @@ interface RawNotification {
   type: 'follow' | 'mention' | PrivateFeedNotificationType | EngagementNotificationType | BlogPostNotificationType;
   fromUserId: string;
   postId?: string;
+  /**
+   * The kind of the recipient's OWN content that was engaged with — a post or a
+   * reply. Drives the notification wording, so it describes the *target*, not the
+   * engagement: for a reply notification it is the kind of the thing replied to.
+   * Left undefined on v2, where the doctypes are polymorphic and the two are
+   * indistinguishable.
+   */
+  targetKind?: TargetKind;
   parentId?: string; // For reply notifications: the ID of the post/reply being replied to
+  rootPostId?: string; // v3 reply notifications: the thread root, which is where the link goes
   replyContent?: string; // For reply notifications: pre-fetched content to avoid re-querying
   blogId?: string;
   blogPostTitle?: string;
   blogPostSlug?: string;
   createdAt: number;
+}
+
+/**
+ * What a reply was a reply TO — which is what the notification's wording is
+ * about, not the reply itself. A nested reply names the reply it answers; a
+ * top-level one answers the thread's root post. Unknowable on v2, where a reply
+ * has one polymorphic parent id and no root link.
+ */
+function repliedToKind(reply: { rootPostId?: string; replyToReplyId?: string }): TargetKind | undefined {
+  if (!reply.rootPostId) return undefined;
+  return reply.replyToReplyId ? 'reply' : 'post';
 }
 
 /**
@@ -65,8 +86,7 @@ class NotificationService {
     try {
       const sdk = await getEvoSdk();
 
-      // SDK query types are incomplete, cast needed for valid query options
-      const response = await sdk.documents.query({
+      const documents = await queryDocuments(sdk, {
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'follow',
         where: [
@@ -75,15 +95,13 @@ class NotificationService {
         ],
         orderBy: [['followingId', 'asc'], ['$createdAt', 'asc']],
         limit: NOTIFICATION_QUERY_LIMIT
-      } as any);
+      });
 
-      const documents = normalizeSDKResponse(response);
-
-      return documents.map((doc: any) => ({
-        id: doc.$id,
+      return documents.map((doc) => ({
+        id: doc.$id as string,
         type: 'follow' as const,
-        fromUserId: doc.$ownerId, // The follower
-        createdAt: doc.$createdAt
+        fromUserId: doc.$ownerId as string, // The follower
+        createdAt: doc.$createdAt as number
       }));
     } catch (error) {
       logger.error('Error fetching new followers:', error);
@@ -109,7 +127,7 @@ class NotificationService {
 
       // Query followRequest documents where this user is the target (feed owner)
       // This discovers incoming private feed access requests
-      const response = await sdk.documents.query({
+      const documents = await queryDocuments(sdk, {
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'followRequest',
         where: [
@@ -118,15 +136,13 @@ class NotificationService {
         ],
         orderBy: [['targetId', 'asc'], ['$createdAt', 'asc']],
         limit: NOTIFICATION_QUERY_LIMIT
-      } as any);
+      });
 
-      const documents = normalizeSDKResponse(response);
-
-      return documents.map((doc: any) => ({
-        id: doc.$id,
+      return documents.map((doc) => ({
+        id: doc.$id as string,
         type: 'privateFeedRequest' as const,
-        fromUserId: doc.$ownerId, // The requester
-        createdAt: doc.$createdAt
+        fromUserId: doc.$ownerId as string, // The requester
+        createdAt: doc.$createdAt as number
       }));
     } catch (error) {
       logger.error('Error fetching private feed request notifications:', error);
@@ -135,21 +151,41 @@ class NotificationService {
   }
 
   /**
-   * Get likes on user's posts since timestamp (for notification queries).
-   * Uses the postOwnerLikes index via likeService.getLikesOnMyPosts()
+   * Get likes on the user's content since timestamp (for notification queries).
+   *
+   * On v2 one `like` doctype holds likes of posts AND of replies, so one query is
+   * the complete answer. The v3 topology splits reply likes off into `likeReply`,
+   * which is a second owner-index to read and merge — and the merge must NOT run
+   * on v2, where it would return the same documents twice.
    */
   async getLikeNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
     try {
       const { likeService } = await import('./like-service');
-      const likes = await likeService.getLikesOnMyPosts(userId, new Date(sinceTimestamp));
+      const since = new Date(sinceTimestamp);
+      const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
 
-      return likes
-        .filter(like => like.$ownerId !== userId) // Exclude self-likes
+      const perKind = await Promise.all(
+        kinds.map((kind) => likeService.getLikesOnMyPosts(userId, since, kind))
+      );
+
+      // indexOnly likes have no stable `$id` — the create-time id and the ids
+      // synthesized by queries differ — so read-state keys on (owner, target)
+      // plus the like's consensus timestamp. The timestamp matters: read-state
+      // persists across sessions, and without it an unlike→re-like would reuse
+      // the old id and arrive permanently marked as read.
+      const likeNotificationId = (like: { $id: string; $ownerId: string; $createdAt: number; postId: string; targetKind: TargetKind }) =>
+        likesAreIndexOnly()
+          ? `like-${like.targetKind}-${like.$ownerId}:${like.postId}:${like.$createdAt}`
+          : `like-${like.$id}`;
+
+      return perKind
+        .flat()
         .map(like => ({
-          id: `like-${like.$id}`,
+          id: likeNotificationId(like),
           type: 'like' as const,
           fromUserId: like.$ownerId,
           postId: like.postId,
+          targetKind: like.targetKind,
           createdAt: like.$createdAt
         }));
     } catch (error) {
@@ -168,7 +204,6 @@ class NotificationService {
       const reposts = await repostService.getRepostsOfMyPosts(userId, new Date(sinceTimestamp));
 
       return reposts
-        .filter(repost => repost.$ownerId !== userId) // Exclude self-reposts
         .map(repost => ({
           id: `repost-${repost.$id}`,
           type: 'repost' as const,
@@ -192,13 +227,16 @@ class NotificationService {
       const replies = await replyService.getRepliesToMyContent(userId, new Date(sinceTimestamp));
 
       return replies
-        .filter(reply => reply.author.id !== userId) // Exclude self-replies
         .map(reply => ({
           id: `reply-${reply.id}`,
           type: 'reply' as const,
           fromUserId: reply.author.id,
           postId: reply.id, // The reply itself
+          targetKind: repliedToKind(reply),
           parentId: reply.parentId, // The post/reply that was replied to (for navigation)
+          // v3: the reply names its thread root, so the link can go straight to
+          // the thread instead of to whatever intermediate reply it answers.
+          rootPostId: reply.rootPostId,
           replyContent: reply.content, // Pre-fetched content to avoid re-querying
           createdAt: reply.createdAt.getTime()
         }));
@@ -216,8 +254,7 @@ class NotificationService {
     try {
       const sdk = await getEvoSdk();
 
-      // SDK query types are incomplete, cast needed for valid query options
-      const response = await sdk.documents.query({
+      const documents = await queryDocuments(sdk, {
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'postMention',
         where: [
@@ -226,20 +263,17 @@ class NotificationService {
         ],
         orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']],
         limit: NOTIFICATION_QUERY_LIMIT
-      } as any);
+      });
 
-      const documents = normalizeSDKResponse(response);
-
-      return documents.map((doc: any) => {
-        const rawPostId = doc.postId || (doc.data?.postId);
-        const postId = rawPostId ? identifierToBase58(rawPostId) : undefined;
+      return documents.map((doc) => {
+        const postId = doc.postId ? identifierToBase58(doc.postId) : undefined;
 
         return {
-          id: doc.$id,
+          id: doc.$id as string,
           type: 'mention' as const,
-          fromUserId: doc.$ownerId, // The post author who mentioned the user
+          fromUserId: doc.$ownerId as string, // The post author who mentioned the user
           postId: postId || undefined,
-          createdAt: doc.$createdAt
+          createdAt: doc.$createdAt as number
         };
       });
     } catch (error) {
@@ -310,9 +344,7 @@ class NotificationService {
     // Collect unique user IDs and post IDs
     const userIds = Array.from(new Set(rawNotifications.map(n => n.fromUserId)));
     const postIds = Array.from(new Set(
-      rawNotifications
-        .filter(n => n.postId)
-        .map(n => n.postId!)
+      rawNotifications.flatMap(n => (n.postId ? [n.postId] : []))
     ));
 
     // Batch fetch all required data in parallel with fault tolerance
@@ -368,17 +400,20 @@ class NotificationService {
         // Use pre-fetched reply data directly - more reliable than re-querying
         post = {
           id: raw.postId || '',
+          targetKind: 'reply',
           author: user, // The reply author is the notification sender
           content: raw.replyContent,
           createdAt: new Date(raw.createdAt),
           likes: 0,
           reposts: 0,
           replies: 0,
+          quotes: 0,
           views: 0,
           liked: false,
           reposted: false,
           bookmarked: false,
-          parentId: raw.parentId // Critical for UI navigation to the parent post
+          parentId: raw.parentId, // Critical for UI navigation to the parent post
+          rootPostId: raw.rootPostId
         };
       } else {
         // For other notification types, use fetched post data
@@ -395,6 +430,7 @@ class NotificationService {
           likes: 0,
           reposts: 0,
           replies: 0,
+          quotes: 0,
           views: 0,
           liked: false,
           reposted: false,
@@ -411,6 +447,7 @@ class NotificationService {
         read: readIds.has(raw.id),
         blogId: raw.blogId,
         blogPostSlug: raw.blogPostSlug,
+        targetKind: raw.targetKind,
       };
     });
   }
@@ -477,10 +514,12 @@ class NotificationService {
           likes: 0,
           reposts: 0,
           replies: 0,
+          quotes: 0,
           views: 0,
           liked: false,
           reposted: false,
-          bookmarked: false
+          bookmarked: false,
+          sensitive: (docData.sensitive ?? nestedData?.sensitive) === true ? true : undefined
         };
         result.set(id, post);
         foundPostIds.add(id);
@@ -513,13 +552,22 @@ class NotificationService {
           // Check both top-level and nested locations for content
           const content = (docData.content as string) || (nestedData?.content as string) || '';
 
-          // Extract parentId from reply - check both top-level and nested locations
-          const rawParentId = docData.parentId || nestedData?.parentId;
-          const parentId = rawParentId ? identifierToBase58(rawParentId) || undefined : undefined;
+          // Extract the reply's parent linkage in whichever fields this topology
+          // declares, so the notification can link into the thread.
+          const { root: rootField, replyToReply: replyToReplyField } = replyLinkage();
+          const linkageId = (field: string): string | undefined => {
+            const raw = docData[field] || nestedData?.[field];
+            return raw ? identifierToBase58(raw) || undefined : undefined;
+          };
+          const rootPostId = replyToReplyField ? linkageId(rootField) : undefined;
+          const parentId = replyToReplyField
+            ? (linkageId(replyToReplyField) ?? rootPostId)
+            : linkageId('parentId');
 
           // Create a Post object from the reply, including parentId for navigation
           const post: Post = {
             id,
+            targetKind: 'reply',
             author: {
               id: ownerId,
               username: '',
@@ -534,11 +582,13 @@ class NotificationService {
             likes: 0,
             reposts: 0,
             replies: 0,
+            quotes: 0,
             views: 0,
             liked: false,
             reposted: false,
             bookmarked: false,
-            parentId // Include parentId so UI can navigate to the parent post
+            parentId, // Include parentId so UI can navigate to the parent post
+            rootPostId
           };
           result.set(id, post);
         }
@@ -600,13 +650,19 @@ class NotificationService {
       this.getBlogPostNotifications(userId, sinceTimestamp)
     ]);
 
-    const rawNotifications = [...followers, ...mentions, ...privateFeed, ...likes, ...reposts, ...replies, ...blogPosts];
+    const allRaw = [...followers, ...mentions, ...privateFeed, ...likes, ...reposts, ...replies, ...blogPosts];
+
+    // Drop self-notifications across every type (liking/reposting/replying to your
+    // own content, mentioning yourself, your own posts in a blog you follow).
+    const rawNotifications = allRaw.filter(n => n.fromUserId !== userId);
     rawNotifications.sort((a, b) => b.createdAt - a.createdAt);
 
     const notifications = await this.enrichNotifications(rawNotifications, readIds);
 
-    const latestTimestamp = rawNotifications.length > 0
-      ? Math.max(...rawNotifications.map(n => n.createdAt))
+    // Advance the poll watermark past self-actions too, so filtered-out events
+    // aren't re-fetched on every poll.
+    const latestTimestamp = allRaw.length > 0
+      ? Math.max(...allRaw.map(n => n.createdAt))
       : fallbackTimestamp;
 
     return { notifications, latestTimestamp };

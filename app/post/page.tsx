@@ -3,18 +3,20 @@
 import { Suspense, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
-import { ReplyThreadItem } from '@/components/post/reply-thread'
+import { ReplyThreadItem, flattenReplyThreads } from '@/components/post/reply-thread'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { usePostDetail } from '@/hooks/use-post-detail'
-import { useAppStore, useSettingsStore } from '@/lib/store'
+import { useAppStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
+import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
+import { replyToPost } from '@/lib/services/post-service'
 import type { Post } from '@/lib/types'
 
 function PostDetailContent() {
@@ -23,7 +25,6 @@ function PostDetailContent() {
   const postId = searchParams.get('id')
   const { user } = useAuth()
   const { setReplyingTo, setComposeOpen } = useAppStore()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const openLoginModal = useLoginModal((s) => s.open)
 
   // All post loading and enrichment handled by hook
@@ -34,10 +35,24 @@ function PostDetailContent() {
     replyChain,
     isLoading,
     isLoadingReplies,
+    hasMoreReplies,
+    isLoadingMoreReplies,
+    loadMoreReplies,
     postEnrichment
   } = usePostDetail({
     postId,
     enabled: !!postId
+  })
+
+  const {
+    sentinelRef: repliesSentinelRef,
+    isSuspended: repliesAutoLoadSuspended,
+    loadMore: loadMoreRepliesManually
+  } = useInfiniteScroll({
+    hasMore: hasMoreReplies,
+    isLoading: isLoadingReplies || isLoadingMoreReplies,
+    onLoadMore: loadMoreReplies,
+    resetKey: postId
   })
 
   const {
@@ -46,25 +61,42 @@ function PostDetailContent() {
     reset: resetReplyEnrichment
   } = useProgressiveEnrichment({ currentUserId: user?.identityId })
 
-  // Check if user can reply to private posts
-  // Posts are top-level content, so the feed owner is the post author
-  const feedOwnerId = post?.author.id
-  const { canReply: canReplyToPrivate, isLoading: isCheckingAccess, reason: cantReplyReason } = useCanReplyToPrivate(post, feedOwnerId)
+  // The thread ROOT's author. Encryption is inherited from the root, so that is
+  // whose feed keys decrypt anything in this thread and who grants access to it —
+  // which is not the same identity when the item being viewed is a reply by
+  // someone else. replyChain[0] is the root (v3) or the oldest known ancestor (v2).
+  const rootPostOwnerId = (replyChain[0] ?? post)?.author.id ?? ''
+  const { canReply: canReplyToPrivate, isLoading: isCheckingAccess, reason: cantReplyReason } = useCanReplyToPrivate(post, rootPostOwnerId)
 
   useEffect(() => {
     resetReplyEnrichment()
   }, [postId, resetReplyEnrichment])
 
+  // Notifications about a reply link to the whole thread with the reply as
+  // `?reply=`, because a reply is only ever rendered inside its root's thread —
+  // which on a flat topology can be fifty cards long. Scroll to it once the
+  // thread has rendered. A reply on a not-yet-loaded page simply does not move
+  // the viewport.
+  const highlightReplyId = searchParams.get('reply')
+  useEffect(() => {
+    if (!highlightReplyId || replyThreads.length === 0) return
+    document
+      .querySelector(`[data-testid="post-card-${highlightReplyId}"]`)
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [highlightReplyId, replyThreads])
+
   useEffect(() => {
     if (replyThreads.length === 0) return
 
-    const replyMap = new Map<string, Post>()
-    replyThreads.forEach((thread) => {
-      replyMap.set(thread.content.id, thread.content as unknown as Post)
-      thread.nestedReplies.forEach((nested) => {
-        replyMap.set(nested.content.id, nested.content as unknown as Post)
-      })
-    })
+    // Replies rendered as Post shapes: tagged as `reply` so their enrichment
+    // queries resolve against the reply interaction doctypes. Walks every
+    // rendered nesting level.
+    const replyMap = new Map<string, Post>(
+      flattenReplyThreads(replyThreads).map((thread): [string, Post] => [
+        thread.content.id,
+        replyToPost(thread.content)
+      ])
+    )
 
     const repliesToEnrich = Array.from(replyMap.values())
     enrichRepliesProgressively(repliesToEnrich)
@@ -78,27 +110,17 @@ function PostDetailContent() {
 
   if (!postId) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
-        <Sidebar />
-        <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+      <PageShell>
             <div className="p-8 text-center text-gray-500">
               <p>Post not found</p>
             </div>
-          </main>
-        </div>
-        <RightSidebar />
-      </div>
+      </PageShell>
     )
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <PageShell>
+        <PageHeader>
           <div className="flex items-center gap-4 px-4 py-3">
             <button
               onClick={() => router.back()}
@@ -108,7 +130,7 @@ function PostDetailContent() {
             </button>
             <h1 className="text-xl font-bold">Post</h1>
           </div>
-        </header>
+        </PageHeader>
 
         {isLoading && !post ? (
           <div className="p-8 text-center">
@@ -137,7 +159,7 @@ function PostDetailContent() {
 
             {/* Main post - the one being viewed */}
             <div className="border-b border-gray-200 dark:border-gray-800">
-              <PostCard post={post} enrichment={postEnrichment} />
+              <PostCard post={post} enrichment={postEnrichment} rootPostOwnerId={rootPostOwnerId} />
             </div>
 
             {user ? (
@@ -191,10 +213,19 @@ function PostDetailContent() {
                   <ReplyThreadItem
                     key={thread.content.id}
                     thread={thread}
-                    mainPostAuthorId={post.author.id}
+                    rootPostOwnerId={rootPostOwnerId}
                     getPostEnrichment={getReplyEnrichment}
                   />
                 ))
+              )}
+
+              {hasMoreReplies && (
+                <InfiniteScrollSentinel
+                  sentinelRef={repliesSentinelRef}
+                  isLoading={isLoadingMoreReplies}
+                  isSuspended={repliesAutoLoadSuspended}
+                  onLoadMore={loadMoreRepliesManually}
+                />
               )}
             </div>
           </>
@@ -203,28 +234,18 @@ function PostDetailContent() {
             <p className="text-gray-500">Post not found</p>
           </div>
         )}
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 
 function LoadingFallback() {
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
+    <PageShell>
           <div className="p-8 text-center">
             <Spinner size="md" className="mx-auto mb-4" />
             <p className="text-gray-500">Loading post...</p>
           </div>
-        </main>
-      </div>
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 

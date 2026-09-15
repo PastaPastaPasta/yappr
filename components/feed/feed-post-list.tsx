@@ -3,7 +3,13 @@
 import { Post } from '@/lib/types';
 import ErrorBoundary from '@/components/error-boundary';
 import { LoadingState } from '@/components/ui/loading-state';
+import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel';
+import { LegacyYapprLink } from '@/components/ui/legacy-yappr-link';
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll';
 import { PostCard } from '@/components/post/post-card';
+import { useSettingsStore } from '@/lib/store';
+import { useAuth } from '@/contexts/auth-context';
+import { filterHiddenSensitive } from '@/lib/sensitive-content';
 
 interface FeedPostListProps {
   posts: Post[] | null;
@@ -14,14 +20,14 @@ interface FeedPostListProps {
   isLoadingMore: boolean;
   pendingNewPosts: Post[];
   onShowNewPosts: () => void;
-  onLoadMore: () => void;
+  onLoadMore: () => Promise<void>;
   onRetry: () => void;
   onPostDelete: (postId: string) => void;
   getPostEnrichment: (post: Post) => {
     username: string | null | undefined;
     displayName: string | undefined;
     avatarUrl: string | undefined;
-    stats: { likes: number; reposts: number; replies: number; views: number } | undefined;
+    stats: { likes: number; reposts: number; replies: number; quotes: number; views: number } | undefined;
     interactions: { liked: boolean; reposted: boolean; bookmarked: boolean } | undefined;
     isBlocked: boolean | undefined;
     isFollowing: boolean | undefined;
@@ -43,6 +49,20 @@ export function FeedPostList({
   onPostDelete,
   getPostEnrichment,
 }: FeedPostListProps) {
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode);
+  const { user } = useAuth();
+  // 'hide' filters at render time so pagination cursors stay untouched — a
+  // short page is fine, a broken cursor is not.
+  const visiblePosts = posts && filterHiddenSensitive(posts, sensitiveContentMode, user?.identityId);
+
+  const { sentinelRef, isSuspended, loadMore } = useInfiniteScroll({
+    hasMore,
+    isLoading: isLoadingMore || isLoading,
+    onLoadMore,
+    resetKey: activeTab,
+  });
+  const hasVisiblePosts = Boolean(visiblePosts && visiblePosts.length > 0);
+
   return (
     <ErrorBoundary level="component">
       {pendingNewPosts.length > 0 && (
@@ -55,9 +75,9 @@ export function FeedPostList({
       )}
 
       <LoadingState
-        loading={isLoading || posts === null}
-        error={error}
-        isEmpty={!isLoading && posts !== null && posts.length === 0}
+        loading={(isLoading || posts === null) && !hasVisiblePosts}
+        error={hasVisiblePosts ? null : error}
+        isEmpty={!isLoading && visiblePosts !== null && visiblePosts.length === 0}
         onRetry={onRetry}
         loadingText="Connecting to Dash Platform..."
         emptyText={activeTab === 'following' ? 'Your following feed is empty' : 'No posts yet'}
@@ -66,9 +86,26 @@ export function FeedPostList({
             ? 'Follow some people to see their posts here!'
             : 'Be the first to share something!'
         }
+        emptyAction={<LegacyYapprLink />}
       >
         <div data-testid="feed-post-list">
-          {posts?.map((post) => (
+          {error && hasVisiblePosts && (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-4 border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
+            >
+              <span>{error}</span>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="shrink-0 rounded-md bg-red-600 px-3 py-1.5 font-medium text-white transition-colors hover:bg-red-700"
+              >
+                Try Again
+              </button>
+            </div>
+          )}
+
+          {visiblePosts?.map((post) => (
             <ErrorBoundary key={post.id} level="component">
               <PostCard
                 post={post}
@@ -79,14 +116,19 @@ export function FeedPostList({
           ))}
 
           {hasMore && posts && posts.length > 0 && (
-            <div className="p-4 flex justify-center border-t border-gray-200 dark:border-gray-800">
-              <button
-                onClick={onLoadMore}
-                disabled={isLoadingMore}
-                className="px-6 py-2 rounded-full bg-yappr-500 text-white hover:bg-yappr-600 disabled:opacity-50 transition-colors"
-              >
-                {isLoadingMore ? 'Loading...' : 'Load More'}
-              </button>
+            <InfiniteScrollSentinel
+              sentinelRef={sentinelRef}
+              isLoading={isLoadingMore}
+              isSuspended={isSuspended}
+              onLoadMore={loadMore}
+              className="border-t border-gray-200 dark:border-gray-800"
+            />
+          )}
+
+          {!hasMore && posts && posts.length > 0 && (
+            <div className="p-6 flex flex-col items-center gap-2 border-t border-gray-200 dark:border-gray-800 text-center">
+              <p className="text-sm text-gray-500">You&apos;ve reached the end.</p>
+              <LegacyYapprLink />
             </div>
           )}
         </div>

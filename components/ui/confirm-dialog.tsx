@@ -1,8 +1,8 @@
 'use client'
 
 import * as Dialog from '@radix-ui/react-dialog'
+import { Modal } from './modal'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
-import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from './button'
 
 interface ConfirmDialogProps {
@@ -41,25 +41,7 @@ export function ConfirmDialog({
   }
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={onClose}>
-      <AnimatePresence>
-        {isOpen && (
-          <Dialog.Portal forceMount>
-            <Dialog.Overlay asChild>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
-              >
-                <Dialog.Content asChild>
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl"
-                    onClick={(e) => e.stopPropagation()}
-                  >
+    <Modal open={isOpen} onOpenChange={onClose} className="w-[400px] max-w-[90vw]">
                     <div className="flex items-start gap-4">
                       <div className={`p-2 rounded-full bg-gray-100 dark:bg-gray-800 ${iconColors[variant]}`}>
                         <ExclamationTriangleIcon className="h-6 w-6" />
@@ -90,13 +72,6 @@ export function ConfirmDialog({
                         {isLoading ? 'Deleting...' : confirmText}
                       </Button>
                     </div>
-                  </motion.div>
-                </Dialog.Content>
-              </motion.div>
-            </Dialog.Overlay>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
-    </Dialog.Root>
+    </Modal>
   )
 }

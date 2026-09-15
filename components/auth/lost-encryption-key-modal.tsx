@@ -2,7 +2,7 @@
 
 import { logger } from '@/lib/logger';
 import { useState, useCallback, useEffect } from 'react'
-import * as Dialog from '@radix-ui/react-dialog'
+import { Modal, ModalTitle } from '@/components/ui/modal'
 import {
   XMarkIcon,
   KeyIcon,
@@ -13,7 +13,6 @@ import {
   DocumentTextIcon,
   UserGroupIcon,
 } from '@heroicons/react/24/outline'
-import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 
@@ -74,29 +73,11 @@ export function LostEncryptionKeyModal({
   }, [onClose])
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={handleClose}>
-      <AnimatePresence>
-        {isOpen && (
-          <Dialog.Portal forceMount>
-            <Dialog.Overlay asChild>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
-              >
-                <Dialog.Content asChild>
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto shadow-xl relative"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+    <Modal open={isOpen} onOpenChange={handleClose} className="w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto">
+                    <ModalTitle>
                       <ExclamationTriangleIcon className="h-6 w-6 text-amber-500" />
                       Lost Your Encryption Key?
-                    </Dialog.Title>
+                    </ModalTitle>
 
                     <button
                       onClick={handleClose}
@@ -242,13 +223,6 @@ export function LostEncryptionKeyModal({
                         Close
                       </Button>
                     </div>
-                  </motion.div>
-                </Dialog.Content>
-              </motion.div>
-            </Dialog.Overlay>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
-    </Dialog.Root>
+    </Modal>
   )
 }

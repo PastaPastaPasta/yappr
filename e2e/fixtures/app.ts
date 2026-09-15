@@ -25,6 +25,17 @@ export function appUrl(path: string): string {
   return `${BASE_URL}${path.startsWith('/') ? path : `/${path}`}`
 }
 
+/**
+ * URL assertion pattern for an in-app path, anchored to the deployment's base
+ * path (`/testing` locally, `/devnet` on the moutai deployment, …). Specs must
+ * use this instead of hardcoding the base path into their regexes.
+ */
+export function appUrlPattern(path: string): RegExp {
+  const pathname = new URL(BASE_URL).pathname
+  const full = `${pathname}${path.startsWith('/') ? path : `/${path}`}`
+  return new RegExp(full.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+}
+
 export function scopedKey(key: string): string {
   return STORAGE_SCOPE ? `${STORAGE_SCOPE}:${key}` : key
 }

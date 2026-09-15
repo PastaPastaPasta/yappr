@@ -28,6 +28,15 @@ interface LikeWithUser extends LikeDocument {
   hasProfile: boolean
 }
 
+/**
+ * A like's timestamp, or null when the topology cannot supply one: v4
+ * indexOnly likes are listed off the `byPost` projection, which carries no
+ * `$createdAt` (only the notification index does).
+ */
+function likeTime(like: LikeDocument): string | null {
+  return Number.isFinite(like.$createdAt) ? formatTime(new Date(like.$createdAt)) : null
+}
+
 export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
   const likesState = useAsyncState<LikeWithUser[]>([])
   const { setLoading, setError, setData } = likesState
@@ -125,10 +134,10 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
                           <p className="font-semibold">{like.displayName}</p>
                           {like.hasDpnsName ? (
                             // Has DPNS: show @username
-                            <p className="text-sm text-gray-500">@{like.username} · {formatTime(new Date(like.$createdAt))}</p>
+                            <p className="text-sm text-gray-500">@{like.username}{likeTime(like) ? ` · ${likeTime(like)}` : ''}</p>
                           ) : like.hasProfile ? (
                             // Has profile but no DPNS: just show timestamp
-                            <p className="text-sm text-gray-500">{formatTime(new Date(like.$createdAt))}</p>
+                            <p className="text-sm text-gray-500">{likeTime(like)}</p>
                           ) : (
                             // No DPNS and no profile: show identity ID
                             <div className="flex items-center gap-1 text-sm text-gray-500">
@@ -157,7 +166,7 @@ export function LikesModal({ isOpen, onClose, postId }: LikesModalProps) {
                                   </Tooltip.Portal>
                                 </Tooltip.Root>
                               </Tooltip.Provider>
-                              <span>· {formatTime(new Date(like.$createdAt))}</span>
+                              {likeTime(like) && <span>· {likeTime(like)}</span>}
                             </div>
                           )}
                         </div>

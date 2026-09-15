@@ -4,6 +4,8 @@
  * averages them for accuracy, and caches results.
  */
 
+import { TtlMap } from '@/lib/caches/ttl-map'
+
 // Scheme to API identifier mapping
 const SCHEME_TO_IDS: Record<string, { coingecko: string; cryptocompare: string }> = {
   'dash:': { coingecko: 'dash', cryptocompare: 'DASH' },
@@ -39,13 +41,8 @@ export interface ConversionResult {
   sources: string[]
 }
 
-interface CacheEntry {
-  result: PriceResult
-  expiresAt: number
-}
-
 class CryptoPriceService {
-  private cache: Map<string, CacheEntry> = new Map()
+  private cache = new TtlMap<string, PriceResult>(CACHE_DURATION)
 
   /**
    * Normalize scheme to lowercase with trailing colon
@@ -118,9 +115,7 @@ class CryptoPriceService {
     // Check cache first (unless skipCache is true)
     if (!skipCache) {
       const cached = this.cache.get(cacheKey)
-      if (cached && cached.expiresAt > Date.now()) {
-        return cached.result
-      }
+      if (cached) return cached
     }
 
     // Fetch from both APIs in parallel
@@ -154,10 +149,7 @@ class CryptoPriceService {
     }
 
     // Cache the result
-    this.cache.set(cacheKey, {
-      result,
-      expiresAt: Date.now() + CACHE_DURATION,
-    })
+    this.cache.set(cacheKey, result)
 
     return result
   }

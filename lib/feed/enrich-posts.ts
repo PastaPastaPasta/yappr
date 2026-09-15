@@ -1,10 +1,17 @@
 import { logger } from '@/lib/logger';
 import { Post } from '@/lib/types';
-import { postService, unifiedProfileService } from '@/lib/services';
+import { dpnsService, unifiedProfileService } from '@/lib/services';
+import { profileDataByOwnerId } from '@/lib/services/post-enrichment-helpers';
 import { repostService } from '@/lib/services/repost-service';
+import { attachQuotedPosts } from './resolve-quoted-posts';
 
 export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Promise<Post[]> {
-  const enrichedPosts = postsToEnrich.map((post) => ({ ...post }));
+  // Tombstones (v3 "deleted" posts) still exist on chain and still come back from
+  // timeline queries — the document is permanent, only its content is gone. They
+  // are dropped from feeds here, cheaply, while remaining visible at their
+  // permalink so anything linking to one still resolves. `deleted` is never set
+  // on v2, so this is a no-op there.
+  const enrichedPosts = postsToEnrich.filter((post) => !post.deleted).map((post) => ({ ...post }));
 
   try {
     const postIds = enrichedPosts.map((post) => post.id);
@@ -22,21 +29,28 @@ export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Pr
       const reposterIds = Array.from(new Set(Array.from(repostMap.values()).map((repost) => repost.$ownerId)));
       const reposterProfiles = new Map<string, { displayName?: string; username?: string }>();
 
-      await Promise.all(
-        reposterIds.map(async (id) => {
-          try {
-            const profile = await unifiedProfileService.getProfileWithUsername(id);
-            if (profile) {
-              reposterProfiles.set(id, {
-                displayName: profile.displayName,
-                username: profile.username,
-              });
-            }
-          } catch {
-            // Ignore profile fetch errors to keep feed loading resilient.
-          }
-        })
-      );
+      // Two batch queries across all reposters instead of a DPNS + profile
+      // lookup per reposter; failures leave names blank rather than failing
+      // the feed load.
+      try {
+        const [usernameMap, profiles] = await Promise.all([
+          dpnsService.resolveUsernamesBatch(reposterIds),
+          unifiedProfileService.getProfilesByIdentityIds(reposterIds),
+        ]);
+
+        const profileMap = profileDataByOwnerId(profiles);
+
+        for (const id of reposterIds) {
+          const profileData = profileMap.get(id);
+          const username = usernameMap.get(id);
+          reposterProfiles.set(id, {
+            displayName: profileData?.displayName as string | undefined,
+            username: username || undefined,
+          });
+        }
+      } catch {
+        // Ignore profile fetch errors to keep feed loading resilient.
+      }
 
       for (const post of enrichedPosts) {
         const repost = repostMap.get(post.id);
@@ -58,24 +72,7 @@ export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Pr
     logger.error('Feed: Error fetching reposts:', error);
   }
 
-  try {
-    const quotedPostIds = enrichedPosts
-      .filter((post) => post.quotedPostId)
-      .map((post) => post.quotedPostId as string);
-
-    if (quotedPostIds.length > 0) {
-      const quotedPosts = await postService.fetchPostsOrReplies(quotedPostIds);
-      const quotedPostMap = new Map(quotedPosts.map((post) => [post.id, post]));
-
-      for (const post of enrichedPosts) {
-        if (post.quotedPostId && quotedPostMap.has(post.quotedPostId)) {
-          post.quotedPost = quotedPostMap.get(post.quotedPostId);
-        }
-      }
-    }
-  } catch (error) {
-    logger.error('Feed: Error fetching quoted posts:', error);
-  }
+  await attachQuotedPosts(enrichedPosts);
 
   return enrichedPosts;
 }

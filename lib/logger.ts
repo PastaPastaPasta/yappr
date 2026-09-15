@@ -85,6 +85,12 @@ function emit(level: LogLevel, message: unknown, context?: unknown, ...extra: un
   }
 }
 
+/**
+ * `debug` is the level for tracing what the app is doing (queries issued,
+ * documents found, retry attempts); it is hidden in production builds.
+ * `info` is reserved for things an operator would want in a production
+ * console, `warn` for degraded-but-working, `error` for failures.
+ */
 export const logger = {
   debug(message: unknown, context?: unknown, ...extra: unknown[]): void {
     emit('debug', message, context, ...extra);

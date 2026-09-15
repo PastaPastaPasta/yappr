@@ -3,8 +3,8 @@
 import { logger } from '@/lib/logger';
 import { useState, useCallback, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
+import { Modal, ModalTitle } from '@/components/ui/modal'
 import { XMarkIcon, LockClosedIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
-import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Input } from '@/components/ui/input'
@@ -14,6 +14,7 @@ import { AddEncryptionKeyModal } from './add-encryption-key-modal'
 import { LostEncryptionKeyModal } from './lost-encryption-key-modal'
 import { identityService } from '@/lib/services/identity-service'
 import toast from 'react-hot-toast'
+import { keyNetwork } from '@/lib/constants'
 
 type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
 
@@ -30,7 +31,7 @@ type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
  */
 export function EncryptionKeyModal() {
   const { user, mergeSecretsIntoAuthVault } = useAuth()
-  const { isOpen, action, onSuccess, close, closeWithSuccess } = useEncryptionKeyModal()
+  const { isOpen, action, onSuccess, close } = useEncryptionKeyModal()
   const [encryptionKeyInput, setEncryptionKeyInput] = useState('')
   const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -106,18 +107,18 @@ export function EncryptionKeyModal() {
 
         // Convert to hex for storage
         const { privateKeyToWif } = await import('@/lib/crypto/wif')
-        const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet'
+        const network = keyNetwork()
         const derivedKeyWif = privateKeyToWif(derivedKey, network, true)
 
         storeEncryptionKey(user.identityId, derivedKeyWif)
         storeEncryptionKeyType(user.identityId, 'derived')
         await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: derivedKeyWif })
 
-        // Brief success message, then close (use closeWithSuccess to avoid calling onCancel)
+        // Brief success message, then close
         setTimeout(() => {
           if (!isModalActiveRef.current) return
           toast.success('Encryption key recovered automatically')
-          closeWithSuccess()
+          close()
           if (onSuccess) {
             onSuccess()
           }
@@ -135,7 +136,7 @@ export function EncryptionKeyModal() {
       setAutoRecoveryStatus('failed')
       setAutoRecoveryMessage('')
     }
-  }, [closeWithSuccess, mergeSecretsIntoAuthVault, user, onSuccess])
+  }, [close, mergeSecretsIntoAuthVault, user, onSuccess])
 
   // Trigger auto-recovery when modal opens
   useEffect(() => {
@@ -192,7 +193,7 @@ export function EncryptionKeyModal() {
 
       toast.success('Encryption key saved')
       setEncryptionKeyInput('')
-      closeWithSuccess()
+      close()
 
       // Call success callback if provided
       if (onSuccess) {
@@ -204,7 +205,7 @@ export function EncryptionKeyModal() {
     } finally {
       setIsValidating(false)
     }
-  }, [closeWithSuccess, mergeSecretsIntoAuthVault, user, encryptionKeyInput, onSuccess])
+  }, [close, mergeSecretsIntoAuthVault, user, encryptionKeyInput, onSuccess])
 
   const handleClose = useCallback(() => {
     // State is reset by the useEffect when isOpen becomes false
@@ -234,32 +235,15 @@ export function EncryptionKeyModal() {
     // (unless they just generated it, in which case it was stored)
     // Call onSuccess since the key was added and stored
     toast.success('You can now use private feed features!')
-    closeWithSuccess()
+    close()
     if (onSuccess) {
       onSuccess()
     }
-  }, [closeWithSuccess, onSuccess])
+  }, [close, onSuccess])
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={handleClose}>
-      <AnimatePresence>
-        {isOpen && (
-          <Dialog.Portal forceMount>
-            <Dialog.Overlay asChild>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
-              >
-                <Dialog.Content asChild>
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[450px] max-w-[95vw] shadow-xl relative"
-                    onClick={(e) => e.stopPropagation()}
-                  >
+    <>
+    <Modal open={isOpen} onOpenChange={handleClose} className="w-[450px] max-w-[95vw]">
                     <button
                       onClick={handleClose}
                       aria-label="Close"
@@ -271,14 +255,14 @@ export function EncryptionKeyModal() {
                     {/* Auto-recovery checking state */}
                     {(autoRecoveryStatus === 'checking' || autoRecoveryStatus === 'found') && (
                       <>
-                        <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+                        <ModalTitle>
                           {autoRecoveryStatus === 'found' ? (
                             <CheckCircleIcon className="h-6 w-6 text-green-500" />
                           ) : (
                             <Spinner size="sm" className="h-6 w-6" />
                           )}
                           {autoRecoveryStatus === 'found' ? 'Key Recovered!' : 'Recovering Key...'}
-                        </Dialog.Title>
+                        </ModalTitle>
 
                         <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-6">
                           {autoRecoveryStatus === 'found'
@@ -305,10 +289,10 @@ export function EncryptionKeyModal() {
                     {/* Manual entry state (idle or failed) */}
                     {(autoRecoveryStatus === 'idle' || autoRecoveryStatus === 'failed') && !showAddKeyModal && (
                       <>
-                        <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+                        <ModalTitle>
                           <KeyIcon className="h-6 w-6 text-yappr-500" />
                           Enter Encryption Key
-                        </Dialog.Title>
+                        </ModalTitle>
 
                         <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
                           Enter your encryption private key to {actionDescription}.
@@ -422,13 +406,7 @@ export function EncryptionKeyModal() {
                         </div>
                       </>
                     )}
-                  </motion.div>
-                </Dialog.Content>
-              </motion.div>
-            </Dialog.Overlay>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
+    </Modal>
 
       {/* Add Encryption Key Modal */}
       <AddEncryptionKeyModal
@@ -444,6 +422,6 @@ export function EncryptionKeyModal() {
         onFoundKey={handleLostKeyFoundKey}
         onResetPrivateFeed={handleLostKeyResetFeed}
       />
-    </Dialog.Root>
+    </>
   )
 }

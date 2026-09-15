@@ -1,5 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import bs58 from 'bs58'
+import { base64ToBytes, bytesToBase64 } from './bytes'
 
 // 5KB = 5000 bytes = 40,000 bits
 const FILTER_SIZE_BYTES = 5000
@@ -176,23 +177,12 @@ export class BloomFilter {
  * Convert a Uint8Array to base64 string for sessionStorage.
  */
 export function bloomFilterToBase64(filter: BloomFilter): string {
-  const bytes = filter.serialize()
-  // Use btoa with binary string conversion
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
+  return bytesToBase64(filter.serialize())
 }
 
 /**
  * Create a BloomFilter from a base64 string.
  */
 export function bloomFilterFromBase64(base64: string, itemCount: number = 0): BloomFilter {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return new BloomFilter(bytes, itemCount)
+  return new BloomFilter(base64ToBytes(base64), itemCount)
 }

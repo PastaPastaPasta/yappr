@@ -1,0 +1,101 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { logger } from '@/lib/logger';
+import { useAuth } from '@/contexts/auth-context';
+import { filterBlockedAuthors } from '@/hooks/use-block';
+import { followService } from '@/lib/services';
+import type { Post } from '@/lib/types';
+import type { RankingWindow } from '@/lib/services/ranked-likes';
+import { likesAreIndexOnly } from '@/lib/contract-topology';
+import type { FeedTab } from '@/hooks/use-feed-data';
+
+interface UseTopFeedOptions {
+  /** Which feed the ranking scopes to: global for `forYou`, followed authors for `following`. */
+  activeTab: FeedTab;
+  /** `'today'` reads the v6 daily-windowed twin; `'all'` is all-time. */
+  window: RankingWindow;
+  /** Only load while the Top view is showing. */
+  enabled: boolean;
+}
+
+interface UseTopFeedResult {
+  posts: Post[] | null;
+  isLoading: boolean;
+  refresh: () => Promise<void>;
+  handlePostDelete: (postId: string) => void;
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  loadMore: () => Promise<void>;
+}
+
+/**
+ * The Top view of the home feed: the proved most-liked ranking, global for
+ * For You and merged across followed authors for Following (see
+ * `topLikedPostsByAuthorsHydrated`). Blocked authors are filtered the way the
+ * Explore Top tab does. v4+ only — on older topologies nothing loads and the
+ * page never offers the toggle (`likesAreIndexOnly()`).
+ */
+export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): UseTopFeedResult {
+  const { user } = useAuth();
+  const userId = user?.identityId;
+  const [posts, setPosts] = useState<Post[] | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  // Following Top fans out one ranked read per followed author and can settle
+  // well after a For You Top read issued later; only the newest request may
+  // touch state, so a superseded response never overwrites the current view.
+  const requestIdRef = useRef(0);
+  const [limit, setLimit] = useState(20);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+  const load = useCallback(
+    async (force = false) => {
+      const requestId = ++requestIdRef.current;
+      const isCurrent = () => requestIdRef.current === requestId;
+
+      if (!likesAreIndexOnly() || (activeTab === 'following' && !userId)) {
+        setPosts([]);
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        const { topLikedPostsHydrated, topLikedPostsByAuthorsHydrated } = await import('@/lib/services/ranked-likes');
+        let ranked: Post[];
+        if (activeTab === 'following' && userId) {
+          const authorIds = await followService.getFollowingIds(userId);
+          ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit, window, force });
+        } else {
+          ranked = await topLikedPostsHydrated({ limit, window, force });
+        }
+        const visible = await filterBlockedAuthors(userId, ranked);
+        if (isCurrent()) setPosts(visible);
+      } catch (error) {
+        logger.error('Feed: Failed to load top posts:', error);
+        if (isCurrent()) setPosts([]);
+      } finally {
+        if (isCurrent()) setIsLoading(false);
+      }
+    },
+    [activeTab, limit, userId, window]
+  );
+
+  useEffect(() => {
+    if (!enabled) return;
+    setPosts(null);
+    load().catch((error) => logger.error('Feed: top posts load failed:', error));
+  }, [enabled, load]);
+
+  const refresh = useCallback(() => { setLimit(20); return load(true); }, [load]);
+
+  const loadMore = useCallback(async () => {
+    if (isLoading || isLoadingMore || posts === null || posts.length < limit) return;
+    setIsLoadingMore(true);
+    try { setLimit((current) => current + 20); } finally { setIsLoadingMore(false); }
+  }, [isLoading, isLoadingMore, limit, posts]);
+
+  const handlePostDelete = useCallback((postId: string) => {
+    setPosts((current) => (current ? current.filter((post) => post.id !== postId) : current));
+  }, []);
+
+  return { posts, isLoading, refresh, handlePostDelete, hasMore: posts !== null && posts.length >= limit, isLoadingMore, loadMore };
+}

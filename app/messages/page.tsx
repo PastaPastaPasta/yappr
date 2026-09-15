@@ -19,7 +19,9 @@ import { Spinner } from '@/components/ui/spinner'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatDistanceToNow } from 'date-fns'
-import { directMessageService, dpnsService, identityService, unifiedProfileService } from '@/lib/services'
+import { directMessageService, dpnsService, followService, identityService, unifiedProfileService } from '@/lib/services'
+import { getPrimaryUsername } from '@/lib/utils/username'
+import { base58ToBytes } from '@/lib/services/sdk-helpers'
 import { useSettingsStore } from '@/lib/store'
 import { DirectMessage, Conversation } from '@/lib/types'
 import toast from 'react-hot-toast'
@@ -27,9 +29,13 @@ import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { EmojiPicker } from '@/components/compose/emoji-picker'
 import { isEmojiOnly } from '@/lib/utils'
 
+// Upper bound on the follower suggestions shown before anything is typed; also
+// keeps the batched DPNS lookup within its single-query limit.
+const MAX_FOLLOWER_SUGGESTIONS = 50
+
 interface UserSearchResult {
   id: string
-  username: string
+  username?: string
   displayName: string
   bio?: string
 }
@@ -54,6 +60,9 @@ function MessagesPage() {
   const sendReadReceipts = useSettingsStore((s) => s.sendReadReceipts)
   const [userSearchResults, setUserSearchResults] = useState<UserSearchResult[]>([])
   const [isSearchingUsers, setIsSearchingUsers] = useState(false)
+  const [followerSuggestions, setFollowerSuggestions] = useState<UserSearchResult[]>([])
+  const [isLoadingFollowers, setIsLoadingFollowers] = useState(false)
+  const followersLoadedRef = useRef(false)
   const searchIdRef = useRef(0)
   const participantHydrationInFlightRef = useRef(new Set<string>())
 
@@ -183,7 +192,7 @@ function MessagesPage() {
     if (updated && updated !== selectedConversation) {
       setSelectedConversation(updated)
     }
-  }, [conversations, selectedConversation?.id])
+  }, [conversations, selectedConversation])
 
   // Handle auto-starting a conversation from URL parameter
   useEffect(() => {
@@ -194,6 +203,14 @@ function MessagesPage() {
       setPendingStartConversation(null)
 
       const participantId = pendingStartConversation
+
+      // The id comes from the URL, so validate it before it reaches Platform
+      // calls that require a 32-byte identifier.
+      const participantIdBytes = base58ToBytes(participantId)
+      if (!participantIdBytes || participantIdBytes.length !== 32) {
+        toast.error('Invalid user ID')
+        return
+      }
 
       // Don't start conversation with yourself
       if (participantId === user.identityId) {
@@ -237,11 +254,15 @@ function MessagesPage() {
     handleStartConversation().catch(err => logger.error('Failed to handle start conversation:', err))
   }, [pendingStartConversation, user, isLoading, conversations])
 
-  // Load messages when conversation is selected
+  // Load messages when conversation is selected.
+  // Keyed on the conversation id, not the object: participant hydration swaps in
+  // new conversation objects with the same id, which must not refetch messages.
   useEffect(() => {
+    const conversationId = selectedConversation?.id
     const loadMessages = async () => {
       const currentConversation = selectedConversationRef.current
-      if (!currentConversation || !user) return
+      if (!conversationId || !user) return
+      if (!currentConversation || currentConversation.id !== conversationId) return
       setIsLoadingMessages(true)
       setParticipantLastRead(null) // Reset while loading
       try {
@@ -264,12 +285,18 @@ function MessagesPage() {
           await directMessageService.markAsRead(currentConversation.id, user.identityId)
         }
 
-        // Update conversation unread count in UI
-        setConversations(prev => prev.map(conv =>
-          conv.id === currentConversation.id
-            ? { ...conv, unreadCount: 0 }
-            : conv
-        ))
+        // Update conversation unread count in UI. Only touch state when a count
+        // actually changes - replacing conversation objects here re-triggers the
+        // selected-conversation sync effect and would loop message loading forever.
+        setConversations(prev => {
+          const needsUpdate = prev.some(conv => conv.id === currentConversation.id && conv.unreadCount !== 0)
+          if (!needsUpdate) return prev
+          return prev.map(conv =>
+            conv.id === currentConversation.id
+              ? { ...conv, unreadCount: 0 }
+              : conv
+          )
+        })
       } catch (error) {
         logger.error('Failed to load messages:', error)
         toast.error('Failed to load messages')
@@ -278,7 +305,7 @@ function MessagesPage() {
       }
     }
     loadMessages().catch(err => logger.error('Failed to load messages:', err))
-  }, [selectedConversation, user, sendReadReceipts])
+  }, [selectedConversation?.id, user, sendReadReceipts])
 
   // Poll for new messages in active conversation (timestamp-based, efficient)
   useEffect(() => {
@@ -416,20 +443,23 @@ function MessagesPage() {
         // Create profile map
         const profileMap = new Map(profiles.map(p => [p.$ownerId || p.ownerId, p]))
 
-        // Build results, grouping by owner
-        const seenOwners = new Set<string>()
-        const results: UserSearchResult[] = []
-
+        // Group matched names by owner to handle multiple names per owner
+        const ownerToNames = new Map<string, string[]>()
         for (const dpnsResult of dpnsResults) {
           if (!dpnsResult.ownerId || dpnsResult.ownerId === user?.identityId) continue
-          if (seenOwners.has(dpnsResult.ownerId)) continue
-          seenOwners.add(dpnsResult.ownerId)
+          const names = ownerToNames.get(dpnsResult.ownerId) || []
+          names.push(dpnsResult.username)
+          ownerToNames.set(dpnsResult.ownerId, names)
+        }
 
-          const profile = profileMap.get(dpnsResult.ownerId)
-          const username = dpnsResult.username.replace(/\.dash$/, '')
+        // Build results (one per unique owner, picking the best matched name)
+        const results: UserSearchResult[] = []
+        for (const [ownerId, names] of Array.from(ownerToNames.entries())) {
+          const profile = profileMap.get(ownerId)
+          const username = (getPrimaryUsername(names) ?? names[0]).replace(/\.dash$/, '')
 
           results.push({
-            id: dpnsResult.ownerId,
+            id: ownerId,
             username,
             displayName: profile?.displayName || username,
             bio: profile?.bio
@@ -449,6 +479,71 @@ function MessagesPage() {
 
     return () => clearTimeout(debounceTimer)
   }, [newConversationInput, user?.identityId])
+
+  // Load the current user's followers once the new conversation modal opens so
+  // they can be offered as suggestions before anything is typed.
+  useEffect(() => {
+    if (!showNewConversation || !user || followersLoadedRef.current) return
+    followersLoadedRef.current = true
+
+    let cancelled = false
+    setIsLoadingFollowers(true)
+
+    const loadFollowerSuggestions = async () => {
+      try {
+        const follows = await followService.getFollowers(user.identityId)
+        // getFollowers returns oldest first; suggest the most recent followers
+        // and cap the list so the DPNS/profile lookups stay a single batch.
+        const followerIds = Array.from(
+          new Set(follows.map(f => f.$ownerId).filter(id => id && id !== user.identityId))
+        ).reverse().slice(0, MAX_FOLLOWER_SUGGESTIONS)
+
+        if (cancelled) return
+
+        if (followerIds.length === 0) {
+          setFollowerSuggestions([])
+          return
+        }
+
+        const [usernamesResult, profilesResult] = await Promise.allSettled([
+          dpnsService.resolveUsernamesBatch(followerIds),
+          unifiedProfileService.getProfilesByIdentityIds(followerIds)
+        ])
+
+        if (cancelled) return
+
+        const usernames = usernamesResult.status === 'fulfilled'
+          ? usernamesResult.value
+          : new Map<string, string | null>()
+        const profileMap = new Map(
+          (profilesResult.status === 'fulfilled' ? profilesResult.value : [])
+            .map(profile => [profile.$ownerId, profile] as const)
+        )
+
+        setFollowerSuggestions(followerIds.map(id => {
+          const username = usernames.get(id)?.replace(/\.dash$/, '') || undefined
+          const profile = profileMap.get(id)
+          return {
+            id,
+            username,
+            displayName: profile?.displayName || username || `User ${id.slice(-6)}`,
+            bio: profile?.bio
+          }
+        }))
+      } catch (error) {
+        logger.error('Failed to load followers for new conversation:', error)
+        // Allow a retry the next time the modal is opened
+        followersLoadedRef.current = false
+        if (!cancelled) setFollowerSuggestions([])
+      } finally {
+        if (!cancelled) setIsLoadingFollowers(false)
+      }
+    }
+
+    loadFollowerSuggestions().catch(err => logger.error('Failed to load followers:', err))
+
+    return () => { cancelled = true }
+  }, [showNewConversation, user])
 
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedConversation || !user || isSending) return
@@ -624,6 +719,41 @@ function MessagesPage() {
       setIsResolvingUser(false)
     }
   }
+
+  const newConversationQuery = newConversationInput.trim()
+  // Below the 3-character search threshold we show the user's followers instead
+  // of hitting DPNS; a 1-2 character query just filters that list locally.
+  const showFollowerSuggestions = newConversationQuery.length < 3
+  const filteredFollowerSuggestions = newConversationQuery
+    ? followerSuggestions.filter(follower => {
+        const needle = newConversationQuery.toLowerCase()
+        return follower.username?.toLowerCase().includes(needle)
+          || follower.displayName.toLowerCase().includes(needle)
+      })
+    : followerSuggestions
+
+  const renderUserResult = (result: UserSearchResult) => (
+    <button
+      key={result.id}
+      type="button"
+      onClick={() => selectUserFromSearch(result)}
+      disabled={isResolvingUser}
+      className="w-full flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left border-b border-gray-100 dark:border-gray-800 last:border-b-0"
+    >
+      <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 flex-shrink-0">
+        <UserAvatar userId={result.id} size="md" alt={result.displayName} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold truncate">{result.displayName}</p>
+        <p className="text-sm text-gray-500 truncate">
+          {result.username ? `@${result.username}` : `${result.id.slice(0, 8)}...${result.id.slice(-4)}`}
+        </p>
+        {result.bio && (
+          <p className="text-xs text-gray-400 truncate mt-0.5">{result.bio}</p>
+        )}
+      </div>
+    </button>
+  )
 
   return (
     <div className="h-[calc(100dvh-32px-56px)] md:h-[calc(100dvh-40px)] flex overflow-hidden">
@@ -871,7 +1001,7 @@ function MessagesPage() {
                 Have private 1-on-1 conversations with other users.
               </p>
               <p className="text-gray-400 text-sm mb-6">
-                Messages are stored securely on Dash Platform.
+                Messages are stored encrypted on Dash Platform.
               </p>
               <Button
                 onClick={() => setShowNewConversation(true)}
@@ -954,8 +1084,33 @@ function MessagesPage() {
                 </p>
               </div>
 
+              {/* Followers list (shown until the search threshold is reached) */}
+              {showFollowerSuggestions && (
+                <div className="mb-4 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+                  <div className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
+                    Your followers
+                  </div>
+                  {isLoadingFollowers ? (
+                    <div className="p-4 flex items-center justify-center gap-2 text-gray-500">
+                      <Spinner size="sm" className="border-gray-500" />
+                      <span className="text-sm">Loading followers...</span>
+                    </div>
+                  ) : filteredFollowerSuggestions.length > 0 ? (
+                    <div className="max-h-64 overflow-y-auto">
+                      {filteredFollowerSuggestions.map(renderUserResult)}
+                    </div>
+                  ) : (
+                    <p className="p-4 text-center text-sm text-gray-500">
+                      {followerSuggestions.length === 0
+                        ? 'No followers yet — search for a username above.'
+                        : `No followers matching "${newConversationQuery}"`}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Search Results */}
-              {(isSearchingUsers || userSearchResults.length > 0) && (
+              {!showFollowerSuggestions && (isSearchingUsers || userSearchResults.length > 0) && (
                 <div className="mb-4 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
                   {isSearchingUsers ? (
                     <div className="p-4 flex items-center justify-center gap-2 text-gray-500">
@@ -964,26 +1119,7 @@ function MessagesPage() {
                     </div>
                   ) : (
                     <div className="max-h-64 overflow-y-auto">
-                      {userSearchResults.map((result) => (
-                        <button
-                          key={result.id}
-                          type="button"
-                          onClick={() => selectUserFromSearch(result)}
-                          disabled={isResolvingUser}
-                          className="w-full flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left border-b border-gray-100 dark:border-gray-800 last:border-b-0"
-                        >
-                          <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 flex-shrink-0">
-                            <UserAvatar userId={result.id} size="md" alt={result.displayName} />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-semibold truncate">{result.displayName}</p>
-                            <p className="text-sm text-gray-500 truncate">@{result.username}</p>
-                            {result.bio && (
-                              <p className="text-xs text-gray-400 truncate mt-0.5">{result.bio}</p>
-                            )}
-                          </div>
-                        </button>
-                      ))}
+                      {userSearchResults.map(renderUserResult)}
                     </div>
                   )}
                 </div>

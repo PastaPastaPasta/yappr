@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { transformDocumentWithField, identifierStringToDocumentBytes } from './sdk-helpers';
-import { paginateFetchAll } from './pagination-utils';
+import { paginateFetchAll, chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 
 export interface BookmarkDocument {
   $id: string;
@@ -28,7 +28,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
       // Check if already bookmarked
       const existing = await this.getBookmark(postId, ownerId);
       if (existing) {
-        logger.info('Post already bookmarked');
+        logger.debug('Post already bookmarked');
         return true;
       }
 
@@ -54,7 +54,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
     try {
       const bookmark = await this.getBookmark(postId, ownerId);
       if (!bookmark) {
-        logger.info('Post not bookmarked');
+        logger.debug('Post not bookmarked');
         return true;
       }
 
@@ -131,14 +131,6 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
   }
 
   /**
-   * Count bookmarks for a user
-   */
-  async countUserBookmarks(userId: string): Promise<number> {
-    const bookmarks = await this.getUserBookmarks(userId);
-    return bookmarks.length;
-  }
-
-  /**
    * Get user's bookmarks for specific posts.
    * Uses the ownerAndPost index: [$ownerId, postId]
    *
@@ -151,16 +143,20 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
     if (postIds.length === 0) return [];
 
     try {
-      const result = await this.query({
-        where: [
-          ['$ownerId', '==', userId],
-          ['postId', 'in', postIds]
-        ],
-        orderBy: [['$ownerId', 'asc'], ['postId', 'asc']],
-        limit: postIds.length
-      });
+      // Platform caps `in` clauses (and query limits) at 100 values, so
+      // oversized pages must be batched.
+      const batches = await mapLimit(chunk(postIds, MAX_IN_CLAUSE_VALUES), 2, (batch) =>
+        this.query({
+          where: [
+            ['$ownerId', '==', userId],
+            ['postId', 'in', batch]
+          ],
+          orderBy: [['$ownerId', 'asc'], ['postId', 'asc']],
+          limit: batch.length
+        })
+      );
 
-      return result.documents;
+      return batches.flatMap((result) => result.documents);
     } catch (error) {
       logger.error('Error getting user bookmarks for posts:', error);
       return [];

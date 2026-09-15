@@ -1,9 +1,10 @@
+import { isReferenceNotFoundError } from '@/lib/error-utils';
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
-import { paginateCount, paginateFetchAll } from './pagination-utils';
+import { paginateFetchAll, documentCount } from './pagination-utils';
 
 export interface FollowDocument {
   $id: string;
@@ -33,7 +34,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     try {
       const existing = await this.getFollow(targetUserId, followerUserId);
       if (existing) {
-        logger.info('Already following user');
+        logger.debug('Already following user');
         return { success: true };
       }
 
@@ -44,9 +45,20 @@ class FollowService extends BaseDocumentService<FollowDocument> {
         { followingId: identifierStringToDocumentBytes(targetUserId) }
       );
 
+      // On the v3 contract `follow.followingId` declares `refersTo: identity`,
+      // so consensus refuses a follow of an identity that is not on chain.
+      // createDocument reports that as a failed result rather than throwing, so
+      // promote it into the throw path the UI already treats as toast-worthy.
+      if (!result.success && isReferenceNotFoundError(result.error)) {
+        throw new Error(result.error ?? 'Referenced identity not found');
+      }
+
       return result;
     } catch (error) {
       logger.error('Error following user:', error);
+      // Mirror like-service: let the UI say what actually went wrong instead of
+      // collapsing this into a generic "failed to follow".
+      if (isReferenceNotFoundError(error)) throw error;
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to follow user'
@@ -61,7 +73,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     try {
       const follow = await this.getFollow(targetUserId, followerUserId);
       if (!follow) {
-        logger.info('Not following user');
+        logger.debug('Not following user');
         return { success: true };
       }
 
@@ -231,21 +243,12 @@ class FollowService extends BaseDocumentService<FollowDocument> {
       try {
         const sdk = await getEvoSdk();
 
-        const { count } = await paginateCount(
-          sdk,
-          () => ({
-            dataContractId: this.contractId,
-            documentTypeName: 'follow',
-            where: [
-              ['followingId', '==', userId],
-              ['$createdAt', '>', 0]
-            ],
-            // Use followers index: [followingId, $createdAt]
-            orderBy: [['followingId', 'asc'], ['$createdAt', 'asc']]
-          })
-        );
-
-        return count;
+        // O(1) count tree on the `followerCount` index [followingId].
+        return await documentCount(sdk, {
+          dataContractId: this.contractId,
+          documentTypeName: 'follow',
+          where: [['followingId', '==', userId]],
+        });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error('Error counting followers:', errorMessage, error);
@@ -264,21 +267,12 @@ class FollowService extends BaseDocumentService<FollowDocument> {
       try {
         const sdk = await getEvoSdk();
 
-        const { count } = await paginateCount(
-          sdk,
-          () => ({
-            dataContractId: this.contractId,
-            documentTypeName: 'follow',
-            where: [
-              ['$ownerId', '==', userId],
-              ['$createdAt', '>', 0]
-            ],
-            // Use following index: [$ownerId, $createdAt]
-            orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']]
-          })
-        );
-
-        return count;
+        // O(1) count tree on the `followingCount` index [$ownerId].
+        return await documentCount(sdk, {
+          dataContractId: this.contractId,
+          documentTypeName: 'follow',
+          where: [['$ownerId', '==', userId]],
+        });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error('Error counting following:', errorMessage, error);
@@ -287,17 +281,6 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     });
   }
 
-  /**
-   * Check mutual follow (both users follow each other)
-   */
-  async areMutualFollowers(userId1: string, userId2: string): Promise<boolean> {
-    const [follows1to2, follows2to1] = await Promise.all([
-      this.isFollowing(userId2, userId1),
-      this.isFollowing(userId1, userId2)
-    ]);
-
-    return follows1to2 && follows2to1;
-  }
 }
 
 // Singleton instance

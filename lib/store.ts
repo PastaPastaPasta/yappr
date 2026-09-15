@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { User, Post } from './types'
-import { mockCurrentUser } from './mock-data'
+import { Post } from './types'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 import type { ReadingMode, FontSizeLevel } from '@/lib/blog/reader-preferences'
 import { scopedKey } from '@/lib/storage-scope'
@@ -24,7 +23,6 @@ export interface PendingPostNavigation {
 }
 
 interface AppState {
-  currentUser: User | null
   isComposeOpen: boolean
   replyingTo: Post | null
   quotingPost: Post | null
@@ -34,7 +32,6 @@ interface AppState {
   // Pending navigation data (set when clicking post, consumed on detail page mount)
   pendingPostNavigation: PendingPostNavigation | null
 
-  setCurrentUser: (user: User | null) => void
   setComposeOpen: (open: boolean) => void
   setReplyingTo: (post: Post | null) => void
   setQuotingPost: (post: Post | null) => void
@@ -60,7 +57,6 @@ const createInitialThreadPost = (): ThreadPost => ({
 })
 
 export const useAppStore = create<AppState>((set, get) => ({
-  currentUser: mockCurrentUser,
   isComposeOpen: false,
   replyingTo: null,
   quotingPost: null,
@@ -68,25 +64,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeThreadPostId: null,
   pendingPostNavigation: null,
 
-  setCurrentUser: (user) => set({ currentUser: user }),
   setComposeOpen: (open) => {
-    if (open) {
-      // Reset thread posts when opening modal
-      const initialPost = createInitialThreadPost()
-      set({
-        isComposeOpen: open,
-        threadPosts: [initialPost],
-        activeThreadPostId: initialPost.id
-      })
-    } else {
-      // Reset thread posts when closing modal to prevent stale state
-      const initialPost = createInitialThreadPost()
-      set({
-        isComposeOpen: false,
-        threadPosts: [initialPost],
-        activeThreadPostId: initialPost.id
-      })
-    }
+    // Reset thread drafts on both open and close so no stale draft survives.
+    const initialPost = createInitialThreadPost()
+    set({
+      isComposeOpen: open,
+      threadPosts: [initialPost],
+      activeThreadPostId: initialPost.id
+    })
   },
   setReplyingTo: (post) => set({ replyingTo: post }),
   setQuotingPost: (post) => set({ quotingPost: post }),
@@ -185,12 +170,21 @@ interface NotificationSettings {
   blogPosts: boolean
 }
 
-export type LinkPreviewChoice = 'undecided' | 'enabled' | 'disabled'
+/**
+ * How the viewer wants author-flagged sensitive (NSFW) posts handled:
+ * blur = gate behind an opaque warning with a per-post reveal (default),
+ * show = never gate, hide = remove from list feeds entirely (detail pages,
+ * threads and bookmarks still show the gate so conversations keep their shape).
+ */
+export type SensitiveContentMode = 'blur' | 'show' | 'hide'
 
 interface SettingsState {
-  /** Link preview preference: undecided (show prompt), enabled, or disabled */
-  linkPreviewsChoice: LinkPreviewChoice
-  setLinkPreviewsChoice: (choice: LinkPreviewChoice) => void
+  /** Fetch link previews and post media (opt-out; disabling stops all preview fetches) */
+  linkPreviewsEnabled: boolean
+  setLinkPreviewsEnabled: (enabled: boolean) => void
+  /** Hide media/previews from non-followed authors behind a click-to-reveal placeholder */
+  gateMediaFromNonFollowed: boolean
+  setGateMediaFromNonFollowed: (enabled: boolean) => void
   /** Send read receipts in direct messages */
   sendReadReceipts: boolean
   setSendReadReceipts: (enabled: boolean) => void
@@ -203,13 +197,18 @@ interface SettingsState {
   /** Preferred language for the For You feed */
   feedLanguage: string
   setFeedLanguage: (language: string) => void
+  /** How to treat posts the author flagged as sensitive */
+  sensitiveContentMode: SensitiveContentMode
+  setSensitiveContentMode: (mode: SensitiveContentMode) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      linkPreviewsChoice: 'undecided' as LinkPreviewChoice,
-      setLinkPreviewsChoice: (choice) => set({ linkPreviewsChoice: choice }),
+      linkPreviewsEnabled: true, // Opt-out: previews/media fetch by default
+      setLinkPreviewsEnabled: (enabled) => set({ linkPreviewsEnabled: enabled }),
+      gateMediaFromNonFollowed: true, // Media from non-followed authors is blurred until revealed
+      setGateMediaFromNonFollowed: (enabled) => set({ gateMediaFromNonFollowed: enabled }),
       sendReadReceipts: true, // Enabled by default
       setSendReadReceipts: (enabled) => set({ sendReadReceipts: enabled }),
       notificationSettings: {
@@ -229,9 +228,22 @@ export const useSettingsStore = create<SettingsState>()(
       setPotatoMode: (enabled) => set({ potatoMode: enabled }),
       feedLanguage: 'en', // Default to English
       setFeedLanguage: (language) => set({ feedLanguage: language }),
+      sensitiveContentMode: 'blur' as SensitiveContentMode,
+      setSensitiveContentMode: (mode) => set({ sensitiveContentMode: mode }),
     }),
     {
       name: scopedKey('yappr-settings'),
+      version: 1,
+      migrate: (persistedState, version) => {
+        const state = (persistedState ?? {}) as Partial<SettingsState> & { linkPreviewsChoice?: string }
+        if (version === 0) {
+          // v0 stored a tri-state linkPreviewsChoice; only an explicit
+          // 'disabled' opt-out carries over now that previews default on.
+          state.linkPreviewsEnabled = state.linkPreviewsChoice !== 'disabled'
+          delete state.linkPreviewsChoice
+        }
+        return state as SettingsState
+      },
     }
   )
 )

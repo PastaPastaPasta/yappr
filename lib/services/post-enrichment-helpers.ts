@@ -4,19 +4,37 @@ import { dpnsService } from './dpns-service';
 import { blockService } from './block-service';
 import { followService } from './follow-service';
 import { unifiedProfileService } from './unified-profile-service';
-import { seedBlockStatusCache, seedFollowStatusCache } from '../caches/user-status-cache';
+import { blockStatusCache, followStatusCache } from '../caches/user-status-cache';
+import { targetOf, type KindedTarget } from '../contract-topology';
 import type { PostStats } from './post-service';
 import type { PostInteractionState } from './post-stats-helpers';
 
+/**
+ * Owner-keyed profile data from a `getProfilesByIdentityIds` result, with the
+ * SDK's optional `data` nesting already unwrapped.
+ */
+export function profileDataByOwnerId(profiles: readonly unknown[]): Map<string, Record<string, unknown>> {
+  const map = new Map<string, Record<string, unknown>>();
+  for (const profile of profiles) {
+    const record = profile as Record<string, unknown> | undefined;
+    const ownerId = record?.$ownerId as string | undefined;
+    if (record && ownerId) {
+      map.set(ownerId, (record.data || record) as Record<string, unknown>);
+    }
+  }
+  return map;
+}
+
 export async function enrichPostFull(
   post: Post,
-  getPostStats: (postId: string) => Promise<PostStats>,
-  getUserInteractions: (postId: string) => Promise<PostInteractionState>
+  getPostStats: (target: KindedTarget) => Promise<PostStats>,
+  getUserInteractions: (target: KindedTarget) => Promise<PostInteractionState>
 ): Promise<Post> {
   try {
+    const target = targetOf(post);
     const [stats, interactions, author] = await Promise.all([
-      getPostStats(post.id),
-      getUserInteractions(post.id),
+      getPostStats(target),
+      getUserInteractions(target),
       unifiedProfileService.getProfileWithUsername(post.author.id),
     ]);
 
@@ -28,6 +46,7 @@ export async function enrichPostFull(
       likes: stats.likes,
       reposts: stats.reposts,
       replies: stats.replies,
+      quotes: stats.quotes,
       views: stats.views,
       liked: interactions.liked,
       reposted: interactions.reposted,
@@ -45,14 +64,16 @@ export async function enrichPostFull(
 
 export async function enrichPostsBatch(
   posts: Post[],
-  getBatchPostStats: (postIds: string[]) => Promise<Map<string, PostStats>>,
-  getBatchUserInteractions: (postIds: string[]) => Promise<Map<string, PostInteractionState>>,
+  getBatchPostStats: (targets: readonly KindedTarget[]) => Promise<Map<string, PostStats>>,
+  getBatchUserInteractions: (targets: readonly KindedTarget[]) => Promise<Map<string, PostInteractionState>>,
   currentUserId: string | null
 ): Promise<Post[]> {
   if (posts.length === 0) return posts;
 
   try {
-    const postIds = posts.map((post) => post.id);
+    // Tagged with each post's kind so the batch queries hit the right doctypes
+    // (a no-op on v2, where both kinds share one surface).
+    const targets = posts.map(targetOf);
     const authorIds = Array.from(new Set(posts.map((post) => post.author.id).filter(Boolean)));
 
     const [
@@ -64,8 +85,8 @@ export async function enrichPostsBatch(
       followStatusMap,
       avatarUrlMap,
     ] = await Promise.all([
-      getBatchPostStats(postIds),
-      getBatchUserInteractions(postIds),
+      getBatchPostStats(targets),
+      getBatchUserInteractions(targets),
       dpnsService.resolveUsernamesBatch(authorIds),
       unifiedProfileService.getProfilesByIdentityIds(authorIds),
       currentUserId
@@ -78,24 +99,17 @@ export async function enrichPostsBatch(
     ]);
 
     if (currentUserId) {
-      seedBlockStatusCache(currentUserId, blockStatusMap);
-      seedFollowStatusCache(currentUserId, followStatusMap);
+      blockStatusCache.seed(currentUserId, blockStatusMap);
+      followStatusCache.seed(currentUserId, followStatusMap);
     }
 
-    const profileMap = new Map<string, Record<string, unknown>>();
-    profiles.forEach((profile) => {
-      const profileRecord = profile as unknown as Record<string, unknown>;
-      if (profileRecord.$ownerId) {
-        profileMap.set(profileRecord.$ownerId as string, profileRecord);
-      }
-    });
+    const profileMap = profileDataByOwnerId(profiles);
 
     return posts.map((post) => {
       const stats = statsMap.get(post.id);
       const interactions = interactionsMap.get(post.id);
       const username = usernameMap.get(post.author.id);
-      const profile = profileMap.get(post.author.id);
-      const profileData = (profile?.data || profile) as Record<string, unknown> | undefined;
+      const profileData = profileMap.get(post.author.id);
 
       const authorIsBlocked = blockStatusMap.get(post.author.id) ?? false;
       const authorIsFollowing = followStatusMap.get(post.author.id) ?? false;
@@ -106,6 +120,7 @@ export async function enrichPostsBatch(
         likes: stats?.likes ?? post.likes,
         reposts: stats?.reposts ?? post.reposts,
         replies: stats?.replies ?? post.replies,
+        quotes: stats?.quotes ?? post.quotes,
         views: stats?.views ?? post.views,
         liked: interactions?.liked ?? post.liked,
         reposted: interactions?.reposted ?? post.reposted,
@@ -140,5 +155,54 @@ export async function resolvePostAuthor(post: Post): Promise<void> {
     }
   } catch (error) {
     logger.error('Error resolving post author:', error);
+  }
+}
+
+/**
+ * Resolve authors for many posts with three batch queries (DPNS + profiles +
+ * avatars) instead of `resolvePostAuthor`'s two queries PER post. Mutates
+ * `post.author` in place.
+ *
+ * Like the other batch author passes (enrichPostsBatch above, reply-service's
+ * resolveAuthors), this only carries the fields feed surfaces render —
+ * username, displayName, bio, avatar, hasDpns. The extended profile fields
+ * (location, website, bannerUri, paymentUris, pronouns, nsfw, socialLinks)
+ * are intentionally NOT populated; anything that needs them must fetch the
+ * full profile itself rather than read them off `post.author`.
+ */
+export async function resolvePostAuthorsBatch(posts: Post[]): Promise<void> {
+  const authorIds = Array.from(
+    new Set(posts.map((post) => post.author?.id).filter((id): id is string => Boolean(id) && id !== 'unknown'))
+  );
+  if (authorIds.length === 0) return;
+
+  try {
+    const [usernameMap, profiles, avatarUrls] = await Promise.all([
+      dpnsService.resolveUsernamesBatch(authorIds),
+      unifiedProfileService.getProfilesByIdentityIds(authorIds),
+      unifiedProfileService.getAvatarUrlsBatch(authorIds),
+    ]);
+
+    const profileMap = profileDataByOwnerId(profiles);
+
+    for (const post of posts) {
+      const authorId = post.author?.id;
+      if (!authorId || authorId === 'unknown') continue;
+
+      const username = usernameMap.get(authorId);
+      const profileData = profileMap.get(authorId);
+      const avatarUrl = avatarUrls.get(authorId);
+
+      post.author = {
+        ...post.author,
+        username: username || post.author.username,
+        displayName: (profileData?.displayName as string) || post.author.displayName,
+        bio: (profileData?.bio as string | undefined) ?? post.author.bio,
+        avatar: avatarUrl || post.author.avatar,
+        hasDpns: Boolean(username),
+      };
+    }
+  } catch (error) {
+    logger.error('Error batch resolving post authors:', error);
   }
 }

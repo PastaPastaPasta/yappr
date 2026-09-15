@@ -141,12 +141,3 @@ export function formatCryptoAmount(amount: number, scheme: string): string {
   const decimals = getCryptoDisplayDecimals(scheme)
   return amount.toFixed(decimals)
 }
-
-/**
- * Format a crypto amount with symbol
- */
-export function formatCryptoWithSymbol(amount: number, scheme: string): string {
-  const formatted = formatCryptoAmount(amount, scheme)
-  const symbol = getCryptoSymbol(scheme)
-  return `${formatted} ${symbol}`
-}

@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger'
 import { DOCUMENT_TYPES, YAPPR_AUTH_VAULT_CONTRACT_ID } from '@/lib/constants'
 import { BaseDocumentService } from '@/lib/services/document-service'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
-import { type DocumentWhereClause, normalizeBytes, requireIdentifierBytes } from '@/lib/services/sdk-helpers'
+import { type DocumentWhereClause, normalizeBytes, requireDocumentIdentifierBytes } from '@/lib/services/sdk-helpers'
 import bs58 from 'bs58'
 
 export type AuthVaultAccessKind = 'password' | 'passkey-prf'
@@ -241,7 +241,7 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
 
     const existing = await this.getPasswordAccess(identityId)
     const data = {
-      vaultId: requireIdentifierBytes(input.vaultId, 'vaultId'),
+      vaultId: requireDocumentIdentifierBytes(input.vaultId, 'vaultId'),
       kind: 'password',
       label: input.label,
       status: 'active',
@@ -265,7 +265,7 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
     }
 
     return this.create(identityId, {
-      vaultId: requireIdentifierBytes(input.vaultId, 'vaultId'),
+      vaultId: requireDocumentIdentifierBytes(input.vaultId, 'vaultId'),
       kind: 'passkey-prf',
       label: input.label,
       status: 'active',
