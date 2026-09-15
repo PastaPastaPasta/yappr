@@ -30,6 +30,8 @@ import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingZone, StorePolicy, SavedAddress } from '@/lib/types'
 import { normalizeBytes } from '@/lib/bytes'
 
+const SHIPPING_UNAVAILABLE_MESSAGE = 'We cannot ship to this address. Please check your shipping address.'
+
 /**
  * The seller's encryption public key as bytes, or null if the identity key
  * data does not decode to a secp256k1 point (33-byte compressed or 65-byte
@@ -289,6 +291,7 @@ function CheckoutPage() {
 
   // Calculate shipping when address changes (only when shipping is included)
   useEffect(() => {
+    setError(current => current === SHIPPING_UNAVAILABLE_MESSAGE ? null : current)
     if (!includeShipping) {
       setIsCalculatingShipping(false)
       setMatchedZone(null)
@@ -546,7 +549,7 @@ function CheckoutPage() {
     if (isCalculatingShipping) return
     // Allow checkout if: zone matched, zones failed to load, or store has no zones
     if (!matchedZone && !zonesLoadFailed && !hasNoZones) {
-      setError('We cannot ship to this address. Please check your shipping address.')
+      setError(SHIPPING_UNAVAILABLE_MESSAGE)
       return
     }
     setError(null)
