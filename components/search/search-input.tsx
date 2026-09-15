@@ -73,7 +73,7 @@ export function SearchInput() {
 
         // Check if it looks like a hashtag search
         const isHashtagSearch = trimmedQuery.startsWith('#')
-        const searchTerm = isHashtagSearch ? trimmedQuery.slice(1) : trimmedQuery
+        const searchTerm = isHashtagSearch ? trimmedQuery.slice(1) : trimmedQuery.replace(/^@/, '')
 
         if (searchTerm.length < MIN_SEARCH_LENGTH) {
           if (searchId === searchIdRef.current) {
