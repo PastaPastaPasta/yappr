@@ -6,6 +6,7 @@ import { XMarkIcon, WalletIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { PaymentSchemeIcon, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
 import { APPROVED_PAYMENT_SCHEMES } from '@/lib/services/unified-profile-service'
+import { isValidPaymentAddress } from '@/lib/utils/payment-uri'
 
 // Supported payment schemes with their details
 const PAYMENT_SCHEMES = [
@@ -55,6 +56,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
   const [customMode, setCustomMode] = useState(false)
   const [customUri, setCustomUri] = useState('')
   const [customError, setCustomError] = useState('')
+  const [addressError, setAddressError] = useState('')
 
   if (!isOpen) return null
 
@@ -75,6 +77,17 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
       resolvedAddress = address.trim()
     }
 
+    if (!isValidPaymentAddress(resolvedScheme, resolvedAddress)) {
+      const message = resolvedScheme === 'tdash:'
+        ? 'Enter a valid Dash testnet address (tdash:).'
+        : resolvedScheme === 'dash:'
+          ? 'Enter a valid Dash mainnet address (dash:).'
+          : 'Enter a valid payment address.'
+      if (customMode) setCustomError(message)
+      else setAddressError(message)
+      return
+    }
+
     setIsSubmitting(true)
     try {
       await onSave({
@@ -87,6 +100,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
       setScheme('tdash:')
       setCustomUri('')
       setCustomError('')
+      setAddressError('')
       setCustomMode(false)
     } finally {
       setIsSubmitting(false)
@@ -138,11 +152,14 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
 
           {customMode ? (
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label htmlFor="payment-method-uri" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Payment URI *
                 </label>
                 <input
+                  id="payment-method-uri"
                   type="text"
+                  aria-invalid={Boolean(customError)}
+                  aria-describedby="payment-method-uri-help"
                   value={customUri}
                   onChange={(e) => {
                     setCustomUri(e.target.value)
@@ -155,7 +172,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
                     const trimmed = customUri.trim()
                     if (trimmed && !parseCustomUri(trimmed)) {
                       setCustomError('Enter a valid URI in scheme:address format (e.g., dash:Xabc123...)')
-                    } else {
+                    } else if (!trimmed) {
                       setCustomError('')
                     }
                   }}
@@ -165,9 +182,9 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
                   }`}
                 />
                 {customError ? (
-                  <p className="text-xs text-red-500 mt-1">{customError}</p>
+                  <p id="payment-method-uri-help" role="alert" className="text-xs text-red-500 mt-1">{customError}</p>
                 ) : (
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p id="payment-method-uri-help" className="text-xs text-gray-500 mt-1">
                     Supported: {APPROVED_PAYMENT_SCHEMES.map(s => PAYMENT_SCHEME_LABELS[s] || s.replace(':', '')).join(', ')}
                   </p>
                 )}
@@ -184,7 +201,10 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
                     <button
                       key={s.scheme}
                       type="button"
-                      onClick={() => setScheme(s.scheme)}
+                      onClick={() => {
+                        setScheme(s.scheme)
+                        setAddressError('')
+                      }}
                       className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all ${
                         scheme === s.scheme
                           ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20'
@@ -206,19 +226,27 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
 
               {/* Address input */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label htmlFor="payment-method-address" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Address *
                 </label>
                 <input
+                  id="payment-method-address"
                   type="text"
+                  aria-invalid={Boolean(addressError)}
+                  aria-describedby="payment-method-address-help"
                   value={address}
-                  onChange={(e) => setAddress(e.target.value)}
+                  onChange={(e) => {
+                    setAddress(e.target.value)
+                    setAddressError('')
+                  }}
                   placeholder={selectedScheme.placeholder}
                   className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  {selectedScheme.hint}
-                </p>
+                {addressError ? (
+                  <p id="payment-method-address-help" role="alert" className="text-xs text-red-500 mt-1">{addressError}</p>
+                ) : (
+                  <p id="payment-method-address-help" className="text-xs text-gray-500 mt-1">{selectedScheme.hint}</p>
+                )}
               </div>
             </>
           )}

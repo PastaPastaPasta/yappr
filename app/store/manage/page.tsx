@@ -30,6 +30,7 @@ import { ShippingZoneModal, PaymentMethodModal, InventoryUploadModal, PriceRange
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { formatPrice } from '@/lib/utils/format'
 import { getStoreStatusLabel, getStoreStatusDescription } from '@/lib/utils/store-status'
+import { isValidPaymentAddress } from '@/lib/utils/payment-uri'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
@@ -241,16 +242,19 @@ function StoreManagePage() {
     setIsImporting(true)
     try {
       const profileUris = await unifiedProfileService.getPaymentUris(user.identityId)
+      const validProfileUris = profileUris.filter(({ scheme, uri }) =>
+        isValidPaymentAddress(scheme, uri.slice(uri.indexOf(':') + 1))
+      )
 
-      if (profileUris.length === 0) {
-        toast('No payment addresses found on your profile', { icon: 'ℹ️' })
+      if (validProfileUris.length === 0) {
+        toast('No valid payment addresses found on your profile', { icon: 'ℹ️' })
         return
       }
 
       const currentUris = store.paymentUris || []
       const currentUriSet = new Set(currentUris.map(u => u.uri))
       const seenUris = new Set<string>()
-      const newUris = profileUris.filter(u => {
+      const newUris = validProfileUris.filter(u => {
         if (currentUriSet.has(u.uri) || seenUris.has(u.uri)) return false
         seenUris.add(u.uri)
         return true
