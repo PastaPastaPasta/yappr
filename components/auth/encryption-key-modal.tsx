@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useId, useState, useCallback, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { XMarkIcon, LockClosedIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
@@ -31,6 +31,7 @@ type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
  */
 export function EncryptionKeyModal() {
   const { user, mergeSecretsIntoAuthVault } = useAuth()
+  const encryptionKeyId = useId()
   const { isOpen, action, onSuccess, close } = useEncryptionKeyModal()
   const [encryptionKeyInput, setEncryptionKeyInput] = useState('')
   const [isValidating, setIsValidating] = useState(false)
@@ -322,10 +323,11 @@ export function EncryptionKeyModal() {
 
                         <div className="space-y-3 mb-4">
                           <div className="space-y-2">
-                            <label className="text-sm font-medium">
+                            <label htmlFor={encryptionKeyId} className="text-sm font-medium">
                               Encryption Private Key
                             </label>
                             <Input
+                              id={encryptionKeyId}
                               type="password"
                               placeholder="WIF (cXyz...) or hex (64 chars)"
                               value={encryptionKeyInput}
