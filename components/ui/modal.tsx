@@ -22,6 +22,8 @@ interface ModalProps {
   variant?: 'card' | 'sheet'
   /** Overlay classes; `sheet` compose uses this to top-align on tall screens. */
   overlayClassName?: string
+  onOpenAutoFocus?: Dialog.DialogContentProps['onOpenAutoFocus']
+  onCloseAutoFocus?: Dialog.DialogContentProps['onCloseAutoFocus']
 }
 
 const CARD_MOTION = { initial: { opacity: 0, scale: 0.95 }, animate: { opacity: 1, scale: 1 }, exit: { opacity: 0, scale: 0.95 } }
@@ -37,7 +39,7 @@ const SHEET_MOTION = {
  * accessibility tree, framer-motion for the enter/exit animation. Put a
  * `<Dialog.Title>` (or `<ModalTitle>`) inside so screen readers get a name.
  */
-export function Modal({ open, onOpenChange, children, className, variant = 'card', overlayClassName }: ModalProps) {
+export function Modal({ open, onOpenChange, children, className, variant = 'card', overlayClassName, onOpenAutoFocus, onCloseAutoFocus }: ModalProps) {
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const sheet = variant === 'sheet'
   return (
@@ -57,7 +59,7 @@ export function Modal({ open, onOpenChange, children, className, variant = 'card
                   overlayClassName
                 )}
               >
-                <Dialog.Content asChild>
+                <Dialog.Content asChild onOpenAutoFocus={onOpenAutoFocus} onCloseAutoFocus={onCloseAutoFocus}>
                   <motion.div
                     {...(sheet ? SHEET_MOTION : CARD_MOTION)}
                     className={cn(
