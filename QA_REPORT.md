@@ -70,3 +70,8 @@ The current seeded devnet corpus is available under `/Users/pasta/.local/share/y
 - **P2 Blog dialog accessibility warning.** Create Blog's Radix `DialogContent` emits “Missing Description or aria-describedby”; the modal lacks an accessible description for screen readers.
 
 These writes used a seeded persona against the current devnet contracts and captured the DAPI error text from the browser console/UI. Social, private/DM, and commerce agents are continuing with the current 100-persona corpus; their results will be merged here before completion.
+
+### Critical authenticated DM finding
+
+- **P0 DM send is silently lost.** Persona `carol9-sept` selected `paints-sasha9`, entered a message, and submitted. Yappr redirected to `/feed/` without success or error. A fresh session as the recipient showed the conversation shell but `No messages yet. Start the conversation!`; the message was not persisted. This is a destructive UX/data-loss failure in the primary messaging story. Reproduce with two seeded identities and inspect the recipient after confirmation.
+- **P1 Encryption/Auth Vault controls absent.** Settings → Privacy & Security for the current seeded identity shows only the Privacy section; controls to create encryption keys, add a password/passkey, or configure Auth Vault are absent even though feature contracts are present. The private-feed/key-management story cannot be completed through the UI.
