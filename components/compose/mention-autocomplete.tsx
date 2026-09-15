@@ -41,7 +41,7 @@ function detectActiveMention(
       if (precededByWhitespace) {
         const mention = content.substring(start + 1, cursorPos)
         // Only valid if mention contains valid username characters
-        if (/^[a-zA-Z0-9_]*$/.test(mention)) {
+        if (/^[a-zA-Z0-9_-]*$/.test(mention)) {
           return { mention, start, end: cursorPos }
         }
       }

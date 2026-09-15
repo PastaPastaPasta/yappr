@@ -60,4 +60,11 @@ describe('mentions', () => {
     expect(extractMentions('hi @Alice.dash and @alice, cc @bob_2')).toEqual(['alice', 'bob_2'])
     expect(extractMentions('email me at foo@bar.com')).toEqual(['bar'])
   })
+
+  it('keeps hyphenated DPNS mentions intact for indexing and deduplication', () => {
+    expect(extractMentions('Hello @ingrid-vinyl9 and @Ingrid-Vinyl9.dash!'))
+      .toEqual(['ingrid-vinyl9'])
+    expect(extractMentions('cc @qa-multi-part-42.dash, @hamzak78, and @another-name'))
+      .toEqual(['qa-multi-part-42', 'hamzak78', 'another-name'])
+  })
 })
