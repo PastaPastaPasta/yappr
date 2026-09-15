@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { useSdk } from '@/contexts/sdk-context'
 import { blogPostService } from '@/lib/services'
 import { dpnsService } from '@/lib/services/dpns-service'
@@ -97,16 +98,23 @@ function EmbedPageContent() {
   }, [state.post])
 
   const createdLabel = state.post?.createdAt.toLocaleDateString() || ''
+  const error = postId ? state.error : 'This embed link is missing its post.'
 
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: EMBED_STYLES }} />
       <div className="yappr-embed" data-yappr-theme={theme}>
         <article className="yappr-embed-article">
-          {state.loading ? (
+          {postId && state.loading ? (
             <p className="yappr-embed-meta">Loading post...</p>
-          ) : state.error ? (
-            <p className="yappr-embed-meta">{state.error}</p>
+          ) : error ? (
+            <div role="alert">
+              <h1 className="yappr-embed-title">Post unavailable</h1>
+              <p className="yappr-embed-meta">{error}</p>
+              <footer className="yappr-embed-footer">
+                <Link href="/blog" target="_top" rel="noopener noreferrer">Browse blogs on Yappr</Link>
+              </footer>
+            </div>
           ) : state.post ? (
             <>
               <header className="yappr-embed-header">
