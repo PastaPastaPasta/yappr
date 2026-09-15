@@ -58,3 +58,15 @@ The SDK initializes successfully against devnet and seeds 9 bundled contracts. P
 ## Test limitations
 
 Authenticated writes and cross-identity stories (posting, replies, likes, follows, private feeds, DMs, commerce checkout/order transitions) require a funded devnet identity and private key. Agent retries for parallel authenticated probes were rate-limited (HTTP 429), so those paths remain explicitly unverified rather than being marked pass/fail.
+
+## Authenticated follow-up (current seeded devnet)
+
+The current seeded devnet corpus is available under `/Users/pasta/.local/share/yappr-seed-20260915-hour/` (100 identities; live topology-v6 contracts). Additional authenticated probing found:
+
+- **P1 Blog creation gives no actionable failure.** With a valid signed session, submitting Create Blog logs `Error creating document: Identity not found`; the modal stays open and no visible toast/inline error appears. The user cannot tell whether to retry, change identity, or wait.
+- **P1 Store creation exposes raw failure but cannot recover.** Store create submission returns `Identity not found` inline while retaining the form; there is no guidance or retry state. This is a deployment/data identity mismatch surfaced through Yappr's write path.
+- **P2 Store management routes lose context.** Authenticated `/store/inventory/` and `/store/manage/` with no store both render the Create Store form, rather than explaining that a store is missing or linking to the store selector.
+- **P2 Store item deep link is blank.** `/store/view/` without an item id renders the shell/navigation with an empty center and no missing-id message or browse/recovery action.
+- **P2 Blog dialog accessibility warning.** Create Blog's Radix `DialogContent` emits “Missing Description or aria-describedby”; the modal lacks an accessible description for screen readers.
+
+These writes used a seeded persona against the current devnet contracts and captured the DAPI error text from the browser console/UI. Social, private/DM, and commerce agents are continuing with the current 100-persona corpus; their results will be merged here before completion.
