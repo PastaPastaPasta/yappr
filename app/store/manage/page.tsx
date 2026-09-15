@@ -714,6 +714,7 @@ function StoreManagePage() {
         isOpen={showZoneModal}
         onClose={() => setShowZoneModal(false)}
         onSave={handleCreateZone}
+        defaultCurrency={store?.defaultCurrency || 'USD'}
       />
 
       <ShippingZoneModal
