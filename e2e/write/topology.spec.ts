@@ -181,6 +181,7 @@ test.describe('v3+ interaction topology on the devnet contract', () => {
     await expect(page.getByTestId(`post-card-${firstReplyId}`)).toBeVisible({ timeout: 60_000 })
 
     await expect(page.getByTestId(`bookmark-btn-${firstReplyId}`)).toHaveCount(0)
+    await expect(page.getByTestId(`more-btn-${firstReplyId}`)).toHaveAccessibleName('Reply options')
 
     // The repost/quote dropdown still exists on a reply (quoting IS allowed), so
     // this checks the menu's contents rather than the trigger.
