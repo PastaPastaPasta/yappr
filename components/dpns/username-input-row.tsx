@@ -97,7 +97,7 @@ export function UsernameInputRow({
             onChange={(e) => onChange(e.target.value.toLowerCase())}
             placeholder="username"
             disabled={disabled}
-            maxLength={20}
+            maxLength={63}
             className={cn('pr-16', getStatusBorderClass(entry.status))}
           />
           <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
