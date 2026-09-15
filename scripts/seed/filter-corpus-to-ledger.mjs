@@ -1,30 +1,77 @@
 /**
- * Blank out corpus ops whose author (or follow target) is not yet in the given
- * ledger state, plus every op that depends on a blanked ref. Line numbers are
- * PRESERVED (blank lines), so the seeder's checkpoint stays valid when the
- * full corpus is run later.
+ * Derive a runnable subset of a corpus, preserving line numbers.
  *
- *   node scripts/seed/filter-corpus-to-ledger.mjs <corpus.jsonl> <out.jsonl> [--min-state ready]
+ * Blanks out (a) ops whose author — or follow target — has not reached the
+ * given ledger state, (b) ops whose type is excluded by --types, and (c) any
+ * op whose referenced target is neither already on chain (per the seeder's
+ * checkpoint) nor kept earlier in this same file. Line numbers are PRESERVED
+ * as blank lines, so the seeder's checkpoint stays valid and a later run of
+ * the FULL corpus still picks up everything that was blanked here.
+ *
+ *   node scripts/seed/filter-corpus-to-ledger.mjs <corpus.jsonl> <out.jsonl> \
+ *     [--min-state ready] [--types post,quote] [--limit N]
  */
 import fs from 'node:fs';
-const [input, output] = process.argv.slice(2);
-const minState = process.argv.includes('--min-state') ? process.argv[process.argv.indexOf('--min-state') + 1] : 'ready';
-if (!input || !output) throw new Error('usage: filter-corpus-to-ledger.mjs <corpus.jsonl> <out.jsonl> [--min-state ready]');
-const ledger = JSON.parse(fs.readFileSync('.seed-identities.local.json', 'utf8'));
-const rank = { planned: 0, funded: 1, locked: 2, registered: 3, profiled: 4, named: 5, ready: 6 };
-const ok = new Set(ledger.identities.filter((e) => rank[e.state] >= rank[minState] && e.identityId).map((e) => e.personaIdx));
+import { PROGRESS_FILE, loadLedger, stateRank } from './seed-lib.mjs';
+
+const argv = process.argv.slice(2);
+const flag = (name, fallback = null) => {
+  const i = argv.indexOf(`--${name}`);
+  return i === -1 ? fallback : argv[i + 1];
+};
+const [input, output] = argv.filter((a, i) => !a.startsWith('--') && !String(argv[i - 1] ?? '').startsWith('--'));
+if (!input || !output) {
+  throw new Error('usage: filter-corpus-to-ledger.mjs <corpus.jsonl> <out.jsonl> [--min-state ready] [--types a,b] [--limit N]');
+}
+const minState = flag('min-state', 'ready');
+const types = flag('types') ? new Set(flag('types').split(',').map((t) => t.trim())) : null;
+const limit = flag('limit') ? Number(flag('limit')) : Infinity;
+
+const ledger = loadLedger();
+const ok = new Set(
+  ledger.identities.filter((e) => stateRank(e.state) >= stateRank(minState) && e.identityId).map((e) => e.personaIdx)
+);
+
+/** Refs the seeder has already materialized on chain, and the lines that did it. */
+const known = new Set();
+const doneLines = new Set();
+if (fs.existsSync(PROGRESS_FILE)) {
+  for (const line of fs.readFileSync(PROGRESS_FILE, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line);
+      if (row.status !== 'done') continue;
+      doneLines.add(row.line);
+      if (row.ref) known.add(row.ref);
+    } catch { /* partial trailing write */ }
+  }
+}
+
+const depsOf = (op) => {
+  const deps = [op.quotedRef, op.rootRef, op.parentRef, op.targetRef].filter(Boolean);
+  for (const m of String(op.content ?? '').matchAll(/\{\{link:([A-Za-z0-9_-]+)\}\}/g)) deps.push(m[1]);
+  return deps;
+};
+
 const lines = fs.readFileSync(input, 'utf8').split('\n');
-const dropped = new Set();
-let kept = 0;
-const out = lines.map((ln) => {
-  if (!ln.trim()) return '';
-  const j = JSON.parse(ln);
-  const deps = [j.quotedRef, j.rootRef, j.parentRef, j.targetRef].filter(Boolean);
-  for (const m of String(j.content ?? '').matchAll(/\{\{link:([A-Za-z0-9_-]+)\}\}/g)) deps.push(m[1]);
-  const bad = !ok.has(j.author) || (j.type === 'follow' && !ok.has(j.target)) || deps.some((d) => dropped.has(d));
-  if (bad) { if (j.ref) dropped.add(j.ref); return ''; }
-  kept += 1;
-  return ln;
+const kept = new Set();
+let n = 0;
+const out = lines.map((line, i) => {
+  if (!line.trim() || n >= limit) return '';
+  // Lines the checkpoint already completed are no-ops for the seeder; blanking
+  // them makes --limit count ops that will actually be broadcast.
+  if (doneLines.has(i + 1)) return '';
+  const op = JSON.parse(line);
+  if (!ok.has(op.author)) return '';
+  if (op.type === 'follow' && !ok.has(op.target)) return '';
+  if (types && !types.has(op.type)) return '';
+  if (!depsOf(op).every((d) => known.has(d) || kept.has(d))) return '';
+  if (op.ref) kept.add(op.ref);
+  n += 1;
+  return line;
 });
 fs.writeFileSync(output, out.join('\n'));
-console.log(`kept ${kept} ops (authors at >= ${minState}: ${ok.size}); line numbers preserved`);
+console.log(
+  `kept ${n} pending op(s)${types ? ` of type ${[...types].join('/')}` : ''} ` +
+  `(authors at >= ${minState}: ${ok.size}, lines already done: ${doneLines.size}); line numbers preserved`
+);
