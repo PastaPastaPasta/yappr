@@ -341,7 +341,7 @@ export function PostCard({
                       </DropdownMenu.Trigger>
                     </Tooltip.Trigger>
                     <Tooltip.Portal>
-                      <Tooltip.Content className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded" sideOffset={5}>
+                      <Tooltip.Content className="z-50 bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded" sideOffset={5}>
                         {optionsLabel}
                       </Tooltip.Content>
                     </Tooltip.Portal>
