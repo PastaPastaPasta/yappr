@@ -40,6 +40,10 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
   const [error, setError] = useState<string | null>(null)
   const [content, setContent] = useState('')
 
+  useEffect(() => {
+    onCommentCountChange?.(comments.length)
+  }, [comments.length, onCommentCountChange])
+
   const loadComments = useCallback(async () => {
     if (!commentsEnabled) {
       setComments([])
@@ -61,7 +65,6 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
 
       const filtered = allComments.filter((comment) => !blockedMap.get(comment.ownerId))
       setComments(filtered)
-      onCommentCountChange?.(filtered.length)
 
       const filteredAuthorIds = Array.from(new Set(filtered.map((comment) => comment.ownerId).filter(Boolean)))
       const [resolvedUsernames, resolvedAvatars] = await Promise.all([
@@ -76,7 +79,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
     } finally {
       setIsLoading(false)
     }
-  }, [blogPostId, commentsEnabled, user?.identityId, onCommentCountChange])
+  }, [blogPostId, commentsEnabled, user?.identityId])
 
   useEffect(() => {
     loadComments().catch(() => {
