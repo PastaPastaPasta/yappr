@@ -2,6 +2,7 @@
 
 import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useTheme } from 'next-themes'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import { SuggestionMenuController } from '@blocknote/react'
@@ -23,6 +24,7 @@ interface BlogEditorProps {
 }
 
 export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEditorProps) {
+  const { resolvedTheme } = useTheme()
   const editor = useCreateBlockNote({
     schema: blogBlockNoteSchema,
     initialContent: (initialBlocks?.length ? initialBlocks : undefined) as never,
@@ -148,7 +150,7 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
 
       <BlockNoteView
         editor={editor}
-        theme="dark"
+        theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
         onChange={publishChange}
         slashMenu={false}
         formattingToolbar
@@ -166,7 +168,7 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
           aria-label="Upload image"
           onClick={() => fileInputRef.current?.click()}
           disabled={isUploading}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gray-800/40 px-3 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-800/70 hover:text-gray-300 disabled:opacity-50"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gray-100 dark:bg-gray-800/40 px-3 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-200 dark:hover:bg-gray-800/70 hover:text-gray-900 dark:hover:text-gray-300 disabled:opacity-50"
         >
           <PhotoIcon className="h-3.5 w-3.5" />
           Add image
@@ -182,20 +184,20 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
                 if (e.key === 'Escape') { setShowImageUrlInput(false); setImageUrlInput('') }
               }}
               placeholder="https://example.com/image.jpg"
-              className="h-7 min-w-0 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-xs text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
+              className="h-7 min-w-0 flex-1 rounded border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/60 px-2 text-xs text-gray-700 dark:text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
               autoFocus
             />
             <button
               type="button"
               onClick={handleImageUrlSubmit}
-              className="shrink-0 rounded bg-gray-800 px-2 py-0.5 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
+              className="shrink-0 rounded bg-gray-200 dark:bg-gray-800 px-2 py-0.5 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-300 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-300"
             >
               Add
             </button>
             <button
               type="button"
               onClick={() => { setShowImageUrlInput(false); setImageUrlInput('') }}
-              className="shrink-0 rounded p-0.5 text-gray-500 hover:text-gray-300"
+              className="shrink-0 rounded p-0.5 text-gray-500 hover:text-gray-900 dark:hover:text-gray-300"
             >
               <XMarkIcon className="h-3.5 w-3.5" />
             </button>
@@ -204,7 +206,7 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
           <button
             type="button"
             onClick={() => setShowImageUrlInput(true)}
-            className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-400"
+            className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-700 dark:hover:text-gray-400"
           >
             <LinkIcon className="h-3 w-3" />
             Paste URL
