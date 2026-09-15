@@ -17,9 +17,14 @@ Updated 2026-09-15. Target: `https://yap.pr/devnet/`, observed build `4105c5d`. 
 | QA-07 | Medium: menu accessibility | The separate top-right post options button has an empty accessible name. | Named post/reply options, focus tooltip and keyboard menu behavior. | [#414](https://github.com/PastaPastaPasta/yappr/pull/414) |
 | QA-08 | Medium: misleading guest page | As a guest, `/followers/` or `/following/` without `id` displays `@User` and an apparent zero-result list although no target was selected. | Guest recovery; signed-in own-account defaults and explicit public targets remain supported. | [#415](https://github.com/PastaPastaPasta/yappr/pull/415) |
 | QA-09 | Medium: mobile navigation accessibility | Computed accessibility snapshot confirms all five mobile bottom-navigation controls lack names. | Named navigation landmark/controls, Menu disclosure state and focus tooltip. | [#416](https://github.com/PastaPastaPasta/yappr/pull/416) |
-
-| QA-10 | Medium: hidden-menu accessibility | The visually closed mobile More sheet remains exposed in the accessibility tree; invisible controls can receive keyboard focus. This is separate from the withdrawn visual duplicate-navigation claim. | Separate focused fix in progress. | Pending |
+| QA-10 | Medium: hidden-menu accessibility | The visually closed mobile More sheet remains exposed in the accessibility tree; invisible controls can receive keyboard focus. This is separate from the withdrawn visual duplicate-navigation claim. | Closed-sheet inert/ARIA exclusion and open/close keyboard focus. | [#418](https://github.com/PastaPastaPasta/yappr/pull/418) |
 | QA-11 | Medium: wrong deployment navigation | A real published devnet article embeds successfully, but its footer opens root testnet and shows Blog not found. Generated iframe/script snippets and the loader also drop the deployment path. | Preserve the build deployment path in snippets, loader and article footer. | [#417](https://github.com/PastaPastaPasta/yappr/pull/417) |
+| QA-12 | Medium: profile form accessibility | Name/Bio/Location are unnamed; Pronouns/Website use placeholders as fallback. All five visible label clicks fail to focus their fields. | Connect each label to a stable unique input ID. | [#419](https://github.com/PastaPastaPasta/yappr/pull/419) |
+| QA-13 | Medium: embedded article navigation | Script-created iframe renders the real article but View on Yappr cannot navigate the host tab because the sandbox includes an invalid navigation flag. | User-activated top navigation from script-created embeds, stacked on #417 to isolate this defect. | [#420](https://github.com/PastaPastaPasta/yappr/pull/420) |
+| QA-14 | High: profile edits fail | Editing only Bio on two current seeded profiles fails with a visible generic toast. SDK schema validation rejects the parsed paymentUris array; the replacement path merged the display User model into a raw profile payload. | Send the full raw-derived serialized replacement; actual UI save/readback and exact original field restoration passed. | [#421](https://github.com/PastaPastaPasta/yappr/pull/421) |
+| QA-15 | Medium: incorrect reply context | Open a saved reply directly. Its parent remains Unknown User and loses engagement counts even after waiting; opening the parent directly resolves its profile. | Keep the enriched chain returned before initial state installation. | [#422](https://github.com/PastaPastaPasta/yappr/pull/422) |
+| QA-16 | Medium: broken search navigation | On deployed staging, select the #masternodes sidebar suggestion. It navigates to /devnet/hashtag/masternodes and a 404 instead of the supported query route. | Supported query route, verified by mouse/keyboard browser regressions and populated feed readback. | [#423](https://github.com/PastaPastaPasta/yappr/pull/423) |
+| QA-17 | Medium: broken copied link | Copy a devnet post link; the clipboard omits /devnet and the destination cannot find the same post. | Separate deployment-aware sharing fix in progress. | Pending |
 
 Severity here describes practical impact, not a security vulnerability rating. No confirmed P0 data-loss defect remains from the original audit.
 
@@ -36,6 +41,14 @@ The authoritative PR descriptions contain immutable before/after links, exact re
 
 [Successful post, like/unlike and bookmark/unbookmark cycles](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/a33ea2235f732bc876195e6561776ec22080b79c/yappr/qa-20260915-revalidation/social-cycle) include actual independent-session readback and inspected final screenshots. Rejected loading captures and corrected test selectors are documented; they are not product failures.
 
+[Reply, repost/undo and follow/unfollow evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/122da82bdb785c65c258dbe44714b5e0ff47e858/yappr/qa-20260915-revalidation/social-persona33) records fresh-session reads, relevant public SDK records, and seven inspected screenshots.
+
+[Auth Vault password/passkey evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/1a5d5d3d63f714374af57e7a7f25fb840cbca6bd/yappr/qa-20260915-revalidation/auth-vault-persona39) records seven normal-flow checks, including an empty browser-context password sign-in and virtual-authenticator passkey sign-in. The virtual authenticator is disclosed; this is not a physical-device compatibility claim.
+
+[Private-feed lifecycle evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/1bab1e9cef3b764c3d744e8722c1614740fafc01/yappr/qa-20260915-revalidation/private-feed-36-37) records enable, publish, request, approve, fresh approved readback, normal revocation and a locked future post. Three visible state inconsistencies are documented separately from the successful lifecycle; no access-bypass test was performed.
+
+[Appearance and notification evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/204a49f868720375af2c7975771a73f1a0df4dc7/yappr/qa-20260915-revalidation/settings-notifications) records four appearance assertions and actual reply-notification/filter/read-state/navigation checks.
+
 Source changes received local builds and relevant lint/tests. Current PR checks must be read from GitHub; a skipped check is not counted as a pass, and a CodeRabbit success status can represent a skipped review. Published image verification checks HTTP status, content type and SHA-256 against the inspected local files, followed by inspection of the rendered PR.
 
 ## Corrections to the original findings
@@ -44,7 +57,7 @@ Source changes received local builds and relevant lint/tests. Current PR checks 
 |---|---|
 | Deterministic first DM loss; P0 | Retracted. A first message persisted and decrypted in fresh sender and recipient contexts on unchanged staging. This validates one supported key/session configuration, not every key type. |
 | Fix first DM by adding `recipientId` | Invalid. The live lean DM contract forbids that extra property. [#409](https://github.com/PastaPastaPasta/yappr/pull/409) is closed; its synthetic screenshot is removed from the description. |
-| Auth Vault/encryption/password/passkey controls absent | Retracted. Real settings show Enter Key, Add Password Unlock and Add Passkey. Enter Key and Enable Private Feed open the expected forms. Enrollment/publication was not completed in this revalidation. |
+| Auth Vault/encryption/password/passkey controls absent | Retracted. Real settings show Enter Key, Add Password Unlock and Add Passkey. Enter Key and Enable Private Feed open the expected forms. Subsequent actual Auth Vault and private-feed cycles passed as recorded below. |
 | Duplicate mobile bottom-navigation rows | Retracted. Full-page capture included the closed translated More sheet below the viewport. Actual 390×844 screenshots at top and bottom show one navigation row. |
 | Post/like/bookmark failures universally invisible; bookmark rollback absent | Unproven. Staging already has generic failure feedback and rollback. Earlier observations do not establish their absence or isolate timing. |
 | Buy YAPP to fix bookmark failure; #408 fixes write feedback | Invalid. Bookmarks have no YAPP cost. `createDocument()` returns an error result that the proposed catch does not receive. [#408](https://github.com/PastaPastaPasta/yappr/pull/408) is closed; its handcrafted HTML evidence is removed. |
@@ -70,36 +83,36 @@ The inventory was derived from 38 route pages plus the dialogs/settings they exp
 | Search users, hashtags and content | Search | Entry/results surfaces observed; empty, repeated, pagination and special-character cases remaining. |
 | Browse a hashtag | Hashtag | Missing-context guidance inspected; populated pagination remaining. |
 | View mentions | Mentions | Guest guidance inspected; two-account mention notification cycle remaining. |
-| Open a post and its thread | Post | Current post fixture used for accessibility captures; reply/write/readback cycle remaining. |
+| Open a post and its thread | Post | Current root/reply publication and fresh readback passed; direct reply context revealed QA-15, fixed in #422. |
 | View engagement lists | Post engagements | Route visited; consistency after writes remaining. |
 | Discover and view profiles | User | Seeded profile reads observed; missing/invalid/deleted identity permutations remaining. |
 | Create a new funded identity | Login/create-account flow | Entry UI inspected. New identity funding/registration ceremony not certified. |
 | Restore a session with an authentication key | Login/session | Revalidated with current seeded identities and fresh browser contexts. |
 | Sign in via external wallet QR | Login | Entry UI inspected; real external-wallet ceremony remaining. |
-| Enroll and sign in with a passkey | Login/settings | Control availability revalidated; full ceremony remaining. |
-| Add password unlock and sign in | Login/settings | Control availability revalidated; full enrollment/lock/unlock remaining. |
+| Enroll and sign in with a passkey | Login/settings | Persona39 enrollment, logout, passkey sign-in and reload passed with Chromium virtual WebAuthn/PRF. Physical-device and external-wallet ceremonies remain separate. |
+| Add password unlock and sign in | Login/settings | Persona39 actual password enrollment, logout/password sign-in, empty-context password sign-in and reload passed. No preseeded session/private key was used for fresh sign-in. |
 | Recover/replace a missing key | Settings | Recovery entry visible; recovery workflow remaining. |
 | Finish first-run onboarding | Welcome | Surface inspected; fresh-account completion remaining. |
-| Create/edit a profile | Profile create/settings | Surface observed; persisted edit/readback and failure recovery remaining. |
+| Create/edit a profile | Profile create/settings | Bio-only edit failed on two current identities; confirmed QA-14 serialization issue. Fixed by #421; live UI save and fresh chain readback passed, then original raw contract fields restored. |
 | Choose avatar/banner and social links | Profile settings | Surface inventoried; media upload/save/readback remaining. |
 | Add a profile payment destination | Profile payment input | Malformed Dash validation addressed by #410; on-chain transfer not exercised. |
 | Register/manage a DPNS username | DPNS register | Entry surface inspected; paid registration/conflict/readback remaining. |
 | Compose a public post | Composer | Revalidated with persona30: post creation success toast, modal closes, and an independent session displays saved post `9mcdDNznWP86bScjmMykF1kzNpecneoFoZVVNAB5qCFd`. |
-| Reply and compose a thread | Composer/post | Inventory only beyond entry UI; publish/readback remaining. |
+| Reply and compose a thread | Composer/post | Persona33 reply publication/readback and persona42 three-part thread publication/readback passed. Direct part3 detail shows root+part3 by current flat-context design; reduced ancestry is a UX concern, not a confirmed missing-data defect. |
 | Attach media to a post | Composer/storage | Upload/provider flows remaining. |
-| Create/vote on a poll | Composer/poll | Full two-account cycle remaining. |
-| Edit/delete own content | Post options | Menu access covered separately; persistence cycle remaining. |
-| Like/unlike, repost/undo and quote | Post actions | Names/tooltips covered by #413; persona32 like/unlike with fresh-session readback passed. Repost/quote cycles continuing. |
+| Create/vote on a poll | Composer/poll | Personas42/43 poll creation, vote and fresh readback passed; end-time/multiple-choice branches remain. |
+| Edit/delete own content | Post options | Persona43 own quote deletion passed immediately and after fresh readback; SDK tombstone confirmed. Ordinary post options expose no Edit action. Thread cleanup is being verified separately. |
+| Like/unlike, repost/undo and quote | Post actions | Names/tooltips covered by #413; persona32 like/unlike with fresh-session readback passed. Persona33 repost/undo fresh-session cycles also passed. Persona43 quote publication, readback and deletion/tombstone readback passed. |
 | Bookmark/unbookmark | Post/bookmarks | Accessible state covered by #413; persona32 bookmark/unbookmark and independent-session readback both passed. |
-| Share a post/copy link | Post actions | Control naming covered by #413; clipboard/share-sheet destinations remaining. |
-| Follow/unfollow another identity | Profile/connection lists | Read surfaces observed; full two-account transition remaining. |
+| Share a post/copy link | Post actions | Clipboard/open-destination test found missing deployment path (QA-17); separate fix in progress. Native share sheet remains. |
+| Follow/unfollow another identity | Profile/connection lists | Persona33 follow/unfollow passed, with both fresh own/target lists and independent SDK records checked; initial relationship restored. |
 | View own followers/following | Connection lists | Authenticated no-id default intentional; preserve in QA-08. |
-| View another user's followers/following | Connection lists | Explicit-id route supported; guest missing-context recovery in progress. |
+| View another user's followers/following | Connection lists | Explicit-id route supported; guest missing-context recovery fixed in #415. |
 | Block/unblock and consume trusted block lists | Privacy & Security | Settings visible; behavioral filtering/readback remaining. |
-| Read/mark/filter notifications | Notifications/settings | Entry surface observed; event-trigger/readback cycle remaining. |
-| Enter encryption key | Privacy & Security | Real key-entry dialog revalidated; no secret entered in published captures. |
-| Enable and publish a private feed | Private Feed | Setup controls revalidated; successful publish remaining. |
-| Request/approve/revoke private-feed access | Private Feed/profile | Two-account access and revocation cycles remaining. |
+| Read/mark/filter notifications | Notifications/settings | Persona30 received persona33 reply notification; Replies filter, mark-all-read persistence after reload, and click-through to persisted reply passed. Other event types/mobile filtering remain. |
+| Enter encryption key | Privacy & Security | Personas36/37 normal encryption-key entry passed as part of private-feed lifecycle; populated secret inputs were excluded from captures. |
+| Enable and publish a private feed | Private Feed | Persona36 enabled a feed, published a private QA post, and owner readback passed. |
+| Request/approve/revoke private-feed access | Private Feed/profile | Persona37 requested, persona36 approved, fresh recipient decrypted. Normal revocation rotated epoch, removed request/grant and locked a future post in retained recipient session. Reply-control/dashboard UI inconsistencies are being isolated separately. |
 | Send the first direct message | Messages | Revalidated: real send, fresh sender readback, fresh recipient decryption. |
 | Continue/reload a conversation | Messages | Existing-message readback revalidated; concurrent replies and pagination remaining. |
 | Discover stores/items | Store/item | Routes and seeded items observed; full filtering/stock permutations remaining. |
@@ -117,7 +130,7 @@ The inventory was derived from 38 route pages plus the dialogs/settings they exp
 | Read/comment on a blog article | Blog viewer | Complete comment cycle remaining. |
 | Embed an article and recover a broken link | Embed | Missing/empty-ID offline recovery revalidated in #407; successful embed navigation exposed QA-11; correction in #417. |
 | Navigate on mobile/by keyboard/screen reader | Navigation/post/dialogs | Specific action/dialog defects receive separate PRs; not a blanket accessibility certification. |
-| Change appearance/storage/provider preferences | Settings | Entry surfaces observed; persistence and provider integrations remaining. |
+| Change appearance/storage/provider preferences | Settings | Persona38 light/dark selection, dark persistence after reload, and System following dark/light media changes passed. Storage/provider integrations remain. |
 | Inspect query/contract information | Developer settings/contract | Entry surfaces observed; no proof-correctness certification. |
 | Read informational/legal pages | About/private feeds/privacy/terms/cookies | Routes visited; copy/content review not a functional transaction test. |
 | Log out, clear local state, and restore account | Settings/session | Independent contexts used for readback; every logout/vault-lock variant remaining. |
