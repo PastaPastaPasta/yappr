@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import {
   UserIcon,
@@ -101,6 +101,11 @@ function SettingsPage() {
   // the menu, the section title, and the render gate can't drift apart.
   const visibleSections = isAuthority ? [...settingsSections, MODERATION_SECTION] : settingsSections
   const { theme, setTheme } = useTheme()
+  const [encryptionKeyVersion, setEncryptionKeyVersion] = useState(0)
+  const handleEncryptionKeyChanged = useCallback(() => {
+    setEncryptionKeyVersion((version) => version + 1)
+  }, [])
+
   const linkPreviewsEnabled = useSettingsStore((s) => s.linkPreviewsEnabled)
   const setLinkPreviewsEnabled = useSettingsStore((s) => s.setLinkPreviewsEnabled)
   const gateMediaFromNonFollowed = useSettingsStore((s) => s.gateMediaFromNonFollowed)
@@ -353,7 +358,7 @@ function SettingsPage() {
   const renderPrivacySettings = () => (
     <div className="p-6 space-y-6">
       {/* Key Backup Section */}
-      <KeyBackupSettings />
+      <KeyBackupSettings onEncryptionKeyChanged={handleEncryptionKeyChanged} />
 
       <div>
         <h3 className="font-semibold mb-4">Privacy</h3>
@@ -464,7 +469,7 @@ function SettingsPage() {
 
       {/* Saved Addresses Section */}
       <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
-        <SavedAddressesSettings />
+        <SavedAddressesSettings encryptionKeyVersion={encryptionKeyVersion} />
       </div>
     </div>
   )
