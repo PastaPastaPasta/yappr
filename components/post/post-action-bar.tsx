@@ -55,12 +55,15 @@ export function stopAndRun(e: React.MouseEvent, action: () => void | Promise<voi
 
 /** The reply / repost / like / tip / bookmark / share row under a post. */
 export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark, onQuote, onTip, onShare }: PostActionBarProps) {
+  const repostLabel = repost.allowed ? 'Repost or quote' : 'Quote'
+
   return (
     <div className="flex items-center justify-between mt-1 -ml-2 max-w-[485px]">
       <Tooltip.Provider>
         <ActionTooltip label={reply.reason || 'Reply'}>
           <button
             data-testid={`reply-btn-${postId}`}
+            aria-label={`Reply, ${reply.count} ${reply.count === 1 ? 'reply' : 'replies'}`}
             onClick={(e) => stopAndRun(e, reply.onClick)}
             disabled={!reply.enabled}
             className={cn('group flex items-center gap-1 p-2 rounded-full transition-colors', reply.enabled ? 'hover:bg-yappr-50 dark:hover:bg-yappr-950' : 'opacity-50 cursor-not-allowed')}
@@ -73,23 +76,26 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark
         </ActionTooltip>
 
         <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <button
-              data-testid={`repost-menu-btn-${postId}`}
-              onClick={stopPropagation}
-              disabled={repost.loading}
-              className={cn(
-                'group flex items-center gap-1 p-2 rounded-full transition-colors hover:bg-green-50 dark:hover:bg-green-950',
-                repost.loading && 'opacity-50 cursor-wait',
-                repost.active && 'text-green-500'
-              )}
-            >
-              <ArrowPathIcon className={cn('h-5 w-5 transition-colors', repost.loading && 'animate-spin', repost.active ? 'text-green-500' : 'text-gray-500 group-hover:text-green-500')} />
-              <span className={cn('text-sm transition-colors', repost.active ? 'text-green-500' : 'text-gray-500 group-hover:text-green-500')}>
-                {repost.count > 0 && formatNumber(repost.count)}
-              </span>
-            </button>
-          </DropdownMenu.Trigger>
+          <ActionTooltip label={repostLabel}>
+            <DropdownMenu.Trigger asChild>
+              <button
+                data-testid={`repost-menu-btn-${postId}`}
+                aria-label={repost.allowed ? `${repostLabel}, ${repost.count} repost${repost.count === 1 ? '' : 's'}${repost.active ? ', reposted' : ''}` : repostLabel}
+                onClick={stopPropagation}
+                disabled={repost.loading}
+                className={cn(
+                  'group flex items-center gap-1 p-2 rounded-full transition-colors hover:bg-green-50 dark:hover:bg-green-950',
+                  repost.loading && 'opacity-50 cursor-wait',
+                  repost.active && 'text-green-500'
+                )}
+              >
+                <ArrowPathIcon className={cn('h-5 w-5 transition-colors', repost.loading && 'animate-spin', repost.active ? 'text-green-500' : 'text-gray-500 group-hover:text-green-500')} />
+                <span className={cn('text-sm transition-colors', repost.active ? 'text-green-500' : 'text-gray-500 group-hover:text-green-500')}>
+                  {repost.count > 0 && formatNumber(repost.count)}
+                </span>
+              </button>
+            </DropdownMenu.Trigger>
+          </ActionTooltip>
           <DropdownMenu.Portal>
             <DropdownMenu.Content
               className="min-w-[160px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50"
@@ -114,6 +120,7 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark
         <ActionTooltip label="Like">
           <button
             data-testid={`like-btn-${postId}`}
+            aria-label={`Like, ${like.count} like${like.count === 1 ? '' : 's'}`}
             aria-pressed={like.active}
             onClick={(e) => stopAndRun(e, like.onClick)}
             disabled={like.loading}
@@ -134,6 +141,7 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark
 
         <ActionTooltip label={isOwnPost ? "Can't tip yourself" : 'Tip'}>
           <button
+            aria-label="Tip"
             onClick={(e) => stopAndRun(e, onTip)}
             disabled={isOwnPost}
             className={cn('group flex items-center gap-1 p-2 rounded-full transition-colors', isOwnPost ? 'opacity-40 cursor-not-allowed' : 'hover:bg-amber-50 dark:hover:bg-amber-950')}
@@ -147,6 +155,8 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark
             <ActionTooltip label="Bookmark">
               <button
                 data-testid={`bookmark-btn-${postId}`}
+                aria-label="Bookmark"
+                aria-pressed={bookmark.active}
                 onClick={(e) => stopAndRun(e, bookmark.onClick)}
                 disabled={bookmark.loading}
                 className={cn('p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors', bookmark.loading && 'opacity-50 cursor-wait')}
@@ -156,7 +166,7 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark
             </ActionTooltip>
           )}
           <ActionTooltip label="Share">
-            <button onClick={(e) => stopAndRun(e, onShare)} className="p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors">
+            <button aria-label="Share" onClick={(e) => stopAndRun(e, onShare)} className="p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors">
               <ArrowUpTrayIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
             </button>
           </ActionTooltip>
