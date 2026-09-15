@@ -3,6 +3,7 @@ import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { transformDocumentWithField, identifierStringToDocumentBytes } from './sdk-helpers';
 import { paginateFetchAll, chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
+import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
 
 export interface BookmarkDocument {
   $id: string;
@@ -43,6 +44,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
       return result.success;
     } catch (error) {
       logger.error('Error bookmarking post:', error);
+      if (isInsufficientTokenError(error) || isFrozenBalanceError(error)) throw error;
       return false;
     }
   }

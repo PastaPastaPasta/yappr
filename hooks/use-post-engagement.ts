@@ -124,7 +124,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     } catch (error) {
       setBookmarked(wasBookmarked)
       logger.error('Bookmark error:', error)
-      toast.error('Failed to update bookmark. Please try again.')
+      reportSpendError(error, 'You need YAPP to save bookmarks. Buy some to continue.', 'Failed to update bookmark. Please try again.')
     } finally {
       setBookmarkLoading(false)
     }
