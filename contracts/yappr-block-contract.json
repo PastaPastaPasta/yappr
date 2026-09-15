@@ -1,5 +1,6 @@
 {
   "block": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "description": "A block relationship with optional public message/reason",
     "indices": [
@@ -36,6 +37,7 @@
   },
 
   "blockFilter": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "description": "Bloom filter of blocked users for efficient probabilistic matching. One per user.",
     "indices": [
@@ -75,6 +77,7 @@
   },
 
   "blockFollow": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "description": "Tracks which users' block lists this user inherits (hard blocks). One per user.",
     "indices": [

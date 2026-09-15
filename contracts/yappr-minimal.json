@@ -5,6 +5,7 @@
   "ownerId": "{{ownerId}}",
   "documents": {
     "profile": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "description": "User profile information",
       "indices": [
@@ -30,6 +31,7 @@
       "additionalProperties": false
     },
     "post": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "description": "A post in the social network",
       "indices": [

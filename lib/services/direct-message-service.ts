@@ -25,7 +25,7 @@ import { YAPPR_DM_CONTRACT_ID } from '../constants'
 import { promptForAuthKey } from '../auth-utils'
 import bs58 from 'bs58'
 import { normalizeBytes } from '@/lib/bytes'
-import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
+import { findDMPublicKey } from '@/lib/crypto/keys'
 
 /**
  * Direct Message Service for v3 contract
@@ -82,20 +82,16 @@ class DirectMessageService {
         // Create conversation invite
         const senderPubKey = getPublicKeyFromPrivate(privateKey)
 
-        // Check if sender's identity uses hash160 (no full pubkey on-chain)
-        const needsPubKeyInInvite = await this.identityUsesHash160(senderId)
-
-        const conversationIdDocumentBytes = conversationIdBytes
-        const senderPubKeyDocumentBytes = needsPubKeyInInvite ? senderPubKey : undefined
-
+        // Publish the key actually used for ECDH, including for MEDIUM keys.
+        // Another HIGH key on the identity may belong to a different login.
         const inviteResult = await stateTransitionService.createDocument(
           this.contractId,
           'conversationInvite',
           senderId,
           {
             recipientId: identifierStringToDocumentBytes(recipientId),
-            conversationId: conversationIdDocumentBytes,
-            ...(senderPubKeyDocumentBytes ? { senderPubKey: senderPubKeyDocumentBytes } : {})
+            conversationId: conversationIdBytes,
+            senderPubKey
           }
         )
 
@@ -563,41 +559,10 @@ class DirectMessageService {
       const publicKeys = identity.publicKeys
       if (!publicKeys || publicKeys.length === 0) return null
 
-      // DMs use the HIGH authentication key (full secp256k1 point) for ECDH,
-      // falling back to any HIGH secp256k1 key.
-      const isHighSecp = (pk: { type: number; securityLevel: number }) =>
-        pk.type === KeyType.ECDSA_SECP256K1 && pk.securityLevel === SecurityLevel.HIGH
-      const authHighKey = publicKeys.find((pk) => isHighSecp(pk) && pk.purpose === KeyPurpose.AUTHENTICATION)
-      const fallbackKey = !authHighKey ? publicKeys.find(isHighSecp) : null
-
-      const ecdsaKey = authHighKey || fallbackKey
-      if (!ecdsaKey) return null
-
-      return this.extractPublicKeyBytes(ecdsaKey)
+      return findDMPublicKey(publicKeys)
     } catch (error) {
       logger.error('Error getting public key from identity:', error)
       return null
-    }
-  }
-
-  /**
-   * Check if identity uses hash160 (no full public key on-chain)
-   */
-  private async identityUsesHash160(userId: string): Promise<boolean> {
-    try {
-      const identity = await identityService.getIdentity(userId)
-      if (!identity) return false
-
-      const publicKeys = identity.publicKeys
-      if (!publicKeys || publicKeys.length === 0) return false
-
-      // Uses hash160 if no HIGH key carries a full secp256k1 point
-      const highKeys = publicKeys.filter((pk) => pk.securityLevel === SecurityLevel.HIGH)
-      const hasType0 = highKeys.some((pk) => pk.type === KeyType.ECDSA_SECP256K1)
-
-      return !hasType0  // Uses hash160 if no type 0 keys at HIGH security level
-    } catch {
-      return false
     }
   }
 
@@ -766,27 +731,6 @@ class DirectMessageService {
       }
     }
     return normalizeBytes(value) ?? new Uint8Array(0)
-  }
-
-  /**
-   * Public-key bytes from an identity key object, whichever of the field names
-   * the SDK surface used (`data`, `publicKey`, `key`) or the raw value itself.
-   */
-  private extractPublicKeyBytes(publicKey: unknown): Uint8Array {
-    const isBytesLike = (v: unknown) => v instanceof Uint8Array || Array.isArray(v) || typeof v === 'string'
-    const candidates: unknown[] = []
-    if (publicKey && typeof publicKey === 'object' && !isBytesLike(publicKey)) {
-      const pkObj = publicKey as Record<string, unknown>
-      candidates.push(pkObj.data, pkObj.publicKey, pkObj.key)
-    } else {
-      candidates.push(publicKey)
-    }
-    for (const candidate of candidates) {
-      if (!isBytesLike(candidate)) continue
-      const bytes = this.extractByteArray(candidate)
-      if (bytes.length > 0) return bytes
-    }
-    throw new Error('Unknown public key format: ' + JSON.stringify(publicKey))
   }
 }
 

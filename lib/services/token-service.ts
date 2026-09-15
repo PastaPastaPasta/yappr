@@ -88,7 +88,7 @@ class TokenService {
    * than silently overspending.
    *
    * Drive only accepts a CRITICAL auth key for direct purchase (it spends
-   * credits). If the stored login key is HIGH, this returns
+   * credits). If the stored login key is MEDIUM or HIGH, this returns
    * NEEDS_CRITICAL_KEY without broadcasting; the UI should prompt for the
    * CRITICAL key and retry with `criticalKeyWif` (used to sign, never stored).
    */

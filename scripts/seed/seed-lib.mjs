@@ -172,6 +172,7 @@ export const IDENTITY_KEY_ROLES = [
   { keyId: 2, purpose: 'authentication', securityLevel: 'high' },
   { keyId: 3, purpose: 'transfer', securityLevel: 'critical' },
   { keyId: 4, purpose: 'encryption', securityLevel: 'medium' },
+  { keyId: 5, purpose: 'authentication', securityLevel: 'medium' },
 ];
 export const CRITICAL_AUTH_KEY_ID = 1;
 

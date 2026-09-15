@@ -30,7 +30,7 @@ const WIF_VERSION_TESTNET = 0xef;
 /**
  * Key layout of every bot identity. Purposes/security levels match the Dash
  * Platform identity key semantics the app expects: writes are signed with an
- * AUTHENTICATION key at CRITICAL or HIGH.
+ * AUTHENTICATION key at MEDIUM, HIGH or CRITICAL (depending on the contract).
  */
 export const KEY_ROLES = [
   { keyIndex: 0, purpose: 'AUTHENTICATION', securityLevel: 'MASTER' },
@@ -38,6 +38,7 @@ export const KEY_ROLES = [
   { keyIndex: 2, purpose: 'AUTHENTICATION', securityLevel: 'HIGH' },
   { keyIndex: 3, purpose: 'TRANSFER', securityLevel: 'CRITICAL' },
   { keyIndex: 4, purpose: 'ENCRYPTION', securityLevel: 'MEDIUM' },
+  { keyIndex: 5, purpose: 'AUTHENTICATION', securityLevel: 'MEDIUM' },
 ];
 
 export const KEY_TYPE = 'ECDSA_SECP256K1';
