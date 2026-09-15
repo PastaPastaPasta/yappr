@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { PlusIcon, TrashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { APPROVED_PAYMENT_SCHEMES } from '@/lib/services/unified-profile-service'
+import { isValidPaymentAddress } from '@/lib/utils/payment-uri'
 
 interface PaymentUriInputProps {
   uris: string[]
@@ -41,10 +42,13 @@ function getSchemeLabel(uri: string): string {
   return 'Unknown'
 }
 
-function isValidPaymentUri(uri: string): boolean {
-  if (!uri.trim()) return false
-  const lowerUri = uri.toLowerCase()
-  return APPROVED_PAYMENT_SCHEMES.some(scheme => lowerUri.startsWith(scheme))
+function parsePaymentUri(uri: string): { scheme: string; address: string } | null {
+  const colonIndex = uri.indexOf(':')
+  if (colonIndex <= 0) return null
+  const scheme = uri.slice(0, colonIndex + 1).toLowerCase()
+  const address = uri.slice(colonIndex + 1).trim()
+  if (!address || !APPROVED_PAYMENT_SCHEMES.includes(scheme as typeof APPROVED_PAYMENT_SCHEMES[number])) return null
+  return { scheme, address }
 }
 
 export function PaymentUriInput({
@@ -56,11 +60,12 @@ export function PaymentUriInput({
   const [newUri, setNewUri] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  const handleAddUri = () => {
+  const handleAddUri = async () => {
     if (!newUri.trim()) return
 
-    if (!isValidPaymentUri(newUri)) {
-      setError('Please enter a valid payment URI (e.g., dash:XnNh3..., bitcoin:bc1...)')
+    const parsed = parsePaymentUri(newUri)
+    if (!parsed || !isValidPaymentAddress(parsed.scheme, parsed.address)) {
+      setError('Please enter a valid payment URI (e.g., tdash:y..., dash:XnNh3..., bitcoin:bc1...)')
       return
     }
 
@@ -88,7 +93,7 @@ export function PaymentUriInput({
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      handleAddUri()
+      void handleAddUri()
     }
   }
 

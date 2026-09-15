@@ -6,6 +6,7 @@ import { XMarkIcon, WalletIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { PaymentSchemeIcon, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
 import { APPROVED_PAYMENT_SCHEMES } from '@/lib/services/unified-profile-service'
+import { isValidPaymentAddress } from '@/lib/utils/payment-uri'
 
 // Supported payment schemes with their details
 const PAYMENT_SCHEMES = [
@@ -55,6 +56,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
   const [customMode, setCustomMode] = useState(false)
   const [customUri, setCustomUri] = useState('')
   const [customError, setCustomError] = useState('')
+  const [addressError, setAddressError] = useState('')
 
   if (!isOpen) return null
 
@@ -77,6 +79,16 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
 
     setIsSubmitting(true)
     try {
+      if (!isValidPaymentAddress(resolvedScheme, resolvedAddress)) {
+        const message = resolvedScheme === 'tdash:'
+          ? 'Enter a valid Dash testnet address (tdash:).'
+          : resolvedScheme === 'dash:'
+            ? 'Enter a valid Dash mainnet address (dash:).'
+            : 'Enter a valid payment address.'
+        if (customMode) setCustomError(message)
+        else setAddressError(message)
+        return
+      }
       await onSave({
         scheme: resolvedScheme,
         address: resolvedAddress,
@@ -87,6 +99,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
       setScheme('tdash:')
       setCustomUri('')
       setCustomError('')
+      setAddressError('')
       setCustomMode(false)
     } finally {
       setIsSubmitting(false)
@@ -212,13 +225,18 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
                 <input
                   type="text"
                   value={address}
-                  onChange={(e) => setAddress(e.target.value)}
+                  onChange={(e) => {
+                    setAddress(e.target.value)
+                    setAddressError('')
+                  }}
                   placeholder={selectedScheme.placeholder}
                   className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  {selectedScheme.hint}
-                </p>
+                {addressError ? (
+                  <p className="text-xs text-red-500 mt-1">{addressError}</p>
+                ) : (
+                  <p className="text-xs text-gray-500 mt-1">{selectedScheme.hint}</p>
+                )}
               </div>
             </>
           )}
