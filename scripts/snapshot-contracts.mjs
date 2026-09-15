@@ -4,15 +4,16 @@
  * `lib/contracts/bundled/<key>.json`, so the app seeds the SDK from the bundle
  * on load instead of fetching the contracts (see lib/contracts/bundled-contracts.ts).
  *
- *   NETWORK=devnet node scripts/snapshot-contracts.mjs
+ *   NETWORK=devnet node scripts/snapshot-contracts.mjs [--prune]
  *   NETWORK=testnet CONTRACT_IDS=<id>,<id> node scripts/snapshot-contracts.mjs
  *
  * Ids come from every `NEXT_PUBLIC_*CONTRACT_ID` in the network's env file
  * (`.env.devnet` for devnet, `.env.testing` for testnet) plus `CONTRACT_IDS`.
  * Entries already in the bundle are kept and refreshed, so one file per network
- * serves every deployment on it. Re-run after registering or updating a
- * contract; the app revalidates the bundle at runtime anyway, so a stale
- * snapshot costs one extra fetch, not correctness.
+ * serves every deployment on it; `--prune` drops every entry this run did not
+ * request, for a chain that was wiped and re-cut. Re-run after registering or
+ * updating a contract; the app revalidates the bundle at runtime anyway, so a
+ * stale snapshot costs one extra fetch, not correctness.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,6 +21,7 @@ import { PlatformVersion } from '@dashevo/evo-sdk';
 import { connectSdk, devnetName, network } from './sdk-env.mjs';
 import { readEnvFile, REPO_ROOT } from './derive-identities.mjs';
 
+const prune = process.argv.includes('--prune');
 const net = network();
 const key = net === 'devnet' ? `devnet-${devnetName()}` : net;
 const envFile = net === 'devnet' ? '.env.devnet' : net === 'testnet' ? '.env.testing' : null;
@@ -48,7 +50,7 @@ const fetched = await sdk.contracts.getMany([...ids]);
 const outDir = join(REPO_ROOT, 'lib', 'contracts', 'bundled');
 mkdirSync(outDir, { recursive: true });
 const outPath = join(outDir, `${key}.json`);
-const bundle = existsSync(outPath)
+const bundle = existsSync(outPath) && !prune
   ? JSON.parse(readFileSync(outPath, 'utf8'))
   : { network: key, generatedAt: '', contracts: {} };
 
