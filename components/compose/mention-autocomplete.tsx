@@ -5,6 +5,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { dpnsService, unifiedProfileService } from '@/lib/services'
 import { getPrimaryUsername } from '@/lib/utils/username'
+import { detectActiveMention } from '@/lib/compose/mention-query'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Spinner } from '@/components/ui/spinner'
 
@@ -21,43 +22,6 @@ interface MentionAutocompleteProps {
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
   content: string
   onSelect: (username: string, startPos: number, endPos: number) => void
-}
-
-/**
- * Detects if there's an active @mention being typed at the cursor position
- * Returns the mention text (without @) and the start/end positions, or null if no active mention
- */
-function detectActiveMention(
-  content: string,
-  cursorPos: number
-): { mention: string; start: number; end: number } | null {
-  // Look backwards from cursor to find @
-  let start = cursorPos - 1
-  while (start >= 0) {
-    const char = content[start]
-    // Found @, check if it's at start or preceded by whitespace
-    if (char === '@') {
-      const precededByWhitespace = start === 0 || /\s/.test(content[start - 1])
-      if (precededByWhitespace) {
-        const mention = content.substring(start + 1, cursorPos)
-        // Only valid if mention contains valid username characters
-        if (/^[a-zA-Z0-9_-]*$/.test(mention)) {
-          return { mention, start, end: cursorPos }
-        }
-      }
-      break
-    }
-    // Stop at whitespace or if we hit an invalid character
-    if (/\s/.test(char)) {
-      break
-    }
-    // Invalid username character - stop searching
-    if (!/[a-zA-Z0-9_]/.test(char)) {
-      break
-    }
-    start--
-  }
-  return null
 }
 
 export function MentionAutocomplete({
