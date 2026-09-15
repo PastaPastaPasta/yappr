@@ -14,6 +14,21 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('DPNS composite cache seeds', () => {
+  it('resolves all aliases for a connection page with one in-query', async () => {
+    query.mockResolvedValue([
+      { records: { identity: '111111111' }, label: 'zeta' },
+      { records: { identity: '111111111' }, label: 'alpha' },
+      { records: { identity: '222222222' }, label: 'bravo' },
+    ]);
+
+    const names = await dpnsService.getAllUsernamesSortedBatch(['111111111', '222222222']);
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0][0].where).toEqual([['records.identity', 'in', ['111111111', '222222222']]]);
+    expect(names.get('111111111')).toEqual(['zeta.dash', 'alpha.dash']);
+    expect(names.get('222222222')).toEqual(['bravo.dash']);
+  });
+
   it('should expire proven absences after five minutes', async () => {
     dpnsService.seedUsernames(new Map([['111111111', null]]));
     expect((await dpnsService.resolveUsernamesBatch(['111111111'])).get('111111111')).toBeNull();

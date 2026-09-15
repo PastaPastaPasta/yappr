@@ -114,6 +114,67 @@ class DpnsService {
   }
 
   /**
+   * Resolve every DPNS name for a set of identities in one bounded query.
+   * Connection lists need aliases for display, so the primary-only
+   * resolveUsernamesBatch helper is not sufficient here. If the shared query
+   * is near the platform's 100-document cap, fall back to the complete per-id
+   * reads rather than returning a partial alias set.
+   */
+  async getAllUsernamesSortedBatch(identityIds: string[]): Promise<Map<string, string[]>> {
+    const uniqueIds = Array.from(new Set(identityIds.filter(Boolean)));
+    const result = new Map<string, string[]>(uniqueIds.map((id) => [id, []]));
+    if (uniqueIds.length === 0) return result;
+
+    try {
+      const sdk = await getEvoSdk();
+      const response = await sdk.documents.query({
+        dataContractId: DPNS_CONTRACT_ID,
+        documentTypeName: DPNS_DOCUMENT_TYPE,
+        where: [['records.identity', 'in', uniqueIds]],
+        orderBy: [['records.identity', 'asc']],
+        limit: 100,
+      });
+      let documents = extractDocuments(response);
+
+      // An `in` query can stop at the shared limit while a single identity has
+      // more aliases. Re-read each identity in that case so callers never see
+      // an incomplete alias list.
+      if (documents.length + uniqueIds.length >= 100) {
+        documents = [];
+        for (const identityId of uniqueIds) {
+          documents.push(...extractDocuments(await sdk.documents.query({
+            dataContractId: DPNS_CONTRACT_ID,
+            documentTypeName: DPNS_DOCUMENT_TYPE,
+            where: [['records.identity', '==', identityId]],
+            orderBy: [['records.identity', 'asc']],
+            limit: 100,
+          })));
+        }
+      }
+
+      for (const doc of documents) {
+        const data = (doc.data || doc) as Record<string, unknown>;
+        const records = data.records as Record<string, unknown> | undefined;
+        const ownerId = identifierToBase58(records?.identity || records?.dashUniqueIdentityId);
+        const label = data.label || data.normalizedLabel;
+        if (!ownerId || typeof label !== 'string') continue;
+        const parent = data.normalizedParentDomainName || 'dash';
+        const names = result.get(ownerId) ?? [];
+        names.push(`${label}.${parent}`);
+        result.set(ownerId, names);
+        this._cacheEntry(`${label}.${parent}`, ownerId);
+      }
+
+      uniqueIds.forEach((id) => result.set(id, sortUsernames(result.get(id) ?? [])));
+      return result;
+    } catch (error) {
+      logger.error('DPNS: Batch alias resolution error:', error);
+      const entries = await Promise.all(uniqueIds.map(async (id) => [id, await this.getAllUsernamesSorted(id)] as const));
+      return new Map(entries);
+    }
+  }
+
+  /**
    * Batch resolve usernames for multiple identity IDs (reverse lookup)
    * Uses 'in' operator for efficient single-query resolution
    * Selects the "best" username for identities with multiple names (contested first, then shortest, then alphabetically)

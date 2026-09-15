@@ -85,22 +85,11 @@ function HashtagPageContent() {
 
           const postIds = Array.from(new Set(hashtagDocs.map(h => h.postId)))
 
-          // Fetch posts and validate ownership
-          fetchedPosts = []
-          for (const postId of postIds) {
-            try {
-              const post = await postService.get(postId)
-              if (post) {
-                // Verify hashtag was created by post owner (security filter)
-                const hashtagDoc = hashtagDocs.find(h => h.postId === postId)
-                if (hashtagDoc && hashtagDoc.$ownerId === post.author.id) {
-                  fetchedPosts.push(post)
-                }
-              }
-            } catch (error) {
-              logger.error('Failed to fetch post:', postId, error)
-            }
-          }
+          // Fetch referenced posts in bounded `$id in [...]` batches, then
+          // retain the ownership check for legacy hashtag documents.
+          const posts = await postService.getPostsByIds(postIds, { skipEnrichment: true })
+          const hashtagOwnerByPostId = new Map(hashtagDocs.map((hashtagDoc) => [hashtagDoc.postId, hashtagDoc.$ownerId]))
+          fetchedPosts = posts.filter((post) => hashtagOwnerByPostId.get(post.id) === post.author.id)
 
           // Sort by creation date (newest first)
           fetchedPosts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())

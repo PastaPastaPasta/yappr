@@ -65,22 +65,11 @@ function MentionsPageContent() {
 
         const postIds = Array.from(new Set(mentionDocs.map(m => m.postId)))
 
-        // Fetch posts and validate ownership
-        const fetchedPosts: Post[] = []
-        for (const postId of postIds) {
-          try {
-            const post = await postService.get(postId)
-            if (post) {
-              // Verify mention was created by post owner (security filter)
-              const mentionDoc = mentionDocs.find(m => m.postId === postId)
-              if (mentionDoc && mentionDoc.$ownerId === post.author.id) {
-                fetchedPosts.push(post)
-              }
-            }
-          } catch (error) {
-            logger.error('Failed to fetch post:', postId, error)
-          }
-        }
+        // Fetch referenced posts in bounded `$id in [...]` batches, then keep
+        // the ownership check that prevents forged mention records surfacing.
+        const posts = await postService.getPostsByIds(postIds, { skipEnrichment: true })
+        const mentionOwnerByPostId = new Map(mentionDocs.map((mention) => [mention.postId, mention.$ownerId]))
+        const fetchedPosts: Post[] = posts.filter((post) => mentionOwnerByPostId.get(post.id) === post.author.id)
 
         // Sort by creation date (newest first)
         fetchedPosts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())

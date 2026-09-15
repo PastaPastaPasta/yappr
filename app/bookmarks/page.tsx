@@ -63,17 +63,16 @@ function BookmarksPage() {
         // Get bookmark documents
         const bookmarkDocs = await bookmarkService.getUserBookmarks(user.identityId)
 
-        // Fetch raw post data for each bookmark (without individual enrichment)
-        const rawPostsWithBookmarkData = await Promise.all(
-          bookmarkDocs.map(async (bookmark) => {
-            const post = await postService.get(bookmark.postId)
-            if (!post) return null
-            return {
-              post,
-              bookmarkedAt: new Date(bookmark.$createdAt)
-            }
-          })
+        // Fetch all referenced posts in bounded `$id in [...]` batches. The
+        // previous loop issued one DAPI read per bookmark before enrichment.
+        const postsById = new Map(
+          (await postService.getPostsByIds(bookmarkDocs.map((bookmark) => bookmark.postId), { skipEnrichment: true }))
+            .map((post) => [post.id, post])
         )
+        const rawPostsWithBookmarkData = bookmarkDocs.map((bookmark) => {
+          const post = postsById.get(bookmark.postId)
+          return post ? { post, bookmarkedAt: new Date(bookmark.$createdAt) } : null
+        })
 
         // Filter out deleted posts
         const validPostsWithData = rawPostsWithBookmarkData.filter(
