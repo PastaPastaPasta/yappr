@@ -497,7 +497,14 @@ function CheckoutPage() {
       if (!privKey) throw new Error('Encryption key not found')
 
       await savedAddressService.removeAddress(user.identityId, id, userEncryptionPubKey, privKey)
-      setSavedAddresses((prev) => prev.filter((a) => a.id !== id))
+      setSavedAddresses((prev) => {
+        const removedDefault = prev.find((address) => address.id === id)?.isDefault
+        const remaining = prev.filter((address) => address.id !== id)
+        // The service promotes the first remaining address when deleting the default.
+        return removedDefault
+          ? remaining.map((address, index) => ({ ...address, isDefault: index === 0 }))
+          : remaining
+      })
 
       // If we deleted the selected address, deselect it
       if (selectedSavedAddressId === id) {
