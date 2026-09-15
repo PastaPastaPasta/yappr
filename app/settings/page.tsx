@@ -332,12 +332,14 @@ function SettingsPage() {
           {Object.entries(notificationSettings).map(([key, value]) => (
             <div key={key} className="flex items-center justify-between">
               <div>
-                <p className="font-medium">{NOTIFICATION_LABELS[key] || key}</p>
-                <p className="text-sm text-gray-500">
+                <label htmlFor={`notification-${key}`} className="block font-medium cursor-pointer">{NOTIFICATION_LABELS[key] || key}</label>
+                <p id={`notification-${key}-description`} className="text-sm text-gray-500">
                   {NOTIFICATION_DESCRIPTIONS[key]}
                 </p>
               </div>
               <SettingsSwitch
+                id={`notification-${key}`}
+                aria-describedby={`notification-${key}-description`}
                 checked={value}
                 onCheckedChange={(checked) =>
                   setNotificationSettings({ [key as keyof typeof notificationSettings]: checked })
@@ -360,10 +362,12 @@ function SettingsPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium">Link Previews</p>
-              <p className="text-sm text-gray-500">Show previews with titles, descriptions, and images for links</p>
+              <label htmlFor="settings-link-previews" className="block font-medium cursor-pointer">Link Previews</label>
+              <p id="settings-link-previews-description" className="text-sm text-gray-500">Show previews with titles, descriptions, and images for links</p>
             </div>
             <SettingsSwitch
+              id="settings-link-previews"
+              aria-describedby="settings-link-previews-description"
               checked={linkPreviewsEnabled}
               onCheckedChange={setLinkPreviewsEnabled}
             />
@@ -394,10 +398,12 @@ function SettingsPage() {
 
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium">Blur Media From People You Don&apos;t Follow</p>
-              <p className="text-sm text-gray-500">Images and link previews from accounts you don&apos;t follow stay hidden behind a blurred placeholder until you tap to reveal them</p>
+              <label htmlFor="settings-media-gate" className="block font-medium cursor-pointer">Blur Media From People You Don&apos;t Follow</label>
+              <p id="settings-media-gate-description" className="text-sm text-gray-500">Images and link previews from accounts you don&apos;t follow stay hidden behind a blurred placeholder until you tap to reveal them</p>
             </div>
             <SettingsSwitch
+              id="settings-media-gate"
+              aria-describedby="settings-media-gate-description"
               checked={gateMediaFromNonFollowed}
               onCheckedChange={setGateMediaFromNonFollowed}
             />
@@ -409,10 +415,12 @@ function SettingsPage() {
         <h3 className="font-semibold mb-4">Direct Messages</h3>
         <div className="flex items-center justify-between">
           <div>
-            <p className="font-medium">Read Receipts</p>
-            <p className="text-sm text-gray-500">Let others see when you&apos;ve read their messages</p>
+            <label htmlFor="settings-read-receipts" className="block font-medium cursor-pointer">Read Receipts</label>
+            <p id="settings-read-receipts-description" className="text-sm text-gray-500">Let others see when you&apos;ve read their messages</p>
           </div>
           <SettingsSwitch
+            id="settings-read-receipts"
+            aria-describedby="settings-read-receipts-description"
             checked={sendReadReceipts}
             onCheckedChange={setSendReadReceipts}
           />
@@ -529,12 +537,14 @@ function SettingsPage() {
         <h3 className="font-semibold mb-4">Performance</h3>
         <div className="flex items-center justify-between">
           <div>
-            <p className="font-medium">Potato Mode</p>
-            <p className="text-sm text-gray-500">
+            <label htmlFor="settings-potato-mode" className="block font-medium cursor-pointer">Potato Mode</label>
+            <p id="settings-potato-mode-description" className="text-sm text-gray-500">
               Disable blur effects and visual flair. Enable this if Yappr feels sluggish on your device.
             </p>
           </div>
           <SettingsSwitch
+            id="settings-potato-mode"
+            aria-describedby="settings-potato-mode-description"
             checked={potatoMode}
             onCheckedChange={setPotatoMode}
           />
