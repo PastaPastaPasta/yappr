@@ -35,6 +35,7 @@ export function StarRatingInput({
       onValueChange={(rating) => onChange(Number(rating))}
       disabled={disabled}
       className="flex gap-1"
+      onKeyDown={() => setHoverRating(0)}
       onMouseLeave={() => setHoverRating(0)}
     >
       {[1, 2, 3, 4, 5].map((star) => (
@@ -42,7 +43,6 @@ export function StarRatingInput({
           key={star}
           value={String(star)}
           aria-label={`${star} ${star === 1 ? 'star' : 'stars'}`}
-          onKeyDown={() => setHoverRating(0)}
           onMouseEnter={() => !disabled && setHoverRating(star)}
           className={`rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 focus-visible:ring-offset-2 transition-transform ${
             disabled
