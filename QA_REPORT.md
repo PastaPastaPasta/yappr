@@ -33,9 +33,19 @@ Updated 2026-09-15. Target: `https://yap.pr/devnet/`, observed build `4105c5d`. 
 | QA-23 | High: wrong-network onboarding | Devnet Create an identity opens the bridge in TESTNET mode. | Include the correct bridge network selector; actual before/head destination labels verified. | [#430](https://github.com/PastaPastaPasta/yappr/pull/430) |
 | QA-24 | Medium: shipping calculation race | A valid address is rejected by immediate Continue, then accepted unchanged after calculation settles. | Wait for calculation and ignore stale address results; valid/unsupported/no-shipping checks and final-head evidence passed. | [#431](https://github.com/PastaPastaPasta/yappr/pull/431) |
 | QA-25 | High: DASH checkout unavailable | A DASH-priced order paid via tdash shows Amount not calculated / Price unavailable. | Preserve1:1 amounts for matching currency/scheme; actual amount and decoded QR payment URI verified. | [#432](https://github.com/PastaPastaPasta/yappr/pull/432) |
-| QA-26 | Medium: checkout accessibility | Shipping/contact inputs and country select lack programmatic label associations. | Independent focused fix in progress. | Pending |
+| QA-26 | Medium: checkout accessibility | Shipping/contact inputs and country select lack programmatic label associations. | Associate all eight shipping/contact inputs and country selector with visible labels; before/head focus/name checks passed. | [#435](https://github.com/PastaPastaPasta/yappr/pull/435) |
 | QA-27 | Medium: settings accessibility | Eleven notification/privacy/performance switches lack accessible names. | Associate visible labels/descriptions; actual names, click/focus, keyboard and persistence checks passed. | [#433](https://github.com/PastaPastaPasta/yappr/pull/433) |
 | QA-28 | Medium: incorrect Following feed | Live persona50 follows nobody; quickly select Following and38public posts persist after18seconds. Refresh correctly empties the feed. | Ignore prior-view loads/background callbacks/polls; exact before/head browser comparison and populated-pagination compatibility passed. | [#434](https://github.com/PastaPastaPasta/yappr/pull/434) |
+| QA-29 | Medium: contacts dialog accessibility | Close icon lacks an accessible name; dialog lacks descriptive context. | Named control, visible tooltip and associated description undergoing final browser checks. | [#436](https://github.com/PastaPastaPasta/yappr/pull/436) |
+| QA-30 | Medium: storage form accessibility | Storacha email and Pinata JWT/gateway labels do not focus/name their inputs. | Associate each visible label with its input; actual before/head click/focus checks passed. | [#437](https://github.com/PastaPastaPasta/yappr/pull/437) |
+| QA-31 | Medium: encryption-key form accessibility | Encryption Private Key label does not focus/name its input. | Associate label and input; actual before/head click/focus checks passed with empty secret field. | [#438](https://github.com/PastaPastaPasta/yappr/pull/438) |
+| QA-32 | Medium: Auth Vault dialog accessibility | Custom overlay lacks modal semantics/focus handling; close/visibility/strength controls lack names. | Dialog/keyboard/label fix undergoing desktop/mobile verification. | Pending |
+| QA-33 | Medium: pagination loses reading position | Top Load More clears existing cards and jumps from scrolled position to top before rendering next batch. | Incremental-load preservation fix under validation. | Pending |
+| QA-34 | Medium: truncated hashtag history | Latest shows50posts and offers no continuation, while Top exposes older matching posts absent from Latest. | Separate pagination fix queued; do not treat50loaded posts as proved total. | Pending |
+| QA-35 | Low: username search mismatch | Sidebar resolves alice7 but returns no user for displayed-style @alice7. | Prefix normalization fix queued. | Pending |
+| QA-36 | Medium: misleading content-search result | Explore search reports no matches for known matching older public post because only latest100posts are scanned. | Scope/result handling needs separate fix. | Pending |
+| QA-37 | Low: unsupported tip-message input | Profile tip accepts a message, but only post tips publish messages; credit transfer succeeds. | Suppress unsupported message entry for profile tips and explain supported behavior; separate fix under validation. | Pending |
+| QA-38 | Medium: overlapping onboarding dialogs | Fresh login opens username registration and Auth Vault setup simultaneously. | Queue username modal until backup modal closes; new unnamed-fixture comparison underway. | Pending |
 
 Severity here describes practical impact, not a security vulnerability rating. No confirmed P0 data-loss defect remains from the original audit.
 
@@ -99,7 +109,7 @@ The inventory was derived from 38 route pages plus the dialogs/settings they exp
 
 | Story | Surface | Current evidence / remaining work |
 |---|---|---|
-| Browse public posts without an account | Home, Explore | Populated live reads observed; sort/pagination coverage incomplete. |
+| Browse public posts without an account | Home, Explore | Live Recent pagination118unique posts in descending timestamp; Top100unique nonincreasing like counts passed. Top Load More exposed QA-33. Explore Trending/Top20/Creators/Blogs and user keyboard navigation passed. |
 | Browse following feed | Feed | Persona48 follows49: real QA post appears in fresh Following feed. Block removes target, unblock restores target; relationship restored absent. Rapid tab switch separately exposes QA-28 contamination, so overall feed correctness remains open. |
 | Search users, hashtags and content | Search | Entry/results surfaces observed; empty, repeated, pagination and special-character cases remaining. |
 | Browse a hashtag | Hashtag | Missing-context guidance inspected; populated pagination remaining. |
