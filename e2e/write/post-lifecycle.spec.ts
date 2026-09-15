@@ -151,7 +151,7 @@ test.describe('post lifecycle on the real testnet', () => {
     await expect(likeButton).toHaveAttribute('aria-pressed', 'false')
   })
 
-  test('a reply to the post renders', async ({ page }) => {
+  test('a reply to the post renders with its resolved parent author', async ({ page, bot }) => {
     // Budget: 60s to load the post, a 120s broadcast wait, then up to 5x15s of
     // reloading read-back polls.
     test.setTimeout(360_000)
@@ -160,6 +160,11 @@ test.describe('post lifecycle on the real testnet', () => {
 
     await page.goto(appUrl(`/post?id=${postId}`))
     await expect(page.getByTestId(`post-card-${postId}`)).toBeVisible({ timeout: 60_000 })
+    const parentAuthor = page.getByTestId(`post-card-${postId}`)
+      .locator(`a.font-semibold[href*="id=${bot.identityId}"]`)
+    await expect(parentAuthor).toBeVisible()
+    await expect(parentAuthor).not.toHaveText('Unknown User')
+    const expectedAuthor = await parentAuthor.innerText()
 
     await page.getByRole('button', { name: 'Post your reply' }).click()
 
@@ -169,8 +174,16 @@ test.describe('post lifecycle on the real testnet', () => {
     await dialog.getByTestId('compose-submit-btn').click()
     await expect(dialog).toBeHidden({ timeout: 120_000 })
 
-    await reloadUntilVisible(page, appUrl(`/post?id=${postId}`), (p) =>
+    const replyCard = await reloadUntilVisible(page, appUrl(`/post?id=${postId}`), (p) =>
       p.locator('[data-testid^="post-card-"]').filter({ hasText: replyContent })
     )
+    const replyId = (await replyCard.getAttribute('data-testid'))?.replace('post-card-', '')
+    expect(replyId).toBeTruthy()
+
+    // A direct reply-detail load must keep the root's resolved profile, just
+    // like opening the root itself. The old chain path discarded enrichment.
+    await page.goto(appUrl(`/post?id=${replyId}`))
+    await expect(page.getByTestId(`post-card-${postId}`)
+      .locator(`a.font-semibold[href*="id=${bot.identityId}"]`)).toHaveText(expectedAuthor)
   })
 })

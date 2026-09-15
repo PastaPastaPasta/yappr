@@ -383,7 +383,9 @@ export function usePostDetail({
     // Enrich all posts in the chain
     if (chain.length > 0) {
       try {
-        await enrich(chain)
+        // The chain is not in state yet, so the enrichment callback cannot
+        // update it. Install the returned authors and stats with the chain.
+        return await enrich(chain)
       } catch (err) {
         logger.error('usePostDetail: Failed to enrich reply chain:', err)
       }
