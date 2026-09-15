@@ -31,11 +31,11 @@ Updated 2026-09-15. Target: `https://yap.pr/devnet/`, observed build `4105c5d`. 
 | QA-21 | Medium: incorrect commerce amounts | Product/order amounts of0.00000100 DASH display0.0000, hiding their value. | Preserve eight-decimal duff precision in storefront prices. | [#426](https://github.com/PastaPastaPasta/yappr/pull/426) |
 | QA-22 | Medium: incorrect currency defaults | A DASH store opens new product/shipping forms with USD, requiring repeated correction. | Load the store default before creating product/zone forms; preserve edited records and explicit overrides. | [#428](https://github.com/PastaPastaPasta/yappr/pull/428) |
 | QA-23 | High: wrong-network onboarding | Devnet Create an identity opens the bridge in TESTNET mode. | Include the correct bridge network selector; actual before/head destination labels verified. | [#430](https://github.com/PastaPastaPasta/yappr/pull/430) |
-| QA-24 | Medium: shipping calculation race | A valid address is rejected by immediate Continue, then accepted unchanged after calculation settles. | Pending-state/cancellation fix undergoing actual browser comparison. | Pending |
-| QA-25 | High: DASH checkout unavailable | A DASH-priced order paid via tdash shows Amount not calculated / Price unavailable. | Preserve1:1 amounts for matching currency/scheme; fix undergoing actual browser comparison. | Pending |
+| QA-24 | Medium: shipping calculation race | A valid address is rejected by immediate Continue, then accepted unchanged after calculation settles. | Wait for calculation and ignore stale address results; valid/unsupported/no-shipping checks and final-head evidence passed. | [#431](https://github.com/PastaPastaPasta/yappr/pull/431) |
+| QA-25 | High: DASH checkout unavailable | A DASH-priced order paid via tdash shows Amount not calculated / Price unavailable. | Preserve1:1 amounts for matching currency/scheme; actual amount and decoded QR payment URI verified. | [#432](https://github.com/PastaPastaPasta/yappr/pull/432) |
 | QA-26 | Medium: checkout accessibility | Shipping/contact inputs and country select lack programmatic label associations. | Independent focused fix in progress. | Pending |
-| QA-27 | Medium: settings accessibility | Eleven notification/privacy/performance switches lack accessible names. | Associate visible labels/descriptions; fix in progress. | Pending |
-| QA-28 | Medium: incorrect Following feed | Live persona50 follows nobody; quickly select Following and38public posts persist after18seconds. Refresh correctly empties the feed. | Ignore stale page/background results from prior feed view; fix in progress. | Pending |
+| QA-27 | Medium: settings accessibility | Eleven notification/privacy/performance switches lack accessible names. | Associate visible labels/descriptions; actual names, click/focus, keyboard and persistence checks passed. | [#433](https://github.com/PastaPastaPasta/yappr/pull/433) |
+| QA-28 | Medium: incorrect Following feed | Live persona50 follows nobody; quickly select Following and38public posts persist after18seconds. Refresh correctly empties the feed. | Ignore prior-view loads/background callbacks/polls; exact before/head browser comparison and populated-pagination compatibility passed. | [#434](https://github.com/PastaPastaPasta/yappr/pull/434) |
 
 Severity here describes practical impact, not a security vulnerability rating. No confirmed P0 data-loss defect remains from the original audit.
 
@@ -57,6 +57,16 @@ The authoritative PR descriptions contain immutable before/after links, exact re
 [Auth Vault password/passkey evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/1a5d5d3d63f714374af57e7a7f25fb840cbca6bd/yappr/qa-20260915-revalidation/auth-vault-persona39) records seven normal-flow checks, including an empty browser-context password sign-in and virtual-authenticator passkey sign-in. The virtual authenticator is disclosed; this is not a physical-device compatibility claim.
 
 [Private-feed lifecycle evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/1bab1e9cef3b764c3d744e8722c1614740fafc01/yappr/qa-20260915-revalidation/private-feed-36-37) records enable, publish, request, approve, fresh approved readback, normal revocation and a locked future post. Three visible state inconsistencies are documented separately from the successful lifecycle; no access-bypass test was performed.
+
+[Follow/block/NSFW preference evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/e5be1e6d863560a920bb3732258626989419d9cb/yappr/qa-20260915-revalidation/follow-block-nsfw-48-49) records live target-specific behavior and explicitly separates the feed-tab race.
+
+[Token purchase and tip evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/396a30e3aa043f85ee53a22c871e8df32b7942a5/yappr/qa-20260915-revalidation/token-tip-51-52) records actual devnet purchases/transfers and independent balance readback.
+
+[Fresh onboarding evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/f4d8acd44ae8bcc04ba1e89ceebec133ff5329a0/yappr/qa-20260915-revalidation/onboarding) explicitly distinguishes the stalled bridge flow from SDK recovery and successful Yappr key-login/DPNS/profile UI.
+
+[Blog lifecycle evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/8ed103d45efdddf851ab770f4a99816832cb53c9/yappr/qa-20260915-revalidation/blog-44-45) records creation, settings, publication/edit/theme persistence, draft restoration, and cross-account comments/deletion.
+
+[Commerce lifecycle evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/ea7211ba6165500a47a95690b3828d023056b0e7/yappr/qa-20260915-revalidation/commerce-40-41) records seller/buyer state checks, simulated fulfillment and review; no actual commerce payment or shipment.
 
 [Appearance and notification evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/204a49f868720375af2c7975771a73f1a0df4dc7/yappr/qa-20260915-revalidation/settings-notifications) records four appearance assertions and actual reply-notification/filter/read-state/navigation checks.
 
@@ -97,17 +107,17 @@ The inventory was derived from 38 route pages plus the dialogs/settings they exp
 | Open a post and its thread | Post | Current root/reply publication and fresh readback passed; direct reply context revealed QA-15, fixed in #422. |
 | View engagement lists | Post engagements | Route visited; consistency after writes remaining. |
 | Discover and view profiles | User | Seeded profile reads observed; missing/invalid/deleted identity permutations remaining. |
-| Create a new funded identity | Login/create-account flow | Entry UI inspected. New identity funding/registration ceremony not certified. |
+| Create a new funded identity | Login/create-account flow | Actual bridge creation/funding reached an InstantSend timeout, then stalled on ChainLock fallback despite confirmed transaction. Supported SDK recovery registered the same fresh fixture. This is not a bridge success or proof of a Platform defect. |
 | Restore a session with an authentication key | Login/session | Revalidated with current seeded identities and fresh browser contexts. |
 | Sign in via external wallet QR | Login | Entry UI inspected; real external-wallet ceremony remaining. |
 | Enroll and sign in with a passkey | Login/settings | Persona39 enrollment, logout, passkey sign-in and reload passed with Chromium virtual WebAuthn/PRF. Physical-device and external-wallet ceremonies remain separate. |
 | Add password unlock and sign in | Login/settings | Persona39 actual password enrollment, logout/password sign-in, empty-context password sign-in and reload passed. No preseeded session/private key was used for fresh sign-in. |
 | Recover/replace a missing key | Settings | Recovery entry visible; recovery workflow remaining. |
-| Finish first-run onboarding | Welcome | Surface inspected; fresh-account completion remaining. |
+| Finish first-run onboarding | Welcome | Fresh identity actual key login, DPNS registration and profile creation passed; SDK and guest readback confirmed persisted values. Simultaneous username/vault dialogs are being investigated. |
 | Create/edit a profile | Profile create/settings | Bio-only edit failed on two current identities; confirmed QA-14 serialization issue. Fixed by #421; live UI save and fresh chain readback passed, then original raw contract fields restored. |
 | Choose avatar/banner and social links | Profile settings | Surface inventoried; media upload/save/readback remaining. |
 | Add a profile payment destination | Profile payment input | Malformed Dash validation addressed by #410; on-chain transfer not exercised. |
-| Register/manage a DPNS username | DPNS register | Entry surface inspected; paid registration/conflict/readback remaining. |
+| Register/manage a DPNS username | DPNS register | Fresh qa-new-9511058113.dash registration completed in actual UI; independent SDK resolves GXcWeXmgQCNqKiVmwZfbwo5szhdhgEhnPvUTVHAyi1Yk. Conflict/multiple-name management branches remain. |
 | Compose a public post | Composer | Revalidated with persona30: post creation success toast, modal closes, and an independent session displays saved post `9mcdDNznWP86bScjmMykF1kzNpecneoFoZVVNAB5qCFd`. |
 | Reply and compose a thread | Composer/post | Persona33 reply publication/readback and persona42 three-part thread publication/readback passed. Direct part3 detail shows root+part3 by current flat-context design; reduced ancestry is a UX concern, not a confirmed missing-data defect. |
 | Attach media to a post | Composer/storage | Upload/provider flows remaining. |
@@ -119,9 +129,13 @@ The inventory was derived from 38 route pages plus the dialogs/settings they exp
 | Follow/unfollow another identity | Profile/connection lists | Persona33 follow/unfollow passed, with both fresh own/target lists and independent SDK records checked; initial relationship restored. |
 | View own followers/following | Connection lists | Authenticated no-id default intentional; preserve in QA-08. |
 | View another user's followers/following | Connection lists | Explicit-id route supported; guest missing-context recovery fixed in #415. |
-| Block/unblock and consume trusted block lists | Privacy & Security | Persona48 blocks49 through post menu; fresh profile/blocked-users settings reflect block, target absent from Following. Settings unblock restores target in fresh feed. Trusted-list propagation remains. |
+| Block/unblock and consume trusted block lists | Privacy & Security | Persona48 blocks49 through post menu; fresh profile/blocked-users settings reflect block, target absent from Following. Settings unblock restores target in fresh feed. Trusted-list cycle also passed:49blocks50,48trusts49, fresh Following hides50 while49remains; disabling trust restores50. All added relationships restored. |
 | Read/mark/filter notifications | Notifications/settings | Persona30 received persona33 reply notification; Replies filter, mark-all-read persistence after reload, and click-through to persisted reply passed. Other event types/mobile filtering remain. |
 | Choose NSFW content preferences | Composer/privacy/post/feed | Persona49 published harmless flagged text. Persona48 warning/reveal, reload resetting reveal, Always show persistence, Hide persistence, list exclusion and gated direct detail passed. Warn first and follow relationship restored. Initial direct click on a hidden radio was a test selector error; clicking its visible label worked. |
+| Buy YAPP | Purchase dialog | Persona51 actual100-YAPP purchase passed: minimum99 rejected, critical key requested after HIGH-key login, independent token balance570→670. |
+| Tip another user | Profile tip | Persona51→52 actual0.001devnet-DASH transfer passed; independent receiver credits increased100,000,000. Below-minimum amount rejected. Optional-message behavior being investigated separately. |
+| Import DashPay contacts | Contacts | Actual empty discovery opens and reports no contacts. Populated import requires a dedicated wallet/contact fixture. |
+| Connect storage provider | Storage | Actual provider prerequisites and empty-submit validation observed. No email/credential/billing request sent; real upload coverage requires a dedicated QA provider fixture. |
 | Enter encryption key | Privacy & Security | Personas36/37 normal encryption-key entry passed as part of private-feed lifecycle; populated secret inputs were excluded from captures. |
 | Enable and publish a private feed | Private Feed | Persona36 enabled a feed, published a private QA post, and owner readback passed. |
 | Request/approve/revoke private-feed access | Private Feed/profile | Persona37 requested, persona36 approved, fresh recipient decrypted. Normal revocation rotated epoch, removed request/grant and locked a future post in retained recipient session. Reply-control/dashboard UI inconsistencies are being isolated separately. |
