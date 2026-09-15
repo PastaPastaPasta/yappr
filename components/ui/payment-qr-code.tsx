@@ -159,7 +159,7 @@ export function PaymentQRCode({
                 <p className="text-lg font-semibold">
                   Send: {formatCryptoAmount(cryptoAmount, paymentUri.scheme)} {cryptoSymbol}
                 </p>
-                <p className="text-sm text-gray-500">
+                {orderCurrency?.toUpperCase() !== cryptoSymbol && <p className="text-sm text-gray-500">
                   (~{(() => {
                     try {
                       return new Intl.NumberFormat('en-US', { style: 'currency', currency: orderCurrency || 'USD' }).format(cryptoPrice)
@@ -167,7 +167,7 @@ export function PaymentQRCode({
                       return `${cryptoPrice.toFixed(2)} ${orderCurrency || 'USD'}`
                     }
                   })()} per {cryptoSymbol})
-                </p>
+                </p>}
               </div>
               {priceSources.length > 0 && (
                 <div className="flex items-center justify-center gap-1 text-xs text-gray-400">

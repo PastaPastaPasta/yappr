@@ -110,6 +110,11 @@ class CryptoPriceService {
    * @param skipCache - If true, bypass the cache and fetch fresh prices
    */
   async getPrice(scheme: string, fiatCurrency: string, skipCache = false): Promise<PriceResult | null> {
+    const symbol = SCHEME_TO_IDS[this.normalizeScheme(scheme)]?.cryptocompare
+    if (symbol && symbol === fiatCurrency.toUpperCase()) {
+      return { price: 1, sources: [], timestamp: Date.now() }
+    }
+
     const cacheKey = this.getCacheKey(scheme, fiatCurrency)
 
     // Check cache first (unless skipCache is true)
