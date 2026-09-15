@@ -32,10 +32,12 @@ export function StarRatingInput({
       aria-label="Rating"
       orientation="horizontal"
       value={value === 0 ? '' : String(value)}
-      onValueChange={(rating) => onChange(Number(rating))}
+      onValueChange={(rating) => {
+        setHoverRating(0)
+        onChange(Number(rating))
+      }}
       disabled={disabled}
       className="flex gap-1"
-      onKeyDown={() => setHoverRating(0)}
       onMouseLeave={() => setHoverRating(0)}
     >
       {[1, 2, 3, 4, 5].map((star) => (
