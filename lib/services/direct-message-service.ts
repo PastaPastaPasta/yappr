@@ -354,19 +354,18 @@ class DirectMessageService {
   }
 
   /**
-   * Poll for new messages - queries only messages newer than sinceTimestamp
-   * Returns only the NEW messages (already decrypted)
+   * Continue after a server-read document. A document cursor also includes
+   * messages sharing a block timestamp and is independent of the device clock.
    */
   async pollNewMessages(
     conversationId: string,
-    sinceTimestamp: number,
+    startAfter: string | undefined,
     userId: string,
     participantId: string
-  ): Promise<DirectMessage[]> {
+  ): Promise<{ messages: DirectMessage[]; cursor?: string }> {
     try {
-      // Query only messages newer than sinceTimestamp (uses index efficiently)
-      const newDocs = await this.getConversationMessagesRaw(conversationId, 100, sinceTimestamp)
-      if (newDocs.length === 0) return []
+      const newDocs = await this.getConversationMessagesRaw(conversationId, 100, startAfter)
+      if (newDocs.length === 0) return { messages: [], cursor: startAfter }
 
       // Decrypt the new messages (public key is cached after first call)
       const messages: DirectMessage[] = []
@@ -378,21 +377,21 @@ class DirectMessageService {
           // Skip failed decryption
         }
       }
-      return messages
+      return { messages, cursor: newDocs.at(-1)?.$id as string | undefined }
     } catch (error) {
       logger.error('Error polling messages:', error)
-      return []
+      return { messages: [], cursor: startAfter }
     }
   }
 
   /**
    * Get raw message documents for a conversation
-   * @param sinceTimestamp - If provided, only fetch messages with $createdAt > sinceTimestamp
+   * @param startAfter - Last server-read document, in ascending creation order.
    */
   private async getConversationMessagesRaw(
     conversationId: string,
     limit: number = 100,
-    sinceTimestamp?: number
+    startAfter?: string
   ): Promise<Record<string, unknown>[]> {
     try {
       const sdk = await getEvoSdk()
@@ -401,18 +400,15 @@ class DirectMessageService {
       const convIdBytes = bs58.decode(conversationId)
       const convIdBase64 = bytesToBase64QueryOperand(convIdBytes)
 
-      // Build where clause - add timestamp filter if provided
       const where: DocumentWhereClause[] = [['conversationId', '==', convIdBase64]]
-      if (sinceTimestamp) {
-        where.push(['$createdAt', '>', sinceTimestamp])
-      }
 
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'directMessage',
         where,
         orderBy: [['$createdAt', 'asc']],
-        limit
+        limit,
+        startAfter,
       })
 
       return this.extractDocuments(response)
