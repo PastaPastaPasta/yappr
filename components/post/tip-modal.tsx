@@ -191,7 +191,7 @@ export function TipModal() {
       post ?? null,
       credits,
       keyToUse,
-      tipMessage.trim() || undefined
+      post ? tipMessage.trim() || undefined : undefined
     )
 
     // Clear sensitive data from input immediately
@@ -320,6 +320,11 @@ export function TipModal() {
                     <p className="text-gray-600 dark:text-gray-400">
                       Send a tip to <span className="font-semibold text-gray-900 dark:text-white">{recipientName}</span>
                     </p>
+                    {!post && (
+                      <p className="text-sm text-gray-500">
+                        Profile tips send credits only. To include a public message, tip a post.
+                      </p>
+                    )}
 
                     {/* Tab Navigation - only show if there are external payment options */}
                     {paymentUris.length > 0 && (
@@ -400,8 +405,8 @@ export function TipModal() {
                           ))}
                         </div>
 
-                        {/* Optional message */}
-                        <div>
+                        {/* Messages are published as replies to the tipped post. */}
+                        {post && <div>
                           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                             Message (optional)
                           </label>
@@ -416,7 +421,7 @@ export function TipModal() {
                           <p className="mt-1 text-xs text-gray-500 text-right">
                             {tipMessage.length}/280
                           </p>
-                        </div>
+                        </div>}
 
                         {/* Transfer key input */}
                         <div>
@@ -519,7 +524,7 @@ export function TipModal() {
                         <span className="text-gray-600 dark:text-gray-400">To</span>
                         <span className="font-medium">{recipientName}</span>
                       </div>
-                      {tipMessage.trim() && (
+                      {post && tipMessage.trim() && (
                         <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
                           <span className="text-gray-600 dark:text-gray-400 text-sm">Message:</span>
                           <p className="text-sm mt-1">{tipMessage}</p>
