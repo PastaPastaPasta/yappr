@@ -24,6 +24,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
+import { TooltipButton } from '@/components/ui/tooltip-button'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useTheme } from 'next-themes'
 import * as RadioGroup from '@radix-ui/react-radio-group'
@@ -761,12 +762,13 @@ function SettingsPage() {
     <PageShell>
         <PageHeader>
           <div className="flex items-center gap-4 px-4 py-3">
-            <button
+            <TooltipButton
+              label="Back"
               onClick={handleBack}
-              className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
+              className="-ml-2 border-0 dark:hover:bg-gray-900"
             >
               <ArrowLeftIcon className="h-5 w-5" />
-            </button>
+            </TooltipButton>
             <h1 className="text-xl font-bold">{getSectionTitle()}</h1>
           </div>
         </PageHeader>
