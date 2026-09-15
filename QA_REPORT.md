@@ -96,3 +96,20 @@ Positive coverage: seeded commerce QA successfully created a store, product, inv
 Further DM verification confirms the loss is deterministic for the first message to a recipient with no prior conversation: the conversation shell is created, but the first message (`first-init-probe`) is absent after 20 seconds in a fresh recipient session. A later message succeeds once both sides have initialized keys, indicating a first-message/key-exchange race. The app still gives no error or retry guidance.
 
 Additional mobile commerce observation: the settings screen visibly renders two stacked bottom-navigation rows (primary five-icon row plus Store/Blog/Profile/Notifications row), consuming roughly 100 px of viewport and creating a cluttered, ambiguous navigation hierarchy.
+
+## Coverage disposition
+
+| Area | Disposition |
+|---|---|
+| Public home/explore/feed/search/hashtag/profile/engagements | Exercised against live seeded corpus; reads and navigation work |
+| Auth/session restoration | Verified with seeded key material; identity recognized and feed loads |
+| Post/like/bookmark writes | Exercised; insufficient-balance errors are hidden and bookmark state is not rolled back |
+| Follow/follower/notifications | Public/read surfaces inspected; authenticated transition needs a dedicated funded run to avoid spending seeded corpus budget |
+| Private feeds/key onboarding | UI/settings inspected; key-management controls absent for current identity |
+| First-message DM and subsequent DM | First message loss reproduced; subsequent initialized-key message succeeds |
+| Store/product/inventory/cart | Store, product, inventory, view, add-to-cart and cart persistence verified |
+| Checkout/order/review | Seller self-cart reached checkout; cross-identity payment/order transition remains unverified |
+| Blog create/discovery | Blog creation and My Blogs persistence verified; dialog accessibility warning reproduced |
+| DPNS/identity creation/passkey/wallet QR | Entry surfaces inspected; creating a new funded identity and external wallet/passkey ceremony require hardware/external funding and were not fabricated as passes |
+
+The report deliberately distinguishes verified behavior from unverified flows requiring an external wallet ceremony or additional funded identities.
