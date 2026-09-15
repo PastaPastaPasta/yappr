@@ -26,7 +26,7 @@ class CartService {
   /**
    * Load cart from localStorage
    */
-  private loadCart(): void {
+  private loadCart(): Cart {
     try {
       const stored = localStorage.getItem(CART_STORAGE_KEY);
       if (stored) {
@@ -42,6 +42,7 @@ class CartService {
       logger.error('Failed to load cart from localStorage');
       this.cart = { items: [], updatedAt: new Date() };
     }
+    return this.cart;
   }
 
   /**
@@ -88,10 +89,7 @@ class CartService {
    * Get current cart
    */
   getCart(): Cart {
-    if (!this.cart) {
-      this.loadCart();
-    }
-    return this.cart!;
+    return this.cart ?? this.loadCart();
   }
 
   /**

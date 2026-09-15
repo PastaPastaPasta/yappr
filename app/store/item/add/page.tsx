@@ -16,13 +16,13 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
-import { useSettingsStore } from '@/lib/store'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { getCurrencyStep, toSmallestUnit, fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
 import type { VariantAxis, VariantCombination, ItemVariants } from '@/lib/types'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 
 function AddItemPage() {
   const router = useRouter()
@@ -32,7 +32,6 @@ function AddItemPage() {
   const isEditMode = !!itemId
   const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const [isLoading, setIsLoading] = useState(isEditMode)
   const [title, setTitle] = useState('')
@@ -237,12 +236,8 @@ function AddItemPage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <PageShell>
+          <PageHeader>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => router.back()}
@@ -252,7 +247,7 @@ function AddItemPage() {
               </button>
               <h1 className="text-xl font-bold">{isEditMode ? 'Edit Product' : 'Add Product'}</h1>
             </div>
-          </header>
+          </PageHeader>
 
           {isLoading ? (
             <div className="flex items-center justify-center py-20">
@@ -572,11 +567,7 @@ function AddItemPage() {
             </div>
           </form>
           )}
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 

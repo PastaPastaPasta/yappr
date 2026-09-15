@@ -153,7 +153,7 @@ export function hasStorachaCredentials(identityId: string): boolean {
   const hasEmail = has(`email_${identityId}`)
   const hasAgent = has(`agent_${identityId}`)
   const hasSpace = has(`space_${identityId}`)
-  logger.info('[Storacha Storage] hasCredentials check:', { identityId, hasEmail, hasAgent, hasSpace })
+  logger.debug('[Storacha Storage] hasCredentials check:', { identityId, hasEmail, hasAgent, hasSpace })
   return hasEmail && hasAgent && hasSpace
 }
 
@@ -176,11 +176,11 @@ export function getStorachaCredentials(identityId: string): StorachaCredentials 
  * Store all Storacha credentials for an identity
  */
 export function storeStorachaCredentials(identityId: string, credentials: StorachaCredentials): void {
-  logger.info('[Storacha Storage] Storing credentials for identity:', identityId)
+  logger.debug('[Storacha Storage] Storing credentials for identity:', identityId)
   storeStorachaEmail(identityId, credentials.email)
   storeStorachaAgent(identityId, credentials.agentData)
   storeStorachaSpace(identityId, credentials.spaceDid)
-  logger.info('[Storacha Storage] Credentials stored successfully')
+  logger.debug('[Storacha Storage] Credentials stored successfully')
 }
 
 /**
@@ -190,27 +190,4 @@ export function clearStorachaCredentials(identityId: string): void {
   remove(`email_${identityId}`)
   remove(`agent_${identityId}`)
   remove(`space_${identityId}`)
-}
-
-/**
- * Clear all Storacha credentials (for all identities)
- */
-export function clearAllStorachaCredentials(): void {
-  if (!isStorageAvailable()) return
-
-  const clearFromStorage = (storage: Storage) => {
-    const keysToRemove: string[] = []
-    for (let i = 0; i < storage.length; i++) {
-      const key = storage.key(i)
-      if (key?.startsWith(PREFIX)) {
-        keysToRemove.push(key)
-      }
-    }
-    for (const key of keysToRemove) {
-      storage.removeItem(key)
-    }
-  }
-
-  clearFromStorage(localStorage)
-  clearFromStorage(sessionStorage)
 }

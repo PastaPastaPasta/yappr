@@ -7,6 +7,11 @@ import { useRelativeTime } from '@/hooks/use-relative-time'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { PostContent } from './post-content'
 import { PrivateQuotedPostContent, isQuotedPostPrivate } from './private-quoted-post-content'
+import { SensitiveContentGate } from './sensitive-content-gate'
+import { shouldGateSensitive } from '@/lib/sensitive-content'
+import { targetKindOf } from '@/lib/contract-topology'
+import { useSettingsStore } from '@/lib/store'
+import { useMediaGate } from '@/hooks/use-media-gate'
 
 export interface EmbeddedPostCardProps {
   post: Post
@@ -20,10 +25,18 @@ export interface EmbeddedPostSkeletonProps {
 const EMBED_CONTAINER_CLASS = 'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer'
 
 export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps) {
-  const createdAtLabel = useRelativeTime(post.createdAt)
+  const createdAtLabel = useRelativeTime(post.createdAt, { compact: true })
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
+  // Quoted authors have no enrichment hint here; the shared follow cache and
+  // own-post check still lift the gate, otherwise media is click-to-reveal.
+  const mediaGate = useMediaGate(post.author.id)
   if (isQuotedPostPrivate(post)) {
     return <PrivateQuotedPostContent quotedPost={post} className={className} />
   }
+
+  // A quote of a sensitive post gates the inner content independently of the
+  // quoting card — the mini author row stays visible, the content does not.
+  const gateSensitive = shouldGateSensitive(post, sensitiveContentMode)
 
   return (
     <Link
@@ -46,8 +59,30 @@ export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps
         <span>·</span>
         <span>{createdAtLabel}</span>
       </div>
-      <PostContent content={post.content} className="mt-1 text-sm" disableInternalPostEmbed />
+      {post.deleted ? (
+        // A tombstone has no content left, so say so instead of rendering a blank box.
+        <p className="mt-1 text-sm italic text-gray-500 dark:text-gray-400">
+          {targetKindOf(post) === 'reply' ? 'This reply was deleted.' : 'This post was deleted.'}
+        </p>
+      ) : (
+        <SensitiveContentGate postId={post.id} active={gateSensitive} variant="embedded">
+          <PostContent content={post.content} className="mt-1 text-sm" disableInternalPostEmbed mediaGate={mediaGate} />
+        </SensitiveContentGate>
+      )}
     </Link>
+  )
+}
+
+/**
+ * Shown when a quote's target could not be loaded (deleted, or the lookup
+ * failed) — an explicit terminal state instead of a skeleton that never
+ * resolves.
+ */
+export function EmbeddedPostUnavailable({ className = '' }: EmbeddedPostSkeletonProps) {
+  return (
+    <div className={cn('mt-3 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm text-gray-500', className)}>
+      This post is unavailable
+    </div>
   )
 }
 

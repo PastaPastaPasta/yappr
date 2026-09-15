@@ -6,11 +6,12 @@ import { SdkProvider } from '@/contexts/sdk-context'
 import { UsernameModalProvider } from '@/components/dpns/username-modal-provider'
 import { KeyBackupModal } from '@/components/auth/key-backup-modal'
 import { TipModal } from '@/components/post/tip-modal'
-import { HashtagRecoveryModal } from '@/components/post/hashtag-recovery-modal'
-import { MentionRecoveryModal } from '@/components/post/mention-recovery-modal'
+import { RecoveryModal } from '@/components/post/recovery-modal'
 import { DeleteConfirmationModal } from '@/components/post/delete-confirmation-modal'
 import { DashPayContactsModal } from '@/components/contacts/dashpay-contacts-modal'
 import { EncryptionKeyModal } from '@/components/auth/encryption-key-modal'
+import { BuyYappModal } from '@/components/token/buy-yapp-modal'
+import { QueryInspectorGate } from '@/components/query-inspector/inspector-gate'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -26,11 +27,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <UsernameModalProvider />
           <KeyBackupModal />
           <TipModal />
-          <HashtagRecoveryModal />
-          <MentionRecoveryModal />
+          <BuyYappModal />
+          <RecoveryModal />
           <DeleteConfirmationModal />
           <DashPayContactsModal />
           <EncryptionKeyModal />
+          <QueryInspectorGate />
         </AuthProvider>
       </SdkProvider>
     </ThemeProvider>

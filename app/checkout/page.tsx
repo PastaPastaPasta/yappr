@@ -4,8 +4,7 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -18,7 +17,6 @@ import {
 } from '@/components/checkout'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
-import { useSettingsStore } from '@/lib/store'
 import { cartService } from '@/lib/services/cart-service'
 import { storeService } from '@/lib/services/store-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
@@ -30,41 +28,20 @@ import { savedAddressService } from '@/lib/services/saved-address-service'
 import { hasEncryptionKey, getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingZone, StorePolicy, SavedAddress } from '@/lib/types'
+import { normalizeBytes } from '@/lib/bytes'
 
 /**
- * Normalize key data from various formats to Uint8Array
+ * The seller's encryption public key as bytes, or null if the identity key
+ * data does not decode to a secp256k1 point (33-byte compressed or 65-byte
+ * uncompressed).
  */
 function normalizeKeyData(data: unknown): Uint8Array | null {
-  if (!data) return null
-  if (data instanceof Uint8Array) return data
-  if (Array.isArray(data)) return new Uint8Array(data)
-  if (typeof data === 'string') {
-    const isValidSecpPublicKey = (bytes: Uint8Array) =>
-      (bytes.length === 33 && (bytes[0] === 0x02 || bytes[0] === 0x03)) ||
-      (bytes.length === 65 && bytes[0] === 0x04)
-
-    // Hex (common for stored keys)
-    if (/^[0-9a-fA-F]+$/.test(data) && (data.length === 66 || data.length === 130)) {
-      const bytes = new Uint8Array(data.length / 2)
-      for (let i = 0; i < bytes.length; i++) {
-        const byte = parseInt(data.substr(i * 2, 2), 16)
-        if (Number.isNaN(byte)) return null
-        bytes[i] = byte
-      }
-      if (isValidSecpPublicKey(bytes)) return bytes
-    }
-
-    // Base64
-    try {
-      const binaryString = atob(data)
-      const bytes = Uint8Array.from(binaryString, (c) => c.charCodeAt(0))
-      if (isValidSecpPublicKey(bytes)) return bytes
-      return null
-    } catch {
-      return null
-    }
-  }
-  return null
+  const bytes = normalizeBytes(data)
+  if (!bytes) return null
+  const isSecpPoint =
+    (bytes.length === 33 && (bytes[0] === 0x02 || bytes[0] === 0x03)) ||
+    (bytes.length === 65 && bytes[0] === 0x04)
+  return isSecpPoint ? bytes : null
 }
 
 type CheckoutReadinessBlocker =
@@ -102,7 +79,6 @@ function CheckoutPage() {
   const storeId = searchParams.get('storeId')
   const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
 
   const [store, setStore] = useState<Store | null>(null)
@@ -683,24 +659,15 @@ function CheckoutPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
-        <Sidebar />
-        <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
+      <PageShell mainClassName="flex items-center justify-center">
             <Spinner size="md" />
-          </main>
-        </div>
-        <RightSidebar />
-      </div>
+      </PageShell>
     )
   }
 
   if (orderCreated) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
-        <Sidebar />
-        <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800 flex flex-col items-center justify-center p-8">
+      <PageShell mainClassName="flex flex-col items-center justify-center p-8">
             <CheckCircleIcon className="h-20 w-20 text-green-500 mb-4" />
             <h1 className="text-2xl font-bold mb-2">Order Placed!</h1>
             <p className="text-gray-500 text-center max-w-sm mb-6">
@@ -714,20 +681,14 @@ function CheckoutPage() {
                 Continue Shopping
               </Button>
             </div>
-          </main>
-        </div>
-        <RightSidebar />
-      </div>
+      </PageShell>
     )
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <>
+    <PageShell>
+          <PageHeader>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => {
@@ -785,7 +746,7 @@ function CheckoutPage() {
                 )
               })}
             </div>
-          </header>
+          </PageHeader>
 
           {error && (
             <div className="m-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-300 text-sm">
@@ -932,10 +893,7 @@ function CheckoutPage() {
               </div>
             </div>
           )}
-        </main>
-      </div>
-
-      <RightSidebar />
+    </PageShell>
 
       {/* Saved Address Management Modal */}
       <SavedAddressModal
@@ -947,7 +905,7 @@ function CheckoutPage() {
         onDelete={handleDeleteAddressFromModal}
         onSetDefault={handleSetDefaultFromModal}
       />
-    </div>
+    </>
   )
 }
 

@@ -29,7 +29,7 @@ interface KeyRegistrationFlowProps {
  *
  * States:
  * - building: Spinner while building transition
- * - waiting: QR code with countdown
+ * - waiting: QR code
  * - verifying: Brief "Checking keys..." message
  * - complete: Success checkmark
  * - error: Error message with retry button
@@ -45,7 +45,6 @@ export function KeyRegistrationFlow({
   const {
     state,
     uri,
-    remainingTime,
     error,
     start,
     cancel,
@@ -91,17 +90,11 @@ export function KeyRegistrationFlow({
             {/* Explanation */}
             <p className="text-sm text-gray-600 dark:text-gray-400 text-center max-w-xs">
               Your login keys need to be added to your identity.
-              Scan this QR code with Dash Evo Tool to complete setup.
+              Approve this request with your Dash wallet to complete setup.
             </p>
 
             {/* QR Code */}
-            {uri && (
-              <KeyExchangeQR
-                uri={uri}
-                size={200}
-                remainingTime={remainingTime}
-              />
-            )}
+            {uri && <KeyExchangeQR uri={uri} size={200} />}
 
             {/* Key info */}
             <div className="bg-gray-50 dark:bg-neutral-800 rounded-lg p-3 w-full">

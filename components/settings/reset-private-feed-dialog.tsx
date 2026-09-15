@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { motion, AnimatePresence } from 'framer-motion'
+import { Modal, ModalTitle } from '@/components/ui/modal'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -137,25 +137,7 @@ export function ResetPrivateFeedDialog({
   const isValid = confirmText === 'RESET' && encryptionKeyInput.trim().length >= 50
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <AnimatePresence>
-        {open && (
-          <Dialog.Portal forceMount>
-            <Dialog.Overlay asChild>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
-              >
-                <Dialog.Content asChild>
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[500px] max-w-[90vw] shadow-xl relative max-h-[90vh] overflow-y-auto"
-                    onClick={(e) => e.stopPropagation()}
-                  >
+    <Modal open={open} onOpenChange={onOpenChange} className="w-[500px] max-w-[90vw] max-h-[90vh] overflow-y-auto">
                     {/* Close button */}
                     <button
                       onClick={() => onOpenChange(false)}
@@ -167,10 +149,10 @@ export function ResetPrivateFeedDialog({
                     </button>
 
                     {/* Header */}
-                    <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2 text-red-600 dark:text-red-400">
+                    <ModalTitle className="text-red-600 dark:text-red-400">
                       <ExclamationTriangleIcon className="h-6 w-6" />
                       Reset Private Feed
-                    </Dialog.Title>
+                    </ModalTitle>
 
                     <Dialog.Description className="text-sm text-gray-600 dark:text-gray-400 mb-4">
                       This action cannot be undone. Your private feed will be completely reset.
@@ -281,13 +263,6 @@ export function ResetPrivateFeedDialog({
                         )}
                       </Button>
                     </div>
-                  </motion.div>
-                </Dialog.Content>
-              </motion.div>
-            </Dialog.Overlay>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
-    </Dialog.Root>
+    </Modal>
   )
 }

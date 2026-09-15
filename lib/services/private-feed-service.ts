@@ -32,10 +32,12 @@ import {
 import { privateFeedKeyStore } from './private-feed-key-store';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
+import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys';
+import { getPublicKey } from '@/lib/crypto/keys';
 import { queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
+import { bytesEqual, normalizeBytes, requireBytes } from '@/lib/bytes';
 import { identityService } from './identity-service';
-import { parsePublicKeyData } from '../crypto/key-validation';
 
 /**
  * PrivateFeedState document from platform
@@ -63,31 +65,10 @@ export interface PrivateFeedRekeyDocument {
 }
 
 /**
- * Result of creating a private post
- */
-export interface PrivatePostResult {
-  success: boolean;
-  postId?: string;
-  error?: string;
-}
-
-/**
  * Convert string to UTF-8 bytes
  */
 function utf8Encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
-}
-
-/**
- * Convert base64 to Uint8Array
- */
-function fromBase64(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
 }
 
 class PrivateFeedService {
@@ -135,7 +116,7 @@ class PrivateFeedService {
         $createdAt: doc.$createdAt as number,
         treeCapacity: doc.treeCapacity as number,
         maxEpoch: doc.maxEpoch as number,
-        encryptedSeed: this.normalizeBytes(doc.encryptedSeed),
+        encryptedSeed: requireBytes(doc.encryptedSeed, 'encryptedSeed'),
       };
     } catch (error) {
       logger.error('Error fetching private feed state:', error);
@@ -194,8 +175,8 @@ class PrivateFeedService {
           $createdAt: doc.$createdAt as number,
           epoch: doc.epoch as number,
           revokedLeaf: doc.revokedLeaf as number,
-          packets: this.normalizeBytes(doc.packets),
-          encryptedCEK: this.normalizeBytes(doc.encryptedCEK),
+          packets: requireBytes(doc.packets, 'packets'),
+          encryptedCEK: requireBytes(doc.encryptedCEK, 'encryptedCEK'),
         }),
         { maxResults: 2000 } // SPEC allows up to 2000 epochs
       );
@@ -233,7 +214,7 @@ class PrivateFeedService {
       }
 
       // 2. Derive public key and verify it matches the identity's registered encryption key
-      const encryptionPubKey = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
+      const encryptionPubKey = getPublicKey(encryptionPrivateKey);
 
       // Verify the derived public key is registered on the identity
       const identity = await identityService.getIdentity(ownerId);
@@ -241,20 +222,17 @@ class PrivateFeedService {
         return { success: false, error: 'Could not fetch identity' };
       }
 
-      const derivedPubKeyHex = Buffer.from(encryptionPubKey).toString('hex');
+      const matchesDerived = (data: unknown) => {
+        const onChainPubKey = normalizeBytes(data);
+        return onChainPubKey !== null && bytesEqual(onChainPubKey, encryptionPubKey);
+      };
       // Find the identity's encryption key
       const preferredKey = findEncryptionKey(identity.publicKeys);
-      const matchesPreferred = preferredKey?.data
-        ? Buffer.from(parsePublicKeyData(preferredKey.data) ?? new Uint8Array()).toString('hex') === derivedPubKeyHex
-        : false;
-      const matchingKey = matchesPreferred
+      const matchingKey = preferredKey?.data && matchesDerived(preferredKey.data)
         ? preferredKey
-        : identity.publicKeys.find(key => {
-            if (key.purpose !== 1 || key.type !== 0 || key.disabledAt) return false;
-            const onChainPubKey = parsePublicKeyData(key.data);
-            if (!onChainPubKey) return false;
-            return Buffer.from(onChainPubKey).toString('hex') === derivedPubKeyHex;
-          });
+        : identity.publicKeys.find(key =>
+            key.purpose === KeyPurpose.ENCRYPTION && key.type === KeyType.ECDSA_SECP256K1 && !key.disabledAt && matchesDerived(key.data)
+          );
 
       if (!matchingKey) {
         return {
@@ -295,7 +273,7 @@ class PrivateFeedService {
         encryptedSeed,
       };
 
-      logger.info('Creating PrivateFeedState document:', {
+      logger.debug('Creating PrivateFeedState document:', {
         treeCapacity: TREE_CAPACITY,
         maxEpoch: MAX_EPOCH,
         encryptedSeedLength: encryptedSeed.length,
@@ -318,7 +296,7 @@ class PrivateFeedService {
       // Store CEK[1] for immediate use
       privateFeedKeyStore.storeCachedCEK(ownerId, 1, cek1);
 
-      logger.info('Private feed enabled successfully');
+      logger.debug('Private feed enabled successfully');
       return { success: true };
     } catch (error) {
       logger.error('Error enabling private feed:', error);
@@ -384,7 +362,7 @@ class PrivateFeedService {
           if (!feedSeed) {
             return { success: false, error: 'Feed seed not available after recovery' };
           }
-          logger.info('Automatic recovery completed, continuing with approval');
+          logger.debug('Automatic recovery completed, continuing with approval');
         } else {
           return {
             success: false,
@@ -487,7 +465,7 @@ class PrivateFeedService {
         encryptedPayload,
       };
 
-      logger.info('Creating PrivateFeedGrant document:', {
+      logger.debug('Creating PrivateFeedGrant document:', {
         recipientId: requesterId,
         leafIndex,
         epoch: localEpoch,
@@ -517,7 +495,7 @@ class PrivateFeedService {
       // (we can't sign documents owned by the recipient). Followers discover approvals
       // by polling their grants via getMyGrants() or checking followRequest status.
 
-      logger.info(`Approved follower ${requesterId} with leaf index ${leafIndex}`);
+      logger.debug(`Approved follower ${requesterId} with leaf index ${leafIndex}`);
       return { success: true };
     } catch (error) {
       logger.error('Error approving follower:', error);
@@ -577,7 +555,7 @@ class PrivateFeedService {
           if (!feedSeed) {
             return { success: false, error: 'Feed seed not available after recovery' };
           }
-          logger.info('Automatic recovery completed, continuing with revocation');
+          logger.debug('Automatic recovery completed, continuing with revocation');
         } else {
           return {
             success: false,
@@ -758,7 +736,7 @@ class PrivateFeedService {
         encryptedCEK,
       };
 
-      logger.info('Creating PrivateFeedRekey document:', {
+      logger.debug('Creating PrivateFeedRekey document:', {
         epoch: newEpoch,
         revokedLeaf: leafIndex,
         packetsCount: packets.length,
@@ -790,7 +768,7 @@ class PrivateFeedService {
       // Note: We'll do this after grant deletion for consistency
 
       // 15. Delete PrivateFeedGrant document
-      logger.info(`Deleting grant document: ${grantId}`);
+      logger.debug(`Deleting grant document: ${grantId}`);
 
       const deleteResult = await stateTransitionService.deleteDocument(
         this.contractId,
@@ -820,7 +798,7 @@ class PrivateFeedService {
       // (we can't sign documents owned by the recipient). Revoked followers discover
       // revocation when their grant stops working or via grant expiry checks.
 
-      logger.info(`Revoked follower ${followerId} (leaf ${leafIndex}), new epoch: ${newEpoch}`);
+      logger.debug(`Revoked follower ${followerId} (leaf ${leafIndex}), new epoch: ${newEpoch}`);
       return { success: true };
     } catch (error) {
       logger.error('Error revoking follower:', error);
@@ -934,11 +912,11 @@ class PrivateFeedService {
       }
 
       // 2. Verify user has the encryption key by deriving public key
-      const encryptionPubKey = privateFeedCryptoService.getPublicKey(encryptionPrivateKey);
+      const encryptionPubKey = getPublicKey(encryptionPrivateKey);
 
       // 3. Delete all existing PrivateFeedGrant documents
       // These are now useless since they're encrypted to old seed's epoch keys
-      logger.info('Deleting existing grants...');
+      logger.debug('Deleting existing grants...');
       const sdk = await getEvoSdk();
       const { documents: grantDocs } = await paginateFetchAll<{ $id: string }>(
         sdk,
@@ -954,7 +932,7 @@ class PrivateFeedService {
         { maxResults: 1024 }
       );
 
-      logger.info(`Found ${grantDocs.length} grants to delete`);
+      logger.debug(`Found ${grantDocs.length} grants to delete`);
 
       // Delete grants one by one (unfortunately no batch delete in SDK)
       let deletedCount = 0;
@@ -976,11 +954,11 @@ class PrivateFeedService {
           // Continue with other grants even if one fails
         }
       }
-      logger.info(`Deleted ${deletedCount}/${grantDocs.length} grants`);
+      logger.debug(`Deleted ${deletedCount}/${grantDocs.length} grants`);
 
       // 4. Delete all existing PrivateFeedRekey documents
       // These reference the old epoch chain and would cause conflicts/confusion
-      logger.info('Deleting existing rekey documents...');
+      logger.debug('Deleting existing rekey documents...');
       const { documents: rekeyDocs } = await paginateFetchAll<{ $id: string }>(
         sdk,
         (startAfter) => ({
@@ -995,7 +973,7 @@ class PrivateFeedService {
         { maxResults: 2000 } // maxEpoch is typically 2000
       );
 
-      logger.info(`Found ${rekeyDocs.length} rekey documents to delete`);
+      logger.debug(`Found ${rekeyDocs.length} rekey documents to delete`);
 
       let deletedRekeyCount = 0;
       for (const rekey of rekeyDocs) {
@@ -1016,7 +994,7 @@ class PrivateFeedService {
           // Continue with other rekeys even if one fails
         }
       }
-      logger.info(`Deleted ${deletedRekeyCount}/${rekeyDocs.length} rekey documents`);
+      logger.debug(`Deleted ${deletedRekeyCount}/${rekeyDocs.length} rekey documents`);
 
       // 5. Generate new feed seed (SPEC §8.1 step 1)
       const newFeedSeed = privateFeedCryptoService.generateFeedSeed();
@@ -1065,7 +1043,7 @@ class PrivateFeedService {
         encryptedSeed: newEncryptedSeed,
       };
 
-      logger.info('Resetting PrivateFeedState document:', {
+      logger.debug('Resetting PrivateFeedState document:', {
         documentId,
         revision,
         encryptedSeedLength: newEncryptedSeed.length,
@@ -1091,7 +1069,7 @@ class PrivateFeedService {
       // Store CEK[1] for immediate use
       privateFeedKeyStore.storeCachedCEK(ownerId, 1, cek1);
 
-      logger.info('Private feed reset successfully');
+      logger.debug('Private feed reset successfully');
       return { success: true };
     } catch (error) {
       logger.error('Error resetting private feed:', error);
@@ -1139,7 +1117,7 @@ class PrivateFeedService {
     encryptionPrivateKey: Uint8Array
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      logger.info('Starting owner recovery for:', ownerId);
+      logger.debug('Starting owner recovery for:', ownerId);
 
       // 1. Fetch PrivateFeedState document
       const feedState = await this.getPrivateFeedState(ownerId);
@@ -1174,7 +1152,7 @@ class PrivateFeedService {
 
       // 4. Fetch ALL PrivateFeedRekey documents (ordered by epoch)
       const rekeyDocs = await this.getRekeyDocuments(ownerId);
-      logger.info(`Found ${rekeyDocs.length} rekey documents`);
+      logger.debug(`Found ${rekeyDocs.length} rekey documents`);
 
       // 5. Build revokedLeaves list from rekey docs (in epoch order)
       const revokedLeaves: number[] = [];
@@ -1186,11 +1164,11 @@ class PrivateFeedService {
       const currentEpoch = rekeyDocs.length > 0
         ? rekeyDocs[rekeyDocs.length - 1].epoch
         : 1;
-      logger.info(`Current epoch: ${currentEpoch}, revoked leaves: ${revokedLeaves.length}`);
+      logger.debug(`Current epoch: ${currentEpoch}, revoked leaves: ${revokedLeaves.length}`);
 
       // 7. Fetch ALL PrivateFeedGrant documents
       const grants = await this.getPrivateFollowers(ownerId);
-      logger.info(`Found ${grants.length} active grants`);
+      logger.debug(`Found ${grants.length} active grants`);
 
       // 8. Build recipientId → leafIndex mapping
       const recipientMap: Record<string, number> = {};
@@ -1207,7 +1185,7 @@ class PrivateFeedService {
           availableLeaves.push(i);
         }
       }
-      logger.info(`Available leaves: ${availableLeaves.length}`);
+      logger.debug(`Available leaves: ${availableLeaves.length}`);
 
       // 10. Clear existing owner state and initialize with recovered data
       privateFeedKeyStore.clearOwnerKeys();
@@ -1232,7 +1210,7 @@ class PrivateFeedService {
       const currentCEK = epochChain[currentEpoch];
       privateFeedKeyStore.storeCachedCEK(ownerId, currentEpoch, currentCEK);
 
-      logger.info('Owner recovery completed successfully');
+      logger.debug('Owner recovery completed successfully');
       return { success: true };
     } catch (error) {
       logger.error('Error during owner recovery:', error);
@@ -1263,7 +1241,7 @@ class PrivateFeedService {
 
       if (!hasLocalKeys) {
         // No local keys - need full recovery
-        logger.info('No local keys found, running full owner recovery');
+        logger.debug('No local keys found, running full owner recovery');
         return await this.recoverOwnerState(ownerId, encryptionPrivateKey);
       }
 
@@ -1273,7 +1251,7 @@ class PrivateFeedService {
 
       if (chainEpoch > localEpoch) {
         // Local state is behind - need recovery
-        logger.info(`Local epoch ${localEpoch} < chain epoch ${chainEpoch}, running recovery`);
+        logger.debug(`Local epoch ${localEpoch} < chain epoch ${chainEpoch}, running recovery`);
         return await this.recoverOwnerState(ownerId, encryptionPrivateKey);
       }
 
@@ -1291,35 +1269,6 @@ class PrivateFeedService {
   // ============================================================
   // Utility Methods
   // ============================================================
-
-  /**
-   * Normalize bytes from SDK response (may be base64 string or array)
-   */
-  private normalizeBytes(value: unknown): Uint8Array {
-    if (value instanceof Uint8Array) {
-      return value;
-    }
-    if (Array.isArray(value)) {
-      return new Uint8Array(value);
-    }
-    if (typeof value === 'string') {
-      // Try base64 decode
-      try {
-        return fromBase64(value);
-      } catch {
-        // Might be hex
-        if (/^[0-9a-fA-F]+$/.test(value)) {
-          const bytes = new Uint8Array(value.length / 2);
-          for (let i = 0; i < bytes.length; i++) {
-            bytes[i] = parseInt(value.substr(i * 2, 2), 16);
-          }
-          return bytes;
-        }
-      }
-    }
-    logger.warn('Unable to normalize bytes:', value);
-    return new Uint8Array(0);
-  }
 }
 
 // Export singleton instance
@@ -1375,14 +1324,14 @@ export async function prepareOwnerEncryption(
     const hasLocalKeys = privateFeedKeyStore.hasFeedSeed();
 
     if (!hasLocalKeys) {
-      logger.info('No local private feed keys found, need full recovery');
+      logger.debug('No local private feed keys found, need full recovery');
 
       if (encryptionPrivateKey) {
         const recoveryResult = await privateFeedService.recoverOwnerState(ownerId, encryptionPrivateKey);
         if (!recoveryResult.success) {
           return { success: false, error: `Recovery failed: ${recoveryResult.error}` };
         }
-        logger.info('Full recovery completed, continuing with encryption');
+        logger.debug('Full recovery completed, continuing with encryption');
       } else {
         return {
           success: false,
@@ -1396,14 +1345,14 @@ export async function prepareOwnerEncryption(
     const localEpoch = privateFeedKeyStore.getCurrentEpoch();
 
     if (chainEpoch > localEpoch) {
-      logger.info(`Chain epoch ${chainEpoch} > local epoch ${localEpoch}, need recovery`);
+      logger.debug(`Chain epoch ${chainEpoch} > local epoch ${localEpoch}, need recovery`);
 
       if (encryptionPrivateKey) {
         const recoveryResult = await privateFeedService.recoverOwnerState(ownerId, encryptionPrivateKey);
         if (!recoveryResult.success) {
           return { success: false, error: `Sync failed: ${recoveryResult.error}` };
         }
-        logger.info('Automatic recovery completed, continuing with encryption');
+        logger.debug('Automatic recovery completed, continuing with encryption');
       } else {
         return {
           success: false,
@@ -1452,7 +1401,7 @@ export async function prepareOwnerEncryption(
       currentEpoch
     );
 
-    logger.info('Prepared owner encryption:', {
+    logger.debug('Prepared owner encryption:', {
       hasTeaser: !!teaser,
       encryptedContentLength: encrypted.ciphertext.length,
       epoch: currentEpoch,
@@ -1533,7 +1482,7 @@ export async function prepareInheritedEncryption(
       source.epoch
     );
 
-    logger.info('Prepared inherited encryption:', {
+    logger.debug('Prepared inherited encryption:', {
       feedOwnerId: source.ownerId,
       epoch: source.epoch,
       encryptedContentLength: encrypted.ciphertext.length,

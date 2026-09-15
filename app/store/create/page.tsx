@@ -4,13 +4,11 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon, BuildingStorefrontIcon } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
-import { useSettingsStore } from '@/lib/store'
 import { storeService } from '@/lib/services/store-service'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
 import { PoliciesEditor } from '@/components/store/policies-editor'
@@ -26,7 +24,6 @@ function CreateStorePage() {
   const isEditMode = !!storeId
   const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [isLoading, setIsLoading] = useState(isEditMode)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -146,12 +143,8 @@ function CreateStorePage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <PageShell>
+          <PageHeader>
             <div className="flex items-center gap-4 p-4">
               <button
                 onClick={() => router.back()}
@@ -161,7 +154,7 @@ function CreateStorePage() {
               </button>
               <h1 className="text-xl font-bold">{isEditMode ? 'Edit Store' : 'Create Store'}</h1>
             </div>
-          </header>
+          </PageHeader>
 
           {isLoading ? (
             <div className="flex items-center justify-center py-20">
@@ -327,11 +320,7 @@ function CreateStorePage() {
             </div>
           </form>
           )}
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 

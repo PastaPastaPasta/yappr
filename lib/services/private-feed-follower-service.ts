@@ -29,6 +29,7 @@ import type { NodeKey } from './private-feed-crypto-service';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
 import { queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
+import { requireBytes } from '@/lib/bytes';
 
 /**
  * FollowRequest document from platform
@@ -71,18 +72,6 @@ export interface EncryptedPostFields {
   epoch: number;
   nonce: Uint8Array;
   $ownerId: string;
-}
-
-/**
- * Convert base64 to Uint8Array
- */
-function fromBase64(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
 }
 
 class PrivateFeedFollowerService {
@@ -133,7 +122,7 @@ class PrivateFeedFollowerService {
         documentData.publicKey = publicKey;
       }
 
-      logger.info('Creating FollowRequest:', { targetId: ownerId });
+      logger.debug('Creating FollowRequest:', { targetId: ownerId });
 
       const result = await stateTransitionService.createDocument(
         this.contractId,
@@ -151,7 +140,7 @@ class PrivateFeedFollowerService {
       // separate notification documents, which would fail anyway due to ownership constraints.
       // The feed owner's client will find this request when polling for notifications.
 
-      logger.info('Follow request created successfully');
+      logger.debug('Follow request created successfully');
       return { success: true };
     } catch (error) {
       logger.error('Error requesting access:', error);
@@ -191,7 +180,7 @@ class PrivateFeedFollowerService {
         return { success: false, error: result.error || 'Failed to delete follow request' };
       }
 
-      logger.info('Follow request cancelled successfully');
+      logger.debug('Follow request cancelled successfully');
       return { success: true };
     } catch (error) {
       logger.error('Error cancelling request:', error);
@@ -227,7 +216,7 @@ class PrivateFeedFollowerService {
           $ownerId: doc.$ownerId as string,
           $createdAt: doc.$createdAt as number,
           targetId: doc.targetId as string,
-          publicKey: doc.publicKey ? this.normalizeBytes(doc.publicKey) : undefined,
+          publicKey: doc.publicKey ? requireBytes(doc.publicKey, 'publicKey') : undefined,
         }),
         { maxResults: 1024 } // SPEC allows up to 1024 followers
       );
@@ -279,7 +268,7 @@ class PrivateFeedFollowerService {
         $ownerId: doc.$ownerId as string,
         $createdAt: doc.$createdAt as number,
         targetId: doc.targetId as string,
-        publicKey: doc.publicKey ? this.normalizeBytes(doc.publicKey) : undefined,
+        publicKey: doc.publicKey ? requireBytes(doc.publicKey, 'publicKey') : undefined,
       };
     } catch (error) {
       logger.error('Error fetching follow request:', error);
@@ -317,7 +306,7 @@ class PrivateFeedFollowerService {
         recipientId: identifierToBase58(doc.recipientId) || '',
         leafIndex: doc.leafIndex as number,
         epoch: doc.epoch as number,
-        encryptedPayload: this.normalizeBytes(doc.encryptedPayload),
+        encryptedPayload: requireBytes(doc.encryptedPayload, 'encryptedPayload'),
       };
     } catch (error) {
       logger.error('Error fetching grant:', error);
@@ -519,7 +508,7 @@ class PrivateFeedFollowerService {
         }
       }
 
-      logger.info(`Caught up on ${rekeyDocs.length} rekey(s) for owner ${ownerId}`);
+      logger.debug(`Caught up on ${rekeyDocs.length} rekey(s) for owner ${ownerId}`);
       return { success: true };
     } catch (error) {
       logger.error('Error catching up:', error);
@@ -695,8 +684,8 @@ class PrivateFeedFollowerService {
           $createdAt: doc.$createdAt as number,
           epoch: doc.epoch as number,
           revokedLeaf: doc.revokedLeaf as number,
-          packets: this.normalizeBytes(doc.packets),
-          encryptedCEK: this.normalizeBytes(doc.encryptedCEK),
+          packets: requireBytes(doc.packets, 'packets'),
+          encryptedCEK: requireBytes(doc.encryptedCEK, 'encryptedCEK'),
         }),
         { maxResults: 2000 } // SPEC allows up to 2000 epochs
       );
@@ -772,7 +761,7 @@ class PrivateFeedFollowerService {
         logger.warn('Failed to cleanup stale follow request after recovery:', err);
       });
 
-      logger.info(`Recovered follower keys for owner ${ownerId} at epoch ${payload.grantEpoch}`);
+      logger.debug(`Recovered follower keys for owner ${ownerId} at epoch ${payload.grantEpoch}`);
       return { success: true };
     } catch (error) {
       logger.error('Error recovering follower keys:', error);
@@ -842,7 +831,7 @@ class PrivateFeedFollowerService {
             // Request was created before any revocation, meaning this user
             // was approved (which would have happened after the request)
             // and then later revoked. Return 'revoked' state.
-            logger.info(`User ${myId} appears to be revoked: request created at ${requestCreatedAt}, first revocation at ${firstRevocationAt}`);
+            logger.debug(`User ${myId} appears to be revoked: request created at ${requestCreatedAt}, first revocation at ${firstRevocationAt}`);
             return 'revoked';
           }
         }
@@ -882,7 +871,7 @@ class PrivateFeedFollowerService {
       }
 
       // Delete the stale request
-      logger.info('Cleaning up stale FollowRequest for approved user:', myId);
+      logger.debug('Cleaning up stale FollowRequest for approved user:', myId);
       const result = await stateTransitionService.deleteDocument(
         this.contractId,
         DOCUMENT_TYPES.FOLLOW_REQUEST,
@@ -894,7 +883,7 @@ class PrivateFeedFollowerService {
         return { success: false, error: result.error || 'Failed to delete stale follow request' };
       }
 
-      logger.info('Successfully cleaned up stale FollowRequest');
+      logger.debug('Successfully cleaned up stale FollowRequest');
       return { success: true };
     } catch (error) {
       logger.error('Error cleaning up stale follow request:', error);
@@ -945,11 +934,11 @@ class PrivateFeedFollowerService {
       const followedOwners = privateFeedKeyStore.getFollowedFeedOwners();
 
       if (followedOwners.length === 0) {
-        logger.info('PrivateFeedSync: No followed private feeds to sync');
+        logger.debug('PrivateFeedSync: No followed private feeds to sync');
         return { synced, failed, upToDate };
       }
 
-      logger.info(`PrivateFeedSync: Syncing ${followedOwners.length} followed private feed(s)`);
+      logger.debug(`PrivateFeedSync: Syncing ${followedOwners.length} followed private feed(s)`);
 
       // Process each feed owner in parallel (with limited concurrency)
       const CONCURRENCY_LIMIT = 3;
@@ -983,7 +972,7 @@ class PrivateFeedFollowerService {
         }
       }
 
-      logger.info(`PrivateFeedSync: Complete - synced: ${synced.length}, up-to-date: ${upToDate.length}, failed: ${failed.length}`);
+      logger.debug(`PrivateFeedSync: Complete - synced: ${synced.length}, up-to-date: ${upToDate.length}, failed: ${failed.length}`);
       return { synced, failed, upToDate };
     } catch (error) {
       logger.error('PrivateFeedSync: Error syncing feeds:', error);
@@ -1021,7 +1010,7 @@ class PrivateFeedFollowerService {
       }
 
       // Need to catch up
-      logger.info(`PrivateFeedSync: Catching up feed ${ownerId} from epoch ${cachedEpoch} to ${chainEpoch}`);
+      logger.debug(`PrivateFeedSync: Catching up feed ${ownerId} from epoch ${cachedEpoch} to ${chainEpoch}`);
       const catchUpResult = await this.catchUp(ownerId, myId);
 
       if (catchUpResult.success) {
@@ -1041,33 +1030,6 @@ class PrivateFeedFollowerService {
   // ============================================================
   // Utility Methods
   // ============================================================
-
-  /**
-   * Normalize bytes from SDK response (may be base64 string or array)
-   */
-  private normalizeBytes(value: unknown): Uint8Array {
-    if (value instanceof Uint8Array) {
-      return value;
-    }
-    if (Array.isArray(value)) {
-      return new Uint8Array(value);
-    }
-    if (typeof value === 'string') {
-      try {
-        return fromBase64(value);
-      } catch {
-        if (/^[0-9a-fA-F]+$/.test(value)) {
-          const bytes = new Uint8Array(value.length / 2);
-          for (let i = 0; i < bytes.length; i++) {
-            bytes[i] = parseInt(value.substr(i * 2, 2), 16);
-          }
-          return bytes;
-        }
-      }
-    }
-    logger.warn('Unable to normalize bytes:', value);
-    return new Uint8Array(0);
-  }
 }
 
 // Export singleton instance

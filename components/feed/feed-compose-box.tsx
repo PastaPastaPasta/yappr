@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { useAppStore } from '@/lib/store';
-import { useLoginPromptModal } from '@/hooks/use-login-prompt-modal';
+import { useLoginModal } from '@/hooks/use-login-modal';
 import { UserAvatar } from '@/components/ui/avatar-image';
 import { Button } from '@/components/ui/button';
 
@@ -11,7 +11,7 @@ export function FeedComposeBox() {
   const [isHydrated, setIsHydrated] = useState(false);
   const { user } = useAuth();
   const setComposeOpen = useAppStore((state) => state.setComposeOpen);
-  const { open: openLoginPrompt } = useLoginPromptModal();
+  const openLoginPrompt = useLoginModal((s) => s.open);
 
   useEffect(() => {
     setIsHydrated(true);

@@ -2,13 +2,21 @@
 
 import { logger } from '@/lib/logger';
 import * as Dialog from '@radix-ui/react-dialog'
+import { Modal, ModalTitle } from '@/components/ui/modal'
 import { XMarkIcon, TrashIcon } from '@heroicons/react/24/outline'
-import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
+import { deletesAreTombstones, targetKindOf } from '@/lib/contract-topology'
 
 export function DeleteConfirmationModal() {
   const { isOpen, post, isDeleting, onConfirm, close, setDeleting } = useDeleteConfirmationModal()
+
+  // On the v3 topology `post` and `reply` are `canBeDeleted: false`, so this
+  // action blanks the document rather than removing it. Promising the user a
+  // permanent removal there would be a lie, and the difference is exactly the
+  // thing they might care about.
+  const isTombstone = deletesAreTombstones()
+  const noun = post && targetKindOf(post) === 'reply' ? 'reply' : 'post'
 
   const handleConfirm = async () => {
     if (!onConfirm || isDeleting) return
@@ -24,32 +32,16 @@ export function DeleteConfirmationModal() {
   }
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={(open) => !open && !isDeleting && close()}>
-      <AnimatePresence>
-        {isOpen && (
-          <Dialog.Portal forceMount>
-            <Dialog.Overlay asChild>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
-              >
-                <Dialog.Content asChild>
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-[400px] max-w-[90vw] shadow-xl relative"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Dialog.Title className="text-xl font-bold mb-2 flex items-center gap-2">
+    <Modal open={isOpen} onOpenChange={(open) => !open && !isDeleting && close()} className="w-[400px] max-w-[90vw]">
+                    <ModalTitle>
                       <TrashIcon className="h-6 w-6 text-red-500" />
-                      Delete post?
-                    </Dialog.Title>
+                      Delete {noun}?
+                    </ModalTitle>
 
                     <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-6">
-                      This action cannot be undone. The post will be permanently removed from the platform.
+                      {isTombstone
+                        ? `This action cannot be undone. The ${noun}'s content is erased and it stops appearing in feeds, but a tombstone remains on-chain forever — anything that referenced it keeps resolving.`
+                        : `This action cannot be undone. The ${noun} will be permanently removed from the platform.`}
                     </Dialog.Description>
 
                     {!isDeleting && (
@@ -109,13 +101,6 @@ export function DeleteConfirmationModal() {
                         Cancel
                       </Button>
                     </div>
-                  </motion.div>
-                </Dialog.Content>
-              </motion.div>
-            </Dialog.Overlay>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
-    </Dialog.Root>
+    </Modal>
   )
 }

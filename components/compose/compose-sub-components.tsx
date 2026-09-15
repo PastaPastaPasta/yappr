@@ -640,20 +640,6 @@ function getAuthorDisplayName(author: Post['author']): string {
 }
 
 /**
- * Gets the modal title based on compose mode.
- */
-export function getModalTitle(
-  isReply: boolean,
-  isQuote: boolean,
-  threadCount: number
-): string {
-  if (isReply) return 'Reply'
-  if (isQuote) return 'Quote'
-  if (threadCount > 1) return `Thread (${threadCount} posts)`
-  return 'New Post'
-}
-
-/**
  * Gets the accessibility title for the dialog.
  */
 export function getDialogTitle(isReply: boolean, isQuote: boolean): string {

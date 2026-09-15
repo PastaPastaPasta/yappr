@@ -72,7 +72,7 @@ function CreateProfilePage() {
 
         if (existingProfile) {
           toast.success('You already have a profile!')
-          router.push(`/user?id=${user.identityId}`)
+          router.push('/feed')
           return
         }
 
@@ -133,7 +133,7 @@ function CreateProfilePage() {
         throw new Error('User not authenticated')
       }
 
-      logger.info('Creating profile with data:', formData)
+      logger.debug('Creating profile with data:', formData)
 
       // Build avatar data - either custom URL or generated DiceBear settings
       let avatarData: string | undefined
@@ -173,7 +173,7 @@ function CreateProfilePage() {
           errorMessage.includes('already exists')) {
         toast.error('You already have a profile! Redirecting...')
         setTimeout(() => {
-          router.push(`/user?id=${user?.identityId}`)
+          router.push('/feed')
         }, 2000)
         return
       }
@@ -390,7 +390,6 @@ function CreateProfilePage() {
               {/* Banner Preview */}
               {bannerUrl && (
                 <div className="relative aspect-[3/1] rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={isIpfsProtocol(bannerUrl) ? ipfsToGatewayUrl(bannerUrl) : bannerUrl}
                     alt="Banner preview"

@@ -440,18 +440,19 @@ export function InventoryTable({
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
               {filteredItems.map((item) => {
-                const hasVariants = item.variants && item.variants.combinations.length > 0
+                const combinations = item.variants?.combinations ?? []
+                const hasVariants = combinations.length > 0
                 const isExpanded = expandedItems.has(item.id)
                 const priceRange = storeItemService.getPriceRange(item)
                 const totalStock = hasVariants
-                  ? item.variants!.combinations.reduce((sum, c) => {
+                  ? combinations.reduce((sum, c) => {
                       const s = c.stock ?? Infinity
                       return s === Infinity ? Infinity : (sum === Infinity ? Infinity : sum + s)
                     }, 0)
                   : storeItemService.getStock(item)
 
                 const variantRows = hasVariants && isExpanded
-                  ? item.variants!.combinations.map((combo: VariantCombination) => (
+                  ? combinations.map((combo: VariantCombination) => (
                       <tr
                         key={`${item.id}-${combo.key}`}
                         className="bg-gray-50 dark:bg-gray-800/30"
@@ -534,7 +535,7 @@ export function InventoryTable({
                             )}
                             {hasVariants && (
                               <div className="text-xs text-yappr-500">
-                                {item.variants!.combinations.length} variants
+                                {combinations.length} variants
                               </div>
                             )}
                           </div>

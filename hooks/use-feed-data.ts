@@ -4,7 +4,8 @@ import { useAuth } from '@/contexts/auth-context';
 import { useAsyncState } from '@/components/ui/loading-state';
 import { Post } from '@/lib/types';
 import { cacheManager } from '@/lib/cache-manager';
-import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment';
+import { useProgressiveEnrichment, type PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
+import { enrichPostsWithRepostsAndQuotes } from '@/lib/feed/enrich-posts';
 import { loadFollowingFeed, type FollowingFeedWindow } from '@/lib/feed/load-following-feed';
 import { loadForYouFeed } from '@/lib/feed/load-for-you-feed';
 import { getFeedItemTimestamp, sortFeedByTimestamp, transformRawPost } from '@/lib/feed/transform-raw-post';
@@ -116,6 +117,37 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     skipFollowStatus: activeTab === 'following',
   });
 
+  const applyRepostAndQuoteEnrichment = useCallback(
+    (postsToEnrich: Post[]) => {
+      if (postsToEnrich.length === 0) return;
+
+      enrichPostsWithRepostsAndQuotes(postsToEnrich)
+        .then((enrichedPosts) => {
+          const enrichedById = new Map(enrichedPosts.map((post) => [post.id, post]));
+          setData((current) => {
+            if (!current) return current;
+            return current.map((post) => {
+              const enriched = enrichedById.get(post.id);
+              if (!enriched) return post;
+              // Merge only enrichment fields so concurrent updates to the post
+              // (e.g. reconciliation clearing _syncPending) are not reverted.
+              return {
+                ...post,
+                ...(enriched.quotedPost ? { quotedPost: enriched.quotedPost } : {}),
+                ...(enriched.repostedBy
+                  ? { repostedBy: enriched.repostedBy, repostTimestamp: enriched.repostTimestamp }
+                  : {}),
+              };
+            });
+          });
+        })
+        .catch((error) => {
+          logger.error('Feed: Error enriching posts with reposts/quotes:', error);
+        });
+    },
+    [setData]
+  );
+
   const normalizeCreatedPost = useCallback(
     (rawPost: unknown, fallbackPostId?: string, confirmed = true): FeedPost | null => {
       const postRecord = asRecord(rawPost) || {};
@@ -221,12 +253,12 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
 
       try {
         if (activeTab === 'following' && !user?.identityId) {
-          logger.info('Feed: Skipping Following feed load - user not logged in');
+          logger.debug('Feed: Skipping Following feed load - user not logged in');
           setLoading(false);
           return;
         }
 
-        logger.info(`Feed: Loading ${activeTab} posts from Dash Platform...`, isPaginating ? '(paginating)' : '');
+        logger.debug(`Feed: Loading ${activeTab} posts from Dash Platform...`, isPaginating ? '(paginating)' : '');
 
         const cacheKey =
           activeTab === 'following'
@@ -236,7 +268,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         if (!forceRefresh && !isPaginating) {
           const cached = cacheManager.get<Post[]>('feed', cacheKey);
           if (cached) {
-            logger.info('Feed: Using cached data');
+            logger.debug('Feed: Using cached data');
             setData(cached);
             setLoading(false);
 
@@ -249,11 +281,14 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
             setPendingNewPosts([]);
 
             enrichProgressively(cached);
+            applyRepostAndQuoteEnrichment(cached);
             return;
           }
         }
 
         let posts: Post[] = [];
+        // Enrichment that arrived with the posts (composite For You pages).
+        let forYouPreloaded: PreloadedEnrichment | undefined;
 
         if (activeTab === 'following' && user?.identityId) {
           let followingPosts: Post[] = [];
@@ -276,7 +311,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
           setHasMore(followingHasMore);
 
           if (followingPosts.length === 0) {
-            logger.info('Feed: No posts in this time window, cursor points to next window');
+            logger.debug('Feed: No posts in this time window, cursor points to next window');
             if (!isPaginating) {
               setData([]);
             }
@@ -287,8 +322,8 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         } else {
           const forYouResult = await loadForYouFeed({
             startAfter: pagination?.startAfter,
-            forceRefresh,
             feedLanguage,
+            currentUserId: user?.identityId,
             setData,
             setHasMore,
             setLastPostId,
@@ -296,9 +331,10 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
           });
 
           posts = forYouResult.posts;
+          forYouPreloaded = forYouResult.preloaded;
 
           if (posts.length === 0) {
-            logger.info('Feed: No posts found on platform');
+            logger.debug('Feed: No posts found on platform');
             if (!isPaginating) {
               setData([]);
             }
@@ -319,7 +355,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
             const existingIds = new Set((currentItems || []).map((item) => item.id));
             const newItems = sortedPosts.filter((item) => !existingIds.has(item.id));
             const allItems = [...(currentItems || []), ...newItems];
-            logger.info(
+            logger.debug(
               `Feed: Appended ${newItems.length} new items (${sortedPosts.length - newItems.length} duplicates filtered)`
             );
             return allItems;
@@ -335,7 +371,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         }
 
         if (activeTab !== 'following') {
-          enrichProgressively(sortedPosts);
+          enrichProgressively(sortedPosts, forYouPreloaded);
         }
 
         if (!isPaginating && sortedPosts.length > 0) {
@@ -345,18 +381,15 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
         logger.error('Feed: Failed to load posts from platform:', error);
 
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logger.info('Feed: Falling back to empty state due to error:', errorMessage);
-
-        setData([]);
-
-        if (errorMessage.includes('Contract ID not configured') || errorMessage.includes('Not logged in')) {
-          setError(errorMessage);
-        }
+        // Keep the current page visible during refresh and pagination failures.
+        // The feed list renders this error alongside the preserved posts with a
+        // retry action, so a transient DAPI/composite failure is recoverable.
+        setError(errorMessage);
       } finally {
         setLoading(false);
       }
     },
-    [activeTab, enrichProgressively, feedLanguage, setData, setError, setLoading, user?.identityId]
+    [activeTab, applyRepostAndQuoteEnrichment, enrichProgressively, feedLanguage, setData, setError, setLoading, user?.identityId]
   );
 
   const loadMore = useCallback(async () => {
@@ -384,7 +417,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     if (!newestPostTimestamp || isLoading) return;
 
     try {
-      logger.info('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString());
+      logger.debug('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString());
       const OVERLAP_MS = 2000;
       const sinceTimestamp = Math.max(0, newestPostTimestamp - OVERLAP_MS);
 
@@ -403,7 +436,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
 
       if (newPosts.length === 0) return;
 
-      logger.info(`Feed: Found ${newPosts.length} new posts`);
+      logger.debug(`Feed: Found ${newPosts.length} new posts`);
 
       const transformedPosts = newPosts.map((doc) => transformRawPost(doc));
       sortFeedByTimestamp(transformedPosts);
@@ -416,7 +449,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
       const uniqueNewPosts = transformedPosts.filter((post) => !existingIds.has(post.id));
 
       if (uniqueNewPosts.length > 0) {
-        logger.info(`Feed: ${uniqueNewPosts.length} unique new posts to show`);
+        logger.debug(`Feed: ${uniqueNewPosts.length} unique new posts to show`);
         setPendingNewPosts((prev) => [...uniqueNewPosts, ...prev]);
       }
     } catch (error) {
@@ -435,9 +468,10 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     });
 
     enrichProgressively(pendingNewPosts);
+    applyRepostAndQuoteEnrichment(pendingNewPosts);
     setNewestPostTimestamp(newestPendingTimestamp);
     setPendingNewPosts([]);
-  }, [enrichProgressively, pendingNewPosts, setData]);
+  }, [applyRepostAndQuoteEnrichment, enrichProgressively, pendingNewPosts, setData]);
 
   const refresh = useCallback(async () => {
     resetEnrichment();
@@ -479,6 +513,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
       });
 
       enrichProgressively([createdPost]);
+      applyRepostAndQuoteEnrichment([createdPost]);
       setNewestPostTimestamp((prev) => Math.max(prev || 0, getFeedItemTimestamp(createdPost)));
 
       reconcileCreatedPost(createdPost.id).catch((error) =>
@@ -490,7 +525,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     return () => {
       window.removeEventListener('post-created', handlePostCreated as EventListener);
     };
-  }, [enrichProgressively, loadPosts, normalizeCreatedPost, reconcileCreatedPost, resetEnrichment, setData]);
+  }, [applyRepostAndQuoteEnrichment, enrichProgressively, loadPosts, normalizeCreatedPost, reconcileCreatedPost, resetEnrichment, setData]);
 
   useEffect(() => {
     resetEnrichment();

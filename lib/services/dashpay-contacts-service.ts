@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map';
 /**
  * Dash Pay Contacts Service
  *
@@ -14,6 +15,7 @@ import { dpnsService } from './dpns-service';
 import { unifiedProfileService, UnifiedProfileDocument } from './unified-profile-service';
 import { DASHPAY_CONTRACT_ID } from '../constants';
 import bs58 from 'bs58';
+import { base64ToBytes } from '@/lib/bytes';
 
 // Raw contact request document from Dash Pay contract
 export interface ContactRequestDocument {
@@ -45,24 +47,14 @@ export interface UnfollowedContactsResult {
 }
 
 class DashPayContactsService {
-  private cache: Map<string, { data: UnfollowedContactsResult; timestamp: number }> = new Map();
-  private readonly CACHE_TTL = 300000; // 5 minutes
+  private cache = new TtlMap<string, UnfollowedContactsResult>(5 * 60 * 1000);
 
   /**
    * Convert base64 string to base58 for identifier consistency
    */
   private base64ToBase58(base64: string): string | null {
     try {
-      let bytes: Uint8Array;
-      if (typeof atob === 'function') {
-        const binary = atob(base64);
-        bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-      } else {
-        bytes = new Uint8Array(Buffer.from(base64, 'base64'));
-      }
+      const bytes = base64ToBytes(base64);
 
       if (bytes.length === 32) {
         return bs58.encode(bytes);
@@ -164,7 +156,7 @@ class DashPayContactsService {
     }
 
     if (outgoingSet.size === 0) {
-      logger.info('DashPayContactsService: No outgoing contact requests found');
+      logger.debug('DashPayContactsService: No outgoing contact requests found');
       return [];
     }
 
@@ -180,7 +172,7 @@ class DashPayContactsService {
     }
 
     if (incomingMap.size === 0) {
-      logger.info('DashPayContactsService: No incoming contact requests found');
+      logger.debug('DashPayContactsService: No incoming contact requests found');
       return [];
     }
 
@@ -196,7 +188,7 @@ class DashPayContactsService {
       }
     });
 
-    logger.info(`DashPayContactsService: Found ${mutualContacts.length} mutual contacts`);
+    logger.debug(`DashPayContactsService: Found ${mutualContacts.length} mutual contacts`);
     return mutualContacts;
   }
 
@@ -226,9 +218,9 @@ class DashPayContactsService {
   async getUnfollowedContacts(userId: string): Promise<UnfollowedContactsResult> {
     // Check cache first
     const cached = this.cache.get(userId);
-    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-      logger.info('DashPayContactsService: Returning cached result');
-      return cached.data;
+    if (cached) {
+      logger.debug('DashPayContactsService: Returning cached result');
+      return cached;
     }
 
     try {
@@ -241,7 +233,7 @@ class DashPayContactsService {
           totalMutualContacts: 0,
           alreadyFollowedCount: 0
         };
-        this.cache.set(userId, { data: result, timestamp: Date.now() });
+        this.cache.set(userId, result);
         return result;
       }
 
@@ -261,7 +253,7 @@ class DashPayContactsService {
           totalMutualContacts: mutualContactIds.length,
           alreadyFollowedCount: mutualContactIds.length
         };
-        this.cache.set(userId, { data: result, timestamp: Date.now() });
+        this.cache.set(userId, result);
         return result;
       }
 
@@ -304,9 +296,9 @@ class DashPayContactsService {
       };
 
       // Cache the result
-      this.cache.set(userId, { data: result, timestamp: Date.now() });
+      this.cache.set(userId, result);
 
-      logger.info(`DashPayContactsService: Found ${contacts.length} unfollowed contacts out of ${mutualContactIds.length} total`);
+      logger.debug(`DashPayContactsService: Found ${contacts.length} unfollowed contacts out of ${mutualContactIds.length} total`);
       return result;
     } catch (error) {
       logger.error('DashPayContactsService: Error getting unfollowed contacts:', error);

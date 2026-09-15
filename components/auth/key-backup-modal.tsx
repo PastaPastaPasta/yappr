@@ -9,13 +9,8 @@ import { X, Eye, EyeOff, Shield, AlertTriangle, Key, Check, KeyRound } from 'luc
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '@/contexts/auth-context'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
-import {
-  validateBackupPassword,
-  benchmarkPbkdf2,
-  MIN_PASSWORD_LENGTH,
-  MIN_KDF_ITERATIONS,
-  MAX_KDF_ITERATIONS
-} from '@/lib/onchain-key-encryption'
+import { validateBackupPassword, benchmarkPbkdf2, MIN_PASSWORD_LENGTH } from '@/lib/onchain-key-encryption'
+import { MIN_KDF_ITERATIONS, MAX_KDF_ITERATIONS } from '@/lib/crypto/aes-gcm'
 import { useSettingsStore } from '@/lib/store'
 import { getPasskeyPrfSupport } from '@/lib/webauthn/passkey-support'
 

@@ -1,5 +1,8 @@
 import { Post } from '@/lib/types';
 import { identifierToBase58, normalizeBytes } from '@/lib/services/sdk-helpers';
+import { extractPostEmbedFields } from '@/lib/poll-embed';
+import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
+import { hashtagIsOptional } from '@/lib/contract-topology';
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
@@ -80,6 +83,11 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
   const rawQuotedPostId = data.quotedPostId || doc.quotedPostId;
   const quotedPostId = rawQuotedPostId ? identifierToBase58(rawQuotedPostId) || undefined : undefined;
 
+  // v3 only: quotes of replies live in their own field. Absent on v2 documents.
+  const rawQuotedReplyId = data.quotedReplyId || doc.quotedReplyId;
+  const quotedReplyId = rawQuotedReplyId ? identifierToBase58(rawQuotedReplyId) || undefined : undefined;
+  const rawHashtag = data.hashtag ?? doc.hashtag;
+
   const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
   const rawNonce = data.nonce || doc.nonce;
   const epoch = (data.epoch ?? doc.epoch) as number | undefined;
@@ -93,9 +101,18 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     : new Date((createdAtValue as number | string | undefined) || Date.now());
 
   const resolvedId = getFirstValidIdentifier(doc.$id, doc.id);
+  const id = resolvedId || createPlaceholderPostId(doc, data);
+
+  // Same media mapping as postService.transformDocument — without it, feed
+  // cards render without the post's image while the detail page shows it.
+  // normalizeMediaUrl restores ipfs:// from stored gateway URLs so IpfsImage
+  // gets multi-gateway failover instead of being pinned to one host.
+  const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
   return {
-    id: resolvedId || createPlaceholderPostId(doc, data),
+    id,
+    // Feed documents come off the `post` doctype.
+    targetKind: 'post',
     content: (data.content || '') as string,
     author: {
       id: authorId,
@@ -112,11 +129,27 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     likes: (doc.likes as number | undefined) || 0,
     replies: (doc.replies as number | undefined) || 0,
     reposts: (doc.reposts as number | undefined) || 0,
+    quotes: (doc.quotes as number | undefined) || 0,
     views: (doc.views as number | undefined) || 0,
     liked: (doc.liked as boolean | undefined) || false,
     reposted: (doc.reposted as boolean | undefined) || false,
     bookmarked: (doc.bookmarked as boolean | undefined) || false,
+    media: mediaUrl ? [{
+      id: id + '-media',
+      type: 'image',
+      url: normalizeMediaUrl(mediaUrl),
+    }] : undefined,
     quotedPostId,
+    quotedReplyId,
+    deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
+    sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
+    // v5/v6 omit the untagged property on chain; normalize that absence to
+    // the client's known-untagged sentinel so index-only likes can reuse the
+    // agreement-bound value without refetching the target post.
+    hashtag: typeof rawHashtag === 'string'
+      ? rawHashtag
+      : hashtagIsOptional() ? '' : undefined,
+    ...extractPostEmbedFields(data, doc),
     encryptedContent: rawEncryptedContent ? normalizeBytes(rawEncryptedContent) ?? undefined : undefined,
     epoch,
     nonce: rawNonce ? normalizeBytes(rawNonce) ?? undefined : undefined,

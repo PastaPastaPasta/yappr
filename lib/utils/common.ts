@@ -33,23 +33,29 @@ export function formatTime(date: Date | string): string {
 }
 
 /**
- * Format time in compact form for space-constrained UIs (1m, 1h, 1d).
- * Falls back to locale date for times over 7 days.
+ * Format time in compact form for space-constrained UIs (30s, 1m, 1h, 1d).
+ * Falls back to a short date ("Mar 4", with year when not current) past 7 days.
  */
 export function formatTimeCompact(date: Date | string): string {
   if (!date) return ''
 
   const dateObj = typeof date === 'string' ? new Date(date) : date
-  const diffMs = Date.now() - dateObj.getTime()
+  const now = new Date()
+  const diffMs = now.getTime() - dateObj.getTime()
+  const seconds = Math.max(0, Math.floor(diffMs / 1000))
   const minutes = Math.floor(diffMs / 60000)
   const hours = Math.floor(diffMs / 3600000)
   const days = Math.floor(diffMs / 86400000)
 
-  if (minutes < 1) return 'just now'
+  if (minutes < 1) return `${seconds}s`
   if (minutes < 60) return `${minutes}m`
   if (hours < 24) return `${hours}h`
   if (days < 7) return `${days}d`
-  return dateObj.toLocaleDateString()
+  return dateObj.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: dateObj.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+  })
 }
 
 export function formatNumber(num: number): string {

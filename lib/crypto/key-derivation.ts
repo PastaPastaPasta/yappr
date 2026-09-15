@@ -16,9 +16,8 @@
 
 import { sha256 } from '@noble/hashes/sha2.js'
 import { hkdf } from '@noble/hashes/hkdf.js'
-
-// Key type indicates whether a key was derived from auth key or externally provided
-export type KeyType = 'derived' | 'external'
+import { getPublicKey } from './keys'
+import { bytesEqual, normalizeBytes } from '@/lib/bytes'
 
 // HKDF info string for encryption key derivation
 const INFO_ENCRYPTION_KEY = 'yappr/encryption-key/v1'
@@ -75,10 +74,9 @@ export async function validateDerivedKeyMatchesIdentity(
   identityId: string,
 ): Promise<boolean> {
   // Get the public key from derived private key
-  const { privateFeedCryptoService } = await import('@/lib/services')
   let derivedPubKey: Uint8Array
   try {
-    derivedPubKey = privateFeedCryptoService.getPublicKey(derivedPrivateKey)
+    derivedPubKey = getPublicKey(derivedPrivateKey)
   } catch {
     return false
   }
@@ -99,66 +97,10 @@ export async function validateDerivedKeyMatchesIdentity(
     return false
   }
 
-  // Parse on-chain public key data
-  let onChainPubKeyBytes: Uint8Array | null = null
-  if (targetKey.data instanceof Uint8Array) {
-    onChainPubKeyBytes = targetKey.data
-  } else if (typeof targetKey.data === 'string') {
-    // Could be hex or base64
-    if (/^[0-9a-fA-F]+$/.test(targetKey.data)) {
-      // Hex
-      onChainPubKeyBytes = new Uint8Array(targetKey.data.length / 2)
-      for (let i = 0; i < onChainPubKeyBytes.length; i++) {
-        onChainPubKeyBytes[i] = parseInt(targetKey.data.substr(i * 2, 2), 16)
-      }
-    } else {
-      // Assume base64
-      const binary = atob(targetKey.data)
-      onChainPubKeyBytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) {
-        onChainPubKeyBytes[i] = binary.charCodeAt(i)
-      }
-    }
-  }
-
+  const onChainPubKeyBytes = normalizeBytes(targetKey.data)
   if (!onChainPubKeyBytes) {
     return false
   }
 
-  // Compare derived public key with on-chain public key
-  return (
-    derivedPubKey.length === onChainPubKeyBytes.length &&
-    derivedPubKey.every((b, i) => b === onChainPubKeyBytes[i])
-  )
-}
-
-/**
- * Determine the encryption key type by attempting derivation and checking match.
- *
- * @param authPrivateKey - The 32-byte auth private key
- * @param identityId - The user's identity ID
- * @returns The key type ('derived' if matches, 'external' if not, or null if no key on identity)
- */
-export async function determineKeyType(
-  authPrivateKey: Uint8Array,
-  identityId: string,
-): Promise<KeyType | null> {
-  // First check if identity has an encryption key
-  const { identityService } = await import('@/lib/services/identity-service')
-  const { hasEncryptionKeyOnIdentity } = await import('@/lib/crypto/encryption-key-lookup')
-  const identityData = await identityService.getIdentity(identityId)
-  if (!identityData) {
-    return null
-  }
-
-  if (!hasEncryptionKeyOnIdentity(identityData.publicKeys)) {
-    return null
-  }
-
-  // Derive the encryption key
-  const derivedKey = deriveEncryptionKey(authPrivateKey, identityId)
-
-  // Check if derived matches identity
-  const matches = await validateDerivedKeyMatchesIdentity(derivedKey, identityId)
-  return matches ? 'derived' : 'external'
+  return bytesEqual(derivedPubKey, onChainPubKeyBytes)
 }

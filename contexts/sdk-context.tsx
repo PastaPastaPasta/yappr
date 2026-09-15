@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger';
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
-import { YAPPR_CONTRACT_ID } from '@/lib/constants'
+import { YAPPR_CONTRACT_ID, getConfiguredNetwork } from '@/lib/constants'
 
 interface SdkContextType {
   isReady: boolean
@@ -19,16 +19,21 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const initializeSdk = async () => {
       try {
-        logger.info('SdkProvider: Starting EvoSDK initialization for testnet...')
+        // This provider is the app-wide SDK bootstrap and usually wins the race
+        // against the on-demand callers (services, platform-auth), so
+        // it has to agree with them on the network. Hardcoding it would leave a
+        // /devnet build reading testnet through every `useSdk()` consumer until
+        // some later caller forced a reinit.
+        const network = getConfiguredNetwork()
+        logger.debug(`SdkProvider: Starting EvoSDK initialization for ${network}...`)
 
-        // Initialize with testnet configuration
         await evoSdkService.initialize({
-          network: 'testnet',
+          network,
           contractId: YAPPR_CONTRACT_ID
         })
 
         setIsReady(true)
-        logger.info('SdkProvider: EvoSDK initialized successfully, isReady = true')
+        logger.debug('SdkProvider: EvoSDK initialized successfully, isReady = true')
       } catch (err) {
         logger.error('SdkProvider: Failed to initialize EvoSDK:', err)
         setError(err instanceof Error ? err.message : 'Failed to initialize SDK')
@@ -39,10 +44,10 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
 
     // Only initialize in browser
     if (typeof window !== 'undefined') {
-      logger.info('SdkProvider: Running in browser, starting initialization...')
-      initializeSdk()
+      logger.debug('SdkProvider: Running in browser, starting initialization...')
+      initializeSdk().catch((err) => logger.error('SdkProvider: initialization failed:', err))
     } else {
-      logger.info('SdkProvider: Not in browser, skipping initialization')
+      logger.debug('SdkProvider: Not in browser, skipping initialization')
     }
   }, [])
 

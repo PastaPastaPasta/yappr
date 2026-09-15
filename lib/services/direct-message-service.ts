@@ -24,6 +24,8 @@ import { getPrivateKey } from '../secure-storage'
 import { YAPPR_DM_CONTRACT_ID } from '../constants'
 import { promptForAuthKey } from '../auth-utils'
 import bs58 from 'bs58'
+import { normalizeBytes } from '@/lib/bytes'
+import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
 
 /**
  * Direct Message Service for v3 contract
@@ -53,7 +55,7 @@ class DirectMessageService {
     try {
       // 1. Generate 10-byte conversation ID (10 bytes >= platform's byte detection threshold)
       const conversationIdBytes = await generateConversationId(senderId, recipientId)
-      const conversationId = bs58.encode(Buffer.from(conversationIdBytes))
+      const conversationId = bs58.encode(conversationIdBytes)
 
       // 2. Get sender's private key
       const privateKey = getPrivateKey(senderId)
@@ -71,10 +73,12 @@ class DirectMessageService {
         }
       }
 
-      // 4. Check if we need to create a conversation invite
+      // 4. Create the conversation invite if this is the first message that way.
+      // An unknown answer (lookup failed) skips creation: a missing invite
+      // costs one inbox hint, a duplicate costs credits every time.
       const existingInvite = await this.getMyInviteToRecipient(senderId, recipientId)
 
-      if (!existingInvite) {
+      if (existingInvite === null) {
         // Create conversation invite
         const senderPubKey = getPublicKeyFromPrivate(privateKey)
 
@@ -182,7 +186,7 @@ class DirectMessageService {
       for (const invite of receivedInvites) {
         const inviteData = invite.data as Record<string, unknown> | undefined
         const convIdBytes = this.extractByteArray(invite.conversationId || inviteData?.conversationId)
-        const convId = bs58.encode(Buffer.from(convIdBytes))
+        const convId = bs58.encode(convIdBytes)
         const senderId = invite.$ownerId
 
         const existingConv = conversationMap.get(convId)
@@ -200,9 +204,9 @@ class DirectMessageService {
       for (const invite of sentInvites) {
         const inviteData = invite.data as Record<string, unknown> | undefined
         const convIdBytes = this.extractByteArray(invite.conversationId || inviteData?.conversationId)
-        const convId = bs58.encode(Buffer.from(convIdBytes))
+        const convId = bs58.encode(convIdBytes)
         const recipientIdBytes = this.extractByteArray(invite.recipientId || inviteData?.recipientId)
-        const recipientId = bs58.encode(Buffer.from(recipientIdBytes))
+        const recipientId = bs58.encode(recipientIdBytes)
 
         const existingSentConv = conversationMap.get(convId)
         if (!existingSentConv) {
@@ -446,7 +450,7 @@ class DirectMessageService {
     participantId: string
   ): Promise<{ conversationId: string; isNew: boolean }> {
     const conversationIdBytes = await generateConversationId(userId, participantId)
-    const conversationId = bs58.encode(Buffer.from(conversationIdBytes))
+    const conversationId = bs58.encode(conversationIdBytes)
 
     // Check if conversation exists by looking for invites
     const invite = await this.getMyInviteToRecipient(userId, participantId)
@@ -496,7 +500,7 @@ class DirectMessageService {
     const convIdBytes = this.extractByteArray(
       doc.conversationId || docData?.conversationId
     )
-    const conversationId = bs58.encode(Buffer.from(convIdBytes))
+    const conversationId = bs58.encode(convIdBytes)
 
     // Decrypt
     const content = await decryptFromBinary(
@@ -559,14 +563,12 @@ class DirectMessageService {
       const publicKeys = identity.publicKeys
       if (!publicKeys || publicKeys.length === 0) return null
 
-      // Find the authentication HIGH key (type 0, securityLevel 2, purpose 0)
-      interface PublicKeyInfo { type: number; securityLevel: number; purpose: number }
-      const authHighKey = publicKeys.find((pk: PublicKeyInfo) =>
-        pk.type === 0 && pk.securityLevel === 2 && pk.purpose === 0
-      )
-      const fallbackKey = !authHighKey ? publicKeys.find((pk: PublicKeyInfo) =>
-        pk.type === 0 && pk.securityLevel === 2
-      ) : null
+      // DMs use the HIGH authentication key (full secp256k1 point) for ECDH,
+      // falling back to any HIGH secp256k1 key.
+      const isHighSecp = (pk: { type: number; securityLevel: number }) =>
+        pk.type === KeyType.ECDSA_SECP256K1 && pk.securityLevel === SecurityLevel.HIGH
+      const authHighKey = publicKeys.find((pk) => isHighSecp(pk) && pk.purpose === KeyPurpose.AUTHENTICATION)
+      const fallbackKey = !authHighKey ? publicKeys.find(isHighSecp) : null
 
       const ecdsaKey = authHighKey || fallbackKey
       if (!ecdsaKey) return null
@@ -589,10 +591,9 @@ class DirectMessageService {
       const publicKeys = identity.publicKeys
       if (!publicKeys || publicKeys.length === 0) return false
 
-      // Check if all HIGH security keys are type 2 (ECDSA_HASH160)
-      interface PublicKeySecInfo { type: number; securityLevel: number }
-      const highKeys = publicKeys.filter((pk: PublicKeySecInfo) => pk.securityLevel === 2)
-      const hasType0 = highKeys.some((pk: PublicKeySecInfo) => pk.type === 0)
+      // Uses hash160 if no HIGH key carries a full secp256k1 point
+      const highKeys = publicKeys.filter((pk) => pk.securityLevel === SecurityLevel.HIGH)
+      const hasType0 = highKeys.some((pk) => pk.type === KeyType.ECDSA_SECP256K1)
 
       return !hasType0  // Uses hash160 if no type 0 keys at HIGH security level
     } catch {
@@ -600,13 +601,11 @@ class DirectMessageService {
     }
   }
 
-  /**
-   * Get my invite to a recipient
-   */
+  /** The sender's invite to the recipient; `null` when there is none, `undefined` when the lookup failed. */
   private async getMyInviteToRecipient(
     senderId: string,
     recipientId: string
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown> | null | undefined> {
     try {
       const sdk = await getEvoSdk()
 
@@ -623,8 +622,9 @@ class DirectMessageService {
 
       const docs = this.extractDocuments(response)
       return docs[0] || null
-    } catch {
-      return null
+    } catch (error) {
+      logger.warn('Could not check for an existing conversation invite:', error)
+      return undefined
     }
   }
 
@@ -635,7 +635,7 @@ class DirectMessageService {
     senderId: string,
     recipientId: string
   ): Promise<Record<string, unknown> | null> {
-    return this.getMyInviteToRecipient(senderId, recipientId)
+    return (await this.getMyInviteToRecipient(senderId, recipientId)) ?? null
   }
 
   /**
@@ -751,81 +751,41 @@ class DirectMessageService {
   }
 
   /**
-   * Extract byte array from various formats
+   * Bytes of a document field. Platform hands identifier-typed fields back as
+   * base58 while plain byte arrays come as base64/number[]/Uint8Array, so
+   * base58 is tried first and the generic codec covers the rest. Absent or
+   * undecodable values yield an empty array, matching the field being unset.
    */
   private extractByteArray(value: unknown): Uint8Array {
     if (!value) return new Uint8Array(0)
-    if (value instanceof Uint8Array) return value
-    if (Array.isArray(value)) return new Uint8Array(value)
     if (typeof value === 'string') {
       try {
         return bs58.decode(value)
       } catch {
-        return new Uint8Array(Buffer.from(value, 'base64'))
+        return normalizeBytes(value) ?? new Uint8Array(0)
       }
     }
-    const typedValue = value as { buffer?: ArrayBuffer; byteOffset?: number; byteLength?: number }
-    if (typedValue.buffer && typedValue.byteLength !== undefined) {
-      return new Uint8Array(typedValue.buffer, typedValue.byteOffset ?? 0, typedValue.byteLength)
-    }
-    return new Uint8Array(0)
+    return normalizeBytes(value) ?? new Uint8Array(0)
   }
 
   /**
-   * Extract public key bytes from identity public key object
+   * Public-key bytes from an identity key object, whichever of the field names
+   * the SDK surface used (`data`, `publicKey`, `key`) or the raw value itself.
    */
   private extractPublicKeyBytes(publicKey: unknown): Uint8Array {
-    if (publicKey instanceof Uint8Array) return publicKey
-    if (Array.isArray(publicKey)) return new Uint8Array(publicKey)
-
-    if (publicKey && typeof publicKey === 'object') {
+    const isBytesLike = (v: unknown) => v instanceof Uint8Array || Array.isArray(v) || typeof v === 'string'
+    const candidates: unknown[] = []
+    if (publicKey && typeof publicKey === 'object' && !isBytesLike(publicKey)) {
       const pkObj = publicKey as Record<string, unknown>
-      // Try 'data' field (common in Dash Platform)
-      if (pkObj.data) {
-        if (Array.isArray(pkObj.data)) return new Uint8Array(pkObj.data)
-        if (typeof pkObj.data === 'string') {
-          try {
-            return bs58.decode(pkObj.data)
-          } catch {
-            return new Uint8Array(Buffer.from(pkObj.data, 'base64'))
-          }
-        }
-        if (pkObj.data instanceof Uint8Array) return pkObj.data
-      }
-
-      // Try 'publicKey' field
-      if (pkObj.publicKey) {
-        if (Array.isArray(pkObj.publicKey)) return new Uint8Array(pkObj.publicKey)
-        if (typeof pkObj.publicKey === 'string') {
-          try {
-            return bs58.decode(pkObj.publicKey)
-          } catch {
-            return new Uint8Array(Buffer.from(pkObj.publicKey, 'base64'))
-          }
-        }
-      }
-
-      // Try 'key' field
-      if (pkObj.key) {
-        if (Array.isArray(pkObj.key)) return new Uint8Array(pkObj.key)
-        if (typeof pkObj.key === 'string') {
-          try {
-            return bs58.decode(pkObj.key)
-          } catch {
-            return new Uint8Array(Buffer.from(pkObj.key, 'base64'))
-          }
-        }
-      }
+      candidates.push(pkObj.data, pkObj.publicKey, pkObj.key)
+    } else {
+      candidates.push(publicKey)
     }
-
-    if (typeof publicKey === 'string') {
-      try {
-        return bs58.decode(publicKey)
-      } catch {
-        return new Uint8Array(Buffer.from(publicKey, 'base64'))
-      }
+    for (const candidate of candidates) {
+      if (!isBytesLike(candidate)) continue
+      const bytes = this.extractByteArray(candidate)
+      if (bytes.length > 0) return bytes
     }
-
     throw new Error('Unknown public key format: ' + JSON.stringify(publicKey))
   }
 }

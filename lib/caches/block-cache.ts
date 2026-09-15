@@ -71,9 +71,12 @@ export function loadBlockCache(userId: string): BlockCacheData | null {
 
     const data = JSON.parse(raw) as BlockCacheData
 
-    // Check if cache is stale
+    // Check if cache is stale. Judge by the newest section write so a cache
+    // seeded by a single section (e.g. setBlockFollows before full
+    // initialization) isn't immediately discarded as stale.
     const now = Date.now()
-    if (now - data.ownBlocks.timestamp > CACHE_TTL) {
+    const newestWrite = Math.max(data.ownBlocks.timestamp, data.blockFollows.timestamp)
+    if (now - newestWrite > CACHE_TTL) {
       return null // Force refresh
     }
 
@@ -105,18 +108,6 @@ export function invalidateBlockCache(userId: string): void {
 
   const key = getCacheKey(userId)
   sessionStorage.removeItem(key)
-}
-
-/**
- * Update own blocks in the cache.
- */
-export function setOwnBlocks(userId: string, blockedIds: string[]): void {
-  const cache = loadBlockCache(userId) || getEmptyCache()
-  cache.ownBlocks = {
-    blockedIds,
-    timestamp: Date.now()
-  }
-  saveBlockCache(userId, cache)
 }
 
 /**
@@ -253,10 +244,14 @@ export function isInOwnBlocks(userId: string, targetId: string): boolean {
 
 /**
  * Get all block follows from cache.
+ * Returns null when the value has never been cached (or expired) —
+ * distinct from a cached empty list, which is the common case and
+ * must not trigger a refetch.
  */
-export function getBlockFollowsFromCache(userId: string): string[] {
+export function getBlockFollowsFromCache(userId: string): string[] | null {
   const cache = loadBlockCache(userId)
-  return cache?.blockFollows.followedUserIds ?? []
+  if (!cache || cache.blockFollows.timestamp === 0) return null
+  return cache.blockFollows.followedUserIds
 }
 
 /**

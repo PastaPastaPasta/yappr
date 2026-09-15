@@ -17,12 +17,12 @@ import {
   BookOpenIcon,
 } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { withAuth } from '@/contexts/auth-context'
+import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
+import { shouldGateSensitive } from '@/lib/sensitive-content'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { formatTimeCompact } from '@/lib/utils'
 import Link from 'next/link'
@@ -52,6 +52,15 @@ function getNotificationUrl(notification: Notification): string | null {
     return getBlogPostUrl(notification.blogId, notification.blogPostSlug)
   }
 
+  // A v3 reply links to ITSELF: usePostDetail renders a reply as the main card
+  // with the thread root as context, which is always reliable — whereas the root
+  // page fetches replies oldest-first in pages and renders limited nesting, so a
+  // deep or recent reply may not be present there at all. v2's link targets
+  // below are untouched.
+  if (notification.post?.rootPostId) {
+    return `/post?id=${notification.post.id}`
+  }
+
   // For reply notifications, navigate to the parent post (where the reply appears)
   // The post.parentId contains the ID of the post/reply that was replied to
   if (notification.type === 'reply' && notification.post?.parentId) {
@@ -64,6 +73,19 @@ function getNotificationUrl(notification: Notification): string | null {
   }
 
   return null
+}
+
+/**
+ * What the notification says happened. `targetKind` only differs from the
+ * default where the topology can tell a reply from a post — the v3 `likeReply`
+ * doctype, and replies that carry a thread root.
+ */
+function notificationMessage(notification: Notification): string {
+  if (notification.targetKind === 'reply') {
+    if (notification.type === 'like') return 'liked your reply'
+    if (notification.type === 'reply') return 'replied to your reply'
+  }
+  return NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'
 }
 
 // Map notification types to settings keys
@@ -129,7 +151,8 @@ const EMPTY_STATE_MESSAGES: Record<NotificationFilter, string> = {
 }
 
 function NotificationsPage() {
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
+  const { user } = useAuth()
   // Store - polling is handled by Sidebar, we just display data
   const filter = useNotificationStore((s) => s.filter)
   const isLoading = useNotificationStore((s) => s.isLoading)
@@ -191,12 +214,8 @@ function NotificationsPage() {
   }).length
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-      <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-        <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <PageShell>
+        <PageHeader>
           <div className="flex items-center justify-between px-4 py-3">
             <h1 className="text-xl font-bold">Notifications</h1>
             <div className="flex items-center gap-2">
@@ -301,7 +320,7 @@ function NotificationsPage() {
               )
             })}
           </div>
-        </header>
+        </PageHeader>
 
         {isLoading || !hasFetchedOnce ? (
           <div className="p-8 text-center">
@@ -358,7 +377,7 @@ function NotificationsPage() {
                               {notification.from?.displayName || notification.from?.username || 'Unknown User'}
                             </Link>
                             {' '}
-                            {NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'}
+                            {notificationMessage(notification)}
                             <span className="text-gray-500 ml-2">
                               {formatTimeCompact(notification.createdAt)}
                             </span>
@@ -389,13 +408,21 @@ function NotificationsPage() {
                           const notifUrl = getNotificationUrl(notification)
                           if (!notifUrl) return null
                           const post = notification.post
+                          // Cards gate the viewer's own posts; previews of
+                          // their own content deliberately do not.
+                          const gateSensitivePreview =
+                            shouldGateSensitive(post, sensitiveContentMode) && post?.author.id !== user?.identityId
                           return (
                             <Link
                               href={notifUrl}
                               onClick={(e) => e.stopPropagation()}
                               className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
                             >
-                              {post?.content || 'View post'}
+                              {gateSensitivePreview ? (
+                                <span className="italic text-gray-500">NSFW content</span>
+                              ) : (
+                                post?.content || 'View post'
+                              )}
                             </Link>
                           )
                         })()}
@@ -411,11 +438,7 @@ function NotificationsPage() {
             ))}
           </div>
         )}
-      </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }
 

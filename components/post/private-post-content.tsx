@@ -6,26 +6,37 @@ import { LockClosedIcon, LockOpenIcon, ExclamationTriangleIcon, KeyIcon, ArrowPa
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
 import { Post } from '@/lib/types'
 import { PostContent } from './post-content'
+import type { MediaGate } from '@/hooks/use-media-gate'
 import { cn } from '@/lib/utils'
 import { identifierToBytes } from '@/lib/services/sdk-helpers'
 import { useAuth } from '@/contexts/auth-context'
-import { HashtagValidationStatus } from '@/hooks/use-hashtag-validation'
-import { MentionValidationStatus } from '@/hooks/use-mention-validation'
+import type { FieldValidationStatus } from '@/hooks/use-post-field-validation'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import { usePrivateFeedRequest } from '@/hooks/use-private-feed-request'
-import { useLoginPromptModal } from '@/hooks/use-login-prompt-modal'
+import { useLoginModal } from '@/hooks/use-login-modal'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 
 interface PrivatePostContentProps {
   post: Post
+  /**
+   * Owner of the thread ROOT, when this card is showing a reply.
+   *
+   * A reply to a private post inherits the root author's CEK, so the root author
+   * — not the reply author — is whose feed keys decrypt it. Without this, a reply
+   * written by anyone other than the root author cannot be decrypted at all: the
+   * lookup goes to the wrong identity's grant.
+   */
+  rootPostOwnerId?: string
   className?: string
-  hashtagValidations?: Map<string, HashtagValidationStatus>
+  hashtagValidations?: Map<string, FieldValidationStatus>
   onFailedHashtagClick?: (hashtag: string) => void
-  mentionValidations?: Map<string, MentionValidationStatus>
+  mentionValidations?: Map<string, FieldValidationStatus>
   onFailedMentionClick?: (username: string) => void
   /** @deprecated Use authorId instead. This prop is kept for backwards compatibility. */
   onRequestAccess?: () => void
+  /** Follow-gate for external media/previews in teaser and decrypted content */
+  mediaGate?: MediaGate
 }
 
 type DecryptionState =
@@ -116,17 +127,18 @@ function PrivateContentCard({ children, status, statusText, footer }: PrivateCon
  */
 interface TeaserProps {
   content: string
-  hashtagValidations?: Map<string, HashtagValidationStatus>
+  hashtagValidations?: Map<string, FieldValidationStatus>
   onFailedHashtagClick?: (hashtag: string) => void
-  mentionValidations?: Map<string, MentionValidationStatus>
+  mentionValidations?: Map<string, FieldValidationStatus>
   onFailedMentionClick?: (username: string) => void
+  mediaGate?: MediaGate
 }
 
 /**
  * Renders the teaser content for private posts.
  * Used across multiple decryption states to avoid prop drilling repetition.
  */
-function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionValidations, onFailedMentionClick, muted = false, disableLinkPreview = false }: TeaserProps & { muted?: boolean; disableLinkPreview?: boolean }): React.ReactElement {
+function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionValidations, onFailedMentionClick, mediaGate, muted = false, disableLinkPreview = false }: TeaserProps & { muted?: boolean; disableLinkPreview?: boolean }): React.ReactElement {
   if (muted) {
     return (
       <div className="text-gray-500 dark:text-gray-400 text-sm">
@@ -137,6 +149,7 @@ function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionVali
           mentionValidations={mentionValidations}
           onFailedMentionClick={onFailedMentionClick}
           disableLinkPreview={disableLinkPreview}
+          mediaGate={mediaGate}
         />
       </div>
     )
@@ -150,6 +163,7 @@ function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionVali
       mentionValidations={mentionValidations}
       onFailedMentionClick={onFailedMentionClick}
       disableLinkPreview={disableLinkPreview}
+      mediaGate={mediaGate}
     />
   )
 }
@@ -163,16 +177,22 @@ function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionVali
  */
 export function PrivatePostContent({
   post,
+  rootPostOwnerId,
   className = '',
   hashtagValidations,
   onFailedHashtagClick,
   mentionValidations,
   onFailedMentionClick,
+  mediaGate,
 }: PrivatePostContentProps) {
+  // Whose CEK this content was encrypted under. For a top-level post that is its
+  // author; for a reply it is the ROOT author, because replies inherit the
+  // thread's encryption (PRD §5.5).
+  const encryptionSourceOwnerId = rootPostOwnerId ?? post.author.id
   const { user } = useAuth()
   const [state, setState] = useState<DecryptionState>({ status: 'idle' })
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
-  const { open: openLoginPrompt } = useLoginPromptModal()
+  const openLoginPrompt = useLoginModal((s) => s.open)
 
   // Use the private feed request hook for requesting access from feed posts
   const {
@@ -184,15 +204,22 @@ export function PrivatePostContent({
     onKeyAdded,
     dismissKeyModal,
   } = usePrivateFeedRequest({
-    ownerId: post.author.id,
+    // Access is granted per FEED, so the request goes to whoever owns the
+    // encryption — the root author for an inherited-encrypted reply.
+    ownerId: encryptionSourceOwnerId,
     currentUserId: user?.identityId ?? null,
-    onRequireAuth: () => openLoginPrompt('generic'),
+    onRequireAuth: () => openLoginPrompt(),
   })
 
   // State for showing cancel option when pending is clicked
   const [showCancelOption, setShowCancelOption] = useState(false)
 
-  const isOwner = user?.identityId === post.author.id
+  // Role for key-recovery and access-request controls follows the ENCRYPTION
+  // owner — the root author for an inherited-encrypted reply — not the reply's
+  // author: access is granted per feed, and the "enter your key" affordance
+  // belongs to whoever owns that feed. On v2 encryptionSourceOwnerId falls back
+  // to post.author.id, so this is identical there.
+  const isOwner = user?.identityId === encryptionSourceOwnerId
   // Skip rendering teaser if it's just the lock emoji placeholder
   const teaserContent = post.content?.trim()
   const hasTeaser = teaserContent && teaserContent.length > 0 && teaserContent !== ':lock:' && teaserContent !== '🔒'
@@ -204,11 +231,17 @@ export function PrivatePostContent({
     onFailedHashtagClick,
     mentionValidations,
     onFailedMentionClick,
+    mediaGate,
   }
 
   // Attempt follower key recovery using encryption key
   const attemptRecovery = useCallback(async () => {
     if (!user) return
+    const { encryptedContent, epoch, nonce } = post
+    if (!encryptedContent || epoch == null || !nonce) {
+      setState({ status: 'error', message: 'Invalid private post data' })
+      return
+    }
 
     setState({ status: 'recovering' })
 
@@ -221,10 +254,6 @@ export function PrivatePostContent({
         return
       }
 
-      // For posts, the encryption source is always the post author
-      // (Replies use inherited encryption but that's handled separately)
-      const encryptionSourceOwnerId = post.author.id
-
       // Attempt to recover follower keys from grant
       const { privateFeedFollowerService } = await import('@/lib/services')
       const result = await privateFeedFollowerService.recoverFollowerKeys(
@@ -236,9 +265,9 @@ export function PrivatePostContent({
       if (result.success) {
         // Recovery successful - now try to decrypt the post
         const decryptResult = await privateFeedFollowerService.decryptPost({
-          encryptedContent: post.encryptedContent!,
-          epoch: post.epoch!,
-          nonce: post.nonce!,
+          encryptedContent,
+          epoch,
+          nonce,
           $ownerId: encryptionSourceOwnerId,
         }, user.identityId)
 
@@ -267,7 +296,7 @@ export function PrivatePostContent({
         message: error instanceof Error ? error.message : 'Recovery failed',
       })
     }
-  }, [post, user])
+  }, [post, user, encryptionSourceOwnerId])
 
   // Handle "Recover Access" button click
   const handleRecoverAccess = useCallback(() => {
@@ -281,7 +310,8 @@ export function PrivatePostContent({
 
   const attemptDecryption = useCallback(async () => {
     // Safety check: ensure this is a private post
-    if (!post.encryptedContent || post.epoch == null || !post.nonce) {
+    const { encryptedContent, epoch, nonce } = post
+    if (!encryptedContent || epoch == null || !nonce) {
       setState({ status: 'error', message: 'Invalid private post data' })
       return
     }
@@ -298,10 +328,6 @@ export function PrivatePostContent({
       const { privateFeedFollowerService } = await import('@/lib/services')
       const { privateFeedKeyStore } = await import('@/lib/services')
 
-      // For posts, the encryption source is always the post author
-      // (Replies use inherited encryption but that's handled by reply-service)
-      const encryptionSourceOwnerId = post.author.id
-
       // Check if user is the encryption source owner (can decrypt with their own feed keys)
       const isEncryptionSourceOwner = user.identityId === encryptionSourceOwnerId
 
@@ -313,7 +339,7 @@ export function PrivatePostContent({
         if (!feedSeed) {
           const encryptionPrivateKey = getEncryptionKeyBytes(user.identityId)
           if (encryptionPrivateKey) {
-            logger.info('Owner auto-recovery: no local feed seed, attempting recovery with encryption key')
+            logger.debug('Owner auto-recovery: no local feed seed, attempting recovery with encryption key')
             setState({ status: 'recovering' })
 
             // Attempt to recover owner state from chain
@@ -324,17 +350,17 @@ export function PrivatePostContent({
             )
 
             if (recoveryResult.success) {
-              logger.info('Owner auto-recovery: successfully recovered feed seed')
+              logger.debug('Owner auto-recovery: successfully recovered feed seed')
               feedSeed = privateFeedKeyStore.getFeedSeed()
             } else {
-              logger.info('Owner auto-recovery failed:', recoveryResult.error)
+              logger.debug('Owner auto-recovery failed:', recoveryResult.error)
               // Recovery failed - show locked state with no-keys reason
               setState({ status: 'locked', reason: 'no-keys' })
               return
             }
           } else {
             // Owner doesn't have encryption key - needs to enter it
-            logger.info('Owner cannot decrypt: no feed seed and no encryption key')
+            logger.debug('Owner cannot decrypt: no feed seed and no encryption key')
             setState({ status: 'locked', reason: 'no-keys' })
             return
           }
@@ -353,14 +379,14 @@ export function PrivatePostContent({
         const cached = privateFeedKeyStore.getCachedCEK(encryptionSourceOwnerId)
         let cek: Uint8Array
 
-        if (cached && cached.epoch === post.epoch) {
+        if (cached && cached.epoch === epoch) {
           cek = cached.cek
-        } else if (cached && cached.epoch > post.epoch!) {
-          cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, post.epoch!)
+        } else if (cached && cached.epoch > epoch) {
+          cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, epoch)
         } else {
           // Generate from chain
           const chain = privateFeedCryptoService.generateEpochChain(feedSeed, MAX_EPOCH)
-          cek = chain[post.epoch!]
+          cek = chain[epoch]
         }
 
         // Convert encryption source owner ID to bytes for AAD
@@ -369,9 +395,9 @@ export function PrivatePostContent({
         const decryptedContent = privateFeedCryptoService.decryptPostContent(
           cek,
           {
-            ciphertext: post.encryptedContent,
-            nonce: post.nonce!,
-            epoch: post.epoch!,
+            ciphertext: encryptedContent,
+            nonce,
+            epoch,
           },
           ownerIdBytes
         )
@@ -382,7 +408,7 @@ export function PrivatePostContent({
         if (isOwner) {
           try {
             const { privateFeedService } = await import('@/lib/services')
-            followerCount = await privateFeedService.getPrivateFollowerCount(post.author.id)
+            followerCount = await privateFeedService.getPrivateFollowerCount(encryptionSourceOwnerId)
           } catch (err) {
             logger.warn('Failed to fetch private follower count:', err)
             // Continue without follower count - it's not critical
@@ -430,9 +456,9 @@ export function PrivatePostContent({
 
       // Attempt to decrypt using encryption source owner's keys
       const result = await privateFeedFollowerService.decryptPost({
-        encryptedContent: post.encryptedContent,
-        epoch: post.epoch!,
-        nonce: post.nonce!,
+        encryptedContent,
+        epoch,
+        nonce,
         $ownerId: encryptionSourceOwnerId,
       }, user.identityId)
 
@@ -463,7 +489,7 @@ export function PrivatePostContent({
         }
         // BUG-017 fix: Check if we need to trigger key recovery due to missing wrapNonceSalt
         if (result.error?.startsWith('REKEY_RECOVERY_NEEDED:')) {
-          logger.info('BUG-017: Triggering key recovery due to missing wrapNonceSalt')
+          logger.debug('BUG-017: Triggering key recovery due to missing wrapNonceSalt')
           // Check if we have encryption key in session to auto-recover
           const encryptionKeyBytes = getEncryptionKeyBytes(user.identityId)
           if (encryptionKeyBytes) {
@@ -490,7 +516,7 @@ export function PrivatePostContent({
         message: error instanceof Error ? error.message : 'Decryption failed',
       })
     }
-  }, [post, user, isOwner, attemptRecovery])
+  }, [post, user, isOwner, attemptRecovery, encryptionSourceOwnerId])
 
   // Reset state when post or user changes to avoid stale decryption data
   useEffect(() => {
@@ -560,6 +586,7 @@ export function PrivatePostContent({
             onFailedHashtagClick={onFailedHashtagClick}
             mentionValidations={mentionValidations}
             onFailedMentionClick={onFailedMentionClick}
+            mediaGate={mediaGate}
           />
         </PrivateContentCard>
       </div>
@@ -749,24 +776,6 @@ export function PrivatePostContent({
         </div>
       </PrivateContentCard>
     </div>
-  )
-}
-
-/**
- * Helper component to show the private badge on posts
- */
-export function PrivatePostBadge({ className }: { className?: string }) {
-  return (
-    <span
-      data-testid="private-post-badge"
-      className={cn(
-        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs',
-        className
-      )}
-    >
-      <LockClosedIcon className="h-3 w-3" />
-      <span>Private</span>
-    </span>
   )
 }
 

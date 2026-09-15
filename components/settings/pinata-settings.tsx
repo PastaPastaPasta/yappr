@@ -61,7 +61,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
 
       // Check if we have stored credentials
       const hasCredentials = provider.hasStoredCredentials()
-      logger.info('[Pinata] Checking credentials for identity:', user.identityId, 'hasCredentials:', hasCredentials)
+      logger.debug('[Pinata] Checking credentials for identity:', user.identityId, 'hasCredentials:', hasCredentials)
 
       if (hasCredentials) {
         try {
@@ -70,14 +70,14 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
           setMaskedJwt(provider.getMaskedJwt())
           setGateway(provider.getConnectedGateway())
           onConnectionChangeRef.current?.(true)
-          logger.info('[Pinata] Successfully connected')
+          logger.debug('[Pinata] Successfully connected')
         } catch (err) {
           logger.error('[Pinata] Failed to connect with stored credentials:', err)
           setStatus('disconnected')
           onConnectionChangeRef.current?.(false)
         }
       } else {
-        logger.info('[Pinata] No stored credentials found')
+        logger.debug('[Pinata] No stored credentials found')
         setStatus('disconnected')
         onConnectionChangeRef.current?.(false)
       }

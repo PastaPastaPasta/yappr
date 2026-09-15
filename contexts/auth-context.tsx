@@ -2,6 +2,7 @@
 
 import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
+import { base64ToBytes } from '@/lib/bytes'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
@@ -34,7 +35,8 @@ interface AuthContextType {
   login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean }) => Promise<void>
   loginWithPassword: (username: string, password: string) => Promise<void>
   loginWithPasskey: (identityOrUsername?: string) => Promise<void>
-  loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number) => Promise<void>
+  /** Resolves with the post-login intent so the caller can tell a fully set-up account from one still needing a username/profile. */
+  loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number) => Promise<PlatformAuthIntent>
   createOrUpdateUnifiedVaultFromLoginKey: (identityId: string, loginKey: Uint8Array) => Promise<void>
   createOrUpdateUnifiedVaultFromAuthKey: (identityId: string, authKeyWif: string) => Promise<void>
   addPasskeyWrapper: (label?: string) => Promise<void>
@@ -99,15 +101,6 @@ function toFriendlyVaultWriteError(error: unknown, methodLabel: 'passkey' | 'pas
   return error instanceof Error ? error : new Error(message)
 }
 
-function decodeBase64ToBytes(value: string): Uint8Array {
-  const binary = atob(value)
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-  return bytes
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const controller = useMemo(() => new PlatformAuthController(createYapprPlatformAuthDependencies()), [])
@@ -160,6 +153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginWithKeyExchange = useCallback(async (identityId: string, loginKey: Uint8Array, keyIndex: number) => {
     const result = await controller.loginWithLoginKey(identityId, loginKey, keyIndex)
     await applyIntent(result.intent)
+    return result.intent
   }, [applyIntent, controller])
 
   const createOrUpdateUnifiedVaultFromLoginKey = useCallback(async (identityId: string, loginKey: Uint8Array) => {
@@ -184,7 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loginKey: partialSecrets.loginKey
         ? partialSecrets.loginKey instanceof Uint8Array
           ? partialSecrets.loginKey
-          : decodeBase64ToBytes(partialSecrets.loginKey)
+          : base64ToBytes(partialSecrets.loginKey)
         : undefined,
       authKeyWif: partialSecrets.authKeyWif,
       encryptionKeyWif: partialSecrets.encryptionKeyWif,
@@ -313,7 +307,7 @@ export function withAuth<P extends object>(
       if (needsDPNS) {
         router.push('/dpns/register')
       }
-    }, [user, isAuthRestoring, router, needsDPNS, options?.optional])
+    }, [user, isAuthRestoring, router, needsDPNS])
 
     if (isAuthRestoring) {
       return <AuthLoadingSpinner />

@@ -10,6 +10,8 @@ import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BlogThemeProvider } from './theme-provider'
 import { useAuth } from '@/contexts/auth-context'
 import { useBlogFollow } from '@/hooks/use-blog-follow'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
+import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
 
 interface BlogHomeProps {
   blog: Blog
@@ -69,6 +71,14 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
   useEffect(() => {
     setPage(1)
   }, [activeLabel])
+
+  // Pages are sliced from posts already in memory, so this never hits the network.
+  const { sentinelRef, isSuspended, loadMore } = useInfiniteScroll({
+    hasMore,
+    isLoading: loading,
+    onLoadMore: () => setPage((prev) => prev + 1),
+    resetKey: `${blog.id}:${activeLabel}`
+  })
 
   return (
     <BlogThemeProvider
@@ -173,15 +183,14 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
       )}
 
       {hasMore && (
-        <div className="flex justify-center">
-          <button
-            type="button"
-            onClick={() => setPage((prev) => prev + 1)}
-            className="rounded-full border border-[var(--blog-border)] px-4 py-2 text-sm text-[var(--blog-text)] transition hover:bg-[var(--blog-surface)]"
-          >
-            Load more
-          </button>
-        </div>
+        <InfiniteScrollSentinel
+          sentinelRef={sentinelRef}
+          isLoading={loading}
+          isSuspended={isSuspended}
+          onLoadMore={loadMore}
+          label="Load more"
+          buttonClassName="rounded-full border border-[var(--blog-border)] px-4 py-2 text-sm text-[var(--blog-text)] transition hover:bg-[var(--blog-surface)]"
+        />
       )}
     </BlogThemeProvider>
   )

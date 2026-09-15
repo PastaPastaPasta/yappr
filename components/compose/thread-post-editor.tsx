@@ -2,14 +2,14 @@
 
 import { useRef, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { TrashIcon, PhotoIcon } from '@heroicons/react/24/outline'
+import { TrashIcon, PhotoIcon, ChartBarIcon } from '@heroicons/react/24/outline'
 import type { ThreadPost } from '@/lib/store'
 import { MarkdownContent } from '@/components/ui/markdown-content'
 import { FormatButton, CharacterCounter } from './compose-sub-components'
 import { MentionAutocomplete } from './mention-autocomplete'
 import { EmojiPicker } from './emoji-picker'
 
-const CHARACTER_LIMIT = 500
+import { CHARACTER_LIMIT } from '@/lib/compose/limits'
 
 interface ThreadPostEditorProps {
   post: ThreadPost
@@ -26,6 +26,14 @@ interface ThreadPostEditorProps {
   onImageClick?: () => void
   canAttachImage?: boolean
   imageTitle?: string
+  /** Poll attachment toggle - only shown on a single, unposted, public post */
+  onPollClick?: () => void
+  pollAttached?: boolean
+  /**
+   * Read-only because this text is now something immutable: it supplied the
+   * question of a poll that already landed on Platform.
+   */
+  locked?: boolean
 }
 
 export function ThreadPostEditor({
@@ -42,6 +50,9 @@ export function ThreadPostEditor({
   onImageClick,
   canAttachImage,
   imageTitle,
+  onPollClick,
+  pollAttached = false,
+  locked = false,
 }: ThreadPostEditorProps) {
   const localRef = useRef<HTMLTextAreaElement>(null)
   const ref = textareaRef || localRef
@@ -219,8 +230,8 @@ export function ThreadPostEditor({
             </div>
           )}
 
-          {/* Formatting toolbar - only show when active and not posted */}
-          {isActive && !showPreview && !isPosted && (
+          {/* Formatting toolbar - only show when active, not posted and editable */}
+          {isActive && !showPreview && !isPosted && !locked && (
             <div className="flex items-center gap-1 mb-3 pb-2 border-b border-gray-100 dark:border-gray-800">
               <FormatButton
                 onClick={() => handleInsertFormat('**')}
@@ -269,6 +280,16 @@ export function ThreadPostEditor({
                 </>
               )}
 
+              {/* Poll attachment button */}
+              {onPollClick && (
+                <FormatButton
+                  onClick={onPollClick}
+                  title={pollAttached ? 'Remove poll' : 'Add poll'}
+                >
+                  <ChartBarIcon className={`w-4 h-4 ${pollAttached ? 'text-yappr-500' : ''}`} />
+                </FormatButton>
+              )}
+
               {/* Remove button for thread posts */}
               {!isOnly && (
                 <>
@@ -282,7 +303,7 @@ export function ThreadPostEditor({
           )}
 
           {/* Content area */}
-          {showPreview || isPosted ? (
+          {showPreview || isPosted || locked ? (
             <div className={`min-h-[60px] whitespace-pre-wrap break-words ${
               isPosted
                 ? 'text-gray-600 dark:text-gray-400'
@@ -346,13 +367,25 @@ export function ThreadPostEditor({
             </div>
           )}
 
-          {/* Footer with formatting hints and character count - only show when active and not posted */}
+          {locked && !isPosted && (
+            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              This text is your poll&apos;s question and can&apos;t change now that the poll is
+              live. Remove the poll to edit it.
+            </p>
+          )}
+
+          {/* Footer with formatting hints and character count - only show when active and not posted.
+              The count still matters when locked: an attached image URL is appended to this text. */}
           {isActive && !isPosted && (
             <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
               <div className="flex items-center gap-2 text-xs text-gray-400">
-                <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">**bold**</code>
-                <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">*italic*</code>
-                <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">`code`</code>
+                {!locked && (
+                  <>
+                    <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">**bold**</code>
+                    <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">*italic*</code>
+                    <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">`code`</code>
+                  </>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 {extraCharacters > 0 && (
@@ -370,4 +403,3 @@ export function ThreadPostEditor({
   )
 }
 
-export { CHARACTER_LIMIT }

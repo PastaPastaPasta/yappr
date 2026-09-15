@@ -2,8 +2,9 @@
 
 import { logger } from '@/lib/logger';
 import { useEffect, useMemo, useState } from 'react'
-import type { Post, Reply } from '@/lib/types'
-import { extractYapprPostId } from './use-link-preview'
+import type { Post } from '@/lib/types'
+import { replyToPost } from '@/lib/services/post-service'
+import { extractYapprPostId } from '@/lib/link-preview/urls'
 
 interface UseYapprPostReferenceOptions {
   disabled?: boolean
@@ -18,29 +19,6 @@ export interface UseYapprPostReferenceResult {
 
 const referenceCache = new Map<string, Post | null>()
 const pendingReferences = new Map<string, Promise<Post | null>>()
-
-function convertReplyToPost(reply: Reply): Post {
-  return {
-    id: reply.id,
-    author: reply.author,
-    content: reply.content,
-    createdAt: reply.createdAt,
-    likes: reply.likes,
-    reposts: reply.reposts,
-    replies: reply.replies,
-    views: reply.views,
-    liked: reply.liked,
-    reposted: reply.reposted,
-    bookmarked: reply.bookmarked,
-    media: reply.media,
-    parentId: reply.parentId,
-    parentOwnerId: reply.parentOwnerId,
-    encryptedContent: reply.encryptedContent,
-    epoch: reply.epoch,
-    nonce: reply.nonce,
-    _enrichment: reply._enrichment,
-  }
-}
 
 async function fetchReferencedPost(postId: string): Promise<Post | null> {
   if (referenceCache.has(postId)) {
@@ -63,8 +41,12 @@ async function fetchReferencedPost(postId: string): Promise<Post | null> {
 
       const { replyService } = await import('@/lib/services/reply-service')
       const reply = await replyService.getReplyById(postId)
-      const convertedReply = reply ? convertReplyToPost(reply) : null
-      referenceCache.set(postId, convertedReply)
+      const convertedReply = reply ? replyToPost(reply) : null
+      // Only cache hits: the services swallow network errors into null, so a
+      // cached miss would pin a transient DAPI failure for the whole session.
+      if (convertedReply) {
+        referenceCache.set(postId, convertedReply)
+      }
       return convertedReply
     } catch (error) {
       logger.error('useYapprPostReference: Failed to resolve linked post:', error)
@@ -84,10 +66,13 @@ export function useYapprPostReference(
 ): UseYapprPostReferenceResult {
   const { disabled = false } = options
 
+  // `matched` is a pure pattern check on the URL and stays truthful even when
+  // resolution is disabled — callers rely on it to keep internal post links
+  // out of the external link-preview and media-gate paths.
   const referencedPostId = useMemo(() => {
-    if (!url || disabled) return null
+    if (!url) return null
     return extractYapprPostId(url)
-  }, [url, disabled])
+  }, [url])
 
   const matched = referencedPostId !== null
   const [post, setPost] = useState<Post | null>(null)
@@ -95,7 +80,7 @@ export function useYapprPostReference(
   const [resolved, setResolved] = useState(false)
 
   useEffect(() => {
-    if (!matched || !referencedPostId) {
+    if (disabled || !matched || !referencedPostId) {
       setPost(null)
       setLoading(false)
       setResolved(false)
@@ -130,7 +115,7 @@ export function useYapprPostReference(
     return () => {
       cancelled = true
     }
-  }, [matched, referencedPostId])
+  }, [disabled, matched, referencedPostId])
 
   return {
     matched,

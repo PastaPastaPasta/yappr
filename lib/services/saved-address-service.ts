@@ -12,7 +12,7 @@ import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../cons
 import { privateFeedCryptoService } from './private-feed-crypto-service';
 import { identityService } from './identity-service';
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
-import { toUint8Array } from './sdk-helpers';
+import { normalizeBytes } from '@/lib/bytes';
 import type {
   SavedAddress,
   SavedAddressPayload,
@@ -26,23 +26,6 @@ const AAD_SHIPPING = 'yappr/shipping/v1';
 
 // Current payload schema version
 const PAYLOAD_VERSION = 1;
-
-/**
- * Normalize key data from various formats to Uint8Array
- */
-function normalizeKeyData(data: unknown): Uint8Array | null {
-  if (!data) return null;
-  if (data instanceof Uint8Array) return data;
-  if (Array.isArray(data)) return new Uint8Array(data);
-  if (typeof data === 'string') {
-    try {
-      return new Uint8Array(Buffer.from(data, 'base64'));
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
 
 /**
  * Generate a simple UUID v4
@@ -72,7 +55,7 @@ class SavedAddressService extends BaseDocumentService<InternalSavedAddressDocume
     const data = (doc.data || doc) as SavedAddressDocument;
 
     // Convert encrypted payload to Uint8Array
-    const encryptedPayload = toUint8Array(data.encryptedPayload) || new Uint8Array();
+    const encryptedPayload = normalizeBytes(data.encryptedPayload) || new Uint8Array();
 
     return {
       id: (doc.$id || doc.id) as string,
@@ -107,7 +90,7 @@ class SavedAddressService extends BaseDocumentService<InternalSavedAddressDocume
     const encryptionKey = findEncryptionKey(identity.publicKeys);
 
     if (!encryptionKey?.data) return null;
-    return normalizeKeyData(encryptionKey.data);
+    return normalizeBytes(encryptionKey.data);
   }
 
   /**

@@ -3,9 +3,8 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, FireIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
-import { Sidebar } from '@/components/layout/sidebar'
-import { RightSidebar } from '@/components/layout/right-sidebar'
+import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, FireIcon, DocumentTextIcon, TrophyIcon, UserGroupIcon } from '@heroicons/react/24/outline'
+import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
 import { Spinner } from '@/components/ui/spinner'
 import { BlogPostCard } from '@/components/blog/blog-post-card'
@@ -14,24 +13,22 @@ import { useRouter } from 'next/navigation'
 import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
+import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
+import { hashtagsAreInline, likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
+import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
+import type { RankingWindow } from '@/lib/services/ranked-likes'
+import { TopCreators } from '@/components/explore/top-creators'
 import type { Post, Blog, BlogPostWithAuthor } from '@/lib/types'
 import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
 
-interface RawPostDocument {
-  $id: string
-  $ownerId: string
-  $createdAt: number
-  content?: string
-}
-
-type ExploreTab = 'hashtags' | 'blogs'
+type ExploreTab = 'hashtags' | 'top' | 'creators' | 'blogs'
 
 export default function ExplorePage() {
   const router = useRouter()
   const { user } = useAuth()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const [activeTab, setActiveTab] = useState<ExploreTab>('hashtags')
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
@@ -42,7 +39,42 @@ export default function ExplorePage() {
   const [isLoadingTrends, setIsLoadingTrends] = useState(true)
   const [recentBlogPosts, setRecentBlogPosts] = useState<BlogPostWithAuthor[]>([])
   const [isLoadingBlogs, setIsLoadingBlogs] = useState(true)
+  const [topPosts, setTopPosts] = useState<Post[]>([])
+  const [isLoadingTop, setIsLoadingTop] = useState(false)
+  /** v6: which slice the ranked surfaces show (Top posts, trending, creators). */
+  const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
   const blogCacheRef = useRef<{ blogIds: string[]; blogMap: Map<string, Blog> } | null>(null)
+
+  // Load the global most-liked posts when the Top tab is activated (v4 only —
+  // the ranking is one proved `documents.ranked()` page on `like.byPost`).
+  // Re-activations are cheap: hydration is session-cached for a minute.
+  useEffect(() => {
+    if (activeTab !== 'top' || !likesAreIndexOnly()) return
+
+    const loadTopPosts = async () => {
+      setIsLoadingTop(true)
+      try {
+        const { topLikedPostsHydrated } = await import('@/lib/services/ranked-likes')
+        let posts = await topLikedPostsHydrated({ limit: 20, window: rankingWindow })
+
+        // Filter out posts from blocked users, same as the search results above.
+        if (user?.identityId && posts.length > 0) {
+          const authorIds = Array.from(new Set(posts.map(p => p.author.id)))
+          const blockedMap = await checkBlockedForAuthors(user.identityId, authorIds)
+          posts = posts.filter(post => !blockedMap.get(post.author.id))
+        }
+
+        setTopPosts(posts)
+      } catch (error) {
+        logger.error('Failed to load top posts:', error)
+        setTopPosts([])
+      } finally {
+        setIsLoadingTop(false)
+      }
+    }
+
+    loadTopPosts().catch(err => logger.error('Failed to load top posts:', err))
+  }, [activeTab, user?.identityId, rankingWindow])
 
   // Load trending hashtags
   useEffect(() => {
@@ -52,7 +84,8 @@ export default function ExplorePage() {
         const trending = await hashtagService.getTrendingHashtags({
           timeWindowHours: 168, // 1 week
           minPosts: 1,
-          limit: 12
+          limit: 12,
+          window: rankingWindow,
         })
         setTrendingHashtags(trending)
       } catch (error) {
@@ -63,7 +96,7 @@ export default function ExplorePage() {
     }
 
     loadTrendingHashtags().catch(err => logger.error('Failed to load trending hashtags:', err))
-  }, [])
+  }, [rankingWindow])
 
   // Load recent blog posts for discovery
   useEffect(() => {
@@ -114,44 +147,27 @@ export default function ExplorePage() {
       try {
         setIsSearching(true)
 
-        // Search regular posts
-        const { getDashPlatformClient } = await import('@/lib/dash-platform-client')
-        const dashClient = getDashPlatformClient()
+        // Search regular posts: a client-side substring match over the most
+        // recent timeline page. Authors are left as placeholders for PostCard
+        // to resolve progressively.
+        const { postService } = await import('@/lib/services/post-service')
+        const { documents: recentPosts } = await postService.getTimeline({ limit: 100 })
 
-        const allPosts = await dashClient.queryPosts({ limit: 100 })
-
-        const typedPosts = allPosts as RawPostDocument[]
-        const authorIds = Array.from(new Set(typedPosts.map(p => p.$ownerId).filter(Boolean)))
+        const authorIds = Array.from(new Set(recentPosts.map(p => p.author.id).filter(Boolean)))
         const blockedMap = user?.identityId
           ? await checkBlockedForAuthors(user.identityId, authorIds)
           : new Map<string, boolean>()
 
-        const filtered = typedPosts
+        const needle = searchQuery.toLowerCase()
+        const filtered = recentPosts
           .filter(post =>
-            post.$ownerId &&
-            post.content?.toLowerCase().includes(searchQuery.toLowerCase()) &&
-            !blockedMap.get(post.$ownerId)
+            !post.deleted &&
+            post.content.toLowerCase().includes(needle) &&
+            !blockedMap.get(post.author.id)
           )
           .map(post => ({
-            id: post.$id,
-            content: post.content || '',
-            author: {
-              id: post.$ownerId,
-              username: '',
-              handle: '',
-              displayName: '',
-              avatar: '',
-              followers: 0,
-              following: 0,
-              verified: false,
-              joinedAt: new Date(),
-              hasDpns: undefined
-            },
-            createdAt: new Date(post.$createdAt || 0),
-            likes: 0,
-            replies: 0,
-            reposts: 0,
-            views: 0
+            ...post,
+            author: { ...post.author, username: '', displayName: '', avatar: '', hasDpns: undefined },
           }))
 
         setSearchResults(filtered)
@@ -200,12 +216,8 @@ export default function ExplorePage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <Sidebar />
-
-      <div className="flex-1 flex justify-center min-w-0">
-        <main className="w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800">
-          <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 border-b border-gray-200 dark:border-gray-800 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <PageShell>
+          <PageHeader>
             <div className="flex items-center gap-4 p-4">
               {isSearchFocused && (
                 <button
@@ -254,6 +266,53 @@ export default function ExplorePage() {
                     />
                   )}
                 </button>
+                {/* Server-ranked global Top posts need the v4+ ranked like axes. */}
+                {likesAreIndexOnly() && (
+                  <button
+                    onClick={() => setActiveTab('top')}
+                    data-testid="explore-top-tab"
+                    className={`flex-1 py-3 text-sm font-semibold text-center transition-colors relative ${
+                      activeTab === 'top'
+                        ? 'text-foreground'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900/50'
+                    }`}
+                  >
+                    <span className="flex items-center justify-center gap-1.5">
+                      <TrophyIcon className="h-4 w-4" />
+                      Top
+                    </span>
+                    {activeTab === 'top' && (
+                      <motion.div
+                        layoutId="explore-tab-indicator"
+                        className="absolute bottom-0 left-0 right-0 h-[3px] bg-yappr-500 rounded-full"
+                      />
+                    )}
+                  </button>
+                )}
+                {/* The creator leaderboard needs the v5 prefix ranked axes
+                    (byAuthorPost at-form) — no earlier contract can serve it. */}
+                {prefixRankingsAvailable() && (
+                  <button
+                    onClick={() => setActiveTab('creators')}
+                    data-testid="explore-creators-tab"
+                    className={`flex-1 py-3 text-sm font-semibold text-center transition-colors relative ${
+                      activeTab === 'creators'
+                        ? 'text-foreground'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900/50'
+                    }`}
+                  >
+                    <span className="flex items-center justify-center gap-1.5">
+                      <UserGroupIcon className="h-4 w-4" />
+                      Creators
+                    </span>
+                    {activeTab === 'creators' && (
+                      <motion.div
+                        layoutId="explore-tab-indicator"
+                        className="absolute bottom-0 left-0 right-0 h-[3px] bg-yappr-500 rounded-full"
+                      />
+                    )}
+                  </button>
+                )}
                 <button
                   onClick={() => setActiveTab('blogs')}
                   className={`flex-1 py-3 text-sm font-semibold text-center transition-colors relative ${
@@ -275,7 +334,7 @@ export default function ExplorePage() {
                 </button>
               </div>
             )}
-          </header>
+          </PageHeader>
 
           <AnimatePresence mode="wait">
             {searchQuery ? (
@@ -322,7 +381,7 @@ export default function ExplorePage() {
                             </h3>
                           </div>
                         )}
-                        {searchResults.map((post) => <PostCard key={post.id} post={post} />)}
+                        {filterHiddenSensitive(searchResults, sensitiveContentMode, user?.identityId).map((post) => <PostCard key={post.id} post={post} />)}
                       </div>
                     )}
                   </>
@@ -350,6 +409,19 @@ export default function ExplorePage() {
                       transition={{ duration: 0.15 }}
                     >
                       {/* Trending Hashtags */}
+                      <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-trending" />
+                      {/* v4 trending is derived from recent post activity, not a
+                          proved count — label it so nobody reads it as one. On
+                          v5 the ranking IS a proved prefix ranked page, so the
+                          disclaimer must not show. */}
+                      {hashtagsAreInline() && !prefixRankingsAvailable() && !isLoadingTrends && trendingHashtags.length > 0 && (
+                        <div
+                          className="px-4 py-2 text-xs text-gray-400 border-b border-gray-200 dark:border-gray-800"
+                          data-testid="trending-activity-note"
+                        >
+                          Based on recent activity
+                        </div>
+                      )}
                       <div className="divide-y divide-gray-200 dark:divide-gray-800">
                         {isLoadingTrends ? (
                           <div className="p-8 text-center">
@@ -382,7 +454,11 @@ export default function ExplorePage() {
                                   <div className="flex-1">
                                     <p className="font-bold text-yappr-500 hover:underline">{tagSymbol}{displayTag}</p>
                                     <p className="text-sm text-gray-500">
-                                      {formatNumber(trend.postCount)} {trend.postCount === 1 ? 'post' : 'posts'}
+                                      {/* v5's proved ranking counts LIKES on tagged
+                                          posts; earlier topologies count posts. */}
+                                      {prefixRankingsAvailable()
+                                        ? `${formatNumber(trend.postCount)} ${trend.postCount === 1 ? 'like' : 'likes'}`
+                                        : `${formatNumber(trend.postCount)} ${trend.postCount === 1 ? 'post' : 'posts'}`}
                                     </p>
                                   </div>
                                 </div>
@@ -391,6 +467,47 @@ export default function ExplorePage() {
                           })
                         )}
                       </div>
+                    </motion.div>
+                  ) : activeTab === 'top' ? (
+                    <motion.div
+                      key="tab-top"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      {/* Global most-liked posts (proved ranking, top 20) */}
+                      <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-top" />
+                      <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                        {isLoadingTop ? (
+                          <div className="p-8 text-center">
+                            <Spinner size="md" className="mx-auto mb-4" />
+                            <p className="text-gray-500">Loading top posts...</p>
+                          </div>
+                        ) : topPosts.length === 0 ? (
+                          <div className="p-8 text-center" data-testid="explore-top-empty">
+                            <TrophyIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                            <p className="text-gray-500">No liked posts yet</p>
+                            <p className="text-sm text-gray-400 mt-1">The most-liked posts will appear here</p>
+                          </div>
+                        ) : (
+                          filterHiddenSensitive(topPosts, sensitiveContentMode, user?.identityId).map((post) => (
+                            <PostCard key={post.id} post={post} />
+                          ))
+                        )}
+                      </div>
+                    </motion.div>
+                  ) : activeTab === 'creators' ? (
+                    <motion.div
+                      key="tab-creators"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      {/* v5 creator leaderboard (proved prefix rankings). */}
+                      <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-creators" />
+                      <TopCreators window={rankingWindow} />
                     </motion.div>
                   ) : (
                     <motion.div
@@ -430,10 +547,6 @@ export default function ExplorePage() {
               </motion.div>
             )}
           </AnimatePresence>
-        </main>
-      </div>
-
-      <RightSidebar />
-    </div>
+    </PageShell>
   )
 }

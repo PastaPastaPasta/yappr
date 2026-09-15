@@ -15,5 +15,24 @@ export function scopedKey(key: string): string {
   return STORAGE_SCOPE ? `${STORAGE_SCOPE}:${key}` : key
 }
 
+/** Read a scoped localStorage value; `null` when absent, on the server, or when storage is blocked. */
+export function readScoped(key: string): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return localStorage.getItem(scopedKey(key))
+  } catch {
+    return null
+  }
+}
+
+/** Write a scoped localStorage value, ignoring failures (privacy mode / blocked storage). */
+export function writeScoped(key: string, value: string): void {
+  try {
+    localStorage.setItem(scopedKey(key), value)
+  } catch {
+    // Storage unavailable — the preference simply does not persist.
+  }
+}
+
 /** localStorage key holding the persisted login session. */
 export const SESSION_STORAGE_KEY = scopedKey('yappr_session')

@@ -3,18 +3,18 @@
 import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { cn } from '@/lib/utils';
 import type { FeedTab } from '@/hooks/use-feed-data';
+import { PageHeader } from '@/components/layout/page-shell';
 
 interface FeedHeaderProps {
   activeTab: FeedTab;
   onTabChange: (tab: FeedTab) => void;
   onRefresh: () => void;
   isLoading: boolean;
-  potatoMode: boolean;
 }
 
-export function FeedHeader({ activeTab, onTabChange, onRefresh, isLoading, potatoMode }: FeedHeaderProps) {
+export function FeedHeader({ activeTab, onTabChange, onRefresh, isLoading }: FeedHeaderProps) {
   return (
-    <header className={`sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80 ${potatoMode ? '' : 'backdrop-blur-xl'}`}>
+    <PageHeader borderless>
       <div className="px-4 py-3 flex items-center justify-between">
         <h1 className="text-xl font-bold">Home</h1>
         <button
@@ -57,6 +57,6 @@ export function FeedHeader({ activeTab, onTabChange, onRefresh, isLoading, potat
           )}
         </button>
       </div>
-    </header>
+    </PageHeader>
   );
 }

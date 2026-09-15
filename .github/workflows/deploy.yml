@@ -3,9 +3,10 @@ name: Deploy to GitHub Pages
 # Unified deploy: the Pages artifact always contains the production site
 # (built from master, served at the root / yap.pr), the testing site (built
 # from the same master commit against the test contracts, served under
-# /testing) and the staging site (built from the staging branch, served under
-# /staging). A push to either branch rebuilds all three so no deploy can wipe
-# another.
+# /testing), the staging site (built from the staging branch, served under
+# /staging) and the devnet site (the same staging commit built against
+# .env.devnet, served under /devnet). A push to either branch rebuilds all four
+# so no deploy can wipe another.
 
 on:
   # Master deploys are gated on CI: CI runs on every push to master, and this
@@ -87,8 +88,24 @@ jobs:
         run: |
           npm ci
           npm run build
+          mv out out-staging
         env:
           BASE_PATH: /staging
+
+      # Same staging checkout and the same commit as the /staging build, rebuilt
+      # against .env.devnet (BASE_PATH=/devnet, so client-side storage is scoped
+      # to `devnet:` and stays isolated from / , /staging and /testing).
+      # continue-on-error because the devnet chain is disposable and resets
+      # without notice — a broken /devnet must never hold back /staging.
+      - name: Build devnet (staging)
+        id: devnet-build
+        if: steps.staging-build.outcome == 'success'
+        continue-on-error: true
+        working-directory: staging
+        run: |
+          rm -rf .next
+          npm run build:devnet
+          mv out out-devnet
 
       # Same master checkout and the same commit as the production build, so no
       # second `npm ci` — but the production output has to be moved aside first
@@ -107,11 +124,17 @@ jobs:
           cp -R master/out-production/. site/
           mkdir -p site/testing
           cp -R master/out/. site/testing/
-          if [ "${{ steps.staging-build.outcome }}" = "success" ] && [ -d staging/out ]; then
+          if [ "${{ steps.staging-build.outcome }}" = "success" ] && [ -d staging/out-staging ]; then
             mkdir -p site/staging
-            cp -R staging/out/. site/staging/
+            cp -R staging/out-staging/. site/staging/
           else
             echo "::warning::staging build failed — deploying without an updated /staging"
+          fi
+          if [ "${{ steps.devnet-build.outcome }}" = "success" ] && [ -d staging/out-devnet ]; then
+            mkdir -p site/devnet
+            cp -R staging/out-devnet/. site/devnet/
+          else
+            echo "::warning::devnet build failed or was skipped — deploying without an updated /devnet"
           fi
 
       - name: Upload artifact

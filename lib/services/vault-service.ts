@@ -2,19 +2,10 @@
 
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
+import { normalizeBytes } from '@/lib/bytes';
 import { dpnsService } from './dpns-service';
 import { YAPPR_VAULT_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
-import {
-  validateBackupPassword,
-  benchmarkPbkdf2,
-  type BenchmarkResult,
-} from '../onchain-key-encryption';
-import {
-  aesGcmEncrypt,
-  aesGcmDecrypt,
-  deriveKeyFromPasswordAndSalt,
-  deriveAesKeyFromPrivateKey,
-} from '../crypto/aes-gcm';
+import { aesGcmDecrypt, deriveKeyFromPasswordAndSalt } from '../crypto/aes-gcm';
 
 // ---------- Types ----------
 
@@ -29,11 +20,6 @@ export interface VaultDocument {
   pbkdf2Iterations?: number;
 }
 
-export interface VaultPayload {
-  version: 1;
-  keys: Array<{ wif: string; keyId: number; label: string }>;
-}
-
 export interface LoginWithPasswordResult {
   identityId: string;
   privateKey: string;
@@ -42,16 +28,7 @@ export interface LoginWithPasswordResult {
 // ---------- Helpers ----------
 
 function toUint8Array(data: unknown): Uint8Array | undefined {
-  if (data instanceof Uint8Array) return data;
-  if (Array.isArray(data)) return new Uint8Array(data);
-  if (typeof data === 'string') {
-    // base64
-    const binary = atob(data);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-  }
-  return undefined;
+  return normalizeBytes(data) ?? undefined;
 }
 
 // ---------- Service ----------
@@ -168,50 +145,6 @@ class VaultService extends BaseDocumentService<VaultDocument> {
     }
   }
 
-  async benchmarkDevice(targetMs = 2000): Promise<BenchmarkResult> {
-    return benchmarkPbkdf2(targetMs);
-  }
-
-  /**
-   * Save a password-encrypted backup of the private key to the vault contract.
-   */
-  async savePasswordBackup(
-    identityId: string,
-    privateKeyWif: string,
-    password: string,
-    iterations: number
-  ): Promise<{ success: boolean; error?: string }> {
-    if (!this.isConfigured()) {
-      return { success: false, error: 'Vault contract is not configured' };
-    }
-
-    const validation = validateBackupPassword(password);
-    if (!validation.valid) {
-      return { success: false, error: validation.error };
-    }
-
-    try {
-      // Generate random salt (32 bytes as required by contract)
-      const salt = crypto.getRandomValues(new Uint8Array(32));
-
-      // Derive key and encrypt
-      const key = await deriveKeyFromPasswordAndSalt(password, salt, iterations);
-      const encoder = new TextEncoder();
-      const encrypted = await aesGcmEncrypt(key, encoder.encode(privateKeyWif));
-
-      await this.createOrUpdateVault(identityId, {
-        passwordEncryptedData: encrypted,
-        pbkdf2Salt: salt,
-        pbkdf2Iterations: iterations,
-      });
-
-      return { success: true };
-    } catch (error) {
-      logger.error('VaultService: Error saving password backup:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to save backup' };
-    }
-  }
-
   /**
    * Login with username + password by decrypting the vault's password backup.
    */
@@ -245,47 +178,6 @@ class VaultService extends BaseDocumentService<VaultDocument> {
 
   // ---- Vault data (encryption-key-encrypted) ----
 
-  /**
-   * Save encrypted vault data (e.g., old keys) using the identity's encryption private key.
-   */
-  async saveVaultData(
-    identityId: string,
-    payload: VaultPayload,
-    encryptionPrivateKey: Uint8Array
-  ): Promise<void> {
-    if (!this.isConfigured()) {
-      throw new Error('Vault contract is not configured');
-    }
-
-    const aesKey = await deriveAesKeyFromPrivateKey(encryptionPrivateKey);
-    const encoder = new TextEncoder();
-    const encrypted = await aesGcmEncrypt(aesKey, encoder.encode(JSON.stringify(payload)));
-
-    await this.createOrUpdateVault(identityId, { encryptedData: encrypted });
-  }
-
-  /**
-   * Decrypt and return vault data using the identity's encryption private key.
-   */
-  async getVaultData(
-    identityId: string,
-    encryptionPrivateKey: Uint8Array
-  ): Promise<VaultPayload | null> {
-    if (!this.isConfigured()) return null;
-
-    const vault = await this.getVault(identityId);
-    if (!vault?.encryptedData) return null;
-
-    try {
-      const aesKey = await deriveAesKeyFromPrivateKey(encryptionPrivateKey);
-      const decrypted = await aesGcmDecrypt(aesKey, vault.encryptedData);
-      const decoder = new TextDecoder();
-      return JSON.parse(decoder.decode(decrypted)) as VaultPayload;
-    } catch (error) {
-      logger.error('VaultService: Error decrypting vault data:', error);
-      return null;
-    }
-  }
 }
 
 export const vaultService = new VaultService();

@@ -2,17 +2,15 @@
 
 import { useCallback } from 'react'
 import { useAuth, AuthUser } from '@/contexts/auth-context'
-import { useLoginPromptModal, LoginPromptAction } from '@/hooks/use-login-prompt-modal'
+import { useLoginModal } from '@/hooks/use-login-modal'
 
 /**
- * Hook that provides utilities for requiring authentication before actions.
+ * Gate an action on being logged in.
  *
- * Usage:
  * ```tsx
  * const { requireAuth } = useRequireAuth()
- *
  * const handleLike = () => {
- *   const authedUser = requireAuth('like')
+ *   const authedUser = requireAuth()
  *   if (!authedUser) return
  *   // authedUser.identityId is now type-safe
  * }
@@ -20,34 +18,20 @@ import { useLoginPromptModal, LoginPromptAction } from '@/hooks/use-login-prompt
  */
 export function useRequireAuth() {
   const { user } = useAuth()
-  const { open: openLoginPrompt } = useLoginPromptModal()
+  const openLoginPrompt = useLoginModal((s) => s.open)
 
-  const isAuthenticated = !!user
-
-  /**
-   * Check if user is authenticated. If not, opens the login prompt modal.
-   * @param action - The type of action being attempted (for display purposes)
-   * @returns The authenticated user if logged in, null if login prompt was shown
-   */
-  const requireAuth = useCallback(
-    (action: LoginPromptAction = 'generic'): AuthUser | null => {
-      if (user) {
-        return user
-      }
-      openLoginPrompt(action)
-      return null
-    },
-    [user, openLoginPrompt]
-  )
+  /** The user when logged in; otherwise opens the login modal and returns null. */
+  const requireAuth = useCallback((): AuthUser | null => {
+    if (user) return user
+    openLoginPrompt()
+    return null
+  }, [user, openLoginPrompt])
 
   return {
-    /** Whether the user is currently authenticated */
-    isAuthenticated,
-    /** The current user object (null if not authenticated) */
+    isAuthenticated: !!user,
     user,
-    /** Check auth and show login prompt if needed. Returns the user if authenticated, null otherwise. */
     requireAuth,
-    /** Directly open the login prompt modal */
+    /** Open the login modal directly. */
     openLoginPrompt,
   }
 }

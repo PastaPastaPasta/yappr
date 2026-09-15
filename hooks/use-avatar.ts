@@ -1,23 +1,13 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { DiceBearStyle } from '@/lib/services/unified-profile-service'
-
-// Module-level cache for avatar URLs
-const avatarCache = new Map<string, { url: string; timestamp: number }>()
-const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
 export interface AvatarSettings {
   style: DiceBearStyle
   seed: string
   avatarUrl: string
-}
-
-export interface UseAvatarResult {
-  avatarUrl: string
-  loading: boolean
-  refresh: () => void
 }
 
 export interface UseAvatarSettingsResult {
@@ -37,71 +27,6 @@ export interface UseAvatarSettingsResult {
 }
 
 /**
- * Hook to get avatar URL for a user
- * Fetches from unified profile service, falls back to default
- */
-export function useAvatar(userId: string): UseAvatarResult {
-  const [avatarUrl, setAvatarUrl] = useState(() => {
-    if (!userId) return ''
-    // Check cache first
-    const cached = avatarCache.get(userId)
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      return cached.url
-    }
-    // Return empty initially, will be populated after load
-    return ''
-  })
-  const [loading, setLoading] = useState(true)
-
-  const loadAvatar = useCallback(async (forceRefresh = false) => {
-    if (!userId) {
-      setLoading(false)
-      return
-    }
-
-    // Check cache unless forcing refresh
-    if (!forceRefresh) {
-      const cached = avatarCache.get(userId)
-      if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-        setAvatarUrl(cached.url)
-        setLoading(false)
-        return
-      }
-    }
-
-    setLoading(true)
-
-    try {
-      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
-      const url = await unifiedProfileService.getAvatarUrl(userId)
-
-      // Cache the result
-      avatarCache.set(userId, { url, timestamp: Date.now() })
-      setAvatarUrl(url)
-    } catch (error) {
-      logger.error('useAvatar: Error loading avatar:', error)
-      // Use default on error
-      const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
-      const defaultUrl = unifiedProfileService.getDefaultAvatarUrl(userId)
-      setAvatarUrl(defaultUrl)
-    } finally {
-      setLoading(false)
-    }
-  }, [userId])
-
-  useEffect(() => {
-    loadAvatar()
-  }, [loadAvatar])
-
-  const refresh = useCallback(() => {
-    avatarCache.delete(userId)
-    loadAvatar(true)
-  }, [userId, loadAvatar])
-
-  return { avatarUrl, loading, refresh }
-}
-
-/**
  * Hook to manage avatar settings (for customization UI)
  * Note: In the unified profile, avatar is stored in the profile document itself.
  * This hook provides settings management for the avatar customization UI.
@@ -113,8 +38,11 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Bumped per load so a slow response for a previous user cannot overwrite a newer one.
+  const requestRef = useRef(0)
 
-  const loadSettings = useCallback(async (forceRefresh = false) => {
+  const loadSettings = useCallback(async () => {
+    const request = ++requestRef.current
     if (!userId) {
       setLoading(false)
       return
@@ -128,8 +56,9 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
 
       // Get profile to extract avatar settings
       const profile = await unifiedProfileService.getProfile(userId)
+      if (request !== requestRef.current) return
 
-      if (profile && profile.avatar) {
+      if (profile?.avatar) {
         // Parse the avatar field to extract settings
         // Could be JSON {"style":"bottts","seed":"xyz"} or a URI (ipfs://, https://, data:)
         try {
@@ -194,15 +123,16 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
         })
       }
     } catch (err) {
+      if (request !== requestRef.current) return
       logger.error('useAvatarSettings: Error loading settings:', err)
       setError('Failed to load avatar settings')
     } finally {
-      setLoading(false)
+      if (request === requestRef.current) setLoading(false)
     }
   }, [userId])
 
   useEffect(() => {
-    loadSettings()
+    loadSettings().catch((error) => logger.error('useAvatarSettings: load failed:', error))
   }, [loadSettings])
 
   const save = useCallback(async (style: DiceBearStyle, seed: string): Promise<boolean> => {
@@ -223,9 +153,7 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
       })
 
       if (result) {
-        // Clear cache and reload
-        avatarCache.delete(userId)
-        await loadSettings(true)
+        await loadSettings()
         return true
       } else {
         setError('Failed to save avatar')
@@ -255,9 +183,7 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
       })
 
       if (result) {
-        // Clear cache and reload
-        avatarCache.delete(userId)
-        await loadSettings(true)
+        await loadSettings()
         return true
       } else {
         setError('Failed to save avatar')
@@ -273,23 +199,8 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
   }, [userId, loadSettings])
 
   const refresh = useCallback(() => {
-    loadSettings(true)
+    loadSettings().catch((error) => logger.error('useAvatarSettings: refresh failed:', error))
   }, [loadSettings])
 
   return { settings, isCustomImage, customImageUrl, loading, saving, error, save, saveCustomUrl, refresh }
-}
-
-/**
- * Invalidate cached avatar for a user
- * Call this after avatar settings are updated elsewhere
- */
-export function invalidateAvatarCache(userId: string): void {
-  avatarCache.delete(userId)
-}
-
-/**
- * Clear all cached avatars
- */
-export function clearAvatarCache(): void {
-  avatarCache.clear()
 }

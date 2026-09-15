@@ -39,7 +39,7 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
     try {
       const existing = await this.getFollow(userId, blogId);
       if (existing) {
-        logger.info('Already following blog');
+        logger.debug('Already following blog');
         return { success: true };
       }
 
@@ -62,7 +62,7 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
     try {
       const follow = await this.getFollow(userId, blogId);
       if (!follow) {
-        logger.info('Not following blog');
+        logger.debug('Not following blog');
         return { success: true };
       }
 

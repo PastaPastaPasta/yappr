@@ -1,11 +1,14 @@
 import { logger } from '@/lib/logger';
+import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
-import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
-import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
+import { signerService } from './signer-service';
+import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, keyNetwork } from '../constants';
 import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
-import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
+import { matchIdentityKey } from '@/lib/crypto/keys';
+import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
+import { getPrimaryUsername, sortUsernames } from '@/lib/utils/username';
 
 /**
  * Extract documents array from SDK response (handles Map, Array, and object formats)
@@ -36,17 +39,33 @@ function extractDocuments(response: unknown): Record<string, unknown>[] {
 }
 
 class DpnsService {
-  private cache: Map<string, { value: string; timestamp: number }> = new Map();
-  private reverseCache: Map<string, { value: string; timestamp: number }> = new Map();
-  private readonly CACHE_TTL = 3600000; // 1 hour cache for DPNS
+  private static readonly CACHE_TTL_MS = 60 * 60 * 1000;
+  /** lower-cased username -> identity id */
+  private cache = new TtlMap<string, string>(DpnsService.CACHE_TTL_MS);
+  /** identity id -> primary username */
+  private reverseCache = new TtlMap<string, string>(DpnsService.CACHE_TTL_MS);
+
+  /** Cache only complete DPNS lookup results; null records a proven absence. */
+  private reverseMissCache = new TtlMap<string, true>(5 * 60 * 1000);
+
+  seedUsernames(usernames: ReadonlyMap<string, string | null>): void {
+    usernames.forEach((username, identityId) => {
+      if (username) {
+        this._cacheEntry(username, identityId);
+      } else {
+        this.reverseCache.delete(identityId);
+        this.reverseMissCache.set(identityId, true);
+      }
+    });
+  }
 
   /**
    * Helper method to cache entries in both directions
    */
   private _cacheEntry(username: string, identityId: string): void {
-    const now = Date.now();
-    this.cache.set(username.toLowerCase(), { value: identityId, timestamp: now });
-    this.reverseCache.set(identityId, { value: username, timestamp: now });
+    this.cache.set(username.toLowerCase(), identityId);
+    this.reverseCache.set(identityId, username);
+    this.reverseMissCache.delete(identityId);
   }
 
   /**
@@ -86,32 +105,12 @@ class DpnsService {
   }
 
   /**
-   * Sort usernames by: contested first, then shortest, then alphabetically
+   * Get all usernames for an identity ID, sorted by the canonical ordering
+   * (contested first, then shortest, then alphabetically). The first entry
+   * is the identity's primary username.
    */
-  async sortUsernamesByContested(usernames: string[]): Promise<string[]> {
-    const sdk = await getEvoSdk();
-
-    // Check contested status for all usernames
-    const contestedStatuses = await Promise.all(
-      usernames.map(async (u) => ({
-        username: u,
-        contested: await sdk.dpns.isContestedUsername(u.split('.')[0])
-      }))
-    );
-
-    return contestedStatuses
-      .sort((a, b) => {
-        // 1. Contested usernames first
-        if (a.contested && !b.contested) return -1;
-        if (!a.contested && b.contested) return 1;
-        // 2. Shorter usernames first
-        if (a.username.length !== b.username.length) {
-          return a.username.length - b.username.length;
-        }
-        // 3. Alphabetically
-        return a.username.localeCompare(b.username);
-      })
-      .map(item => item.username);
+  async getAllUsernamesSorted(identityId: string): Promise<string[]> {
+    return sortUsernames(await this.getAllUsernames(identityId));
   }
 
   /**
@@ -119,10 +118,9 @@ class DpnsService {
    * Uses 'in' operator for efficient single-query resolution
    * Selects the "best" username for identities with multiple names (contested first, then shortest, then alphabetically)
    *
-   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
-   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
-   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
-   * implement pagination here to handle cases where results exceed the limit.
+   * Near the shared limit, retry per identity with document cursors: empty
+   * identity branches can consume IN-query capacity too, so fewer than 100
+   * documents does not by itself prove that the batch is complete.
    */
   async resolveUsernamesBatch(identityIds: string[]): Promise<Map<string, string | null>> {
     const results = new Map<string, string | null>();
@@ -136,8 +134,10 @@ class DpnsService {
     const uncachedIds: string[] = [];
     for (const id of identityIds) {
       const cached = this.reverseCache.get(id);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        results.set(id, cached.value);
+      if (cached !== undefined) {
+        results.set(id, cached);
+      } else if (this.reverseMissCache.has(id)) {
+        results.set(id, null);
       } else {
         uncachedIds.push(id);
       }
@@ -159,7 +159,33 @@ class DpnsService {
         limit: 100
       });
 
-      const documents = extractDocuments(response);
+      let documents = extractDocuments(response);
+      if (documents.length + uncachedIds.length >= 100) {
+        // Discard the partial batch, including potentially incomplete alias
+        // sets, before choosing primary names or reporting missing authors.
+        documents = [];
+        for (const identityId of uncachedIds) {
+          let startAfter: string | undefined;
+          while (true) {
+            const page = extractDocuments(await sdk.documents.query({
+              dataContractId: DPNS_CONTRACT_ID,
+              documentTypeName: DPNS_DOCUMENT_TYPE,
+              where: [['records.identity', '==', identityId]],
+              orderBy: [['records.identity', 'asc']],
+              limit: 100,
+              ...(startAfter ? { startAfter } : {}),
+            }));
+            documents.push(...page);
+            if (page.length < 100) break;
+            const last = page[page.length - 1];
+            const next = identifierToBase58(last.$id || last.id);
+            if (!next || next === startAfter) {
+              throw new Error('DPNS: username pagination did not advance');
+            }
+            startAfter = next;
+          }
+        }
+      }
 
       // Collect ALL usernames per identity (some users have multiple)
       const usernamesByIdentity = new Map<string, string[]>();
@@ -180,28 +206,10 @@ class DpnsService {
         }
       }
 
-      // For identities with multiple usernames, sort and pick the best one
-      // For identities with one username, use it directly
+      // Pick the primary username for each identity using the canonical ordering
       for (const [identityId, usernames] of Array.from(usernamesByIdentity.entries())) {
-        let bestUsername: string;
-        if (usernames.length === 1) {
-          bestUsername = usernames[0];
-        } else {
-          // Sort: contested first, then shortest, then alphabetically
-          // Wrap in try-catch so one failed contested lookup doesn't break the batch
-          try {
-            const sortedUsernames = await this.sortUsernamesByContested(usernames);
-            bestUsername = sortedUsernames[0];
-          } catch (err) {
-            logger.warn(`DPNS: Failed to check contested status for ${identityId}, falling back to length sort`, err);
-            // Fallback: sort by length then alphabetically (skip contested check)
-            const sorted = [...usernames].sort((a, b) => {
-              if (a.length !== b.length) return a.length - b.length;
-              return a.localeCompare(b);
-            });
-            bestUsername = sorted[0];
-          }
-        }
+        const bestUsername = getPrimaryUsername(usernames);
+        if (!bestUsername) continue;
         results.set(identityId, bestUsername);
         this._cacheEntry(bestUsername, identityId);
       }
@@ -220,20 +228,16 @@ class DpnsService {
     try {
       // Check cache
       const cached = this.reverseCache.get(identityId);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        return cached.value;
-      }
+      if (cached !== undefined) return cached;
+      if (this.reverseMissCache.has(identityId)) return null;
 
-      // Get all usernames for this identity
+      // Get all usernames for this identity and pick the primary one
       const allUsernames = await this.getAllUsernames(identityId);
+      const bestUsername = getPrimaryUsername(allUsernames);
 
-      if (allUsernames.length === 0) {
+      if (!bestUsername) {
         return null;
       }
-
-      // Sort usernames with contested ones first
-      const sortedUsernames = await this.sortUsernamesByContested(allUsernames);
-      const bestUsername = sortedUsernames[0];
 
       this._cacheEntry(bestUsername, identityId);
       return bestUsername;
@@ -253,9 +257,7 @@ class DpnsService {
 
       // Check cache first
       const cached = this.cache.get(normalizedUsername);
-      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-        return cached.value;
-      }
+      if (cached !== undefined) return cached;
 
       const sdk = await getEvoSdk();
 
@@ -377,84 +379,28 @@ class DpnsService {
   }
 
   /**
-   * Search for usernames by prefix
-   */
-  async searchUsernames(prefix: string, limit: number = 10): Promise<string[]> {
-    const results = await this.searchUsernamesWithDetails(prefix, limit);
-    return results.map(r => r.username);
-  }
-
-  /**
-   * Find the WASM identity public key that matches the stored private key.
-   *
-   * This is critical for the typed API: we must use the key that matches our signer's private key.
-   * The signer only has one private key, so we find which identity key it corresponds to.
-   *
-   * DPNS registration operations require CRITICAL (1) or HIGH (2) security level keys.
-   *
-   * @param privateKeyWif - The private key in WIF format
-   * @param wasmPublicKeys - The identity's WASM public keys
-   * @param requiredSecurityLevel - Maximum allowed security level (lower = more secure)
-   * @returns The matching WASM key or null if not found/not suitable
+   * The enabled CRITICAL or HIGH authentication key the private key corresponds
+   * to. DPNS registration may not be signed with MASTER.
    */
   private findMatchingSigningKey(
     privateKeyWif: string,
-    wasmPublicKeys: WasmIdentityPublicKey[],
-    requiredSecurityLevel: number = SecurityLevel.CRITICAL
+    wasmPublicKeys: WasmIdentityPublicKey[]
   ): WasmIdentityPublicKey | null {
-    const network = (process.env.NEXT_PUBLIC_NETWORK as 'testnet' | 'mainnet') || 'testnet';
-
-    // Filter out disabled keys before processing
-    const activeWasmKeys = wasmPublicKeys.filter(k => !k.disabledAt);
-
-    // Convert WASM keys to the format expected by findMatchingKeyIndex
-    const keyInfos: IdentityPublicKeyInfo[] = activeWasmKeys.map(key => {
-      // WASM key.data getter returns hex string - convert to Uint8Array
-      const dataHex = key.data;
-      const data = dataHex && dataHex.length > 0
-        ? new Uint8Array(dataHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || [])
-        : new Uint8Array(0);
-
-      return {
-        id: key.keyId ?? 0,
-        type: key.keyTypeNumber ?? 0,
-        purpose: key.purposeNumber ?? 0,
-        securityLevel: key.securityLevelNumber ?? 0,
-        data
-      };
+    const result = matchIdentityKey(privateKeyWif, wasmPublicKeys, {
+      network: keyNetwork(),
+      purpose: KeyPurpose.AUTHENTICATION,
+      allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
     });
-
-    // Find which key matches our private key
-    const match = findMatchingKeyIndex(privateKeyWif, keyInfos, network);
-
-    if (!match) {
-      logger.error('DPNS: Private key does not match any key on this identity');
+    if (!result.ok) {
+      logger.error(
+        result.reason === 'rejected'
+          ? `DPNS: Private key matches key id=${result.match.keyId} (purpose ${getPurposeName(result.match.purpose)}, level ${getSecurityLevelName(result.match.securityLevel)}), which cannot sign this operation: CRITICAL or HIGH AUTHENTICATION required`
+          : `DPNS: Private key does not match any enabled key on this identity`
+      );
       return null;
     }
-
-    logger.info(`DPNS: Matched private key to identity key: id=${match.keyId}, securityLevel=${getSecurityLevelName(match.securityLevel)}, purpose=${match.purpose}`);
-
-    // Check if the matched key is suitable for DPNS operations
-    // Must be AUTHENTICATION purpose
-    if (match.purpose !== KeyPurpose.AUTHENTICATION) {
-      logger.error(`DPNS: Matched key (id=${match.keyId}) has purpose ${match.purpose}, not AUTHENTICATION (0)`);
-      return null;
-    }
-
-    // Must be CRITICAL (1) or HIGH (2) - NOT MASTER (0) and not below required level
-    if (match.securityLevel < SecurityLevel.CRITICAL) {
-      logger.error(`DPNS: Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, which is not allowed for DPNS operations (only CRITICAL or HIGH)`);
-      return null;
-    }
-
-    if (match.securityLevel > requiredSecurityLevel) {
-      logger.error(`DPNS: Matched key (id=${match.keyId}) has security level ${getSecurityLevelName(match.securityLevel)}, but operation requires at least ${getSecurityLevelName(requiredSecurityLevel)}`);
-      return null;
-    }
-
-    // Return the WASM key object for the matched key (from filtered active keys)
-    const wasmKey = activeWasmKeys.find(k => k.keyId === match.keyId);
-    return wasmKey || null;
+    logger.debug(`DPNS: Matched private key to identity key: id=${result.match.keyId}, securityLevel=${getSecurityLevelName(result.match.securityLevel)}`);
+    return result.key;
   }
 
   /**
@@ -498,12 +444,12 @@ class DpnsService {
 
       // Find a signing key that matches the provided private key
       // DPNS operations require CRITICAL or HIGH security level
-      const identityKey = this.findMatchingSigningKey(privateKeyWif, wasmPublicKeys, SecurityLevel.HIGH);
+      const identityKey = this.findMatchingSigningKey(privateKeyWif, wasmPublicKeys);
       if (!identityKey) {
         throw new Error('No suitable signing key found that matches your private key. DPNS operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
       }
 
-      logger.info(`DPNS: Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
+      logger.debug(`DPNS: Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
       // Create signer and identity key for the state transition
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
@@ -512,7 +458,7 @@ class DpnsService {
       );
 
       // Register the name
-      logger.info(`Registering DPNS name: ${label}`);
+      logger.debug(`Registering DPNS name: ${label}`);
       await sdk.dpns.registerName({
         label,
         identity,
@@ -679,10 +625,12 @@ class DpnsService {
     }
     if (identityId) {
       this.reverseCache.delete(identityId);
+      this.reverseMissCache.delete(identityId);
     }
     if (!username && !identityId) {
       this.cache.clear();
       this.reverseCache.clear();
+      this.reverseMissCache.clear();
     }
   }
 
@@ -690,21 +638,9 @@ class DpnsService {
    * Clean up expired cache entries
    */
   cleanupCache(): void {
-    const now = Date.now();
-    
-    // Clean forward cache
-    for (const [key, value] of Array.from(this.cache.entries())) {
-      if (now - value.timestamp > this.CACHE_TTL) {
-        this.cache.delete(key);
-      }
-    }
-    
-    // Clean reverse cache
-    for (const [key, value] of Array.from(this.reverseCache.entries())) {
-      if (now - value.timestamp > this.CACHE_TTL) {
-        this.reverseCache.delete(key);
-      }
-    }
+    this.cache.prune();
+    this.reverseCache.prune();
+    this.reverseMissCache.prune();
   }
 }
 

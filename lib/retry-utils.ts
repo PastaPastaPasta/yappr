@@ -1,3 +1,4 @@
+import { isReferenceNotFoundError } from '@/lib/error-utils';
 import { logger } from '@/lib/logger';
 /**
  * Retry utility functions for handling network errors and transient failures
@@ -86,9 +87,9 @@ export async function retryAsync<T>(
   
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      logger.info(`Retry attempt ${attempt}/${maxAttempts}`)
+      logger.debug(`Retry attempt ${attempt}/${maxAttempts}`)
       const result = await operation()
-      logger.info(`Operation succeeded on attempt ${attempt}`)
+      logger.debug(`Operation succeeded on attempt ${attempt}`)
       
       return {
         success: true,
@@ -101,13 +102,13 @@ export async function retryAsync<T>(
       
       // Don't retry if this is the last attempt or if error is not retryable
       if (attempt === maxAttempts || !retryCondition(lastError)) {
-        logger.info(attempt === maxAttempts ? 'Max attempts reached' : 'Error not retryable')
+        logger.debug(attempt === maxAttempts ? 'Max attempts reached' : 'Error not retryable')
         break
       }
       
       // Calculate delay for next attempt
       const delay = calculateDelay(attempt, initialDelayMs, maxDelayMs, backoffMultiplier)
-      logger.info(`Waiting ${Math.round(delay)}ms before retry...`)
+      logger.debug(`Waiting ${Math.round(delay)}ms before retry...`)
       await sleep(delay)
     }
   }
@@ -132,6 +133,12 @@ export async function retryPostCreation<T>(
     maxDelayMs: 8000,
     backoffMultiplier: 2,
     retryCondition: (error) => {
+      // A `refersTo` rejection is permanent: the referenced identity or document
+      // does not exist and will not appear because we asked again. Bail before
+      // the allowlists below, whose 'consensus error' entry would otherwise
+      // burn three attempts on a write that can never succeed.
+      if (isReferenceNotFoundError(error)) return false
+
       // defaultRetryCondition covers network/timeout errors — these are safe to retry
       // because state-transition-service.createDocument() performs idempotency checks
       // before each attempt (verifies on Platform + checks pending store).
@@ -152,18 +159,4 @@ export async function retryPostCreation<T>(
     },
     ...options
   })
-}
-
-/**
- * Check if an error appears to be a network error
- */
-export function isNetworkError(error: unknown): boolean {
-  return defaultRetryCondition(error)
-}
-
-/**
- * Check if an error is retryable
- */
-export function isRetryableError(error: unknown): boolean {
-  return defaultRetryCondition(error)
 }
