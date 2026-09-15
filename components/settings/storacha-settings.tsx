@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
+import { useId, useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -32,6 +32,7 @@ interface StorachaSettingsProps {
  */
 export function StorachaSettings({ disabled, onConnectionChange }: StorachaSettingsProps) {
   const { user } = useAuth()
+  const formId = useId()
   const [status, setStatus] = useState<ProviderStatus>('disconnected')
   const [isLoading, setIsLoading] = useState(true)
   const [connectedEmail, setConnectedEmail] = useState<string | null>(null)
@@ -356,8 +357,9 @@ export function StorachaSettings({ disabled, onConnectionChange }: StorachaSetti
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium">Email Address</label>
+                <label htmlFor={`${formId}-email`} className="text-sm font-medium">Email Address</label>
                 <Input
+                  id={`${formId}-email`}
                   type="email"
                   placeholder="[email protected]"
                   value={emailInput}
