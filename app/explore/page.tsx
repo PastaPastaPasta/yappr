@@ -15,6 +15,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
+import { useExplorePostSearch } from '@/hooks/use-explore-post-search'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 import { hashtagsAreInline, likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
@@ -32,9 +33,13 @@ export default function ExplorePage() {
   const [activeTab, setActiveTab] = useState<ExploreTab>('hashtags')
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
-  const [searchResults, setSearchResults] = useState<Post[]>([])
+  const query = searchQuery.trim()
+  const postSearch = useExplorePostSearch(query, user?.identityId)
+  const searchResults = filterHiddenSensitive(postSearch.posts, sensitiveContentMode, user?.identityId)
   const [blogSearchResults, setBlogSearchResults] = useState<BlogPostWithAuthor[]>([])
-  const [isSearching, setIsSearching] = useState(false)
+  const [isSearchingBlogs, setIsSearchingBlogs] = useState(false)
+  const [blogSearchError, setBlogSearchError] = useState<string | null>(null)
+  const isSearching = postSearch.isSearching || isSearchingBlogs
   const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([])
   const [isLoadingTrends, setIsLoadingTrends] = useState(true)
   const [recentBlogPosts, setRecentBlogPosts] = useState<BlogPostWithAuthor[]>([])
@@ -137,47 +142,17 @@ export default function ExplorePage() {
     loadRecentBlogPosts().catch(err => logger.error('Failed to load blog posts:', err))
   }, [activeTab])
 
-  // Search posts and blog posts when query changes
+  // Article search is independent of the paginated post history search.
   useEffect(() => {
-    if (!searchQuery) {
-      setSearchResults([])
-      setBlogSearchResults([])
-      setIsSearching(false)
-      return
-    }
+    let cancelled = false
+    setBlogSearchResults([])
+    setBlogSearchError(null)
+    setIsSearchingBlogs(!!query)
+    if (!query) return
 
-    const searchAll = async () => {
+    const searchBlogs = async () => {
       try {
-        setIsSearching(true)
-
-        // Search regular posts: a client-side substring match over the most
-        // recent timeline page. Authors are left as placeholders for PostCard
-        // to resolve progressively.
-        const { postService } = await import('@/lib/services/post-service')
-        const { documents: recentPosts } = await postService.getTimeline({ limit: 100 })
-
-        const authorIds = Array.from(new Set(recentPosts.map(p => p.author.id).filter(Boolean)))
-        const blockedMap = user?.identityId
-          ? await checkBlockedForAuthors(user.identityId, authorIds)
-          : new Map<string, boolean>()
-
-        const needle = searchQuery.toLowerCase()
-        const filtered = recentPosts
-          .filter(post =>
-            !post.deleted &&
-            post.content.toLowerCase().includes(needle) &&
-            !blockedMap.get(post.author.id)
-          )
-          .map(post => ({
-            ...post,
-            author: { ...post.author, username: '', displayName: '', avatar: '', hasDpns: undefined },
-          }))
-
-        setSearchResults(await postService.enrichPostsBatch(filtered))
-
-        // Search blog posts — reuse cached blog data from mount when available
         const { blogPostService } = await import('@/lib/services')
-
         let cached = blogCacheRef.current
         if (!cached) {
           const { blogService } = await import('@/lib/services')
@@ -187,26 +162,23 @@ export default function ExplorePage() {
           cached = { blogIds, blogMap }
           blogCacheRef.current = cached
         }
-
+        if (cancelled) return
         if (cached.blogIds.length > 0) {
-          const matchingBlogPosts = await blogPostService.searchPosts(cached.blogIds, searchQuery, 10)
+          const matchingBlogPosts = await blogPostService.searchPosts(cached.blogIds, query, 10)
           const blogResults = await enrichBlogPostsWithAuthors(matchingBlogPosts, cached.blogMap)
-          setBlogSearchResults(blogResults)
-        } else {
-          setBlogSearchResults([])
+          if (!cancelled) setBlogSearchResults(blogResults)
         }
       } catch (error) {
-        logger.error('Search failed:', error)
-        setSearchResults([])
-        setBlogSearchResults([])
+        logger.error('Article search failed:', error)
+        if (!cancelled) setBlogSearchError('Could not search articles. Refresh to try again.')
       } finally {
-        setIsSearching(false)
+        if (!cancelled) setIsSearchingBlogs(false)
       }
     }
 
-    const debounceTimer = setTimeout(searchAll, 300)
-    return () => clearTimeout(debounceTimer)
-  }, [searchQuery, user?.identityId])
+    const timer = setTimeout(() => { void searchBlogs() }, 300)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [query])
 
   const handleHashtagClick = (hashtag: string) => {
     router.push(`/hashtag?tag=${encodeURIComponent(hashtag)}`)
@@ -248,7 +220,7 @@ export default function ExplorePage() {
             </div>
 
             {/* Tabs */}
-            {!searchQuery && (
+            {!query && (
               <div className="flex">
                 <button
                   onClick={() => setActiveTab('hashtags')}
@@ -340,7 +312,7 @@ export default function ExplorePage() {
           </PageHeader>
 
           <AnimatePresence mode="wait">
-            {searchQuery ? (
+            {query ? (
               <motion.div
                 key="search-results"
                 initial={{ opacity: 0 }}
@@ -384,14 +356,44 @@ export default function ExplorePage() {
                             </h3>
                           </div>
                         )}
-                        {filterHiddenSensitive(searchResults, sensitiveContentMode, user?.identityId).map((post) => <PostCard key={post.id} post={post} />)}
+                        {searchResults.map((post) => <PostCard key={post.id} post={post} />)}
                       </div>
                     )}
                   </>
                 ) : (
                   <div className="p-8 text-center">
-                    <p className="text-gray-500">No results for &quot;{searchQuery}&quot;</p>
-                    <p className="text-sm text-gray-400 mt-1">Try searching for something else</p>
+                    <p className="text-gray-500">
+                      {postSearch.error && postSearch.scanned === 0
+                        ? 'Post search could not be completed'
+                        : <>No matches for &quot;{query}&quot; in the searched content</>}
+                    </p>
+                    <p className="text-sm text-gray-400 mt-1">
+                      {postSearch.error && postSearch.scanned === 0
+                        ? 'Retry below to search posts'
+                        : postSearch.hasMore ? 'Search older posts or try another phrase' : 'Try another phrase'}
+                    </p>
+                  </div>
+                )}
+                {!isSearching && (
+                  <div className="p-4 text-center border-t border-gray-200 dark:border-gray-800">
+                    {!(postSearch.error && postSearch.scanned === 0) && (
+                      <p className="text-sm text-gray-500" role="status">
+                        {postSearch.hasMore
+                          ? `Searched the latest ${postSearch.scanned} English posts. Older posts have not been searched yet.`
+                          : `Searched all ${postSearch.scanned} English posts. End of post history.`}
+                      </p>
+                    )}
+                    {postSearch.error && <p className="mt-2 text-sm text-red-600" role="alert">{postSearch.error}</p>}
+                    {blogSearchError && <p className="mt-2 text-sm text-red-600" role="alert">{blogSearchError}</p>}
+                    {postSearch.hasMore && (
+                      <button
+                        onClick={() => { void postSearch.loadMore() }}
+                        disabled={postSearch.loading}
+                        className="mt-3 px-5 py-2 rounded-full bg-yappr-500 text-white disabled:opacity-50"
+                      >
+                        {postSearch.isLoadingMore ? 'Searching older posts...' : postSearch.error ? 'Retry post search' : 'Search older posts'}
+                      </button>
+                    )}
                   </div>
                 )}
               </motion.div>
