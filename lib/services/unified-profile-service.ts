@@ -261,6 +261,11 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     return found;
   }
 
+  hasCachedProfile(ownerId: string): boolean {
+    return !!cacheManager.get(this.RAW_PROFILE_CACHE, ownerId) ||
+      !!cacheManager.get(this.MISSING_PROFILE_CACHE, ownerId);
+  }
+
   // ==================== Batching for Profile Documents ====================
 
   /**

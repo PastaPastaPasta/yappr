@@ -739,7 +739,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * @param since - Only return likes created after this timestamp (optional)
    * @param kind - Whether to read likes of posts or likes of replies
    */
-  async getLikesOnMyPosts(userId: string, since?: Date, kind: TargetKind = 'post'): Promise<LikeDocument[]> {
+  async getLikesOnMyPosts(userId: string, since?: Date, kind: TargetKind = 'post', preloaded?: Record<string, unknown>[]): Promise<LikeDocument[]> {
     const { docType, ownerField } = likeIndexFor(kind);
     if (!ownerField) return [];
 
@@ -748,7 +748,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
 
       const sinceTimestamp = since?.getTime() || 0;
 
-      const response = await sdk.documents.query({
+      const response = preloaded ?? await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: docType,
         where: [

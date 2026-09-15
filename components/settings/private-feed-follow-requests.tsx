@@ -12,7 +12,7 @@ import toast from 'react-hot-toast'
 import Link from 'next/link'
 import { formatTime } from '@/lib/utils'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
-import { resolveUserDetails, type UserDetails } from '@/lib/utils/resolve-user-details'
+import { resolveUserDetailsBatch, type UserDetails } from '@/lib/utils/resolve-user-details'
 import { normalizeBytes } from '@/lib/bytes'
 
 interface FollowRequestUser extends UserDetails {
@@ -57,9 +57,9 @@ export function PrivateFeedFollowRequests() {
       }
 
       // Resolve usernames and profiles for requesters
-      const requestsWithDetails = await Promise.all(
-        followRequests.map(async (request) => {
-          const details = await resolveUserDetails(request.$ownerId)
+      const users = await resolveUserDetailsBatch(followRequests.map(item => item.$ownerId))
+      const requestsWithDetails = followRequests.map((request) => {
+          const details = users.get(request.$ownerId) ?? { id: request.$ownerId, displayName: `User ${request.$ownerId.slice(-6)}`, hasDpns: false }
           return {
             ...details,
             requestId: request.$id,
@@ -67,7 +67,6 @@ export function PrivateFeedFollowRequests() {
             publicKey: request.publicKey
           }
         })
-      )
 
       setRequests(requestsWithDetails)
     } catch (error) {

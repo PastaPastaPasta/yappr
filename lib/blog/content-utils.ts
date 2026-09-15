@@ -114,21 +114,9 @@ export async function enrichBlogPostsWithAuthors<T extends { ownerId: string; bl
 ): Promise<(T & { authorUsername?: string; authorDisplayName?: string; blogName?: string })[]> {
   if (posts.length === 0) return []
 
-  const { dpnsService } = await import('@/lib/services/dpns-service')
-  const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
-
-  const ownerIds = Array.from(new Set(posts.map((p) => p.ownerId)))
-  const [usernameMap, profileEntries] = await Promise.all([
-    dpnsService.resolveUsernamesBatch(ownerIds),
-    Promise.all(
-      ownerIds.map(async (id) => {
-        const profile = await unifiedProfileService.getProfile(id).catch(() => null)
-        return [id, profile] as const
-      }),
-    ),
-  ])
-
-  const profileMap = new Map(profileEntries)
+  const { loadIdentityBatch } = await import('@/lib/services/identity-batch')
+  const { usernames: usernameMap, profiles } = await loadIdentityBatch(posts.map(post => post.ownerId))
+  const profileMap = new Map(profiles.map(profile => [profile.$ownerId, profile]))
 
   return posts.map((post) => ({
     ...post,

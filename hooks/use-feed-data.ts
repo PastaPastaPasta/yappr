@@ -24,6 +24,7 @@ interface PostCreatedEventDetail {
 interface UseFeedDataOptions {
   activeTab: FeedTab;
   feedLanguage?: string;
+  enabled?: boolean;
 }
 
 interface FeedLoadPagination {
@@ -87,7 +88,7 @@ function normalizePostId(value: unknown): string | null {
   return null;
 }
 
-export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): UseFeedDataResult {
+export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeedDataOptions): UseFeedDataResult {
   const { user } = useAuth();
 
   const postsState = useAsyncState<Post[]>(null);
@@ -114,7 +115,6 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     getPostEnrichment,
   } = useProgressiveEnrichment({
     currentUserId: user?.identityId,
-    skipFollowStatus: activeTab === 'following',
   });
 
   const applyRepostAndQuoteEnrichment = useCallback(
@@ -479,16 +479,17 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
   }, [loadPosts, resetEnrichment]);
 
   useEffect(() => {
-    if (!newestPostTimestamp) return;
+    if (!enabled || !newestPostTimestamp) return;
 
     const intervalId = setInterval(() => {
       checkForNewPosts().catch((error) => logger.error('Failed to check for new posts:', error));
     }, 15000);
 
     return () => clearInterval(intervalId);
-  }, [checkForNewPosts, newestPostTimestamp]);
+  }, [enabled, checkForNewPosts, newestPostTimestamp]);
 
   useEffect(() => {
+    if (!enabled) return;
     const handlePostCreated = (event: Event) => {
       const customEvent = event as CustomEvent<PostCreatedEventDetail>;
       const detail = customEvent.detail || {};
@@ -525,7 +526,7 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     return () => {
       window.removeEventListener('post-created', handlePostCreated as EventListener);
     };
-  }, [applyRepostAndQuoteEnrichment, enrichProgressively, loadPosts, normalizeCreatedPost, reconcileCreatedPost, resetEnrichment, setData]);
+  }, [enabled, applyRepostAndQuoteEnrichment, enrichProgressively, loadPosts, normalizeCreatedPost, reconcileCreatedPost, resetEnrichment, setData]);
 
   useEffect(() => {
     resetEnrichment();
@@ -536,8 +537,8 @@ export function useFeedData({ activeTab, feedLanguage }: UseFeedDataOptions): Us
     setPendingNewPosts([]);
     setNewestPostTimestamp(null);
 
-    loadPosts().catch((error) => logger.error('Failed to load posts:', error));
-  }, [activeTab, loadPosts, resetEnrichment, setData]);
+    if (enabled) loadPosts().catch((error) => logger.error('Failed to load posts:', error));
+  }, [enabled, activeTab, loadPosts, resetEnrichment, setData]);
 
   const handlePostDelete = useCallback(
     (postId: string) => {

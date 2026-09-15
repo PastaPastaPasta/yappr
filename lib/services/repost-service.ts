@@ -1,8 +1,9 @@
+import { queryDocumentBundle } from './document-query-bundle';
 import { logger } from '@/lib/logger';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
-import { paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
+import { mapLimit, paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
 import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
 
 /** A repost of a post — a dedicated `repost` document ({ postId, postOwnerId }). */
@@ -170,6 +171,21 @@ class RepostService {
     }
   }
 
+  /** One independently bounded page per owner; crowded owners retain the
+   * original cursor pagination and 1,000-result ceiling. */
+  async getUserRepostsBatch(userIds: string[]): Promise<RepostDocument[]> {
+    const ids = Array.from(new Set(userIds));
+    const pages = await queryDocumentBundle(ids.map(userId => ({
+      dataContractId: this.contractId, documentTypeName: this.documentType,
+      where: [['$ownerId', '==', userId], ['$createdAt', '>', 0]],
+      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100,
+    })), true);
+    const reposts = await mapLimit(pages, 3, (page, index) => page.length === 100
+      ? this.getUserReposts(ids[index])
+      : Promise.resolve(page.map(doc => this.map(doc)).filter((doc): doc is RepostDocument => doc !== null)));
+    return reposts.flat();
+  }
+
   /**
    * Which of the given posts the user has reposted — queries only the user's OWN
    * reposts via the unique `ownerAndPost` [$ownerId, postId] index, so the result
@@ -243,11 +259,11 @@ class RepostService {
    * Reposts of a user's posts (for "X reposted your post" notifications).
    * Uses the `postOwnerAndTime` index [postOwnerId, $createdAt].
    */
-  async getRepostsOfMyPosts(userId: string, since?: Date): Promise<RepostDocument[]> {
+  async getRepostsOfMyPosts(userId: string, since?: Date, preloaded?: Record<string, unknown>[]): Promise<RepostDocument[]> {
     const sinceTimestamp = since?.getTime() || 0;
     try {
       const sdk = await this.sdk();
-      const response = await sdk.documents.query({
+      const response = preloaded ?? await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         where: [['postOwnerId', '==', userId], ['$createdAt', '>', sinceTimestamp]],

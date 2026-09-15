@@ -1,13 +1,15 @@
 import { logger } from '@/lib/logger';
+import { chunk, mapLimit } from './pagination-utils';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
-import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, keyNetwork } from '../constants';
-import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
+import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, YAPPR_PROFILE_CONTRACT_ID, keyNetwork } from '../constants';
+import { documentToPlainObject, identifierToBase58, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
+import { likesAreIndexOnly } from '@/lib/contract-topology';
 import { getPrimaryUsername, sortUsernames } from '@/lib/utils/username';
 
 /**
@@ -48,6 +50,12 @@ class DpnsService {
   /** Cache only complete DPNS lookup results; null records a proven absence. */
   private reverseMissCache = new TtlMap<string, true>(5 * 60 * 1000);
 
+  private aliasCache = new TtlMap<string, string[]>(5 * 60 * 1000);
+
+  hasCachedUsername(identityId: string): boolean {
+    return this.reverseCache.has(identityId) || this.reverseMissCache.has(identityId);
+  }
+
   seedUsernames(usernames: ReadonlyMap<string, string | null>): void {
     usernames.forEach((username, identityId) => {
       if (username) {
@@ -72,212 +80,100 @@ class DpnsService {
    * Get all usernames for an identity ID
    */
   async getAllUsernames(identityId: string): Promise<string[]> {
-    try {
-      const sdk = await getEvoSdk();
-
-      // Try the dedicated DPNS usernames function first (v3 SDK returns string[] directly)
-      try {
-        const usernames = await sdk.dpns.usernames({ identityId, limit: 20 });
-        if (usernames && usernames.length > 0) {
-          return usernames;
-        }
-      } catch {
-        // Fallback to document query
-      }
-
-      // Fallback: Query DPNS documents by identity ID
-      const response = await sdk.documents.query({
-        dataContractId: DPNS_CONTRACT_ID,
-        documentTypeName: DPNS_DOCUMENT_TYPE,
-        where: [['records.identity', '==', identityId]],
-        limit: 20
-      });
-
-      const documents = extractDocuments(response);
-      return documents.map((doc) => {
-        const data = (doc.data || doc) as Record<string, unknown>;
-        return `${data.label}.${data.normalizedParentDomainName}`;
-      });
-    } catch (error) {
-      logger.error('DPNS: Error fetching all usernames:', error);
-      return [];
-    }
+    return (await this.getAllUsernamesSortedBatch([identityId])).get(identityId) ?? [];
   }
 
-  /**
-   * Get all usernames for an identity ID, sorted by the canonical ordering
-   * (contested first, then shortest, then alphabetically). The first entry
-   * is the identity's primary username.
-   */
   async getAllUsernamesSorted(identityId: string): Promise<string[]> {
-    return sortUsernames(await this.getAllUsernames(identityId));
+    return this.getAllUsernames(identityId);
   }
 
-  /**
-   * Resolve every DPNS name for a set of identities in one bounded query.
-   * Connection lists need aliases for display, so the primary-only
-   * resolveUsernamesBatch helper is not sufficient here. If the shared query
-   * is near the platform's 100-document cap, fall back to the complete per-id
-   * reads rather than returning a partial alias set.
-   */
+  /** Complete alias sets, chunked below the IN/row budgets and cursor-paged
+   * for crowded identities. Never seed a partial set or a transport failure. */
   async getAllUsernamesSortedBatch(identityIds: string[]): Promise<Map<string, string[]>> {
-    const uniqueIds = Array.from(new Set(identityIds.filter(Boolean)));
-    const result = new Map<string, string[]>(uniqueIds.map((id) => [id, []]));
-    if (uniqueIds.length === 0) return result;
-
+    const ids = Array.from(new Set(identityIds.filter(Boolean)));
+    const result = new Map<string, string[]>();
+    const missing = ids.filter(id => {
+      const cached = this.aliasCache.get(id);
+      if (cached !== undefined) result.set(id, [...cached]);
+      return cached === undefined;
+    });
+    if (missing.length === 0) return result;
+    let sdk: Awaited<ReturnType<typeof getEvoSdk>>;
     try {
-      const sdk = await getEvoSdk();
-      const response = await sdk.documents.query({
-        dataContractId: DPNS_CONTRACT_ID,
-        documentTypeName: DPNS_DOCUMENT_TYPE,
-        where: [['records.identity', 'in', uniqueIds]],
-        orderBy: [['records.identity', 'asc']],
-        limit: 100,
-      });
-      let documents = extractDocuments(response);
-
-      // An `in` query can stop at the shared limit while a single identity has
-      // more aliases. Re-read each identity in that case so callers never see
-      // an incomplete alias list.
-      if (documents.length + uniqueIds.length >= 100) {
-        documents = [];
-        for (const identityId of uniqueIds) {
-          documents.push(...extractDocuments(await sdk.documents.query({
-            dataContractId: DPNS_CONTRACT_ID,
-            documentTypeName: DPNS_DOCUMENT_TYPE,
-            where: [['records.identity', '==', identityId]],
-            orderBy: [['records.identity', 'asc']],
-            limit: 100,
-          })));
-        }
-      }
-
-      for (const doc of documents) {
-        const data = (doc.data || doc) as Record<string, unknown>;
-        const records = data.records as Record<string, unknown> | undefined;
-        const ownerId = identifierToBase58(records?.identity || records?.dashUniqueIdentityId);
-        const label = data.label || data.normalizedLabel;
-        if (!ownerId || typeof label !== 'string') continue;
-        const parent = data.normalizedParentDomainName || 'dash';
-        const names = result.get(ownerId) ?? [];
-        names.push(`${label}.${parent}`);
-        result.set(ownerId, names);
-        this._cacheEntry(`${label}.${parent}`, ownerId);
-      }
-
-      uniqueIds.forEach((id) => result.set(id, sortUsernames(result.get(id) ?? [])));
-      return result;
+      sdk = await getEvoSdk();
     } catch (error) {
-      logger.error('DPNS: Batch alias resolution error:', error);
-      const entries = await Promise.all(uniqueIds.map(async (id) => [id, await this.getAllUsernamesSorted(id)] as const));
-      return new Map(entries);
+      logger.error('DPNS: SDK unavailable for aliases', error);
+      return result;
     }
-  }
-
-  /**
-   * Batch resolve usernames for multiple identity IDs (reverse lookup)
-   * Uses 'in' operator for efficient single-query resolution
-   * Selects the "best" username for identities with multiple names (contested first, then shortest, then alphabetically)
-   *
-   * Near the shared limit, retry per identity with document cursors: empty
-   * identity branches can consume IN-query capacity too, so fewer than 100
-   * documents does not by itself prove that the batch is complete.
-   */
-  async resolveUsernamesBatch(identityIds: string[]): Promise<Map<string, string | null>> {
-    const results = new Map<string, string | null>();
-
-    // Initialize all as null
-    identityIds.forEach(id => results.set(id, null));
-
-    if (identityIds.length === 0) return results;
-
-    // Check cache first
-    const uncachedIds: string[] = [];
-    for (const id of identityIds) {
-      const cached = this.reverseCache.get(id);
-      if (cached !== undefined) {
-        results.set(id, cached);
-      } else if (this.reverseMissCache.has(id)) {
-        results.set(id, null);
-      } else {
-        uncachedIds.push(id);
-      }
-    }
-
-    if (uncachedIds.length === 0) {
-      return results;
-    }
-
-    try {
-      const sdk = await getEvoSdk();
-
-      // Batch query using 'in' operator (max 100 per query)
-      const response = await sdk.documents.query({
-        dataContractId: DPNS_CONTRACT_ID,
-        documentTypeName: DPNS_DOCUMENT_TYPE,
-        where: [['records.identity', 'in', uncachedIds]],
-        orderBy: [['records.identity', 'asc']],
-        limit: 100
-      });
-
-      let documents = extractDocuments(response);
-      if (documents.length + uncachedIds.length >= 100) {
-        // Discard the partial batch, including potentially incomplete alias
-        // sets, before choosing primary names or reporting missing authors.
-        documents = [];
-        for (const identityId of uncachedIds) {
-          let startAfter: string | undefined;
-          while (true) {
-            const page = extractDocuments(await sdk.documents.query({
-              dataContractId: DPNS_CONTRACT_ID,
-              documentTypeName: DPNS_DOCUMENT_TYPE,
-              where: [['records.identity', '==', identityId]],
-              orderBy: [['records.identity', 'asc']],
-              limit: 100,
-              ...(startAfter ? { startAfter } : {}),
-            }));
-            documents.push(...page);
-            if (page.length < 100) break;
-            const last = page[page.length - 1];
-            const next = identifierToBase58(last.$id || last.id);
-            if (!next || next === startAfter) {
-              throw new Error('DPNS: username pagination did not advance');
+    // Leave headroom for absent branches and multiple aliases per identity.
+    await mapLimit(chunk(missing, 40), 2, async batch => {
+      try {
+        let documents = extractDocuments(await sdk.documents.query({
+          dataContractId: DPNS_CONTRACT_ID,
+          documentTypeName: DPNS_DOCUMENT_TYPE,
+          where: [['records.identity', 'in', batch]],
+          orderBy: [['records.identity', 'asc']],
+          limit: 100,
+        }));
+        if (documents.length + batch.length >= 100) {
+          documents = [];
+          for (const id of batch) {
+            let startAfter: string | undefined;
+            while (true) {
+              const page = extractDocuments(await sdk.documents.query({
+                dataContractId: DPNS_CONTRACT_ID,
+                documentTypeName: DPNS_DOCUMENT_TYPE,
+                where: [['records.identity', '==', id]],
+                orderBy: [['records.identity', 'asc']],
+                limit: 100,
+                ...(startAfter ? { startAfter } : {}),
+              }));
+              documents.push(...page);
+              if (page.length < 100) break;
+              const last = page[page.length - 1];
+              const next = identifierToBase58(last.$id || last.id);
+              if (!next || next === startAfter) throw new Error('DPNS: alias cursor did not advance');
+              startAfter = next;
             }
-            startAfter = next;
           }
         }
-      }
-
-      // Collect ALL usernames per identity (some users have multiple)
-      const usernamesByIdentity = new Map<string, string[]>();
-      for (const doc of documents) {
-        const data = (doc.data || doc) as Record<string, unknown>;
-        const records = data.records as Record<string, unknown> | undefined;
-        const rawId = records?.identity || records?.dashUniqueIdentityId;
-        // Convert base64 identity to base58 for consistent map keys
-        const identityId = identifierToBase58(rawId);
-        const label = data.label || data.normalizedLabel;
-        const parentDomain = data.normalizedParentDomainName || 'dash';
-        const username = `${label}.${parentDomain}`;
-
-        if (identityId && label) {
-          const existing = usernamesByIdentity.get(identityId) || [];
-          existing.push(username);
-          usernamesByIdentity.set(identityId, existing);
+        const names = new Map<string, string[]>(batch.map(id => [id, []]));
+        for (const doc of documents) {
+          const data = (doc.data || doc) as Record<string, unknown>;
+          const records = data.records as Record<string, unknown> | undefined;
+          const id = identifierToBase58(records?.identity || records?.dashUniqueIdentityId);
+          const label = data.label || data.normalizedLabel;
+          if (id && typeof label === 'string') {
+            names.get(id)?.push(`${label}.${data.normalizedParentDomainName || 'dash'}`);
+          }
         }
+        names.forEach((aliases, id) => {
+          const sorted = sortUsernames(Array.from(new Set(aliases)));
+          result.set(id, sorted);
+          this.aliasCache.set(id, sorted);
+          // Forward lookup knows every alias; reverse lookup knows the PRIMARY.
+          sorted.forEach(name => this.cache.set(name.toLowerCase(), id));
+          this.seedUsernames(new Map([[id, sorted[0] ?? null]]));
+        });
+      } catch (error) {
+        logger.error('DPNS: Batch alias resolution error:', error);
       }
+    });
+    return result;
+  }
 
-      // Pick the primary username for each identity using the canonical ordering
-      for (const [identityId, usernames] of Array.from(usernamesByIdentity.entries())) {
-        const bestUsername = getPrimaryUsername(usernames);
-        if (!bestUsername) continue;
-        results.set(identityId, bestUsername);
-        this._cacheEntry(bestUsername, identityId);
-      }
-    } catch (error) {
-      logger.error('DPNS: Batch resolution error:', error);
-    }
-
+  /** Primary names reuse complete alias reads; composite seeds remain valid. */
+  async resolveUsernamesBatch(identityIds: string[]): Promise<Map<string, string | null>> {
+    const ids = Array.from(new Set(identityIds.filter(Boolean)));
+    const results = new Map<string, string | null>();
+    const missing = ids.filter(id => {
+      const name = this.reverseCache.get(id);
+      if (name !== undefined) results.set(id, name);
+      else if (this.reverseMissCache.has(id)) results.set(id, null);
+      return !results.has(id);
+    });
+    const aliases = await this.getAllUsernamesSortedBatch(missing);
+    missing.forEach(id => results.set(id, aliases.get(id)?.[0] ?? null));
     return results;
   }
 
@@ -410,18 +306,38 @@ class DpnsService {
       // Normalize the search prefix to match how DPNS stores normalizedLabel
       const searchPrefix = await sdk.dpns.convertToHomographSafe(cleanPrefix);
 
-      const response = await sdk.documents.query({
+      const query = {
         dataContractId: DPNS_CONTRACT_ID,
         documentTypeName: DPNS_DOCUMENT_TYPE,
         where: [
           ['normalizedLabel', 'startsWith', searchPrefix],
-          ['normalizedParentDomainName', '==', 'dash']
-        ],
-        orderBy: [['normalizedLabel', 'asc']],
-        limit
-      });
-
-      const documents = extractDocuments(response);
+          ['normalizedParentDomainName', '==', 'dash'],
+        ] as DocumentWhereClause[],
+        orderBy: [['normalizedLabel', 'asc']] as DocumentOrderByClause[], limit,
+      };
+      let documents: Record<string, unknown>[] | undefined;
+      if (likesAreIndexOnly()) {
+        try {
+          const result = await sdk.documents.composite({
+            dataContractId: DPNS_CONTRACT_ID, documentType: DPNS_DOCUMENT_TYPE,
+            where: query.where, orderBy: query.orderBy, limit,
+            subQueries: [{ dataContractId: YAPPR_PROFILE_CONTRACT_ID, documentType: 'profile',
+              bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } }],
+          });
+          const profiles = result.subResults?.[0];
+          if (!Array.isArray(result.pageDocuments) || result.subResults.length !== 1 ||
+              profiles?.kind !== 'documents' || !Array.isArray(profiles.documents)) {
+            throw new Error('DPNS search: incomplete composite response');
+          }
+          documents = result.pageDocuments.map(documentToPlainObject);
+          const owners = documents.map(doc => String(doc.$ownerId || doc.ownerId));
+          const { unifiedProfileService } = await import('./unified-profile-service');
+          unifiedProfileService.seedProfileDocuments(profiles.documents.map(documentToPlainObject), owners);
+        } catch (error) {
+          logger.warn('DPNS search composite failed; using ordinary search', error);
+        }
+      }
+      documents ??= extractDocuments(await sdk.documents.query(query));
       return documents.map((doc) => {
         const data = (doc.data || doc) as Record<string, unknown>;
         const label = (data.label || data.normalizedLabel || 'unknown') as string;
@@ -681,6 +597,8 @@ class DpnsService {
    * Clear cache entries
    */
   clearCache(username?: string, identityId?: string): void {
+    if (identityId) this.aliasCache.delete(identityId);
+    else this.aliasCache.clear();
     if (username) {
       this.cache.delete(username.toLowerCase());
     }
@@ -702,6 +620,7 @@ class DpnsService {
     this.cache.prune();
     this.reverseCache.prune();
     this.reverseMissCache.prune();
+    this.aliasCache.prune();
   }
 }
 

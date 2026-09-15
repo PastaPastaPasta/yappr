@@ -49,7 +49,7 @@ function FeedPage() {
     refresh,
     handlePostDelete,
     getPostEnrichment,
-  } = useFeedData({ activeTab, feedLanguage });
+  } = useFeedData({ activeTab, feedLanguage, enabled: !showTop });
 
   const topFeed = useTopFeed({ activeTab, window: rankingWindow, enabled: showTop });
 

@@ -12,7 +12,7 @@ import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { truncateId } from '@/lib/utils'
 import { normalizeDpnsUsername } from '@/lib/post-helpers'
 import type { BlogComment } from '@/lib/types'
-import { blogCommentService, dpnsService, unifiedProfileService } from '@/lib/services'
+import { blogCommentService } from '@/lib/services'
 
 interface BlogCommentsProps {
   blogPostId: string
@@ -64,10 +64,8 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
       onCommentCountChange?.(filtered.length)
 
       const filteredAuthorIds = Array.from(new Set(filtered.map((comment) => comment.ownerId).filter(Boolean)))
-      const [resolvedUsernames, resolvedAvatars] = await Promise.all([
-        dpnsService.resolveUsernamesBatch(filteredAuthorIds),
-        unifiedProfileService.getAvatarUrlsBatch(filteredAuthorIds),
-      ])
+      const { loadIdentityBatch } = await import('@/lib/services/identity-batch')
+      const { usernames: resolvedUsernames, avatars: resolvedAvatars } = await loadIdentityBatch(filteredAuthorIds)
 
       setUsernames(resolvedUsernames)
       setAvatars(resolvedAvatars)

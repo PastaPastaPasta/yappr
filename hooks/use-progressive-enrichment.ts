@@ -143,196 +143,204 @@ export function useProgressiveEnrichment(
     // Check if this request is still valid
     const isValid = () => enrichmentIdRef.current === requestId
 
-    // Extract IDs (deduplicate to prevent "duplicate values for In query" errors).
-    // Each target carries its kind, so the stats/interaction queries are
-    // partitioned by interaction surface — one partition (i.e. unchanged) on v2.
-    const seenPostIds = new Set<string>()
-    const targets: KindedTarget[] = []
-    for (const post of posts) {
-      if (!post.id || seenPostIds.has(post.id)) continue
-      seenPostIds.add(post.id)
-      targets.push(targetOf(post))
-    }
-    const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)))
-    // Quoted authors are gated for media just like top-level ones, but they are
-    // NOT enriched as authors (no username/profile/avatar/block lookups) and
-    // must never be seeded as followed on the Following tab — following the
-    // quoter says nothing about who they quoted. Their follow status rides
-    // along on the real batch query only, which seeds the shared cache that
-    // useMediaGate reads, so an embedded card of someone you follow renders its
-    // media instead of a placeholder.
-    const followLookupIds = Array.from(
-      new Set([...authorIds, ...posts.map(p => p.quotedPost?.author.id).filter((id): id is string => !!id)])
-    )
-
-    // Helper to merge Maps (TypeScript-compatible without downlevelIteration)
-    const mergeMaps = <K, V>(prev: Map<K, V>, next: Map<K, V>): Map<K, V> => {
-      const merged = new Map(prev)
-      next.forEach((value, key) => merged.set(key, value))
-      return merged
-    }
-
-    // Set loading phase, merging whatever arrived with the posts
-    setEnrichmentState(prev => ({
-      ...prev,
-      phase: 'loading',
-      usernames: preloaded?.usernames ? mergeMaps(prev.usernames, preloaded.usernames) : prev.usernames,
-      profiles: preloaded?.profiles ? mergeMaps(prev.profiles, preloaded.profiles) : prev.profiles,
-      avatars: preloaded?.avatars ? mergeMaps(prev.avatars, preloaded.avatars) : prev.avatars,
-      stats: preloaded?.stats ? mergeMaps(prev.stats, preloaded.stats) : prev.stats,
-      interactions: preloaded?.interactions ? mergeMaps(prev.interactions, preloaded.interactions) : prev.interactions,
-    }))
-
-    // Only what the preload did not cover goes to the network
-    const notIn = <V,>(map: Map<string, V> | undefined) => (id: string) => !map?.has(id)
-    const usernameAuthorIds = authorIds.filter(notIn(preloaded?.usernames))
-    const profileAuthorIds = authorIds.filter(notIn(preloaded?.profiles))
-    const avatarAuthorIds = authorIds.filter(notIn(preloaded?.avatars))
-    const statsTargets = targets.filter(target => notIn(preloaded?.stats)(target.id))
-    const interactionTargets = targets.filter(target => notIn(preloaded?.interactions)(target.id))
-
-    // Store promises so we can reuse them for completion tracking
-    // This prevents duplicate queries that were happening before
-
-    // Priority 1: DPNS usernames (most visible - author identity)
-    const usernamePromise = usernameAuthorIds.length > 0
-      ? dpnsService.resolveUsernamesBatch(usernameAuthorIds)
-      : Promise.resolve(new Map<string, string | null>())
-    usernamePromise.then(usernames => {
-      if (!isValid()) return
-      setEnrichmentState(prev => ({
-        ...prev,
-        usernames: mergeMaps(prev.usernames, usernames)
-      }))
-    }).catch(err => logger.error('Progressive enrichment: usernames failed', err))
-
-    // Priority 1: Profiles (display names)
-    const profilePromise = profileAuthorIds.length > 0
-      ? unifiedProfileService.getProfilesByIdentityIds(profileAuthorIds)
-      : Promise.resolve([] as Awaited<ReturnType<typeof unifiedProfileService.getProfilesByIdentityIds>>)
-    // Seed queried authors that have no entry yet, so consumers can
-    // distinguish "loaded, no profile" (empty entry) from "still loading"
-    // (no entry) without clobbering profiles from earlier batches
-    const seedMissingAuthors = (profiles: Map<string, ProfileData>): Map<string, ProfileData> => {
-      const seeded = new Map(profiles)
-      for (const id of authorIds) {
-        if (!seeded.has(id)) {
-          seeded.set(id, {})
-        }
+    const run = async () => {
+      if (!preloaded) {
+        const { loadPostEnrichment } = await import('@/lib/feed/load-post-enrichment')
+        preloaded = await loadPostEnrichment(posts, currentUserId)
+        if (!isValid()) return
       }
-      return seeded
-    }
-
-    profilePromise.then(profiles => {
-      if (!isValid()) return
-      const profileMap = new Map<string, ProfileData>()
-      for (const profile of profiles) {
-        if (profile.$ownerId) {
-          profileMap.set(profile.$ownerId, {
-            displayName: profile.displayName,
-            bio: profile.bio
-          })
-        }
+      // Extract IDs (deduplicate to prevent "duplicate values for In query" errors).
+      // Each target carries its kind, so the stats/interaction queries are
+      // partitioned by interaction surface — one partition (i.e. unchanged) on v2.
+      const seenPostIds = new Set<string>()
+      const targets: KindedTarget[] = []
+      for (const post of posts) {
+        if (!post.id || seenPostIds.has(post.id)) continue
+        seenPostIds.add(post.id)
+        targets.push(targetOf(post))
       }
+      const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)))
+      // Quoted authors are gated for media just like top-level ones, but they are
+      // NOT enriched as authors (no username/profile/avatar/block lookups) and
+      // must never be seeded as followed on the Following tab — following the
+      // quoter says nothing about who they quoted. Their follow status rides
+      // along on the real batch query only, which seeds the shared cache that
+      // useMediaGate reads, so an embedded card of someone you follow renders its
+      // media instead of a placeholder.
+      const followLookupIds = Array.from(
+        new Set([...authorIds, ...posts.map(p => p.quotedPost?.author.id).filter((id): id is string => !!id)])
+      )
+
+      // Helper to merge Maps (TypeScript-compatible without downlevelIteration)
+      const mergeMaps = <K, V>(prev: Map<K, V>, next: Map<K, V>): Map<K, V> => {
+        const merged = new Map(prev)
+        next.forEach((value, key) => merged.set(key, value))
+        return merged
+      }
+
+      // Set loading phase, merging whatever arrived with the posts
       setEnrichmentState(prev => ({
         ...prev,
-        profiles: seedMissingAuthors(mergeMaps(prev.profiles, profileMap))
+        phase: 'loading',
+        usernames: preloaded?.usernames ? mergeMaps(prev.usernames, preloaded.usernames) : prev.usernames,
+        profiles: preloaded?.profiles ? mergeMaps(prev.profiles, preloaded.profiles) : prev.profiles,
+        avatars: preloaded?.avatars ? mergeMaps(prev.avatars, preloaded.avatars) : prev.avatars,
+        stats: preloaded?.stats ? mergeMaps(prev.stats, preloaded.stats) : prev.stats,
+        interactions: preloaded?.interactions ? mergeMaps(prev.interactions, preloaded.interactions) : prev.interactions,
       }))
-    }).catch(err => {
-      logger.error('Progressive enrichment: profiles failed', err)
-      if (!isValid()) return
-      // Mark the authors as loaded so cards fall back to identity display
-      // instead of showing a loading skeleton forever
-      setEnrichmentState(prev => ({
-        ...prev,
-        profiles: seedMissingAuthors(prev.profiles)
-      }))
-    })
 
-    // Priority 2: Avatars
-    const avatarPromise = avatarAuthorIds.length > 0
-      ? unifiedProfileService.getAvatarUrlsBatch(avatarAuthorIds)
-      : Promise.resolve(new Map<string, string>())
-    avatarPromise.then(avatars => {
-      if (!isValid()) return
-      setEnrichmentState(prev => ({
-        ...prev,
-        avatars: mergeMaps(prev.avatars, avatars)
-      }))
-    }).catch(err => logger.error('Progressive enrichment: avatars failed', err))
+      // Only what the preload did not cover goes to the network
+      const notIn = <V,>(map: Map<string, V> | undefined) => (id: string) => !map?.has(id)
+      const usernameAuthorIds = authorIds.filter(notIn(preloaded?.usernames))
+      const profileAuthorIds = authorIds.filter(notIn(preloaded?.profiles))
+      const avatarAuthorIds = authorIds.filter(notIn(preloaded?.avatars))
+      const statsTargets = targets.filter(target => notIn(preloaded?.stats)(target.id))
+      const interactionTargets = targets.filter(target => notIn(preloaded?.interactions)(target.id))
 
-    // Priority 3: Stats
-    const statsPromise = statsTargets.length > 0
-      ? postService.getBatchPostStats(statsTargets)
-      : Promise.resolve(new Map<string, PostStats>())
-    statsPromise.then(stats => {
-      if (!isValid()) return
-      setEnrichmentState(prev => ({
-        ...prev,
-        stats: mergeMaps(prev.stats, stats)
-      }))
-    }).catch(err => logger.error('Progressive enrichment: stats failed', err))
+      // Store promises so we can reuse them for completion tracking
+      // This prevents duplicate queries that were happening before
 
-    // Priority 4: User interactions (only if logged in)
-    const interactionsPromise = currentUserId && interactionTargets.length > 0
-      ? postService.getBatchUserInteractions(interactionTargets)
-      : Promise.resolve(new Map<string, UserInteractions>())
-
-    if (currentUserId) {
-      interactionsPromise.then(interactions => {
+      // Priority 1: DPNS usernames (most visible - author identity)
+      const usernamePromise = usernameAuthorIds.length > 0
+        ? dpnsService.resolveUsernamesBatch(usernameAuthorIds)
+        : Promise.resolve(new Map<string, string | null>())
+      usernamePromise.then(usernames => {
         if (!isValid()) return
         setEnrichmentState(prev => ({
           ...prev,
-          interactions: mergeMaps(prev.interactions, interactions)
+          usernames: mergeMaps(prev.usernames, usernames)
         }))
-      }).catch(err => logger.error('Progressive enrichment: interactions failed', err))
+      }).catch(err => logger.error('Progressive enrichment: usernames failed', err))
 
-      // Priority 5: Block status (always query for filtering)
-      const blockPromise = blockService.checkBlockedBatch(currentUserId, authorIds)
-      blockPromise.then(blockStatus => {
+      // Priority 1: Profiles (display names)
+      const profilePromise = profileAuthorIds.length > 0
+        ? unifiedProfileService.getProfilesByIdentityIds(profileAuthorIds)
+        : Promise.resolve([] as Awaited<ReturnType<typeof unifiedProfileService.getProfilesByIdentityIds>>)
+      // Seed queried authors that have no entry yet, so consumers can
+      // distinguish "loaded, no profile" (empty entry) from "still loading"
+      // (no entry) without clobbering profiles from earlier batches
+      const seedMissingAuthors = (profiles: Map<string, ProfileData>): Map<string, ProfileData> => {
+        const seeded = new Map(profiles)
+        for (const id of authorIds) {
+          if (!seeded.has(id)) {
+            seeded.set(id, {})
+          }
+        }
+        return seeded
+      }
+
+      profilePromise.then(profiles => {
         if (!isValid()) return
-        blockStatusCache.seed(currentUserId, blockStatus)
+        const profileMap = new Map<string, ProfileData>()
+        for (const profile of profiles) {
+          if (profile.$ownerId) {
+            profileMap.set(profile.$ownerId, {
+              displayName: profile.displayName,
+              bio: profile.bio
+            })
+          }
+        }
         setEnrichmentState(prev => ({
           ...prev,
-          blockStatus: mergeMaps(prev.blockStatus, blockStatus)
+          profiles: seedMissingAuthors(mergeMaps(prev.profiles, profileMap))
         }))
-      }).catch(err => logger.error('Progressive enrichment: block status failed', err))
+      }).catch(err => {
+        logger.error('Progressive enrichment: profiles failed', err)
+        if (!isValid()) return
+        // Mark the authors as loaded so cards fall back to identity display
+        // instead of showing a loading skeleton forever
+        setEnrichmentState(prev => ({
+          ...prev,
+          profiles: seedMissingAuthors(prev.profiles)
+        }))
+      })
 
-      // Priority 5: Follow status (skip if on Following tab - all authors are followed by definition)
-      if (!skipFollowStatus) {
-        const followPromise = followService.getFollowStatusBatch(followLookupIds, currentUserId)
-        followPromise.then(followStatus => {
+      // Priority 2: Avatars
+      const avatarPromise = avatarAuthorIds.length > 0
+        ? unifiedProfileService.getAvatarUrlsBatch(avatarAuthorIds)
+        : Promise.resolve(new Map<string, string>())
+      avatarPromise.then(avatars => {
+        if (!isValid()) return
+        setEnrichmentState(prev => ({
+          ...prev,
+          avatars: mergeMaps(prev.avatars, avatars)
+        }))
+      }).catch(err => logger.error('Progressive enrichment: avatars failed', err))
+
+      // Priority 3: Stats
+      const statsPromise = statsTargets.length > 0
+        ? postService.getBatchPostStats(statsTargets)
+        : Promise.resolve(new Map<string, PostStats>())
+      statsPromise.then(stats => {
+        if (!isValid()) return
+        setEnrichmentState(prev => ({
+          ...prev,
+          stats: mergeMaps(prev.stats, stats)
+        }))
+      }).catch(err => logger.error('Progressive enrichment: stats failed', err))
+
+      // Priority 4: User interactions (only if logged in)
+      const interactionsPromise = currentUserId && interactionTargets.length > 0
+        ? postService.getBatchUserInteractions(interactionTargets)
+        : Promise.resolve(new Map<string, UserInteractions>())
+
+      if (currentUserId) {
+        interactionsPromise.then(interactions => {
           if (!isValid()) return
+          setEnrichmentState(prev => ({
+            ...prev,
+            interactions: mergeMaps(prev.interactions, interactions)
+          }))
+        }).catch(err => logger.error('Progressive enrichment: interactions failed', err))
+
+        // Priority 5: Block status (always query for filtering)
+        const blockPromise = blockService.checkBlockedBatch(currentUserId, authorIds)
+        blockPromise.then(blockStatus => {
+          if (!isValid()) return
+          blockStatusCache.seed(currentUserId, blockStatus)
+          setEnrichmentState(prev => ({
+            ...prev,
+            blockStatus: mergeMaps(prev.blockStatus, blockStatus)
+          }))
+        }).catch(err => logger.error('Progressive enrichment: block status failed', err))
+
+        // Priority 5: Follow status (skip if on Following tab - all authors are followed by definition)
+        if (!skipFollowStatus) {
+          const followPromise = followService.getFollowStatusBatch(followLookupIds, currentUserId)
+          followPromise.then(followStatus => {
+            if (!isValid()) return
+            followStatusCache.seed(currentUserId, followStatus)
+            setEnrichmentState(prev => ({
+              ...prev,
+              followStatus: mergeMaps(prev.followStatus, followStatus)
+            }))
+          }).catch(err => logger.error('Progressive enrichment: follow status failed', err))
+        } else {
+          // On Following tab, mark all authors as followed
+          const followStatus = new Map<string, boolean>()
+          authorIds.forEach(id => followStatus.set(id, true))
           followStatusCache.seed(currentUserId, followStatus)
           setEnrichmentState(prev => ({
             ...prev,
             followStatus: mergeMaps(prev.followStatus, followStatus)
           }))
-        }).catch(err => logger.error('Progressive enrichment: follow status failed', err))
-      } else {
-        // On Following tab, mark all authors as followed
-        const followStatus = new Map<string, boolean>()
-        authorIds.forEach(id => followStatus.set(id, true))
-        followStatusCache.seed(currentUserId, followStatus)
-        setEnrichmentState(prev => ({
-          ...prev,
-          followStatus: mergeMaps(prev.followStatus, followStatus)
-        }))
+        }
       }
-    }
 
-    // Track completion using the SAME promises (no duplicate queries!). Each
-    // promise already reports its own failure above; here only settlement matters.
-    Promise.allSettled([
-      usernamePromise,
-      profilePromise,
-      avatarPromise,
-      statsPromise,
-      interactionsPromise
-    ]).then(() => {
-      if (!isValid()) return
-      setEnrichmentState(prev => ({ ...prev, phase: 'complete' }))
-    }).catch(err => logger.error('Progressive enrichment: completion tracking failed', err))
+      // Track completion using the SAME promises (no duplicate queries!). Each
+      // promise already reports its own failure above; here only settlement matters.
+      Promise.allSettled([
+        usernamePromise,
+        profilePromise,
+        avatarPromise,
+        statsPromise,
+        interactionsPromise
+      ]).then(() => {
+        if (!isValid()) return
+        setEnrichmentState(prev => ({ ...prev, phase: 'complete' }))
+      }).catch(err => logger.error('Progressive enrichment: completion tracking failed', err))
+    }
+    run().catch(error => logger.error('Progressive enrichment failed', error))
 
   }, [currentUserId, skipFollowStatus])
 

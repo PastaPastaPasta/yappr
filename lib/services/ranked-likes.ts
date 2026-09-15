@@ -220,6 +220,7 @@ export async function mostFollowedUsers(limit: number = 10): Promise<RankedGroup
 }
 
 export interface HydratedTopPostsOptions {
+  postAuthor?: string;
   /** Pin the per-hashtag axis. Storage form (lowercase, no '#'), never `''`. */
   hashtag?: string;
   /** 1..100, default 20. */
@@ -252,16 +253,16 @@ const hydratedCache = new TtlMap<string, Post[]>(60_000);
  * `likesAreIndexOnly()`. Returns `[]` on failure.
  */
 export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {}): Promise<Post[]> {
-  const { hashtag, limit = 20, window = 'all', force = false } = options;
+  const { hashtag, postAuthor, limit = 20, window = 'all', force = false } = options;
   if (hashtag === '') {
     // The '' group is the untagged bucket, not a tag — nothing should ask for it.
     logger.warn('topLikedPostsHydrated: refusing the empty hashtag group');
     return [];
   }
 
-  const cacheKey = `${window}:${limit}:${hashtag === undefined ? 'global' : `tag:${hashtag}`}`;
+  const cacheKey = `${window}:${limit}:${postAuthor ? `author:${postAuthor}` : hashtag === undefined ? 'global' : `tag:${hashtag}`}`;
   return hydrateRankedCached(cacheKey, force, () =>
-    topLikedPosts(hashtag === undefined ? { limit, window } : { hashtag, limit, window })
+    topLikedPosts({ ...(postAuthor ? { postAuthor } : hashtag === undefined ? {} : { hashtag }), limit, window })
   );
 }
 
@@ -318,13 +319,16 @@ async function hydrateRankedCached(
   force: boolean,
   rank: () => Promise<RankedLikedPost[]>
 ): Promise<Post[]> {
-  const cached = force ? undefined : hydratedCache.get(cacheKey);
+  const { getCurrentUserId } = await import('./sdk-helpers');
+  const currentUserId = getCurrentUserId() ?? undefined;
+  const viewerKey = `${currentUserId ?? 'anonymous'}:${cacheKey}`;
+  const cached = force ? undefined : hydratedCache.get(viewerKey);
   if (cached) return cached;
 
   try {
     const ranked = await rank();
-    const posts = await hydrateRankedPosts(ranked);
-    hydratedCache.set(cacheKey, posts);
+    const posts = await hydrateRankedPosts(ranked, currentUserId);
+    hydratedCache.set(viewerKey, posts);
     return posts;
   } catch (error) {
     logger.error('topLikedPostsHydrated: hydration failed:', error);
@@ -343,16 +347,12 @@ async function hydrateRankedCached(
  * still two batch lookups: neither is a document of the page, and the cards'
  * relation hooks would otherwise fan out one query per author.
  */
-async function hydrateRankedPosts(ranked: RankedLikedPost[]): Promise<Post[]> {
+async function hydrateRankedPosts(ranked: RankedLikedPost[], currentUserId?: string): Promise<Post[]> {
   if (ranked.length === 0) return [];
 
   // Dynamic: composite-feed-page imports the enrichment helpers, which import
   // the post service, which imports this module.
-  const [{ loadCompositeFeedPage }, { getCurrentUserId }] = await Promise.all([
-    import('@/lib/feed/composite-feed-page'),
-    import('./sdk-helpers'),
-  ]);
-  const currentUserId = getCurrentUserId() ?? undefined;
+  const { loadCompositeFeedPage } = await import('@/lib/feed/composite-feed-page');
   const ids = ranked.map((entry) => entry.postId);
 
   const page = await loadCompositeFeedPage({

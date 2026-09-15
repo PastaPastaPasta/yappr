@@ -18,7 +18,7 @@ import toast from 'react-hot-toast'
 import Link from 'next/link'
 import { TREE_CAPACITY } from '@/lib/services'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
-import { resolveUserDetails, type UserDetails } from '@/lib/utils/resolve-user-details'
+import { resolveUserDetailsBatch, type UserDetails } from '@/lib/utils/resolve-user-details'
 
 interface PrivateFollower extends UserDetails {
   grantedAt: Date
@@ -72,16 +72,15 @@ export function PrivateFeedFollowers() {
       }
 
       // Resolve usernames and profiles for followers
-      const followersWithDetails = await Promise.all(
-        grants.map(async (grant) => {
-          const details = await resolveUserDetails(grant.recipientId)
+      const users = await resolveUserDetailsBatch(grants.map(item => item.recipientId))
+      const followersWithDetails = grants.map((grant) => {
+          const details = users.get(grant.recipientId) ?? { id: grant.recipientId, displayName: `User ${grant.recipientId.slice(-6)}`, hasDpns: false }
           return {
             ...details,
             grantedAt: new Date(grant.grantedAt),
             leafIndex: grant.leafIndex,
           }
         })
-      )
 
       // Sort by granted date (newest first)
       followersWithDetails.sort((a, b) => b.grantedAt.getTime() - a.grantedAt.getTime())

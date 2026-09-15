@@ -141,7 +141,7 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
 }
 
 function BlogCard({ blog, currentUserId }: { blog: BlogWithUsername; currentUserId?: string }) {
-  const { isFollowing, isLoading: followLoading, toggleFollow } = useBlogFollow(blog.id)
+  const { isFollowing, isLoading: followLoading, toggleFollow } = useBlogFollow(blog.id, undefined, false)
   const isOwnBlog = currentUserId === blog.ownerId
 
   const handleFollowClick = (e: React.MouseEvent) => {

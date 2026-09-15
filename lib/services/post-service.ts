@@ -1,12 +1,13 @@
+import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import { Post, PostQueryOptions, Reply } from '../../types';
 import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
-import { documentCount, groupedDocumentCount } from './pagination-utils';
+import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
-import { authorFieldIsRequired, groupByInteractionSurface, hashtagIsOptional, hashtagMaxLength, hashtagsAreInline, quoteFieldFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { authorFieldIsRequired, likesAreIndexOnly, groupByInteractionSurface, hashtagIsOptional, hashtagMaxLength, hashtagsAreInline, quoteFieldFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { firstHashtag } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
@@ -276,12 +277,13 @@ class PostService extends BaseDocumentService<Post> {
    * Uses batch queries to minimize network requests.
    * Returns new Post objects with enriched data including _enrichment for N+1 avoidance.
    */
-  async enrichPostsBatch(posts: Post[]): Promise<Post[]> {
+  async enrichPostsBatch(posts: Post[], preloaded?: PreloadedEnrichment): Promise<Post[]> {
     const enriched = await enrichPostsBatchHelper(
       posts,
       (targets) => this.getBatchPostStats(targets),
       (targets) => this.getBatchUserInteractions(targets),
-      this.getCurrentUserId()
+      this.getCurrentUserId(),
+      preloaded
     );
     // Quote targets ride along here so every enrichment surface gets them in
     // one batch — a no-op when the loader already attached them. Dynamic
@@ -500,6 +502,7 @@ class PostService extends BaseDocumentService<Post> {
   async getFollowingFeed(
     userId: string,
     options: QueryOptions & {
+      followingIds?: string[];
       timeWindowStart?: Date;  // For pagination - start of time window
       timeWindowEnd?: Date;    // For pagination - end of time window
       windowHours?: number;    // Suggested window size (adaptive based on density)
@@ -513,10 +516,32 @@ class PostService extends BaseDocumentService<Post> {
     );
   }
 
+  /** Display pages combine selection and enrichment on cursor-free queries.
+   * Later pages keep exact document cursors, including timestamp ties. */
+  async queryForDisplay(options: QueryOptions): Promise<DocumentResult<Post> & { preloaded?: PreloadedEnrichment }> {
+    if (likesAreIndexOnly() && !options.startAfter && !options.startAt) {
+      try {
+        const { loadCompositeFeedPage } = await import('@/lib/feed/composite-feed-page');
+        const page = await loadCompositeFeedPage({
+          language: 'en', limit: options.limit ?? 20, pageQuery: options,
+          currentUserId: this.getCurrentUserId() ?? undefined,
+        });
+        const byId = new Map(page.posts.map(post => [post.id, post]));
+        return {
+          documents: page.rawPosts.map(doc => byId.get(doc.$id as string) ?? this.transformDocument(doc)),
+          preloaded: page.preloaded,
+        };
+      } catch (error) {
+        logger.warn('Composite post page failed; retaining ordinary selection', error);
+      }
+    }
+    return this.query(options);
+  }
+
   /**
    * Get posts by user
    */
-  async getUserPosts(userId: string, options: QueryOptions = {}): Promise<DocumentResult<Post>> {
+  async getUserPosts(userId: string, options: QueryOptions & { forDisplay?: boolean } = {}): Promise<DocumentResult<Post> & { preloaded?: PreloadedEnrichment }> {
     const queryOptions: QueryOptions = {
       where: [
         ['$ownerId', '==', userId],
@@ -527,7 +552,7 @@ class PostService extends BaseDocumentService<Post> {
       ...options
     };
 
-    return this.query(queryOptions);
+    return options.forDisplay ? this.queryForDisplay(queryOptions) : this.query(queryOptions);
   }
 
   /**
@@ -845,6 +870,25 @@ class PostService extends BaseDocumentService<Post> {
       logger.error('Error counting posts by hashtag:', error);
       return 0;
     }
+  }
+
+  /** Referenced-post screens need the bodies and enrichment together. */
+  async getPostsByIdsForDisplay(postIds: string[]): Promise<{ posts: Post[]; preloaded: PreloadedEnrichment }> {
+    const ids = Array.from(new Set(postIds.filter(Boolean)));
+    const pages = await mapLimit(chunk(ids, 100), 2, async batch => {
+      try {
+        return await this.queryForDisplay({ where: [['$id', 'in', batch]], limit: batch.length });
+      } catch (error) {
+        logger.warn('Referenced post page failed; using cached/per-id recovery', error);
+        return { documents: await this.getMany(batch), preloaded: undefined };
+      }
+    });
+    const byId = new Map(pages.flatMap(page => page.documents).map(post => [post.id, post]));
+    const { mergePostEnrichment } = await import('@/lib/feed/load-post-enrichment');
+    return {
+      posts: ids.flatMap(id => { const post = byId.get(id); return post ? [post] : []; }),
+      preloaded: mergePostEnrichment(pages.map(page => page.preloaded ?? {})),
+    };
   }
 
   /**

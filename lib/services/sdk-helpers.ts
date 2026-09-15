@@ -544,7 +544,8 @@ export class RequestDeduplicator<K, V> {
     this.inFlight.set(key, promise);
 
     promise.finally(() => {
-      setTimeout(() => this.inFlight.delete(key), this.cleanupDelayMs);
+      if (this.cleanupDelayMs === 0) this.inFlight.delete(key);
+      else setTimeout(() => this.inFlight.delete(key), this.cleanupDelayMs);
     }).catch(() => {/* Errors are handled by the consumer */});
 
     return promise;

@@ -11,7 +11,6 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { identifierStringToLegacyNumberArray, queryDocuments, identifierToBase58 } from './sdk-helpers';
 import { followService } from './follow-service';
-import { dpnsService } from './dpns-service';
 import { unifiedProfileService, UnifiedProfileDocument } from './unified-profile-service';
 import { DASHPAY_CONTRACT_ID } from '../constants';
 import bs58 from 'bs58';
@@ -258,10 +257,8 @@ class DashPayContactsService {
       }
 
       // Batch resolve usernames and profiles in parallel
-      const [usernameMap, profiles] = await Promise.all([
-        dpnsService.resolveUsernamesBatch(unfollowedIds),
-        unifiedProfileService.getProfilesByIdentityIds(unfollowedIds)
-      ]);
+      const { loadIdentityBatch } = await import('./identity-batch');
+      const { usernames: usernameMap, profiles } = await loadIdentityBatch(unfollowedIds);
 
       // Create profile lookup map
       const profileMap = new Map<string, UnifiedProfileDocument>();

@@ -3,8 +3,8 @@ import type { DocumentResult, QueryOptions } from './document-service';
 import { queryRawDocuments } from './document-service';
 import type { Post } from '../types';
 import type { PostStats } from './post-service';
-import { type DocumentWhereClause } from './sdk-helpers';
-import { rangeDistinctCount } from './pagination-utils';
+import { identifierToHex, type DocumentWhereClause } from './sdk-helpers';
+import { chunk, mapLimit, rangeDistinctCount } from './pagination-utils';
 import { getEvoSdk } from './evo-sdk-service';
 import { quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
 
@@ -39,6 +39,7 @@ export async function fetchFollowingFeed(
   contractId: string,
   transformDocument: (doc: Record<string, unknown>) => Post,
   options: QueryOptions & {
+    followingIds?: string[];
     timeWindowStart?: Date;
     timeWindowEnd?: Date;
     windowHours?: number;
@@ -50,8 +51,9 @@ export async function fetchFollowingFeed(
 
   try {
     const { followService } = await import('./follow-service');
-    const following = await followService.getFollowing(userId);
-    const followingIds = extractFollowingIds(following as unknown as Array<Record<string, unknown>>);
+    const followingIds = options.followingIds ?? extractFollowingIds(
+      await followService.getFollowing(userId) as unknown as Array<Record<string, unknown>>
+    );
 
     if (followingIds.length === 0) {
       return { documents: [], nextCursor: undefined, prevCursor: undefined };
@@ -64,13 +66,16 @@ export async function fetchFollowingFeed(
     let windowStartMs = options.timeWindowStart?.getTime() || (windowEndMs - windowHours * 60 * 60 * 1000);
 
     const executeQuery = async (whereClause: DocumentWhereClause[]): Promise<Post[]> => {
-      const documents = await queryRawDocuments({
-        dataContractId: contractId,
-        documentTypeName: 'post',
-        where: whereClause,
-        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
-        limit: 100,
-      });
+      // More than 100 followed identities cannot fit in one IN clause. Keep
+      // owner-index order across chunks before applying the original row cap.
+      const ownerBatches = chunk([...followingIds].sort((a, b) =>
+        (identifierToHex(a) ?? a).localeCompare(identifierToHex(b) ?? b)), 100);
+      const pages = await mapLimit(ownerBatches, 2, ids => queryRawDocuments({
+        dataContractId: contractId, documentTypeName: 'post',
+        where: whereClause.map(clause => clause[0] === '$ownerId' ? ['$ownerId', 'in', ids] : clause),
+        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100,
+      }));
+      const documents = pages.flat().slice(0, 100);
       return documents.map((doc) => transformDocument(doc));
     };
 

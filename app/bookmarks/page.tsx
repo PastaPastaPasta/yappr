@@ -65,10 +65,8 @@ function BookmarksPage() {
 
         // Fetch all referenced posts in bounded `$id in [...]` batches. The
         // previous loop issued one DAPI read per bookmark before enrichment.
-        const postsById = new Map(
-          (await postService.getPostsByIds(bookmarkDocs.map((bookmark) => bookmark.postId), { skipEnrichment: true }))
-            .map((post) => [post.id, post])
-        )
+        const page = await postService.getPostsByIdsForDisplay(bookmarkDocs.map(bookmark => bookmark.postId))
+        const postsById = new Map(page.posts.map(post => [post.id, post]))
         const rawPostsWithBookmarkData = bookmarkDocs.map((bookmark) => {
           const post = postsById.get(bookmark.postId)
           return post ? { post, bookmarkedAt: new Date(bookmark.$createdAt) } : null
@@ -83,7 +81,7 @@ function BookmarksPage() {
         const postsToEnrich = validPostsWithData.map(item => item.post)
         // enrichPostsBatch also resolves quote targets, so bookmarked quotes
         // render their embed instead of a permanent skeleton
-        const enrichedPosts = await postService.enrichPostsBatch(postsToEnrich)
+        const enrichedPosts = await postService.enrichPostsBatch(postsToEnrich, page.preloaded)
 
         // Combine enriched posts with bookmark data
         const postsWithBookmarkData = validPostsWithData.map((item, index) => ({

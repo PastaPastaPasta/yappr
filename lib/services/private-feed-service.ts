@@ -34,7 +34,7 @@ import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
 import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys';
 import { getPublicKey } from '@/lib/crypto/keys';
-import { queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
+import { RequestDeduplicator, queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
 import { bytesEqual, normalizeBytes, requireBytes } from '@/lib/bytes';
 import { identityService } from './identity-service';
@@ -94,7 +94,13 @@ class PrivateFeedService {
   /**
    * Get PrivateFeedState document for an owner
    */
+  private getPrivateFeedStateReads = new RequestDeduplicator<string, PrivateFeedStateDocument | null>(0);
+
   async getPrivateFeedState(ownerId: string): Promise<PrivateFeedStateDocument | null> {
+    return this.getPrivateFeedStateReads.dedupe(ownerId, () => this.fetchPrivateFeedState(ownerId));
+  }
+
+  private async fetchPrivateFeedState(ownerId: string): Promise<PrivateFeedStateDocument | null> {
     try {
       const sdk = await getEvoSdk();
 
@@ -814,7 +820,13 @@ class PrivateFeedService {
    *
    * @param ownerId - The identity ID of the feed owner
    */
+  private getPrivateFollowersReads = new RequestDeduplicator<string, Array<{ recipientId: string; leafIndex: number; grantedAt: number }>>(0);
+
   async getPrivateFollowers(ownerId: string): Promise<Array<{ recipientId: string; leafIndex: number; grantedAt: number }>> {
+    return this.getPrivateFollowersReads.dedupe(ownerId, () => this.fetchPrivateFollowers(ownerId));
+  }
+
+  private async fetchPrivateFollowers(ownerId: string): Promise<Array<{ recipientId: string; leafIndex: number; grantedAt: number }>> {
     try {
       const sdk = await getEvoSdk();
 

@@ -10,13 +10,15 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
 import ErrorBoundary from '@/components/error-boundary'
-import { followService, dpnsService, unifiedProfileService, likeService, repostService, postService } from '@/lib/services'
+import { followService, likeService, repostService, postService } from '@/lib/services'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
+import { loadIdentityBatch } from '@/lib/services/identity-batch'
+import { loadEngagementCounts } from '@/lib/services/social-stats-service'
 import { canRepost, type TargetKind } from '@/lib/contract-topology'
 
 type TabType = 'quotes' | 'reposts' | 'likes'
@@ -42,9 +44,10 @@ async function resolveEngagementUsers(
   ownerIds: string[],
   currentUserId: string | undefined
 ): Promise<Pick<EngagementUser, 'id' | 'username' | 'displayName' | 'bio' | 'hasDpnsName' | 'hasProfile' | 'isFollowing'>[]> {
+  const identities = loadIdentityBatch(ownerIds)
   const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
-    dpnsService.resolveUsernamesBatch(ownerIds),
-    unifiedProfileService.getProfilesByIdentityIds(ownerIds),
+    identities.then(result => result.usernames),
+    identities.then(result => result.profiles),
     currentUserId
       ? followService.getFollowStatusBatch(ownerIds, currentUserId)
       : Promise.resolve(new Map<string, boolean>())
@@ -224,12 +227,7 @@ function EngagementsPageContent() {
 
     let cancelled = false
 
-    Promise.all([
-      postService.countQuotes(postId, targetKind),
-      // A kind the topology forbids reposting has no repost doctype to count.
-      repostable ? repostService.countReposts(postId) : Promise.resolve(0),
-      likeService.countLikes(postId, targetKind),
-    ]).then(([quotes, reposts, likes]) => {
+    loadEngagementCounts(postId, targetKind).then(({ quotes, reposts, likes }) => {
       if (cancelled) return
       setTabCounts({ quotes, reposts, likes })
     }).catch(err => logger.error('Failed to load engagement tab counts:', err))

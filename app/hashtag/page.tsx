@@ -59,12 +59,18 @@ function HashtagPageContent() {
         const { postService } = await import('@/lib/services/post-service')
 
         let fetchedPosts: Post[]
+        let preloaded: import('@/hooks/use-progressive-enrichment').PreloadedEnrichment | undefined
         if (hashtagsAreInline()) {
           // v4: posts carry their single hashtag inline — one `tagAndTime`
           // query IS the tag page (newest first), with no postHashtag
           // indirection and no ownership cross-check (the tag is a property of
           // the post itself).
-          fetchedPosts = await postService.getPostsByHashtag(tag)
+          const page = await postService.queryForDisplay({
+            where: [['hashtag', '==', tag], ['$createdAt', '>', 0]],
+            orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']], limit: 50,
+          })
+          fetchedPosts = page.documents.filter(post => !post.deleted)
+          preloaded = page.preloaded
           setPostCount(fetchedPosts.length)
 
           if (fetchedPosts.length === 0) {
@@ -88,15 +94,15 @@ function HashtagPageContent() {
           // Fetch referenced posts in bounded `$id in [...]` batches, then
           // retain the ownership check for legacy hashtag documents.
           const posts = await postService.getPostsByIds(postIds, { skipEnrichment: true })
-          const hashtagOwnerByPostId = new Map(hashtagDocs.map((hashtagDoc) => [hashtagDoc.postId, hashtagDoc.$ownerId]))
-          fetchedPosts = posts.filter((post) => hashtagOwnerByPostId.get(post.id) === post.author.id)
+          const authenticTags = new Set(hashtagDocs.map(tag => `${tag.postId}:${tag.$ownerId}`))
+          fetchedPosts = posts.filter((post) => authenticTags.has(`${post.id}:${post.author.id}`))
 
           // Sort by creation date (newest first)
           fetchedPosts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
         }
 
         // Enrich posts with author data (DPNS names, displayNames, stats)
-        let enrichedPosts = await postService.enrichPostsBatch(fetchedPosts)
+        let enrichedPosts = await postService.enrichPostsBatch(fetchedPosts, preloaded)
 
         // Filter out posts from blocked users
         if (user?.identityId && enrichedPosts.length > 0) {

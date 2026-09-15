@@ -27,7 +27,7 @@ import { privateFeedService } from './private-feed-service';
 import type { PrivateFeedRekeyDocument } from './private-feed-service';
 import type { NodeKey } from './private-feed-crypto-service';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
-import { queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
+import { RequestDeduplicator, queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
 import { requireBytes } from '@/lib/bytes';
 
@@ -196,7 +196,13 @@ class PrivateFeedFollowerService {
    *
    * @param ownerId - The feed owner's identity ID
    */
+  private getFollowRequestsForOwnerReads = new RequestDeduplicator<string, FollowRequestDocument[]>(0);
+
   async getFollowRequestsForOwner(ownerId: string): Promise<FollowRequestDocument[]> {
+    return this.getFollowRequestsForOwnerReads.dedupe(ownerId, () => this.fetchFollowRequestsForOwner(ownerId));
+  }
+
+  private async fetchFollowRequestsForOwner(ownerId: string): Promise<FollowRequestDocument[]> {
     try {
       const sdk = await getEvoSdk();
 

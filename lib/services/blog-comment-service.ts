@@ -1,3 +1,5 @@
+import { queryDocumentBundle } from './document-query-bundle'
+import { mapLimit } from './pagination-utils'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import type { BlogComment } from '@/lib/types'
@@ -84,9 +86,17 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
   }
 
   async countCommentsByPostBatch(postIds: string[]): Promise<Map<string, number>> {
-    const counts = await Promise.all(
-      postIds.map(async (id) => [id, await this.countCommentsByPost(id)] as const)
-    )
+    const ids = Array.from(new Set(postIds))
+    // No countable index is deployed for blog comments. Bundle first pages;
+    // keep the existing full cursor count for posts with 100+ comments.
+    const pages = await queryDocumentBundle(ids.map(blogPostId => ({
+      dataContractId: this.contractId, documentTypeName: this.documentType,
+      where: [['blogPostId', '==', blogPostId], ['$createdAt', '>', 0]],
+      orderBy: [['blogPostId', 'asc'], ['$createdAt', 'asc']], limit: 100,
+    })), true)
+    const counts = await mapLimit(ids, 3, async (id, index) => [
+      id, pages[index].length === 100 ? await this.countCommentsByPost(id) : pages[index].length,
+    ] as const)
     return new Map(counts)
   }
 

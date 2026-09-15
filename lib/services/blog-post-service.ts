@@ -1,3 +1,4 @@
+import { queryDocumentBundle } from './document-query-bundle'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import type { BlogPost } from '@/lib/types'
@@ -191,6 +192,16 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     return result.documents
   }
 
+  async getPostsByBlogs(blogIds: string[], limit: number): Promise<Map<string, BlogPost[]>> {
+    const ids = Array.from(new Set(blogIds))
+    const pages = await queryDocumentBundle(ids.map(blogId => ({
+      dataContractId: this.contractId, documentTypeName: this.documentType,
+      where: [['blogId', '==', blogId], ['$createdAt', '>', 0]],
+      orderBy: [['blogId', 'asc'], ['$createdAt', 'desc']], limit,
+    })), true)
+    return new Map(ids.map((id, index) => [id, pages[index].map(doc => this.transformDocument(doc))]))
+  }
+
   async getPostsByOwner(ownerId: string, options: BlogPostQueryOptions = {}): Promise<BlogPost[]> {
     const queryOptions: QueryOptions = {
       where: [['$ownerId', '==', ownerId]],
@@ -211,11 +222,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
 
     // Fetch enough posts per blog to fill the requested limit
     const perBlogLimit = Math.min(Math.ceil(limit / blogIds.length), limit)
-    const results = await Promise.all(
-      blogIds.map(blogId =>
-        this.getPostsByBlog(blogId, { limit: perBlogLimit }).catch(() => [])
-      )
-    )
+    const results = Array.from((await this.getPostsByBlogs(blogIds, perBlogLimit)).values())
 
     // Merge, sort by createdAt desc, and take top N
     return results
@@ -236,11 +243,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const lowerQuery = query.toLowerCase()
 
     // Fetch a reasonable number of posts per blog for client-side filtering
-    const results = await Promise.all(
-      blogIds.map(blogId =>
-        this.getPostsByBlog(blogId, { limit: 20 }).catch(() => [])
-      )
-    )
+    const results = Array.from((await this.getPostsByBlogs(blogIds, 20)).values())
 
     // Filter by title, subtitle, or labels matching the query
     return results

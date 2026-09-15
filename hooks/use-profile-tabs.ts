@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { logger } from '@/lib/logger'
 import type { Post } from '@/lib/types'
-import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { fetchReplyParents } from '@/lib/feed/resolve-reply-parents'
 import { postService, replyToPost } from '@/lib/services/post-service'
 import { mentionService } from '@/lib/services/mention-service'
@@ -43,19 +42,13 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
         return
       }
       const postIds = Array.from(new Set(mentionDocs.map((m) => m.postId)))
-      const fetched: Post[] = []
-      for (const postId of postIds) {
-        try {
-          const post = await postService.get(postId)
-          // Only the post's own author may register a mention on it.
-          const mentionDoc = mentionDocs.find((m) => m.postId === postId)
-          if (post && mentionDoc && mentionDoc.$ownerId === post.author.id) fetched.push(post)
-        } catch (error) {
-          logger.error('Failed to fetch post:', postId, error)
-        }
-      }
+      const { posts, preloaded } = await postService.getPostsByIdsForDisplay(postIds)
+      // Only the post's own author may register a mention on it.
+      const fetched = posts.filter(post => mentionDocs.some(
+        mention => mention.postId === post.id && mention.$ownerId === post.author.id
+      ))
       fetched.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      setMentions(await postService.enrichPostsBatch(fetched))
+      setMentions(await postService.enrichPostsBatch(fetched, preloaded))
     } catch (error) {
       logger.error('Failed to load mentions:', error)
       setMentions([])
@@ -103,19 +96,8 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
     if (!userId || topLoaded) return
     setTopLoading(true)
     try {
-      const { topLikedPosts } = await import('@/lib/services/ranked-likes')
-      const ranked = await topLikedPosts({ postAuthor: userId, limit: 10, window: rankingWindow })
-      if (ranked.length === 0) {
-        setTopPosts([])
-        return
-      }
-      const fetched = await postService.getPostsByIds(ranked.map((r) => r.postId))
-      const byId = new Map(fetched.map((p) => [p.id, p]))
-      // Keep the proved order; drop ids that failed to load.
-      const ordered = ranked.map((r) => byId.get(r.postId)).filter((p): p is Post => p !== undefined)
-      await attachQuotedPosts(ordered)
-      setTopPosts(ordered)
-      enrichProgressively(ordered)
+      const { topLikedPostsHydrated } = await import('@/lib/services/ranked-likes')
+      setTopPosts(await topLikedPostsHydrated({ postAuthor: userId, limit: 10, window: rankingWindow }))
     } catch (error) {
       logger.error('Failed to load top posts:', error)
       setTopPosts([])
@@ -123,7 +105,7 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
       setTopLoading(false)
       setTopLoaded(true)
     }
-  }, [userId, topLoaded, enrichProgressively, rankingWindow])
+  }, [userId, topLoaded, rankingWindow])
 
   // A window change reads a different index: drop the loaded Top list.
   useEffect(() => {

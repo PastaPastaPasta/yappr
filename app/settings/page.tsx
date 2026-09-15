@@ -140,7 +140,7 @@ function SettingsPage() {
 
   // Fetch account creation date from profile
   useEffect(() => {
-    if (!user?.identityId) return
+    if (!user?.identityId || activeSection !== 'account') return
 
     const fetchProfileCreatedAt = async () => {
       try {
@@ -159,11 +159,11 @@ function SettingsPage() {
     }
 
     fetchProfileCreatedAt().catch(err => logger.error('Failed to fetch profile created at:', err))
-  }, [user?.identityId])
+  }, [user?.identityId, activeSection])
 
   // Fetch DPNS usernames
   useEffect(() => {
-    if (!user?.identityId) return
+    if (!user?.identityId || activeSection !== 'account') return
 
     const fetchUsernames = async () => {
       try {
@@ -177,7 +177,7 @@ function SettingsPage() {
     }
 
     fetchUsernames().catch(err => logger.error('Failed to fetch usernames:', err))
-  }, [user?.identityId])
+  }, [user?.identityId, activeSection])
 
   // Refresh DPNS usernames after registration
   const refreshUsernames = async () => {

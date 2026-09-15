@@ -1,5 +1,7 @@
 'use client'
 
+import { loadIdentityBatch } from '@/lib/services/identity-batch'
+
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
@@ -119,13 +121,9 @@ function MessagesPage() {
 
     const hydrate = async () => {
       try {
+        const identities = loadIdentityBatch([...usernameIds, ...profileIds])
         const [usernamesResult, profilesResult] = await Promise.allSettled([
-          usernameIds.length > 0
-            ? dpnsService.resolveUsernamesBatch(usernameIds)
-            : Promise.resolve(new Map<string, string | null>()),
-          profileIds.length > 0
-            ? unifiedProfileService.getProfilesByIdentityIds(profileIds)
-            : Promise.resolve([])
+          identities.then(result => result.usernames), identities.then(result => result.profiles)
         ])
 
         if (cancelled) return
@@ -505,9 +503,9 @@ function MessagesPage() {
           return
         }
 
+        const identities = loadIdentityBatch(followerIds)
         const [usernamesResult, profilesResult] = await Promise.allSettled([
-          dpnsService.resolveUsernamesBatch(followerIds),
-          unifiedProfileService.getProfilesByIdentityIds(followerIds)
+          identities.then(result => result.usernames), identities.then(result => result.profiles)
         ])
 
         if (cancelled) return
