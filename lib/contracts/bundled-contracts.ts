@@ -5,8 +5,7 @@ import type { AppNetwork } from '@/lib/constants';
  * network. The app seeds the SDK's contract cache from the bundle on load, so
  * its first document query needs no contract round trip, then asks the network
  * off the critical path whether any bundled version is stale and refetches
- * only those. Without SDK support for seeding the bundle is ignored and the
- * contracts are fetched as before.
+ * only those. Networks without a bundle fetch their contracts as before.
  */
 
 export interface BundledContract {

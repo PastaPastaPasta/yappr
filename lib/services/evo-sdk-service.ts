@@ -2,20 +2,8 @@ import { logger } from '@/lib/logger';
 import { DataContract, EvoSDK, PlatformVersion } from '@dashevo/evo-sdk';
 import { bundleKey, bundledContractsFor, staleContractIds } from '@/lib/contracts/bundled-contracts';
 import { instrumentSdk } from '@/lib/query-inspector/capture';
-import { DPNS_CONTRACT_ID, YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL, getContractTopology } from '../constants';
+import { YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
 import type { AppNetwork } from '../constants';
-
-/**
- * Contract seeding and the versions check land in a later evo-sdk than the
- * pinned one; until then the bundle is ignored and contracts are fetched.
- */
-type ContractsFacadeWithBundleSupport = EvoSDK['contracts'] & {
-  addKnown?: (contract: DataContract) => Promise<boolean>;
-  getLatestVersions?: (query: {
-    contractIds: string[];
-    includeContracts?: boolean;
-  }) => Promise<Map<string, { version: number } | undefined>>;
-};
 
 export interface EvoSdkConfig {
   network: AppNetwork;
@@ -143,17 +131,6 @@ class EvoSdkService {
       await this.sdk.connect();
       logger.debug('EvoSdkService: Connected successfully');
 
-      // PROTOCOL-VERSION RATCHET: rs-sdk starts devnet connections at PV12 and
-      // only ratchets up from verified response metadata. The v4+ contracts use
-      // PV14 ranked-index grammar (`rankedCountable` et al.), so the FIRST
-      // proved query that touches one fails deserialization ("value wrong type
-      // error: unexpected property name") — and a failed verification bans the
-      // address without ever ratcheting. One proved warm-up query that does NOT
-      // touch the social contract (DPNS is on every chain) ratchets the
-      // connection to the chain's real protocol version before any social-
-      // contract read can race it.
-      await this._warmUpProtocolVersion();
-
       // Resolve the configured contracts once, before _isInitialized flips, so a
       // missing or misconfigured contract is reported here rather than surfacing
       // as an opaque failure in whichever query happens to need it first. One
@@ -171,25 +148,6 @@ class EvoSdkService {
       this.initPromise = null;
       this._isInitialized = false;
       throw error;
-    }
-  }
-
-  /**
-   * See the call site: ratchet the SDK's negotiated protocol version with a
-   * proved query that cannot touch the social contract, so the parallel preload
-   * below never races a PV14 contract fetch against a PV12 connection. Needed
-   * on every topology whose contract uses the ranked-index grammar (v4 and
-   * everything after it — only v2/v3 predate it); failures are non-fatal (the
-   * preload's own fetches would then surface the real problem).
-   */
-  private async _warmUpProtocolVersion(): Promise<void> {
-    const topology = getContractTopology();
-    if (topology === 'v2' || topology === 'v3' || !this.sdk) return;
-    try {
-      await this.sdk.contracts.fetch(DPNS_CONTRACT_ID);
-      logger.debug('EvoSdkService: protocol-version warm-up query completed');
-    } catch (error) {
-      logger.warn('EvoSdkService: protocol-version warm-up query failed:', error);
     }
   }
 
@@ -219,7 +177,6 @@ class EvoSdkService {
     // Build list of contracts to fetch
     const contractsToFetch: Array<{ id: string; name: string }> = [
       { id: this.config.contractId, name: 'Yappr' },
-      { id: DPNS_CONTRACT_ID, name: 'DPNS' },
       { id: YAPPR_PROFILE_CONTRACT_ID, name: 'Profile' },
     ];
 
@@ -295,12 +252,10 @@ class EvoSdkService {
 
   /**
    * Seed the SDK with every bundled contract among `ids`. Returns the ids that
-   * were seeded. A no-op when the SDK cannot seed or nothing is bundled.
+   * were seeded. A no-op when nothing is bundled for the network.
    */
   private async _seedBundledContracts(sdk: EvoSDK, ids: readonly string[]): Promise<Set<string>> {
     const seeded = new Set<string>();
-    const contracts = sdk.contracts as ContractsFacadeWithBundleSupport;
-    if (typeof contracts.addKnown !== 'function') return seeded;
     const bundle = await this._bundle();
     if (!bundle) return seeded;
     const platformVersion = PlatformVersion.latest();
@@ -308,8 +263,11 @@ class EvoSdkService {
       const entry = bundle.contracts[id];
       if (!entry) continue;
       try {
-        const contract = DataContract.fromBase64(entry.bytes, true, platformVersion);
-        if (await contracts.addKnown(contract)) seeded.add(id);
+        // Structural validation applies today's rules to a contract the chain
+        // accepted under older ones (a deployed contract can fail a rule added
+        // since), and the fetch path skips it too; the snapshot is trusted.
+        const contract = DataContract.fromBase64(entry.bytes, false, platformVersion);
+        if (await sdk.contracts.addKnown(contract)) seeded.add(id);
       } catch (error) {
         logger.warn(`EvoSdkService: bundled contract ${id} did not load, fetching it instead:`, error);
       }
@@ -326,14 +284,13 @@ class EvoSdkService {
    */
   private _revalidateBundledContracts(sdk: EvoSDK, ids: readonly string[]): void {
     if (ids.length === 0) return;
-    const contracts = sdk.contracts as ContractsFacadeWithBundleSupport;
-    const getLatestVersions = contracts.getLatestVersions;
-    if (typeof getLatestVersions !== 'function') return;
     void (async () => {
       try {
         const bundle = await this._bundle();
         if (!bundle) return;
-        const latest = await getLatestVersions.call(contracts, { contractIds: [...ids] });
+        // Versions only: from protocol version 14 the proof covers the
+        // contracts' version items, a few hundred bytes per contract.
+        const latest = await sdk.contracts.getLatestVersions({ contractIds: [...ids] });
         const stale = staleContractIds(bundle.contracts, latest, ids);
         if (stale.length === 0) {
           logger.debug(`EvoSdkService: ${ids.length} bundled contract(s) are current`);
@@ -343,7 +300,14 @@ class EvoSdkService {
         // The fetch replaces the seeded entries in the SDK's cache.
         await sdk.contracts.getMany(stale);
       } catch (error) {
-        logger.warn('EvoSdkService: bundled contract revalidation failed:', error);
+        // Nodes below the query's protocol version answer UNIMPLEMENTED; the
+        // seeded contracts stay in use and the SDK's own staleness guard applies.
+        const message = error instanceof Error ? error.message : String(error);
+        if (/not implemented|not supported/i.test(message)) {
+          logger.debug('EvoSdkService: node does not serve the contract versions query; skipping revalidation');
+        } else {
+          logger.warn('EvoSdkService: bundled contract revalidation failed:', error);
+        }
       }
     })();
   }
