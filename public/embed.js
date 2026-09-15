@@ -1,5 +1,9 @@
 (function () {
-  var BASE = 'https://yap.pr';
+  // Capture this synchronously: currentScript is null in DOMContentLoaded callbacks.
+  var script = document.currentScript;
+  var BASE = script && script.src
+    ? new URL('.', script.src).href.replace(/\/$/, '')
+    : 'https://yap.pr';
 
   function run() {
     var elements = document.querySelectorAll('[data-yappr-post]:not([data-yappr-loaded])');
