@@ -764,6 +764,7 @@ function SettingsPage() {
           <div className="flex items-center gap-4 px-4 py-3">
             <TooltipButton
               label="Back"
+              tooltipClassName="z-50"
               onClick={handleBack}
               className="-ml-2 border-0 dark:hover:bg-gray-900"
             >
