@@ -45,7 +45,7 @@ export function StarRatingInput({
           key={star}
           value={String(star)}
           aria-label={`${star} ${star === 1 ? 'star' : 'stars'}`}
-          onMouseEnter={() => !disabled && setHoverRating(star)}
+          onMouseMove={() => !disabled && setHoverRating(star)}
           className={`rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 focus-visible:ring-offset-2 transition-transform ${
             disabled
               ? 'cursor-not-allowed opacity-50'
