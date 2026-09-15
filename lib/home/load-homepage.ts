@@ -1,6 +1,8 @@
 import type { Post } from '@/lib/types';
 import type { CompositeDocumentsQuery } from '@dashevo/wasm-sdk';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, YAPPR_PROFILE_CONTRACT_ID } from '@/lib/constants';
+import { likesAreIndexOnly } from '@/lib/contract-topology';
+import { logger } from '@/lib/logger';
 import { loadCompositeFeedPage, usernamesByIdentity } from '@/lib/feed/composite-feed-page';
 import { dpnsService } from '@/lib/services/dpns-service';
 import { getEvoSdk } from '@/lib/services/evo-sdk-service';
@@ -10,7 +12,11 @@ import { documentToPlainObject } from '@/lib/services/sdk-helpers';
 import { unifiedProfileService, type UnifiedProfileDocument } from '@/lib/services/unified-profile-service';
 
 /**
- * The anonymous homepage in two waves of document queries.
+ * The anonymous homepage in two waves of document queries, on topologies with
+ * a like ranking (v4 and later) against nodes that serve composite pages.
+ * Elsewhere, and whenever that path fails, the topology-agnostic loader
+ * below takes over: a timeline of 50, its engagement counts, and per-slice
+ * profile and name lookups.
  *
  * Wave 1, in parallel:
  * - a proved top-K ranking on the like count tree (which posts to feature),
@@ -52,6 +58,39 @@ const RANKED_LIMIT = 10;
 const TOP_USERS_LIMIT = 6;
 
 export async function loadHomepage(): Promise<HomepageSnapshot> {
+  if (!likesAreIndexOnly()) return loadHomepageLegacy();
+  try {
+    return await loadHomepageRanked();
+  } catch (error) {
+    logger.warn('Homepage: ranked/composite load failed, falling back to the timeline loader:', error);
+    return loadHomepageLegacy();
+  }
+}
+
+/** The pre-composite shape: works on every topology and every node version. */
+async function loadHomepageLegacy(): Promise<HomepageSnapshot> {
+  const [totalPosts, featuredPosts, authorCounts] = await Promise.all([
+    postService.countAllPosts(),
+    postService.getTopPostsByLikes(FEATURED_LIMIT),
+    postService.getAuthorPostCounts(),
+  ]);
+  const sortedAuthors = Array.from(authorCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, TOP_USERS_LIMIT);
+  const ids = sortedAuthors.map(([id]) => id);
+  if (ids.length === 0) return { totalPosts, featuredPosts, topUsers: [] };
+  const [profiles, usernames] = await Promise.all([
+    unifiedProfileService.getProfilesByIdentityIds(ids),
+    dpnsService.resolveUsernamesBatch(ids),
+  ]);
+  const profileMap = new Map<string, UnifiedProfileDocument>();
+  for (const profile of profiles) {
+    if (profile.$ownerId) profileMap.set(profile.$ownerId, profile);
+  }
+  return { totalPosts, featuredPosts, topUsers: buildTopUsers(sortedAuthors, profileMap, usernames) };
+}
+
+async function loadHomepageRanked(): Promise<HomepageSnapshot> {
   // Wave 1.
   const [ranked, authorCounts, totalPosts] = await Promise.all([
     topLikedPosts({ limit: RANKED_LIMIT, window: 'all' }),
