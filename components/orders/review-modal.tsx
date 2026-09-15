@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Modal } from '@/components/ui/modal'
 import { XMarkIcon, BuildingStorefrontIcon } from '@heroicons/react/24/outline'
@@ -30,6 +30,7 @@ export function ReviewModal({
   store,
   onSuccess
 }: ReviewModalProps) {
+  const formId = useId()
   const [rating, setRating] = useState(0)
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
@@ -76,7 +77,7 @@ export function ReviewModal({
                       <Dialog.Title className="font-semibold text-gray-900 dark:text-gray-100">
                         Leave a Review
                       </Dialog.Title>
-                      <IconButton onClick={handleClose}>
+                      <IconButton aria-label="Close review" onClick={handleClose}>
                         <XMarkIcon className="h-5 w-5" />
                       </IconButton>
                     </div>
@@ -98,7 +99,7 @@ export function ReviewModal({
                         </div>
                         <div>
                           <p className="font-medium">{store.name}</p>
-                          <p className="text-sm text-gray-500">How was your experience?</p>
+                          <Dialog.Description className="text-sm text-gray-500">How was your experience?</Dialog.Description>
                         </div>
                       </div>
 
@@ -122,10 +123,11 @@ export function ReviewModal({
 
                       {/* Title Input */}
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        <label htmlFor={`${formId}-title`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                           Title <span className="text-gray-400">(optional)</span>
                         </label>
                         <input
+                          id={`${formId}-title`}
                           type="text"
                           value={title}
                           onChange={(e) => setTitle(e.target.value.slice(0, TITLE_LIMIT))}
@@ -140,10 +142,11 @@ export function ReviewModal({
 
                       {/* Content Input */}
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        <label htmlFor={`${formId}-content`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                           Review <span className="text-gray-400">(optional)</span>
                         </label>
                         <textarea
+                          id={`${formId}-content`}
                           value={content}
                           onChange={(e) => setContent(e.target.value.slice(0, CONTENT_LIMIT))}
                           placeholder="Share details of your experience..."
