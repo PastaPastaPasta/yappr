@@ -47,51 +47,63 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   const load = useCallback(
-    async (force = false) => {
+    async (requestedLimit = 20, force = false, incremental = false) => {
       const requestId = ++requestIdRef.current;
       const isCurrent = () => requestIdRef.current === requestId;
 
       if (!likesAreIndexOnly() || (activeTab === 'following' && !userId)) {
         setPosts([]);
         setIsLoading(false);
+        setIsLoadingMore(false);
         return;
       }
 
-      setIsLoading(true);
+      setIsLoading(!incremental);
+      setIsLoadingMore(incremental);
       try {
         const { topLikedPostsHydrated, topLikedPostsByAuthorsHydrated } = await import('@/lib/services/ranked-likes');
         let ranked: Post[];
         if (activeTab === 'following' && userId) {
           const authorIds = await followService.getFollowingIds(userId);
-          ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit, window, force });
+          ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit: requestedLimit, window, force });
         } else {
-          ranked = await topLikedPostsHydrated({ limit, window, force });
+          ranked = await topLikedPostsHydrated({ limit: requestedLimit, window, force });
         }
         const visible = await filterBlockedAuthors(userId, ranked);
-        if (isCurrent()) setPosts(visible);
+        if (isCurrent()) {
+          setPosts(visible);
+          setLimit(requestedLimit);
+        }
       } catch (error) {
         logger.error('Feed: Failed to load top posts:', error);
-        if (isCurrent()) setPosts([]);
+        // A failed incremental request must leave the already-loaded page
+        // readable and allow retrying the same next limit.
+        if (isCurrent() && !incremental) setPosts([]);
       } finally {
-        if (isCurrent()) setIsLoading(false);
+        if (isCurrent()) {
+          setIsLoading(false);
+          setIsLoadingMore(false);
+        }
       }
     },
-    [activeTab, limit, userId, window]
+    [activeTab, userId, window]
   );
 
   useEffect(() => {
     if (!enabled) return;
     setPosts(null);
+    setLimit(20);
     load().catch((error) => logger.error('Feed: top posts load failed:', error));
+    const requests = requestIdRef;
+    return () => { ++requests.current; };
   }, [enabled, load]);
 
-  const refresh = useCallback(() => { setLimit(20); return load(true); }, [load]);
+  const refresh = useCallback(() => load(20, true), [load]);
 
   const loadMore = useCallback(async () => {
-    if (isLoading || isLoadingMore || posts === null || posts.length < limit) return;
-    setIsLoadingMore(true);
-    try { setLimit((current) => current + 20); } finally { setIsLoadingMore(false); }
-  }, [isLoading, isLoadingMore, limit, posts]);
+    if (!enabled || isLoading || isLoadingMore || posts === null || posts.length < limit) return;
+    await load(limit + 20, false, true);
+  }, [enabled, isLoading, isLoadingMore, limit, load, posts]);
 
   const handlePostDelete = useCallback((postId: string) => {
     setPosts((current) => (current ? current.filter((post) => post.id !== postId) : current));

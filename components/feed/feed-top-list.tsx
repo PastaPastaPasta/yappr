@@ -22,8 +22,8 @@ interface FeedTopListProps {
 
 /**
  * The home feed's Top view: one proved ranked page (global, or merged across
- * followed authors), already hydrated and enriched by `useTopFeed`. No
- * pagination — a ranking is a bounded top-K, not a timeline.
+ * followed authors), already hydrated and enriched by `useTopFeed`. Loading
+ * more expands the ranked top-K while keeping the existing cards mounted.
  */
 export function FeedTopList({ posts, isLoading, activeTab, onPostDelete, hasMore, isLoadingMore, onLoadMore }: FeedTopListProps) {
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode);
