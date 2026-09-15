@@ -184,6 +184,7 @@ test.describe('v3+ interaction topology on the devnet contract', () => {
 
     // The repost/quote dropdown still exists on a reply (quoting IS allowed), so
     // this checks the menu's contents rather than the trigger.
+    await expect(page.getByTestId(`repost-menu-btn-${firstReplyId}`)).toHaveAccessibleName('Quote')
     await page.getByTestId(`repost-menu-btn-${firstReplyId}`).click()
     await expect(page.getByRole('menuitem', { name: 'Quote' })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: /Repost/ })).toHaveCount(0)

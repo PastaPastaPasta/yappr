@@ -127,6 +127,17 @@ test.describe('post lifecycle on the real testnet', () => {
     const testId = await card.getAttribute('data-testid')
     postId = (testId ?? '').replace('post-card-', '')
     expect(postId, 'the post card should expose the document id').not.toBe('')
+
+    await expect(card.getByTestId(`reply-btn-${postId}`)).toHaveAccessibleName('Reply, 0 replies')
+    await expect(card.getByTestId(`repost-menu-btn-${postId}`)).toHaveAccessibleName('Repost or quote, 0 reposts')
+    await expect(card.getByTestId(`like-btn-${postId}`)).toHaveAccessibleName('Like, 0 likes')
+    await expect(card.getByRole('button', { name: 'Tip', exact: true })).toBeDisabled()
+    await expect(card.getByRole('button', { name: 'Share', exact: true })).toBeVisible()
+    await expect(card.getByTestId(`bookmark-btn-${postId}`)).toHaveAccessibleName('Bookmark')
+    await expect(card.getByTestId(`bookmark-btn-${postId}`)).toHaveAttribute('aria-pressed', 'false')
+
+    await card.getByTestId(`repost-menu-btn-${postId}`).focus()
+    await expect(page.getByRole('tooltip', { name: 'Repost or quote', exact: true })).toBeVisible()
   })
 
   test('the post can be liked and unliked', async ({ page }) => {
@@ -142,6 +153,7 @@ test.describe('post lifecycle on the real testnet', () => {
     await likeButton.click()
     // Optimistic toggle, then the button re-enables when the write settles.
     await expect(likeButton).toHaveAttribute('aria-pressed', 'true')
+    await expect(likeButton).toHaveAccessibleName('Like, 1 like')
     await expect(likeButton).toBeEnabled({ timeout: 60_000 })
     await expect(likeButton).toHaveAttribute('aria-pressed', 'true')
 
