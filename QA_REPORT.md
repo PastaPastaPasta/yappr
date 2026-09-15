@@ -92,3 +92,7 @@ Evidence: `/tmp/postattempt.png` was inspected; it shows the failed compose stil
 - **P2 Blog dialog lacks accessible description.** Radix reports `Missing Description or aria-describedby={undefined}` when Create Blog opens.
 
 Positive coverage: seeded commerce QA successfully created a store, product, inventory entry, viewed the product, added it to cart, and created a blog with visible My Blogs entry and success toast. Orders/seller empty states rendered correctly.
+
+Further DM verification confirms the loss is deterministic for the first message to a recipient with no prior conversation: the conversation shell is created, but the first message (`first-init-probe`) is absent after 20 seconds in a fresh recipient session. A later message succeeds once both sides have initialized keys, indicating a first-message/key-exchange race. The app still gives no error or retry guidance.
+
+Additional mobile commerce observation: the settings screen visibly renders two stacked bottom-navigation rows (primary five-icon row plus Store/Blog/Profile/Notifications row), consuming roughly 100 px of viewport and creating a cluttered, ambiguous navigation hierarchy.
