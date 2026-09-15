@@ -15,6 +15,9 @@ interface FeedTopListProps {
   isLoading: boolean;
   activeTab: FeedTab;
   onPostDelete: (postId: string) => void;
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  onLoadMore: () => void;
 }
 
 /**
@@ -22,7 +25,7 @@ interface FeedTopListProps {
  * followed authors), already hydrated and enriched by `useTopFeed`. No
  * pagination — a ranking is a bounded top-K, not a timeline.
  */
-export function FeedTopList({ posts, isLoading, activeTab, onPostDelete }: FeedTopListProps) {
+export function FeedTopList({ posts, isLoading, activeTab, onPostDelete, hasMore, isLoadingMore, onLoadMore }: FeedTopListProps) {
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode);
   const { user } = useAuth();
 
@@ -59,6 +62,13 @@ export function FeedTopList({ posts, isLoading, activeTab, onPostDelete }: FeedT
             <PostCard post={post} onDelete={onPostDelete} />
           </ErrorBoundary>
         ))}
+        {hasMore && (
+          <div className="p-4 flex justify-center border-t border-gray-200 dark:border-gray-800">
+            <button onClick={onLoadMore} disabled={isLoadingMore} className="px-6 py-2 rounded-full bg-yappr-500 text-white disabled:opacity-50">
+              {isLoadingMore ? 'Loading...' : 'Load More'}
+            </button>
+          </div>
+        )}
       </div>
     </ErrorBoundary>
   );
