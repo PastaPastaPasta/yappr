@@ -6,6 +6,7 @@ import { YAPPR_PROFILE_CONTRACT_ID } from '../constants';
 import { User, ParsedPaymentUri, SocialLink } from '../../types';
 import { generateAvatarDataUri } from './avatar-generator';
 import { documentToPlainObject } from './sdk-helpers';
+import { stateTransitionService } from './state-transition-service';
 
 /** The `scheme:` prefix of a payment URI, lower-cased; empty when there is none. */
 export function paymentUriScheme(uri: string): string {
@@ -789,9 +790,24 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         documentData.socialLinks = rawProfile.socialLinks;
       }
 
-      const result = await this.update(docId, ownerId, documentData);
+      // This is already the complete contract payload. The inherited update()
+      // merges a transformed User, which would reintroduce UI-only fields and
+      // parsed arrays, and restore optional fields intentionally omitted above.
+      const result = await stateTransitionService.updateDocument(
+        this.contractId,
+        this.documentType,
+        docId,
+        ownerId,
+        documentData,
+        rawProfile.$revision ?? 0
+      );
+      if (!result.success || !result.document) {
+        throw new Error(result.error || 'Failed to update profile');
+      }
+
+      this.clearCache(docId);
       cacheManager.invalidateByTag(`user:${ownerId}`);
-      return result;
+      return this.transformDocument({ $createdAt: rawProfile.$createdAt, ...result.document });
     } catch (error) {
       logger.error('UnifiedProfileService: Error updating profile:', error);
       throw error;
