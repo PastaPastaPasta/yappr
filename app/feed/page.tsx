@@ -96,6 +96,9 @@ function FeedPage() {
               isLoading={topFeed.isLoading}
               activeTab={activeTab}
               onPostDelete={topFeed.handlePostDelete}
+              hasMore={topFeed.hasMore}
+              isLoadingMore={topFeed.isLoadingMore}
+              onLoadMore={() => { topFeed.loadMore().catch((error) => logger.error('Top feed loadMore failed', error)); }}
             />
           ) : (
             <FeedPostList

@@ -22,6 +22,9 @@ interface UseTopFeedResult {
   isLoading: boolean;
   refresh: () => Promise<void>;
   handlePostDelete: (postId: string) => void;
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  loadMore: () => Promise<void>;
 }
 
 /**
@@ -40,6 +43,8 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
   // well after a For You Top read issued later; only the newest request may
   // touch state, so a superseded response never overwrites the current view.
   const requestIdRef = useRef(0);
+  const [limit, setLimit] = useState(20);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   const load = useCallback(
     async (force = false) => {
@@ -58,9 +63,9 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         let ranked: Post[];
         if (activeTab === 'following' && userId) {
           const authorIds = await followService.getFollowingIds(userId);
-          ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit: 20, window, force });
+          ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit, window, force });
         } else {
-          ranked = await topLikedPostsHydrated({ limit: 20, window, force });
+          ranked = await topLikedPostsHydrated({ limit, window, force });
         }
         const visible = await filterBlockedAuthors(userId, ranked);
         if (isCurrent()) setPosts(visible);
@@ -71,7 +76,7 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         if (isCurrent()) setIsLoading(false);
       }
     },
-    [activeTab, userId, window]
+    [activeTab, limit, userId, window]
   );
 
   useEffect(() => {
@@ -80,11 +85,17 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
     load().catch((error) => logger.error('Feed: top posts load failed:', error));
   }, [enabled, load]);
 
-  const refresh = useCallback(() => load(true), [load]);
+  const refresh = useCallback(() => { setLimit(20); return load(true); }, [load]);
+
+  const loadMore = useCallback(async () => {
+    if (isLoading || isLoadingMore || posts === null || posts.length < limit) return;
+    setIsLoadingMore(true);
+    try { setLimit((current) => current + 20); } finally { setIsLoadingMore(false); }
+  }, [isLoading, isLoadingMore, limit, posts]);
 
   const handlePostDelete = useCallback((postId: string) => {
     setPosts((current) => (current ? current.filter((post) => post.id !== postId) : current));
   }, []);
 
-  return { posts, isLoading, refresh, handlePostDelete };
+  return { posts, isLoading, refresh, handlePostDelete, hasMore: posts !== null && posts.length >= limit, isLoadingMore, loadMore };
 }
