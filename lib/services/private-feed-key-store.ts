@@ -112,6 +112,34 @@ function getAllKeys(): string[] {
 }
 
 class PrivateFeedKeyStore {
+  private followerKeyListeners = new Set<() => void>();
+
+  /** Observe follower-key changes in this tab and other tabs. No key material is emitted. */
+  subscribeFollowerKeys = (listener: () => void): (() => void) => {
+    this.followerKeyListeners.add(listener);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key.startsWith(STORAGE_PREFIX + KEY_PATH_KEYS_PREFIX) ||
+          event.key.startsWith(STORAGE_PREFIX + KEY_CACHED_CEK_PREFIX)) {
+        listener();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      this.followerKeyListeners.delete(listener);
+      window.removeEventListener('storage', onStorage);
+    };
+  };
+
+  private notifyFollowerKeys(): void {
+    this.followerKeyListeners.forEach(listener => listener());
+  }
+
+  /** UI readiness for a particular post; older cached keys cannot cover a newer epoch. */
+  hasKeysForEpoch(ownerId: string, epoch: number): boolean {
+    const cachedEpoch = this.getCachedEpoch(ownerId);
+    return cachedEpoch !== null && cachedEpoch >= epoch && this.hasPathKeys(ownerId);
+  }
+
   // ============================================================
   // Owner Keys
   // ============================================================
@@ -304,6 +332,7 @@ class PrivateFeedKeyStore {
       key: bytesToBase64(pk.key),
     }));
     setItem(KEY_PATH_KEYS_PREFIX + ownerId, JSON.stringify(stored));
+    this.notifyFollowerKeys();
   }
 
   /**
@@ -355,6 +384,7 @@ class PrivateFeedKeyStore {
       cek: bytesToBase64(cek),
     };
     setItem(KEY_CACHED_CEK_PREFIX + ownerId, JSON.stringify(cached));
+    this.notifyFollowerKeys();
   }
 
   /**
@@ -392,6 +422,7 @@ class PrivateFeedKeyStore {
   clearFeedKeys(ownerId: string): void {
     removeItem(KEY_PATH_KEYS_PREFIX + ownerId);
     removeItem(KEY_CACHED_CEK_PREFIX + ownerId);
+    this.notifyFollowerKeys();
   }
 
   /**
@@ -413,6 +444,7 @@ class PrivateFeedKeyStore {
     for (const key of allKeys) {
       removeItem(key);
     }
+    this.notifyFollowerKeys();
   }
 
   /**
