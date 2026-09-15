@@ -137,7 +137,7 @@ export function DashPayContactsModal() {
                     </button>
                   </Dialog.Close>
                 </TooltipTrigger>
-                <TooltipContent>Close contacts</TooltipContent>
+                <TooltipContent onEscapeKeyDown={handleClose}>Close contacts</TooltipContent>
               </Tooltip>
             </TooltipProvider>
           </div>
