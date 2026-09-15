@@ -8,12 +8,12 @@ import { chunk, mapLimit } from './pagination-utils';
 
 /** A name does not require a Yappr profile. Query the requested identities as
  * independent siblings, so profile-less users keep their names. Reuse either
- * service's existing cache; only bundle when BOTH would need a network read. */
+ * service's existing cache; bundle identities missing either cached result. */
 export async function loadIdentityBatch(identityIds: string[], options: { includeUsername?: boolean } = {}) {
   const includeUsername = options.includeUsername ?? true;
   const ids = Array.from(new Set(identityIds.filter(Boolean)));
   if (likesAreIndexOnly() && includeUsername) {
-    const cold = ids.filter(id => (includeUsername && !dpnsService.hasCachedUsername(id)) || !unifiedProfileService.hasCachedProfile(id));
+    const cold = ids.filter(id => !dpnsService.hasCachedUsername(id) || !unifiedProfileService.hasCachedProfile(id));
     await mapLimit(chunk(cold, 40), 2, async batch => {
       try {
         const [profiles, names] = await queryDocumentBundle([
@@ -25,7 +25,7 @@ export async function loadIdentityBatch(identityIds: string[], options: { includ
         // Validate the complete response before seeding either service.
         const { usernamesByIdentity } = await import('@/lib/feed/composite-feed-page');
         unifiedProfileService.seedProfileDocuments(profiles, batch);
-        if (includeUsername) dpnsService.seedUsernames(usernamesByIdentity(names, batch, batch.length));
+        dpnsService.seedUsernames(usernamesByIdentity(names, batch, batch.length));
       } catch (error) {
         logger.warn('Identity composite failed; using cached/batch identity readers', error);
       }

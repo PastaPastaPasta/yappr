@@ -84,23 +84,19 @@ export async function enrichPostsBatch(
     const [
       statsMap,
       interactionsMap,
-      usernameMap,
-      profiles,
+      { usernames: usernameMap, profiles, avatars: avatarUrlMap },
       blockStatusMap,
       followStatusMap,
-      avatarUrlMap,
     ] = await Promise.all([
       getBatchPostStats(targets.filter(target => !preloaded.stats?.has(target.id))),
       getBatchUserInteractions(targets.filter(target => !preloaded.interactions?.has(target.id))),
-      identities.then(result => result.usernames),
-      identities.then(result => result.profiles),
+      identities,
       currentUserId
         ? blockService.checkBlockedBatch(currentUserId, authorIds)
         : Promise.resolve(new Map<string, boolean>()),
       currentUserId
         ? followService.getFollowStatusBatch(authorIds, currentUserId)
         : Promise.resolve(new Map<string, boolean>()),
-      identities.then(result => result.avatars),
     ]);
 
     preloaded.stats?.forEach((stats, postId) => statsMap.set(postId, { ...stats, postId }));

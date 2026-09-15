@@ -326,32 +326,23 @@ class NotificationService {
     ));
 
     // Batch fetch all required data in parallel with fault tolerance
-    const identities = loadIdentityBatch(userIds);
     const results = await Promise.allSettled([
-      identities.then(result => result.usernames),
-      identities.then(result => result.profiles),
-      identities.then(result => result.avatars),
+      loadIdentityBatch(userIds),
       postIds.length > 0 ? this.fetchPostsByIds(postIds) : Promise.resolve(new Map<string, Post>())
     ]);
 
     // Extract results with fallbacks for failures
-    const usernameMap = results[0].status === 'fulfilled'
+    const { usernames: usernameMap, profiles, avatars: avatarUrls } = results[0].status === 'fulfilled'
       ? results[0].value
-      : new Map<string, string>();
-    const profiles = results[1].status === 'fulfilled'
+      : { usernames: new Map<string, string | null>(), profiles: [], avatars: new Map<string, string>() };
+    const posts = results[1].status === 'fulfilled'
       ? results[1].value
-      : [];
-    const avatarUrls = results[2].status === 'fulfilled'
-      ? results[2].value
-      : new Map<string, string>();
-    const posts = results[3].status === 'fulfilled'
-      ? results[3].value
       : new Map<string, Post>();
 
     // Log any enrichment failures for debugging
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
-        const fetchTypes = ['usernames', 'profiles', 'avatars', 'posts'];
+        const fetchTypes = ['identities', 'posts'];
         logger.error(`Failed to fetch ${fetchTypes[index]} for notification enrichment:`, result.reason);
       }
     });

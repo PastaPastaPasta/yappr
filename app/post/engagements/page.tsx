@@ -44,10 +44,8 @@ async function resolveEngagementUsers(
   ownerIds: string[],
   currentUserId: string | undefined
 ): Promise<Pick<EngagementUser, 'id' | 'username' | 'displayName' | 'bio' | 'hasDpnsName' | 'hasProfile' | 'isFollowing'>[]> {
-  const identities = loadIdentityBatch(ownerIds)
-  const [dpnsNamesMap, profiles, followStatus] = await Promise.all([
-    identities.then(result => result.usernames),
-    identities.then(result => result.profiles),
+  const [{ usernames: dpnsNamesMap, profiles }, followStatus] = await Promise.all([
+    loadIdentityBatch(ownerIds),
     currentUserId
       ? followService.getFollowStatusBatch(ownerIds, currentUserId)
       : Promise.resolve(new Map<string, boolean>())
