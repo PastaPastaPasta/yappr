@@ -24,7 +24,18 @@ Updated 2026-09-15. Target: `https://yap.pr/devnet/`, observed build `4105c5d`. 
 | QA-14 | High: profile edits fail | Editing only Bio on two current seeded profiles fails with a visible generic toast. SDK schema validation rejects the parsed paymentUris array; the replacement path merged the display User model into a raw profile payload. | Send the full raw-derived serialized replacement; actual UI save/readback and exact original field restoration passed. | [#421](https://github.com/PastaPastaPasta/yappr/pull/421) |
 | QA-15 | Medium: incorrect reply context | Open a saved reply directly. Its parent remains Unknown User and loses engagement counts even after waiting; opening the parent directly resolves its profile. | Keep the enriched chain returned before initial state installation. | [#422](https://github.com/PastaPastaPasta/yappr/pull/422) |
 | QA-16 | Medium: broken search navigation | On deployed staging, select the #masternodes sidebar suggestion. It navigates to /devnet/hashtag/masternodes and a 404 instead of the supported query route. | Supported query route, verified by mouse/keyboard browser regressions and populated feed readback. | [#423](https://github.com/PastaPastaPasta/yappr/pull/423) |
-| QA-17 | Medium: broken copied link | Copy a devnet post link; the clipboard omits /devnet and the destination cannot find the same post. | Separate deployment-aware sharing fix in progress. | Pending |
+| QA-17 | Medium: broken copied link | Copy a devnet post link; the clipboard omits /devnet and the destination cannot find the same post. | Copy deployment-aware URLs; actual clipboard and destination readback verified on exact base/head. | [#425](https://github.com/PastaPastaPasta/yappr/pull/425) |
+| QA-18 | Medium: stale private reply control | After approved recipient recovers keys, plaintext appears but reply remains unavailable until reload. | Subscribe to follower-key readiness changes; settled revocation compatibility separately verified. | [#424](https://github.com/PastaPastaPasta/yappr/pull/424) |
+| QA-19 | Medium: blog light-theme contrast | Create Blog heading/Cancel render black on near-black; selected blog title/tab render white on white in light mode. | Theme-aware management styling; actual light/dark management and reader/theme compatibility verified. | [#427](https://github.com/PastaPastaPasta/yappr/pull/427) |
+| QA-20 | Low: stale article comment count | Delete own last comment: Comments (0) and No comments yet appear, but article header and rail still show1. Fresh reload fixes the count. | Derive all displayed counts from current visible comments; actual before/head deletion cycles and independent cleanup readback passed. | [#429](https://github.com/PastaPastaPasta/yappr/pull/429) |
+| QA-21 | Medium: incorrect commerce amounts | Product/order amounts of0.00000100 DASH display0.0000, hiding their value. | Preserve eight-decimal duff precision in storefront prices. | [#426](https://github.com/PastaPastaPasta/yappr/pull/426) |
+| QA-22 | Medium: incorrect currency defaults | A DASH store opens new product/shipping forms with USD, requiring repeated correction. | Load the store default before creating product/zone forms; preserve edited records and explicit overrides. | [#428](https://github.com/PastaPastaPasta/yappr/pull/428) |
+| QA-23 | High: wrong-network onboarding | Devnet Create an identity opens the bridge in TESTNET mode. | Include the correct bridge network selector; actual before/head destination labels verified. | [#430](https://github.com/PastaPastaPasta/yappr/pull/430) |
+| QA-24 | Medium: shipping calculation race | A valid address is rejected by immediate Continue, then accepted unchanged after calculation settles. | Pending-state/cancellation fix undergoing actual browser comparison. | Pending |
+| QA-25 | High: DASH checkout unavailable | A DASH-priced order paid via tdash shows Amount not calculated / Price unavailable. | Preserve1:1 amounts for matching currency/scheme; fix undergoing actual browser comparison. | Pending |
+| QA-26 | Medium: checkout accessibility | Shipping/contact inputs and country select lack programmatic label associations. | Independent focused fix in progress. | Pending |
+| QA-27 | Medium: settings accessibility | Eleven notification/privacy/performance switches lack accessible names. | Associate visible labels/descriptions; fix in progress. | Pending |
+| QA-28 | Medium: incorrect Following feed | Live persona50 follows nobody; quickly select Following and38public posts persist after18seconds. Refresh correctly empties the feed. | Ignore stale page/background results from prior feed view; fix in progress. | Pending |
 
 Severity here describes practical impact, not a security vulnerability rating. No confirmed P0 data-loss defect remains from the original audit.
 
@@ -79,7 +90,7 @@ The inventory was derived from 38 route pages plus the dialogs/settings they exp
 | Story | Surface | Current evidence / remaining work |
 |---|---|---|
 | Browse public posts without an account | Home, Explore | Populated live reads observed; sort/pagination coverage incomplete. |
-| Browse following feed | Feed | Page/read surface observed; follow-write-to-feed propagation remaining. |
+| Browse following feed | Feed | Persona48 follows49: real QA post appears in fresh Following feed. Block removes target, unblock restores target; relationship restored absent. Rapid tab switch separately exposes QA-28 contamination, so overall feed correctness remains open. |
 | Search users, hashtags and content | Search | Entry/results surfaces observed; empty, repeated, pagination and special-character cases remaining. |
 | Browse a hashtag | Hashtag | Missing-context guidance inspected; populated pagination remaining. |
 | View mentions | Mentions | Guest guidance inspected; two-account mention notification cycle remaining. |
@@ -101,15 +112,16 @@ The inventory was derived from 38 route pages plus the dialogs/settings they exp
 | Reply and compose a thread | Composer/post | Persona33 reply publication/readback and persona42 three-part thread publication/readback passed. Direct part3 detail shows root+part3 by current flat-context design; reduced ancestry is a UX concern, not a confirmed missing-data defect. |
 | Attach media to a post | Composer/storage | Upload/provider flows remaining. |
 | Create/vote on a poll | Composer/poll | Personas42/43 poll creation, vote and fresh readback passed; end-time/multiple-choice branches remain. |
-| Edit/delete own content | Post options | Persona43 own quote deletion passed immediately and after fresh readback; SDK tombstone confirmed. Ordinary post options expose no Edit action. Thread cleanup is being verified separately. |
+| Edit/delete own content | Post options | Persona43 own quote deletion passed immediately and after fresh readback; SDK tombstone confirmed. Ordinary post options expose no Edit action. Thread cleanup verified to tombstones. |
 | Like/unlike, repost/undo and quote | Post actions | Names/tooltips covered by #413; persona32 like/unlike with fresh-session readback passed. Persona33 repost/undo fresh-session cycles also passed. Persona43 quote publication, readback and deletion/tombstone readback passed. |
 | Bookmark/unbookmark | Post/bookmarks | Accessible state covered by #413; persona32 bookmark/unbookmark and independent-session readback both passed. |
-| Share a post/copy link | Post actions | Clipboard/open-destination test found missing deployment path (QA-17); separate fix in progress. Native share sheet remains. |
+| Share a post/copy link | Post actions | Actual clipboard/destination readback exposed QA-17, fixed in#425. Native share sheet remains. |
 | Follow/unfollow another identity | Profile/connection lists | Persona33 follow/unfollow passed, with both fresh own/target lists and independent SDK records checked; initial relationship restored. |
 | View own followers/following | Connection lists | Authenticated no-id default intentional; preserve in QA-08. |
 | View another user's followers/following | Connection lists | Explicit-id route supported; guest missing-context recovery fixed in #415. |
-| Block/unblock and consume trusted block lists | Privacy & Security | Settings visible; behavioral filtering/readback remaining. |
+| Block/unblock and consume trusted block lists | Privacy & Security | Persona48 blocks49 through post menu; fresh profile/blocked-users settings reflect block, target absent from Following. Settings unblock restores target in fresh feed. Trusted-list propagation remains. |
 | Read/mark/filter notifications | Notifications/settings | Persona30 received persona33 reply notification; Replies filter, mark-all-read persistence after reload, and click-through to persisted reply passed. Other event types/mobile filtering remain. |
+| Choose NSFW content preferences | Composer/privacy/post/feed | Persona49 published harmless flagged text. Persona48 warning/reveal, reload resetting reveal, Always show persistence, Hide persistence, list exclusion and gated direct detail passed. Warn first and follow relationship restored. Initial direct click on a hidden radio was a test selector error; clicking its visible label worked. |
 | Enter encryption key | Privacy & Security | Personas36/37 normal encryption-key entry passed as part of private-feed lifecycle; populated secret inputs were excluded from captures. |
 | Enable and publish a private feed | Private Feed | Persona36 enabled a feed, published a private QA post, and owner readback passed. |
 | Request/approve/revoke private-feed access | Private Feed/profile | Persona37 requested, persona36 approved, fresh recipient decrypted. Normal revocation rotated epoch, removed request/grant and locked a future post in retained recipient session. Reply-control/dashboard UI inconsistencies are being isolated separately. |
@@ -118,16 +130,16 @@ The inventory was derived from 38 route pages plus the dialogs/settings they exp
 | Discover stores/items | Store/item | Routes and seeded items observed; full filtering/stock permutations remaining. |
 | Create/manage a store | Store create/manage | Earlier current-persona creation succeeded; repeat evidence lacks full provenance. No fresh completion claimed. |
 | Configure store payment methods | Payment modal | Invalid Dash acceptance reproduced; #410 validates modal/profile/import paths. |
-| Create/manage inventory/products | Store inventory/item add | Earlier creation observed; update/delete/stock cycles remaining. |
+| Create/manage inventory/products | Store inventory/item add | Persona40 product creation/readback and stock5→7 UI/reload passed. DASH precision/default bugs QA-21/22 fixed separately. Deletion/stock-exhaustion branches remain. |
 | Add/remove items and retain cart | Item/cart | Earlier add-to-cart/persistence observed; mixed-store/quantity/stock edges remaining. |
 | Save shipping information | Checkout/settings | Encryption prerequisite visible; save/readback remaining. |
 | Checkout and pay as another buyer | Checkout | Full funded buyer/seller payment cycle remaining. |
-| Track/cancel/fulfill an order | Orders/seller orders | Empty states observed; complete transition cycle remaining. |
-| Review a purchased product | Orders/item | Full eligible purchase/review cycle remaining. |
-| Discover/create a blog | Blog | Current-persona create and My Blogs success previously observed; dialog accessibility revalidated in #412. |
-| Configure blog theme and metadata | Blog settings | Inventory only; saved customization/readback remaining. |
-| Publish/edit/delete a blog article | Blog editor | A real QA article was published through the normal editor and read back signed out; edit/delete cycles remaining. |
-| Read/comment on a blog article | Blog viewer | Complete comment cycle remaining. |
+| Track/cancel/fulfill an order | Orders/seller orders | QA order processing→shipped→delivered persisted to buyer41. Tracking is explicitly fake; no actual shipment/payment occurred. Cancellation remains. |
+| Review a purchased product | Orders/item | Buyer41 five-star review persisted; store shows5.0/1. This followed a simulated QA order, with no actual payment/shipment. |
+| Discover/create a blog | Blog | Persona44 create and independent My Blogs readback passed. Light-mode contrast issue QA-19 confirmed; dialog description separately fixed in #412. |
+| Configure blog theme and metadata | Blog settings | Persona44 description save/fresh readback and label add/fresh readback passed; Ocean theme saved and visible to fresh persona45. Fresh theme editor and reader both confirmed Ocean background#ecfeff; disposable draft title/body restored after reload. |
+| Publish/edit/delete a blog article | Blog editor | Real QA articles published and read back independently. Persona44 article content edit persisted to fresh persona45. Article deletion is not exposed by current normal UI; no unsupported delete claim. |
+| Read/comment on a blog article | Blog viewer | Persona45 comment creation, persona44 readback, own deletion and completed empty-state fresh readback passed. Deletion exposed stale header/rail count QA-20. An initial wrong empty-state test string was corrected, not counted as an app failure. |
 | Embed an article and recover a broken link | Embed | Missing/empty-ID offline recovery revalidated in #407; successful embed navigation exposed QA-11; correction in #417. |
 | Navigate on mobile/by keyboard/screen reader | Navigation/post/dialogs | Specific action/dialog defects receive separate PRs; not a blanket accessibility certification. |
 | Change appearance/storage/provider preferences | Settings | Persona38 light/dark selection, dark persistence after reload, and System following dark/light media changes passed. Storage/provider integrations remain. |
