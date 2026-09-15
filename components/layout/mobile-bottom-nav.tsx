@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/contexts/auth-context'
@@ -40,7 +40,28 @@ export function MobileBottomNav() {
   const openLoginModal = useLoginModal((s) => s.open)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [isHydrated, setIsHydrated] = useState(false)
+  const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const closeMenuButtonRef = useRef<HTMLButtonElement>(null)
   const unreadNotificationCount = useNotificationStore((s) => s.getUnreadCount())
+
+  const closeMoreMenu = useCallback(() => {
+    setMoreMenuOpen(false)
+    moreMenuButtonRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    if (!moreMenuOpen) return
+
+    closeMenuButtonRef.current?.focus()
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeMoreMenu()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [moreMenuOpen, closeMoreMenu])
 
   useEffect(() => {
     setIsHydrated(true)
@@ -97,12 +118,13 @@ export function MobileBottomNav() {
       {moreMenuOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-40 md:hidden"
-          onClick={() => setMoreMenuOpen(false)}
+          onClick={closeMoreMenu}
         />
       )}
 
       {/* More Menu Sheet */}
-      <div id="mobile-more-menu" className={cn(
+      {/* React 18 emits inert only as a string, while the DOM typings declare it boolean. */}
+      <div id="mobile-more-menu" aria-hidden={!moreMenuOpen} inert={moreMenuOpen ? undefined : ('' as unknown as boolean)} className={cn(
         "fixed bottom-14 left-0 right-0 z-40 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
         moreMenuOpen ? "translate-y-0" : "translate-y-full pointer-events-none"
       )}>
@@ -111,7 +133,8 @@ export function MobileBottomNav() {
             <h3 className="text-lg font-semibold">Menu</h3>
             <button
               aria-label="Close menu"
-              onClick={() => setMoreMenuOpen(false)}
+              ref={closeMenuButtonRef}
+              onClick={closeMoreMenu}
               className="p-2 -mr-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
             >
               <XMarkIcon className="h-5 w-5" />
@@ -248,7 +271,8 @@ export function MobileBottomNav() {
                   aria-label="Menu"
                   aria-expanded={moreMenuOpen}
                   aria-controls="mobile-more-menu"
-                  onClick={() => setMoreMenuOpen(!moreMenuOpen)}
+                  ref={moreMenuButtonRef}
+                  onClick={() => moreMenuOpen ? closeMoreMenu() : setMoreMenuOpen(true)}
                   className="flex-1 flex items-center justify-center h-full relative"
                 >
                   <Bars3Icon className={cn(
