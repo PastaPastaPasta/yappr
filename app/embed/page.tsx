@@ -106,7 +106,10 @@ function EmbedPageContent() {
           {state.loading ? (
             <p className="yappr-embed-meta">Loading post...</p>
           ) : state.error ? (
-            <p className="yappr-embed-meta">{state.error}</p>
+            <div className="yappr-embed-meta" role="alert">
+              <p>{state.error}</p>
+              <p><a href="/" target="_top" rel="noopener noreferrer">Open Yappr</a></p>
+            </div>
           ) : state.post ? (
             <>
               <header className="yappr-embed-header">
