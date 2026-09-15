@@ -75,3 +75,20 @@ These writes used a seeded persona against the current devnet contracts and capt
 
 - **P0 DM send is silently lost.** Persona `carol9-sept` selected `paints-sasha9`, entered a message, and submitted. Yappr redirected to `/feed/` without success or error. A fresh session as the recipient showed the conversation shell but `No messages yet. Start the conversation!`; the message was not persisted. This is a destructive UX/data-loss failure in the primary messaging story. Reproduce with two seeded identities and inspect the recipient after confirmation.
 - **P1 Encryption/Auth Vault controls absent.** Settings → Privacy & Security for the current seeded identity shows only the Privacy section; controls to create encryption keys, add a password/passkey, or configure Auth Vault are absent even though feature contracts are present. The private-feed/key-management story cannot be completed through the UI.
+
+### Authenticated social findings (current seeded devnet)
+
+- **P1 Write failures are invisible.** Compose Post with a balance below the required YAPP/credit cost fails DAPI broadcast (`Insufficient identity ... balance ... required ...`), but the modal remains populated with the blue Post button and no toast or inline error. Users are encouraged to retry without understanding funding/cost. Existing-post Like has the same hidden failure (`Like operation failed` only in console).
+- **P1 Optimistic bookmark state is false.** Clicking Bookmark turns the icon blue, but a fresh `/bookmarks/` context still reports `0 saved posts` after the write fails. The UI does not roll back the optimistic state or report failure.
+- **P2 Post action controls lack accessible names/state.** Reply, repost, like, bookmark, and share controls are icon-only with no usable `aria-label`/title; bookmark also lacks `aria-pressed`. This blocks discoverability and assistive technology use.
+
+Evidence: `/tmp/postattempt.png` was inspected; it shows the failed compose still populated with the active Post button. DAPI error text and the fresh-context bookmark check were recorded by the social probe.
+
+### Authenticated commerce/blog findings (current seeded devnet)
+
+- **P1 Payment URI validation accepts malformed addresses.** Store → Add Payment Method accepts `yUvJf3g4Qw1QfFfR9o2d8mT5cX9kLmN7pQ` (invalid length/checksum), stores it as `tdash:yUv...`, and marks payment as configured. Buyers can be given an unusable payment destination; validate Dash URI/address network, checksum, and length before persistence.
+- **P2 Duplicate payment-modal actions.** The Add Payment modal exposes duplicate controls named “Add Payment Method” plus a submit “Add Payment”, creating visual and automation ambiguity.
+- **P2 Seller checkout ambiguity.** A seller account can add its own product to cart and reaches an enabled Checkout action; the UI does not explain or prevent self-purchase. Cross-identity buyer checkout still needs confirmation.
+- **P2 Blog dialog lacks accessible description.** Radix reports `Missing Description or aria-describedby={undefined}` when Create Blog opens.
+
+Positive coverage: seeded commerce QA successfully created a store, product, inventory entry, viewed the product, added it to cart, and created a blog with visible My Blogs entry and success toast. Orders/seller empty states rendered correctly.
