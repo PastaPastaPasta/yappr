@@ -26,6 +26,7 @@ import { promptForAuthKey } from '../auth-utils'
 import bs58 from 'bs58'
 import { normalizeBytes } from '@/lib/bytes'
 import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
+import { buildDirectMessageDocumentData } from './direct-message-data'
 
 /**
  * Direct Message Service for v3 contract
@@ -112,10 +113,7 @@ class DirectMessageService {
         this.contractId,
         'directMessage',
         senderId,
-        {
-          conversationId: conversationIdBytes,
-          encryptedContent
-        }
+        buildDirectMessageDocumentData(recipientId, conversationIdBytes, encryptedContent)
       )
 
       if (!result.success) {
