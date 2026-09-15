@@ -2,6 +2,9 @@
 
 Updated 2026-09-15. Target: `https://yap.pr/devnet/`, observed build `4105c5d`. Reference staging revision: `4105c5d1c914f5d0838619da93c3b8d28b4a780e`.
 
+
+Integration update: upstream staging advanced to `eb895be71a7207c73fb9329ac9d9bb7b398f53da` while the live devnet site still reported `4105c5d`. PRs #407, #410, #413, #416 and #421 were merged upstream. The agent did not merge them. New integration checks use a separately built, frozen `eb895be7` baseline; historical comparisons retain their recorded revisions. #448 and #450 are being updated to preserve the social-query changes merged in #405.
+
 **This supersedes the earlier report. The earlier claim of a completed audit of all user stories was unsupported.** Several reported failures used stale identities, incomplete observations, or invalid screenshot evidence. Confirmed defects, withdrawn claims and remaining test coverage are separated below. A route visit is not an end-to-end story pass, and a green build is not proof of live persistence.
 
 ## Confirmed issues and individual fixes
@@ -41,18 +44,26 @@ Updated 2026-09-15. Target: `https://yap.pr/devnet/`, observed build `4105c5d`. 
 | QA-31 | Medium: encryption-key form accessibility | Encryption Private Key label does not focus/name its input. | Associate label and input; actual before/head click/focus checks passed with empty secret field. | [#438](https://github.com/PastaPastaPasta/yappr/pull/438) |
 | QA-32 | Medium: Auth Vault dialog accessibility | Custom overlay lacks modal semantics/focus handling; close/visibility/strength controls lack names. | Named/described shared modal; desktop/mobile focus confinement, Escape/focus return, label focus and empty-field visibility compatibility passed. | [#446](https://github.com/PastaPastaPasta/yappr/pull/446) |
 | QA-33 | Medium: pagination loses reading position | Top Load More clears existing cards and jumps from scrolled position to top before rendering next batch. | Retain existing cards and scroll while appending; actual20→40comparison, base1973→0scroll and head1973retention passed. | [#439](https://github.com/PastaPastaPasta/yappr/pull/439) |
-| QA-34 | Medium: truncated hashtag history | Latest shows50posts and offers no continuation, while Top exposes older matching posts absent from Latest. | Separate pagination fix queued; do not treat50loaded posts as proved total. | Pending |
-| QA-35 | Low: username search mismatch | Sidebar resolves alice7 but returns no user for displayed-style @alice7. | Strip user-search leading @ while preserving hashtag behavior; final compatibility checks underway. | [#445](https://github.com/PastaPastaPasta/yappr/pull/445) (draft) |
-| QA-36 | Medium: misleading content-search result | Explore search reports no matches for known matching older public post because only latest100posts are scanned. | Cursor continuation and honest scanned-scope handling under implementation. | Pending |
+| QA-34 | Medium: truncated hashtag history | Latest shows50posts and offers no continuation, while Top exposes older matching posts absent from Latest. | Pagination reaches 262 unique chronological posts; final integration and visual checks underway. | [#448](https://github.com/PastaPastaPasta/yappr/pull/448) (draft) |
+| QA-35 | Low: username search mismatch | Sidebar resolves alice7 but returns no user for displayed-style @alice7. | Strip user-search leading @ while preserving hashtag behavior; actual before/head search and compatibility checks passed. | [#445](https://github.com/PastaPastaPasta/yappr/pull/445) |
+| QA-36 | Medium: misleading content-search result | Explore search reports no matches for known matching older public post because only latest100posts are scanned. | Cursor continuation, scanned-scope text, preserved results on error and retry verified; current-staging integration capture underway. | [#450](https://github.com/PastaPastaPasta/yappr/pull/450) (draft) |
 | QA-37 | Low: unsupported tip-message input | Profile tip accepts a message, but only post tips publish messages; credit transfer succeeds. | Remove unsupported message input and explain profile credits-only tips; actual post-tip message remains supported and persisted. | [#440](https://github.com/PastaPastaPasta/yappr/pull/440) |
 | QA-38 | Medium: overlapping onboarding dialogs | Fresh login opens username registration and Auth Vault setup simultaneously. | Queue username modal until backup closes; actual login reduces2backdrops to1 and Skip opens queued username registration. | [#443](https://github.com/PastaPastaPasta/yappr/pull/443) |
 
 
-| QA-39 | Medium: wrong username validation | Waiting past300ms rejects valid qa-ordered-9511, accepts underscore syntax and restricts labels to20characters despite SDK63limit. | Align basic input validation/length with SDK; hyphen, underscore and63-character browser checks passed. | Publishing |
-| QA-40 | Medium: broken hyphenated mentions | Selecting ingrid-vinyl9 creates a split mention and no recipient notification; ordinary hamzak78 control delivers. | Align extraction, rendering and active autocomplete with hyphens; final-head delivery checks underway. | [#444](https://github.com/PastaPastaPasta/yappr/pull/444) (draft) |
+| QA-39 | Medium: wrong username validation | Waiting past300ms rejects valid qa-ordered-9511, accepts underscore syntax and restricts labels to20characters despite SDK63limit. | Align basic input validation/length with SDK; hyphen, underscore and 63-character browser checks passed. | [#447](https://github.com/PastaPastaPasta/yappr/pull/447) |
+| QA-40 | Medium: broken hyphenated mentions | Selecting ingrid-vinyl9 creates a split mention and no recipient notification; ordinary hamzak78 control delivers. | Align extraction, rendering and active autocomplete with hyphens; actual final-head recipient notification, Mentions tab and correct post navigation passed. | [#444](https://github.com/PastaPastaPasta/yappr/pull/444) |
 | QA-41 | Medium: feed-language accessibility | Feed Language label neither names nor focuses its select. | Associate label and description; before/head gesture/name checks passed. | [#441](https://github.com/PastaPastaPasta/yappr/pull/441) |
 | QA-42 | Medium: settings navigation accessibility | Settings Back icon is unnamed and provides no focus tooltip. | Named Back control with visible tooltip; final artifact replaces an initial tooltip hidden behind the sticky header. | [#442](https://github.com/PastaPastaPasta/yappr/pull/442) |
-| QA-43 | Medium: trusted-block switch accessibility | Populated Block Lists exposes unnamed switches beside user profiles. | Visible action label and per-user accessible name; browser/layout validation underway. | Pending |
+| QA-43 | Medium: trusted-block switch accessibility | Populated Block Lists exposes unnamed switches beside user profiles. | Visible label and per-user accessible name; actual label/Space toggles, fresh persistence, mobile layout and relationship restoration passed. | [#449](https://github.com/PastaPastaPasta/yappr/pull/449) |
+
+
+| QA-44 | Medium: stale encryption prerequisite | Restore a valid encryption key; success toast appears, but Saved Shipping Addresses still asks for an encryption key until reload. | Notify the address section after successful key entry; final before/head checks passed, publication underway. | Pending |
+| QA-45 | Low: stale default address | Delete the default address; remaining address lacks its promoted Default badge until reload, despite correct persisted promotion. | Update the default in settings and checkout state; default/nondefault/last deletion and fresh readback passed. | Pending |
+| QA-46 | Medium: saved-address form accessibility | The separate saved-address modal has nine unassociated form labels. | Associate all nine controls with unique IDs; actual label-focus/name checks passed. | Pending |
+| QA-47 | Medium: review dialog accessibility | Rating buttons are unnamed and expose no selected rating state; text labels are unassociated. | Named radio group with keyboard rating controls, connected fields and dialog description. Final browser validation underway. | [#451](https://github.com/PastaPastaPasta/yappr/pull/451) (draft) |
+| QA-48 | Medium: live DM replies skipped | With a sender device clock two minutes ahead, send a DM and receive a reply. Active conversation omits the reply after 18 seconds; a fresh session reads it. Ordinary concurrent sends produced one similar miss but two later controls passed. | Confirmed-document cursor candidate under review. Persistence/decryption pass; this is not a Platform data-loss claim. | Pending |
+| QA-49 | Medium: blank search authors on original baseline | Explore search on4105c5d leaves author placeholders blank after waiting. | Upstream #405 adds batch enrichment. Verify on the new integration baseline; no duplicate fix PR. | [#405](https://github.com/PastaPastaPasta/yappr/pull/405) (merged upstream) |
 
 Severity here describes practical impact, not a security vulnerability rating. No confirmed P0 data-loss defect remains from the original audit.
 
@@ -157,15 +168,15 @@ The inventory was derived from 38 route pages plus the dialogs/settings they exp
 | Enable and publish a private feed | Private Feed | Persona36 enabled a feed, published a private QA post, and owner readback passed. |
 | Request/approve/revoke private-feed access | Private Feed/profile | Persona37 requested, persona36 approved, fresh recipient decrypted. Normal revocation rotated epoch, removed request/grant and locked a future post in retained recipient session. Reply-control/dashboard UI inconsistencies are being isolated separately. |
 | Send the first direct message | Messages | Revalidated: real send, fresh sender readback, fresh recipient decryption. |
-| Continue/reload a conversation | Messages | Existing-message readback revalidated; concurrent replies and pagination remaining. |
+| Continue/reload a conversation | Messages | Personas55/56 first send, reply, fresh two-party readback passed. Concurrent sends produced one active-session omission with all messages readable fresh; two subsequent controls passed. Fast-device-clock reproduction confirmed QA-48. Long-history and conversation-switch checks remain. |
 | Discover stores/items | Store/item | Routes and seeded items observed; full filtering/stock permutations remaining. |
 | Create/manage a store | Store create/manage | Earlier current-persona creation succeeded; repeat evidence lacks full provenance. No fresh completion claimed. |
 | Configure store payment methods | Payment modal | Invalid Dash acceptance reproduced; #410 validates modal/profile/import paths. |
 | Create/manage inventory/products | Store inventory/item add | Persona40 product creation/readback and stock5→7 UI/reload passed. DASH precision/default bugs QA-21/22 fixed separately. Deletion/stock-exhaustion branches remain. |
 | Add/remove items and retain cart | Item/cart | Earlier add-to-cart/persistence observed; mixed-store/quantity/stock edges remaining. |
-| Save shipping information | Checkout/settings | Encryption prerequisite visible; save/readback remaining. |
+| Save shipping information | Checkout/settings | Persona51 saved-address create/edit/default/cancel-delete/confirm-delete cycles and fresh decryption passed; final SDK readback confirms zero addresses after cleanup. UI issues QA-44–46 isolated separately. |
 | Checkout and pay as another buyer | Checkout | Full funded buyer/seller payment cycle remaining. |
-| Track/cancel/fulfill an order | Orders/seller orders | QA order processing→shipped→delivered persisted to buyer41. Tracking is explicitly fake; no actual shipment/payment occurred. Cancellation remains. |
+| Track/cancel/fulfill an order | Orders/seller orders | QA order processing→shipped→delivered persisted to buyer41. Tracking is explicitly fake; no actual shipment/payment occurred. Buyer51 placed a separate unpaid order; seller40 cancelled it; fresh buyer display/decryption and independent Platform status readback passed. No payment or shipment occurred. |
 | Review a purchased product | Orders/item | Buyer41 five-star review persisted; store shows5.0/1. This followed a simulated QA order, with no actual payment/shipment. |
 | Discover/create a blog | Blog | Persona44 create and independent My Blogs readback passed. Light-mode contrast issue QA-19 confirmed; dialog description separately fixed in #412. |
 | Configure blog theme and metadata | Blog settings | Persona44 description save/fresh readback and label add/fresh readback passed; Ocean theme saved and visible to fresh persona45. Fresh theme editor and reader both confirmed Ocean background#ecfeff; disposable draft title/body restored after reload. |
@@ -177,6 +188,8 @@ The inventory was derived from 38 route pages plus the dialogs/settings they exp
 | Inspect query/contract information | Developer settings/contract | Entry surfaces observed; no proof-correctness certification. |
 | Read informational/legal pages | About/private feeds/privacy/terms/cookies | Routes visited; copy/content review not a functional transaction test. |
 | Log out, clear local state, and restore account | Settings/session | Independent contexts used for readback; every logout/vault-lock variant remaining. |
+
+[Trusted block-list lifecycle evidence](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/dbc3373da6bfb730d0d870db6ca91f4586bf14f1/yappr/qa-20260915-revalidation/trusted-block-48-50) records filtering, fresh readback and complete temporary-relationship restoration.
 
 ## Identity/funding setup and transcript correction
 
