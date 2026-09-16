@@ -348,12 +348,12 @@ Latest evidence corrections and review status:
 | QA139 | Blog comment mutation failures showed misleading ownership text/raw transport errors. | #535, preserve row/draft and actionable errors. |
 | QA140 | Blog custom blocks and embedded viewer text had insufficient light-theme contrast. | #545, palette plus resolved BlockNote theme; measured light/dark evidence. |
 | QA141 | Embedded blog quote metadata/title had insufficient light-theme contrast. | #540, measured light/dark evidence. |
-| QA142 | Variant price and stock inputs clipped their editable content/spinner area. | Follow-up PR pending; exact 751a/8c0 geometry and keyboard evidence complete. |
+| QA142 | Variant price and stock inputs clipped their editable content/spinner area. | Follow-up PR pending; exact 751a/8c0 geometry and keyboard evidence complete. | PR pending creation |
 | QA143 | Comment timestamp and Delete action overlapped at 320px. | #543 stacked on #535; exact mobile evidence. |
 | QA144 | Cashtag-only posts were not indexed by the inline tag contract. | #538, ordinary post/Today/Top evidence and helper tests. |
 | QA145 | Merchant payment/shipping custom modals lacked dialog semantics/focus containment. | #542 stacked on #537; focus, Escape, dismiss and keyboard evidence. |
-| QA146 | Clearing stock appeared successful but persisted the old quantity after reload. | Follow-up PR pending; #026c7d22 service regression and exact UI repro complete. |
-| QA147 | A newly published own post did not appear on the author profile until reload. | Follow-up PR pending; canonical-fetch/merge/count fix in progress. |
+| QA146 | Clearing stock appeared successful but persisted the old quantity after reload. | Follow-up PR pending; #026c7d22 service regression and exact UI repro complete. | PR pending creation |
+| QA147 | A newly published own post did not appear on the author profile until reload. | Canonical-fetch/merge/count fix with exact evidence. | [#547](https://github.com/PastaPastaPasta/yappr/pull/547) |
 | QA148 | Merchant payment modal/action was obstructed at a 568×320 viewport. | Investigation reserved; only classify after visible-action repro and evidence. |
 | QA149 | Removing an active thread card bubbled activation and moved focus to no remaining editor. | Follow-up PR pending; #317c881f propagation fix in validation. |
 
