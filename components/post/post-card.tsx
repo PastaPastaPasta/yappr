@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowPathIcon, ChatBubbleOvalLeftIcon, CurrencyDollarIcon, EllipsisHorizontalIcon, LockClosedIcon, TrashIcon } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
 import type { Post } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -283,6 +284,7 @@ export function PostCard({
   }
 
   const authorLabel = usernameState ? `@${usernameState}` : displayName
+  const optionsLabel = isReply ? 'Reply options' : 'Post options'
 
   return (
     <article
@@ -329,11 +331,22 @@ export function PostCard({
                 </span>
               )}
               <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <IconButton data-testid={`more-btn-${post.id}`} onClick={stopPropagation}>
-                    <EllipsisHorizontalIcon className="h-5 w-5" />
-                  </IconButton>
-                </DropdownMenu.Trigger>
+                <Tooltip.Provider>
+                  <Tooltip.Root>
+                    <Tooltip.Trigger asChild>
+                      <DropdownMenu.Trigger asChild>
+                        <IconButton data-testid={`more-btn-${post.id}`} aria-label={optionsLabel} onClick={stopPropagation}>
+                          <EllipsisHorizontalIcon className="h-5 w-5" />
+                        </IconButton>
+                      </DropdownMenu.Trigger>
+                    </Tooltip.Trigger>
+                    <Tooltip.Portal>
+                      <Tooltip.Content className="z-50 bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded" sideOffset={5}>
+                        {optionsLabel}
+                      </Tooltip.Content>
+                    </Tooltip.Portal>
+                  </Tooltip.Root>
+                </Tooltip.Provider>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50" sideOffset={5}>
                     <DropdownMenu.Item onClick={(e) => stopAndRun(e, toggleFollow)} disabled={followLoading} className={cn(CARD_MENU_ITEM, 'disabled:opacity-50')}>

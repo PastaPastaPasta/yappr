@@ -138,6 +138,17 @@ test.describe('post lifecycle on the real testnet', () => {
 
     await card.getByTestId(`repost-menu-btn-${postId}`).focus()
     await expect(page.getByRole('tooltip', { name: 'Repost or quote', exact: true })).toBeVisible()
+
+    const options = card.getByTestId(`more-btn-${postId}`)
+    await expect(options).toHaveAccessibleName('Post options')
+    await options.focus()
+    await expect(page.getByRole('tooltip', { name: 'Post options', exact: true })).toBeVisible()
+    await options.press('Enter')
+    await expect(options).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.getByRole('menuitem', { name: 'View post engagements', exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(options).toHaveAttribute('aria-expanded', 'false')
+    await expect(options).toBeFocused()
   })
 
   test('the post can be liked and unliked', async ({ page }) => {
