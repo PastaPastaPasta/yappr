@@ -47,7 +47,9 @@ export default defineConfig({
     {
       name: 'write',
       testDir: './e2e/write',
-      use: { ...devices['Desktop Chrome'] },
+      // Auth fixtures pass private signing keys to browser initialization.
+      // Retained traces would include those arguments in uploaded reports.
+      use: { ...devices['Desktop Chrome'], trace: 'off' },
     },
   ],
   webServer: {
