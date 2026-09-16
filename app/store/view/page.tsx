@@ -354,8 +354,8 @@ function StoreDetailContent() {
     <PageShell>
           {/* Header */}
           <PageHeader>
-            <div className="flex items-center justify-between p-4">
-              <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+              <div className="flex min-w-0 basis-full items-center gap-4 sm:basis-auto sm:flex-1">
                 <button
                   onClick={() => router.back()}
                   className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
@@ -365,7 +365,7 @@ function StoreDetailContent() {
                 <h1 className="text-xl font-bold truncate">{store.name}</h1>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="ml-auto flex shrink-0 items-center gap-2">
                 {isOwner ? (
                   <Button
                     variant="outline"
