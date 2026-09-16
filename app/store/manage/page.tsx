@@ -101,14 +101,14 @@ function StoreManagePage() {
 
         // Load items, zones, pending orders count, and check encryption key - handle each independently
         const [itemsResult, zonesResult, ordersResult, encKeyResult] = await Promise.allSettled([
-          storeItemService.getByStore(currentStoreId, { limit: 100 }),
+          storeItemService.getAllByStore(currentStoreId),
           shippingZoneService.getByStore(currentStoreId),
           storeOrderService.getSellerOrders(user.identityId, { limit: 100 }),
           identityService.hasEncryptionKey(user.identityId)
         ])
 
         if (itemsResult.status === 'fulfilled') {
-          setItems(itemsResult.value.items)
+          setItems(itemsResult.value)
         } else {
           logger.error('Failed to load items:', itemsResult.reason)
         }
@@ -757,8 +757,8 @@ function StoreManagePage() {
             toast.success(`Added ${addedCount} item${addedCount !== 1 ? 's' : ''} to your store`)
             // Reload items
             if (store?.id) {
-              storeItemService.getByStore(store.id, { limit: 100 })
-                .then(result => setItems(result.items))
+              storeItemService.getAllByStore(store.id)
+                .then(setItems)
                 .catch((error) => logger.error(error))
             }
           }

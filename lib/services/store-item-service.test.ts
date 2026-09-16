@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { get, updateDocument } = vi.hoisted(() => ({ get: vi.fn(), updateDocument: vi.fn() }));
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get } }) }));
+const { get, query, updateDocument } = vi.hoisted(() => ({ get: vi.fn(), query: vi.fn(), updateDocument: vi.fn() }));
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get, query } }) }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument } }));
 import { storeItemService } from './store-item-service';
 
@@ -11,9 +11,14 @@ const raw = {
   storeId, title: 'Tracked product', status: 'active', stockQuantity: 7,
   basePrice: 2500000, currency: 'DASH', description: 'Keep this description',
 };
+const records = Array.from({ length: 104 }, (_, index) => ({
+  $id: `item-${index}`, $ownerId: storeId, $createdAt: 1000 + index,
+  storeId, title: `Product ${index}`, basePrice: 0, currency: 'DASH', status: 'active',
+}));
 
 beforeEach(() => {
   storeItemService.clearCache();
+  query.mockReset();
   get.mockReset().mockResolvedValue(raw);
   updateDocument.mockReset().mockImplementation(async (_contract, _type, id, owner, data, revision) => ({
     success: true,
@@ -39,5 +44,45 @@ describe('product stock replacements', () => {
     const result = await storeItemService.updateItem('item', 'owner', storeId, { stockQuantity: 0 });
     expect(updateDocument.mock.calls[0][4]).toMatchObject({ stockQuantity: 0 });
     expect(storeItemService.isOutOfStock(result)).toBe(true);
+  });
+});
+
+describe('complete store product list', () => {
+  it('includes products beyond the first 100 in creation order', async () => {
+    query.mockResolvedValueOnce(records.slice(0, 100)).mockResolvedValueOnce(records.slice(100));
+
+    const items = await storeItemService.getAllByStore(storeId);
+
+    expect(items.map(item => item.id)).toEqual(records.map(record => record.$id));
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[1][0]).toMatchObject({
+      where: [['storeId', '==', storeId]],
+      orderBy: [['storeId', 'asc'], ['$createdAt', 'asc']],
+      limit: 100,
+      startAfter: 'item-99',
+    });
+  });
+
+  it('checks for exhaustion after exactly 100 products without losing any', async () => {
+    query.mockResolvedValueOnce(records.slice(0, 100)).mockResolvedValueOnce([]);
+    await expect(storeItemService.getAllByStore(storeId)).resolves.toHaveLength(100);
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  it('finishes an empty store in one query', async () => {
+    query.mockResolvedValueOnce([]);
+    await expect(storeItemService.getAllByStore(storeId)).resolves.toEqual([]);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not return a truncated list when a later page fails', async () => {
+    query.mockResolvedValueOnce(records.slice(0, 100)).mockRejectedValueOnce(new Error('offline'));
+    await expect(storeItemService.getAllByStore(storeId)).rejects.toThrow('offline');
+  });
+
+  it('stops instead of looping if the service repeats a full page', async () => {
+    query.mockResolvedValue(records.slice(0, 100));
+    await expect(storeItemService.getAllByStore(storeId)).rejects.toThrow('pagination did not advance');
+    expect(query).toHaveBeenCalledTimes(2);
   });
 });
