@@ -41,6 +41,31 @@ Because `.env.testing` only holds public data (contract IDs, identity IDs) it is
 checked in. Private key material — the seed phrase — lives in the gitignored
 `.env.local` and in the `E2E_SEED_PHRASE` GitHub Actions secret, never here.
 
+### Devnet CI credentials
+
+The devnet topology job builds `.env.devnet` and uses the separate GitHub Actions
+secret `E2E_DEVNET_SEED_PHRASE`. The workflow maps it to the fixture's runtime
+`E2E_SEED_PHRASE` variable. Testnet continues to use the existing
+`E2E_SEED_PHRASE` secret and `.env.testing` identity pool.
+
+After a devnet reset, retain a dedicated seed privately, provision the bot pool
+in derivation-index order, and update only the public `E2E_IDENTITY_IDS` in
+`.env.devnet`. Verify that each derived authentication key matches an enabled
+key on its registered identity before running write tests. Fund the identities'
+credits and YAPP balances separately from the contract maker. Never replace the
+testnet seed to repair devnet credentials.
+
+Publish a new dedicated secret from its private file, without printing the seed:
+
+```bash
+gh secret set E2E_DEVNET_SEED_PHRASE < /path/to/devnet-ci-mnemonic.txt
+```
+
+The devnet CI command disables Playwright traces because authentication fixture
+arguments include a private key. Screenshots and the HTML report remain available.
+This job is nonblocking: inspect the test results rather than treating the job's
+success status as proof that all tests passed.
+
 ### Deployment
 
 `.github/workflows/deploy.yml` builds one Pages artifact containing all three
