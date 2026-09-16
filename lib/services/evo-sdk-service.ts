@@ -30,6 +30,7 @@ function sameConfig(a: EvoSdkConfig, b: EvoSdkConfig): boolean {
 class EvoSdkService {
   private sdk: EvoSDK | null = null;
   private initPromise: Promise<void> | null = null;
+  private reconnectPromise: Promise<void> | null = null;
   private config: EvoSdkConfig | null = null;
   private _isInitialized = false;
   private _isInitializing = false;
@@ -316,6 +317,7 @@ class EvoSdkService {
    * Get the SDK instance, initializing if necessary
    */
   async getSdk(): Promise<EvoSDK> {
+    if (this.reconnectPromise) await this.reconnectPromise;
     if (!this._isInitialized || !this.sdk) {
       if (!this.config) {
         throw new Error('SDK not configured. Call initialize() first.');
@@ -326,6 +328,37 @@ class EvoSdkService {
       throw new Error('SDK initialization failed');
     }
     return this.sdk;
+  }
+
+  /**
+   * Rebuild the SDK after connectivity returns. Offline reads can ban every
+   * endpoint in the old instance; connect() is idempotent and cannot reset it.
+   * Share one rebuild and make new readers wait, without replaying any writes.
+   */
+  async reconnect(delayMs = 0): Promise<void> {
+    if (this.reconnectPromise) return this.reconnectPromise;
+
+    const reconnect = async () => {
+      if (this._isInitializing && this.initPromise) {
+        // An initialization started while offline may fail. Keep its config
+        // and start a fresh instance once that attempt has finished.
+        await this.initPromise.catch(() => undefined);
+      }
+      const config = this.config;
+      if (!config) throw new Error('SDK not configured. Call initialize() first.');
+
+      // Error-triggered recovery retains its rate-limit backoff while online
+      // events and concurrent readers share the same pending replacement.
+      if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
+
+      // Retain the configuration throughout recovery; callers must never see
+      // the temporary unconfigured state produced by a full cleanup().
+      this.sdk = null;
+      this._isInitialized = false;
+      await this.initialize(config);
+    };
+    this.reconnectPromise = reconnect().finally(() => { this.reconnectPromise = null; });
+    return this.reconnectPromise;
   }
 
   /**
@@ -380,15 +413,9 @@ class EvoSdkService {
     if (this.isNoAvailableAddressesError(error) || this.isStaleQuorumError(error)) {
       logger.debug('EvoSdkService: Detected connection-level error (address pool exhausted or stale quorum cache), attempting to reconnect...');
       try {
-        const savedConfig = this.config;
-        await this.cleanup();
-        if (savedConfig) {
-          // Wait a bit before reconnecting to avoid immediate rate limiting
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          await this.initialize(savedConfig);
-          logger.debug('EvoSdkService: Reconnected successfully');
-          return true;
-        }
+        await this.reconnect(2000);
+        logger.debug('EvoSdkService: Reconnected successfully');
+        return true;
       } catch (reconnectError) {
         logger.error('EvoSdkService: Failed to reconnect:', reconnectError);
       }
