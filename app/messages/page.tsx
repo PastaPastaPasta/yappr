@@ -29,6 +29,7 @@ import toast from 'react-hot-toast'
 import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { EmojiPicker } from '@/components/compose/emoji-picker'
 import { isEmojiOnly } from '@/lib/utils'
+import { markMessagesReadLocally } from '@/lib/utils/dm-local-read-state'
 
 // Upper bound on the follower suggestions shown before anything is typed; also
 // keeps the batched DPNS lookup within its single-query limit.
@@ -262,6 +263,7 @@ function MessagesPage() {
         )
         if (cancelled) return
         setMessages(msgs)
+        markMessagesReadLocally(user.identityId, currentConversation.id, msgs)
         loadedMessageCursorRef.current = { conversationId, cursor: msgs.at(-1)?.id }
 
         // Get when participant last read (for read receipts)
@@ -338,6 +340,7 @@ function MessagesPage() {
         const newMsgs = page.messages
 
         if (newMsgs.length > 0) {
+          markMessagesReadLocally(currentUser.identityId, convId, newMsgs)
           setMessages(prev => {
             const result = [...prev]
             const existingIds = new Set(prev.map(m => m.id))
