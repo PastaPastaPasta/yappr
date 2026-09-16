@@ -237,7 +237,7 @@ export function PostCard({
     setReplyingTo(enrichedPost)
     setComposeOpen(true)
   }
-  const handleShare = () => copy(`${window.location.origin}/post?id=${post.id}`, 'Link copied to clipboard')
+  const handleShare = () => copy(`${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH || ''}/post/?id=${post.id}`, 'Link copied to clipboard')
   const handleTip = () => {
     if (!requireAuth()) return
     openTipModal(enrichedPost)
