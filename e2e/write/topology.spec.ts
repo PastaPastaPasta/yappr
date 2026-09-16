@@ -38,6 +38,16 @@ test.describe.configure({ mode: 'serial' })
 /** Broadcast waits are long and chained; each write test budgets its own. */
 const COMPOSE_TIMEOUT = 120_000
 
+/** The static Explore tabs are visible before React attaches their handlers. */
+async function openReadyExplore(page: Page): Promise<void> {
+  await page.goto(appUrl('/explore/'), { waitUntil: 'domcontentloaded' })
+  await expect(page.getByTestId('explore-creators-tab')).toBeVisible({ timeout: 30_000 })
+  // The initial trending request starts in a client effect. Its loading state
+  // disappearing proves hydration has run, including when the result is empty.
+  await expect(page.getByText('Loading trending hashtags...', { exact: true }))
+    .toBeHidden({ timeout: 60_000 })
+}
+
 /**
  * The devnet run is the only one this file applies to, and it is identified the
  * same way the build is: by which env file was selected. Read synchronously so it
@@ -674,7 +684,7 @@ test.describe('v5 optional-hashtag topology and prefix rankings on the devnet co
     // SDK connection) recovers.
     const attempts = 4
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      await page.goto(appUrl('/explore/'), { waitUntil: 'domcontentloaded' })
+      await openReadyExplore(page)
       const creatorsTab = page.getByTestId('explore-creators-tab')
       await expect(creatorsTab).toBeVisible({ timeout: 30_000 })
       await creatorsTab.click()
@@ -789,7 +799,7 @@ test.describe('v6 daily-windowed rankings on the devnet contract', () => {
 
   test("Explore's trending → Today ranks the run tag (beat.byDayHashtagPost at hashtag)", async ({ page }) => {
     test.setTimeout(180_000)
-    await page.goto(appUrl('/explore/'), { waitUntil: 'domcontentloaded' })
+    await openReadyExplore(page)
     const today = page.getByTestId('explore-trending-today')
     await expect(today).toBeVisible({ timeout: 60_000 })
     await today.click()
@@ -801,7 +811,7 @@ test.describe('v6 daily-windowed rankings on the devnet contract', () => {
 
   test("Explore's Top → Today renders today's ranking (like.byDayPost)", async ({ page }) => {
     test.setTimeout(180_000)
-    await page.goto(appUrl('/explore/'), { waitUntil: 'domcontentloaded' })
+    await openReadyExplore(page)
     const topTab = page.getByTestId('explore-top-tab')
     await expect(topTab).toBeVisible({ timeout: 60_000 })
     await topTab.click()
