@@ -208,12 +208,21 @@ export function BlockListSettings() {
                     )}
                   </div>
                 </Link>
-                <SettingsSwitch
-                  checked={followedUser.isFollowingBlocks}
-                  onCheckedChange={() => handleToggle(followedUser.id, followedUser.isFollowingBlocks)}
-                  disabled={togglingId === followedUser.id}
-                  className="flex-shrink-0 ml-3"
-                />
+                <div className="flex flex-shrink-0 flex-col items-end gap-1 ml-3">
+                  <label
+                    htmlFor={`block-list-${followedUser.id}`}
+                    className="text-xs text-gray-500 cursor-pointer"
+                  >
+                    Follow block list
+                  </label>
+                  <SettingsSwitch
+                    id={`block-list-${followedUser.id}`}
+                    aria-label={`Follow block list from ${followedUser.username ? `@${followedUser.username}` : followedUser.displayName}`}
+                    checked={followedUser.isFollowingBlocks}
+                    onCheckedChange={() => handleToggle(followedUser.id, followedUser.isFollowingBlocks)}
+                    disabled={togglingId === followedUser.id}
+                  />
+                </div>
               </div>
             ))}
           </div>
