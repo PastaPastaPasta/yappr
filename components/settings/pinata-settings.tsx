@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useId, useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,6 +31,7 @@ interface PinataSettingsProps {
  */
 export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsProps) {
   const { user } = useAuth()
+  const formId = useId()
   const [status, setStatus] = useState<ProviderStatus>('disconnected')
   const [isLoading, setIsLoading] = useState(true)
   const [maskedJwt, setMaskedJwt] = useState<string | null>(null)
@@ -289,8 +290,9 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
 
               <div className="space-y-3">
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">JWT (secret access token)</label>
+                  <label htmlFor={`${formId}-jwt`} className="text-sm font-medium">JWT (secret access token)</label>
                   <Input
+                    id={`${formId}-jwt`}
                     type="password"
                     placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                     value={jwtInput}
@@ -303,10 +305,11 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">
+                  <label htmlFor={`${formId}-gateway`} className="text-sm font-medium">
                     Gateway Domain <span className="text-gray-400 font-normal">(optional)</span>
                   </label>
                   <Input
+                    id={`${formId}-gateway`}
                     type="text"
                     placeholder="my-gateway.mypinata.cloud"
                     value={gatewayInput}
