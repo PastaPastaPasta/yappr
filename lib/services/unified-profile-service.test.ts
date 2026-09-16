@@ -11,7 +11,7 @@ import { unifiedProfileService } from './unified-profile-service';
 import { cacheManager } from '../cache-manager';
 import { YAPPR_PROFILE_CONTRACT_ID } from '../constants';
 
-const ownerId = '111111111';
+const ownerId = '11111111111111111111111111111111';
 const documentId = '222222222';
 const content = {
   displayName: 'Ava', bio: 'Original bio', location: 'Chicago',
@@ -94,5 +94,25 @@ describe('profile replacements', () => {
     expect(cacheManager.get('unified_profiles', ownerId)).toBeNull();
     get.mockResolvedValueOnce({ ...raw, bio: 'New bio', $revision: 8 });
     expect((await unifiedProfileService.get(documentId))?.bio).toBe('New bio');
+  });
+});
+
+describe('stored avatar settings', () => {
+  it('preserves the generator recipe alongside the separately rendered profile avatar', async () => {
+    const profile = await unifiedProfileService.getProfile(ownerId);
+    expect(profile?.avatar).toBe('data:image/svg+xml,avatar');
+    expect(await unifiedProfileService.getStoredAvatar(ownerId)).toBe(content.avatar);
+  });
+
+  it.each(['https://example.com/avatar.png', 'ipfs://avatar-cid'])('preserves a custom avatar URI: %s', async (avatar) => {
+    query.mockResolvedValueOnce([{ ...raw, avatar }]);
+    expect(await unifiedProfileService.getStoredAvatar(ownerId)).toBe(avatar);
+    expect(await unifiedProfileService.getAvatarUrl(ownerId)).toBe(avatar);
+  });
+
+  it('returns no stored recipe for a profile using its default avatar', async () => {
+    query.mockResolvedValueOnce([{ ...raw, avatar: undefined }]);
+    expect(await unifiedProfileService.getStoredAvatar(ownerId)).toBeUndefined();
+    expect(await unifiedProfileService.getAvatarUrl(ownerId)).toBe('data:image/svg+xml,avatar');
   });
 });
