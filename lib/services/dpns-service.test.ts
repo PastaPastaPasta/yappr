@@ -13,6 +13,21 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+describe('DPNS username format validation', () => {
+  // Boundary and character cases verified against the SDK's isValidUsername.
+  it.each(['abc', 'AbC', 'qa-ordered-9511', '123', 'a'.repeat(20), 'a'.repeat(63)])(
+    'accepts the valid DPNS label %s', (label) => {
+      expect(dpnsService.getUsernameValidationError(label)).toBeNull();
+    }
+  );
+
+  it.each(['', 'ab', 'a'.repeat(64), 'qa_user', '-abc', 'abc-', 'a--b', 'a b', 'a.b', 'ąbc'])(
+    'rejects the invalid DPNS label %s', (label) => {
+      expect(dpnsService.getUsernameValidationError(label)).not.toBeNull();
+    }
+  );
+});
+
 describe('DPNS composite cache seeds', () => {
   it('bounds and deduplicates identity requests above 100 values', async () => {
     const ids = Array.from({ length: 121 }, (_, i) => `identity${i}`);
