@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useId, useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { XMarkIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
@@ -36,6 +36,7 @@ function generateId(): string {
 }
 
 export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurrency = 'USD' }: ShippingZoneModalProps) {
+  const formId = useId()
   const [name, setName] = useState('')
   const [rateType, setRateType] = useState<RateType>('flat')
   const [baseRate, setBaseRate] = useState('')
@@ -193,9 +194,10 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
         <div className="p-4 space-y-5">
           {/* Zone Name */}
           <div>
-            <label className="block text-sm font-medium mb-2">Zone Name *</label>
+            <label htmlFor={`${formId}-name`} className="block text-sm font-medium mb-2">Zone Name *</label>
             <input
               type="text"
+              id={`${formId}-name`}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g., Domestic, Europe, Worldwide"
@@ -206,7 +208,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
 
           {/* Country Pattern */}
           <div>
-            <label className="block text-sm font-medium mb-2">Region</label>
+            <label htmlFor={`${formId}-region`} className="block text-sm font-medium mb-2">Region</label>
             <label className="flex items-center gap-2 mb-3 cursor-pointer">
               <input
                 type="checkbox"
@@ -223,6 +225,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
               <>
                 <input
                   type="text"
+                  id={`${formId}-region`}
                   value={countryPattern}
                   onChange={(e) => setCountryPattern(e.target.value)}
                   placeholder="e.g., US, US|CA, US.IL"
@@ -237,9 +240,10 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
 
           {/* Priority */}
           <div>
-            <label className="block text-sm font-medium mb-2">Priority</label>
+            <label htmlFor={`${formId}-priority`} className="block text-sm font-medium mb-2">Priority</label>
             <input
               type="number"
+              id={`${formId}-priority`}
               value={priority}
               onChange={(e) => setPriority(e.target.value)}
               onBlur={() => {
@@ -265,11 +269,12 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
             {/* Base Rate */}
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="block text-sm font-medium mb-2">Base Rate</label>
+                <label htmlFor={`${formId}-base-rate`} className="block text-sm font-medium mb-2">Base Rate</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
                   <input
                     type="number"
+                    id={`${formId}-base-rate`}
                     value={baseRate}
                     onChange={(e) => setBaseRate(e.target.value)}
                     placeholder="0.00"
@@ -280,8 +285,9 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium mb-2">Currency</label>
+                <label htmlFor={`${formId}-currency`} className="block text-sm font-medium mb-2">Currency</label>
                 <select
+                  id={`${formId}-currency`}
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value)}
                   className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
@@ -297,12 +303,13 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
 
             {/* Weight Rate */}
             <div className="mb-4">
-              <label className="block text-sm font-medium mb-2">Weight Rate (optional)</label>
+              <label htmlFor={`${formId}-weight-rate`} className="block text-sm font-medium mb-2">Weight Rate (optional)</label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
                   <input
                     type="number"
+                    id={`${formId}-weight-rate`}
                     value={weightRate}
                     onChange={(e) => setWeightRate(e.target.value)}
                     placeholder="0.00"
