@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { PlusIcon, TrashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { SocialLink } from '@/lib/types'
+import { validateSocialHandle } from '@/lib/social-link-validation'
 
 interface SocialLinksInputProps {
   links: SocialLink[]
@@ -41,65 +42,6 @@ function getPlatformLabel(platformId: string): string {
 function getPlatformPlaceholder(platformId: string): string {
   const platform = SOCIAL_PLATFORMS.find(p => p.id === platformId)
   return platform?.placeholder || 'handle'
-}
-
-function validateHandle(platform: string, handle: string): string | null {
-  const trimmed = handle.trim()
-
-  switch (platform) {
-    case 'twitter':
-    case 'github':
-    case 'twitch':
-    case 'instagram':
-    case 'telegram':
-      if (!/^@?[\w]+$/.test(trimmed)) {
-        return 'Only letters, numbers, and underscores allowed'
-      }
-      break
-    case 'youtube':
-      if (!/^@?[\w.-]+$/.test(trimmed)) {
-        return 'Invalid YouTube handle'
-      }
-      break
-    case 'linkedin':
-      if (!/^[\w-]+$/.test(trimmed)) {
-        return 'Only letters, numbers, and hyphens allowed'
-      }
-      break
-    case 'email':
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
-        return 'Invalid email address'
-      }
-      break
-    case 'mastodon':
-      if (!/^@?[\w]+@[a-zA-Z0-9.-]+$/.test(trimmed)) {
-        return 'Use format @user@instance.social'
-      }
-      break
-    case 'discord':
-      if (!/^[\w.]+(?:#\d{4})?$/.test(trimmed)) {
-        return 'Invalid Discord username (e.g., username or username#1234)'
-      }
-      break
-    case 'nostr':
-      if (!/^npub1[a-z0-9]{58}$/.test(trimmed)) {
-        return 'Invalid npub format'
-      }
-      break
-    case 'other':
-      if (/^https?:\/\//i.test(trimmed)) {
-        try {
-          const url = new URL(trimmed)
-          if (!['http:', 'https:'].includes(url.protocol)) {
-            return 'Only http/https URLs allowed'
-          }
-        } catch {
-          return 'Invalid URL'
-        }
-      }
-      break
-  }
-  return null
 }
 
 export function SocialLinksInput({
@@ -151,7 +93,7 @@ export function SocialLinksInput({
       return
     }
 
-    const validationError = validateHandle(selectedPlatform, handle)
+    const validationError = validateSocialHandle(selectedPlatform, handle)
     if (validationError) {
       setError(validationError)
       return
