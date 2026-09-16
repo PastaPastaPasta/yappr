@@ -9,6 +9,7 @@ import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { identityBridgeUrl } from '@/lib/identity-bridge'
 import { WalletLoginPanel } from './wallet-login-panel'
 import { KeyLoginForm } from './key-login-form'
 
@@ -182,7 +183,7 @@ export function LoginModal() {
               <p className="mt-5 text-center text-sm text-gray-600 dark:text-gray-400">
                 New to Dash?{' '}
                 <a
-                  href="https://bridge.thepasta.org"
+                  href={identityBridgeUrl()}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="font-medium text-yappr-600 dark:text-yappr-400 hover:underline underline-offset-4"
