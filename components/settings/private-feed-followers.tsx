@@ -43,6 +43,7 @@ export function PrivateFeedFollowers() {
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
   const refreshKey = usePrivateFeedRefreshStore((s) => s.refreshKey)
+  const triggerRefresh = usePrivateFeedRefreshStore((s) => s.triggerRefresh)
 
   const loadFollowers = useCallback(async () => {
     if (!user?.identityId) {
@@ -144,6 +145,7 @@ export function PrivateFeedFollowers() {
       if (result.success) {
         // Remove from local state
         setFollowers((prev) => prev.filter((f) => f.id !== follower.id))
+        triggerRefresh()
         toast.success(
           `Revoked access for ${follower.username ? `@${follower.username}` : follower.displayName}`
         )
