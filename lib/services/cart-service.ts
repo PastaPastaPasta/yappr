@@ -12,6 +12,12 @@ import { scopedKey } from '@/lib/storage-scope';
 
 const CART_STORAGE_KEY = scopedKey('yappr_cart');
 
+export interface CartItemAvailability {
+  item: CartItem;
+  maxQuantity: number;
+  reason?: string;
+}
+
 class CartService {
   private cart: Cart | null = null;
   private listeners: Set<(cart: Cart) => void> = new Set();
@@ -152,6 +158,17 @@ class CartService {
    * Add item from StoreItem with variant selection
    */
   addStoreItem(storeItem: StoreItem, variantKey?: string, quantity: number = 1): void {
+    const stock = storeItemService.getStock(storeItem, variantKey);
+    const existingQuantity = this.getItems().find(
+      item => item.itemId === storeItem.id && item.variantKey === variantKey
+    )?.quantity ?? 0;
+    if (storeItem.status !== 'active' || (storeItem.variants && !storeItemService.getCombination(storeItem, variantKey || ''))) {
+      throw new Error('This item is no longer available');
+    }
+    if (existingQuantity + quantity > stock) {
+      throw new Error(stock === 0 ? 'Out of stock' : `Only ${stock} available, including items already in your cart`);
+    }
+
     const price = storeItemService.getPrice(storeItem, variantKey);
     const imageUrl = storeItem.imageUrls?.[0];
 
@@ -271,36 +288,43 @@ class CartService {
     return this.getStoreIds().length > 1;
   }
 
-  /**
-   * Validate cart items are still available
-   * Returns list of unavailable items
-   */
-  async validateItems(): Promise<{ item: CartItem; reason: string }[]> {
-    const unavailable: { item: CartItem; reason: string }[] = [];
-
-    for (const cartItem of this.getItems()) {
-      const item = await storeItemService.get(cartItem.itemId);
-
-      if (!item) {
-        unavailable.push({ item: cartItem, reason: 'Item no longer exists' });
-        continue;
-      }
-
-      if (item.status !== 'active') {
-        unavailable.push({ item: cartItem, reason: 'Item is no longer available' });
-        continue;
-      }
-
-      const stock = storeItemService.getStock(item, cartItem.variantKey);
-      if (stock < cartItem.quantity) {
-        unavailable.push({
-          item: cartItem,
-          reason: stock === 0 ? 'Out of stock' : `Only ${stock} available`
+  /** Read current inventory without the document cache or modifying the cart. */
+  async getAvailability(items: CartItem[] = this.getItems()): Promise<CartItemAvailability[]> {
+    return Promise.all(items.map(async (cartItem) => {
+      try {
+        // query() propagates read failures; get() caches and converts failures to null.
+        const { documents } = await storeItemService.query({
+          where: [['$id', '==', cartItem.itemId]],
+          limit: 1
         });
+        const item = documents[0];
+        if (!item || item.status !== 'active') {
+          return { item: cartItem, maxQuantity: 0, reason: 'Item is no longer available' };
+        }
+        if (item.variants && !storeItemService.getCombination(item, cartItem.variantKey || '')) {
+          return { item: cartItem, maxQuantity: 0, reason: 'Selected option is no longer available' };
+        }
+        const stock = storeItemService.getStock(item, cartItem.variantKey);
+        return {
+          item: cartItem,
+          maxQuantity: stock,
+          reason: stock < cartItem.quantity
+            ? stock === 0 ? 'Out of stock' : `Only ${stock} available`
+            : undefined
+        };
+      } catch {
+        return {
+          item: cartItem,
+          maxQuantity: cartItem.quantity,
+          reason: 'Could not check availability. Please try again.'
+        };
       }
-    }
+    }));
+  }
 
-    return unavailable;
+  /** Validate a checkout snapshot, including only the selected store's items. */
+  async validateItems(items: CartItem[] = this.getItems()): Promise<CartItemAvailability[]> {
+    return (await this.getAvailability(items)).filter(result => result.reason);
   }
 
   /**

@@ -7,22 +7,25 @@ import { BuildingStorefrontIcon } from '@heroicons/react/24/outline'
 import { CartItemRow } from './cart-item-row'
 import { Button } from '@/components/ui/button'
 import { formatPrice } from '@/lib/utils/format'
-import { cartService } from '@/lib/services/cart-service'
+import { cartService, type CartItemAvailability } from '@/lib/services/cart-service'
 import type { CartItem, Store } from '@/lib/types'
 
 interface CartStoreSectionProps {
   storeId: string
   store?: Store
   items: CartItem[]
+  availability: CartItemAvailability[]
+  onRefreshAvailability: () => void
   onRemoveAll: () => void
 }
 
 export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps>(
-  function CartStoreSection({ storeId, store, items, onRemoveAll }, ref) {
+  function CartStoreSection({ storeId, store, items, availability, onRefreshAvailability, onRemoveAll }, ref) {
     const router = useRouter()
 
     const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
     const currency = items[0]?.currency || 'USD'
+    const hasAvailabilityIssue = availability.some(result => result.reason)
 
     const handleQuantityChange = (item: CartItem, newQuantity: number) => {
       cartService.updateQuantity(item.itemId, item.variantKey, newQuantity)
@@ -78,6 +81,7 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
             <CartItemRow
               key={`${item.itemId}-${item.variantKey || ''}`}
               item={item}
+              availability={availability.find(result => result.item.itemId === item.itemId && result.item.variantKey === item.variantKey)}
               onQuantityChange={(qty) => handleQuantityChange(item, qty)}
               onRemove={() => handleRemoveItem(item)}
             />
@@ -93,7 +97,13 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
             {formatPrice(subtotal, currency)}
           </span>
         </div>
-        <Button className="w-full" onClick={handleCheckout}>
+        {hasAvailabilityIssue && (
+          <div className="mb-4 text-sm">
+            <p role="alert" className="text-red-600">Review item availability before checkout.</p>
+            <button className="mt-2 text-yappr-600 underline" onClick={onRefreshAvailability}>Check availability again</button>
+          </div>
+        )}
+        <Button className="w-full" onClick={handleCheckout} disabled={hasAvailabilityIssue}>
           Checkout from {store?.name || 'Store'}
         </Button>
       </div>

@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
@@ -89,6 +89,12 @@ function CheckoutPage() {
   const [step, setStep] = useState<'details' | 'policies' | 'payment'>('details')
   const [includeShipping, setIncludeShipping] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [stockError, setStockError] = useState<string | null>(null)
+  const availabilityRequest = useRef(0)
+  const currentStoreId = useRef(storeId)
+  currentStoreId.current = storeId
+
+  useEffect(() => () => { availabilityRequest.current += 1 }, [])
 
   // Policies
   const [storePolicies, setStorePolicies] = useState<StorePolicy[]>([])
@@ -134,6 +140,17 @@ function CheckoutPage() {
     sellerEncryptionPublicKey: null,
     buyerEncryptionPrivateKey: null
   })
+
+  const validateCartAvailability = useCallback(async (items: CartItem[]): Promise<boolean> => {
+    const request = ++availabilityRequest.current
+    const unavailable = await cartService.validateItems(items)
+    if (request !== availabilityRequest.current || currentStoreId.current !== storeId) return false
+    const message = unavailable.length > 0
+      ? unavailable.map(result => `${result.item.title}: ${result.reason}`).join(' ')
+      : null
+    setStockError(message)
+    return message === null
+  }, [storeId])
 
   const validateCheckoutReadiness = useCallback(async (storeToValidate: Store | null): Promise<CheckoutReadinessState> => {
     function blocked(
@@ -225,6 +242,7 @@ function CheckoutPage() {
 
         setStore(storeData)
         setCartItems(items)
+        await validateCartAvailability(items)
         setStorePolicies(parseStorePolicies(storeData.policies))
 
         // Select first payment URI by default
@@ -242,7 +260,7 @@ function CheckoutPage() {
     }
 
     loadData().catch((error) => logger.error(error))
-  }, [sdkReady, storeId, router, validateCheckoutReadiness])
+  }, [sdkReady, storeId, router, validateCheckoutReadiness, validateCartAvailability])
 
   // Load saved addresses
   useEffect(() => {
@@ -539,8 +557,8 @@ function CheckoutPage() {
   const promptForEncryptionKeyThenContinue = useCallback(() => {
     openEncryptionKeyModal('generic', () => {
       validateCheckoutReadiness(store)
-        .then((readiness) => {
-          if (readiness.isReady) {
+        .then(async (readiness) => {
+          if (readiness.isReady && await validateCartAvailability(cartItems)) {
             setError(null)
             setStep('payment')
             return
@@ -552,10 +570,11 @@ function CheckoutPage() {
           setError(err instanceof Error ? err.message : 'Failed to verify checkout readiness.')
         })
     })
-  }, [openEncryptionKeyModal, validateCheckoutReadiness, store])
+  }, [openEncryptionKeyModal, validateCheckoutReadiness, validateCartAvailability, cartItems, store])
 
   const handlePoliciesSubmit = async () => {
     setError(null)
+    if (!await validateCartAvailability(cartItems)) return
     const readiness = await validateCheckoutReadiness(store)
     if (readiness.isReady) {
       setStep('payment')
@@ -592,6 +611,8 @@ function CheckoutPage() {
     setError(null)
 
     try {
+      if (!await validateCartAvailability(cartItems)) return
+
       const payload = storeOrderService.buildOrderPayload(
         cartItems,
         includeShipping ? shippingAddress : undefined,
@@ -661,6 +682,22 @@ function CheckoutPage() {
     return (
       <PageShell mainClassName="flex items-center justify-center">
             <Spinner size="md" />
+      </PageShell>
+    )
+  }
+
+  if (stockError) {
+    return (
+      <PageShell>
+        <PageHeader><h1 className="text-xl font-bold p-4">Checkout</h1></PageHeader>
+        <div className="p-4 space-y-4">
+          <div role="alert" className="p-4 border border-red-200 bg-red-50 dark:bg-red-900/20 rounded-lg">
+            <p className="font-medium text-red-700 dark:text-red-200">Please review item availability</p>
+            <p className="text-sm text-red-600 dark:text-red-300 mt-1">{stockError}</p>
+            <p className="text-sm mt-2">Your cart has been kept. Adjust quantities or check availability again from your cart.</p>
+          </div>
+          <Button onClick={() => router.push('/cart')} className="w-full">Review Cart</Button>
+        </div>
       </PageShell>
     )
   }

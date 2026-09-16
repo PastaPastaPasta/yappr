@@ -14,7 +14,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { CartStoreSection } from '@/components/store'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
-import { cartService } from '@/lib/services/cart-service'
+import { cartService, type CartItemAvailability } from '@/lib/services/cart-service'
 import { storeService } from '@/lib/services/store-service'
 import type { Cart, Store } from '@/lib/types'
 
@@ -26,6 +26,8 @@ export default function CartPage() {
   const [cart, setCart] = useState<Cart>({ items: [], updatedAt: new Date() })
   const [stores, setStores] = useState<Map<string, Store>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
+  const [availability, setAvailability] = useState<CartItemAvailability[]>([])
+  const [refreshCount, setRefreshCount] = useState(0)
 
   // Subscribe to cart changes
   useEffect(() => {
@@ -38,6 +40,7 @@ export default function CartPage() {
   // Load store info for cart items
   useEffect(() => {
     if (!sdkReady) return
+    let cancelled = false
     const loadStores = async () => {
       setIsLoading(true)
       const storeIds = cartService.getStoreIds()
@@ -56,12 +59,17 @@ export default function CartPage() {
         })
       )
 
-      setStores(storeMap)
-      setIsLoading(false)
+      const currentAvailability = await cartService.getAvailability()
+      if (!cancelled) {
+        setStores(storeMap)
+        setAvailability(currentAvailability)
+        setIsLoading(false)
+      }
     }
 
     loadStores().catch((error) => logger.error(error))
-  }, [sdkReady, cart.items])
+    return () => { cancelled = true }
+  }, [sdkReady, cart.items, refreshCount])
 
   // Group items by store
   const itemsByStore = new Map<string, typeof cart.items>()
@@ -112,6 +120,8 @@ export default function CartPage() {
                     storeId={storeId}
                     store={stores.get(storeId)}
                     items={storeItems}
+                    availability={availability.filter(result => result.item.storeId === storeId)}
+                    onRefreshAvailability={() => setRefreshCount(count => count + 1)}
                     onRemoveAll={() => cartService.removeStoreItems(storeId)}
                   />
                 ))}
