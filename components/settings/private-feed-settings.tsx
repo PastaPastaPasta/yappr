@@ -32,6 +32,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
   const { user } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const refreshKey = usePrivateFeedRefreshStore((state) => state.refreshKey)
+  const triggerRefresh = usePrivateFeedRefreshStore((state) => state.triggerRefresh)
   const [isEnabled, setIsEnabled] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isEnabling, setIsEnabling] = useState(false)
@@ -175,7 +176,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
         setShowKeyInput(false)
         setEncryptionKeyInput('')
         // Refresh all status to ensure consistent UI state
-        await checkPrivateFeedStatus()
+        triggerRefresh()
       } else {
         setKeyError(result.error || 'Failed to enable private feed')
         toast.error(result.error || 'Failed to enable private feed')
@@ -366,7 +367,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
             <ResetPrivateFeedDialog
               open={showResetDialog}
               onOpenChange={setShowResetDialog}
-              onSuccess={checkPrivateFeedStatus}
+              onSuccess={triggerRefresh}
             />
           </>
         ) : (
