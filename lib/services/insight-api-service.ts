@@ -143,6 +143,22 @@ export function getNetworkFromScheme(scheme: string): AppNetwork {
   return 'mainnet'
 }
 
+/** Link a Dash payment to the explorer for the chain that received it. */
+export function getPaymentVerificationUrl(txid: string, paymentUri: unknown): string | null {
+  if (typeof paymentUri !== 'string') return null
+  const scheme = paymentUri.slice(0, paymentUri.indexOf(':') + 1)
+  if (!isDashScheme(scheme)) return null
+
+  const network = getNetworkFromScheme(scheme)
+  const baseUrl = network === 'devnet'
+    // Enter through the root hash route: direct deep links on Moutai return 404.
+    ? `${new URL(INSIGHT_API_URLS.devnet).origin}/#!/tx/`
+    : network === 'mainnet'
+      ? 'https://insight.dash.org/insight/tx/'
+      : 'https://insight.testnet.networks.dash.org/insight/tx/'
+  return `${baseUrl}${encodeURIComponent(txid)}`
+}
+
 /**
  * Convert satoshis to DASH
  */

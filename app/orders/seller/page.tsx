@@ -20,6 +20,7 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { orderStatusService } from '@/lib/services/order-status-service'
+import { getPaymentVerificationUrl } from '@/lib/services/insight-api-service'
 import { dpnsService } from '@/lib/services'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import toast from 'react-hot-toast'
@@ -208,6 +209,9 @@ function SellerOrdersPage() {
               {orders.map((order, index) => {
                 const status = orderStatuses.get(order.id)
                 const payload = orderPayloads.get(order.id)
+                const paymentVerificationUrl = payload?.txid
+                  ? getPaymentVerificationUrl(payload.txid, payload.paymentUri)
+                  : null
                 const isExpanded = expandedOrder === order.id
                 const isUpdating = updateOrderId === order.id
 
@@ -329,14 +333,18 @@ function SellerOrdersPage() {
                               {payload.txid && (
                                 <p className="text-sm mt-1">
                                   <span className="text-gray-500">TXID: </span>
-                                  <a
-                                    href={storeOrderService.getPaymentVerificationUrl(payload.txid)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-yappr-600 hover:underline font-mono"
-                                  >
-                                    {payload.txid.slice(0, 16)}...
-                                  </a>
+                                  {paymentVerificationUrl ? (
+                                    <a
+                                      href={paymentVerificationUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-yappr-600 hover:underline font-mono"
+                                    >
+                                      {payload.txid.slice(0, 16)}...
+                                    </a>
+                                  ) : (
+                                    <span className="font-mono break-all">{payload.txid}</span>
+                                  )}
                                 </p>
                               )}
                             </div>
