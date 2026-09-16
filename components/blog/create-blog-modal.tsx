@@ -66,6 +66,10 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
             </Dialog.Close>
           </div>
 
+          <Dialog.Description className="mb-4 text-sm text-gray-400">
+            Give your blog a name, then add an optional description and images.
+          </Dialog.Description>
+
           <div className="space-y-4">
             <div>
               <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Blog name</label>
