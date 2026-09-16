@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
+import * as Popover from '@radix-ui/react-popover'
 import { LockClosedIcon, GlobeAltIcon, EyeIcon } from '@heroicons/react/24/outline'
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
 import type { PostVisibility } from '@/lib/store'
@@ -81,20 +82,6 @@ export function VisibilitySelector({
     setIsExpanded(false)
   }
 
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  // Close dropdown when clicking outside (uses capture phase to work with stopPropagation)
-  useEffect(() => {
-    if (!isExpanded) return
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setIsExpanded(false)
-      }
-    }
-    document.addEventListener('click', handleClickOutside, true)
-    return () => document.removeEventListener('click', handleClickOutside, true)
-  }, [isExpanded])
-
   // Don't show if private feed is loading
   if (privateFeedLoading) {
     return (
@@ -106,15 +93,13 @@ export function VisibilitySelector({
   }
 
   return (
-    <div ref={containerRef} className="relative">
+    <Popover.Root open={isExpanded} onOpenChange={setIsExpanded}>
       {/* Main selector button */}
+      <Popover.Trigger asChild>
       <button
         data-testid="visibility-selector"
         type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          setIsExpanded(!isExpanded)
-        }}
+        onClick={(e) => e.stopPropagation()}
         disabled={disabled}
         className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
           isPrivate
@@ -133,12 +118,17 @@ export function VisibilitySelector({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
+      </Popover.Trigger>
 
       {/* Dropdown menu */}
-      {isExpanded && (
-        <div
+      <Popover.Portal>
+        <Popover.Content
+          aria-label="Post visibility"
+          align="start"
+          sideOffset={4}
+          collisionPadding={16}
           onClick={(e) => e.stopPropagation()}
-          className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl z-50 overflow-hidden"
+          className="w-64 max-h-[var(--radix-popover-content-available-height)] bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl z-50 overflow-y-auto"
         >
           {visibilityOptions.map((option) => {
             const Icon = option.icon
@@ -215,9 +205,9 @@ export function VisibilitySelector({
               </p>
             </div>
           )}
-        </div>
-      )}
-    </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   )
 }
 
