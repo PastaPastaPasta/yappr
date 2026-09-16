@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useId, useState, useCallback, useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { XMarkIcon, KeyIcon, ExclamationTriangleIcon, CheckCircleIcon, ClipboardIcon, EyeIcon, EyeSlashIcon, ShieldCheckIcon, CheckIcon } from '@heroicons/react/24/outline'
@@ -41,6 +41,7 @@ export function AddEncryptionKeyModal({
   context = 'generic',
 }: AddEncryptionKeyModalProps) {
   const { user, mergeSecretsIntoAuthVault } = useAuth()
+  const masterKeyInputId = useId()
 
   // Context-specific messaging
   const contextMessages = {
@@ -702,10 +703,12 @@ export function AddEncryptionKeyModal({
               {/* Master Key Input */}
               <div className="space-y-2">
                 <div className="text-sm font-medium flex items-center justify-between">
-                  <span>Master Key</span>
+                  <label htmlFor={masterKeyInputId}>Master Key</label>
                   <button
                     type="button"
                     onClick={() => setShowCriticalKey(!showCriticalKey)}
+                    aria-label={showCriticalKey ? 'Hide master key' : 'Show master key'}
+                    title={showCriticalKey ? 'Hide master key' : 'Show master key'}
                     className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 p-1"
                   >
                     {showCriticalKey ? (
@@ -716,6 +719,7 @@ export function AddEncryptionKeyModal({
                   </button>
                 </div>
                 <input
+                  id={masterKeyInputId}
                   type={showCriticalKey ? 'text' : 'password'}
                   value={criticalKeyWif}
                   onChange={(e) => {
@@ -866,6 +870,9 @@ export function AddEncryptionKeyModal({
     <Modal open={isOpen} onOpenChange={handleClose} className="w-[500px] max-w-[95vw] max-h-[90vh] overflow-y-auto">
                     {step !== 'adding' && (
                       <button
+                        type="button"
+                        aria-label="Close encryption key setup"
+                        title="Close encryption key setup"
                         onClick={handleClose}
                         className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
                       >
