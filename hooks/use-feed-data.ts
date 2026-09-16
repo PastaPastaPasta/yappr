@@ -130,12 +130,14 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
   const applyRepostAndQuoteEnrichment = useCallback(
     (postsToEnrich: Post[]) => {
       if (postsToEnrich.length === 0) return;
+      const generation = loadGenerationRef.current;
 
       enrichPostsWithRepostsAndQuotes(postsToEnrich)
         .then((enrichedPosts) => {
+          if (generation !== loadGenerationRef.current) return;
           const enrichedById = new Map(enrichedPosts.map((post) => [post.id, post]));
           setData((current) => {
-            if (!current) return current;
+            if (generation !== loadGenerationRef.current || !current) return current;
             return current.map((post) => {
               const enriched = enrichedById.get(post.id);
               if (!enriched) return post;
