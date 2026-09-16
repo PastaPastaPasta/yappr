@@ -1,6 +1,6 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -41,6 +41,7 @@ const SHEET_MOTION = {
  */
 export function Modal({ open, onOpenChange, children, className, variant = 'card', overlayClassName, onOpenAutoFocus, onCloseAutoFocus }: ModalProps) {
   const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
   const sheet = variant === 'sheet'
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -59,7 +60,24 @@ export function Modal({ open, onOpenChange, children, className, variant = 'card
                   overlayClassName
                 )}
               >
-                <Dialog.Content asChild onOpenAutoFocus={onOpenAutoFocus} onCloseAutoFocus={onCloseAutoFocus}>
+                <Dialog.Content
+                  asChild
+                  onOpenAutoFocus={(event) => {
+                    // Controlled modals have no Dialog.Trigger for Radix to restore.
+                    returnFocusRef.current = document.activeElement instanceof HTMLElement
+                      ? document.activeElement
+                      : null
+                    onOpenAutoFocus?.(event)
+                  }}
+                  onCloseAutoFocus={(event) => {
+                    onCloseAutoFocus?.(event)
+                    if (!event.defaultPrevented && returnFocusRef.current?.isConnected) {
+                      event.preventDefault()
+                      returnFocusRef.current.focus({ preventScroll: true })
+                    }
+                    returnFocusRef.current = null
+                  }}
+                >
                   <motion.div
                     {...(sheet ? SHEET_MOTION : CARD_MOTION)}
                     className={cn(
