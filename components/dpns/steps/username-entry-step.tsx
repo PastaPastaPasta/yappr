@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useCallback } from 'react'
+import { WasmSdk } from '@dashevo/evo-sdk'
 import { Button } from '@/components/ui/button'
 import { UsernameInputRow } from '../username-input-row'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
@@ -77,6 +78,20 @@ export function UsernameEntryStep({ onCheckAvailability }: UsernameEntryStepProp
     updateUsernameLabel(id, label)
   }
 
+  // Use the WASM export from the same SDK initialized before isReady is set.
+  // DPNS also treats o/0 and i/l/1 as the same label.
+  const canonicalLabel = (label: string) => isSdkReady
+    ? WasmSdk.dpnsConvertToHomographSafe(label.trim())
+    : label.trim().toLowerCase()
+  const seenLabels = new Set<string>()
+  const duplicateLabels = new Set<string>()
+  for (const entry of usernames) {
+    const label = canonicalLabel(entry.label)
+    if (!label) continue
+    if (seenLabels.has(label)) duplicateLabels.add(label)
+    seenLabels.add(label)
+  }
+
   const hasValidUsernames = usernames.some(
     (u) => u.label.trim() && u.status !== 'invalid'
   )
@@ -87,7 +102,9 @@ export function UsernameEntryStep({ onCheckAvailability }: UsernameEntryStepProp
         {usernames.map((entry) => (
           <UsernameInputRow
             key={entry.id}
-            entry={entry}
+            entry={duplicateLabels.has(canonicalLabel(entry.label))
+              ? { ...entry, status: 'invalid', validationError: 'This username matches another entry' }
+              : entry}
             onChange={(label) => handleLabelChange(entry.id, label)}
             onRemove={() => removeUsername(entry.id)}
             canRemove={usernames.length > 1}
@@ -109,7 +126,7 @@ export function UsernameEntryStep({ onCheckAvailability }: UsernameEntryStepProp
 
       <Button
         onClick={onCheckAvailability}
-        disabled={!hasValidUsernames || !isSdkReady}
+        disabled={!hasValidUsernames || duplicateLabels.size > 0 || !isSdkReady}
         className="w-full"
       >
         Check Availability
