@@ -320,3 +320,41 @@ Latest evidence corrections and review status:
 - #469 rebased/current evidence: [cf0→7f259cfe](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/3bdc491901ce9e0219d40ef792df54c4d5f6f3be/yappr/pr-469-current).
 - #489/#490 profile evidence: [header](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/5068ae0d9084a7d7c2e38c68bd66f31e103aed0e/yappr/pr-profile-header-mobile) and [actual copied profile destination](https://github.com/PastaPastaPasta/dash-ui-artifacts/tree/5068ae0d9084a7d7c2e38c68bd66f31e103aed0e/yappr/pr-profile-share-base-path).
 - Open-PR approval/CI status changes during testing. Current-head pastaclaw approval remains a required handoff condition; the central monitor tracks reviewed commit hashes, feedback, mergeability and actual nonblocking test logs. The user will merge; the agent will not.
+
+## Newly confirmed follow-up issues (QA119–QA149)
+
+| ID | Confirmed behavior | Fix / status |
+|---|---|---|
+| QA119 | Blog management state and optional fields required persistence/error coverage. | Covered by #498 and the blog closure ledger. |
+| QA120 | Composer toolbar controls clipped at 320px. | #534, exact before/head visual evidence. |
+| QA121 | Login route dismissal failed under deployment paths/trailing slash. | #526, exact route and focus evidence. |
+| QA122 | Manage-products pagination stopped at the first 100 records. | #522, 100→104 traversal and retry evidence. |
+| QA123 | Explicit post language was not forwarded/reset consistently. | Stacked language fix pending publication on #487; live Spanish/English checks pass. |
+| QA124 | Visibility popover could extend beyond a short viewport. | #527, portal and available-height scrolling. |
+| QA125 | Payment URI duplicate check missed surrounding whitespace. | #532, trim-before-duplicate validation. |
+| QA126 | Payment-address removal controls lacked reliable direct tooltip/focus semantics. | #533, Radix trigger attached to native button. |
+| QA127 | Sender read receipts stayed stale until reload/new message. | #523, live recipient/sender receipt refresh. |
+| QA128 | Inventory sort used a different price than the displayed minimum variant. | #524, both sort directions/readback. |
+| QA129 | Filtered storefront pagination hid the continuation sentinel. | #531, filtered cursor/exhaustion behavior. |
+| QA130 | Profile preview Following/Followers links used an ignored tab query. | #546, exact 1280/390 before/head route evidence. |
+| QA131 | Profile hover preview actions were not keyboard accessible. | #528, ArrowDown entry and focus-loop evidence. |
+| QA132 | Retrying a partially delivered thread could lose reply linkage. | #539 stacked on #484; one explicit retry produced one linked reply, fresh readback. |
+| QA133 | Authenticated test traces could retain credentials by default. | #530, trace-off policy plus harmless regression proof. |
+| QA134 | Product form labels and controls were not programmatically named. | #529 restacked on #475; exact label/name evidence. |
+| QA135 | Shipping/status form labels were not associated with controls. | #537, exact label/name evidence. |
+| QA136 | Settings called unsupported push notifications and exposed an inert Messages switch. | #536, truthful in-app notification scope. |
+| QA137 | Reported production logo 404 was a static-server fixture artifact, not a product defect. | Withdrawn; no PR. |
+| QA138 | Thread composer formatting hints/counter overflowed narrow footers. | #541, 30 responsive states plus bounded counter checks. |
+| QA139 | Blog comment mutation failures showed misleading ownership text/raw transport errors. | #535, preserve row/draft and actionable errors. |
+| QA140 | Blog custom blocks and embedded viewer text had insufficient light-theme contrast. | #545, palette plus resolved BlockNote theme; measured light/dark evidence. |
+| QA141 | Embedded blog quote metadata/title had insufficient light-theme contrast. | #540, measured light/dark evidence. |
+| QA142 | Variant price and stock inputs clipped their editable content/spinner area. | Follow-up PR pending; exact 751a/8c0 geometry and keyboard evidence complete. |
+| QA143 | Comment timestamp and Delete action overlapped at 320px. | #543 stacked on #535; exact mobile evidence. |
+| QA144 | Cashtag-only posts were not indexed by the inline tag contract. | #538, ordinary post/Today/Top evidence and helper tests. |
+| QA145 | Merchant payment/shipping custom modals lacked dialog semantics/focus containment. | #542 stacked on #537; focus, Escape, dismiss and keyboard evidence. |
+| QA146 | Clearing stock appeared successful but persisted the old quantity after reload. | Follow-up PR pending; #026c7d22 service regression and exact UI repro complete. |
+| QA147 | A newly published own post did not appear on the author profile until reload. | Follow-up PR pending; canonical-fetch/merge/count fix in progress. |
+| QA148 | Merchant payment modal/action was obstructed at a 568×320 viewport. | Investigation reserved; only classify after visible-action repro and evidence. |
+| QA149 | Removing an active thread card bubbled activation and moved focus to no remaining editor. | Follow-up PR pending; #317c881f propagation fix in validation. |
+
+These follow-ups are individually tracked; open PR approval and CI status are monitored by exact head commit. Fixture-limited external-wallet GUI login, provider-backed image upload, and authority moderation remain unverified.
