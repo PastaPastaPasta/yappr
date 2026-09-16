@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Modal } from '@/components/ui/modal'
 import {
@@ -40,6 +40,7 @@ export function SavedAddressModal({
   onDelete,
   onSetDefault
 }: SavedAddressModalProps) {
+  const formId = useId()
   const [mode, setMode] = useState<ModalMode>('list')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -258,9 +259,10 @@ export function SavedAddressModal({
     <>
       <div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto">
         <div>
-          <label className="block text-sm font-medium mb-1">Label *</label>
+          <label htmlFor={`${formId}-label`} className="block text-sm font-medium mb-1">Label *</label>
           <input
             type="text"
+            id={`${formId}-label`}
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder="e.g., Home, Work"
@@ -273,9 +275,10 @@ export function SavedAddressModal({
 
           <div className="space-y-3">
             <div>
-              <label className="block text-sm font-medium mb-1">Full Name *</label>
+              <label htmlFor={`${formId}-name`} className="block text-sm font-medium mb-1">Full Name *</label>
               <input
                 type="text"
+                id={`${formId}-name`}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
@@ -283,9 +286,10 @@ export function SavedAddressModal({
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">Street Address *</label>
+              <label htmlFor={`${formId}-street`} className="block text-sm font-medium mb-1">Street Address *</label>
               <input
                 type="text"
+                id={`${formId}-street`}
                 value={street}
                 onChange={(e) => setStreet(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
@@ -294,18 +298,20 @@ export function SavedAddressModal({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium mb-1">City *</label>
+                <label htmlFor={`${formId}-city`} className="block text-sm font-medium mb-1">City *</label>
                 <input
                   type="text"
+                  id={`${formId}-city`}
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">State/Province</label>
+                <label htmlFor={`${formId}-state`} className="block text-sm font-medium mb-1">State/Province</label>
                 <input
                   type="text"
+                  id={`${formId}-state`}
                   value={state}
                   onChange={(e) => setState(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
@@ -315,17 +321,19 @@ export function SavedAddressModal({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium mb-1">Postal Code *</label>
+                <label htmlFor={`${formId}-postalCode`} className="block text-sm font-medium mb-1">Postal Code *</label>
                 <input
                   type="text"
+                  id={`${formId}-postalCode`}
                   value={postalCode}
                   onChange={(e) => setPostalCode(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Country *</label>
+                <label htmlFor={`${formId}-country`} className="block text-sm font-medium mb-1">Country *</label>
                 <select
+                  id={`${formId}-country`}
                   value={country}
                   onChange={(e) => setCountry(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
@@ -347,18 +355,20 @@ export function SavedAddressModal({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium mb-1">Email</label>
+              <label htmlFor={`${formId}-email`} className="block text-sm font-medium mb-1">Email</label>
               <input
                 type="email"
+                id={`${formId}-email`}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Phone</label>
+              <label htmlFor={`${formId}-phone`} className="block text-sm font-medium mb-1">Phone</label>
               <input
                 type="tel"
+                id={`${formId}-phone`}
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
