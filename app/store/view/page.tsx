@@ -575,11 +575,11 @@ function StoreDetailContent() {
               <div className="grid grid-cols-2 gap-4 p-4">
                 {items.length === 0 ? (
                   <div className="col-span-2 py-12 text-center">
-                    <p className="text-gray-500">No products listed yet</p>
+                    <p className="text-gray-500">{hasMoreItems ? 'No active products in the loaded items' : 'No products listed yet'}</p>
                   </div>
                 ) : filteredItems.length === 0 ? (
                   <div className="col-span-2 py-12 text-center">
-                    <p className="text-gray-500">No matching products</p>
+                    <p className="text-gray-500">{hasMoreItems ? 'No matching products in the loaded items' : 'No matching products'}</p>
                     <button
                       onClick={() => { setSearchQuery(''); setCategoryFilter('all') }}
                       className="mt-2 text-sm text-yappr-500 hover:text-yappr-600"
@@ -640,17 +640,17 @@ function StoreDetailContent() {
                         </motion.div>
                       )
                     })}
-                    {hasMoreItems && (
-                      <InfiniteScrollSentinel
-                        sentinelRef={itemsSentinelRef}
-                        isLoading={isLoadingMore}
-                        isSuspended={itemsAutoLoadSuspended}
-                        onLoadMore={loadMoreItemsManually}
-                        label="Load More Products"
-                        className="col-span-2"
-                      />
-                    )}
                   </>
+                )}
+                {hasMoreItems && (
+                  <InfiniteScrollSentinel
+                    sentinelRef={itemsSentinelRef}
+                    isLoading={isLoadingMore}
+                    isSuspended={itemsAutoLoadSuspended}
+                    onLoadMore={loadMoreItemsManually}
+                    label="Load More Products"
+                    className="col-span-2"
+                  />
                 )}
               </div>
             </>
