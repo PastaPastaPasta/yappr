@@ -162,10 +162,36 @@ function renderBlock(block: EmbedBlock, options?: EmbedRenderOptions): string {
   }
 
   if (type === 'codeBlock') {
-    const code = escapeHtml(inlineToText(block.content))
+    const code = escapeHtml(typeof props?.code === 'string' ? props.code : inlineToText(block.content))
     const language = ensureString(props?.language)
     const className = language ? ` class="language-${escapeHtml(language)}"` : ''
     return `<pre><code${className}>${code}</code></pre>`
+  }
+
+  if (type === 'simpleTable') {
+    const rows = Math.floor(Math.min(12, Math.max(1, Number(props?.rows) || 3)))
+    const cols = Math.floor(Math.min(8, Math.max(1, Number(props?.cols) || 3)))
+    let data: unknown = []
+    try {
+      data = JSON.parse(ensureString(props?.data))
+    } catch {
+      // Empty or invalid saved data displays the same blank cells as the reader.
+    }
+    const cells = Array.from({ length: rows }, (_, rowIndex) => {
+      const row: unknown = Array.isArray(data) ? data[rowIndex] : null
+      const columns = Array.from({ length: cols }, (_, colIndex) =>
+        `<td>${escapeHtml(Array.isArray(row) ? ensureString(row[colIndex]) : '')}</td>`
+      )
+      return `<tr>${columns.join('')}</tr>`
+    })
+    return `<div class="yappr-embed-table"><table><tbody>${cells.join('')}</tbody></table></div>`
+  }
+
+  if (type === 'video' || type === 'videoEmbed') {
+    const url = sanitizeUrl(ensureString(props?.url), options)
+    if (!url) return ''
+    const label = ensureString(props?.caption) || ensureString(props?.name) || 'Watch video'
+    return `<p><a href="${escapeHtml(url)}" target="_top" rel="noopener noreferrer">${escapeHtml(label)}</a></p>`
   }
 
   if (type === 'quote' || type === 'blockquote') {

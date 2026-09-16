@@ -128,6 +128,24 @@ body {
   padding: 0;
 }
 
+.yappr-embed-table {
+  margin: 0 0 1rem;
+  overflow-x: auto;
+}
+
+.yappr-embed-table table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.yappr-embed-table td {
+  border: 1px solid var(--yappr-border);
+  min-width: 3rem;
+  padding: 8px;
+  vertical-align: top;
+  white-space: pre-wrap;
+}
+
 .yappr-embed-content blockquote {
   border-left: 3px solid var(--yappr-border);
   color: var(--yappr-quote);
