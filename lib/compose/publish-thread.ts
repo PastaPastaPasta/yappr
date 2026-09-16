@@ -113,14 +113,15 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
 
     // The direct target is what was clicked (i === 0) or the previous item in
     // this thread; its owner is what notification queries key on.
-    const isReply = (i === 0 && !!replyingTo) || (i > 0 && !!previousPostId)
     const directTargetId = i === 0 && replyingTo ? replyingTo.id : previousPostId
+    // The first remaining item in a retry still follows the confirmed prefix.
+    const isReply = !!directTargetId
     const parentOwnerId = i === 0 && replyingTo ? replyingTo.author.id : previousPostId ? authorId : undefined
     const linkage = threadRootId && directTargetId ? replyLinkageTo({ id: directTargetId, targetKind: 'reply', rootPostId: threadRootId }) : null
 
     // Naming a document this session created but never saw confirmed would be
     // rejected by consensus and charged for; wait for it first.
-    const referenced = i === 0 ? replyingTo?.id ?? quotingPost?.id : directTargetId ?? undefined
+    const referenced = directTargetId ?? (i === 0 ? quotingPost?.id : undefined)
     if (isUnconfirmed(referenced)) {
       progress(i === 0 ? 'Waiting for the post you are referencing to confirm...' : 'Waiting for the previous post to confirm...')
       if (!(await settleUnconfirmed(referenced))) {
