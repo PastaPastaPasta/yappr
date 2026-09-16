@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useId } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
@@ -26,6 +26,7 @@ import type { VariantAxis, VariantCombination, ItemVariants } from '@/lib/types'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 
 function AddItemPage() {
+  const formId = useId()
   const router = useRouter()
   const searchParams = useSearchParams()
   const storeId = searchParams.get('storeId')
@@ -272,6 +273,7 @@ function AddItemPage() {
           <PageHeader>
             <div className="flex items-center gap-4 p-4">
               <button
+                aria-label="Back"
                 onClick={() => router.back()}
                 className="p-2 -ml-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
               >
@@ -301,11 +303,12 @@ function AddItemPage() {
 
             {/* Title */}
             <div>
-              <label className="block text-sm font-medium mb-2">
+              <label htmlFor={`${formId}-title`} className="block text-sm font-medium mb-2">
                 Product Title <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
+                id={`${formId}-title`}
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Enter product title"
@@ -317,8 +320,9 @@ function AddItemPage() {
 
             {/* Description */}
             <div>
-              <label className="block text-sm font-medium mb-2">Description</label>
+              <label htmlFor={`${formId}-description`} className="block text-sm font-medium mb-2">Description</label>
               <textarea
+                id={`${formId}-description`}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Describe your product"
@@ -330,7 +334,7 @@ function AddItemPage() {
 
             {/* Images */}
             <div>
-              <label className="block text-sm font-medium mb-2">Product Images (max 4)</label>
+              <p className="block text-sm font-medium mb-2">Product Images (max 4)</p>
 
               {imageUrls.length > 0 && (
                 <div className="grid grid-cols-4 gap-2 mb-3">
@@ -339,6 +343,7 @@ function AddItemPage() {
                       <IpfsImage src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover" />
                       <button
                         type="button"
+                        aria-label={`Remove product image ${index + 1}`}
                         onClick={() => handleRemoveImage(index)}
                         className="absolute top-1 right-1 p-1 bg-black/50 rounded-full hover:bg-black/70 transition-colors"
                       >
@@ -369,6 +374,7 @@ function AddItemPage() {
                   <div className="flex gap-2 mt-2">
                     <input
                       type="url"
+                      aria-label="Product image URL"
                       value={newImageUrl}
                       onChange={(e) => setNewImageUrl(e.target.value)}
                       placeholder="Enter image URL"
@@ -377,6 +383,7 @@ function AddItemPage() {
                     <Button
                       type="button"
                       variant="outline"
+                      aria-label="Add product image URL"
                       onClick={handleAddImage}
                       disabled={!newImageUrl}
                     >
@@ -389,9 +396,10 @@ function AddItemPage() {
 
             {/* Category */}
             <div>
-              <label className="block text-sm font-medium mb-2">Category</label>
+              <label htmlFor={`${formId}-category`} className="block text-sm font-medium mb-2">Category</label>
               <input
                 type="text"
+                id={`${formId}-category`}
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
                 placeholder="e.g., Electronics, Clothing"
@@ -423,6 +431,7 @@ function AddItemPage() {
                       <span className="font-medium">{axis.name}</span>
                       <button
                         type="button"
+                        aria-label={`Remove variant option ${axis.name}`}
                         onClick={() => handleRemoveAxis(index)}
                         className="p-1 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30 rounded"
                       >
@@ -448,6 +457,7 @@ function AddItemPage() {
                     <div className="grid grid-cols-2 gap-2 mb-2">
                       <input
                         type="text"
+                        aria-label="Variant option name"
                         value={newAxisName}
                         onChange={(e) => setNewAxisName(e.target.value)}
                         placeholder="Option name (e.g., Size)"
@@ -455,6 +465,7 @@ function AddItemPage() {
                       />
                       <input
                         type="text"
+                        aria-label="Variant option values"
                         value={newAxisOptions}
                         onChange={(e) => setNewAxisOptions(e.target.value)}
                         placeholder="Values (e.g., S, M, L)"
@@ -477,9 +488,9 @@ function AddItemPage() {
                 {/* Combinations Table */}
                 {combinations.length > 0 && (
                   <div>
-                    <label className="block text-sm font-medium mb-2">
+                    <p className="block text-sm font-medium mb-2">
                       Variant Pricing & Stock
-                    </label>
+                    </p>
                     <div className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden">
                       <table className="w-full text-sm">
                         <thead className="bg-gray-50 dark:bg-gray-900">
@@ -496,6 +507,7 @@ function AddItemPage() {
                               <td className="px-3 py-2">
                                 <input
                                   type="number"
+                                  aria-label={`Price for ${key.replace(/\|/g, ' / ')} (${currency})`}
                                   value={combinationPrices[key] || ''}
                                   onChange={(e) => setCombinationPrices({ ...combinationPrices, [key]: e.target.value })}
                                   placeholder="0.00"
@@ -507,6 +519,7 @@ function AddItemPage() {
                               <td className="px-3 py-2">
                                 <input
                                   type="number"
+                                  aria-label={`Stock for ${key.replace(/\|/g, ' / ')}`}
                                   value={combinationStocks[key] || ''}
                                   onChange={(e) => setCombinationStocks({ ...combinationStocks, [key]: e.target.value })}
                                   placeholder="Unlimited"
@@ -527,9 +540,10 @@ function AddItemPage() {
               <>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium mb-2">Price ({currency})</label>
+                    <label htmlFor={`${formId}-price`} className="block text-sm font-medium mb-2">Price ({currency})</label>
                     <input
                       type="number"
+                      id={`${formId}-price`}
                       value={basePrice}
                       onChange={(e) => setBasePrice(e.target.value)}
                       placeholder="0.00"
@@ -539,8 +553,9 @@ function AddItemPage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2">Currency</label>
+                    <label htmlFor={`${formId}-currency`} className="block text-sm font-medium mb-2">Currency</label>
                     <select
+                      id={`${formId}-currency`}
                       value={currency}
                       onChange={(e) => setCurrency(e.target.value)}
                       className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
@@ -555,9 +570,10 @@ function AddItemPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-2">Stock Quantity</label>
+                  <label htmlFor={`${formId}-stock`} className="block text-sm font-medium mb-2">Stock Quantity</label>
                   <input
                     type="number"
+                    id={`${formId}-stock`}
                     value={stockQuantity}
                     onChange={(e) => setStockQuantity(e.target.value)}
                     placeholder="Unlimited"
@@ -571,8 +587,9 @@ function AddItemPage() {
             {/* Currency selector when variants enabled */}
             {hasVariants && (
               <div>
-                <label className="block text-sm font-medium mb-2">Currency</label>
+                <label htmlFor={`${formId}-currency`} className="block text-sm font-medium mb-2">Currency</label>
                 <select
+                  id={`${formId}-currency`}
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value)}
                   className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
