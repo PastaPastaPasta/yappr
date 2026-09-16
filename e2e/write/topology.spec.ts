@@ -28,7 +28,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Locator, Page } from '@playwright/test'
 import { appUrl } from '../fixtures/app'
-import { expect, hasSeedPhrase, NO_SEED_REASON, test } from '../fixtures/auth'
+import { expect, hasSeedPhrase, NO_SEED_REASON, seedContext, test } from '../fixtures/auth'
 import { expectedSocialContractId, expectedTopology } from '../fixtures/contracts'
 import { reloadUntilVisible } from '../fixtures/eventual'
 import { uniqueTag } from '../fixtures/run-tag'
@@ -733,8 +733,9 @@ test.describe('v6 daily-windowed rankings on the devnet contract', () => {
     hashtag = `v6${runTag.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 61)
 
     const context = await browser.newContext()
-    const page = await context.newPage()
     try {
+      await seedContext(context, bot)
+      const page = await context.newPage()
       await page.goto(appUrl('/feed/'))
       await page.getByTestId('open-compose-btn').click()
       const composeDialog = page.getByRole('dialog', { name: 'Create a new post' })

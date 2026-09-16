@@ -11,7 +11,7 @@
  * — the same derivation the provisioning scripts used, so the WIFs match the
  * public keys registered on the bot identities. Nothing here ever logs a WIF.
  */
-import { test as base, expect } from '@playwright/test'
+import { test as base, expect, type BrowserContext } from '@playwright/test'
 import { scopedKey } from './app'
 
 export type BotIdentity = {
@@ -65,40 +65,45 @@ export async function resolveBotIdentity(): Promise<BotIdentity> {
   return cachedIdentity
 }
 
+/** Seed manually-created hook contexts with the same session as the page fixture. */
+export async function seedContext(context: BrowserContext, bot: BotIdentity): Promise<void> {
+  // Runs before any page script on every navigation, so the private key stays
+  // seeded for the whole run — if it ever went missing mid-session the app
+  // would drop the session and pop the login modal.
+  await context.addInitScript(
+    ({ sessionKey, privateKeyKey, skipDpnsKey, identityId, wif }) => {
+      if (!window.localStorage.getItem(sessionKey)) {
+        window.localStorage.setItem(
+          sessionKey,
+          JSON.stringify({
+            user: { identityId, balance: 0, publicKeys: [] },
+            timestamp: Date.now(),
+          })
+        )
+      }
+      // The secure store JSON-encodes its values, so the WIF is double-quoted.
+      window.localStorage.setItem(privateKeyKey, JSON.stringify(wif))
+      // The bots own DPNS names, so this is belt-and-braces against the
+      // `withAuth` DPNS gate redirecting to /dpns/register mid-test.
+      window.sessionStorage.setItem(skipDpnsKey, 'true')
+    },
+    {
+      sessionKey: scopedKey('yappr_session'),
+      privateKeyKey: scopedKey(`yappr_secure_pk_${bot.identityId}`),
+      skipDpnsKey: scopedKey('yappr_skip_dpns'),
+      identityId: bot.identityId,
+      wif: bot.wif,
+    }
+  )
+}
+
 export const test = base.extend<{ bot: BotIdentity }>({
   bot: async ({}, use) => {
     await use(await resolveBotIdentity())
   },
 
   context: async ({ context, bot }, use) => {
-    // Runs before any page script on every navigation, so the private key stays
-    // seeded for the whole run — if it ever went missing mid-session the app
-    // would drop the session and pop the login modal.
-    await context.addInitScript(
-      ({ sessionKey, privateKeyKey, skipDpnsKey, identityId, wif }) => {
-        if (!window.localStorage.getItem(sessionKey)) {
-          window.localStorage.setItem(
-            sessionKey,
-            JSON.stringify({
-              user: { identityId, balance: 0, publicKeys: [] },
-              timestamp: Date.now(),
-            })
-          )
-        }
-        // The secure store JSON-encodes its values, so the WIF is double-quoted.
-        window.localStorage.setItem(privateKeyKey, JSON.stringify(wif))
-        // The bots own DPNS names, so this is belt-and-braces against the
-        // `withAuth` DPNS gate redirecting to /dpns/register mid-test.
-        window.sessionStorage.setItem(skipDpnsKey, 'true')
-      },
-      {
-        sessionKey: scopedKey('yappr_session'),
-        privateKeyKey: scopedKey(`yappr_secure_pk_${bot.identityId}`),
-        skipDpnsKey: scopedKey('yappr_skip_dpns'),
-        identityId: bot.identityId,
-        wif: bot.wif,
-      }
-    )
+    await seedContext(context, bot)
 
     await use(context)
   },
