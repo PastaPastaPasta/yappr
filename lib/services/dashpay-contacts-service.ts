@@ -101,7 +101,7 @@ class DashPayContactsService {
       return documents.map(doc => this.transformDocument(doc));
     } catch (error) {
       logger.error('DashPayContactsService: Error fetching outgoing requests:', error);
-      return [];
+      throw error;
     }
   }
 
@@ -129,7 +129,7 @@ class DashPayContactsService {
       return documents.map(doc => this.transformDocument(doc));
     } catch (error) {
       logger.error('DashPayContactsService: Error fetching incoming requests:', error);
-      return [];
+      throw error;
     }
   }
 
@@ -240,8 +240,8 @@ class DashPayContactsService {
       const contactDateMap = new Map(mutualContacts.map(c => [c.identityId, c.contactDate]));
 
       // Get current Yappr following list
-      const followingIds = await followService.getFollowingIds(userId);
-      const followingSet = new Set(followingIds);
+      const following = await followService.getFollowing(userId, { throwOnError: true });
+      const followingSet = new Set(following.map(follow => follow.followingId));
 
       // Filter to unfollowed contacts
       const unfollowedIds = mutualContactIds.filter(id => !followingSet.has(id));

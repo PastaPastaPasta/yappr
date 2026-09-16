@@ -44,7 +44,8 @@ export function DashPayContactsModal() {
       const result = await dashPayContactsService.getUnfollowedContacts(user.identityId)
       setReady(result)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load contacts')
+      logger.error('Failed to load Dash Pay contacts:', err)
+      setError('Unable to load Dash Pay contacts. Check your connection and try again.')
     }
   }, [user, setLoading, setReady, setError])
 
