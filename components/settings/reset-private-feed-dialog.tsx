@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect } from 'react'
+import { useId, useState, useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { useAuth } from '@/contexts/auth-context'
@@ -32,6 +32,8 @@ export function ResetPrivateFeedDialog({
   onOpenChange,
   onSuccess,
 }: ResetPrivateFeedDialogProps) {
+  const encryptionKeyId = useId()
+  const confirmTextId = useId()
   const { user } = useAuth()
 
   // Stats for confirmation
@@ -194,10 +196,11 @@ export function ResetPrivateFeedDialog({
 
                     {/* Encryption key input */}
                     <div className="space-y-2 mb-4">
-                      <label className="text-sm font-medium">
+                      <label htmlFor={encryptionKeyId} className="text-sm font-medium">
                         Enter your encryption private key
                       </label>
                       <Input
+                        id={encryptionKeyId}
                         type="password"
                         placeholder="WIF (cXyz...) or hex (64 chars)"
                         value={encryptionKeyInput}
@@ -212,10 +215,11 @@ export function ResetPrivateFeedDialog({
 
                     {/* Confirm text input */}
                     <div className="space-y-2 mb-4">
-                      <label className="text-sm font-medium">
+                      <label htmlFor={confirmTextId} className="text-sm font-medium">
                         Type <span className="font-bold text-red-600 dark:text-red-400">RESET</span> to confirm:
                       </label>
                       <Input
+                        id={confirmTextId}
                         type="text"
                         placeholder="Type RESET"
                         value={confirmText}

@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
+import { useId, useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -29,6 +29,7 @@ interface PrivateFeedSettingsProps {
  * Implements PRD §4.1 - Enable Private Feed UI
  */
 export function PrivateFeedSettings({ openReset = false, onResetOpened }: PrivateFeedSettingsProps) {
+  const encryptionKeyId = useId()
   const { user } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const refreshKey = usePrivateFeedRefreshStore((state) => state.refreshKey)
@@ -448,10 +449,11 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">
+                  <label htmlFor={encryptionKeyId} className="text-sm font-medium">
                     Encryption Private Key
                   </label>
                   <Input
+                    id={encryptionKeyId}
                     type="password"
                     placeholder="WIF (cXyz...) or hex (64 chars)"
                     value={encryptionKeyInput}
