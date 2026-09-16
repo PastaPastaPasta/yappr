@@ -26,7 +26,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
   async bookmarkPost(postId: string, ownerId: string): Promise<boolean> {
     try {
       // Check if already bookmarked
-      const existing = await this.getBookmark(postId, ownerId);
+      const existing = await this.getBookmark(postId, ownerId, { throwOnError: true });
       if (existing) {
         logger.debug('Post already bookmarked');
         return true;
@@ -52,7 +52,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
    */
   async removeBookmark(postId: string, ownerId: string): Promise<boolean> {
     try {
-      const bookmark = await this.getBookmark(postId, ownerId);
+      const bookmark = await this.getBookmark(postId, ownerId, { throwOnError: true });
       if (!bookmark) {
         logger.debug('Post not bookmarked');
         return true;
@@ -84,7 +84,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
   /**
    * Get bookmark by post and owner
    */
-  async getBookmark(postId: string, ownerId: string): Promise<BookmarkDocument | null> {
+  async getBookmark(postId: string, ownerId: string, options: { throwOnError?: boolean } = {}): Promise<BookmarkDocument | null> {
     try {
       const result = await this.query({
         where: [
@@ -97,6 +97,7 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
       return result.documents.length > 0 ? result.documents[0] : null;
     } catch (error) {
       logger.error('Error getting bookmark:', error);
+      if (options.throwOnError) throw error;
       return null;
     }
   }

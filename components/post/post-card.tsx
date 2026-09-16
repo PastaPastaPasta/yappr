@@ -72,6 +72,8 @@ interface PostCardProps {
   parentPostLoading?: boolean
   /** Called after a successful delete so a list can drop the card. */
   onDelete?: (postId: string) => void
+  /** Let a saved-post list coordinate removal with its other bookmark mutations. */
+  bookmarkAction?: { active: boolean; loading: boolean; onClick: () => void }
 }
 
 /**
@@ -95,6 +97,7 @@ export function PostCard({
   parentPost,
   parentPostLoading = false,
   onDelete,
+  bookmarkAction,
 }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
@@ -440,7 +443,7 @@ export function PostCard({
             reply={{ count: stats.replies, enabled: canReplyToPrivate, reason: cantReplyReason, onClick: handleReply }}
             repost={{ count: totalReposts, active: engagement.reposted, loading: engagement.repostLoading, allowed: repostable, onClick: handleRepost }}
             like={{ count: engagement.likes, active: engagement.liked, loading: engagement.likeLoading, onClick: handleLike }}
-            bookmark={bookmarkable ? { active: engagement.bookmarked, loading: engagement.bookmarkLoading, onClick: handleBookmark } : undefined}
+            bookmark={bookmarkable ? bookmarkAction ?? { active: engagement.bookmarked, loading: engagement.bookmarkLoading, onClick: handleBookmark } : undefined}
             onQuote={handleQuote}
             onTip={handleTip}
             onShare={handleShare}
