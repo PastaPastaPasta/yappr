@@ -9,6 +9,7 @@ import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { useSettingsStore } from '@/lib/store'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
 import { Spinner } from '@/components/ui/spinner'
+import { Button } from '@/components/ui/button'
 import { PostCard } from '@/components/post/post-card'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
@@ -33,7 +34,15 @@ interface ProfileTabsProps {
   viewerId?: string
   getPostEnrichment: (post: Post) => React.ComponentProps<typeof PostCard>['enrichment']
   posts: Post[]
-  replies: PostListState & { parents: Map<string, Post>; parentsLoading: boolean }
+  replies: PostListState & {
+    parents: Map<string, Post>
+    parentsLoading: boolean
+    loadingMore: boolean
+    hasMore: boolean
+    error: string | null
+    onLoadMore: () => void
+    onRetry: () => void
+  }
   top: PostListState & { window: RankingWindow; onWindowChange: (w: RankingWindow) => void }
   mentions: PostListState
   blogs: { blogs: ProfileBlog[]; loading: boolean }
@@ -77,7 +86,13 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
     }
     const list = lists[tab]
     if (list.loading) return <Loading text={list.loadingText} />
-    if (list.items.length === 0) {
+    const replyError = tab === 'replies' && replies.error && (
+      <div role="alert" className="p-4 text-center text-sm">
+        <p>{replies.error}</p>
+        <Button variant="outline" size="sm" className="mt-2" onClick={replies.onRetry} disabled={replies.loadingMore}>Try Again</Button>
+      </div>
+    )
+    if (list.items.length === 0 && !replyError) {
       return (
         <div className="p-8 text-center text-gray-500" data-testid={tab === 'top' ? 'profile-top-empty' : undefined}>
           <p>{list.empty}</p>
@@ -95,7 +110,14 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
             parentPostLoading={tab === 'replies' && replies.parentsLoading}
           />
         ))}
-        {/* Only the Posts tab paginates. */}
+        {replyError}
+        {tab === 'replies' && replies.hasMore && !replies.error && (
+          <div className="p-4 text-center border-t border-gray-200 dark:border-gray-800">
+            <Button variant="outline" onClick={replies.onLoadMore} disabled={replies.loadingMore}>
+              {replies.loadingMore ? 'Loading replies...' : 'Load more replies'}
+            </Button>
+          </div>
+        )}
         {tab === 'posts' && pagination.hasMore && (
           <InfiniteScrollSentinel
             sentinelRef={pagination.sentinelRef}

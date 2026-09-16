@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { logger } from '@/lib/logger'
 import type { Post } from '@/lib/types'
-import { fetchReplyParents } from '@/lib/feed/resolve-reply-parents'
-import { postService, replyToPost } from '@/lib/services/post-service'
+import { postService } from '@/lib/services/post-service'
 import { mentionService } from '@/lib/services/mention-service'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
 import type { ProfileTab } from '@/components/profile/profile-tabs'
+import { useProfileReplies } from '@/hooks/use-profile-replies'
 
 /**
  * The lazily loaded profile tabs: replies, top posts and mentions each fetch
@@ -21,11 +21,7 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
   const [mentionsLoading, setMentionsLoading] = useState(false)
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
 
-  const [replies, setReplies] = useState<Post[]>([])
-  const [repliesLoading, setRepliesLoading] = useState(false)
-  const [repliesLoaded, setRepliesLoaded] = useState(false)
-  const [replyParents, setReplyParents] = useState<Map<string, Post>>(new Map())
-  const [replyParentsLoading, setReplyParentsLoading] = useState(false)
+  const replies = useProfileReplies(userId, enrichProgressively)
 
   const [topPosts, setTopPosts] = useState<Post[]>([])
   const [topLoading, setTopLoading] = useState(false)
@@ -58,35 +54,6 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
     }
   }, [userId, mentionsLoaded])
 
-  const loadReplies = useCallback(async () => {
-    if (!userId || repliesLoaded) return
-    setRepliesLoading(true)
-    try {
-      const { replyService } = await import('@/lib/services/reply-service')
-      const result = await replyService.getUserReplies(userId, { limit: 50 })
-      if (result.documents.length === 0) {
-        setReplies([])
-        return
-      }
-      const replyPosts = result.documents.map(replyToPost)
-      setReplies(replyPosts)
-      enrichProgressively(replyPosts)
-      // Resolve what each reply answers in the background; the cards render
-      // immediately and fill their context in, the way enrichment does.
-      setReplyParentsLoading(true)
-      fetchReplyParents(replyPosts)
-        .then(setReplyParents)
-        .catch((err) => logger.error('Failed to load reply parents:', err))
-        .finally(() => setReplyParentsLoading(false))
-    } catch (error) {
-      logger.error('Failed to load user replies:', error)
-      setReplies([])
-    } finally {
-      setRepliesLoading(false)
-      setRepliesLoaded(true)
-    }
-  }, [userId, repliesLoaded, enrichProgressively])
-
   /**
    * One proved server-side ranked query on `like.byAuthorPost` pinned to this
    * profile; the order and counts come from the count trees, not from a
@@ -114,18 +81,14 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
 
   // Each loader is a no-op once its list is loaded, so this may fire freely.
   useEffect(() => {
-    const load = activeTab === 'mentions' ? loadMentions : activeTab === 'top' ? loadTop : activeTab === 'replies' ? loadReplies : null
+    const load = activeTab === 'mentions' ? loadMentions : activeTab === 'top' ? loadTop : activeTab === 'replies' && !replies.loaded ? replies.load : null
     load?.().catch((err) => logger.error(`Failed to load ${activeTab}:`, err))
-  }, [activeTab, loadMentions, loadTop, loadReplies])
+  }, [activeTab, loadMentions, loadTop, replies.loaded, replies.load])
 
   // A new profile starts on Posts with nothing loaded.
   useEffect(() => {
     setMentions([])
     setMentionsLoaded(false)
-    setReplies([])
-    setRepliesLoaded(false)
-    setReplyParents(new Map())
-    setReplyParentsLoading(false)
     setTopPosts([])
     setTopLoaded(false)
     setActiveTab('posts')
@@ -135,7 +98,7 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
     activeTab,
     setActiveTab,
     mentions: { posts: mentions, loading: mentionsLoading },
-    replies: { posts: replies, loading: repliesLoading, parents: replyParents, parentsLoading: replyParentsLoading },
+    replies,
     top: { posts: topPosts, loading: topLoading, window: rankingWindow, onWindowChange: setRankingWindow },
   }
 }
