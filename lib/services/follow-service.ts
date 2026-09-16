@@ -129,7 +129,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
    * Get followers of a user.
    * Paginates through all results to return complete list.
    */
-  async getFollowers(userId: string): Promise<FollowDocument[]> {
+  async getFollowers(userId: string, options: { throwOnError?: boolean } = {}): Promise<FollowDocument[]> {
     try {
       const sdk = await getEvoSdk();
 
@@ -151,6 +151,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
       return documents;
     } catch (error) {
       logger.error('Error getting followers:', error);
+      if (options.throwOnError) throw error;
       return [];
     }
   }
@@ -159,7 +160,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
    * Get users that a user follows.
    * Paginates through all results to return complete list.
    */
-  async getFollowing(userId: string): Promise<FollowDocument[]> {
+  async getFollowing(userId: string, options: { throwOnError?: boolean } = {}): Promise<FollowDocument[]> {
     try {
       const sdk = await getEvoSdk();
 
@@ -181,6 +182,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
       return documents;
     } catch (error) {
       logger.error('Error getting following:', error);
+      if (options.throwOnError) throw error;
       return [];
     }
   }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { MagnifyingGlassIcon, XMarkIcon, ArrowPathIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
@@ -141,6 +141,8 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   const { data, loading, error, setLoading, setError, setData } = useAsyncState<ConnectionUser[]>(null)
   const [actionInProgress, setActionInProgress] = useState<Set<string>>(new Set())
   const [targetUserName, setTargetUserName] = useState<string | null>(null)
+  const loadGeneration = useRef(0)
+  const invalidateLoad = useCallback(() => { loadGeneration.current++ }, [])
 
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<ConnectionUser[]>([])
@@ -167,6 +169,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   }, [targetUserId, viewerId])
 
   const load = useCallback(async (forceRefresh = false) => {
+    const generation = ++loadGeneration.current
     setLoading(true)
     setError(null)
     try {
@@ -186,8 +189,9 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
       }
 
       const follows = kind === 'following'
-        ? await followService.getFollowing(userIdToLoad)
-        : await followService.getFollowers(userIdToLoad)
+        ? await followService.getFollowing(userIdToLoad, { throwOnError: true })
+        : await followService.getFollowers(userIdToLoad, { throwOnError: true })
+      if (generation !== loadGeneration.current) return
       const ids = follows.map((f) => (kind === 'following' ? f.followingId : f.$ownerId)).filter(Boolean)
       if (ids.length === 0) {
         setData([])
@@ -207,19 +211,24 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
       const users = enrichment.map((entry) =>
         toUser(entry, usernamesById.get(entry.id) ?? [], kind === 'following' || (followStatus.get(entry.id) ?? false))
       )
+      if (generation !== loadGeneration.current) return
       cacheManager.set(kind, cacheKey, users)
       setData(users)
     } catch (error) {
       logger.error(`${kind}: failed to load list:`, error)
-      setError(error instanceof Error ? error.message : 'Unknown error')
+      if (generation === loadGeneration.current) {
+        setError(`Could not load ${kind}. Check your connection and try again.`)
+      }
     } finally {
-      setLoading(false)
+      if (generation === loadGeneration.current) setLoading(false)
     }
   }, [kind, isOwnProfile, setLoading, setError, setData, viewerId, targetUserId])
 
   useEffect(() => {
+    setData(null)
     load().catch((error) => logger.error(`Failed to load ${kind}:`, error))
-  }, [load, kind])
+    return invalidateLoad
+  }, [load, kind, setData, invalidateLoad])
 
   const withProgress = async (userId: string, run: () => Promise<void>) => {
     setActionInProgress((prev) => new Set(prev).add(userId))
@@ -334,9 +343,9 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
 
   const subtitle = searchQuery
     ? plural(searchResults.length, 'search result', 'search results')
-    : loading
+    : loading && data === null
       ? 'Loading...'
-      : plural(data?.length ?? 0, ...copy.noun)
+      : data === null ? 'Unavailable' : plural(data.length, ...copy.noun)
 
   const renderRow = (u: ConnectionUser) => (
     <ConnectionRow
@@ -395,7 +404,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
                   </div>
                 </div>
                 {!searchQuery && (
-                  <Button variant="ghost" size="sm" onClick={() => load(true)} disabled={loading}>
+                  <Button variant="ghost" size="sm" onClick={() => load(true)} disabled={loading} aria-label={`Refresh ${kind}`}>
                     <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                   </Button>
                 )}
@@ -445,17 +454,27 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
                 </div>
               ) : null
             ) : (
+              <>
+              {error && data !== null && (
+                <div role="alert" className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 text-sm">
+                  <p>{error} Showing the last loaded list.</p>
+                  <Button variant="outline" size="sm" className="mt-2" onClick={() => load(true)} disabled={loading}>
+                    Try Again
+                  </Button>
+                </div>
+              )}
               <LoadingState
-                loading={loading || data === null}
-                error={error}
+                loading={loading && data === null}
+                error={data === null ? error : null}
                 isEmpty={!loading && data !== null && data.length === 0}
-                onRetry={load}
+                onRetry={() => load(true)}
                 loadingText={copy.loadingText}
                 emptyText={copy.emptyText}
                 emptyDescription={copy.emptyDescription}
               >
                 <div>{data?.map(renderRow)}</div>
               </LoadingState>
+              </>
             )}
           </ErrorBoundary>
     </PageShell>
