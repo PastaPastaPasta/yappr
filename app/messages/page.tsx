@@ -10,8 +10,6 @@ import { motion } from 'framer-motion'
 import {
   MagnifyingGlassIcon,
   PaperAirplaneIcon,
-  InformationCircleIcon,
-  EllipsisHorizontalIcon,
   PlusIcon
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
@@ -866,14 +864,6 @@ function MessagesPage() {
                   </Link>
                 </div>
 
-                <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-                  <button className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full">
-                    <InformationCircleIcon className="h-5 w-5" />
-                  </button>
-                  <button className="hidden sm:block p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full">
-                    <EllipsisHorizontalIcon className="h-5 w-5" />
-                  </button>
-                </div>
               </div>
             </header>
 
