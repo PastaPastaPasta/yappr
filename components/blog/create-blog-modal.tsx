@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
@@ -25,6 +25,7 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
   const [avatar, setAvatar] = useState('')
   const [headerImage, setHeaderImage] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
 
   const handleSubmit = async () => {
     if (!user?.identityId || !name.trim()) return
@@ -56,7 +57,21 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[95vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-5">
+        <Dialog.Content
+          className="fixed left-1/2 top-1/2 z-50 w-[95vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-5"
+          onOpenAutoFocus={() => {
+            returnFocusRef.current = document.activeElement instanceof HTMLElement
+              ? document.activeElement
+              : null
+          }}
+          onCloseAutoFocus={(event) => {
+            if (returnFocusRef.current?.isConnected) {
+              event.preventDefault()
+              returnFocusRef.current.focus({ preventScroll: true })
+            }
+            returnFocusRef.current = null
+          }}
+        >
           <div className="mb-4 flex items-center justify-between">
             <Dialog.Title className="text-lg font-semibold">Create Blog</Dialog.Title>
             <Dialog.Close asChild>
