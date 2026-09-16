@@ -599,8 +599,16 @@ function StoreDetailContent() {
                           initial={skipAnimations ? false : { opacity: 0, y: 20 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={skipAnimations ? { duration: 0 } : { delay: Math.min(index, 20) * 0.05 }}
+                          role="button"
+                          tabIndex={0}
                           onClick={() => handleItemClick(item.id)}
-                          className="cursor-pointer group"
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              handleItemClick(item.id)
+                            }
+                          }}
+                          className="cursor-pointer group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-black"
                         >
                           <div className="relative aspect-square bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden">
                             {item.imageUrls?.[0] ? (
