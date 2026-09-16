@@ -128,7 +128,7 @@ export function VisibilitySelector({
           sideOffset={4}
           collisionPadding={16}
           onClick={(e) => e.stopPropagation()}
-          className="w-64 bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl z-50 overflow-hidden"
+          className="w-64 max-h-[var(--radix-popover-content-available-height)] bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl z-50 overflow-y-auto"
         >
           {visibilityOptions.map((option) => {
             const Icon = option.icon
