@@ -365,8 +365,8 @@ export function ComposeModal() {
                       <Dialog.Title className="sr-only">{getDialogTitle(!!replyingTo, !!quotingPost)}</Dialog.Title>
                       <Dialog.Description className="sr-only">{getDialogDescription(!!replyingTo, !!quotingPost)}</Dialog.Description>
 
-                      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-gray-800">
-                        <div className="flex items-center gap-3">
+                      <div className="flex flex-col gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                           <IconButton onClick={handleClose} className="hover:bg-gray-200 dark:hover:bg-gray-800">
                             <XMarkIcon className="h-5 w-5" />
                           </IconButton>
@@ -400,7 +400,7 @@ export function ComposeModal() {
                           )}
                         </div>
 
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-end gap-3">
                           <button
                             onClick={() => setShowPreview(!showPreview)}
                             className={`${TOGGLE} ${showPreview ? 'bg-yappr-100 dark:bg-yappr-900/30 text-yappr-600 dark:text-yappr-400' : TOGGLE_OFF}`}
