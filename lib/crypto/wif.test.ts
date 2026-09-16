@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import bs58check from 'bs58check'
 import {
   MAINNET_WIF_PREFIX,
   TESTNET_WIF_PREFIX,
@@ -8,12 +9,32 @@ import {
   isLikelyWif,
   parsePrivateKey,
   privateKeyToWif,
+  toCompressedWif,
   validateWifNetwork,
   wifToPrivateKey,
 } from './wif'
 
 const KEY = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 3) & 0xff)
 const KEY_HEX = bytesToHex(KEY)
+
+describe('toCompressedWif', () => {
+  it.each(['testnet', 'mainnet'] as const)('preserves the scalar and %s network for either encoding', (network) => {
+    const compressed = privateKeyToWif(KEY, network, true)
+    const uncompressed = privateKeyToWif(KEY, network, false)
+    expect(toCompressedWif(uncompressed)).toBe(compressed)
+    expect(toCompressedWif(compressed)).toBe(compressed)
+    expect(wifToPrivateKey(toCompressedWif(uncompressed))).toEqual({
+      privateKey: KEY,
+      prefix: network === 'mainnet' ? MAINNET_WIF_PREFIX : TESTNET_WIF_PREFIX,
+      compressed: true,
+    })
+  })
+
+  it('rejects malformed WIFs and unknown networks instead of assigning a network', () => {
+    expect(() => toCompressedWif('not-a-wif')).toThrow()
+    expect(() => toCompressedWif(bs58check.encode(Uint8Array.from([0x80, ...KEY])))).toThrow('Unsupported Dash WIF network prefix')
+  })
+})
 
 describe('WIF encode/decode', () => {
   it('round-trips a compressed testnet key', () => {

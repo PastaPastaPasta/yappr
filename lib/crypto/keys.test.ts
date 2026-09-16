@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { hash160 } from './hash'
-import { privateKeyToWif } from './wif'
+import { privateKeyToWif, toCompressedWif } from './wif'
 import { bytesToBase64, bytesToHex } from '@/lib/bytes'
 import { findMatchingKeyIndex, getPublicKey, matchIdentityKey, toKeyInfo } from './keys'
 import { KeyPurpose, KeyType, SecurityLevel, getPurposeName, resolveKeyPurpose, resolveSecurityLevel } from './identity-keys'
@@ -108,6 +108,20 @@ describe('findMatchingKeyIndex', () => {
 
 describe('matchIdentityKey', () => {
   const auth = { network: 'testnet' as const, purpose: KeyPurpose.AUTHENTICATION }
+
+  it.each(['testnet', 'mainnet'] as const)('matches either WIF encoding on %s without accepting another key or network', (network) => {
+    const key = wasmKey(2, KeyPurpose.AUTHENTICATION, SecurityLevel.HIGH, AUTH_PUB)
+    const options = { network, purpose: KeyPurpose.AUTHENTICATION, allowedSecurityLevels: [SecurityLevel.HIGH] }
+    for (const compressed of [false, true]) {
+      const wif = privateKeyToWif(AUTH_PRIV, network, compressed)
+      expect(matchIdentityKey(wif, [key], options)).toMatchObject({ ok: true, key })
+      expect(matchIdentityKey(toCompressedWif(wif), [key], options)).toMatchObject({ ok: true, key })
+      const wrongKey = privateKeyToWif(OTHER_PRIV, network, compressed)
+      const wrongNetwork = privateKeyToWif(AUTH_PRIV, network === 'mainnet' ? 'testnet' : 'mainnet', compressed)
+      expect(matchIdentityKey(toCompressedWif(wrongKey), [key], options)).toEqual({ ok: false, reason: 'no-match' })
+      expect(matchIdentityKey(toCompressedWif(wrongNetwork), [key], options)).toEqual({ ok: false, reason: 'no-match' })
+    }
+  })
 
   it('returns the original key object for the match', () => {
     const critical = wasmKey(1, KeyPurpose.AUTHENTICATION, SecurityLevel.CRITICAL, AUTH_PUB)
