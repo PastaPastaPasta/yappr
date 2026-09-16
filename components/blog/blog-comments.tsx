@@ -11,6 +11,7 @@ import { useRelativeTime } from '@/hooks/use-relative-time'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { truncateId } from '@/lib/utils'
 import { normalizeDpnsUsername } from '@/lib/post-helpers'
+import { logger } from '@/lib/logger'
 import type { BlogComment } from '@/lib/types'
 import { blogCommentService } from '@/lib/services'
 
@@ -99,8 +100,8 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
       setContent('')
       await loadComments()
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to post comment'
-      toast.error(message)
+      logger.error('Failed to post blog comment:', error)
+      toast.error('Failed to post comment. Please try again.')
     } finally {
       setIsSubmitting(false)
     }
@@ -113,13 +114,13 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
       setDeletingId(commentId)
       const success = await blogCommentService.deleteComment(commentId, user.identityId)
       if (!success) {
-        throw new Error('You can only delete your own comments')
+        throw new Error('Comment deletion was not confirmed')
       }
 
       setComments((prev) => prev.filter((comment) => comment.id !== commentId))
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to delete comment'
-      toast.error(message)
+      logger.error('Failed to delete blog comment:', error)
+      toast.error('Failed to delete comment. Please try again.')
     } finally {
       setDeletingId(null)
     }
@@ -193,25 +194,29 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
               <div className="flex items-start gap-3">
                 <UserAvatar userId={comment.ownerId} preloadedUrl={avatars.get(comment.ownerId)} size="sm" />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 text-xs text-[var(--blog-text)]/70">
-                    <span className="font-medium text-[var(--blog-heading)]">{displayName}</span>
-                    <span>•</span>
-                    <CommentTimestamp createdAt={comment.createdAt} />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--blog-text)]/70">
+                      <span className="max-w-full break-words font-medium text-[var(--blog-heading)]">{displayName}</span>
+                      <span className="flex max-w-full items-center gap-2">
+                        <span aria-hidden="true">•</span>
+                        <CommentTimestamp createdAt={comment.createdAt} />
+                      </span>
+                    </div>
+                    {isOwnComment && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={deletingId === comment.id}
+                        onClick={() => handleDelete(comment.id)}
+                        className="h-auto shrink-0 px-2 py-1 text-xs"
+                      >
+                        {deletingId === comment.id ? 'Deleting...' : 'Delete'}
+                      </Button>
+                    )}
                   </div>
                   <p className="mt-1 whitespace-pre-wrap break-words text-sm text-[var(--blog-text)]">{comment.content}</p>
                 </div>
-                {isOwnComment && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={deletingId === comment.id}
-                    onClick={() => handleDelete(comment.id)}
-                    className="h-auto px-2 py-1 text-xs"
-                  >
-                    {deletingId === comment.id ? 'Deleting...' : 'Delete'}
-                  </Button>
-                )}
               </div>
             </article>
           )
