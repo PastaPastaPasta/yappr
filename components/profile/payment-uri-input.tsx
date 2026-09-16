@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { PlusIcon, TrashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { APPROVED_PAYMENT_SCHEMES } from '@/lib/services/unified-profile-service'
 import { isValidPaymentAddress } from '@/lib/utils/payment-uri'
-import { TooltipBadge } from '@/components/ui/tooltip-button'
+import * as Tooltip from '@radix-ui/react-tooltip'
 
 interface PaymentUriInputProps {
   uris: string[]
@@ -121,17 +121,26 @@ export function PaymentUriInput({
               <span className="flex-1 text-sm font-mono truncate text-gray-600 dark:text-gray-300">
                 {uri.substring(uri.indexOf(':') + 1)}
               </span>
-              <TooltipBadge label={`Remove ${getSchemeLabel(uri)} address`}>
-                <button
-                  type="button"
-                  onClick={() => handleRemoveUri(index)}
-                  disabled={disabled}
-                  aria-label={`Remove ${getSchemeLabel(uri)} address ${uri.substring(uri.indexOf(':') + 1)}`}
-                  className="p-1 text-gray-400 hover:text-red-500 disabled:opacity-50"
-                >
-                  <TrashIcon className="w-4 h-4" />
-                </button>
-              </TooltipBadge>
+              <Tooltip.Provider>
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveUri(index)}
+                      disabled={disabled}
+                      aria-label={`Remove ${getSchemeLabel(uri)} address ${uri.substring(uri.indexOf(':') + 1)}`}
+                      className="p-1 text-gray-400 hover:text-red-500 disabled:opacity-50"
+                    >
+                      <TrashIcon className="w-4 h-4" />
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Content className="z-50 bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded" sideOffset={5}>
+                      {`Remove ${getSchemeLabel(uri)} address`}
+                    </Tooltip.Content>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
+              </Tooltip.Provider>
             </div>
           ))}
         </div>
