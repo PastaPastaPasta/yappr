@@ -170,7 +170,7 @@ export function ProfileHeader({
                 </Button>
               )
             ) : (
-              <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+              <div className="contents">
                 <TooltipButton
                   label="Tip with credits"
                   aria-label={`Tip ${subject}`}
