@@ -90,7 +90,8 @@ export function useProfileReplies(userId: string | null, enrichProgressively: (p
 
   return {
     posts, loading, loadingMore, loaded, hasMore, error, parents, parentsLoading, load,
-    onLoadMore: () => { void load(true) },
+    // Never rejects: a failure lands in `error`, which the tab renders with its own retry.
+    onLoadMore: () => load(true),
     onRetry: () => { void load(posts.length > 0) },
   }
 }

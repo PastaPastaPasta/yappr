@@ -4,30 +4,41 @@ import { TrophyIcon } from '@heroicons/react/24/outline';
 import { Post } from '@/lib/types';
 import ErrorBoundary from '@/components/error-boundary';
 import { Spinner } from '@/components/ui/spinner';
+import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel';
 import { PostCard } from '@/components/post/post-card';
 import { useSettingsStore } from '@/lib/store';
 import { useAuth } from '@/contexts/auth-context';
 import { filterHiddenSensitive } from '@/lib/sensitive-content';
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll';
 import type { FeedTab } from '@/hooks/use-feed-data';
+import type { RankingWindow } from '@/lib/services/ranked-likes';
 
 interface FeedTopListProps {
   posts: Post[] | null;
   isLoading: boolean;
   activeTab: FeedTab;
+  /** Which ranking is showing; with `activeTab` it identifies the list being paged. */
+  rankingWindow: RankingWindow;
   onPostDelete: (postId: string) => void;
   hasMore: boolean;
   isLoadingMore: boolean;
-  onLoadMore: () => void;
+  onLoadMore: () => Promise<void>;
 }
 
 /**
- * The home feed's Top view: one proved ranked page (global, or merged across
- * followed authors), already hydrated and enriched by `useTopFeed`. No
- * pagination — a ranking is a bounded top-K, not a timeline.
+ * The home feed's Top view: the proved ranked list (global, or merged across
+ * followed authors), already hydrated and enriched by `useTopFeed`. Scrolling
+ * to the end widens the ranking by another page.
  */
-export function FeedTopList({ posts, isLoading, activeTab, onPostDelete, hasMore, isLoadingMore, onLoadMore }: FeedTopListProps) {
+export function FeedTopList({ posts, isLoading, activeTab, rankingWindow, onPostDelete, hasMore, isLoadingMore, onLoadMore }: FeedTopListProps) {
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode);
   const { user } = useAuth();
+  const { sentinelRef, isSuspended, loadMore } = useInfiniteScroll({
+    hasMore,
+    isLoading: isLoading || isLoadingMore,
+    onLoadMore,
+    resetKey: `${activeTab}:${rankingWindow}`,
+  });
 
   if (isLoading || posts === null) {
     return (
@@ -63,11 +74,13 @@ export function FeedTopList({ posts, isLoading, activeTab, onPostDelete, hasMore
           </ErrorBoundary>
         ))}
         {hasMore && (
-          <div className="p-4 flex justify-center border-t border-gray-200 dark:border-gray-800">
-            <button onClick={onLoadMore} disabled={isLoadingMore} className="px-6 py-2 rounded-full bg-yappr-500 text-white disabled:opacity-50">
-              {isLoadingMore ? 'Loading...' : 'Load More'}
-            </button>
-          </div>
+          <InfiniteScrollSentinel
+            sentinelRef={sentinelRef}
+            isLoading={isLoadingMore}
+            isSuspended={isSuspended}
+            onLoadMore={loadMore}
+            className="border-t border-gray-200 dark:border-gray-800"
+          />
         )}
       </div>
     </ErrorBoundary>

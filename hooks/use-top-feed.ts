@@ -8,6 +8,12 @@ import type { RankingWindow } from '@/lib/services/ranked-likes';
 import { likesAreIndexOnly } from '@/lib/contract-topology';
 import type { FeedTab } from '@/hooks/use-feed-data';
 
+/** How many ranked posts one page asks for; each load-more widens the ranking by this much. */
+const PAGE_SIZE = 20;
+
+/** Drive's `max_query_limit`: a ranked read wider than this is rejected outright. */
+const MAX_RANKED_LIMIT = 100;
+
 interface UseTopFeedOptions {
   /** Which feed the ranking scopes to: global for `forYou`, followed authors for `following`. */
   activeTab: FeedTab;
@@ -24,7 +30,15 @@ interface UseTopFeedResult {
   handlePostDelete: (postId: string) => void;
   hasMore: boolean;
   isLoadingMore: boolean;
+  /** Widens the ranking by one page. Rejects when the wider read fails, so the caller can offer a retry. */
   loadMore: () => Promise<void>;
+}
+
+interface LoadOptions {
+  /** Bypass the ranked-page cache. */
+  force?: boolean;
+  /** Keep the current list on screen while the wider page loads. */
+  append?: boolean;
 }
 
 /**
@@ -33,69 +47,108 @@ interface UseTopFeedResult {
  * `topLikedPostsByAuthorsHydrated`). Blocked authors are filtered the way the
  * Explore Top tab does. v4+ only — on older topologies nothing loads and the
  * page never offers the toggle (`likesAreIndexOnly()`).
+ *
+ * A ranking is a bounded top-K rather than a cursor-paged timeline, so "more"
+ * re-reads the ranking with a larger K. Posts already on screen keep their
+ * place and only the genuinely new ids are appended, so a like-count shuffle
+ * between reads never reorders the list under the reader.
  */
 export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): UseTopFeedResult {
   const { user } = useAuth();
   const userId = user?.identityId;
   const [posts, setPosts] = useState<Post[] | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   // Following Top fans out one ranked read per followed author and can settle
   // well after a For You Top read issued later; only the newest request may
   // touch state, so a superseded response never overwrites the current view.
   const requestIdRef = useRef(0);
-  const [limit, setLimit] = useState(20);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  // Raw size of the last ranked page (before block filtering). The next K is
+  // derived from it rather than accumulated, so two overlapping load-more
+  // calls cannot skip a page, and the ranked service's silent-empty failure
+  // mode can be told apart from a ranking that simply ended.
+  const rankedCountRef = useRef(0);
 
   const load = useCallback(
-    async (force = false) => {
+    async ({ force = false, append = false }: LoadOptions = {}) => {
       const requestId = ++requestIdRef.current;
       const isCurrent = () => requestIdRef.current === requestId;
 
       if (!likesAreIndexOnly() || (activeTab === 'following' && !userId)) {
         setPosts([]);
+        setHasMore(false);
         setIsLoading(false);
+        setIsLoadingMore(false);
         return;
       }
 
-      setIsLoading(true);
+      const limit = append ? Math.min(rankedCountRef.current + PAGE_SIZE, MAX_RANKED_LIMIT) : PAGE_SIZE;
+      // A widening always bypasses the cache: its wider limit is a cold key
+      // anyway, and a retry after a failure must not replay the ranked
+      // service's cached empty page.
+      const bypassCache = force || append;
+      if (append) setIsLoadingMore(true);
+      else setIsLoading(true);
       try {
         const { topLikedPostsHydrated, topLikedPostsByAuthorsHydrated } = await import('@/lib/services/ranked-likes');
         let ranked: Post[];
         if (activeTab === 'following' && userId) {
           const authorIds = await followService.getFollowingIds(userId);
-          ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit, window, force });
+          ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit, window, force: bypassCache });
         } else {
-          ranked = await topLikedPostsHydrated({ limit, window, force });
+          ranked = await topLikedPostsHydrated({ limit, window, force: bypassCache });
         }
+        // The ranked reads never reject: a failed query comes back as an empty
+        // page. On a first page that is indistinguishable from an empty
+        // ranking, but a widening of a non-empty list can only be a failure.
+        if (append && ranked.length === 0) throw new Error('Ranked widening returned an empty page');
         const visible = await filterBlockedAuthors(userId, ranked);
-        if (isCurrent()) setPosts(visible);
+        if (!isCurrent()) return;
+        rankedCountRef.current = ranked.length;
+        setPosts((current) => {
+          if (!append || !current) return visible;
+          const known = new Set(current.map((post) => post.id));
+          return [...current, ...visible.filter((post) => !known.has(post.id))];
+        });
+        // Judged on the ranked page, not the block-filtered one, so a filtered
+        // author never makes a full page look like the end of the ranking.
+        setHasMore(ranked.length >= limit && limit < MAX_RANKED_LIMIT);
       } catch (error) {
         logger.error('Feed: Failed to load top posts:', error);
-        if (isCurrent()) setPosts([]);
+        if (!isCurrent()) return;
+        // A failed widening keeps what is already on screen and rejects so the
+        // caller can offer a retry; a failed first page shows empty.
+        if (append) throw error;
+        setPosts([]);
+        setHasMore(false);
       } finally {
-        if (isCurrent()) setIsLoading(false);
+        if (isCurrent()) {
+          setIsLoading(false);
+          setIsLoadingMore(false);
+        }
       }
     },
-    [activeTab, limit, userId, window]
+    [activeTab, userId, window]
   );
 
+  // A different ranking (tab, window, or viewer) starts from the first page.
   useEffect(() => {
     if (!enabled) return;
     setPosts(null);
     load().catch((error) => logger.error('Feed: top posts load failed:', error));
   }, [enabled, load]);
 
-  const refresh = useCallback(() => { setLimit(20); return load(true); }, [load]);
+  const refresh = useCallback(() => load({ force: true }), [load]);
 
   const loadMore = useCallback(async () => {
-    if (isLoading || isLoadingMore || posts === null || posts.length < limit) return;
-    setIsLoadingMore(true);
-    try { setLimit((current) => current + 20); } finally { setIsLoadingMore(false); }
-  }, [isLoading, isLoadingMore, limit, posts]);
+    if (isLoading || isLoadingMore || !hasMore) return;
+    await load({ append: true });
+  }, [isLoading, isLoadingMore, hasMore, load]);
 
   const handlePostDelete = useCallback((postId: string) => {
     setPosts((current) => (current ? current.filter((post) => post.id !== postId) : current));
   }, []);
 
-  return { posts, isLoading, refresh, handlePostDelete, hasMore: posts !== null && posts.length >= limit, isLoadingMore, loadMore };
+  return { posts, isLoading, refresh, handlePostDelete, hasMore, isLoadingMore, loadMore };
 }
