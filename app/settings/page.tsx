@@ -73,13 +73,14 @@ const SENSITIVE_CONTENT_OPTIONS: Array<{ value: SensitiveContentMode; label: str
   { value: 'hide', label: 'Hide', description: 'Remove NSFW posts from your feeds' },
 ]
 
+const NOTIFICATION_KEYS = ['likes', 'reposts', 'replies', 'follows', 'mentions', 'blogPosts'] as const
+
 const NOTIFICATION_LABELS: Record<string, string> = {
   likes: 'Likes',
   reposts: 'Reposts',
   replies: 'Replies',
   follows: 'Follows',
   mentions: 'Mentions',
-  messages: 'Messages',
   blogPosts: 'Blog posts',
 }
 
@@ -89,7 +90,6 @@ const NOTIFICATION_DESCRIPTIONS: Record<string, string> = {
   replies: 'When someone replies to you',
   follows: 'When someone follows you',
   mentions: 'When someone mentions you',
-  messages: 'When you receive new messages',
   blogPosts: 'When a blog you follow publishes a new post',
 }
 
@@ -333,9 +333,9 @@ function SettingsPage() {
   const renderNotificationSettings = () => (
     <div className="p-6 space-y-6">
       <div>
-        <h3 className="font-semibold mb-4">Push Notifications</h3>
+        <h3 className="font-semibold mb-4">In-app notifications</h3>
         <div className="space-y-4">
-          {Object.entries(notificationSettings).map(([key, value]) => (
+          {NOTIFICATION_KEYS.map((key) => (
             <div key={key} className="flex items-center justify-between">
               <div>
                 <label htmlFor={`notification-${key}`} className="block font-medium cursor-pointer">{NOTIFICATION_LABELS[key] || key}</label>
@@ -346,9 +346,9 @@ function SettingsPage() {
               <SettingsSwitch
                 id={`notification-${key}`}
                 aria-describedby={`notification-${key}-description`}
-                checked={value}
+                checked={notificationSettings[key]}
                 onCheckedChange={(checked) =>
-                  setNotificationSettings({ [key as keyof typeof notificationSettings]: checked })
+                  setNotificationSettings({ [key]: checked })
                 }
               />
             </div>
