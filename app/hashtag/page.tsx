@@ -1,13 +1,15 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { ArrowLeftIcon, HashtagIcon, CurrencyDollarIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
 import { Spinner } from '@/components/ui/spinner'
+import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { formatNumber } from '@/lib/utils'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { Post } from '@/lib/types'
@@ -21,6 +23,8 @@ import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
 import { LegacyYapprLink } from '@/components/ui/legacy-yappr-link'
 
+const PAGE_SIZE = 50
+
 function HashtagPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -30,7 +34,13 @@ function HashtagPageContent() {
 
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [postCount, setPostCount] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [lastPostId, setLastPostId] = useState<string | undefined>()
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const loadGeneration = useRef(0)
+  const loadedGeneration = useRef<number | null>(null)
+  const pendingPageGeneration = useRef<number | null>(null)
+  const postCount = posts.length
 
   // Latest|Top sort (v4 only — Top is a proved ranked page on the tag-pinned
   // `like.byHashtagPost` axis). Latest stays the existing tagAndTime path.
@@ -48,6 +58,14 @@ function HashtagPageContent() {
   const TagIcon = isCashtag ? CurrencyDollarIcon : HashtagIcon
 
   useEffect(() => {
+    const generation = ++loadGeneration.current
+    let cancelled = false
+    loadedGeneration.current = null
+    pendingPageGeneration.current = null
+    setPosts([])
+    setHasMore(false)
+    setLastPostId(undefined)
+    setIsLoadingMore(false)
     const loadHashtagPosts = async () => {
       if (!tag) {
         setIsLoading(false)
@@ -67,11 +85,11 @@ function HashtagPageContent() {
           // the post itself).
           const page = await postService.queryForDisplay({
             where: [['hashtag', '==', tag], ['$createdAt', '>', 0]],
-            orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']], limit: 50,
+            orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']], limit: PAGE_SIZE,
           })
-          fetchedPosts = page.documents.filter(post => !post.deleted)
+          if (cancelled) return
+          fetchedPosts = page.documents
           preloaded = page.preloaded
-          setPostCount(fetchedPosts.length)
 
           if (fetchedPosts.length === 0) {
             setPosts([])
@@ -81,7 +99,7 @@ function HashtagPageContent() {
         } else {
           // Get post IDs that have this hashtag
           const hashtagDocs = await hashtagService.getPostIdsByHashtag(tag)
-          setPostCount(hashtagDocs.length)
+          if (cancelled) return
 
           if (hashtagDocs.length === 0) {
             setPosts([])
@@ -102,7 +120,7 @@ function HashtagPageContent() {
         }
 
         // Enrich posts with author data (DPNS names, displayNames, stats)
-        let enrichedPosts = await postService.enrichPostsBatch(fetchedPosts, preloaded)
+        let enrichedPosts = await postService.enrichPostsBatch(fetchedPosts.filter(post => !post.deleted), preloaded)
 
         // Filter out posts from blocked users
         if (user?.identityId && enrichedPosts.length > 0) {
@@ -111,18 +129,74 @@ function HashtagPageContent() {
           enrichedPosts = enrichedPosts.filter(post => !blockedMap.get(post.author.id))
         }
 
+        if (cancelled) return
+        loadedGeneration.current = generation
         setPosts(enrichedPosts)
-        setPostCount(enrichedPosts.length)
+        if (hashtagsAreInline()) {
+          // Advance using the raw page, including posts hidden by viewer filters.
+          setLastPostId(fetchedPosts[fetchedPosts.length - 1]?.id)
+          setHasMore(fetchedPosts.length === PAGE_SIZE)
+        }
       } catch (error) {
         logger.error('Failed to load hashtag posts:', error)
-        setPosts([])
+        if (!cancelled) setPosts([])
       } finally {
-        setIsLoading(false)
+        if (!cancelled) setIsLoading(false)
       }
     }
 
     loadHashtagPosts().catch(err => logger.error('Failed to load hashtag posts:', err))
+    return () => {
+      cancelled = true
+      // An old next-page request must not update a different tag or viewer.
+      loadGeneration.current = generation + 1
+    }
   }, [tag, user?.identityId])
+
+  const loadMorePosts = useCallback(async () => {
+    const generation = loadGeneration.current
+    if (!tag || !hasMore || !lastPostId || isLoading || loadedGeneration.current !== generation || pendingPageGeneration.current === generation) return
+    pendingPageGeneration.current = generation
+    setIsLoadingMore(true)
+    try {
+      const { postService } = await import('@/lib/services/post-service')
+      const result = await postService.queryForDisplay({
+        where: [['hashtag', '==', tag], ['$createdAt', '>', 0]],
+        orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
+        limit: PAGE_SIZE, startAfter: lastPostId,
+      })
+      const page = result.documents
+      let enriched = await postService.enrichPostsBatch(page.filter(post => !post.deleted), result.preloaded)
+      if (user?.identityId && enriched.length > 0) {
+        const authors = Array.from(new Set(enriched.map(post => post.author.id)))
+        const blocked = await checkBlockedForAuthors(user.identityId, authors)
+        enriched = enriched.filter(post => !blocked.get(post.author.id))
+      }
+      if (loadGeneration.current !== generation) return
+      setPosts(current => {
+        const seen = new Set(current.map(post => post.id))
+        return [...current, ...enriched.filter(post => !seen.has(post.id))]
+      })
+      if (page.length > 0) setLastPostId(page[page.length - 1].id)
+      setHasMore(page.length === PAGE_SIZE)
+    } catch (error) {
+      // A stale failure must not suspend the new list's infinite scroll.
+      if (loadGeneration.current === generation) throw error
+    } finally {
+      if (loadGeneration.current === generation) {
+        pendingPageGeneration.current = null
+        setIsLoadingMore(false)
+      }
+    }
+  }, [tag, hasMore, lastPostId, isLoading, user?.identityId])
+
+  const { sentinelRef, isSuspended, loadMore } = useInfiniteScroll({
+    hasMore,
+    isLoading: isLoading || isLoadingMore,
+    onLoadMore: loadMorePosts,
+    disabled: sortMode !== 'latest' || !hashtagsAreInline(),
+    resetKey: `${tag}:${user?.identityId ?? ''}`,
+  })
 
   // Reset the sort state when the tag changes.
   useEffect(() => {
@@ -205,7 +279,7 @@ function HashtagPageContent() {
                   {displayTag}
                 </h1>
                 <p className="text-sm text-gray-500">
-                  {formatNumber(postCount)} {postCount === 1 ? 'post' : 'posts'}
+                  {formatNumber(postCount)}{hasMore ? '+' : ''} {postCount === 1 && !hasMore ? 'post' : 'posts'}
                 </p>
               </div>
             </div>
@@ -261,7 +335,7 @@ function HashtagPageContent() {
                   Posts with {tagSymbol}{displayTag} will rank here once they get likes
                 </p>
               </div>
-            ) : sortMode === 'latest' && posts.length === 0 ? (
+            ) : sortMode === 'latest' && posts.length === 0 && !hasMore ? (
               <div className="p-12 text-center">
                 <TagIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
                 <h2 className="text-xl font-semibold mb-2">No posts yet</h2>
@@ -276,13 +350,22 @@ function HashtagPageContent() {
                   key={post.id}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.05 }}
+                  transition={{ delay: Math.min(index, 9) * 0.05 }}
                 >
                   <PostCard post={post} />
                 </motion.div>
               ))
             )}
           </div>
+          {sortMode === 'latest' && !isLoading && hasMore && (
+            <InfiniteScrollSentinel
+              sentinelRef={sentinelRef}
+              isLoading={isLoadingMore}
+              isSuspended={isSuspended}
+              onLoadMore={loadMore}
+              label="Load more posts"
+            />
+          )}
     </PageShell>
   )
 }
