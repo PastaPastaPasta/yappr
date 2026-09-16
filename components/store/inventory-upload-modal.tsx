@@ -3,6 +3,7 @@
 import { logger } from '@/lib/logger';
 import { useState, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
+import * as Dialog from '@radix-ui/react-dialog'
 import {
   XMarkIcon,
   ArrowUpTrayIcon,
@@ -43,6 +44,7 @@ export function InventoryUploadModal({
   currency = 'USD'
 }: InventoryUploadModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
   const isUploadingRef = useRef(false)
   const [step, setStep] = useState<UploadStep>('select')
   const [fileName, setFileName] = useState('')
@@ -151,27 +153,38 @@ export function InventoryUploadModal({
     URL.revokeObjectURL(url)
   }, [])
 
-  const handleBackdropClick = useCallback(() => {
-    if (step === 'uploading') return
+  const handleDismiss = useCallback(() => {
+    if (isUploadingRef.current) return
     handleClose()
-  }, [step, handleClose])
+  }, [handleClose])
 
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
-        className={`absolute inset-0 bg-black/50 ${step === 'uploading' ? 'cursor-not-allowed' : ''}`}
-        onClick={handleBackdropClick}
-      />
+    <Dialog.Root open={isOpen} onOpenChange={(open) => !open && handleDismiss()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+        <Dialog.Content
+          asChild
+          aria-busy={step === 'uploading'}
+          onOpenAutoFocus={() => {
+            openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            openerRef.current?.focus()
+          }}
+        >
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative w-full max-w-2xl bg-white dark:bg-gray-900 rounded-xl shadow-xl max-h-[90vh] overflow-hidden flex flex-col"
+        className="relative w-full max-w-2xl bg-white dark:bg-gray-900 rounded-xl shadow-xl max-h-[90vh] overflow-hidden flex flex-col pointer-events-auto"
       >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
-          <h2 className="text-lg font-bold">Upload Inventory</h2>
+          <Dialog.Title className="text-lg font-bold">Upload Inventory</Dialog.Title>
+          <Dialog.Description className="sr-only">Choose a CSV file, review its products, and upload them to your inventory.</Dialog.Description>
           <button
             onClick={step === 'uploading' ? undefined : handleClose}
             disabled={step === 'uploading'}
@@ -192,15 +205,17 @@ export function InventoryUploadModal({
           {step === 'select' && (
             <div className="space-y-6">
               {/* File Upload Area */}
-              <div
+              <button
+                type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-8 text-center cursor-pointer hover:border-yappr-500 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+                className="w-full border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-8 text-center cursor-pointer hover:border-yappr-500 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500"
               >
                 <ArrowUpTrayIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                <p className="text-lg font-medium mb-2">Click to select a CSV file</p>
-                <p className="text-sm text-gray-500">
+                <span className="block text-lg font-medium mb-2">Click to select a CSV file</span>
+                <span className="block text-sm text-gray-500">
                   Supported format: .csv
-                </p>
+                </span>
+              </button>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -208,7 +223,6 @@ export function InventoryUploadModal({
                   onChange={handleFileSelect}
                   className="hidden"
                 />
-              </div>
 
               {/* Template Download */}
               <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
@@ -484,6 +498,9 @@ export function InventoryUploadModal({
           )}
         </div>
       </motion.div>
-    </div>
+        </Dialog.Content>
+        </div>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
