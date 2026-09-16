@@ -179,7 +179,11 @@ function BookmarksPage() {
             
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
-                <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full">
+                <button
+                  type="button"
+                  aria-label="Bookmarks options"
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 focus-visible:ring-offset-2"
+                >
                   <EllipsisHorizontalIcon className="h-5 w-5" />
                 </button>
               </DropdownMenu.Trigger>
@@ -257,10 +261,14 @@ function BookmarksPage() {
                 <PostCard post={post} />
                 
                 {/* Bookmark Options Overlay */}
-                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger asChild>
-                      <button className={`p-2 bg-white/90 dark:bg-neutral-900/90 rounded-full shadow-lg hover:bg-gray-100 dark:hover:bg-gray-900 ${potatoMode ? '' : 'backdrop-blur-sm'}`}>
+                      <button
+                        type="button"
+                        aria-label="Bookmark options"
+                        className={`p-2 bg-white/90 dark:bg-neutral-900/90 rounded-full shadow-lg hover:bg-gray-100 dark:hover:bg-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 focus-visible:ring-offset-2 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+                      >
                         <EllipsisHorizontalIcon className="h-5 w-5" />
                       </button>
                     </DropdownMenu.Trigger>
