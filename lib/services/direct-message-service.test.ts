@@ -28,9 +28,9 @@ beforeEach(() => {
     $id: `invite-${index}`, $ownerId: id, conversationId: conversationBytes[index], recipientId: viewer,
   }]))).mockResolvedValueOnce(new Map());
   mocks.composite.mockResolvedValue({
-    pageDocuments: messages(0, 100),
+    pageDocuments: messages(0, 100).reverse(),
     subResults: [
-      { kind: 'documents', documents: messages(1, 3) },
+      { kind: 'documents', documents: messages(1, 3).reverse() },
       { kind: 'documents', documents: [{
         $id: 'receipt', $ownerId: viewer, $updatedAt: 1095,
         data: { conversationId: Array.from(conversationBytes[0]) },
@@ -65,15 +65,33 @@ describe('conversation query bundles', () => {
     expect(mocks.identity).not.toHaveBeenCalled();
   });
 
+  it('selects the latest preview when a conversation exceeds one message page', async () => {
+    mocks.composite.mockImplementation(async query => {
+      const records = Array.from({ length: 130 }, (_, i) => ({ ...messages(0, 1)[0], $id: `preview-message-${i}`, $createdAt: 1000 + i }))
+      if (query.orderBy[0][1] === 'desc') records.reverse()
+      return { pageDocuments: records.slice(0, query.limit), subResults: [
+        { kind: 'documents', documents: messages(1, 3).reverse() },
+        { kind: 'documents', documents: [] },
+      ] }
+    })
+    const { directMessageService } = await import('./direct-message-service')
+    const result = await directMessageService.getConversations(viewer, { includeParticipantInfo: false })
+    expect(result[0].lastMessage?.id).toBe('preview-message-129')
+    expect(result[0].updatedAt.getTime()).toBe(1129)
+    expect(result[1].lastMessage?.id).toBe('message-1-2')
+    expect(mocks.composite.mock.calls[0][0].orderBy).toEqual([['$createdAt', 'desc']])
+  })
+
   it('keeps independently available conversations when one ordinary fallback fails', async () => {
     mocks.composite.mockRejectedValue(new Error('unavailable composite'));
     mocks.query.mockRejectedValueOnce(new Error('unavailable conversation'))
-      .mockResolvedValueOnce(new Map(messages(1, 3).map(doc => [doc.$id, doc])))
+      .mockResolvedValueOnce(new Map(messages(1, 3).reverse().map(doc => [doc.$id, doc])))
       .mockResolvedValueOnce(new Map());
     const { directMessageService } = await import('./direct-message-service');
     const result = await directMessageService.getConversations(viewer, { includeParticipantInfo: false });
     expect(result.find(conversation => conversation.id === conversationIds[0])?.lastMessage).toBeNull();
     expect(result.find(conversation => conversation.id === conversationIds[1])?.unreadCount).toBe(2);
+    expect(result.find(conversation => conversation.id === conversationIds[1])?.lastMessage?.id).toBe('message-1-2');
     expect(mocks.query).toHaveBeenCalledTimes(5);
   });
 });

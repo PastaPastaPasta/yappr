@@ -220,13 +220,13 @@ class DirectMessageService {
         }
       }
 
-      // Preserve each conversation's own 100-message page. A global IN page
+      // Preserve each conversation's own latest 100-message page. A global IN page
       // could let one busy conversation hide every other conversation.
       const conversationIds = Array.from(conversationMap.keys())
       const messageQueries = conversationIds.map(conversationId => ({
         dataContractId: this.contractId, documentTypeName: 'directMessage',
         where: [['conversationId', '==', bytesToBase64QueryOperand(bs58.decode(conversationId))], ['$createdAt', '>', 0]] as DocumentWhereClause[],
-        orderBy: [['$createdAt', 'asc']] as Array<['$createdAt', 'asc']>, limit: 100,
+        orderBy: [['$createdAt', 'desc']] as Array<['$createdAt', 'desc']>, limit: 100,
       }))
       const receiptQueries = chunk(conversationIds, 100).map(ids => ({
         dataContractId: this.contractId, documentTypeName: 'readReceipt',
@@ -252,7 +252,7 @@ class DirectMessageService {
         try {
           // Get messages (fetch once, use for both latest and unread count)
           const allMessages = messagesByConversation.get(convId) ?? []
-          const latestDoc = allMessages[allMessages.length - 1] // Messages are ordered asc
+          const latestDoc = allMessages[0] // The preview page is newest-first
 
           // Get my read receipt
           const myReceipt = receipts.get(convId)
