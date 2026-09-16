@@ -165,19 +165,6 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
   }
 
   /**
-   * Update order with payment txid
-   * Note: Orders are immutable, so this creates a new order with the txid.
-   * In practice, the buyer would need to include txid in the initial order
-   * or use a separate mechanism to communicate payment.
-   */
-  getPaymentVerificationUrl(txid: string, network: 'mainnet' | 'testnet' = 'testnet'): string {
-    const baseUrl = network === 'mainnet'
-      ? 'https://insight.dash.org/insight/tx/'
-      : 'https://insight.testnet.networks.dash.org/insight/tx/';
-    return `${baseUrl}${txid}`;
-  }
-
-  /**
    * Encrypt order payload using deterministic ephemeral key.
    * This allows both buyer (who can re-derive the ephemeral key) and
    * seller (standard ECIES decryption) to decrypt.
