@@ -242,7 +242,7 @@ function BlogPageContent() {
                   aria-selected={activeTab === tab.key}
                   onClick={() => setActiveTab(tab.key)}
                   className={cn(
-                    'relative px-4 py-2.5 text-sm font-medium transition-colors',
+                    'relative whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors max-[360px]:flex-1 max-[360px]:px-1 max-[360px]:text-xs',
                     activeTab === tab.key
                       ? 'text-gray-900 dark:text-white'
                       : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-300'
