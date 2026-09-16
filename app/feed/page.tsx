@@ -95,10 +95,11 @@ function FeedPage() {
               posts={topFeed.posts}
               isLoading={topFeed.isLoading}
               activeTab={activeTab}
+              rankingWindow={rankingWindow}
               onPostDelete={topFeed.handlePostDelete}
               hasMore={topFeed.hasMore}
               isLoadingMore={topFeed.isLoadingMore}
-              onLoadMore={() => { topFeed.loadMore().catch((error) => logger.error('Top feed loadMore failed', error)); }}
+              onLoadMore={topFeed.loadMore}
             />
           ) : (
             <FeedPostList

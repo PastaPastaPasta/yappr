@@ -8,6 +8,7 @@ import { mentionService } from '@/lib/services/mention-service'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
 import type { ProfileTab } from '@/components/profile/profile-tabs'
 import { useProfileReplies } from '@/hooks/use-profile-replies'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 
 /**
  * The lazily loaded profile tabs: replies, top posts and mentions each fetch
@@ -22,6 +23,15 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
 
   const replies = useProfileReplies(userId, enrichProgressively)
+  // A load failure surfaces through `replies.error` with its own retry, so the
+  // sentinel only needs to hold off while that error is showing.
+  const repliesScroll = useInfiniteScroll({
+    hasMore: replies.hasMore && !replies.error,
+    isLoading: replies.loading || replies.loadingMore,
+    onLoadMore: replies.onLoadMore,
+    disabled: activeTab !== 'replies',
+    resetKey: userId,
+  })
 
   const [topPosts, setTopPosts] = useState<Post[]>([])
   const [topLoading, setTopLoading] = useState(false)
@@ -98,7 +108,12 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
     activeTab,
     setActiveTab,
     mentions: { posts: mentions, loading: mentionsLoading },
-    replies,
+    replies: {
+      ...replies,
+      isSuspended: repliesScroll.isSuspended,
+      sentinelRef: repliesScroll.sentinelRef,
+      onLoadMore: repliesScroll.loadMore,
+    },
     top: { posts: topPosts, loading: topLoading, window: rankingWindow, onWindowChange: setRankingWindow },
   }
 }

@@ -40,6 +40,8 @@ interface ProfileTabsProps {
     loadingMore: boolean
     hasMore: boolean
     error: string | null
+    isSuspended: boolean
+    sentinelRef: React.ComponentProps<typeof InfiniteScrollSentinel>['sentinelRef']
     onLoadMore: () => void
     onRetry: () => void
   }
@@ -112,11 +114,14 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
         ))}
         {replyError}
         {tab === 'replies' && replies.hasMore && !replies.error && (
-          <div className="p-4 text-center border-t border-gray-200 dark:border-gray-800">
-            <Button variant="outline" onClick={replies.onLoadMore} disabled={replies.loadingMore}>
-              {replies.loadingMore ? 'Loading replies...' : 'Load more replies'}
-            </Button>
-          </div>
+          <InfiniteScrollSentinel
+            sentinelRef={replies.sentinelRef}
+            isLoading={replies.loadingMore}
+            isSuspended={replies.isSuspended}
+            onLoadMore={replies.onLoadMore}
+            label="Load more replies"
+            className="border-t border-gray-200 dark:border-gray-800"
+          />
         )}
         {tab === 'posts' && pagination.hasMore && (
           <InfiniteScrollSentinel
