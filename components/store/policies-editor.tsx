@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useId } from 'react'
 import { PlusIcon, TrashIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import type { StorePolicy } from '@/lib/types'
 import {
@@ -20,6 +20,7 @@ export function PoliciesEditor({
   onChange,
   maxLength = MAX_POLICIES_LENGTH
 }: PoliciesEditorProps) {
+  const editorId = useId()
   const [openSuggestionIndex, setOpenSuggestionIndex] = useState<number | null>(null)
   const suggestionRef = useRef<HTMLDivElement>(null)
 
@@ -78,11 +79,12 @@ export function PoliciesEditor({
             >
               {/* Policy Name */}
               <div className="relative" ref={openSuggestionIndex === index ? suggestionRef : undefined}>
-                <label className="block text-sm font-medium mb-1">Policy Name</label>
+                <label htmlFor={`${editorId}-${index}-name`} className="block text-sm font-medium mb-1">Policy Name</label>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
                     <input
                       type="text"
+                      id={`${editorId}-${index}-name`}
                       value={policy.name}
                       onChange={(e) => updatePolicy(index, 'name', e.target.value)}
                       onFocus={() => setOpenSuggestionIndex(index)}
@@ -133,8 +135,9 @@ export function PoliciesEditor({
 
               {/* Policy Content */}
               <div>
-                <label className="block text-sm font-medium mb-1">Policy Content</label>
+                <label htmlFor={`${editorId}-${index}-content`} className="block text-sm font-medium mb-1">Policy Content</label>
                 <textarea
+                  id={`${editorId}-${index}-content`}
                   value={policy.content}
                   onChange={(e) => updatePolicy(index, 'content', e.target.value)}
                   placeholder="Describe this policy..."
