@@ -377,8 +377,8 @@ export function ThreadPostEditor({
           {/* Footer with formatting hints and character count - only show when active and not posted.
               The count still matters when locked: an attached image URL is appended to this text. */}
           {isActive && !isPosted && (
-            <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
-              <div className="flex items-center gap-2 text-xs text-gray-400">
+            <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
                 {!locked && (
                   <>
                     <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">**bold**</code>
@@ -387,7 +387,7 @@ export function ThreadPostEditor({
                   </>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="ml-auto flex items-center gap-2">
                 {extraCharacters > 0 && (
                   <span className="text-xs text-gray-400 tabular-nums">
                     Image URL +{extraCharacters} chars
