@@ -34,7 +34,7 @@ export function EmbeddedBlogPostCard({ post, className = '' }: EmbeddedBlogPostC
       href={href}
       onClick={(event) => event.stopPropagation()}
       className={cn(
-        'mt-3 block overflow-hidden rounded-xl border border-gray-700/80 hover:border-yappr-500/60 bg-gray-900/40 hover:bg-gray-900/60 transition-all group',
+        'mt-3 block overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700/80 hover:border-yappr-500/60 bg-gray-50 dark:bg-gray-900/40 hover:bg-gray-100 dark:hover:bg-gray-900/60 transition-all group',
         className
       )}
     >
@@ -53,7 +53,7 @@ export function EmbeddedBlogPostCard({ post, className = '' }: EmbeddedBlogPostC
 
         <div className="min-w-0 flex-1 px-3 py-2.5">
           {/* Source line */}
-          <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
+          <div className="flex items-center gap-1.5 text-[11px] text-gray-600 dark:text-gray-400">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3 text-yappr-400 flex-shrink-0">
               <path d="M10.75 16.82A7.462 7.462 0 0 1 15 15.5c.71 0 1.396.098 2.046.282A.75.75 0 0 0 18 15.06V3.44a.75.75 0 0 0-.546-.721A9.006 9.006 0 0 0 15 2.5a9.006 9.006 0 0 0-4.25 1.065v13.254ZM9.25 4.565A9.006 9.006 0 0 0 5 3.5a9.006 9.006 0 0 0-2.454.218A.75.75 0 0 0 2 4.44v11.62a.75.75 0 0 0 .954.721A7.506 7.506 0 0 1 5 16.5c1.579 0 3.042.487 4.25 1.32V4.565Z" />
             </svg>
@@ -63,13 +63,13 @@ export function EmbeddedBlogPostCard({ post, className = '' }: EmbeddedBlogPostC
           </div>
 
           {/* Title */}
-          <p className="mt-0.5 line-clamp-1 text-sm font-semibold text-gray-100 group-hover:text-yappr-300 transition-colors">
+          <p className="mt-0.5 line-clamp-1 text-sm font-semibold text-gray-900 dark:text-gray-100 group-hover:text-yappr-700 dark:group-hover:text-yappr-300 transition-colors">
             {post.title || 'Untitled'}
           </p>
 
           {/* Subtitle / excerpt — single line */}
           {subtitle && (
-            <p className="mt-0.5 line-clamp-1 text-xs text-gray-500">
+            <p className="mt-0.5 line-clamp-1 text-xs text-gray-600 dark:text-gray-400">
               {subtitle}
             </p>
           )}
