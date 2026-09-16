@@ -19,6 +19,7 @@ interface AddressFormProps {
   // Optional shipping toggle
   includeShipping?: boolean
   onIncludeShippingChange?: (include: boolean) => void
+  isCalculatingShipping?: boolean
 }
 
 export function AddressForm({
@@ -32,7 +33,8 @@ export function AddressForm({
   onSavedAddressSelect,
   onManageSavedAddresses,
   includeShipping,
-  onIncludeShippingChange
+  onIncludeShippingChange,
+  isCalculatingShipping = false
 }: AddressFormProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -206,8 +208,8 @@ export function AddressForm({
       </div>
 
       <div className="p-4 pt-0">
-        <Button type="submit" className="w-full">
-          Continue
+        <Button type="submit" className="w-full" disabled={includeShipping && isCalculatingShipping}>
+          {includeShipping && isCalculatingShipping ? 'Calculating shipping...' : 'Continue'}
         </Button>
       </div>
     </form>

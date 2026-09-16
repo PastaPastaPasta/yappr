@@ -30,6 +30,8 @@ import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingZone, StorePolicy, SavedAddress } from '@/lib/types'
 import { normalizeBytes } from '@/lib/bytes'
 
+const SHIPPING_UNAVAILABLE_MESSAGE = 'We cannot ship to this address. Please check your shipping address.'
+
 /**
  * The seller's encryption public key as bytes, or null if the identity key
  * data does not decode to a secp256k1 point (33-byte compressed or 65-byte
@@ -112,6 +114,7 @@ function CheckoutPage() {
   const [shippingCost, setShippingCost] = useState(0)
   const [zonesLoadFailed, setZonesLoadFailed] = useState(false)
   const [hasNoZones, setHasNoZones] = useState(false)
+  const [isCalculatingShipping, setIsCalculatingShipping] = useState(false)
 
   // Payment
   const [selectedPaymentUri, setSelectedPaymentUri] = useState<ParsedPaymentUri | null>(null)
@@ -288,7 +291,9 @@ function CheckoutPage() {
 
   // Calculate shipping when address changes (only when shipping is included)
   useEffect(() => {
+    setError(current => current === SHIPPING_UNAVAILABLE_MESSAGE ? null : current)
     if (!includeShipping) {
+      setIsCalculatingShipping(false)
       setMatchedZone(null)
       setShippingCost(0)
       setHasNoZones(false)
@@ -297,9 +302,15 @@ function CheckoutPage() {
       return
     }
 
-    if (!sdkReady || !storeId || !shippingAddress.postalCode || !shippingAddress.country) return
+    if (!sdkReady || !storeId || !shippingAddress.postalCode || !shippingAddress.country) {
+      setIsCalculatingShipping(false)
+      return
+    }
+
+    let cancelled = false
 
     const calculateShipping = async () => {
+      setIsCalculatingShipping(true)
       try {
         setZonesLoadFailed(false)
         setMatchedZone(null)
@@ -308,6 +319,7 @@ function CheckoutPage() {
 
         // First try to get zones to check if store has any configured
         const zones = await shippingZoneService.getByStore(storeId)
+        if (cancelled) return
 
         if (zones.length === 0) {
           // Store has no shipping zones - allow checkout without shipping cost
@@ -320,25 +332,31 @@ function CheckoutPage() {
         setHasNoZones(false)
         const subtotal = cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
         const weight = await cartService.getTotalWeight(storeId)
+        if (cancelled) return
 
         const { zone, cost } = await shippingZoneService.calculateShipping(
           storeId,
           shippingAddress,
           { totalWeight: weight, subtotal }
         )
+        if (cancelled) return
 
         setMatchedZone(zone)
         setShippingCost(cost)
       } catch (error) {
+        if (cancelled) return
         logger.error('Failed to calculate shipping:', error)
         // If zones failed to load, allow checkout anyway
         setZonesLoadFailed(true)
         setMatchedZone(null)
         setShippingCost(0)
+      } finally {
+        if (!cancelled) setIsCalculatingShipping(false)
       }
     }
 
     calculateShipping().catch((error) => logger.error(error))
+    return () => { cancelled = true }
   }, [includeShipping, sdkReady, storeId, shippingAddress, cartItems])
 
   const subtotal = useMemo(() => {
@@ -356,6 +374,7 @@ function CheckoutPage() {
       setStep('policies')
       return
     }
+    if (isCalculatingShipping) return
 
     // If using a saved address, validate shipping then go to policies
     if (selectedSavedAddressId) {
@@ -527,9 +546,10 @@ function CheckoutPage() {
   }
 
   const handleShippingValidation = () => {
+    if (isCalculatingShipping) return
     // Allow checkout if: zone matched, zones failed to load, or store has no zones
     if (!matchedZone && !zonesLoadFailed && !hasNoZones) {
-      setError('We cannot ship to this address. Please check your shipping address.')
+      setError(SHIPPING_UNAVAILABLE_MESSAGE)
       return
     }
     setError(null)
@@ -768,6 +788,7 @@ function CheckoutPage() {
               onManageSavedAddresses={() => setShowAddressModal(true)}
               includeShipping={includeShipping}
               onIncludeShippingChange={setIncludeShipping}
+              isCalculatingShipping={isCalculatingShipping}
             />
           )}
 
