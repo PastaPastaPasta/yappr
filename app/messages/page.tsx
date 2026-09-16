@@ -576,6 +576,7 @@ function MessagesPage() {
 
   const filteredConversations = conversations.filter(conv =>
     conv.participantId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    conv.participantDisplayName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     conv.participantUsername?.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
