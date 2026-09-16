@@ -26,7 +26,11 @@ interface KeyInfo {
   type: KeyType | null
 }
 
-export function KeyBackupSettings() {
+interface KeyBackupSettingsProps {
+  onEncryptionKeyChanged?: () => void
+}
+
+export function KeyBackupSettings({ onEncryptionKeyChanged }: KeyBackupSettingsProps) {
   const { user, addPasskeyWrapper } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const [isConfigured, setIsConfigured] = useState(false)
@@ -63,6 +67,11 @@ export function KeyBackupSettings() {
   useEffect(() => {
     refreshEncryptionKeyInfo()
   }, [refreshEncryptionKeyInfo])
+
+  const handleEncryptionKeyChanged = useCallback(() => {
+    refreshEncryptionKeyInfo()
+    onEncryptionKeyChanged?.()
+  }, [onEncryptionKeyChanged, refreshEncryptionKeyInfo])
 
   useEffect(() => {
     getPasskeyPrfSupport()
@@ -368,7 +377,7 @@ export function KeyBackupSettings() {
                     variant="outline"
                     size="sm"
                     className="h-7 text-xs"
-                    onClick={() => openEncryptionKeyModal('generic', refreshEncryptionKeyInfo)}
+                    onClick={() => openEncryptionKeyModal('generic', handleEncryptionKeyChanged)}
                   >
                     <KeyIcon className="h-3 w-3 mr-1" />
                     Enter Key
@@ -553,7 +562,7 @@ export function KeyBackupSettings() {
         onClose={() => setShowAddKeyModal(false)}
         onSuccess={() => {
           setShowAddKeyModal(false)
-          refreshEncryptionKeyInfo()
+          handleEncryptionKeyChanged()
         }}
         context="generic"
       />

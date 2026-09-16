@@ -12,7 +12,11 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import type { SavedAddress, ShippingAddress, BuyerContact } from '@/lib/types'
 
-export function SavedAddressesSettings() {
+interface SavedAddressesSettingsProps {
+  encryptionKeyVersion?: number
+}
+
+export function SavedAddressesSettings({ encryptionKeyVersion = 0 }: SavedAddressesSettingsProps) {
   const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
 
@@ -61,7 +65,7 @@ export function SavedAddressesSettings() {
 
   useEffect(() => {
     loadAddresses().catch((error) => logger.error(error))
-  }, [loadAddresses])
+  }, [loadAddresses, encryptionKeyVersion])
 
   const handleAdd = async (address: ShippingAddress, contact: BuyerContact, label: string) => {
     if (!user?.identityId || !userEncryptionPubKey) return
