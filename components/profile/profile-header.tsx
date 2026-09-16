@@ -145,7 +145,7 @@ export function ProfileHeader({
             )}
           </div>
 
-          <div className="mt-20 flex items-center gap-2">
+          <div className="mt-20 flex min-w-0 flex-wrap items-center justify-end gap-2">
             <TooltipButton label="Share profile" onClick={() => copy(`${window.location.origin}/user?id=${userId}`, 'Profile link copied!')}>
               <ShareIcon className="h-4 w-4" />
             </TooltipButton>
@@ -170,7 +170,7 @@ export function ProfileHeader({
                 </Button>
               )
             ) : (
-              <div className="flex gap-2 items-center">
+              <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                 <TooltipButton
                   label="Tip with credits"
                   aria-label={`Tip ${subject}`}
