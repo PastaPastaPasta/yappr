@@ -27,6 +27,13 @@ interface UseFeedDataOptions {
   enabled?: boolean;
 }
 
+/** The first page as cached: its posts plus the pagination state that goes with them. */
+interface CachedFeedPage {
+  posts: Post[];
+  cursor: string | null;
+  hasMore: boolean;
+}
+
 interface FeedLoadPagination {
   startAfter?: string;
   timeWindow?: FollowingFeedWindow;
@@ -266,27 +273,34 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
             : `feed_for_you_${feedLanguage || 'all'}`;
 
         if (!forceRefresh && !isPaginating) {
-          const cached = cacheManager.get<Post[]>('feed', cacheKey);
+          const cached = cacheManager.get<CachedFeedPage>('feed', cacheKey);
           if (cached) {
             logger.debug('Feed: Using cached data');
-            setData(cached);
+            setData(cached.posts);
             setLoading(false);
 
-            if (cached.length > 0) {
-              setLastPostId(cached[cached.length - 1].id);
-              setHasMore(cached.length >= 20);
-              const newestTimestamp = Math.max(...cached.map(getFeedItemTimestamp));
+            if (cached.posts.length > 0) {
+              // The raw cursor and hasMore are cached with the page: a first
+              // page thinned by tombstones is shorter than the page size and
+              // its last live post is not where the timeline left off.
+              if (cached.cursor) {
+                setLastPostId(cached.cursor);
+              }
+              setHasMore(cached.hasMore);
+              const newestTimestamp = Math.max(...cached.posts.map(getFeedItemTimestamp));
               setNewestPostTimestamp(newestTimestamp);
             }
             setPendingNewPosts([]);
 
-            enrichProgressively(cached);
-            applyRepostAndQuoteEnrichment(cached);
+            enrichProgressively(cached.posts);
+            applyRepostAndQuoteEnrichment(cached.posts);
             return;
           }
         }
 
         let posts: Post[] = [];
+        let cursor: string | null = null;
+        let pageHasMore = false;
         // Enrichment that arrived with the posts (composite For You pages).
         let forYouPreloaded: PreloadedEnrichment | undefined;
 
@@ -307,8 +321,9 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
             enrichProgressively,
           });
 
+          pageHasMore = followingHasMore;
           setFollowingNextWindow(followingCursor);
-          setHasMore(followingHasMore);
+          setHasMore(pageHasMore);
 
           if (followingPosts.length === 0) {
             logger.debug('Feed: No posts in this time window, cursor points to next window');
@@ -324,28 +339,25 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
             startAfter: pagination?.startAfter,
             feedLanguage,
             currentUserId: user?.identityId,
-            setData,
-            setHasMore,
-            setLastPostId,
-            enrichProgressively,
           });
 
           posts = forYouResult.posts;
           forYouPreloaded = forYouResult.preloaded;
+          cursor = forYouResult.cursor;
+          pageHasMore = forYouResult.hasMore;
+
+          if (cursor) {
+            setLastPostId(cursor);
+          }
+          setHasMore(pageHasMore);
 
           if (posts.length === 0) {
             logger.debug('Feed: No posts found on platform');
             if (!isPaginating) {
               setData([]);
             }
-            setHasMore(false);
             return;
           }
-
-          if (forYouResult.cursor) {
-            setLastPostId(forYouResult.cursor);
-          }
-          setHasMore(forYouResult.hasMore);
         }
 
         const sortedPosts = sortFeedByTimestamp(posts);
@@ -372,10 +384,13 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
         if (activeTab !== 'following') {
           enrichProgressively(sortedPosts, forYouPreloaded);
+          // Repost attribution and the quotes the composite page did not
+          // attach (quoted replies, blog quotes); Following resolves its own.
+          applyRepostAndQuoteEnrichment(sortedPosts);
         }
 
         if (!isPaginating && sortedPosts.length > 0) {
-          cacheManager.set('feed', cacheKey, sortedPosts);
+          cacheManager.set<CachedFeedPage>('feed', cacheKey, { posts: sortedPosts, cursor, hasMore: pageHasMore });
         }
       } catch (error) {
         logger.error('Feed: Failed to load posts from platform:', error);
