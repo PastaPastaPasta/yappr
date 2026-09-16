@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { PlusIcon, TrashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { APPROVED_PAYMENT_SCHEMES } from '@/lib/services/unified-profile-service'
 import { isValidPaymentAddress } from '@/lib/utils/payment-uri'
+import { TooltipBadge } from '@/components/ui/tooltip-button'
 
 interface PaymentUriInputProps {
   uris: string[]
@@ -120,14 +121,17 @@ export function PaymentUriInput({
               <span className="flex-1 text-sm font-mono truncate text-gray-600 dark:text-gray-300">
                 {uri.substring(uri.indexOf(':') + 1)}
               </span>
-              <button
-                type="button"
-                onClick={() => handleRemoveUri(index)}
-                disabled={disabled}
-                className="p-1 text-gray-400 hover:text-red-500 disabled:opacity-50"
-              >
-                <TrashIcon className="w-4 h-4" />
-              </button>
+              <TooltipBadge label={`Remove ${getSchemeLabel(uri)} address`}>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveUri(index)}
+                  disabled={disabled}
+                  aria-label={`Remove ${getSchemeLabel(uri)} address ${uri.substring(uri.indexOf(':') + 1)}`}
+                  className="p-1 text-gray-400 hover:text-red-500 disabled:opacity-50"
+                >
+                  <TrashIcon className="w-4 h-4" />
+                </button>
+              </TooltipBadge>
             </div>
           ))}
         </div>
