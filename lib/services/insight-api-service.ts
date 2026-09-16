@@ -144,7 +144,8 @@ export function getNetworkFromScheme(scheme: string): AppNetwork {
 }
 
 /** Link a Dash payment to the explorer for the chain that received it. */
-export function getPaymentVerificationUrl(txid: string, paymentUri: string): string | null {
+export function getPaymentVerificationUrl(txid: string, paymentUri: unknown): string | null {
+  if (typeof paymentUri !== 'string') return null
   const scheme = paymentUri.slice(0, paymentUri.indexOf(':') + 1)
   if (!isDashScheme(scheme)) return null
 

@@ -27,4 +27,16 @@ describe('payment verification links', () => {
   it.each(['bitcoin:bc1qexample', 'ethereum:0x123', 'address-without-scheme'])('does not send a %s payment to a Dash explorer', (uri) => {
     expect(getPaymentVerificationUrl(txid, uri)).toBeNull()
   })
+
+  it.each([
+    ['missing', `{ "txid": "${txid}" }`],
+    ['null', '{ "paymentUri": null }'],
+    ['number', '{ "paymentUri": 123 }'],
+    ['boolean', '{ "paymentUri": false }'],
+    ['object', '{ "paymentUri": {} }'],
+    ['array', '{ "paymentUri": ["tdash:address"] }']
+  ])('keeps transaction IDs unlinked for a %s payment URI in decoded order data', (_type, json) => {
+    const payload = JSON.parse(json)
+    expect(getPaymentVerificationUrl(txid, payload.paymentUri)).toBeNull()
+  })
 })
