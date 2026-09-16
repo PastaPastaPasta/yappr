@@ -65,9 +65,9 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         let ranked: Post[];
         if (activeTab === 'following' && userId) {
           const authorIds = await followService.getFollowingIds(userId);
-          ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit: requestedLimit, window, force });
+          ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit: requestedLimit, window, force, throwOnError: true });
         } else {
-          ranked = await topLikedPostsHydrated({ limit: requestedLimit, window, force });
+          ranked = await topLikedPostsHydrated({ limit: requestedLimit, window, force, throwOnError: true });
         }
         const visible = await filterBlockedAuthors(userId, ranked);
         if (isCurrent()) {
