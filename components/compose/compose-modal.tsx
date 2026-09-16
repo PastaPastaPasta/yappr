@@ -340,7 +340,7 @@ export function ComposeModal() {
 
   return (
     <>
-      <Dialog.Root open={isComposeOpen} onOpenChange={setComposeOpen}>
+      <Dialog.Root open={isComposeOpen} onOpenChange={(open) => { if (!open) handleClose() }}>
         <AnimatePresence>
           {isComposeOpen && (
             <Dialog.Portal forceMount>
@@ -586,7 +586,7 @@ export function ComposeModal() {
       </Dialog.Root>
 
       <AddEncryptionKeyModal isOpen={privateFeed.showAddKeyModal} onClose={privateFeed.cancelAddKey} onSuccess={privateFeed.onKeyAdded} />
-      <StorageProviderModal open={image.showProviderModal} onOpenChange={image.setShowProviderModal} onSettingsNavigate={() => setComposeOpen(false)} />
+      <StorageProviderModal open={image.showProviderModal} onOpenChange={image.setShowProviderModal} onSettingsNavigate={handleClose} />
     </>
   )
 }
