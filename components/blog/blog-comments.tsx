@@ -11,6 +11,7 @@ import { useRelativeTime } from '@/hooks/use-relative-time'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { truncateId } from '@/lib/utils'
 import { normalizeDpnsUsername } from '@/lib/post-helpers'
+import { logger } from '@/lib/logger'
 import type { BlogComment } from '@/lib/types'
 import { blogCommentService } from '@/lib/services'
 
@@ -99,8 +100,8 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
       setContent('')
       await loadComments()
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to post comment'
-      toast.error(message)
+      logger.error('Failed to post blog comment:', error)
+      toast.error('Failed to post comment. Please try again.')
     } finally {
       setIsSubmitting(false)
     }
@@ -113,13 +114,13 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
       setDeletingId(commentId)
       const success = await blogCommentService.deleteComment(commentId, user.identityId)
       if (!success) {
-        throw new Error('You can only delete your own comments')
+        throw new Error('Comment deletion was not confirmed')
       }
 
       setComments((prev) => prev.filter((comment) => comment.id !== commentId))
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to delete comment'
-      toast.error(message)
+      logger.error('Failed to delete blog comment:', error)
+      toast.error('Failed to delete comment. Please try again.')
     } finally {
       setDeletingId(null)
     }
