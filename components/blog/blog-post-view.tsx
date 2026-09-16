@@ -133,7 +133,8 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
     setComposeOpen(true)
   }
 
-  const postUrl = `${APP_URL}${getBlogPostUrl(blog.id, post.slug)}`
+  const deploymentUrl = `${APP_URL.replace(/\/+$/, '')}${(process.env.NEXT_PUBLIC_BASE_PATH || '').replace(/\/+$/, '')}`
+  const postUrl = `${deploymentUrl}${getBlogPostUrl(blog.id, post.slug)}`
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(postUrl).then(
