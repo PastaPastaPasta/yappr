@@ -361,7 +361,7 @@ export function ProfileHoverCard({
             {/* Stats */}
             <div className="flex items-center gap-4 text-sm">
               <Link
-                href={`/user?id=${userId}&tab=following`}
+                href={`/following?id=${userId}`}
                 onClick={handleViewProfile}
                 className="hover:underline"
               >
@@ -371,7 +371,7 @@ export function ProfileHoverCard({
                 <span className="text-gray-500 ml-1">Following</span>
               </Link>
               <Link
-                href={`/user?id=${userId}&tab=followers`}
+                href={`/followers?id=${userId}`}
                 onClick={handleViewProfile}
                 className="hover:underline"
               >
