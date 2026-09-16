@@ -3,7 +3,8 @@
 import { loadIdentityBatch } from '@/lib/services/identity-batch'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useId, type MouseEvent } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -55,6 +56,9 @@ function MessagesPage() {
   const [isSending, setIsSending] = useState(false)
   const [isLoadingMessages, setIsLoadingMessages] = useState(false)
   const [showNewConversation, setShowNewConversation] = useState(false)
+  const recipientInputId = useId()
+  const newMessageOpener = useRef<HTMLElement | null>(null)
+  const messageInput = useRef<HTMLInputElement | null>(null)
   const [newConversationInput, setNewConversationInput] = useState('')
   const [isResolvingUser, setIsResolvingUser] = useState(false)
   const [participantLastRead, setParticipantLastRead] = useState<number | null>(null)
@@ -749,6 +753,17 @@ function MessagesPage() {
     </button>
   )
 
+  const openNewConversation = (event: MouseEvent<HTMLButtonElement>) => {
+    newMessageOpener.current = event.currentTarget
+    setShowNewConversation(true)
+  }
+
+  const closeNewConversation = () => {
+    setShowNewConversation(false)
+    setNewConversationInput('')
+    setUserSearchResults([])
+  }
+
   return (
     <div className="h-[calc(100dvh-32px-56px)] md:h-[calc(100dvh-40px)] flex overflow-hidden">
       <Sidebar />
@@ -764,7 +779,7 @@ function MessagesPage() {
                   <TooltipTrigger asChild>
                     <button
                       aria-label="New conversation"
-                      onClick={() => setShowNewConversation(true)}
+                      onClick={openNewConversation}
                       className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
                     >
                       <PlusIcon className="h-5 w-5" aria-hidden="true" />
@@ -970,6 +985,7 @@ function MessagesPage() {
                 />
 
                 <Input
+                  ref={messageInput}
                   type="text"
                   placeholder="Type a message..."
                   value={newMessage}
@@ -1014,7 +1030,7 @@ function MessagesPage() {
                 Messages are stored encrypted on Dash Platform.
               </p>
               <Button
-                onClick={() => setShowNewConversation(true)}
+                onClick={openNewConversation}
                 className="gap-2"
               >
                 <PlusIcon className="h-5 w-5" />
@@ -1030,7 +1046,7 @@ function MessagesPage() {
               <h2 className="text-2xl font-semibold mb-2">Select a conversation</h2>
               <p className="text-gray-500 mb-6">Choose from your existing conversations or start a new one</p>
               <Button
-                onClick={() => setShowNewConversation(true)}
+                onClick={openNewConversation}
                 className="gap-2"
               >
                 <PlusIcon className="h-5 w-5" />
@@ -1043,24 +1059,25 @@ function MessagesPage() {
 
       {/* New Conversation Modal */}
       {showNewConversation && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center pt-16 sm:pt-0">
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => {
-              setShowNewConversation(false)
-              setNewConversationInput('')
-              setUserSearchResults([])
-            }}
-          />
-          <div className="relative bg-white dark:bg-gray-900 rounded-2xl w-full max-w-md mx-3 sm:mx-4 p-4 sm:p-6 shadow-xl max-h-[80vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold">New Message</h2>
-              <button
-                onClick={() => {
-                  setShowNewConversation(false)
-                  setNewConversationInput('')
-                  setUserSearchResults([])
+        <Dialog.Root open={showNewConversation} onOpenChange={(open) => { if (!open) closeNewConversation() }}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+            <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center pt-16 sm:pt-0 pointer-events-none">
+              <Dialog.Content
+                onCloseAutoFocus={(event) => {
+                  event.preventDefault()
+                  const opener = newMessageOpener.current
+                  if (opener?.getClientRects().length) opener.focus()
+                  else messageInput.current?.focus()
                 }}
+                className="relative bg-white dark:bg-gray-900 rounded-2xl w-full max-w-md mx-3 sm:mx-4 p-4 sm:p-6 shadow-xl max-h-[80vh] overflow-y-auto pointer-events-auto"
+              >
+            <div className="flex items-center justify-between mb-4">
+              <Dialog.Title className="text-xl font-bold">New Message</Dialog.Title>
+              <Dialog.Description className="sr-only">Choose a person to start an encrypted conversation.</Dialog.Description>
+              <button
+                aria-label="Close new message"
+                onClick={closeNewConversation}
                 className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
               >
                 <XMarkIcon className="h-5 w-5" />
@@ -1074,12 +1091,14 @@ function MessagesPage() {
               }}
             >
               <div className="mb-4">
-                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                <label htmlFor={recipientInputId} className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                   Search for a user
                 </label>
                 <div className="relative">
                   <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
                   <Input
+                    id={recipientInputId}
+                    aria-describedby={`${recipientInputId}-hint`}
                     type="text"
                     placeholder="Search by username..."
                     value={newConversationInput}
@@ -1089,7 +1108,7 @@ function MessagesPage() {
                     className="pl-10"
                   />
                 </div>
-                <p className="text-xs text-gray-500 mt-2">
+                <p id={`${recipientInputId}-hint`} className="text-xs text-gray-500 mt-2">
                   Type at least 3 characters to search, or paste a full identity ID
                 </p>
               </div>
@@ -1147,11 +1166,7 @@ function MessagesPage() {
                   type="button"
                   variant="outline"
                   className="flex-1"
-                  onClick={() => {
-                    setShowNewConversation(false)
-                    setNewConversationInput('')
-                    setUserSearchResults([])
-                  }}
+                  onClick={closeNewConversation}
                 >
                   Cancel
                 </Button>
@@ -1168,8 +1183,10 @@ function MessagesPage() {
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
+              </Dialog.Content>
+            </div>
+          </Dialog.Portal>
+        </Dialog.Root>
       )}
     </div>
   )
