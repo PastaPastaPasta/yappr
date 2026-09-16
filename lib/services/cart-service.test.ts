@@ -46,7 +46,7 @@ describe('cart inventory', () => {
   })
 
   it('keeps per-variant additions within their own stock', () => {
-    const item = product({ variants: { axes: [{ name: 'Size', options: ['S', 'M'] }], combinations: [{ key: 'S', stock: 1 }, { key: 'M', stock: 2 }] } })
+    const item = product({ variants: { axes: [{ name: 'Size', options: ['S', 'M'] }], combinations: [{ key: 'S', price: 100, stock: 1 }, { key: 'M', price: 100, stock: 2 }] } })
     cartService.addStoreItem(item, 'S')
     cartService.addStoreItem(item, 'M', 2)
     expect(() => cartService.addStoreItem(item, 'S')).toThrow('Only 1 available')
