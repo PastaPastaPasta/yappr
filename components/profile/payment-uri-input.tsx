@@ -62,9 +62,10 @@ export function PaymentUriInput({
   const [error, setError] = useState<string | null>(null)
 
   const handleAddUri = () => {
-    if (!newUri.trim()) return
+    const trimmedUri = newUri.trim()
+    if (!trimmedUri) return
 
-    const parsed = parsePaymentUri(newUri)
+    const parsed = parsePaymentUri(trimmedUri)
     if (!parsed || !isValidPaymentAddress(parsed.scheme, parsed.address)) {
       setError('Please enter a valid payment URI (e.g., tdash:y..., dash:XnNh3..., bitcoin:bc1...)')
       return
@@ -76,12 +77,12 @@ export function PaymentUriInput({
     }
 
     // Check for duplicates
-    if (uris.some(u => u.toLowerCase() === newUri.toLowerCase())) {
+    if (uris.some(u => u.toLowerCase() === trimmedUri.toLowerCase())) {
       setError('This address is already added')
       return
     }
 
-    onChange([...uris, newUri.trim()])
+    onChange([...uris, trimmedUri])
     setNewUri('')
     setError(null)
   }
