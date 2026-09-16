@@ -1,6 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger'
+import bs58 from 'bs58'
 import { useState, useEffect, Suspense, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon, EyeSlashIcon, NoSymbolIcon } from '@heroicons/react/24/outline'
@@ -32,6 +33,16 @@ import { EMPTY_DRAFT, type ProfileDraft } from '@/components/profile/profile-edi
 
 const PAGE_SIZE = 50
 
+/** A profile route accepts only a 32-byte Platform identifier. */
+function profileIdentityId(value: string | null): string | null {
+  if (!value) return null
+  try {
+    return bs58.decode(value).length === 32 ? value : null
+  } catch {
+    return null
+  }
+}
+
 /** Override the author display fields; blanks make progressive enrichment fill them in. */
 function withAuthor(post: Post, fields: Partial<Post['author']>): Post {
   return { ...post, author: { ...post.author, ...fields } }
@@ -48,7 +59,8 @@ function replaceQueryParam(key: string, value: string | null) {
 function UserProfileContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const userId = searchParams.get('id')
+  const requestedUserId = searchParams.get('id')
+  const userId = profileIdentityId(requestedUserId)
   const { user: currentUser, logout } = useAuth()
   const viewerId = currentUser?.identityId
   const { requireAuth } = useRequireAuth()
@@ -420,7 +432,7 @@ function UserProfileContent() {
     return (
       <PageShell>
         <div className="p-8 text-center text-gray-500">
-          <p>User not found</p>
+          <p>{requestedUserId ? 'Invalid identity ID' : 'User not found'}</p>
         </div>
       </PageShell>
     )
