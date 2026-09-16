@@ -8,6 +8,7 @@ import { ArrowLeftIcon, EyeSlashIcon, NoSymbolIcon } from '@heroicons/react/24/o
 import toast from 'react-hot-toast'
 import type { Post, ParsedPaymentUri, Store } from '@/lib/types'
 import { useSettingsStore } from '@/lib/store'
+import { followStatusCache } from '@/lib/caches/user-status-cache'
 import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { byNewestActivity, resolveUserReposts } from '@/lib/feed/resolve-user-reposts'
 import { paymentUriScheme } from '@/lib/services/unified-profile-service'
@@ -366,6 +367,8 @@ function UserProfileContent() {
       const result = isFollowing ? await followService.unfollowUser(authedUser.identityId, userId) : await followService.followUser(authedUser.identityId, userId)
       if (!result.success) throw new Error(result.error || 'Follow failed')
       const delta = isFollowing ? -1 : 1
+      // Mounted post media reads the shared cache before its enrichment hint.
+      followStatusCache.set(authedUser.identityId, userId, !isFollowing)
       setIsFollowing(!isFollowing)
       setProfile((prev) => (prev ? { ...prev, followersCount: Math.max(0, prev.followersCount + delta) } : null))
       toast.success(isFollowing ? 'Unfollowed' : 'Following!')
