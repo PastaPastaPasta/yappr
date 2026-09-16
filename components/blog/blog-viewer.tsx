@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef } from 'react'
+import { useTheme } from 'next-themes'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import hljs from 'highlight.js/lib/core'
@@ -50,6 +51,7 @@ function collectFootnotes(blocks: unknown[]): Array<{ key: string; text: string;
 }
 
 function BlogViewerContent({ blocks }: BlogViewerProps) {
+  const { resolvedTheme } = useTheme()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const editor = useCreateBlockNote({
     schema: blogBlockNoteSchema,
@@ -78,7 +80,7 @@ function BlogViewerContent({ blocks }: BlogViewerProps) {
       <BlockNoteView
         editor={editor}
         editable={false}
-        theme="dark"
+        theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
       />
       {footnotes.length > 0 && (
         <section className="mt-6 border-t pt-6" style={{ borderColor: 'var(--blog-border)' }}>

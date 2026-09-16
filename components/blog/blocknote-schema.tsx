@@ -152,10 +152,10 @@ const calloutBlock = createReactBlockSpec(
       const variant = block.props.variant
       const editable = Boolean((editor as { isEditable?: boolean }).isEditable)
       const variantClassMap: Record<string, string> = {
-        info: 'border-cyan-500/40 bg-cyan-500/10 text-cyan-100',
-        warning: 'border-amber-500/40 bg-amber-500/10 text-amber-100',
-        tip: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100',
-        note: 'border-violet-500/40 bg-violet-500/10 text-violet-100',
+        info: 'border-cyan-500/40 bg-cyan-500/10 text-cyan-900 dark:text-cyan-100',
+        warning: 'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100',
+        tip: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-900 dark:text-emerald-100',
+        note: 'border-violet-500/40 bg-violet-500/10 text-violet-900 dark:text-violet-100',
       }
       const labelMap: Record<string, string> = {
         info: 'Info',
@@ -259,7 +259,7 @@ const tableOfContentsBlock = createReactBlockSpec(
     render: ({ editor }) => {
       if ((editor as { isEditable?: boolean }).isEditable) {
         return (
-          <div className="rounded-lg border border-dashed border-gray-600 bg-gray-900/40 p-3 text-sm text-gray-300">
+          <div className="rounded-lg border border-dashed border-gray-600 bg-gray-900/40 p-3 text-sm text-gray-900 dark:text-gray-300">
             Table of Contents (auto-generated on view)
           </div>
         )
@@ -269,7 +269,7 @@ const tableOfContentsBlock = createReactBlockSpec(
 
       if (headings.length === 0) {
         return (
-          <div className="rounded-lg border border-dashed border-gray-700 bg-gray-900/30 p-3 text-sm text-gray-400">
+          <div className="rounded-lg border border-dashed border-gray-700 bg-gray-900/30 p-3 text-sm text-gray-700 dark:text-gray-400">
             No headings found.
           </div>
         )
@@ -277,11 +277,11 @@ const tableOfContentsBlock = createReactBlockSpec(
 
       return (
         <nav aria-label="Table of contents" className="rounded-lg border border-white/10 bg-black/20 p-3">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Table of contents</p>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-700 dark:text-gray-400">Table of contents</p>
           <ul className="space-y-1">
             {headings.map((heading, index) => (
               <li key={heading.id}>
-                <a href={`#${heading.id}`} className="text-sm text-cyan-300 hover:underline">
+                <a href={`#${heading.id}`} className="text-sm text-cyan-800 hover:underline dark:text-cyan-300">
                   {index + 1}. {heading.text}
                 </a>
               </li>
@@ -599,7 +599,7 @@ const columnLayoutBlock = createReactBlockSpec(
       return (
         <div className="space-y-2 rounded-lg border border-white/10 bg-black/20 p-3">
           <div className="flex items-center gap-2">
-            <label className="text-xs font-medium uppercase tracking-wider text-gray-400">Columns</label>
+            <label className="text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-400">Columns</label>
             <select
               value={String(block.props.columns || '2')}
               disabled={!editable}
@@ -612,17 +612,17 @@ const columnLayoutBlock = createReactBlockSpec(
           </div>
           <div className={`grid gap-2 ${columnCount === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
             {Array.from({ length: columnCount }).map((_, index) => (
-              <div key={`col-${index}`} className="rounded-md border border-white/10 bg-black/20 p-2 text-sm text-gray-100">
-                {parts[index] || <span className="text-gray-500">{`Column ${index + 1}`}</span>}
+              <div key={`col-${index}`} className="rounded-md border border-white/10 bg-black/20 p-2 text-sm text-gray-900 dark:text-gray-100">
+                {parts[index] || <span className="text-gray-800 dark:text-gray-500">{`Column ${index + 1}`}</span>}
               </div>
             ))}
           </div>
           {editable && (
             <div>
-              <p className="mb-1 text-xs text-gray-400">Edit source text (use | to separate columns)</p>
+              <p className="mb-1 text-xs text-gray-700 dark:text-gray-400">Edit source text (use | to separate columns)</p>
               <div
                 ref={contentRef}
-                className="min-h-[28px] rounded-md border border-dashed border-gray-700 bg-black/20 p-2 text-sm text-gray-100"
+                className="min-h-[28px] rounded-md border border-dashed border-gray-700 bg-black/20 p-2 text-sm text-gray-900 dark:text-gray-100"
               />
             </div>
           )}
@@ -652,7 +652,7 @@ const footnoteBlock = createReactBlockSpec(
         if (!text) return null
         return (
           <sup id={`footnote-ref-${index}`} className="mx-0.5 align-super text-xs">
-            <a href={`#footnote-item-${index}`} className="text-cyan-300 hover:underline">
+            <a href={`#footnote-item-${index}`} className="text-cyan-800 hover:underline dark:text-cyan-300">
               [{index}]
             </a>
           </sup>
@@ -661,7 +661,7 @@ const footnoteBlock = createReactBlockSpec(
 
       return (
         <div className="flex items-start gap-2 rounded-md border border-white/10 bg-black/20 p-2">
-          <sup className="pt-1 text-xs text-gray-300">[{index}]</sup>
+          <sup className="pt-1 text-xs text-gray-700 dark:text-gray-300">[{index}]</sup>
           <div className="flex-1 space-y-1">
             <input
               type="text"
@@ -670,7 +670,7 @@ const footnoteBlock = createReactBlockSpec(
               placeholder="Footnote id (optional)"
               className="w-full rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-100"
             />
-            <div ref={contentRef} className="min-h-[24px] rounded-md border border-dashed border-gray-700 p-2 text-sm text-gray-100" />
+            <div ref={contentRef} className="min-h-[24px] rounded-md border border-dashed border-gray-700 p-2 text-sm text-gray-900 dark:text-gray-100" />
           </div>
         </div>
       )
