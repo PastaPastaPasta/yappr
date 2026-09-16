@@ -1,8 +1,9 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { ArrowLeftIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
@@ -91,6 +92,18 @@ function CheckoutPage() {
   const [step, setStep] = useState<'details' | 'policies' | 'payment'>('details')
   const [includeShipping, setIncludeShipping] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [stockError, setStockError] = useState<string | null>(null)
+  const [isCheckingAvailability, setIsCheckingAvailability] = useState(false)
+  const stockErrorRef = useRef<HTMLDivElement>(null)
+  const availabilityRequest = useRef(0)
+  const currentStoreId = useRef(storeId)
+  currentStoreId.current = storeId
+
+  useEffect(() => () => { availabilityRequest.current += 1 }, [])
+
+  useEffect(() => {
+    if (stockError && !isLoading) stockErrorRef.current?.scrollIntoView({ block: 'center' })
+  }, [stockError, isLoading])
 
   // Policies
   const [storePolicies, setStorePolicies] = useState<StorePolicy[]>([])
@@ -137,6 +150,24 @@ function CheckoutPage() {
     sellerEncryptionPublicKey: null,
     buyerEncryptionPrivateKey: null
   })
+
+  const validateCartAvailability = useCallback(async (items: CartItem[]): Promise<boolean> => {
+    const request = ++availabilityRequest.current
+    setIsCheckingAvailability(true)
+    try {
+      const unavailable = await cartService.validateItems(items)
+      if (request !== availabilityRequest.current || currentStoreId.current !== storeId) return false
+      const message = unavailable.length > 0
+        ? unavailable.map(result => `${result.item.title}: ${result.reason}`).join(' ')
+        : null
+      setStockError(message)
+      return message === null
+    } finally {
+      if (request === availabilityRequest.current && currentStoreId.current === storeId) {
+        setIsCheckingAvailability(false)
+      }
+    }
+  }, [storeId])
 
   const validateCheckoutReadiness = useCallback(async (storeToValidate: Store | null): Promise<CheckoutReadinessState> => {
     function blocked(
@@ -228,6 +259,7 @@ function CheckoutPage() {
 
         setStore(storeData)
         setCartItems(items)
+        await validateCartAvailability(items)
         setStorePolicies(parseStorePolicies(storeData.policies))
 
         // Select first payment URI by default
@@ -245,7 +277,7 @@ function CheckoutPage() {
     }
 
     loadData().catch((error) => logger.error(error))
-  }, [sdkReady, storeId, router, validateCheckoutReadiness])
+  }, [sdkReady, storeId, router, validateCheckoutReadiness, validateCartAvailability])
 
   // Load saved addresses
   useEffect(() => {
@@ -566,8 +598,8 @@ function CheckoutPage() {
   const promptForEncryptionKeyThenContinue = useCallback(() => {
     openEncryptionKeyModal('generic', () => {
       validateCheckoutReadiness(store)
-        .then((readiness) => {
-          if (readiness.isReady) {
+        .then(async (readiness) => {
+          if (readiness.isReady && await validateCartAvailability(cartItems)) {
             setError(null)
             setStep('payment')
             return
@@ -579,10 +611,11 @@ function CheckoutPage() {
           setError(err instanceof Error ? err.message : 'Failed to verify checkout readiness.')
         })
     })
-  }, [openEncryptionKeyModal, validateCheckoutReadiness, store])
+  }, [openEncryptionKeyModal, validateCheckoutReadiness, validateCartAvailability, cartItems, store])
 
   const handlePoliciesSubmit = async () => {
     setError(null)
+    if (!await validateCartAvailability(cartItems)) return
     const readiness = await validateCheckoutReadiness(store)
     if (readiness.isReady) {
       setStep('payment')
@@ -613,12 +646,14 @@ function CheckoutPage() {
   }
 
   const handlePlaceOrder = async () => {
-    if (!user?.identityId || !store || !selectedPaymentUri) return
+    if (!user?.identityId || !store || !selectedPaymentUri || isSubmitting || isCheckingAvailability || stockError) return
 
     setIsSubmitting(true)
     setError(null)
 
     try {
+      if (!await validateCartAvailability(cartItems)) return
+
       const payload = storeOrderService.buildOrderPayload(
         cartItems,
         includeShipping ? shippingAddress : undefined,
@@ -775,6 +810,39 @@ function CheckoutPage() {
             </div>
           </PageHeader>
 
+          {stockError && (
+            <div ref={stockErrorRef} role="alert" className="m-4 p-4 border border-red-200 bg-red-50 dark:bg-red-900/20 rounded-lg space-y-3">
+              <p className="font-medium text-red-700 dark:text-red-200">Please review item availability</p>
+              <p className="text-sm text-red-600 dark:text-red-300">{stockError}</p>
+              <p className="text-sm">Your cart and checkout details have been kept. Check availability again without leaving this page.</p>
+              {step === 'payment' && (
+                <p className="text-sm font-medium">
+                  Do not send payment while availability is unresolved. If you have already paid, do not pay again. Keep the payment details below and contact the seller to arrange fulfillment or a refund.
+                </p>
+              )}
+              <Button
+                variant="outline"
+                onClick={() => validateCartAvailability(cartItems)}
+                disabled={isCheckingAvailability || isSubmitting}
+              >
+                {isCheckingAvailability ? 'Checking availability...' : 'Check availability again'}
+              </Button>
+              {step === 'payment' && store && (
+                <Link
+                  href={`/messages?startConversation=${store.ownerId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-sm text-yappr-600 underline"
+                >
+                  Contact seller (opens in a new tab)
+                </Link>
+              )}
+              {step !== 'payment' && (
+                <Button variant="ghost" onClick={() => router.push('/cart')}>Review Cart</Button>
+              )}
+            </div>
+          )}
+
           {error && (
             <div className="m-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-300 text-sm">
               {error}
@@ -910,7 +978,7 @@ function CheckoutPage() {
                 <Button
                   className="w-full"
                   onClick={handlePlaceOrder}
-                  disabled={isSubmitting || !selectedPaymentUri}
+                  disabled={isSubmitting || isCheckingAvailability || Boolean(stockError) || !selectedPaymentUri}
                 >
                   {isSubmitting ? 'Placing Order...' : 'Place Order'}
                 </Button>

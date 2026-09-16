@@ -51,6 +51,7 @@ function ItemDetailContent() {
   const [quantity, setQuantity] = useState(1)
   const [variantSelections, setVariantSelections] = useState<Record<string, string>>({})
   const [addedToCart, setAddedToCart] = useState(false)
+  const [cartError, setCartError] = useState<string | null>(null)
   const [cartItemCount, setCartItemCount] = useState(0)
   const addedToCartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -166,6 +167,16 @@ function ItemDetailContent() {
     return storeItemService.hasInventoryTracking(item, variantKey)
   }, [item, variantKey])
 
+  const quantityInCart = cartService.getItems().find(
+    cartItem => cartItem.itemId === item?.id && cartItem.variantKey === variantKey
+  )?.quantity ?? 0
+  const remainingStock = Math.max(0, currentStock - quantityInCart)
+
+  useEffect(() => {
+    setQuantity(value => Math.max(1, Math.min(value, remainingStock)))
+    setCartError(null)
+  }, [remainingStock, variantKey])
+
   // Get current image (variant-specific or default)
   const images = useMemo(() => {
     if (!item) return []
@@ -202,8 +213,14 @@ function ItemDetailContent() {
   const handleAddToCart = () => {
     if (!item) return
 
-    cartService.addStoreItem(item, variantKey, quantity)
-    setAddedToCart(true)
+    try {
+      cartService.addStoreItem(item, variantKey, quantity)
+      setCartError(null)
+      setAddedToCart(true)
+    } catch (err) {
+      setCartError(err instanceof Error ? err.message : 'Could not add item to cart')
+      return
+    }
 
     // Clear any existing timeout before setting a new one
     if (addedToCartTimeoutRef.current) {
@@ -332,6 +349,7 @@ function ItemDetailContent() {
             {hasInventoryTracking && (
               <div className={`text-sm ${isOutOfStock ? 'text-red-500' : 'text-green-600'}`}>
                 {isOutOfStock ? 'Out of stock' : `${currentStock} in stock`}
+                {quantityInCart > 0 && ` · ${quantityInCart} in your cart`}
               </div>
             )}
 
@@ -343,16 +361,18 @@ function ItemDetailContent() {
                   value={quantity}
                   onChange={setQuantity}
                   min={1}
-                  max={hasInventoryTracking ? currentStock : 99}
+                  max={hasInventoryTracking ? remainingStock : 99}
                 />
               </div>
             )}
+
+            {cartError && <p role="alert" className="text-sm text-red-600">{cartError}</p>}
 
             {/* Add to Cart */}
             <Button
               className="w-full"
               size="lg"
-              disabled={isOutOfStock}
+              disabled={isOutOfStock || remainingStock === 0}
               onClick={handleAddToCart}
             >
               {addedToCart ? (
@@ -366,6 +386,8 @@ function ItemDetailContent() {
                 </motion.span>
               ) : isOutOfStock ? (
                 'Out of Stock'
+              ) : remainingStock === 0 ? (
+                'Maximum quantity in cart'
               ) : (
                 <>
                   <ShoppingCartIcon className="h-5 w-5 mr-2" />
