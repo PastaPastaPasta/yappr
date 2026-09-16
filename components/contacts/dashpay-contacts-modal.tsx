@@ -7,6 +7,7 @@ import { XMarkIcon, UserGroupIcon } from '@heroicons/react/24/outline'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { LoadingState } from '@/components/ui/loading-state'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useAuth } from '@/contexts/auth-context'
@@ -123,15 +124,27 @@ export function DashPayContactsModal() {
               <UserGroupIcon className="h-6 w-6 text-blue-500" />
               Dash Pay Contacts
             </Dialog.Title>
-            <Dialog.Close asChild>
-              <button
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full transition-colors disabled:opacity-50"
-                disabled={state === 'following'}
-              >
-                <XMarkIcon className="h-5 w-5" />
-              </button>
-            </Dialog.Close>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Dialog.Close asChild>
+                    <button
+                      aria-label="Close contacts"
+                      className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full transition-colors disabled:opacity-50"
+                      disabled={state === 'following'}
+                    >
+                      <XMarkIcon className="h-5 w-5" />
+                    </button>
+                  </Dialog.Close>
+                </TooltipTrigger>
+                <TooltipContent onEscapeKeyDown={handleClose}>Close contacts</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
+
+          <Dialog.Description className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+            Find and follow your mutual Dash Pay contacts on Yappr.
+          </Dialog.Description>
 
           {/* Content */}
           <div className="flex-1 overflow-y-auto">
