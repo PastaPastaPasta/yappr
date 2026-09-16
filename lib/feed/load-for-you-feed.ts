@@ -3,8 +3,6 @@ import { postService } from '@/lib/services/post-service';
 import { Post } from '@/lib/types';
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 import { loadCompositeFeedPage } from './composite-feed-page';
-import { enrichPostsWithRepostsAndQuotes } from './enrich-posts';
-import { sortFeedByTimestamp } from './transform-raw-post';
 
 /**
  * Timeline documents arrive with `createDefaultUser` placeholders
@@ -70,153 +68,33 @@ async function fetchFeedPage(options: {
   return { posts, cursor, hasMore };
 }
 
+/**
+ * A page whose every document is a tombstone must not read as the end of the
+ * feed, so this many further pages are tried before an empty page is returned.
+ */
+const MAX_EMPTY_PAGES = 5;
+
+/**
+ * One For You page. Short pages (tombstones thin most of them on a feed with
+ * many deleted posts) are NOT topped up here: the feed list's infinite-scroll
+ * sentinel already auto-loads while it stays on screen, and a background fill
+ * running next to it fetched every page twice.
+ */
 export async function loadForYouFeed(options: {
   startAfter?: string;
   feedLanguage?: string;
   currentUserId?: string;
-  setData: (updater: (prev: Post[] | null) => Post[] | null) => void;
-  setHasMore: (value: boolean) => void;
-  setLastPostId: (id: string) => void;
-  enrichProgressively: (posts: Post[], preloaded?: PreloadedEnrichment) => void;
-}): Promise<{ posts: Post[]; cursor: string | null; hasMore: boolean; preloaded?: PreloadedEnrichment }> {
-  const MIN_NON_REPLY_POSTS = 20;
-  const MAX_FETCH_ITERATIONS = 5;
+}): Promise<FeedPage> {
+  const pageOptions = { language: options.feedLanguage, currentUserId: options.currentUserId };
 
-  const currentStartAfter = options.startAfter;
+  logger.debug('Feed: Loading posts', options.startAfter ? `starting after ${options.startAfter}` : '');
+  let page = await fetchFeedPage({ ...pageOptions, startAfter: options.startAfter });
 
-  logger.debug(
-    'Feed: Loading posts',
-    currentStartAfter ? `starting after ${currentStartAfter}` : '',
-    '(iteration 1)'
-  );
-
-  const firstPage = await fetchFeedPage({
-    startAfter: currentStartAfter,
-    language: options.feedLanguage,
-    currentUserId: options.currentUserId,
-  });
-
-  if (!firstPage.cursor) {
-    logger.debug('Feed: No posts available');
-    options.setHasMore(false);
-    return { posts: [], cursor: null, hasMore: false };
+  for (let skipped = 0; page.posts.length === 0 && page.hasMore && page.cursor && skipped < MAX_EMPTY_PAGES; skipped++) {
+    logger.debug(`Feed: Page after ${page.cursor} held only tombstones, loading the next one`);
+    page = await fetchFeedPage({ ...pageOptions, startAfter: page.cursor });
   }
 
-  const firstBatchPosts = firstPage.posts;
-  const firstBatchCursor = firstPage.cursor;
-
-  logger.debug(`Feed: First batch has ${firstBatchPosts.length} posts`);
-
-  const forYouNextCursor: string | null = firstBatchCursor;
-  const forYouHasMore = firstPage.hasMore;
-
-  // Repost attribution ("X reposted") and whatever quotes the composite page
-  // did not already attach (quoted replies, blog quotes).
-  enrichPostsWithRepostsAndQuotes(firstBatchPosts)
-    .then((enrichedPosts) => {
-      options.setData((current) => {
-        if (!current) return current;
-        const enrichedById = new Map(enrichedPosts.map((post) => [post.id, post]));
-        return current.map((post) => enrichedById.get(post.id) || post);
-      });
-    })
-    .catch((error) => {
-      logger.error('Feed: Error enriching first batch:', error);
-    });
-
-  if (firstBatchPosts.length < MIN_NON_REPLY_POSTS && forYouHasMore) {
-    logger.debug(
-      `Feed: Only ${firstBatchPosts.length} posts, will fetch more in background... (need ${MIN_NON_REPLY_POSTS})`
-    );
-
-    const fetchMoreInBackground = async () => {
-      let bgCurrentStartAfter = firstBatchCursor;
-      let bgFetchIteration = 1;
-      let allPostCount = firstBatchPosts.length;
-      let bgHasMore: boolean = forYouHasMore;
-
-      while (
-        allPostCount < MIN_NON_REPLY_POSTS &&
-        bgFetchIteration < MAX_FETCH_ITERATIONS &&
-        bgHasMore &&
-        bgCurrentStartAfter
-      ) {
-        bgFetchIteration++;
-        logger.debug(`Feed: Loading posts starting after ${bgCurrentStartAfter} (iteration ${bgFetchIteration})`);
-
-        const bgPage = await fetchFeedPage({
-          startAfter: bgCurrentStartAfter,
-          language: options.feedLanguage,
-          currentUserId: options.currentUserId,
-        });
-
-        bgHasMore = bgPage.hasMore;
-
-        if (!bgPage.cursor) {
-          logger.debug('Feed: No more posts available (background)');
-          options.setHasMore(false);
-          break;
-        }
-
-        const bgPosts = bgPage.posts;
-
-        enrichPostsWithRepostsAndQuotes(bgPosts)
-          .then((enrichedPosts) => {
-            options.setData((current) => {
-              if (!current) return current;
-              const enrichedById = new Map(enrichedPosts.map((post) => [post.id, post]));
-              return current.map((post) => enrichedById.get(post.id) || post);
-            });
-          })
-          .catch((error) => {
-            logger.error('Feed: Error enriching background batch:', error);
-          });
-
-        allPostCount += bgPosts.length;
-
-        bgCurrentStartAfter = bgPage.cursor;
-
-        options.setData((currentItems) => {
-          if (!currentItems) return bgPosts;
-
-          const existingIds = new Set(currentItems.map((item) => item.id));
-          const newItems = bgPosts.filter((post) => !existingIds.has(post.id));
-          const allItems = sortFeedByTimestamp([...currentItems, ...newItems]);
-
-          logger.debug(`Feed: Background added ${newItems.length} posts (total: ${allItems.length})`);
-          return allItems;
-        });
-
-        options.enrichProgressively(bgPosts, bgPage.preloaded);
-        if (bgCurrentStartAfter) {
-          options.setLastPostId(bgCurrentStartAfter);
-        }
-
-        if (allPostCount < MIN_NON_REPLY_POSTS && bgFetchIteration < MAX_FETCH_ITERATIONS) {
-          logger.debug(`Feed: Only ${allPostCount} posts, fetching more... (need ${MIN_NON_REPLY_POSTS})`);
-        }
-      }
-
-      options.setHasMore(bgHasMore);
-      logger.debug(`Feed: Background fetch complete. Total posts: ${allPostCount}`);
-    };
-
-    fetchMoreInBackground().catch((error) => {
-      logger.error('Feed: Background fetch error:', error);
-    });
-  }
-
-  const sortedPosts = sortFeedByTimestamp(firstBatchPosts);
-
-  if (forYouNextCursor) {
-    options.setLastPostId(forYouNextCursor);
-  }
-  options.setHasMore(forYouHasMore);
-
-  return {
-    posts: sortedPosts,
-    cursor: forYouNextCursor,
-    hasMore: forYouHasMore,
-    preloaded: firstPage.preloaded,
-  };
+  logger.debug(`Feed: Page has ${page.posts.length} posts`);
+  return page;
 }
