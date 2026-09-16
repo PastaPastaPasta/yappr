@@ -4,6 +4,7 @@ import { bundleKey, bundledContractsFor, staleContractIds } from '@/lib/contract
 import { instrumentSdk } from '@/lib/query-inspector/capture';
 import { YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
 import type { AppNetwork } from '../constants';
+import { observeSdkConnectionErrors } from './sdk-connection-errors';
 
 export interface EvoSdkConfig {
   network: AppNetwork;
@@ -138,6 +139,17 @@ class EvoSdkService {
       // batched request, so this costs a single round trip.
       await this._preloadContracts();
 
+      const sdk = this.sdk;
+      // Observe the facade boundary after initialization: preload failures
+      // must not wait on a rebuild that is itself waiting for initialization.
+      observeSdkConnectionErrors([
+        sdk.documents, sdk.identities, sdk.contracts, sdk.dpns, sdk.tokens,
+        sdk.epoch, sdk.protocol, sdk.system, sdk.voting, sdk.group,
+        sdk.addresses, sdk.shielded, sdk.stateTransitions,
+      ], async error => {
+        // A late rejection from an old SDK must not replace a healthy one.
+        if (this.sdk === sdk) await this.handleConnectionError(error);
+      });
       this._isInitialized = true;
       logger.debug('EvoSdkService: SDK initialized successfully');
     } catch (error) {

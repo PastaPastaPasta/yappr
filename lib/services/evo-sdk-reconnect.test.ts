@@ -2,12 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
+  broadcast: vi.fn(),
+  fetch: vi.fn(),
   instances: [] as { options: unknown }[],
 }));
 vi.mock('@dashevo/evo-sdk', () => ({
   EvoSDK: class {
     connect = mocks.connect;
     contracts = { getMany: async () => new Map([['contract', {}]]) };
+    identities = { fetch: mocks.fetch };
+    stateTransitions = { broadcastStateTransition: mocks.broadcast };
+    documents = {}; dpns = {}; tokens = {}; epoch = {}; protocol = {};
+    system = {}; voting = {}; group = {}; addresses = {}; shielded = {};
     constructor(public options: unknown) { mocks.instances.push(this); }
   },
   DataContract: {},
@@ -39,6 +45,8 @@ beforeEach(() => {
   vi.resetModules();
   mocks.instances.length = 0;
   mocks.connect.mockReset().mockResolvedValue(undefined);
+  mocks.broadcast.mockReset().mockResolvedValue(undefined);
+  mocks.fetch.mockReset().mockResolvedValue({ id: 'identity' });
 });
 
 describe('SDK connection recovery', () => {
@@ -123,5 +131,77 @@ describe('SDK connection recovery', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('preserves a failed broadcast, shares recovery with a failed query, and only broadcasts again on explicit retry', async () => {
+    vi.useFakeTimers();
+    try {
+      const { evoSdkService } = await import('./evo-sdk-service');
+      await evoSdkService.initialize(config);
+      const oldSdk = await evoSdkService.getSdk();
+      const exhausted = new Error('no available addresses to use');
+      mocks.broadcast.mockRejectedValueOnce(exhausted);
+      mocks.fetch.mockRejectedValueOnce(exhausted);
+      const transition = {} as Parameters<typeof oldSdk.stateTransitions.broadcastStateTransition>[0];
+      const failedWrite = expect(oldSdk.stateTransitions.broadcastStateTransition(transition)).rejects.toBe(exhausted);
+      const failedRead = expect(oldSdk.identities.fetch('identity')).rejects.toBe(exhausted);
+      await vi.advanceTimersByTimeAsync(2000);
+      await Promise.all([failedWrite, failedRead]);
+
+      expect(mocks.instances).toHaveLength(2);
+      expect(mocks.broadcast).toHaveBeenCalledTimes(1);
+      expect(mocks.fetch).toHaveBeenCalledTimes(1);
+      const healthySdk = await evoSdkService.getSdk();
+      expect(healthySdk).not.toBe(oldSdk);
+      await healthySdk.stateTransitions.broadcastStateTransition(transition);
+      expect(mocks.broadcast).toHaveBeenCalledTimes(2);
+      expect(mocks.broadcast).toHaveBeenLastCalledWith(transition);
+      await expect(healthySdk.identities.fetch('identity')).resolves.toEqual({ id: 'identity' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recovers a query-only address failure without an online event', async () => {
+    vi.useFakeTimers();
+    try {
+      const { evoSdkService } = await import('./evo-sdk-service');
+      await evoSdkService.initialize(config);
+      const oldSdk = await evoSdkService.getSdk();
+      const exhausted = new Error('NoAvailableAddressesForRetry');
+      mocks.fetch.mockRejectedValueOnce(exhausted);
+      const failedRead = expect(oldSdk.identities.fetch('identity')).rejects.toBe(exhausted);
+      await vi.advanceTimersByTimeAsync(2000);
+      await failedRead;
+      expect(mocks.instances).toHaveLength(2);
+      expect(mocks.fetch).toHaveBeenCalledTimes(1);
+      const healthySdk = await evoSdkService.getSdk();
+      await expect(healthySdk.identities.fetch('identity')).resolves.toEqual({ id: 'identity' });
+      expect(mocks.broadcast).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not rebuild on validation errors or late failures from a replaced SDK', async () => {
+    const { evoSdkService } = await import('./evo-sdk-service');
+    await evoSdkService.initialize(config);
+    const oldSdk = await evoSdkService.getSdk();
+    const invalid = new Error('Invalid document schema');
+    mocks.broadcast.mockRejectedValueOnce(invalid);
+    const transition = {} as Parameters<typeof oldSdk.stateTransitions.broadcastStateTransition>[0];
+    await expect(oldSdk.stateTransitions.broadcastStateTransition(transition)).rejects.toBe(invalid);
+    expect(mocks.instances).toHaveLength(1);
+
+    let fail: (error: Error) => void = () => { throw new Error('query has not started'); };
+    mocks.fetch.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+    const exhausted = new Error('no available addresses to use');
+    const lateRead = expect(oldSdk.identities.fetch('identity')).rejects.toBe(exhausted);
+    await evoSdkService.reconnect();
+    const healthySdk = await evoSdkService.getSdk();
+    fail(exhausted);
+    await lateRead;
+    expect(mocks.instances).toHaveLength(2);
+    expect(await evoSdkService.getSdk()).toBe(healthySdk);
   });
 });
