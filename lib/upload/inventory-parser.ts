@@ -45,7 +45,7 @@ export interface ParsedInventoryRow {
   tags: string[]
   variant?: string
   subVariant?: string
-  price: number           // Price in cents
+  price: number           // Price in the currency's smallest unit (cents, duffs, or satoshis)
   quantity?: number | string  // Number or formula string
   quantityFormula?: string    // Original formula if quantity was a formula
   shippingCost?: number
