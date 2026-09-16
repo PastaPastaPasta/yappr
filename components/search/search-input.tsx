@@ -201,7 +201,7 @@ export function SearchInput() {
     if (result.type === 'user') {
       router.push(`/user?id=${result.id}`)
     } else if (result.type === 'hashtag') {
-      router.push(`/hashtag/${result.hashtag}`)
+      router.push(`/hashtag?tag=${encodeURIComponent(result.hashtag || '')}`)
     }
     setShowDropdown(false)
     setQuery('')
