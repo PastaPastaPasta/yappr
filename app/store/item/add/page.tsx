@@ -20,6 +20,7 @@ import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { storeItemService } from '@/lib/services/store-item-service'
+import { storeService } from '@/lib/services/store-service'
 import { getCurrencyStep, toSmallestUnit, fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
 import type { VariantAxis, VariantCombination, ItemVariants } from '@/lib/types'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
@@ -33,7 +34,7 @@ function AddItemPage() {
   const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
 
-  const [isLoading, setIsLoading] = useState(isEditMode)
+  const [isLoading, setIsLoading] = useState(isEditMode || !!storeId)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [basePrice, setBasePrice] = useState('')
@@ -53,6 +54,37 @@ function AddItemPage() {
   const [newAxisOptions, setNewAxisOptions] = useState('')
   const [combinationPrices, setCombinationPrices] = useState<Record<string, string>>({})
   const [combinationStocks, setCombinationStocks] = useState<Record<string, string>>({})
+
+  // Resolve the store default before the new-product form becomes editable.
+  useEffect(() => {
+    if (!sdkReady || isEditMode || !storeId) return
+    let cancelled = false
+
+    const loadStoreCurrency = async () => {
+      setIsLoading(true)
+      setLoadedStoreId(null)
+      setError(null)
+      try {
+        const store = await storeService.getById(storeId)
+        if (cancelled) return
+        if (!store) {
+          setError('Store not found. Return to your store and try again.')
+          return
+        }
+        setCurrency(store.defaultCurrency || 'USD')
+        setLoadedStoreId(store.id)
+      } catch (err) {
+        if (cancelled) return
+        logger.error('Failed to load store currency:', err)
+        setError('Failed to load store currency. Reload this page to try again.')
+      } finally {
+        if (!cancelled) setIsLoading(false)
+      }
+    }
+
+    void loadStoreCurrency()
+    return () => { cancelled = true }
+  }, [sdkReady, isEditMode, storeId])
 
   // Load existing item data in edit mode
   useEffect(() => {
@@ -166,7 +198,7 @@ function AddItemPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user?.identityId || !title.trim()) return
-    if (!isEditMode && !storeId) return
+    if (!isEditMode && (!storeId || loadedStoreId !== storeId)) return
 
     setIsSubmitting(true)
     setError(null)
@@ -249,10 +281,12 @@ function AddItemPage() {
             </div>
           </PageHeader>
 
-          {isLoading ? (
+          {isLoading || (!isEditMode && loadedStoreId !== storeId && !error) ? (
             <div className="flex items-center justify-center py-20">
               <Spinner />
             </div>
+          ) : !isEditMode && loadedStoreId !== storeId ? (
+            <p role="alert" className="p-4 text-red-500">{error}</p>
           ) : (
           <form onSubmit={handleSubmit} className="p-4 space-y-6">
             {error && (
@@ -517,6 +551,7 @@ function AddItemPage() {
                       <option value="USD">USD</option>
                       <option value="EUR">EUR</option>
                       <option value="GBP">GBP</option>
+                      <option value="CAD">CAD</option>
                       <option value="DASH">DASH</option>
                     </select>
                   </div>
@@ -548,6 +583,7 @@ function AddItemPage() {
                   <option value="USD">USD</option>
                   <option value="EUR">EUR</option>
                   <option value="GBP">GBP</option>
+                  <option value="CAD">CAD</option>
                   <option value="DASH">DASH</option>
                 </select>
               </div>

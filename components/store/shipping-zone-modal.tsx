@@ -28,19 +28,20 @@ interface ShippingZoneModalProps {
     priority?: number
   }) => Promise<void>
   zone?: ShippingZone | null
+  defaultCurrency?: string
 }
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 9)
 }
 
-export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZoneModalProps) {
+export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurrency = 'USD' }: ShippingZoneModalProps) {
   const [name, setName] = useState('')
   const [rateType, setRateType] = useState<RateType>('flat')
   const [baseRate, setBaseRate] = useState('')
   const [weightRate, setWeightRate] = useState('')
   const [weightUnit, setWeightUnit] = useState('lb')
-  const [currency, setCurrency] = useState('USD')
+  const [currency, setCurrency] = useState(defaultCurrency)
   const [countryPattern, setCountryPattern] = useState('')
   const [isWorldwide, setIsWorldwide] = useState(false)
   const [priority, setPriority] = useState('0')
@@ -90,13 +91,13 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
       setBaseRate('')
       setWeightRate('')
       setWeightUnit('lb')
-      setCurrency('USD')
+      setCurrency(defaultCurrency)
       setCountryPattern('')
       setIsWorldwide(false)
       setPriority('0')
       setMultipliers([])
     }
-  }, [zone, isOpen])
+  }, [zone, isOpen, defaultCurrency])
 
   if (!isOpen) return null
 
@@ -288,6 +289,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone }: ShippingZon
                   <option value="USD">USD</option>
                   <option value="EUR">EUR</option>
                   <option value="GBP">GBP</option>
+                  <option value="CAD">CAD</option>
                   <option value="DASH">DASH</option>
                 </select>
               </div>
