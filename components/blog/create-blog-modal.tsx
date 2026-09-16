@@ -56,11 +56,11 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[95vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-xl border border-gray-800 bg-neutral-950 p-5">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[95vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-5">
           <div className="mb-4 flex items-center justify-between">
             <Dialog.Title className="text-lg font-semibold">Create Blog</Dialog.Title>
             <Dialog.Close asChild>
-              <button className="rounded-full p-1 hover:bg-gray-800">
+              <button className="rounded-full p-1 hover:bg-gray-200 dark:hover:bg-gray-800">
                 <XMarkIcon className="h-5 w-5" />
               </button>
             </Dialog.Close>
@@ -68,12 +68,12 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
 
           <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm text-gray-300">Blog name</label>
+              <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Blog name</label>
               <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={64} placeholder="My Blog" />
             </div>
 
             <div>
-              <label className="mb-1 block text-sm text-gray-300">Description</label>
+              <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Description</label>
               <Textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={256} rows={3} placeholder="What this blog is about" />
             </div>
 

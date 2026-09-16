@@ -48,7 +48,7 @@ function SegmentedControl<T extends string>({
   onChange: (value: T) => void
 }) {
   return (
-    <div className="flex rounded-lg bg-white/[0.04] p-0.5">
+    <div className="flex rounded-lg bg-gray-100 dark:bg-white/[0.04] p-0.5">
       {options.map((option) => (
         <button
           key={option.value}
@@ -57,8 +57,8 @@ function SegmentedControl<T extends string>({
           className={cn(
             'flex-1 rounded-md px-2 py-1.5 text-xs font-medium capitalize transition-all',
             value === option.value
-              ? 'bg-white/[0.1] text-gray-100 shadow-sm'
-              : 'text-gray-500 hover:text-gray-300'
+              ? 'bg-white dark:bg-white/[0.1] text-gray-900 dark:text-gray-100 shadow-sm'
+              : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-300'
           )}
         >
           {option.label}
@@ -87,7 +87,7 @@ function GradientSection({
 
       {/* Preview swatch */}
       <div
-        className="mb-3 h-10 w-full rounded-lg ring-1 ring-white/[0.08]"
+        className="mb-3 h-10 w-full rounded-lg ring-1 ring-gray-200 dark:ring-white/[0.08]"
         style={{ background: previewCSS }}
       />
 
@@ -117,7 +117,7 @@ function GradientSection({
                 className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
               />
               <div
-                className="h-7 w-7 rounded-full border-2 border-white/10 transition-all group-hover:border-white/25"
+                className="h-7 w-7 rounded-full border-2 border-gray-300 dark:border-white/10 transition-all group-hover:border-gray-400 dark:group-hover:border-white/25"
                 style={{ backgroundColor: gradient.from }}
               />
             </div>
@@ -125,7 +125,7 @@ function GradientSection({
               type="text"
               value={gradient.from}
               onChange={(e) => update({ from: e.target.value })}
-              className="w-full rounded bg-transparent text-[11px] text-gray-400 outline-none focus:text-gray-200"
+              className="w-full rounded bg-transparent text-[11px] text-gray-600 dark:text-gray-400 outline-none focus:text-gray-900 dark:focus:text-gray-200"
             />
           </div>
         </label>
@@ -138,8 +138,8 @@ function GradientSection({
               className={cn(
                 'rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide transition-colors',
                 gradient.to === 'transparent'
-                  ? 'bg-white/10 text-gray-300'
-                  : 'text-gray-600 hover:text-gray-400'
+                  ? 'bg-white/10 text-gray-700 dark:text-gray-300'
+                  : 'text-gray-600 hover:text-gray-700 dark:hover:text-gray-400'
               )}
             >
               Transparent
@@ -154,7 +154,7 @@ function GradientSection({
                 className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
               />
               <div
-                className="h-7 w-7 rounded-full border-2 border-white/10 transition-all group-hover:border-white/25"
+                className="h-7 w-7 rounded-full border-2 border-gray-300 dark:border-white/10 transition-all group-hover:border-gray-400 dark:group-hover:border-white/25"
                 style={{ backgroundColor: gradient.to === 'transparent' ? 'transparent' : gradient.to }}
               />
             </div>
@@ -162,7 +162,7 @@ function GradientSection({
               type="text"
               value={gradient.to}
               onChange={(e) => update({ to: e.target.value })}
-              className="w-full rounded bg-transparent text-[11px] text-gray-400 outline-none focus:text-gray-200"
+              className="w-full rounded bg-transparent text-[11px] text-gray-600 dark:text-gray-400 outline-none focus:text-gray-900 dark:focus:text-gray-200"
             />
           </div>
         </label>
@@ -254,11 +254,11 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
       <div className="xl:w-[380px] shrink-0 space-y-5">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-gray-200">Customize Theme</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Customize Theme</h3>
           <button
             type="button"
             onClick={handleReset}
-            className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
+            className="text-[11px] text-gray-500 hover:text-gray-900 dark:hover:text-gray-300 transition-colors"
           >
             Reset defaults
           </button>
@@ -277,14 +277,14 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
                   key={preset.id}
                   type="button"
                   onClick={() => handlePresetApply(preset.id)}
-                  className="group shrink-0 w-[120px] rounded-xl border border-white/[0.06] bg-white/[0.02] p-2.5 text-left transition-all hover:border-white/[0.15] hover:bg-white/[0.05]"
+                  className="group shrink-0 w-[120px] rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] p-2.5 text-left transition-all hover:border-gray-300 dark:hover:border-white/[0.15] hover:bg-gray-100 dark:hover:bg-white/[0.05]"
                 >
-                  <div className="mb-2 flex h-5 overflow-hidden rounded-md ring-1 ring-white/[0.08]">
+                  <div className="mb-2 flex h-5 overflow-hidden rounded-md ring-1 ring-gray-200 dark:ring-white/[0.08]">
                     <div className="flex-1" style={{ backgroundColor: preset.config.colors.bg }} />
                     <div className="flex-1" style={{ background: presetGradient }} />
                     <div className="flex-1" style={{ backgroundColor: preset.config.colors.heading }} />
                   </div>
-                  <p className="text-[11px] font-medium text-gray-300 group-hover:text-gray-100 transition-colors">{preset.name}</p>
+                  <p className="text-[11px] font-medium text-gray-700 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-gray-100 transition-colors">{preset.name}</p>
                   <p className="mt-0.5 text-[10px] leading-snug text-gray-600 line-clamp-2">{preset.description}</p>
                 </button>
               )
@@ -306,7 +306,7 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
                     className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                   />
                   <div
-                    className="h-9 w-9 rounded-full border-2 border-white/10 shadow-lg transition-all group-hover:scale-110 group-hover:border-white/25"
+                    className="h-9 w-9 rounded-full border-2 border-gray-300 dark:border-white/10 shadow-lg transition-all group-hover:scale-110 group-hover:border-gray-400 dark:group-hover:border-white/25"
                     style={{ backgroundColor: theme.colors[field.key] }}
                   />
                 </div>
@@ -315,7 +315,7 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
                   type="text"
                   value={theme.colors[field.key]}
                   onChange={(event) => updateColor(field.key, event.target.value)}
-                  className="w-[58px] rounded bg-transparent text-center text-[10px] text-gray-500 outline-none transition-colors focus:text-gray-200"
+                  className="w-[58px] rounded bg-transparent text-center text-[10px] text-gray-500 outline-none transition-colors focus:text-gray-900 dark:focus:text-gray-200"
                 />
               </label>
             ))}
@@ -331,7 +331,7 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
               <select
                 value={theme.fonts.body}
                 onChange={(event) => updateTheme({ fonts: { ...theme.fonts, body: event.target.value } })}
-                className="h-9 w-full rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 text-xs text-gray-200 outline-none transition-colors hover:border-white/[0.12] focus:border-white/[0.2]"
+                className="h-9 w-full rounded-lg border border-gray-300 dark:border-white/[0.08] bg-gray-50 dark:bg-white/[0.03] px-2.5 text-xs text-gray-800 dark:text-gray-200 outline-none transition-colors hover:border-gray-400 dark:hover:border-white/[0.12] focus:border-gray-500 dark:focus:border-white/[0.2]"
               >
                 {BLOG_FONT_OPTIONS.map((font) => (
                   <option key={font.id} value={font.id}>{font.label}</option>
@@ -343,7 +343,7 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
               <select
                 value={theme.fonts.heading}
                 onChange={(event) => updateTheme({ fonts: { ...theme.fonts, heading: event.target.value } })}
-                className="h-9 w-full rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 text-xs text-gray-200 outline-none transition-colors hover:border-white/[0.12] focus:border-white/[0.2]"
+                className="h-9 w-full rounded-lg border border-gray-300 dark:border-white/[0.08] bg-gray-50 dark:bg-white/[0.03] px-2.5 text-xs text-gray-800 dark:text-gray-200 outline-none transition-colors hover:border-gray-400 dark:hover:border-white/[0.12] focus:border-gray-500 dark:focus:border-white/[0.2]"
               >
                 {BLOG_FONT_OPTIONS.map((font) => (
                   <option key={font.id} value={font.id}>{font.label}</option>
@@ -390,7 +390,7 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
         {/* Custom CSS */}
         <section>
           <details className="group">
-            <summary className="flex list-none cursor-pointer items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-gray-500 select-none transition-colors hover:text-gray-300 [&::-webkit-details-marker]:hidden">
+            <summary className="flex list-none cursor-pointer items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-gray-500 select-none transition-colors hover:text-gray-900 dark:hover:text-gray-300 [&::-webkit-details-marker]:hidden">
               <svg className="h-3 w-3 transition-transform group-open:rotate-90" viewBox="0 0 12 12" fill="none">
                 <path d="M4 2L8 6L4 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -419,13 +419,13 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
       <div className="flex-1 min-w-0">
         <div className="xl:sticky xl:top-20">
           <h4 className="mb-2.5 text-[11px] font-semibold uppercase tracking-widest text-gray-500">Live Preview</h4>
-          <div className="overflow-hidden rounded-xl ring-1 ring-white/[0.06] shadow-2xl shadow-black/30">
+          <div className="overflow-hidden rounded-xl ring-1 ring-gray-200 dark:ring-white/[0.06] shadow-2xl shadow-black/30">
             {/* Mock browser chrome */}
-            <div className="flex items-center gap-1.5 border-b border-white/[0.06] bg-white/[0.03] px-3 py-2">
-              <div className="h-2 w-2 rounded-full bg-white/[0.15]" />
-              <div className="h-2 w-2 rounded-full bg-white/[0.15]" />
-              <div className="h-2 w-2 rounded-full bg-white/[0.15]" />
-              <div className="ml-2 flex h-5 flex-1 items-center rounded-md bg-white/[0.04] px-2 text-[10px] text-gray-600">
+            <div className="flex items-center gap-1.5 border-b border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.03] px-3 py-2">
+              <div className="h-2 w-2 rounded-full bg-gray-300 dark:bg-white/[0.15]" />
+              <div className="h-2 w-2 rounded-full bg-gray-300 dark:bg-white/[0.15]" />
+              <div className="h-2 w-2 rounded-full bg-gray-300 dark:bg-white/[0.15]" />
+              <div className="ml-2 flex h-5 flex-1 items-center rounded-md bg-gray-100 dark:bg-white/[0.04] px-2 text-[10px] text-gray-600">
                 yap.pr/blog/preview
               </div>
             </div>

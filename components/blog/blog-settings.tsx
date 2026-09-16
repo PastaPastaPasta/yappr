@@ -92,16 +92,16 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
   }
 
   return (
-    <div className="space-y-4 rounded-xl border border-gray-800 bg-neutral-950 p-4">
+    <div className="space-y-4 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-4">
       <h2 className="text-lg font-semibold">Blog Settings</h2>
 
       <div>
-        <label className="mb-1 block text-sm text-gray-300">Blog name</label>
+        <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Blog name</label>
         <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={64} />
       </div>
 
       <div>
-        <label className="mb-1 block text-sm text-gray-300">Description</label>
+        <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Description</label>
         <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} maxLength={256} />
       </div>
 
@@ -122,9 +122,9 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
         />
       </div>
 
-      <section className="space-y-3 rounded-lg border border-gray-800 p-3">
+      <section className="space-y-3 rounded-lg border border-gray-200 dark:border-gray-800 p-3">
         <div>
-          <h3 className="text-sm font-medium text-gray-200">Label Management</h3>
+          <h3 className="text-sm font-medium text-gray-800 dark:text-gray-200">Label Management</h3>
           <p className="text-xs text-gray-500">Manage blog taxonomy labels used for post filtering and selection.</p>
         </div>
 
@@ -139,7 +139,7 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
                 onClick={() => removeLabel(label)}
                 aria-label={`Remove label: ${label}`}
                 disabled={isSavingLabels}
-                className="inline-flex items-center gap-1 rounded-full border border-gray-700 bg-gray-900 px-2.5 py-1 text-xs text-gray-200 hover:bg-gray-800 disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-full border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-900 px-2.5 py-1 text-xs text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-800 disabled:opacity-50"
               >
                 {label}
                 <XMarkIcon className="h-3 w-3" />
@@ -172,7 +172,7 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
         </div>
       </section>
 
-      <div className="flex items-center justify-between rounded-lg border border-gray-800 p-3">
+      <div className="flex items-center justify-between rounded-lg border border-gray-200 dark:border-gray-800 p-3">
         <div>
           <p className="text-sm font-medium">Comments enabled by default</p>
           <p className="text-xs text-gray-500">Applied when creating new posts.</p>

@@ -68,17 +68,24 @@
   --mantine-color-body: transparent;
 }
 
-/* Ensure BlockNote editor text stays light */
+/* Preserve the dark editor text and let the light composer use its own palette. */
 .bn-container [class*="bn-block-content"] {
   color: #e5e7eb;
 }
 
-/* Fix Mantine tooltip and dropdown dark mode */
-.bn-container .mantine-Menu-dropdown,
-.bn-container .mantine-Tooltip-tooltip {
+.compose-canvas .bn-container[data-color-scheme="light"] [class*="bn-block-content"] {
+  color: var(--bn-colors-editor-text);
+}
+
+.bn-container[data-color-scheme="dark"] .mantine-Menu-dropdown,
+.bn-container[data-color-scheme="dark"] .mantine-Tooltip-tooltip {
   background-color: #1a1a2e;
   border-color: #374151;
   color: #e5e7eb;
+}
+
+.compose-canvas .bn-container[data-color-scheme="light"] {
+  --bn-colors-editor-background: transparent;
 }
 
 /* Compose canvas – comfortable writing typography */

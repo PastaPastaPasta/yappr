@@ -216,17 +216,17 @@ function BlogPageContent() {
       <div>
         {/* Blog dashboard header — hidden during focused compose */}
         {!isComposeMode && (
-          <div className="border-b border-gray-800/60 px-5 pb-0 pt-5">
+          <div className="border-b border-gray-200 dark:border-gray-800/60 px-5 pb-0 pt-5">
             <div className="mb-4 flex items-center justify-between">
               <div className="min-w-0">
-                <h1 className="truncate text-lg font-semibold text-white">{selectedBlog.name}</h1>
+                <h1 className="truncate text-lg font-semibold text-gray-900 dark:text-white">{selectedBlog.name}</h1>
                 {selectedBlog.description && (
                   <p className="mt-0.5 truncate text-sm text-gray-500">{selectedBlog.description}</p>
                 )}
               </div>
               <button
                 type="button"
-                className="shrink-0 rounded-full bg-gray-800/60 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-800 hover:text-gray-300"
+                className="shrink-0 rounded-full bg-gray-100 dark:bg-gray-800/60 px-3 py-1.5 text-xs text-gray-600 dark:text-gray-400 transition-colors hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-300"
                 onClick={deselectBlog}
               >
                 All Blogs
@@ -244,8 +244,8 @@ function BlogPageContent() {
                   className={cn(
                     'relative px-4 py-2.5 text-sm font-medium transition-colors',
                     activeTab === tab.key
-                      ? 'text-white'
-                      : 'text-gray-500 hover:text-gray-300'
+                      ? 'text-gray-900 dark:text-white'
+                      : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-300'
                   )}
                 >
                   {tab.label}
@@ -278,11 +278,11 @@ function BlogPageContent() {
               </div>
 
               {ownerPosts.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-gray-800 py-12 text-center">
+                <div className="rounded-xl border border-dashed border-gray-200 dark:border-gray-800 py-12 text-center">
                   <p className="text-sm text-gray-500">Start writing your first post.</p>
                   <button
                     type="button"
-                    className="mt-3 text-sm font-medium text-yappr-400 transition-colors hover:text-yappr-300"
+                    className="mt-3 text-sm font-medium text-yappr-700 dark:text-yappr-400 transition-colors hover:text-yappr-800 dark:hover:text-yappr-300"
                     onClick={() => {
                       setEditingPost(null)
                       setActiveTab('compose')
@@ -292,7 +292,7 @@ function BlogPageContent() {
                   </button>
                 </div>
               ) : (
-                <div className="divide-y divide-gray-800/60">
+                <div className="divide-y divide-gray-200 dark:divide-gray-800/60">
                   {ownerPosts.map((post) => {
                     const isPublished = post.publishedAt !== undefined
                     return (
@@ -303,12 +303,12 @@ function BlogPageContent() {
                           onClick={() => router.push(getBlogPostUrl(post.blogId, post.slug))}
                         >
                           <div className="flex items-center gap-2">
-                            <p className="truncate font-medium text-gray-100 group-hover:text-white transition-colors">{post.title}</p>
+                            <p className="truncate font-medium text-gray-900 dark:text-gray-100 group-hover:text-black dark:group-hover:text-white transition-colors">{post.title}</p>
                             <span className={cn(
                               'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium',
                               isPublished
-                                ? 'bg-green-500/10 text-green-400'
-                                : 'bg-amber-500/10 text-amber-400'
+                                ? 'bg-green-500/10 text-green-700 dark:text-green-400'
+                                : 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
                             )}>
                               {isPublished ? 'Published' : 'Draft'}
                             </span>
@@ -322,7 +322,7 @@ function BlogPageContent() {
                         </button>
                         <button
                           type="button"
-                          className="shrink-0 rounded-full px-3 py-1 text-xs text-gray-500 transition-all group-hover:bg-gray-800/60 group-hover:text-gray-300"
+                          className="shrink-0 rounded-full px-3 py-1 text-xs text-gray-500 transition-all group-hover:bg-gray-100 dark:group-hover:bg-gray-800/60 group-hover:text-gray-900 dark:group-hover:text-gray-300"
                           onClick={() => {
                             setEditingPost(post)
                             setActiveTab('compose')

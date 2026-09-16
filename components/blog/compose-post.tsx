@@ -296,13 +296,13 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
   return (
     <div className="flex min-h-0 flex-col">
       {/* Compose top bar */}
-      <div className="flex items-center justify-between border-b border-gray-800/40 px-4 py-2.5">
+      <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-800/40 px-4 py-2.5">
         <div className="flex items-center gap-3">
           {onBack && (
             <button
               type="button"
               onClick={onBack}
-              className="text-sm text-gray-500 transition-colors hover:text-gray-300"
+              className="text-sm text-gray-500 transition-colors hover:text-gray-900 dark:hover:text-gray-300"
             >
               &larr;
             </button>
@@ -319,7 +319,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
           <button
             type="button"
             onClick={() => setShowSettings((prev) => !prev)}
-            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-800/60 hover:text-gray-300"
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs text-gray-600 dark:text-gray-400 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800/60 hover:text-gray-900 dark:hover:text-gray-300"
           >
             <Cog6ToothIcon className="h-3.5 w-3.5" />
             Settings
@@ -338,15 +338,15 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
 
       {/* Settings panel — collapsible */}
       {showSettings && (
-        <div className="border-b border-gray-800/40 bg-gray-900/20 px-4 py-4">
+        <div className="border-b border-gray-200 dark:border-gray-800/40 bg-gray-50 dark:bg-gray-900/20 px-4 py-4">
           <div className="mx-auto max-w-[640px] space-y-4">
             <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-gray-300">Post settings</p>
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Post settings</p>
               <button
                 type="button"
                 onClick={() => setShowSettings(false)}
                 aria-label="Close settings"
-                className="rounded p-1 text-gray-500 transition-colors hover:text-gray-300"
+                className="rounded p-1 text-gray-500 transition-colors hover:text-gray-900 dark:hover:text-gray-300"
               >
                 <XMarkIcon className="h-4 w-4" />
               </button>
@@ -367,8 +367,8 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                         aria-pressed={selected}
                         className={`rounded-full px-2.5 py-0.5 text-xs transition-all ${
                           selected
-                            ? 'bg-yappr-500/20 text-yappr-300 ring-1 ring-yappr-500/40'
-                            : 'bg-gray-800/60 text-gray-400 hover:bg-gray-800 hover:text-gray-300'
+                            ? 'bg-yappr-500/20 text-yappr-700 dark:text-yappr-300 ring-1 ring-yappr-500/40'
+                            : 'bg-gray-100 dark:bg-gray-800/60 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-300'
                         }`}
                       >
                         {label}
@@ -401,7 +401,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <Switch checked={commentsEnabled} onCheckedChange={setCommentsEnabled} />
-                <span className="text-xs text-gray-400">Allow comments</span>
+                <span className="text-xs text-gray-600 dark:text-gray-400">Allow comments</span>
               </div>
               <span className="text-xs tabular-nums text-gray-600">
                 {compressedBytes.toLocaleString()} / {BLOG_POST_SIZE_LIMIT.toLocaleString()} bytes
@@ -467,13 +467,13 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                       if (e.key === 'Escape') { setShowCoverUrlInput(false); setCoverUrlInput('') }
                     }}
                     placeholder="https://example.com/image.jpg"
-                    className="h-8 min-w-0 flex-1 rounded border border-gray-700 bg-gray-900/60 px-2 text-sm text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
+                    className="h-8 min-w-0 flex-1 rounded border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/60 px-2 text-sm text-gray-700 dark:text-gray-300 placeholder:text-gray-600 focus:border-yappr-500 focus:outline-none"
                     autoFocus
                   />
                   <button
                     type="button"
                     onClick={handleCoverUrlSubmit}
-                    className="shrink-0 rounded bg-gray-800 px-2.5 py-1 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-300"
+                    className="shrink-0 rounded bg-gray-200 dark:bg-gray-800 px-2.5 py-1 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-300 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-300"
                   >
                     Add
                   </button>
@@ -481,7 +481,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                     type="button"
                     onClick={() => { setShowCoverUrlInput(false); setCoverUrlInput('') }}
                     aria-label="Cancel URL input"
-                    className="shrink-0 rounded p-1 text-gray-500 hover:text-gray-300"
+                    className="shrink-0 rounded p-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-300"
                   >
                     <XMarkIcon className="h-4 w-4" />
                   </button>
@@ -493,7 +493,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                   onChange={(e) => setTitle(e.target.value)}
                   maxLength={128}
                   placeholder="Title"
-                  className="min-w-0 flex-1 bg-transparent text-[32px] font-bold leading-tight text-white placeholder:text-gray-700 focus:outline-none"
+                  className="min-w-0 flex-1 bg-transparent text-[32px] font-bold leading-tight text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-gray-600 focus:outline-none"
                 />
               )}
               <div className="flex shrink-0 items-center gap-1">
@@ -501,7 +501,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                   <button
                     type="button"
                     onClick={() => setShowCoverUrlInput(true)}
-                    className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-800/60 hover:text-gray-400"
+                    className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800/60 hover:text-gray-700 dark:hover:text-gray-400"
                     title="Paste cover image URL"
                     aria-label="Paste cover image URL"
                   >
@@ -512,7 +512,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                   type="button"
                   onClick={handleCoverClick}
                   disabled={isUploadingCover}
-                  className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-800/60 hover:text-gray-400 disabled:opacity-50"
+                  className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800/60 hover:text-gray-700 dark:hover:text-gray-400 disabled:opacity-50"
                   title={coverImage ? 'Change cover image' : 'Upload cover image'}
                   aria-label={coverImage ? 'Change cover image' : 'Upload cover image'}
                 >
@@ -527,7 +527,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
 
             {/* Upload progress */}
             {isUploadingCover && (
-              <div className="mt-1 h-1 overflow-hidden rounded-full bg-gray-800/40">
+              <div className="mt-1 h-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800/40">
                 <div
                   className="h-full bg-yappr-500 transition-all duration-300"
                   style={{ width: `${uploadProgress}%` }}
@@ -543,7 +543,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                 onChange={(e) => setSummary(e.target.value)}
                 maxLength={255}
                 placeholder="Add a summary..."
-                className="min-w-0 flex-1 bg-transparent text-lg text-gray-400 placeholder:text-gray-700 focus:outline-none"
+                className="min-w-0 flex-1 bg-transparent text-lg text-gray-600 dark:text-gray-400 placeholder:text-gray-500 dark:placeholder:text-gray-600 focus:outline-none"
               />
               {summary.trim() && (
                 <button
@@ -551,8 +551,8 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                   onClick={() => setSummaryHidden((prev) => !prev)}
                   className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
                     summaryHidden
-                      ? 'bg-gray-800/60 text-gray-500'
-                      : 'bg-yappr-500/20 text-yappr-300'
+                      ? 'bg-gray-100 dark:bg-gray-800/60 text-gray-500'
+                      : 'bg-yappr-500/20 text-yappr-700 dark:text-yappr-300'
                   }`}
                 >
                   {summaryHidden ? 'Hidden from post' : 'Visible on post'}
@@ -565,13 +565,13 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
               {selectedLabels.map((label) => (
                 <span
                   key={label}
-                  className="inline-flex items-center gap-1 rounded-full bg-gray-800/50 px-2.5 py-0.5 text-xs text-gray-400"
+                  className="inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-gray-800/50 px-2.5 py-0.5 text-xs text-gray-600 dark:text-gray-400"
                 >
                   {label}
                   <button
                     type="button"
                     onClick={() => toggleLabel(label)}
-                    className="text-gray-600 hover:text-gray-300"
+                    className="text-gray-600 hover:text-gray-900 dark:hover:text-gray-300"
                   >
                     <XMarkIcon className="h-3 w-3" />
                   </button>
@@ -581,7 +581,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                 type="button"
                 aria-label="Add labels"
                 onClick={handleAddLabel}
-                className="rounded-full bg-gray-800/30 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-800/50 hover:text-gray-400"
+                className="rounded-full bg-gray-100 dark:bg-gray-800/30 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-200 dark:hover:bg-gray-800/50 hover:text-gray-700 dark:hover:text-gray-400"
               >
                 +
               </button>
