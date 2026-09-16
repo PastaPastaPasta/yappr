@@ -8,7 +8,7 @@ import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentByte
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
 import { authorFieldIsRequired, likesAreIndexOnly, groupByInteractionSurface, hashtagIsOptional, hashtagMaxLength, hashtagsAreInline, quoteFieldFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
-import { firstHashtag } from '@/lib/post-helpers';
+import { firstIndexedTag } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes } from './post-query-helpers';
@@ -425,14 +425,15 @@ class PostService extends BaseDocumentService<Post> {
 
     // v4: the poster-attested author (must equal $ownerId — consensus can't
     // bind the agreement to a system field, so the client writes it) and the
-    // single indexed hashtag — the FIRST tag of the PUBLIC content only
+    // single indexed tag — first hashtag, or first cashtag when no hashtag
+    // exists, from the PUBLIC content only
     // (`data.content` is already the teaser/placeholder for private posts, so
     // encrypted text never leaks into the index), '' when untagged.
     if (authorFieldIsRequired()) {
       data.author = identifierStringToDocumentBytes(ownerId);
     }
     if (hashtagsAreInline()) {
-      const tag = firstHashtag(data.content as string, hashtagMaxLength());
+      const tag = firstIndexedTag(data.content as string, hashtagMaxLength());
       // v5: an untagged post OMITS the optional property — likes mirror the
       // absence under the absence-aware propertyAgreement, and `skipIfAbsent`
       // keeps untagged likes out of byHashtagPost entirely. v4 has no optional
