@@ -312,6 +312,21 @@ function StoreDetailContent() {
     return totalLabel
   }, [items.length, filteredItems.length, hasMoreItems])
 
+  if (!storeId) {
+    return (
+      <PageShell mainClassName="flex flex-col items-center justify-center p-8 text-center">
+        <ExclamationTriangleIcon className="h-16 w-16 text-amber-500 mb-4" aria-hidden="true" />
+        <h1 className="text-xl font-semibold">Store link is missing an ID</h1>
+        <p className="mt-2 max-w-md text-gray-500">
+          This store link is incomplete. Browse the available stores to choose one.
+        </p>
+        <Button className="mt-6" onClick={() => router.push('/store')}>
+          Browse Stores
+        </Button>
+      </PageShell>
+    )
+  }
+
   if (isLoading) {
     return (
       <PageShell mainClassName="flex items-center justify-center">

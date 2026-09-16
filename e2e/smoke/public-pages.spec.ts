@@ -41,6 +41,18 @@ test('explore page loads', async ({ page }) => {
   await expect(page.getByRole('button', { name: /Trending/ })).toBeVisible()
 })
 
+for (const route of ['/store/view/', '/store/view/?id=']) {
+  test(`store detail without an id explains how to recover: ${route}`, async ({ page }) => {
+    await page.goto(appUrl(route))
+
+    await expect(page.getByRole('heading', { name: 'Store link is missing an ID' })).toBeVisible()
+    await expect(page.getByText('This store link is incomplete.')).toBeVisible()
+    await page.getByRole('button', { name: 'Browse Stores' }).click()
+    await expect(page).toHaveURL(appUrlPattern('/store'))
+    await expect(page.getByRole('heading', { name: 'Stores', exact: true })).toBeVisible()
+  })
+}
+
 test('login page shows the login affordance', async ({ page }) => {
   await page.goto(appUrl('/login/'))
 
