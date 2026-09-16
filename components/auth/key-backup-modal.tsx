@@ -1,12 +1,14 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { X, Eye, EyeOff, Shield, AlertTriangle, Key, Check, KeyRound } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import * as Dialog from '@radix-ui/react-dialog'
+import { Modal } from '@/components/ui/modal'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/auth-context'
 import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
 import { validateBackupPassword, benchmarkPbkdf2, MIN_PASSWORD_LENGTH } from '@/lib/onchain-key-encryption'
@@ -19,6 +21,7 @@ export function KeyBackupModal() {
   const { addPasswordWrapper, addPasskeyWrapper } = useAuth()
   const { isOpen, identityId, username, redirectOnClose, close } = useKeyBackupModal()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
 
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -193,264 +196,271 @@ export function KeyBackupModal() {
   }
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <>
-          {/* Backdrop */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className={`fixed inset-0 bg-black/50 z-50 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
-          />
-
-          {/* Modal */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 flex items-center justify-center z-50 px-4 overflow-y-auto py-8"
+    <TooltipProvider>
+    <Modal
+      open={isOpen}
+      onOpenChange={(open) => { if (!open) handleClose() }}
+      className="max-w-md w-full my-auto dark:bg-gray-900"
+      overlayClassName={`overflow-y-auto py-8 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+      onOpenAutoFocus={() => { returnFocusRef.current = document.activeElement as HTMLElement | null }}
+      onCloseAutoFocus={(event) => {
+        if (returnFocusRef.current?.isConnected) {
+          event.preventDefault()
+          returnFocusRef.current.focus()
+        }
+      }}
+    >
+      {/* Close button */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label="Close auth vault"
+            onClick={handleClose}
+            className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
           >
-            <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-6 max-w-md w-full relative my-auto">
-              {/* Close button */}
-              <button
-                onClick={handleClose}
-                className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+            <X className="w-5 h-5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent onEscapeKeyDown={handleClose}>Close auth vault</TooltipContent>
+      </Tooltip>
 
-              {/* Icon */}
-              <div className="flex justify-center mb-4">
-                <div className="w-16 h-16 rounded-full bg-yappr-100 dark:bg-yappr-900/30 flex items-center justify-center">
-                  <Shield className="w-8 h-8 text-yappr-600 dark:text-yappr-400" />
-                </div>
-              </div>
+      {/* Icon */}
+      <div className="flex justify-center mb-4">
+        <div className="w-16 h-16 rounded-full bg-yappr-100 dark:bg-yappr-900/30 flex items-center justify-center">
+          <Shield className="w-8 h-8 text-yappr-600 dark:text-yappr-400" />
+        </div>
+      </div>
 
-              <h1 className="text-2xl font-bold text-center mb-2">Protect Your Auth Vault</h1>
-              <p className="text-gray-600 dark:text-gray-400 text-center mb-4 text-sm">
-                Add an unlock method for your unified auth vault on Dash Platform.
-                Passkeys and passwords both unlock the same secret bundle without duplicating it.
+      <Dialog.Title className="text-2xl font-bold text-center mb-2">Protect Your Auth Vault</Dialog.Title>
+      <Dialog.Description className="text-gray-600 dark:text-gray-400 text-center mb-4 text-sm">
+        Add an unlock method for your unified auth vault on Dash Platform.
+        Passkeys and passwords both unlock the same secret bundle without duplicating it.
+      </Dialog.Description>
+
+      {/* Key to be protected */}
+      <div className="bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4">
+        <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
+          Key included in backup
+        </p>
+        <div className="flex items-center gap-3 text-sm">
+          <div className="w-8 h-8 rounded-full bg-yappr-100 dark:bg-yappr-900/30 flex items-center justify-center">
+            <Key className="w-4 h-4 text-yappr-600 dark:text-yappr-400" />
+          </div>
+          <div className="flex-1">
+            <span className="font-medium text-gray-900 dark:text-white">Unified Secret Bundle</span>
+            <span className="text-gray-500 dark:text-gray-400 ml-2 text-xs">One blob unlocked by password or passkey</span>
+          </div>
+          <Check className="w-4 h-4 text-green-500" />
+        </div>
+      </div>
+
+      <div className="bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4 space-y-3">
+        <div className="flex items-start gap-3">
+          <div className="w-8 h-8 rounded-full bg-yappr-100 dark:bg-yappr-900/30 flex items-center justify-center flex-shrink-0">
+            <KeyRound className="w-4 h-4 text-yappr-600 dark:text-yappr-400" />
+          </div>
+          <div className="flex-1">
+            <p className="font-medium text-gray-900 dark:text-white">Add a passkey now</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              Use a device or password-manager passkey to unlock this same auth vault on future sign-ins.
+            </p>
+          </div>
+        </div>
+
+        {passkeySupportMessage && (
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            {passkeySupportMessage}
+          </p>
+        )}
+
+        <Button
+          type="button"
+          className="w-full"
+          onClick={handleAddPasskey}
+          disabled={isCheckingPasskeySupport || !canEnrollPasskey || isAddingPasskey || isSubmitting}
+        >
+          {isAddingPasskey ? (
+            <>
+              <Spinner size="xs" className="mr-2" />
+              Adding passkey...
+            </>
+          ) : (
+            <>
+              <KeyRound className="w-4 h-4 mr-2" />
+              Add Passkey
+            </>
+          )}
+        </Button>
+      </div>
+
+      <div className="flex items-center gap-3 mb-4">
+        <div className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
+        <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">or add a password</span>
+        <div className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Security Warning */}
+        <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-300 dark:border-orange-600 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-semibold text-orange-800 dark:text-orange-200 mb-1">
+                Password Warning
               </p>
-
-              {/* Key to be protected */}
-              <div className="bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4">
-                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
-                  Key included in backup
-                </p>
-                <div className="flex items-center gap-3 text-sm">
-                  <div className="w-8 h-8 rounded-full bg-yappr-100 dark:bg-yappr-900/30 flex items-center justify-center">
-                    <Key className="w-4 h-4 text-yappr-600 dark:text-yappr-400" />
-                  </div>
-                  <div className="flex-1">
-                    <span className="font-medium text-gray-900 dark:text-white">Unified Secret Bundle</span>
-                    <span className="text-gray-500 dark:text-gray-400 ml-2 text-xs">One blob unlocked by password or passkey</span>
-                  </div>
-                  <Check className="w-4 h-4 text-green-500" />
-                </div>
-              </div>
-
-              <div className="bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4 space-y-3">
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-full bg-yappr-100 dark:bg-yappr-900/30 flex items-center justify-center flex-shrink-0">
-                    <KeyRound className="w-4 h-4 text-yappr-600 dark:text-yappr-400" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-900 dark:text-white">Add a passkey now</p>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                      Use a device or password-manager passkey to unlock this same auth vault on future sign-ins.
-                    </p>
-                  </div>
-                </div>
-
-                {passkeySupportMessage && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {passkeySupportMessage}
-                  </p>
-                )}
-
-                <Button
-                  type="button"
-                  className="w-full"
-                  onClick={handleAddPasskey}
-                  disabled={isCheckingPasskeySupport || !canEnrollPasskey || isAddingPasskey || isSubmitting}
-                >
-                  {isAddingPasskey ? (
-                    <>
-                      <Spinner size="xs" className="mr-2" />
-                      Adding passkey...
-                    </>
-                  ) : (
-                    <>
-                      <KeyRound className="w-4 h-4 mr-2" />
-                      Add Passkey
-                    </>
-                  )}
-                </Button>
-              </div>
-
-              <div className="flex items-center gap-3 mb-4">
-                <div className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
-                <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">or add a password</span>
-                <div className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
-              </div>
-
-              <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Security Warning */}
-                <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-300 dark:border-orange-600 rounded-lg p-4">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="w-5 h-5 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" />
-                    <div className="text-sm">
-                      <p className="font-semibold text-orange-800 dark:text-orange-200 mb-1">
-                        Password Warning
-                      </p>
-                      <ul className="text-orange-700 dark:text-orange-300 space-y-1 list-disc list-inside">
-                        <li>Your encrypted auth vault metadata will be stored publicly on Dash Platform</li>
-                        <li><strong>Anyone who knows your password can unlock your login secret bundle</strong></li>
-                        <li>Keep at least one fallback login method in case you lose this password</li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Password input */}
-                <div>
-                  <label htmlFor="backup-password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Passphrase ({password.length}/{MIN_PASSWORD_LENGTH} min)
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="backup-password"
-                      type={showPassword ? 'text' : 'password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Enter a strong passphrase (16+ characters)"
-                      className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
-                      autoComplete="new-password"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600"
-                    >
-                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                    </button>
-                  </div>
-                  {password.length > 0 && password.length < MIN_PASSWORD_LENGTH && (
-                    <p className="text-xs text-orange-600 dark:text-orange-400 mt-1">
-                      {MIN_PASSWORD_LENGTH - password.length} more characters needed
-                    </p>
-                  )}
-                </div>
-
-                {/* Confirm password */}
-                <div>
-                  <label htmlFor="backup-confirm-password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Confirm Passphrase
-                  </label>
-                  <input
-                    id="backup-confirm-password"
-                    type={showPassword ? 'text' : 'password'}
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Confirm your passphrase"
-                    className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
-                    autoComplete="new-password"
-                  />
-                  {confirmPassword.length > 0 && !passwordsMatch && (
-                    <p className="text-xs text-red-600 dark:text-red-400 mt-1">
-                      Passwords do not match
-                    </p>
-                  )}
-                </div>
-
-                {/* Security strength slider */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Security Strength
-                  </label>
-                  <div className="space-y-2">
-                    <input
-                      type="range"
-                      min="1"
-                      max="30"
-                      value={targetTime}
-                      onChange={(e) => handleTimeChange(parseInt(e.target.value))}
-                      className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yappr-600"
-                      disabled={isBenchmarking}
-                    />
-                    <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
-                      <span>1s (faster)</span>
-                      <span>30s (stronger)</span>
-                    </div>
-                    <div className="text-center text-sm">
-                      {isBenchmarking ? (
-                        <span className="text-gray-500 dark:text-gray-400 flex items-center justify-center gap-2">
-                          <Spinner size="xs" />
-                          Calibrating...
-                        </span>
-                      ) : (
-                        <span className="text-gray-700 dark:text-gray-300">
-                          ~{formatIterations(iterations)} iterations ({estimatedTime.toFixed(1)}s to decrypt)
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Consent checkbox */}
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={consentChecked}
-                    onChange={(e) => setConsentChecked(e.target.checked)}
-                    className="mt-1 h-4 w-4 text-yappr-600 focus:ring-yappr-500 border-gray-300 rounded"
-                  />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">
-                    I understand that anyone with my password can access my private key from the public backup
-                  </span>
-                </label>
-
-                {error && (
-                  <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-600 rounded-lg p-3">
-                    <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
-                  </div>
-                )}
-
-                <div className="flex gap-3 pt-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="flex-1"
-                    onClick={handleClose}
-                  >
-                    Skip for now
-                  </Button>
-                  <Button
-                    type="submit"
-                    className="flex-1"
-                    disabled={!canSubmit}
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <Spinner size="xs" className="mr-2" />
-                        Encrypting...
-                      </>
-                    ) : (
-                      'Backup to Chain'
-                    )}
-                  </Button>
-                </div>
-
-                <p className="text-xs text-center text-gray-500 dark:text-gray-400">
-                  Backing up for <span className="font-medium">@{username}</span>
-                </p>
-              </form>
+              <ul className="text-orange-700 dark:text-orange-300 space-y-1 list-disc list-inside">
+                <li>Your encrypted auth vault metadata will be stored publicly on Dash Platform</li>
+                <li><strong>Anyone who knows your password can unlock your login secret bundle</strong></li>
+                <li>Keep at least one fallback login method in case you lose this password</li>
+              </ul>
             </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+          </div>
+        </div>
+
+        {/* Password input */}
+        <div>
+          <label htmlFor="backup-password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Passphrase ({password.length}/{MIN_PASSWORD_LENGTH} min)
+          </label>
+          <div className="relative">
+            <input
+              id="backup-password"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter a strong passphrase (16+ characters)"
+              className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+              autoComplete="new-password"
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={showPassword ? 'Hide passphrases' : 'Show passphrases'}
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent onEscapeKeyDown={handleClose}>{showPassword ? 'Hide passphrases' : 'Show passphrases'}</TooltipContent>
+            </Tooltip>
+          </div>
+          {password.length > 0 && password.length < MIN_PASSWORD_LENGTH && (
+            <p className="text-xs text-orange-600 dark:text-orange-400 mt-1">
+              {MIN_PASSWORD_LENGTH - password.length} more characters needed
+            </p>
+          )}
+        </div>
+
+        {/* Confirm password */}
+        <div>
+          <label htmlFor="backup-confirm-password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Confirm Passphrase
+          </label>
+          <input
+            id="backup-confirm-password"
+            type={showPassword ? 'text' : 'password'}
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            placeholder="Confirm your passphrase"
+            className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors"
+            autoComplete="new-password"
+          />
+          {confirmPassword.length > 0 && !passwordsMatch && (
+            <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+              Passwords do not match
+            </p>
+          )}
+        </div>
+
+        {/* Security strength slider */}
+        <div>
+          <label htmlFor="backup-security-strength" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Security Strength
+          </label>
+          <div className="space-y-2">
+            <input
+              id="backup-security-strength"
+              type="range"
+              aria-valuetext={`${targetTime} seconds`}
+              min="1"
+              max="30"
+              value={targetTime}
+              onChange={(e) => handleTimeChange(parseInt(e.target.value))}
+              className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yappr-600"
+              disabled={isBenchmarking}
+            />
+            <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+              <span>1s (faster)</span>
+              <span>30s (stronger)</span>
+            </div>
+            <div className="text-center text-sm">
+              {isBenchmarking ? (
+                <span className="text-gray-500 dark:text-gray-400 flex items-center justify-center gap-2">
+                  <Spinner size="xs" />
+                  Calibrating...
+                </span>
+              ) : (
+                <span className="text-gray-700 dark:text-gray-300">
+                  ~{formatIterations(iterations)} iterations ({estimatedTime.toFixed(1)}s to decrypt)
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Consent checkbox */}
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={consentChecked}
+            onChange={(e) => setConsentChecked(e.target.checked)}
+            className="mt-1 h-4 w-4 text-yappr-600 focus:ring-yappr-500 border-gray-300 rounded"
+          />
+          <span className="text-sm text-gray-700 dark:text-gray-300">
+            I understand that anyone with my password can access my private key from the public backup
+          </span>
+        </label>
+
+        {error && (
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-600 rounded-lg p-3">
+            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+          </div>
+        )}
+
+        <div className="flex gap-3 pt-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1"
+            onClick={handleClose}
+          >
+            Skip for now
+          </Button>
+          <Button
+            type="submit"
+            className="flex-1"
+            disabled={!canSubmit}
+          >
+            {isSubmitting ? (
+              <>
+                <Spinner size="xs" className="mr-2" />
+                Encrypting...
+              </>
+            ) : (
+              'Backup to Chain'
+            )}
+          </Button>
+        </div>
+
+        <p className="text-xs text-center text-gray-500 dark:text-gray-400">
+          Backing up for <span className="font-medium">@{username}</span>
+        </p>
+      </form>
+    </Modal>
+    </TooltipProvider>
   )
 }
