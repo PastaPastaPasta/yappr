@@ -54,12 +54,16 @@ test('feed reads recover from exhausted addresses while the browser stays online
   const dapi = /\/org\.dash\.platform\.dapi\.v0\.Platform\//
   await context.route(dapi, route => route.abort('connectionfailed'))
   try {
-    const failure = page.waitForEvent('console', {
-      predicate: message => message.text().includes('topLikedPosts: ranked query failed:'),
-    })
-    await refresh.click()
-    expect((await failure).text().toLowerCase()).toContain('no available addresses')
-    await expect(empty).toBeVisible()
+    let exhausted = false
+    for (let attempt = 0; attempt < 10 && !exhausted; attempt++) {
+      const failure = page.waitForEvent('console', {
+        predicate: message => message.text().includes('topLikedPosts: ranked query failed:'),
+      })
+      await refresh.click()
+      exhausted = (await failure).text().toLowerCase().includes('no available addresses')
+      await expect(empty).toBeVisible()
+    }
+    expect(exhausted, 'Configured SDK address pool should exhaust within ten failed reads').toBe(true)
   } finally {
     await context.unroute(dapi)
   }
