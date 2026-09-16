@@ -66,8 +66,7 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
   const requestIdRef = useRef(0);
   // Raw size of the last ranked page (before block filtering). The next K is
   // derived from it rather than accumulated, so two overlapping load-more
-  // calls cannot skip a page, and the ranked service's silent-empty failure
-  // mode can be told apart from a ranking that simply ended.
+  // calls cannot skip a page.
   const rankedCountRef = useRef(0);
 
   const load = useCallback(
@@ -85,8 +84,8 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
 
       const limit = append ? Math.min(rankedCountRef.current + PAGE_SIZE, MAX_RANKED_LIMIT) : PAGE_SIZE;
       // A widening always bypasses the cache: its wider limit is a cold key
-      // anyway, and a retry after a failure must not replay the ranked
-      // service's cached empty page.
+      // anyway, and a retry should re-read rather than serve a page that was
+      // already on screen when the previous attempt failed.
       const bypassCache = force || append;
       if (append) setIsLoadingMore(true);
       else setIsLoading(true);
@@ -95,14 +94,13 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         let ranked: Post[];
         if (activeTab === 'following' && userId) {
           const authorIds = await followService.getFollowingIds(userId);
-          ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit, window, force: bypassCache });
+          ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit, window, force: bypassCache, throwOnError: true });
         } else {
-          ranked = await topLikedPostsHydrated({ limit, window, force: bypassCache });
+          ranked = await topLikedPostsHydrated({ limit, window, force: bypassCache, throwOnError: true });
         }
-        // The ranked reads never reject: a failed query comes back as an empty
-        // page. On a first page that is indistinguishable from an empty
-        // ranking, but a widening of a non-empty list can only be a failure.
-        if (append && ranked.length === 0) throw new Error('Ranked widening returned an empty page');
+        // `throwOnError` makes a failed ranking or hydration reject rather than
+        // degrade to an empty page, so an empty result here is genuinely the
+        // end of the ranking and never a swallowed error.
         const visible = await filterBlockedAuthors(userId, ranked);
         if (!isCurrent()) return;
         rankedCountRef.current = ranked.length;
