@@ -146,7 +146,7 @@ export function ProfileHeader({
           </div>
 
           <div className="mt-20 flex items-center gap-2">
-            <TooltipButton label="Share profile" onClick={() => copy(`${window.location.origin}/user?id=${userId}`, 'Profile link copied!')}>
+            <TooltipButton label="Share profile" onClick={() => copy(`${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH || ''}/user/?id=${userId}`, 'Profile link copied!')}>
               <ShareIcon className="h-4 w-4" />
             </TooltipButton>
             {isOwnProfile && (
