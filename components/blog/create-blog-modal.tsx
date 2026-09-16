@@ -59,6 +59,7 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
         <Dialog.Content
           className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[95vw] max-w-2xl overflow-y-auto -translate-x-1/2 -translate-y-1/2 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-5"
+          onFocusCapture={(event) => event.target.scrollIntoView({ block: 'nearest' })}
           onOpenAutoFocus={() => {
             returnFocusRef.current = document.activeElement instanceof HTMLElement
               ? document.activeElement
