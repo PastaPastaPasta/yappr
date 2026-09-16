@@ -1,6 +1,7 @@
 'use client'
 
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { CheckCircle2, AlertTriangle, XCircle, Loader2, X } from 'lucide-react'
 import type { UsernameEntry, UsernameStatus } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -105,19 +106,27 @@ export function UsernameInputRow({
             {getStatusIcon()}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onRemove}
-          disabled={!canRemoveUsername}
-          className={cn(
-            'p-2 rounded-md transition-colors',
-            canRemoveUsername
-              ? 'text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'
-              : 'text-gray-200 dark:text-gray-700 cursor-not-allowed'
-          )}
-        >
-          <X className="w-5 h-5" />
-        </button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={entry.label.trim() ? `Remove username ${entry.label.trim()}` : 'Remove username'}
+                onClick={onRemove}
+                disabled={!canRemoveUsername}
+                className={cn(
+                  'p-2 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500',
+                  canRemoveUsername
+                    ? 'text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'
+                    : 'text-gray-200 dark:text-gray-700 cursor-not-allowed'
+                )}
+              >
+                <X className="w-5 h-5" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Remove username</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
       {statusMessage && entry.status !== 'pending' && (
         <p className={cn('text-xs ml-1', getStatusTextClass(entry.status))}>
