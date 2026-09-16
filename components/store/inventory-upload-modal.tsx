@@ -233,7 +233,7 @@ export function InventoryUploadModal({
                 <p>Your CSV should include these columns:</p>
                 <ul className="list-disc list-inside space-y-1 pl-2">
                   <li><strong>Item Name</strong> (required) - Product title</li>
-                    <li><strong>Price</strong> (required) - Price in {currency} (e.g., 9.99)</li>
+                  <li><strong>Price</strong> (required) - Price in {currency} (e.g., 9.99)</li>
                   <li><strong>Group</strong> - Group ID to link variants together</li>
                   <li><strong>Variant / Sub Variant</strong> - Variant options (e.g., Color, Size)</li>
                   <li><strong>Quantity</strong> - Stock count or formula (e.g., &quot;(SKU-NAME)*5&quot;)</li>
