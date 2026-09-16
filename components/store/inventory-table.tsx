@@ -76,6 +76,7 @@ export function InventoryTable({
       filtered = filtered.filter(item =>
         item.title.toLowerCase().includes(query) ||
         item.sku?.toLowerCase().includes(query) ||
+        item.variants?.combinations.some(combo => combo.sku?.toLowerCase().includes(query)) ||
         item.category?.toLowerCase().includes(query) ||
         item.tags?.some(tag => tag.toLowerCase().includes(query))
       )
