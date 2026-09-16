@@ -749,10 +749,12 @@ function MessagesPage() {
             <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3">
               <h1 className="text-lg sm:text-xl font-bold">Messages</h1>
               <button
+                aria-label="New conversation"
+                title="New conversation"
                 onClick={() => setShowNewConversation(true)}
                 className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
               >
-                <PlusIcon className="h-5 w-5" />
+                <PlusIcon className="h-5 w-5" aria-hidden="true" />
               </button>
             </div>
 
@@ -843,6 +845,8 @@ function MessagesPage() {
                 <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
                   {/* Back button - mobile only */}
                   <button
+                    aria-label="Back to conversations"
+                    title="Back to conversations"
                     onClick={() => setSelectedConversation(null)}
                     className="md:hidden p-1.5 -ml-1 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full flex-shrink-0"
                   >
@@ -961,6 +965,8 @@ function MessagesPage() {
 
                 <Button
                   type="submit"
+                  aria-label="Send message"
+                  title="Send message"
                   size="sm"
                   disabled={!newMessage.trim() || isSending}
                   className="flex-shrink-0 h-9 w-9 sm:h-10 sm:w-10 p-0"
@@ -968,7 +974,7 @@ function MessagesPage() {
                   {isSending ? (
                     <Spinner size="sm" className="border-white" />
                   ) : (
-                    <PaperAirplaneIcon className="h-4 w-4" />
+                    <PaperAirplaneIcon className="h-4 w-4" aria-hidden="true" />
                   )}
                 </Button>
               </form>
