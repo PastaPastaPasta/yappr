@@ -27,7 +27,9 @@ export default function CartPage() {
   const [stores, setStores] = useState<Map<string, Store>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
   const [availability, setAvailability] = useState<CartItemAvailability[]>([])
+  const [validatedCart, setValidatedCart] = useState<{ items: Cart['items']; refreshCount: number } | null>(null)
   const [refreshCount, setRefreshCount] = useState(0)
+  const isCheckingAvailability = validatedCart?.items !== cart.items || validatedCart?.refreshCount !== refreshCount
 
   // Subscribe to cart changes
   useEffect(() => {
@@ -42,7 +44,6 @@ export default function CartPage() {
     if (!sdkReady) return
     let cancelled = false
     const loadStores = async () => {
-      setIsLoading(true)
       const storeIds = cartService.getStoreIds()
       const storeMap = new Map<string, Store>()
 
@@ -59,10 +60,11 @@ export default function CartPage() {
         })
       )
 
-      const currentAvailability = await cartService.getAvailability()
+      const currentAvailability = await cartService.getAvailability(cart.items)
       if (!cancelled) {
         setStores(storeMap)
         setAvailability(currentAvailability)
+        setValidatedCart({ items: cart.items, refreshCount })
         setIsLoading(false)
       }
     }
@@ -121,6 +123,7 @@ export default function CartPage() {
                     store={stores.get(storeId)}
                     items={storeItems}
                     availability={availability.filter(result => result.item.storeId === storeId)}
+                    isCheckingAvailability={isCheckingAvailability}
                     onRefreshAvailability={() => setRefreshCount(count => count + 1)}
                     onRemoveAll={() => cartService.removeStoreItems(storeId)}
                   />

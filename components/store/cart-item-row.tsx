@@ -11,12 +11,13 @@ import type { CartItem } from '@/lib/types'
 interface CartItemRowProps {
   item: CartItem
   availability?: CartItemAvailability
+  isCheckingAvailability: boolean
   onQuantityChange: (quantity: number) => void
   onRemove: () => void
 }
 
 export const CartItemRow = forwardRef<HTMLDivElement, CartItemRowProps>(
-  function CartItemRow({ item, availability, onQuantityChange, onRemove }, ref) {
+  function CartItemRow({ item, availability, isCheckingAvailability, onQuantityChange, onRemove }, ref) {
     const handleQuantityChange = (newQuantity: number) => {
       if (newQuantity <= 0) {
         onRemove()
@@ -60,11 +61,11 @@ export const CartItemRow = forwardRef<HTMLDivElement, CartItemRowProps>(
           {formatPrice(item.unitPrice, item.currency)}
         </p>
 
-        {availability?.reason ? (
+        {!isCheckingAvailability && (availability?.reason ? (
           <p className="text-sm text-red-600 mt-1">{availability.reason}</p>
         ) : availability && Number.isFinite(availability.maxQuantity) ? (
           <p className="text-sm text-gray-500 mt-1">{availability.maxQuantity} available</p>
-        ) : null}
+        ) : null)}
 
         {/* Quantity Controls */}
         <div className="flex items-center gap-2 mt-2">
@@ -72,7 +73,7 @@ export const CartItemRow = forwardRef<HTMLDivElement, CartItemRowProps>(
             value={item.quantity}
             onChange={handleQuantityChange}
             min={0}
-            max={availability?.maxQuantity ?? item.quantity}
+            max={isCheckingAvailability ? item.quantity : availability?.maxQuantity ?? item.quantity}
             size="sm"
           />
           <button

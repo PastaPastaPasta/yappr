@@ -15,12 +15,13 @@ interface CartStoreSectionProps {
   store?: Store
   items: CartItem[]
   availability: CartItemAvailability[]
+  isCheckingAvailability: boolean
   onRefreshAvailability: () => void
   onRemoveAll: () => void
 }
 
 export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps>(
-  function CartStoreSection({ storeId, store, items, availability, onRefreshAvailability, onRemoveAll }, ref) {
+  function CartStoreSection({ storeId, store, items, availability, isCheckingAvailability, onRefreshAvailability, onRemoveAll }, ref) {
     const router = useRouter()
 
     const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
@@ -81,6 +82,7 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
             <CartItemRow
               key={`${item.itemId}-${item.variantKey || ''}`}
               item={item}
+              isCheckingAvailability={isCheckingAvailability}
               availability={availability.find(result => result.item.itemId === item.itemId && result.item.variantKey === item.variantKey)}
               onQuantityChange={(qty) => handleQuantityChange(item, qty)}
               onRemove={() => handleRemoveItem(item)}
@@ -97,13 +99,15 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
             {formatPrice(subtotal, currency)}
           </span>
         </div>
-        {hasAvailabilityIssue && (
+        {isCheckingAvailability ? (
+          <p role="status" className="mb-4 text-sm text-gray-500">Checking availability...</p>
+        ) : hasAvailabilityIssue && (
           <div className="mb-4 text-sm">
             <p role="alert" className="text-red-600">Review item availability before checkout.</p>
             <button className="mt-2 text-yappr-600 underline" onClick={onRefreshAvailability}>Check availability again</button>
           </div>
         )}
-        <Button className="w-full" onClick={handleCheckout} disabled={hasAvailabilityIssue}>
+        <Button className="w-full" onClick={handleCheckout} disabled={isCheckingAvailability || hasAvailabilityIssue}>
           Checkout from {store?.name || 'Store'}
         </Button>
       </div>
