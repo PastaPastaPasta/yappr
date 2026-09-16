@@ -48,6 +48,7 @@ function BookmarksPage() {
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [bookmarks, setBookmarks] = useState<BookmarkedPost[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isMutating, setIsMutating] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'recent' | 'oldest'>('recent')
 
@@ -103,57 +104,58 @@ function BookmarksPage() {
   }, [user])
 
   const removeBookmark = async (postId: string) => {
-    if (!user) return
-
-    // Optimistic update
-    const previousBookmarks = bookmarks
-    setBookmarks(prev => prev.filter(post => post.id !== postId))
+    if (!user || isMutating) return
+    setIsMutating(true)
 
     try {
       const { bookmarkService } = await import('@/lib/services/bookmark-service')
       const success = await bookmarkService.removeBookmark(postId, user.identityId)
       if (success) {
+        setBookmarks(current => current.filter(post => post.id !== postId))
         toast.success('Removed from bookmarks')
       } else {
-        // Rollback on failure
-        setBookmarks(previousBookmarks)
         toast.error('Failed to remove bookmark')
       }
     } catch (error) {
       logger.error('Error removing bookmark:', error)
-      setBookmarks(previousBookmarks)
       toast.error('Failed to remove bookmark')
+    } finally {
+      setIsMutating(false)
     }
   }
 
   const clearAllBookmarks = async () => {
-    if (!user) return
+    if (!user || isMutating) return
     if (!confirm('Are you sure you want to clear all bookmarks?')) return
 
     const previousBookmarks = bookmarks
-    setBookmarks([])
+    setIsMutating(true)
 
     try {
       const { bookmarkService } = await import('@/lib/services/bookmark-service')
 
       // Remove all bookmarks
-      const results = await Promise.all(
+      const results = await Promise.allSettled(
         previousBookmarks.map(post =>
           bookmarkService.removeBookmark(post.id, user.identityId)
         )
       )
 
-      const allSucceeded = results.every(r => r)
+      const removedIds = new Set(previousBookmarks
+        .filter((_, index) => results[index].status === 'fulfilled' && results[index].value)
+        .map(post => post.id))
+      setBookmarks(current => current.filter(post => !removedIds.has(post.id)))
+      const allSucceeded = removedIds.size === previousBookmarks.length
       if (allSucceeded) {
         toast.success('All bookmarks cleared')
       } else {
-        // Some failed, reload to get current state
         toast.error('Some bookmarks could not be removed')
       }
     } catch (error) {
       logger.error('Error clearing bookmarks:', error)
-      setBookmarks(previousBookmarks)
       toast.error('Failed to clear bookmarks')
+    } finally {
+      setIsMutating(false)
     }
   }
 
@@ -202,6 +204,7 @@ function BookmarksPage() {
                   <DropdownMenu.Item
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2 text-red-600"
                     onClick={clearAllBookmarks}
+                    disabled={isMutating}
                   >
                     <TrashIcon className="h-4 w-4" />
                     Clear all bookmarks
@@ -254,7 +257,10 @@ function BookmarksPage() {
                 animate={{ opacity: 1, y: 0 }}
                 className="relative group"
               >
-                <PostCard post={post} />
+                <PostCard
+                  post={post}
+                  bookmarkAction={{ active: true, loading: isMutating, onClick: () => removeBookmark(post.id) }}
+                />
                 
                 {/* Bookmark Options Overlay */}
                 <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -285,6 +291,7 @@ function BookmarksPage() {
                         <DropdownMenu.Item
                           className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2 text-red-600"
                           onClick={() => removeBookmark(post.id)}
+                          disabled={isMutating}
                         >
                           <BookmarkIcon className="h-4 w-4" />
                           Remove bookmark
