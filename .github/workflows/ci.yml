@@ -237,15 +237,16 @@ jobs:
         continue-on-error: true
         run: npm run build:devnet
 
-      - name: Detect E2E seed secret
+      # Devnet identities are re-provisioned independently of the testnet pool.
+      - name: Detect devnet E2E seed secret
         env:
-          E2E_SEED_PHRASE: ${{ secrets.E2E_SEED_PHRASE }}
+          E2E_SEED_PHRASE: ${{ secrets.E2E_DEVNET_SEED_PHRASE }}
         run: |
           if [ -n "$E2E_SEED_PHRASE" ]; then
             echo "HAS_SEED=true" >> "$GITHUB_ENV"
           else
             echo "HAS_SEED=false" >> "$GITHUB_ENV"
-            echo "::notice::E2E_SEED_PHRASE unavailable (fork PR?) — skipping the devnet write specs"
+            echo "::notice::E2E_DEVNET_SEED_PHRASE unavailable (fork PR?) — skipping the devnet write specs"
           fi
 
       # The devnet quorum service cold-starts (~10s) after idle and every SDK
@@ -263,11 +264,12 @@ jobs:
         if: env.HAS_SEED == 'true'
         continue-on-error: true
         env:
-          E2E_SEED_PHRASE: ${{ secrets.E2E_SEED_PHRASE }}
+          E2E_SEED_PHRASE: ${{ secrets.E2E_DEVNET_SEED_PHRASE }}
           E2E_BASE_PATH: /devnet
           E2E_ENV_FILE: .env.devnet
           NETWORK: devnet
-        run: npx playwright test --project=write topology
+        # Auth fixtures inject a private key; do not retain it in uploaded traces.
+        run: npx playwright test --project=write --trace=off topology
 
       - name: Upload Playwright report
         if: always()
