@@ -2,6 +2,7 @@
 
 import { logger } from '@/lib/logger';
 import React, { useState, useCallback, useMemo } from 'react'
+import toast from 'react-hot-toast'
 import {
   PencilIcon,
   TrashIcon,
@@ -169,22 +170,29 @@ export function InventoryTable({
 
     setIsDeleting(true)
     setBulkDeleteProgress({ current: 0, total })
+    const failedIds: string[] = []
 
     for (let i = 0; i < idsToDelete.length; i++) {
       const itemId = idsToDelete[i]
       setBulkDeleteProgress({ current: i + 1, total })
       try {
-        await storeItemService.delete(itemId, ownerId)
+        const deleted = await storeItemService.delete(itemId, ownerId)
+        if (!deleted) throw new Error('Delete was not confirmed')
         onItemDeleted(itemId)
       } catch (err) {
+        failedIds.push(itemId)
         logger.error(`Failed to delete item ${itemId}:`, err)
       }
     }
 
-    setSelectedItems(new Set())
+    setSelectedItems(new Set(failedIds))
     setBulkDeleteProgress(null)
     setIsDeleting(false)
-    setShowBulkDeleteDialog(false)
+    if (failedIds.length > 0) {
+      toast.error(`Failed to delete ${failedIds.length} item${failedIds.length === 1 ? '' : 's'}. Please try again.`)
+    } else {
+      setShowBulkDeleteDialog(false)
+    }
   }, [selectedItems, filteredItemIds, ownerId, onItemDeleted])
 
   const toggleExpand = useCallback((itemId: string) => {
@@ -272,13 +280,15 @@ export function InventoryTable({
 
     try {
       setIsDeleting(true)
-      await storeItemService.delete(deleteItemId, ownerId)
+      const deleted = await storeItemService.delete(deleteItemId, ownerId)
+      if (!deleted) throw new Error('Delete was not confirmed')
       onItemDeleted(deleteItemId)
+      setDeleteItemId(null)
     } catch (err) {
       logger.error('Failed to delete item:', err)
+      toast.error('Failed to delete item. Please try again.')
     } finally {
       setIsDeleting(false)
-      setDeleteItemId(null)
     }
   }, [deleteItemId, ownerId, onItemDeleted])
 
