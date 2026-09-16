@@ -102,10 +102,9 @@ class BlogService extends BaseDocumentService<Blog> {
   }
 
   async updateBlog(blogId: string, ownerId: string, data: UpdateBlogData): Promise<Blog> {
-    const cleaned = Object.fromEntries(
-      Object.entries(data).filter(([, v]) => v !== undefined)
-    )
-    return this.update(blogId, ownerId, this.prepareData(cleaned))
+    // Explicit undefined values clear optional fields during the replacement merge.
+    // Omitted fields stay untouched; do not discard that distinction here.
+    return this.update(blogId, ownerId, this.prepareData(data))
   }
 
   async getBlog(blogId: string): Promise<Blog | null> {
