@@ -273,7 +273,7 @@ function BookmarksPage() {
                         <DropdownMenu.Item
                           className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2"
                           onClick={() => {
-                            navigator.clipboard.writeText(`${window.location.origin}/post?id=${post.id}`)
+                            navigator.clipboard.writeText(`${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH || ''}/post/?id=${post.id}`)
                               .then(() => toast.success('Link copied to clipboard'))
                               .catch(() => toast.error('Failed to copy link'))
                           }}
