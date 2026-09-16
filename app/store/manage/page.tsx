@@ -146,11 +146,13 @@ function StoreManagePage() {
 
     try {
       setIsDeleting(true)
-      await storeItemService.delete(deleteItemId, user.identityId)
+      const deleted = await storeItemService.delete(deleteItemId, user.identityId)
+      if (!deleted) throw new Error('Delete was not confirmed')
       setItems(items.filter(i => i.id !== deleteItemId))
       setDeleteItemId(null)
     } catch (error) {
       logger.error('Failed to delete item:', error)
+      toast.error('Failed to delete product. Please try again.')
     } finally {
       setIsDeleting(false)
     }
