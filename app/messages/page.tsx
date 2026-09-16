@@ -17,6 +17,7 @@ import {
 import { Sidebar } from '@/components/layout/sidebar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Spinner } from '@/components/ui/spinner'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { UserAvatar } from '@/components/ui/avatar-image'
@@ -748,14 +749,20 @@ function MessagesPage() {
           <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800">
             <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3">
               <h1 className="text-lg sm:text-xl font-bold">Messages</h1>
-              <button
-                aria-label="New conversation"
-                title="New conversation"
-                onClick={() => setShowNewConversation(true)}
-                className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
-              >
-                <PlusIcon className="h-5 w-5" aria-hidden="true" />
-              </button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      aria-label="New conversation"
+                      onClick={() => setShowNewConversation(true)}
+                      className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
+                    >
+                      <PlusIcon className="h-5 w-5" aria-hidden="true" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">New conversation</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
 
             <div className="px-3 sm:px-4 pb-2 sm:pb-3">
@@ -844,14 +851,20 @@ function MessagesPage() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
                   {/* Back button - mobile only */}
-                  <button
-                    aria-label="Back to conversations"
-                    title="Back to conversations"
-                    onClick={() => setSelectedConversation(null)}
-                    className="md:hidden p-1.5 -ml-1 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full flex-shrink-0"
-                  >
-                    <ArrowLeftIcon className="h-5 w-5" />
-                  </button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          aria-label="Back to conversations"
+                          onClick={() => setSelectedConversation(null)}
+                          className="md:hidden p-1.5 -ml-1 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full flex-shrink-0"
+                        >
+                          <ArrowLeftIcon className="h-5 w-5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">Back to conversations</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                   <Link
                     href={`/user?id=${selectedConversation.participantId}`}
                     className="flex items-center gap-2 sm:gap-3 hover:opacity-80 transition-opacity min-w-0 flex-1"
@@ -963,20 +976,26 @@ function MessagesPage() {
                   className="flex-1 min-w-0 h-9 sm:h-10 text-base"
                 />
 
-                <Button
-                  type="submit"
-                  aria-label="Send message"
-                  title="Send message"
-                  size="sm"
-                  disabled={!newMessage.trim() || isSending}
-                  className="flex-shrink-0 h-9 w-9 sm:h-10 sm:w-10 p-0"
-                >
-                  {isSending ? (
-                    <Spinner size="sm" className="border-white" />
-                  ) : (
-                    <PaperAirplaneIcon className="h-4 w-4" aria-hidden="true" />
-                  )}
-                </Button>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="submit"
+                        aria-label="Send message"
+                        size="sm"
+                        disabled={!newMessage.trim() || isSending}
+                        className="flex-shrink-0 h-9 w-9 sm:h-10 sm:w-10 p-0"
+                      >
+                        {isSending ? (
+                          <Spinner size="sm" className="border-white" />
+                        ) : (
+                          <PaperAirplaneIcon className="h-4 w-4" aria-hidden="true" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">Send message</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </form>
             </div>
           </div>
