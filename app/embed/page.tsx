@@ -127,7 +127,7 @@ function EmbedPageContent() {
               <div className="yappr-embed-content" dangerouslySetInnerHTML={{ __html: contentHtml }} />
 
               <footer className="yappr-embed-footer">
-                <a href={viewPath} target="_top" rel="noopener noreferrer">View on Yappr</a>
+                <Link href={viewPath} target="_top" rel="noopener noreferrer" prefetch={false}>View on Yappr</Link>
               </footer>
             </>
           ) : (

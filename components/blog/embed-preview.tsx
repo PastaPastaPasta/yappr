@@ -9,6 +9,7 @@ import { EMBED_STYLES } from '@/lib/embed/embed-styles'
 import { escapeHtml, renderEmbedHtml } from '@/lib/embed/embed-renderer'
 import type { EmbedTheme } from '@/lib/embed/embed-types'
 import { APP_URL } from '@/lib/constants'
+import { createEmbedSnippets } from '@/lib/embed/embed-snippets'
 
 interface EmbedPreviewProps {
   post: BlogPost
@@ -20,8 +21,9 @@ export function EmbedPreview({ post, username }: EmbedPreviewProps) {
   const [theme, setTheme] = useState<EmbedTheme>('light')
   const [copied, setCopied] = useState(false)
 
-  const iframeSnippet = `<iframe src="${APP_URL}/embed/?post=${post.id}&owner=${post.ownerId}&theme=${theme}" width="100%" height="600" style="border:none"></iframe>`
-  const scriptSnippet = `<div data-yappr-post="${post.id}" data-yappr-owner="${post.ownerId}" data-yappr-theme="${theme}"></div>\n<script src="${APP_URL}/embed.js"></script>`
+  const { iframeSnippet, scriptSnippet } = createEmbedSnippets(
+    post, theme, APP_URL, process.env.NEXT_PUBLIC_BASE_PATH || ''
+  )
 
   const html = useMemo(() => renderEmbedHtml(post.content), [post.content])
 

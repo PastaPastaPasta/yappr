@@ -25,6 +25,7 @@ const nextConfig = {
   trailingSlash: true,
   generateBuildId: async () => gitInfo.commitHash,
   env: {
+    NEXT_PUBLIC_BASE_PATH: basePath,
     NEXT_PUBLIC_GIT_COMMIT_HASH: gitInfo.commitHash,
     NEXT_PUBLIC_GIT_COMMIT_DATE: gitInfo.commitDate,
     NEXT_PUBLIC_GIT_BRANCH: gitInfo.branch,

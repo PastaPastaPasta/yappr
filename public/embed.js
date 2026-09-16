@@ -1,5 +1,9 @@
 (function () {
-  var BASE = 'https://yap.pr';
+  // Capture this synchronously: currentScript is null in DOMContentLoaded callbacks.
+  var script = document.currentScript;
+  var BASE = script && script.src
+    ? new URL('.', script.src).href.replace(/\/$/, '')
+    : 'https://yap.pr';
 
   function run() {
     var elements = document.querySelectorAll('[data-yappr-post]:not([data-yappr-loaded])');
@@ -26,8 +30,8 @@
       // allow-scripts + allow-same-origin: required for SDK (WASM, DAPI fetch, storage).
       // The escape-sandbox risk only applies when parent and iframe share the same origin;
       // embeds are loaded on third-party sites (different origin from yap.pr).
-      // allow-popups-to-navigate: lets "View on Yappr" target="_top" links work.
-      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups-to-navigate');
+      // Let a user click "View on Yappr" to open the article in the host tab.
+      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-top-navigation-by-user-activation');
       iframe.loading = 'lazy';
 
       el.appendChild(iframe);
