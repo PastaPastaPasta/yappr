@@ -1,5 +1,6 @@
 'use client'
 
+import { useId } from 'react'
 import type { SocialLink } from '@/lib/types'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
@@ -35,10 +36,10 @@ interface ProfileEditFormProps {
 const INPUT =
   'mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500'
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</label>
+      <label htmlFor={htmlFor} className="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</label>
       {children}
     </div>
   )
@@ -46,14 +47,16 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 /** The in-place editor for your own profile; the page owns the draft and saves it. */
 export function ProfileEditForm({ draft, onChange, disabled }: ProfileEditFormProps) {
+  const fieldId = useId()
   const set = <K extends keyof ProfileDraft>(key: K, value: ProfileDraft[K]) => onChange({ ...draft, [key]: value })
   return (
     <div className="space-y-4">
-      <Field label="Name">
-        <input type="text" value={draft.displayName} onChange={(e) => set('displayName', e.target.value)} className={INPUT} maxLength={50} />
+      <Field label="Name" htmlFor={`${fieldId}-name`}>
+        <input id={`${fieldId}-name`} type="text" value={draft.displayName} onChange={(e) => set('displayName', e.target.value)} className={INPUT} maxLength={50} />
       </Field>
-      <Field label="Pronouns">
+      <Field label="Pronouns" htmlFor={`${fieldId}-pronouns`}>
         <input
+          id={`${fieldId}-pronouns`}
           type="text"
           value={draft.pronouns}
           onChange={(e) => set('pronouns', e.target.value)}
@@ -62,15 +65,16 @@ export function ProfileEditForm({ draft, onChange, disabled }: ProfileEditFormPr
           maxLength={20}
         />
       </Field>
-      <Field label="Bio">
-        <textarea value={draft.bio} onChange={(e) => set('bio', e.target.value)} className={`${INPUT} resize-none`} rows={3} maxLength={160} />
+      <Field label="Bio" htmlFor={`${fieldId}-bio`}>
+        <textarea id={`${fieldId}-bio`} value={draft.bio} onChange={(e) => set('bio', e.target.value)} className={`${INPUT} resize-none`} rows={3} maxLength={160} />
         <p className="text-xs text-gray-500 mt-1">{draft.bio.length}/160</p>
       </Field>
-      <Field label="Location">
-        <input type="text" value={draft.location} onChange={(e) => set('location', e.target.value)} className={INPUT} maxLength={50} />
+      <Field label="Location" htmlFor={`${fieldId}-location`}>
+        <input id={`${fieldId}-location`} type="text" value={draft.location} onChange={(e) => set('location', e.target.value)} className={INPUT} maxLength={50} />
       </Field>
-      <Field label="Website">
+      <Field label="Website" htmlFor={`${fieldId}-website`}>
         <input
+          id={`${fieldId}-website`}
           type="text"
           value={draft.website}
           onChange={(e) => set('website', e.target.value)}
