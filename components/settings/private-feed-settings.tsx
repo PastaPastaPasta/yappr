@@ -30,7 +30,7 @@ interface PrivateFeedSettingsProps {
  */
 export function PrivateFeedSettings({ openReset = false, onResetOpened }: PrivateFeedSettingsProps) {
   const encryptionKeyId = useId()
-  const { user } = useAuth()
+  const { user, mergeSecretsIntoAuthVault } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const refreshKey = usePrivateFeedRefreshStore((state) => state.refreshKey)
   const [isEnabled, setIsEnabled] = useState(false)
@@ -175,6 +175,24 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
         toast.success('Private feed enabled successfully!')
         setShowKeyInput(false)
         setEncryptionKeyInput('')
+        // Keep the accepted key available just as the manual key-entry flow does.
+        // Storage/backup failures cannot undo the feed that was already enabled.
+        try {
+          const { storeEncryptionKey, getEncryptionKey } = await import('@/lib/secure-storage')
+          storeEncryptionKey(user.identityId, trimmedKey)
+          const normalizedEncryptionKey = getEncryptionKey(user.identityId)
+          if (!normalizedEncryptionKey) throw new Error('Encryption key was not saved')
+
+          try {
+            await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: normalizedEncryptionKey })
+          } catch (error) {
+            logger.error('Failed to back up encryption key after enabling private feed:', error)
+            toast.error('Private feed enabled, but key backup failed. Your key is available for this session.')
+          }
+        } catch (error) {
+          logger.error('Failed to store encryption key after enabling private feed:', error)
+          toast.error('Private feed enabled, but your key could not be saved. Enter it again to manage your feed.')
+        }
         // Refresh all status to ensure consistent UI state
         await checkPrivateFeedStatus()
       } else {
