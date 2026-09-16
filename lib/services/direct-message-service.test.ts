@@ -24,6 +24,12 @@ beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
   vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v6');
+  const storage = new Map<string, string>();
+  vi.stubGlobal('window', {});
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+  });
   mocks.query.mockResolvedValueOnce(new Map(participants.map((id, index) => [String(index), {
     $id: `invite-${index}`, $ownerId: id, conversationId: conversationBytes[index], recipientId: viewer,
   }]))).mockResolvedValueOnce(new Map());
@@ -38,9 +44,35 @@ beforeEach(() => {
     ],
   });
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
 describe('conversation query bundles', () => {
+  it('keeps locally opened messages read without requiring a protocol receipt', async () => {
+    const { markMessagesReadLocally } = await import('../utils/dm-local-read-state');
+    markMessagesReadLocally(viewer, conversationIds[1], [
+      { id: 'message-1-0', senderId: participants[1] },
+      { id: 'message-1-2', senderId: participants[1] },
+    ]);
+    const { directMessageService } = await import('./direct-message-service');
+    const result = await directMessageService.getConversations(viewer, { includeParticipantInfo: false });
+    expect(result.find(conversation => conversation.id === conversationIds[1])?.unreadCount).toBe(0);
+    expect(result.find(conversation => conversation.id === conversationIds[0])?.unreadCount).toBe(2);
+  });
+
+  it('leaves new unread message IDs visible even when their timestamp matches a read message', async () => {
+    const { markMessagesReadLocally } = await import('../utils/dm-local-read-state');
+    markMessagesReadLocally(viewer, conversationIds[1], [{ id: 'message-1-0', senderId: participants[1] }]);
+    const response = await mocks.composite();
+    response.subResults[0].documents.forEach((message: { $createdAt: number }) => { message.$createdAt = 1000; });
+    mocks.composite.mockResolvedValue(response);
+    const { directMessageService } = await import('./direct-message-service');
+    const result = await directMessageService.getConversations(viewer, { includeParticipantInfo: false });
+    expect(result.find(conversation => conversation.id === conversationIds[1])?.unreadCount).toBe(1);
+  });
+
   it('preserves busy and quiet previews, viewer receipt decoding, and unread counts', async () => {
     const { directMessageService } = await import('./direct-message-service');
     const result = await directMessageService.getConversations(viewer, { includeParticipantInfo: false });
