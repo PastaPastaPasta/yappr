@@ -50,11 +50,29 @@ afterEach(() => {
 });
 
 describe('conversation query bundles', () => {
+  it('keeps the latest inbox page read after replaying older conversation history', async () => {
+    const { markMessagesReadLocally } = await import('../utils/dm-local-read-state');
+    const records = Array.from({ length: 2000 }, (_, i) => ({
+      id: `history-${i}`, senderId: participants[1], createdAt: new Date(1000 + i),
+    }));
+    markMessagesReadLocally(viewer, conversationIds[1], records.slice(1000));
+    markMessagesReadLocally(viewer, conversationIds[1], records.slice(0, 1000));
+    const response = await mocks.composite();
+    response.subResults[0].documents = records.slice(-100).reverse().map(message => ({
+      $id: message.id, $ownerId: message.senderId, $createdAt: message.createdAt.getTime(),
+      conversationId: conversationBytes[1], encryptedContent: new Uint8Array(40),
+    }));
+    mocks.composite.mockResolvedValue(response);
+    const { directMessageService } = await import('./direct-message-service');
+    const result = await directMessageService.getConversations(viewer, { includeParticipantInfo: false });
+    expect(result.find(conversation => conversation.id === conversationIds[1])?.unreadCount).toBe(0);
+  });
+
   it('keeps locally opened messages read without requiring a protocol receipt', async () => {
     const { markMessagesReadLocally } = await import('../utils/dm-local-read-state');
     markMessagesReadLocally(viewer, conversationIds[1], [
-      { id: 'message-1-0', senderId: participants[1] },
-      { id: 'message-1-2', senderId: participants[1] },
+      { id: 'message-1-0', senderId: participants[1], createdAt: new Date(1000) },
+      { id: 'message-1-2', senderId: participants[1], createdAt: new Date(1002) },
     ]);
     const { directMessageService } = await import('./direct-message-service');
     const result = await directMessageService.getConversations(viewer, { includeParticipantInfo: false });
@@ -64,7 +82,7 @@ describe('conversation query bundles', () => {
 
   it('leaves new unread message IDs visible even when their timestamp matches a read message', async () => {
     const { markMessagesReadLocally } = await import('../utils/dm-local-read-state');
-    markMessagesReadLocally(viewer, conversationIds[1], [{ id: 'message-1-0', senderId: participants[1] }]);
+    markMessagesReadLocally(viewer, conversationIds[1], [{ id: 'message-1-0', senderId: participants[1], createdAt: new Date(1000) }]);
     const response = await mocks.composite();
     response.subResults[0].documents.forEach((message: { $createdAt: number }) => { message.$createdAt = 1000; });
     mocks.composite.mockResolvedValue(response);
