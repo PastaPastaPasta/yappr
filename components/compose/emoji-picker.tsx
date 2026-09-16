@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import Picker from '@emoji-mart/react'
 import data from '@emoji-mart/data'
@@ -14,15 +14,18 @@ interface EmojiData {
 
 interface EmojiPickerProps {
   onEmojiSelect: (emoji: string) => void
+  onSelectionClose?: () => void
   disabled?: boolean
 }
 
-export function EmojiPicker({ onEmojiSelect, disabled = false }: EmojiPickerProps) {
+export function EmojiPicker({ onEmojiSelect, onSelectionClose, disabled = false }: EmojiPickerProps) {
   const [open, setOpen] = useState(false)
+  const selectedEmoji = useRef(false)
   const { resolvedTheme } = useTheme()
 
   const handleEmojiSelect = useCallback(
     (emoji: EmojiData) => {
+      selectedEmoji.current = true
       onEmojiSelect(emoji.native)
       setOpen(false)
     },
@@ -52,6 +55,13 @@ export function EmojiPicker({ onEmojiSelect, disabled = false }: EmojiPickerProp
           sideOffset={8}
           className="z-[100] animate-in fade-in-0 zoom-in-95 rounded-lg shadow-lg"
           onOpenAutoFocus={(e) => e.preventDefault()}
+          onCloseAutoFocus={(event) => {
+            if (selectedEmoji.current && onSelectionClose) {
+              event.preventDefault()
+              onSelectionClose()
+            }
+            selectedEmoji.current = false
+          }}
         >
           <div
             onWheel={(e) => e.stopPropagation()}

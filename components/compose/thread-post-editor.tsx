@@ -264,7 +264,7 @@ export function ThreadPostEditor({
               >
                 <span className="text-sm">#</span>
               </FormatButton>
-              <EmojiPicker onEmojiSelect={handleInsertEmoji} />
+              <EmojiPicker onEmojiSelect={handleInsertEmoji} onSelectionClose={() => ref.current?.focus()} />
 
               {/* Image attachment button */}
               {onImageClick && (
@@ -402,4 +402,3 @@ export function ThreadPostEditor({
     </motion.div>
   )
 }
-
