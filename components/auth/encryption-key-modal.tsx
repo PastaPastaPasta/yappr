@@ -2,6 +2,7 @@
 
 import { logger } from '@/lib/logger';
 import { useId, useState, useCallback, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { XMarkIcon, LockClosedIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
@@ -30,6 +31,7 @@ type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
  * 3. Show manual entry only as last resort
  */
 export function EncryptionKeyModal() {
+  const router = useRouter()
   const { user, mergeSecretsIntoAuthVault } = useAuth()
   const encryptionKeyId = useId()
   const { isOpen, action, onSuccess, close } = useEncryptionKeyModal()
@@ -223,10 +225,8 @@ export function EncryptionKeyModal() {
     setShowLostKeyModal(false)
     close()
     // Navigate to private feed settings with reset param
-    if (typeof window !== 'undefined') {
-      window.location.href = '/settings?section=privateFeed&action=reset'
-    }
-  }, [close])
+    router.push('/settings?section=privateFeed&action=reset')
+  }, [close, router])
 
   const handleAddKeySuccess = useCallback(() => {
     setShowAddKeyModal(false)
