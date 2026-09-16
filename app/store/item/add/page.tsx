@@ -527,19 +527,16 @@ function AddItemPage() {
               <>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium mb-2">Price</label>
-                    <div className="relative">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">$</span>
-                      <input
-                        type="number"
-                        value={basePrice}
-                        onChange={(e) => setBasePrice(e.target.value)}
-                        placeholder="0.00"
-                        step={getCurrencyStep(currency)}
-                        min="0"
-                        className="w-full pl-8 pr-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                      />
-                    </div>
+                    <label className="block text-sm font-medium mb-2">Price ({currency})</label>
+                    <input
+                      type="number"
+                      value={basePrice}
+                      onChange={(e) => setBasePrice(e.target.value)}
+                      placeholder="0.00"
+                      step={getCurrencyStep(currency)}
+                      min="0"
+                      className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-2">Currency</label>
