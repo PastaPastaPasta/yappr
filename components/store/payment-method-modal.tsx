@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { motion } from 'framer-motion'
+import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, WalletIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { PaymentSchemeIcon, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
@@ -53,6 +54,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
   const [address, setAddress] = useState('')
   const [label, setLabel] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const openerRef = useRef<HTMLElement | null>(null)
   const [customMode, setCustomMode] = useState(false)
   const [customUri, setCustomUri] = useState('')
   const [customError, setCustomError] = useState('')
@@ -111,178 +113,198 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
   const toggleInactiveClass = 'bg-white dark:bg-neutral-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-neutral-750'
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="relative w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-xl"
-      >
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
-          <div className="flex items-center gap-2">
-            <WalletIcon className="h-5 w-5 text-yappr-500" />
-            <h2 className="text-lg font-bold">Add Payment Method</h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+    <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) onClose() }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+          <Dialog.Content
+            asChild
+            onOpenAutoFocus={() => {
+              openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+            }}
+            onCloseAutoFocus={(event) => {
+              if (openerRef.current?.getClientRects().length) {
+                event.preventDefault()
+                openerRef.current.focus()
+              }
+            }}
           >
-            <XMarkIcon className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
-          {/* Mode toggle */}
-          <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setCustomMode(false)}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${!customMode ? toggleActiveClass : toggleInactiveClass}`}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="relative w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-xl pointer-events-auto"
             >
-              Select Type
-            </button>
-            <button
-              type="button"
-              onClick={() => setCustomMode(true)}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${customMode ? toggleActiveClass : toggleInactiveClass}`}
-            >
-              Custom URI
-            </button>
-          </div>
-
-          {customMode ? (
-              <div>
-                <label htmlFor="payment-method-uri" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Payment URI *
-                </label>
-                <input
-                  id="payment-method-uri"
-                  type="text"
-                  aria-invalid={Boolean(customError)}
-                  aria-describedby="payment-method-uri-help"
-                  value={customUri}
-                  onChange={(e) => {
-                    setCustomUri(e.target.value)
-                    if (customError) {
-                      const parsed = parseCustomUri(e.target.value.trim())
-                      if (parsed) setCustomError('')
-                    }
-                  }}
-                  onBlur={() => {
-                    const trimmed = customUri.trim()
-                    if (trimmed && !parseCustomUri(trimmed)) {
-                      setCustomError('Enter a valid URI in scheme:address format (e.g., dash:Xabc123...)')
-                    } else if (!trimmed) {
-                      setCustomError('')
-                    }
-                  }}
-                  placeholder="e.g., dash:XnNh3biq9..."
-                  className={`w-full px-4 py-3 rounded-lg border bg-white dark:bg-neutral-800 font-mono text-sm placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent ${
-                    customError ? 'border-red-400 dark:border-red-600' : 'border-gray-300 dark:border-gray-700'
-                  }`}
-                />
-                {customError ? (
-                  <p id="payment-method-uri-help" role="alert" className="text-xs text-red-500 mt-1">{customError}</p>
-                ) : (
-                  <p id="payment-method-uri-help" className="text-xs text-gray-500 mt-1">
-                    Supported: {APPROVED_PAYMENT_SCHEMES.map(s => PAYMENT_SCHEME_LABELS[s] || s.replace(':', '')).join(', ')}
-                  </p>
-                )}
+              <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
+                <div className="flex items-center gap-2">
+                  <WalletIcon className="h-5 w-5 text-yappr-500" />
+                  <Dialog.Title className="text-lg font-bold">Add Payment Method</Dialog.Title>
+                  <Dialog.Description className="sr-only">Choose a payment type and enter the address where buyers should send payment.</Dialog.Description>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  onClick={onClose}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                >
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
               </div>
-          ) : (
-            <>
-              {/* Payment type grid */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Payment Type
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {PAYMENT_SCHEMES.map((s) => (
-                    <button
-                      key={s.scheme}
-                      type="button"
-                      onClick={() => {
-                        setScheme(s.scheme)
-                        setAddressError('')
-                      }}
-                      className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all ${
-                        scheme === s.scheme
-                          ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20'
-                          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
-                      }`}
-                    >
-                      <PaymentSchemeIcon scheme={s.scheme} size="lg" />
-                      <span className={`text-xs font-medium text-center ${
-                        scheme === s.scheme
-                          ? 'text-yappr-600 dark:text-yappr-400'
-                          : 'text-gray-700 dark:text-gray-300'
-                      }`}>
-                        {s.label}
-                      </span>
-                    </button>
-                  ))}
+
+              <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+                {/* Mode toggle */}
+                <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setCustomMode(false)}
+                    className={`flex-1 py-2 text-sm font-medium transition-colors ${!customMode ? toggleActiveClass : toggleInactiveClass}`}
+                  >
+                    Select Type
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCustomMode(true)}
+                    className={`flex-1 py-2 text-sm font-medium transition-colors ${customMode ? toggleActiveClass : toggleInactiveClass}`}
+                  >
+                    Custom URI
+                  </button>
+                </div>
+
+                {customMode ? (
+                    <div>
+                      <label htmlFor="payment-method-uri" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Payment URI *
+                      </label>
+                      <input
+                        id="payment-method-uri"
+                        type="text"
+                        aria-invalid={Boolean(customError)}
+                        aria-describedby="payment-method-uri-help"
+                        value={customUri}
+                        onChange={(e) => {
+                          setCustomUri(e.target.value)
+                          if (customError) {
+                            const parsed = parseCustomUri(e.target.value.trim())
+                            if (parsed) setCustomError('')
+                          }
+                        }}
+                        onBlur={() => {
+                          const trimmed = customUri.trim()
+                          if (trimmed && !parseCustomUri(trimmed)) {
+                            setCustomError('Enter a valid URI in scheme:address format (e.g., dash:Xabc123...)')
+                          } else if (!trimmed) {
+                            setCustomError('')
+                          }
+                        }}
+                        placeholder="e.g., dash:XnNh3biq9..."
+                        className={`w-full px-4 py-3 rounded-lg border bg-white dark:bg-neutral-800 font-mono text-sm placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent ${
+                          customError ? 'border-red-400 dark:border-red-600' : 'border-gray-300 dark:border-gray-700'
+                        }`}
+                      />
+                      {customError ? (
+                        <p id="payment-method-uri-help" role="alert" className="text-xs text-red-500 mt-1">{customError}</p>
+                      ) : (
+                        <p id="payment-method-uri-help" className="text-xs text-gray-500 mt-1">
+                          Supported: {APPROVED_PAYMENT_SCHEMES.map(s => PAYMENT_SCHEME_LABELS[s] || s.replace(':', '')).join(', ')}
+                        </p>
+                      )}
+                    </div>
+                ) : (
+                  <>
+                    {/* Payment type grid */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Payment Type
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {PAYMENT_SCHEMES.map((s) => (
+                          <button
+                            key={s.scheme}
+                            type="button"
+                            onClick={() => {
+                              setScheme(s.scheme)
+                              setAddressError('')
+                            }}
+                            className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all ${
+                              scheme === s.scheme
+                                ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20'
+                                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                            }`}
+                          >
+                            <PaymentSchemeIcon scheme={s.scheme} size="lg" />
+                            <span className={`text-xs font-medium text-center ${
+                              scheme === s.scheme
+                                ? 'text-yappr-600 dark:text-yappr-400'
+                                : 'text-gray-700 dark:text-gray-300'
+                            }`}>
+                              {s.label}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Address input */}
+                    <div>
+                      <label htmlFor="payment-method-address" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Address *
+                      </label>
+                      <input
+                        id="payment-method-address"
+                        type="text"
+                        aria-invalid={Boolean(addressError)}
+                        aria-describedby="payment-method-address-help"
+                        value={address}
+                        onChange={(e) => {
+                          setAddress(e.target.value)
+                          setAddressError('')
+                        }}
+                        placeholder={selectedScheme.placeholder}
+                        className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
+                      />
+                      {addressError ? (
+                        <p id="payment-method-address-help" role="alert" className="text-xs text-red-500 mt-1">{addressError}</p>
+                      ) : (
+                        <p id="payment-method-address-help" className="text-xs text-gray-500 mt-1">{selectedScheme.hint}</p>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {/* Label input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Label (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    placeholder="e.g., Main Wallet, Business Account"
+                    className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
+                  />
                 </div>
               </div>
 
-              {/* Address input */}
-              <div>
-                <label htmlFor="payment-method-address" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Address *
-                </label>
-                <input
-                  id="payment-method-address"
-                  type="text"
-                  aria-invalid={Boolean(addressError)}
-                  aria-describedby="payment-method-address-help"
-                  value={address}
-                  onChange={(e) => {
-                    setAddress(e.target.value)
-                    setAddressError('')
-                  }}
-                  placeholder={selectedScheme.placeholder}
-                  className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
-                />
-                {addressError ? (
-                  <p id="payment-method-address-help" role="alert" className="text-xs text-red-500 mt-1">{addressError}</p>
-                ) : (
-                  <p id="payment-method-address-help" className="text-xs text-gray-500 mt-1">{selectedScheme.hint}</p>
-                )}
+              <div className="flex gap-3 p-4 border-t border-gray-200 dark:border-gray-800">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={onClose}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleSubmit}
+                  disabled={isSubmitting || (customMode ? !parseCustomUri(customUri.trim()) : !address.trim())}
+                >
+                  {isSubmitting ? 'Adding...' : 'Add Payment'}
+                </Button>
               </div>
-            </>
-          )}
-
-          {/* Label input */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Label (optional)
-            </label>
-            <input
-              type="text"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="e.g., Main Wallet, Business Account"
-              className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
-            />
-          </div>
+            </motion.div>
+          </Dialog.Content>
         </div>
-
-        <div className="flex gap-3 p-4 border-t border-gray-200 dark:border-gray-800">
-          <Button
-            variant="outline"
-            className="flex-1"
-            onClick={onClose}
-          >
-            Cancel
-          </Button>
-          <Button
-            className="flex-1"
-            onClick={handleSubmit}
-            disabled={isSubmitting || (customMode ? !parseCustomUri(customUri.trim()) : !address.trim())}
-          >
-            {isSubmitting ? 'Adding...' : 'Add Payment'}
-          </Button>
-        </div>
-      </motion.div>
-    </div>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
