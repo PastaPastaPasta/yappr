@@ -322,12 +322,17 @@ function MessagesPage() {
           timeoutId = setTimeout(pollMessages, 3000)
           return
         }
-        const page = await directMessageService.pollNewMessages(
-          convId,
-          loaded.cursor,
-          currentUser.identityId,
-          currentConv.participantId
-        )
+        // A recipient can read the conversation without sending another message.
+        // Refresh their published receipt even when the message page is empty.
+        const [page, lastRead] = await Promise.all([
+          directMessageService.pollNewMessages(
+            convId,
+            loaded.cursor,
+            currentUser.identityId,
+            currentConv.participantId
+          ),
+          directMessageService.getParticipantLastRead(convId, currentConv.participantId)
+        ])
 
         if (cancelled) return
         if (loadedMessageCursorRef.current !== loaded) {
@@ -335,6 +340,10 @@ function MessagesPage() {
           return
         }
         loaded.cursor = page.cursor
+        // Failed/missing receipt reads must not erase previously observed reads.
+        if (lastRead !== null) {
+          setParticipantLastRead(previous => Math.max(previous ?? 0, lastRead))
+        }
         const newMsgs = page.messages
 
         if (newMsgs.length > 0) {
