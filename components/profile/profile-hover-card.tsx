@@ -1,11 +1,11 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback, ReactNode } from 'react'
+import { useState, useEffect, useCallback, useRef, useId, ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { EnvelopeIcon, UserPlusIcon, UserMinusIcon } from '@heroicons/react/24/outline'
-import { HoverCard, HoverCardTrigger, HoverCardContent } from '@/components/ui/hover-card'
+import * as Popover from '@radix-ui/react-popover'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
@@ -61,6 +61,45 @@ export function ProfileHoverCard({
   const { requireAuth } = useRequireAuth()
 
   const [isOpen, setIsOpen] = useState(false)
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  const keyboardEntryRef = useRef(false)
+  const returningFocusRef = useRef(false)
+  const previewId = useId()
+  const instructionsId = useId()
+
+  const clearTimer = useCallback(() => {
+    clearTimeout(timerRef.current)
+  }, [])
+
+  const changeOpen = useCallback((open: boolean) => {
+    clearTimer()
+    if (!open) keyboardEntryRef.current = false
+    setIsOpen(open)
+  }, [clearTimer])
+
+  const scheduleClose = () => {
+    clearTimer()
+    timerRef.current = setTimeout(() => {
+      const focused = document.activeElement
+      if (!contentRef.current?.contains(focused) && !triggerRef.current?.contains(focused)) {
+        changeOpen(false)
+      }
+    }, closeDelay)
+  }
+
+  const focusPreview = () => {
+    const content = contentRef.current
+    const firstControl = content?.querySelector<HTMLElement>('a[href], button:not([disabled])')
+    const target = firstControl || content
+    target?.focus()
+  }
+
+  useEffect(() => {
+    changeOpen(false)
+    return clearTimer
+  }, [userId, disabled, changeOpen, clearTimer])
   const [profileData, setProfileData] = useState<ProfileData | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isFollowing, setIsFollowing] = useState(false)
@@ -204,18 +243,76 @@ export function ProfileHoverCard({
   }
 
   return (
-    <HoverCard openDelay={openDelay} closeDelay={closeDelay} onOpenChange={setIsOpen}>
-      <HoverCardTrigger asChild>
+    <Popover.Root open={isOpen} onOpenChange={changeOpen}>
+      <Popover.Anchor
+        ref={triggerRef}
+        asChild
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? previewId : undefined}
+        aria-describedby={instructionsId}
+        onPointerEnter={(event) => {
+          if (event.pointerType === 'touch') return
+          clearTimer()
+          timerRef.current = setTimeout(() => changeOpen(true), openDelay)
+        }}
+        onPointerLeave={scheduleClose}
+        onFocus={() => {
+          if (returningFocusRef.current) {
+            returningFocusRef.current = false
+            return
+          }
+          changeOpen(true)
+        }}
+        onBlur={(event) => {
+          if (!contentRef.current?.contains(event.relatedTarget)) changeOpen(false)
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowDown') return
+          event.preventDefault()
+          event.stopPropagation()
+          keyboardEntryRef.current = true
+          changeOpen(true)
+          focusPreview()
+        }}
+      >
         {children}
-      </HoverCardTrigger>
-      <HoverCardContent
-        className="w-80"
+      </Popover.Anchor>
+      <span id={instructionsId} className="sr-only">
+        Press Arrow Down to access profile actions. Escape closes the preview.
+      </span>
+      <Popover.Portal>
+      <Popover.Content
+        ref={contentRef}
+        id={previewId}
+        aria-label="Profile preview"
+        className="z-50 w-80 max-w-[calc(100vw-1rem)] rounded-xl border border-gray-200 bg-white p-4 shadow-lg outline-none dark:border-gray-800 dark:bg-neutral-900"
         side="bottom"
         align="start"
+        sideOffset={4}
         onClick={(e) => e.stopPropagation()}
+        onPointerEnter={clearTimer}
+        onPointerLeave={scheduleClose}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          if (keyboardEntryRef.current) focusPreview()
+        }}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        onInteractOutside={(event) => {
+          if (event.detail.originalEvent.type === 'focusin' && triggerRef.current?.contains(event.target as Node)) {
+            event.preventDefault()
+          }
+        }}
+        onEscapeKeyDown={() => {
+          changeOpen(false)
+          if (!triggerRef.current?.contains(document.activeElement)) {
+            returningFocusRef.current = true
+            triggerRef.current?.focus()
+          }
+        }}
       >
         {isLoading && !profileData ? (
-          <div className="space-y-3">
+          <div className="space-y-3" role="status" aria-label="Loading profile">
             <div className="flex items-start gap-3">
               <div className="w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse" />
               <div className="flex-1 space-y-2">
@@ -264,7 +361,7 @@ export function ProfileHoverCard({
             {/* Stats */}
             <div className="flex items-center gap-4 text-sm">
               <Link
-                href={`/user?id=${userId}&tab=following`}
+                href={`/following?id=${userId}`}
                 onClick={handleViewProfile}
                 className="hover:underline"
               >
@@ -274,7 +371,7 @@ export function ProfileHoverCard({
                 <span className="text-gray-500 ml-1">Following</span>
               </Link>
               <Link
-                href={`/user?id=${userId}&tab=followers`}
+                href={`/followers?id=${userId}`}
                 onClick={handleViewProfile}
                 className="hover:underline"
               >
@@ -322,7 +419,11 @@ export function ProfileHoverCard({
             )}
           </div>
         ) : null}
-      </HoverCardContent>
-    </HoverCard>
+        <p className="mt-3 border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-gray-800">
+          ↓ Profile actions · Esc Close
+        </p>
+      </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   )
 }
