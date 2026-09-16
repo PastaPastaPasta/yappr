@@ -222,7 +222,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (data.basePrice !== undefined) documentData.basePrice = data.basePrice;
     if (data.currency !== undefined) documentData.currency = data.currency;
     if (data.weight !== undefined) documentData.weight = data.weight;
-    if (data.stockQuantity !== undefined) documentData.stockQuantity = data.stockQuantity;
+    // An explicit undefined clears stock tracking; an omitted field preserves it.
+    if (Object.prototype.hasOwnProperty.call(data, 'stockQuantity')) documentData.stockQuantity = data.stockQuantity;
     if (data.sku !== undefined) documentData.sku = data.sku;
     if (data.variants !== undefined) documentData.variants = JSON.stringify(data.variants);
 
