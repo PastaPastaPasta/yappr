@@ -753,7 +753,6 @@ function StoreManagePage() {
         ownerId={user?.identityId || ''}
         currency={store?.defaultCurrency || 'USD'}
         onComplete={(addedCount) => {
-          setShowInventoryUpload(false)
           if (addedCount > 0) {
             toast.success(`Added ${addedCount} item${addedCount !== 1 ? 's' : ''} to your store`)
             // Reload items
