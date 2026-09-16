@@ -137,7 +137,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   const searchParams = useSearchParams()
   const { user: viewer } = useAuth()
   const viewerId = viewer?.identityId
-  const { requireAuth } = useRequireAuth()
+  const { requireAuth, openLoginPrompt } = useRequireAuth()
   const { data, loading, error, setLoading, setError, setData } = useAsyncState<ConnectionUser[]>(null)
   const [actionInProgress, setActionInProgress] = useState<Set<string>>(new Set())
   const [targetUserName, setTargetUserName] = useState<string | null>(null)
@@ -348,6 +348,30 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
       onToggleFollow={() => (u.isFollowing ? handleUnfollow(u.id) : handleFollow(u.id))}
     />
   )
+
+  // Both routes wait for session restoration in withAuth before rendering.
+  // Without either a viewer or an explicit target, there is no list to count.
+  if (!targetUserId && !viewerId) {
+    return (
+      <PageShell>
+        <PageHeader>
+          <h1 className="px-4 py-3 text-xl font-bold">{copy.title}</h1>
+        </PageHeader>
+        <section className="p-8 text-center" aria-labelledby="connection-sign-in-title">
+          <h2 id="connection-sign-in-title" className="text-xl font-semibold mb-2">
+            Sign in to view your {kind}
+          </h2>
+          <p className="text-gray-500 mb-6">
+            To see someone else&apos;s {kind}, open their profile and select {copy.title}.
+          </p>
+          <div className="flex flex-wrap justify-center gap-3">
+            <Button onClick={openLoginPrompt}>Sign In</Button>
+            <Button variant="outline" onClick={() => router.push('/explore')}>Explore Yappr</Button>
+          </div>
+        </section>
+      </PageShell>
+    )
+  }
 
   return (
     <PageShell>
