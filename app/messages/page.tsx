@@ -73,8 +73,9 @@ function MessagesPage() {
   userRef.current = user
   const selectedConversationRef = useRef(selectedConversation)
   selectedConversationRef.current = selectedConversation
-  const messagesRef = useRef(messages)
-  messagesRef.current = messages
+  // Only server-read messages can establish a polling cursor. Locally sent
+  // messages use the device clock and may be ahead of incoming chain timestamps.
+  const loadedMessageCursorRef = useRef<{ conversationId: string; cursor?: string } | null>(null)
 
   // Load conversations on mount
   useEffect(() => {
@@ -246,6 +247,8 @@ function MessagesPage() {
   // new conversation objects with the same id, which must not refetch messages.
   useEffect(() => {
     const conversationId = selectedConversation?.id
+    let cancelled = false
+    loadedMessageCursorRef.current = null
     const loadMessages = async () => {
       const currentConversation = selectedConversationRef.current
       if (!conversationId || !user) return
@@ -258,13 +261,16 @@ function MessagesPage() {
           user.identityId,
           currentConversation.participantId
         )
+        if (cancelled) return
         setMessages(msgs)
+        loadedMessageCursorRef.current = { conversationId, cursor: msgs.at(-1)?.id }
 
         // Get when participant last read (for read receipts)
         const lastRead = await directMessageService.getParticipantLastRead(
           currentConversation.id,
           currentConversation.participantId
         )
+        if (cancelled) return
         setParticipantLastRead(lastRead)
 
         // Only mark as read if there are unread messages and read receipts are enabled
@@ -275,6 +281,7 @@ function MessagesPage() {
         // Update conversation unread count in UI. Only touch state when a count
         // actually changes - replacing conversation objects here re-triggers the
         // selected-conversation sync effect and would loop message loading forever.
+        if (cancelled) return
         setConversations(prev => {
           const needsUpdate = prev.some(conv => conv.id === currentConversation.id && conv.unreadCount !== 0)
           if (!needsUpdate) return prev
@@ -286,15 +293,16 @@ function MessagesPage() {
         })
       } catch (error) {
         logger.error('Failed to load messages:', error)
-        toast.error('Failed to load messages')
+        if (!cancelled) toast.error('Failed to load messages')
       } finally {
-        setIsLoadingMessages(false)
+        if (!cancelled) setIsLoadingMessages(false)
       }
     }
     loadMessages().catch(err => logger.error('Failed to load messages:', err))
+    return () => { cancelled = true }
   }, [selectedConversation?.id, user, sendReadReceipts])
 
-  // Poll for new messages in active conversation (timestamp-based, efficient)
+  // Continue after the last server-read document, never a local send timestamp.
   useEffect(() => {
     const convId = selectedConversation?.id
     if (!convId || !user?.identityId) return
@@ -310,21 +318,25 @@ function MessagesPage() {
       if (!currentConv || !currentUser) return
 
       try {
-        // Get the latest message timestamp - only fetch messages newer than this
-        const currentMessages = messagesRef.current
-        const lastTimestamp = currentMessages.length > 0
-          ? Math.max(...currentMessages.map(m => m.createdAt.getTime()))
-          : 0
-
-        // Query only messages newer than lastTimestamp (efficient, uses index)
-        const newMsgs = await directMessageService.pollNewMessages(
-          currentConv.id,
-          lastTimestamp,
+        const loaded = loadedMessageCursorRef.current
+        if (!loaded || loaded.conversationId !== convId || currentConv.id !== convId) {
+          timeoutId = setTimeout(pollMessages, 3000)
+          return
+        }
+        const page = await directMessageService.pollNewMessages(
+          convId,
+          loaded.cursor,
           currentUser.identityId,
           currentConv.participantId
         )
 
         if (cancelled) return
+        if (loadedMessageCursorRef.current !== loaded) {
+          timeoutId = setTimeout(pollMessages, 3000)
+          return
+        }
+        loaded.cursor = page.cursor
+        const newMsgs = page.messages
 
         if (newMsgs.length > 0) {
           setMessages(prev => {

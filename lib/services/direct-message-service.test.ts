@@ -95,3 +95,42 @@ describe('conversation query bundles', () => {
     expect(mocks.query).toHaveBeenCalledTimes(5);
   });
 });
+
+
+describe('message polling cursor', () => {
+  it('continues through messages sharing a timestamp without consulting the device clock', async () => {
+    mocks.query.mockReset()
+    const records = messages(0, 102).map(record => ({ ...record, $createdAt: 1000 }))
+    mocks.query.mockImplementation(async (query) => {
+      const start = query.startAfter ? records.findIndex(record => record.$id === query.startAfter) + 1 : 0
+      const page = records.slice(start, start + query.limit)
+      return new Map(page.map(record => [record.$id, record]))
+    })
+    const { directMessageService } = await import('./direct-message-service')
+    // Decryption is outside this query-boundary test; retain document IDs/times.
+    const decrypt = vi.spyOn(directMessageService as unknown as {
+      decryptMessage: (doc: Record<string, unknown>) => Promise<unknown>
+    }, 'decryptMessage').mockImplementation(async doc => ({
+      id: doc.$id, content: 'decrypted QA message', createdAt: new Date(Number(doc.$createdAt)),
+    }))
+    try {
+      const first = await directMessageService.pollNewMessages(conversationIds[0], undefined, viewer, participants[0])
+      expect(first.messages).toHaveLength(100)
+      const second = await directMessageService.pollNewMessages(conversationIds[0], first.cursor, viewer, participants[0])
+      expect(second.messages.map(message => message.id)).toEqual(['message-0-100', 'message-0-101'])
+      expect(mocks.query.mock.calls[1][0].where).toEqual([
+        ['conversationId', '==', Buffer.from(conversationBytes[0]).toString('base64')],
+      ])
+      expect(mocks.query.mock.calls[1][0].startAfter).toBe('message-0-99')
+      const empty = await directMessageService.pollNewMessages(conversationIds[0], second.cursor, viewer, participants[0])
+      expect(empty).toEqual({ messages: [], cursor: 'message-0-101' })
+    } finally { decrypt.mockRestore() }
+  })
+
+  it('retains its last confirmed cursor when the network fails', async () => {
+    mocks.query.mockReset().mockRejectedValue(new Error('offline'))
+    const { directMessageService } = await import('./direct-message-service')
+    expect(await directMessageService.pollNewMessages(conversationIds[0], 'confirmed-message', viewer, participants[0]))
+      .toEqual({ messages: [], cursor: 'confirmed-message' })
+  })
+})
