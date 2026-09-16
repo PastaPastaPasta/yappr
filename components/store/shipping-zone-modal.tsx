@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useId, useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
+import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { getCurrencyStep, getCurrencyDecimals, toSmallestUnit, fromSmallestUnit } from '@/lib/utils/format'
@@ -36,6 +37,7 @@ function generateId(): string {
 }
 
 export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurrency = 'USD' }: ShippingZoneModalProps) {
+  const formId = useId()
   const [name, setName] = useState('')
   const [rateType, setRateType] = useState<RateType>('flat')
   const [baseRate, setBaseRate] = useState('')
@@ -46,6 +48,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
   const [isWorldwide, setIsWorldwide] = useState(false)
   const [priority, setPriority] = useState('0')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const openerRef = useRef<HTMLElement | null>(null)
   const [multipliers, setMultipliers] = useState<MultiplierRow[]>([])
 
   const isEditing = !!zone
@@ -173,251 +176,277 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="relative w-full max-w-lg bg-white dark:bg-gray-900 rounded-xl shadow-xl max-h-[90vh] overflow-y-auto"
-      >
-        <div className="sticky top-0 flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-          <h2 className="text-lg font-bold">{isEditing ? 'Edit Shipping Zone' : 'Add Shipping Zone'}</h2>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
+    <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) onClose() }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+          <Dialog.Content
+            asChild
+            onOpenAutoFocus={() => {
+              openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+            }}
+            onCloseAutoFocus={(event) => {
+              if (openerRef.current?.getClientRects().length) {
+                event.preventDefault()
+                openerRef.current.focus()
+              }
+            }}
           >
-            <XMarkIcon className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="p-4 space-y-5">
-          {/* Zone Name */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Zone Name *</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g., Domestic, Europe, Worldwide"
-              className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
-              maxLength={63}
-            />
-          </div>
-
-          {/* Country Pattern */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Region</label>
-            <label className="flex items-center gap-2 mb-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isWorldwide}
-                onChange={(e) => {
-                  setIsWorldwide(e.target.checked)
-                  if (e.target.checked) setCountryPattern('')
-                }}
-                className="w-4 h-4 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
-              />
-              <span className="text-sm">Worldwide (ships to all countries)</span>
-            </label>
-            {!isWorldwide && (
-              <>
-                <input
-                  type="text"
-                  value={countryPattern}
-                  onChange={(e) => setCountryPattern(e.target.value)}
-                  placeholder="e.g., US, US|CA, US.IL"
-                  className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Examples: US, US|CA, US.IL (state), US.6 (zip prefix), CA.K (postal prefix)
-                </p>
-              </>
-            )}
-          </div>
-
-          {/* Priority */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Priority</label>
-            <input
-              type="number"
-              value={priority}
-              onChange={(e) => setPriority(e.target.value)}
-              onBlur={() => {
-                const val = parseInt(priority, 10)
-                if (isNaN(val) || val < 0) setPriority('0')
-              }}
-              placeholder="0"
-              min="0"
-              className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Lower = higher priority. Use to make specific zones (e.g., US.IL) match before general ones (e.g., US).
-            </p>
-          </div>
-
-          {/* Pricing Section */}
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
-            <h3 className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">PRICING</h3>
-
-            {/* Rate Type (hidden, kept for backwards compat) */}
-            <input type="hidden" value={rateType} />
-
-            {/* Base Rate */}
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">Base Rate</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
-                  <input
-                    type="number"
-                    value={baseRate}
-                    onChange={(e) => setBaseRate(e.target.value)}
-                    placeholder="0.00"
-                    step={getCurrencyStep(currency)}
-                    min="0"
-                    className="w-full pl-7 pr-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-2">Currency</label>
-                <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="relative w-full max-w-lg bg-white dark:bg-gray-900 rounded-xl shadow-xl max-h-[90vh] overflow-y-auto pointer-events-auto"
+            >
+              <div className="sticky top-0 flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+                <Dialog.Title className="text-lg font-bold">{isEditing ? 'Edit Shipping Zone' : 'Add Shipping Zone'}</Dialog.Title>
+                <Dialog.Description className="sr-only">Set the delivery region and shipping prices for your store.</Dialog.Description>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  onClick={onClose}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
                 >
-                  <option value="USD">USD</option>
-                  <option value="EUR">EUR</option>
-                  <option value="GBP">GBP</option>
-                  <option value="CAD">CAD</option>
-                  <option value="DASH">DASH</option>
-                </select>
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
               </div>
-            </div>
 
-            {/* Weight Rate */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-2">Weight Rate (optional)</label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+              <div className="p-4 space-y-5">
+                {/* Zone Name */}
+                <div>
+                  <label htmlFor={`${formId}-name`} className="block text-sm font-medium mb-2">Zone Name *</label>
                   <input
-                    type="number"
-                    value={weightRate}
-                    onChange={(e) => setWeightRate(e.target.value)}
-                    placeholder="0.00"
-                    step={getCurrencyStep(currency)}
-                    min="0"
-                    className="w-full pl-7 pr-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    type="text"
+                    id={`${formId}-name`}
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g., Domestic, Europe, Worldwide"
+                    className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                    maxLength={63}
                   />
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-500">per</span>
-                  <select
-                    value={weightUnit}
-                    onChange={(e) => setWeightUnit(e.target.value)}
-                    className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                  >
-                    <option value="lb">lb</option>
-                    <option value="oz">oz</option>
-                    <option value="kg">kg</option>
-                    <option value="g">g</option>
-                    <option value="item">item</option>
-                  </select>
-                </div>
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Additional charge per weight unit. Leave empty for no weight-based pricing.
-              </p>
-            </div>
 
-            {/* Order Size Multipliers */}
-            <div>
-              <label className="block text-sm font-medium mb-2">Order Size Multipliers (optional)</label>
-              <p className="text-xs text-gray-500 mb-3">
-                Scale shipping cost based on order subtotal. 100% = normal, 0% = free shipping.
-              </p>
-
-              {multipliers.length > 0 && (
-                <div className="space-y-2 mb-3">
-                  <div className="grid grid-cols-[1fr_1fr_40px] gap-2 text-xs font-medium text-gray-500">
-                    <span>Up to $</span>
-                    <span>Charge %</span>
-                    <span></span>
-                  </div>
-                  {multipliers.map((m, index) => (
-                    <div key={m.id} className="grid grid-cols-[1fr_1fr_40px] gap-2 items-center">
+                {/* Country Pattern */}
+                <div>
+                  <label htmlFor={`${formId}-region`} className="block text-sm font-medium mb-2">Region</label>
+                  <label className="flex items-center gap-2 mb-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isWorldwide}
+                      onChange={(e) => {
+                        setIsWorldwide(e.target.checked)
+                        if (e.target.checked) setCountryPattern('')
+                      }}
+                      className="w-4 h-4 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
+                    />
+                    <span className="text-sm">Worldwide (ships to all countries)</span>
+                  </label>
+                  {!isWorldwide && (
+                    <>
                       <input
-                        type="number"
-                        value={m.upTo}
-                        onChange={(e) => updateMultiplier(m.id, 'upTo', e.target.value)}
-                        placeholder={index === multipliers.length - 1 ? 'Above' : '0.00'}
-                        step={getCurrencyStep(currency)}
-                        min="0"
-                        disabled={index === multipliers.length - 1 && m.upTo === ''}
-                        className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 disabled:opacity-50"
+                        type="text"
+                        id={`${formId}-region`}
+                        value={countryPattern}
+                        onChange={(e) => setCountryPattern(e.target.value)}
+                        placeholder="e.g., US, US|CA, US.IL"
+                        className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                       />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Examples: US, US|CA, US.IL (state), US.6 (zip prefix), CA.K (postal prefix)
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                {/* Priority */}
+                <div>
+                  <label htmlFor={`${formId}-priority`} className="block text-sm font-medium mb-2">Priority</label>
+                  <input
+                    type="number"
+                    id={`${formId}-priority`}
+                    value={priority}
+                    onChange={(e) => setPriority(e.target.value)}
+                    onBlur={() => {
+                      const val = parseInt(priority, 10)
+                      if (isNaN(val) || val < 0) setPriority('0')
+                    }}
+                    placeholder="0"
+                    min="0"
+                    className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Lower = higher priority. Use to make specific zones (e.g., US.IL) match before general ones (e.g., US).
+                  </p>
+                </div>
+
+                {/* Pricing Section */}
+                <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+                  <h3 className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">PRICING</h3>
+
+                  {/* Rate Type (hidden, kept for backwards compat) */}
+                  <input type="hidden" value={rateType} />
+
+                  {/* Base Rate */}
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label htmlFor={`${formId}-base-rate`} className="block text-sm font-medium mb-2">Base Rate</label>
                       <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
                         <input
                           type="number"
-                          value={m.percent}
-                          onChange={(e) => updateMultiplier(m.id, 'percent', e.target.value)}
-                          placeholder="100"
-                          step="1"
+                          id={`${formId}-base-rate`}
+                          value={baseRate}
+                          onChange={(e) => setBaseRate(e.target.value)}
+                          placeholder="0.00"
+                          step={getCurrencyStep(currency)}
                           min="0"
-                          className="w-full px-3 py-2 pr-8 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                          className="w-full pl-7 pr-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                         />
-                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500">%</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => removeMultiplier(m.id)}
-                        className="p-2 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-500 rounded-lg"
-                      >
-                        <TrashIcon className="h-4 w-4" />
-                      </button>
                     </div>
-                  ))}
+                    <div>
+                      <label htmlFor={`${formId}-currency`} className="block text-sm font-medium mb-2">Currency</label>
+                      <select
+                        id={`${formId}-currency`}
+                        value={currency}
+                        onChange={(e) => setCurrency(e.target.value)}
+                        className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                      >
+                        <option value="USD">USD</option>
+                        <option value="EUR">EUR</option>
+                        <option value="GBP">GBP</option>
+                        <option value="CAD">CAD</option>
+                        <option value="DASH">DASH</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Weight Rate */}
+                  <div className="mb-4">
+                    <label htmlFor={`${formId}-weight-rate`} className="block text-sm font-medium mb-2">Weight Rate (optional)</label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                        <input
+                          type="number"
+                          id={`${formId}-weight-rate`}
+                          value={weightRate}
+                          onChange={(e) => setWeightRate(e.target.value)}
+                          placeholder="0.00"
+                          step={getCurrencyStep(currency)}
+                          min="0"
+                          className="w-full pl-7 pr-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-500">per</span>
+                        <select
+                          value={weightUnit}
+                          onChange={(e) => setWeightUnit(e.target.value)}
+                          className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                        >
+                          <option value="lb">lb</option>
+                          <option value="oz">oz</option>
+                          <option value="kg">kg</option>
+                          <option value="g">g</option>
+                          <option value="item">item</option>
+                        </select>
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Additional charge per weight unit. Leave empty for no weight-based pricing.
+                    </p>
+                  </div>
+
+                  {/* Order Size Multipliers */}
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Order Size Multipliers (optional)</label>
+                    <p className="text-xs text-gray-500 mb-3">
+                      Scale shipping cost based on order subtotal. 100% = normal, 0% = free shipping.
+                    </p>
+
+                    {multipliers.length > 0 && (
+                      <div className="space-y-2 mb-3">
+                        <div className="grid grid-cols-[1fr_1fr_40px] gap-2 text-xs font-medium text-gray-500">
+                          <span>Up to $</span>
+                          <span>Charge %</span>
+                          <span></span>
+                        </div>
+                        {multipliers.map((m, index) => (
+                          <div key={m.id} className="grid grid-cols-[1fr_1fr_40px] gap-2 items-center">
+                            <input
+                              type="number"
+                              value={m.upTo}
+                              onChange={(e) => updateMultiplier(m.id, 'upTo', e.target.value)}
+                              placeholder={index === multipliers.length - 1 ? 'Above' : '0.00'}
+                              step={getCurrencyStep(currency)}
+                              min="0"
+                              disabled={index === multipliers.length - 1 && m.upTo === ''}
+                              className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 disabled:opacity-50"
+                            />
+                            <div className="relative">
+                              <input
+                                type="number"
+                                value={m.percent}
+                                onChange={(e) => updateMultiplier(m.id, 'percent', e.target.value)}
+                                placeholder="100"
+                                step="1"
+                                min="0"
+                                className="w-full px-3 py-2 pr-8 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                              />
+                              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500">%</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeMultiplier(m.id)}
+                              className="p-2 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-500 rounded-lg"
+                            >
+                              <TrashIcon className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={addMultiplier}
+                      className="flex items-center gap-2 text-sm text-yappr-500 hover:text-yappr-600"
+                    >
+                      <PlusIcon className="h-4 w-4" />
+                      Add tier
+                    </button>
+
+                    {multipliers.length > 0 && (
+                      <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg text-xs text-gray-600 dark:text-gray-400">
+                        <strong>Formula:</strong> shipping = (base + weight x rate) x multiplier%
+                        <br />
+                        <strong>Tip:</strong> Use 0% for free shipping above a threshold.
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
+              </div>
 
-              <button
-                type="button"
-                onClick={addMultiplier}
-                className="flex items-center gap-2 text-sm text-yappr-500 hover:text-yappr-600"
-              >
-                <PlusIcon className="h-4 w-4" />
-                Add tier
-              </button>
-
-              {multipliers.length > 0 && (
-                <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg text-xs text-gray-600 dark:text-gray-400">
-                  <strong>Formula:</strong> shipping = (base + weight x rate) x multiplier%
-                  <br />
-                  <strong>Tip:</strong> Use 0% for free shipping above a threshold.
-                </div>
-              )}
-            </div>
-          </div>
+              <div className="sticky bottom-0 flex gap-3 p-4 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={onClose}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleSubmit}
+                  disabled={isSubmitting || !name.trim()}
+                >
+                  {isSubmitting ? (isEditing ? 'Saving...' : 'Creating...') : (isEditing ? 'Save Changes' : 'Create Zone')}
+                </Button>
+              </div>
+            </motion.div>
+          </Dialog.Content>
         </div>
-
-        <div className="sticky bottom-0 flex gap-3 p-4 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-          <Button
-            variant="outline"
-            className="flex-1"
-            onClick={onClose}
-          >
-            Cancel
-          </Button>
-          <Button
-            className="flex-1"
-            onClick={handleSubmit}
-            disabled={isSubmitting || !name.trim()}
-          >
-            {isSubmitting ? (isEditing ? 'Saving...' : 'Creating...') : (isEditing ? 'Save Changes' : 'Create Zone')}
-          </Button>
-        </div>
-      </motion.div>
-    </div>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }

@@ -1,5 +1,6 @@
 'use client'
 
+import { useId } from 'react'
 import { Button } from '@/components/ui/button'
 import { orderStatusService } from '@/lib/services/order-status-service'
 import type { OrderStatus } from '@/lib/types'
@@ -53,13 +54,16 @@ export function StatusUpdateForm({
   onCancel,
   isSubmitting
 }: StatusUpdateFormProps) {
+  const formId = useId()
+
   return (
     <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-4">
       <h4 className="font-medium">Update Order Status</h4>
 
       <div>
-        <label className="block text-sm font-medium mb-1">Status</label>
+        <label htmlFor={`${formId}-status`} className="block text-sm font-medium mb-1">Status</label>
         <select
+          id={`${formId}-status`}
           value={currentStatus}
           onChange={(e) => onStatusChange(e.target.value as OrderStatus)}
           className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
@@ -75,8 +79,9 @@ export function StatusUpdateForm({
       {currentStatus === 'shipped' && (
         <>
           <div>
-            <label className="block text-sm font-medium mb-1">Carrier</label>
+            <label htmlFor={`${formId}-carrier`} className="block text-sm font-medium mb-1">Carrier</label>
             <select
+              id={`${formId}-carrier`}
               value={trackingCarrier}
               onChange={(e) => onTrackingCarrierChange(e.target.value)}
               className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
@@ -88,9 +93,10 @@ export function StatusUpdateForm({
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Tracking Number</label>
+            <label htmlFor={`${formId}-tracking`} className="block text-sm font-medium mb-1">Tracking Number</label>
             <input
               type="text"
+              id={`${formId}-tracking`}
               value={trackingNumber}
               onChange={(e) => onTrackingNumberChange(e.target.value)}
               placeholder="Enter tracking number"
@@ -101,8 +107,9 @@ export function StatusUpdateForm({
       )}
 
       <div>
-        <label className="block text-sm font-medium mb-1">Message to Buyer</label>
+        <label htmlFor={`${formId}-message`} className="block text-sm font-medium mb-1">Message to Buyer</label>
         <textarea
+          id={`${formId}-message`}
           value={message}
           onChange={(e) => onMessageChange(e.target.value)}
           placeholder="Optional message..."
