@@ -11,6 +11,7 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { IdentitySigner } from '@dashevo/evo-sdk';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
+import { toCompressedWif } from '@/lib/crypto/wif';
 
 /**
  * Ensure WASM module is initialized by connecting SDK
@@ -38,8 +39,9 @@ class SignerService {
     // Create a new signer instance using imported class
     const signer = new IdentitySigner();
 
-    // Add key directly from WIF (the signer has a convenience method for this)
-    signer.addKeyFromWif(privateKeyWif);
+    // Platform identity keys use compressed public keys. Preserve the scalar and
+    // network, but ensure the SDK indexes even an uncompressed WIF by that key.
+    signer.addKeyFromWif(toCompressedWif(privateKeyWif));
 
     return signer;
   }
