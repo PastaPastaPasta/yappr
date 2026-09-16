@@ -336,7 +336,10 @@ class ReplyService extends BaseDocumentService<Reply> {
       await this.resolveAuthors(result.documents);
     }
 
-    return result;
+    const nextCursor = result.documents.length >= (queryOptions.limit ?? 20)
+      ? result.documents[result.documents.length - 1]?.id
+      : undefined;
+    return { ...result, nextCursor };
   }
 
   /**
