@@ -1,5 +1,6 @@
 'use client'
 
+import { useId } from 'react'
 import { TruckIcon, LockClosedIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { SavedAddressPicker } from './saved-address-picker'
@@ -36,6 +37,8 @@ export function AddressForm({
   onIncludeShippingChange,
   isCalculatingShipping = false
 }: AddressFormProps) {
+  const formId = useId()
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     // Only validate address fields when shipping is included
@@ -106,8 +109,9 @@ export function AddressForm({
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Full Name *</label>
+            <label htmlFor={`${formId}-name`} className="block text-sm font-medium mb-1">Full Name *</label>
             <input
+              id={`${formId}-name`}
               type="text"
               value={address.name}
               onChange={(e) => updateAddress('name', e.target.value)}
@@ -117,8 +121,9 @@ export function AddressForm({
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Street Address *</label>
+            <label htmlFor={`${formId}-street`} className="block text-sm font-medium mb-1">Street Address *</label>
             <input
+              id={`${formId}-street`}
               type="text"
               value={address.street}
               onChange={(e) => updateAddress('street', e.target.value)}
@@ -129,8 +134,9 @@ export function AddressForm({
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">City *</label>
+              <label htmlFor={`${formId}-city`} className="block text-sm font-medium mb-1">City *</label>
               <input
+                id={`${formId}-city`}
                 type="text"
                 value={address.city}
                 onChange={(e) => updateAddress('city', e.target.value)}
@@ -139,8 +145,9 @@ export function AddressForm({
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">State/Province</label>
+              <label htmlFor={`${formId}-state`} className="block text-sm font-medium mb-1">State/Province</label>
               <input
+                id={`${formId}-state`}
                 type="text"
                 value={address.state || ''}
                 onChange={(e) => updateAddress('state', e.target.value)}
@@ -151,8 +158,9 @@ export function AddressForm({
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">Postal Code *</label>
+              <label htmlFor={`${formId}-postal-code`} className="block text-sm font-medium mb-1">Postal Code *</label>
               <input
+                id={`${formId}-postal-code`}
                 type="text"
                 value={address.postalCode}
                 onChange={(e) => updateAddress('postalCode', e.target.value)}
@@ -161,8 +169,9 @@ export function AddressForm({
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Country *</label>
+              <label htmlFor={`${formId}-country`} className="block text-sm font-medium mb-1">Country *</label>
               <select
+                id={`${formId}-country`}
                 value={address.country}
                 onChange={(e) => updateAddress('country', e.target.value)}
                 className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
@@ -187,8 +196,9 @@ export function AddressForm({
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium mb-1">Email</label>
+            <label htmlFor={`${formId}-email`} className="block text-sm font-medium mb-1">Email</label>
             <input
+              id={`${formId}-email`}
               type="email"
               value={contact.email || ''}
               onChange={(e) => updateContact('email', e.target.value)}
@@ -196,8 +206,9 @@ export function AddressForm({
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Phone</label>
+            <label htmlFor={`${formId}-phone`} className="block text-sm font-medium mb-1">Phone</label>
             <input
+              id={`${formId}-phone`}
               type="tel"
               value={contact.phone || ''}
               onChange={(e) => updateContact('phone', e.target.value)}
