@@ -18,6 +18,7 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
+import { fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
 import type { Store, StoreItem, VariantCombination } from '@/lib/types'
 import { PageHeader } from '@/components/layout/page-shell'
 
@@ -161,6 +162,8 @@ function InventoryPage() {
     const rows: string[][] = []
 
     for (const item of items) {
+      const itemCurrency = item.currency || store?.defaultCurrency || 'USD'
+      const formatCSVPrice = (price: number) => fromSmallestUnit(price, itemCurrency).toFixed(getCurrencyDecimals(itemCurrency))
       if (item.variants && item.variants.combinations.length > 0) {
         // Export each variant as a row
         for (const combo of item.variants.combinations) {
@@ -176,7 +179,7 @@ function InventoryPage() {
             item.tags?.join(', ') || '',
             variant || '',
             subVariant || '',
-            (combo.price / 100).toFixed(2),
+            formatCSVPrice(combo.price),
             combo.stock?.toString() || '',
             item.weight?.toString() || '',
             combo.imageUrl || item.imageUrls?.[0] || '',
@@ -198,7 +201,7 @@ function InventoryPage() {
           item.tags?.join(', ') || '',
           '',
           '',
-          ((item.basePrice || 0) / 100).toFixed(2),
+          formatCSVPrice(item.basePrice || 0),
           item.stockQuantity?.toString() || '',
           item.weight?.toString() || '',
           item.imageUrls?.[0] || '',
@@ -234,7 +237,7 @@ function InventoryPage() {
     URL.revokeObjectURL(url)
 
     toast.success('Inventory exported')
-  }, [items, store?.name])
+  }, [items, store?.name, store?.defaultCurrency])
 
   const handleUploadComplete = useCallback((addedCount: number) => {
     setShowUploadModal(false)
