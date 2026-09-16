@@ -7,6 +7,7 @@ import {
   extractHashtags,
   extractMentions,
   firstHashtag,
+  firstIndexedTag,
   getTagDisplayText,
   isCashtagStorage,
   normalizeDpnsUsername,
@@ -47,6 +48,32 @@ describe('cashtags', () => {
 
   it('merges hashtags and cashtags into one tag list', () => {
     expect(extractAllTags('#dash $DASH #dash')).toEqual(['dash', 'dash_cashtag'])
+  })
+})
+
+describe('single inline tag', () => {
+  it('indexes the first cashtag when no hashtag exists', () => {
+    expect(firstIndexedTag('buy $DASH before $BTC', 61)).toBe('dash_cashtag')
+    expect(firstIndexedTag('$1bad then $DaSh_2', 61)).toBe('dash_2_cashtag')
+    expect(firstIndexedTag('no tags or $123 here', 61)).toBe('')
+  })
+
+  it('preserves the first hashtag precedence regardless of cashtag position', () => {
+    expect(firstIndexedTag('$DASH then #Second #first', 61)).toBe('second')
+    expect(firstIndexedTag('#First $DASH #second', 61)).toBe('first')
+    expect(firstIndexedTag(`#${'a'.repeat(70)} $DASH`, 61)).toBe('a'.repeat(61))
+  })
+
+  it.each([61, 63])('fits cashtag storage and links within the %i-character ceiling', (maxLength) => {
+    const symbol = 'A'.repeat(63)
+    const expected = 'a'.repeat(maxLength - '_cashtag'.length) + '_cashtag'
+    expect(firstIndexedTag(`$${symbol}`, maxLength)).toBe(expected)
+    expect(cashtagDisplayToStorage(symbol, maxLength)).toBe(expected)
+    expect(expected).toHaveLength(maxLength)
+  })
+
+  it('retains legacy cashtag conversion when no inline ceiling is passed', () => {
+    expect(cashtagDisplayToStorage('A'.repeat(63))).toBe('a'.repeat(63) + '_cashtag')
   })
 })
 

@@ -28,10 +28,14 @@ export function cashtagStorageToDisplay(tag: string): string {
 /**
  * Convert a display cashtag to storage format
  * e.g., "DASH" or "$DASH" -> "dash_cashtag"
+ * An optional ceiling includes the suffix, so indexed cashtags fit the contract.
  */
-export function cashtagDisplayToStorage(tag: string): string {
+export function cashtagDisplayToStorage(tag: string, maxLength?: number): string {
   const normalized = tag.startsWith('$') ? tag.slice(1) : tag
-  return normalized.toLowerCase() + CASHTAG_SUFFIX
+  const symbol = maxLength === undefined
+    ? normalized
+    : normalized.slice(0, maxLength - CASHTAG_SUFFIX.length)
+  return symbol.toLowerCase() + CASHTAG_SUFFIX
 }
 
 /**
@@ -70,6 +74,17 @@ export function extractHashtags(content: string): string[] {
 export function firstHashtag(content: string, maxLength: number = 63): string {
   const match = content.match(new RegExp(`#([a-zA-Z0-9_]{1,${maxLength}})`))
   return match ? match[1].toLowerCase() : ''
+}
+
+/**
+ * The single inline tag: preserve the first hashtag's precedence, then fall
+ * back to the first cashtag when there is no hashtag in the public content.
+ */
+export function firstIndexedTag(content: string, maxLength: number = 63): string {
+  const hashtag = firstHashtag(content, maxLength)
+  if (hashtag) return hashtag
+  const cashtag = content.match(/\$([a-zA-Z][a-zA-Z0-9_]{0,62})/)
+  return cashtag ? cashtagDisplayToStorage(cashtag[1], maxLength) : ''
 }
 
 /**
