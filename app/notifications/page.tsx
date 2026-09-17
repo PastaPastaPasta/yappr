@@ -17,6 +17,7 @@ import {
   BookOpenIcon,
 } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -280,12 +281,24 @@ function NotificationsPage() {
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
               </div>
-              <Link
-                href="/settings?section=notifications"
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
-              >
-                <Cog6ToothIcon className="h-5 w-5" />
-              </Link>
+              <Tooltip.Provider>
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>
+                    <Link
+                      href="/settings?section=notifications"
+                      aria-label="Notification settings"
+                      className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
+                    >
+                      <Cog6ToothIcon className="h-5 w-5" />
+                    </Link>
+                  </Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Content className="z-[60] bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded" side="bottom" sideOffset={5}>
+                      Notification settings
+                    </Tooltip.Content>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
+              </Tooltip.Provider>
             </div>
           </div>
 
