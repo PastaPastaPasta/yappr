@@ -237,7 +237,6 @@ function InventoryPage() {
   }, [items, store?.name])
 
   const handleUploadComplete = useCallback((addedCount: number) => {
-    setShowUploadModal(false)
     if (addedCount > 0) {
       toast.success(`Added ${addedCount} item${addedCount !== 1 ? 's' : ''} to inventory`)
       // Reload all items
