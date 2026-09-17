@@ -96,6 +96,15 @@ export function privateKeyToWif(
   return bs58check.encode(payload)
 }
 
+/** Encode the same scalar and network for a compressed Platform public key. */
+export function toCompressedWif(wif: string): string {
+  const { privateKey, prefix } = wifToPrivateKey(wif)
+  if (prefix !== MAINNET_WIF_PREFIX && prefix !== TESTNET_WIF_PREFIX) {
+    throw new Error('Unsupported Dash WIF network prefix')
+  }
+  return privateKeyToWif(privateKey, prefix === MAINNET_WIF_PREFIX ? 'mainnet' : 'testnet')
+}
+
 /**
  * Check if input looks like a hex private key (64 chars, optional 0x prefix)
  */
