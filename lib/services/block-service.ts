@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService, QueryOptions } from './document-service'
 import { stateTransitionService } from './state-transition-service'
-import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, normalizeBytes } from './sdk-helpers'
+import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, normalizeBytes, RequestDeduplicator } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
 import { DOCUMENT_TYPES } from '../constants'
 import { BloomFilter, BLOOM_FILTER_VERSION } from '../bloom-filter'
@@ -11,9 +11,9 @@ import {
   initializeBlockCache,
   addOwnBlock,
   removeOwnBlock,
-  isInOwnBlocks,
+  getOwnBlocksFromCache,
+  setOwnBlocks,
   getConfirmedBlock,
-  addConfirmedBlock,
   addConfirmedBlocksBatch,
   getMergedBloomFilter,
   setMergedBloomFilter,
@@ -36,6 +36,51 @@ const MAX_BLOCK_FOLLOWS = 100
  * - SessionStorage caching for page load optimization
  */
 class BlockService extends BaseDocumentService<BlockDocument> {
+  private ownBlocksInFlight = new RequestDeduplicator<string, string[]>(0)
+  private ownBlockVersions = new Map<string, number>()
+
+  private updateOwnBlock(userId: string, targetId: string, blocked: boolean): void {
+    this.ownBlockVersions.set(userId, (this.ownBlockVersions.get(userId) ?? 0) + 1)
+    if (blocked) addOwnBlock(userId, targetId)
+    else removeOwnBlock(userId, targetId)
+  }
+
+  /** Share the complete owner list across auth, cards and feed enrichment. */
+  private async getOwnBlockedIds(userId: string): Promise<string[]> {
+    const cached = getOwnBlocksFromCache(userId)
+    if (cached !== null) return cached
+
+    return this.ownBlocksInFlight.dedupe(userId, async () => {
+      const blockedIds: string[] = []
+      let startAfter: string | undefined
+      let version = this.ownBlockVersions.get(userId)
+      while (true) {
+        // Use the ownerAndBlocked index; never treat a capped page as a full list.
+        const { documents } = await this.query({
+          where: [['$ownerId', '==', userId]],
+          orderBy: [['$ownerId', 'asc'], ['blockedId', 'asc']],
+          limit: 100,
+          startAfter,
+        })
+        // A local block/unblock completed while this snapshot was loading.
+        // Restart the shared read so an older result cannot undo that mutation.
+        if (version !== this.ownBlockVersions.get(userId)) {
+          version = this.ownBlockVersions.get(userId)
+          blockedIds.length = 0
+          startAfter = undefined
+          continue
+        }
+        blockedIds.push(...documents.map(block => block.blockedId))
+        if (documents.length < 100) break
+        const nextCursor = documents[documents.length - 1].$id
+        if (!nextCursor || nextCursor === startAfter) throw new Error('Block list cursor did not advance')
+        startAfter = nextCursor
+      }
+      setOwnBlocks(userId, blockedIds)
+      return blockedIds
+    })
+  }
+
   constructor() {
     super(DOCUMENT_TYPES.BLOCK)
   }
@@ -103,7 +148,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       )
 
       if (result.success) {
-        addOwnBlock(blockerId, targetUserId)
+        this.updateOwnBlock(blockerId, targetUserId, true)
         await this.addToBloomFilter(blockerId, targetUserId)
 
         // Auto-revoke private feed access if target is a private follower (PRD §8.1)
@@ -179,7 +224,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     try {
       const block = await this.getBlock(targetUserId, blockerId)
       if (!block) {
-        removeOwnBlock(blockerId, targetUserId)
+        this.updateOwnBlock(blockerId, targetUserId, false)
         return { success: true }
       }
 
@@ -191,7 +236,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       )
 
       if (result.success) {
-        removeOwnBlock(blockerId, targetUserId)
+        this.updateOwnBlock(blockerId, targetUserId, false)
         // Note: Bloom filter is add-only. False positives may occur until rebuilt.
       }
 
@@ -609,82 +654,8 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   async isBlocked(targetUserId: string, viewerId: string): Promise<boolean> {
     if (!viewerId || !targetUserId) return false
 
-    // Fast path: check sessionStorage caches first
-    if (isInOwnBlocks(viewerId, targetUserId)) {
-      return true
-    }
-
-    const confirmed = getConfirmedBlock(viewerId, targetUserId)
-    if (confirmed !== undefined) {
-      return confirmed.isBlocked
-    }
-
-    // Check merged bloom filter for quick negative
-    const mergedFilter = getMergedBloomFilter(viewerId)
-    if (mergedFilter && !mergedFilter.mightContain(targetUserId)) {
-      return false
-    }
-
-    // Bloom filter positive or no filter - verify against platform
-    const ownBlock = await this.getBlock(targetUserId, viewerId)
-    if (ownBlock) {
-      addConfirmedBlock(viewerId, targetUserId, viewerId, true, ownBlock.message)
-      return true
-    }
-
-    // Check inherited blocks from followed users
-    const followedBlockers = await this.getBlockFollows(viewerId)
-    if (followedBlockers.length > 0) {
-      const inheritedBlock = await this.checkInheritedBlocks(targetUserId, followedBlockers)
-      if (inheritedBlock) {
-        addConfirmedBlock(viewerId, targetUserId, inheritedBlock.blockedBy, true, inheritedBlock.message)
-        return true
-      }
-    }
-
-    addConfirmedBlock(viewerId, targetUserId, '', false)
-    return false
-  }
-
-  /**
-   * Check if target is blocked by any of the followed blockers.
-   * Note: Must query each blocker individually since the index only supports
-   * queries on ($ownerId, blockedId) with equality on both.
-   */
-  private async checkInheritedBlocks(
-    targetUserId: string,
-    followedBlockers: string[]
-  ): Promise<{ blockedBy: string; message?: string } | null> {
-    if (followedBlockers.length === 0) return null
-
-    try {
-      // Query each blocker individually in parallel
-      const queries = followedBlockers.map(async (blockerId) => {
-        try {
-          const block = await this.getBlock(targetUserId, blockerId)
-          if (block) {
-            return {
-              blockedBy: blockerId,
-              message: block.message
-            }
-          }
-        } catch (err) {
-          logger.error(`Error checking block from ${blockerId}:`, err)
-        }
-        return null
-      })
-
-      const results = await Promise.all(queries)
-
-      // Return first found block
-      for (const result of results) {
-        if (result) return result
-      }
-    } catch (error) {
-      logger.error('Error checking inherited blocks:', error)
-    }
-
-    return null
+    const blocked = await this.checkBlockedBatch(viewerId, [targetUserId])
+    return blocked.get(targetUserId) ?? false
   }
 
   /**
@@ -700,12 +671,15 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       return result
     }
 
+    // The same read also serves card hooks that mount before enrichment settles.
+    // Let failures reject so neither hooks nor enrichers cache a false negative.
+    const ownBlockedSet = new Set(await this.getOwnBlockedIds(viewerId))
     const uniqueTargetIds = Array.from(new Set(targetIds))
     const unchecked: string[] = []
 
     // Phase 1: Check sessionStorage caches
     for (const targetId of uniqueTargetIds) {
-      if (isInOwnBlocks(viewerId, targetId)) {
+      if (ownBlockedSet.has(targetId)) {
         result.set(targetId, true)
         continue
       }
@@ -752,46 +726,17 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
     // Phase 3: Verify possible positives
     try {
-      // Query own blocks
-      const ownBlocks = await this.queryBlockedIn(viewerId, possiblePositives)
-      const ownBlockedSet = new Set(ownBlocks.map(b => b.blockedId))
-
       const batchResults = new Map<string, { blockedBy: string; isBlocked: boolean; message?: string }>()
-
+      const followedBlockers = await this.getBlockFollows(viewerId)
+      const inheritedBlocks = await this.queryInheritedBlocksBatch(possiblePositives, followedBlockers)
       for (const targetId of possiblePositives) {
-        if (ownBlockedSet.has(targetId)) {
-          result.set(targetId, true)
-          const block = ownBlocks.find(b => b.blockedId === targetId)
-          batchResults.set(targetId, { blockedBy: viewerId, isBlocked: true, message: block?.message })
-        }
-      }
-
-      // Check inherited blocks for remaining
-      const stillUnchecked = possiblePositives.filter(id => !ownBlockedSet.has(id))
-
-      if (stillUnchecked.length > 0) {
-        const followedBlockers = await this.getBlockFollows(viewerId)
-
-        if (followedBlockers.length > 0) {
-          const inheritedBlocks = await this.queryInheritedBlocksBatch(stillUnchecked, followedBlockers)
-
-          for (const targetId of stillUnchecked) {
-            const inherited = inheritedBlocks.get(targetId)
-            if (inherited) {
-              result.set(targetId, true)
-              batchResults.set(targetId, { blockedBy: inherited.blockedBy, isBlocked: true, message: inherited.message })
-            } else {
-              result.set(targetId, false)
-              batchResults.set(targetId, { blockedBy: '', isBlocked: false })
-            }
-          }
-        } else {
-          // No inherited blocks possible
-          for (const targetId of stillUnchecked) {
-            result.set(targetId, false)
-            batchResults.set(targetId, { blockedBy: '', isBlocked: false })
-          }
-        }
+        const inherited = inheritedBlocks.get(targetId)
+        result.set(targetId, Boolean(inherited))
+        batchResults.set(targetId, {
+          blockedBy: inherited?.blockedBy ?? '',
+          isBlocked: Boolean(inherited),
+          message: inherited?.message,
+        })
       }
 
       addConfirmedBlocksBatch(viewerId, batchResults)
@@ -806,32 +751,6 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     }
 
     return result
-  }
-
-  /**
-   * Query blocks using 'in' operator for efficient batch lookup.
-   *
-   * TODO: This query uses 'in' clause which doesn't support reliable pagination.
-   * The SDK returns incomplete results when subtrees are empty but still count against the limit.
-   * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
-   * implement pagination here to handle cases where results exceed the limit.
-   */
-  private async queryBlockedIn(blockerId: string, targetIds: string[]): Promise<BlockDocument[]> {
-    if (targetIds.length === 0) return []
-
-    const sdk = await getEvoSdk()
-    const response = await sdk.documents.query({
-      dataContractId: this.contractId,
-      documentTypeName: this.documentType,
-      where: [
-        ['$ownerId', '==', blockerId],
-        ['blockedId', 'in', targetIds]
-      ],
-      orderBy: [['blockedId', 'asc']],
-      limit: Math.min(targetIds.length, 100)
-    })
-
-    return normalizeSDKResponse(response).map(doc => this.transformDocument(doc))
   }
 
   /**
@@ -903,19 +822,20 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   async initializeBlockData(userId: string): Promise<void> {
     // Check if cache already exists and is fresh
     const existingCache = loadBlockCache(userId)
-    if (existingCache) {
-      return // Cache is fresh, skip initialization
+    if (getOwnBlocksFromCache(userId) !== null && existingCache?.blockFollows.timestamp) {
+      return // Both sections are initialized; partial caches must still load.
     }
 
     try {
       // Query all data in parallel
-      const [blockFollowData, ownBlocks] = await Promise.all([
-        this.getBlockFollow(userId),
-        this.getUserBlocks(userId)
+      const [followedUserIds, ownBlockedIds] = await Promise.all([
+        this.getBlockFollow(userId).then(data => {
+          const ids = data?.followedUserIds ?? []
+          setBlockFollows(userId, ids)
+          return ids
+        }),
+        this.getOwnBlockedIds(userId)
       ])
-
-      const followedUserIds = blockFollowData?.followedUserIds ?? []
-      const ownBlockedIds = ownBlocks.map(b => b.blockedId)
 
       // Get bloom filters for self and followed users
       const filterUserIds = [userId, ...followedUserIds]
@@ -927,7 +847,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       // Initialize cache with all data
       initializeBlockCache(
         userId,
-        ownBlockedIds,
+        getOwnBlocksFromCache(userId) ?? ownBlockedIds,
         followedUserIds,
         mergedFilter,
         filterUserIds
