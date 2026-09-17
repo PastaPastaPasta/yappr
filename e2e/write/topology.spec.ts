@@ -28,7 +28,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Locator, Page } from '@playwright/test'
 import { appUrl } from '../fixtures/app'
-import { expect, hasSeedPhrase, NO_SEED_REASON, test } from '../fixtures/auth'
+import { expect, hasSeedPhrase, NO_SEED_REASON, seedContext, test } from '../fixtures/auth'
 import { expectedSocialContractId, expectedTopology } from '../fixtures/contracts'
 import { reloadUntilVisible } from '../fixtures/eventual'
 import { uniqueTag } from '../fixtures/run-tag'
@@ -37,6 +37,16 @@ test.describe.configure({ mode: 'serial' })
 
 /** Broadcast waits are long and chained; each write test budgets its own. */
 const COMPOSE_TIMEOUT = 120_000
+
+/** The static Explore tabs are visible before React attaches their handlers. */
+async function openReadyExplore(page: Page): Promise<void> {
+  await page.goto(appUrl('/explore/'), { waitUntil: 'domcontentloaded' })
+  await expect(page.getByTestId('explore-creators-tab')).toBeVisible({ timeout: 30_000 })
+  // The initial trending request starts in a client effect. Its loading state
+  // disappearing proves hydration has run, including when the result is empty.
+  await expect(page.getByText('Loading trending hashtags...', { exact: true }))
+    .toBeHidden({ timeout: 60_000 })
+}
 
 /**
  * The devnet run is the only one this file applies to, and it is identified the
@@ -674,7 +684,7 @@ test.describe('v5 optional-hashtag topology and prefix rankings on the devnet co
     // SDK connection) recovers.
     const attempts = 4
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      await page.goto(appUrl('/explore/'), { waitUntil: 'domcontentloaded' })
+      await openReadyExplore(page)
       const creatorsTab = page.getByTestId('explore-creators-tab')
       await expect(creatorsTab).toBeVisible({ timeout: 30_000 })
       await creatorsTab.click()
@@ -715,9 +725,8 @@ test.describe('v5 optional-hashtag topology and prefix rankings on the devnet co
 // rankings (dev.8, contract v6). A like of a TAGGED post writes a `beat`
 // companion as a second transition once the like lands, and every ranked surface gains a
 // Today | All time switch. The assertions pin the run's own writes on the
-// TODAY window: unlike the all-time top-K (which seeded content dominates),
-// "today" on a devnet is small enough that the run's like ranks — and the
-// tag/author pins make inclusion structural regardless.
+// TODAY window. Tag/author pins guarantee inclusion for the run's own writes;
+// global top-K assertions allow seeded posts and tags to outrank the CI bot.
 test.describe('v6 daily-windowed rankings on the devnet contract', () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
   test.skip(SPEC_TOPOLOGY !== 'v6', 'the compiled topology has no daily-windowed ranked twins')
@@ -733,8 +742,9 @@ test.describe('v6 daily-windowed rankings on the devnet contract', () => {
     hashtag = `v6${runTag.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 61)
 
     const context = await browser.newContext()
-    const page = await context.newPage()
     try {
+      await seedContext(context, bot)
+      const page = await context.newPage()
       await page.goto(appUrl('/feed/'))
       await page.getByTestId('open-compose-btn').click()
       const composeDialog = page.getByRole('dialog', { name: 'Create a new post' })
@@ -748,7 +758,7 @@ test.describe('v6 daily-windowed rankings on the devnet contract', () => {
       taggedPostId = ((await card.getAttribute('data-testid')) ?? '').replace('post-card-', '')
       expect(taggedPostId).not.toBe('')
 
-      // Like it: on v6 this writes like + beat in ONE batch transition.
+      // Like it: v6 writes the like, then a beat in a second transition.
       await page.goto(appUrl(`/post?id=${taggedPostId}`))
       const likeButton = page.getByTestId(`like-btn-${taggedPostId}`)
       await expect(likeButton).toBeVisible({ timeout: 60_000 })
@@ -787,29 +797,34 @@ test.describe('v6 daily-windowed rankings on the devnet contract', () => {
     ).toBeVisible({ timeout: 60_000 })
   })
 
-  test("Explore's trending → Today ranks the run tag (beat.byDayHashtagPost at hashtag)", async ({ page }) => {
+  test("Explore's trending → Today renders the proved ranking (beat.byDayHashtagPost at hashtag)", async ({ page }) => {
     test.setTimeout(180_000)
-    await page.goto(appUrl('/explore/'), { waitUntil: 'domcontentloaded' })
+    await openReadyExplore(page)
     const today = page.getByTestId('explore-trending-today')
     await expect(today).toBeVisible({ timeout: 60_000 })
     await today.click()
-    // The beat written beside the like is the only vote for this run-unique
-    // tag, so it appears with a count of exactly 1 like.
-    const row = page.getByText(`#${hashtag}`, { exact: false }).first()
-    await expect(row).toBeVisible({ timeout: 60_000 })
+    await expect(today).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByText('Loading trending hashtags...', { exact: true })).toBeHidden({ timeout: 60_000 })
+    // Seeded tags can outrank this run's one-like tag in the global top-12.
+    // The pinned tag test above proves the run's exact beat membership.
+    await expect(page.getByText(/\d+ likes?$/).first()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByTestId('trending-activity-note')).toHaveCount(0)
   })
 
   test("Explore's Top → Today renders today's ranking (like.byDayPost)", async ({ page }) => {
     test.setTimeout(180_000)
-    await page.goto(appUrl('/explore/'), { waitUntil: 'domcontentloaded' })
+    await openReadyExplore(page)
     const topTab = page.getByTestId('explore-top-tab')
     await expect(topTab).toBeVisible({ timeout: 60_000 })
     await topTab.click()
     const today = page.getByTestId('explore-top-today')
     await expect(today).toBeVisible({ timeout: 30_000 })
     await today.click()
-    // Today's global top-20 on the devnet is small; the run's liked post is
-    // asserted by its like button (proved order + count on the card).
-    await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toBeVisible({ timeout: 60_000 })
+    await expect(today).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByText('Loading top posts...', { exact: true })).toBeHidden({ timeout: 60_000 })
+    // The seeded corpus also lands today; global top-20 need not include the
+    // CI bot. Exact membership is checked on the pinned tag/profile surfaces.
+    await expect(page.locator('[data-testid^="post-card-"]').first()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByTestId('explore-top-empty')).toHaveCount(0)
   })
 })
