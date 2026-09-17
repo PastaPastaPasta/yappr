@@ -54,32 +54,32 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
     try {
       const { unifiedProfileService, DEFAULT_AVATAR_STYLE } = await import('@/lib/services/unified-profile-service')
 
-      // Get profile to extract avatar settings
-      const profile = await unifiedProfileService.getProfile(userId)
+      // Load the stored value; getProfile().avatar is already rendered for display.
+      const avatar = await unifiedProfileService.getStoredAvatar(userId)
       if (request !== requestRef.current) return
 
-      if (profile?.avatar) {
+      if (avatar) {
         // Parse the avatar field to extract settings
         // Could be JSON {"style":"bottts","seed":"xyz"} or a URI (ipfs://, https://, data:)
         try {
           // Check if it's a custom image URL (ipfs://, https://, http://)
-          const isCustom = profile.avatar.startsWith('ipfs://') ||
-                          profile.avatar.startsWith('https://') ||
-                          profile.avatar.startsWith('http://')
+          const isCustom = avatar.startsWith('ipfs://') ||
+                          avatar.startsWith('https://') ||
+                          avatar.startsWith('http://')
 
           if (isCustom) {
             // Custom image URL - not a generated avatar
             setIsCustomImage(true)
-            setCustomImageUrl(profile.avatar)
+            setCustomImageUrl(avatar)
             // Still set default settings in case user switches back to generated
             setSettings({
               style: DEFAULT_AVATAR_STYLE,
               seed: userId,
               avatarUrl: unifiedProfileService.getDefaultAvatarUrl(userId),
             })
-          } else if (profile.avatar.startsWith('{')) {
+          } else if (avatar.startsWith('{')) {
             // JSON format for DiceBear settings
-            const parsed = JSON.parse(profile.avatar)
+            const parsed = JSON.parse(avatar)
             setIsCustomImage(false)
             setCustomImageUrl(null)
             setSettings({
@@ -92,14 +92,14 @@ export function useAvatarSettings(userId: string): UseAvatarSettingsResult {
             })
           } else {
             // Direct URI - extract seed from DiceBear URL if possible
-            const seedMatch = profile.avatar.match(/seed=([^&]+)/)
-            const styleMatch = profile.avatar.match(/\/7\.x\/([^/]+)\//)
+            const seedMatch = avatar.match(/seed=([^&]+)/)
+            const styleMatch = avatar.match(/\/7\.x\/([^/]+)\//)
             setIsCustomImage(false)
             setCustomImageUrl(null)
             setSettings({
               style: (styleMatch?.[1] as DiceBearStyle) || DEFAULT_AVATAR_STYLE,
               seed: seedMatch ? decodeURIComponent(seedMatch[1]) : userId,
-              avatarUrl: profile.avatar,
+              avatarUrl: avatar,
             })
           }
         } catch {

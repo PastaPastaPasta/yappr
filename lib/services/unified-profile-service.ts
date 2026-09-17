@@ -404,6 +404,12 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     }
   }
 
+  /** Return the stored avatar recipe or custom URI without rendering it. */
+  async getStoredAvatar(ownerId: string): Promise<string | undefined> {
+    if (!ownerId) return undefined;
+    return (await this.loadProfileDoc(ownerId))?.avatar;
+  }
+
   /**
    * Get avatar URL for a user, batched with all other profile lookups
    */
