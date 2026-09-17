@@ -6,17 +6,22 @@ that landed upstream on 2026-09-01. Regenerate with
 `python3 scripts/build-v6-contract.py`; `--self-test` asserts the committed
 JSON.
 
-## Status (2026-09-13) — LIVE on moutai dev.9
+## Status (2026-09-17) — LIVE on moutai beta.1
 
 | Layer | State |
 |---|---|
-| Platform | **4.2.0-dev.9 / PV14**, after the 2026-09-13 Platform reset. The reset removed Platform state while Core persisted; contracts, identities, token, and seed data were recreated. |
-| Contract | **Registered**: `6WNGgXQC6jsJDJovUBWAABoQ3ujLnoQBbdYpo6F7649c` (this file's shape, with TTL on the ephemeral buckets). YAPP token `EBVgaNu12cwvnZrtgNhPi5BPmydB4DmwnJoX6fxKkY7P` |
-| Client | `.env.devnet` → v6; `windowedRankingsAvailable()`; like of a tagged post writes its `beat` as a **second transition** after the like lands (consensus caps a document batch at ONE transition — verified live: `Amount of document transitions must be less or equal to 1`); Today \| All time switch on Explore Top / trending / Creators, tag page Top, profile Top |
-| Battery | `scripts/verify-v5.mjs` gains d1–d3 (windowed like axes, beat + propertyAgreement + grid disambiguation, cold bucket) |
-| Seeder | `--topology v6`: a beat companion beside every tagged like |
-| Known edge | A proved ranked read on a **never-populated** bucket still needs a live check after the reset; the client maps the known cold-bucket proof error to an empty ranking. |
-| TTL | dev.9 accepts `timeRange.ttl`; all daily and rolling like/beat buckets use `604800` seconds. Cleanup happens as later writes advance storage, so expiry is not an immediate disk purge. |
+| Platform | **4.2.0-beta.1 / PV14**, after the 2026-09-17 Platform reset. Core persisted; saved identity asset locks and top-ups were reusable. |
+| Contract | **Registered**: `HWZdaqfPuqfVJf7ARomsVdpFPa6P2Bp1Eh9qYZSMEFEQ`, preserving the v6 schema and four seven-day TTL indexes. |
+| Client | Both SDK packages are pinned to beta.1. `.env.devnet` selects v6; Today and All time use server-ordered, proved rankings. Tagged likes write a separate `beat` companion. |
+| Groups | All ten Yappr contracts belong to `DYDGmjxwQwZhRm7zxp12pd52vB9pCunxEPerF9TfvQZe`; scoped-key login remains future work. |
+| Empty rankings | Verified against beta.1: unwritten daily buckets within retention and unused hashtag pins return proved empty results. |
+| TTL | `like.byDayPost`, `like.byDayAuthorPost`, `beat.byDayHashtagPost`, and `beat.byRollingHashtagPost` retain `ttl: 604800`. Expired buckets outside the retention horizon are not valid historical queries. Cleanup advances with later writes. |
+| Seeder | `--topology v6` writes beat companions for tagged likes; saved users are restored onto the new contracts. |
+
+See [the beta.1 investigation and deployment evidence](PLATFORM_BETA1_UPGRADE.md)
+for release changes, public IDs and validation results. The design discussion
+below records the original implementation constraints; the windowed rankings
+and rolling test index are now deployed.
 
 ## Two validation rules the dev.7 blanket rejection had been hiding
 
@@ -53,8 +58,8 @@ in the newest bucket with the client ordering the returned groups. yappr
 cannot ship that: the response carries **one entry per distinct group in the
 window** — every hashtag used today, every author who was liked today — and the
 client sorts it to show 20 rows. That is fine in a test and degrades badly in
-production, so windowed trending is currently not built at all rather than
-built on client-side sorting.
+production, so Yappr uses server-ranked windowed indexes instead of sorting
+an unbounded grouped response on the client.
 
 What we need is the same thing the all-time surfaces already get: the server
 returns the top K, ordered, proved.
@@ -135,8 +140,9 @@ Estimate basis: each new windowed twin costs about what its all-time twin
 does plus one bucket level (~12–15 M per ranked twin at 27,000 cr/byte
 storage + 400 cr/byte processing, ~500 B per entry chain). `range == step`
 everywhere, so one bucket per write; the k=4 `byRollingHashtagPost` on `beat`
-would multiply that index by 4 and is **not** in the shipping shape (it stays
-in the fixture as overlap test material for platform).
+multiplies that index by 4 and **is present** in the deployed v6 schema
+as overlap test material. The estimates above predate that additional cost;
+they are not measurements of the current beta.1 contract.
 
 At the YAPP layer nothing changes (1 YAPP/like); the credit cost is what the
 identity pays. Even the tagged case stays under the cost of a reply today.
