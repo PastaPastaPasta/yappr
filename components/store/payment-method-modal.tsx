@@ -5,13 +5,13 @@ import { motion } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, WalletIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
-import { PaymentSchemeIcon, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
+import { PaymentSchemeIcon, PAYMENT_SCHEME_LABELS, TDASH_NETWORK_LABEL } from '@/components/ui/payment-icons'
 import { APPROVED_PAYMENT_SCHEMES } from '@/lib/services/unified-profile-service'
 import { isValidPaymentAddress } from '@/lib/utils/payment-uri'
 
 // Supported payment schemes with their details
 const PAYMENT_SCHEMES = [
-  { scheme: 'tdash:', label: 'Dash (Testnet)', placeholder: 'yxxxxxxxxxxxxxxxxxxxxxxxxYYYYYY', hint: 'Your testnet Dash wallet address' },
+  { scheme: 'tdash:', label: PAYMENT_SCHEME_LABELS['tdash:'], placeholder: 'yxxxxxxxxxxxxxxxxxxxxxxxxYYYYYY', hint: `Your ${TDASH_NETWORK_LABEL.toLowerCase()} Dash wallet address` },
   { scheme: 'dash:', label: 'Dash', placeholder: 'XxxxxxxxxxxxxxxxxxxxxxxxxYYYYYY', hint: 'Your Dash wallet address' },
   { scheme: 'bitcoin:', label: 'Bitcoin', placeholder: 'bc1qxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Bitcoin wallet address' },
   { scheme: 'ethereum:', label: 'Ethereum', placeholder: '0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Ethereum wallet address' },
@@ -81,7 +81,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
 
     if (!isValidPaymentAddress(resolvedScheme, resolvedAddress)) {
       const message = resolvedScheme === 'tdash:'
-        ? 'Enter a valid Dash testnet address (tdash:).'
+        ? `Enter a valid Dash ${TDASH_NETWORK_LABEL.toLowerCase()} address (tdash:).`
         : resolvedScheme === 'dash:'
           ? 'Enter a valid Dash mainnet address (dash:).'
           : 'Enter a valid payment address.'

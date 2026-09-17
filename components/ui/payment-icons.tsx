@@ -1,9 +1,14 @@
 'use client'
 
+import { getNetworkFromScheme } from '@/lib/services/insight-api-service'
+
+// tdash addresses are shared by testnet and devnet; match the payment watcher.
+export const TDASH_NETWORK_LABEL = getNetworkFromScheme('tdash:') === 'devnet' ? 'Devnet' : 'Testnet'
+
 // Payment scheme to display name mapping
 export const PAYMENT_SCHEME_LABELS: Record<string, string> = {
   'dash:': 'Dash',
-  'tdash:': 'Dash (Testnet)',
+  'tdash:': `Dash (${TDASH_NETWORK_LABEL})`,
   'bitcoin:': 'Bitcoin',
   'litecoin:': 'Litecoin',
   'ethereum:': 'Ethereum',
@@ -84,7 +89,7 @@ function getSchemeAbbreviation(scheme: string): string {
   const lowerScheme = scheme.toLowerCase()
   switch (lowerScheme) {
     case 'dash:': return 'D'
-    case 'tdash:': return 'tD'
+    case 'tdash:': return TDASH_NETWORK_LABEL === 'Devnet' ? 'dD' : 'tD'
     case 'bitcoin:': return 'B'
     case 'litecoin:': return 'L'
     case 'ethereum:': return 'E'

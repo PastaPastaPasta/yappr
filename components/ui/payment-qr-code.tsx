@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { ClipboardIcon, CheckIcon, ArrowLeftIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
-import { PaymentSchemeIcon, getPaymentLabel, PAYMENT_SCHEME_LABELS } from './payment-icons'
+import { PaymentSchemeIcon, getPaymentLabel, PAYMENT_SCHEME_LABELS, TDASH_NETWORK_LABEL } from './payment-icons'
 import { DashPaymentWatcher } from './dash-payment-watcher'
 import { useCryptoPrice } from '@/hooks/use-crypto-price'
 import { formatCryptoAmount, getCryptoSymbol, fromSmallestUnit } from '@/lib/utils/format'
@@ -94,8 +94,8 @@ export function PaymentQRCode({
     return buildUriWithAmount(paymentUri.uri, cryptoAmount)
   }, [paymentUri.uri, cryptoAmount])
 
-  // Check if this is a testnet scheme
-  const isTestnet = paymentUri.scheme.toLowerCase() === 'tdash:'
+  // tdash is used by both testnet and devnet.
+  const isTestCurrency = paymentUri.scheme.toLowerCase() === 'tdash:'
 
   // Format the crypto symbol
   const cryptoSymbol = getCryptoSymbol(paymentUri.scheme)
@@ -181,9 +181,9 @@ export function PaymentQRCode({
                   </button>
                 </div>
               )}
-              {isTestnet && (
+              {isTestCurrency && (
                 <p className="text-xs text-amber-600 dark:text-amber-400 text-center">
-                  Note: Testnet coins have no real value
+                  Note: {TDASH_NETWORK_LABEL} coins have no real value
                 </p>
               )}
             </>
