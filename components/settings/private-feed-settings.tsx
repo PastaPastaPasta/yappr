@@ -178,10 +178,17 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
         // Keep the accepted key available just as the manual key-entry flow does.
         // Storage/backup failures cannot undo the feed that was already enabled.
         try {
-          const { storeEncryptionKey, getEncryptionKey } = await import('@/lib/secure-storage')
+          const { storeEncryptionKey, getEncryptionKey, getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+          const { bytesEqual } = await import('@/lib/bytes')
           storeEncryptionKey(user.identityId, trimmedKey)
           const normalizedEncryptionKey = getEncryptionKey(user.identityId)
-          if (!normalizedEncryptionKey) throw new Error('Encryption key was not saved')
+          // The store swallows write failures, so a non-null readback can still be a stale
+          // key left over from an earlier session. Compare the decoded secret with the key
+          // that was actually accepted before backing anything up.
+          const storedKeyBytes = getEncryptionKeyBytes(user.identityId)
+          if (!normalizedEncryptionKey || !storedKeyBytes || !bytesEqual(storedKeyBytes, validation.privateKey)) {
+            throw new Error('Encryption key was not saved')
+          }
 
           try {
             await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: normalizedEncryptionKey })
