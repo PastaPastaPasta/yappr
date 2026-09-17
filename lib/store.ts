@@ -160,7 +160,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 }))
 
 // Settings store with localStorage persistence
-interface NotificationSettings {
+export interface NotificationSettings {
   likes: boolean
   reposts: boolean
   replies: boolean
