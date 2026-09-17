@@ -27,6 +27,7 @@ import { promptForAuthKey } from '../auth-utils'
 import bs58 from 'bs58'
 import { normalizeBytes } from '@/lib/bytes'
 import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
+import { getLocallyReadMessageIds } from '@/lib/utils/dm-local-read-state'
 
 /**
  * Direct Message Service for v3 contract
@@ -259,8 +260,9 @@ class DirectMessageService {
 
           // Count unread messages (v3: use $updatedAt as last-read timestamp)
           const lastReadAt = (myReceipt?.$updatedAt as number) || 0
+          const locallyReadIds = getLocallyReadMessageIds(userId, convId)
           const unreadCount = allMessages.filter(
-            m => m.$ownerId !== userId && (m.$createdAt as number) > lastReadAt
+            m => m.$ownerId !== userId && (m.$createdAt as number) > lastReadAt && !locallyReadIds.has(m.$id as string)
           ).length
 
           // Get participant username and display name
