@@ -5,6 +5,8 @@ import { scopedKey } from '@/lib/storage-scope'
 export const DUMMY_IDENTITY = 'component-test-identity'
 // WIF for public scalar 1. Never use with an actual identity or funds.
 const EXPECTED_WIF = 'cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87JcbXMTcA'
+// WIF for public scalar 2, standing in for a key left behind by an earlier session.
+const STALE_WIF = 'cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87K7XCyj5v'
 const storageKey = scopedKey(`yappr_secure_ek_${DUMMY_IDENTITY}`)
 const scenario = new URLSearchParams(window.location.search).get('scenario')
 const user = { identityId: DUMMY_IDENTITY }
@@ -18,7 +20,13 @@ const state = {
   vaultReceivedCanonicalKey: false,
 }
 
-if (scenario === 'storage-failure') {
+// The stale-key scenario seeds a different key for this identity first, so the swallowed
+// write failure leaves a non-null readback that does not match the accepted key.
+if (scenario === 'stale-key') {
+  localStorage.setItem(storageKey, JSON.stringify(STALE_WIF))
+}
+
+if (scenario === 'storage-failure' || scenario === 'stale-key') {
   const originalSetItem = Storage.prototype.setItem
   Storage.prototype.setItem = function (key: string, value: string) {
     if (this === localStorage && key === storageKey) {
@@ -35,6 +43,7 @@ export function snapshot() {
     ...state,
     keyAbsent: stored === null,
     hasCanonicalLocalKey: stored === EXPECTED_WIF,
+    hasStaleLocalKey: stored === STALE_WIF,
     hasPersistedCanonicalKey: localStorage.getItem(storageKey) === JSON.stringify(EXPECTED_WIF),
   }
 }
