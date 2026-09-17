@@ -89,12 +89,12 @@ export function ProfileHoverCard({
     }, closeDelay)
   }
 
-  const focusPreview = () => {
+  const focusPreview = useCallback(() => {
     const content = contentRef.current
     const firstControl = content?.querySelector<HTMLElement>('a[href], button:not([disabled])')
     const target = firstControl || content
     target?.focus()
-  }
+  }, [])
 
   useEffect(() => {
     changeOpen(false)
@@ -181,6 +181,20 @@ export function ProfileHoverCard({
       loadFollowStatus().catch(err => logger.error('Failed to load follow status:', err))
     }
   }, [isOpen, loadProfileData, loadFollowStatus])
+
+  // ArrowDown can open the preview before the profile has loaded. The loading skeleton
+  // has no focusable control, so the initial focusPreview() (and onOpenAutoFocus) leave
+  // focus on the non-actionable container. Retry once the real controls render, unless
+  // the user has already reached one of them.
+  useEffect(() => {
+    if (!isOpen || !keyboardEntryRef.current || !profileData) return
+    const content = contentRef.current
+    if (!content) return
+    const active = document.activeElement
+    const alreadyOnControl = active instanceof HTMLElement && active !== content && content.contains(active)
+    if (alreadyOnControl) return
+    focusPreview()
+  }, [isOpen, profileData, focusPreview])
 
   const handleFollowToggle = async (e: React.MouseEvent) => {
     e.stopPropagation()
