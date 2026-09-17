@@ -199,66 +199,65 @@ export function ProfileImageUpload({
         disabled={isUploading}
       />
 
-      <div
-        role="button"
-        tabIndex={isUploading ? -1 : 0}
-        aria-disabled={isUploading}
-        onClick={handleClick}
-        onKeyDown={(e) => {
-          if ((e.key === 'Enter' || e.key === ' ') && !isUploading) {
-            e.preventDefault()
-            handleClick()
-          }
-        }}
-        {...dropZoneProps}
-        className={`relative ${aspectClass} bg-gray-50 dark:bg-gray-900/60 border border-dashed transition-colors overflow-hidden ${
-          isDragging
-            ? 'border-yappr-500 bg-yappr-500/10 dark:bg-yappr-500/10'
-            : 'border-gray-200 dark:border-gray-800 hover:border-yappr-500/60 dark:hover:border-yappr-500/40'
-        } focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 ${
-          isUploading ? 'cursor-wait' : 'cursor-pointer'
-        }`}
-      >
-        {/* Current or preview image */}
-        {(previewUrl || currentUrl) && (
-          <>
-            {renderImage()}
-            {!isUploading && onClear && !imageLoading && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleClear()
-                }}
-                className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
-                title="Remove image"
-              >
-                <XMarkIcon className="h-4 w-4 text-white" />
-              </button>
-            )}
-          </>
-        )}
+      <div className="relative">
+        <div
+          role="button"
+          tabIndex={isUploading ? -1 : 0}
+          aria-disabled={isUploading}
+          onClick={handleClick}
+          onKeyDown={(e) => {
+            if ((e.key === 'Enter' || e.key === ' ') && !isUploading) {
+              e.preventDefault()
+              handleClick()
+            }
+          }}
+          {...dropZoneProps}
+          className={`relative ${aspectClass} bg-gray-50 dark:bg-gray-900/60 border border-dashed transition-colors overflow-hidden ${
+            isDragging
+              ? 'border-yappr-500 bg-yappr-500/10 dark:bg-yappr-500/10'
+              : 'border-gray-200 dark:border-gray-800 hover:border-yappr-500/60 dark:hover:border-yappr-500/40'
+          } focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:ring-offset-2 ${
+            isUploading ? 'cursor-wait' : 'cursor-pointer'
+          }`}
+        >
+          {/* Current or preview image */}
+          {(previewUrl || currentUrl) && renderImage()}
 
-        {/* Upload progress overlay */}
-        {isUploading && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30">
-            <Loader2 className="h-8 w-8 text-white animate-spin mb-2" />
-            <span className="text-white text-sm font-medium">{progress}%</span>
-          </div>
-        )}
+          {/* Upload progress overlay */}
+          {isUploading && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30">
+              <Loader2 className="h-8 w-8 text-white animate-spin mb-2" />
+              <span className="text-white text-sm font-medium">{progress}%</span>
+            </div>
+          )}
 
-        {/* Empty state */}
-        {!previewUrl && !currentUrl && !isUploading && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <PhotoIcon className={`h-10 w-10 mb-2 ${isDragging ? 'text-yappr-500' : 'text-gray-400'}`} />
-            <span className={`text-sm ${isDragging ? 'text-yappr-500' : 'text-gray-500 dark:text-gray-400'}`}>
-              {isDragging ? 'Drop image here' : isProviderConnected ? placeholder : 'Paste a URL below'}
-            </span>
-            {isProviderConnected && (
-              <span className="text-xs text-gray-400 mt-1">
-                Max {maxSizeMB}MB
+          {/* Empty state */}
+          {!previewUrl && !currentUrl && !isUploading && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <PhotoIcon className={`h-10 w-10 mb-2 ${isDragging ? 'text-yappr-500' : 'text-gray-400'}`} />
+              <span className={`text-sm ${isDragging ? 'text-yappr-500' : 'text-gray-500 dark:text-gray-400'}`}>
+                {isDragging ? 'Drop image here' : isProviderConnected ? placeholder : 'Paste a URL below'}
               </span>
-            )}
-          </div>
+              {isProviderConnected && (
+                <span className="text-xs text-gray-400 mt-1">
+                  Max {maxSizeMB}MB
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Keep removal outside the clipped image and its upload target. */}
+        {(previewUrl || currentUrl) && !isUploading && onClear && !imageLoading && (
+          <button
+            type="button"
+            onClick={handleClear}
+            className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
+            title="Remove image"
+            aria-label="Remove image"
+          >
+            <XMarkIcon className="h-4 w-4 text-white" />
+          </button>
         )}
       </div>
 
