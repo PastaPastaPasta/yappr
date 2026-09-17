@@ -349,7 +349,7 @@ export function ComposeModal() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className={`fixed inset-0 bg-black/60 z-50 flex items-start justify-center pt-12 sm:pt-20 px-4 overflow-y-auto pb-12 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+                  className={`fixed inset-0 bg-black/60 z-50 flex items-start justify-center pt-6 sm:pt-20 px-3 sm:px-4 overflow-y-auto pb-12 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
                 >
                   <Dialog.Content asChild>
                     <motion.div
@@ -365,9 +365,9 @@ export function ComposeModal() {
                       <Dialog.Title className="sr-only">{getDialogTitle(!!replyingTo, !!quotingPost)}</Dialog.Title>
                       <Dialog.Description className="sr-only">{getDialogDescription(!!replyingTo, !!quotingPost)}</Dialog.Description>
 
-                      <div className="flex flex-col gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                          <IconButton onClick={handleClose} className="hover:bg-gray-200 dark:hover:bg-gray-800">
+                      <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-gray-100 dark:border-gray-800">
+                        <div className="flex min-w-0 flex-wrap items-center gap-1 sm:gap-2">
+                          <IconButton aria-label="Close composer" onClick={handleClose} className="h-8 w-8 shrink-0 hover:bg-gray-200 dark:hover:bg-gray-800">
                             <XMarkIcon className="h-5 w-5" />
                           </IconButton>
                           {user && <UserAvatar userId={user.identityId} size="sm" alt="Your avatar" />}
@@ -400,7 +400,7 @@ export function ComposeModal() {
                           )}
                         </div>
 
-                        <div className="flex items-center justify-end gap-3">
+                        <div className="flex w-full items-center justify-between gap-2 sm:w-auto">
                           <button
                             onClick={() => setShowPreview(!showPreview)}
                             className={`${TOGGLE} ${showPreview ? 'bg-yappr-100 dark:bg-yappr-900/30 text-yappr-600 dark:text-yappr-400' : TOGGLE_OFF}`}
@@ -412,9 +412,9 @@ export function ComposeModal() {
                             data-testid="compose-submit-btn"
                             onClick={handlePost}
                             disabled={!canPost}
-                            className={`min-w-[100px] h-10 px-5 text-sm font-semibold transition-all ${
+                            className={`min-w-[100px] h-9 px-4 text-sm font-semibold !shadow-none transition-colors ${
                               canPost
-                                ? 'bg-yappr-500 hover:bg-yappr-600 shadow-lg shadow-yappr-500/25 hover:shadow-xl hover:shadow-yappr-500/30'
+                                ? 'bg-yappr-500 hover:bg-yappr-600'
                                 : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                             }`}
                           >
@@ -426,7 +426,7 @@ export function ComposeModal() {
                       {isPosting && postingProgress && <PostingProgressBar progress={postingProgress} />}
                       {replyingTo && <ReplyContext author={replyingTo.author} />}
 
-                      <div ref={scrollContainerRef} className="px-5 py-4 max-h-[60vh] overflow-y-auto">
+                      <div ref={scrollContainerRef} className="px-4 sm:px-5 py-4 max-h-[60vh] overflow-y-auto">
                         <div className="space-y-4">
                           {inherited.source && !isPrivateVisibility && (
                             <Banner tone="purple">
@@ -566,7 +566,7 @@ export function ComposeModal() {
                                 addThreadPost()
                                 setTimeout(() => scrollContainerRef.current?.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' }), 100)
                               }}
-                              className="flex items-center gap-2 px-4 py-2.5 w-full rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-800 text-gray-500 hover:text-yappr-500 hover:border-yappr-300 dark:hover:border-yappr-700 transition-colors"
+                              className="flex items-center justify-center gap-2 px-4 py-2.5 w-full rounded-lg text-gray-500 dark:text-gray-400 hover:text-yappr-600 dark:hover:text-yappr-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                             >
                               <PlusIcon className="w-5 h-5" />
                               <span className="text-sm font-medium">Add to thread</span>

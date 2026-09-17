@@ -35,7 +35,7 @@ export function FormatButton({ onClick, title, children, disabled = false }: For
   )
 }
 
-// Character counter with visual progress indicator
+// Character count includes any attachment URL appended to the post.
 interface CharacterCounterProps {
   current: number
   limit: number
@@ -43,72 +43,20 @@ interface CharacterCounterProps {
 
 export function CharacterCounter({ current, limit }: CharacterCounterProps) {
   const remaining = limit - current
-  const percentage = Math.min((current / limit) * 100, 100)
-  const isWarning = remaining <= 50 && remaining > 20
-  const isDanger = remaining <= 20
-  const isValid = current > 0 && current <= limit
-
-  const radius = 10
-  const circumference = 2 * Math.PI * radius
-  const offset = circumference * (1 - percentage / 100)
-
-  function getProgressColor(): string {
-    if (isDanger) return 'text-red-500'
-    if (isWarning) return 'text-amber-500'
-    return 'text-yappr-500'
-  }
-
-  if (current === 0) {
-    return <div className="flex items-center gap-2" />
-  }
+  const color = remaining < 0
+    ? 'text-red-600 dark:text-red-400'
+    : remaining <= 50
+    ? 'text-amber-700 dark:text-amber-400'
+    : 'text-gray-500 dark:text-gray-400'
 
   return (
-    <div className="flex items-center gap-2">
-      <div className="relative w-6 h-6">
-        <svg className="w-6 h-6 -rotate-90" viewBox="0 0 24 24">
-          {/* Background circle */}
-          <circle
-            cx="12"
-            cy="12"
-            r={radius}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            className="text-gray-200 dark:text-gray-700"
-          />
-          {/* Progress circle */}
-          <circle
-            cx="12"
-            cy="12"
-            r={radius}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-            strokeLinecap="round"
-            className={getProgressColor()}
-          />
-        </svg>
-        {/* Checkmark when valid and not in danger zone */}
-        {isValid && !isDanger && !isWarning && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <svg className="w-3 h-3 text-yappr-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-        )}
-      </div>
-      {isDanger && (
-        <span
-          className={`text-xs font-medium tabular-nums ${
-            remaining < 0 ? 'text-red-500' : 'text-amber-500'
-          }`}
-        >
-          {remaining}
-        </span>
-      )}
-    </div>
+    <output
+      aria-live="off"
+      className={`whitespace-nowrap tabular-nums ${color}`}
+      aria-label={`${current} of ${limit} characters${remaining < 0 ? `, ${-remaining} over limit` : ''}`}
+    >
+      {current} <span aria-hidden="true" className="text-gray-300 dark:text-gray-600">/</span> {limit}
+    </output>
   )
 }
 
