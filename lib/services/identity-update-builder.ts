@@ -207,7 +207,7 @@ export async function buildUnsignedKeyRegistrationTransition(
   const authKey = new wasm.IdentityPublicKeyInCreation({
     keyId: authKeyId,
     purpose: 'authentication',
-    securityLevel: 'high',
+    securityLevel: 'medium',
     keyType: authKeyType,
     isReadOnly: false,
     data: authKeyData,
@@ -265,7 +265,7 @@ export async function buildUnsignedKeyRegistrationTransition(
   const authKeyWithSig = new wasm.IdentityPublicKeyInCreation({
     keyId: authKeyId,
     purpose: 'authentication',
-    securityLevel: 'high',
+    securityLevel: 'medium',
     keyType: authKeyType,
     isReadOnly: false,
     data: authKeyData,

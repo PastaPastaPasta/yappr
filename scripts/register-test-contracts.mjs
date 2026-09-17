@@ -111,6 +111,10 @@ function reownedContractJson(source, ownerId, identityNonce, platformVersion) {
   if (!json.documentSchemas || Object.keys(json.documentSchemas).length === 0) {
     throw new Error('Fetched contract exposes no document schemas');
   }
+  // This is a fresh contract: existing document types cannot change this requirement.
+  for (const schema of Object.values(json.documentSchemas)) {
+    schema.signatureSecurityLevelRequirement = 3;
+  }
   json.ownerId = ownerId;
   json.id = DataContract.generateId(ownerId, identityNonce).toBase58();
   json.version = 1;

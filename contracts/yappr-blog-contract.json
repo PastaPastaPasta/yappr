@@ -1,5 +1,6 @@
 {
   "blog": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "documentsKeepHistory": true,
     "canBeDeleted": false,
@@ -70,6 +71,7 @@
     "additionalProperties": false
   },
   "blogPost": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "documentsKeepHistory": true,
     "canBeDeleted": false,
@@ -203,6 +205,7 @@
     "additionalProperties": false
   },
   "blogComment": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "documentsMutable": false,
     "indices": [
@@ -265,6 +268,7 @@
     "additionalProperties": false
   },
   "blogFollow": {
+    "signatureSecurityLevelRequirement": 3,
     "type": "object",
     "documentsMutable": false,
     "indices": [

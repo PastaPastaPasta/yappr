@@ -3,6 +3,7 @@
   "version": 1,
   "documentSchemas": {
     "like": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -60,6 +61,7 @@
       "additionalProperties": false
     },
     "post": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -187,6 +189,7 @@
       "additionalProperties": false
     },
     "reply": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -292,6 +295,7 @@
       "additionalProperties": false
     },
     "repost": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -357,6 +361,7 @@
       "additionalProperties": false
     },
     "block": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -402,6 +407,7 @@
       "additionalProperties": false
     },
     "blockFilter": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -444,6 +450,7 @@
       "additionalProperties": false
     },
     "blockFollow": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -473,6 +480,7 @@
       "additionalProperties": false
     },
     "follow": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -532,6 +540,7 @@
       "additionalProperties": false
     },
     "profile": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -594,6 +603,7 @@
       "additionalProperties": false
     },
     "bookmark": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -632,6 +642,7 @@
       "additionalProperties": false
     },
     "followRequest": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -677,6 +688,7 @@
       "additionalProperties": false
     },
     "privateFeedGrant": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -741,6 +753,7 @@
       "additionalProperties": false
     },
     "privateFeedRekey": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -796,6 +809,7 @@
       "additionalProperties": false
     },
     "privateFeedState": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "canBeDeleted": false,
       "indices": [
@@ -842,6 +856,7 @@
       "additionalProperties": false
     },
     "postHashtag": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -902,6 +917,7 @@
       "additionalProperties": false
     },
     "postMention": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {

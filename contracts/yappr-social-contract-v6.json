@@ -15,6 +15,7 @@
   },
   "documentSchemas": {
     "block": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -68,6 +69,7 @@
       "additionalProperties": false
     },
     "blockFilter": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -112,6 +114,7 @@
       "additionalProperties": false
     },
     "blockFollow": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -143,6 +146,7 @@
       "additionalProperties": false
     },
     "bookmark": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -193,6 +197,7 @@
       "additionalProperties": false
     },
     "follow": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -273,6 +278,7 @@
       "additionalProperties": false
     },
     "followRequest": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -326,6 +332,7 @@
       "additionalProperties": false
     },
     "like": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indexOnly": true,
       "documentsMutable": false,
@@ -513,6 +520,7 @@
       "additionalProperties": false
     },
     "likeReply": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indexOnly": true,
       "documentsMutable": false,
@@ -596,6 +604,7 @@
       "additionalProperties": false
     },
     "post": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -845,6 +854,7 @@
       "canBeDeleted": false
     },
     "postMention": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -904,6 +914,7 @@
       "additionalProperties": false
     },
     "privateFeedGrant": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -976,6 +987,7 @@
       "additionalProperties": false
     },
     "privateFeedRekey": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -1035,6 +1047,7 @@
       "additionalProperties": false
     },
     "privateFeedState": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "canBeDeleted": false,
       "indices": [
@@ -1083,6 +1096,7 @@
       "additionalProperties": false
     },
     "profile": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -1147,6 +1161,7 @@
       "additionalProperties": false
     },
     "reply": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -1323,6 +1338,7 @@
       "canBeDeleted": false
     },
     "repost": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indices": [
         {
@@ -1409,6 +1425,7 @@
       "additionalProperties": false
     },
     "beat": {
+      "signatureSecurityLevelRequirement": 3,
       "type": "object",
       "indexOnly": true,
       "documentsMutable": false,

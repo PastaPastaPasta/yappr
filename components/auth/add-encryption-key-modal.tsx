@@ -31,7 +31,7 @@ type Step = 'checking' | 'existing-key' | 'enter-existing' | 'intro' | 'generate
  * Implements PRD §6.2 - Key Addition Flow
  *
  * NOTE: Adding an encryption key to an identity requires a MASTER
- * security level key for signing. The typical HIGH security level login key
+ * security level key for signing. The typical MEDIUM security level login key
  * is insufficient for identity modifications on Dash Platform (SDK dev.11+).
  */
 export function AddEncryptionKeyModal({

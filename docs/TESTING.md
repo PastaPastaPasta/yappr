@@ -119,8 +119,8 @@ no credits spent on the login path. This works identically against
 `https://yap.pr/testing/` and a local `--base /testing` server, because both use
 the `testing:` scope.
 
-Get the identity's **AUTHENTICATION/HIGH** WIF (key index 2 — writes require
-AUTHENTICATION at CRITICAL or HIGH):
+Get the identity's **AUTHENTICATION/HIGH** WIF (key index 2, compatible with
+the existing deployed test contracts):
 
 ```bash
 node scripts/derive-identities.mjs 0 --reveal
@@ -170,6 +170,7 @@ Rare, manual, never from CI. Everything below runs from the repo root.
    | 2 | AUTHENTICATION | HIGH |
    | 3 | TRANSFER | CRITICAL |
    | 4 | ENCRYPTION | MEDIUM |
+   | 5 | AUTHENTICATION | MEDIUM |
 
    Inspect (public data only) with `node scripts/derive-identities.mjs <index>`;
    add `--reveal` to print WIFs.
@@ -344,3 +345,13 @@ node scripts/provision-test-identity.mjs 2 \
 `derive-identities.mjs` withholds WIFs unless `--reveal` is passed, and the
 provisioning scripts redact WIF-shaped strings from error output. Keep it that
 way — CI logs are public.
+
+### MEDIUM authentication keys
+
+Freshly provisioned identities include an AUTHENTICATION/MEDIUM key at index 5;
+existing indices and their derivation paths are unchanged. After deploying fresh
+MEDIUM-enabled contracts and provisioning a fresh test pool, run the write suite
+with `E2E_AUTH_KEY_LEVEL=MEDIUM npm run test:e2e -- --project=write`. The default
+remains HIGH for existing deployed test pools. The local unit suite also exercises
+real WASM signing (with network calls mocked), including a document token fee,
+and decodes the wallet registration transaction to check its key levels.
