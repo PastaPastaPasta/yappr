@@ -824,26 +824,9 @@ class PrivateFeedFollowerService {
       // No grant - check for pending request
       const request = await this.getFollowRequest(ownerId, myId);
       if (request) {
-        // Check if this user was previously approved and then revoked (PRD §4.7)
-        // A revoked user has a FollowRequest but no grant, and the request was created
-        // before any revocation occurred (meaning they were approved then revoked)
-        const rekeyDocs = await this.getRekeyDocumentsAfter(ownerId, 0);
-        if (rekeyDocs.length > 0) {
-          // Revocations have occurred - check if request predates first revocation
-          const requestCreatedAt = request.$createdAt as number;
-          const firstRevocationAt = rekeyDocs[0].$createdAt;
-
-          if (requestCreatedAt < firstRevocationAt) {
-            // Request was created before any revocation, meaning this user
-            // was approved (which would have happened after the request)
-            // and then later revoked. Return 'revoked' state.
-            logger.debug(`User ${myId} appears to be revoked: request created at ${requestCreatedAt}, first revocation at ${firstRevocationAt}`);
-            return 'revoked';
-          }
-        }
-
-        // Either no revocations have occurred, or request is newer than revocations
-        // This is a genuinely pending request
+        // A feed-wide rekey does not identify whether this requester was revoked.
+        // Without a grant, the requester-owned document remains pending on the
+        // owner's side and must remain cancellable by its owner.
         return 'pending';
       }
 
