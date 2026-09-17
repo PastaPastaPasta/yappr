@@ -195,8 +195,11 @@ body {
 }
 
 .yappr-embed-background-section {
+  --yappr-link: #2dd4bf;
+  background: #0f172a;
   border: 1px solid var(--yappr-border);
   border-radius: 12px;
+  color: rgba(255, 255, 255, 0.9);
   margin: 0 0 1rem;
 }
 
