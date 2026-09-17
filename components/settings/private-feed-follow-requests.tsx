@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { UserAvatar } from '@/components/ui/avatar-image'
@@ -29,6 +29,14 @@ export function PrivateFeedFollowRequests() {
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
   const triggerRefresh = usePrivateFeedRefreshStore((s) => s.triggerRefresh)
   const refreshKey = usePrivateFeedRefreshStore((s) => s.refreshKey)
+  // Ignored requests stay on chain, so every reload has to re-hide them or the shared
+  // refresh signal would resurrect them mid-session.
+  const ignoredRequestIds = useRef(new Set<string>())
+
+  // Hiding is scoped to the signed-in identity; another account starts with a clean slate.
+  useEffect(() => {
+    ignoredRequestIds.current = new Set()
+  }, [user?.identityId])
 
   const loadRequests = useCallback(async () => {
     if (!user?.identityId) {
@@ -50,7 +58,8 @@ export function PrivateFeedFollowRequests() {
       }
 
       // Get all follow requests targeting this user
-      const followRequests = await privateFeedFollowerService.getFollowRequestsForOwner(user.identityId)
+      const followRequests = (await privateFeedFollowerService.getFollowRequestsForOwner(user.identityId))
+        .filter(request => !ignoredRequestIds.current.has(request.$id))
 
       if (followRequests.length === 0) {
         setRequests([])
@@ -162,10 +171,11 @@ export function PrivateFeedFollowRequests() {
   const handleIgnore = (request: FollowRequestUser) => {
     if (!user?.identityId || processingId) return
 
-    // Remove from UI only - the request remains on-chain and will reappear on refresh
+    // Remove from UI only - the request remains on-chain
     // This is intentional: blockchain data is immutable, so we can only hide locally
     // User can approve later if they change their mind
-    setRequests(prev => prev.filter(r => r.id !== request.id))
+    ignoredRequestIds.current.add(request.requestId)
+    setRequests(prev => prev.filter(r => r.requestId !== request.requestId))
     toast('Request hidden for this session', {
       icon: '👁️',
       duration: 3000,
