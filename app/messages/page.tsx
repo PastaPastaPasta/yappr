@@ -331,7 +331,14 @@ function MessagesPage() {
             currentUser.identityId,
             currentConv.participantId
           ),
-          directMessageService.getParticipantLastRead(convId, currentConv.participantId)
+          // A receipt read that fails must never discard the polled message page,
+          // so it resolves to null ("keep the previous value") instead of rejecting.
+          directMessageService
+            .getParticipantLastRead(convId, currentConv.participantId)
+            .catch((error: unknown) => {
+              logger.warn('Failed to refresh participant read receipt:', error)
+              return null
+            })
         ])
 
         if (cancelled) return
