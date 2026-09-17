@@ -232,7 +232,7 @@ export function ThreadPostEditor({
 
           {/* Formatting toolbar - only show when active, not posted and editable */}
           {isActive && !showPreview && !isPosted && !locked && (
-            <div className="flex items-center gap-1 mb-3 pb-2 border-b border-gray-100 dark:border-gray-800">
+            <div className="flex flex-wrap items-center gap-1 mb-3 pb-2 border-b border-gray-100 dark:border-gray-800">
               <FormatButton
                 onClick={() => handleInsertFormat('**')}
                 title="Bold (Ctrl+B)"
