@@ -217,21 +217,39 @@ function NotificationsPage() {
   return (
     <PageShell>
         <PageHeader>
-          <div className="flex items-center justify-between px-4 py-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-4 py-3 md:flex md:justify-between">
             <h1 className="text-xl font-bold">Notifications</h1>
-            <div className="flex items-center gap-2">
+            <div className="contents md:flex md:items-center md:gap-2">
+              <Tooltip.Provider>
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>
+                    <Link
+                      href="/settings?section=notifications"
+                      aria-label="Notification settings"
+                      className="col-start-2 row-start-1 justify-self-end p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
+                    >
+                      <Cog6ToothIcon className="h-5 w-5" />
+                    </Link>
+                  </Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Content className="z-[60] bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded" side="bottom" sideOffset={5}>
+                      Notification settings
+                    </Tooltip.Content>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
+              </Tooltip.Provider>
               {unreadCount > 0 && (
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={markAllAsRead}
-                  className="text-yappr-500 hover:text-yappr-600 text-sm"
+                  className="col-start-1 row-start-2 justify-self-start text-yappr-500 hover:text-yappr-600 text-sm"
                 >
                   Mark all as read
                 </Button>
               )}
               {/* Mobile filter dropdown */}
-              <div className="md:hidden">
+              <div className="col-start-2 row-start-2 justify-self-end md:hidden">
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger asChild>
                     <button
@@ -281,24 +299,6 @@ function NotificationsPage() {
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
               </div>
-              <Tooltip.Provider>
-                <Tooltip.Root>
-                  <Tooltip.Trigger asChild>
-                    <Link
-                      href="/settings?section=notifications"
-                      aria-label="Notification settings"
-                      className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
-                    >
-                      <Cog6ToothIcon className="h-5 w-5" />
-                    </Link>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content className="z-[60] bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded" side="bottom" sideOffset={5}>
-                      Notification settings
-                    </Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
-              </Tooltip.Provider>
             </div>
           </div>
 
