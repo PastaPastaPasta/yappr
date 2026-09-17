@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -44,20 +45,34 @@ export function ImageGallery({ images, alt }: ImageGalleryProps) {
         />
 
         {images.length > 1 && (
-          <>
-            <button
-              onClick={handlePrevious}
-              className="absolute left-2 top-1/2 -translate-y-1/2 p-2 bg-white/80 dark:bg-black/50 rounded-full hover:bg-white dark:hover:bg-black/70 transition-colors"
-            >
-              <ChevronLeftIcon className="h-5 w-5" />
-            </button>
-            <button
-              onClick={handleNext}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-white/80 dark:bg-black/50 rounded-full hover:bg-white dark:hover:bg-black/70 transition-colors"
-            >
-              <ChevronRightIcon className="h-5 w-5" />
-            </button>
-          </>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Previous image"
+                  onClick={handlePrevious}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 p-2 bg-white/80 dark:bg-black/50 rounded-full hover:bg-white dark:hover:bg-black/70 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 focus-visible:ring-offset-2"
+                >
+                  <ChevronLeftIcon className="h-5 w-5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Previous image</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Next image"
+                  onClick={handleNext}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-white/80 dark:bg-black/50 rounded-full hover:bg-white dark:hover:bg-black/70 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 focus-visible:ring-offset-2"
+                >
+                  <ChevronRightIcon className="h-5 w-5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Next image</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         )}
       </div>
 
