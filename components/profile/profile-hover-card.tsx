@@ -419,9 +419,6 @@ export function ProfileHoverCard({
             )}
           </div>
         ) : null}
-        <p className="mt-3 border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-gray-800">
-          ↓ Profile actions · Esc Close
-        </p>
       </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
