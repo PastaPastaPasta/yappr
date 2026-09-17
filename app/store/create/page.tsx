@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon, BuildingStorefrontIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
@@ -18,6 +18,7 @@ import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import type { SocialLink, ParsedPaymentUri, StorePolicy } from '@/lib/types'
 
 function CreateStorePage() {
+  const formId = useId()
   const router = useRouter()
   const searchParams = useSearchParams()
   const storeId = searchParams.get('id')
@@ -184,9 +185,10 @@ function CreateStorePage() {
               <h2 className="text-lg font-semibold">Store Information</h2>
 
               <div>
-                <label className="block text-sm font-medium mb-1">Store Name *</label>
+                <label htmlFor={`${formId}-name`} className="block text-sm font-medium mb-1">Store Name *</label>
                 <input
                   type="text"
+                  id={`${formId}-name`}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Your Store Name"
@@ -197,8 +199,9 @@ function CreateStorePage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">Description</label>
+                <label htmlFor={`${formId}-description`} className="block text-sm font-medium mb-1">Description</label>
                 <textarea
+                  id={`${formId}-description`}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Describe your store and what you sell"
@@ -254,9 +257,10 @@ function CreateStorePage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-1">Location</label>
+                  <label htmlFor={`${formId}-location`} className="block text-sm font-medium mb-1">Location</label>
                   <input
                     type="text"
+                    id={`${formId}-location`}
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
                     placeholder="City, Country"
@@ -265,8 +269,9 @@ function CreateStorePage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">Default Currency</label>
+                  <label htmlFor={`${formId}-currency`} className="block text-sm font-medium mb-1">Default Currency</label>
                   <select
+                    id={`${formId}-currency`}
                     value={defaultCurrency}
                     onChange={(e) => setDefaultCurrency(e.target.value)}
                     className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
