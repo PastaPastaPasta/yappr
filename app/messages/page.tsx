@@ -982,6 +982,7 @@ function MessagesPage() {
               >
                 <EmojiPicker
                   onEmojiSelect={(emoji) => setNewMessage(prev => prev + emoji)}
+                  onSelectionClose={() => messageInput.current?.focus()}
                   disabled={isSending}
                 />
 
