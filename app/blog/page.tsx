@@ -233,7 +233,7 @@ function BlogPageContent() {
               </button>
             </div>
 
-            <nav className="flex gap-1" role="tablist">
+            <nav className="grid grid-cols-4 gap-1" role="tablist">
               {tabs.map((tab) => (
                 <button
                   key={tab.key}
@@ -242,7 +242,7 @@ function BlogPageContent() {
                   aria-selected={activeTab === tab.key}
                   onClick={() => setActiveTab(tab.key)}
                   className={cn(
-                    'relative px-4 py-2.5 text-sm font-medium transition-colors max-[360px]:flex-1 max-[360px]:whitespace-nowrap max-[360px]:px-1 max-[360px]:text-xs',
+                    'relative min-w-0 break-words px-1 py-2.5 text-sm font-medium transition-colors',
                     activeTab === tab.key
                       ? 'text-gray-900 dark:text-white'
                       : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-300'
