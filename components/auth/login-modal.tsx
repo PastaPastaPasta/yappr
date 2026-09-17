@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useId } from 'react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { X, KeyRound, ChevronDown } from 'lucide-react'
 import { useAuth } from '@/contexts/auth-context'
@@ -23,6 +23,7 @@ import { KeyLoginForm } from './key-login-form'
  */
 export function LoginModal() {
   const router = useRouter()
+  const pathname = usePathname()
   const { isOpen, close } = useLoginModal()
   const { loginWithPasskey } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
@@ -47,10 +48,11 @@ export function LoginModal() {
   const handleClose = useCallback(() => {
     close()
     // If we're on /login, navigate away
-    if (typeof window !== 'undefined' && window.location.pathname === '/login') {
+    // Next's pathname omits the deployment base path; exports add a trailing slash.
+    if (pathname.replace(/\/+$/, '') === '/login') {
       router.push('/')
     }
-  }, [close, router])
+  }, [close, pathname, router])
 
   useEffect(() => {
     if (!isOpen) return

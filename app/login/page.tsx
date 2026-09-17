@@ -8,14 +8,14 @@ import { useLoginModal } from '@/hooks/use-login-modal'
 export default function LoginPage() {
   const router = useRouter()
   const { user } = useAuth()
-  const { open, isOpen } = useLoginModal()
+  const { open } = useLoginModal()
 
   // Open the login modal when this page loads
   useEffect(() => {
-    if (!user && !isOpen) {
+    if (!user) {
       open()
     }
-  }, [user, isOpen, open])
+  }, [user, open])
 
   // Redirect if already logged in
   useEffect(() => {
