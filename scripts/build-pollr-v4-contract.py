@@ -71,10 +71,6 @@ IDENTIFIER = {
     'contentMediaType': 'application/x.dash.dpp.identifier',
 }
 
-# Ballots stay free: a poll is worthless if voting costs a token, and the
-# structural one-entry-per-voter rule already caps the spam a ballot can do.
-BALLOT_TOKEN_COST = None
-
 
 def identifier(position, description, refers_to=None):
     prop = dict(IDENTIFIER)
@@ -142,6 +138,9 @@ def build(src):
     )
 
     # ---- vote (single choice) -----------------------------------------------
+    # Neither ballot doctype declares a `tokenCost`: a poll is worthless if
+    # voting costs a token, and the structural one-entry-per-voter rule already
+    # caps the spam a ballot can do.
     out['vote'] = {
         'type': 'object',
         'indexOnly': True,
@@ -208,10 +207,6 @@ def build(src):
         ),
         'additionalProperties': False,
     }
-
-    if BALLOT_TOKEN_COST is not None:  # pragma: no cover - documents the knob
-        for name in ('vote', 'multiVote'):
-            out[name]['tokenCost'] = {'create': {'tokenPosition': 0, 'amount': BALLOT_TOKEN_COST}}
 
     # Stable doctype order for reviewable diffs.
     return {name: out[name] for name in ('poll', 'vote', 'multiVote')}

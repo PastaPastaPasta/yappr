@@ -124,16 +124,15 @@ const CHOICE_ORDER = [['choice', 'asc']];
 // ---- Cases ------------------------------------------------------------------
 
 /** The indexOnly acceptance probe: does this voter's entry for (poll, choice) exist? */
-function entryExists(ctx, docType, pollId, who, choice) {
-  return ctx.battery
-    .queryDocs(docType, {
-      where: [
-        ['pollId', '==', pollId],
-        ['choice', '==', choice],
-        ['$ownerId', '==', who.ownerId],
-      ],
-    })
-    .then((docs) => docs.length > 0);
+async function entryExists(ctx, docType, pollId, who, choice) {
+  const entries = await ctx.battery.queryDocs(docType, {
+    where: [
+      ['pollId', '==', pollId],
+      ['choice', '==', choice],
+      ['$ownerId', '==', who.ownerId],
+    ],
+  });
+  return entries.length > 0;
 }
 
 /** Casts a ballot, deciding acceptance by readback on `byPollChoice`. */
@@ -159,9 +158,12 @@ function castBallot(ctx, docType, who, pollId, choice, { pollOwnerId, accepted }
  * polls: a concurrent voter on the same option would look like acceptance.
  */
 async function recastIdenticalBallot(ctx, docType, who, pollId, choice) {
-  const entries = () => ctx.battery
-    .queryDocs(docType, { where: [['pollId', '==', pollId], ['choice', '==', choice]] })
-    .then((docs) => docs.length);
+  const entries = async () => {
+    const docs = await ctx.battery.queryDocs(docType, {
+      where: [['pollId', '==', pollId], ['choice', '==', choice]],
+    });
+    return docs.length;
+  };
   const before = await entries();
   return castBallot(ctx, docType, who, pollId, choice, { accepted: async () => (await entries()) > before });
 }
@@ -294,8 +296,9 @@ async function caseP5Tallies(ctx) {
   battery.check('p5b multi-choice grouped count matches the selections cast', sameTally(multi, ctx.expectedMulti),
     `got=${showTally(multi)} want=${showTally(ctx.expectedMulti)}`);
 
+  const singleTotal = sumOf(single);
   battery.check('p5c the single-choice grouped total is the VOTER count (one ballot each)',
-    sumOf(single) === 3, `total=${sumOf(single)}`);
+    singleTotal === 3, `total=${singleTotal}`);
 
   const untouched = await tallyOf(ctx, 'vote', ctx.pollZ);
   battery.check('p5d a never-voted poll has no groups (count trees do not materialise empty branches)',
@@ -474,9 +477,9 @@ async function caseP10ReadSurfaces(ctx) {
     where: [['pollId', '==', ctx.pollM], ...CHOICE_IN, ['$ownerId', '==', voter.ownerId]],
     orderBy: CHOICE_ORDER,
   });
+  const onPollChoices = onPoll.map((doc) => Number(doc.choice)).sort((a, b) => a - b);
   battery.check('p10c the per-poll choice read (pollId ==, choice in [...], $ownerId ==) returns exactly my selections',
-    onPoll.map((doc) => Number(doc.choice)).sort((a, b) => a - b).join(',') === '0,2',
-    `choices=[${onPoll.map((doc) => Number(doc.choice)).join(',')}]`);
+    onPollChoices.join(',') === '0,2', `choices=[${onPollChoices.join(',')}]`);
   battery.workingShapes.push({
     label: 'my choices on one poll (byPollChoice)',
     shape: { documentTypeName: 'multiVote', where: [['pollId', '==', '<pollId>'], ['choice', 'in', [0, 1, 2]], ['$ownerId', '==', '<me>']], orderBy: [['choice', 'asc']] },
