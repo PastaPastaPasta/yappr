@@ -121,6 +121,70 @@ class TokenService {
   }
 
   /**
+   * Transfer `amount` YAPP to another identity, signing locally.
+   *
+   * Like every token transition this needs a CRITICAL auth key, so a
+   * wallet-login user (whose stored key is HIGH) gets NEEDS_CRITICAL_KEY
+   * without a broadcast; the UI then either collects one or hands the unsigned
+   * transition to the wallet (`buildUnsignedYappTipTransition`).
+   *
+   * `publicNote` is written verbatim into the token-history `transfer`
+   * document and signed along with the amount and the recipient.
+   */
+  async transfer(
+    senderId: string,
+    recipientId: string,
+    amount: bigint,
+    publicNote?: string,
+    criticalKeyWif?: string
+  ): Promise<TokenResult> {
+    try {
+      const sdk = await getEvoSdk();
+      const { signer, identityKey } = await this.getAuthSigner(senderId, {
+        requireCritical: true,
+        overrideWif: criticalKeyWif,
+      });
+
+      await sdk.tokens.transfer({
+        dataContractId: new Identifier(YAPPR_CONTRACT_ID),
+        tokenPosition: YAPP_TOKEN_POSITION,
+        senderId: new Identifier(senderId),
+        recipientId: new Identifier(recipientId),
+        amount,
+        publicNote,
+        identityKey,
+        signer,
+      } as Parameters<typeof sdk.tokens.transfer>[0]);
+
+      return { success: true };
+    } catch (error) {
+      return this.toResult(error, 'Transfer failed');
+    }
+  }
+
+  /**
+   * Whether the key this browser holds for `identityId` is a CRITICAL
+   * authentication key — i.e. whether a token transition can be signed here at
+   * all, or has to go out to a wallet. Answered without broadcasting anything;
+   * any failure (no stored key, identity unreachable) answers false, which
+   * only ever routes the user to the wallet path.
+   */
+  async canSignTokenTransitions(identityId: string): Promise<boolean> {
+    try {
+      const { getPrivateKey } = await import('../secure-storage');
+      const wif = getPrivateKey(identityId)?.trim();
+      if (!wif) return false;
+      const sdk = await getEvoSdk();
+      const identity = await sdk.identities.fetch(identityId);
+      if (!identity) return false;
+      return this.findMatchingAuthKey(wif, identity.publicKeys, [SecurityLevel.CRITICAL]) !== null;
+    } catch (error) {
+      logger.debug('tokenService: critical-key probe failed', error);
+      return false;
+    }
+  }
+
+  /**
    * Freeze an identity's YAPP balance (moderation — blocks posting + transfers).
    * Signed by the token authority (contract owner) identity.
    */

@@ -33,6 +33,21 @@ export const STOREFRONT_YAPP_TOKEN_COSTS = {
   storeReview: 3,
   itemReview: 1,
 } as const
+// ---- tips (YAPP token transfers) — owned by the tips work, edit here only ----
+// The SYSTEM token-history contract. Platform writes one `transfer` document
+// into it for every transfer of a token whose config sets
+// `keepsTransferHistory` (YAPP does), owned by the sender and carrying the
+// exact amount, the recipient and the sender's `publicNote`. That document IS
+// the tip proof — see docs/TIPS_YAPP.md.
+//
+// System contracts share an id across chains, so this is hardcoded; overridable
+// all the same for a devnet genesised with a different registration.
+export const TOKEN_HISTORY_CONTRACT_ID =
+  process.env.NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID ?? '43gujrzZgXqcKBiScLa4T8XTDnRhenR9BLx8GWVHjPxF'
+/** Minimum YAPP per tip. Whole tokens (YAPP has decimals=0). */
+export const MIN_YAPP_TIP = BigInt(1)
+// ---- end tips block ----
+
 export const YAPPR_PROFILE_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID || 'FZSnZdKsLAuWxE7iZJq12eEz6xfGTgKPxK7uZJapTQxe' // Unified profile contract
 // Optional contracts use ?? (not ||) so a deployment can EXPLICITLY BLANK one
 // (e.g. .env.devnet sets them empty until devnet copies are provisioned): the

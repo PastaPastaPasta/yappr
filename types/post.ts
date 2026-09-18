@@ -1,16 +1,6 @@
 import type { TargetKind } from '@/lib/contract-topology'
 import type { User } from './user'
 
-// Tip metadata parsed from post content (format: tip:CREDITS\nmessage)
-// NOTE: Amount is currently self-reported and unverified.
-// TODO: Once SDK exposes transition IDs, format will become tip:CREDITS@TRANSITION_ID
-// which will allow on-chain verification of tip amounts.
-export interface TipInfo {
-  amount: number        // Tip amount in credits (self-reported, unverified)
-  message: string       // The tip message (content after the tip: line)
-  transitionId?: string // Future: will be used for on-chain verification
-}
-
 export interface Media {
   id: string
   type: 'image' | 'video' | 'gif'
@@ -63,7 +53,6 @@ export interface Post {
   embedContractId?: string // base58 contract id the embedded document lives on
   embedDocType?: string    // document type name on that contract (e.g. 'poll')
   embedId?: string         // base58 id of the embedded document
-  tipInfo?: TipInfo     // Populated if this post is a tip (parsed from content)
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
   repostedBy?: { id: string; username?: string; displayName?: string }  // If this is a repost, who reposted it
   repostTimestamp?: Date  // When the repost was created (for timeline sorting)

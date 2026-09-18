@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
+import { PostTips } from '@/components/post/post-tips'
 import { ReplyThreadItem, flattenReplyThreads } from '@/components/post/reply-thread'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
@@ -161,6 +162,9 @@ function PostDetailContent() {
             <div className="border-b border-gray-200 dark:border-gray-800">
               <PostCard post={post} enrichment={postEnrichment} rootPostOwnerId={rootPostOwnerId} />
             </div>
+
+            {/* Proved YAPP tips on this post — one token-history read, detail view only */}
+            <PostTips postId={post.id} authorId={post.author.id} />
 
             {user ? (
               isCheckingAccess ? (
