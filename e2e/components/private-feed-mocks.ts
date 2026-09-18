@@ -8,16 +8,26 @@ const EXPECTED_WIF = 'cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87JcbXMTcA'
 // WIF for public scalar 2, standing in for a key left behind by an earlier session.
 const STALE_WIF = 'cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87K7XCyj5v'
 const storageKey = scopedKey(`yappr_secure_ek_${DUMMY_IDENTITY}`)
-const scenario = new URLSearchParams(window.location.search).get('scenario')
+const params = new URLSearchParams(window.location.search)
+const scenario = params.get('scenario')
+// The sibling Requests/Followers panels are only mounted (and only given data) for the
+// panel-refresh cases, so the key-persistence cases keep their exact call counts.
+export const showSiblingPanels = params.get('panels') === '1'
+export const REQUEST_ID = 'component-test-request'
+export const REQUESTER_ID = 'component-test-requester'
+export const FOLLOWER_ID = 'component-test-follower'
 const user = { identityId: DUMMY_IDENTITY }
 const state = {
-  enabled: false,
+  enabled: params.get('enabled') === '1',
   statusReads: 0,
   enableCalls: 0,
   storageWriteFailures: 0,
   vaultCalls: 0,
   vaultHadLocalKey: false,
   vaultReceivedCanonicalKey: false,
+  requestLoads: 0,
+  followerLoads: 0,
+  revokeCalls: 0,
 }
 
 // The stale-key scenario seeds a different key for this identity first, so the swallowed
@@ -73,8 +83,32 @@ export const privateFeedService = {
     return { success: true }
   },
   getLatestEpoch: async () => 1,
-  getPrivateFollowers: async () => [],
+  hasPrivateFeed: async () => state.enabled,
+  getPrivateFollowers: async () => {
+    state.followerLoads += 1
+    // The grant stays queryable after a revoke on purpose: revokeFollower tolerates an
+    // unconfirmed grant deletion, so a reload must not be able to resurrect the follower.
+    return showSiblingPanels && state.enabled
+      ? [{ recipientId: FOLLOWER_ID, leafIndex: 0, grantedAt: 1700000000000 }]
+      : []
+  },
+  revokeFollower: async () => {
+    state.revokeCalls += 1
+    return { success: true }
+  },
 }
+export const privateFeedFollowerService = {
+  getFollowRequestsForOwner: async () => {
+    state.requestLoads += 1
+    // Likewise on chain and therefore returned by every reload, ignored or not.
+    return showSiblingPanels && state.enabled
+      ? [{ $id: REQUEST_ID, $ownerId: REQUESTER_ID, $createdAt: 1700000000000 }]
+      : []
+  },
+}
+export const resolveUserDetailsBatch = async (identityIds: string[]) =>
+  new Map(identityIds.map(id => [id, { id, displayName: `User ${id.slice(-6)}`, hasDpns: false }]))
+export const UserAvatar = () => null
 export const privateFeedKeyStore = { hasFeedSeed: () => false, getRecipientMap: () => ({}) }
 export const identityService = { hasEncryptionKey: async () => true }
 export const validateEncryptionKey = async () => ({

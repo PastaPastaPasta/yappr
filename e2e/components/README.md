@@ -22,3 +22,11 @@ vault merge while the local key remains available. Each verifies refreshed
 enabled UI, the correct success/warning toasts, and absence of a misleading
 "Failed to enable private feed" toast. The storage failure affects only the
 synthetic encryption-key entry; storage availability checks still succeed.
+
+`private-feed-panel-refresh.spec.ts` adds `?panels=1`, which also mounts
+`PrivateFeedFollowRequests` and `PrivateFeedFollowers` so the shared refresh store
+is exercised across panels. Those cases assert that enabling the feed reloads both
+siblings, and that an ignored request and a revoked follower stay hidden after a
+later refresh even though the mocked chain keeps returning both records — which is
+what the real chain does while a deletion is not yet query-visible. The extra
+panels are off by default so the key-persistence cases keep their exact call counts.

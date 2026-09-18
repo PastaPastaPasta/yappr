@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -43,6 +43,17 @@ export function PrivateFeedFollowers() {
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
   const refreshKey = usePrivateFeedRefreshStore((s) => s.refreshKey)
+  const triggerRefresh = usePrivateFeedRefreshStore((s) => s.triggerRefresh)
+  // A revoked follower is cryptographically cut off the moment the rekey lands, but the
+  // grant deletion may not be query-visible yet (and revokeFollower deliberately reports
+  // success even when it fails outright). Re-hide them on every reload instead of letting
+  // the shared refresh resurrect them.
+  const revokedFollowerIds = useRef(new Set<string>())
+
+  // Revocations are scoped to the signed-in identity; another account starts clean.
+  useEffect(() => {
+    revokedFollowerIds.current = new Set()
+  }, [user?.identityId])
 
   const loadFollowers = useCallback(async () => {
     if (!user?.identityId) {
@@ -64,7 +75,8 @@ export function PrivateFeedFollowers() {
       }
 
       // Get all private followers
-      const grants = await privateFeedService.getPrivateFollowers(user.identityId)
+      const grants = (await privateFeedService.getPrivateFollowers(user.identityId))
+        .filter((grant) => !revokedFollowerIds.current.has(grant.recipientId))
 
       if (grants.length === 0) {
         setFollowers([])
@@ -142,8 +154,10 @@ export function PrivateFeedFollowers() {
       )
 
       if (result.success) {
-        // Remove from local state
+        // Remove from local state, and keep them out of subsequent reloads
+        revokedFollowerIds.current.add(follower.id)
         setFollowers((prev) => prev.filter((f) => f.id !== follower.id))
+        triggerRefresh()
         toast.success(
           `Revoked access for ${follower.username ? `@${follower.username}` : follower.displayName}`
         )
