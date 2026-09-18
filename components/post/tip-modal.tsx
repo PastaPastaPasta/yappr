@@ -54,6 +54,42 @@ type ModalState =
 type PaymentTab = 'yapp' | 'credits' | 'crypto'
 type KeySource = 'prefilled' | 'manual' | null
 
+// Only these steps retitle the modal; every other one is still "Send Tip".
+const MODAL_TITLES: Partial<Record<ModalState, string>> = {
+  success: 'Tip Sent!',
+  error: 'Transfer Failed',
+}
+
+interface AmountPresetsProps {
+  presets: number[]
+  /** Unit shown on each chip, e.g. "YAPP" or "DASH". */
+  unit: string
+  /** The amount currently in the input, as typed. */
+  value: string
+  onSelect: (preset: string) => void
+}
+
+/** The row of quick-pick amount chips, shared by the YAPP and DASH tabs. */
+function AmountPresets({ presets, unit, value, onSelect }: AmountPresetsProps) {
+  return (
+    <div className="flex gap-2 overflow-x-auto">
+      {presets.map((preset) => (
+        <button
+          key={preset}
+          onClick={() => onSelect(preset.toString())}
+          className={`px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
+            value === preset.toString()
+              ? 'bg-amber-500 text-white'
+              : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+          }`}
+        >
+          {preset} {unit}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function TipModal() {
   const { isOpen, post, recipient, close } = useTipModal()
   const { user, refreshBalance, mergeSecretsIntoAuthVault } = useAuth()
@@ -175,6 +211,9 @@ export function TipModal() {
   }, [isOpen])
 
   const yappAmountBig = /^\d+$/.test(yappAmount) ? BigInt(yappAmount) : BigInt(0)
+  // The text that rides along in the tip note, normalised once: the note that
+  // gets signed and the match used to find it again must never disagree.
+  const noteMessage = tipMessage.trim() || undefined
 
   const handleAmountChange = (value: string) => {
     // Only allow valid decimal numbers with up to 8 decimal places
@@ -273,44 +312,46 @@ export function TipModal() {
       recipientInfo.id,
       yappAmountBig,
       tipTarget,
-      tipMessage.trim() || undefined,
+      noteMessage,
       enteredKey || undefined
     )
 
-    if (result.success) {
-      setCriticalKeyWif('')
-      finishYappTip()
-    } else if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
+    if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
+      // The only branch that keeps the entered key: the user stays on the key
+      // screen to correct it in place.
       setError(enteredKey ? "That key doesn't match a critical key on your identity. Check it and try again." : null)
       setShowKeyEntry(Boolean(enteredKey))
       setState('needKey')
+      return
+    }
+
+    // Leaving the key-entry flow — drop the entered key so a later action can't
+    // silently sign with it without the user re-confirming.
+    setCriticalKeyWif('')
+
+    if (result.success) {
+      finishYappTip()
     } else if (result.errorCode === 'UNCONFIRMED') {
       // Broadcast went out, the proof has not shown up yet. Never offer a plain
       // retry here — a second press would move the money twice.
-      setCriticalKeyWif('')
       setError(result.error ?? null)
       setState('unconfirmed')
     } else {
-      setCriticalKeyWif('')
       setState('error')
       setError(result.error || 'Tip failed')
     }
   }
 
   /**
-   * Re-ask the chain whether a tip we could not confirm has landed. Used by
-   * both the "couldn't confirm" screen and the expired QR, so neither offers a
-   * fresh send before checking whether the first one settled.
+   * Re-ask the chain whether a tip we could not confirm has landed.
+   *
+   * Deliberately no time floor, unlike the wallet path's own match: if the
+   * chain's clock ran behind ours the tip is real but sits before the moment
+   * we sent it, and a floor would hide it.
    */
-  const recheckTip = useCallback(async (since?: number) => {
+  const recheckTip = useCallback(async () => {
     if (!user || !recipientInfo) return false
-    const match = tipService.tipMatch(
-      recipientInfo.id,
-      yappAmountBig,
-      tipTarget,
-      tipMessage.trim() || undefined,
-      since
-    )
+    const match = tipService.tipMatch(recipientInfo.id, yappAmountBig, tipTarget, noteMessage)
     const result = await tipService.confirmYappTip(user.identityId, match)
     if (result.success) {
       finishYappTip()
@@ -318,26 +359,20 @@ export function TipModal() {
     }
     setError(result.error ?? null)
     return false
-  }, [user, recipientInfo, yappAmountBig, tipTarget, tipMessage, finishYappTip])
-
-  const handleRecheck = () => {
-    setState('confirming-landed')
-    recheckTip()
-      .then(landed => { if (!landed) setState('unconfirmed') })
-      .catch(err => { logger.error('Tip re-check failed:', err); setState('unconfirmed') })
-  }
+  }, [user, recipientInfo, yappAmountBig, tipTarget, noteMessage, finishYappTip])
 
   /**
-   * The QR's window ran out. Before offering a fresh signing request — which
-   * the user could scan into a SECOND transfer — check whether the first one
-   * actually landed. No time floor: if the chain's clock ran behind ours the
-   * tip is real but sits before `since`.
+   * Ask the chain first, act second. Both "check again" buttons go through
+   * here, so neither the "couldn't confirm" screen nor the expired QR — which
+   * the user could scan into a SECOND transfer — offers a fresh send before
+   * the first one has been ruled out. `onStillMissing` runs only when no proof
+   * turned up.
    */
-  const handleWalletRecheck = () => {
+  const checkTipLanded = (onStillMissing: () => void) => {
     setState('confirming-landed')
     recheckTip()
-      .then(landed => { if (!landed) { setError(null); startWalletSign() } })
-      .catch(err => { logger.error('Wallet tip re-check failed:', err); startWalletSign() })
+      .then(landed => { if (!landed) onStillMissing() })
+      .catch(err => { logger.error('Tip re-check failed:', err); onStillMissing() })
   }
 
   // Leave the dash-st: QR screen. Bumping the generation counter discards any
@@ -377,14 +412,14 @@ export function TipModal() {
         recipientInfo.id,
         yappAmountBig,
         tipTarget,
-        tipMessage.trim() || undefined,
+        noteMessage,
         Date.now() - CLOCK_SKEW_MARGIN_MS
       )
       const bytes = await buildUnsignedYappTipTransition(
         user.identityId,
         recipientInfo.id,
         yappAmountBig,
-        tipService.tipNoteFor(tipTarget, tipMessage.trim() || undefined)
+        tipService.tipNoteFor(tipTarget, noteMessage)
       )
       if (walletSessionRef.current !== session) return
       setWalletUri(buildYapprStateTransitionUri(bytes, getConfiguredNetwork()))
@@ -440,12 +475,11 @@ export function TipModal() {
     const dashAmount = parseFloat(amount)
     const credits = tipService.dashToCredits(dashAmount)
 
-    const keyToUse = transferKey
     if (keySource === 'manual') {
-      usedTransferKeyRef.current = keyToUse
+      usedTransferKeyRef.current = transferKey
     }
 
-    const result = await tipService.sendTip(user.identityId, recipientInfo.id, credits, keyToUse)
+    const result = await tipService.sendTip(user.identityId, recipientInfo.id, credits, transferKey)
 
     // Clear sensitive data from input immediately
     setTransferKey('')
@@ -537,6 +571,37 @@ export function TipModal() {
   const recipientName = recipientInfo.displayName || recipientInfo.username || 'this user'
   const amountLabel = isYapp ? `${yappAmountBig.toString()} YAPP` : `${dashAmount} DASH`
 
+  // The confirm step's primary action: which tab is open, and for YAPP whether
+  // this browser can sign a token transition at all or has to ask the wallet.
+  function confirmAction() {
+    if (!isYapp) {
+      return (
+        <Button onClick={handleSendTip} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">
+          Confirm &amp; Send
+        </Button>
+      )
+    }
+    if (canSignLocally === null) {
+      return (
+        <Button disabled className="flex-1 bg-amber-500 text-white">
+          Checking your keys…
+        </Button>
+      )
+    }
+    if (canSignLocally) {
+      return (
+        <Button onClick={handleSendYappTip} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">
+          Confirm &amp; Send
+        </Button>
+      )
+    }
+    return (
+      <Button onClick={startWalletSign} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">
+        Sign with wallet
+      </Button>
+    )
+  }
+
   const tabClass = (tab: PaymentTab) =>
     `flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
       activeTab === tab
@@ -549,7 +614,7 @@ export function TipModal() {
     <Modal open={isOpen} onOpenChange={handleClose} className="w-[420px] max-w-[90vw]">
                 <ModalTitle className="mb-4">
                   <CurrencyDollarIcon className="h-6 w-6 text-amber-500" />
-                  {state === 'success' ? 'Tip Sent!' : state === 'error' ? 'Transfer Failed' : 'Send Tip'}
+                  {MODAL_TITLES[state] ?? 'Send Tip'}
                 </ModalTitle>
 
                 <Dialog.Description className="sr-only">
@@ -620,21 +685,12 @@ export function TipModal() {
                           />
                         </div>
 
-                        <div className="flex gap-2 overflow-x-auto">
-                          {YAPP_PRESETS.map((preset) => (
-                            <button
-                              key={preset}
-                              onClick={() => { setYappAmount(preset.toString()); setError(null) }}
-                              className={`px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
-                                yappAmount === preset.toString()
-                                  ? 'bg-amber-500 text-white'
-                                  : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
-                              }`}
-                            >
-                              {preset} YAPP
-                            </button>
-                          ))}
-                        </div>
+                        <AmountPresets
+                          presets={YAPP_PRESETS}
+                          unit="YAPP"
+                          value={yappAmount}
+                          onSelect={(preset) => { setYappAmount(preset); setError(null) }}
+                        />
 
                         <div>
                           <label htmlFor="tip-yapp-message" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -702,22 +758,12 @@ export function TipModal() {
                           />
                         </div>
 
-                        {/* Preset amounts */}
-                        <div className="flex gap-2 overflow-x-auto">
-                          {PRESET_AMOUNTS.map((preset) => (
-                            <button
-                              key={preset}
-                              onClick={() => { setAmount(preset.toString()); setError(null) }}
-                              className={`px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
-                                amount === preset.toString()
-                                  ? 'bg-amber-500 text-white'
-                                  : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
-                              }`}
-                            >
-                              {preset} DASH
-                            </button>
-                          ))}
-                        </div>
+                        <AmountPresets
+                          presets={PRESET_AMOUNTS}
+                          unit="DASH"
+                          value={amount}
+                          onSelect={(preset) => { setAmount(preset); setError(null) }}
+                        />
 
                         {/* Transfer key input */}
                         <div>
@@ -848,28 +894,7 @@ export function TipModal() {
                       >
                         Back
                       </Button>
-                      {isYapp ? (
-                        canSignLocally === null ? (
-                          <Button disabled className="flex-1 bg-amber-500 text-white">
-                            Checking your keys…
-                          </Button>
-                        ) : canSignLocally ? (
-                          <Button onClick={handleSendYappTip} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">
-                            Confirm &amp; Send
-                          </Button>
-                        ) : (
-                          <Button onClick={startWalletSign} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">
-                            Sign with wallet
-                          </Button>
-                        )
-                      ) : (
-                        <Button
-                          onClick={handleSendTip}
-                          className="flex-1 bg-amber-500 hover:bg-amber-600 text-white"
-                        >
-                          Confirm &amp; Send
-                        </Button>
-                      )}
+                      {confirmAction()}
                     </div>
 
                     {isYapp && canSignLocally && (
@@ -967,7 +992,7 @@ export function TipModal() {
                           If your wallet already broadcast it, your balance will update shortly. Otherwise check again
                           for a fresh request.
                         </p>
-                        <Button onClick={handleWalletRecheck} className="w-full">
+                        <Button onClick={() => checkTipLanded(startWalletSign)} className="w-full">
                           Check again
                         </Button>
                       </div>
@@ -1017,7 +1042,7 @@ export function TipModal() {
                       <Button onClick={close} variant="outline" className="flex-1">
                         Close
                       </Button>
-                      <Button onClick={handleRecheck} className="flex-1">
+                      <Button onClick={() => checkTipLanded(() => setState('unconfirmed'))} className="flex-1">
                         Check again
                       </Button>
                     </div>
