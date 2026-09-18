@@ -1,20 +1,41 @@
 # Pollr contract v4
 
-Registered on moutai 2026-09-17 as `HRuWcjcGVmhDZV63SWWqRKdorGuVMKGeC7VqU9rYHFZK`
-(a throwaway battery registration owned by seed persona 232 — the maker persona
-260 had been drained by the other feature re-cuts that day; the deployment maker
-can re-publish the same JSON at the next full re-provision). Built by
-`scripts/build-pollr-v4-contract.py` from the v3 file, published by
-`scripts/register-feature-contract.mjs`, verified live by
-`scripts/verify-pollr-v4.mjs` (40 checks, all passing). Protocol 14, Platform
-4.2.0-beta.1 or later.
+**Not currently deployed.** The 2026-09-17 registration
+(`HRuWcjcGVmhDZV63SWWqRKdorGuVMKGeC7VqU9rYHFZK`, 40/40 battery checks) went with
+the moutai wipe, and the JSON has since been re-cut for **4.2.0-beta.2** — see
+"beta.2 re-cut" below. Built by `scripts/build-pollr-v4-contract.py` from the v3
+file, published by `scripts/register-feature-contract.mjs`, verified live by
+`scripts/verify-pollr-v4.mjs`. Protocol 14, Platform 4.2.0-beta.2 or later.
+
+## beta.2 re-cut
+
+beta.2 lets a `propertyAgreement` name the referenced document's `$ownerId`, so
+ballots bind to the identity that actually signed the poll:
+
+- **`vote.pollId` / `multiVote.pollId` agree `{pollOwnerId: "$ownerId"}`**,
+  not `{pollOwnerId: "author"}`.
+- **`poll.author` is gone**, and with it the whole "attested author, and the
+  gap" section this document used to carry: the flag (`Poll.authorIsOwner`),
+  the client refusal built on it, and the battery case that documented a forged
+  poll landing. There is nothing left to forge.
+- `byPollOwner` stays preallocatable — a referenced document determines its own
+  `$ownerId` exactly as it determined `author` — and `COUNT_AND_RANK` drops the
+  `countable` key `rangeCountable` now implies.
+
+A side effect worth keeping: the v4 poll payload is byte-identical to v3's
+again, so battery case p7's preallocation measurement is the ballot trees
+alone, with no payload difference mixed in.
 
 **The standalone Pollr app needs the same cut.** The testnet contract
 (`GBCR8Jqt…`) is externally owned and is what
 `https://pastapastapasta.github.io/pollr` reads; only the devnet clone is ours.
 This JSON is the source of record for that re-cut, and the app's own repo
 (`PastaPastaPasta/pollr`) has to publish it and adopt the write/read shapes
-below before a shared testnet v4 exists.
+below before a shared testnet v4 exists. The beta.2 re-cut makes that easier,
+not harder: a v4 poll is now written exactly like a v3 one, so the standalone
+app's poll-create path needs no change at all — only its ballot path does.
+`scripts/verify-poll-interop.mjs`, which creates polls without an `author`,
+works against a v4 contract again for the same reason.
 
 ## What changed and why
 
@@ -26,8 +47,8 @@ use.
 
 | Doctype | v4 change | Serves |
 | --- | --- | --- |
-| `poll` | `canBeDeleted: false`; required poster-attested `author` | permanentDocument target; the agreement source for `pollOwnerId` |
-| `vote` | indexOnly; `pollId` refersTo poll with `{pollOwnerId: author}`; `byPoll` structural single ballot (preallocated); `byPollChoice` count + ranked; `byPollOwner` (preallocated); `byVoterChoice` | body-less flat-priced ballots, ghost-poll rejection, O(log n) winner, "my votes", "votes on my polls" |
+| `poll` | `canBeDeleted: false` | permanentDocument target; its `$ownerId` is the agreement source for `pollOwnerId` |
+| `vote` | indexOnly; `pollId` refersTo poll with `{pollOwnerId: '$ownerId'}`; `byPoll` structural single ballot (preallocated); `byPollChoice` count + ranked; `byPollOwner` (preallocated); `byVoterChoice` | body-less flat-priced ballots, ghost-poll rejection, O(log n) winner, "my votes", "votes on my polls" |
 | `multiVote` | the same, minus any `[pollId]`-terminating index: `byPollChoice`, `byPollOwnerChoice`, `byVoterChoice` | one entry per (poll, voter, choice) |
 
 Ballots stay free — v4 declares no `tokenCost`. Structural uniqueness already
@@ -36,10 +57,10 @@ make polls useless.
 
 The client selects the topology with `NEXT_PUBLIC_POLLR_TOPOLOGY=v4`
 (`POLLR_TOPOLOGY` in `lib/constants.ts`). On `v3` (the default, matching the
-testnet contract) nothing changes. The two are incompatible in both directions:
-a v4 poll carries `author`, which v3's `additionalProperties: false` refuses,
-and a v4 ballot carries no `$createdAt`, which v3 requires — so the switch must
-match the deployed contract.
+testnet contract) nothing changes. The two are still incompatible: a v4 ballot
+carries no `$createdAt`, which v3 requires, and a v3 ballot's `pollOwnerId` is
+unchecked where v4's is consensus-bound — so the switch must match the deployed
+contract. (The v4 poll payload itself is now identical to v3's.)
 
 ## Single-choice is structural now
 
@@ -67,20 +88,21 @@ terminal `$ownerId` would make a voter's second selection a duplicate, so
 *distinct voters* on a multi-choice poll — one that did would cap a voter at a
 single selection. v3 had the same limitation.
 
-## Attested author, and the gap
+## Whose poll it is, settled by consensus
 
-`propertyAgreement` binds user properties, never `$ownerId`. So the creator
-writes `author` into their own poll, consensus forces every ballot on that poll
-to carry the same value as `pollOwnerId`, and the app decides:
+Every ballot must carry the poll's own `$ownerId` in `pollOwnerId`:
 
-- a poll is **genuine** when `poll.author == poll.$ownerId`
-  (`Poll.authorIsOwner`);
-- a ballot must carry `poll.author`, not `poll.$ownerId` — on a poll where they
-  differ, sending the owner is rejected with 40127.
+```
+the document's pollOwnerId does not agree with the referenced document's
+$ownerId (propertyAgreement on pollId)                            [40127]
+```
 
-The battery's p1d documents the gap: a poll naming someone else as its author
-lands. `pollrVoteService.castVote` refuses to vote on one, so a forged poll
-cannot file ballots under the impersonated creator's "votes on my polls".
+`$ownerId` is assigned from the signature, so "votes on my polls"
+(`byPollOwner`) cannot be filed under anyone but the real creator, and the
+client simply sends `poll.ownerId`. On beta.1 the agreement could only name a
+user property, so the poll carried an attested `author`; a poll naming someone
+else was accepted (old battery case p1d) and `castVote` had to refuse to vote
+on one. Both are gone.
 
 ## No `$createdAt` anywhere
 
@@ -91,7 +113,7 @@ is never assigned. Two consequences:
   tuple; social-contract likes need the consensus `$createdAt` recovered from a
   time-carrying index projection first. A v4 ballot's tuple is just
   `{pollId, choice, pollOwnerId}` — `choice` off the `byPollChoice` projection,
-  `pollOwnerId` off the referenced poll's `author`. (An indexOnly projection
+  `pollOwnerId` off the referenced poll's `$ownerId`. (An indexOnly projection
   only carries what its own index path holds, which is why `pollOwnerId` is not
   in it.)
 - **No vote history.** "Recent votes", "trending polls today" and v3's
@@ -149,9 +171,11 @@ sdk.documents.query({ dataContractId, documentTypeName: 'vote', where: [['pollOw
    the `rankedCountable: {at: […]}` form, which `vote` cannot use (rule 2 —
    `byPoll` terminates at the `at` level). The client sums the grouped tally,
    which it needs for the bars anyway.
-4. **`rankedCountable` needs `countable` and `rangeCountable` spelled out** —
-   the sugar is not expanded before the dependency check, so the offline
-   validator accepts what registration refuses (dashpay/platform#4809).
+4. **`rankedCountable` needs `rangeCountable` spelled out** — the sugar is not
+   expanded before the dependency check, so the offline validator accepts what
+   registration refuses (dashpay/platform#4809). `countable` is the exception
+   since beta.2: `rangeCountable: true` implies it in the meta-schema and in the
+   structural parser alike.
 5. **A terminal must be `$ownerId` or a refersTo identifier.** `choice` is an
    integer, so no index can be keyed (poll, voter) → choice; "my choices on a
    poll" is the `choice in [...]` walk above rather than a direct lookup.
@@ -189,4 +213,6 @@ over a knowingly wrong total are worse than an error with a retry.
   full tally, so nothing calls it yet; it is there for a future "winner" or
   leaderboard surface that does not want to page every option.
 - Consensus-enforced `endsAt`. Still advisory; clients refuse late ballots.
-- Consensus-bound poll authorship (see "the gap").
+- `immutable` lists anywhere. `poll` is already `documentsMutable: false` and
+  the ballots are indexOnly, so every property on this contract is frozen
+  already; the keyword is only allowed on a mutable doctype.

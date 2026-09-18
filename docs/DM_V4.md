@@ -1,26 +1,47 @@
 # DM contract v4
 
-Registered on moutai 2026-09-17 as `BSLkjKCbqCs4S7nUAYz9io658Pv3fEcUXWwTudfhZbef`
-(a throwaway battery registration owned by a seed persona; the deployment maker
-can re-publish the same JSON when the next full re-provision happens). Built by
-`scripts/build-dm-v4-contract.py` from the deployed v3 file, published by
-`scripts/register-feature-contract.mjs`, verified live by
-`scripts/verify-dm-v4.mjs` (25 checks, all passing). Protocol 14, Platform
-4.2.0-beta.1 or later.
+**Not currently deployed.** The 2026-09-17 registration
+(`BSLkjKCbqCs4S7nUAYz9io658Pv3fEcUXWwTudfhZbef`, 25/25 battery checks) went with
+the moutai wipe, and the JSON has since been re-cut for **4.2.0-beta.2** — see
+"beta.2 re-cut" below. Built by `scripts/build-dm-v4-contract.py` from the
+deployed v3 file, published by `scripts/register-feature-contract.mjs`, verified
+live by `scripts/verify-dm-v4.mjs`. Protocol 14, Platform 4.2.0-beta.2 or later.
+
+## beta.2 re-cut
+
+Still the smallest re-cut in the set, and still free. Every doctype gains an
+`immutable` list naming the properties the client never edits, and the
+`conversation` index drops the `countable` key `rangeCountable` now implies.
+
+`immutable` is a doctype keyword checked when a REPLACE is validated. It adds no
+storage and no work to the create path every message takes, so DM writes cost
+exactly what they cost before — which is the whole reason this is the one beta.2
+feature DMs adopt.
+
+| Doctype | frozen | why it is the right call here |
+| --- | --- | --- |
+| `conversationInvite` | `recipientId`, `conversationId`, `senderPubKey` | nothing replaces an invite; `senderPubKey` is listed plain, not allow-setting, because the key belongs to the invite's moment |
+| `directMessage` | `conversationId`, `encryptedContent` | a sent message is never edited, and freezing `conversationId` stops a replace re-keying its count-tree entry into another conversation |
+| `readReceipt` | `conversationId` | the case that earns the keyword: `markAsRead` replaces the receipt purely to move `$updatedAt`, and freezing its only property makes that the only thing a replace CAN do |
+
+Deliberately NOT adopted: no `refersTo` or `propertyAgreement` on
+`directMessage`/`readReceipt`. Both would add a read per write to the hottest
+path on this contract. Key exchange stays on v2 for the same reason — indexOnly
+measured +42% fees there.
 
 ## What changed and why
 
 **DMs must stay cheap.** That constraint, not a lack of ideas, is what makes
 this the smallest re-cut in the set: two additive flags, no new doctypes, no
 ranked or timeRange indexes, no indexOnly rewrite, no token costs, and
-`readReceipt` untouched. A message write costs what it cost on v3 plus the one
-extra count-tree branch the `countable` flag maintains.
+`readReceipt`'s storage untouched. A message write costs what it cost on v3 plus
+the one extra count-tree branch the count flag maintains.
 
 | Doctype | v4 change | Serves |
 | --- | --- | --- |
 | `conversationInvite` | `recipientId` refersTo `{type: identity}` | a ghost recipient is refused at write time (40120) instead of becoming a permanently undeliverable inbox row |
-| `directMessage` | `conversation [conversationId, $createdAt]` gains `countable` + `rangeCountable` | per-conversation totals and "unread since my read receipt" as O(1) counts |
-| `readReceipt` | none | — |
+| `directMessage` | `conversation [conversationId, $createdAt]` gains `rangeCountable` (which implies `countable`) | per-conversation totals and "unread since my read receipt" as O(1) counts |
+| `readReceipt` | `immutable [conversationId]` | a replace can only move `$updatedAt` |
 
 v3 paid for the unread badge with bandwidth: the conversation list downloaded a
 100-message page **per conversation** and counted in JS, decrypting nothing but
@@ -145,8 +166,9 @@ Two lifecycle details the badge depends on:
    `mapLimit(…, 6)` instead. The IN-only grouped count (no range) **is** proved
    and correct.
 2. **A contract-bound ENCRYPTION key cannot be pre-registered.** See below.
-3. Spell `countable` and `rangeCountable` out literally rather than relying on
-   meta-schema sugar — same reason as `docs/STOREFRONT_V2.md` gotcha 1.
+3. Since beta.2 `rangeCountable: true` implies `countable: "countable"`, so the
+   index spells only the former. The `ranked*` flags still need their own axis
+   spelled out literally — see `docs/STOREFRONT_V2.md` gotcha 1.
 4. The battery is re-runnable only because conversation ids are salted per run.
    `conversationInvite.senderAndRecipient` is unique on `[$ownerId, recipientId]`
    with no `conversationId`, so a pair gets exactly **one** invite ever; the
@@ -190,4 +212,6 @@ the battery and never fails it, since nothing in v4 depends on the outcome.
   `keyIdProperty` to bind. It would need a schema change, not a flag.
 - A `countable` flag on `conversationInvite.inbox` (a "new conversations since
   t" badge); not needed by any current surface.
+- `immutableAllowSetting` anywhere. Nothing on this contract is set later —
+  every optional property is written at creation or never.
 - Excluding the viewer's own messages from the unread count — see above.

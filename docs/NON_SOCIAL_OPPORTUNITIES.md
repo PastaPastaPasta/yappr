@@ -1,6 +1,7 @@
-# Non-social contract opportunities on Platform 4.2 (beta.1)
+# Non-social contract opportunities on Platform 4.2
 
-Review date: 2026-09-17. Scope: every Yappr contract and user surface that is
+Review date: 2026-09-17; re-cut for `v4.2.0-beta.2` on 2026-09-18 (see
+"Status" below). Scope: every Yappr contract and user surface that is
 not the social contract (`yappr-social-contract-v6.json`), assessed against
 what Platform `v4.2.0-beta.1` (protocol 14) can do and what the social side
 already exploits. Sources: the checked-in contracts, the deployed devnet
@@ -9,6 +10,41 @@ bundle (`lib/contracts/bundled/devnet-moutai.json`), the services under
 (`packages/rs-dpp/schema/meta_schemas/document/v3/document-meta.json` at
 `v4.2.0-beta.1`), the rs-drive query dispatchers, and the Aug–Sep 2026
 session transcripts.
+
+## Status
+
+Everything ranked below as worth doing has been **built** and lives in
+`contracts/` + `scripts/build-*-contract.py`, re-cut against
+**`v4.2.0-beta.2`**. Nothing is registered: moutai was wiped and reset to
+beta.2, so the contracts here are validated offline only and phase 2
+(registration, batteries, seeding) is pending a new social contract id.
+
+| Area | State | Doc |
+| --- | --- | --- |
+| Storefront v2 | built; writer gates, frozen `storeId`, three attested id copies dropped | `docs/STOREFRONT_V2.md` |
+| Blog v2 | built; comments bind to the post's `$ownerId`, `author` dropped, `blogId`/`publishedAt` frozen | `docs/BLOG_V2.md` |
+| DM v4 | built; count flags + `immutable` lists, nothing else (cost directive) | `docs/DM_V4.md` |
+| Pollr v4 | built; ballots bind to the poll's `$ownerId`, `author` dropped | `docs/POLLR_V4.md` |
+| Tips on YAPP | built (social contract token transfers) | `docs/TIPS_YAPP.md` |
+| Key exchange v3 | **abandoned** — indexOnly measured +42% fees | — |
+
+beta.2 changed three things this plan was written around, all of them for the
+better:
+
+- **`propertyAgreement` can name system fields.** The referenced side may be
+  the referenced document's `$ownerId`/`$creatorId`, and the *referring* side
+  may be `$ownerId` — the writer — which makes the pair a **write gate**. That
+  retires the whole "poster-attested id + client check" pattern §2 and §4
+  below describe as unavoidable, and with it four documented gaps (a forged
+  blog-post author, a forged poll author, a spoofed order status update, a
+  stranger burning an order's review slot).
+- **`immutable` / `immutableAllowSetting`** freeze chosen properties of a
+  MUTABLE doctype, so structural fields (`storeItem.storeId`,
+  `blogPost.blogId`, `directMessage.conversationId`) stop being editable
+  without freezing the whole document.
+- **`rangeCountable: true` implies `countable: "countable"`**, one link of the
+  #4809 spell-it-all-out chain relaxed. The `ranked*` prerequisites still run
+  on the literal keys.
 
 ## 1. Where things stand
 
@@ -92,9 +128,12 @@ client-supplied ids (`storeId`, `orderId`, `blogPostId`, `blogPostOwnerId`,
 can post an `orderStatusUpdate` against any order id, a review against a
 nonexistent order, a comment with a forged post-owner id, or a vote on a
 missing poll. `permanentDocument` targets need `canBeDeleted: false`
-(tombstone-by-edit, as the social contract does). `propertyAgreement` binds
+(tombstone-by-edit, as the social contract does). ~~`propertyAgreement` binds
 user properties only, never `$ownerId`; the social contract's poster-attested
-`author` field is the pattern to copy.
+`author` field is the pattern to copy.~~ **beta.2:** an agreement may name the
+referenced document's `$ownerId`/`$creatorId`, and may put `$ownerId` on the
+referring side as a write gate — so the attested-copy pattern is obsolete and
+the re-cuts drop those copies rather than adding more.
 
 **`tokenCost` with a foreign `contractId`.** `documentActionTokenCost` takes
 an optional `contractId`, so storefront/blog/Pollr doctypes can charge YAPP
@@ -163,7 +202,7 @@ Contract:
 - `storeItem.storeId`: `refersTo: {type: 'permanentDocument', documentType: 'store'}`.
 - `storeOrder.storeId` → store; add `buyerId` (poster-attested, like `post.author`).
 - `storeOrder.sellerId`: `refersTo: {type: 'identity'}`.
-- `orderStatusUpdate.orderId` → storeOrder with `propertyAgreement: {sellerId: 'sellerId'}` (add `sellerId` to the status doc) so only a doc that carries the order's seller id is accepted; the client then checks `$ownerId == sellerId`.
+- `orderStatusUpdate.orderId` → storeOrder with `propertyAgreement: {$ownerId: 'sellerId'}` — the **writer gate**: only the order's seller may write one, so no `sellerId` copy and no client check. (As planned at beta.1 this was `{sellerId: 'sellerId'}` plus a client comparison; see `docs/STOREFRONT_V2.md`.)
 - `storeReview.orderId` → storeOrder with `propertyAgreement: {storeId: 'storeId', sellerId: 'sellerId', buyerId: 'buyerId'}`; client checks `review.$ownerId == review.buyerId` for the "verified purchase" badge.
 - `shippingZone.storeId` → store.
 
@@ -289,9 +328,9 @@ order/review/comment/DM siblings. `orderStatusUpdate` lacks a buyer key; a
 - Sponsored writes: `gasFeesPaidBy: 1` lets a store owner pay gas for customer reviews.
 - Sellable documents: `tradeMode: 1` + `transferable: 1` on a `collectible` or `ticket` doctype with `keepsPurchaseHistory` gives an atomic marketplace with a provable sale history, which nothing in Yappr exercises.
 
-## 4. Not possible at beta.1 (do not design around)
+## 4. Not possible at 4.2 (do not design around)
 
-- Binding `$ownerId` through `propertyAgreement`; buyer/reviewer identity stays poster-attested.
+- ~~Binding `$ownerId` through `propertyAgreement`; buyer/reviewer identity stays poster-attested.~~ **Shipped in beta.2** — this is what the 2026-09-18 re-cut adopts.
 - Consensus-enforced poll expiry, stock decrement on another owner's document, or any cross-owner mutation.
 - Pay-to-referenced-owner token effect; two-party atomic transitions (batch cap is one document transition).
 - Ranked reads with an arbitrary pin set ("top stores among those I follow").
@@ -299,7 +338,7 @@ order/review/comment/DM siblings. `orderStatusUpdate` lacks a buyer key; a
 - Creating budgeted or contract-bound authentication keys from the JS SDK.
 - Adding index flags to a live contract; every change above is a re-cut.
 
-## 5. Suggested sequencing
+## 5. Suggested sequencing (as planned; items 2-6 are built)
 
 1. **Client-only wins, no re-cut** (days): `in`-batched order status and review-exists lookups; `$id in` store batch on order pages; blog edit history UI; delete dead vault scan; wire or drop `getUserStats`; snapshot the live DM schema into `contracts/`.
 2. **Storefront v2 re-cut** (the "average tree" milestone): review average/count/distribution/ranked indexes, `refersTo` chain across store → item → order → status/review, countable order indexes, composite store and order pages. Battery script in the style of `scripts/verify-v5.mjs`.
