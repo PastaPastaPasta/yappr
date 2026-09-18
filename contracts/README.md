@@ -38,7 +38,8 @@ Historical drafts (`-actual`, `-clean`, `-ready`, `-deploy`, `-updated`,
 - `yappr-vault-contract.json` — contract-bound encryption keys + encrypted storage
 - `yappr-auth-vault-contract.json` — auth vault + access grants
 - `encrypted-key-backup-contract.json` — passphrase-encrypted key backups
-- `key-exchange-v2.json` — QR login key-exchange protocol
+- `key-exchange-v2.json` — QR login key-exchange protocol (deployed everywhere)
+- `key-exchange-v3.json` — **registered on moutai** (`DoW8GtvXbh9o…`), **not enabled**: `loginKeyResponse` as an indexOnly doctype (no stored row) plus a TTL'd daily counter, `refersTo`-checked application id, structural uniqueness per wallet. Built by `scripts/build-key-exchange-v3-contract.py`, batteried by `scripts/verify-key-exchange-v3.mjs`; see `docs/KEY_EXCHANGE_V3.md` — the response is written by the *wallet*, so the switch waits on dashwallet-ios
 - `pollr-contract-v3.json` — polls (deployed); `pollr-contract-v2.json` is the abandoned predecessor, kept for the on-chain id record
 
 ## Legacy (merged into the social contract)
