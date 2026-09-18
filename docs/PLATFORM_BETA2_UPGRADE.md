@@ -25,7 +25,7 @@ a split between the two packages loads two WASM modules into one page.
 | [#4815](https://github.com/dashpay/platform/pull/4815) `96fb252820` | **`immutable` properties on mutable document types** | **Adopted.** `post` and `reply` freeze their structural columns; `deleted` becomes immutable-but-settable. See below. |
 | [#4816](https://github.com/dashpay/platform/pull/4816) `1a57e101a1` | **`propertyAgreement` on `$ownerId`/`$creatorId`; writer gates** (breaking) | **Adopted.** Retires the client-attested `author` column. Binds `repost.postOwnerId`. No writer gate is appropriate here. |
 | [#4817](https://github.com/dashpay/platform/pull/4817) `d1411648c9` | `wasm-dpp2` exposes immutable properties to JS | Used by `scripts/validate-contract-offline.mjs`: `contract.documentTypeImmutableProperties(type)` and `contract.documentImmutableProperties` (a `Map`). |
-| [#4809](https://github.com/dashpay/platform/pull/4809) `8f5b44e741` | v3 meta-schema aggregate prerequisites are **sugar-aware** | `rangeCountable: true` now implies `countable: "countable"`. v7 drops the redundant explicit pairing from eight indexes. |
+| [#4809](https://github.com/dashpay/platform/pull/4809) `8f5b44e741` | v3 meta-schema aggregate prerequisites are **sugar-aware** | `rangeCountable: true` now implies `countable: "countable"`. v7 drops the redundant explicit pairing from the nine indexes that carried both. |
 | [#4813](https://github.com/dashpay/platform/pull/4813) `26fa43eeb5` | indexOnly creates that **collide within one batch** are refused | No change needed. The client already writes a like and its `beat` in two sequential transitions (the network caps a document batch at one), and the two are different doctypes anyway. |
 | [#4811](https://github.com/dashpay/platform/pull/4811) `ba01d4cdfa` | Key limits on every client (breaking) | **Additive in practice.** The wasm-dpp2 diff only adds optional `totalBudget`/`expiresAt` getters and setters to `IdentityPublicKey` and `IdentityPublicKeyInCreation`; the constructor shape is unchanged, so `lib/services/identity-update-builder.ts` compiles and behaves identically. Yappr does not yet create limited keys (beta.1 follow-up work, still open). |
 | [#4807](https://github.com/dashpay/platform/pull/4807) `9f814131cc` | `IdentityKeyLimitsUpdate` state transition (breaking) | New transition kind; Yappr issues none. Relevant only if the scoped/limited-key feature from the beta.1 document is adopted. |
@@ -88,13 +88,21 @@ still qualifies — "the poster is the one owner a referenced post does determin
 
 Three bindings were considered and **rejected**:
 
-- `post.quotedPostId` → `{ "quotedPostOwnerId": "$ownerId" }`. `quotedPostOwnerId`
-  is also written when quoting a **reply**, where the reference lives in
-  `quotedReplyId` and `quotedPostId` is absent
-  (`lib/feed/resolve-quoted-posts.ts` sets `[field]: id` plus
-  `quotedPostOwnerId` for both kinds). Agreement absence semantics are strict —
-  one side present with the other absent is the same 40127 as a differing value
-  — so this pair would reject every reply-quote.
+- `post.quotedPostId` → `{ "quotedPostOwnerId": "$ownerId" }` — **deferred, not
+  impossible.** `quotedPostOwnerId` is a shared denormalization:
+  `lib/feed/resolve-quoted-posts.ts` writes it when quoting a **reply** too,
+  where the reference lives in `quotedReplyId` and `quotedPostId` is absent.
+  That does not reject reply-quotes — an absent *reference property* skips its
+  whole reference, `propertyAgreement` included (`Ok(None) => continue` in
+  rs-drive-abci `document_reference_validation/v0/mod.rs`); strict absence
+  applies to the paired *values* once the reference resolves. The binding would
+  therefore be safe but only **half** cover the column: post-quotes checked,
+  reply-quotes not, since binding `quotedReplyId` instead is the mirror
+  problem. Half-covering a denormalization is a worse invariant to reason about
+  than not covering it, and adopting it is a contract change that wants its own
+  battery case proving both directions live. The clean fix is to split the
+  column into `quotedPostOwnerId`/`quotedReplyOwnerId`, after which each side
+  binds cleanly.
 - `reply.rootPostId` → `{ "parentOwnerId": "$ownerId" }`. `parentOwnerId` names
   the owner of the **direct** parent, which for a nested reply is another reply's
   owner, not the root post's.
@@ -159,7 +167,7 @@ Frozen **nowhere**, deliberately:
 
 beta.2 documents that `rangeCountable: true` implies `countable: "countable"` and
 drops the `dependentRequired` row that demanded the pairing, so the explicit value
-is now noise. v7 removes it from the eight indexes that carried both
+is now noise. v7 removes it from the nine indexes that carried both
 (`post.byOwner`, `follow.followerCount`, `like.byPost` / `byHashtagPost` /
 `byAuthorPost` / `byDayPost` / `byDayAuthorPost`, `beat.byDayHashtagPost` /
 `byRollingHashtagPost`). Indexes countable **without** a range tree
@@ -276,11 +284,15 @@ array.
   integer widths ignored — because storage reorders object members by schema
   position and narrows integers, so a byte comparison would flag an untouched
   object as changed.
-- **`propertyAgreement` absence is strictly symmetric.** Both sides absent agree;
-  one side present is the same mismatch a differing value would be. This is what
-  lets an agreement key double as a `skipIfAbsent` trigger, and it is what makes a
+- **`propertyAgreement` absence is strictly symmetric — but only for the paired
+  VALUES.** Once a reference resolves, both sides absent agree and one side
+  present is the same mismatch a differing value would be; that is what lets an
+  agreement key double as a `skipIfAbsent` trigger. An absent *reference
+  property* is different: it skips the whole reference, agreement included. So a
   denormalized column shared between two different references (Yappr's
-  `quotedPostOwnerId`) unbindable.
+  `quotedPostOwnerId`) is bindable — it just ends up checked on one reference and
+  unchecked on the other, which is why v7 leaves it alone rather than
+  half-covering it.
 - **Preallocation survives an `$ownerId` agreement.** An index is preallocatable
   when every property is the referring property itself or a key of its
   `propertyAgreement` — and the referenced document's `$ownerId` and `$creatorId`
@@ -311,7 +323,7 @@ re-running it against a v5 contract that no longer exists on chain.
 | `e2` | `like.postAuthor` agrees with the post's `$ownerId` — the liker's own id, an unrelated id, a wrong tag and both hashtag-absence directions are 40127; the post owner's id is accepted, as is the both-absent direction. |
 | `e3` | The `likeReply.replyAuthor` mirror, plus the 40105 duplicate. |
 | `e4` | `repost.postOwnerId`, the new binding: a third party's id and the reposter's own id are 40127; the post owner's id is accepted. |
-| `f1` | A tombstone that drops `language`, drops the quote reference, changes `hashtag` or drops the optional `hashtag` is 40128; one carrying every immutable property verbatim is accepted. |
+| `f1` | A tombstone that **changes** the required-and-frozen `language`, or **drops** the optional frozen `quotedPostId` or `hashtag`, is 40128; one carrying every immutable property verbatim is accepted. The drop cases use optional properties on purpose: dropping a *required* one is refused by schema validation (10101) before state validation ever reaches the immutability check, so it would prove nothing. |
 | `f2` | `deleted` is settable exactly once: reverting it and dropping it are 40128, re-stating `true` is accepted. |
 | `f3` | The mutable half still is: a replace may blank `content` and drop `mediaUrl`/`sensitive`. |
 | `g1` | The like lifecycle end to end under the new agreement — create, the preallocated `byPost`/`byAuthorPost` counts, the tagged `beat` companion, delete-by-values unlike. |
@@ -329,11 +341,14 @@ cases already covered them live.
 With the beta.2 packages, on `beta2/social-v7`:
 
 - `npx tsc --noEmit`, `npm run lint`, `npx knip` — clean.
-- `npx vitest run` — 372 tests across 48 files, including the 6 new
-  `lib/contract-topology.test.ts` drift-guard tests. The guard was verified to
-  actually fail when a preserve entry is removed.
+- `npx vitest run` — 383 tests across 49 files, including
+  `lib/contract-topology.test.ts` (7 drift guards) and `lib/error-utils.test.ts`
+  (11 matcher cases). Both guards were verified to actually fail when the thing
+  they pin is mutated: removing a tombstone preserve entry, and shortening the
+  e2e spec's copied topology order. The five read-surface suites now stub `v7`
+  rather than `v6`, so the deployed topology is the one under test.
 - `npm run build:devnet` — the static export succeeds.
-- `python3 scripts/build-v7-contract.py --self-test` — 41 checks pass.
+- `python3 scripts/build-v7-contract.py --self-test` — 42 checks pass.
 - `node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v7.json`
   — full-validation parse at protocol 14.
 - `node scripts/verify-v7.mjs --self-test`, `node scripts/seed/run-seeder.mjs
@@ -344,11 +359,16 @@ Both SDK dependencies resolve to one beta.2 WASM runtime.
 
 ## Deployment
 
-`.env.devnet` sets `NEXT_PUBLIC_CONTRACT_TOPOLOGY=v7`. The contract ids in that
-file still name the beta.1 deployment and are **not** updated here — the ids and
-the topology flag must move as a unit, and registering v7 is the deploy step, not
-a code change. Registration order and the contract-group mechanics are unchanged
-from the beta.1 document.
+`.env.devnet` is left on `NEXT_PUBLIC_CONTRACT_TOPOLOGY=v6`, matching the v6
+contract id still in that file. **The flag and the ids must move as a unit, in
+the deploy commit.** This is not bookkeeping: `.github/workflows/deploy.yml`
+rebuilds `/devnet` from `.env.devnet` on every push to `staging`, and a v7
+client against a v6 contract fails totally rather than degrading — v6 lists
+`author` in `post`/`reply` `required`, the v7 client stops writing it, so every
+post, reply and tombstone fails schema validation while likes keep working, a
+config fault that presents as a posting bug. `scripts/register-social-v3-draft.mjs` (file-agnostic despite the
+name) now defaults `--contract-file` to the v7 JSON. Registration order and the
+contract-group mechanics are unchanged from the beta.1 document.
 
 ## Deployment evidence
 
@@ -362,3 +382,11 @@ from the beta.1 document.
 > corpus totals; and the browser topology-suite result. A contract id printed by
 > a publish call is not evidence that the contract is on chain — reconcile it
 > with a proved fetch.
+>
+> One claim neither the offline parse nor any self-test can prove, and which
+> therefore belongs here: that beta.2 really does **infer** `countable` from
+> `rangeCountable`. Offline validation passes either way, and a wrong inference
+> would silently kill the count trees behind `post.byOwner`,
+> `follow.followerCount` and the five `like`/`beat` ranked axes that lost their
+> explicit `countable`. Read one count back live off a stripped index before
+> declaring the cut good.

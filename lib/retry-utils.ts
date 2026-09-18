@@ -139,8 +139,11 @@ export async function retryPostCreation<T>(
       // burn three attempts on a write that can never succeed.
       if (isReferenceNotFoundError(error)) return false
 
-      // Same reasoning for a frozen property (40128): the replacement itself
-      // is wrong, so every attempt produces the identical rejection.
+      // Same reasoning for a frozen property (40128): the replacement itself is
+      // wrong, so every attempt produces the identical rejection. Defensive —
+      // 40128 is replace-only and this wraps creates — but the 'consensus
+      // error' allowlist below is broad enough that it would retry one if a
+      // replace ever reached here.
       if (isImmutablePropertyChangedError(error)) return false
 
       // defaultRetryCondition covers network/timeout errors — these are safe to retry

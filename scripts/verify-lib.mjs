@@ -6,7 +6,10 @@
  * write helpers, the strict wrong-reason-fails rejection matchers, the
  * PASS/FAIL ledger and the CLI/dry-run/report shell all live here.
  *
- * Extracted verbatim from `scripts/verify-v5.mjs`, which is deliberately NOT
+ * Extracted from `scripts/verify-v5.mjs` — verbatim apart from the parts v7
+ * has no analogue for, which were dropped rather than left as unreachable
+ * residue (delete-by-id, the reference/foreign-delete matchers, the
+ * bookmark/postMention shapes). `verify-v5.mjs` is deliberately NOT
  * refactored onto this module: it is the frozen record of the v5 cut, its
  * `--dry-run` only exercises shape building, and a rewrite of its live paths
  * could not be validated without re-running the whole battery against a v5
@@ -35,7 +38,7 @@ const SETTLE_MS = 3000;
 /** How many settle intervals to wait before calling a write absent (~9s). */
 const POLL_ATTEMPTS = 3;
 /** Placeholder ids for `--dry-run`, where nothing is fetched or signed. */
-export const DRY_RUN_ID = '11111111111111111111111111111111';
+const DRY_RUN_ID = '11111111111111111111111111111111';
 /** YAPP is at token position 0; a battery's writes cost 10/3/1 per document. */
 const YAPP_TOKEN_POSITION = 0;
 /** Below this the run cannot finish, so it aborts instead of failing cases. */
@@ -49,7 +52,7 @@ function defaultDevnetAddresses(devnetName) {
   );
 }
 
-export function devnetSdk() {
+function devnetSdk() {
   const devnetName = process.env.DEVNET_NAME?.trim() || DEFAULT_DEVNET_NAME;
   const configured = (process.env.DAPI_ADDRESSES ?? '')
     .split(',')
@@ -139,24 +142,16 @@ async function reconnectSdk(reason) {
 let failures = 0;
 /** Every rejection text seen, printed verbatim at the end. */
 const capturedErrors = [];
-/** Query shapes that worked, echoed for the results doc. */
-const workingShapes = [];
-
-/** Records a query shape that Platform accepted, for the results write-up. */
-export function recordShape(label, shape) {
-  workingShapes.push({ label, shape });
-}
-
 export function check(name, condition, detail = '') {
   console.log(`${condition ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
   if (!condition) failures += 1;
 }
 
-export function capture(label, message) {
+function capture(label, message) {
   if (message) capturedErrors.push({ label, message });
 }
 
-export const settle = () => new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+const settle = () => new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
 export const randomIdBytes = () => crypto.getRandomValues(new Uint8Array(32));
 
 // ---- Document plumbing ------------------------------------------------------
@@ -264,7 +259,7 @@ const NOT_THROWN_BUT_ABSENT = 'the SDK reported no error, but the write is not o
  * land, and js documents.create() can throw post-broadcast for indexOnly types
  * even when the write landed. Readback covers both.
  */
-export async function attemptWrite({ accepted }, write) {
+async function attemptWrite({ accepted }, write) {
   let error = null;
   try {
     await write();
@@ -294,7 +289,7 @@ export async function attemptWrite({ accepted }, write) {
 }
 
 /** The token-payment agreement a token-priced doctype's create must carry. */
-export function paymentInfo(tokenCost) {
+function paymentInfo(tokenCost) {
   return tokenCost
     ? {
         tokenPaymentInfo: new TokenPaymentInfo({
@@ -373,19 +368,6 @@ export async function attemptReplace(sdk, who, { contractId, docType, id, data, 
   );
 }
 
-/** Deletes a stored document by reference; absence afterwards = success. */
-export async function attemptDelete(sdk, who, { contractId, docType, id }) {
-  return attemptWrite(
-    { accepted: async () => (await fetchDocument(sdk, contractId, docType, id)) === null },
-    () =>
-      sdk.documents.delete({
-        document: { id, ownerId: who.ownerId, dataContractId: contractId, documentTypeName: docType },
-        identityKey: who.identityKey,
-        signer: who.signer,
-      })
-  );
-}
-
 /**
  * indexOnly delete-by-values: the Document instance carries the whole value
  * tuple (including `$createdAt`, which v5 keeps in `required` for the
@@ -406,31 +388,24 @@ export function expectAccepted(label, outcome) {
 // ---- Expected rejection shapes ---------------------------------------------
 
 // The patterns run against describeErr()'s output, which concatenates the
-// error's message AND its `code` field — so the numeric alternatives key on
-// the SDK-attached consensus code (`code=40127` etc.), the most stable
-// discriminator, while the text alternatives document the human-readable
-// message observed live.
+// error's message AND a JSON dump of it — so the numeric alternatives key on
+// the SDK-attached consensus code, the most stable discriminator, while the
+// text alternatives document the human-readable message observed live.
+//
+// Each numeric alternative is ANCHORED to a `code` label rather than matched
+// as a bare substring. That JSON dump carries credit amounts, millisecond
+// timestamps and nonces, any of which can contain "40127" or "40105" — and a
+// rejection scored for the wrong reason is exactly what expectRejected below
+// exists to prevent. The optional quote covers the `"code":40127` rendering.
 
-/** refersTo target missing (ReferencedEntityNotFoundError, 40120). */
-export const REFERENCE_NOT_FOUND = /40120|referenced .*not found/i;
 /**
  * propertyAgreement violation (ReferencedDocumentPropertyMismatchError,
  * 40127). Live message: "the document's <p> does not agree with the referenced
  * document's <q> (propertyAgreement on <field>)".
  */
-export const PROPERTY_MISMATCH = /40127|does not agree with the referenced document/i;
+export const PROPERTY_MISMATCH = /\bcode"?\s*[=:]\s*40127\b|does not agree with the referenced document/i;
 /** Structural uniqueness / unique index (DuplicateUniqueIndexError family, 40105). */
-export const DUPLICATE_UNIQUE = /40105|duplicate unique properties/i;
-/** The delete-immutability refusal ("documents of type X can not be deleted"). */
-export const DELETE_FORBIDDEN = /can ?not be deleted/i;
-/**
- * A foreign delete (bot A signing a delete whose $ownerId is bot B): the state
- * transition's identity is B, but the signature comes from A's key, so it dies
- * in signature validation ("Invalid State Transition signature") before any
- * document logic. Kept adjacent-qualified so an unrelated message merely
- * containing the word "signature" can never score as enforcement.
- */
-export const FOREIGN_DELETE = /invalid.{0,40}signature|signature.{0,40}(invalid|mismatch)|identity.{0,40}not.{0,10}found|4020\d/i;
+export const DUPLICATE_UNIQUE = /\bcode"?\s*[=:]\s*40105\b|duplicate unique properties/i;
 
 /**
  * Asserts Platform refused the write FOR THE EXPECTED REASON. A rejection whose
@@ -465,9 +440,7 @@ export const likeData = ({ postId, hashtag, postAuthor }) => ({
 });
 export const likeReplyData = ({ replyId, replyAuthor }) => ({ replyId, replyAuthor });
 export const repostData = ({ postId, postOwnerId }) => ({ postId, postOwnerId });
-export const bookmarkData = ({ postId }) => ({ postId });
 export const followData = ({ followingId }) => ({ followingId });
-export const postMentionData = ({ postId, mentionedUserId }) => ({ postId, mentionedUserId });
 // ---- Identities -------------------------------------------------------------
 
 function poolIdentityIds() {
@@ -477,7 +450,7 @@ function poolIdentityIds() {
   return { ids: loadIdentityIds(), source: 'E2E_IDENTITY_IDS (set NETWORK=devnet to read .env.devnet)' };
 }
 
-export async function botSigner(sdk, index, explicitOwnerId) {
+async function botSigner(sdk, index, explicitOwnerId) {
   let ownerId = explicitOwnerId;
   if (!ownerId) {
     const { ids, source } = poolIdentityIds();
@@ -498,7 +471,7 @@ export async function botSigner(sdk, index, explicitOwnerId) {
 }
 
 /** Aborts before any case runs if a bot cannot pay for its writes. */
-export async function requireYapp(sdk, contractId, bots) {
+async function requireYapp(sdk, contractId, bots) {
   const tokenId = await sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION);
   console.log(`     YAPP token id: ${tokenId}`);
   const balances = await sdk.tokens.balances(bots.map((bot) => bot.ownerId), tokenId);
@@ -522,7 +495,7 @@ export async function requireYapp(sdk, contractId, bots) {
  * Parses the flags every battery shares. `cases` is the ordered Map of case
  * key → handler, so `--only` can reject an unknown key before connecting.
  */
-export function parseBatteryArgs(argv, { cases, contractEnvVar }) {
+function parseBatteryArgs(argv, { cases, contractEnvVar }) {
   const args = {
     contract: process.env[contractEnvVar]?.trim() || null,
     botIndex: 0,
@@ -663,11 +636,6 @@ export async function runBattery({
       console.log('\n--- captured rejection texts (verbatim) ---');
       for (const { label, message } of capturedErrors) console.log(`\n[${label}]\n${message}`);
     }
-    if (workingShapes.length > 0) {
-      console.log('\n--- working query shapes ---');
-      for (const { label, shape } of workingShapes) console.log(`\n# ${label}\n${JSON.stringify(shape, null, 2)}`);
-    }
-
     console.log('');
     summarize(ctx);
     console.log(failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`);

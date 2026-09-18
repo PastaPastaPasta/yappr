@@ -23,9 +23,11 @@ import { DataContract, PlatformVersion, ensureInitialized } from '@dashevo/evo-s
 const PLACEHOLDER_ID = '11111111111111111111111111111111';
 
 function parseArgs(argv) {
-  const file = argv.find((arg) => !arg.startsWith('--'));
   const flagIndex = argv.indexOf('--immutable');
   const immutable = flagIndex === -1 ? [] : (argv[flagIndex + 1] ?? '').split(',').filter(Boolean);
+  // Skip the flag AND its value, so `--immutable post,reply <file>` does not
+  // resolve the positional to "post,reply".
+  const file = argv.find((arg, index) => !arg.startsWith('--') && index !== flagIndex + 1);
   if (!file) throw new Error('usage: node scripts/validate-contract-offline.mjs <contract.json> [--immutable a,b]');
   return { file, immutable };
 }

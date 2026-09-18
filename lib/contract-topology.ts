@@ -155,18 +155,6 @@ export interface ContractTopologyDescriptor {
   readonly tombstonePreserves: Readonly<Record<TargetKind, TombstonePreservation>>
 }
 
-/**
- * The engagement surface of a `post`, encoded exactly as the chain declares it.
- *
- * The index orders matter and are NOT uniform: `like.postAndOwner` is
- * `[postId, $ownerId]` while `repost.ownerAndPost` and `bookmark.ownerAndPost`
- * are `[$ownerId, postId]`.
- *
- * Both topologies keep this surface unchanged, and on v2 a *reply* resolves to
- * it too — every v2 identifier field is polymorphic over post|reply — so it is
- * shared by all three slots below and the descriptors differ only where the
- * topologies genuinely differ.
- */
 /** Nothing to carry over: the topology deletes documents instead of blanking them. */
 const NOTHING_PRESERVED: TombstonePreservation = { identifiers: [], scalars: [] }
 
@@ -181,6 +169,18 @@ const REPLY_LINKAGE_PRESERVED: TombstonePreservation = {
   scalars: [],
 }
 
+/**
+ * The engagement surface of a `post`, encoded exactly as the chain declares it.
+ *
+ * The index orders matter and are NOT uniform: `like.postAndOwner` is
+ * `[postId, $ownerId]` while `repost.ownerAndPost` and `bookmark.ownerAndPost`
+ * are `[$ownerId, postId]`.
+ *
+ * Both topologies keep this surface unchanged, and on v2 a *reply* resolves to
+ * it too — every v2 identifier field is polymorphic over post|reply — so it is
+ * shared by all three slots below and the descriptors differ only where the
+ * topologies genuinely differ.
+ */
 const POST_INTERACTIONS: InteractionSurface = {
   like: { docType: 'like', field: 'postId', ownerFirst: false, ownerField: 'postOwnerId' },
   indexOnlyLike: null,

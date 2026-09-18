@@ -4,7 +4,7 @@
  *
  * The name is historical — the script is file-agnostic. It publishes any
  * contract JSON from `contracts/` as a brand-new contract; pick the file with
- * `--contract-file` (default `yappr-social-contract-v5.json`, the shape the
+ * `--contract-file` (default `yappr-social-contract-v7.json`, the shape the
  * /devnet build runs). The v3-era inputs it was written for
  * (`yappr-social-contract-v3-draft.json`, `-v3-topology.json`) were removed
  * from the repo 2026-08-31; see git history if an old shape is ever needed.
@@ -91,7 +91,7 @@ import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONTRACTS_DIR = join(REPO_ROOT, 'contracts');
-const DEFAULT_CONTRACT_FILE = 'yappr-social-contract-v5.json';
+const DEFAULT_CONTRACT_FILE = 'yappr-social-contract-v7.json';
 /** YAPP is defined at token position 0 of every yappr social contract. */
 const YAPP_TOKEN_POSITION = 0;
 /** Enough YAPP for a battery run: posts cost 10, replies 3, likes/reposts 1. */

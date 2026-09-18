@@ -9,6 +9,8 @@
  * has drifted below the contract's list turns every delete into a hard
  * failure, at runtime, on chain. This test makes that drift a red unit test.
  */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import socialContractV7 from '@/contracts/yappr-social-contract-v7.json'
 import { CONTRACT_TOPOLOGIES } from './constants'
@@ -34,6 +36,18 @@ async function topologyModule(topology: string) {
 }
 
 describe('contract topology', () => {
+  it('keeps the e2e spec\'s hand-copied topology order in sync', () => {
+    // e2e/ cannot import from lib/ (it reads the COMPILED bundle, and Playwright
+    // runs outside the app's module graph), so `TOPOLOGY_ORDER` there is a
+    // literal copy. Drift would not error — it would silently skip whole devnet
+    // suites, which is exactly what the ordered gates were introduced to stop.
+    const spec = readFileSync(join(process.cwd(), 'e2e/write/topology.spec.ts'), 'utf8')
+    const literal = spec.match(/const TOPOLOGY_ORDER = \[([^\]]*)\]/)?.[1] ?? ''
+    expect(literal, 'e2e/write/topology.spec.ts must declare TOPOLOGY_ORDER').not.toBe('')
+    expect(literal.split(',').map((entry) => entry.trim().replace(/'/g, '')))
+      .toEqual([...CONTRACT_TOPOLOGIES])
+  })
+
   it('resolves every declared topology to its own descriptor', async () => {
     for (const topology of CONTRACT_TOPOLOGIES) {
       const { topologyDescriptor } = await topologyModule(topology)

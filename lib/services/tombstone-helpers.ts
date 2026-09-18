@@ -71,8 +71,18 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
     const replacement: Record<string, unknown> = { content: '', deleted: true };
 
     for (const field of params.preserve.identifiers) {
-      const base58 = identifierToBase58(data[field] ?? raw[field]);
+      const stored = data[field] ?? raw[field];
+      const base58 = identifierToBase58(stored);
       if (base58) replacement[field] = identifierStringToDocumentBytes(base58);
+      else if (stored !== undefined && stored !== null) {
+        // Present but undecodable. Dropping it silently used to lose a field;
+        // on v7 it becomes a 40128, which the handler below would otherwise
+        // blame on the descriptor. Name the real cause here instead.
+        logger.error(
+          `Tombstone of ${documentType} ${documentId}: stored ${field} could not be decoded as an ` +
+            'identifier, so it cannot be preserved; the replace will be rejected if it is immutable.'
+        );
+      }
     }
     for (const field of params.preserve.scalars) {
       const value = data[field] ?? raw[field];

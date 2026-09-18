@@ -71,8 +71,17 @@ export function resolveQuoteReference(quotingPost: Post | null | undefined): Quo
 /**
  * The quote target a post references, or null when it references nothing.
  * Exactly one of the three fields is ever set on a document.
+ *
+ * A TOMBSTONE references nothing, whatever it still stores. Up to contract v6
+ * the tombstone replace dropped the quote and embed fields, so this fell out
+ * for free; v7 freezes them as `immutable`, so a tombstone carries its
+ * reference forever. `PostCard` short-circuits on `deleted` and never renders a
+ * quote, so resolving one would be a batch-pass entry plus a per-card fetch
+ * whose result is discarded — pure wasted DAPI traffic on every feed holding a
+ * deleted quote post.
  */
 export function quoteTargetOf(post: Post): { id: string; where: 'post' | 'reply' | 'blogPost' } | null {
+  if (post.deleted) return null;
   if (post.quotedPostId) return { id: post.quotedPostId, where: 'post' };
   if (post.quotedReplyId) return { id: post.quotedReplyId, where: 'reply' };
   if (post.embedDocType === BLOG_POST_EMBED_DOC_TYPE && post.embedId) {

@@ -332,7 +332,12 @@ test.describe('v3+ interaction topology on the devnet contract', () => {
  */
 test.describe('v4 indexOnly like lifecycle on the devnet contract', () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(SPEC_TOPOLOGY !== 'v4', 'the compiled topology has stored likes — indexOnly surfaces do not exist')
+  // NOT generalized to specTopologyAtLeast('v4'): the stated reason below is
+  // stale — v5, v6 and v7 all have indexOnly likes — but the assertions inside
+  // are written against v4's `''` hashtag sentinel, which v5 removed, so they
+  // would fail rather than pass on a later cut. Widening this suite means
+  // porting those assertions to optional hashtags first.
+  test.skip(SPEC_TOPOLOGY !== 'v4', 'this suite asserts v4\'s \'\' hashtag sentinel, which v5+ replaced with property absence')
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''

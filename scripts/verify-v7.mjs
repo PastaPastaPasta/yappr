@@ -109,18 +109,22 @@ import {
  *
  * Deliberately does NOT match the 401xx state codes: a 40127 or 40128 here
  * would mean the column still exists and something else refused the write,
- * which must fail the check rather than score as enforcement.
+ * which must fail the check rather than score as enforcement. The numeric
+ * alternative is anchored to a `code` label because `describeErr` appends a
+ * JSON dump of the error, so a bare "10101" would also match a credit amount
+ * or a millisecond timestamp inside an unrelated rejection.
  */
 const UNKNOWN_PROPERTY =
-  /10101|additional properties are not allowed|was unexpected|\bunknown property\b|property .{0,40}not (found|defined) in/i;
+  /\bcode"?\s*[=:]\s*10101\b|additional properties are not allowed|was unexpected|\bunknown property\b|property .{0,40}not (found|defined) in/i;
 
 /**
  * A frozen property was changed, added or dropped by a replace
  * (DocumentImmutablePropertyChangedError, 40128). Live message: "property
  * '<p>' of document <id> (type '<t>') is immutable and cannot be changed by a
- * replace".
+ * replace". The numeric alternative is `code`-anchored for the same reason as
+ * UNKNOWN_PROPERTY above.
  */
-const IMMUTABLE_CHANGED = /40128|is immutable and cannot be changed/i;
+const IMMUTABLE_CHANGED = /\bcode"?\s*[=:]\s*40128\b|is immutable and cannot be changed/i;
 
 // ---- v7 document shapes -----------------------------------------------------
 //
@@ -156,21 +160,54 @@ const replyData = ({ content = 'v7 battery reply', rootPostId, replyToReplyId, p
 
 // ---- Shared fixtures --------------------------------------------------------
 
+/** One fixture create: a failure is logged and reported as `null`, never thrown. */
+async function createFixture(ctx, who, docType, data, label) {
+  const created = await attemptCreate(ctx.sdk, who, {
+    contractId: ctx.contractId,
+    docType,
+    data,
+    tokenCost: TOKEN_COST[docType],
+  });
+  if (created.ok) return created.id;
+  console.log(`     (could not create ${label}: ${(created.error ?? '').slice(0, 200)})`);
+  return null;
+}
+
+/**
+ * A like by bot A on `postId`, with whatever agreement-bound values the caller
+ * wants to probe. Shared by e2 and g1 so the create tuple and the
+ * delete-by-values tuple cannot drift apart — which is the very thing g1's
+ * unlike asserts.
+ */
+function likeOn(ctx, postId, data) {
+  return attemptCreateIndexOnly(ctx.sdk, ctx.botA, {
+    contractId: ctx.contractId,
+    docType: 'like',
+    data: likeData({ postId: bs58.decode(postId), ...data }),
+    tokenCost: TOKEN_COST.like,
+    accepted: () => entryExists(ctx.sdk, ctx.contractId, 'like', 'postId', postId, ctx.botA.ownerId),
+  });
+}
+
+/** The agreement-bound values a CORRECT like on a tagged fixture post carries. */
+const agreedLike = (ctx) => ({ hashtag: ctx.tag, postAuthor: bs58.decode(ctx.botB.ownerId) });
+
+/** The immutable set `ensureOwnMutablePost` writes; every replace must repeat it verbatim. */
+function immutablesOf(ctx, quoted) {
+  return {
+    language: 'en',
+    hashtag: ctx.tag,
+    quotedPostId: bs58.decode(quoted),
+    quotedPostOwnerId: bs58.decode(ctx.botB.ownerId),
+  };
+}
+
 /** A post owned by bot B, so bot A's likes agree against a DIFFERENT identity. */
 async function ensurePost(ctx, key, overrides = {}) {
   if (ctx.posts[key]) return ctx.posts[key];
-  const created = await attemptCreate(ctx.sdk, ctx.botB, {
-    contractId: ctx.contractId,
-    docType: 'post',
-    data: postData({ content: `battery ${key}`, ...overrides }),
-    tokenCost: TOKEN_COST.post,
-  });
-  if (!created.ok) {
-    console.log(`     (could not create ${key}: ${(created.error ?? '').slice(0, 200)})`);
-    return null;
-  }
-  ctx.posts[key] = created.id;
-  return created.id;
+  const id = await createFixture(ctx, ctx.botB, 'post', postData({ content: `battery ${key}`, ...overrides }), key);
+  if (id) ctx.posts[key] = id;
+  return id;
 }
 
 /** A reply by bot B on the anchor post, for the likeReply agreement. */
@@ -178,22 +215,12 @@ async function ensureReply(ctx) {
   if (ctx.replyId) return ctx.replyId;
   const rootPostId = await ensurePost(ctx, 'anchor');
   if (!rootPostId) return null;
-  const created = await attemptCreate(ctx.sdk, ctx.botB, {
-    contractId: ctx.contractId,
-    docType: 'reply',
-    data: replyData({
-      rootPostId: bs58.decode(rootPostId),
-      parentOwnerId: bs58.decode(ctx.botB.ownerId),
-      content: 'battery anchor reply',
-    }),
-    tokenCost: TOKEN_COST.reply,
-  });
-  if (!created.ok) {
-    console.log(`     (could not create the anchor reply: ${(created.error ?? '').slice(0, 200)})`);
-    return null;
-  }
-  ctx.replyId = created.id;
-  return created.id;
+  ctx.replyId = await createFixture(ctx, ctx.botB, 'reply', replyData({
+    rootPostId: bs58.decode(rootPostId),
+    parentOwnerId: bs58.decode(ctx.botB.ownerId),
+    content: 'battery anchor reply',
+  }), 'the anchor reply');
+  return ctx.replyId;
 }
 
 /**
@@ -206,23 +233,13 @@ async function ensureOwnMutablePost(ctx, key, overrides = {}) {
   if (ctx.own[key]) return ctx.own[key];
   const quoted = await ensurePost(ctx, 'anchor');
   if (!quoted) return null;
-  const created = await attemptCreate(ctx.sdk, ctx.botA, {
-    contractId: ctx.contractId,
-    docType: 'post',
-    data: postData({
-      content: `immutability fixture ${key}`,
-      hashtag: ctx.tag,
-      quotedPostId: bs58.decode(quoted),
-      quotedPostOwnerId: bs58.decode(ctx.botB.ownerId),
-      ...overrides,
-    }),
-    tokenCost: TOKEN_COST.post,
-  });
-  if (!created.ok) {
-    console.log(`     (could not create ${key}: ${(created.error ?? '').slice(0, 200)})`);
-    return null;
-  }
-  ctx.own[key] = { id: created.id, quoted };
+  const id = await createFixture(ctx, ctx.botA, 'post', postData({
+    content: `immutability fixture ${key}`,
+    ...immutablesOf(ctx, quoted),
+    ...overrides,
+  }), key);
+  if (!id) return null;
+  ctx.own[key] = { id, quoted };
   return ctx.own[key];
 }
 
@@ -332,52 +349,43 @@ async function caseE2LikeOwnerAgreement(ctx) {
   // Every violation targets a post bot A has NOT yet liked: the 40105
   // structural-uniqueness probe fires before the agreement check and would
   // mask the 40127 we are asserting.
-  const likeOn = (postId, data) =>
-    attemptCreateIndexOnly(ctx.sdk, ctx.botA, {
-      contractId: ctx.contractId,
-      docType: 'like',
-      data: likeData({ postId: bs58.decode(postId), ...data }),
-      tokenCost: TOKEN_COST.like,
-      accepted: () => entryExists(ctx.sdk, ctx.contractId, 'like', 'postId', postId, ctx.botA.ownerId),
-    });
-
   // The liker's own id is the interesting wrong answer: on v6 `postAuthor`
   // was compared against a column the POSTER wrote, so a client bug could
   // make it anything; v7 compares it against the post's real owner.
   expectRejected(
     'e2a a like whose postAuthor is the LIKER, not the post owner, is refused',
-    await likeOn(tagged, { hashtag: ctx.tag, postAuthor: bs58.decode(ctx.botA.ownerId) }),
+    await likeOn(ctx, tagged, { hashtag: ctx.tag, postAuthor: bs58.decode(ctx.botA.ownerId) }),
     PROPERTY_MISMATCH
   );
   expectRejected(
     'e2b a like whose postAuthor is an unrelated identity is refused',
-    await likeOn(tagged, { hashtag: ctx.tag, postAuthor: randomIdBytes() }),
+    await likeOn(ctx, tagged, { hashtag: ctx.tag, postAuthor: randomIdBytes() }),
     PROPERTY_MISMATCH
   );
   expectRejected(
     'e2c the hashtag pair still holds: a wrong tag is refused',
-    await likeOn(tagged, { hashtag: `${ctx.tag}x`, postAuthor: bs58.decode(ctx.botB.ownerId) }),
+    await likeOn(ctx, tagged, { hashtag: `${ctx.tag}x`, postAuthor: bs58.decode(ctx.botB.ownerId) }),
     PROPERTY_MISMATCH
   );
   expectRejected(
     'e2d absence is strict: a tagged like on an UNTAGGED post is refused',
-    await likeOn(untagged, { hashtag: ctx.tag, postAuthor: bs58.decode(ctx.botB.ownerId) }),
+    await likeOn(ctx, untagged, { hashtag: ctx.tag, postAuthor: bs58.decode(ctx.botB.ownerId) }),
     PROPERTY_MISMATCH
   );
   expectRejected(
     'e2e and the other direction: a hashtag-ABSENT like on a TAGGED post is refused',
-    await likeOn(spare, { postAuthor: bs58.decode(ctx.botB.ownerId) }),
+    await likeOn(ctx, spare, { postAuthor: bs58.decode(ctx.botB.ownerId) }),
     PROPERTY_MISMATCH
   );
 
   expectAccepted(
     'e2f a like naming the post owner\'s $ownerId (and its tag) is accepted',
-    await likeOn(tagged, { hashtag: ctx.tag, postAuthor: bs58.decode(ctx.botB.ownerId) })
+    await likeOn(ctx, tagged, agreedLike(ctx))
   );
   if ((await countBy(ctx.sdk, ctx.contractId, 'like', 'postId', tagged)) > 0) ctx.likedTagged = true;
   expectAccepted(
     'e2g the both-absent direction agrees: a hashtag-less like on an untagged post',
-    await likeOn(untagged, { postAuthor: bs58.decode(ctx.botB.ownerId) })
+    await likeOn(ctx, untagged, { postAuthor: bs58.decode(ctx.botB.ownerId) })
   );
 }
 
@@ -459,20 +467,20 @@ async function caseF1TombstoneImmutability(ctx) {
   }
   const { id, quoted } = fixture;
   const revision = await revisionOf(ctx, 'post', id);
-  const full = {
-    language: 'en',
-    hashtag: ctx.tag,
-    quotedPostId: bs58.decode(quoted),
-    quotedPostOwnerId: bs58.decode(ctx.botB.ownerId),
-  };
+  const full = immutablesOf(ctx, quoted);
   const replaceWith = (data) =>
     attemptReplace(ctx.sdk, ctx.botA, { contractId: ctx.contractId, docType: 'post', id, data, revision });
 
   // Each rejection runs against the SAME stored revision: a refused replace
   // leaves the document untouched, so they do not have to be ordered.
+  // `language` is REQUIRED, so a replace that dropped it would be refused by
+  // schema validation (10101) before state validation ever reached 40128 —
+  // which `expectRejected` would correctly score as the wrong reason. CHANGING
+  // it is how a required frozen property reaches the immutability check. The
+  // DROP direction is covered by f1b/f1d, whose properties are optional.
   expectRejected(
-    'f1a a tombstone that DROPS the immutable `language` is refused',
-    await replaceWith({ content: '', deleted: true, ...without(full, 'language') }),
+    'f1a a tombstone that CHANGES the immutable, REQUIRED `language` is refused',
+    await replaceWith({ content: '', deleted: true, ...full, language: 'fr' }),
     IMMUTABLE_CHANGED
   );
   expectRejected(
@@ -557,13 +565,7 @@ async function caseF3MutableFieldsStayMutable(ctx) {
       docType: 'post',
       id,
       revision: await revisionOf(ctx, 'post', id),
-      data: {
-        content: '',
-        language: 'en',
-        hashtag: ctx.tag,
-        quotedPostId: bs58.decode(quoted),
-        quotedPostOwnerId: bs58.decode(ctx.botB.ownerId),
-      },
+      data: { content: '', ...immutablesOf(ctx, quoted) },
     })
   );
 }
@@ -577,19 +579,9 @@ async function caseG1LikeLifecycle(ctx) {
     check('g1 like lifecycle', false, 'no tagged post available');
     return;
   }
+  const agreed = agreedLike(ctx);
   if (!ctx.likedTagged) {
-    const created = await attemptCreateIndexOnly(ctx.sdk, ctx.botA, {
-      contractId: ctx.contractId,
-      docType: 'like',
-      data: likeData({
-        postId: bs58.decode(tagged),
-        hashtag: ctx.tag,
-        postAuthor: bs58.decode(ctx.botB.ownerId),
-      }),
-      tokenCost: TOKEN_COST.like,
-      accepted: () => entryExists(ctx.sdk, ctx.contractId, 'like', 'postId', tagged, ctx.botA.ownerId),
-    });
-    if (!expectAccepted('g1a the like is accepted', created).ok) return;
+    if (!expectAccepted('g1a the like is accepted', await likeOn(ctx, tagged, agreed)).ok) return;
     ctx.likedTagged = true;
   }
 
@@ -642,11 +634,9 @@ async function caseG1LikeLifecycle(ctx) {
     contractId: ctx.contractId,
     docType: 'like',
     ownerId: ctx.botA.ownerId,
-    data: likeData({
-      postId: bs58.decode(tagged),
-      hashtag: ctx.tag,
-      postAuthor: bs58.decode(ctx.botB.ownerId),
-    }),
+    // The SAME tuple the create used: a delete-by-values that differs by one
+    // byte finds no entry.
+    data: likeData({ postId: bs58.decode(tagged), ...agreed }),
     createdAt: BigInt(createdAt),
     id: randomIdBytes(),
   });
@@ -687,18 +677,18 @@ await runBattery({
   // Every shape the live battery writes, so `--self-test` proves they build.
   shapes: [
     ['post (untagged, no author)', 'post', postData(), undefined],
-    ['post (tagged)', 'post', postData({ hashtag: 'v7tag' }), undefined],
-    ['post (quote + owner denorm)', 'post', postData({ quotedPostId: someId(), quotedPostOwnerId: someId() }), undefined],
-    ['post (media + sensitive)', 'post', postData({ mediaUrl: 'ipfs://bafy', sensitive: true }), undefined],
-    ['reply (flat, no author)', 'reply', replyData({ rootPostId: someId(), parentOwnerId: someId() }), undefined],
-    ['reply (nested)', 'reply', replyData({ rootPostId: someId(), replyToReplyId: someId(), parentOwnerId: someId() }), undefined],
-    ['like (tagged)', 'like', likeData({ postId: someId(), hashtag: 'v7tag', postAuthor: someId() }), undefined],
-    ['like (hashtag absent)', 'like', likeData({ postId: someId(), postAuthor: someId() }), undefined],
+    ['post (tagged)', 'post', postData({ hashtag: 'v7tag' })],
+    ['post (quote + owner denorm)', 'post', postData({ quotedPostId: someId(), quotedPostOwnerId: someId() })],
+    ['post (media + sensitive)', 'post', postData({ mediaUrl: 'ipfs://bafy', sensitive: true })],
+    ['reply (flat, no author)', 'reply', replyData({ rootPostId: someId(), parentOwnerId: someId() })],
+    ['reply (nested)', 'reply', replyData({ rootPostId: someId(), replyToReplyId: someId(), parentOwnerId: someId() })],
+    ['like (tagged)', 'like', likeData({ postId: someId(), hashtag: 'v7tag', postAuthor: someId() })],
+    ['like (hashtag absent)', 'like', likeData({ postId: someId(), postAuthor: someId() })],
     ['like (delete tuple)', 'like', likeData({ postId: someId(), hashtag: 'v7tag', postAuthor: someId() }), BigInt(Date.now())],
-    ['likeReply', 'likeReply', likeReplyData({ replyId: someId(), replyAuthor: someId() }), undefined],
-    ['beat', 'beat', { postId: someId(), hashtag: 'v7tag' }, undefined],
-    ['repost', 'repost', repostData({ postId: someId(), postOwnerId: someId() }), undefined],
-    ['follow', 'follow', followData({ followingId: someId() }), undefined],
+    ['likeReply', 'likeReply', likeReplyData({ replyId: someId(), replyAuthor: someId() })],
+    ['beat', 'beat', { postId: someId(), hashtag: 'v7tag' }],
+    ['repost', 'repost', repostData({ postId: someId(), postOwnerId: someId() })],
+    ['follow', 'follow', followData({ followingId: someId() })],
   ],
   replaceShapes: [
     ['post (tombstone, immutables kept)', 'post', postData({ content: '', hashtag: 'v7tag', quotedPostId: someId(), quotedPostOwnerId: someId(), deleted: true })],

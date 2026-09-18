@@ -39,7 +39,6 @@ Run:
   python3 scripts/build-v7-contract.py              # (re)write the v7 JSON
   python3 scripts/build-v7-contract.py --self-test  # assert the committed JSON
 """
-import copy
 import json
 import sys
 
@@ -71,13 +70,23 @@ AGREEMENTS = {
 # NOT bound, deliberately:
 #
 #   post.quotedPostId -> {"quotedPostOwnerId": "$ownerId"}
-#     `quotedPostOwnerId` is also written for quotes of a REPLY, where the
-#     reference lives in `quotedReplyId` and `quotedPostId` is absent
-#     (lib/feed/resolve-quoted-posts.ts sets `[field]: id` plus
-#     `quotedPostOwnerId` for both kinds). propertyAgreement is absence-aware
-#     and strict: one side present with the other absent is the same 40127
-#     mismatch a wrong value would be, so binding it would reject every
-#     reply-quote.
+#     DEFERRED, not impossible. `quotedPostOwnerId` is a SHARED denormalization:
+#     lib/feed/resolve-quoted-posts.ts writes it for quotes of a REPLY too,
+#     where the reference lives in `quotedReplyId` and `quotedPostId` is absent.
+#     That does NOT reject reply-quotes, as an earlier draft of this comment
+#     claimed — an absent REFERENCE property skips its whole reference,
+#     propertyAgreement included (rs-drive-abci
+#     .../document_reference_validation/v0/mod.rs, `Ok(None) => continue`).
+#     Strict absence applies to the paired VALUES once the reference resolves,
+#     which is what the like/hashtag pair exercises.
+#     So the binding would be SAFE and would give PARTIAL cover: post-quotes
+#     checked, reply-quotes still unchecked, because binding `quotedReplyId`
+#     instead is the mirror problem. It is left off because half-covering a
+#     denormalization is a worse invariant to reason about than not covering
+#     it, and because adopting it is a contract change that wants its own
+#     battery case proving both directions live. Revisit by splitting the
+#     column into `quotedPostOwnerId`/`quotedReplyOwnerId`, after which each
+#     side binds cleanly.
 #
 #   reply.rootPostId -> {"parentOwnerId": "$ownerId"}
 #     `parentOwnerId` is the owner of the DIRECT parent, which for a nested
@@ -268,6 +277,7 @@ def build():
 def self_test():
     built = build()
     committed = json.load(open(DST))
+    source = json.load(open(SRC))
     failures = []
 
     def check(name, condition):
@@ -277,7 +287,7 @@ def self_test():
 
     check('committed v7 JSON matches a fresh build', built == committed)
 
-    v6 = json.load(open(SRC))['documentSchemas']
+    v6 = source['documentSchemas']
     v7 = committed['documentSchemas']
 
     check('no doctype is added or removed relative to v6', sorted(v7) == sorted(v6))
@@ -316,7 +326,7 @@ def self_test():
         check(f'{doc_type}.author is no longer required',
               ATTESTED_AUTHOR not in v7[doc_type]['required'])
         check(f'{doc_type} keeps every OTHER v6 property, unchanged',
-              {name: definition for name, definition in v7[doc_type]['properties'].items()}
+              v7[doc_type]['properties']
               == {name: dict(definition, position=position)
                   for position, (name, definition) in enumerate(
                       sorted(((n, d) for n, d in v6[doc_type]['properties'].items() if n != ATTESTED_AUTHOR),
@@ -366,16 +376,25 @@ def self_test():
     check('no index pairs rangeCountable with a now-redundant explicit countable',
           not [f"{t}.{i['name']}" for t, i in indices
                if i.get('rangeCountable') is True and i.get('countable') == 'countable'])
+    # Pinned so docs/PLATFORM_BETA2_UPGRADE.md's list cannot drift from the JSON.
+    check('the nine indexes named in the upgrade doc are exactly the ones that lost `countable`',
+          sorted(f"{t}.{i['name']}" for t, s in v6.items() for i in s.get('indices', [])
+                 if i.get('rangeCountable') is True and i.get('countable') == 'countable')
+          == ['beat.byDayHashtagPost', 'beat.byRollingHashtagPost', 'follow.followerCount',
+              'like.byAuthorPost', 'like.byDayAuthorPost', 'like.byDayPost',
+              'like.byHashtagPost', 'like.byPost', 'post.byOwner'])
     check('every rangeCountable index in v6 survives as a rangeCountable index in v7',
           sorted(f"{t}.{i['name']}" for t, i in indices if i.get('rangeCountable') is True)
           == sorted(f'{t}.{i["name"]}' for t, s in v6.items() for i in s.get('indices', [])
                     if i.get('rangeCountable') is True))
+    # Index names are unique within a doctype, so one lookup replaces the
+    # quadratic rebuild this check used to do per v7 index.
+    v6_countable = {(t, i['name']): i.get('countable')
+                    for t, schema in v6.items() for i in schema.get('indices', [])}
     check('indexes countable WITHOUT a range tree keep their explicit countable',
           all(i.get('countable') is not None for t, i in indices
               if i.get('rangeCountable') is not True
-              and any(j.get('countable') is not None for u, j in
-                      [(t2, i2) for t2, s2 in v6.items() for i2 in s2.get('indices', [])]
-                      if u == t and j['name'] == i['name'])))
+              and v6_countable.get((t, i['name'])) is not None))
 
     # ---- the read surface is untouched ---------------------------------------
     def index_shape(schema):
@@ -385,8 +404,8 @@ def self_test():
           all(index_shape(v7[t]) == index_shape(v6[t]) for t in v7))
     check('the token costs, config and contract version are v6\'s',
           all(v7[t].get('tokenCost') == v6[t].get('tokenCost') for t in v7)
-          and committed['config'] == json.load(open(SRC))['config']
-          and committed['version'] == json.load(open(SRC))['version'])
+          and committed['config'] == source['config']
+          and committed['version'] == source['version'])
 
     print()
     print('SELF-TEST PASSED' if not failures else f'{len(failures)} CHECK(S) FAILED')

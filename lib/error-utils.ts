@@ -179,14 +179,21 @@ export function isReferenceNotFoundError(error: unknown): boolean {
  *
  * Matches the consensus error name and Drive's rendered phrasing, "property
  * '<p>' of document <id> (type '<t>') is immutable and cannot be changed by a
- * replace" (rs-dpp `document_immutable_property_changed_error.rs`), as well as
- * the bare numeric code the SDK attaches.
+ * replace" (rs-dpp `document_immutable_property_changed_error.rs`), plus the
+ * numeric code where the SDK attaches it as a labelled field.
+ *
+ * The numeric alternative is deliberately anchored to a `code` label rather
+ * than matched as a bare substring: "40128" occurs inside ordinary millisecond
+ * timestamps and credit amounts, and a false positive here would both mislabel
+ * an unrelated failure and stop {@link retryPostCreation} retrying something
+ * genuinely transient. The optional quote covers the `JSON.stringify` fallback
+ * in {@link extractErrorMessage}, which renders the field as `"code":40128`.
  */
 export function isImmutablePropertyChangedError(error: unknown): boolean {
   const msg = extractErrorMessage(error).toLowerCase()
   return (
     msg.includes('documentimmutablepropertychanged') ||
-    msg.includes('40128') ||
+    /\bcode"?\s*[=:]\s*40128\b/.test(msg) ||
     (msg.includes('is immutable') && msg.includes('replace'))
   )
 }
