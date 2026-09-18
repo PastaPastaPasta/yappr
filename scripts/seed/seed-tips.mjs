@@ -33,7 +33,7 @@
  */
 import { IdentitySigner, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sha256 } from '@noble/hashes/sha2.js';
 import {
@@ -52,6 +52,7 @@ import {
   sleep,
   socialContractId,
   wifFromHex,
+  writePrivateFile,
 } from './seed-lib.mjs';
 
 // ---- Constants ---------------------------------------------------------------
@@ -72,11 +73,21 @@ const STATE_FILE = join(REPO_ROOT, '.seed-tips.local.json');
 // Mirrors lib/tip-note.ts. Kept literal (like verify-tips.mjs does) so the
 // seeder writes the encoding the app parses, not a re-export of the app's copy.
 const TIP_NOTE_PREFIX = 'yappr:tip:v1:';
+/** `publicNote` maxLength on the token-history `transfer` doctype. */
+const TIP_NOTE_MAX_LENGTH = 2048;
+/** Message cap the tip UI enforces. */
+const TIP_MESSAGE_MAX_LENGTH = 280;
 
 function encodeTipNote(kind, targetId, message) {
   const header = `${TIP_NOTE_PREFIX}${kind}:${targetId}`;
   const trimmed = (message ?? '').trim();
-  return trimmed ? `${header}\n${trimmed}` : header;
+  if (!trimmed) return header;
+  // Never sign a note the doctype would reject, exactly as lib/tip-note.ts
+  // does: the message is capped by the UI limit and by the room the header
+  // leaves inside `maxLength`.
+  const room = Math.min(TIP_MESSAGE_MAX_LENGTH, TIP_NOTE_MAX_LENGTH - header.length - 1);
+  const body = trimmed.slice(0, room).trimEnd();
+  return body ? `${header}\n${body}` : header;
 }
 
 function parseTipNote(note) {
@@ -190,6 +201,8 @@ const MESSAGES = {
  * @param senders  [{ personaIdx, ownerId, handle, budget }] budget = YAPP on hand
  */
 function buildPlan({ authors, senders, seed, postTips, replyTips, profileTips, postsPerAuthor }) {
+  if (authors.length === 0) throw new Error('no authors with posts to tip');
+  if (senders.length === 0) throw new Error('no senders to tip from');
   const random = makeRandom(seed);
   const tips = [];
 
@@ -330,7 +343,10 @@ function loadState(file) {
 }
 
 function saveState(file, state) {
-  writeFileSync(file, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  // Atomic (tmp + rename) and mode 600, like every other seed ledger: parallel
+  // senders save after each confirmation, and a half-written plan would strand
+  // tips that are already on chain.
+  writePrivateFile(file, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 /** Plans carry bigint amounts; JSON does not. */
