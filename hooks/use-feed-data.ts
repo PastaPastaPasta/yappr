@@ -113,6 +113,9 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
   const [followingNextWindow, setFollowingNextWindow] = useState<FollowingFeedWindow | null>(null);
   const [pendingNewPosts, setPendingNewPosts] = useState<Post[]>([]);
   const [newestPostTimestamp, setNewestPostTimestamp] = useState<number | null>(null);
+  // Late page/background results belong to the feed view that requested them.
+  const loadGenerationRef = useRef(0);
+  const invalidateFeedLoads = useCallback(() => { loadGenerationRef.current++; }, []);
   const reconcilingPostIdsRef = useRef<Set<string>>(new Set());
 
   const {
@@ -127,12 +130,14 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
   const applyRepostAndQuoteEnrichment = useCallback(
     (postsToEnrich: Post[]) => {
       if (postsToEnrich.length === 0) return;
+      const generation = loadGenerationRef.current;
 
       enrichPostsWithRepostsAndQuotes(postsToEnrich)
         .then((enrichedPosts) => {
+          if (generation !== loadGenerationRef.current) return;
           const enrichedById = new Map(enrichedPosts.map((post) => [post.id, post]));
           setData((current) => {
-            if (!current) return current;
+            if (generation !== loadGenerationRef.current || !current) return current;
             return current.map((post) => {
               const enriched = enrichedById.get(post.id);
               if (!enriched) return post;
@@ -251,6 +256,11 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
   const loadPosts = useCallback(
     async (forceRefresh = false, pagination?: FeedLoadPagination) => {
+      const generation = loadGenerationRef.current;
+      const isCurrent = () => generation === loadGenerationRef.current;
+      const enrichCurrent: typeof enrichProgressively = (items, preloaded) => {
+        if (isCurrent()) enrichProgressively(items, preloaded);
+      };
       const isPaginating = Boolean(pagination?.startAfter || pagination?.timeWindow);
 
       if (!isPaginating) {
@@ -318,8 +328,9 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
               followingCursor = nextWindow;
               followingHasMore = batchHasMore;
             },
-            enrichProgressively,
+            enrichProgressively: enrichCurrent,
           });
+          if (!isCurrent()) return;
 
           pageHasMore = followingHasMore;
           setFollowingNextWindow(followingCursor);
@@ -340,6 +351,9 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
             feedLanguage,
             currentUserId: user?.identityId,
           });
+          // The tab may have changed while this page was in flight; its posts,
+          // cursor and cache entry belong to the view that asked for them.
+          if (!isCurrent()) return;
 
           posts = forYouResult.posts;
           forYouPreloaded = forYouResult.preloaded;
@@ -393,6 +407,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
           cacheManager.set<CachedFeedPage>('feed', cacheKey, { posts: sortedPosts, cursor, hasMore: pageHasMore });
         }
       } catch (error) {
+        if (!isCurrent()) return;
         logger.error('Feed: Failed to load posts from platform:', error);
 
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -401,7 +416,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
         // retry action, so a transient DAPI/composite failure is recoverable.
         setError(errorMessage);
       } finally {
-        setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     },
     [activeTab, applyRepostAndQuoteEnrichment, enrichProgressively, feedLanguage, setData, setError, setLoading, user?.identityId]
@@ -416,6 +431,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
       return;
     }
 
+    const generation = loadGenerationRef.current;
     setIsLoadingMore(true);
     try {
       if (activeTab === 'following' && followingNextWindow) {
@@ -424,12 +440,13 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
         await loadPosts(false, { startAfter: lastPostId });
       }
     } finally {
-      setIsLoadingMore(false);
+      if (generation === loadGenerationRef.current) setIsLoadingMore(false);
     }
   }, [activeTab, followingNextWindow, hasMore, isLoadingMore, lastPostId, loadPosts]);
 
   const checkForNewPosts = useCallback(async () => {
     if (!newestPostTimestamp || isLoading) return;
+    const generation = loadGenerationRef.current;
 
     try {
       logger.debug('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString());
@@ -449,7 +466,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
         newPosts = await queryPostsSince(sinceTimestamp, 50, feedLanguage || 'en');
       }
 
-      if (newPosts.length === 0) return;
+      if (generation !== loadGenerationRef.current || newPosts.length === 0) return;
 
       logger.debug(`Feed: Found ${newPosts.length} new posts`);
 
@@ -465,7 +482,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
       if (uniqueNewPosts.length > 0) {
         logger.debug(`Feed: ${uniqueNewPosts.length} unique new posts to show`);
-        setPendingNewPosts((prev) => [...uniqueNewPosts, ...prev]);
+        setPendingNewPosts((prev) => generation === loadGenerationRef.current ? [...uniqueNewPosts, ...prev] : prev);
       }
     } catch (error) {
       logger.error('Feed: Error checking for new posts:', error);
@@ -489,9 +506,11 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
   }, [applyRepostAndQuoteEnrichment, enrichProgressively, pendingNewPosts, setData]);
 
   const refresh = useCallback(async () => {
+    invalidateFeedLoads();
+    setIsLoadingMore(false);
     resetEnrichment();
     await loadPosts(true);
-  }, [loadPosts, resetEnrichment]);
+  }, [invalidateFeedLoads, loadPosts, resetEnrichment]);
 
   useEffect(() => {
     if (!enabled || !newestPostTimestamp) return;
@@ -548,12 +567,14 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     setData(null);
     setLastPostId(null);
     setFollowingNextWindow(null);
+    setIsLoadingMore(false);
     setHasMore(true);
     setPendingNewPosts([]);
     setNewestPostTimestamp(null);
 
     if (enabled) loadPosts().catch((error) => logger.error('Failed to load posts:', error));
-  }, [enabled, activeTab, loadPosts, resetEnrichment, setData]);
+    return invalidateFeedLoads;
+  }, [enabled, activeTab, invalidateFeedLoads, loadPosts, resetEnrichment, setData]);
 
   const handlePostDelete = useCallback(
     (postId: string) => {
