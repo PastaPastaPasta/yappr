@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback, useId } from 'react'
+import { useState, useEffect, useCallback, useId, useRef } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { X, KeyRound, ChevronDown } from 'lucide-react'
@@ -28,8 +29,8 @@ export function LoginModal() {
   const { loginWithPasskey } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const reduceMotion = useReducedMotion()
-  const titleId = useId()
   const advancedId = useId()
+  const opener = useRef<HTMLElement | null>(null)
 
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [walletKey, setWalletKey] = useState(0)
@@ -54,15 +55,6 @@ export function LoginModal() {
     }
   }, [close, pathname, router])
 
-  useEffect(() => {
-    if (!isOpen) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') handleClose()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isOpen, handleClose])
-
   const handlePasskey = async () => {
     setPasskeyError(null)
     setPasskeyBusy(true)
@@ -81,19 +73,28 @@ export function LoginModal() {
   const restartWallet = useCallback(() => setWalletKey((k) => k + 1), [])
 
   return (
+    <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) handleClose() }}>
     <AnimatePresence>
       {isOpen && (
+        <Dialog.Portal forceMount>
+        <Dialog.Overlay asChild>
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          onClick={handleClose}
           className={`fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
         >
+          <Dialog.Content
+            asChild
+            onOpenAutoFocus={() => {
+              opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+            }}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault()
+              if (opener.current?.getClientRects().length) opener.current.focus()
+            }}
+          >
           <motion.div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={titleId}
             initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.97 }}
@@ -113,12 +114,16 @@ export function LoginModal() {
             <div className="px-6 pt-7 pb-6">
               {/* Header */}
               <div className="text-center mb-6">
-                <h1 id={titleId} className="text-2xl font-bold text-gray-900 dark:text-white">
+                <Dialog.Title asChild>
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
                   Sign in to <span className="text-gradient">Yappr</span>
                 </h1>
+                </Dialog.Title>
+                <Dialog.Description asChild>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
                   Scan the code with your Dash wallet to sign in.
                 </p>
+                </Dialog.Description>
               </div>
 
               {/* Primary: wallet */}
@@ -195,8 +200,12 @@ export function LoginModal() {
               </p>
             </div>
           </motion.div>
+          </Dialog.Content>
         </motion.div>
+        </Dialog.Overlay>
+        </Dialog.Portal>
       )}
     </AnimatePresence>
+    </Dialog.Root>
   )
 }
