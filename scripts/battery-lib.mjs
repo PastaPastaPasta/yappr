@@ -1,6 +1,7 @@
 /**
  * Shared harness for the registration-day contract batteries
- * (verify-storefront.mjs, verify-blog.mjs, verify-dm.mjs, …).
+ * (verify-storefront.mjs, verify-blog.mjs, verify-dm.mjs, verify-pollr.mjs,
+ * verify-tips.mjs — see docs/NON_SOCIAL_CONTRACTS.md).
  *
  * Every helper decides a write's outcome by READING IT BACK from the chain,
  * never from the SDK's throw/no-throw: DAPI 504s on confirmation waits for
@@ -12,19 +13,21 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { IdentitySigner, TokenPaymentInfo } from '@dashevo/evo-sdk';
+import { IdentitySigner, TokenPaymentInfo, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID } from './derive-identities.mjs';
 import {
   REPO_ROOT,
   YAPP_TOKEN_POSITION,
   buildDocument,
+  createSdkHandle,
   describeErr,
   ledgerEntry,
   loadLedger,
   randomEntropy,
   readback as readbackWith,
   sleep,
+  socialContractId,
   wifFromHex,
 } from './seed/seed-lib.mjs';
 
@@ -48,9 +51,58 @@ export const DELETE_FORBIDDEN = /can ?not be deleted/i;
 export const DUPLICATE_UNIQUE = /\b40105\b|duplicate unique properties/i;
 export const TOKEN_AGREEMENT_MISSING = /token|payment|agree/i;
 export const FOREIGN_SIGNATURE = /invalid.{0,40}signature|signature.{0,40}(invalid|mismatch)|4020\d/i;
+/**
+ * A ranked read on a grid bucket no document ever landed in fails proof
+ * generation instead of proving an empty ranking; that error IS the empty
+ * answer (lib/services/ranked-likes.ts isColdBucketError).
+ */
+export const COLD_BUCKET = /single-path axis read must produce exactly one axis descent/i;
 
 export const id32 = (base58) => bs58.decode(base58);
 export const settle = () => sleep(SETTLE_MS);
+
+/** Base64 query operand for a plain byte-array property (what the client's `bytesToBase64QueryOperand` emits). */
+export const b64 = (bytes) => Buffer.from(bytes).toString('base64');
+
+/** A 32-byte identifier that is not an identity or a document on this devnet. */
+export const ghostIdentity = () => bs58.encode(randomEntropy());
+
+/**
+ * Integer group keys come back in two forms, and both are live:
+ * `documents.count({groupBy})` keys by the HEX of the platform-encoded byte
+ * (0x80 + value) while `documents.ranked` hands back the decoded number.
+ * Anything else stays `null`, so a mismatch fails a check instead of quietly
+ * reading as group 0.
+ */
+export function decodeIntGroupKey(key) {
+  if (typeof key === 'number') return key;
+  if (typeof key === 'bigint') return Number(key);
+  if (typeof key !== 'string' || !/^[0-9a-f]+$/i.test(key)) return null;
+  return parseInt(key, 16) - 0x80;
+}
+
+/** Any identifier shape (bytes, base58 string, Identifier) → base58. */
+export function normalizeId(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (value instanceof Uint8Array || Array.isArray(value)) return bs58.encode(Uint8Array.from(value));
+  if (typeof value.base58 === 'function') return value.base58();
+  if (typeof value.toString === 'function') return value.toString();
+  return '';
+}
+
+/**
+ * Drive's "internal error" payloads arrive base64-encoded CBOR, so the actual
+ * consensus reason never reaches the log. Splices the decoded text in.
+ */
+export function decodeDriveError(text) {
+  return text.replace(/[A-Za-z0-9+/]{24,}={0,2}/g, (blob) => {
+    try {
+      const decoded = Buffer.from(blob, 'base64').toString('utf8').replace(/[^\x20-\x7e]+/g, ' ').trim();
+      return decoded.length > 12 ? `${blob.slice(0, 12)}… ("${decoded}")` : blob;
+    } catch { return blob; }
+  });
+}
 
 /** Creates a battery context: SDK handle, reporting state, and the helper set bound to it. */
 export function createBattery({ handle, contractId, socialId }) {
@@ -80,6 +132,12 @@ export function createBattery({ handle, contractId, socialId }) {
 
   async function yappBalance(tokenId, ownerId) {
     const balances = await readback(() => sdk.tokens.balances([ownerId], tokenId));
+    return (balances instanceof Map ? balances.get(ownerId) : undefined) ?? 0n;
+  }
+
+  /** An identity's CREDIT balance — what a cost measurement diffs. */
+  async function balanceOf(ownerId) {
+    const balances = await readback(() => sdk.identities.balances([ownerId]));
     return (balances instanceof Map ? balances.get(ownerId) : undefined) ?? 0n;
   }
 
@@ -172,6 +230,23 @@ export function createBattery({ handle, contractId, socialId }) {
     return attemptWrite({ accepted }, () => sdk.documents.delete({ document, identityKey: who.identityKey, signer: who.signer }));
   }
 
+  /**
+   * An indexOnly type has no id-addressable row, so acceptance can only be a
+   * VALUE query on one of its index paths.
+   */
+  async function entryExists(docType, where, contract = contractId) {
+    return (await queryDocs(docType, { where }, contract)).length > 0;
+  }
+
+  /** Creates an indexOnly document; accepted = an entry matching `where` appears. */
+  function attemptCreateByValues(who, docType, data, where, options = {}) {
+    const contract = options.contract ?? contractId;
+    return attemptCreate(who, docType, data, {
+      ...options,
+      accepted: options.accepted ?? (() => entryExists(docType, where, contract)),
+    });
+  }
+
   function expectAccepted(label, outcome) {
     check(label, outcome.ok, outcome.ok ? (outcome.id ? `id=${outcome.id}` : '') : `rejected: ${(outcome.error ?? '').slice(0, 220)}`);
     return outcome;
@@ -185,6 +260,16 @@ export function createBattery({ handle, contractId, socialId }) {
     check(label, matched, matched ? reason.slice(0, 200) : `rejected, but NOT for the expected reason ${pattern}: ${reason.slice(0, 180)}`);
     return outcome;
   }
+
+  /** A write and its verdict in one call, so case tables can be data. */
+  const verdict = (label, expect, outcome) => (expect ? expectRejected(label, outcome, expect) : expectAccepted(label, outcome));
+  /** `expect` is the rejection pattern the write must produce, or null when it must land. */
+  const probeCreate = async (label, expect, who, docType, data, options) =>
+    verdict(label, expect, await attemptCreate(who, docType, data, options));
+  const probeReplace = async (label, expect, who, docType, id, data, revision, contract) =>
+    verdict(label, expect, await attemptReplace(who, docType, id, data, revision, contract));
+  const probeDelete = async (label, expect, who, docType, id, contract) =>
+    verdict(label, expect, await attemptDelete(who, docType, id, contract));
 
   // ---- Reads ------------------------------------------------------------------
 
@@ -228,6 +313,27 @@ export function createBattery({ handle, contractId, socialId }) {
     return { page, shape };
   }
 
+  /**
+   * Asserts one group's count on a ranked page. A WINDOWED read (`timeRange`) on a
+   * grid bucket nothing landed in throws instead of proving an empty page, and that
+   * error IS the empty answer — but ONLY for a windowed read. An all-time axis that
+   * fails proof generation is a real fault and stays a FAIL, which is the whole
+   * point of the cases that read it.
+   */
+  async function checkRanked(label, docType, groupBy, key, expected, extra = {}, contract = contractId) {
+    try {
+      const result = await ranked(docType, groupBy, { type: 'count' }, extra, contract);
+      const entry = groupValueOf(result.page, key);
+      check(label, Number(entry?.value ?? -1) === expected, `value=${entry?.value} groups=${result.page.entries.length}`);
+      return result;
+    } catch (e) {
+      const message = describeErr(e);
+      const coldBucket = Boolean(extra.timeRange) && COLD_BUCKET.test(message);
+      check(label, coldBucket, coldBucket ? `cold bucket (the empty answer): ${message.slice(0, 160)}` : message.slice(0, 200));
+      return null;
+    }
+  }
+
   async function queryDocs(docType, query, contract = contractId) {
     return readback(async () => {
       const r = await sdk.documents.query({ dataContractId: contract, documentTypeName: docType, ...query });
@@ -255,9 +361,10 @@ export function createBattery({ handle, contractId, socialId }) {
   }
 
   return {
-    sdk, readback, check, personaActor, yappBalance, ensureYapp, fetchDocument, revisionOf, attemptWrite, paymentInfo,
-    attemptCreate, attemptReplace, attemptDelete, attemptDeleteByValues, expectAccepted, expectRejected,
-    countBy, groupedCount, averageBy, sumBy, ranked, queryDocs, groupValueOf, avgOf, approx, b58,
+    sdk, readback, check, personaActor, yappBalance, balanceOf, ensureYapp, fetchDocument, revisionOf,
+    attemptWrite, paymentInfo, attemptCreate, attemptReplace, attemptDelete, attemptDeleteByValues,
+    attemptCreateByValues, entryExists, expectAccepted, expectRejected, probeCreate, probeReplace, probeDelete,
+    countBy, groupedCount, averageBy, sumBy, ranked, checkRanked, queryDocs, groupValueOf, avgOf, approx, b58,
     workingShapes, report, get failures() { return failures; },
   };
 }
@@ -278,6 +385,91 @@ export function parseOnly(value, cases) {
   const only = value.split(',').map((s) => s.trim());
   for (const key of only) if (!cases.has(key)) throw new Error(`unknown case ${key}`);
   return only;
+}
+
+// ---- Entrypoint --------------------------------------------------------------
+
+/**
+ * `flags` and `actors` map a flag name to its default, and the default's TYPE is
+ * the coercion (number → Number, bigint → BigInt, anything else → the raw
+ * string). Pass `{ default, parse }` when a flag needs its own.
+ */
+function coerceFlag({ default: fallback, parse }, raw) {
+  if (parse) return parse(raw);
+  if (typeof fallback === 'number') return Number(raw);
+  if (typeof fallback === 'bigint') return BigInt(raw);
+  return raw;
+}
+
+function parseBatteryArgs(argv, spec) {
+  const specs = new Map();
+  const args = { only: null };
+  const define = (name, value) => {
+    const entry = value !== null && typeof value === 'object' ? value : { default: value };
+    specs.set(name, entry);
+    args[name] = entry.default;
+  };
+  if (spec.contract?.env) define('contract', process.env[spec.contract.env]?.trim() || null);
+  if (spec.yapp?.default !== undefined) define('yapp', spec.yapp.default);
+  for (const [name, value] of Object.entries({ ...spec.actors, ...spec.flags })) define(name, value);
+
+  for (let i = 0; i < argv.length; i++) {
+    const name = argv[i].startsWith('--') ? argv[i].slice(2) : null;
+    if (name === 'only') { args.only = parseOnly(argv[++i], spec.cases); continue; }
+    const entry = name === null ? undefined : specs.get(name);
+    if (!entry) throw new Error(`Unknown argument: ${argv[i]}`);
+    args[name] = coerceFlag(entry, argv[++i]);
+  }
+  if (spec.contract?.env && !args.contract) throw new Error(`Pass --contract <id> or set ${spec.contract.env}`);
+  spec.validate?.(args);
+  return args;
+}
+
+/**
+ * The whole battery entrypoint: `--self-test` guard, argument parsing, connect,
+ * persona actors, the optional YAPP pre-flight, the case run and the exit code.
+ * `setup` returns the extra ctx a battery's cases need; `battery`, `contractId`,
+ * `socialId`, `tokenId`, `args`, `run` and every actor are merged in for free.
+ */
+export async function runBattery(spec) {
+  if (spec.selfTest && process.argv.includes('--self-test')) process.exit(spec.selfTest());
+  try {
+    const args = parseBatteryArgs(process.argv.slice(2), spec);
+    await ensureInitialized();
+    const socialId = socialContractId();
+    const contractId = spec.contract.fixed ?? args.contract;
+    const extra = (spec.extraContracts?.(args) ?? []).filter(Boolean);
+    const handle = createSdkHandle({ contractIds: [socialId, contractId, ...extra] });
+    const { protocolVersion } = await handle.connect();
+    const battery = createBattery({ handle, contractId, socialId });
+    console.log(`connected (PV${protocolVersion}); ${spec.label} ${contractId}${spec.banner?.({ args, socialId }) ?? ''}`);
+
+    const names = Object.keys(spec.actors ?? {});
+    const resolved = await Promise.all(names.map((name) => battery.personaActor(args[name])));
+    const actors = Object.fromEntries(names.map((name, index) => [name, resolved[index]]));
+    if (names.length > 0) console.log(names.map((name) => `${name}=${actors[name].label}`).join(' '));
+
+    let tokenId = null;
+    if (spec.yapp) {
+      tokenId = await battery.readback(() => battery.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
+      const target = spec.yapp.target ? spec.yapp.target(args) : args.yapp;
+      for (const name of spec.yapp.actors) {
+        const balance = await battery.ensureYapp(tokenId, actors[name], target);
+        console.log(`     ${actors[name].label}: ${balance} YAPP`);
+        if (spec.yapp.require && balance < target) {
+          throw new Error(`${actors[name].label} holds ${balance} YAPP, below the ${target} the battery needs`);
+        }
+      }
+    }
+
+    const base = { battery, contractId, socialId, tokenId, args, run: Date.now().toString(36), ...actors };
+    const ctx = { ...base, ...(await spec.setup?.({ ...base, protocolVersion }) ?? {}) };
+    await runCases(battery, spec.cases, args.only, ctx);
+    process.exit(battery.report(spec.summary?.(ctx) ?? '') === 0 ? 0 : 1);
+  } catch (e) {
+    console.error('ERROR:', describeErr(e));
+    process.exit(1);
+  }
 }
 
 // ---- Offline pre-flight ------------------------------------------------------
@@ -333,5 +525,20 @@ export function selfTest(file, expect) {
     return 1;
   }
   console.log(`contracts/${file} declares every rule this battery asserts`);
+  return 0;
+}
+
+/**
+ * Reports an OFFLINE self-test built from plain assertions, for a battery whose
+ * subject is not a checked-in contract (verify-tips.mjs). Returns an exit code.
+ */
+export function reportSelfTest(subject, assertions) {
+  const problems = assertions.filter(([, ok]) => !ok).map(([what]) => what);
+  for (const problem of problems) console.error(`FAIL  ${problem}`);
+  if (problems.length > 0) {
+    console.error(`${subject} no longer behaves the way this battery asserts`);
+    return 1;
+  }
+  console.log(`${subject} behaves the way this battery asserts (${assertions.length} checks)`);
   return 0;
 }
