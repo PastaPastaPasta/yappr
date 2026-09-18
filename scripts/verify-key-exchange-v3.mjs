@@ -170,7 +170,12 @@ CASES.set('k1', async (ctx) => {
   );
   battery.workingShapes.push({
     label: 'getResponse (byContractAndEphemeralKey; v2 shape, difference 2)',
-    shape: { ...responseShape('<contractId>', '<appContractId>', ctx.hash1), where: [['contractId', '==', '<base58>'], ['appEphemeralPubKeyHash', '==', '<base64>']] },
+    shape: {
+      dataContractId: '<contractId>',
+      documentTypeName: 'loginKeyResponse',
+      where: [['contractId', '==', '<base58>'], ['appEphemeralPubKeyHash', '==', '<base64>']],
+      limit: 1,
+    },
   });
 
   const meta = await getMeta(ctx, ctx.hash1);
@@ -181,7 +186,12 @@ CASES.set('k1', async (ctx) => {
   );
   battery.workingShapes.push({
     label: 'consume read (byHandshakeMeta; hash alone, difference 2)',
-    shape: { ...metaShape('<contractId>', ctx.hash1), where: [['appEphemeralPubKeyHash', '==', '<base64>']] },
+    shape: {
+      dataContractId: '<contractId>',
+      documentTypeName: 'loginKeyResponse',
+      where: [['appEphemeralPubKeyHash', '==', '<base64>']],
+      limit: 1,
+    },
   });
 });
 

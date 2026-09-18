@@ -109,8 +109,8 @@ class KeyExchangeService extends BaseDocumentService<LoginKeyResponse> {
    */
   private async getHandshakeMeta(hashBase64: string): Promise<Record<string, unknown> | null> {
     const raw = await queryRawDocuments({
-      dataContractId: KEY_EXCHANGE_CONTRACT_ID,
-      documentTypeName: DOCUMENT_TYPES.LOGIN_KEY_RESPONSE,
+      dataContractId: this.contractId,
+      documentTypeName: this.documentType,
       where: [['appEphemeralPubKeyHash', '==', hashBase64]],
       limit: 1
     })
