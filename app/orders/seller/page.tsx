@@ -108,7 +108,7 @@ function SellerOrdersPage() {
         setOrderPayloads(payloadMap)
 
         // Latest genuine status per order: one `in` query per 100 orders
-        // (v2 binds sellerId to the order, so spoofed updates are dropped).
+        // (v2 gates the writer against the order's sellerId, so every update here is the seller's own).
         const [statusMap, usernameMap] = await Promise.all([
           orderStatusService.getLatestStatuses(sellerOrders.map((order) => order.id)).catch((e) => {
             logger.error('Failed to load order statuses:', e)

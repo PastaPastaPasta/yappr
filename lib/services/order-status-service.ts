@@ -30,7 +30,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       id: (doc.$id || doc.id) as string,
       ownerId: (doc.$ownerId || doc.ownerId) as string,
       orderId,
-      sellerId: identifierToBase58(data.sellerId) || undefined,
       buyerId: identifierToBase58(data.buyerId) || undefined,
       createdAt: new Date((doc.$createdAt || doc.createdAt) as number),
       status: data.status,
@@ -41,21 +40,16 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
   }
 
   /**
-   * v2 binds `sellerId` to the order by consensus but cannot bind `$ownerId`,
-   * so a stranger can post an update carrying the right ids. An update is
-   * genuine only when the seller signed it. On v1 there is no attested seller
-   * to compare against, so every update is taken as-is (the v1 behaviour).
+   * Newest update per order from an unordered list of updates.
+   *
+   * Every update here is the seller's: v2 gates the writer against the order's
+   * `sellerId` (`{$ownerId: sellerId}`), so an update by anyone else is refused
+   * at write time and there is nothing to filter out. v1 carried no seller
+   * attestation at all, so it never filtered either.
    */
-  isGenuine(update: OrderStatusUpdate): boolean {
-    if (update.sellerId === undefined) return !storefrontIsV2();
-    return update.ownerId === update.sellerId;
-  }
-
-  /** Newest genuine update per order from an unordered list of updates. */
   latestPerOrder(updates: OrderStatusUpdate[]): Map<string, OrderStatusUpdate> {
     const latest = new Map<string, OrderStatusUpdate>();
     for (const update of updates) {
-      if (!this.isGenuine(update)) continue;
       const current = latest.get(update.orderId);
       if (
         !current ||
@@ -69,7 +63,7 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
   }
 
   /**
-   * Latest genuine status for many orders. Status history is append-only, so
+   * Latest status for many orders. Status history is append-only, so
    * an `in` page is walked with a cursor until it runs short — a single
    * 100-row page would silently drop the orders that sort last.
    */
@@ -104,28 +98,23 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       limit: 100
     });
 
-    return documents.filter((update) => this.isGenuine(update));
+    return documents;
   }
 
   /**
-   * Get the latest status for an order
+   * Get the latest status for an order.
+   *
+   * One row: only the order's seller can write an update (the writer gate), so
+   * the newest one IS the status. This used to walk newest-first through pages
+   * of spoofs, which were cheap and unbounded before consensus refused them.
    */
   async getLatestStatus(orderId: string): Promise<OrderStatusUpdate | null> {
-    // Walk newest-first until a genuine update turns up: spoofed updates are
-    // cheap and unbounded, so a fixed page could hide the seller's real one.
-    let startAfter: string | undefined;
-    for (;;) {
-      const { documents } = await this.query({
-        where: [['orderId', '==', orderId]],
-        orderBy: [['orderId', 'asc'], ['$createdAt', 'desc']],
-        limit: 20,
-        startAfter,
-      });
-      const genuine = documents.find((update) => this.isGenuine(update));
-      if (genuine) return genuine;
-      if (documents.length < 20) return null;
-      startAfter = documents[documents.length - 1].id;
-    }
+    const { documents } = await this.query({
+      where: [['orderId', '==', orderId]],
+      orderBy: [['orderId', 'asc'], ['$createdAt', 'desc']],
+      limit: 1,
+    });
+    return documents[0] ?? null;
   }
 
   /**
@@ -156,15 +145,16 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       trackingNumber?: string;
       trackingCarrier?: string;
       message?: string;
-      /** The order's buyer (v2 propertyAgreement; required). */
+      /** The order's buyer (v2 propertyAgreement against the order's $ownerId; required). */
       buyerId: string;
     }
   ): Promise<OrderStatusUpdate> {
     const documentData: Record<string, unknown> = {
       orderId: identifierStringToDocumentBytes(orderId),
-      ...(storefrontIsV2()
-        ? { sellerId: identifierStringToDocumentBytes(sellerId), buyerId: identifierStringToDocumentBytes(data.buyerId) }
-        : {}),
+      // No sellerId copy: v2 gates the writer to the order's seller, so the
+      // signer IS the seller. buyerId stays because `buyerStatusUpdates`
+      // indexes it for the buyer's own feed.
+      ...(storefrontIsV2() ? { buyerId: identifierStringToDocumentBytes(data.buyerId) } : {}),
       status: data.status
     };
 

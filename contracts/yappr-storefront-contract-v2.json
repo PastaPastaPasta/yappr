@@ -155,10 +155,13 @@
         "maxItems": 32,
         "contentMediaType": "application/x.dash.dpp.identifier",
         "position": 0,
-        "description": "ID of the store this item belongs to",
+        "description": "ID of the store this item belongs to; only that store's owner may write it",
         "refersTo": {
           "type": "permanentDocument",
-          "documentType": "store"
+          "documentType": "store",
+          "propertyAgreement": {
+            "$ownerId": "$ownerId"
+          }
         }
       },
       "title": {
@@ -253,9 +256,12 @@
         "description": "JSON object with axes and combinations for product variants"
       }
     },
-    "description": "A product listing with optional embedded variants. Permanent so orders and item reviews can reference it; status `deleted` is the tombstone.",
+    "description": "A product listing with optional embedded variants. Permanent so orders and item reviews can reference it; status `deleted` is the tombstone. Only the store owner can create or edit one, and storeId is frozen.",
     "additionalProperties": false,
-    "canBeDeleted": false
+    "canBeDeleted": false,
+    "immutable": [
+      "storeId"
+    ]
   },
   "shippingZone": {
     "type": "object",
@@ -298,10 +304,13 @@
         "maxItems": 32,
         "contentMediaType": "application/x.dash.dpp.identifier",
         "position": 0,
-        "description": "ID of the store this zone belongs to",
+        "description": "ID of the store this zone belongs to; only that store's owner may write it",
         "refersTo": {
           "type": "permanentDocument",
-          "documentType": "store"
+          "documentType": "store",
+          "propertyAgreement": {
+            "$ownerId": "$ownerId"
+          }
         }
       },
       "name": {
@@ -359,8 +368,11 @@
         "description": "Zone matching priority (lower = higher priority)"
       }
     },
-    "description": "Shipping zone configuration for a store",
-    "additionalProperties": false
+    "description": "A shipping zone for a store. Only the store owner can create or edit one, and storeId is frozen.",
+    "additionalProperties": false,
+    "immutable": [
+      "storeId"
+    ]
   },
   "storeOrder": {
     "type": "object",
@@ -423,7 +435,6 @@
             "storeId": "asc"
           }
         ],
-        "countable": "countable",
         "rangeCountable": true,
         "rankedCountable": true
       }
@@ -432,7 +443,6 @@
       "$createdAt",
       "storeId",
       "sellerId",
-      "buyerId",
       "encryptedPayload",
       "nonce"
     ],
@@ -444,10 +454,13 @@
         "maxItems": 32,
         "contentMediaType": "application/x.dash.dpp.identifier",
         "position": 0,
-        "description": "ID of the store",
+        "description": "ID of the store; its owner is copied into sellerId",
         "refersTo": {
           "type": "permanentDocument",
-          "documentType": "store"
+          "documentType": "store",
+          "propertyAgreement": {
+            "sellerId": "$ownerId"
+          }
         }
       },
       "sellerId": {
@@ -457,25 +470,13 @@
         "maxItems": 32,
         "contentMediaType": "application/x.dash.dpp.identifier",
         "position": 1,
-        "description": "Identity ID of the store owner (for seller queries)",
-        "refersTo": {
-          "type": "identity"
-        }
-      },
-      "buyerId": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 32,
-        "maxItems": 32,
-        "contentMediaType": "application/x.dash.dpp.identifier",
-        "position": 2,
-        "description": "Buyer identity; must equal $ownerId (poster-attested)"
+        "description": "Store owner's identity, consensus-bound to the store's $ownerId"
       },
       "encryptedPayload": {
         "type": "array",
         "maxItems": 16000,
         "minItems": 1,
-        "position": 3,
+        "position": 2,
         "byteArray": true,
         "description": "XChaCha20-Poly1305 encrypted order data (items, address, payment info)"
       },
@@ -483,12 +484,12 @@
         "type": "array",
         "maxItems": 24,
         "minItems": 24,
-        "position": 4,
+        "position": 3,
         "byteArray": true,
         "description": "24-byte nonce for XChaCha20-Poly1305 encryption"
       }
     },
-    "description": "An encrypted order created by a buyer. Permanent so status updates and reviews can reference it. `buyerId` is poster-attested (must equal $ownerId; the app checks) and is the propertyAgreement source that pins reviews and status updates to this order.",
+    "description": "An encrypted order created by a buyer. Permanent so status updates and reviews can reference it. The buyer IS $ownerId, and `sellerId` is consensus-equal to the store's owner, so both parties are facts rather than buyer-supplied claims; reviews and status updates bind to them.",
     "additionalProperties": false,
     "documentsMutable": false,
     "canBeDeleted": false
@@ -533,7 +534,6 @@
     "required": [
       "$createdAt",
       "orderId",
-      "sellerId",
       "buyerId",
       "status"
     ],
@@ -545,24 +545,15 @@
         "maxItems": 32,
         "contentMediaType": "application/x.dash.dpp.identifier",
         "position": 0,
-        "description": "ID of the order being updated",
+        "description": "ID of the order being updated; only its seller may write this",
         "refersTo": {
           "type": "permanentDocument",
           "documentType": "storeOrder",
           "propertyAgreement": {
-            "sellerId": "sellerId",
-            "buyerId": "buyerId"
+            "buyerId": "$ownerId",
+            "$ownerId": "sellerId"
           }
         }
-      },
-      "sellerId": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 32,
-        "maxItems": 32,
-        "contentMediaType": "application/x.dash.dpp.identifier",
-        "position": 1,
-        "description": "Seller identity; must equal the order's sellerId and this $ownerId"
       },
       "buyerId": {
         "type": "array",
@@ -570,8 +561,8 @@
         "minItems": 32,
         "maxItems": 32,
         "contentMediaType": "application/x.dash.dpp.identifier",
-        "position": 2,
-        "description": "Buyer identity; must equal the order's buyerId (for buyer status feeds)"
+        "position": 1,
+        "description": "Buyer identity, consensus-bound to the order's $ownerId (for buyer status feeds)"
       },
       "status": {
         "type": "string",
@@ -585,29 +576,29 @@
           "refunded",
           "disputed"
         ],
-        "position": 3,
+        "position": 2,
         "description": "Order status"
       },
       "trackingNumber": {
         "type": "string",
-        "position": 4,
+        "position": 3,
         "maxLength": 100,
         "description": "Shipping tracking number"
       },
       "trackingCarrier": {
         "type": "string",
-        "position": 5,
+        "position": 4,
         "maxLength": 50,
         "description": "Shipping carrier name"
       },
       "message": {
         "type": "string",
-        "position": 6,
+        "position": 5,
         "maxLength": 500,
         "description": "Optional message to buyer"
       }
     },
-    "description": "A status update for an order (append-only history). Only a document carrying the order's own sellerId/buyerId is accepted (propertyAgreement); the app treats an update whose $ownerId != sellerId as invalid.",
+    "description": "A status update for an order (append-only history). Only the order's SELLER can write one \u2014 consensus gates the writer against the order's sellerId \u2014 so there is nothing left for the app to second-guess. buyerId is bound to the order's owner so buyers keep a status feed.",
     "additionalProperties": false,
     "documentsMutable": false
   },
@@ -663,7 +654,6 @@
             "storeId": "asc"
           }
         ],
-        "countable": "countable",
         "summable": "rating",
         "averageable": "rating",
         "rangeCountable": true,
@@ -679,7 +669,6 @@
             "sellerId": "asc"
           }
         ],
-        "countable": "countable",
         "summable": "rating",
         "averageable": "rating",
         "rangeCountable": true,
@@ -705,7 +694,6 @@
       "storeId",
       "orderId",
       "sellerId",
-      "buyerId",
       "rating"
     ],
     "properties": {
@@ -729,14 +717,14 @@
         "maxItems": 32,
         "contentMediaType": "application/x.dash.dpp.identifier",
         "position": 1,
-        "description": "ID of the completed order (proves purchase)",
+        "description": "ID of the completed order (proves purchase); only its buyer may review it",
         "refersTo": {
           "type": "permanentDocument",
           "documentType": "storeOrder",
           "propertyAgreement": {
             "storeId": "storeId",
             "sellerId": "sellerId",
-            "buyerId": "buyerId"
+            "$ownerId": "$ownerId"
           }
         }
       },
@@ -747,38 +735,29 @@
         "maxItems": 32,
         "contentMediaType": "application/x.dash.dpp.identifier",
         "position": 2,
-        "description": "Identity ID of the store owner (for seller queries)"
-      },
-      "buyerId": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 32,
-        "maxItems": 32,
-        "contentMediaType": "application/x.dash.dpp.identifier",
-        "position": 3,
-        "description": "Buyer identity copied from the order; the app requires it to equal $ownerId"
+        "description": "Store owner's identity, consensus-bound to the order's sellerId (for seller queries)"
       },
       "rating": {
         "type": "integer",
         "minimum": 1,
         "maximum": 5,
-        "position": 4,
+        "position": 3,
         "description": "Star rating (1-5)"
       },
       "title": {
         "type": "string",
-        "position": 5,
+        "position": 4,
         "maxLength": 100,
         "description": "Review title"
       },
       "content": {
         "type": "string",
-        "position": 6,
+        "position": 5,
         "maxLength": 1000,
         "description": "Review content"
       }
     },
-    "description": "A review of a store from a buyer, one per order. orderId must name a real order whose storeId/sellerId/buyerId agree with this document; the app shows \"verified purchase\" when $ownerId == buyerId.",
+    "description": "A review of a store from a buyer, one per order. orderId must name a real order whose storeId/sellerId agree with this document AND whose owner is the signer, so every review on chain is a verified purchase.",
     "additionalProperties": false,
     "documentsMutable": false,
     "tokenCost": {
@@ -792,7 +771,7 @@
   "itemReview": {
     "type": "object",
     "documentsMutable": false,
-    "description": "A review of one item from an order, one per (order, item). The item must belong to the same store as the order; the buyer is pinned by propertyAgreement against the order. Reviewing an item publishes that this order contained it.",
+    "description": "A review of one item from an order, one per (order, item). The item must belong to the same store as the order, and only the identity that placed the order may write it (writer gate). Reviewing an item publishes that this order contained it.",
     "indices": [
       {
         "name": "itemReviews",
@@ -835,7 +814,6 @@
             "itemId": "asc"
           }
         ],
-        "countable": "countable",
         "summable": "rating",
         "averageable": "rating",
         "rangeCountable": true,
@@ -854,7 +832,6 @@
             "itemId": "asc"
           }
         ],
-        "countable": "countable",
         "summable": "rating",
         "averageable": "rating",
         "rangeCountable": true,
@@ -900,36 +877,27 @@
         "maxItems": 32,
         "contentMediaType": "application/x.dash.dpp.identifier",
         "position": 2,
-        "description": "ID of the order the item was bought in",
+        "description": "ID of the order the item was bought in; only its buyer may review it",
         "refersTo": {
           "type": "permanentDocument",
           "documentType": "storeOrder",
           "propertyAgreement": {
             "storeId": "storeId",
-            "buyerId": "buyerId"
+            "$ownerId": "$ownerId"
           }
         }
-      },
-      "buyerId": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 32,
-        "maxItems": 32,
-        "contentMediaType": "application/x.dash.dpp.identifier",
-        "position": 3,
-        "description": "Buyer identity copied from the order; the app requires it to equal $ownerId"
       },
       "rating": {
         "type": "integer",
         "minimum": 1,
         "maximum": 5,
-        "position": 4,
+        "position": 3,
         "description": "Star rating (1-5)"
       },
       "content": {
         "type": "string",
         "maxLength": 1000,
-        "position": 5,
+        "position": 4,
         "description": "Review content"
       }
     },
@@ -938,7 +906,6 @@
       "storeId",
       "itemId",
       "orderId",
-      "buyerId",
       "rating"
     ],
     "additionalProperties": false,

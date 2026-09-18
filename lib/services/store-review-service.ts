@@ -1,10 +1,10 @@
 /**
  * Store Review Service (storefront v2)
  *
- * One review per order. Consensus enforces that the order exists and that the
- * review's storeId/sellerId/buyerId agree with it (refersTo +
- * propertyAgreement); the app marks a review as a verified purchase when its
- * owner is the order's buyer. Costs 3 YAPP. Aggregates (average, count,
+ * One review per order. Consensus enforces that the order exists, that the
+ * review's storeId/sellerId agree with it, and that the signer OWNS the order
+ * (the `{$ownerId: $ownerId}` writer gate) — so every review on chain is a
+ * verified purchase. Costs 3 YAPP. Aggregates (average, count,
  * distribution, rankings) come from `storeStatsService`, never from scans.
  */
 
@@ -22,16 +22,15 @@ class StoreReviewService extends BaseDocumentService<StoreReview> {
 
   protected transformDocument(doc: Record<string, unknown>): StoreReview {
     const data = (doc.data || doc) as StoreReviewDocument;
-    const reviewerId = (doc.$ownerId || doc.ownerId) as string;
-    const buyerId = identifierToBase58(data.buyerId) || undefined;
     return {
       id: (doc.$id || doc.id) as string,
-      reviewerId,
+      reviewerId: (doc.$ownerId || doc.ownerId) as string,
       storeId: identifierToBase58(data.storeId) || '',
       orderId: identifierToBase58(data.orderId) || '',
       sellerId: identifierToBase58(data.sellerId) || '',
-      buyerId,
-      verifiedPurchase: buyerId !== undefined && buyerId === reviewerId,
+      // v2 gates the writer to the order's owner; v1 has no such rule, so a
+      // review there proves nothing about a purchase.
+      verifiedPurchase: storefrontIsV2(),
       createdAt: new Date((doc.$createdAt || doc.createdAt) as number),
       rating: data.rating,
       title: data.title,
@@ -84,9 +83,6 @@ class StoreReviewService extends BaseDocumentService<StoreReview> {
       storeId: identifierStringToDocumentBytes(data.storeId),
       orderId: identifierStringToDocumentBytes(data.orderId),
       sellerId: identifierStringToDocumentBytes(data.sellerId),
-      // v2: consensus checks this equals the order's buyerId; the app requires
-      // it to equal the signer too, which is what makes the review "verified".
-      ...(storefrontIsV2() ? { buyerId: identifierStringToDocumentBytes(reviewerId) } : {}),
       rating: data.rating,
     };
     if (data.title) documentData.title = data.title;

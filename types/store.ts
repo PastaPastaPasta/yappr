@@ -264,9 +264,8 @@ export interface OrderPayload {
 
 // Store order document (from platform)
 export interface StoreOrderDocument {
-  buyerId?: Uint8Array | string // v2: poster-attested, equals $ownerId
   $id: string
-  $ownerId: string // buyer
+  $ownerId: string // buyer — there is no separate buyerId property
   $createdAt: number
   storeId: Uint8Array | string
   sellerId: Uint8Array | string
@@ -299,8 +298,7 @@ export interface OrderStatusUpdateDocument {
   $ownerId: string // seller
   $createdAt: number
   orderId: Uint8Array | string
-  sellerId?: Uint8Array | string // v2: agreed with the order by consensus
-  buyerId?: Uint8Array | string // v2: agreed with the order by consensus
+  buyerId?: Uint8Array | string // v2: agreed with the order's $ownerId by consensus
   status: OrderStatus
   trackingNumber?: string
   trackingCarrier?: string
@@ -310,10 +308,9 @@ export interface OrderStatusUpdateDocument {
 // Parsed order status update for UI
 export interface OrderStatusUpdate {
   id: string
+  /** v2: necessarily the order's seller — consensus gates the writer. */
   ownerId: string
   orderId: string
-  /** v2: the order's seller. Consensus binds it to the order; the app treats an update whose ownerId != sellerId as spoofed. */
-  sellerId?: string
   buyerId?: string
   createdAt: Date
   status: OrderStatus
@@ -330,7 +327,6 @@ export interface StoreReviewDocument {
   storeId: Uint8Array | string
   orderId: Uint8Array | string
   sellerId: Uint8Array | string
-  buyerId?: Uint8Array | string // v2: agreed with the order by consensus
   rating: number
   title?: string
   content?: string
@@ -343,8 +339,7 @@ export interface StoreReview {
   storeId: string
   orderId: string
   sellerId: string
-  /** v2: the order's buyer, bound by consensus. `verifiedPurchase` is `reviewerId === buyerId`. */
-  buyerId?: string
+  /** v2: always true — only the order's owner can write a review of it. */
   verifiedPurchase: boolean
   createdAt: Date
   rating: number
@@ -364,7 +359,6 @@ export interface ItemReviewDocument {
   storeId: Uint8Array | string
   itemId: Uint8Array | string
   orderId: Uint8Array | string
-  buyerId: Uint8Array | string
   rating: number
   content?: string
 }
@@ -376,7 +370,7 @@ export interface ItemReview {
   storeId: string
   itemId: string
   orderId: string
-  buyerId: string
+  /** v2-only doctype, and the writer gate makes every review a real purchase. */
   verifiedPurchase: boolean
   createdAt: Date
   rating: number

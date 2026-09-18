@@ -8,26 +8,35 @@ docs/STOREFRONT_V2.md for the rationale and the query shapes each index serves.
 What v2 adds, per document type:
 
   store        canBeDeleted:false (permanentDocument target; `closed` is the tombstone)
-  storeItem    canBeDeleted:false (`deleted` status is the tombstone);
-               storeId refersTo store
-  storeOrder   canBeDeleted:false; buyerId (poster-attested, == $ownerId);
-               storeId refersTo store; sellerId refersTo identity;
-               countable buyer/seller/store order indexes; storeOrderCount
-               ranked by count ("most ordered stores")
+  storeItem    canBeDeleted:false (`deleted` status is the tombstone); storeId
+               refersTo store WITH THE WRITER GATE {$ownerId: $ownerId}, so only
+               the store's owner can list an item under it, and storeId is
+               `immutable` so an edit cannot move the item to another store
+  storeOrder   canBeDeleted:false; storeId refersTo store with the agreement
+               {sellerId: $ownerId}, which makes sellerId consensus-TRUE (it is
+               the store's real owner, not a buyer-supplied claim); NO buyerId
+               property — the buyer is $ownerId and every buyer index already
+               keys on it; countable buyer/seller/store order indexes;
+               storeOrderCount ranked by count ("most ordered stores")
   orderStatusUpdate
-               sellerId (propertyAgreement with the order) so only a document
-               carrying the order's seller id is accepted; the app checks
-               $ownerId == sellerId; buyerId copied the same way so buyers can
-               query their own status feed
+               orderId refersTo storeOrder with the writer gate
+               {$ownerId: sellerId}: only the order's seller can post a status
+               update, so the doctype no longer carries a sellerId copy for the
+               app to check. buyerId is agreement-bound to the order's $ownerId
+               so buyers keep their own status feed
   storeReview  one per order (unique orderId); orderId refersTo storeOrder with
-               propertyAgreement {storeId, sellerId, buyerId}; `rating` averaged
-               and ranked per store and per seller; rating distribution countable;
-               YAPP cost 3 (charged from the social contract's token)
-  itemReview   NEW, one per (orderId, itemId); orderId/itemId refersTo with the
-               same agreement chain plus {storeId} agreement against the item;
-               `rating` averaged and ranked per item and per (store, item);
-               YAPP cost 1
-  shippingZone storeId refersTo store
+               propertyAgreement {storeId, sellerId} plus the writer gate
+               {$ownerId: $ownerId} — only the identity that placed the order can
+               review it, so the buyerId copy is gone and "verified purchase" is
+               a consensus fact; `rating` averaged and ranked per store and per
+               seller; rating distribution countable; YAPP cost 3 (charged from
+               the social contract's token)
+  itemReview   NEW, one per (orderId, itemId); itemId refersTo storeItem with
+               {storeId}; orderId refersTo storeOrder with {storeId} plus the
+               same writer gate; `rating` averaged and ranked per item and per
+               (store, item); YAPP cost 1
+  shippingZone storeId refersTo store with the writer gate {$ownerId: $ownerId}
+               and frozen (`immutable`)
   savedAddress unchanged
 
 Run:
@@ -49,10 +58,13 @@ SOCIAL_CONTRACT_ID_PLACEHOLDER = 'SOCIAL_CONTRACT_ID'
 YAPP_TOKEN_POSITION = 0
 REVIEW_COST = {'storeReview': 3, 'itemReview': 1}
 
-# The "average tree" flags, spelled out the way upstream's restaurants fixture
-# does: count + sum + average axes, each with its range variant.
+# The "average tree" flags: count + sum + average axes, each with its range
+# variant. `countable` is left out — 4.2.0-beta.2 makes `rangeCountable: true`
+# imply `countable: "countable"` in the meta-schema and in the structural parser
+# alike. The rest stays spelled out: the `ranked*` dependency checks run on the
+# literal keys and the offline wasm validator compiles them out, so anything
+# only implied "passes locally and fails on chain" (dashpay/platform#4809).
 AVERAGE_FLAGS = {
-    'countable': 'countable',
     'summable': 'rating',
     'averageable': 'rating',
     'rangeCountable': True,
@@ -85,6 +97,15 @@ def permanent(document_type, agreement=None):
     return ref
 
 
+# The referring side of a propertyAgreement pair may be `$ownerId`, the WRITER
+# (4.2.0-beta.2). `{'$ownerId': '<referenced prop or $ownerId>'}` therefore says
+# "only that identity may create — or replace — this document", checked on every
+# write, not only when the reference changes. Spelled as a constant because the
+# two gates below mean different things and mixing them up bricks a feature.
+OWNED_BY_REFERENCED_OWNER = {'$ownerId': '$ownerId'}
+OWNED_BY_REFERENCED_SELLER = {'$ownerId': 'sellerId'}
+
+
 def renumber(properties):
     """Rewrites `position` to the insertion order of `properties`."""
     for position, prop in enumerate(properties.values()):
@@ -105,15 +126,28 @@ def build(src):
     # ---- storeItem ----------------------------------------------------------
     item = out['storeItem']
     item['canBeDeleted'] = False
-    item['properties']['storeId'] = identifier(0, 'ID of the store this item belongs to', permanent('store'))
+    item['properties']['storeId'] = identifier(
+        0, "ID of the store this item belongs to; only that store's owner may write it",
+        permanent('store', OWNED_BY_REFERENCED_OWNER))
+    # The gate is re-checked on every replace, and storeId is frozen, so an item
+    # can neither be listed under someone else's store nor moved into one later.
+    item['immutable'] = ['storeId']
     item['description'] = (
         'A product listing with optional embedded variants. Permanent so orders '
-        'and item reviews can reference it; status `deleted` is the tombstone.'
+        'and item reviews can reference it; status `deleted` is the tombstone. '
+        'Only the store owner can create or edit one, and storeId is frozen.'
     )
 
     # ---- shippingZone -------------------------------------------------------
     zone = out['shippingZone']
-    zone['properties']['storeId'] = identifier(0, 'ID of the store this zone belongs to', permanent('store'))
+    zone['properties']['storeId'] = identifier(
+        0, "ID of the store this zone belongs to; only that store's owner may write it",
+        permanent('store', OWNED_BY_REFERENCED_OWNER))
+    zone['immutable'] = ['storeId']
+    zone['description'] = (
+        'A shipping zone for a store. Only the store owner can create or edit '
+        'one, and storeId is frozen.'
+    )
 
     # ---- storeOrder ---------------------------------------------------------
     order = out['storeOrder']
@@ -121,21 +155,28 @@ def build(src):
     order['documentsMutable'] = False
     order['canBeDeleted'] = False
     order['description'] = (
-        'An encrypted order created by a buyer. Permanent so status updates '
-        'and reviews can reference it. `buyerId` is poster-attested (must '
-        'equal $ownerId; the app checks) and is the propertyAgreement source '
-        'that pins reviews and status updates to this order.'
+        'An encrypted order created by a buyer. Permanent so status updates and '
+        'reviews can reference it. The buyer IS $ownerId, and `sellerId` is '
+        "consensus-equal to the store's owner, so both parties are facts rather "
+        'than buyer-supplied claims; reviews and status updates bind to them.'
     )
     props = {
-        'storeId': identifier(0, 'ID of the store', permanent('store')),
-        'sellerId': identifier(1, 'Identity ID of the store owner (for seller queries)', {'type': 'identity'}),
-        'buyerId': identifier(2, 'Buyer identity; must equal $ownerId (poster-attested)'),
+        # The agreement makes sellerId the store's REAL owner. That also retires
+        # the separate `refersTo: identity` it used to carry: an identity that
+        # owns a document necessarily exists, so the extra existence check was
+        # buying nothing.
+        'storeId': identifier(0, "ID of the store; its owner is copied into sellerId",
+                              permanent('store', {'sellerId': '$ownerId'})),
+        'sellerId': identifier(1, "Store owner's identity, consensus-bound to the store's $ownerId"),
         'encryptedPayload': order['properties']['encryptedPayload'],
         'nonce': order['properties']['nonce'],
     }
     renumber(props)
     order['properties'] = props
-    order['required'] = ['$createdAt', 'storeId', 'sellerId', 'buyerId', 'encryptedPayload', 'nonce']
+    # No `buyerId`: it could only ever equal $ownerId, every buyer-side index
+    # already keys on $ownerId, and the documents that need to name the buyer
+    # bind to the order's $ownerId directly.
+    order['required'] = ['$createdAt', 'storeId', 'sellerId', 'encryptedPayload', 'nonce']
     order['indices'] = [
         {'name': 'buyerOrders', 'properties': [{'$ownerId': 'asc'}, {'$createdAt': 'asc'}]},
         {'name': 'sellerOrders', 'properties': [{'sellerId': 'asc'}, {'$createdAt': 'asc'}]},
@@ -147,7 +188,7 @@ def build(src):
         {'name': 'buyerOrderCount', 'properties': [{'$ownerId': 'asc'}], 'countable': 'countable'},
         {'name': 'sellerOrderCount', 'properties': [{'sellerId': 'asc'}], 'countable': 'countable'},
         {'name': 'storeOrderCount', 'properties': [{'storeId': 'asc'}],
-         'countable': 'countable', 'rangeCountable': True, 'rankedCountable': True},
+         'rangeCountable': True, 'rankedCountable': True},
     ]
 
     # ---- orderStatusUpdate --------------------------------------------------
@@ -155,15 +196,20 @@ def build(src):
     status.pop('mutable', None)
     status['documentsMutable'] = False
     status['description'] = (
-        'A status update for an order (append-only history). Only a document '
-        'carrying the order\'s own sellerId/buyerId is accepted (propertyAgreement); '
-        'the app treats an update whose $ownerId != sellerId as invalid.'
+        'A status update for an order (append-only history). Only the order\'s '
+        'SELLER can write one — consensus gates the writer against the order\'s '
+        'sellerId — so there is nothing left for the app to second-guess. '
+        'buyerId is bound to the order\'s owner so buyers keep a status feed.'
     )
     props = {
-        'orderId': identifier(0, 'ID of the order being updated',
-                              permanent('storeOrder', {'sellerId': 'sellerId', 'buyerId': 'buyerId'})),
-        'sellerId': identifier(1, 'Seller identity; must equal the order\'s sellerId and this $ownerId'),
-        'buyerId': identifier(2, 'Buyer identity; must equal the order\'s buyerId (for buyer status feeds)'),
+        # `{'$ownerId': 'sellerId'}` is the gate; `{'buyerId': '$ownerId'}` is
+        # the denormalization the buyer feed index reads. The seller copy is
+        # gone: the gate makes the writer the seller, and `sellerStatusUpdates`
+        # already indexes $ownerId.
+        'orderId': identifier(0, "ID of the order being updated; only its seller may write this",
+                              permanent('storeOrder',
+                                        {'buyerId': '$ownerId', **OWNED_BY_REFERENCED_SELLER})),
+        'buyerId': identifier(1, "Buyer identity, consensus-bound to the order's $ownerId (for buyer status feeds)"),
         'status': status['properties']['status'],
         'trackingNumber': status['properties']['trackingNumber'],
         'trackingCarrier': status['properties']['trackingCarrier'],
@@ -171,7 +217,7 @@ def build(src):
     }
     renumber(props)
     status['properties'] = props
-    status['required'] = ['$createdAt', 'orderId', 'sellerId', 'buyerId', 'status']
+    status['required'] = ['$createdAt', 'orderId', 'buyerId', 'status']
     status['indices'] = [
         {'name': 'orderAndTime', 'properties': [{'orderId': 'asc'}, {'$createdAt': 'asc'}]},
         {'name': 'sellerStatusUpdates', 'properties': [{'$ownerId': 'asc'}, {'$createdAt': 'asc'}]},
@@ -184,22 +230,22 @@ def build(src):
     review['documentsMutable'] = False
     review['description'] = (
         'A review of a store from a buyer, one per order. orderId must name a '
-        'real order whose storeId/sellerId/buyerId agree with this document; '
-        'the app shows "verified purchase" when $ownerId == buyerId.'
+        'real order whose storeId/sellerId agree with this document AND whose '
+        'owner is the signer, so every review on chain is a verified purchase.'
     )
     props = {
         'storeId': identifier(0, 'ID of the store being reviewed', permanent('store')),
-        'orderId': identifier(1, 'ID of the completed order (proves purchase)',
-                              permanent('storeOrder', {'storeId': 'storeId', 'sellerId': 'sellerId', 'buyerId': 'buyerId'})),
-        'sellerId': identifier(2, 'Identity ID of the store owner (for seller queries)'),
-        'buyerId': identifier(3, 'Buyer identity copied from the order; the app requires it to equal $ownerId'),
+        'orderId': identifier(1, 'ID of the completed order (proves purchase); only its buyer may review it',
+                              permanent('storeOrder', {'storeId': 'storeId', 'sellerId': 'sellerId',
+                                                       **OWNED_BY_REFERENCED_OWNER})),
+        'sellerId': identifier(2, "Store owner's identity, consensus-bound to the order's sellerId (for seller queries)"),
         'rating': review['properties']['rating'],
         'title': review['properties']['title'],
         'content': review['properties']['content'],
     }
     renumber(props)
     review['properties'] = props
-    review['required'] = ['$createdAt', 'storeId', 'orderId', 'sellerId', 'buyerId', 'rating']
+    review['required'] = ['$createdAt', 'storeId', 'orderId', 'sellerId', 'rating']
     review['indices'] = [
         {'name': 'storeReviews', 'properties': [{'storeId': 'asc'}, {'$createdAt': 'asc'}]},
         {'name': 'sellerReviews', 'properties': [{'sellerId': 'asc'}, {'$createdAt': 'asc'}]},
@@ -230,11 +276,10 @@ def build(src):
         'storeId': identifier(0, 'ID of the store the item belongs to', permanent('store')),
         'itemId': identifier(1, 'ID of the item being reviewed; must belong to storeId',
                              permanent('storeItem', {'storeId': 'storeId'})),
-        'orderId': identifier(2, 'ID of the order the item was bought in',
-                              permanent('storeOrder', {'storeId': 'storeId', 'buyerId': 'buyerId'})),
-        'buyerId': identifier(3, 'Buyer identity copied from the order; the app requires it to equal $ownerId'),
-        'rating': {'type': 'integer', 'minimum': 1, 'maximum': 5, 'position': 4, 'description': 'Star rating (1-5)'},
-        'content': {'type': 'string', 'maxLength': 1000, 'position': 5, 'description': 'Review content'},
+        'orderId': identifier(2, 'ID of the order the item was bought in; only its buyer may review it',
+                              permanent('storeOrder', {'storeId': 'storeId', **OWNED_BY_REFERENCED_OWNER})),
+        'rating': {'type': 'integer', 'minimum': 1, 'maximum': 5, 'position': 3, 'description': 'Star rating (1-5)'},
+        'content': {'type': 'string', 'maxLength': 1000, 'position': 4, 'description': 'Review content'},
     }
     renumber(props)
     out['itemReview'] = {
@@ -242,9 +287,9 @@ def build(src):
         'documentsMutable': False,
         'description': (
             'A review of one item from an order, one per (order, item). The item '
-            'must belong to the same store as the order; the buyer is pinned by '
-            'propertyAgreement against the order. Reviewing an item publishes '
-            'that this order contained it.'
+            'must belong to the same store as the order, and only the identity '
+            'that placed the order may write it (writer gate). Reviewing an item '
+            'publishes that this order contained it.'
         ),
         'indices': [
             {'name': 'itemReviews', 'properties': [{'itemId': 'asc'}, {'$createdAt': 'asc'}]},
@@ -258,7 +303,7 @@ def build(src):
              **AVERAGE_FLAGS, 'rankedAverageable': True},
         ],
         'properties': props,
-        'required': ['$createdAt', 'storeId', 'itemId', 'orderId', 'buyerId', 'rating'],
+        'required': ['$createdAt', 'storeId', 'itemId', 'orderId', 'rating'],
         'additionalProperties': False,
         'tokenCost': {'create': {
             'contractId': SOCIAL_CONTRACT_ID_PLACEHOLDER,
