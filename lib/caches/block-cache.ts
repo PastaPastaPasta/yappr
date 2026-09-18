@@ -24,6 +24,8 @@ export interface BlockCacheData {
   ownBlocks: {
     blockedIds: string[]
     timestamp: number
+    // Older caches and individual mutations do not prove the list is complete.
+    complete?: boolean
   }
 
   // Block follows - users whose blocks we inherit
@@ -110,6 +112,21 @@ export function invalidateBlockCache(userId: string): void {
   sessionStorage.removeItem(key)
 }
 
+/** A complete, fresh list can answer both positive and negative own-block checks. */
+export function getOwnBlocksFromCache(userId: string): string[] | null {
+  const ownBlocks = loadBlockCache(userId)?.ownBlocks
+  if (!ownBlocks?.complete || Date.now() - ownBlocks.timestamp >= CACHE_TTL) return null
+  return ownBlocks.blockedIds
+}
+
+export function setOwnBlocks(userId: string, blockedIds: string[]): void {
+  const cache = loadBlockCache(userId) || getEmptyCache()
+  cache.ownBlocks = { blockedIds, timestamp: Date.now(), complete: true }
+  // A refreshed list supersedes confirmations from the previous snapshot.
+  cache.confirmedBlocks = {}
+  saveBlockCache(userId, cache)
+}
+
 /**
  * Add a block to own blocks cache.
  */
@@ -184,26 +201,6 @@ export function getMergedBloomFilter(userId: string): BloomFilter | null {
 }
 
 /**
- * Add a confirmed block result from bloom filter verification.
- */
-export function addConfirmedBlock(
-  userId: string,
-  targetId: string,
-  blockedBy: string,
-  isBlocked: boolean,
-  message?: string
-): void {
-  const cache = loadBlockCache(userId) || getEmptyCache()
-  cache.confirmedBlocks[targetId] = {
-    isBlocked,
-    blockedBy,
-    message,
-    timestamp: Date.now()
-  }
-  saveBlockCache(userId, cache)
-}
-
-/**
  * Get confirmed block status from cache.
  * Returns undefined if not in cache.
  */
@@ -235,14 +232,6 @@ export function addConfirmedBlocksBatch(
 }
 
 /**
- * Check if a user is in own blocks (from cache).
- */
-export function isInOwnBlocks(userId: string, targetId: string): boolean {
-  const cache = loadBlockCache(userId)
-  return cache?.ownBlocks.blockedIds.includes(targetId) ?? false
-}
-
-/**
  * Get all block follows from cache.
  * Returns null when the value has never been cached (or expired) —
  * distinct from a cached empty list, which is the common case and
@@ -269,7 +258,8 @@ export function initializeBlockCache(
   const cache: BlockCacheData = {
     ownBlocks: {
       blockedIds: ownBlockedIds,
-      timestamp: now
+      timestamp: now,
+      complete: true
     },
     blockFollows: {
       followedUserIds,
