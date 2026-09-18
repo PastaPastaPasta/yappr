@@ -58,7 +58,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { IdentitySigner, ensureInitialized } from '@dashevo/evo-sdk';
+import { Document, IdentitySigner, ensureInitialized } from '@dashevo/evo-sdk';
 import * as secp256k1 from '@noble/secp256k1';
 import { sha256 } from '@noble/hashes/sha2.js';
 import bs58 from 'bs58';
@@ -659,6 +659,9 @@ function buildPlan(actorsByIdx, seed) {
       actorB,
       messages,
       scenario,
+      // The side that did NOT send the final message, and therefore the only
+      // one whose unread count the app will ever report as non-zero.
+      reader,
       receipts,
     };
   });
@@ -1071,7 +1074,22 @@ async function verify(writer, plans, state) {
       }
     }
 
-    return { plan, total, planted, foreign: total - planted, sides, preview, decryptError };
+    // The whole point of the read/stale/cold split is the number the app shows.
+    // A conversation that wrote every document and still reports the wrong
+    // unread count is a FAILED seed, not a cosmetic difference: the usual
+    // cause is a mid-conversation receipt whose $updatedAt collided with the
+    // block timestamp of the messages it was supposed to precede.
+    const readerSide = sides.find((side) => side.viewer === plan.reader);
+    const scenarioError =
+      plan.scenario === 'read'
+        ? sides.some((side) => side.unread > 0)
+          ? `scenario "read" but unread is ${sides.map((side) => `${side.viewer.handle}:${side.unread}`).join(' ')}`
+          : null
+        : !readerSide || readerSide.unread === 0
+          ? `scenario "${plan.scenario}" but ${plan.reader.handle} has 0 unread — the receipt did not land before the tail of the thread`
+          : null;
+
+    return { plan, total, planted, foreign: total - planted, sides, preview, decryptError, scenarioError };
   });
 }
 
@@ -1090,10 +1108,29 @@ async function verify(writer, plans, state) {
  * never be a side effect; `--only` narrows phase 1 but phase 2 always sweeps
  * every actor, so run it without `--only`.
  */
-async function pruneForeign(writer, plans, actors, state) {
+async function pruneForeign(writer, plans, actors, state, contractId) {
   const byIdentity = new Map(actors.map((actor) => [actor.identityId, actor]));
   const seeded = new Set(plans.map((plan) => plan.key));
   let removed = 0;
+
+  /**
+   * Every message id this seeder would write for `plan`, journal or no journal.
+   *
+   * Trusting the journal alone here is the one way this prune could destroy
+   * real data: a lost or truncated `.seed-dm.local.json` makes a fully seeded
+   * conversation look empty, and every message in it "foreign". Document ids
+   * are a pure function of (type, owner, contract, entropy) and the entropy is
+   * derived, so the full set can always be recomputed — the journal is only a
+   * shortcut. The union covers ids from an older journal too.
+   */
+  function protectedIds(plan) {
+    const ids = new Set(Object.values(state.conversations[plan.key]?.messages ?? {}));
+    for (const message of plan.messages) {
+      const entropy = stableEntropy('message', plan.key, String(message.position), message.from.identityId);
+      ids.add(bs58.encode(Document.generateId('directMessage', message.from.identityId, contractId, entropy)));
+    }
+    return ids;
+  }
 
   /** Deletes every message in `conversationKey` that is not in `keep`. */
   async function sweep(conversationKey, keep) {
@@ -1120,7 +1157,7 @@ async function pruneForeign(writer, plans, actors, state) {
   // derived from the pair alone, so anything that ever addressed the same two
   // identities lands in the middle of the thread being seeded.
   for (const plan of plans) {
-    await sweep(plan.key, new Set(Object.values(state.conversations[plan.key]?.messages ?? {})));
+    await sweep(plan.key, protectedIds(plan));
   }
 
   // Phase 2: whole conversations this seeder never planned but that the
@@ -1212,6 +1249,13 @@ function parseArgs(argv) {
   }
   args.contract ??= dmContractId();
   if (!args.contract) throw new Error('Pass --contract <id> or set NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID');
+  // Phase 2 of the prune sweeps every actor's invites and deletes any
+  // conversation not in `plans`. Under --only, `plans` is a subset, so the
+  // conversations that were merely filtered out would look unseeded and be
+  // destroyed. Refuse the combination rather than narrow the sweep silently.
+  if (args.pruneForeign && args.only) {
+    throw new Error('--prune-foreign cannot be combined with --only: the sweep would delete the conversations --only filtered out');
+  }
   if (!Number.isFinite(args.seed)) throw new Error('--seed must be a number');
   return args;
 }
@@ -1342,7 +1386,7 @@ async function main() {
   }
 
   if (args.pruneForeign) {
-    const removed = await pruneForeign(writer, plans, actors, state);
+    const removed = await pruneForeign(writer, plans, actors, state, args.contract);
     console.log(`pruned ${removed} document(s) this seeder did not write`);
   }
 
@@ -1352,7 +1396,7 @@ async function main() {
   // A conversation fails when something THIS seeder is responsible for is
   // wrong. Documents it did not write are reported in the `extra` column and
   // cleaned up with --prune-foreign, not treated as a broken seed.
-  const failures = rows.filter((row) => row.decryptError || row.planted !== row.plan.messages.length);
+  const failures = rows.filter((row) => row.decryptError || row.scenarioError || row.planted !== row.plan.messages.length);
   const unreadConversations = rows.filter((row) => row.sides.some((side) => side.unread > 0));
   console.log(
     `\n${rows.length} conversations, ${rows.reduce((sum, row) => sum + row.total, 0)} messages on chain, ` +
@@ -1361,7 +1405,9 @@ async function main() {
   console.log(`every conversation's newest message decrypted with the recipient's key: ${rows.length - rows.filter((r) => r.decryptError).length}/${rows.length}`);
   if (failures.length > 0) {
     for (const row of failures) {
-      console.log(`FAIL  ${row.plan.key}: ${row.decryptError ?? `${row.planted} of ${row.plan.messages.length} planned messages written`}`);
+      const reason =
+        row.decryptError ?? row.scenarioError ?? `${row.planted} of ${row.plan.messages.length} planned messages written`;
+      console.log(`FAIL  ${row.plan.key}: ${reason}`);
     }
   }
   console.log(`state journal: ${args.state}`);
