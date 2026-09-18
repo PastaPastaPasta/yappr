@@ -5,15 +5,15 @@
  *
  * It writes the four v2 doctypes in the shapes the APP writes them, not the
  * battery's placeholder shapes (`scripts/verify-blog-v2.mjs` is still the
- * reference for the write MECHANICS — token payment, poster-attested `author`,
- * permanent-document references):
+ * reference for the write MECHANICS — token payment, permanent-document
+ * references):
  *
  *   blog        name / description / labels / picsum header+avatar /
  *               zlib-compressed themeConfig (lib/blog/theme-types.ts)
  *   blogPost    real BlockNote block arrays (headings, paragraphs, lists,
  *               quotes, callouts, code, images) zlib-compressed and chunked
  *               into data0–data3 exactly like lib/services/blog-post-service.ts
- *   blogComment `blogPostOwnerId` = the post's attested `author`, 1 YAPP each
+ *   blogComment `blogPostOwnerId` = the post's $ownerId, 1 YAPP each
  *               through the cross-contract tokenCost on the social contract
  *   blogFollow  unevenly distributed so "Most followed" and "Trending today"
  *               (followersByDay, the daily grid) have a clear leader
@@ -2686,9 +2686,6 @@ async function seed({ battery, plan, state, stateFile, args, tokenId }) {
     }
     const outcome = await battery.attemptCreate(actor, 'blogPost', {
       blogId: id32(blogId),
-      // Poster-attested: consensus pins every comment's blogPostOwnerId to
-      // this value, and the app requires author === $ownerId.
-      author: id32(actor.ownerId),
       ...post.data,
     });
     if (outcome.ok) {
@@ -2754,7 +2751,7 @@ async function seed({ battery, plan, state, stateFile, args, tokenId }) {
     if (resumed) { recorder.record(key, resumed.id, 'recovered'); return; }
     const outcome = await battery.attemptCreate(actor, 'blogComment', {
       blogPostId: id32(postId),
-      // Must equal the post's attested `author` or consensus rejects (40127).
+      // Must equal the post's $ownerId or consensus rejects (40127).
       blogPostOwnerId: id32(actors.get(post.owner).ownerId),
       content: comment.content,
     }, { tokenCost: COMMENT_COST });
@@ -2772,9 +2769,11 @@ async function seed({ battery, plan, state, stateFile, args, tokenId }) {
     const revision = BigInt(current?.revision ?? 1);
     // Already edited (by an earlier run whose state file was lost).
     if (revision > 1n) { recorder.record(edit.key, postId, 'recovered'); return; }
+    // `edit.data` spreads the same `meta` the create used, so `publishedAt`
+    // comes back byte-identical — required, because v2 freezes it (and blogId)
+    // and a replace that changed or dropped either is rejected with 40128.
     const outcome = await battery.attemptReplace(actor, 'blogPost', postId, {
       blogId: id32(blogIds.get(post.blogKey)),
-      author: id32(actor.ownerId),
       ...edit.data,
     }, revision);
     if (outcome.ok) {

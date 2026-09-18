@@ -8,8 +8,9 @@
  * show. Every document is written in the shape the APP writes it
  * (`lib/services/store-*.ts`, `types/store.ts`): JSON-string `tags` /
  * `imageUrls` / `paymentUris` / `contactMethods`, integer minor-unit prices,
- * poster-attested `buyerId`, and orders encrypted to the seller with the real
- * deterministic-ephemeral ECIES the checkout uses.
+ * and orders encrypted to the seller with the real deterministic-ephemeral
+ * ECIES the checkout uses. The buyer is an order's `$ownerId` — v2 carries no
+ * buyerId copy — and `sellerId` is consensus-checked against the store owner.
  *
  * Determinism and resumability
  *   Every document id comes from `entropyFor(key)` = SHA-256 of a stable
@@ -911,8 +912,8 @@ async function main() {
         cryptoVerified += 1;
         const id = await createDoc(actor, 'storeOrder', `order/${order.key}`, {
           storeId: id32(storeId),
+          // Must equal the store's own $ownerId or consensus rejects (40127).
           sellerId: id32(actors.get(store.persona).ownerId),
-          buyerId: id32(actor.ownerId),
           encryptedPayload,
           nonce,
         });
@@ -935,9 +936,10 @@ async function main() {
           const buyerActor = actors.get(BUYERS[order.buyer].persona);
           for (const status of CHAINS[order.chain]) {
             const rng = rngFor(`status/${order.key}/${status}`);
+            // Only the order's seller may write one: `actor` IS the store
+            // persona, which the writer gate checks against the order's sellerId.
             await createDoc(actor, 'orderStatusUpdate', `status/${order.key}/${status}`, {
               orderId: id32(orderId),
-              sellerId: id32(actor.ownerId),
               buyerId: id32(buyerActor.ownerId),
               status,
               message: pick(rng, STATUS_MESSAGE[status]),
@@ -981,7 +983,6 @@ async function main() {
             storeId: storeIdBytes,
             orderId: id32(orderId),
             sellerId: id32(actors.get(store.persona).ownerId),
-            buyerId: id32(actor.ownerId),
             rating: order.review.rating,
             title: order.review.title,
             content: order.review.content,
@@ -994,7 +995,6 @@ async function main() {
             storeId: storeIdBytes,
             itemId: id32(itemId),
             orderId: id32(orderId),
-            buyerId: id32(actor.ownerId),
             rating,
             content,
           }, { tokenCost: REVIEW_COST.itemReview });

@@ -4,8 +4,8 @@
  *
  * What it writes, per planned poll (the same three steps the compose flow
  * performs — see components/compose/compose-modal.tsx):
- *   1. a `poll` on the Pollr contract, carrying the poster-attested `author`
- *      (v4 binds every ballot's `pollOwnerId` to it) — credits only, no YAPP,
+ *   1. a `poll` on the Pollr contract (v4 binds every ballot's `pollOwnerId` to
+ *      the poll's own `$ownerId`) — credits only, no YAPP,
  *      but pricey (~57M credits: the creator pays up front for the
  *      preallocated `vote.byPoll` / `vote.byPollOwner` ballot trees);
  *   2. a `post` on the SOCIAL contract by the same author whose
@@ -581,7 +581,7 @@ async function runChains(chains, limit, runOp) {
 /** A fetched document's properties, whichever of the two shapes the SDK returns. */
 const fieldsOf = (document) => (typeof document?.toObject === 'function' ? document.toObject() : document);
 
-/** A raw identifier property (poll `author`, post `embedId`) as base58, or null when absent. */
+/** A raw identifier property (e.g. a post's `embedId`) as base58, or null when absent. */
 const identifierFrom = (bytes) => (bytes ? bs58.encode(Uint8Array.from(bytes)) : null);
 
 /**
@@ -655,17 +655,15 @@ async function winnerOf(handle, contractId, poll, pollId) {
 
 /**
  * Re-reads the poll itself and confirms the fields nothing else would catch:
- * the attested `author` (a poll whose author is not its owner is the documented
- * v4 gap and the app distrusts it), the immutable `multiChoice` flag that
- * selects the ballot doctype, and `endsAt` — the only property here that no
- * other script in the repo writes.
+ * the immutable `multiChoice` flag that selects the ballot doctype, and
+ * `endsAt` — the only property here that no other script in the repo writes.
+ * The creator needs no check: ballots bind `pollOwnerId` to the poll's own
+ * `$ownerId`, which only the signer can be.
  */
-async function checkPollDocument(handle, contractId, poll, pollId, creatorOwnerId) {
+async function checkPollDocument(handle, contractId, poll, pollId) {
   const fields = fieldsOf(await readback(handle, () => handle.sdk.documents.get(contractId, 'poll', pollId)));
   if (!fields) return ['the poll document does not read back'];
   const problems = [];
-  const author = identifierFrom(fields.author);
-  if (author !== creatorOwnerId) problems.push(`author=${author} but the creator is ${creatorOwnerId}`);
   if (Boolean(fields.multiChoice) !== poll.multiChoice) problems.push(`multiChoice=${fields.multiChoice}, planned ${poll.multiChoice}`);
   const endsAt = fields.endsAt === undefined || fields.endsAt === null ? undefined : Number(fields.endsAt);
   if (endsAt !== poll.endsAtMs) problems.push(`endsAt=${endsAt}, planned ${poll.endsAtMs}`);
@@ -723,8 +721,8 @@ function parseArgs(argv) {
   const env = readEnvFile(join(REPO_ROOT, '.env.devnet'));
   if (!args.contract) args.contract = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID || env.NEXT_PUBLIC_POLLR_CONTRACT_ID;
   if (!args.contract) throw new Error('Pass --contract <id> or set NEXT_PUBLIC_POLLR_CONTRACT_ID');
-  // The poll shape here is v4-only: `author` is required, and v3's
-  // additionalProperties:false would refuse all fourteen of them.
+  // The ballot shapes here are v4-only (indexOnly vote/multiVote), so refuse
+  // to run against a contract the topology says is v3.
   const topology = process.env.NEXT_PUBLIC_POLLR_TOPOLOGY || env.NEXT_PUBLIC_POLLR_TOPOLOGY;
   if (topology && topology !== 'v4') {
     throw new Error(`this seeder writes v4 poll and ballot shapes, but NEXT_PUBLIC_POLLR_TOPOLOGY is ${topology}`);
@@ -815,7 +813,6 @@ async function seedPollsAndPosts(run, plan) {
           ...Object.fromEntries(poll.options.map((option, index) => [`option${index}`, option])),
           ...(poll.multiChoice ? { multiChoice: true } : {}),
           ...(poll.endsAtMs === undefined ? {} : { endsAt: poll.endsAtMs }),
-          author: bs58.decode(actor.ownerId),
         }),
       });
       await ensurePollDocument(run, {
@@ -898,8 +895,7 @@ async function verifyPolls(run, plan) {
       badPolls.push(poll.key);
       continue;
     }
-    const creatorOwnerId = run.actors.get(poll.creator).ownerId;
-    const problems = await checkPollDocument(run.handle, run.contractId, poll, record.pollId, creatorOwnerId);
+    const problems = await checkPollDocument(run.handle, run.contractId, poll, record.pollId);
     const counts = await tallyOf(run.handle, run.contractId, poll, record.pollId);
     if (!counts) {
       console.log(`\n  ${poll.key} [${poll.docType}] ${record.pollId}: the grouped tally decoded to nothing (key encoding changed?)`);

@@ -16,8 +16,7 @@
  *   b1  fixtures: author blog + two posts; reader and stranger follow it;
  *       three comments (2 on post one, 1 on post two)
  *   b2  refersTo on blogId: post and follow naming a GHOST blog rejected
- *       (40120); a post whose author is not its owner is ACCEPTED (the
- *       documented gap consensus cannot close)
+ *       (40120)
  *   b3  comments: wrong blogPostOwnerId rejected (40127); ghost blogPostId
  *       rejected (40120); a comment WITHOUT a token payment agreement rejected
  *   b4  counts: countable `commentCount` per post, one grouped count over
@@ -33,15 +32,21 @@
  *   b10 a deleted comment decrements the count tree
  *   b11 an unfollow (a delete on a stored doctype carrying a TTL'd windowed
  *       index) is accepted and decrements both the all-time and daily axes
+ *   b12 immutability (beta.2 `immutable` / `immutableAllowSetting`): a replace
+ *       that moves `blogId`, re-dates `publishedAt`, or drops `publishedAt` is
+ *       rejected (40128); a DRAFT can be published exactly once and is frozen
+ *       from then on
  *
  * Run:
  *   NETWORK=devnet node scripts/verify-blog-v2.mjs --contract <id> \
  *     [--author 210] [--reader 211] [--stranger 212] [--yapp 20] [--only b4,b5]
+ *   node scripts/verify-blog-v2.mjs --self-test   # offline: contract declares what the cases assert
  */
 import { ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import {
   DELETE_FORBIDDEN,
+  IMMUTABLE_CHANGED,
   PROPERTY_MISMATCH,
   REFERENCE_NOT_FOUND,
   TOKEN_AGREEMENT_MISSING,
@@ -49,6 +54,7 @@ import {
   id32,
   parseOnly,
   runCases,
+  selfTest,
 } from './battery-lib.mjs';
 import {
   YAPP_TOKEN_POSITION,
@@ -72,13 +78,17 @@ const COLD_BUCKET = /single-path axis read must produce exactly one axis descent
 // ---- Document shapes --------------------------------------------------------
 
 const blogData = (run) => ({ name: `Battery ${run}`, description: 'blog v2 battery' });
-const postData = ({ blogId, author, title, slug }) => ({
+/**
+ * `publishedAt` is `immutable` + `immutableAllowSetting`: a replace must resend
+ * the stored value byte-identically, so it is a parameter rather than a fresh
+ * `Date.now()` — passing `null` omits it, which is how a DRAFT is written.
+ */
+const postData = ({ blogId, title, slug, publishedAt = Date.now() }) => ({
   blogId,
-  author,
   title,
   slug,
   data0: crypto.getRandomValues(new Uint8Array(64)),
-  publishedAt: Date.now(),
+  ...(publishedAt === null ? {} : { publishedAt }),
 });
 const commentData = ({ blogPostId, blogPostOwnerId, content }) => ({ blogPostId, blogPostOwnerId, content });
 
@@ -91,14 +101,20 @@ async function caseB1Fixtures(ctx) {
   ctx.blogId = blog.ok ? blog.id : null;
   if (!ctx.blogId) throw new Error('fixture blog unavailable');
 
-  const base = { blogId: id32(ctx.blogId), author: id32(author.ownerId) };
-  const post1 = battery.expectAccepted('b1b post one created (author == $ownerId)',
-    await battery.attemptCreate(author, 'blogPost', postData({ ...base, title: `First ${ctx.run}`, slug: `first-${ctx.run}` })));
+  const base = { blogId: id32(ctx.blogId) };
+  // Remembered so every later replace can resend the frozen value verbatim.
+  ctx.publishedAt = Date.now();
+  const post1 = battery.expectAccepted('b1b post one created',
+    await battery.attemptCreate(author, 'blogPost', postData({ ...base, title: `First ${ctx.run}`, slug: `first-${ctx.run}`, publishedAt: ctx.publishedAt })));
   const post2 = battery.expectAccepted('b1c post two created',
-    await battery.attemptCreate(author, 'blogPost', postData({ ...base, title: `Second ${ctx.run}`, slug: `second-${ctx.run}` })));
+    await battery.attemptCreate(author, 'blogPost', postData({ ...base, title: `Second ${ctx.run}`, slug: `second-${ctx.run}`, publishedAt: ctx.publishedAt })));
   ctx.post1 = post1.ok ? post1.id : null;
   ctx.post2 = post2.ok ? post2.id : null;
   if (!ctx.post1 || !ctx.post2) throw new Error('fixture posts unavailable');
+  // A draft: `publishedAt` absent, so b12 can publish it exactly once.
+  const draft = battery.expectAccepted('b1i draft post created (no publishedAt)',
+    await battery.attemptCreate(author, 'blogPost', postData({ ...base, title: `Draft ${ctx.run}`, slug: `draft-${ctx.run}`, publishedAt: null })));
+  ctx.draftId = draft.ok ? draft.id : null;
 
   battery.expectAccepted('b1d reader follows the blog',
     await battery.attemptCreate(reader, 'blogFollow', { blogId: id32(ctx.blogId) }));
@@ -129,7 +145,7 @@ async function caseB2BlogRefs(ctx) {
   battery.expectRejected(
     'b2a post naming a GHOST blog is rejected (40120)',
     await battery.attemptCreate(author, 'blogPost', postData({
-      blogId: randomEntropy(), author: id32(author.ownerId), title: `Ghost ${ctx.run}`, slug: `ghost-${ctx.run}`,
+      blogId: randomEntropy(), title: `Ghost ${ctx.run}`, slug: `ghost-${ctx.run}`,
     })),
     REFERENCE_NOT_FOUND
   );
@@ -138,18 +154,9 @@ async function caseB2BlogRefs(ctx) {
     await battery.attemptCreate(reader, 'blogFollow', { blogId: randomEntropy() }),
     REFERENCE_NOT_FOUND
   );
-  // DOCUMENTED HOLE: propertyAgreement cannot bind $ownerId, so consensus does
-  // not check that a post's `author` is its own owner. A post naming someone
-  // else is ACCEPTED here; the client is what keeps the two equal (it writes
-  // author = $ownerId and only notifies a post's real owner). When upstream
-  // ships owner-agreement this check flips and tells you.
-  battery.expectAccepted(
-    'b2c post whose author is NOT its owner is accepted (documented gap, client-enforced)',
-    await battery.attemptCreate(reader, 'blogPost', postData({
-      blogId: id32(ctx.blogId), author: id32(ctx.author.ownerId),
-      title: `Impostor ${ctx.run}`, slug: `impostor-${ctx.run}`,
-    }))
-  );
+  // The v2 "a post may attest an author who is not its owner" gap is GONE:
+  // there is no `author` property to lie in. A comment's blogPostOwnerId binds
+  // to the post's $ownerId, which only the signer can be — b3a is the proof.
 }
 
 async function caseB3Comments(ctx) {
@@ -269,7 +276,8 @@ async function caseB7History(ctx) {
   const revision = BigInt(current?.revision ?? 1);
   battery.expectAccepted('b7a post edit (replace) is accepted', await battery.attemptReplace(
     author, 'blogPost', ctx.post1,
-    postData({ blogId: id32(ctx.blogId), author: id32(author.ownerId), title: `First ${ctx.run} (edited)`, slug: `first-${ctx.run}` }),
+    // blogId and publishedAt come back byte-identical: both are frozen.
+    postData({ blogId: id32(ctx.blogId), title: `First ${ctx.run} (edited)`, slug: `first-${ctx.run}`, publishedAt: ctx.publishedAt }),
     revision
   ));
   try {
@@ -353,10 +361,56 @@ async function caseB11FollowDelete(ctx) {
   }
 }
 
+async function caseB12Immutable(ctx) {
+  const { battery, author } = ctx;
+  console.log('\n--- b12. immutable blogId, write-once publishedAt ---');
+  if (!ctx.post2) { battery.check('b12 immutability', false, 'no post fixture'); return; }
+  const revisionOf = async (id) => BigInt((await battery.fetchDocument('blogPost', id))?.revision ?? 1);
+  const edit = (id, data, revision) => battery.attemptReplace(author, 'blogPost', id, data, revision);
+  const post2Base = { title: `Second ${ctx.run}`, slug: `second-${ctx.run}` };
+
+  // A second blog to move the post INTO — the rejection must be about
+  // immutability, not about a reference that does not resolve.
+  const otherBlog = await battery.attemptCreate(author, 'blog', blogData(`${ctx.run}-alt`));
+  if (!otherBlog.ok) { battery.check('b12 immutability', false, 'no second blog fixture'); return; }
+
+  const revision = await revisionOf(ctx.post2);
+  battery.expectRejected(
+    'b12a a replace moving blogId to another REAL blog is rejected (40128)',
+    await edit(ctx.post2, postData({ ...post2Base, blogId: id32(otherBlog.id), publishedAt: ctx.publishedAt }), revision),
+    IMMUTABLE_CHANGED
+  );
+  battery.expectRejected(
+    'b12b a replace re-dating publishedAt is rejected (40128)',
+    await edit(ctx.post2, postData({ ...post2Base, blogId: id32(ctx.blogId), publishedAt: ctx.publishedAt + 86_400_000 }), revision),
+    IMMUTABLE_CHANGED
+  );
+  battery.expectRejected(
+    'b12c a replace DROPPING publishedAt is rejected (40128) — removal counts as a change',
+    await edit(ctx.post2, postData({ ...post2Base, blogId: id32(ctx.blogId), publishedAt: null }), revision),
+    IMMUTABLE_CHANGED
+  );
+
+  if (!ctx.draftId) { battery.check('b12d draft publish', false, 'no draft fixture'); return; }
+  const draftBase = { blogId: id32(ctx.blogId), title: `Draft ${ctx.run}`, slug: `draft-${ctx.run}` };
+  const firstPublish = Date.now();
+  const draftRevision = await revisionOf(ctx.draftId);
+  battery.expectAccepted(
+    'b12d publishing a DRAFT sets publishedAt for the first time (immutableAllowSetting)',
+    await edit(ctx.draftId, postData({ ...draftBase, publishedAt: firstPublish }), draftRevision)
+  );
+  battery.expectRejected(
+    'b12e re-dating the now-published draft is rejected (40128) — allow-setting is once only',
+    await edit(ctx.draftId, postData({ ...draftBase, publishedAt: firstPublish + 1000 }), await revisionOf(ctx.draftId)),
+    IMMUTABLE_CHANGED
+  );
+}
+
 const CASES = new Map([
   ['b1', caseB1Fixtures], ['b2', caseB2BlogRefs], ['b3', caseB3Comments], ['b4', caseB4Counts],
   ['b5', caseB5Rankings], ['b6', caseB6Windowed], ['b7', caseB7History], ['b8', caseB8Permanence],
   ['b9', caseB9Tokens], ['b10', caseB10CommentDelete], ['b11', caseB11FollowDelete],
+  ['b12', caseB12Immutable],
 ]);
 
 function parseArgs(argv) {
@@ -377,6 +431,15 @@ function parseArgs(argv) {
   }
   if (!args.contract) throw new Error('Pass --contract <id> or set BLOG_V2_CONTRACT_ID');
   return args;
+}
+
+if (process.argv.includes('--self-test')) {
+  process.exit(selfTest('yappr-blog-contract-v2.json', {
+    // b3a: the notification key binds to the post's REAL owner.
+    blogComment: { agreements: { blogPostId: { blogPostOwnerId: '$ownerId' } } },
+    // b12: blogId frozen, publishedAt write-once.
+    blogPost: { immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'] },
+  }));
 }
 
 try {
@@ -400,7 +463,7 @@ try {
   const ctx = {
     battery, contractId: args.contract, socialId, tokenId, author, reader, stranger,
     run: Date.now().toString(36), startedAt: Date.now() - 60_000,
-    readerComments: 0, strangerCommentId: null,
+    readerComments: 0, strangerCommentId: null, draftId: null, publishedAt: null,
     readerYappBefore: await battery.yappBalance(tokenId, reader.ownerId),
   };
   await runCases(battery, CASES, args.only, ctx);

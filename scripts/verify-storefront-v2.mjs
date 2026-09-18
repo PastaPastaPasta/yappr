@@ -11,18 +11,20 @@
  * Cases:
  *   s1  fixtures: seller store + two items; a second seller store belongs to
  *       the stranger for cross-store probes
- *   s2  refersTo on items/zones: ghost storeId rejected (40120), real accepted
- *   s3  orders: buyer order accepted; order naming a GHOST store rejected;
- *       order naming a GHOST seller identity rejected
- *   s4  status updates: seller's update accepted; update carrying the WRONG
- *       sellerId (40127) or WRONG buyerId (40127) rejected; a ghost orderId
- *       rejected (40120); buyerStatusUpdates index serves the buyer's feed
- *   s5  store reviews: buyer review accepted; wrong storeId / sellerId /
- *       buyerId rejected (40127); ghost orderId rejected (40120); a SECOND
- *       review on the same order rejected (40105, unique orderReview); the
- *       stranger's review carrying the buyer's buyerId lands (documented gap:
- *       consensus cannot bind $ownerId) but is one-per-order so it cannot land
- *       once the buyer's exists
+ *   s2  refersTo + WRITER GATE on items/zones: ghost storeId rejected (40120),
+ *       the store owner's own item/zone accepted, and a STRANGER listing an
+ *       item or a zone under someone else's store rejected (40127)
+ *   s3  orders: buyer order accepted; order naming a GHOST store rejected
+ *       (40120); order claiming the WRONG sellerId rejected (40127, agreed
+ *       against the store's $ownerId)
+ *   s4  status updates: seller's update accepted; a STRANGER's update rejected
+ *       by the writer gate (40127); WRONG buyerId rejected (40127); ghost
+ *       orderId rejected (40120); buyerStatusUpdates serves the buyer's feed
+ *       and every row on it is the seller's
+ *   s5  store reviews: buyer review accepted; wrong storeId / sellerId rejected
+ *       (40127); a STRANGER reviewing the buyer's order rejected by the writer
+ *       gate (40127); ghost orderId rejected (40120); a SECOND review on the
+ *       same order rejected (40105, unique orderReview)
  *   s6  item reviews: accepted for both items; item from ANOTHER store
  *       rejected (40127 on the item's storeId agreement); duplicate
  *       (orderId,itemId) rejected (40105)
@@ -41,14 +43,18 @@
  *       item tombstone by status update accepted
  *   s12 tokens: review create WITHOUT a token payment agreement rejected;
  *       the buyer's YAPP balance dropped by exactly the review costs
+ *   s13 immutability (beta.2 `immutable`): a replace moving a storeItem or a
+ *       shippingZone to another REAL store is rejected (40128)
  *
  * Run:
  *   NETWORK=devnet node scripts/verify-storefront-v2.mjs --contract <id> \
  *     [--seller 200] [--buyer 201] [--stranger 202] [--yapp 60] [--only s5,s7]
+ *   node scripts/verify-storefront-v2.mjs --self-test   # offline: contract declares what the cases assert
  */
 import { IdentitySigner, TokenPaymentInfo, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID } from './derive-identities.mjs';
+import { selfTest } from './battery-lib.mjs';
 import {
   DUPLICATE_UNIQUE,
   YAPP_TOKEN_POSITION,
@@ -72,6 +78,15 @@ const MIN_YAPP_PURCHASE = 100n;
 
 const REFERENCE_NOT_FOUND = /40120|referenced .*not found/i;
 const PROPERTY_MISMATCH = /40127|does not agree with the referenced document/i;
+/**
+ * A writer gate (`propertyAgreement` with `$ownerId` on the REFERRING side)
+ * fails as the same ReferencedDocumentPropertyMismatchError a value pair does —
+ * the signing identity IS the referring side — so this is PROPERTY_MISMATCH
+ * under the name that says what was refused.
+ */
+const WRITER_GATE_REFUSED = PROPERTY_MISMATCH;
+/** DocumentImmutablePropertyChangedError: a replace touched a frozen property. */
+const IMMUTABLE_CHANGED = /40128|is immutable and cannot be changed/i;
 const DELETE_FORBIDDEN = /can ?not be deleted/i;
 const TOKEN_AGREEMENT_MISSING = /token|payment|agree/i;
 
@@ -298,20 +313,21 @@ const approx = (a, b) => a !== undefined && b !== undefined && Math.abs(a - b) <
 const storeData = ({ name, status = 'active' }) => ({ name, status, description: 'storefront v2 battery' });
 const itemData = ({ storeId, title, status = 'active' }) => ({ storeId, title, status, basePrice: 1000, currency: 'USD' });
 const zoneData = ({ storeId, name }) => ({ storeId, name, rateType: 'flat', flatRate: 500, currency: 'USD', priority: 1 });
-const orderData = ({ storeId, sellerId, buyerId }) => ({
+// No buyerId anywhere: the buyer is the order's $ownerId, and the documents
+// that need to name it bind to that through propertyAgreement.
+const orderData = ({ storeId, sellerId }) => ({
   storeId,
   sellerId,
-  buyerId,
   encryptedPayload: crypto.getRandomValues(new Uint8Array(64)),
   nonce: crypto.getRandomValues(new Uint8Array(24)),
 });
-const statusData = ({ orderId, sellerId, buyerId, status = 'shipped', message }) => ({
-  orderId, sellerId, buyerId, status, ...(message ? { message } : {}),
+const statusData = ({ orderId, buyerId, status = 'shipped', message }) => ({
+  orderId, buyerId, status, ...(message ? { message } : {}),
 });
-const storeReviewData = ({ storeId, orderId, sellerId, buyerId, rating, title }) => ({
-  storeId, orderId, sellerId, buyerId, rating, ...(title ? { title } : {}),
+const storeReviewData = ({ storeId, orderId, sellerId, rating, title }) => ({
+  storeId, orderId, sellerId, rating, ...(title ? { title } : {}),
 });
-const itemReviewData = ({ storeId, itemId, orderId, buyerId, rating }) => ({ storeId, itemId, orderId, buyerId, rating });
+const itemReviewData = ({ storeId, itemId, orderId, rating }) => ({ storeId, itemId, orderId, rating });
 
 // ---- Cases ------------------------------------------------------------------
 
@@ -371,16 +387,30 @@ async function caseS2ItemRefs(ctx) {
     await attemptCreate(ctx, ctx.seller, 'shippingZone', zoneData({ storeId: randomEntropy(), name: `z${ctx.run}` })),
     REFERENCE_NOT_FOUND
   );
-  expectAccepted(
+  const zone = expectAccepted(
     's2c shipping zone on the REAL store is accepted',
     await attemptCreate(ctx, ctx.seller, 'shippingZone', zoneData({ storeId: id32(ctx.storeId), name: `zone${ctx.run}` }))
+  );
+  ctx.zoneId = zone.ok ? zone.id : null;
+  // The writer gate: `storeId` agrees {$ownerId: $ownerId} against the store,
+  // so only the store's owner can put anything under it. Before beta.2 both of
+  // these landed and only the UI kept them out of sight.
+  expectRejected(
+    's2d a STRANGER listing an item under the seller\'s store is rejected (writer gate, 40127)',
+    await attemptCreate(ctx, ctx.stranger, 'storeItem', itemData({ storeId: id32(ctx.storeId), title: `Intruder ${ctx.run}` })),
+    WRITER_GATE_REFUSED
+  );
+  expectRejected(
+    's2e a STRANGER adding a shipping zone to the seller\'s store is rejected (writer gate, 40127)',
+    await attemptCreate(ctx, ctx.stranger, 'shippingZone', zoneData({ storeId: id32(ctx.storeId), name: `intruder${ctx.run}` })),
+    WRITER_GATE_REFUSED
   );
 }
 
 async function caseS3Orders(ctx) {
-  console.log('\n--- s3. orders: refersTo store + seller identity ---');
+  console.log('\n--- s3. orders: refersTo store, sellerId agreed against the store owner ---');
   const { seller, buyer } = ctx;
-  const base = { storeId: id32(ctx.storeId), sellerId: id32(seller.ownerId), buyerId: id32(buyer.ownerId) };
+  const base = { storeId: id32(ctx.storeId), sellerId: id32(seller.ownerId) };
   const order = expectAccepted('s3a buyer order on the real store is accepted', await attemptCreate(ctx, buyer, 'storeOrder', orderData(base)));
   ctx.orderId = order.ok ? order.id : null;
   const order2 = expectAccepted('s3b a second buyer order is accepted', await attemptCreate(ctx, buyer, 'storeOrder', orderData(base)));
@@ -390,38 +420,45 @@ async function caseS3Orders(ctx) {
     await attemptCreate(ctx, buyer, 'storeOrder', orderData({ ...base, storeId: randomEntropy() })),
     REFERENCE_NOT_FOUND
   );
+  // v2 agrees sellerId against the store's own $ownerId, so a wrong seller is
+  // a 40127 mismatch — strictly stronger than the old "the identity exists"
+  // check, which a real-but-unrelated identity passed.
   expectRejected(
-    's3d order naming a GHOST seller identity is rejected (40120)',
-    await attemptCreate(ctx, buyer, 'storeOrder', orderData({ ...base, sellerId: randomEntropy() })),
-    REFERENCE_NOT_FOUND
+    's3d order claiming the WRONG sellerId is rejected (40127)',
+    await attemptCreate(ctx, buyer, 'storeOrder', orderData({ ...base, sellerId: id32(ctx.stranger.ownerId) })),
+    PROPERTY_MISMATCH
   );
 }
 
 async function caseS4Status(ctx) {
-  console.log('\n--- s4. status updates: propertyAgreement on sellerId/buyerId ---');
+  console.log('\n--- s4. status updates: writer gate on the seller, buyerId agreed ---');
   if (!ctx.orderId) { check('s4 status', false, 'no order fixture'); return; }
   const { seller, buyer, stranger } = ctx;
-  const good = { orderId: id32(ctx.orderId), sellerId: id32(seller.ownerId), buyerId: id32(buyer.ownerId) };
-  expectAccepted('s4a seller status update with agreeing ids is accepted', await attemptCreate(ctx, seller, 'orderStatusUpdate', statusData({ ...good, status: 'processing' })));
+  const good = { orderId: id32(ctx.orderId), buyerId: id32(buyer.ownerId) };
+  expectAccepted('s4a seller status update is accepted', await attemptCreate(ctx, seller, 'orderStatusUpdate', statusData({ ...good, status: 'processing' })));
   expectRejected(
-    's4b status update with the WRONG sellerId is rejected (40127)',
-    await attemptCreate(ctx, stranger, 'orderStatusUpdate', statusData({ ...good, sellerId: id32(stranger.ownerId) })),
-    PROPERTY_MISMATCH
-  );
-  expectRejected(
-    's4c status update with the WRONG buyerId is rejected (40127)',
+    's4b status update with the WRONG buyerId is rejected (40127)',
     await attemptCreate(ctx, seller, 'orderStatusUpdate', statusData({ ...good, buyerId: id32(stranger.ownerId) })),
     PROPERTY_MISMATCH
   );
   expectRejected(
-    's4d status update on a GHOST order is rejected (40120)',
+    's4c status update on a GHOST order is rejected (40120)',
     await attemptCreate(ctx, seller, 'orderStatusUpdate', statusData({ ...good, orderId: randomEntropy() })),
     REFERENCE_NOT_FOUND
   );
-  // Documented gap: a stranger CAN post an update that carries the right ids.
-  // Consensus cannot bind $ownerId; the app must check $ownerId == sellerId.
-  const spoof = await attemptCreate(ctx, stranger, 'orderStatusUpdate', statusData({ ...good, status: 'cancelled', message: 'spoof' }));
-  check('s4e (documented gap) a stranger update carrying the order\'s own ids LANDS — client must filter on $ownerId == sellerId', spoof.ok, spoof.ok ? `id=${spoof.id}` : (spoof.error ?? '').slice(0, 160));
+  // THE GAP THAT CLOSED: a stranger used to be able to post an update carrying
+  // the order's own ids, and only the client kept it off the buyer's screen.
+  // `{$ownerId: sellerId}` refuses it at write time.
+  expectRejected(
+    's4d a STRANGER posting an update on the order is rejected (writer gate, 40127)',
+    await attemptCreate(ctx, stranger, 'orderStatusUpdate', statusData({ ...good, status: 'cancelled', message: 'spoof' })),
+    WRITER_GATE_REFUSED
+  );
+  expectRejected(
+    's4e even the BUYER cannot post a status update on their own order (writer gate, 40127)',
+    await attemptCreate(ctx, buyer, 'orderStatusUpdate', statusData({ ...good, status: 'cancelled' })),
+    WRITER_GATE_REFUSED
+  );
   const latest = expectAccepted('s4f seller ships the order', await attemptCreate(ctx, seller, 'orderStatusUpdate', statusData({ ...good, status: 'shipped' })));
   ctx.latestStatusId = latest.ok ? latest.id : null;
   await settle();
@@ -432,8 +469,8 @@ async function caseS4Status(ctx) {
     })
   );
   const rows = [...feed.values()].map((doc) => doc.toObject());
-  const spoofRows = rows.filter((row) => bs58.encode(Uint8Array.from(row.$ownerId)) !== bs58.encode(Uint8Array.from(row.sellerId)));
-  check('s4g buyerStatusUpdates index serves the buyer\'s feed; owner!=sellerId identifies exactly the spoofs', rows.length >= 3 && spoofRows.length >= (spoof.ok ? 1 : 0) && spoofRows.every((row) => bs58.encode(Uint8Array.from(row.$ownerId)) === stranger.ownerId), `rows=${rows.length} spoofs=${spoofRows.length}`);
+  const foreign = rows.filter((row) => bs58.encode(Uint8Array.from(row.$ownerId)) !== seller.ownerId);
+  check('s4g buyerStatusUpdates serves the buyer\'s feed, and EVERY row on it was written by the seller', rows.length >= 2 && foreign.length === 0, `rows=${rows.length} foreign=${foreign.length}`);
   workingShapes.push({ label: 'buyer status feed', shape: { documentTypeName: 'orderStatusUpdate', where: [['buyerId', '==', '<buyerId>']], orderBy: [['$createdAt', 'desc']] } });
 }
 
@@ -441,7 +478,7 @@ async function caseS5StoreReviews(ctx) {
   console.log('\n--- s5. store reviews: agreement chain, uniqueness, token cost ---');
   if (!ctx.orderId || !ctx.orderId2) { check('s5 reviews', false, 'no order fixtures'); return; }
   const { seller, buyer, stranger } = ctx;
-  const good = { storeId: id32(ctx.storeId), orderId: id32(ctx.orderId), sellerId: id32(seller.ownerId), buyerId: id32(buyer.ownerId) };
+  const good = { storeId: id32(ctx.storeId), orderId: id32(ctx.orderId), sellerId: id32(seller.ownerId) };
   const cost = REVIEW_COST.storeReview;
   expectRejected(
     's5a review with the WRONG storeId is rejected (40127)',
@@ -453,10 +490,14 @@ async function caseS5StoreReviews(ctx) {
     await attemptCreate(ctx, buyer, 'storeReview', storeReviewData({ ...good, sellerId: id32(stranger.ownerId), rating: 5 }), { tokenCost: cost }),
     PROPERTY_MISMATCH
   );
+  // THE GAP THAT CLOSED: the stranger used to be able to write a review of
+  // someone else's order as long as it carried the right ids, and only the
+  // unique orderReview slot limited the damage. Now the writer gate refuses it
+  // outright — and it is refused BEFORE the buyer's review exists.
   expectRejected(
-    's5c review with the WRONG buyerId is rejected (40127)',
-    await attemptCreate(ctx, buyer, 'storeReview', storeReviewData({ ...good, buyerId: id32(stranger.ownerId), rating: 5 }), { tokenCost: cost }),
-    PROPERTY_MISMATCH
+    's5c a STRANGER reviewing the buyer\'s order is rejected (writer gate, 40127)',
+    await attemptCreate(ctx, stranger, 'storeReview', storeReviewData({ ...good, rating: 1 }), { tokenCost: cost }),
+    WRITER_GATE_REFUSED
   );
   expectRejected(
     's5d review on a GHOST order is rejected (40120)',
@@ -475,11 +516,6 @@ async function caseS5StoreReviews(ctx) {
     await attemptCreate(ctx, buyer, 'storeReview', storeReviewData({ ...good, rating: 1 }), { tokenCost: cost }),
     DUPLICATE_UNIQUE
   );
-  expectRejected(
-    's5h the stranger reviewing the buyer\'s order (right ids, wrong signer) is rejected — the order\'s single review slot is taken (40105)',
-    await attemptCreate(ctx, stranger, 'storeReview', storeReviewData({ ...good, rating: 1 }), { tokenCost: cost }),
-    DUPLICATE_UNIQUE
-  );
   const r2 = expectAccepted('s5i buyer review (2 stars) on order two is accepted', await attemptCreate(ctx, buyer, 'storeReview', storeReviewData({ ...good, orderId: id32(ctx.orderId2), rating: 2 }), { tokenCost: cost }));
   ctx.reviews.push(r2.ok ? 2 : null);
   ctx.reviews = ctx.reviews.filter((r) => r !== null);
@@ -490,7 +526,7 @@ async function caseS6ItemReviews(ctx) {
   if (!ctx.orderId || !ctx.item1 || !ctx.item2 || !ctx.foreignItem) { check('s6 item reviews', false, 'fixtures missing'); return; }
   const { buyer } = ctx;
   const cost = REVIEW_COST.itemReview;
-  const base = { storeId: id32(ctx.storeId), orderId: id32(ctx.orderId), buyerId: id32(buyer.ownerId) };
+  const base = { storeId: id32(ctx.storeId), orderId: id32(ctx.orderId) };
   expectRejected(
     's6a item review of an item from ANOTHER store is rejected (40127 on the item\'s storeId agreement)',
     await attemptCreate(ctx, buyer, 'itemReview', itemReviewData({ ...base, itemId: id32(ctx.foreignItem), rating: 5 }), { tokenCost: cost }),
@@ -658,10 +694,41 @@ async function caseS12Tokens(ctx) {
   check('s12a buyer YAPP dropped by exactly the accepted review costs (rejected writes charge no tokens)', spent === expected, `before=${ctx.buyerYappBefore} after=${after} spent=${spent} expected=${expected}`);
 }
 
+async function caseS13Immutable(ctx) {
+  console.log('\n--- s13. immutable storeId on items and shipping zones ---');
+  const { seller } = ctx;
+  if (!ctx.item1 || !ctx.strangerStoreId) { check('s13 immutability', false, 'fixtures missing'); return; }
+
+  // Moving the item to the stranger's REAL store: the rejection has to be about
+  // immutability, and it fires before the writer gate the move would also fail.
+  const item = await fetchDocument(ctx.sdk, ctx.contractId, 'storeItem', ctx.item1);
+  expectRejected(
+    's13a a replace moving a storeItem to another store is rejected (40128)',
+    await attemptReplace(ctx, seller, 'storeItem', ctx.item1,
+      itemData({ storeId: id32(ctx.strangerStoreId), title: `Widget ${ctx.run}` }), BigInt(item?.revision ?? 1)),
+    IMMUTABLE_CHANGED
+  );
+  expectAccepted(
+    's13b a replace that leaves storeId alone still goes through',
+    await attemptReplace(ctx, seller, 'storeItem', ctx.item1,
+      itemData({ storeId: id32(ctx.storeId), title: `Widget ${ctx.run} (renamed)` }), BigInt(item?.revision ?? 1))
+  );
+
+  if (!ctx.zoneId) { check('s13c shippingZone immutability', false, 'no zone fixture'); return; }
+  const zone = await fetchDocument(ctx.sdk, ctx.contractId, 'shippingZone', ctx.zoneId);
+  expectRejected(
+    's13c a replace moving a shippingZone to another store is rejected (40128)',
+    await attemptReplace(ctx, seller, 'shippingZone', ctx.zoneId,
+      zoneData({ storeId: id32(ctx.strangerStoreId), name: `zone${ctx.run}` }), BigInt(zone?.revision ?? 1)),
+    IMMUTABLE_CHANGED
+  );
+}
+
 const CASES = new Map([
   ['s1', caseS1Fixtures], ['s2', caseS2ItemRefs], ['s3', caseS3Orders], ['s4', caseS4Status],
   ['s5', caseS5StoreReviews], ['s6', caseS6ItemReviews], ['s7', caseS7Averages], ['s8', caseS8Rankings],
   ['s9', caseS9OrderCounts], ['s10', caseS10Composite], ['s11', caseS11Permanence], ['s12', caseS12Tokens],
+  ['s13', caseS13Immutable],
 ]);
 
 function parseArgs(argv) {
@@ -682,6 +749,24 @@ function parseArgs(argv) {
   return args;
 }
 
+if (process.argv.includes('--self-test')) {
+  const ownedByStoreOwner = { agreements: { storeId: { $ownerId: '$ownerId' } }, immutable: ['storeId'] };
+  process.exit(selfTest('yappr-storefront-contract-v2.json', {
+    // s2d/s2e + s13: only the store owner may list under it, and never move it.
+    storeItem: ownedByStoreOwner,
+    shippingZone: ownedByStoreOwner,
+    // s3d: sellerId is the store's real owner, not a buyer's claim.
+    storeOrder: { agreements: { storeId: { sellerId: '$ownerId' } } },
+    // s4d/s4e: only the seller posts status updates.
+    orderStatusUpdate: { agreements: { orderId: { buyerId: '$ownerId', $ownerId: 'sellerId' } } },
+    // s5c/s6: only the identity that placed the order may review it.
+    storeReview: { agreements: { orderId: { storeId: 'storeId', sellerId: 'sellerId', $ownerId: '$ownerId' } } },
+    itemReview: {
+      agreements: { itemId: { storeId: 'storeId' }, orderId: { storeId: 'storeId', $ownerId: '$ownerId' } },
+    },
+  }));
+}
+
 try {
   const args = parseArgs(process.argv.slice(2));
   await ensureInitialized();
@@ -700,7 +785,7 @@ try {
   }
   const ctx = {
     sdk, contractId: args.contract, socialId, tokenId, seller, buyer, stranger,
-    run: Date.now().toString(36), reviews: [], itemRatings: {},
+    run: Date.now().toString(36), reviews: [], itemRatings: {}, zoneId: null,
     buyerYappBefore: await yappBalance(sdk, tokenId, buyer.ownerId),
   };
   for (const key of [...CASES.keys()].filter((k) => !args.only || args.only.includes(k))) {

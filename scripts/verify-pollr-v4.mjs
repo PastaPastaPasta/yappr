@@ -15,9 +15,8 @@
  * indexOnly type whose write landed.
  *
  * Cases:
- *   p1  fixtures: a single-choice poll, a multi-choice poll, a never-voted
- *       control poll, and the documented gap that a poll whose `author` is not
- *       its `$ownerId` still lands (propertyAgreement cannot bind `$ownerId`)
+ *   p1  fixtures: a single-choice poll, a multi-choice poll and a never-voted
+ *       control poll
  *   p2  references: a ballot on a ghost pollId is rejected (40120); a ballot
  *       carrying the wrong `pollOwnerId` is rejected (40127) — both doctypes
  *   p3  single-choice is STRUCTURAL: the first ballot lands, a second ballot by
@@ -46,6 +45,7 @@
  * Run:
  *   NETWORK=devnet node scripts/verify-pollr-v4.mjs --contract <id> \
  *     [--creator 230] [--voter 231] [--voter2 232] [--v3 <v3 contract id>] [--only p3,p6]
+ *   node scripts/verify-pollr-v4.mjs --self-test   # offline: contract declares what the cases assert
  */
 import { ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
@@ -59,6 +59,7 @@ import {
   id32,
   parseOnly,
   runCases,
+  selfTest,
 } from './battery-lib.mjs';
 import {
   buildDocument,
@@ -79,19 +80,18 @@ const OPTIONS = ['alpha', 'bravo', 'charlie'];
 const CLIENT_DUPLICATE_PREDICATE = /duplicate unique properties|\b40105\b/i;
 
 /**
- * Floor for the extra credits a v4 poll create pays over a v3 one (p7). Well
- * above what v4's extra 32-byte `author` property could account for on its own,
- * so the check cannot pass on payload size alone; measured delta is ~18M.
+ * Floor for the extra credits a v4 poll create pays over a v3 one (p7). v4's
+ * poll payload is now byte-identical to v3's, so the whole delta is the
+ * preallocated ballot trees; measured delta is ~18M.
  */
 const PREALLOCATION_FLOOR = 5_000_000n;
 
 // ---- Document shapes --------------------------------------------------------
 
-const pollData = ({ run, label, author, multiChoice }) => ({
+const pollData = ({ run, label, multiChoice }) => ({
   question: `${label} ${run}?`,
   ...Object.fromEntries(OPTIONS.map((option, index) => [`option${index}`, option])),
   ...(multiChoice ? { multiChoice: true } : {}),
-  author,
 });
 
 const ballotData = ({ pollId, pollOwnerId, choice }) => ({ pollId, pollOwnerId, choice });
@@ -169,36 +169,24 @@ async function recastIdenticalBallot(ctx, docType, who, pollId, choice) {
 }
 
 async function caseP1Fixtures(ctx) {
-  const { battery, creator, voter } = ctx;
+  const { battery, creator } = ctx;
   console.log('\n--- p1. fixtures: single-choice, multi-choice and never-voted polls ---');
-  const author = id32(creator.ownerId);
   for (const [key, label, multiChoice] of [
     ['pollS', 'Single', false],
     ['pollM', 'Multi', true],
     ['pollZ', 'Untouched', false],
   ]) {
     const created = battery.expectAccepted(
-      `p1 ${key} created (author == $ownerId)`,
-      await battery.attemptCreate(creator, 'poll', pollData({ run: ctx.run, label, author, multiChoice }))
+      `p1 ${key} created`,
+      await battery.attemptCreate(creator, 'poll', pollData({ run: ctx.run, label, multiChoice }))
     );
     ctx[key] = created.ok ? created.id : null;
   }
   if (!ctx.pollS || !ctx.pollM || !ctx.pollZ) throw new Error('fixture polls unavailable');
-
-  // Documented gap: propertyAgreement binds user properties, never $ownerId, so
-  // a poll can name someone else as its author. It lands; the app rejects it by
-  // comparing author with $ownerId, exactly like storefront v2's buyerId.
-  const spoofed = await battery.attemptCreate(
-    voter,
-    'poll',
-    pollData({ run: ctx.run, label: 'Spoofed', author, multiChoice: false })
-  );
-  battery.check(
-    'p1d a poll whose author != $ownerId LANDS (documented gap: agreement cannot bind $ownerId)',
-    spoofed.ok,
-    spoofed.ok ? `id=${spoofed.id} — the client must check author == $ownerId` : `rejected: ${(spoofed.error ?? '').slice(0, 160)}`
-  );
-  ctx.pollSpoofed = spoofed.ok ? spoofed.id : null;
+  // The v4 "a poll may attest an author who is not its creator" gap is GONE:
+  // ballots bind pollOwnerId to the poll's $ownerId, which the platform sets
+  // from the signature, so there is no attested field left to forge. p2c/p2d
+  // are the proof that a ballot cannot name anyone else either.
 }
 
 async function caseP2References(ctx) {
@@ -363,16 +351,13 @@ async function caseP7Preallocation(ctx) {
     battery.check('p7 preallocation cost comparison', true, 'skipped — pass --v3 <v3 contract id> to measure');
     return;
   }
-  const author = id32(creator.ownerId);
   const costOf = async (contract, label) => {
     const before = await battery.balanceOf(creator.ownerId);
+    // Identical payloads on both contracts, so the delta is preallocation alone.
     const created = await battery.attemptCreate(
       creator,
       'poll',
-      // The v3 schema has no `author`; sending it there would fail additionalProperties.
-      contract === ctx.v3ContractId
-        ? { question: `Cost ${label} ${ctx.run}?`, option0: OPTIONS[0], option1: OPTIONS[1] }
-        : { question: `Cost ${label} ${ctx.run}?`, option0: OPTIONS[0], option1: OPTIONS[1], author },
+      { question: `Cost ${label} ${ctx.run}?`, option0: OPTIONS[0], option1: OPTIONS[1] },
       { contract }
     );
     if (!created.ok) throw new Error(`${label} poll create failed: ${(created.error ?? '').slice(0, 160)}`);
@@ -382,7 +367,7 @@ async function caseP7Preallocation(ctx) {
   const v3Cost = await costOf(ctx.v3ContractId, 'v3');
   const v4Cost = await costOf(ctx.contractId, 'v4');
   battery.check(
-    `p7a a v4 poll create costs at least ${PREALLOCATION_FLOOR} credits more than the same v3 poll — the preallocated vote.byPoll / vote.byPollOwner trees are billed to the creator, far beyond v4's extra 32-byte author field`,
+    `p7a a v4 poll create costs at least ${PREALLOCATION_FLOOR} credits more than the BYTE-IDENTICAL v3 poll — the preallocated vote.byPoll / vote.byPollOwner trees are billed to the creator`,
     v4Cost - v3Cost >= PREALLOCATION_FLOOR,
     `v3=${v3Cost} credits, v4=${v4Cost} credits, delta=${v4Cost - v3Cost}`
   );
@@ -394,7 +379,7 @@ async function caseP8Unvote(ctx) {
   // NOTHING from the create call is reused: the create-returned Document is
   // unreliable for indexOnly types. An indexOnly projection only carries what
   // ITS OWN index path holds, so `byPollChoice` yields pollId + choice and
-  // NOT pollOwnerId — that one comes off the referenced poll's `author`, the
+  // NOT pollOwnerId — that one comes off the referenced poll's `$ownerId`, the
   // same place the write took it from (social v6 recovers hashtag/postAuthor
   // off the post the same way). With no `$createdAt` in v4 there is nothing
   // else to recover.
@@ -403,9 +388,9 @@ async function caseP8Unvote(ctx) {
     orderBy: CHOICE_ORDER,
   });
   const choice = mine[0] === undefined ? null : Number(mine[0].choice);
-  const poll = await battery.fetchDocument('poll', ctx.pollS);
-  const pollOwner = poll?.toObject()?.author ? battery.b58(poll.toObject().author) : null;
-  battery.check('p8a the delete tuple recovers: choice from the byPollChoice projection, pollOwnerId from the poll',
+  const pollFields = (await battery.fetchDocument('poll', ctx.pollS))?.toObject();
+  const pollOwner = pollFields?.$ownerId ? battery.b58(pollFields.$ownerId) : null;
+  battery.check('p8a the delete tuple recovers: choice from the byPollChoice projection, pollOwnerId from the poll\'s $ownerId',
     choice === 0 && pollOwner === ctx.creator.ownerId,
     `choice=${choice} pollOwnerId=${pollOwner} entries=${mine.length} (projection keys: ${Object.keys(mine[0] ?? {}).join(',')})`);
   if (choice === null || pollOwner === null) return;
@@ -526,6 +511,12 @@ function parseArgs(argv) {
   }
   if (!args.contract) throw new Error('Pass --contract <id> or set POLLR_V4_CONTRACT_ID');
   return args;
+}
+
+if (process.argv.includes('--self-test')) {
+  // p2c/p2d: a ballot can only ever name the poll's real creator.
+  const ballot = { agreements: { pollId: { pollOwnerId: '$ownerId' } } };
+  process.exit(selfTest('pollr-contract-v4.json', { vote: ballot, multiVote: ballot }));
 }
 
 try {

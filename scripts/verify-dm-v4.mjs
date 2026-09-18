@@ -35,11 +35,17 @@
  *       lib/services/identity-update-builder.ts. PASS-with-note either way:
  *       the contract does NOT declare requiresIdentity*BoundedKey, so nothing
  *       in v4 depends on the outcome.
+ *   d8  immutability (beta.2 `immutable`): a readReceipt replace may only move
+ *       $updatedAt — re-pointing conversationId is rejected (40128); the same
+ *       for a directMessage's conversationId/encryptedContent and a
+ *       conversationInvite's conversationId. This is what makes "a message is
+ *       never edited" a consensus rule instead of a client convention.
  *
  * Run:
  *   NETWORK=devnet node scripts/verify-dm-v4.mjs --contract <id> \
  *     [--sender 220] [--recipient 221] [--stranger 222] [--messages 5] \
  *     [--run <tag>] [--only d4,d5]
+ *   node scripts/verify-dm-v4.mjs --self-test   # offline: contract declares what the cases assert
  *
  * Re-runnable: conversation ids are salted per run (see `conversationIdFor`), so
  * the exact-count cases never measure a previous run's messages. The invite
@@ -50,10 +56,12 @@ import { ContractBounds, IdentityPublicKeyInCreation, IdentitySigner, ensureInit
 import bs58 from 'bs58';
 import {
   DUPLICATE_UNIQUE,
+  IMMUTABLE_CHANGED,
   REFERENCE_NOT_FOUND,
   createBattery,
   parseOnly,
   runCases,
+  selfTest,
   settle,
 } from './battery-lib.mjs';
 import {
@@ -214,6 +222,7 @@ CASES.set('d3', async (ctx) => {
     await battery.attemptCreate(recipient, 'readReceipt', { conversationId: ctx.c1 }),
     DUPLICATE_UNIQUE
   );
+  ctx.receiptId = created.id;
 });
 
 // ---- d4 counts ---------------------------------------------------------------
@@ -379,6 +388,63 @@ CASES.set('d7', async (ctx) => {
   battery.check('d7 contract-bound encryption key probe reported', true, landed ? 'registered' : 'not registered');
 });
 
+// ---- d8 immutability ---------------------------------------------------------
+
+CASES.set('d8', async (ctx) => {
+  const { battery, sender, recipient } = ctx;
+
+  if (ctx.receiptId) {
+    const stored = await battery.fetchDocument('readReceipt', ctx.receiptId);
+    battery.expectRejected(
+      'd8a a readReceipt replace re-pointing conversationId is rejected (40128) — only $updatedAt may move',
+      await battery.attemptReplace(recipient, 'readReceipt', ctx.receiptId,
+        { conversationId: ctx.c2 }, stored?.revision ?? 1n),
+      IMMUTABLE_CHANGED
+    );
+  } else {
+    battery.check('d8a readReceipt immutability', false, 'no receipt fixture (run d3 first)');
+  }
+
+  // A message of its own rather than one of d2's, so the exact-count cases stay
+  // independent of this one whatever order the cases are selected in.
+  const message = battery.expectAccepted(
+    'd8b a message to edit is created in C2',
+    await battery.attemptCreate(sender, 'directMessage', { conversationId: ctx.c2, encryptedContent: randomBytes(64) })
+  );
+  if (message.ok) {
+    const stored = await battery.fetchDocument('directMessage', message.id);
+    const revision = stored?.revision ?? 1n;
+    battery.expectRejected(
+      'd8c rewriting a sent message\'s encryptedContent is rejected (40128)',
+      await battery.attemptReplace(sender, 'directMessage', message.id,
+        { conversationId: ctx.c2, encryptedContent: randomBytes(64) }, revision),
+      IMMUTABLE_CHANGED
+    );
+    battery.expectRejected(
+      'd8d moving a message into another conversation is rejected (40128) — the count tree cannot be re-keyed',
+      await battery.attemptReplace(sender, 'directMessage', message.id,
+        { conversationId: ctx.c1, encryptedContent: stored?.toObject()?.encryptedContent }, revision),
+      IMMUTABLE_CHANGED
+    );
+  }
+
+  const invites = await battery.queryDocs('conversationInvite', {
+    where: [['$ownerId', '==', sender.ownerId], ['recipientId', '==', recipient.ownerId]], limit: 1,
+  });
+  if (invites[0]) {
+    const inviteId = battery.b58(invites[0].$id);
+    const stored = await battery.fetchDocument('conversationInvite', inviteId);
+    battery.expectRejected(
+      'd8e re-pointing an invite at another conversation is rejected (40128)',
+      await battery.attemptReplace(sender, 'conversationInvite', inviteId,
+        { recipientId: bs58.decode(recipient.ownerId), conversationId: ctx.c2 }, stored?.revision ?? 1n),
+      IMMUTABLE_CHANGED
+    );
+  } else {
+    battery.check('d8e conversationInvite immutability', false, 'no invite fixture (run d1 first)');
+  }
+});
+
 // ---- entrypoint --------------------------------------------------------------
 
 function parseArgs(argv) {
@@ -406,6 +472,15 @@ function parseArgs(argv) {
   return args;
 }
 
+if (process.argv.includes('--self-test')) {
+  // d8: everything a DM document says is frozen; only $updatedAt may move.
+  process.exit(selfTest('yappr-dm-contract-v4.json', {
+    conversationInvite: { immutable: ['conversationId', 'recipientId', 'senderPubKey'] },
+    directMessage: { immutable: ['conversationId', 'encryptedContent'] },
+    readReceipt: { immutable: ['conversationId'] },
+  }));
+}
+
 try {
   const args = parseArgs(process.argv.slice(2));
   const only = parseOnly(args.only, CASES);
@@ -423,7 +498,7 @@ try {
 
   const ctx = {
     battery, sdk: battery.sdk, contractId: args.contract, sender, recipient, stranger,
-    strangerIdx: args.stranger, messageCount: args.messages,
+    strangerIdx: args.stranger, messageCount: args.messages, receiptId: null,
     c1: await conversationIdFor(sender.ownerId, recipient.ownerId, args.run),
     c2: await conversationIdFor(sender.ownerId, stranger.ownerId, args.run),
   };

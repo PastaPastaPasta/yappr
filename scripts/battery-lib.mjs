@@ -10,10 +10,13 @@
  * scripts/seed/provision-seed-identities.mjs); `personaActor` signs with the
  * persona's CRITICAL auth key, which also covers YAPP direct purchases.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { IdentitySigner, TokenPaymentInfo } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID } from './derive-identities.mjs';
 import {
+  REPO_ROOT,
   YAPP_TOKEN_POSITION,
   buildDocument,
   describeErr,
@@ -31,7 +34,16 @@ export const MIN_YAPP_PURCHASE = 100n;
 
 // ---- Expected consensus rejection shapes (matched against describeErr text) ----
 export const REFERENCE_NOT_FOUND = /40120|referenced .*not found/i;
+/**
+ * ReferencedDocumentPropertyMismatchError. Covers BOTH agreement shapes: a value
+ * pair that disagrees with the referenced document, and a WRITER GATE
+ * (`propertyAgreement: {"$ownerId": …}`) refusing a signer who may not write the
+ * document at all — the gate is an agreement pair with the signing identity on
+ * the referring side, so consensus reports it the same way.
+ */
 export const PROPERTY_MISMATCH = /40127|does not agree with the referenced document/i;
+/** DocumentImmutablePropertyChangedError: a replace touched a frozen property. */
+export const IMMUTABLE_CHANGED = /40128|is immutable and cannot be changed/i;
 export const DELETE_FORBIDDEN = /can ?not be deleted/i;
 export const DUPLICATE_UNIQUE = /40105|duplicate unique properties/i;
 export const TOKEN_AGREEMENT_MISSING = /token|payment|agree/i;
@@ -255,4 +267,55 @@ export function parseOnly(value, cases) {
   const only = value.split(',').map((s) => s.trim());
   for (const key of only) if (!cases.has(key)) throw new Error(`unknown case ${key}`);
   return only;
+}
+
+// ---- Offline pre-flight ------------------------------------------------------
+
+/**
+ * Asserts the checked-in contract JSON still declares the rules a battery's
+ * cases are written against, without touching the network (`--self-test`).
+ *
+ * A battery only finds out on registration day that a contract no longer
+ * carries, say, the writer gate its "a stranger cannot do this" case expects —
+ * and a MISSING rule reads as a case that fails for an unexplained reason. This
+ * pins the declarations in CI instead, right beside the build scripts' own
+ * `--self-test`.
+ *
+ * `expect` is keyed by document type:
+ *   agreements: { <property>: { <referring>: <referenced>, … } }  exact match
+ *   immutable / immutableAllowSetting: property names, order-insensitive
+ *
+ * Returns a process exit code.
+ */
+export function selfTest(file, expect) {
+  const parsed = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', file), 'utf8'));
+  const schemas = parsed.documentSchemas ?? parsed;
+  const problems = [];
+  const sorted = (values) => [...(values ?? [])].sort();
+
+  for (const [docType, rules] of Object.entries(expect)) {
+    const schema = schemas[docType];
+    if (!schema) { problems.push(`${docType}: document type is missing`); continue; }
+    for (const [property, agreement] of Object.entries(rules.agreements ?? {})) {
+      const actual = schema.properties?.[property]?.refersTo?.propertyAgreement;
+      if (JSON.stringify(actual) !== JSON.stringify(agreement)) {
+        problems.push(`${docType}.${property} propertyAgreement is ${JSON.stringify(actual)}, expected ${JSON.stringify(agreement)}`);
+      }
+    }
+    for (const key of ['immutable', 'immutableAllowSetting']) {
+      if (rules[key] === undefined) continue;
+      const actual = sorted(schema[key]);
+      if (JSON.stringify(actual) !== JSON.stringify(sorted(rules[key]))) {
+        problems.push(`${docType} ${key} is ${JSON.stringify(actual)}, expected ${JSON.stringify(sorted(rules[key]))}`);
+      }
+    }
+  }
+
+  for (const problem of problems) console.error(`FAIL  ${problem}`);
+  if (problems.length > 0) {
+    console.error(`contracts/${file} no longer matches what this battery asserts`);
+    return 1;
+  }
+  console.log(`contracts/${file} declares every rule this battery asserts`);
+  return 0;
 }
