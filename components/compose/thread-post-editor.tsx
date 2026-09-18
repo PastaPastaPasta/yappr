@@ -190,7 +190,7 @@ export function ThreadPostEditor({
     >
       {/* Thread connector line */}
       {index > 0 && (
-        <div className={`absolute left-5 -top-3 w-0.5 h-3 bg-gradient-to-b ${
+        <div className={`absolute left-6 -top-4 w-px h-4 bg-gradient-to-b ${
           isPosted
             ? 'from-green-300 to-green-400 dark:from-green-700 dark:to-green-600'
             : 'from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600'
@@ -199,18 +199,18 @@ export function ThreadPostEditor({
 
       <div
         onClick={isPosted ? undefined : onActivate}
-        className={`relative rounded-xl border-2 transition-all ${
+        className={`relative rounded-xl border transition-colors ${
           isPosted
             ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/30 cursor-default'
             : isActive
-            ? 'border-yappr-500 bg-white dark:bg-neutral-900 shadow-sm cursor-pointer'
+            ? 'border-gray-300 dark:border-gray-600 bg-white dark:bg-neutral-900 shadow-sm cursor-text'
             : 'border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950 hover:border-gray-300 dark:hover:border-gray-700 cursor-pointer'
         }`}
       >
         {/* Post number/status indicator - only show for threads (multiple posts) or posted status */}
         {(!isOnly || isPosted) && (
-          <div className={`absolute -left-2 top-3 flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-semibold shadow-sm ${
-            isPosted ? 'bg-green-500' : 'bg-yappr-500'
+          <div className={`absolute left-3 top-3 flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${
+            isPosted ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
           }`}>
             {isPosted ? (
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
@@ -222,7 +222,7 @@ export function ThreadPostEditor({
           </div>
         )}
 
-        <div className={`pr-5 ${!isOnly || isPosted ? 'pl-8' : 'pl-5'} ${isActive ? 'py-4' : 'py-3'}`}>
+        <div className={`px-3 sm:px-4 ${!isOnly || isPosted ? 'pt-12 pb-3' : 'py-3'}`}>
           {/* Posted status badge */}
           {isPosted && (
             <div className="flex items-center gap-2 mb-2 text-xs text-green-600 dark:text-green-400 font-medium">
@@ -232,7 +232,7 @@ export function ThreadPostEditor({
 
           {/* Formatting toolbar - only show when active, not posted and editable */}
           {isActive && !showPreview && !isPosted && !locked && (
-            <div className="flex flex-wrap items-center gap-1 mb-3 pb-2 border-b border-gray-100 dark:border-gray-800">
+            <div className="flex flex-wrap items-center gap-0.5 mb-3 pb-2 border-b border-gray-100 dark:border-gray-800">
               <FormatButton
                 onClick={() => handleInsertFormat('**')}
                 title="Bold (Ctrl+B)"
@@ -269,7 +269,6 @@ export function ThreadPostEditor({
               {/* Image attachment button */}
               {onImageClick && (
                 <>
-                  <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1" />
                   <FormatButton
                     onClick={onImageClick}
                     title={imageTitle || 'Attach image'}
@@ -292,12 +291,11 @@ export function ThreadPostEditor({
 
               {/* Remove button for thread posts */}
               {!isOnly && (
-                <>
-                  <div className="flex-1" />
+                <div className="absolute right-2 top-2">
                   <FormatButton onClick={onRemove} title="Remove this post">
-                    <TrashIcon className="w-4 h-4 text-red-500" />
+                    <TrashIcon className="w-4 h-4" />
                   </FormatButton>
-                </>
+                </div>
               )}
             </div>
           )}
@@ -340,7 +338,7 @@ export function ThreadPostEditor({
                     ? "What's on your mind?"
                     : 'Continue your thread...'
                 }
-                className={`w-full text-base resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600 ${isActive ? 'min-h-[80px]' : ''}`}
+                className={`w-full text-base text-gray-900 dark:text-gray-100 resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600 ${isActive ? 'min-h-[80px]' : ''}`}
               />
               <MentionAutocomplete
                 textareaRef={ref}
@@ -374,25 +372,15 @@ export function ThreadPostEditor({
             </p>
           )}
 
-          {/* Footer with formatting hints and character count - only show when active and not posted.
-              The count still matters when locked: an attached image URL is appended to this text. */}
+          {/* Keep attachment cost and the count visible in edit, preview and locked states. */}
           {isActive && !isPosted && (
-            <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
-              <div className="flex items-center gap-2 text-xs text-gray-400">
-                {!locked && (
-                  <>
-                    <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">**bold**</code>
-                    <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">*italic*</code>
-                    <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">`code`</code>
-                  </>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {extraCharacters > 0 && (
-                  <span className="text-xs text-gray-400 tabular-nums">
-                    Image URL +{extraCharacters} chars
-                  </span>
-                )}
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mt-3 text-xs text-gray-500 dark:text-gray-400">
+              {extraCharacters > 0 ? (
+                <span className="min-w-0 break-words">Image URL +{extraCharacters} chars</span>
+              ) : !locked && !showPreview ? (
+                <span>Markdown supported</span>
+              ) : null}
+              <div className="ml-auto shrink-0">
                 <CharacterCounter current={effectiveLength} limit={CHARACTER_LIMIT} />
               </div>
             </div>
