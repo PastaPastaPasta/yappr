@@ -42,24 +42,31 @@ export function PostTips({ postId, authorId }: PostTipsProps) {
     setTips(null)
     setNames(new Map())
     setBlocked(new Set())
+    // The proved tips are the payload; names and block status only decorate
+    // them. A failed profile or block lookup must not erase tips that DID load,
+    // so the decorations run in their own chains with their own catches.
     tipHistoryService
       .getTipsForPost(postId, authorId)
-      .then(async (result) => {
+      .then((result) => {
         if (!active) return
         setTips(result)
         if (result.length === 0) return
         const senders = result.map((tip) => tip.from)
 
-        const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
-        const profiles = await unifiedProfileService.getProfilesByIdentityIds(senders)
-        if (!active) return
-        setNames(new Map(profiles.map((profile) => [profile.$ownerId, profile.displayName])))
+        import('@/lib/services/unified-profile-service')
+          .then(({ unifiedProfileService }) => unifiedProfileService.getProfilesByIdentityIds(senders))
+          .then((profiles) => {
+            if (active) setNames(new Map(profiles.map((profile) => [profile.$ownerId, profile.displayName])))
+          })
+          .catch((error) => logger.warn('PostTips: could not resolve tipper names', error))
 
         if (!viewerId) return
-        const { blockService } = await import('@/lib/services/block-service')
-        const statuses = await blockService.checkBlockedBatch(viewerId, senders)
-        if (!active) return
-        setBlocked(new Set([...statuses].filter(([, isBlocked]) => isBlocked).map(([id]) => id)))
+        import('@/lib/services/block-service')
+          .then(({ blockService }) => blockService.checkBlockedBatch(viewerId, senders))
+          .then((statuses) => {
+            if (active) setBlocked(new Set([...statuses].filter(([, isBlocked]) => isBlocked).map(([id]) => id)))
+          })
+          .catch((error) => logger.warn('PostTips: could not check block status', error))
       })
       .catch((error) => {
         logger.warn('PostTips: could not load tips', error)

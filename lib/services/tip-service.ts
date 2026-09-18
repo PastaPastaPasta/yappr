@@ -7,7 +7,7 @@ import { KeyPurpose } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { keyNetwork, MIN_YAPP_TIP } from '@/lib/constants'
 import { encodeTipNote, type TipTargetKind } from '@/lib/tip-note'
-import { isNonFatalWaitError, isTimeoutError } from '@/lib/error-utils'
+import { isAlreadyExistsError, isNonFatalWaitError, isTimeoutError } from '@/lib/error-utils'
 import { tokenService } from './token-service'
 import { tipHistoryService, type SentTipMatch } from './tip-history-service'
 
@@ -33,6 +33,9 @@ export interface TipResult {
      */
     | 'UNCONFIRMED';
 }
+
+/** How far behind this clock the chain's block time may sit for a just-sent tip to still match. */
+const SENT_TIP_SKEW_MARGIN_MS = 60_000;
 
 // Conversion: 1 DASH = 100,000,000,000 credits on Dash Platform
 // (Platform credits are different from core duffs)
@@ -261,6 +264,12 @@ class TipService {
     const invalid = this.validateYappTip(senderId, recipientId, amount);
     if (invalid) return invalid;
 
+    // Taken BEFORE the broadcast so the confirmation match can floor on it: an
+    // identical earlier tip to the same author must not pass for this one. The
+    // margin absorbs skew between this clock and the chain's block time; a tip
+    // that lands "before" the floor anyway is still found by the modal's
+    // floor-less "check again".
+    const sentAt = Date.now() - SENT_TIP_SKEW_MARGIN_MS;
     const result = await tokenService.transfer(
       senderId,
       recipientId,
@@ -270,11 +279,12 @@ class TipService {
     );
     if (!result.success) {
       // A failed CONFIRMATION is not a failed transfer: DAPI 504s on
-      // `wait_for_state_transition_result` for transitions that landed. Ask the
-      // chain instead of guessing — reporting failure here would put a
+      // `wait_for_state_transition_result` for transitions that landed, and
+      // "already in mempool/chain" means the broadcast went through before. Ask
+      // the chain instead of guessing — reporting failure here would put a
       // "Try Again" button in front of a tip that already went out.
       if (result.errorCode === 'NETWORK_ERROR' && this.looksUnconfirmed(result.error)) {
-        return this.confirmYappTip(senderId, this.tipMatch(recipientId, amount, target, message));
+        return this.confirmYappTip(senderId, this.tipMatch(recipientId, amount, target, message, sentAt));
       }
       return {
         success: false,
@@ -327,12 +337,17 @@ class TipService {
     };
   }
 
-  /** Whether a failure is a confirmation-wait problem rather than a rejection. */
+  /**
+   * Whether a failure is a confirmation-wait problem rather than a rejection.
+   * "Already in mempool / already in chain / nonce already present" belong
+   * here too: they are what a transfer that DID land looks like on a retry.
+   */
   private looksUnconfirmed(error?: string): boolean {
     if (!error) return false;
     return (
       isTimeoutError(error) ||
       isNonFatalWaitError(error) ||
+      isAlreadyExistsError(error) ||
       /504|gateway|wait_for_state_transition_result/i.test(error)
     );
   }

@@ -63,6 +63,13 @@ against the chain, with no trust in Yappr.
   attributable to a post. `components/profile/yapp-flow.tsx` is therefore
   labelled "YAPP received / sent" rather than "tips" — calling that sum "tips"
   would be the same unearned claim this change exists to delete.
+- **A deployment whose social contract has no YAPP token has no YAPP tips.**
+  The `/testing` build's social contract (`2qvaZNJJ…`) was registered before
+  the token existed, so there the YAPP tab reads a balance of 0 and refuses to
+  send; nothing can move. Staging, production and the moutai devnet all carry
+  the token with `keepsTransferHistory` (checked on chain 2026-09-18, and the
+  `transfer` doctype on the history contract is identical on testnet and
+  devnet: same four indexes, `publicNote` max 2048).
 - **The credit (DASH) tip path is not provable at all** and never was. It is
   kept as a plain "send someone DASH" option, it announces nothing, and the UI
   tells the user it cannot be shown on the post.
@@ -153,17 +160,25 @@ DAPI's `wait_for_state_transition_result` routinely 504s on transitions that
 landed (see CLAUDE.md). A tip is money, so "the SDK threw" must never become a
 "Try Again" button. Both paths resolve it by asking the chain instead:
 
-- The local path funnels confirmation-shaped failures into
-  `tipService.confirmYappTip`, which polls `getTipsSent(..., {fresh: true})` for
-  the matching row. Found → success. Not found → a distinct `UNCONFIRMED`
-  result and a screen whose only actions are **Close** and **Check again**.
+- The local path funnels confirmation-shaped failures — timeouts, 504s, and
+  the "already in mempool / already in chain / nonce already present" replies
+  that mean the broadcast went through — into `tipService.confirmYappTip`,
+  which polls `getTipsSent(..., {fresh: true})` for the matching row, floored
+  at the moment of the send (minus a 60 s skew margin) so an identical earlier
+  tip cannot pass for it. Found → success. Not found → a distinct
+  `UNCONFIRMED` result and a screen whose only actions are **Close** and
+  **Check again**.
 - The wallet path's expired QR re-checks for the tip **with no time floor**
   before it will build a second signing request — if the chain's clock ran
   behind the browser's, the tip is real but sits before the `since` margin.
 
 `matchesSentTip` (in `tip-history-service.ts`) is the single predicate both use:
-recipient, exact amount, tipped post and message must all agree, so an earlier
-same-size tip to the same author is never mistaken for the new one.
+recipient, exact amount, tipped post and message must all agree. The automatic
+confirmations also carry a time floor; the two **Check again** buttons
+deliberately do not, which is the one place an identical earlier tip (same
+author, amount, post and message) would be reported as this one. That trade
+was made so a chain clock more than a minute behind the browser's cannot hide a
+real tip and prompt a second send — the costlier failure.
 
 > **Wallet support caveat.** The `dash-st:` channel and the URI builder are the
 > same ones buy-YAPP and key registration already use, and `verify-tips.mjs`
