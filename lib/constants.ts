@@ -26,6 +26,13 @@ export const YAPP_TOKEN_COSTS = {
   likeReply: 1,
   repost: 1,
 } as const
+// Storefront v2 reviews are priced in YAPP too, charged from the social
+// contract's token through `tokenCost.create.contractId` (a cross-contract
+// token cost), so their payment agreement must name the social contract.
+export const STOREFRONT_YAPP_TOKEN_COSTS = {
+  storeReview: 3,
+  itemReview: 1,
+} as const
 export const YAPPR_PROFILE_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID || 'FZSnZdKsLAuWxE7iZJq12eEz6xfGTgKPxK7uZJapTQxe' // Unified profile contract
 // Optional contracts use ?? (not ||) so a deployment can EXPLICITLY BLANK one
 // (e.g. .env.devnet sets them empty until devnet copies are provisioned): the
@@ -36,7 +43,16 @@ export const YAPPR_DM_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID
 // Overridable all the same: a freshly genesised devnet can be brought up with a
 // different DPNS registration, and `/devnet` must not preload a missing id.
 export const DPNS_CONTRACT_ID = process.env.NEXT_PUBLIC_DPNS_CONTRACT_ID || 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec'
-export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID ?? '2AUBj86MGTsXP7A3ekD62YoTeDwtJe5b9MxwkWwdg6Ba' // Testnet - Storefront contract v2 (with savedAddress)
+export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID ?? '2AUBj86MGTsXP7A3ekD62YoTeDwtJe5b9MxwkWwdg6Ba' // Testnet - legacy storefront (v1 topology, with savedAddress)
+// Storefront contract topology. `v1` is the testnet contract: plain indexes,
+// no buyerId/sellerId attestation, no itemReview, no token cost — aggregates
+// are client-side scans. `v2` (contracts/yappr-storefront-contract-v2.json,
+// docs/STOREFRONT_V2.md) adds the proved rating trees, the refersTo chain
+// and YAPP-priced reviews; writes carry the v2 fields and consensus rejects
+// them on a v1 contract, so the switch must match the deployed contract.
+export const STOREFRONT_TOPOLOGY: 'v1' | 'v2' =
+  process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY === 'v2' ? 'v2' : 'v1'
+export const storefrontIsV2 = () => STOREFRONT_TOPOLOGY === 'v2'
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID ?? '7UaqHGBJBbRLJ4fUWS45cnud8PPUugJWoGTt1SKwHJ2P' // Key exchange protocol contract
@@ -244,6 +260,7 @@ export const STOREFRONT_DOCUMENT_TYPES = {
   STORE_ORDER: 'storeOrder',
   ORDER_STATUS_UPDATE: 'orderStatusUpdate',
   STORE_REVIEW: 'storeReview',
+  ITEM_REVIEW: 'itemReview',
   SAVED_ADDRESS: 'savedAddress'
 } as const
 

@@ -204,7 +204,7 @@ export async function groupedDocumentCount(
 const MIN_IDENTIFIER = '1'.repeat(32);
 
 /** The SDK returns grouped counts as a Map or (older shapes) a plain object. */
-function groupedCountEntries(raw: unknown): [string, unknown][] {
+export function groupedCountEntries(raw: unknown): [string, unknown][] {
   return raw instanceof Map ? Array.from(raw.entries()) : Object.entries((raw ?? {}) as Record<string, unknown>);
 }
 

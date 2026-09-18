@@ -18,8 +18,12 @@ import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
-import { storeReviewService } from '@/lib/services/store-review-service'
+import { storeStatsService } from '@/lib/services/store-stats-service'
+import { storefrontIsV2 } from '@/lib/constants'
 import type { Store, StoreRatingSummary } from '@/lib/types'
+
+type StoreSort = 'newest' | 'topRated' | 'mostOrdered'
+const SORT_OPTIONS: ReadonlyArray<[StoreSort, string]> = [['newest', 'Newest'], ['topRated', 'Top rated'], ['mostOrdered', 'Most ordered']]
 
 export default function StoreBrowsePage() {
   const router = useRouter()
@@ -30,6 +34,7 @@ export default function StoreBrowsePage() {
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [hasStore, setHasStore] = useState(false)
+  const [sort, setSort] = useState<StoreSort>('newest')
 
   // Check if user has a store
   useEffect(() => {
@@ -48,33 +53,40 @@ export default function StoreBrowsePage() {
   // Load active stores
   useEffect(() => {
     if (!sdkReady) return
+    let active = true
     const loadStores = async () => {
       try {
         setIsLoading(true)
-        const { stores: activeStores } = await storeService.getActiveStores({ limit: 50 })
+        let activeStores: Store[]
+        if (sort === 'newest') {
+          activeStores = (await storeService.getActiveStores({ limit: 50 })).stores
+        } else {
+          // One proved ranked page (top rated by average, or most ordered),
+          // then the stores by id.
+          const ranked = sort === 'topRated'
+            ? await storeStatsService.topRatedStores(50)
+            : await storeStatsService.mostOrderedStores(50)
+          const byId = new Map((await storeService.getMany(ranked.map((entry) => entry.id))).map((store) => [store.id, store]))
+          activeStores = ranked
+            .map((entry) => byId.get(entry.id))
+            .filter((store): store is Store => store !== undefined && store.status === 'active')
+        }
+        // Proved averages (v2 only): one average-tree read per store, no review scans.
+        const ratings = storefrontIsV2()
+          ? await storeStatsService.getStoreRatingSummaries(activeStores.map((store) => store.id))
+          : new Map<string, StoreRatingSummary>()
+        if (!active) return
         setStores(activeStores)
-
-        // Load ratings for each store
-        const ratingsMap = new Map<string, StoreRatingSummary>()
-        await Promise.all(
-          activeStores.map(async (store) => {
-            try {
-              const summary = await storeReviewService.calculateRatingSummary(store.id)
-              ratingsMap.set(store.id, summary)
-            } catch (e) {
-              // Ignore rating fetch errors
-            }
-          })
-        )
-        setStoreRatings(ratingsMap)
+        setStoreRatings(ratings)
       } catch (error) {
         logger.error('Failed to load stores:', error)
       } finally {
-        setIsLoading(false)
+        if (active) setIsLoading(false)
       }
     }
     loadStores().catch((error) => logger.error(error))
-  }, [sdkReady])
+    return () => { active = false }
+  }, [sdkReady, sort])
 
   // Filter stores by search query
   const filteredStores = searchQuery
@@ -125,6 +137,27 @@ export default function StoreBrowsePage() {
                 </div>
               )}
             </div>
+
+            {/* Sort (ranked tabs need the v2 contract's ranking trees) */}
+            {storefrontIsV2() && (
+            <div className="flex gap-2 px-4 pb-3" role="tablist" aria-label="Sort stores">
+              {SORT_OPTIONS.map(([key, label]) => (
+                <button
+                  key={key}
+                  role="tab"
+                  aria-selected={sort === key}
+                  onClick={() => setSort(key)}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                    sort === key
+                      ? 'bg-yappr-500 text-white'
+                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            )}
 
             {/* Search */}
             <div className="px-4 pb-4">

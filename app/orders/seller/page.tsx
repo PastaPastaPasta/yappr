@@ -107,31 +107,21 @@ function SellerOrdersPage() {
         )
         setOrderPayloads(payloadMap)
 
-        // Load latest status for each order and resolve buyer usernames
-        const statusMap = new Map<string, OrderStatusUpdate>()
-        const usernameMap = new Map<string, string>()
-
-        await Promise.all(
-          sellerOrders.map(async (order) => {
-            try {
-              const [status, username] = await Promise.all([
-                orderStatusService.getLatestStatus(order.id),
-                dpnsService.resolveUsername(order.buyerId)
-              ])
-              if (status) {
-                statusMap.set(order.id, status)
-              }
-              if (username) {
-                usernameMap.set(order.buyerId, username)
-              }
-            } catch (e) {
-              // Ignore errors
-            }
-          })
-        )
+        // Latest genuine status per order: one `in` query per 100 orders
+        // (v2 binds sellerId to the order, so spoofed updates are dropped).
+        const [statusMap, usernameMap] = await Promise.all([
+          orderStatusService.getLatestStatuses(sellerOrders.map((order) => order.id)).catch((e) => {
+            logger.error('Failed to load order statuses:', e)
+            return new Map<string, OrderStatusUpdate>()
+          }),
+          dpnsService.resolveUsernamesBatch([...new Set(sellerOrders.map((order) => order.buyerId))]).catch((e) => {
+            logger.error('Failed to resolve buyer usernames:', e)
+            return new Map<string, string | null>()
+          }),
+        ])
 
         setOrderStatuses(statusMap)
-        setBuyerUsernames(usernameMap)
+        setBuyerUsernames(new Map([...usernameMap].filter((entry): entry is [string, string] => entry[1] !== null)))
       } catch (error) {
         logger.error('Failed to load seller orders:', error)
       } finally {
@@ -147,11 +137,14 @@ function SellerOrdersPage() {
 
     setIsSubmitting(true)
     try {
+      const order = orders.find((candidate) => candidate.id === orderId)
+      if (!order) throw new Error('Order not found')
       const update = await orderStatusService.createStatusUpdate(user.identityId, orderId, {
         status: newStatus,
         trackingNumber: trackingNumber || undefined,
         trackingCarrier: trackingCarrier || undefined,
-        message: statusMessage || undefined
+        message: statusMessage || undefined,
+        buyerId: order.buyerId
       })
 
       setOrderStatuses(prev => new Map(prev).set(orderId, update))

@@ -7,7 +7,7 @@ import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
-import { YAPPR_CONTRACT_ID, YAPP_TOKEN_COSTS, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
+import { STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_COSTS, YAPP_TOKEN_POSITION, keyNetwork, storefrontIsV2 } from '../constants';
 import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError } from '../error-utils';
 import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
@@ -298,11 +298,18 @@ class StateTransitionService {
   private resolveTokenPayment(
     contractId: string,
     documentType: string
-  ): { tokenContractPosition?: number; maximumTokenCost: number } | undefined {
-    if (contractId !== YAPPR_CONTRACT_ID) return undefined;
-    const amount = (YAPP_TOKEN_COSTS as Record<string, number>)[documentType];
-    if (!amount) return undefined;
-    return { maximumTokenCost: amount };
+  ): { tokenContractPosition?: number; paymentTokenContractId?: string; maximumTokenCost: number } | undefined {
+    if (contractId === YAPPR_CONTRACT_ID) {
+      const amount = (YAPP_TOKEN_COSTS as Record<string, number>)[documentType];
+      return amount ? { maximumTokenCost: amount } : undefined;
+    }
+    if (contractId === YAPPR_STOREFRONT_CONTRACT_ID && storefrontIsV2()) {
+      // Storefront reviews spend the SOCIAL contract's YAPP (cross-contract
+      // tokenCost), so the agreement names that contract explicitly.
+      const amount = (STOREFRONT_YAPP_TOKEN_COSTS as Record<string, number>)[documentType];
+      return amount ? { paymentTokenContractId: YAPPR_CONTRACT_ID, maximumTokenCost: amount } : undefined;
+    }
+    return undefined;
   }
 
   async createDocument(
@@ -321,6 +328,8 @@ class StateTransitionService {
        */
       tokenPayment?: {
         tokenContractPosition?: number;
+        /** The contract defining the token when it is not `contractId` (cross-contract tokenCost). */
+        paymentTokenContractId?: string;
         maximumTokenCost: number;
       };
       /**
@@ -460,6 +469,9 @@ class StateTransitionService {
       let tokenPaymentInfo: TokenPaymentInfo | undefined;
       if (effectivePayment) {
         tokenPaymentInfo = new TokenPaymentInfo({
+          ...(effectivePayment.paymentTokenContractId
+            ? { paymentTokenContractId: effectivePayment.paymentTokenContractId }
+            : {}),
           tokenContractPosition: effectivePayment.tokenContractPosition ?? YAPP_TOKEN_POSITION,
           maximumTokenCost: BigInt(effectivePayment.maximumTokenCost),
         });

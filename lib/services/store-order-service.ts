@@ -7,7 +7,7 @@ import { logger } from '@/lib/logger';
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV2 } from '../constants';
 import { identifierToBase58, identifierStringToDocumentBytes, normalizeBytes } from './sdk-helpers';
 import { privateFeedCryptoService } from './private-feed-crypto-service';
 import type {
@@ -116,6 +116,9 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
     const documentData: Record<string, unknown> = {
       storeId: identifierStringToDocumentBytes(data.storeId),
       sellerId: identifierStringToDocumentBytes(data.sellerId),
+      // v2: poster-attested buyer; the propertyAgreement source that pins
+      // this order's reviews and status updates to its buyer.
+      ...(storefrontIsV2() ? { buyerId: identifierStringToDocumentBytes(buyerId) } : {}),
       encryptedPayload: data.encryptedPayload,
       nonce: data.nonce
     };
