@@ -6,9 +6,7 @@ import {
   POLL_MIN_OPTIONS,
   POLL_OPTION_MAX_LENGTH,
   POLL_QUESTION_MAX_LENGTH,
-  pollrIsV4,
 } from '@/lib/constants';
-import { identifierStringToDocumentBytes, identifierToBase58 } from './sdk-helpers';
 
 /**
  * A poll on the shared Pollr contract.
@@ -27,19 +25,6 @@ export interface Poll {
   multiChoice: boolean;
   /** Advisory close time in ms since epoch. Not enforced on-chain. */
   endsAt?: number;
-  /**
-   * Poll creator as the poll itself attests it — v4's `author` field, falling
-   * back to `$ownerId` on v3 (which has no such field).
-   *
-   * Ballots must carry THIS value as `pollOwnerId`: consensus checks it against
-   * `poll.author` through the refersTo propertyAgreement, and `propertyAgreement`
-   * cannot bind `$ownerId`, so a poll whose `author` names someone else still
-   * lands. {@link authorIsOwner} is the tell; the ballot must agree with the
-   * attested author either way or the write is rejected with 40127.
-   */
-  author: string;
-  /** False when the poll attests an author that is not its own owner — do not trust it. */
-  authorIsOwner: boolean;
 }
 
 export interface CreatePollData {
@@ -79,20 +64,14 @@ class PollrPollService extends BaseDocumentService<Poll> {
       options.push(value);
     }
 
-    const ownerId = (doc.$ownerId || doc.ownerId) as string;
-    // v3 polls have no `author`; the owner is the only claim available there.
-    const author = identifierToBase58(data.author ?? doc.author) ?? ownerId;
-
     return {
       id: (doc.$id || doc.id) as string,
-      ownerId,
+      ownerId: (doc.$ownerId || doc.ownerId) as string,
       createdAt: new Date(Number((doc.$createdAt || doc.createdAt) ?? Date.now())),
       question: ((data.question ?? doc.question) || '') as string,
       options,
       multiChoice: Boolean(data.multiChoice ?? doc.multiChoice ?? false),
       endsAt: toFiniteNumber(data.endsAt ?? doc.endsAt),
-      author,
-      authorIsOwner: author === ownerId,
     };
   }
 
@@ -126,19 +105,14 @@ class PollrPollService extends BaseDocumentService<Poll> {
    * Optional properties are omitted entirely (never sent as null) so the
    * contract's `additionalProperties: false` schema stays satisfied.
    *
-   * On v4 the poll also attests its `author` (== the creator) and is permanent:
-   * ballots reference it, and their `pollOwnerId` is bound to this field. v3's
-   * schema has no such property and `additionalProperties: false` would reject
-   * it, so the field is strictly topology-gated.
+   * On v4 the poll is permanent, because ballots reference it; every ballot's
+   * `pollOwnerId` is bound by consensus to the poll's `$ownerId`, which the
+   * platform assigns, so the poll carries no attested creator field of its own.
    */
   async createPoll(ownerId: string, data: CreatePollData): Promise<Poll> {
     const { question, options } = this.normalize(data);
 
     const documentData: Record<string, unknown> = { question };
-    if (pollrIsV4()) {
-      // Identifier-typed contract fields must reach the typed write path as raw bytes.
-      documentData.author = identifierStringToDocumentBytes(ownerId);
-    }
     options.forEach((option, index) => {
       documentData[optionField(index)] = option;
     });

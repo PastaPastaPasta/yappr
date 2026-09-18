@@ -8,11 +8,12 @@ the index set.
 
 What v4 changes, per document type:
 
-  poll       canBeDeleted:false (it becomes a permanentDocument target) and a
-             required poster-attested `author` (== $ownerId; the app checks),
-             which is the propertyAgreement source that pins every ballot's
-             `pollOwnerId` to the real poll creator. Still immutable and
-             documentsCountable.
+  poll       canBeDeleted:false (it becomes a permanentDocument target).
+             Nothing else: every ballot's `pollOwnerId` is pinned to the poll's
+             own `$ownerId` by a system-field propertyAgreement, so the poll
+             carries no attested `author` copy and the "a poll may name an
+             author who is not its creator" gap does not exist. Still immutable
+             and documentsCountable.
 
   vote       indexOnly. Ballots are index entries, not stored rows: flat-priced,
              body-less, and single-choice is STRUCTURAL — `byPoll [pollId]`
@@ -48,9 +49,11 @@ Index-set rules this had to satisfy (rs-dpp `apply_index_only`, 4.2.0-beta.1):
     countable/summable index. `byPollChoice` is ranked with prefix `[pollId]`
     and `vote.byPoll` terminates exactly there — legal only because `byPoll` is
     PLAIN. Moving any aggregate flag onto `byPoll` breaks registration;
-  * `rankedCountable` needs `countable` and `rangeCountable` spelled out
+  * `rankedCountable` needs `rangeCountable` spelled out
     (dashpay/platform#4809: the sugar is not expanded before the dependency
     check, so the offline validator accepts what consensus refuses).
+    `countable` is no longer spelled out: 4.2.0-beta.2 makes `rangeCountable:
+    true` imply it, in the meta-schema and in the structural parser alike.
 
 Run:
   python3 scripts/build-pollr-v4-contract.py              # (re)write the v4 JSON
@@ -82,11 +85,16 @@ def identifier(position, description, refers_to=None):
 
 
 def poll_reference():
-    """`pollId`'s refersTo: the poll must exist, and its author pins pollOwnerId."""
+    """`pollId`'s refersTo: the poll must exist, and its OWNER pins pollOwnerId.
+
+    The referenced side is the system field `$ownerId` (4.2.0-beta.2), so the
+    binding is to the identity that actually signed the poll — there is no
+    attested copy to disagree with it and nothing for the client to check.
+    """
     return {
         'type': 'permanentDocument',
         'documentType': 'poll',
-        'propertyAgreement': {'pollOwnerId': 'author'},
+        'propertyAgreement': {'pollOwnerId': '$ownerId'},
     }
 
 
@@ -96,15 +104,16 @@ def index(name, properties, terminal, **flags):
     return out
 
 
-# The count tree plus its ranked secondary, spelled out in full — the
-# `rankedCountable` dependency check runs on the literal keys (#4809).
-COUNT_AND_RANK = {'countable': 'countable', 'rangeCountable': True, 'rankedCountable': True}
+# The count tree plus its ranked secondary. The `rankedCountable` dependency
+# check runs on the literal keys (#4809), so `rangeCountable` stays spelled out;
+# `countable` is implied by it since 4.2.0-beta.2.
+COUNT_AND_RANK = {'rangeCountable': True, 'rankedCountable': True}
 
 
 def ballot_properties(choice_description):
     return {
-        'pollId': identifier(0, 'ID of the poll being voted on (must exist; its author pins pollOwnerId)', poll_reference()),
-        'pollOwnerId': identifier(1, "The poll creator's identity, consensus-bound to poll.author"),
+        'pollId': identifier(0, "ID of the poll being voted on (must exist; its $ownerId pins pollOwnerId)", poll_reference()),
+        'pollOwnerId': identifier(1, "The poll creator's identity, consensus-bound to the poll's $ownerId"),
         'choice': {
             'type': 'integer',
             'minimum': 0,
@@ -121,20 +130,13 @@ def build(src):
     # ---- poll ---------------------------------------------------------------
     poll = out['poll']
     poll['canBeDeleted'] = False
-    # One past the highest declared position, rather than the property count:
-    # those agree only while v3's positions are a contiguous 0..12, and a silent
-    # collision here would be a consensus-visible schema bug.
-    poll['properties']['author'] = identifier(
-        max(prop['position'] for prop in poll['properties'].values()) + 1,
-        'Poll creator; must equal $ownerId (poster-attested). Ballots copy it into '
-        'pollOwnerId under propertyAgreement, so a ballot cannot lie about whose poll it is',
-    )
-    poll['required'] = [*poll['required'], 'author']
     poll['description'] = (
         'A poll: question plus 2-10 choices as enumerated option fields. Permanent '
         '(canBeDeleted:false) so ballots can reference it, and immutable, so the '
         'multiChoice flag that selects the ballot doctype cannot be flipped after '
-        'ballots land. Creating one preallocates the vote trees its ballots need'
+        'ballots land. Every ballot\'s pollOwnerId is bound by consensus to this '
+        "poll's $ownerId, so the creator needs no attested copy. Creating one "
+        'preallocates the vote trees its ballots need'
     )
 
     # ---- vote (single choice) -----------------------------------------------
@@ -155,7 +157,8 @@ def build(src):
             # Per-option tallies (count tree) and the winner (ranked secondary,
             # groupBy choice with pollId pinned).
             index('byPollChoice', ['pollId', 'choice'], '$ownerId', **COUNT_AND_RANK),
-            # "Votes on my polls". pollOwnerId is an agreement key and pollId the
+            # "Votes on my polls". pollOwnerId is an agreement key (bound to the
+            # poll's $ownerId, which a reference does determine) and pollId the
             # referring property, so the poll's creation preallocates these trees.
             index('byPollOwner', ['pollOwnerId', 'pollId'], '$ownerId', preallocated=True),
             # "My votes", carrying the choice. The terminal must be $ownerId or a

@@ -161,15 +161,6 @@ class PollrVoteService {
       return refused('This poll takes a single choice', selected);
     }
 
-    // A v4 poll attests its own `author`, and consensus binds every ballot's
-    // `pollOwnerId` to that field but CANNOT bind it to `$ownerId` — so a poll
-    // can name someone else as its creator and still land. Casting on one would
-    // file the ballot under the forged creator's "votes on my polls"; refuse it
-    // instead. (Always true on v3, where `author` falls back to the owner.)
-    if (!poll.authorIsOwner) {
-      return refused('This poll names an author that is not its creator', selected);
-    }
-
     // The close time is advisory — the contract can't enforce it — so clients
     // are the ones that have to refuse a late ballot.
     const { endsAt } = poll;
@@ -212,11 +203,11 @@ class PollrVoteService {
           {
             // Identifier-typed contract fields must reach the typed write path as raw bytes.
             pollId: identifierStringToDocumentBytes(poll.id),
-            // v4 binds this to the poll's ATTESTED author through
-            // propertyAgreement, and `author` need not equal `$ownerId` — a
-            // ballot carrying the owner instead would be rejected with 40127.
-            // On v3 the two are the same value (no `author` field exists).
-            pollOwnerId: identifierStringToDocumentBytes(isV4 ? poll.author : poll.ownerId),
+            // v4 binds this to the poll's `$ownerId` through a system-field
+            // propertyAgreement, so the poll's real creator is the only value
+            // consensus accepts; on v3 nothing is checked and it is the same
+            // value anyway.
+            pollOwnerId: identifierStringToDocumentBytes(poll.ownerId),
             choice,
           },
           // v4 ballots are indexOnly: there is no id-addressable row for the

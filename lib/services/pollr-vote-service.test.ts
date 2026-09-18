@@ -23,8 +23,6 @@ const poll = (overrides: Partial<Poll> = {}): Poll => ({
   question: 'Which?',
   options: ['alpha', 'bravo', 'charlie'],
   multiChoice: false,
-  author: CREATOR,
-  authorIsOwner: true,
   ...overrides,
 });
 
@@ -57,11 +55,11 @@ async function withoutWaiting<T>(work: Promise<T>): Promise<T> {
 }
 
 describe('ballot writes', () => {
-  it('v4 binds pollOwnerId to the poll’s attested author and confirms by affected state', async () => {
+  it('v4 binds pollOwnerId to the poll’s $ownerId and confirms by affected state', async () => {
     const service = await loadService('v4');
-    // A poll whose author is NOT its owner: consensus binds the ballot to
-    // `author`, so sending `ownerId` here would be rejected with 40127.
-    const result = await service.castVote(poll({ ownerId: IMPOSTOR, author: IMPOSTOR }), [1], VOTER);
+    // Consensus binds the ballot to the poll's OWNER, so that — not the
+    // caller's idea of a creator — is the only value that can be sent.
+    const result = await service.castVote(poll({ ownerId: IMPOSTOR }), [1], VOTER);
 
     expect(result.created).toEqual([1]);
     const [contractId, docType, owner, data, options] = mocks.createDocument.mock.calls[0];
@@ -79,14 +77,6 @@ describe('ballot writes', () => {
     expect(docType).toBe('multiVote');
     expect(bs58.encode(data.pollOwnerId as Uint8Array)).toBe(CREATOR);
     expect(options).toBeUndefined();
-  });
-
-  it('refuses to vote on a poll that attests an author it does not own', async () => {
-    const service = await loadService('v4');
-    const result = await service.castVote(poll({ author: IMPOSTOR, authorIsOwner: false }), [0], VOTER);
-
-    expect(result).toMatchObject({ success: false, created: [], failed: [0] });
-    expect(mocks.createDocument).not.toHaveBeenCalled();
   });
 
   it('believes the chain over a v4 create that fails after the broadcast landed', async () => {

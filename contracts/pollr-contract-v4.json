@@ -29,8 +29,7 @@
         "$createdAt",
         "question",
         "option0",
-        "option1",
-        "author"
+        "option1"
       ],
       "properties": {
         "question": {
@@ -121,18 +120,9 @@
           "maximum": 9007199254740991,
           "position": 12,
           "description": "Optional close time (ms since epoch). Advisory: clients hide the vote UI and reject late votes; not enforceable on-chain"
-        },
-        "author": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
-          "position": 13,
-          "description": "Poll creator; must equal $ownerId (poster-attested). Ballots copy it into pollOwnerId under propertyAgreement, so a ballot cannot lie about whose poll it is"
         }
       },
-      "description": "A poll: question plus 2-10 choices as enumerated option fields. Permanent (canBeDeleted:false) so ballots can reference it, and immutable, so the multiChoice flag that selects the ballot doctype cannot be flipped after ballots land. Creating one preallocates the vote trees its ballots need",
+      "description": "A poll: question plus 2-10 choices as enumerated option fields. Permanent (canBeDeleted:false) so ballots can reference it, and immutable, so the multiChoice flag that selects the ballot doctype cannot be flipped after ballots land. Every ballot's pollOwnerId is bound by consensus to this poll's $ownerId, so the creator needs no attested copy. Creating one preallocates the vote trees its ballots need",
       "additionalProperties": false,
       "canBeDeleted": false
     },
@@ -163,7 +153,6 @@
             }
           ],
           "terminal": "$ownerId",
-          "countable": "countable",
           "rangeCountable": true,
           "rankedCountable": true
         },
@@ -206,12 +195,12 @@
           "maxItems": 32,
           "contentMediaType": "application/x.dash.dpp.identifier",
           "position": 0,
-          "description": "ID of the poll being voted on (must exist; its author pins pollOwnerId)",
+          "description": "ID of the poll being voted on (must exist; its $ownerId pins pollOwnerId)",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "poll",
             "propertyAgreement": {
-              "pollOwnerId": "author"
+              "pollOwnerId": "$ownerId"
             }
           }
         },
@@ -222,7 +211,7 @@
           "maxItems": 32,
           "contentMediaType": "application/x.dash.dpp.identifier",
           "position": 1,
-          "description": "The poll creator's identity, consensus-bound to poll.author"
+          "description": "The poll creator's identity, consensus-bound to the poll's $ownerId"
         },
         "choice": {
           "type": "integer",
@@ -252,7 +241,6 @@
             }
           ],
           "terminal": "$ownerId",
-          "countable": "countable",
           "rangeCountable": true,
           "rankedCountable": true
         },
@@ -297,12 +285,12 @@
           "maxItems": 32,
           "contentMediaType": "application/x.dash.dpp.identifier",
           "position": 0,
-          "description": "ID of the poll being voted on (must exist; its author pins pollOwnerId)",
+          "description": "ID of the poll being voted on (must exist; its $ownerId pins pollOwnerId)",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "poll",
             "propertyAgreement": {
-              "pollOwnerId": "author"
+              "pollOwnerId": "$ownerId"
             }
           }
         },
@@ -313,7 +301,7 @@
           "maxItems": 32,
           "contentMediaType": "application/x.dash.dpp.identifier",
           "position": 1,
-          "description": "The poll creator's identity, consensus-bound to poll.author"
+          "description": "The poll creator's identity, consensus-bound to the poll's $ownerId"
         },
         "choice": {
           "type": "integer",
