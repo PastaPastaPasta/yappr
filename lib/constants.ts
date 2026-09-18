@@ -39,6 +39,20 @@ export const YAPPR_PROFILE_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_PROFILE_C
 // preload and every isConfigured() gate treat an empty id as "not available",
 // which fails closed instead of querying an id that does not exist on-chain.
 export const YAPPR_DM_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID ?? 'J7MP9YU1aEGNAe7bjB45XdrjDLBsevFLPK1t1YwFS4ck' // Testnet - DM contract v3 (simplified readReceipt)
+// ---- DM topology — owned by the DM v4 work, edit here only ----
+// `v3` is the testnet contract: no count flags, so the conversation list has to
+// download a 100-message page per conversation and count unread in JS. `v4`
+// (contracts/yappr-dm-contract-v4.json, docs/DM_V4.md) adds countable +
+// rangeCountable to directMessage's conversation index, so unread is a count
+// query and the list fetches only each conversation's newest message.
+//
+// Unlike the storefront switch, this one changes READS ONLY — v4 writes are
+// byte-identical to v3 writes, so a mismatched switch degrades performance or
+// unread accuracy, it does not get anything rejected by consensus.
+export const DM_TOPOLOGY: 'v3' | 'v4' =
+  process.env.NEXT_PUBLIC_DM_TOPOLOGY === 'v4' ? 'v4' : 'v3'
+export const dmIsV4 = () => DM_TOPOLOGY === 'v4'
+// ---- end DM topology block ----
 // DPNS is a system contract, so its id is normally identical on every chain.
 // Overridable all the same: a freshly genesised devnet can be brought up with a
 // different DPNS registration, and `/devnet` must not preload a missing id.

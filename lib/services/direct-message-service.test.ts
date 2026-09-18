@@ -3,7 +3,7 @@ import bs58 from 'bs58';
 
 // Exercise document decoding and page selection at an in-memory SDK boundary.
 // No browser secrets, SDK initialization, decryption, or network access.
-const mocks = vi.hoisted(() => ({ query: vi.fn(), composite: vi.fn(), identity: vi.fn() }));
+const mocks = vi.hoisted(() => ({ query: vi.fn(), composite: vi.fn(), count: vi.fn(), identity: vi.fn() }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: mocks }) }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: {} }));
 vi.mock('./identity-service', () => ({ identityService: {} }));
@@ -134,3 +134,123 @@ describe('message polling cursor', () => {
       .toEqual({ messages: [], cursor: 'confirmed-message' })
   })
 })
+
+
+/**
+ * v4 reads unread from the contract's count tree instead of downloading and
+ * filtering a 100-message page. The fixture exercises both branches at once:
+ * conversation 0's newest message belongs to the viewer (last speaker → 0
+ * unread, no query at all), conversation 1's belongs to the participant.
+ */
+describe('v4 unread counts', () => {
+  const useV4 = async () => {
+    vi.stubEnv('NEXT_PUBLIC_DM_TOPOLOGY', 'v4');
+    return (await import('./direct-message-service')).directMessageService;
+  };
+
+  beforeEach(() => {
+    // v4 fetches only the newest message per conversation for the preview.
+    mocks.composite.mockResolvedValue({
+      pageDocuments: [messages(0, 100).reverse()[0]],
+      subResults: [
+        { kind: 'documents', documents: [messages(1, 3).reverse()[0]] },
+        { kind: 'documents', documents: [{
+          $id: 'receipt', $ownerId: viewer, $updatedAt: 1095,
+          data: { conversationId: Array.from(conversationBytes[0]) },
+        }] },
+      ],
+    });
+    mocks.count.mockResolvedValue(new Map([['', 4n]]));
+  });
+
+  it('fetches one message per conversation and counts unread against the read receipt', async () => {
+    const service = await useV4();
+    const result = await service.getConversations(viewer, { includeParticipantInfo: false });
+
+    expect(result.map(conversation => ({ id: conversation.id, unread: conversation.unreadCount })))
+      .toEqual([
+        // Newest message is the viewer's own: nothing newer to read, no query.
+        { id: conversationIds[0], unread: 0 },
+        { id: conversationIds[1], unread: 4 },
+      ]);
+
+    // The whole v3/v4 read difference: a 1-message preview, not a 100-message page.
+    const query = mocks.composite.mock.calls[0][0];
+    expect([query, ...query.subQueries].map(page => page.limit)).toEqual([1, 1, 2]);
+
+    // Exactly one count: conversation 0 short-circuited.
+    expect(mocks.count).toHaveBeenCalledTimes(1);
+    expect(mocks.count.mock.calls[0][0]).toMatchObject({
+      documentTypeName: 'directMessage',
+      where: [
+        ['conversationId', '==', Buffer.from(conversationBytes[1]).toString('base64')],
+        // No receipt for this conversation, so everything counts.
+        ['$createdAt', '>', 0],
+      ],
+    });
+  });
+
+  it('counts only messages newer than the receipt when the participant spoke last', async () => {
+    // Give conversation 0 a participant-owned newest message so its receipt
+    // ($updatedAt 1095) becomes the range bound.
+    const theirs = { ...messages(0, 100).reverse()[0], $ownerId: participants[0] };
+    mocks.composite.mockResolvedValue({
+      pageDocuments: [theirs],
+      subResults: [
+        { kind: 'documents', documents: [] },
+        { kind: 'documents', documents: [{
+          $id: 'receipt', $ownerId: viewer, $updatedAt: 1095,
+          data: { conversationId: Array.from(conversationBytes[0]) },
+        }] },
+      ],
+    });
+    const service = await useV4();
+    const result = await service.getConversations(viewer, { includeParticipantInfo: false });
+
+    expect(result.find(conversation => conversation.id === conversationIds[0])?.unreadCount).toBe(4);
+    // A conversation with no messages at all is 0 unread and costs no query.
+    expect(result.find(conversation => conversation.id === conversationIds[1])?.unreadCount).toBe(0);
+    expect(mocks.count).toHaveBeenCalledTimes(1);
+    expect(mocks.count.mock.calls[0][0].where[1]).toEqual(['$createdAt', '>', 1095]);
+  });
+
+  it('reports 0 rather than failing the list when a count query fails', async () => {
+    mocks.count.mockRejectedValue(new Error('count tree unavailable'));
+    const service = await useV4();
+    const result = await service.getConversations(viewer, { includeParticipantInfo: false });
+    expect(result.map(conversation => conversation.unreadCount)).toEqual([0, 0]);
+    expect(result).toHaveLength(2);
+  });
+});
+
+describe('global unread total', () => {
+  it('sums the per-conversation unread on v4 without decrypting or resolving identities', async () => {
+    vi.stubEnv('NEXT_PUBLIC_DM_TOPOLOGY', 'v4');
+    mocks.composite.mockResolvedValue({
+      pageDocuments: [{ ...messages(0, 100).reverse()[0], $ownerId: participants[0] }],
+      subResults: [
+        { kind: 'documents', documents: [messages(1, 3).reverse()[0]] },
+        { kind: 'documents', documents: [] },
+      ],
+    });
+    mocks.count.mockResolvedValue(new Map([['', 3n]]));
+    const { directMessageService } = await import('./direct-message-service');
+    expect(await directMessageService.getUnreadTotal(viewer)).toBe(6); // 3 + 3
+    expect(mocks.identity).not.toHaveBeenCalled();
+  });
+
+  it('reports 0 on v3, where a total would cost a message page per conversation per poll', async () => {
+    const { directMessageService } = await import('./direct-message-service');
+    expect(await directMessageService.getUnreadTotal(viewer)).toBe(0);
+    // The v3 branch short-circuits before any DAPI request.
+    expect(mocks.query).not.toHaveBeenCalled();
+    expect(mocks.count).not.toHaveBeenCalled();
+  });
+
+  it('reports 0 when the conversation index cannot be loaded', async () => {
+    vi.stubEnv('NEXT_PUBLIC_DM_TOPOLOGY', 'v4');
+    mocks.query.mockReset().mockRejectedValue(new Error('offline'));
+    const { directMessageService } = await import('./direct-message-service');
+    expect(await directMessageService.getUnreadTotal(viewer)).toBe(0);
+  });
+});

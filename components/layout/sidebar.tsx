@@ -42,6 +42,7 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { YappBalanceItem } from '@/components/token/yapp-balance-item'
 import { useAuth } from '@/contexts/auth-context'
 import { notificationService } from '@/lib/services'
+import { directMessageService } from '@/lib/services/direct-message-service'
 import { useLoginModal } from '@/hooks/use-login-modal'
 
 const getNavigation = (isLoggedIn: boolean, userId?: string) => {
@@ -76,8 +77,9 @@ export function Sidebar() {
   const { user, logout, refreshBalance } = useAuth()
   const openLoginModal = useLoginModal((s) => s.open)
 
-  // Notification store - only subscribe to unread count for badge display
+  // Notification store - only subscribe to unread counts for badge display
   const unreadNotificationCount = useNotificationStore((s) => s.getUnreadCount())
+  const unreadMessageCount = useNotificationStore((s) => s.dmUnreadCount)
 
   const [isHydrated, setIsHydrated] = useState(false)
   const [isRefreshingBalance, setIsRefreshingBalance] = useState(false)
@@ -149,9 +151,17 @@ export function Sidebar() {
 
       try {
         const readIds = store.getReadIdsSet()
-        const result = isInitial
-          ? await notificationService.getInitialNotifications(userId, readIds)
-          : await notificationService.pollNewNotifications(userId, store.lastFetchTimestamp, readIds)
+        // The DM unread total rides this same cadence rather than adding a
+        // second timer. It never rejects (the service reports 0 on failure and
+        // on the v3 topology), so it cannot take the notification fetch down.
+        const [result] = await Promise.all([
+          isInitial
+            ? notificationService.getInitialNotifications(userId, readIds)
+            : notificationService.pollNewNotifications(userId, store.lastFetchTimestamp, readIds),
+          directMessageService.getUnreadTotal(userId).then((total) => {
+            if (!cancelled) store.setDmUnreadCount(total)
+          }),
+        ])
 
         if (cancelled) return
 
@@ -201,7 +211,12 @@ export function Sidebar() {
           {navigation.map((item) => {
             const isActive = pathname === item.href
             const Icon = isActive ? item.activeIcon : item.icon
-            const showBadge = item.name === 'Notifications' && isHydrated && unreadNotificationCount > 0
+            // Badges render only after hydration: both counts are client-only,
+            // so drawing them during SSR would mismatch.
+            const badgeCount = !isHydrated ? 0
+              : item.name === 'Notifications' ? unreadNotificationCount
+              : item.name === 'Messages' ? unreadMessageCount
+              : 0
 
             return (
               <Link
@@ -215,9 +230,9 @@ export function Sidebar() {
               >
                 <div className="relative">
                   <Icon className="h-7 w-7" />
-                  {showBadge && (
+                  {badgeCount > 0 && (
                     <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-yappr-500 text-[10px] font-bold text-white">
-                      {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+                      {badgeCount > 99 ? '99+' : badgeCount}
                     </span>
                   )}
                 </div>

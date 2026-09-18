@@ -26,6 +26,18 @@ interface NotificationState {
   notifications: Notification[];
   lastFetchTimestamp: number;
 
+  /**
+   * Unread direct messages across every conversation, for the Messages nav
+   * badge. Refreshed by the same sidebar poll that drives `notifications` —
+   * there is deliberately no second timer — and always 0 on the v3 DM topology,
+   * where a total would cost a 100-message download per conversation per poll
+   * (see directMessageService.getUnreadTotal).
+   *
+   * Not persisted: it is a live count, and a stale one from the last session
+   * would show a badge for messages the user has since read.
+   */
+  dmUnreadCount: number;
+
   // Filter
   filter: NotificationFilter;
 
@@ -45,6 +57,7 @@ interface NotificationState {
   setLoading: (loading: boolean) => void;
   setLastFetchTimestamp: (timestamp: number) => void;
   setHasFetchedOnce: (fetched: boolean) => void;
+  setDmUnreadCount: (count: number) => void;
   clearNotifications: () => void;
 
   // Computed helpers
@@ -64,6 +77,7 @@ export const useNotificationStore = create<NotificationState>()(
       isLoading: false,
       hasFetchedOnce: false,
       readIds: [],
+      dmUnreadCount: 0,
 
       // Actions
       setNotifications: (notifications) => {
@@ -127,9 +141,12 @@ export const useNotificationStore = create<NotificationState>()(
 
       setHasFetchedOnce: (fetched) => set({ hasFetchedOnce: fetched }),
 
+      setDmUnreadCount: (dmUnreadCount) => set({ dmUnreadCount }),
+
       clearNotifications: () => set({
         notifications: [],
-        lastFetchTimestamp: 0
+        lastFetchTimestamp: 0,
+        dmUnreadCount: 0
       }),
 
       // Computed helpers
