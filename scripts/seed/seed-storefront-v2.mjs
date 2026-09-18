@@ -34,11 +34,11 @@ import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as secp256k1 from '@noble/secp256k1';
-import bs58 from 'bs58';
 import { ensureInitialized } from '@dashevo/evo-sdk';
 import { createBattery, id32 } from '../battery-lib.mjs';
 import {
   REPO_ROOT,
+  YAPP_TOKEN_POSITION,
   addressFor,
   buildDocument,
   createSdkHandle,
@@ -276,6 +276,7 @@ const STORES = [
 
 const STORE_BY_KEY = new Map(STORES.map((store) => [store.key, store]));
 
+
 /** Shipping and billing personas for the buyer identities. */
 const BUYERS = {
   bo: { persona: 201, name: 'Bo Nakamura', street: '412 Fremont St, Apt 6', city: 'Seattle', state: 'WA', postalCode: '98109', country: 'US', email: 'bo.nakamura@example.com' },
@@ -372,6 +373,20 @@ const ORDERS = [
     items: [['bifold', 5, 'Saddle stitch is dead even, edges are glass, and it was flat in the pocket inside a month. Worth the wait.']] },
 ];
 
+/**
+ * The stores the ranked surfaces are designed to showcase, derived from the
+ * ORDERS table rather than hard-coded so re-balancing the data re-points the
+ * verification with it.
+ */
+const storeOrderCount = (key) => ORDERS.filter((order) => order.store === key).length;
+const storeRatings = (key) => ORDERS.filter((order) => order.store === key && order.review).map((order) => order.review.rating);
+const MOST_ORDERED = STORES.reduce((best, store) => (storeOrderCount(store.key) > storeOrderCount(best.key) ? store : best));
+/** Widest 1-5 spread: the store whose reviewers disagree most. */
+const POLARISING = STORES.reduce((best, store) => {
+  const spread = (key) => { const r = storeRatings(key); return r.length ? Math.max(...r) - Math.min(...r) : -1; };
+  return spread(store.key) > spread(best.key) ? store : best;
+});
+
 // ---- Order payload encryption (ported from the app) --------------------------
 //
 // Byte-for-byte the checkout's scheme (lib/services/store-order-service.ts +
@@ -384,6 +399,8 @@ const ORDERS = [
 const ORDER_AAD = utf8('yappr/order/v1');
 const KEY_SIZE = 32;
 const NONCE_SIZE = 24;
+/** Compressed secp256k1 public key: the ECIES wire format's prefix length. */
+const PUBKEY_SIZE = 33;
 
 const concatBytes = (...arrays) => {
   const out = new Uint8Array(arrays.reduce((n, a) => n + a.length, 0));
@@ -395,7 +412,7 @@ const concatBytes = (...arrays) => {
   return out;
 };
 
-const ecdhSharedX = (privateKey, publicKey) => secp256k1.getSharedSecret(privateKey, publicKey, true).slice(1, 33);
+const ecdhSharedX = (privateKey, publicKey) => secp256k1.getSharedSecret(privateKey, publicKey, true).slice(1, 1 + KEY_SIZE);
 
 function eciesKeyAndNonce(sharedX, ephemeralPubKey) {
   const derived = hkdf(sha256, sha256(sharedX), ephemeralPubKey, utf8('yappr/ecies/v1'), KEY_SIZE + NONCE_SIZE);
@@ -413,20 +430,26 @@ function encryptOrderPayload(payload, buyerPrivateKey, sellerPublicKey, nonce, s
   return concatBytes(ephemeralPubKey, xchacha20poly1305(encKey, aeadNonce, ORDER_AAD).encrypt(plaintext));
 }
 
-/** The seller's view: plain ECIES as the recipient (what the app's seller order page does). */
-function decryptAsSeller(sellerPrivateKey, ciphertext) {
-  const ephemeralPubKey = ciphertext.slice(0, 33);
-  const { encKey, nonce } = eciesKeyAndNonce(ecdhSharedX(sellerPrivateKey, ephemeralPubKey), ephemeralPubKey);
-  return JSON.parse(new TextDecoder().decode(xchacha20poly1305(encKey, nonce, ORDER_AAD).decrypt(ciphertext.slice(33))));
+/**
+ * Opens `ephemeralPubKey || ciphertext` given whichever ECDH the caller could
+ * reach. Both roles end here: ECDH(ephemeralPriv, sellerPub) and
+ * ECDH(sellerPriv, ephemeralPub) are the same point.
+ */
+function openOrder(sharedX, ciphertext) {
+  const ephemeralPubKey = ciphertext.slice(0, PUBKEY_SIZE);
+  const { encKey, nonce } = eciesKeyAndNonce(sharedX, ephemeralPubKey);
+  return JSON.parse(new TextDecoder().decode(
+    xchacha20poly1305(encKey, nonce, ORDER_AAD).decrypt(ciphertext.slice(PUBKEY_SIZE))
+  ));
 }
 
+/** The seller's view: plain ECIES as the recipient (what the app's seller order page does). */
+const decryptAsSeller = (sellerPrivateKey, ciphertext) =>
+  openOrder(ecdhSharedX(sellerPrivateKey, ciphertext.slice(0, PUBKEY_SIZE)), ciphertext);
+
 /** The buyer's view: re-derive the ephemeral key and reach the same shared secret. */
-function decryptAsBuyer(buyerPrivateKey, sellerPublicKey, ciphertext, nonce, storeId) {
-  const ephemeralPrivKey = deriveOrderEphemeralKey(buyerPrivateKey, nonce, storeId);
-  const ephemeralPubKey = ciphertext.slice(0, 33);
-  const { encKey, nonce: aeadNonce } = eciesKeyAndNonce(ecdhSharedX(ephemeralPrivKey, sellerPublicKey), ephemeralPubKey);
-  return JSON.parse(new TextDecoder().decode(xchacha20poly1305(encKey, aeadNonce, ORDER_AAD).decrypt(ciphertext.slice(33))));
-}
+const decryptAsBuyer = (buyerPrivateKey, sellerPublicKey, ciphertext, nonce, storeId) =>
+  openOrder(ecdhSharedX(deriveOrderEphemeralKey(buyerPrivateKey, nonce, storeId), sellerPublicKey), ciphertext);
 
 /** 24-byte order nonce, deterministic per order key so re-runs reproduce the ciphertext. */
 const orderNonce = (key) => digest(`nonce/${key}`).slice(0, NONCE_SIZE);
@@ -556,12 +579,12 @@ async function runByActor(groups, concurrency) {
   await Promise.all(workers);
 }
 
-function groupBy(tasks, keyOf) {
+/** Buckets `{actor, run}` tasks into one sequential queue per actor. */
+function groupBy(tasks) {
   const groups = new Map();
-  for (const task of tasks) {
-    const key = keyOf(task);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(task.run);
+  for (const { actor, run } of tasks) {
+    if (!groups.has(actor)) groups.set(actor, []);
+    groups.get(actor).push(run);
   }
   return groups;
 }
@@ -591,16 +614,17 @@ function parseArgs(argv) {
   return args;
 }
 
+/** Mean of a per-store bucket's seeded ratings, 0 when the store has none. */
+const averageRating = (bucket) =>
+  bucket.ratings.length ? bucket.ratings.reduce((a, b) => a + b, 0) / bucket.ratings.length : 0;
+
 /** What the run intends to write, computed from the tables alone (also the --dry-run report). */
 function plan() {
-  const storeReviews = ORDERS.filter((order) => order.review);
-  const itemReviews = ORDERS.flatMap((order) => (order.items ?? []).map((line) => ({ order, line })));
-  const perStore = new Map(STORES.map((store) => [store.key, { orders: 0, ratings: [], itemRatings: 0 }]));
+  const perStore = new Map(STORES.map((store) => [store.key, { orders: 0, ratings: [] }]));
   for (const order of ORDERS) {
     const bucket = perStore.get(order.store);
     bucket.orders += 1;
     if (order.review) bucket.ratings.push(order.review.rating);
-    bucket.itemRatings += (order.items ?? []).length;
   }
   return {
     stores: STORES.length,
@@ -608,8 +632,8 @@ function plan() {
     zones: STORES.reduce((n, store) => n + store.zones.length, 0),
     orders: ORDERS.length,
     statuses: ORDERS.reduce((n, order) => n + CHAINS[order.chain].length, 0),
-    storeReviews: storeReviews.length,
-    itemReviews: itemReviews.length,
+    storeReviews: ORDERS.filter((order) => order.review).length,
+    itemReviews: ORDERS.reduce((n, order) => n + (order.items ?? []).length, 0),
     perStore,
   };
 }
@@ -622,7 +646,7 @@ function printPlan(p) {
   console.log('\nstore                      persona  items  orders  reviews  expected avg');
   for (const store of STORES) {
     const bucket = p.perStore.get(store.key);
-    const avg = bucket.ratings.length ? (bucket.ratings.reduce((a, b) => a + b, 0) / bucket.ratings.length).toFixed(2) : '   —';
+    const avg = bucket.ratings.length ? averageRating(bucket).toFixed(2) : '   —';
     console.log(`  ${store.name.padEnd(24)} ${String(store.persona).padEnd(8)} ${String(store.items.length).padEnd(6)} ${String(bucket.orders).padEnd(7)} ${String(bucket.ratings.length).padEnd(8)} ${avg}`);
   }
 }
@@ -643,7 +667,8 @@ async function main() {
   const { protocolVersion } = await handle.connect();
   console.log(`connected (PV${protocolVersion}); storefront v2 ${args.contract}; YAPP from ${socialId}`);
   const battery = createBattery({ handle, contractId: args.contract, socialId });
-  const { sdk, check, personaActor, attemptWrite, fetchDocument, paymentInfo, ensureYapp, queryDocs, ranked, averageBy, countBy, groupedCount, b58, report } = battery;
+  const { sdk, check, personaActor, attemptWrite, attemptReplace, fetchDocument, paymentInfo, ensureYapp, queryDocs, ranked, averageBy, countBy, groupedCount, b58, report } = battery;
+  const tokenId = await battery.readback(() => sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
 
   const ledger = loadLedger();
   const personaIndexes = [...new Set([...STORES.map((s) => s.persona), ...Object.values(BUYERS).map((b) => b.persona)])];
@@ -665,6 +690,9 @@ async function main() {
   const reused = { ...written };
   const failed = [];
   const flush = () => saveProgress(args.progress, progress, args.contract);
+  const recordDoc = (key, docType, id) => { progress.docs[key] = { type: docType, id }; flush(); };
+  /** One dependency phase: each actor's tasks in order, actors in parallel. */
+  const runPhase = (tasks) => runByActor(groupBy(tasks), args.concurrency);
 
   /**
    * Creates one document with a key-derived id, so a retry of a broadcast that
@@ -678,8 +706,7 @@ async function main() {
       contractId: args.contract, docType, ownerId: actor.ownerId, data, entropy: entropyFor(key),
     });
     if (await fetchDocument(docType, id)) {
-      progress.docs[key] = { type: docType, id };
-      flush();
+      recordDoc(key, docType, id);
       reused[docType] += 1;
       return id;
     }
@@ -692,8 +719,7 @@ async function main() {
       console.log(`  FAIL ${docType} ${key}: ${(outcome.error ?? '').slice(0, 160)}`);
       return null;
     }
-    progress.docs[key] = { type: docType, id };
-    flush();
+    recordDoc(key, docType, id);
     written[docType] += 1;
     return id;
   }
@@ -705,143 +731,120 @@ async function main() {
   if (!args.verifyOnly) {
     // --- phase 1: stores (one per seller; `store` is unique per $ownerId) ----
     console.log('\n--- phase 1: stores ---');
-    await runByActor(
-      groupBy(
-        STORES.map((store) => ({
-          actor: store.persona,
-          run: async () => {
-            const actor = actors.get(store.persona);
-            const uris = [{ scheme: 'dash:', uri: `dash:${payoutAddress(store.persona)}`, label: `${store.name} (Dash)` }];
-            const data = storeData(store, uris);
-            const existing = await queryDocs('store', { where: [['$ownerId', '==', actor.ownerId]], orderBy: [['$ownerId', 'asc']], limit: 1 });
-            if (existing.length > 0) {
-              const current = existing[0];
-              const id = b58(current.$id);
-              storeIds.set(store.key, id);
-              progress.docs[`store/${store.key}`] = { type: 'store', id };
-              flush();
-              if (current.name === store.name) { reused.store += 1; return; }
-              // The registration battery's placeholder store occupies the slot:
-              // rewrite it in place (stores cannot be deleted).
-              const revision = BigInt(current.$revision ?? 1) + 1n;
-              const { document } = buildDocument({ contractId: args.contract, docType: 'store', ownerId: actor.ownerId, data, revision, id: id32(id) });
-              const outcome = await attemptWrite(
-                { accepted: async () => { const d = await fetchDocument('store', id); return d?.revision !== undefined && BigInt(d.revision) >= revision; } },
-                () => sdk.documents.replace({ document, identityKey: actor.identityKey, signer: actor.signer })
-              );
-              if (outcome.ok) { written.store += 1; console.log(`  rewrote ${current.name} → ${store.name}`); }
-              else failed.push({ key: `store/${store.key}`, docType: 'store', error: (outcome.error ?? '').slice(0, 200) });
-              return;
-            }
-            const id = await createDoc(actor, 'store', `store/${store.key}`, data);
-            if (id) storeIds.set(store.key, id);
-          },
-        })),
-        (task) => task.actor
-      ),
-      args.concurrency
+    await runPhase(
+    STORES.map((store) => ({
+      actor: store.persona,
+      run: async () => {
+        const actor = actors.get(store.persona);
+        const uris = [{ scheme: 'dash:', uri: `dash:${payoutAddress(store.persona)}`, label: `${store.name} (Dash)` }];
+        const data = storeData(store, uris);
+        const existing = await queryDocs('store', { where: [['$ownerId', '==', actor.ownerId]], orderBy: [['$ownerId', 'asc']], limit: 1 });
+        if (existing.length > 0) {
+          const current = existing[0];
+          const id = b58(current.$id);
+          storeIds.set(store.key, id);
+          recordDoc(`store/${store.key}`, 'store', id);
+          if (current.name === store.name) { reused.store += 1; return; }
+          // The registration battery's placeholder store occupies the slot:
+          // rewrite it in place (stores cannot be deleted).
+          const outcome = await attemptReplace(actor, 'store', id, data, current.$revision ?? 1);
+          if (outcome.ok) { written.store += 1; console.log(`  rewrote ${current.name} → ${store.name}`); }
+          else failed.push({ key: `store/${store.key}`, docType: 'store', error: (outcome.error ?? '').slice(0, 200) });
+          return;
+        }
+        const id = await createDoc(actor, 'store', `store/${store.key}`, data);
+        if (id) storeIds.set(store.key, id);
+      },
+    }))
     );
     for (const store of STORES) if (!storeIds.has(store.key)) throw new Error(`store ${store.key} was not created; cannot continue`);
 
     // --- phase 2: catalog + shipping zones ----------------------------------
     console.log('\n--- phase 2: items and shipping zones ---');
-    await runByActor(
-      groupBy(
-        STORES.map((store) => ({
-          actor: store.persona,
-          run: async () => {
-            const actor = actors.get(store.persona);
-            const storeIdBytes = id32(storeIds.get(store.key));
-            for (const item of store.items) {
-              const id = await createDoc(actor, 'storeItem', `item/${store.key}/${item.key}`, itemData(store, item, storeIdBytes));
-              if (id) itemIds.set(`${store.key}/${item.key}`, id);
-            }
-            for (const zone of store.zones) {
-              await createDoc(actor, 'shippingZone', `zone/${store.key}/${zone.name}`, zoneData(zone, store, storeIdBytes));
-            }
-          },
-        })),
-        (task) => task.actor
-      ),
-      args.concurrency
+    await runPhase(
+    STORES.map((store) => ({
+      actor: store.persona,
+      run: async () => {
+        const actor = actors.get(store.persona);
+        const storeIdBytes = id32(storeIds.get(store.key));
+        for (const item of store.items) {
+          const id = await createDoc(actor, 'storeItem', `item/${store.key}/${item.key}`, itemData(store, item, storeIdBytes));
+          if (id) itemIds.set(`${store.key}/${item.key}`, id);
+        }
+        for (const zone of store.zones) {
+          await createDoc(actor, 'shippingZone', `zone/${store.key}/${zone.name}`, zoneData(zone, store, storeIdBytes));
+        }
+      },
+    }))
     );
 
     // --- phase 3: orders, encrypted to the seller ---------------------------
     console.log('\n--- phase 3: orders ---');
     let cryptoVerified = 0;
-    await runByActor(
-      groupBy(
-        ORDERS.map((order) => ({
-          actor: BUYERS[order.buyer].persona,
-          run: async () => {
-            const store = STORE_BY_KEY.get(order.store);
-            const buyer = BUYERS[order.buyer];
-            const actor = actors.get(buyer.persona);
-            const storeId = storeIds.get(store.key);
-            const payload = orderPayload(order, store, buyer, `dash:${payoutAddress(store.persona)}`, (itemKey) => itemIds.get(`${store.key}/${itemKey}`) ?? '');
-            const nonce = orderNonce(order.key);
-            const buyerPriv = encryptionKey(buyer.persona, 'privateKeyHex');
-            const sellerPub = encryptionKey(store.persona, 'publicKeyHex');
-            const encryptedPayload = encryptOrderPayload(payload, buyerPriv, sellerPub, nonce, storeId);
-            // Prove the ciphertext is the real thing both parties can open.
-            const asSeller = decryptAsSeller(encryptionKey(store.persona, 'privateKeyHex'), encryptedPayload);
-            const asBuyer = decryptAsBuyer(buyerPriv, sellerPub, encryptedPayload, nonce, storeId);
-            if (JSON.stringify(asSeller) !== JSON.stringify(payload) || JSON.stringify(asBuyer) !== JSON.stringify(payload)) {
-              throw new Error(`order ${order.key}: round-trip decryption mismatch`);
-            }
-            cryptoVerified += 1;
-            const id = await createDoc(actor, 'storeOrder', `order/${order.key}`, {
-              storeId: id32(storeId),
-              sellerId: id32(actors.get(store.persona).ownerId),
-              buyerId: id32(actor.ownerId),
-              encryptedPayload,
-              nonce,
-            });
-            if (id) orderIds.set(order.key, id);
-          },
-        })),
-        (task) => task.actor
-      ),
-      args.concurrency
+    await runPhase(
+    ORDERS.map((order) => ({
+      actor: BUYERS[order.buyer].persona,
+      run: async () => {
+        const store = STORE_BY_KEY.get(order.store);
+        const buyer = BUYERS[order.buyer];
+        const actor = actors.get(buyer.persona);
+        const storeId = storeIds.get(store.key);
+        const payload = orderPayload(order, store, buyer, `dash:${payoutAddress(store.persona)}`, (itemKey) => itemIds.get(`${store.key}/${itemKey}`) ?? '');
+        const nonce = orderNonce(order.key);
+        const buyerPriv = encryptionKey(buyer.persona, 'privateKeyHex');
+        const sellerPub = encryptionKey(store.persona, 'publicKeyHex');
+        const encryptedPayload = encryptOrderPayload(payload, buyerPriv, sellerPub, nonce, storeId);
+        // Prove the ciphertext is the real thing both parties can open.
+        const asSeller = decryptAsSeller(encryptionKey(store.persona, 'privateKeyHex'), encryptedPayload);
+        const asBuyer = decryptAsBuyer(buyerPriv, sellerPub, encryptedPayload, nonce, storeId);
+        if (JSON.stringify(asSeller) !== JSON.stringify(payload) || JSON.stringify(asBuyer) !== JSON.stringify(payload)) {
+          throw new Error(`order ${order.key}: round-trip decryption mismatch`);
+        }
+        cryptoVerified += 1;
+        const id = await createDoc(actor, 'storeOrder', `order/${order.key}`, {
+          storeId: id32(storeId),
+          sellerId: id32(actors.get(store.persona).ownerId),
+          buyerId: id32(actor.ownerId),
+          encryptedPayload,
+          nonce,
+        });
+        if (id) orderIds.set(order.key, id);
+      },
+    }))
     );
     console.log(`  ${cryptoVerified} order payloads encrypted and round-tripped (seller ECIES + buyer re-derived ephemeral)`);
 
     // --- phase 4: status chains, written by the seller ----------------------
     console.log('\n--- phase 4: order status updates ---');
-    await runByActor(
-      groupBy(
-        STORES.map((store) => ({
-          actor: store.persona,
-          run: async () => {
-            const actor = actors.get(store.persona);
-            for (const order of ORDERS.filter((o) => o.store === store.key)) {
-              const orderId = orderIds.get(order.key);
-              if (!orderId) continue;
-              const buyerActor = actors.get(BUYERS[order.buyer].persona);
-              for (const status of CHAINS[order.chain]) {
-                const rng = rngFor(`status/${order.key}/${status}`);
-                await createDoc(actor, 'orderStatusUpdate', `status/${order.key}/${status}`, {
-                  orderId: id32(orderId),
-                  sellerId: id32(actor.ownerId),
-                  buyerId: id32(buyerActor.ownerId),
-                  status,
-                  message: pick(rng, STATUS_MESSAGE[status]),
-                  ...(status === 'shipped' && order.carrier
-                    ? { trackingCarrier: order.carrier, trackingNumber: trackingFor(order.key, order.carrier) }
-                    : {}),
-                });
-              }
-            }
-          },
-        })),
-        (task) => task.actor
-      ),
-      args.concurrency
+    await runPhase(
+    STORES.map((store) => ({
+      actor: store.persona,
+      run: async () => {
+        const actor = actors.get(store.persona);
+        for (const order of ORDERS.filter((o) => o.store === store.key)) {
+          const orderId = orderIds.get(order.key);
+          if (!orderId) continue;
+          const buyerActor = actors.get(BUYERS[order.buyer].persona);
+          for (const status of CHAINS[order.chain]) {
+            const rng = rngFor(`status/${order.key}/${status}`);
+            await createDoc(actor, 'orderStatusUpdate', `status/${order.key}/${status}`, {
+              orderId: id32(orderId),
+              sellerId: id32(actor.ownerId),
+              buyerId: id32(buyerActor.ownerId),
+              status,
+              message: pick(rng, STATUS_MESSAGE[status]),
+              ...(status === 'shipped' && order.carrier
+                ? { trackingCarrier: order.carrier, trackingNumber: trackingFor(order.key, order.carrier) }
+                : {}),
+            });
+          }
+        }
+      },
+    }))
     );
 
     // --- phase 5: reviews (3 YAPP store, 1 YAPP item) -----------------------
     console.log('\n--- phase 5: reviews ---');
-    const tokenId = await battery.readback(() => sdk.tokens.calculateId(socialId, 0));
     const needed = new Map();
     for (const order of ORDERS) {
       const persona = BUYERS[order.buyer].persona;
@@ -852,44 +855,40 @@ async function main() {
       const balance = await ensureYapp(tokenId, actors.get(persona), cost + YAPP_HEADROOM);
       console.log(`  ${actors.get(persona).label}: ${balance} YAPP (needs ${cost})`);
     }
-    await runByActor(
-      groupBy(
-        ORDERS.map((order) => ({
-          actor: BUYERS[order.buyer].persona,
-          run: async () => {
-            const store = STORE_BY_KEY.get(order.store);
-            const actor = actors.get(BUYERS[order.buyer].persona);
-            const orderId = orderIds.get(order.key);
-            if (!orderId) return;
-            const storeIdBytes = id32(storeIds.get(store.key));
-            if (order.review) {
-              await createDoc(actor, 'storeReview', `review/${order.key}`, {
-                storeId: storeIdBytes,
-                orderId: id32(orderId),
-                sellerId: id32(actors.get(store.persona).ownerId),
-                buyerId: id32(actor.ownerId),
-                rating: order.review.rating,
-                title: order.review.title,
-                content: order.review.content,
-              }, REVIEW_COST.storeReview);
-            }
-            for (const [itemKey, rating, content] of order.items ?? []) {
-              const itemId = itemIds.get(`${store.key}/${itemKey}`);
-              if (!itemId) continue;
-              await createDoc(actor, 'itemReview', `itemreview/${order.key}/${itemKey}`, {
-                storeId: storeIdBytes,
-                itemId: id32(itemId),
-                orderId: id32(orderId),
-                buyerId: id32(actor.ownerId),
-                rating,
-                content,
-              }, REVIEW_COST.itemReview);
-            }
-          },
-        })),
-        (task) => task.actor
-      ),
-      args.concurrency
+    await runPhase(
+    ORDERS.map((order) => ({
+      actor: BUYERS[order.buyer].persona,
+      run: async () => {
+        const store = STORE_BY_KEY.get(order.store);
+        const actor = actors.get(BUYERS[order.buyer].persona);
+        const orderId = orderIds.get(order.key);
+        if (!orderId) return;
+        const storeIdBytes = id32(storeIds.get(store.key));
+        if (order.review) {
+          await createDoc(actor, 'storeReview', `review/${order.key}`, {
+            storeId: storeIdBytes,
+            orderId: id32(orderId),
+            sellerId: id32(actors.get(store.persona).ownerId),
+            buyerId: id32(actor.ownerId),
+            rating: order.review.rating,
+            title: order.review.title,
+            content: order.review.content,
+          }, REVIEW_COST.storeReview);
+        }
+        for (const [itemKey, rating, content] of order.items ?? []) {
+          const itemId = itemIds.get(`${store.key}/${itemKey}`);
+          if (!itemId) continue;
+          await createDoc(actor, 'itemReview', `itemreview/${order.key}/${itemKey}`, {
+            storeId: storeIdBytes,
+            itemId: id32(itemId),
+            orderId: id32(orderId),
+            buyerId: id32(actor.ownerId),
+            rating,
+            content,
+          }, REVIEW_COST.itemReview);
+        }
+      },
+    }))
     );
   } else {
     for (const [key, record] of Object.entries(progress.docs)) {
@@ -902,7 +901,7 @@ async function main() {
 
   // --- verification: the shapes lib/services/store-stats-service.ts issues ---
   console.log('\n--- verification: reading back through the app’s query shapes ---');
-  const expected = plan().perStore;
+  const expected = p.perStore;
   const directory = await queryDocs('store', { where: [['$ownerId', 'in', STORES.map((s) => actors.get(s.persona).ownerId)]], orderBy: [['$ownerId', 'asc']], limit: 50 });
   check('store directory lists every seeded store', directory.length >= STORES.length, `${directory.length} stores`);
 
@@ -927,10 +926,7 @@ async function main() {
     );
   }
 
-  const topStoreKey = [...expected.entries()].sort((a, b) => {
-    const avgOfBucket = (x) => (x.ratings.length ? x.ratings.reduce((s, r) => s + r, 0) / x.ratings.length : 0);
-    return avgOfBucket(b[1]) - avgOfBucket(a[1]);
-  })[0][0];
+  const topStoreKey = [...expected.entries()].sort((a, b) => averageRating(b[1]) - averageRating(a[1]))[0][0];
   const topRated = await ranked('storeReview', 'storeId', { type: 'avg', property: 'rating' }, { direction: 'desc', limit: 20 });
   const mostOrdered = await ranked('storeOrder', 'storeId', { type: 'count' }, { direction: 'desc', limit: 20 });
   const nameOf = (id) => STORES.find((s) => storeIds.get(s.key) === id)?.name ?? `${id.slice(0, 8)}…`;
@@ -944,22 +940,26 @@ async function main() {
     console.log(`  ${String(entry.value).padStart(3)}  ${nameOf(entry.groupValue)}`);
   }
 
-  check('top-rated ranking puts the intended store first', nameOf(topRated.page.entries[0]?.groupValue) === STORE_BY_KEY.get(topStoreKey).name,
-    `first=${nameOf(topRated.page.entries[0]?.groupValue)} expected=${STORE_BY_KEY.get(topStoreKey).name}`);
-  check('most-ordered ranking puts Anvil & Ash Coffee first', nameOf(mostOrdered.page.entries[0]?.groupValue) === 'Anvil & Ash Coffee',
-    `first=${nameOf(mostOrdered.page.entries[0]?.groupValue)}`);
+  const topRatedFirst = nameOf(topRated.page.entries[0]?.groupValue);
+  const mostOrderedFirst = nameOf(mostOrdered.page.entries[0]?.groupValue);
+  const intendedTop = STORE_BY_KEY.get(topStoreKey).name;
+  check('top-rated ranking puts the intended store first', topRatedFirst === intendedTop, `first=${topRatedFirst} expected=${intendedTop}`);
+  check(`most-ordered ranking puts ${MOST_ORDERED.name} first`, mostOrderedFirst === MOST_ORDERED.name, `first=${mostOrderedFirst}`);
 
-  const polarisingId = storeIds.get('analog');
-  const distribution = await groupedCount('storeReview', [['storeId', '==', polarisingId], ['rating', 'in', [1, 2, 3, 4, 5]]], ['rating'], (hex) => parseInt(hex, 16) - 0x80);
-  console.log(`\nAnalog Supply Co. rating distribution: ${[1, 2, 3, 4, 5].map((r) => `${r}★ ${distribution.get(r) ?? 0}`).join('  ')}`);
-  check('the polarising store is bimodal (1★ and 5★ both present)', (distribution.get(1) ?? 0) > 0 && (distribution.get(5) ?? 0) > 0);
+  const distribution = await groupedCount('storeReview', [['storeId', '==', storeIds.get(POLARISING.key)], ['rating', 'in', [1, 2, 3, 4, 5]]], ['rating'], (hex) => parseInt(hex, 16) - 0x80);
+  console.log(`\n${POLARISING.name} rating distribution: ${[1, 2, 3, 4, 5].map((r) => `${r}★ ${distribution.get(r) ?? 0}`).join('  ')}`);
+  check(`${POLARISING.name} is bimodal (1★ and 5★ both present)`, (distribution.get(1) ?? 0) > 0 && (distribution.get(5) ?? 0) > 0);
 
-  const topItems = await ranked('itemReview', 'itemId', { type: 'avg', property: 'rating' }, { where: [['storeId', '==', storeIds.get('coffee')]], direction: 'desc', limit: 20 });
+  const topItems = await ranked('itemReview', 'itemId', { type: 'avg', property: 'rating' }, { where: [['storeId', '==', storeIds.get(MOST_ORDERED.key)]], direction: 'desc', limit: 20 });
   const itemNameOf = (id) => {
-    for (const [key, value] of itemIds) if (value === id) return STORE_BY_KEY.get(key.split('/')[0]).items.find((i) => i.key === key.split('/')[1]).title;
+    for (const [key, value] of itemIds) {
+      if (value !== id) continue;
+      const [storeKey, itemKey] = key.split('/');
+      return STORE_BY_KEY.get(storeKey).items.find((item) => item.key === itemKey).title;
+    }
     return `${id.slice(0, 8)}…`;
   };
-  console.log('\ntop items in Anvil & Ash Coffee (documents.ranked, store-pinned)');
+  console.log(`\ntop items in ${MOST_ORDERED.name} (documents.ranked, store-pinned)`);
   for (const entry of topItems.page.entries.slice(0, 6)) {
     console.log(`  ${(Number(entry.value) / Number(topItems.page.valueScale)).toFixed(2)}  ${itemNameOf(entry.groupValue)}`);
   }
@@ -973,16 +973,16 @@ async function main() {
   }
   console.log(`  ${'TOTAL'.padEnd(20)} ${String(Object.values(written).reduce((a, b) => a + b, 0)).padEnd(8)} ${Object.values(reused).reduce((a, b) => a + b, 0)}`);
 
-  const tokenId = await battery.readback(() => sdk.tokens.calculateId(socialId, 0));
   console.log('\n--- personas ---');
   console.log('persona  handle             role            credits              YAPP');
   for (const idx of personaIndexes) {
     const actor = actors.get(idx);
     const credits = await battery.readback(() => sdk.identities.balance(actor.ownerId));
     const yapp = await battery.yappBalance(tokenId, actor.ownerId);
-    const seller = STORES.find((s) => s.persona === idx);
-    const buyer = Object.entries(BUYERS).find(([, b]) => b.persona === idx);
-    const role = [seller ? 'seller' : null, buyer ? 'buyer' : null].filter(Boolean).join('+');
+    const role = [
+      STORES.some((store) => store.persona === idx) ? 'seller' : null,
+      Object.values(BUYERS).some((buyer) => buyer.persona === idx) ? 'buyer' : null,
+    ].filter(Boolean).join('+');
     console.log(`  ${String(idx).padEnd(8)} ${ledgerEntry(ledger, idx).handle.padEnd(18)} ${role.padEnd(15)} ${String(credits).padEnd(20)} ${yapp}`);
   }
 
