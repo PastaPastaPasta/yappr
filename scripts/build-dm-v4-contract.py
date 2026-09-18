@@ -6,23 +6,38 @@ diff against the deployed v3 shape is reviewable as code. See docs/DM_V4.md for
 the rationale and the query shapes the new flags serve.
 
 DMs must stay CHEAP. v4 is deliberately the smallest possible re-cut: two
-additive index/property flags, no new doctypes, no ranked or timeRange indexes,
-no indexOnly rewrites, and no token costs. Every write costs exactly what it
-cost on v3 plus the one extra count-tree branch the `countable` flag maintains.
+additive index/property flags plus three parse-time `immutable` lists, no new
+doctypes, no ranked or timeRange indexes, no indexOnly rewrites, no extra
+references and no token costs. Every write costs exactly what it cost on v3 plus
+the one extra count-tree branch the count flag maintains — `immutable` is a
+doctype keyword checked when a REPLACE is validated, so it adds no storage and
+no per-write work to the create path every message takes.
 
 What v4 changes, per document type:
 
   conversationInvite  recipientId refersTo {type: identity}: an invite naming an
                       identity that does not exist is refused at write time
                       (40120) instead of sitting in the recipient's inbox
-                      forever. Nothing else changes; senderPubKey is untouched.
+                      forever. All three properties are `immutable`: an invite
+                      is written once and never edited, so a replace that
+                      re-points it at another conversation or swaps the sender's
+                      public key is now a consensus rejection (40128).
   directMessage       the `conversation` index [conversationId, $createdAt]
-                      gains countable + rangeCountable, so
+                      gains rangeCountable (which implies countable since
+                      4.2.0-beta.2), so
                         count(conversationId == C)                      → total
                         count(conversationId == C, $createdAt > lastRead) → unread
                       are single O(1) calls instead of a 100-message download
-                      per conversation.
-  readReceipt         unchanged (see docs/DM_V4.md "Not in v4").
+                      per conversation. Both properties are `immutable`: a sent
+                      message is never edited, and freezing conversationId is
+                      what stops a replace from moving a message (and its
+                      count-tree entry) into another conversation.
+  readReceipt         conversationId is `immutable`. The doctype stays mutable
+                      on purpose — marking a conversation read IS a replace,
+                      whose only effect is the $updatedAt the platform stamps —
+                      so this is the one place the keyword earns its keep:
+                      everything the document says is frozen, and only the
+                      system timestamp moves.
 
 Deliberately NOT changed: `requiresIdentityEncryptionBoundedKey` /
 `requiresIdentityDecryptionBoundedKey` stay off. Turning either on would
@@ -63,28 +78,46 @@ def build(src):
     # identity, not a document; a disabled key is not checked here since the
     # invite names no key id (senderPubKey is the SENDER's, raw bytes).
     invite['properties']['recipientId']['refersTo'] = {'type': 'identity'}
+    # Nothing in the client replaces an invite; freezing every property makes
+    # that a consensus rule instead of a convention. `senderPubKey` is optional
+    # and set at creation or never — listing it plain (not under
+    # immutableAllowSetting) means an invite sent without one can never grow
+    # one, which is the honest reading: the key belongs to the invite's moment.
+    invite['immutable'] = sorted(invite['properties'])
     invite['description'] = (
         'Notifies a recipient that a conversation has been started with them. '
         'One per conversation per direction. recipientId must name an identity '
-        'that exists.'
+        'that exists, and every property is frozen at creation.'
     )
 
     # ---- directMessage ------------------------------------------------------
     message = out['directMessage']
     conversation = index_named(message, 'conversation')
-    # `countable` gives `count where conversationId == C`; `rangeCountable`
-    # extends it over the index's LAST property, $createdAt, which is exactly
-    # the "unread since my read receipt" question. Spelled out literally rather
-    # than through meta-schema sugar — see docs/STOREFRONT_V2.md gotcha 1.
-    conversation['countable'] = 'countable'
+    # `rangeCountable` gives `count where conversationId == C` (it implies
+    # `countable` since 4.2.0-beta.2) and extends it over the index's LAST
+    # property, $createdAt — exactly the "unread since my read receipt"
+    # question.
     conversation['rangeCountable'] = True
+    # A sent message is never edited by any client path.
+    message['immutable'] = ['conversationId', 'encryptedContent']
     message['description'] = (
         'A message in a conversation. Lean - no recipientId, no read status. '
-        'The conversation index is countable and rangeCountable, so per-'
-        'conversation totals and "unread since lastReadAt" are count queries.'
+        'The conversation index is rangeCountable, so per-conversation totals '
+        'and "unread since lastReadAt" are count queries. Both properties are '
+        'frozen at creation.'
     )
 
-    # ---- readReceipt: unchanged --------------------------------------------
+    # ---- readReceipt --------------------------------------------------------
+    # markAsRead() replaces the receipt with the SAME conversationId purely to
+    # move $updatedAt. Freezing the only property makes that the only thing a
+    # replace can do.
+    receipt = out['readReceipt']
+    receipt['immutable'] = ['conversationId']
+    receipt['description'] = (
+        "One per (owner, conversation), replaced to bump $updatedAt whenever the "
+        'owner reads it. conversationId is frozen, so a replace can only move '
+        'the read time.'
+    )
 
     return {name: out[name] for name in DOCTYPE_ORDER}
 
