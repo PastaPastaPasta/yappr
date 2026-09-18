@@ -4,9 +4,11 @@
  * identities provisioned by provision-seed-identities.mjs.
  *
  * `--topology` guards the document shape of the target contract (default:
- * NEXT_PUBLIC_CONTRACT_TOPOLOGY from the env). Only the devnet cut `v7` can be
- * seeded — the testnet `v2` contract is production data — so the flag exists to
- * make a mismatched env file fail loudly instead of writing the wrong shapes.
+ * NEXT_PUBLIC_CONTRACT_TOPOLOGY from the env, else the only seedable cut).
+ * Only the devnet cut `v7` can be seeded — the testnet `v2` contract is
+ * production data — and BOTH the flag and the env value THROW on anything
+ * else, so an env file left on a retired cut aborts before spending credits on
+ * writes the chain would reject.
  *
  * Execution model:
  *  - per-author ops run STRICTLY SEQUENTIALLY in corpus line order (one

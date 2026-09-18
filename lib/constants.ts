@@ -244,10 +244,30 @@ export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 
 export const DEFAULT_CONTRACT_TOPOLOGY: ContractTopology = 'v2'
 
-/** The interaction topology of the configured contract, from `NEXT_PUBLIC_CONTRACT_TOPOLOGY`. */
+/**
+ * The interaction topology of the configured contract, from
+ * `NEXT_PUBLIC_CONTRACT_TOPOLOGY`.
+ *
+ * An ABSENT value defaults to v2, which is what keeps testnet/staging/prod
+ * working without the flag. A value that is SET but unrecognized THROWS: it
+ * names a cut that no longer exists on any chain (a stale `v6`, say), and
+ * silently resolving that to v2 would build a client for the wrong contract —
+ * a config fault that presents as every write failing schema validation. The
+ * throw happens during `next build`, because `app/contract/page.tsx` resolves
+ * the topology at module scope, so a mismatched env file cannot ship.
+ */
 export function getContractTopology(): ContractTopology {
   const configured = process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY
-  return CONTRACT_TOPOLOGIES.find((topology) => topology === configured) ?? DEFAULT_CONTRACT_TOPOLOGY
+  if (configured === undefined || configured === '') return DEFAULT_CONTRACT_TOPOLOGY
+  const topology = CONTRACT_TOPOLOGIES.find((candidate) => candidate === configured)
+  if (!topology) {
+    throw new Error(
+      `NEXT_PUBLIC_CONTRACT_TOPOLOGY="${configured}" is not a topology this build knows ` +
+      `(expected one of ${CONTRACT_TOPOLOGIES.join(', ')}). The contract id and this flag must ` +
+      'move as a unit; see docs/SOCIAL_CONTRACT.md.'
+    )
+  }
+  return topology
 }
 
 // Devnet wiring. A devnet has no public masternode discovery, so the DAPI

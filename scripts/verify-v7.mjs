@@ -203,30 +203,35 @@ async function revisionOf(ctx, docType, id) {
 
 async function caseE1AuthorColumnGone(ctx) {
   console.log('\n--- e1. the attested `author` column is gone from post and reply ---');
-  const rootPostId = await ensurePost(ctx, 'anchor');
-  if (!rootPostId) {
-    check('e1 author column', false, 'no anchor post available');
-    return;
-  }
-  const post = (extra = {}) => ({ ...postData({ content: 'e1 post' }), ...extra });
-  const reply = (extra = {}) => ({
-    ...replyData({
-      content: 'e1 reply', rootPostId: bs58.decode(rootPostId), parentOwnerId: bs58.decode(ctx.botB.ownerId),
-    }),
-    ...extra,
-  });
   const author = { author: bs58.decode(ctx.botA.ownerId) };
+  const post = (extra = {}) => ({ ...postData({ content: 'e1 post' }), ...extra });
   const create = (docType, data, allowBuildFailure = false) => () =>
     (allowBuildFailure ? attemptCreateAllowingBuildFailure : attemptCreate)(ctx.sdk, ctx.botA, {
       contractId: ctx.contractId, docType, data, tokenCost: TOKEN_COST[docType],
     });
 
   // The accepted rows are the control: without them, the refusals would prove
-  // the write path is broken rather than that the column is gone.
+  // the write path is broken rather than that the column is gone. The post rows
+  // run FIRST and need no fixture, so an anchor that could not be created costs
+  // the reply half of the case, not all of it.
   await runTable([
     ['e1a a post carrying the removed `author` property is refused', create('post', post(author), true), UNKNOWN_PROPERTY],
-    ['e1b a reply carrying the removed `author` property is refused', create('reply', reply(author), true), UNKNOWN_PROPERTY],
     ['e1c the same post WITHOUT `author` is accepted', create('post', post()), ACCEPT],
+  ]);
+
+  const rootPostId = await ensurePost(ctx, 'anchor');
+  if (!rootPostId) {
+    check('e1 reply rows', false, 'no anchor post available');
+    return;
+  }
+  const reply = (extra = {}) => ({
+    ...replyData({
+      content: 'e1 reply', rootPostId: bs58.decode(rootPostId), parentOwnerId: bs58.decode(ctx.botB.ownerId),
+    }),
+    ...extra,
+  });
+  await runTable([
+    ['e1b a reply carrying the removed `author` property is refused', create('reply', reply(author), true), UNKNOWN_PROPERTY],
     ['e1d the same reply WITHOUT `author` is accepted', create('reply', reply()), ACCEPT],
   ]);
 }
@@ -273,14 +278,19 @@ async function caseE3LikeReplyOwnerAgreement(ctx) {
     check('e3 likeReply agreement', false, 'no anchor reply available');
     return;
   }
-  const likeReplyOn = (replyAuthor) => () =>
+  // The duplicate probe (e3c) cannot use entry-existence: e3b's accepted like
+  // already satisfies it, so a refused duplicate would score as ACCEPTED. It
+  // asks the countable `byReply` axis whether a SECOND row appeared instead.
+  const likeReplyOn = (replyAuthor, accepted) => () =>
     attemptCreate(ctx.sdk, ctx.botA, {
       contractId: ctx.contractId,
       docType: 'likeReply',
       data: likeReplyData({ replyId: bs58.decode(replyId), replyAuthor }),
       tokenCost: TOKEN_COST.likeReply,
-      accepted: () => entryExists(ctx.sdk, ctx.contractId, 'likeReply', 'replyId', replyId, ctx.botA.ownerId),
+      accepted: accepted ?? (() => entryExists(ctx.sdk, ctx.contractId, 'likeReply', 'replyId', replyId, ctx.botA.ownerId)),
     });
+  const secondRowAppeared = async () =>
+    (await countBy(ctx.sdk, ctx.contractId, 'likeReply', 'replyId', replyId)) > 1;
 
   // e3c must follow e3b: it asserts the duplicate refusal of the like e3b made.
   await runTable([
@@ -289,7 +299,7 @@ async function caseE3LikeReplyOwnerAgreement(ctx) {
     ['e3b a reply like naming the reply owner\'s $ownerId is accepted',
       likeReplyOn(bs58.decode(ctx.botB.ownerId)), ACCEPT],
     ['e3c re-liking the same reply is still the structural duplicate (40105)',
-      likeReplyOn(bs58.decode(ctx.botB.ownerId)), DUPLICATE_UNIQUE],
+      likeReplyOn(bs58.decode(ctx.botB.ownerId), secondRowAppeared), DUPLICATE_UNIQUE],
   ]);
 }
 

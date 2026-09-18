@@ -54,9 +54,17 @@ describe('contract topology', () => {
       const { topologyDescriptor } = await topologyModule(topology)
       expect(topologyDescriptor().topology).toBe(topology)
     }
-    // An unrecognized value must fall back rather than resolve to undefined.
-    const { topologyDescriptor } = await topologyModule('v99')
-    expect(topologyDescriptor().topology).toBe('v2')
+    // Absent means "the production default", which is what lets testnet builds
+    // run without the flag at all.
+    const unset = await topologyModule('')
+    expect(unset.topologyDescriptor().topology).toBe(DEFAULT_CONTRACT_TOPOLOGY)
+  })
+
+  it('refuses a topology that is set but not a cut this build knows', async () => {
+    // A stale value (an env file left on a retired cut) must not resolve to the
+    // production default: that silently builds a client for the wrong contract.
+    const { topologyDescriptor } = await topologyModule('v6')
+    expect(() => topologyDescriptor()).toThrow(/NEXT_PUBLIC_CONTRACT_TOPOLOGY="v6"/)
   })
 
   it('enables every v7 capability and none of them on v2', async () => {

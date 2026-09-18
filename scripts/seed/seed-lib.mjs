@@ -91,10 +91,23 @@ export function profileContractId() {
 export const TOPOLOGIES = ['v7'];
 export const HASHTAG_MAX = 61;
 
-/** Topology the run targets: NEXT_PUBLIC_CONTRACT_TOPOLOGY (env or the env file), else v7. */
+/**
+ * Topology the run targets: NEXT_PUBLIC_CONTRACT_TOPOLOGY (env or the env file),
+ * defaulting to the only seedable cut when unset. A value that is SET but
+ * unseedable THROWS rather than falling through — the env file naming an older
+ * contract while the seeder writes v7 shapes would spend real credits on writes
+ * the chain rejects.
+ */
 export function defaultTopology() {
   const configured = envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY');
-  return TOPOLOGIES.includes(configured) ? configured : TOPOLOGIES[0];
+  if (!configured) return TOPOLOGIES[0];
+  if (!TOPOLOGIES.includes(configured)) {
+    throw new Error(
+      `NEXT_PUBLIC_CONTRACT_TOPOLOGY="${configured}" is not seedable (expected ${TOPOLOGIES.join('|')}). ` +
+      'Pass --topology explicitly only if the env file is genuinely out of date.'
+    );
+  }
+  return configured;
 }
 
 /**

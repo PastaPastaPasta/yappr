@@ -475,7 +475,6 @@ export function generate(opts) {
   } = opts;
   const rng = makeRng(seed);
   const deal = makeDecks(rng);
-  const hashtagMax = HASHTAG_MAX;
 
   // --- banks ---------------------------------------------------------------
   const { banks: authored, missing, files } = loadedBanks ?? (existsSync(banksDir) ? loadBanks(banksDir) : { banks: {}, missing: [...ARCHETYPE_KEYS, 'generic', 'hero', 'dashlore', 'trends'], files: [] });
@@ -571,7 +570,7 @@ export function generate(opts) {
   const tagWeight = (t) => 1 / Math.pow((universeRank.get(t) ?? 60) + 3, 0.8);
   const archetypeTagChoices = {};
   for (const key of ARCHETYPE_KEYS) {
-    const tags = ARCHETYPES[key].tags.filter((t) => universeRank.has(t) && t.length <= hashtagMax);
+    const tags = ARCHETYPES[key].tags.filter((t) => universeRank.has(t) && t.length <= HASHTAG_MAX);
     const pool = tags.length ? tags : ['life'];
     archetypeTagChoices[key] = { tags: pool, weights: pool.map(tagWeight) };
   }

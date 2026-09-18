@@ -366,9 +366,13 @@ test.describe('optional hashtags and prefix rankings on the devnet contract', ()
     await expect(likeButton).toBeEnabled({ timeout: 60_000 })
     await expect(likeButton).toHaveAttribute('aria-pressed', 'true')
 
-    await reloadUntilVisible(page, appUrl(`/post?id=${postId}`), (p) =>
+    const persisted = await reloadUntilVisible(page, appUrl(`/post?id=${postId}`), (p) =>
       p.getByTestId(`like-btn-${postId}`).and(p.locator('[aria-pressed="true"]'))
     )
+    // The pressed state comes out of the byLiker readback; the RENDERED COUNT
+    // comes out of the countable byPost axis. The posts are run-unique, so the
+    // only like on them is this one.
+    await expect(persisted).toContainText('1')
   }
 
   /** Unlike (delete-by-values), verify the absence persists, then re-like. */
@@ -453,6 +457,18 @@ test.describe('optional hashtags and prefix rankings on the devnet contract', ()
     await unlikeAndRelike(page, taggedPostId)
   })
 
+  test('the liked state survives a feed listing (batched membership)', async ({ page, bot }) => {
+    test.setTimeout(180_000)
+
+    // A single-post page resolves liked-state one target at a time. The profile
+    // feed resolves the WHOLE page in one owner-pinned `in` query — the batch
+    // shape that lowers onto byLiker — so it is the only surface that proves
+    // the batched form answers at all.
+    await reloadUntilVisible(page, appUrl(`/user?id=${bot.identityId}`), (p) =>
+      p.getByTestId(`like-btn-${taggedPostId}`).and(p.locator('[aria-pressed="true"]'))
+    )
+  })
+
   test('trending is the PROVED ranking (like counts, no disclaimer) and the tag ranks on its pinned surface', async ({ page }) => {
     test.setTimeout(180_000)
 
@@ -465,6 +481,9 @@ test.describe('optional hashtags and prefix rankings on the devnet contract', ()
     await reloadUntilVisible(page, appUrl('/explore/'), (p) =>
       p.getByText(/\d+ likes?$/).first()
     )
+    // Tripwire rather than a live assertion: the testid no longer exists in the
+    // app, so this can only fail if an unproven trending fallback is reintroduced
+    // without relabeling the proved surface.
     await expect(page.getByTestId('trending-activity-note')).toHaveCount(0)
 
     // The run tag's own proved ranking is asserted where the pin guarantees

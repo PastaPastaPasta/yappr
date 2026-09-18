@@ -288,7 +288,7 @@ With the beta.2 packages:
   — full-validation parse at protocol 14, all social invariants pass.
 - `node scripts/verify-v7.mjs --self-test`, `node scripts/seed/run-seeder.mjs
   --self-test` — pass.
-- `npx playwright test --list topology` — 20 devnet tests collect under v7.
+- `npx playwright test --list topology` — 21 devnet tests collect under v7.
 
 Both SDK dependencies resolve to one beta.2 WASM runtime.
 
@@ -300,7 +300,11 @@ the deploy commit.** `.github/workflows/deploy.yml` rebuilds `/devnet` from
 contract fails totally rather than degrading — the older cut lists `author` in
 `post`/`reply` `required`, the v7 client stops writing it, so every post, reply
 and tombstone fails schema validation while likes keep working: a config fault
-that presents as a posting bug. `scripts/register-social-v3-draft.mjs`
+that presents as a posting bug. `getContractTopology()` therefore THROWS on a
+`NEXT_PUBLIC_CONTRACT_TOPOLOGY` that is set but is not a cut this build knows,
+and `app/contract/page.tsx` resolves it at module scope, so `next build` fails
+rather than silently falling back to v2 and shipping a client for the wrong
+contract. The seeder's `defaultTopology()` throws for the same reason. `scripts/register-social-v3-draft.mjs`
 (file-agnostic despite the name) defaults `--contract-file` to the v7 JSON.
 Registration order and contract-group mechanics are unchanged from the beta.1
 document; the full runbook is in [`SOCIAL_CONTRACT.md`](./SOCIAL_CONTRACT.md).

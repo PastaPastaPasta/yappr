@@ -52,22 +52,91 @@ const FROZEN = {
 const TOMBSTONE_BLANKS = ['content', 'mediaUrl', 'sensitive', 'encryptedContent', 'epoch', 'nonce'];
 
 /**
- * Indexes carrying a range tree. `rangeCountable: true` implies
- * `countable: "countable"` from 4.2.0-beta.2 on, so pairing them explicitly is
- * redundant and must not reappear.
+ * Every index, canonicalized as
+ * `<doctype>.<name> [prop:dir,…] <flag>=<json> …` with the flags sorted.
+ *
+ * Pinned in full rather than by individual flag because the contract is frozen:
+ * a flipped sort direction, a dropped `terminal`/`unique`/`rangeCountable`/
+ * `preallocated`/`skipIfAbsent`, a changed `timeRange` grid or TTL, and an
+ * added or removed index all change the string, and the failure prints the
+ * exact pair. `rangeCountable: true` implies `countable: "countable"`, so an
+ * index carrying both is a contradiction the list would also catch — it is
+ * checked separately only to name that rule in the output.
  */
-const RANGE_COUNTABLE = [
-  'beat.byDayHashtagPost', 'beat.byRollingHashtagPost', 'follow.followerCount',
-  'like.byAuthorPost', 'like.byDayAuthorPost', 'like.byDayPost', 'like.byHashtagPost',
-  'like.byPost', 'post.byOwner',
+const INDEXES = [
+  "beat.byDayHashtagPost [$createdAt:asc,hashtag:asc,postId:asc] rangeCountable=true rankedCountable={\"at\":[\"hashtag\",\"postId\"]} terminal=\"$ownerId\" timeRange={\"on\":\"$createdAt\",\"range\":86400,\"step\":86400,\"ttl\":604800}",
+  "beat.byPost [postId:asc] terminal=\"$ownerId\"",
+  "beat.byPostTime [postId:asc,$createdAt:asc] terminal=\"$ownerId\"",
+  "beat.byRollingHashtagPost [$createdAt:asc,hashtag:asc,postId:asc] rangeCountable=true rankedCountable={\"at\":[\"hashtag\",\"postId\"]} terminal=\"$ownerId\" timeRange={\"on\":\"$createdAt\",\"range\":86400,\"step\":21600,\"ttl\":604800}",
+  "block.ownerAndBlocked [$ownerId:asc,blockedId:asc] unique=true",
+  "block.ownerBlocks [$ownerId:asc,$createdAt:asc]",
+  "blockFilter.owner [$ownerId:asc] unique=true",
+  "blockFollow.owner [$ownerId:asc] unique=true",
+  "bookmark.ownerAndPost [$ownerId:asc,postId:asc] unique=true",
+  "bookmark.ownerBookmarks [$ownerId:asc,$createdAt:asc]",
+  "follow.followerCount [followingId:asc] rangeCountable=true rankedCountable=true",
+  "follow.followers [followingId:asc,$createdAt:asc]",
+  "follow.following [$ownerId:asc,$createdAt:asc]",
+  "follow.followingCount [$ownerId:asc] countable=true",
+  "follow.ownerAndFollowing [$ownerId:asc,followingId:asc] unique=true",
+  "followRequest.target [targetId:asc,$createdAt:asc]",
+  "followRequest.targetAndRequester [targetId:asc,$ownerId:asc] unique=true",
+  "like.byAuthorPost [postAuthor:asc,postId:asc] preallocated=true rangeCountable=true rankedCountable={\"at\":[\"postAuthor\",\"postId\"]} terminal=\"$ownerId\"",
+  "like.byAuthorTimePost [postAuthor:asc,$createdAt:asc,postId:asc] terminal=\"$ownerId\"",
+  "like.byDayAuthorPost [$createdAt:asc,postAuthor:asc,postId:asc] rangeCountable=true rankedCountable={\"at\":[\"postAuthor\",\"postId\"]} terminal=\"$ownerId\" timeRange={\"on\":\"$createdAt\",\"range\":86400,\"step\":86400,\"ttl\":604800}",
+  "like.byDayPost [$createdAt:asc,postId:asc] rangeCountable=true rankedCountable=true terminal=\"$ownerId\" timeRange={\"on\":\"$createdAt\",\"range\":86400,\"step\":86400,\"ttl\":604800}",
+  "like.byHashtagPost [hashtag:asc,postId:asc] preallocated=true rangeCountable=true rankedCountable={\"at\":[\"hashtag\",\"postId\"]} skipIfAbsent=true terminal=\"$ownerId\"",
+  "like.byLiker [$ownerId:asc] terminal=\"postId\"",
+  "like.byPost [postId:asc] preallocated=true rangeCountable=true rankedCountable=true terminal=\"$ownerId\"",
+  "likeReply.byAuthorTimeReply [replyAuthor:asc,$createdAt:asc,replyId:asc] terminal=\"$ownerId\"",
+  "likeReply.byLiker [$ownerId:asc] terminal=\"replyId\"",
+  "likeReply.byReply [replyId:asc] countable=\"countable\" preallocated=true terminal=\"$ownerId\"",
+  "post.byOwner [$ownerId:asc] rangeCountable=true rankedCountable=true",
+  "post.languageTimeline [language:asc,$createdAt:asc]",
+  "post.ownerAndTime [$ownerId:asc,$createdAt:asc]",
+  "post.quoteCount [quotedPostId:asc] countable=true",
+  "post.quoteReplyCount [quotedReplyId:asc] countable=true",
+  "post.quotedPostOwnerAndTime [quotedPostOwnerId:asc,$createdAt:asc]",
+  "post.quotesOfPost [quotedPostId:asc,$createdAt:asc]",
+  "post.quotesOfReply [quotedReplyId:asc,$createdAt:asc]",
+  "post.tagAndTime [hashtag:asc,$createdAt:asc]",
+  "postMention.mentionedUserAndTime [mentionedUserId:asc,$createdAt:asc]",
+  "postMention.postAndMentioned [postId:asc,mentionedUserId:asc] unique=true",
+  "privateFeedGrant.ownerAndLeaf [$ownerId:asc,leafIndex:asc] unique=true",
+  "privateFeedGrant.ownerAndRecipient [$ownerId:asc,recipientId:asc] unique=true",
+  "privateFeedRekey.ownerAndEpoch [$ownerId:asc,epoch:asc] unique=true",
+  "privateFeedState.owner [$ownerId:asc] unique=true",
+  "profile.owner [$ownerId:asc] unique=true",
+  "reply.byReplyToReply [replyToReplyId:asc] countable=true",
+  "reply.byRoot [rootPostId:asc] countable=true",
+  "reply.ownerAndTime [$ownerId:asc,$createdAt:asc]",
+  "reply.parentOwnerAndTime [parentOwnerId:asc,$createdAt:asc]",
+  "reply.replyToReplyAndTime [replyToReplyId:asc,$createdAt:asc]",
+  "reply.rootAndTime [rootPostId:asc,$createdAt:asc]",
+  "repost.byPost [postId:asc] countable=true",
+  "repost.ownerAndPost [$ownerId:asc,postId:asc] unique=true",
+  "repost.ownerAndTime [$ownerId:asc,$createdAt:asc]",
+  "repost.postOwnerAndTime [postOwnerId:asc,$createdAt:asc]",
 ];
 
-/** Indexes countable WITHOUT a range tree, which therefore keep an explicit flag. */
-const PLAIN_COUNTABLE = [
-  'follow.followingCount=true', 'likeReply.byReply=countable', 'post.quoteCount=true',
-  'post.quoteReplyCount=true', 'reply.byReplyToReply=true', 'reply.byRoot=true',
-  'repost.byPost=true',
+/** Per-doctype YAPP create prices. A zeroed cost is the anti-spam bond gone. */
+const TOKEN_COSTS = {
+  post: { create: { tokenPosition: 0, amount: 10 } },
+  reply: { create: { tokenPosition: 0, amount: 3 } },
+  like: { create: { tokenPosition: 0, amount: 1 } },
+  likeReply: { create: { tokenPosition: 0, amount: 1 } },
+  repost: { create: { tokenPosition: 0, amount: 1 } },
+};
+
+/** The doctypes the social contract declares. */
+const DOCUMENT_TYPES = [
+  'beat', 'block', 'blockFilter', 'blockFollow', 'bookmark', 'follow', 'followRequest',
+  'like', 'likeReply', 'post', 'postMention', 'privateFeedGrant', 'privateFeedRekey',
+  'privateFeedState', 'profile', 'reply', 'repost',
 ];
+
+/** Doctypes any social contract must declare, used to recognize one. */
+const SOCIAL_MARKERS = ['post', 'reply', 'like'];
 
 const IDENTIFIER_MEDIA_TYPE = 'application/x.dash.dpp.identifier';
 /** Structural equality, insensitive to object key order (arrays stay ordered). */
@@ -77,9 +146,23 @@ const canonical = (_, value) =>
     : value;
 const eq = (a, b) => JSON.stringify(a, canonical) === JSON.stringify(b, canonical);
 
-/** True when `schemas` is the social contract rather than one of the feature contracts. */
+/**
+ * Whether `schemas` is the social contract. A file carrying SOME of the marker
+ * doctypes but not all of them throws rather than skipping: the invariants
+ * below are the whole point of running this on the social contract, and a
+ * silent skip on a renamed or dropped doctype would report OK while checking
+ * nothing.
+ */
 function isSocialContract(schemas) {
-  return ['post', 'reply', 'like', 'likeReply', 'repost', 'beat'].every((type) => type in schemas);
+  const present = SOCIAL_MARKERS.filter((type) => type in schemas);
+  if (present.length === 0) return false;
+  if (present.length !== SOCIAL_MARKERS.length) {
+    throw new Error(
+      `this looks like the social contract (it declares ${present.join(', ')}) but is missing ` +
+      `${SOCIAL_MARKERS.filter((type) => !(type in schemas)).join(', ')}, so its invariants cannot be checked`
+    );
+  }
+  return true;
 }
 
 /**
@@ -160,20 +243,26 @@ function socialInvariants(schemas, contract, check) {
       !schemas[type].immutable.some((name) => TOMBSTONE_BLANKS.includes(name)));
   }
 
-  // ---- count trees ----------------------------------------------------------
-  check('the range-countable indexes are exactly the declared set',
-    eq(indices.filter(([, i]) => i.rangeCountable === true).map(([key]) => key).sort(), RANGE_COUNTABLE));
+  // ---- indexes, doctypes and prices ------------------------------------------
+  const signatures = indices.map(([key, index]) => {
+    const properties = index.properties
+      .map((property) => Object.entries(property).map(([name, direction]) => `${name}:${direction}`).join(''))
+      .join(',');
+    const flags = Object.keys(index).filter((k) => k !== 'name' && k !== 'properties').sort()
+      .map((k) => `${k}=${JSON.stringify(index[k])}`).join(' ');
+    return `${key} [${properties}]${flags ? ` ${flags}` : ''}`;
+  }).sort();
+  const drifted = [
+    ...signatures.filter((signature) => !INDEXES.includes(signature)).map((s) => `+ ${s}`),
+    ...INDEXES.filter((signature) => !signatures.includes(signature)).map((s) => `- ${s}`),
+  ];
+  check('every index matches its pinned signature', drifted.length === 0, drifted.join(' | ').slice(0, 400));
   check('no range-countable index repeats the now-implied explicit countable',
     !indices.some(([, i]) => i.rangeCountable === true && i.countable === 'countable'));
-  check('the indexes countable WITHOUT a range tree are exactly the declared set',
-    eq(indices.filter(([, i]) => i.rangeCountable !== true && i.countable !== undefined)
-      .map(([key, i]) => `${key}=${i.countable}`).sort(), PLAIN_COUNTABLE));
-
-  // Preallocation survives an `$ownerId` agreement: an [authorId, postId] path
-  // whose authorId agrees with the post's owner is still a pure function of the
-  // referenced document.
-  check('like.byAuthorPost stays preallocated',
-    indices.find(([key]) => key === 'like.byAuthorPost')?.[1].preallocated === true);
+  check('the doctypes are exactly the declared set', eq(Object.keys(schemas).sort(), DOCUMENT_TYPES));
+  check('the YAPP create prices are unchanged',
+    eq(Object.fromEntries(Object.entries(schemas).filter(([, s]) => s.tokenCost).map(([t, s]) => [t, s.tokenCost])),
+      TOKEN_COSTS));
 }
 
 async function main() {

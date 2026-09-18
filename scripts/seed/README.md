@@ -111,7 +111,8 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
 - `--topology` guards the target contract's shape (default:
   `NEXT_PUBLIC_CONTRACT_TOPOLOGY` from the env / `.env.devnet`). Only the
   devnet cut `v7` is seedable — the testnet `v2` contract is production data —
-  so a mismatched env file fails loudly instead of writing the wrong shapes.
+  and both the flag and the env value throw on anything else, so an env file
+  left on a retired cut aborts before spending credits.
   The corpus `"hashtag": ""` convention means "untagged", which **omits the
   hashtag property** on the post and on every like of it (propertyAgreement
   both-absent; `''` is consensus error 40127). Tag maxLength is 61 at parse

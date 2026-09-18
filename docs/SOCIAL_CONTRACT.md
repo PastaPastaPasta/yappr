@@ -250,7 +250,9 @@ unit.** `.github/workflows/deploy.yml` rebuilds `/devnet` from `.env.devnet` on
 every push to `staging`, and a client pointed at the wrong cut fails totally
 rather than degrading.
 
-- `NEXT_PUBLIC_YAPPR_CONTRACT_ID`, `NEXT_PUBLIC_CONTRACT_TOPOLOGY=v7`
+- `NEXT_PUBLIC_YAPPR_CONTRACT_ID`, `NEXT_PUBLIC_CONTRACT_TOPOLOGY=v7` — a
+  value naming a retired cut makes `next build` and the seeder throw rather
+  than fall back, so these two genuinely cannot drift apart silently
 - `NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID` and the feature ids from 4c
 - `DEVNET_MAKER_IDENTITY_ID` / `NEXT_PUBLIC_YAPP_TOKEN_AUTHORITY_ID` /
   `E2E_IDENTITY_IDS`, only if the identity ids changed
