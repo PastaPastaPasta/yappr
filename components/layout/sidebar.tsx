@@ -42,6 +42,7 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { YappBalanceItem } from '@/components/token/yapp-balance-item'
 import { useAuth } from '@/contexts/auth-context'
 import { notificationService } from '@/lib/services'
+import { directMessageService } from '@/lib/services/direct-message-service'
 import { useLoginModal } from '@/hooks/use-login-modal'
 
 const getNavigation = (isLoggedIn: boolean, userId?: string) => {
@@ -76,8 +77,9 @@ export function Sidebar() {
   const { user, logout, refreshBalance } = useAuth()
   const openLoginModal = useLoginModal((s) => s.open)
 
-  // Notification store - only subscribe to unread count for badge display
+  // Notification store - only subscribe to unread counts for badge display
   const unreadNotificationCount = useNotificationStore((s) => s.getUnreadCount())
+  const unreadMessageCount = useNotificationStore((s) => s.dmUnreadCount)
 
   const [isHydrated, setIsHydrated] = useState(false)
   const [isRefreshingBalance, setIsRefreshingBalance] = useState(false)
@@ -125,7 +127,12 @@ export function Sidebar() {
 
   // Initial notification fetch and polling
   useEffect(() => {
-    if (!user?.identityId) return
+    if (!user?.identityId) {
+      // Logout / user switch: drop the previous user's DM count. Nothing polls
+      // while logged out, so a survivor would be shown until the next login.
+      useNotificationStore.getState().setDmUnreadCount(0)
+      return
+    }
 
     const userId = user.identityId
     let timeoutId: NodeJS.Timeout | null = null
@@ -149,9 +156,21 @@ export function Sidebar() {
 
       try {
         const readIds = store.getReadIdsSet()
-        const result = isInitial
-          ? await notificationService.getInitialNotifications(userId, readIds)
-          : await notificationService.pollNewNotifications(userId, store.lastFetchTimestamp, readIds)
+        // The DM unread total rides this same cadence rather than adding a
+        // second timer. The service never rejects (its whole body is inside a
+        // try; it answers 0 on v3 and null when it cannot tell), and the catch
+        // below is belt and braces so it can never take the notification
+        // fetch down with it.
+        const [result] = await Promise.all([
+          isInitial
+            ? notificationService.getInitialNotifications(userId, readIds)
+            : notificationService.pollNewNotifications(userId, store.lastFetchTimestamp, readIds),
+          directMessageService.getUnreadTotal(userId).then((total) => {
+            // `null` is "could not tell": hold the previous badge rather than
+            // blinking it off for 30s and reading as "all caught up".
+            if (!cancelled && total !== null) store.setDmUnreadCount(total)
+          }).catch((error) => logger.warn('DM unread total failed:', error)),
+        ])
 
         if (cancelled) return
 
@@ -201,7 +220,12 @@ export function Sidebar() {
           {navigation.map((item) => {
             const isActive = pathname === item.href
             const Icon = isActive ? item.activeIcon : item.icon
-            const showBadge = item.name === 'Notifications' && isHydrated && unreadNotificationCount > 0
+            // Badges render only after hydration: both counts are client-only,
+            // so drawing them during SSR would mismatch.
+            const badgeCount = !isHydrated ? 0
+              : item.name === 'Notifications' ? unreadNotificationCount
+              : item.name === 'Messages' ? unreadMessageCount
+              : 0
 
             return (
               <Link
@@ -215,9 +239,9 @@ export function Sidebar() {
               >
                 <div className="relative">
                   <Icon className="h-7 w-7" />
-                  {showBadge && (
+                  {badgeCount > 0 && (
                     <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-yappr-500 text-[10px] font-bold text-white">
-                      {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+                      {badgeCount > 99 ? '99+' : badgeCount}
                     </span>
                   )}
                 </div>

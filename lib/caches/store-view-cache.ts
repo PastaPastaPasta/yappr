@@ -6,7 +6,7 @@
  * Follows the same pattern as block-cache.ts.
  */
 
-import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy } from '../types'
+import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy, ItemRatingSummary } from '../types'
 import { scopedKey } from '@/lib/storage-scope'
 
 const CACHE_KEY_PREFIX = scopedKey('yappr_store_view_')
@@ -17,6 +17,7 @@ export interface StoreViewCacheData {
   items: StoreItem[]
   reviews: StoreReview[]
   ratingSummary: StoreRatingSummary | null
+  itemRatings?: Record<string, ItemRatingSummary>
   storePolicies: StorePolicy[]
   hasMoreItems: boolean
   lastCursor: string | undefined
@@ -26,7 +27,7 @@ export interface StoreViewCacheData {
   activeTab: 'items' | 'reviews' | 'policies'
   searchQuery: string
   categoryFilter: string
-  sortField: 'newest' | 'title' | 'price'
+  sortField: 'newest' | 'title' | 'price' | 'rating'
   timestamp: number
 }
 

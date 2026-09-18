@@ -1,0 +1,318 @@
+{
+  "documentSchemas": {
+    "poll": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "byCreatedAt",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "documentsMutable": false,
+      "documentsCountable": true,
+      "required": [
+        "$createdAt",
+        "question",
+        "option0",
+        "option1"
+      ],
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "position": 0,
+          "description": "The poll question"
+        },
+        "option0": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "position": 1,
+          "description": "Choice 0 (always present)"
+        },
+        "option1": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "position": 2,
+          "description": "Choice 1 (always present)"
+        },
+        "option2": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "position": 3,
+          "description": "Choice 2"
+        },
+        "option3": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "position": 4,
+          "description": "Choice 3"
+        },
+        "option4": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "position": 5,
+          "description": "Choice 4"
+        },
+        "option5": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "position": 6,
+          "description": "Choice 5"
+        },
+        "option6": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "position": 7,
+          "description": "Choice 6"
+        },
+        "option7": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "position": 8,
+          "description": "Choice 7"
+        },
+        "option8": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "position": 9,
+          "description": "Choice 8"
+        },
+        "option9": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "position": 10,
+          "description": "Choice 9"
+        },
+        "multiChoice": {
+          "type": "boolean",
+          "position": 11,
+          "description": "True when voters may select more than one choice; absent/false = single choice. Immutable, and it selects which doctype holds this poll's ballots: false/absent = `vote`, true = `multiVote`"
+        },
+        "endsAt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "position": 12,
+          "description": "Optional close time (ms since epoch). Advisory: clients hide the vote UI and reject late votes; not enforceable on-chain"
+        }
+      },
+      "description": "A poll: question plus 2-10 choices as enumerated option fields. Permanent (canBeDeleted:false) so ballots can reference it, and immutable, so the multiChoice flag that selects the ballot doctype cannot be flipped after ballots land. Every ballot's pollOwnerId is bound by consensus to this poll's $ownerId, so the creator needs no attested copy. Creating one preallocates the vote trees its ballots need",
+      "additionalProperties": false,
+      "canBeDeleted": false
+    },
+    "vote": {
+      "type": "object",
+      "indexOnly": true,
+      "documentsMutable": false,
+      "canBeDeleted": true,
+      "indices": [
+        {
+          "name": "byPoll",
+          "properties": [
+            {
+              "pollId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "preallocated": true
+        },
+        {
+          "name": "byPollChoice",
+          "properties": [
+            {
+              "pollId": "asc"
+            },
+            {
+              "choice": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "rangeCountable": true,
+          "rankedCountable": true
+        },
+        {
+          "name": "byPollOwner",
+          "properties": [
+            {
+              "pollOwnerId": "asc"
+            },
+            {
+              "pollId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "preallocated": true
+        },
+        {
+          "name": "byVoterChoice",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "choice": "asc"
+            }
+          ],
+          "terminal": "pollId"
+        }
+      ],
+      "required": [
+        "pollId",
+        "pollOwnerId",
+        "choice"
+      ],
+      "properties": {
+        "pollId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 0,
+          "description": "ID of the poll being voted on (must exist; its $ownerId pins pollOwnerId)",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "poll",
+            "propertyAgreement": {
+              "pollOwnerId": "$ownerId"
+            }
+          }
+        },
+        "pollOwnerId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 1,
+          "description": "The poll creator's identity, consensus-bound to the poll's $ownerId"
+        },
+        "choice": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9,
+          "position": 2,
+          "description": "Index of the selected option (0-9)"
+        }
+      },
+      "description": "A single-choice poll's ballot, indexOnly: the index entries ARE the ballot, so there is no stored body and nothing to fetch by id. byPoll admits one entry per (poll, voter), so Platform itself rejects a second selection \u2014 single-choice is structural, not a client convention (indexOnly types cannot declare `unique`; this is the same one-per-owner shape, used on purpose). Read only for polls whose multiChoice is false/absent; byPollChoice gives O(1) per-option tallies whose sum is the voter count",
+      "additionalProperties": false
+    },
+    "multiVote": {
+      "type": "object",
+      "indexOnly": true,
+      "documentsMutable": false,
+      "canBeDeleted": true,
+      "indices": [
+        {
+          "name": "byPollChoice",
+          "properties": [
+            {
+              "pollId": "asc"
+            },
+            {
+              "choice": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "rangeCountable": true,
+          "rankedCountable": true
+        },
+        {
+          "name": "byPollOwnerChoice",
+          "properties": [
+            {
+              "pollOwnerId": "asc"
+            },
+            {
+              "pollId": "asc"
+            },
+            {
+              "choice": "asc"
+            }
+          ],
+          "terminal": "$ownerId"
+        },
+        {
+          "name": "byVoterChoice",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "choice": "asc"
+            }
+          ],
+          "terminal": "pollId"
+        }
+      ],
+      "required": [
+        "pollId",
+        "pollOwnerId",
+        "choice"
+      ],
+      "properties": {
+        "pollId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 0,
+          "description": "ID of the poll being voted on (must exist; its $ownerId pins pollOwnerId)",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "poll",
+            "propertyAgreement": {
+              "pollOwnerId": "$ownerId"
+            }
+          }
+        },
+        "pollOwnerId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 1,
+          "description": "The poll creator's identity, consensus-bound to the poll's $ownerId"
+        },
+        "choice": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9,
+          "position": 2,
+          "description": "Index of one selected option (0-9). A multi-choice ballot writes one document per selection"
+        }
+      },
+      "description": "A multi-choice poll's ballot, indexOnly: one entry per selection, structurally unique per (poll, voter, choice) so repeating a choice is rejected while a different one is accepted. Read only for polls whose multiChoice is true; byPollChoice tallies selections, not voters (no index counts distinct voters \u2014 one that did would cap a voter at a single selection)",
+      "additionalProperties": false
+    }
+  }
+}

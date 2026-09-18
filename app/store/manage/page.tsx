@@ -36,7 +36,9 @@ import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
+import { storeStatsService } from '@/lib/services/store-stats-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
+import { storefrontIsV2 } from '@/lib/constants'
 import { identityService } from '@/lib/services/identity-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import type { Store, StoreItem, ShippingZone } from '@/lib/types'
@@ -106,7 +108,10 @@ function StoreManagePage() {
         const [itemsResult, zonesResult, ordersResult, encKeyResult] = await Promise.allSettled([
           storeItemService.getAllByStore(currentStoreId),
           shippingZoneService.getByStore(currentStoreId),
-          storeOrderService.getSellerOrders(user.identityId, { limit: 100 }),
+          // v2: O(1) countable index; v1: the legacy capped page length.
+          storefrontIsV2()
+            ? storeStatsService.countSellerOrders(user.identityId)
+            : storeOrderService.getSellerOrders(user.identityId, { limit: 100 }).then((result) => result.orders.length),
           identityService.hasEncryptionKey(user.identityId)
         ])
 
@@ -124,7 +129,7 @@ function StoreManagePage() {
         }
 
         if (ordersResult.status === 'fulfilled') {
-          setPendingOrdersCount(ordersResult.value.orders.length)
+          setPendingOrdersCount(ordersResult.value)
         } else {
           logger.error('Failed to load orders:', ordersResult.reason)
         }
@@ -353,7 +358,10 @@ function StoreManagePage() {
                 <ShoppingBagIcon className="h-4 w-4" />
                 Orders
                 {pendingOrdersCount > 0 && (
-                  <span className="ml-1 w-5 h-5 bg-yappr-500 text-white text-xs rounded-full flex items-center justify-center">
+                  <span
+                    className="ml-1 min-w-5 h-5 px-1.5 bg-yappr-500 text-white text-xs rounded-full flex items-center justify-center"
+                    title={`${pendingOrdersCount} orders received`}
+                  >
                     {pendingOrdersCount}
                   </span>
                 )}

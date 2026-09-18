@@ -165,6 +165,50 @@ export function isReferenceNotFoundError(error: unknown): boolean {
 }
 
 /**
+ * Checks whether Platform refused a write because a `propertyAgreement` pair
+ * disagreed with the referenced document (ReferencedDocumentPropertyMismatch,
+ * state code 40127).
+ *
+ * Two shapes reach here and they mean different things to a user:
+ *
+ * - a VALUE pair — the document repeated a referenced value that has since
+ *   changed, or was built from a stale cache. Retrying with fresh data works.
+ * - a WRITER GATE, where the referring side is `$ownerId`: the signer is not
+ *   the identity the referenced document says may write this. Retrying never
+ *   works, so {@link isWriteGateError} splits it out.
+ *
+ * Both are permanent for the transition as submitted and neither charges the
+ * document's token cost.
+ *
+ * The numeric code is matched on word boundaries (as `isDuplicateVoteError`
+ * does for 40105): an unbounded substring would also fire on a document id or a
+ * credit amount that happens to contain those five digits.
+ */
+export function isPropertyAgreementError(error: unknown): boolean {
+  return /referenceddocumentpropertymismatch|does not agree with the referenced document|\b40127\b/i
+    .test(extractErrorMessage(error))
+}
+
+/**
+ * Checks whether the 40127 above is a WRITER GATE rather than a value
+ * disagreement: the contract declares `propertyAgreement: {"$ownerId": …}` on
+ * the reference, so only one identity may write the document at all.
+ *
+ * Drive names the referring property in the message — "the document's $ownerId
+ * does not agree with the referenced document's sellerId (propertyAgreement on
+ * orderId)" — and `$ownerId` on the LEFT is what makes it a gate. Yappr uses
+ * these for "only the store owner lists items in a store", "only the seller
+ * posts order status updates" and "only the buyer reviews their own order".
+ */
+export function isWriteGateError(error: unknown): boolean {
+  // Extracted once and handed back to the broader predicate: a gate is a 40127
+  // that ALSO names `$ownerId` as the referring side, and `extractErrorMessage`
+  // returns a string it is given unchanged.
+  const message = extractErrorMessage(error)
+  return isPropertyAgreementError(message) && /the document's \$ownerid does not agree/i.test(message)
+}
+
+/**
  * Checks if an error is Platform refusing a REPLACE that touched a property
  * the document type freezes — `DocumentImmutablePropertyChangedError`, state
  * code **40128**, new in protocol v14 / Platform 4.2.0-beta.2.
@@ -212,6 +256,16 @@ export function categorizeError(error: unknown): string {
   // rather than offering YAPP or a retry.
   if (isReferenceNotFoundError(error)) {
     return 'That account no longer exists on Dash Platform, so this action can\'t be completed.'
+  }
+
+  // Before the generic agreement message: a gate is about WHO is signing, and
+  // telling that user to "try again" would be wrong.
+  if (isWriteGateError(error)) {
+    return 'Only the owner of this store, order or listing can do that.'
+  }
+
+  if (isPropertyAgreementError(error)) {
+    return 'This is out of date — reload the page and try again.'
   }
 
   // Check frozen before insufficient-balance: a frozen account can't spend even

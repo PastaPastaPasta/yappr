@@ -6,7 +6,8 @@
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV2 } from '../constants';
+import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import type {
   OrderStatusUpdate,
@@ -29,6 +30,7 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       id: (doc.$id || doc.id) as string,
       ownerId: (doc.$ownerId || doc.ownerId) as string,
       orderId,
+      buyerId: identifierToBase58(data.buyerId) || undefined,
       createdAt: new Date((doc.$createdAt || doc.createdAt) as number),
       status: data.status,
       trackingNumber: data.trackingNumber,
@@ -38,51 +40,70 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
   }
 
   /**
-   * Get status history for an order
+   * Newest update per order from an unordered list of updates.
+   *
+   * Every update here is the seller's: v2 gates the writer against the order's
+   * `sellerId` (`{$ownerId: sellerId}`), so an update by anyone else is refused
+   * at write time and there is nothing to filter out. v1 carried no seller
+   * attestation at all, so it never filtered either.
    */
-  async getOrderHistory(orderId: string): Promise<OrderStatusUpdate[]> {
-    const { documents } = await this.query({
-      where: [['orderId', '==', orderId]],
-      orderBy: [['orderId', 'asc'], ['$createdAt', 'asc']],
-      limit: 100
-    });
-
-    return documents;
+  latestPerOrder(updates: OrderStatusUpdate[]): Map<string, OrderStatusUpdate> {
+    const latest = new Map<string, OrderStatusUpdate>();
+    for (const update of updates) {
+      const current = latest.get(update.orderId);
+      if (
+        !current ||
+        update.createdAt > current.createdAt ||
+        (update.createdAt.getTime() === current.createdAt.getTime() && update.id > current.id)
+      ) {
+        latest.set(update.orderId, update);
+      }
+    }
+    return latest;
   }
 
   /**
-   * Get the latest status for an order
+   * Latest status for many orders. Status history is append-only, so
+   * an `in` page is walked with a cursor until it runs short — a single
+   * 100-row page would silently drop the orders that sort last.
+   */
+  async getLatestStatuses(orderIds: string[]): Promise<Map<string, OrderStatusUpdate>> {
+    const all: OrderStatusUpdate[] = [];
+    // Small batches keep each cursor walk short: ~10 updates per order fit
+    // in one page for a batch of ten.
+    for (const batch of chunk(orderIds, Math.min(MAX_IN_CLAUSE_VALUES, 10))) {
+      let startAfter: string | undefined;
+      for (;;) {
+        const { documents } = await this.query({
+          where: [['orderId', 'in', batch]],
+          orderBy: [['orderId', 'asc'], ['$createdAt', 'asc']],
+          limit: 100,
+          startAfter,
+        });
+        all.push(...documents);
+        if (documents.length < 100) break;
+        startAfter = documents[documents.length - 1].id;
+      }
+    }
+    return this.latestPerOrder(all);
+  }
+
+  /**
+   * Get the latest status for an order.
+   *
+   * One row: only the order's seller can write an update (the writer gate), so
+   * the newest one IS the status. This used to walk newest-first through pages
+   * of spoofs, which were cheap and unbounded before consensus refused them.
    */
   async getLatestStatus(orderId: string): Promise<OrderStatusUpdate | null> {
     const { documents } = await this.query({
       where: [['orderId', '==', orderId]],
       orderBy: [['orderId', 'asc'], ['$createdAt', 'desc']],
-      limit: 1
+      limit: 1,
     });
-
-    return documents[0] || null;
+    return documents[0] ?? null;
   }
 
-  /**
-   * Get all status updates by a seller
-   */
-  async getSellerStatusUpdates(sellerId: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ updates: OrderStatusUpdate[]; nextCursor?: string }> {
-    const { documents } = await this.query({
-      where: [['$ownerId', '==', sellerId]],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
-      limit: options.limit || 50,
-      startAfter: options.startAfter
-    });
-
-    return {
-      updates: documents,
-      nextCursor: documents.length > 0 ? documents[documents.length - 1].id : undefined
-    };
-  }
-
-  /**
-   * Create a status update (seller only)
-   */
   async createStatusUpdate(
     sellerId: string,
     orderId: string,
@@ -91,10 +112,16 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       trackingNumber?: string;
       trackingCarrier?: string;
       message?: string;
+      /** The order's buyer (v2 propertyAgreement against the order's $ownerId; required). */
+      buyerId: string;
     }
   ): Promise<OrderStatusUpdate> {
     const documentData: Record<string, unknown> = {
       orderId: identifierStringToDocumentBytes(orderId),
+      // No sellerId copy: v2 gates the writer to the order's seller, so the
+      // signer IS the seller. buyerId stays because `buyerStatusUpdates`
+      // indexes it for the buyer's own feed.
+      ...(storefrontIsV2() ? { buyerId: identifierStringToDocumentBytes(data.buyerId) } : {}),
       status: data.status
     };
 
@@ -105,9 +132,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
     return this.create(sellerId, documentData);
   }
 
-  /**
-   * Get tracking URL for a carrier
-   */
   getTrackingUrl(carrier: string, trackingNumber: string): string | null {
     const carrierUrls: Record<string, string> = {
       'usps': `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`,
@@ -123,9 +147,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
     return carrierUrls[normalizedCarrier] || null;
   }
 
-  /**
-   * Get human-readable status label
-   */
   getStatusLabel(status: OrderStatus): string {
     const labels: Record<OrderStatus, string> = {
       'pending': 'Pending',
@@ -140,9 +161,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
     return labels[status] || status;
   }
 
-  /**
-   * Get status color for UI
-   */
   getStatusColor(status: OrderStatus): string {
     const colors: Record<OrderStatus, string> = {
       'pending': 'text-yellow-600',
@@ -155,13 +173,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       'disputed': 'text-red-600'
     };
     return colors[status] || 'text-gray-600';
-  }
-
-  /**
-   * Check if order is in a terminal state
-   */
-  isTerminalStatus(status: OrderStatus): boolean {
-    return ['delivered', 'cancelled', 'refunded'].includes(status);
   }
 }
 

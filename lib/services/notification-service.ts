@@ -3,7 +3,7 @@ import { queryDocumentBundle } from './document-query-bundle';
 import { getEvoSdk } from './evo-sdk-service';
 import { loadIdentityBatch } from './identity-batch';
 import { identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
-import { YAPPR_CONTRACT_ID } from '../constants';
+import { YAPPR_CONTRACT_ID, blogIsV2 } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
 import { likesAreIndexOnly, likeSurfacesAreSplit, likeIndexFor, replyLinkage, type TargetKind } from '../contract-topology';
@@ -24,16 +24,18 @@ type PrivateFeedNotificationType = 'privateFeedRequest' | 'privateFeedApproved' 
 type EngagementNotificationType = 'like' | 'repost' | 'reply';
 
 /**
- * Blog post notification type
+ * Blog notification types. `blogPost` is "a blog you follow published";
+ * `blogComment` is "someone commented on your post" — the v2 contract's
+ * `postOwnerAndTime` index, which does not exist on v1.
  */
-type BlogPostNotificationType = 'blogPost';
+type BlogNotificationType = 'blogPost' | 'blogComment';
 
 /**
  * Raw notification data before enrichment
  */
 interface RawNotification {
   id: string;
-  type: 'follow' | 'mention' | PrivateFeedNotificationType | EngagementNotificationType | BlogPostNotificationType;
+  type: 'follow' | 'mention' | PrivateFeedNotificationType | EngagementNotificationType | BlogNotificationType;
   fromUserId: string;
   postId?: string;
   /**
@@ -50,6 +52,8 @@ interface RawNotification {
   blogId?: string;
   blogPostTitle?: string;
   blogPostSlug?: string;
+  /** blogComment only: the comment text, shown instead of the post title. */
+  blogCommentContent?: string;
   createdAt: number;
 }
 
@@ -310,6 +314,44 @@ class NotificationService {
   }
 
   /**
+   * Comments other people left on the user's own blog posts — one page of the
+   * v2 `postOwnerAndTime` index plus one by-id fetch for the posts they name
+   * (needed for the link and the title). On v1 the index does not exist and the
+   * source is empty.
+   */
+  async getBlogCommentNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+    if (!blogIsV2()) return [];
+    try {
+      const { blogCommentService } = await import('./blog-comment-service');
+      const { blogPostService } = await import('./blog-post-service');
+
+      const comments = await blogCommentService.getCommentsOnMyPosts(userId, sinceTimestamp, NOTIFICATION_QUERY_LIMIT);
+      if (comments.length === 0) return [];
+
+      const posts = new Map(
+        (await blogPostService.getMany(Array.from(new Set(comments.map(c => c.blogPostId)))))
+          .map(post => [post.id, post])
+      );
+      return comments.flatMap(comment => {
+        const post = posts.get(comment.blogPostId);
+        // `blogPostOwnerId` is pinned by consensus to the post's own `$ownerId`,
+        // so a row on this index is by construction a comment on this user's
+        // post — this drops only rows whose post did not come back (a read
+        // failure), since there is no title or link to render without it.
+        if (!post) return [];
+        return [{
+          id: `blogComment-${comment.id}`, type: 'blogComment' as const, fromUserId: comment.ownerId,
+          postId: post.id, blogId: post.blogId, blogPostTitle: post.title, blogPostSlug: post.slug,
+          blogCommentContent: comment.content, createdAt: comment.createdAt.getTime(),
+        }];
+      });
+    } catch (error) {
+      logger.error('Error fetching blog comment notifications:', error);
+      return [];
+    }
+  }
+
+  /**
    * Enrich raw notifications with user profiles and post data.
    * Uses Promise.allSettled for fault tolerance - partial failures don't block other notifications.
    */
@@ -322,7 +364,9 @@ class NotificationService {
     // Collect unique user IDs and post IDs
     const userIds = Array.from(new Set(rawNotifications.map(n => n.fromUserId)));
     const postIds = Array.from(new Set(
-      rawNotifications.flatMap(n => (n.postId && n.type !== 'blogPost' && n.replyContent === undefined ? [n.postId] : []))
+      rawNotifications.flatMap(n => (
+        n.postId && n.type !== 'blogPost' && n.type !== 'blogComment' && n.replyContent === undefined ? [n.postId] : []
+      ))
     ));
 
     // Batch fetch all required data in parallel with fault tolerance
@@ -390,12 +434,13 @@ class NotificationService {
         post = raw.postId ? posts.get(raw.postId) : undefined;
       }
 
-      // For blogPost notifications, create a synthetic post with the title
-      if (raw.type === 'blogPost' && raw.blogPostTitle) {
+      // Blog notifications have no social post: synthesise a card carrying the
+      // post title (a new post) or the comment text (a comment on your post).
+      if ((raw.type === 'blogPost' || raw.type === 'blogComment') && raw.blogPostTitle) {
         post = {
           id: raw.postId || '',
           author: user,
-          content: raw.blogPostTitle,
+          content: raw.blogCommentContent ?? raw.blogPostTitle,
           createdAt: new Date(raw.createdAt),
           likes: 0,
           reposts: 0,
@@ -616,13 +661,14 @@ class NotificationService {
       ...kinds.map(kind => { const index = likeIndexFor(kind); if (!index.ownerField) throw new Error('Notification index has no author field'); return [index.docType, index.ownerField]; }),
       ['repost', 'postOwnerId'], ['reply', 'parentOwnerId'],
     ];
-    const [documents, blogPosts] = await Promise.all([
+    const [documents, blogPosts, blogComments] = await Promise.all([
       queryDocumentBundle(sources.map(([documentTypeName, ownerField]) => ({
         dataContractId: YAPPR_CONTRACT_ID, documentTypeName,
         where: [[ownerField, '==', userId], ['$createdAt', '>', sinceTimestamp]],
         orderBy: [[ownerField, 'asc'], ['$createdAt', 'asc']], limit: NOTIFICATION_QUERY_LIMIT,
       })), true),
       this.getBlogPostNotifications(userId, sinceTimestamp),
+      this.getBlogCommentNotifications(userId, sinceTimestamp),
     ]);
     const [followers, mentions, privateFeed, likes, reposts, replies] = await Promise.all([
       this.getNewFollowers(userId, sinceTimestamp, documents[0]),
@@ -633,7 +679,7 @@ class NotificationService {
       this.getReplyNotifications(userId, sinceTimestamp, documents[4 + kinds.length]),
     ]);
 
-    const allRaw = [...followers, ...mentions, ...privateFeed, ...likes, ...reposts, ...replies, ...blogPosts];
+    const allRaw = [...followers, ...mentions, ...privateFeed, ...likes, ...reposts, ...replies, ...blogPosts, ...blogComments];
 
     // Drop self-notifications across every type (liking/reposting/replying to your
     // own content, mentioning yourself, your own posts in a blog you follow).

@@ -43,6 +43,9 @@ export function MobileBottomNav() {
   const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
   const closeMenuButtonRef = useRef<HTMLButtonElement>(null)
   const unreadNotificationCount = useNotificationStore((s) => s.getUnreadCount())
+  // Refreshed by the Sidebar's poll: it is hidden with CSS on mobile, not
+  // unmounted, so its effect is the single source of both badge counts.
+  const unreadMessageCount = useNotificationStore((s) => s.dmUnreadCount)
 
   const closeMoreMenu = useCallback(() => {
     setMoreMenuOpen(false)
@@ -248,17 +251,25 @@ export function MobileBottomNav() {
           {navItems.slice(2, 3).map((item) => {
             const isActive = item.match(pathname)
             const Icon = isActive ? item.activeIcon : item.icon
+            const badgeCount = isHydrated && user ? unreadMessageCount : 0
             return (
               <Link
                 key={item.name}
                 href={item.href}
-                aria-label={item.name}
+                aria-label={badgeCount > 0 ? `${item.name}, ${badgeCount} unread` : item.name}
                 className="flex-1 flex items-center justify-center h-full"
               >
-                <Icon className={cn(
-                  "h-7 w-7",
-                  isActive ? "text-black dark:text-white" : "text-gray-500"
-                )} />
+                <div className="relative">
+                  <Icon className={cn(
+                    "h-7 w-7",
+                    isActive ? "text-black dark:text-white" : "text-gray-500"
+                  )} />
+                  {badgeCount > 0 && (
+                    <span className="absolute -top-1 -right-2 min-w-[18px] h-[18px] px-1 bg-yappr-500 text-white text-[10px] font-medium rounded-full flex items-center justify-center">
+                      {badgeCount > 99 ? '99+' : badgeCount}
+                    </span>
+                  )}
+                </div>
               </Link>
             )
           })}

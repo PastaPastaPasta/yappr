@@ -265,7 +265,7 @@ export interface OrderPayload {
 // Store order document (from platform)
 export interface StoreOrderDocument {
   $id: string
-  $ownerId: string // buyer
+  $ownerId: string // buyer — there is no separate buyerId property
   $createdAt: number
   storeId: Uint8Array | string
   sellerId: Uint8Array | string
@@ -298,6 +298,7 @@ export interface OrderStatusUpdateDocument {
   $ownerId: string // seller
   $createdAt: number
   orderId: Uint8Array | string
+  buyerId?: Uint8Array | string // v2: agreed with the order's $ownerId by consensus
   status: OrderStatus
   trackingNumber?: string
   trackingCarrier?: string
@@ -307,8 +308,10 @@ export interface OrderStatusUpdateDocument {
 // Parsed order status update for UI
 export interface OrderStatusUpdate {
   id: string
+  /** v2: necessarily the order's seller — consensus gates the writer. */
   ownerId: string
   orderId: string
+  buyerId?: string
   createdAt: Date
   status: OrderStatus
   trackingNumber?: string
@@ -336,6 +339,8 @@ export interface StoreReview {
   storeId: string
   orderId: string
   sellerId: string
+  /** v2: always true — only the order's owner can write a review of it. */
+  verifiedPurchase: boolean
   createdAt: Date
   rating: number
   title?: string
@@ -346,7 +351,36 @@ export interface StoreReview {
   reviewerAvatar?: string
 }
 
-// Store rating summary
+// Item review document (v2, one per order line)
+export interface ItemReviewDocument {
+  $id: string
+  $ownerId: string
+  $createdAt: number
+  storeId: Uint8Array | string
+  itemId: Uint8Array | string
+  orderId: Uint8Array | string
+  rating: number
+  content?: string
+}
+
+// Parsed item review for UI
+export interface ItemReview {
+  id: string
+  reviewerId: string
+  storeId: string
+  itemId: string
+  orderId: string
+  /** v2-only doctype, and the writer gate makes every review a real purchase. */
+  verifiedPurchase: boolean
+  createdAt: Date
+  rating: number
+  content?: string
+  reviewerUsername?: string
+  reviewerDisplayName?: string
+  reviewerAvatar?: string
+}
+
+// Proved rating summary (count + sum from the contract's average tree; the client divides)
 export interface StoreRatingSummary {
   averageRating: number
   reviewCount: number
@@ -357,6 +391,12 @@ export interface StoreRatingSummary {
     4: number
     5: number
   }
+}
+
+// Proved item rating (no distribution index on itemReview)
+export interface ItemRatingSummary {
+  averageRating: number
+  reviewCount: number
 }
 
 // Saved address for encrypted storage

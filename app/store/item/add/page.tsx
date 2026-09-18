@@ -235,8 +235,11 @@ function AddItemPage() {
         variants
       }
 
-      // Use URL storeId or fall back to loaded item's storeId for edit mode
-      const effectiveStoreId = storeId || loadedStoreId
+      // An EDIT must use the item's own store, never the URL's: v2 freezes
+      // `storeItem.storeId`, so a stale or wrong `?storeId=` would turn a title
+      // change into a 40128 rejection (and a 40127 if that store is not yours).
+      // A create has no stored value to defer to, so the URL leads there.
+      const effectiveStoreId = isEditMode ? (loadedStoreId || storeId) : (storeId || loadedStoreId)
 
       if (isEditMode && itemId && effectiveStoreId) {
         await storeItemService.updateItem(itemId, user.identityId, effectiveStoreId, itemData)

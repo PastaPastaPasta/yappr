@@ -67,7 +67,8 @@
         "description": "Comma-separated label taxonomy"
       }
     },
-    "additionalProperties": false
+    "additionalProperties": false,
+    "description": "A blog (many per user). Permanent so posts and follows can reference it; there is no tombstone flag \u2014 an abandoned blog is simply empty."
   },
   "blogPost": {
     "type": "object",
@@ -123,9 +124,13 @@
         "byteArray": true,
         "minItems": 32,
         "maxItems": 32,
-        "position": 0,
         "contentMediaType": "application/x.dash.dpp.identifier",
-        "description": "Reference to parent blog document"
+        "position": 0,
+        "description": "Reference to parent blog document",
+        "refersTo": {
+          "type": "permanentDocument",
+          "documentType": "blog"
+        }
       },
       "title": {
         "type": "string",
@@ -200,7 +205,15 @@
         "description": "Publication timestamp (ms since epoch)"
       }
     },
-    "additionalProperties": false
+    "additionalProperties": false,
+    "description": "A published post. Permanent and history-keeping, so every edit is retrievable through documents.history. The author IS $ownerId: a comment binds its blogPostOwnerId to the post's $ownerId through a system-field propertyAgreement, so no attested copy is carried.",
+    "immutable": [
+      "blogId",
+      "publishedAt"
+    ],
+    "immutableAllowSetting": [
+      "publishedAt"
+    ]
   },
   "blogComment": {
     "type": "object",
@@ -227,6 +240,27 @@
             "$createdAt": "asc"
           }
         ]
+      },
+      {
+        "name": "postOwnerAndTime",
+        "properties": [
+          {
+            "blogPostOwnerId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "commentCount",
+        "properties": [
+          {
+            "blogPostId": "asc"
+          }
+        ],
+        "rangeCountable": true,
+        "rankedCountable": true
       }
     ],
     "required": [
@@ -241,18 +275,25 @@
         "byteArray": true,
         "minItems": 32,
         "maxItems": 32,
-        "position": 0,
         "contentMediaType": "application/x.dash.dpp.identifier",
-        "description": "Reference to parent blog post document"
+        "position": 0,
+        "description": "Reference to parent blog post document",
+        "refersTo": {
+          "type": "permanentDocument",
+          "documentType": "blogPost",
+          "propertyAgreement": {
+            "blogPostOwnerId": "$ownerId"
+          }
+        }
       },
       "blogPostOwnerId": {
         "type": "array",
         "byteArray": true,
         "minItems": 32,
         "maxItems": 32,
-        "position": 1,
         "contentMediaType": "application/x.dash.dpp.identifier",
-        "description": "Owner identity ID of parent blog post"
+        "position": 1,
+        "description": "Owner of the parent post, consensus-bound to its $ownerId"
       },
       "content": {
         "type": "string",
@@ -262,7 +303,15 @@
         "description": "Comment content"
       }
     },
-    "additionalProperties": false
+    "additionalProperties": false,
+    "description": "A comment on a post. blogPostId must name a real post whose $ownerId equals this document's blogPostOwnerId, so the notification key cannot be forged and comments on ghost posts are impossible.",
+    "tokenCost": {
+      "create": {
+        "contractId": "SOCIAL_CONTRACT_ID",
+        "tokenPosition": 0,
+        "amount": 1
+      }
+    }
   },
   "blogFollow": {
     "type": "object",
@@ -301,6 +350,35 @@
             "$createdAt": "asc"
           }
         ]
+      },
+      {
+        "name": "followerCount",
+        "properties": [
+          {
+            "blogId": "asc"
+          }
+        ],
+        "rangeCountable": true,
+        "rankedCountable": true
+      },
+      {
+        "name": "followersByDay",
+        "properties": [
+          {
+            "$createdAt": "asc"
+          },
+          {
+            "blogId": "asc"
+          }
+        ],
+        "rangeCountable": true,
+        "rankedCountable": true,
+        "timeRange": {
+          "on": "$createdAt",
+          "range": 86400,
+          "step": 86400,
+          "ttl": 604800
+        }
       }
     ],
     "required": [
@@ -313,11 +391,16 @@
         "byteArray": true,
         "minItems": 32,
         "maxItems": 32,
-        "position": 0,
         "contentMediaType": "application/x.dash.dpp.identifier",
-        "description": "Reference to the blog being followed"
+        "position": 0,
+        "description": "Reference to the blog being followed",
+        "refersTo": {
+          "type": "permanentDocument",
+          "documentType": "blog"
+        }
       }
     },
-    "additionalProperties": false
+    "additionalProperties": false,
+    "description": "A follow of a blog, one per (follower, blog). Counted and ranked so discovery reads \"most followed\" and \"trending today\" instead of crawling every blog's followers."
   }
 }

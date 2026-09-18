@@ -47,7 +47,7 @@
  *
  * The social contract carries the YAPP token configuration (`post` costs 10 YAPP,
  * `reply` 3, `like`/`repost` 1). `new DataContract({ownerId, identityNonce,
- * schemas})` — the shape `register-pollr-contract.mjs` uses — cannot express it:
+ * schemas})` — the shape a bare-schemas registration uses — cannot express it:
  * its optional `tokens` field is typed `Record<number, TokenConfiguration>` and
  * the wasm constructor rejects a plain object with "JS object constructor name
  * mismatch. Expected TokenConfiguration". Building real `TokenConfiguration`

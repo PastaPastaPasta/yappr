@@ -104,6 +104,10 @@ class PollrPollService extends BaseDocumentService<Poll> {
    * Poll documents carry no token cost — only the usual credit fee.
    * Optional properties are omitted entirely (never sent as null) so the
    * contract's `additionalProperties: false` schema stays satisfied.
+   *
+   * On v4 the poll is permanent, because ballots reference it; every ballot's
+   * `pollOwnerId` is bound by consensus to the poll's `$ownerId`, which the
+   * platform assigns, so the poll carries no attested creator field of its own.
    */
   async createPoll(ownerId: string, data: CreatePollData): Promise<Poll> {
     const { question, options } = this.normalize(data);

@@ -32,6 +32,8 @@ yarn-error.log*
 
 # local env files
 .env*.local
+# scratch space for local scripts and logs (never committed)
+.local/
 .env
 .env.contract
 
@@ -92,6 +94,11 @@ worktrees/
 .seed-progress.local*
 .seed-report.local*
 .seed-faucet.local*
+.seed-storefront.local*
+.seed-tips.local*
+.seed-pollr.local*
+.seed-blog.local*
+.seed-dm.local*
 
 # generated seed corpora + claude-authored text banks (150 MB at 1M ops) — never commit
 .seed-corpus.local*

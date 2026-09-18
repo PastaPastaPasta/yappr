@@ -115,6 +115,10 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
   ): Promise<StoreOrder> {
     const documentData: Record<string, unknown> = {
       storeId: identifierStringToDocumentBytes(data.storeId),
+      // v2 checks this against the store's own $ownerId, so a wrong value is
+      // refused (40127) rather than quietly filing the order under a stranger.
+      // The buyer needs no property: it is this order's $ownerId, which is what
+      // its reviews and status updates bind to.
       sellerId: identifierStringToDocumentBytes(data.sellerId),
       encryptedPayload: data.encryptedPayload,
       nonce: data.nonce

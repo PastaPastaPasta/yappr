@@ -275,6 +275,11 @@ export abstract class BaseDocumentService<T> {
     }
   }
 
+  /** Transform a plain document object (e.g. a composite sub-result) into `T`. */
+  fromDocument(doc: Record<string, unknown>): T {
+    return this.transformDocument(doc);
+  }
+
   /**
    * Extract content fields from a transformed document, stripping system metadata.
    * Used to build the full document data for replacements (updates).

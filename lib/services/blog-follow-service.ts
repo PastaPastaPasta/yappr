@@ -3,8 +3,9 @@ import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
-import { YAPPR_BLOG_CONTRACT_ID } from '../constants';
-import { paginateCount, paginateFetchAll } from './pagination-utils';
+import { YAPPR_BLOG_CONTRACT_ID, blogIsV2 } from '../constants';
+import { blogStatsService } from './blog-stats-service';
+import { documentCount, paginateCount, paginateFetchAll } from './pagination-utils';
 import type { BlogFollow } from '@/lib/types';
 
 interface BlogFollowDocument {
@@ -43,12 +44,17 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
         return { success: true };
       }
 
-      return await stateTransitionService.createDocument(
+      const result = await stateTransitionService.createDocument(
         this.contractId,
         this.documentType,
         userId,
         { blogId: identifierStringToDocumentBytes(blogId) }
       );
+      // A landed follow/unfollow changes the follower count and the ranked pages
+      // built on it. The count itself is not cached (RequestDeduplicator only
+      // collapses in-flight calls), so nothing else needs clearing.
+      if (result.success) blogStatsService.invalidate();
+      return result;
     } catch (error) {
       logger.error('Error following blog:', error);
       return {
@@ -66,12 +72,14 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
         return { success: true };
       }
 
-      return await stateTransitionService.deleteDocument(
+      const result = await stateTransitionService.deleteDocument(
         this.contractId,
         this.documentType,
         follow.$id,
         userId
       );
+      if (result.success) blogStatsService.invalidate();
+      return result;
     } catch (error) {
       logger.error('Error unfollowing blog:', error);
       return {
@@ -163,10 +171,19 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
     }
   }
 
+  /** One proved count on v2's `followerCount` tree; a cursor scan on v1. */
   async countBlogFollowers(blogId: string): Promise<number> {
     return this.countFollowersDeduplicator.dedupe(blogId, async () => {
       try {
         const sdk = await getEvoSdk();
+
+        if (blogIsV2()) {
+          return await documentCount(sdk, {
+            dataContractId: this.contractId,
+            documentTypeName: this.documentType,
+            where: [['blogId', '==', blogId]],
+          });
+        }
 
         const { count } = await paginateCount(
           sdk,

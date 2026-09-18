@@ -17,6 +17,8 @@ import { storeOrderService } from '@/lib/services/store-order-service'
 import { orderStatusService } from '@/lib/services/order-status-service'
 import { storeService } from '@/lib/services/store-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
+import { storeStatsService } from '@/lib/services/store-stats-service'
+import { storefrontIsV2 } from '@/lib/constants'
 import { identityService } from '@/lib/services/identity-service'
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
@@ -37,32 +39,20 @@ function OrdersPage() {
   const [reviewedOrders, setReviewedOrders] = useState<Set<string>>(new Set())
   const [reviewModalData, setReviewModalData] = useState<{ order: StoreOrder; store: Store } | null>(null)
 
-  // Refresh just the order statuses (lightweight refresh)
-  // Merges new statuses into existing map to preserve data on transient failures
+  // Refresh just the order statuses (one `in` query per 100 orders).
+  // Merges new statuses into the existing map to preserve data on transient failures.
   const refreshStatuses = useCallback(async (orderList: StoreOrder[]) => {
     if (orderList.length === 0) return
-
-    const updates: Array<{ orderId: string; status: OrderStatusUpdate }> = []
-    await Promise.all(
-      orderList.map(async (order) => {
-        try {
-          const status = await orderStatusService.getLatestStatus(order.id)
-          if (status) {
-            updates.push({ orderId: order.id, status })
-          }
-        } catch (e) {
-          // Ignore errors - preserve existing status for this order
-        }
+    try {
+      const latest = await orderStatusService.getLatestStatuses(orderList.map((order) => order.id))
+      setOrderStatuses(prev => {
+        const merged = new Map(prev)
+        for (const [orderId, status] of latest) merged.set(orderId, status)
+        return merged
       })
-    )
-    // Merge updates into existing map
-    setOrderStatuses(prev => {
-      const merged = new Map(prev)
-      for (const { orderId, status } of updates) {
-        merged.set(orderId, status)
-      }
-      return merged
-    })
+    } catch (e) {
+      logger.warn('Failed to refresh order statuses:', e)
+    }
   }, [])
 
   // Load orders
@@ -72,37 +62,49 @@ function OrdersPage() {
     const loadOrders = async () => {
       try {
         setIsLoading(true)
-        const { orders: userOrders } = await storeOrderService.getBuyerOrders(user.identityId, { limit: 50 })
+        // One composite proof: orders + store joins + review-exists + status
+        // history. Falls back to batched `in` queries when the composite is
+        // unavailable (older networks).
+        // The by-id store join needs v2's refersTo; v1 takes the batched path.
+        const composite = storefrontIsV2() ? await storeStatsService.loadBuyerOrdersComposite(user.identityId, 50) : null
+        const userOrders = composite
+          ? composite.orders.map((doc) => storeOrderService.fromDocument(doc))
+          : (await storeOrderService.getBuyerOrders(user.identityId, { limit: 50 })).orders
         setOrders(userOrders)
 
         // Get buyer's encryption private key for decryption
         const buyerPrivKey = getEncryptionKeyBytes(user.identityId)
 
-        // Load latest status for each order, decrypt payloads, and check if reviewed
         const payloadMap = new Map<string, OrderPayload>()
-        const statusMap = new Map<string, OrderStatusUpdate>()
-        const storeMap = new Map<string, Store>()
-        const reviewedSet = new Set<string>()
+        let stores: Store[]
+        let reviewedOrderIds: string[]
+        let statusMap: Map<string, OrderStatusUpdate>
+
+        if (composite) {
+          stores = composite.stores.map((doc) => storeService.fromDocument(doc))
+          reviewedOrderIds = composite.reviews.map((doc) => storeReviewService.fromDocument(doc).orderId)
+          statusMap = orderStatusService.latestPerOrder(composite.statuses.map((doc) => orderStatusService.fromDocument(doc)))
+        } else {
+          const orderIds = userOrders.map((order) => order.id)
+          const [fetchedStores, reviews, statuses] = await Promise.all([
+            storeService.getMany([...new Set(userOrders.map((order) => order.storeId))]),
+            storeReviewService.getOrderReviews(orderIds),
+            orderStatusService.getLatestStatuses(orderIds),
+          ])
+          stores = fetchedStores
+          reviewedOrderIds = [...reviews.keys()]
+          statusMap = statuses
+        }
+        const storeMap = new Map(stores.map((store) => [store.id, store]))
+        // A join sub-result should cover every order; backfill any it missed
+        // so the store name and the review button never silently vanish.
+        const missingStoreIds = [...new Set(userOrders.map((order) => order.storeId))].filter((id) => !storeMap.has(id))
+        for (const store of await storeService.getMany(missingStoreIds)) storeMap.set(store.id, store)
+        const reviewedSet = new Set(reviewedOrderIds)
 
         await Promise.all(
           userOrders.map(async (order) => {
             try {
-              const [status, store, existingReview] = await Promise.all([
-                orderStatusService.getLatestStatus(order.id),
-                storeService.getById(order.storeId),
-                storeReviewService.getOrderReview(order.id)
-              ])
-
-              if (status) {
-                statusMap.set(order.id, status)
-              }
-              if (store) {
-                storeMap.set(order.storeId, store)
-              }
-              if (existingReview) {
-                reviewedSet.add(order.id)
-              }
-
               // Decrypt order payload if we have the private key
               if (buyerPrivKey) {
                 try {
@@ -135,7 +137,7 @@ function OrdersPage() {
                 }
               }
             } catch (e) {
-              // Ignore errors for status/store/review fetching
+              // Ignore decryption errors for one order
             }
           })
         )
@@ -243,6 +245,7 @@ function OrdersPage() {
           onClose={() => setReviewModalData(null)}
           order={reviewModalData.order}
           store={reviewModalData.store}
+          payload={orderPayloads.get(reviewModalData.order.id)}
           onSuccess={() => {
             setReviewedOrders((prev) => {
               const next = new Set(prev)

@@ -13,14 +13,16 @@ import { CheckIcon } from '@heroicons/react/24/solid'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { ImageGallery, QuantityControl, MobileCartFab } from '@/components/store'
+import { ImageGallery, QuantityControl, MobileCartFab, RatingStars, ItemReviewList } from '@/components/store'
 import { formatPrice } from '@/lib/utils/format'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { cartService } from '@/lib/services/cart-service'
-import type { Store, StoreItem } from '@/lib/types'
+import { storeStatsService } from '@/lib/services/store-stats-service'
+import { storefrontIsV2 } from '@/lib/constants'
+import type { Store, StoreItem, ItemRatingSummary } from '@/lib/types'
 
 function LoadingFallback() {
   return (
@@ -47,6 +49,7 @@ function ItemDetailContent() {
 
   const [item, setItem] = useState<StoreItem | null>(null)
   const [store, setStore] = useState<Store | null>(null)
+  const [rating, setRating] = useState<ItemRatingSummary | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [quantity, setQuantity] = useState(1)
   const [variantSelections, setVariantSelections] = useState<Record<string, string>>({})
@@ -90,8 +93,18 @@ function ItemDetailContent() {
         setItem(itemData)
 
         if (itemData) {
-          const storeData = await storeService.getById(itemData.storeId)
+          const [storeData, ratingData] = await Promise.all([
+            storeService.getById(itemData.storeId),
+            // Proved from the itemRating average tree (v2); one request.
+            storefrontIsV2()
+              ? storeStatsService.getItemRatingSummary(itemData.id).catch((error) => {
+                  logger.warn('Failed to load item rating:', error)
+                  return null
+                })
+              : Promise.resolve(null),
+          ])
           setStore(storeData)
+          setRating(ratingData)
 
           // Initialize variant selections with first available option
           if (itemData.variants?.axes) {
@@ -298,6 +311,15 @@ function ItemDetailContent() {
 
             <h1 className="text-2xl font-bold">{item.title}</h1>
 
+            {rating && rating.reviewCount > 0 && (
+              <div className="flex items-center gap-2">
+                <RatingStars rating={rating.averageRating} size="md" />
+                <span className="text-sm text-gray-500">
+                  {rating.averageRating.toFixed(1)} ({rating.reviewCount} {rating.reviewCount === 1 ? 'review' : 'reviews'})
+                </span>
+              </div>
+            )}
+
             <p className="text-2xl font-bold text-yappr-600">
               {formatPrice(currentPrice, item.currency)}
             </p>
@@ -417,6 +439,14 @@ function ItemDetailContent() {
                     {tag}
                   </span>
                 ))}
+              </div>
+            )}
+
+            {/* Reviews of this item */}
+            {rating && rating.reviewCount > 0 && (
+              <div className="pt-4 border-t border-gray-200 dark:border-gray-800">
+                <h3 className="font-medium mb-2">Reviews</h3>
+                <ItemReviewList itemId={item.id} />
               </div>
             )}
           </div>

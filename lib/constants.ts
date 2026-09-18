@@ -26,31 +26,120 @@ export const YAPP_TOKEN_COSTS = {
   likeReply: 1,
   repost: 1,
 } as const
+// Storefront v2 reviews are priced in YAPP too, charged from the social
+// contract's token through `tokenCost.create.contractId` (a cross-contract
+// token cost), so their payment agreement must name the social contract.
+export const STOREFRONT_YAPP_TOKEN_COSTS = {
+  storeReview: 3,
+  itemReview: 1,
+} as const
+// ---- tips (YAPP token transfers) — owned by the tips work, edit here only ----
+// The SYSTEM token-history contract. Platform writes one `transfer` document
+// into it for every transfer of a token whose config sets
+// `keepsTransferHistory` (YAPP does), owned by the sender and carrying the
+// exact amount, the recipient and the sender's `publicNote`. That document IS
+// the tip proof — see docs/NON_SOCIAL_CONTRACTS.md.
+//
+// System contracts share an id across chains, so this is hardcoded; overridable
+// all the same for a devnet genesised with a different registration.
+export const TOKEN_HISTORY_CONTRACT_ID =
+  process.env.NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID ?? '43gujrzZgXqcKBiScLa4T8XTDnRhenR9BLx8GWVHjPxF'
+/** Minimum YAPP per tip. Whole tokens (YAPP has decimals=0). */
+export const MIN_YAPP_TIP = BigInt(1)
+// ---- end tips block ----
+
 export const YAPPR_PROFILE_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID || 'FZSnZdKsLAuWxE7iZJq12eEz6xfGTgKPxK7uZJapTQxe' // Unified profile contract
 // Optional contracts use ?? (not ||) so a deployment can EXPLICITLY BLANK one
 // (e.g. .env.devnet sets them empty until devnet copies are provisioned): the
 // preload and every isConfigured() gate treat an empty id as "not available",
 // which fails closed instead of querying an id that does not exist on-chain.
 export const YAPPR_DM_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID ?? 'J7MP9YU1aEGNAe7bjB45XdrjDLBsevFLPK1t1YwFS4ck' // Testnet - DM contract v3 (simplified readReceipt)
+// ---- DM topology — owned by the DM v4 work, edit here only ----
+// `v3` is the testnet contract: no count flags, so the conversation list has to
+// download a 100-message page per conversation and count unread in JS. `v4`
+// (contracts/yappr-dm-contract.json, docs/NON_SOCIAL_CONTRACTS.md) adds countable +
+// rangeCountable to directMessage's conversation index, so unread is a count
+// query and the list fetches only each conversation's newest message.
+//
+// Unlike the storefront switch, this one changes READS ONLY — v4 writes are
+// byte-identical to v3 writes, so a mismatch is never rejected by consensus.
+// It is not harmless, though: point `v4` at a contract WITHOUT the count flags
+// (the id and this switch are separate env vars) and every count query fails,
+// so unread reads as 0 everywhere and the badge silently never appears. The
+// service logs a warning naming this cause on each failed count.
+export const DM_TOPOLOGY: 'v3' | 'v4' =
+  process.env.NEXT_PUBLIC_DM_TOPOLOGY === 'v4' ? 'v4' : 'v3'
+export const dmIsV4 = () => DM_TOPOLOGY === 'v4'
+// ---- end DM topology block ----
 // DPNS is a system contract, so its id is normally identical on every chain.
 // Overridable all the same: a freshly genesised devnet can be brought up with a
 // different DPNS registration, and `/devnet` must not preload a missing id.
 export const DPNS_CONTRACT_ID = process.env.NEXT_PUBLIC_DPNS_CONTRACT_ID || 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec'
-export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID ?? '2AUBj86MGTsXP7A3ekD62YoTeDwtJe5b9MxwkWwdg6Ba' // Testnet - Storefront contract v2 (with savedAddress)
+export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID ?? '2AUBj86MGTsXP7A3ekD62YoTeDwtJe5b9MxwkWwdg6Ba' // Testnet - legacy storefront (v1 topology, with savedAddress)
+// Storefront contract topology. `v1` is the testnet contract: plain indexes,
+// no reference integrity, no itemReview, no token cost — aggregates are
+// client-side scans, and nothing stops a stranger writing a status update or a
+// review on someone else's order. `v2` (contracts/yappr-storefront-contract.json,
+// docs/NON_SOCIAL_CONTRACTS.md) adds the proved rating trees, the refersTo chain with
+// WRITER GATES (only a store's owner lists under it, only an order's seller
+// posts its status, only its buyer reviews it) and YAPP-priced reviews; writes
+// differ and consensus rejects v2 writes on a v1 contract, so the switch must
+// match the deployed contract.
+export const STOREFRONT_TOPOLOGY: 'v1' | 'v2' =
+  process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY === 'v2' ? 'v2' : 'v1'
+export const storefrontIsV2 = () => STOREFRONT_TOPOLOGY === 'v2'
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID ?? '7UaqHGBJBbRLJ4fUWS45cnud8PPUugJWoGTt1SKwHJ2P' // Key exchange protocol contract
 export const YAPPR_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_VAULT_CONTRACT_ID ?? '7RQoHtVZaRZDSrR22s8KcbCJmwSwetJHBcFjx6FJdkJD' // Testnet - Vault contract (contract-bound encryption keys + encrypted storage)
 export const YAPPR_AUTH_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID ?? '64RTgHjGXhtiN9t5S4u6hVDps7oHuTBaaHrQEFYcxt9M'
 export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID ?? '9jfarXPwRoKXK4v2JBDaiFg3j78diQuLnHMyVqBZfZNc' // Testnet - Blog contract v4 (BlockNote 0.47 upgrade)
+// ---- blog v2 topology — owned by the blog work, edit here only ----
+// `v1` is the testnet contract: plain indexes, no reference integrity, no token
+// cost — comment counts and follower counts are client-side page scans, and a
+// comment can name any post owner it likes. `v2`
+// (contracts/yappr-blog-contract.json, docs/NON_SOCIAL_CONTRACTS.md) adds the refersTo
+// chain (a comment's `blogPostOwnerId` is bound by consensus to the post's own
+// `$ownerId`), the countable/ranked comment and follower trees, frozen
+// `blogId`/`publishedAt`, and YAPP-priced comments; writes carry the v2 fields
+// and consensus rejects them on a v1 contract, so the switch must match the
+// deployed contract.
+//
+// Read at CALL time (like `getContractTopology`, unlike `STOREFRONT_TOPOLOGY`):
+// `NEXT_PUBLIC_*` is inlined at build time either way, and a function keeps the
+// gate stubbable from unit tests.
+export const blogTopology = (): 'v1' | 'v2' =>
+  process.env.NEXT_PUBLIC_BLOG_TOPOLOGY === 'v2' ? 'v2' : 'v1'
+export const blogIsV2 = () => blogTopology() === 'v2'
+// Blog comments are priced in YAPP, charged from the SOCIAL contract's token
+// through `tokenCost.create.contractId` (a cross-contract token cost), so their
+// payment agreement must name that contract — see resolveTokenPayment.
+export const BLOG_YAPP_TOKEN_COSTS = {
+  blogComment: 1,
+} as const
+// ---- end blog v2 block ----
 export const BLOG_CHUNK_SIZE = 5120         // 5 KiB — platform max_field_value_size
 export const BLOG_MAX_CHUNKS = 4            // Number of data fields in contract (data0–data3)
 export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (leaves headroom within 4 × 5120 = 20KB)
 
+// ---- pollr block — owned by the pollr work, edit here only ----
 // Pollr — native polls shared with the standalone Pollr app.
 // Testnet pollr v3: count trees plus a per-mode ballot doctype, maker-owned
 // (Yappr only reads/writes documents).
 export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID ?? 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr8E'
+// Pollr contract topology. `v3` is the testnet contract: stored ballots whose
+// single-choice rule is a `unique` index, and no reference integrity — a vote
+// may name a poll that does not exist. `v4` (contracts/pollr-contract.json,
+// docs/NON_SOCIAL_CONTRACTS.md) makes both ballot doctypes indexOnly (the entries ARE the
+// ballot), binds `pollId` to a real poll with a `pollOwnerId` agreement against
+// the poll's own `$ownerId`, and adds the ranked winner query. The two BALLOT
+// shapes are incompatible — a v4 ballot carries no `$createdAt`, which v3
+// requires, and its `pollOwnerId` is consensus-bound where v3's is unchecked —
+// so the switch must match the deployed contract. (A v4 POLL is written exactly
+// like a v3 one.)
+export const POLLR_TOPOLOGY: 'v3' | 'v4' =
+  process.env.NEXT_PUBLIC_POLLR_TOPOLOGY === 'v4' ? 'v4' : 'v3'
+export const pollrIsV4 = () => POLLR_TOPOLOGY === 'v4'
 // Two superseded pollr contracts were abandoned in place (v1 stored options as
 // JSON in byte arrays; v2 had a single `vote` doctype whose uniqueness rule could
 // not enforce single-choice ballots). Their ids are recorded in git history and
@@ -60,6 +149,7 @@ export const POLLR_APP_URL = 'https://pastapastapasta.github.io/pollr'
 // deployment above). External poll permalinks only resolve when our polls live
 // in that same contract — a devnet clone's polls do not exist there.
 export const POLLR_APP_CONTRACT_ID = 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr8E'
+// ---- end pollr block ----
 
 /**
  * `VOTE` and `MULTI_VOTE` are the two ballot doctypes. A poll's immutable
@@ -244,6 +334,7 @@ export const STOREFRONT_DOCUMENT_TYPES = {
   STORE_ORDER: 'storeOrder',
   ORDER_STATUS_UPDATE: 'orderStatusUpdate',
   STORE_REVIEW: 'storeReview',
+  ITEM_REVIEW: 'itemReview',
   SAVED_ADDRESS: 'savedAddress'
 } as const
 

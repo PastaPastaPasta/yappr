@@ -9,32 +9,49 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { StarRatingInput } from '@/components/store/star-rating-input'
 import { storeReviewService } from '@/lib/services/store-review-service'
+import { itemReviewService } from '@/lib/services/item-review-service'
+import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
+import { STOREFRONT_YAPP_TOKEN_COSTS, storefrontIsV2 } from '@/lib/constants'
 import toast from 'react-hot-toast'
-import type { StoreOrder, Store } from '@/lib/types'
+import type { StoreOrder, Store, OrderPayload } from '@/lib/types'
 
 interface ReviewModalProps {
   isOpen: boolean
   onClose: () => void
   order: StoreOrder
   store: Store
+  /** The decrypted order, so each purchased item can be rated too. */
+  payload?: OrderPayload
   onSuccess: () => void
 }
 
 const TITLE_LIMIT = 100
 const CONTENT_LIMIT = 1000
+/** Indexed by the star rating, 0 meaning "not rated yet". */
+const RATING_LABELS = ['Tap a star to rate', 'Poor', 'Fair', 'Good', 'Very Good', 'Excellent']
 
 export function ReviewModal({
   isOpen,
   onClose,
   order,
   store,
+  payload,
   onSuccess
 }: ReviewModalProps) {
   const formId = useId()
   const [rating, setRating] = useState(0)
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
+  const [itemRatings, setItemRatings] = useState<Record<string, number>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // One entry per distinct purchased item (variants collapse onto the item).
+  // Item reviews only exist on the v2 contract.
+  const purchasedItems = storefrontIsV2()
+    ? Array.from(new Map((payload?.items ?? []).map((line) => [line.itemId, line.itemTitle])).entries())
+    : []
+  const ratedItems = Object.entries(itemRatings).filter(([, value]) => value > 0)
+  const yappCost = STOREFRONT_YAPP_TOKEN_COSTS.storeReview + ratedItems.length * STOREFRONT_YAPP_TOKEN_COSTS.itemReview
 
   const canSubmit = rating >= 1 && rating <= 5 && !isSubmitting
 
@@ -46,18 +63,48 @@ export function ReviewModal({
       await storeReviewService.createReview(order.buyerId, {
         storeId: store.id,
         orderId: order.id,
-        sellerId: store.ownerId,
+        // The order's own sellerId is what consensus agrees the review against.
+        sellerId: order.sellerId,
         rating,
         title: title.trim() || undefined,
         content: content.trim() || undefined
       })
 
-      toast.success('Review submitted!')
+      // Item reviews are separate documents (one transition each); a failure
+      // here leaves the store review standing, so report it without undoing.
+      const failedItems: string[] = []
+      for (let index = 0; index < ratedItems.length; index++) {
+        const [itemId, itemRating] = ratedItems[index]
+        try {
+          await itemReviewService.createItemReview(order.buyerId, {
+            storeId: store.id,
+            itemId,
+            orderId: order.id,
+            rating: itemRating
+          })
+        } catch (error) {
+          logger.error(`Failed to submit item review for ${itemId}:`, error)
+          if (handleInsufficientYapp(error, 'You ran out of YAPP before every item review was posted.')) {
+            // Nothing after this one was attempted either.
+            failedItems.push(...ratedItems.slice(index).map(([id]) => id))
+            break
+          }
+          failedItems.push(itemId)
+        }
+      }
+
+      if (failedItems.length === 0) {
+        toast.success('Review submitted!')
+      } else {
+        toast.error(`Store review submitted, but ${failedItems.length} item ${failedItems.length === 1 ? 'rating' : 'ratings'} failed. Item ratings cannot be retried.`)
+      }
       handleClose()
       onSuccess()
     } catch (error) {
       logger.error('Failed to submit review:', error)
-      toast.error('Failed to submit review. Please try again.')
+      if (!handleInsufficientYapp(error, `A review costs ${yappCost} YAPP.`)) {
+        toast.error('Failed to submit review. Please try again.')
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -67,6 +114,7 @@ export function ReviewModal({
     setRating(0)
     setTitle('')
     setContent('')
+    setItemRatings({})
     onClose()
   }
 
@@ -111,14 +159,7 @@ export function ReviewModal({
                           size="lg"
                           disabled={isSubmitting}
                         />
-                        <p className="text-sm text-gray-500">
-                          {rating === 0 && 'Tap a star to rate'}
-                          {rating === 1 && 'Poor'}
-                          {rating === 2 && 'Fair'}
-                          {rating === 3 && 'Good'}
-                          {rating === 4 && 'Very Good'}
-                          {rating === 5 && 'Excellent'}
-                        </p>
+                        <p className="text-sm text-gray-500">{RATING_LABELS[rating]}</p>
                       </div>
 
                       {/* Title Input */}
@@ -139,6 +180,29 @@ export function ReviewModal({
                           {title.length}/{TITLE_LIMIT}
                         </p>
                       </div>
+
+                      {/* Per-item ratings (optional; each publishes that this order contained the item) */}
+                      {purchasedItems.length > 0 && (
+                        <fieldset className="space-y-2">
+                          <legend className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Rate the items <span className="text-gray-400">(optional)</span>
+                          </legend>
+                          {purchasedItems.map(([itemId, itemTitle]) => (
+                            <div key={itemId} className="flex items-center justify-between gap-3">
+                              <span className="text-sm truncate">{itemTitle}</span>
+                              <StarRatingInput
+                                value={itemRatings[itemId] ?? 0}
+                                onChange={(value) => setItemRatings((prev) => ({ ...prev, [itemId]: value }))}
+                                size="sm"
+                                disabled={isSubmitting}
+                              />
+                            </div>
+                          ))}
+                          <p className="text-xs text-gray-400">
+                            Rating an item makes it public that this order included it. Item ratings are submitted once with the review.
+                          </p>
+                        </fieldset>
+                      )}
 
                       {/* Content Input */}
                       <div>
@@ -178,6 +242,8 @@ export function ReviewModal({
                             <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                             Submitting...
                           </span>
+                        ) : storefrontIsV2() ? (
+                          `Submit Review (${yappCost} YAPP)`
                         ) : (
                           'Submit Review'
                         )}

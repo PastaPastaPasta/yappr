@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowPathIcon, ChatBubbleOvalLeftIcon, CurrencyDollarIcon, EllipsisHorizontalIcon, LockClosedIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, LockClosedIcon, TrashIcon } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
@@ -24,14 +24,12 @@ import { useRecoveryModal } from '@/hooks/use-recovery-modal'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { usePostEngagement } from '@/hooks/use-post-engagement'
-import { tipService } from '@/lib/services/tip-service'
 import { shouldGateSensitive } from '@/lib/sensitive-content'
 import { findPollrPollLink, getEmbeddedPollId, stripPollrPollLink } from '@/lib/poll-embed'
 import { deletesAreTombstones, targetKindOf } from '@/lib/contract-topology'
 import { stopPropagation } from '@/lib/utils/events'
 import { IconButton } from '@/components/ui/icon-button'
 import { UserAvatar } from '@/components/ui/avatar-image'
-import { TooltipBadge } from '@/components/ui/tooltip-button'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { EmbeddedBlogPostCard, isEmbeddedBlogPostLike } from '@/components/blog/embedded-blog-post-card'
 import { PollCard } from '@/components/poll/poll-card'
@@ -196,7 +194,6 @@ export function PostCard({
   // For replies, access is checked against the root post owner, not the reply author.
   const { canReply: canReplyToPrivate, reason: cantReplyReason } = useCanReplyToPrivate(post, rootPostOwnerId)
 
-  const tipInfo = useMemo(() => tipService.parseTipContent(post.content), [post.content])
   const createdAtLabel = useRelativeTime(post.createdAt, { compact: true })
   // toISOString() throws on an invalid Date.
   const createdAtDate = new Date(post.createdAt)
@@ -389,15 +386,6 @@ export function PostCard({
           <SensitiveContentGate postId={post.id} active={gateSensitive}>
             {isTombstoned ? (
               <p className="mt-2 text-sm italic text-gray-500 dark:text-gray-400">{isReply ? 'This reply was deleted.' : 'This post was deleted.'}</p>
-            ) : tipInfo ? (
-              <div className="mt-2">
-                {/* TODO: drop the tooltip once the SDK exposes transition ids for on-chain verification. */}
-                <TooltipBadge label="Unverified - awaiting SDK support" className="gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-sm font-medium mb-2 cursor-help">
-                  <CurrencyDollarIcon className="h-4 w-4" />
-                  <span>Sent a tip of {tipService.formatDash(tipService.creditsToDash(tipInfo.amount))}</span>
-                </TooltipBadge>
-                {tipInfo.message && <PostContent content={tipInfo.message} className="mt-1" />}
-              </div>
             ) : isPrivatePost(post) ? (
               <PrivatePostContent
                 post={post}

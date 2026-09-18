@@ -1,5 +1,5 @@
 import { queryDocumentBundle } from './document-query-bundle'
-import { chunk } from './pagination-utils'
+import { chunk, documentCount, mapLimit } from './pagination-utils'
 import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service'
 import { stateTransitionService } from './state-transition-service'
@@ -22,7 +22,8 @@ import {
   getPublicKeyFromPrivate
 } from '../message-encryption'
 import { getPrivateKey } from '../secure-storage'
-import { YAPPR_DM_CONTRACT_ID } from '../constants'
+import { YAPPR_DM_CONTRACT_ID, dmIsV4 } from '../constants'
+import { useSettingsStore } from '../store'
 import { promptForAuthKey } from '../auth-utils'
 import bs58 from 'bs58'
 import { normalizeBytes } from '@/lib/bytes'
@@ -40,7 +41,21 @@ import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
  * - readReceipt no longer has lastReadAt field - use $updatedAt instead
  * - readReceipt has single index (userConversation) - query other party directly
  * - encryptedContent max reduced to 5000 bytes
+ *
+ * v4 changes (NEXT_PUBLIC_DM_TOPOLOGY=v4, docs/NON_SOCIAL_CONTRACTS.md) — READS ONLY, writes
+ * are identical:
+ * - directMessage's conversation index is countable + rangeCountable, so unread
+ *   is `count(conversationId == C, $createdAt > lastReadAt)` and the list fetches
+ *   only each conversation's newest message instead of a 100-message page
+ * - conversationInvite.recipientId refersTo an identity, so an invite to a
+ *   nonexistent identity is rejected at write time (nothing to do client-side;
+ *   the existing create-failure path reports it)
  */
+/** v3's unread scan needs a page of messages to filter; v4 needs one for the preview. */
+const V3_UNREAD_SCAN_PAGE = 100
+/** Parallel unread count queries. Matches the pool size used elsewhere for per-id reads. */
+const UNREAD_COUNT_CONCURRENCY = 6
+
 class DirectMessageService {
   private contractId = YAPPR_DM_CONTRACT_ID
   private publicKeyCache = new Map<string, Uint8Array>()
@@ -144,6 +159,214 @@ class DirectMessageService {
   }
 
   /**
+   * The user's conversations, keyed by conversation id, from their invites.
+   *
+   * Two queries: the inbox (invites naming me) and my own sent invites. A
+   * conversation can be represented by either or both.
+   */
+  private async loadConversationIndex(
+    userId: string
+  ): Promise<Map<string, { participantId: string; invites: Record<string, unknown>[] }>> {
+    const sdk = await getEvoSdk()
+
+    // 1. Get invites where I'm the recipient (inbox)
+    // Uses 'inbox' index: [recipientId, $createdAt]
+    const receivedInvitesResponse = await sdk.documents.query({
+      dataContractId: this.contractId,
+      documentTypeName: 'conversationInvite',
+      where: [['recipientId', '==', userId]],
+      orderBy: [['$createdAt', 'desc']],
+      limit: 100
+    })
+
+    // 2. Get invites I sent
+    // Uses 'senderAndRecipient' index: [$ownerId, recipientId]
+    const sentInvitesResponse = await sdk.documents.query({
+      dataContractId: this.contractId,
+      documentTypeName: 'conversationInvite',
+      where: [['$ownerId', '==', userId]],
+      orderBy: [['recipientId', 'asc']],
+      limit: 100
+    })
+
+    // 3. Build conversation map from invites. The other party is the invite's
+    // sender on an invite I received and its recipient on one I sent; the first
+    // invite seen for a conversation names the participant, later ones only add
+    // to its invite list.
+    const conversationMap = new Map<string, {
+      participantId: string
+      invites: Record<string, unknown>[]
+    }>()
+
+    const sources: Array<[Record<string, unknown>[], (invite: Record<string, unknown>) => string]> = [
+      [this.extractDocuments(receivedInvitesResponse), (invite) => invite.$ownerId as string],
+      [this.extractDocuments(sentInvitesResponse), (invite) => {
+        const inviteData = invite.data as Record<string, unknown> | undefined
+        return bs58.encode(this.extractByteArray(invite.recipientId || inviteData?.recipientId))
+      }],
+    ]
+
+    for (const [invites, participantOf] of sources) {
+      for (const invite of invites) {
+        const inviteData = invite.data as Record<string, unknown> | undefined
+        const convId = bs58.encode(this.extractByteArray(invite.conversationId || inviteData?.conversationId))
+        const existing = conversationMap.get(convId)
+        if (existing) {
+          existing.invites.push(invite)
+        } else {
+          conversationMap.set(convId, { participantId: participantOf(invite), invites: [invite] })
+        }
+      }
+    }
+
+    return conversationMap
+  }
+
+  /**
+   * Each conversation's newest messages plus the viewer's read receipts, in one
+   * bundle.
+   *
+   * `messageLimit` is the whole v3/v4 difference on the read path: v3 must pull
+   * a 100-message page because it counts unread in JS, while v4 needs only the
+   * newest message for the preview and gets unread from the count tree.
+   *
+   * `tolerateFailures` (default true) lets the conversation LIST keep every
+   * conversation whose page did load and show the failed one without a
+   * preview. The global badge passes false: a failed page comes back as an
+   * empty one, which reads as "no messages, 0 unread", and a total built on
+   * that would be wrong in the one direction a badge must never be.
+   */
+  private async loadMessagePagesAndReceipts(
+    userId: string,
+    conversationIds: string[],
+    messageLimit: number,
+    tolerateFailures = true
+  ): Promise<{ messagesByConversation: Map<string, Record<string, unknown>[]>; lastReadByConversation: Map<string, number> }> {
+    // Preserve each conversation's own page. A global IN page could let one busy
+    // conversation hide every other conversation.
+    const messageQueries = conversationIds.map(conversationId => ({
+      dataContractId: this.contractId, documentTypeName: 'directMessage',
+      where: [['conversationId', '==', bytesToBase64QueryOperand(bs58.decode(conversationId))], ['$createdAt', '>', 0]] as DocumentWhereClause[],
+      orderBy: [['$createdAt', 'desc']] as Array<['$createdAt', 'desc']>, limit: messageLimit,
+    }))
+    const receiptQueries = chunk(conversationIds, 100).map(ids => ({
+      dataContractId: this.contractId, documentTypeName: 'readReceipt',
+      where: [['$ownerId', '==', userId], ['conversationId', 'in', ids.map(id => bytesToBase64QueryOperand(bs58.decode(id)))]] as DocumentWhereClause[],
+      orderBy: [['conversationId', 'asc']] as Array<['conversationId', 'asc']>, limit: ids.length,
+    }))
+    const pages = await queryDocumentBundle([...messageQueries, ...receiptQueries], tolerateFailures)
+    return {
+      messagesByConversation: new Map(conversationIds.map((id, index) => [id, pages[index]])),
+      // v3 and v4 both use the receipt's $updatedAt as the last-read timestamp.
+      lastReadByConversation: new Map(pages.slice(conversationIds.length).flat().map(doc => {
+        const data = (doc.data || doc) as Record<string, unknown>
+        return [bs58.encode(this.extractByteArray(data.conversationId)), (doc.$updatedAt as number) || 0]
+      })),
+    }
+  }
+
+  /**
+   * v4 unread counts, one count-tree query per conversation (bounded
+   * concurrency), replacing v3's download-and-filter.
+   *
+   * The `conversation` index is [conversationId, $createdAt] with `countable` +
+   * `rangeCountable`, so `count(conversationId == C, $createdAt > lastReadAt)`
+   * is answered by the tree without reading a single ciphertext.
+   *
+   * ACCURACY NOTE. That index carries no `$ownerId`, so the count cannot exclude
+   * the viewer's OWN messages the way v3's JS filter did. Two things keep it
+   * honest: a conversation whose newest message is the viewer's own is reported
+   * as 0 unread (they are the last speaker, so there is nothing newer to read)
+   * and that query is skipped entirely; otherwise the count can exceed the true
+   * unread by the number of messages the viewer sent since their last read
+   * receipt — which the app writes on opening a conversation, i.e. immediately
+   * before any message they send from it. Adding an `$ownerId` axis would mean a
+   * second index on every message write, and DMs are deliberately cheap.
+   *
+   * A grouped `conversationId in [...]` count would answer all conversations in
+   * one call, but only WITHOUT a range clause; adding `$createdAt >` makes
+   * Platform return an empty map rather than an error (verified in
+   * scripts/verify-dm.mjs case d6b), so per-conversation counts it is.
+   */
+  private async countUnreadByConversation(
+    userId: string,
+    conversationIds: string[],
+    pages: { messagesByConversation: Map<string, Record<string, unknown>[]>; lastReadByConversation: Map<string, number> }
+  ): Promise<Map<string, number | null>> {
+    const sdk = await getEvoSdk()
+    const counts = await mapLimit(conversationIds, UNREAD_COUNT_CONCURRENCY, async (conversationId) => {
+      const latest = pages.messagesByConversation.get(conversationId)?.[0]
+      if (!latest || latest.$ownerId === userId) return 0
+      try {
+        return await documentCount(sdk, {
+          dataContractId: this.contractId,
+          documentTypeName: 'directMessage',
+          where: [
+            ['conversationId', '==', bytesToBase64QueryOperand(bs58.decode(conversationId))],
+            ['$createdAt', '>', pages.lastReadByConversation.get(conversationId) ?? 0],
+          ],
+        })
+      } catch (error) {
+        // `null` is "could not tell", not "nothing unread". The list renders it
+        // as 0, but the global badge refuses to publish a total built on it —
+        // a wrong 0 there would look exactly like "all caught up".
+        //
+        // NOTE: this is also what a MISCONFIGURED deployment looks like. Point
+        // NEXT_PUBLIC_DM_TOPOLOGY=v4 at a contract without the count flags (the
+        // id and the switch are separate env vars) and every count fails here.
+        // Debug level per conversation: this runs on the 30 s badge poll, and
+        // the caller reports the misconfiguration once per pass instead.
+        logger.debug(`Unread count failed for conversation ${conversationId}:`, error)
+        return null
+      }
+    })
+    return new Map(conversationIds.map((conversationId, index) => [conversationId, counts[index]]))
+  }
+
+  /**
+   * Total unread messages across every conversation, for the Messages nav badge.
+   * `null` means "could not tell" — the caller should leave the badge as it is
+   * rather than publishing a 0 that reads as "all caught up".
+   *
+   * v4 only. On v3 this would mean downloading a 100-message page per
+   * conversation on every poll, so it reports 0 and the badge stays hidden.
+   * Never decrypts and never resolves participant identities — it runs on the
+   * background notification cadence, where prompting for a private key or
+   * fetching profiles would be wrong.
+   */
+  async getUnreadTotal(userId: string): Promise<number | null> {
+    // Everything is inside the try: the sidebar runs this alongside the
+    // notification fetch in one Promise.all, so a rejection here would throw
+    // away a notification page that had already loaded.
+    try {
+      if (!dmIsV4()) return 0
+      // With read receipts switched off the app never writes a readReceipt, so
+      // every conversation's lastReadAt is 0 and the count is its ENTIRE
+      // history — a badge that is permanently non-zero and that no amount of
+      // reading can clear. v3 had no global badge at all; keep it hidden
+      // rather than wrong. (The per-conversation numbers on /messages are
+      // unaffected and match v3's own behaviour with receipts disabled.)
+      if (!useSettingsStore.getState().sendReadReceipts) return 0
+      const conversationIds = Array.from((await this.loadConversationIndex(userId)).keys())
+      if (conversationIds.length === 0) return 0
+      // No tolerated failures here (see loadMessagePagesAndReceipts): a
+      // conversation whose page could not be read must fail the whole total.
+      const pages = await this.loadMessagePagesAndReceipts(userId, conversationIds, 1, false)
+      const unread = await this.countUnreadByConversation(userId, conversationIds, pages)
+      const counts = Array.from(unread.values())
+      // A partial total is not a total.
+      if (counts.some(count => count === null)) {
+        logger.warn('Unread total unavailable: a per-conversation count failed. If every count fails, NEXT_PUBLIC_DM_TOPOLOGY=v4 is pointed at a contract without the countable flags.')
+        return null
+      }
+      return counts.reduce((total: number, count) => total + (count ?? 0), 0)
+    } catch (error) {
+      logger.error('Error getting unread total:', error)
+      return null
+    }
+  }
+
+  /**
    * Get all conversations for a user
    */
   async getConversations(
@@ -152,93 +375,15 @@ class DirectMessageService {
   ): Promise<Conversation[]> {
     try {
       const includeParticipantInfo = options?.includeParticipantInfo ?? true
-      const sdk = await getEvoSdk()
+      const conversationMap = await this.loadConversationIndex(userId)
 
-      // 1. Get invites where I'm the recipient (inbox)
-      // Uses 'inbox' index: [recipientId, $createdAt]
-      const receivedInvitesResponse = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'conversationInvite',
-        where: [['recipientId', '==', userId]],
-        orderBy: [['$createdAt', 'desc']],
-        limit: 100
-      })
-
-      // 2. Get invites I sent
-      // Uses 'senderAndRecipient' index: [$ownerId, recipientId]
-      const sentInvitesResponse = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'conversationInvite',
-        where: [['$ownerId', '==', userId]],
-        orderBy: [['recipientId', 'asc']],
-        limit: 100
-      })
-
-      const receivedInvites = this.extractDocuments(receivedInvitesResponse)
-      const sentInvites = this.extractDocuments(sentInvitesResponse)
-
-      // 3. Build conversation map from invites
-      const conversationMap = new Map<string, {
-        participantId: string
-        invites: Record<string, unknown>[]
-      }>()
-
-      // Process received invites (they sent to me)
-      for (const invite of receivedInvites) {
-        const inviteData = invite.data as Record<string, unknown> | undefined
-        const convIdBytes = this.extractByteArray(invite.conversationId || inviteData?.conversationId)
-        const convId = bs58.encode(convIdBytes)
-        const senderId = invite.$ownerId
-
-        const existingConv = conversationMap.get(convId)
-        if (!existingConv) {
-          conversationMap.set(convId, {
-            participantId: senderId as string,
-            invites: [invite]
-          })
-        } else {
-          existingConv.invites.push(invite)
-        }
-      }
-
-      // Process sent invites (I sent to them)
-      for (const invite of sentInvites) {
-        const inviteData = invite.data as Record<string, unknown> | undefined
-        const convIdBytes = this.extractByteArray(invite.conversationId || inviteData?.conversationId)
-        const convId = bs58.encode(convIdBytes)
-        const recipientIdBytes = this.extractByteArray(invite.recipientId || inviteData?.recipientId)
-        const recipientId = bs58.encode(recipientIdBytes)
-
-        const existingSentConv = conversationMap.get(convId)
-        if (!existingSentConv) {
-          conversationMap.set(convId, {
-            participantId: recipientId,
-            invites: [invite]
-          })
-        } else {
-          existingSentConv.invites.push(invite)
-        }
-      }
-
-      // Preserve each conversation's own latest 100-message page. A global IN page
-      // could let one busy conversation hide every other conversation.
       const conversationIds = Array.from(conversationMap.keys())
-      const messageQueries = conversationIds.map(conversationId => ({
-        dataContractId: this.contractId, documentTypeName: 'directMessage',
-        where: [['conversationId', '==', bytesToBase64QueryOperand(bs58.decode(conversationId))], ['$createdAt', '>', 0]] as DocumentWhereClause[],
-        orderBy: [['$createdAt', 'desc']] as Array<['$createdAt', 'desc']>, limit: 100,
-      }))
-      const receiptQueries = chunk(conversationIds, 100).map(ids => ({
-        dataContractId: this.contractId, documentTypeName: 'readReceipt',
-        where: [['$ownerId', '==', userId], ['conversationId', 'in', ids.map(id => bytesToBase64QueryOperand(bs58.decode(id)))]] as DocumentWhereClause[],
-        orderBy: [['conversationId', 'asc']] as Array<['conversationId', 'asc']>, limit: ids.length,
-      }))
-      const pages = await queryDocumentBundle([...messageQueries, ...receiptQueries], true)
-      const messagesByConversation = new Map(conversationIds.map((id, index) => [id, pages[index]]))
-      const receipts = new Map(pages.slice(conversationIds.length).flat().map(doc => {
-        const data = (doc.data || doc) as Record<string, unknown>
-        return [bs58.encode(this.extractByteArray(data.conversationId)), doc]
-      }))
+      const pages = await this.loadMessagePagesAndReceipts(userId, conversationIds, dmIsV4() ? 1 : V3_UNREAD_SCAN_PAGE)
+      const { messagesByConversation, lastReadByConversation } = pages
+      // v4 asks the count tree; v3 counts the page it just downloaded.
+      const unreadByConversation = dmIsV4()
+        ? await this.countUnreadByConversation(userId, conversationIds, pages)
+        : null
       const participantIds = Array.from(new Set(Array.from(conversationMap.values()).map(data => data.participantId)))
       const { usernames, profiles } = includeParticipantInfo
         ? await loadIdentityBatch(participantIds)
@@ -250,18 +395,14 @@ class DirectMessageService {
 
       for (const [convId, data] of Array.from(conversationMap.entries())) {
         try {
-          // Get messages (fetch once, use for both latest and unread count)
           const allMessages = messagesByConversation.get(convId) ?? []
           const latestDoc = allMessages[0] // The preview page is newest-first
-
-          // Get my read receipt
-          const myReceipt = receipts.get(convId)
-
-          // Count unread messages (v3: use $updatedAt as last-read timestamp)
-          const lastReadAt = (myReceipt?.$updatedAt as number) || 0
-          const unreadCount = allMessages.filter(
-            m => m.$ownerId !== userId && (m.$createdAt as number) > lastReadAt
-          ).length
+          const lastReadAt = lastReadByConversation.get(convId) ?? 0
+          const unreadCount = unreadByConversation
+            ? unreadByConversation.get(convId) ?? 0
+            : allMessages.filter(
+                m => m.$ownerId !== userId && (m.$createdAt as number) > lastReadAt
+              ).length
 
           // Get participant username and display name
           const participantUsername = usernames.get(data.participantId) ?? undefined

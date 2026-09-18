@@ -4,15 +4,43 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { blogService } from '@/lib/services'
+import { blogStatsService } from '@/lib/services/blog-stats-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import type { Blog } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { useAuth } from '@/contexts/auth-context'
 import { useBlogFollow } from '@/hooks/use-blog-follow'
 import { blogFollowStatusCache } from '@/lib/caches/user-status-cache'
+import { blogIsV2 } from '@/lib/constants'
 
 interface BlogWithUsername extends Blog {
   username: string | null
+}
+
+/**
+ * Discovery orderings. `newest` pages every blog and sorts client-side (the
+ * only shape v1 can serve); the other two are v2 proved rankings, one request
+ * each, hydrated with a single by-id fetch.
+ */
+const SORTS = [
+  { key: 'newest', label: 'Newest' },
+  { key: 'followed', label: 'Most followed' },
+  { key: 'trending', label: 'Trending today' },
+] as const
+
+type BlogSort = (typeof SORTS)[number]['key']
+
+/** The blogs a ranked page names, in the proved order; absent ids are dropped. */
+async function rankedBlogs(sort: Exclude<BlogSort, 'newest'>): Promise<Blog[]> {
+  const ranked = sort === 'followed'
+    ? await blogStatsService.mostFollowedBlogs(100)
+    : await blogStatsService.trendingBlogs(100)
+  if (ranked.length === 0) return []
+  const byId = new Map((await blogService.getMany(ranked.map((entry) => entry.id))).map((blog) => [blog.id, blog]))
+  return ranked.flatMap((entry) => {
+    const blog = byId.get(entry.id)
+    return blog ? [blog] : []
+  })
 }
 
 export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkReady?: boolean; showHeader?: boolean }) {
@@ -20,6 +48,7 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<BlogSort>('newest')
   const { user } = useAuth()
 
   useEffect(() => {
@@ -31,7 +60,7 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
       setLoading(true)
       setError(null)
       try {
-        const allBlogs = await blogService.getAllBlogs(100)
+        const allBlogs = sort === 'newest' ? await blogService.getAllBlogs(100) : await rankedBlogs(sort)
         if (cancelled) return
 
         const ownerIds = Array.from(new Set(allBlogs.map((b) => b.ownerId)))
@@ -75,7 +104,7 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
     return () => {
       cancelled = true
     }
-  }, [sdkReady, user?.identityId])
+  }, [sdkReady, sort, user?.identityId])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return blogs
@@ -109,6 +138,27 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
         />
       </div>
 
+      {blogIsV2() && (
+        <div className="flex items-center gap-1" role="tablist" aria-label="Sort blogs">
+          {SORTS.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              role="tab"
+              aria-selected={sort === option.key}
+              onClick={() => setSort(option.key)}
+              className={`rounded-full px-3 py-1 text-sm font-medium transition ${
+                sort === option.key
+                  ? 'bg-yappr-500 text-white'
+                  : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <div className="space-y-3">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -127,7 +177,11 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
         <p className="text-center text-sm text-gray-500">{error}</p>
       ) : filtered.length === 0 ? (
         <p className="text-center text-sm text-gray-500">
-          {search.trim() ? 'No blogs match your search.' : 'No blogs have been created yet.'}
+          {search.trim()
+            ? 'No blogs match your search.'
+            : sort === 'trending'
+              ? 'No blog gained a follower today.'
+              : 'No blogs have been created yet.'}
         </p>
       ) : (
         <div className="space-y-2">

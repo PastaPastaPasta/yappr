@@ -46,6 +46,17 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   protected extractContentFields(doc: BlogPost): Record<string, unknown> {
     const fields = super.extractContentFields(doc)
     delete fields.content
+    // `update()` merges this back into a full replace, and the transform hands
+    // identifiers back as base58 — restore the raw-byte form the create path
+    // writes so an edit keeps blogId byte-identical. It has to be: v2 freezes
+    // blogId (`immutable`), so a replace carrying a re-encoded value would be
+    // rejected outright (40128) rather than silently rewriting the reference.
+    // An empty string is how the transform reports a field it could not decode;
+    // drop it rather than throwing, so the required-field error describes the
+    // real problem.
+    if (typeof fields.blogId === 'string') {
+      fields.blogId = fields.blogId ? requireDocumentIdentifierBytes(fields.blogId, 'blogId') : undefined
+    }
     // Re-compress and chunk content into data0–data3 (only set chunks that exist)
     if (doc.content && Array.isArray(doc.content) && doc.content.length > 0) {
       const compressed = compressContent(doc.content)
