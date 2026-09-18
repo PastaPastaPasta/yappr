@@ -17,7 +17,13 @@
  *   duplicating; all generated text is drawn from a seeded PRNG keyed the same
  *   way, so content never drifts between runs. `.seed-storefront.local.json`
  *   records what landed (skip on resume) but is only a cache — deleting it
- *   costs one existence read per document, never a duplicate.
+ *   costs one existence read per document, never a duplicate; a cache written
+ *   for a different contract is ignored rather than obeyed.
+ *
+ *   Re-running reconciles CONTENT only where Platform allows it: `store` and
+ *   `shippingZone` are replaced when the table has changed. Orders, status
+ *   updates and reviews are `documentsMutable: false` — once written, editing
+ *   their table below only affects a fresh contract.
  *
  * Ordering
  *   Writes are strictly sequential per identity (identity contract nonce) and
@@ -87,6 +93,14 @@ function trackingFor(key, carrier) {
   return `JJD${digits(15)}`;
 }
 
+/**
+ * The app matches a zone by testing `countryPattern` as `^(pattern)$` against
+ * the ISO-3166 alpha-2 country on the address (shipping-zone-service.ts), so a
+ * zone must spell its countries out; `'EU'` and `'*'` match nobody, and a store
+ * whose zones all miss BLOCKS checkout (app/checkout/page.tsx).
+ */
+const EU_COUNTRIES = 'AT|BE|BG|HR|CY|CZ|DK|EE|FI|FR|DE|GR|HU|IE|IT|LV|LT|LU|MT|NL|PL|PT|RO|SK|SI|ES|SE';
+
 // ---- Catalog ----------------------------------------------------------------
 //
 // Six shops on six identities (`store` is unique per $ownerId, so one each).
@@ -111,7 +125,8 @@ const STORES = [
     zones: [
       { name: 'US Domestic', countryPattern: 'US', rateType: 'flat', flatRate: 600, priority: 1 },
       { name: 'Canada & Mexico', countryPattern: 'CA|MX', rateType: 'flat', flatRate: 1600, priority: 2 },
-      { name: 'Rest of World', countryPattern: '*', rateType: 'flat', flatRate: 3200, priority: 3 },
+      // No countryPattern: the app's matchesCountryPattern treats an absent pattern as "matches all".
+      { name: 'Rest of World', rateType: 'flat', flatRate: 3200, priority: 3 },
     ],
     items: [
       { key: 'ethiopia', title: 'Ethiopia Guji Natural — 12 oz', price: 1900, stock: 42, weight: 340, section: 'Coffee', category: 'Single Origin', subcategory: 'Africa', tags: ['ethiopia', 'natural', 'blueberry', 'filter'], description: 'Guji zone, 2,050 m, natural process. Blueberry jam, cane sugar, a long floral finish. Brews best as filter at 1:16; it will take an espresso dose if you like it loud.' },
@@ -142,7 +157,8 @@ const STORES = [
     ],
     zones: [
       { name: 'Benelux', countryPattern: 'BE|NL|LU', rateType: 'flat', flatRate: 450, priority: 1 },
-      { name: 'European Union', countryPattern: 'EU', rateType: 'flat', flatRate: 1200, priority: 2 },
+      { name: 'European Union', countryPattern: EU_COUNTRIES, rateType: 'flat', flatRate: 1200, priority: 2 },
+      { name: 'Rest of World', rateType: 'flat', flatRate: 2600, priority: 3 },
     ],
     items: [
       { key: 'trench', title: '1970s Aquascutum Trench Coat, Club Check Lining', price: 28500, stock: 1, weight: 1800, section: 'Outerwear', category: 'Coats', tags: ['trench', '1970s', 'aquascutum', 'one-of-one'], description: 'Cotton gabardine, storm flap, original horn buttons, club check lining intact. Chest 54 cm flat, length 112 cm. One small ink mark inside the right cuff, photographed. Wears like a 40-42.' },
@@ -170,7 +186,6 @@ const STORES = [
       { name: 'Japan Domestic', countryPattern: 'JP', rateType: 'flat', flatRate: 800, priority: 1 },
       {
         name: 'Worldwide Air',
-        countryPattern: '*',
         rateType: 'weight_tiered',
         priority: 2,
         tiers: { weightRate: 9, weightUnit: 'g', subtotalMultipliers: [{ upTo: 15000, percent: 100 }, { upTo: null, percent: 50 }] },
@@ -202,7 +217,7 @@ const STORES = [
     ],
     zones: [
       { name: 'US Domestic', countryPattern: 'US', rateType: 'flat', flatRate: 900, priority: 1 },
-      { name: 'International', countryPattern: '*', rateType: 'flat', flatRate: 4500, priority: 2 },
+      { name: 'International', rateType: 'flat', flatRate: 4500, priority: 2 },
     ],
     items: [
       { key: 'bifold', title: 'Four-Pocket Bifold, Horween Dublin', price: 12500, stock: 12, weight: 90, section: 'Small Goods', category: 'Wallets', tags: ['wallet', 'bifold', 'horween', 'hand-stitched'], description: 'Horween Dublin, edges burnished to glass, saddle-stitched in brown waxed linen. Four card pockets, one bill sleeve, no liner to bulk it out. Breaks in flat in about a month.' },
@@ -229,7 +244,8 @@ const STORES = [
     ],
     zones: [
       { name: 'Portugal', countryPattern: 'PT', rateType: 'flat', flatRate: 350, priority: 1 },
-      { name: 'European Union', countryPattern: 'EU', rateType: 'flat', flatRate: 900, priority: 2 },
+      { name: 'European Union', countryPattern: EU_COUNTRIES, rateType: 'flat', flatRate: 900, priority: 2 },
+      { name: 'Rest of World', rateType: 'flat', flatRate: 2200, priority: 3 },
     ],
     items: [
       { key: 'olivesoap', title: 'Olive & Laurel Soap Bar, 120 g', price: 750, stock: 88, weight: 120, section: 'Bath', category: 'Soap', tags: ['soap', 'olive', 'laurel', 'cold-process'], description: 'Cold-process, 80 percent olive oil, 20 percent laurel berry, cured eight weeks. Almost no lather and an unreasonably good result. Unscented beyond the laurel itself.' },
@@ -259,7 +275,7 @@ const STORES = [
     ],
     zones: [
       { name: 'Brazil', countryPattern: 'BR', rateType: 'flat', flatRate: 2500, priority: 1 },
-      { name: 'Worldwide Registered', countryPattern: '*', rateType: 'flat', flatRate: 5500, priority: 2 },
+      { name: 'Worldwide Registered', rateType: 'flat', flatRate: 5500, priority: 2 },
     ],
     items: [
       { key: 'om1', title: 'Olympus OM-1n, Serviced, 50 mm f/1.8', price: 34500, stock: 2, weight: 700, section: 'Cameras', category: '35mm SLR', tags: ['olympus', 'om-1', 'slr', 'serviced'], description: 'Serviced in March: new light seals, prism cleaned, shutter within 1/3 stop at every speed. Meter reads accurately on a 1.35 V adapter (included). Zuiko 50 mm f/1.8 has clean glass, no fungus, no haze.' },
@@ -456,10 +472,19 @@ const orderNonce = (key) => digest(`nonce/${key}`).slice(0, NONCE_SIZE);
 
 // ---- Progress file ----------------------------------------------------------
 
-function loadProgress(file) {
+/**
+ * Document ids mix in the contract id and the owner, so a cache written for a
+ * different contract names documents that do not exist here — honouring it
+ * would silently skip the whole run. A mismatch starts from empty.
+ */
+function loadProgress(file, contractId) {
   if (!existsSync(file)) return { docs: {} };
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8'));
+    if (parsed.contractId && parsed.contractId !== contractId) {
+      console.log(`(progress file ${file} was written for ${parsed.contractId}; ignoring it)`);
+      return { docs: {} };
+    }
     return { docs: parsed.docs ?? {} };
   } catch {
     return { docs: {} };
@@ -517,10 +542,44 @@ const zoneData = (zone, store, storeIdBytes) => ({
   rateType: zone.rateType,
   ...(zone.flatRate !== undefined ? { flatRate: zone.flatRate } : {}),
   ...(zone.tiers ? { tiers: JSON.stringify(zone.tiers) } : {}),
-  countryPattern: zone.countryPattern,
+  ...(zone.countryPattern ? { countryPattern: zone.countryPattern } : {}),
   currency: store.currency,
   priority: zone.priority,
 });
+
+/**
+ * The app's shipping maths, ported from lib/services/shipping-zone-service.ts
+ * and lib/utils/weight.ts so a seeded order's `shippingCost` is the number the
+ * store page quotes for the same address and basket.
+ */
+const WEIGHT_UNITS = { g: 1, oz: 28.3495, lb: 453.592, kg: 1000 };
+
+/** Lowest-priority zone whose country pattern covers the address; absent pattern matches all. */
+function findMatchingZone(zones, country) {
+  const matches = (pattern) => {
+    if (!pattern) return true;
+    try {
+      return new RegExp(`^(${pattern})$`, 'i').test(country);
+    } catch {
+      return false;
+    }
+  };
+  return [...zones].sort((a, b) => a.priority - b.priority).find((zone) => matches(zone.countryPattern)) ?? null;
+}
+
+/** `(flatRate + weight x weightRate) x multiplier` for the combined config, else the flat rate. */
+function zoneRate(zone, { totalWeight, subtotal }) {
+  const config = zone.tiers && !Array.isArray(zone.tiers) ? zone.tiers : null;
+  if (config) {
+    const gramsPerUnit = WEIGHT_UNITS[(config.weightUnit ?? 'lb').toLowerCase()] ?? 1;
+    const weightCharge = config.weightRate > 0 ? Math.round((totalWeight / gramsPerUnit) * config.weightRate) : 0;
+    const tier = [...(config.subtotalMultipliers ?? [])]
+      .sort((a, b) => (a.upTo === null ? 1 : b.upTo === null ? -1 : a.upTo - b.upTo))
+      .find((t) => t.upTo === null || subtotal <= t.upTo);
+    return Math.round(((zone.flatRate ?? 0) + weightCharge) * ((tier?.percent ?? 100) / 100));
+  }
+  return zone.rateType === 'flat' ? zone.flatRate ?? 0 : 0;
+}
 
 /** The OrderPayload the app's checkout builds, before encryption. */
 function orderPayload(order, store, buyer, paymentUri, itemIdFor) {
@@ -536,9 +595,11 @@ function orderPayload(order, store, buyer, paymentUri, itemIdFor) {
     };
   });
   const subtotal = items.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
-  // The cheapest zone whose country pattern covers the buyer, else the catch-all.
-  const zone = store.zones.find((candidate) => candidate.countryPattern.split('|').includes(buyer.country)) ?? store.zones[store.zones.length - 1];
-  const shippingCost = zone.flatRate ?? Math.round(subtotal * 0.06);
+  const totalWeight = order.lines.reduce((sum, [itemKey, quantity]) =>
+    sum + (store.items.find((candidate) => candidate.key === itemKey).weight ?? 0) * quantity, 0);
+  const zone = findMatchingZone(store.zones, buyer.country);
+  if (!zone) throw new Error(`order ${order.key}: ${store.name} has no shipping zone covering ${buyer.country}`);
+  const shippingCost = zoneRate(zone, { totalWeight, subtotal });
   return {
     items,
     shippingAddress: { name: buyer.name, street: buyer.street, city: buyer.city, ...(buyer.state ? { state: buyer.state } : {}), postalCode: buyer.postalCode, country: buyer.country },
@@ -611,6 +672,7 @@ function parseArgs(argv) {
     }
   }
   if (!args.contract) throw new Error('Pass --contract <id> or set NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID');
+  if (!Number.isInteger(args.concurrency) || args.concurrency < 1) throw new Error('--concurrency must be a positive integer');
   return args;
 }
 
@@ -667,7 +729,7 @@ async function main() {
   const { protocolVersion } = await handle.connect();
   console.log(`connected (PV${protocolVersion}); storefront v2 ${args.contract}; YAPP from ${socialId}`);
   const battery = createBattery({ handle, contractId: args.contract, socialId });
-  const { sdk, check, personaActor, attemptWrite, attemptReplace, fetchDocument, paymentInfo, ensureYapp, queryDocs, ranked, averageBy, countBy, groupedCount, b58, report } = battery;
+  const { sdk, check, personaActor, attemptWrite, attemptReplace, attemptDelete, fetchDocument, paymentInfo, ensureYapp, queryDocs, ranked, averageBy, countBy, groupedCount, b58, report } = battery;
   const tokenId = await battery.readback(() => sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
 
   const ledger = loadLedger();
@@ -681,32 +743,63 @@ async function main() {
   };
   const payoutAddress = (idx) => {
     const key = ledgerEntry(ledger, idx)?.identityKeys?.find((k) => k.purpose === 'transfer');
+    if (!key) throw new Error(`persona ${idx} has no transfer key in the ledger`);
     return addressFor(key.publicKeyHex);
   };
   console.log(`actors: ${personaIndexes.map((idx) => actors.get(idx).label).join(', ')}`);
 
-  const progress = loadProgress(args.progress);
+  const progress = loadProgress(args.progress, args.contract);
   const written = { store: 0, storeItem: 0, shippingZone: 0, storeOrder: 0, orderStatusUpdate: 0, storeReview: 0, itemReview: 0 };
   const reused = { ...written };
   const failed = [];
+  let pruned = 0;
   const flush = () => saveProgress(args.progress, progress, args.contract);
   const recordDoc = (key, docType, id) => { progress.docs[key] = { type: docType, id }; flush(); };
   /** One dependency phase: each actor's tasks in order, actors in parallel. */
   const runPhase = (tasks) => runByActor(groupBy(tasks), args.concurrency);
 
   /**
+   * True when the on-chain document's scalar fields no longer match the table:
+   * a changed value, or a field the table has since DROPPED (removing
+   * `countryPattern` is exactly how a zone becomes a catch-all). Byte arrays
+   * are index keys and never move, so they are not compared.
+   */
+  const drifted = (data, current) => {
+    const scalars = (o) => Object.entries(o).filter(([f, v]) => !f.startsWith('$') && typeof v !== 'object');
+    // Platform hands integers back as BigInt; compare by value, or every
+    // numeric field looks changed and every re-run rewrites the document.
+    const same = (a, b) =>
+      typeof a === 'bigint' || typeof b === 'bigint' ? BigInt(a ?? 0) === BigInt(b ?? 0) : a === b;
+    return scalars(data).some(([field, value]) => !same(current[field], value))
+      || scalars(current).some(([field]) => !(field in data));
+  };
+
+  /**
    * Creates one document with a key-derived id, so a retry of a broadcast that
    * DID land converges on the same document instead of duplicating it.
    * Returns the document id either way.
+   *
+   * `reconcile` additionally REPLACES an existing document whose fields have
+   * drifted from the table. Only pass it for a mutable doctype: `storeOrder`,
+   * `orderStatusUpdate`, `storeReview` and `itemReview` are
+   * `documentsMutable: false`, so their content is fixed at creation and a
+   * corrected table can only reach the chain on a fresh contract.
    */
-  async function createDoc(actor, docType, key, data, tokenCost) {
+  async function createDoc(actor, docType, key, data, { tokenCost, reconcile } = {}) {
     const recorded = progress.docs[key];
-    if (recorded?.id) { reused[docType] += 1; return recorded.id; }
+    if (recorded?.id && !reconcile) { reused[docType] += 1; return recorded.id; }
     const { document, id } = buildDocument({
       contractId: args.contract, docType, ownerId: actor.ownerId, data, entropy: entropyFor(key),
     });
-    if (await fetchDocument(docType, id)) {
+    const current = await fetchDocument(docType, id);
+    if (current) {
       recordDoc(key, docType, id);
+      const currentData = current.toObject ? current.toObject() : current;
+      if (reconcile && drifted(data, currentData)) {
+        const outcome = await attemptReplace(actor, docType, id, data, currentData.$revision ?? 1);
+        if (outcome.ok) { written[docType] += 1; console.log(`  updated ${docType} ${key}`); return id; }
+        failed.push({ key, docType, error: (outcome.error ?? '').slice(0, 200) });
+      }
       reused[docType] += 1;
       return id;
     }
@@ -772,7 +865,22 @@ async function main() {
           if (id) itemIds.set(`${store.key}/${item.key}`, id);
         }
         for (const zone of store.zones) {
-          await createDoc(actor, 'shippingZone', `zone/${store.key}/${zone.name}`, zoneData(zone, store, storeIdBytes));
+          await createDoc(actor, 'shippingZone', `zone/${store.key}/${zone.name}`, zoneData(zone, store, storeIdBytes), { reconcile: true });
+        }
+        // The registration battery leaves `zone<runid>` fixtures on the stores it
+        // reused (personas 200/202), all at priority 1 with no country pattern —
+        // so they SHADOW the real zones in the app's priority sort and quote the
+        // wrong rate. This table is the store's whole zone list.
+        const named = new Set(store.zones.map((zone) => zone.name));
+        const onChain = await queryDocs('shippingZone', {
+          where: [['storeId', '==', storeIds.get(store.key)]],
+          orderBy: [['storeId', 'asc'], ['priority', 'asc']], limit: 100,
+        });
+        for (const zone of onChain) {
+          if (named.has(zone.name) || b58(zone.$ownerId) !== actor.ownerId) continue;
+          const outcome = await attemptDelete(actor, 'shippingZone', b58(zone.$id));
+          if (outcome.ok) { pruned += 1; console.log(`  pruned stale shippingZone "${zone.name}" from ${store.name}`); }
+          else failed.push({ key: `zone-prune/${store.key}/${zone.name}`, docType: 'shippingZone', error: (outcome.error ?? '').slice(0, 200) });
         }
       },
     }))
@@ -852,8 +960,12 @@ async function main() {
       needed.set(persona, (needed.get(persona) ?? 0n) + cost);
     }
     for (const [persona, cost] of needed) {
-      const balance = await ensureYapp(tokenId, actors.get(persona), cost + YAPP_HEADROOM);
-      console.log(`  ${actors.get(persona).label}: ${balance} YAPP (needs ${cost})`);
+      const actor = actors.get(persona);
+      const balance = await ensureYapp(tokenId, actor, cost + YAPP_HEADROOM);
+      console.log(`  ${actor.label}: ${balance} YAPP (needs ${cost})`);
+      // ensureYapp swallows purchase failures; without the tokens every review
+      // below would be refused, so stop before broadcasting ~50 doomed writes.
+      if (balance < cost) throw new Error(`${actor.label} holds ${balance} YAPP but this run needs ${cost}`);
     }
     await runPhase(
     ORDERS.map((order) => ({
@@ -873,7 +985,7 @@ async function main() {
             rating: order.review.rating,
             title: order.review.title,
             content: order.review.content,
-          }, REVIEW_COST.storeReview);
+          }, { tokenCost: REVIEW_COST.storeReview });
         }
         for (const [itemKey, rating, content] of order.items ?? []) {
           const itemId = itemIds.get(`${store.key}/${itemKey}`);
@@ -885,12 +997,15 @@ async function main() {
             buyerId: id32(actor.ownerId),
             rating,
             content,
-          }, REVIEW_COST.itemReview);
+          }, { tokenCost: REVIEW_COST.itemReview });
         }
       },
     }))
     );
   } else {
+    if (Object.keys(progress.docs).length === 0) {
+      throw new Error(`--verify-only needs a progress file for this contract; ${args.progress} has no entries`);
+    }
     for (const [key, record] of Object.entries(progress.docs)) {
       const [kind, ...rest] = key.split('/');
       if (kind === 'store') storeIds.set(rest[0], record.id);
@@ -940,11 +1055,15 @@ async function main() {
     console.log(`  ${String(entry.value).padStart(3)}  ${nameOf(entry.groupValue)}`);
   }
 
-  const topRatedFirst = nameOf(topRated.page.entries[0]?.groupValue);
-  const mostOrderedFirst = nameOf(mostOrdered.page.entries[0]?.groupValue);
+  // Rankings are contract-global, so assert the order among OUR stores rather
+  // than the first row overall — other owners (the registration battery) rank too.
+  const ours = new Set([...storeIds.values()]);
+  const firstOfOurs = (page) => nameOf(page.entries.find((entry) => ours.has(entry.groupValue))?.groupValue ?? '');
+  const topRatedFirst = firstOfOurs(topRated.page);
+  const mostOrderedFirst = firstOfOurs(mostOrdered.page);
   const intendedTop = STORE_BY_KEY.get(topStoreKey).name;
-  check('top-rated ranking puts the intended store first', topRatedFirst === intendedTop, `first=${topRatedFirst} expected=${intendedTop}`);
-  check(`most-ordered ranking puts ${MOST_ORDERED.name} first`, mostOrderedFirst === MOST_ORDERED.name, `first=${mostOrderedFirst}`);
+  check('top-rated ranking puts the intended store first among the seeded stores', topRatedFirst === intendedTop, `first=${topRatedFirst} expected=${intendedTop}`);
+  check(`most-ordered ranking puts ${MOST_ORDERED.name} first among the seeded stores`, mostOrderedFirst === MOST_ORDERED.name, `first=${mostOrderedFirst}`);
 
   const distribution = await groupedCount('storeReview', [['storeId', '==', storeIds.get(POLARISING.key)], ['rating', 'in', [1, 2, 3, 4, 5]]], ['rating'], (hex) => parseInt(hex, 16) - 0x80);
   console.log(`\n${POLARISING.name} rating distribution: ${[1, 2, 3, 4, 5].map((r) => `${r}★ ${distribution.get(r) ?? 0}`).join('  ')}`);
@@ -972,6 +1091,7 @@ async function main() {
     console.log(`  ${docType.padEnd(20)} ${String(written[docType]).padEnd(8)} ${reused[docType]}`);
   }
   console.log(`  ${'TOTAL'.padEnd(20)} ${String(Object.values(written).reduce((a, b) => a + b, 0)).padEnd(8)} ${Object.values(reused).reduce((a, b) => a + b, 0)}`);
+  if (pruned > 0) console.log(`  ${pruned} stale shipping zone(s) pruned`);
 
   console.log('\n--- personas ---');
   console.log('persona  handle             role            credits              YAPP');
