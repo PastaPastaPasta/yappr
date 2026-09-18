@@ -8,7 +8,6 @@ import {
   KeyIcon,
   ExclamationTriangleIcon,
   LockClosedIcon,
-  ArrowPathIcon,
   ShieldCheckIcon,
   DocumentTextIcon,
   UserGroupIcon,
@@ -135,29 +134,24 @@ export function LostEncryptionKeyModal({
                           <div className="p-4 border border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/20 rounded-lg">
                             <div className="flex gap-3">
                               <div className="p-2 bg-red-100 dark:bg-red-950 rounded-lg h-fit">
-                                <ArrowPathIcon className="h-5 w-5 text-red-600 dark:text-red-400" />
+                                <KeyIcon className="h-5 w-5 text-red-600 dark:text-red-400" />
                               </div>
                               <div className="flex-1">
                                 <h3 className="font-semibold text-gray-900 dark:text-white">
-                                  Reset Your Private Feed
+                                  Reset Is Unavailable
                                 </h3>
                                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                                  As a feed owner, you can reset your private feed with a new encryption key.
-                                  This is a destructive action:
+                                  Your existing private feed cannot be reset. Use your original encryption key
+                                  to recover access. Your feed and followers are preserved.
                                 </p>
-                                <ul className="text-sm text-red-600 dark:text-red-400 mt-2 space-y-1 list-disc list-inside">
-                                  <li>All current private followers will lose access</li>
-                                  <li>All existing private posts become unreadable</li>
-                                  <li>Followers must request access again</li>
-                                </ul>
                                 <Button
                                   onClick={onResetPrivateFeed}
                                   variant="outline"
                                   size="sm"
                                   className="mt-3 text-red-600 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-700 dark:hover:bg-red-950"
                                 >
-                                  <ArrowPathIcon className="h-4 w-4 mr-2" />
-                                  Reset Private Feed
+                                  <KeyIcon className="h-4 w-4 mr-2" />
+                                  View Recovery Information
                                 </Button>
                               </div>
                             </div>

@@ -1,13 +1,13 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
+import { useId, useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { LockClosedIcon, CheckCircleIcon, UserGroupIcon, ExclamationTriangleIcon, KeyIcon, ArrowPathIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { LockClosedIcon, CheckCircleIcon, UserGroupIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { TREE_CAPACITY, MAX_EPOCH } from '@/lib/services'
@@ -29,7 +29,8 @@ interface PrivateFeedSettingsProps {
  * Implements PRD §4.1 - Enable Private Feed UI
  */
 export function PrivateFeedSettings({ openReset = false, onResetOpened }: PrivateFeedSettingsProps) {
-  const { user } = useAuth()
+  const encryptionKeyId = useId()
+  const { user, mergeSecretsIntoAuthVault } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const refreshKey = usePrivateFeedRefreshStore((state) => state.refreshKey)
   const [isEnabled, setIsEnabled] = useState(false)
@@ -174,6 +175,31 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
         toast.success('Private feed enabled successfully!')
         setShowKeyInput(false)
         setEncryptionKeyInput('')
+        // Keep the accepted key available just as the manual key-entry flow does.
+        // Storage/backup failures cannot undo the feed that was already enabled.
+        try {
+          const { storeEncryptionKey, getEncryptionKey, getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+          const { bytesEqual } = await import('@/lib/bytes')
+          storeEncryptionKey(user.identityId, trimmedKey)
+          const normalizedEncryptionKey = getEncryptionKey(user.identityId)
+          // The store swallows write failures, so a non-null readback can still be a stale
+          // key left over from an earlier session. Compare the decoded secret with the key
+          // that was actually accepted before backing anything up.
+          const storedKeyBytes = getEncryptionKeyBytes(user.identityId)
+          if (!normalizedEncryptionKey || !storedKeyBytes || !bytesEqual(storedKeyBytes, validation.privateKey)) {
+            throw new Error('Encryption key was not saved')
+          }
+
+          try {
+            await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: normalizedEncryptionKey })
+          } catch (error) {
+            logger.error('Failed to back up encryption key after enabling private feed:', error)
+            toast.error('Private feed enabled, but key backup failed. Your key is available for this session.')
+          }
+        } catch (error) {
+          logger.error('Failed to store encryption key after enabling private feed:', error)
+          toast.error('Private feed enabled, but your key could not be saved. Enter it again to manage your feed.')
+        }
         // Refresh all status to ensure consistent UI state
         await checkPrivateFeedStatus()
       } else {
@@ -334,29 +360,25 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
               </ul>
             </div>
 
-            {/* Reset Private Feed Section */}
+            {/* Private Feed Recovery */}
             <div className="pt-4 border-t">
-              <h4 className="font-medium mb-2 text-sm flex items-center gap-2 text-red-600 dark:text-red-400">
-                <ExclamationTriangleIcon className="h-4 w-4" />
-                Danger Zone
+              <h4 className="font-medium mb-2 text-sm flex items-center gap-2">
+                <KeyIcon className="h-4 w-4" />
+                Recovery
               </h4>
-              <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 p-4 rounded-lg">
+              <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-4 rounded-lg">
                 <div className="space-y-2">
-                  <p className="text-sm font-medium text-red-900 dark:text-red-100">
-                    Reset Private Feed
-                  </p>
-                  <p className="text-sm text-red-700 dark:text-red-300">
-                    If you have lost your encryption key or want to start fresh, you can reset your private feed.
-                    This will remove all current followers and make existing private posts unreadable.
+                  <p className="text-sm font-medium">Reset unavailable</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Your existing private feed cannot be reset. Keep your original encryption key to recover access.
                   </p>
                   <Button
                     data-testid="reset-private-feed-btn"
                     variant="outline"
-                    className="mt-2 border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900"
+                    className="mt-2"
                     onClick={() => setShowResetDialog(true)}
                   >
-                    <ArrowPathIcon className="h-4 w-4 mr-2" />
-                    Reset Private Feed
+                    View recovery information
                   </Button>
                 </div>
               </div>
@@ -366,7 +388,6 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
             <ResetPrivateFeedDialog
               open={showResetDialog}
               onOpenChange={setShowResetDialog}
-              onSuccess={checkPrivateFeedStatus}
             />
           </>
         ) : (
@@ -448,10 +469,11 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">
+                  <label htmlFor={encryptionKeyId} className="text-sm font-medium">
                     Encryption Private Key
                   </label>
                   <Input
+                    id={encryptionKeyId}
                     type="password"
                     placeholder="WIF (cXyz...) or hex (64 chars)"
                     value={encryptionKeyInput}
