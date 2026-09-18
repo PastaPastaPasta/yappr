@@ -42,6 +42,10 @@ export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID ?? '7UaqHGBJBbRLJ4fUWS45cnud8PPUugJWoGTt1SKwHJ2P' // Key exchange protocol contract
 export const YAPPR_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_VAULT_CONTRACT_ID ?? '7RQoHtVZaRZDSrR22s8KcbCJmwSwetJHBcFjx6FJdkJD' // Testnet - Vault contract (contract-bound encryption keys + encrypted storage)
 export const YAPPR_AUTH_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID ?? '64RTgHjGXhtiN9t5S4u6hVDps7oHuTBaaHrQEFYcxt9M'
+// Bluetooth sign-in (a phone hands the browser a bounded login key over
+// Web Bluetooth). On unless a deployment turns it off; the button only
+// renders in browsers that expose `navigator.bluetooth`.
+export const BLUETOOTH_LOGIN_ENABLED = process.env.NEXT_PUBLIC_BLUETOOTH_LOGIN !== 'false'
 export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID ?? '9jfarXPwRoKXK4v2JBDaiFg3j78diQuLnHMyVqBZfZNc' // Testnet - Blog contract v4 (BlockNote 0.47 upgrade)
 export const BLOG_CHUNK_SIZE = 5120         // 5 KiB — platform max_field_value_size
 export const BLOG_MAX_CHUNKS = 4            // Number of data fields in contract (data0–data3)
