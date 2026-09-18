@@ -40,7 +40,8 @@ Historical drafts (`-actual`, `-clean`, `-ready`, `-deploy`, `-updated`,
 - `encrypted-key-backup-contract.json` — passphrase-encrypted key backups
 - `key-exchange-v2.json` — QR login key-exchange protocol (deployed everywhere)
 - `key-exchange-v3.json` — **registered on moutai** (`DoW8GtvXbh9o…`), **not enabled**: `loginKeyResponse` as an indexOnly doctype (no stored row) plus a TTL'd daily counter, `refersTo`-checked application id, structural uniqueness per wallet. Built by `scripts/build-key-exchange-v3-contract.py`, batteried by `scripts/verify-key-exchange-v3.mjs`; see `docs/KEY_EXCHANGE_V3.md` — the response is written by the *wallet*, so the switch waits on dashwallet-ios
-- `pollr-contract-v3.json` — polls (deployed); `pollr-contract-v2.json` is the abandoned predecessor, kept for the on-chain id record
+- `pollr-contract-v3.json` — polls (deployed on testnet, externally owned); `pollr-contract-v2.json` is the abandoned predecessor, kept for the on-chain id record
+- `pollr-contract-v4.json` — **deployed on moutai** (`HRuWcjcG…`): v3 plus a poster-attested `poll.author`, a permanent poll, indexOnly `vote`/`multiVote` whose mode rule is structural rather than a `unique` index, preallocated ballot trees, and the ranked winner query. Built by `scripts/build-pollr-v4-contract.py`, verified by `scripts/verify-pollr-v4.mjs`; see `docs/POLLR_V4.md`. The standalone Pollr repo needs the same cut before a shared testnet v4 exists
 
 ## Legacy (merged into the social contract)
 

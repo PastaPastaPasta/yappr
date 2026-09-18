@@ -128,10 +128,23 @@ export const BLOG_CHUNK_SIZE = 5120         // 5 KiB — platform max_field_valu
 export const BLOG_MAX_CHUNKS = 4            // Number of data fields in contract (data0–data3)
 export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (leaves headroom within 4 × 5120 = 20KB)
 
+// ---- pollr block — owned by the pollr work, edit here only ----
 // Pollr — native polls shared with the standalone Pollr app.
 // Testnet pollr v3: count trees plus a per-mode ballot doctype, maker-owned
 // (Yappr only reads/writes documents).
 export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID ?? 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr8E'
+// Pollr contract topology. `v3` is the testnet contract: stored ballots whose
+// single-choice rule is a `unique` index, and no reference integrity — a vote
+// may name a poll that does not exist. `v4` (contracts/pollr-contract-v4.json,
+// docs/POLLR_V4.md) makes both ballot doctypes indexOnly (the entries ARE the
+// ballot), binds `pollId` to a real poll with a `pollOwnerId` agreement against
+// the poll's attested `author`, and adds the ranked winner query. The two
+// write shapes are incompatible in both directions — a v4 ballot carries no
+// `$createdAt` and a v4 poll carries `author`, which v3's schema refuses — so
+// the switch must match the deployed contract.
+export const POLLR_TOPOLOGY: 'v3' | 'v4' =
+  process.env.NEXT_PUBLIC_POLLR_TOPOLOGY === 'v4' ? 'v4' : 'v3'
+export const pollrIsV4 = () => POLLR_TOPOLOGY === 'v4'
 // Two superseded pollr contracts were abandoned in place (v1 stored options as
 // JSON in byte arrays; v2 had a single `vote` doctype whose uniqueness rule could
 // not enforce single-choice ballots). Their ids are recorded in git history and
@@ -141,6 +154,7 @@ export const POLLR_APP_URL = 'https://pastapastapasta.github.io/pollr'
 // deployment above). External poll permalinks only resolve when our polls live
 // in that same contract — a devnet clone's polls do not exist there.
 export const POLLR_APP_CONTRACT_ID = 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr8E'
+// ---- end pollr block ----
 
 /**
  * `VOTE` and `MULTI_VOTE` are the two ballot doctypes. A poll's immutable

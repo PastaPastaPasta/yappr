@@ -5,10 +5,16 @@ import { stateTransitionService } from './state-transition-service';
 import {
   POLLR_CONTRACT_ID,
   POLL_MAX_OPTIONS,
+  pollrIsV4,
   pollrVoteDocType,
 } from '@/lib/constants';
 import { extractErrorMessage } from '@/lib/error-utils';
-import { identifierStringToDocumentBytes, normalizeSDKResponse } from './sdk-helpers';
+import {
+  identifierStringToDocumentBytes,
+  normalizeSDKResponse,
+  type DocumentOrderByClause,
+  type DocumentWhereClause,
+} from './sdk-helpers';
 import { documentCount, paginateFetchAll } from './pagination-utils';
 // Type-only: the ballot doctype and the close time both come off the poll, and
 // taking it whole makes a call site physically unable to pair a poll with
@@ -34,6 +40,12 @@ export interface PollTally {
   counts: number[];
   /** Total vote documents for the poll (a multi-choice ballot contributes one per selection). */
   total: number;
+}
+
+/** The leading option of a poll, from the v4 ranked index. */
+export interface PollWinner {
+  choice: number;
+  count: number;
 }
 
 /** Grouped count keys are hex of the platform-encoded integer byte: 0x80 + choice. */
@@ -82,7 +94,9 @@ export class PollTallyUnavailableError extends Error {
 }
 
 /**
- * Platform rejects a colliding ballot with a unique index violation.
+ * Platform rejects a colliding ballot with a duplicate-properties violation —
+ * from v3's `unique` index, or from v4's structural one-entry-per-value-tuple
+ * rule, which reports the same way.
  *
  * What the collision *means* depends on the doctype, and the two differ:
  * on `multiVote` it is "you already cast this choice", but on `vote` the index
@@ -90,7 +104,11 @@ export class PollTallyUnavailableError extends Error {
  * the one just attempted. `castVote` resolves the difference.
  */
 export function isDuplicateVoteError(error: unknown): boolean {
-  return extractErrorMessage(error).toLowerCase().includes('duplicate unique properties');
+  // Both spellings, because everything downstream of this predicate depends on
+  // it: a duplicate that reads as a fresh error would be handed to the landed
+  // probe, which finds the voter's EARLIER entry and reports the rejected write
+  // as cast. The battery asserts the live v4 text matches (case p3b).
+  return /duplicate unique properties|\b40105\b/i.test(extractErrorMessage(error));
 }
 
 /**
@@ -105,6 +123,13 @@ export function isDuplicateVoteError(error: unknown): boolean {
  * field in another document. Splitting it moves the enforcement onto the wire:
  * `poll` is immutable, so the flag can't be flipped after ballots land, and
  * documents written to the doctype a poll doesn't use are never read.
+ *
+ * On v4 (docs/POLLR_V4.md) both doctypes are indexOnly and the same two rules
+ * become STRUCTURAL rather than declared: `vote.byPoll [pollId]` terminal
+ * `$ownerId` admits one entry per (poll, voter), `multiVote.byPollChoice`
+ * admits one per (poll, choice, voter). indexOnly types cannot carry `unique`
+ * indexes at all, so this is the only spelling available — and the tally shape
+ * is unchanged, because both topologies count the same [pollId, choice] tree.
  */
 class PollrVoteService {
   private tallyCache = new TtlMap<string, PollTally>(TALLY_CACHE_TTL_MS);
@@ -137,6 +162,21 @@ class PollrVoteService {
       };
     }
 
+    // A v4 poll attests its own `author`, and consensus binds every ballot's
+    // `pollOwnerId` to that field but CANNOT bind it to `$ownerId` — so a poll
+    // can name someone else as its creator and still land. Casting on one would
+    // file the ballot under the forged creator's "votes on my polls"; refuse it
+    // instead. (Always true on v3, where `author` falls back to the owner.)
+    if (!poll.authorIsOwner) {
+      return {
+        success: false,
+        created: [],
+        alreadyVoted: [],
+        failed: selected,
+        error: 'This poll names an author that is not its creator',
+      };
+    }
+
     // The close time is advisory — the contract can't enforce it — so clients
     // are the ones that have to refuse a late ballot.
     const { endsAt } = poll;
@@ -159,15 +199,38 @@ class PollrVoteService {
           {
             // Identifier-typed contract fields must reach the typed write path as raw bytes.
             pollId: identifierStringToDocumentBytes(poll.id),
-            pollOwnerId: identifierStringToDocumentBytes(poll.ownerId),
+            // v4 binds this to the poll's ATTESTED author through
+            // propertyAgreement, and `author` need not equal `$ownerId` — a
+            // ballot carrying the owner instead would be rejected with 40127.
+            // On v3 the two are the same value (no `author` field exists).
+            pollOwnerId: identifierStringToDocumentBytes(pollrIsV4() ? poll.author : poll.ownerId),
             choice,
-          }
+          },
+          // v4 ballots are indexOnly: there is no id-addressable row for the
+          // strict confirmation probes to find, and the transition proves as an
+          // affected-state snapshot rather than ExecutionProved.
+          pollrIsV4() ? { confirmation: 'affectedState' } : undefined
         );
 
-        if (result.success) {
+        if (result.success && (result.confirmed !== false || !(await this.mustVerify(poll, choice, ownerId)))) {
           created.push(choice);
+        } else if (result.success) {
+          // v4 only: an UNCONFIRMED success that the chain does not show.
+          // `createDocument` returns optimistic success when the confirmation
+          // wait times out, and its own landed-check (`documents.get` by id)
+          // can never resolve for an indexOnly doctype, so that branch always
+          // fires on a 504 — including when the transition was then rejected.
+          // Reporting it as cast would close a single-choice ballot the voter
+          // never actually filed.
+          failed.push(choice);
+          firstError ??= 'The network did not confirm your vote — try again';
         } else if (isDuplicateVoteError(result.error)) {
+          // Checked BEFORE the landed probe: on a duplicate the entry is
+          // already there from an earlier ballot, so the probe would happily
+          // report this rejected write as created.
           alreadyVoted.push(...(await this.resolveDuplicate(poll, choice, ownerId)));
+        } else if (await this.landedDespiteFailure(poll, choice, ownerId)) {
+          created.push(choice);
         } else {
           // Keep going: the remaining choices are independent documents, and
           // re-submitting a landed one is idempotent thanks to the unique index.
@@ -177,6 +240,8 @@ class PollrVoteService {
       } catch (error) {
         if (isDuplicateVoteError(error)) {
           alreadyVoted.push(...(await this.resolveDuplicate(poll, choice, ownerId)));
+        } else if (await this.landedDespiteFailure(poll, choice, ownerId)) {
+          created.push(choice);
         } else {
           failed.push(choice);
           firstError ??= extractErrorMessage(error);
@@ -192,6 +257,90 @@ class PollrVoteService {
       failed,
       error: firstError,
     };
+  }
+
+  /**
+   * v4: is an UNCONFIRMED write still missing from the chain?
+   *
+   * True means "do not report this as cast". A read failure answers false —
+   * the write path did report success, and an unreachable DAPI is not evidence
+   * against it; the next remount re-reads the real state either way.
+   */
+  private async mustVerify(poll: Poll, choice: number, ownerId: string): Promise<boolean> {
+    if (!pollrIsV4()) return false;
+    try {
+      return !(await this.waitForBallot(poll, choice, ownerId));
+    } catch (error) {
+      logger.warn('PollrVoteService: could not verify an unconfirmed ballot against the chain', {
+        pollId: poll.id,
+        error: extractErrorMessage(error),
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Did a ballot the write path reported as FAILED actually land?
+   *
+   * v4 ballots are indexOnly, and the js create path can fail *after* a
+   * successful broadcast without ever returning a usable Document — the same
+   * quirk `like-service` handles. So a reported failure is re-checked against
+   * the chain before being believed. On v3 the create is a stored document with
+   * real confirmation, so there is nothing to second-guess.
+   */
+  private async landedDespiteFailure(poll: Poll, choice: number, ownerId: string): Promise<boolean> {
+    if (!pollrIsV4()) return false;
+    try {
+      return await this.waitForBallot(poll, choice, ownerId);
+    } catch (error) {
+      logger.warn('PollrVoteService: could not re-check a failed ballot against the chain', {
+        pollId: poll.id,
+        error: extractErrorMessage(error),
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Polls the entry probe briefly: an indexOnly write is not query-visible the
+   * instant its transition settles, so a single immediate read would call a
+   * landed ballot missing (like-service polls the same way).
+   */
+  private async waitForBallot(
+    poll: Poll,
+    choice: number,
+    ownerId: string,
+    { attempts = 4, intervalMs = 2_500 } = {}
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (await this.ballotExists(poll, choice, ownerId)) return true;
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+    }
+    return false;
+  }
+
+  /**
+   * v4 entry probe: does this voter's entry for (poll, choice) exist?
+   *
+   * Equality on the two `byPollChoice` properties plus the terminal `$ownerId`
+   * lowers onto that index's member key. This is the only way to confirm an
+   * indexOnly write — `documents.get` has no row to find.
+   */
+  private async ballotExists(poll: Poll, choice: number, ownerId: string): Promise<boolean> {
+    const sdk = await getEvoSdk();
+    const response = await sdk.documents.query({
+      dataContractId: POLLR_CONTRACT_ID,
+      documentTypeName: pollrVoteDocType(poll.multiChoice),
+      where: [
+        ['pollId', '==', poll.id],
+        ['choice', '==', choice],
+        ['$ownerId', '==', ownerId],
+      ],
+      limit: 1,
+    });
+    return normalizeSDKResponse(response).length > 0;
   }
 
   /**
@@ -243,8 +392,15 @@ class PollrVoteService {
   }
 
   /**
-   * Which choices `userId` has already cast on this poll. Both ballot doctypes
-   * lead their unique index with [pollId, $ownerId], so this is one ranged read.
+   * Which choices `userId` has already cast on this poll.
+   *
+   * v3 reads the unique index, which leads with [pollId, $ownerId]: one ranged
+   * read. v4 has no such index — its terminal must be `$ownerId` or a refersTo
+   * identifier, and `choice` is an integer, so no index can be keyed
+   * (poll, voter) → choice. Instead the read walks `byPollChoice`'s choice
+   * level with an `in` over the poll's real options and pins the terminal:
+   * `pollId ==`, `choice in [...]`, `$ownerId ==`. An `in` on an indexOnly
+   * prefix property REQUIRES the matching orderBy, or the query is refused.
    *
    * Throws on failure rather than reporting "no votes": an empty answer reopens
    * the ballot, which on a single-choice poll walks the voter into a write
@@ -256,21 +412,66 @@ class PollrVoteService {
       const response = await sdk.documents.query({
         dataContractId: POLLR_CONTRACT_ID,
         documentTypeName: pollrVoteDocType(poll.multiChoice),
-        where: [
-          ['pollId', '==', poll.id],
-          ['$ownerId', '==', userId],
-        ],
-        // `vote`'s unique index stops at $ownerId; only `multiVote` orders by choice.
-        orderBy: poll.multiChoice
-          ? [['pollId', 'asc'], ['$ownerId', 'asc'], ['choice', 'asc']]
-          : [['pollId', 'asc'], ['$ownerId', 'asc']],
-        limit: poll.multiChoice ? POLL_MAX_OPTIONS : 1,
+        where: pollrIsV4()
+          ? [
+              ['pollId', '==', poll.id],
+              // The FULL 0-9 range, not the poll's option count: `choice` is
+              // schema-valid for 0-9 whatever the poll declares, and a ballot
+              // this read cannot see reopens a ballot Platform will reject.
+              // (getTally narrows on purpose — there the out-of-range groups
+              // are noise; here they are the voter's own state.)
+              ['choice', 'in', choiceRange(POLL_MAX_OPTIONS)],
+              ['$ownerId', '==', userId],
+            ]
+          : [
+              ['pollId', '==', poll.id],
+              ['$ownerId', '==', userId],
+            ],
+        orderBy: pollrIsV4()
+          ? [['choice', 'asc']]
+          // `vote`'s unique index stops at $ownerId; only `multiVote` orders by choice.
+          : poll.multiChoice
+            ? [['pollId', 'asc'], ['$ownerId', 'asc'], ['choice', 'asc']]
+            : [['pollId', 'asc'], ['$ownerId', 'asc']],
+        limit: poll.multiChoice || pollrIsV4() ? POLL_MAX_OPTIONS : 1,
       });
 
       return normalizeChoices(normalizeSDKResponse(response).map(readChoice));
     } catch (error) {
       logger.error('PollrVoteService: failed to load own votes', error);
       throw error;
+    }
+  }
+
+  /**
+   * The leading option, straight off v4's ranked secondary on `byPollChoice`:
+   * `groupBy choice, aggregate count, where pollId == P, limit 1` is O(log n)
+   * and proved, where v3 could only sort a full tally client-side.
+   *
+   * Returns null on v3 (no ranked index) and when the poll has no ballots.
+   */
+  async getWinner(poll: Poll): Promise<PollWinner | null> {
+    if (!pollrIsV4()) return null;
+    try {
+      const sdk = await getEvoSdk();
+      const page = await sdk.documents.ranked({
+        dataContractId: POLLR_CONTRACT_ID,
+        documentTypeName: pollrVoteDocType(poll.multiChoice),
+        groupBy: 'choice',
+        aggregate: { type: 'count' },
+        where: [['pollId', '==', poll.id]],
+        limit: 1,
+      });
+      const top = page?.entries?.[0];
+      // Ranked pages hand integer group values back decoded, unlike grouped
+      // counts (which key by the hex of 0x80 + choice).
+      const choice = Number(top?.groupValue);
+      const count = Number(top?.value ?? 0);
+      if (!isValidChoice(choice) || count <= 0) return null;
+      return { choice, count };
+    } catch (error) {
+      logger.warn('PollrVoteService: ranked winner query failed', { pollId: poll.id, error: extractErrorMessage(error) });
+      return null;
     }
   }
 
@@ -297,7 +498,9 @@ class PollrVoteService {
     const counts =
       (await this.countByChoiceGrouped(sdk, poll.id, docType, size)) ??
       (await this.countByChoiceIndividually(sdk, poll.id, docType, size)) ??
-      (await this.countByChoiceScan(sdk, poll.id, docType));
+      (pollrIsV4()
+        ? await this.countByChoiceKeyset(sdk, poll.id, docType, size)
+        : await this.countByChoiceScan(sdk, poll.id, docType));
 
     // Nothing worked. A grand-total count is deliberately NOT used as a last
     // resort: it can't allocate votes among the options, so pairing it with
@@ -411,7 +614,60 @@ class PollrVoteService {
     }
   }
 
-  /** Fallback 2: paginate the `pollVotesByTime` index and tally client-side. */
+  /**
+   * Fallback 2 (v4): keyset-walk each option's entries and count them.
+   *
+   * This is the only path independent of the count tree, so it is worth having
+   * — but it cannot go through `paginateFetchAll`, whose cursor is the last
+   * document's `$id`: an indexOnly type's synthesized ids address nothing and
+   * the query is rejected on page two (see `like-service.getPostLikes`, which
+   * hit this first). Walk the terminal instead — prefix equality, then
+   * `$ownerId > last` with the matching orderBy. Page one must omit both, since
+   * a terminal orderBy without a terminal clause is refused.
+   */
+  private async countByChoiceKeyset(
+    sdk: Sdk,
+    pollId: string,
+    docType: string,
+    optionCount: number
+  ): Promise<number[] | null> {
+    const PAGE = 100;
+    try {
+      const counts = zeroCounts();
+      for (const choice of choiceRange(optionCount)) {
+        let lastOwner: string | null = null;
+        for (;;) {
+          const where: DocumentWhereClause[] = [['pollId', '==', pollId], ['choice', '==', choice]];
+          if (lastOwner) where.push(['$ownerId', '>', lastOwner]);
+          const response = await sdk.documents.query({
+            dataContractId: POLLR_CONTRACT_ID,
+            documentTypeName: docType,
+            where,
+            ...(lastOwner ? { orderBy: [['$ownerId', 'asc'] as DocumentOrderByClause] } : {}),
+            limit: PAGE,
+          });
+          const page = normalizeSDKResponse(response);
+          counts[choice] += page.length;
+          if (page.length < PAGE) break;
+          const owner = page[page.length - 1].$ownerId;
+          // Without a cursor the next page would repeat this one forever.
+          // Reporting a truncated tally as final would render honest-looking
+          // percentages over a number we know is wrong, so fail the whole path.
+          if (typeof owner !== 'string') {
+            logger.error('PollrVoteService: ballot page carries no $ownerId cursor; tally would truncate', { pollId });
+            return null;
+          }
+          lastOwner = owner;
+        }
+      }
+      return counts;
+    } catch (error) {
+      logger.error('PollrVoteService: unable to tally votes by keyset walk', error);
+      return null;
+    }
+  }
+
+  /** Fallback 2 (v3): page `pollVotesByTime` and tally client-side. */
   private async countByChoiceScan(sdk: Sdk, pollId: string, docType: string): Promise<number[] | null> {
     try {
       const { documents: choices, reachedLimit } = await paginateFetchAll(
