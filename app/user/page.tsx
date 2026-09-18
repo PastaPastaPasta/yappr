@@ -19,6 +19,7 @@ import { useBlock } from '@/hooks/use-block'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { useProfileTabs } from '@/hooks/use-profile-tabs'
+import { useProfileCreatedPosts } from '@/hooks/use-profile-created-posts'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { UserAvatar, invalidateAvatarImageCache } from '@/components/ui/avatar-image'
@@ -112,6 +113,8 @@ function UserProfileContent() {
   const { openForUser: openTipModal } = useTipModal()
   const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({ currentUserId: viewerId })
   const tabs = useProfileTabs(userId, enrichProgressively)
+  const published = useProfileCreatedPosts(userId, posts, enrichProgressively)
+  const displayedPostCount = published.count === null ? postCount : Math.max(postCount ?? 0, published.count)
 
   const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
   const isDisplayNameLoading = isLoading || !profile?.displayName
@@ -455,7 +458,7 @@ function UserProfileContent() {
               ) : (
                 <h1 className="text-xl font-extrabold">{displayName}</h1>
               )}
-              <p className="text-sm text-gray-500">{postCount !== null ? postCount : '–'} posts</p>
+              <p className="text-sm text-gray-500">{displayedPostCount !== null ? displayedPostCount : '–'} posts</p>
             </div>
           </div>
         </PageHeader>
@@ -555,7 +558,7 @@ function UserProfileContent() {
               onTabChange={tabs.setActiveTab}
               viewerId={viewerId}
               getPostEnrichment={getPostEnrichment}
-              posts={posts.filter((p) => !p.repostedBy)}
+              posts={published.posts.filter((p) => !p.repostedBy)}
               replies={tabs.replies}
               top={tabs.top}
               mentions={tabs.mentions}
