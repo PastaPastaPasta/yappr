@@ -1,0 +1,144 @@
+{
+  "conversationInvite": {
+    "type": "object",
+    "description": "Notifies a recipient that a conversation has been started with them. One per conversation per direction. recipientId must name an identity that exists.",
+    "indices": [
+      {
+        "name": "senderAndRecipient",
+        "unique": true,
+        "properties": [
+          {
+            "$ownerId": "asc"
+          },
+          {
+            "recipientId": "asc"
+          }
+        ]
+      },
+      {
+        "name": "inbox",
+        "properties": [
+          {
+            "recipientId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "recipientId",
+      "conversationId"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "recipientId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 0,
+        "description": "Identity ID of the recipient",
+        "contentMediaType": "application/x.dash.dpp.identifier",
+        "refersTo": {
+          "type": "identity"
+        }
+      },
+      "conversationId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 10,
+        "maxItems": 10,
+        "position": 1,
+        "description": "Compact conversation ID (first 10 bytes of hash of sorted participant IDs)"
+      },
+      "senderPubKey": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 33,
+        "maxItems": 33,
+        "position": 2,
+        "description": "Optional: sender's compressed public key for ECDH. Only needed if sender's on-chain identity uses hash160 keys."
+      }
+    }
+  },
+  "directMessage": {
+    "type": "object",
+    "description": "A message in a conversation. Lean - no recipientId, no read status. The conversation index is countable and rangeCountable, so per-conversation totals and \"unread since lastReadAt\" are count queries.",
+    "indices": [
+      {
+        "name": "conversation",
+        "properties": [
+          {
+            "conversationId": "asc"
+          },
+          {
+            "$createdAt": "asc"
+          }
+        ],
+        "countable": "countable",
+        "rangeCountable": true
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "conversationId",
+      "encryptedContent"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "conversationId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 10,
+        "maxItems": 10,
+        "position": 0,
+        "description": "Compact conversation ID (first 10 bytes of hash of sorted participant IDs)"
+      },
+      "encryptedContent": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 13,
+        "maxItems": 5000,
+        "position": 1,
+        "description": "Binary encrypted message: first 12 bytes = IV, remaining = ciphertext."
+      }
+    }
+  },
+  "readReceipt": {
+    "type": "object",
+    "description": "Tracks read status per user per conversation. Owned by the reader. Use $updatedAt as the 'last read' timestamp.",
+    "indices": [
+      {
+        "name": "userConversation",
+        "unique": true,
+        "properties": [
+          {
+            "$ownerId": "asc"
+          },
+          {
+            "conversationId": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "$createdAt",
+      "$updatedAt",
+      "conversationId"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "conversationId": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 10,
+        "maxItems": 10,
+        "position": 0,
+        "description": "Compact conversation ID (first 10 bytes)"
+      }
+    }
+  }
+}
