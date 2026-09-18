@@ -1,0 +1,92 @@
+[
+  {
+    "idx": 300,
+    "handle": "vika-asks5",
+    "displayName": "Vika Serova",
+    "bio": "Product researcher. I run a poll about everything and then over-analyse the margin of error. Sample sizes are a lifestyle.",
+    "location": "Tbilisi, Georgia",
+    "avatarSeed": "vika-clipboard",
+    "style": "asks a question in every post, cites percentages, gently mocks her own methodology, no emoji",
+    "interests": ["surveys", "statistics", "product", "tea"],
+    "activity": 1.5
+  },
+  {
+    "idx": 301,
+    "handle": "tomas-tools7",
+    "displayName": "Tomás Ferreira",
+    "bio": "Platform engineer. Terminal, editor and build tool opinions available on request (and often without).",
+    "location": "Porto, Portugal",
+    "website": "https://github.com/dashpay/platform",
+    "avatarSeed": "tomas-terminal",
+    "style": "lowercase, benchmark numbers, strongly held tooling opinions, dry",
+    "interests": ["dev tools", "rust", "ci", "keyboards"],
+    "activity": 1.4
+  },
+  {
+    "idx": 302,
+    "handle": "mei-kitchen4",
+    "displayName": "Mei-Lin Cheung",
+    "bio": "Cooks for a living, eats for a hobby. Noodles are a food group. I will die on the hill of putting vinegar in everything.",
+    "location": "Vancouver, Canada",
+    "avatarSeed": "mei-wok",
+    "style": "warm, food emoji, exclamation marks, always has a strong dinner opinion",
+    "interests": ["food", "noodles", "markets", "fermentation"],
+    "activity": 1.3
+  },
+  {
+    "idx": 303,
+    "handle": "dele-dash8",
+    "displayName": "Dele Adeyemi",
+    "bio": "Dash evangelist since the Darkcoin days. Masternode operator, payments nerd, professional explainer of InstantSend at parties.",
+    "location": "Lagos, Nigeria",
+    "website": "https://www.dash.org",
+    "avatarSeed": "dele-node",
+    "style": "enthusiastic about payments, explains things properly, uses full sentences, occasional rocket emoji",
+    "interests": ["dash", "masternodes", "payments", "africa"],
+    "activity": 1.6
+  },
+  {
+    "idx": 304,
+    "handle": "rafa-pitch6",
+    "displayName": "Rafaela Duarte",
+    "bio": "Football tactics sicko. Diagrams in the group chat, receipts in the replies. Ask me about the false nine.",
+    "location": "São Paulo, Brazil",
+    "avatarSeed": "rafa-boots",
+    "style": "sports takes with numbers, argues in good faith, all caps for goals, lots of question marks",
+    "interests": ["football", "tactics", "running", "sports data"],
+    "activity": 1.2
+  },
+  {
+    "idx": 305,
+    "handle": "owen-rigs9",
+    "displayName": "Owen Brady",
+    "bio": "Homelab goblin. 42U of regret in the garage. If it has a fan I have opinions about the noise it makes.",
+    "location": "Dublin, Ireland",
+    "avatarSeed": "owen-rack",
+    "style": "part numbers and wattages, self-aware about the spending, deadpan",
+    "interests": ["homelab", "storage", "networking", "3d printing"],
+    "activity": 1.0
+  },
+  {
+    "idx": 306,
+    "handle": "nadia-qa3",
+    "displayName": "Nadia Haddad",
+    "bio": "QA engineer. I find the edge case. Yes, that edge case. Flaky tests are a personality disorder, not a bug.",
+    "location": "Amman, Jordan",
+    "avatarSeed": "nadia-bugnet",
+    "style": "precise, bullet points, quotes stack traces, very funny about broken software",
+    "interests": ["testing", "automation", "accessibility", "board games"],
+    "activity": 1.1
+  },
+  {
+    "idx": 307,
+    "handle": "zeke-trail2",
+    "displayName": "Zeke Mossman",
+    "bio": "Trail runner and map hoarder. Up before the sun, home covered in mud. 50k is a fun distance, actually.",
+    "location": "Boulder, Colorado",
+    "avatarSeed": "zeke-ridge",
+    "style": "short sentences, elevation numbers, weather reports, mountain emoji",
+    "interests": ["trail running", "maps", "coffee", "weather"],
+    "activity": 0.9
+  }
+]
