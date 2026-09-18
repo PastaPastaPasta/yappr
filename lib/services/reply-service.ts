@@ -157,17 +157,14 @@ class ReplyService extends BaseDocumentService<Reply> {
   /**
    * Blank a reply in place, leaving a tombstone.
    *
-   * The v3 `reply` doctype is `canBeDeleted: false`, so this is what "delete"
-   * means there. Content, media and every encrypted field are dropped; the parent
-   * linkage survives, INCLUDING the optional `replyToReplyId` — a tombstone is
-   * still rendered in the thread, so losing its nesting would move it (and every
-   * live reply under it) to the top of the thread.
+   * v7's `reply` doctype is `canBeDeleted: false`, so this is what "delete"
+   * means there. Content, media and every encrypted field are dropped;
+   * {@link tombstonePreservationFor} names what survives, INCLUDING the optional
+   * `replyToReplyId` — a tombstone is still rendered in the thread, so losing its
+   * nesting would move it (and every live reply under it) to the top of the
+   * thread.
    */
   async tombstoneReply(replyId: string, ownerId: string): Promise<boolean> {
-    // On v4-v6 the required poster-attested `author` is part of the preserved
-    // set (it must keep equalling $ownerId, and existing likeReply rows repeat
-    // it under the consensus-checked agreement); on v7 the column is gone and
-    // the preserved set is exactly the doctype's `immutable` list.
     const ok = await tombstoneDocument({
       contractId: this.contractId,
       documentType: this.documentType,

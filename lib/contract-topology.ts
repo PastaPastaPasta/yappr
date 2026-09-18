@@ -155,17 +155,6 @@ export interface ContractTopologyDescriptor {
 const NOTHING_PRESERVED: TombstonePreservation = { identifiers: [], scalars: [] }
 
 /**
- * A reply's parent linkage, preserved on every topology that tombstones.
- * `replyToReplyId` is optional and `tombstoneDocument` skips absent fields, so
- * a direct reply reproduces its absence; losing it would move the tombstone —
- * and every live reply nested under it — to the top of the thread.
- */
-const REPLY_LINKAGE_PRESERVED: TombstonePreservation = {
-  identifiers: ['rootPostId', 'replyToReplyId', 'parentOwnerId'],
-  scalars: [],
-}
-
-/**
  * The engagement surface of a v2 `post`, encoded exactly as the chain declares
  * it.
  *
@@ -247,7 +236,11 @@ const V7_DESCRIPTOR: ContractTopologyDescriptor = {
       identifiers: ['quotedPostId', 'quotedReplyId', 'quotedPostOwnerId', 'embedContractId', 'embedId'],
       scalars: ['language', 'hashtag', 'embedDocType'],
     },
-    reply: REPLY_LINKAGE_PRESERVED,
+    // reply.immutable: the parent linkage. `replyToReplyId` is optional and
+    // `tombstoneDocument` skips absent fields, so a direct reply reproduces its
+    // absence; losing it would move the tombstone — and every live reply nested
+    // under it — to the top of the thread.
+    reply: { identifiers: ['rootPostId', 'replyToReplyId', 'parentOwnerId'], scalars: [] },
   },
 }
 

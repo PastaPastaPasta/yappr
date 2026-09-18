@@ -1,7 +1,7 @@
 /**
  * Tombstone-by-edit: the "delete" path for permanent documents.
  *
- * The v3 topology declares `post` and `reply` as `canBeDeleted: false` (so that
+ * The v7 topology declares `post` and `reply` as `canBeDeleted: false` (so that
  * every `refersTo` reference to them stays resolvable forever) and
  * `documentsMutable: true`. Consensus therefore rejects a delete outright, and
  * removing a post means *replacing* it with an empty one flagged `deleted: true`.
@@ -38,9 +38,10 @@ export interface TombstoneParams {
    * an absent one stays absent (an untagged post has no `hashtag`, a direct
    * reply no `replyToReplyId`).
    *
-   * From contract v7 this set is the doctype's consensus-`immutable` list, so
-   * omitting an entry is no longer a silent field loss: a replace that DROPS a
-   * frozen property is rejected with 40128 exactly like one that changes it.
+   * On a topology that freezes properties this set is the doctype's
+   * consensus-`immutable` list, so omitting an entry is not a silent field
+   * loss: a replace that DROPS a frozen property is rejected with 40128
+   * exactly like one that changes it.
    */
   preserve: TombstonePreservation;
 }
@@ -75,9 +76,9 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
       const base58 = identifierToBase58(stored);
       if (base58) replacement[field] = identifierStringToDocumentBytes(base58);
       else if (stored !== undefined && stored !== null) {
-        // Present but undecodable. Dropping it silently used to lose a field;
-        // on v7 it becomes a 40128, which the handler below would otherwise
-        // blame on the descriptor. Name the real cause here instead.
+        // Present but undecodable. Dropping it silently loses a field, and
+        // where the property is frozen it becomes a 40128 that the handler
+        // below would blame on the descriptor. Name the real cause here.
         logger.error(
           `Tombstone of ${documentType} ${documentId}: stored ${field} could not be decoded as an ` +
             'identifier, so it cannot be preserved; the replace will be rejected if it is immutable.'
@@ -103,15 +104,11 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
       // contract freezes — a contract/descriptor drift bug, not a user or
       // network problem, so name it rather than letting it read as a
       // transient failure.
-      if (isImmutablePropertyChangedError(result.error)) {
-        logger.error(
-          `Failed to tombstone ${documentType} ${documentId}: the replacement dropped or changed an immutable ` +
-            `property, so tombstonePreservationFor('${documentType}') is out of sync with the contract.`,
-          result.error
-        );
-      } else {
-        logger.error(`Failed to tombstone ${documentType} ${documentId}:`, result.error);
-      }
+      const drift = isImmutablePropertyChangedError(result.error)
+        ? ` the replacement dropped or changed an immutable property, so ` +
+          `tombstonePreservationFor('${documentType}') is out of sync with the contract.`
+        : '';
+      logger.error(`Failed to tombstone ${documentType} ${documentId}:${drift}`, result.error);
       return false;
     }
     return true;
