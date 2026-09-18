@@ -23,6 +23,7 @@ import {
 } from '../message-encryption'
 import { getPrivateKey } from '../secure-storage'
 import { YAPPR_DM_CONTRACT_ID, dmIsV4 } from '../constants'
+import { useSettingsStore } from '../store'
 import { promptForAuthKey } from '../auth-utils'
 import bs58 from 'bs58'
 import { normalizeBytes } from '@/lib/bytes'
@@ -299,7 +300,7 @@ class DirectMessageService {
   private async countUnreadByConversation(
     userId: string,
     entries: Array<{ conversationId: string; lastReadAt: number; latest?: Record<string, unknown> }>
-  ): Promise<Map<string, number>> {
+  ): Promise<Map<string, number | null>> {
     const sdk = await getEvoSdk()
     const counts = await mapLimit(entries, UNREAD_COUNT_CONCURRENCY, async ({ conversationId, lastReadAt, latest }) => {
       if (!latest || latest.$ownerId === userId) return 0
@@ -313,9 +314,15 @@ class DirectMessageService {
           ],
         })
       } catch (error) {
-        // Fail quiet, not loud: a badge is not worth failing the whole list over.
-        logger.warn(`Unread count failed for conversation ${conversationId}:`, error)
-        return 0
+        // `null` is "could not tell", not "nothing unread". The list renders it
+        // as 0, but the global badge refuses to publish a total built on it —
+        // a wrong 0 there would look exactly like "all caught up".
+        //
+        // NOTE: this is also what a MISCONFIGURED deployment looks like. Point
+        // NEXT_PUBLIC_DM_TOPOLOGY=v4 at a contract without the count flags (the
+        // id and the switch are separate env vars) and every count fails here.
+        logger.warn(`Unread count failed for conversation ${conversationId} — if this is every conversation, NEXT_PUBLIC_DM_TOPOLOGY=v4 is pointed at a contract without the countable flags:`, error)
+        return null
       }
     })
     return new Map(entries.map((entry, index) => [entry.conversationId, counts[index]]))
@@ -323,6 +330,8 @@ class DirectMessageService {
 
   /**
    * Total unread messages across every conversation, for the Messages nav badge.
+   * `null` means "could not tell" — the caller should leave the badge as it is
+   * rather than publishing a 0 that reads as "all caught up".
    *
    * v4 only. On v3 this would mean downloading a 100-message page per
    * conversation on every poll, so it reports 0 and the badge stays hidden.
@@ -330,8 +339,15 @@ class DirectMessageService {
    * background notification cadence, where prompting for a private key or
    * fetching profiles would be wrong.
    */
-  async getUnreadTotal(userId: string): Promise<number> {
+  async getUnreadTotal(userId: string): Promise<number | null> {
     if (!dmIsV4()) return 0
+    // With read receipts switched off the app never writes a readReceipt, so
+    // every conversation's lastReadAt is 0 and the count is its ENTIRE history
+    // — a badge that is permanently non-zero and that no amount of reading can
+    // clear. v3 had no global badge at all; keep it hidden rather than wrong.
+    // (The per-conversation numbers on /messages are unaffected and match v3's
+    // own behaviour with receipts disabled.)
+    if (!useSettingsStore.getState().sendReadReceipts) return 0
     try {
       const conversationIds = Array.from((await this.loadConversationIndex(userId)).keys())
       if (conversationIds.length === 0) return 0
@@ -342,10 +358,13 @@ class DirectMessageService {
         lastReadAt: lastReadByConversation.get(conversationId) ?? 0,
         latest: messagesByConversation.get(conversationId)?.[0],
       })))
-      return Array.from(unread.values()).reduce((total, count) => total + count, 0)
+      const counts = Array.from(unread.values())
+      // A partial total is not a total.
+      if (counts.some(count => count === null)) return null
+      return counts.reduce((total: number, count) => total + (count ?? 0), 0)
     } catch (error) {
       logger.error('Error getting unread total:', error)
-      return 0
+      return null
     }
   }
 

@@ -240,6 +240,13 @@ CASES.set('d5', async (ctx) => {
   const { battery } = ctx;
   if (ctx.tMid === undefined) { battery.check('d5 has d2 timestamps', false, 'run d2 first'); return; }
 
+  // Guard against a vacuous d5a: if every message landed in one block, t_mid
+  // excludes nothing and this case would merely restate d5b, going blind to a
+  // range clause being ignored outright.
+  battery.check('d5 t_mid actually splits the conversation (otherwise d5a proves nothing)',
+    ctx.afterMid > 0 && ctx.afterMid < ctx.messageCount,
+    `${ctx.afterMid} of ${ctx.messageCount} after t_mid`);
+
   const where = [['conversationId', '==', b64(ctx.c1)], ['$createdAt', '>', ctx.tMid]];
   const unread = await battery.countBy('directMessage', where);
   battery.check('d5a count(C1, $createdAt > t_mid) is exact (rangeCountable)',
@@ -353,12 +360,21 @@ CASES.set('d7', async (ctx) => {
     // the contract cannot require bounded keys until every identity holds one,
     // and no identity can register one until the contract requires it.
     const chickenAndEgg = /key bounds expected but not present|expected encryption key bounds/i.test(broadcastError ?? '');
-    note(`did NOT land on beta.1. ${broadcastError ?? 'the SDK reported no error'}`
-      + (chickenAndEgg
-        ? ' — REASON IS A CONSENSUS RULE, NOT AN SDK BUG: a SingleContract-bounded ENCRYPTION key is only accepted '
-          + 'against a contract that declares requiresIdentityEncryptionBoundedKey, which v4 deliberately does not. '
-          + 'The identity-update-builder.ts note ("disabled due to SDK/tooling bugs") is misattributed.'
-        : ' — the identity-update-builder.ts note stands.'));
+    // Re-runs rebuild a byte-identical transition (the key never lands, so the
+    // next key id and the identity nonce are unchanged) and Core answers from
+    // its tx cache instead of re-evaluating. That is an artefact of running the
+    // probe twice, NOT the platform's answer — say so rather than reporting it
+    // as the result.
+    const cached = /already exists|tx already exists in cache/i.test(broadcastError ?? '');
+    note(cached
+      ? `INCONCLUSIVE on this run: Core replayed the cached transition from an earlier run `
+        + `(${broadcastError}). Run the probe against a persona that has not been probed yet for a fresh answer.`
+      : `did NOT land on beta.1. ${broadcastError ?? 'the SDK reported no error'}`
+        + (chickenAndEgg
+          ? ' — REASON IS A CONSENSUS RULE, NOT AN SDK BUG: a SingleContract-bounded ENCRYPTION key is only accepted '
+            + 'against a contract that declares requiresIdentityEncryptionBoundedKey, which v4 deliberately does not. '
+            + 'The identity-update-builder.ts note ("disabled due to SDK/tooling bugs") is misattributed.'
+          : ' — the identity-update-builder.ts note stands.'));
   }
   battery.check('d7 contract-bound encryption key probe reported', true, landed ? 'registered' : 'not registered');
 });
