@@ -1,72 +1,25 @@
 /**
  * Registration-day battery for **contract v7**
- * (`contracts/yappr-social-contract-v7.json`, docs/PLATFORM_BETA2_UPGRADE.md):
- * the beta.2 grammar Yappr actually adopted, exercised against a freshly
- * registered contract on a 4.2.0-beta.2 devnet.
+ * (`contracts/yappr-social-contract-v7.json`), run against a freshly registered
+ * contract on a 4.2.0-beta.2 devnet. All the machinery — devnet SDK with its
+ * quorum-rotation reconnect, readback-decided write outcomes, strict
+ * wrong-reason-fails rejections, the PASS/FAIL ledger and the CLI — is
+ * {@link file://./verify-lib.mjs}.
  *
- * All the machinery — the devnet SDK with its quorum-rotation reconnect,
- * readback-decided write outcomes, strict wrong-reason-fails rejections, the
- * PASS/FAIL ledger, the CLI and the dry run — is
- * {@link file://./verify-lib.mjs}, extracted from `verify-v5.mjs`. THIS file
- * is only the v7 cases, because v7's query surface is v6's: every index,
- * terminal, ranked axis and `timeRange` window is unchanged, and the v4/v5/v6
- * batteries already proved those live. What is new is who enforces two
- * invariants the client used to maintain.
+ * Only the two invariants v7 moved from the client to consensus are proved here
+ * (E = system-field `propertyAgreement`, F = `immutable` properties), plus one
+ * end-to-end like lifecycle (G) over the surfaces those agreements touch. The
+ * query surface is unchanged from the previous cut and was proved live there.
+ * The case table and the environment are in docs/PLATFORM_BETA2_UPGRADE.md and
+ * docs/SOCIAL_CONTRACT.md; both bots need YAPP or the run aborts early.
  *
- * There is NO default contract id: v7 only exists after registration day.
- * Pass `--contract` or set `V7_CONTRACT_ID`.
+ * Platform behaviours this leans on: js `documents.create()` may THROW
+ * post-broadcast for indexOnly types even when the write landed (acceptance is
+ * always readback); a DAPI 504 on the confirmation wait is not a rejection; and
+ * the 40105 duplicate probe fires BEFORE 40120/40127, so every agreement
+ * violation targets a post its signer has not yet liked.
  *
- * E-cases — system-field propertyAgreement (#4816):
- *   e1  the attested `author` column is GONE from the schema: a post and a
- *       reply carrying it are refused by structure validation
- *       (`additionalProperties: false`), and the same documents without it
- *       are accepted
- *   e2  `like.postId` agrees `postAuthor` with the post's `$ownerId`: a like
- *       whose postAuthor is the LIKER rather than the post's owner is refused
- *       (40127); the correct owner is accepted; the hashtag pair still holds
- *       in both directions, absence included
- *   e3  `likeReply.replyId` agrees `replyAuthor` with the reply's `$ownerId`
- *       (wrong → 40127, correct accepted)
- *   e4  `repost.postId` agrees `postOwnerId` with the post's `$ownerId` — the
- *       binding v7 adds — so a repost naming a third party's identity in the
- *       notification index is refused (40127)
- *
- * F-cases — immutable properties on mutable document types (#4815):
- *   f1  a tombstone that carries every immutable property verbatim is
- *       accepted; one that DROPS `language`, one that drops the quote
- *       reference, and one that CHANGES `hashtag` are each refused (40128)
- *   f2  `deleted` is immutable-but-settable: the first set is accepted, a
- *       later replace flipping it back to false is refused (40128), one that
- *       drops it is refused, and one that re-states `true` is accepted
- *       (an unchanged value is not a change)
- *   f3  the properties v7 deliberately left MUTABLE still are: a replace may
- *       blank `content` and drop `mediaUrl`/`sensitive` on a live post
- *
- * G-cases — v6 carry-over smoke, on the surfaces v7's agreements touch:
- *   g1  the like lifecycle still works end to end under the `$ownerId`
- *       agreement: create, the preallocated `byAuthorPost` count, the tagged
- *       `beat` companion, and delete-by-values unlike
- *
- * Known platform behaviors this battery leans on (unchanged from v4/v5):
- *   - js documents.create() may THROW post-broadcast for indexOnly types even
- *     when the write landed — acceptance is always decided by readback;
- *   - the 40105 duplicate probe fires BEFORE 40120/40127, so every agreement
- *     violation targets a post its signer has not yet liked;
- *   - DAPI 504 on the confirmation wait is not a rejection (readback decides).
- *
- * ## Environment
- *
- *   V7_CONTRACT_ID        the freshly registered v7 contract id (or --contract)
- *   DEVNET_NAME           devnet name           (default: moutai)
- *   DAPI_ADDRESSES        comma-separated DAPI  (default: https://seed-{1..5}.<devnet>.networks.dash.org:1443)
- *   QUORUM_URL            quorum service for the trusted context
- *   DEVNET_IDENTITY_IDS   comma-separated devnet identity ids for the bot pool
- *                         (falls back to E2E_IDENTITY_IDS / .env.devnet)
- *   E2E_SEED_PHRASE       the BIP39 seed the bot keys derive from
- *
- * Both bots need YAPP on the contract under test; the run aborts early if not.
- *
- * ## Run
+ * There is NO default contract id — v7 only exists after registration day.
  *
  *   node scripts/verify-v7.mjs --self-test        # or --dry-run; no network
  *   NETWORK=devnet node scripts/verify-v7.mjs --contract <freshV7Id> \
@@ -79,13 +32,13 @@ import {
   PROPERTY_MISMATCH,
   TOKEN_COST,
   attemptCreate,
-  attemptCreateIndexOnly,
   attemptDeleteByValues,
   asBase58,
   attemptReplace,
   buildDocument,
   check,
   countBy,
+  defined,
   entryExists,
   expectAccepted,
   expectRejected,
@@ -100,74 +53,51 @@ import {
 } from './verify-lib.mjs';
 
 /**
- * A structure-level refusal of an undeclared property: v7's `post`/`reply`
- * declare `additionalProperties: false` and no longer declare `author`, so a
- * document carrying it never reaches state validation (JsonSchemaError, basic
- * code 10101, rendering the jsonschema crate's "Additional properties are not
- * allowed ('author' was unexpected)"). The wasm document builder may refuse it
- * locally first, which is the same verdict one layer up — both are matched.
- *
- * Deliberately does NOT match the 401xx state codes: a 40127 or 40128 here
- * would mean the column still exists and something else refused the write,
- * which must fail the check rather than score as enforcement. The numeric
- * alternative is anchored to a `code` label because `describeErr` appends a
- * JSON dump of the error, so a bare "10101" would also match a credit amount
- * or a millisecond timestamp inside an unrelated rejection.
+ * A structure-level refusal of an undeclared property (JsonSchemaError, basic
+ * code 10101). The wasm document builder may refuse it locally first, which is
+ * the same verdict one layer up, so both are matched. Deliberately does NOT
+ * match the 401xx state codes: a 40127/40128 here would mean the column still
+ * exists and something else refused the write.
  */
 const UNKNOWN_PROPERTY =
   /\bcode"?\s*[=:]\s*10101\b|additional properties are not allowed|was unexpected|\bunknown property\b|property .{0,40}not (found|defined) in/i;
 
-/**
- * A frozen property was changed, added or dropped by a replace
- * (DocumentImmutablePropertyChangedError, 40128). Live message: "property
- * '<p>' of document <id> (type '<t>') is immutable and cannot be changed by a
- * replace". The numeric alternative is `code`-anchored for the same reason as
- * UNKNOWN_PROPERTY above.
- */
+/** A frozen property was changed, added or dropped by a replace (40128). */
 const IMMUTABLE_CHANGED = /\bcode"?\s*[=:]\s*40128\b|is immutable and cannot be changed/i;
+
+/** Table marker: this row's write must LAND rather than be refused. */
+const ACCEPT = Symbol('accept');
+
+/**
+ * Runs `[label, () => outcome, ACCEPT | pattern]` rows in order. Rejection rows
+ * are order-independent by construction — a refused write leaves the chain
+ * untouched — so the table is as strong as the cases written out longhand.
+ */
+async function runTable(rows) {
+  for (const [label, run, expectation] of rows) {
+    const outcome = await run();
+    if (expectation === ACCEPT) expectAccepted(label, outcome);
+    else expectRejected(label, outcome, expectation);
+  }
+}
 
 // ---- v7 document shapes -----------------------------------------------------
 //
-// v7's post/reply: NO `author` (the like agreements bind to `$ownerId`), and
-// `hashtag` still optional — untagged means the property is ABSENT.
+// NO `author` (the like agreements bind to `$ownerId`), and every optional
+// property is dropped when undefined — untagged means `hashtag` is ABSENT, not
+// empty.
 
-const postData = ({
-  content = 'v7 battery post',
-  hashtag,
-  mediaUrl,
-  sensitive,
-  quotedPostId,
-  quotedPostOwnerId,
-  deleted,
-} = {}) => ({
-  content,
-  language: 'en',
-  ...(hashtag === undefined ? {} : { hashtag }),
-  ...(mediaUrl === undefined ? {} : { mediaUrl }),
-  ...(sensitive === undefined ? {} : { sensitive }),
-  ...(quotedPostId ? { quotedPostId } : {}),
-  ...(quotedPostOwnerId ? { quotedPostOwnerId } : {}),
-  ...(deleted === undefined ? {} : { deleted }),
-});
+const postData = ({ content = 'v7 battery post', ...optional } = {}) =>
+  defined({ content, language: 'en', ...optional });
 
-const replyData = ({ content = 'v7 battery reply', rootPostId, replyToReplyId, parentOwnerId, deleted } = {}) => ({
-  content,
-  rootPostId,
-  parentOwnerId,
-  ...(replyToReplyId ? { replyToReplyId } : {}),
-  ...(deleted === undefined ? {} : { deleted }),
-});
+const replyData = ({ content = 'v7 battery reply', ...linkage } = {}) =>
+  defined({ content, ...linkage });
 
 // ---- Shared fixtures --------------------------------------------------------
 
 /** One fixture create: a failure is logged and reported as `null`, never thrown. */
 async function createFixture(ctx, who, docType, data, label) {
-  const created = await attemptCreate(ctx.sdk, who, {
-    contractId: ctx.contractId,
-    docType,
-    data,
-    tokenCost: TOKEN_COST[docType],
-  });
+  const created = await attemptCreate(ctx.sdk, who, { contractId: ctx.contractId, docType, data, tokenCost: TOKEN_COST[docType] });
   if (created.ok) return created.id;
   console.log(`     (could not create ${label}: ${(created.error ?? '').slice(0, 200)})`);
   return null;
@@ -180,7 +110,7 @@ async function createFixture(ctx, who, docType, data, label) {
  * unlike asserts.
  */
 function likeOn(ctx, postId, data) {
-  return attemptCreateIndexOnly(ctx.sdk, ctx.botA, {
+  return attemptCreate(ctx.sdk, ctx.botA, {
     contractId: ctx.contractId,
     docType: 'like',
     data: likeData({ postId: bs58.decode(postId), ...data }),
@@ -193,21 +123,21 @@ function likeOn(ctx, postId, data) {
 const agreedLike = (ctx) => ({ hashtag: ctx.tag, postAuthor: bs58.decode(ctx.botB.ownerId) });
 
 /** The immutable set `ensureOwnMutablePost` writes; every replace must repeat it verbatim. */
-function immutablesOf(ctx, quoted) {
-  return {
-    language: 'en',
-    hashtag: ctx.tag,
-    quotedPostId: bs58.decode(quoted),
-    quotedPostOwnerId: bs58.decode(ctx.botB.ownerId),
-  };
-}
+const immutablesOf = (ctx, quoted) => ({
+  language: 'en',
+  hashtag: ctx.tag,
+  quotedPostId: bs58.decode(quoted),
+  quotedPostOwnerId: bs58.decode(ctx.botB.ownerId),
+});
 
 /** A post owned by bot B, so bot A's likes agree against a DIFFERENT identity. */
 async function ensurePost(ctx, key, overrides = {}) {
-  if (ctx.posts[key]) return ctx.posts[key];
-  const id = await createFixture(ctx, ctx.botB, 'post', postData({ content: `battery ${key}`, ...overrides }), key);
-  if (id) ctx.posts[key] = id;
-  return id;
+  if (!ctx.posts[key]) {
+    const id = await createFixture(ctx, ctx.botB, 'post', postData({ content: `battery ${key}`, ...overrides }), key);
+    if (!id) return null;
+    ctx.posts[key] = id;
+  }
+  return ctx.posts[key];
 }
 
 /** A reply by bot B on the anchor post, for the likeReply agreement. */
@@ -215,39 +145,36 @@ async function ensureReply(ctx) {
   if (ctx.replyId) return ctx.replyId;
   const rootPostId = await ensurePost(ctx, 'anchor');
   if (!rootPostId) return null;
-  ctx.replyId = await createFixture(ctx, ctx.botB, 'reply', replyData({
+  const data = replyData({
+    content: 'battery anchor reply',
     rootPostId: bs58.decode(rootPostId),
     parentOwnerId: bs58.decode(ctx.botB.ownerId),
-    content: 'battery anchor reply',
-  }), 'the anchor reply');
+  });
+  ctx.replyId = await createFixture(ctx, ctx.botB, 'reply', data, 'the anchor reply');
   return ctx.replyId;
 }
 
 /**
- * A post owned by bot A that only the immutability cases touch, so a rejected
- * replace never disturbs a document another case is asserting against.
- * Carries every immutable property v7 freezes that a real post can hold at
- * once: `language`, `hashtag`, a quote reference and its owner denormalization.
+ * A post owned by bot A that only the immutability cases touch, carrying every
+ * immutable property a real post can hold at once, so a rejected replace never
+ * disturbs a document another case asserts against.
  */
 async function ensureOwnMutablePost(ctx, key, overrides = {}) {
-  if (ctx.own[key]) return ctx.own[key];
-  const quoted = await ensurePost(ctx, 'anchor');
-  if (!quoted) return null;
-  const id = await createFixture(ctx, ctx.botA, 'post', postData({
-    content: `immutability fixture ${key}`,
-    ...immutablesOf(ctx, quoted),
-    ...overrides,
-  }), key);
-  if (!id) return null;
-  ctx.own[key] = { id, quoted };
+  if (!ctx.own[key]) {
+    const quoted = await ensurePost(ctx, 'anchor');
+    if (!quoted) return null;
+    const data = postData({ content: `immutability fixture ${key}`, ...immutablesOf(ctx, quoted), ...overrides });
+    const id = await createFixture(ctx, ctx.botA, 'post', data, key);
+    if (!id) return null;
+    ctx.own[key] = { id, quoted };
+  }
   return ctx.own[key];
 }
 
 /**
  * `attemptCreate`, but a failure to even BUILD the document scores as the
  * rejection instead of aborting the case: wasm's `Document.fromObject` refuses
- * some malformed shapes locally, and for e1 that is the same verdict as
- * consensus refusing them, one layer up.
+ * some malformed shapes locally, which for e1 is the same verdict one layer up.
  */
 async function attemptCreateAllowingBuildFailure(sdk, who, spec) {
   try {
@@ -257,9 +184,11 @@ async function attemptCreateAllowingBuildFailure(sdk, who, spec) {
   }
 }
 
-/** A copy of `fields` with `dropped` genuinely ABSENT — `{...f, k: undefined}`
+/**
+ * A copy of `fields` with `dropped` genuinely ABSENT — `{...f, k: undefined}`
  * still carries the key, which is a present-but-empty value rather than the
- * removal these cases are asserting against. */
+ * removal these cases assert against.
+ */
 function without(fields, ...dropped) {
   return Object.fromEntries(Object.entries(fields).filter(([key]) => !dropped.includes(key)));
 }
@@ -274,66 +203,32 @@ async function revisionOf(ctx, docType, id) {
 
 async function caseE1AuthorColumnGone(ctx) {
   console.log('\n--- e1. the attested `author` column is gone from post and reply ---');
-  const a = bs58.decode(ctx.botA.ownerId);
-
-  expectRejected(
-    'e1a a post carrying the removed `author` property is refused',
-    await attemptCreateAllowingBuildFailure(ctx.sdk, ctx.botA, {
-      contractId: ctx.contractId,
-      docType: 'post',
-      data: { ...postData({ content: 'post with a v6 author column' }), author: a },
-      tokenCost: TOKEN_COST.post,
-    }),
-    UNKNOWN_PROPERTY
-  );
-
   const rootPostId = await ensurePost(ctx, 'anchor');
   if (!rootPostId) {
     check('e1 author column', false, 'no anchor post available');
     return;
   }
-  expectRejected(
-    'e1b a reply carrying the removed `author` property is refused',
-    await attemptCreateAllowingBuildFailure(ctx.sdk, ctx.botA, {
-      contractId: ctx.contractId,
-      docType: 'reply',
-      data: {
-        ...replyData({
-          rootPostId: bs58.decode(rootPostId),
-          parentOwnerId: bs58.decode(ctx.botB.ownerId),
-          content: 'reply with a v6 author column',
-        }),
-        author: a,
-      },
-      tokenCost: TOKEN_COST.reply,
+  const post = (extra = {}) => ({ ...postData({ content: 'e1 post' }), ...extra });
+  const reply = (extra = {}) => ({
+    ...replyData({
+      content: 'e1 reply', rootPostId: bs58.decode(rootPostId), parentOwnerId: bs58.decode(ctx.botB.ownerId),
     }),
-    UNKNOWN_PROPERTY
-  );
+    ...extra,
+  });
+  const author = { author: bs58.decode(ctx.botA.ownerId) };
+  const create = (docType, data, allowBuildFailure = false) => () =>
+    (allowBuildFailure ? attemptCreateAllowingBuildFailure : attemptCreate)(ctx.sdk, ctx.botA, {
+      contractId: ctx.contractId, docType, data, tokenCost: TOKEN_COST[docType],
+    });
 
-  // The control: the SAME writes without the column must land, so e1a/e1b
-  // prove the column is gone rather than that the write path is broken.
-  expectAccepted(
-    'e1c the same post WITHOUT `author` is accepted',
-    await attemptCreate(ctx.sdk, ctx.botA, {
-      contractId: ctx.contractId,
-      docType: 'post',
-      data: postData({ content: 'post with no author column' }),
-      tokenCost: TOKEN_COST.post,
-    })
-  );
-  expectAccepted(
-    'e1d the same reply WITHOUT `author` is accepted',
-    await attemptCreate(ctx.sdk, ctx.botA, {
-      contractId: ctx.contractId,
-      docType: 'reply',
-      data: replyData({
-        rootPostId: bs58.decode(rootPostId),
-        parentOwnerId: bs58.decode(ctx.botB.ownerId),
-        content: 'reply with no author column',
-      }),
-      tokenCost: TOKEN_COST.reply,
-    })
-  );
+  // The accepted rows are the control: without them, the refusals would prove
+  // the write path is broken rather than that the column is gone.
+  await runTable([
+    ['e1a a post carrying the removed `author` property is refused', create('post', post(author), true), UNKNOWN_PROPERTY],
+    ['e1b a reply carrying the removed `author` property is refused', create('reply', reply(author), true), UNKNOWN_PROPERTY],
+    ['e1c the same post WITHOUT `author` is accepted', create('post', post()), ACCEPT],
+    ['e1d the same reply WITHOUT `author` is accepted', create('reply', reply()), ACCEPT],
+  ]);
 }
 
 async function caseE2LikeOwnerAgreement(ctx) {
@@ -345,48 +240,30 @@ async function caseE2LikeOwnerAgreement(ctx) {
     check('e2 like agreement', false, 'fixture posts unavailable');
     return;
   }
+  const owner = bs58.decode(ctx.botB.ownerId);
 
   // Every violation targets a post bot A has NOT yet liked: the 40105
-  // structural-uniqueness probe fires before the agreement check and would
-  // mask the 40127 we are asserting.
-  // The liker's own id is the interesting wrong answer: on v6 `postAuthor`
-  // was compared against a column the POSTER wrote, so a client bug could
-  // make it anything; v7 compares it against the post's real owner.
-  expectRejected(
-    'e2a a like whose postAuthor is the LIKER, not the post owner, is refused',
-    await likeOn(ctx, tagged, { hashtag: ctx.tag, postAuthor: bs58.decode(ctx.botA.ownerId) }),
-    PROPERTY_MISMATCH
-  );
-  expectRejected(
-    'e2b a like whose postAuthor is an unrelated identity is refused',
-    await likeOn(ctx, tagged, { hashtag: ctx.tag, postAuthor: randomIdBytes() }),
-    PROPERTY_MISMATCH
-  );
-  expectRejected(
-    'e2c the hashtag pair still holds: a wrong tag is refused',
-    await likeOn(ctx, tagged, { hashtag: `${ctx.tag}x`, postAuthor: bs58.decode(ctx.botB.ownerId) }),
-    PROPERTY_MISMATCH
-  );
-  expectRejected(
-    'e2d absence is strict: a tagged like on an UNTAGGED post is refused',
-    await likeOn(ctx, untagged, { hashtag: ctx.tag, postAuthor: bs58.decode(ctx.botB.ownerId) }),
-    PROPERTY_MISMATCH
-  );
-  expectRejected(
-    'e2e and the other direction: a hashtag-ABSENT like on a TAGGED post is refused',
-    await likeOn(ctx, spare, { postAuthor: bs58.decode(ctx.botB.ownerId) }),
-    PROPERTY_MISMATCH
-  );
-
-  expectAccepted(
-    'e2f a like naming the post owner\'s $ownerId (and its tag) is accepted',
-    await likeOn(ctx, tagged, agreedLike(ctx))
-  );
+  // structural-uniqueness probe fires before the agreement check and would mask
+  // the 40127. The liker's own id is the interesting wrong answer — before v7
+  // `postAuthor` was compared against a column the POSTER wrote, so a client bug
+  // could make it anything.
+  await runTable([
+    ['e2a a like whose postAuthor is the LIKER, not the post owner, is refused',
+      () => likeOn(ctx, tagged, { hashtag: ctx.tag, postAuthor: bs58.decode(ctx.botA.ownerId) }), PROPERTY_MISMATCH],
+    ['e2b a like whose postAuthor is an unrelated identity is refused',
+      () => likeOn(ctx, tagged, { hashtag: ctx.tag, postAuthor: randomIdBytes() }), PROPERTY_MISMATCH],
+    ['e2c the hashtag pair still holds: a wrong tag is refused',
+      () => likeOn(ctx, tagged, { hashtag: `${ctx.tag}x`, postAuthor: owner }), PROPERTY_MISMATCH],
+    ['e2d absence is strict: a tagged like on an UNTAGGED post is refused',
+      () => likeOn(ctx, untagged, { hashtag: ctx.tag, postAuthor: owner }), PROPERTY_MISMATCH],
+    ['e2e and the other direction: a hashtag-ABSENT like on a TAGGED post is refused',
+      () => likeOn(ctx, spare, { postAuthor: owner }), PROPERTY_MISMATCH],
+    ['e2f a like naming the post owner\'s $ownerId (and its tag) is accepted',
+      () => likeOn(ctx, tagged, agreedLike(ctx)), ACCEPT],
+    ['e2g the both-absent direction agrees: a hashtag-less like on an untagged post',
+      () => likeOn(ctx, untagged, { postAuthor: owner }), ACCEPT],
+  ]);
   if ((await countBy(ctx.sdk, ctx.contractId, 'like', 'postId', tagged)) > 0) ctx.likedTagged = true;
-  expectAccepted(
-    'e2g the both-absent direction agrees: a hashtag-less like on an untagged post',
-    await likeOn(ctx, untagged, { postAuthor: bs58.decode(ctx.botB.ownerId) })
-  );
 }
 
 async function caseE3LikeReplyOwnerAgreement(ctx) {
@@ -396,8 +273,8 @@ async function caseE3LikeReplyOwnerAgreement(ctx) {
     check('e3 likeReply agreement', false, 'no anchor reply available');
     return;
   }
-  const likeReplyOn = (replyAuthor) =>
-    attemptCreateIndexOnly(ctx.sdk, ctx.botA, {
+  const likeReplyOn = (replyAuthor) => () =>
+    attemptCreate(ctx.sdk, ctx.botA, {
       contractId: ctx.contractId,
       docType: 'likeReply',
       data: likeReplyData({ replyId: bs58.decode(replyId), replyAuthor }),
@@ -405,20 +282,15 @@ async function caseE3LikeReplyOwnerAgreement(ctx) {
       accepted: () => entryExists(ctx.sdk, ctx.contractId, 'likeReply', 'replyId', replyId, ctx.botA.ownerId),
     });
 
-  expectRejected(
-    'e3a a reply like whose replyAuthor is the LIKER is refused',
-    await likeReplyOn(bs58.decode(ctx.botA.ownerId)),
-    PROPERTY_MISMATCH
-  );
-  expectAccepted(
-    'e3b a reply like naming the reply owner\'s $ownerId is accepted',
-    await likeReplyOn(bs58.decode(ctx.botB.ownerId))
-  );
-  expectRejected(
-    'e3c re-liking the same reply is still the structural duplicate (40105)',
-    await likeReplyOn(bs58.decode(ctx.botB.ownerId)),
-    DUPLICATE_UNIQUE
-  );
+  // e3c must follow e3b: it asserts the duplicate refusal of the like e3b made.
+  await runTable([
+    ['e3a a reply like whose replyAuthor is the LIKER is refused',
+      likeReplyOn(bs58.decode(ctx.botA.ownerId)), PROPERTY_MISMATCH],
+    ['e3b a reply like naming the reply owner\'s $ownerId is accepted',
+      likeReplyOn(bs58.decode(ctx.botB.ownerId)), ACCEPT],
+    ['e3c re-liking the same reply is still the structural duplicate (40105)',
+      likeReplyOn(bs58.decode(ctx.botB.ownerId)), DUPLICATE_UNIQUE],
+  ]);
 }
 
 async function caseE4RepostOwnerAgreement(ctx) {
@@ -428,7 +300,7 @@ async function caseE4RepostOwnerAgreement(ctx) {
     check('e4 repost agreement', false, 'no post to repost');
     return;
   }
-  const repostWith = (postOwnerId) =>
+  const repostWith = (postOwnerId) => () =>
     attemptCreate(ctx.sdk, ctx.botA, {
       contractId: ctx.contractId,
       docType: 'repost',
@@ -436,23 +308,15 @@ async function caseE4RepostOwnerAgreement(ctx) {
       tokenCost: TOKEN_COST.repost,
     });
 
-  // On v6 this was accepted, and it poisoned `postOwnerAndTime`: the named
-  // identity saw a "X reposted your post" notification for a post that is not
-  // theirs.
-  expectRejected(
-    'e4a a repost naming a third party in postOwnerId is refused',
-    await repostWith(randomIdBytes()),
-    PROPERTY_MISMATCH
-  );
-  expectRejected(
-    'e4b a repost naming the REPOSTER in postOwnerId is refused',
-    await repostWith(bs58.decode(ctx.botA.ownerId)),
-    PROPERTY_MISMATCH
-  );
-  expectAccepted(
-    'e4c a repost naming the post owner\'s $ownerId is accepted',
-    await repostWith(bs58.decode(ctx.botB.ownerId))
-  );
+  // Before v7 these were accepted, and they poisoned `postOwnerAndTime`: the
+  // named identity saw "X reposted your post" for a post that is not theirs.
+  await runTable([
+    ['e4a a repost naming a third party in postOwnerId is refused', repostWith(randomIdBytes()), PROPERTY_MISMATCH],
+    ['e4b a repost naming the REPOSTER in postOwnerId is refused',
+      repostWith(bs58.decode(ctx.botA.ownerId)), PROPERTY_MISMATCH],
+    ['e4c a repost naming the post owner\'s $ownerId is accepted',
+      repostWith(bs58.decode(ctx.botB.ownerId)), ACCEPT],
+  ]);
 }
 
 // ---- F-cases: immutable properties on mutable document types ----------------
@@ -468,48 +332,35 @@ async function caseF1TombstoneImmutability(ctx) {
   const { id, quoted } = fixture;
   const revision = await revisionOf(ctx, 'post', id);
   const full = immutablesOf(ctx, quoted);
-  const replaceWith = (data) =>
-    attemptReplace(ctx.sdk, ctx.botA, { contractId: ctx.contractId, docType: 'post', id, data, revision });
+  const tombstone = (data) => () =>
+    attemptReplace(ctx.sdk, ctx.botA, {
+      contractId: ctx.contractId, docType: 'post', id, revision, data: { content: '', deleted: true, ...data },
+    });
 
-  // Each rejection runs against the SAME stored revision: a refused replace
-  // leaves the document untouched, so they do not have to be ordered.
-  // `language` is REQUIRED, so a replace that dropped it would be refused by
-  // schema validation (10101) before state validation ever reached 40128 —
-  // which `expectRejected` would correctly score as the wrong reason. CHANGING
-  // it is how a required frozen property reaches the immutability check. The
-  // DROP direction is covered by f1b/f1d, whose properties are optional.
-  expectRejected(
-    'f1a a tombstone that CHANGES the immutable, REQUIRED `language` is refused',
-    await replaceWith({ content: '', deleted: true, ...full, language: 'fr' }),
-    IMMUTABLE_CHANGED
-  );
-  expectRejected(
-    'f1b a tombstone that DROPS the quote reference is refused',
-    await replaceWith({ content: '', deleted: true, ...without(full, 'quotedPostId') }),
-    IMMUTABLE_CHANGED
-  );
-  expectRejected(
-    'f1c a tombstone that CHANGES the immutable `hashtag` is refused',
-    await replaceWith({ content: '', deleted: true, ...full, hashtag: `${ctx.tag}x` }),
-    IMMUTABLE_CHANGED
-  );
-  expectRejected(
-    'f1d a tombstone that DROPS the optional `hashtag` is refused too',
-    await replaceWith({ content: '', deleted: true, ...without(full, 'hashtag') }),
-    IMMUTABLE_CHANGED
-  );
-  expectAccepted(
-    'f1e a tombstone carrying every immutable property verbatim is accepted',
-    await replaceWith({ content: '', deleted: true, ...full })
-  );
+  // Every rejection runs against the SAME stored revision. `language` is
+  // REQUIRED, so DROPPING it would be refused by schema validation (10101)
+  // before state validation reached 40128 — which expectRejected would score as
+  // the wrong reason. Changing it is how a required frozen property reaches the
+  // immutability check; the drop direction rides the optional ones (f1b/f1d).
+  await runTable([
+    ['f1a a tombstone that CHANGES the immutable, REQUIRED `language` is refused',
+      tombstone({ ...full, language: 'fr' }), IMMUTABLE_CHANGED],
+    ['f1b a tombstone that DROPS the quote reference is refused',
+      tombstone(without(full, 'quotedPostId')), IMMUTABLE_CHANGED],
+    ['f1c a tombstone that CHANGES the immutable `hashtag` is refused',
+      tombstone({ ...full, hashtag: `${ctx.tag}x` }), IMMUTABLE_CHANGED],
+    ['f1d a tombstone that DROPS the optional `hashtag` is refused too',
+      tombstone(without(full, 'hashtag')), IMMUTABLE_CHANGED],
+    ['f1e a tombstone carrying every immutable property verbatim is accepted', tombstone(full), ACCEPT],
+  ]);
   ctx.tombstonedId = id;
   ctx.tombstonedFull = full;
 }
 
 async function caseF2DeletedIsSettableOnce(ctx) {
   console.log('\n--- f2. `deleted` is immutable-but-settable: one set, never a revert ---');
-  // Lazy fixture so `--only f2` works; never re-runs a case that already
-  // ran and failed, which would double-count its checks.
+  // Lazy fixture so `--only f2` works; never re-runs a case that already ran
+  // and failed, which would double-count its checks.
   if (!ctx.tombstonedId && !ctx.f1Ran) await caseF1TombstoneImmutability(ctx);
   const id = ctx.tombstonedId;
   if (!id) {
@@ -517,47 +368,36 @@ async function caseF2DeletedIsSettableOnce(ctx) {
     return;
   }
   const full = ctx.tombstonedFull;
-  const replaceWith = async (data) =>
-    attemptReplace(ctx.sdk, ctx.botA, {
-      contractId: ctx.contractId,
-      docType: 'post',
-      id,
-      data,
-      revision: await revisionOf(ctx, 'post', id),
-    });
-
   // f1e already performed the one allowed set (absent → true), which is what
   // `immutableAllowSetting: ["deleted"]` exists for. From here it is frozen.
-  expectRejected(
-    'f2a flipping `deleted` back to false is refused',
-    await replaceWith({ content: '', deleted: false, ...full }),
-    IMMUTABLE_CHANGED
-  );
-  expectRejected(
-    'f2b DROPPING `deleted` from a tombstoned post is refused',
-    await replaceWith({ content: '', ...full }),
-    IMMUTABLE_CHANGED
-  );
-  expectAccepted(
-    'f2c re-stating `deleted: true` is accepted (an unchanged value is not a change)',
-    await replaceWith({ content: '', deleted: true, ...full })
-  );
+  const replaceWith = (data) => async () =>
+    attemptReplace(ctx.sdk, ctx.botA, {
+      contractId: ctx.contractId, docType: 'post', id, data, revision: await revisionOf(ctx, 'post', id),
+    });
+
+  await runTable([
+    ['f2a flipping `deleted` back to false is refused',
+      replaceWith({ content: '', deleted: false, ...full }), IMMUTABLE_CHANGED],
+    ['f2b DROPPING `deleted` from a tombstoned post is refused',
+      replaceWith({ content: '', ...full }), IMMUTABLE_CHANGED],
+    ['f2c re-stating `deleted: true` is accepted (an unchanged value is not a change)',
+      replaceWith({ content: '', deleted: true, ...full }), ACCEPT],
+  ]);
 }
 
 async function caseF3MutableFieldsStayMutable(ctx) {
   console.log('\n--- f3. the properties v7 left mutable still are ---');
   const fixture = await ensureOwnMutablePost(ctx, 'editable', {
-    mediaUrl: 'ipfs://bafybatteryfixture',
-    sensitive: true,
+    mediaUrl: 'ipfs://bafybatteryfixture', sensitive: true,
   });
   if (!fixture) {
     check('f3 mutable fields', false, 'no fixture post available');
     return;
   }
   const { id, quoted } = fixture;
-  // A replace that keeps every FROZEN property and rewrites the content ones:
-  // blanks the body, drops the media and drops the sensitivity flag. This is
-  // exactly the tombstone's content half, without setting `deleted`.
+  // Keeps every FROZEN property and rewrites the content ones: blanks the body,
+  // drops the media and the sensitivity flag. The tombstone's content half,
+  // without setting `deleted`.
   expectAccepted(
     'f3a a replace may blank `content` and drop `mediaUrl`/`sensitive`',
     await attemptReplace(ctx.sdk, ctx.botA, {
@@ -570,7 +410,25 @@ async function caseF3MutableFieldsStayMutable(ctx) {
   );
 }
 
-// ---- G-cases: v6 carry-over smoke -------------------------------------------
+// ---- G-case: the like lifecycle under the new agreement ----------------------
+
+/** The `$createdAt` of bot A's like of `postId`, recovered off byAuthorTimePost. */
+async function likeCreatedAt(ctx, postId) {
+  const page = await readback(() =>
+    ctx.sdk.documents.query({
+      dataContractId: ctx.contractId,
+      documentTypeName: 'like',
+      where: [['postAuthor', '==', ctx.botB.ownerId]],
+      orderBy: [['$createdAt', 'desc']],
+      limit: 100,
+    })
+  );
+  for (const doc of page.values()) {
+    const obj = doc.toObject();
+    if (asBase58(obj?.postId) === postId && asBase58(obj?.$ownerId) === ctx.botA.ownerId) return obj?.$createdAt;
+  }
+  return null;
+}
 
 async function caseG1LikeLifecycle(ctx) {
   console.log('\n--- g1. the like lifecycle under the $ownerId agreement ---');
@@ -585,20 +443,16 @@ async function caseG1LikeLifecycle(ctx) {
     ctx.likedTagged = true;
   }
 
-  check(
-    'g1b the preallocated byPost count sees it',
-    (await countBy(ctx.sdk, ctx.contractId, 'like', 'postId', tagged)) >= 1
-  );
-  check(
-    'g1c the byAuthorPost count, whose authorId now agrees with post.$ownerId, sees it',
-    (await countBy(ctx.sdk, ctx.contractId, 'like', 'postAuthor', ctx.botB.ownerId)) >= 1
-  );
+  check('g1b the preallocated byPost count sees it',
+    (await countBy(ctx.sdk, ctx.contractId, 'like', 'postId', tagged)) >= 1);
+  check('g1c the byAuthorPost count, whose authorId now agrees with post.$ownerId, sees it',
+    (await countBy(ctx.sdk, ctx.contractId, 'like', 'postAuthor', ctx.botB.ownerId)) >= 1);
 
-  // The tagged `beat` companion: the windowed hashtag axis is v6's, carried
-  // into v7 with its `{hashtag: hashtag}` agreement untouched.
+  // The tagged `beat` companion carries the windowed hashtag axis; its
+  // `{hashtag: hashtag}` agreement is untouched by v7.
   expectAccepted(
     'g1d the tagged `beat` companion is accepted',
-    await attemptCreateIndexOnly(ctx.sdk, ctx.botA, {
+    await attemptCreate(ctx.sdk, ctx.botA, {
       contractId: ctx.contractId,
       docType: 'beat',
       data: { postId: bs58.decode(tagged), hashtag: ctx.tag },
@@ -606,26 +460,9 @@ async function caseG1LikeLifecycle(ctx) {
     })
   );
 
-  // Unlike is a delete-by-values: the tuple must reproduce the create's
-  // values exactly, `$createdAt` included, which is recovered from the stored
-  // entry rather than guessed.
-  const page = await readback(() =>
-    ctx.sdk.documents.query({
-      dataContractId: ctx.contractId,
-      documentTypeName: 'like',
-      where: [['postAuthor', '==', ctx.botB.ownerId]],
-      orderBy: [['$createdAt', 'desc']],
-      limit: 100,
-    })
-  );
-  let createdAt;
-  for (const doc of page.values()) {
-    const obj = doc.toObject();
-    if (asBase58(obj?.postId) === tagged && asBase58(obj?.$ownerId) === ctx.botA.ownerId) {
-      createdAt = obj?.$createdAt;
-      break;
-    }
-  }
+  // Unlike is a delete-by-values: the tuple must reproduce the create's values
+  // exactly, `$createdAt` included, recovered from the stored entry not guessed.
+  const createdAt = await likeCreatedAt(ctx, tagged);
   if (createdAt === undefined || createdAt === null) {
     check('g1e the like\'s $createdAt is recoverable for the delete tuple', false, 'byAuthorTimePost returned nothing');
     return;
@@ -634,8 +471,7 @@ async function caseG1LikeLifecycle(ctx) {
     contractId: ctx.contractId,
     docType: 'like',
     ownerId: ctx.botA.ownerId,
-    // The SAME tuple the create used: a delete-by-values that differs by one
-    // byte finds no entry.
+    // The SAME tuple the create used: one byte of difference finds no entry.
     data: likeData({ postId: bs58.decode(tagged), ...agreed }),
     createdAt: BigInt(createdAt),
     id: randomIdBytes(),
@@ -654,17 +490,6 @@ async function caseG1LikeLifecycle(ctx) {
 
 // ---- Registry ---------------------------------------------------------------
 
-const CASES = new Map([
-  ['e1', caseE1AuthorColumnGone],
-  ['e2', caseE2LikeOwnerAgreement],
-  ['e3', caseE3LikeReplyOwnerAgreement],
-  ['e4', caseE4RepostOwnerAgreement],
-  ['f1', caseF1TombstoneImmutability],
-  ['f2', caseF2DeletedIsSettableOnce],
-  ['f3', caseF3MutableFieldsStayMutable],
-  ['g1', caseG1LikeLifecycle],
-]);
-
 const someId = randomIdBytes;
 
 await runBattery({
@@ -673,7 +498,11 @@ await runBattery({
   usage:
     'Usage: node scripts/verify-v7.mjs --contract <id> [--bot <n>] [--bot2 <n>]\n' +
     '       [--owner <id>] [--owner2 <id>] [--only e1,f2] [--dry-run|--self-test]',
-  cases: CASES,
+  cases: new Map(Object.entries({
+    e1: caseE1AuthorColumnGone, e2: caseE2LikeOwnerAgreement, e3: caseE3LikeReplyOwnerAgreement,
+    e4: caseE4RepostOwnerAgreement, f1: caseF1TombstoneImmutability, f2: caseF2DeletedIsSettableOnce,
+    f3: caseF3MutableFieldsStayMutable, g1: caseG1LikeLifecycle,
+  })),
   // Every shape the live battery writes, so `--self-test` proves they build.
   shapes: [
     ['post (untagged, no author)', 'post', postData(), undefined],
@@ -695,21 +524,12 @@ await runBattery({
     ['reply (tombstone, linkage kept)', 'reply', replyData({ content: '', rootPostId: someId(), parentOwnerId: someId(), deleted: true })],
   ],
   makeContext: ({ sdk, contractId, botA, botB }) => ({
-    sdk,
-    contractId,
-    botA,
-    botB,
+    sdk, contractId, botA, botB,
     /** Run-unique lowercase hashtag, so per-tag assertions stay exact across re-runs. */
     tag: `v7b${Date.now().toString(36)}`,
-    /** Fixture posts owned by bot B, keyed by role. */
-    posts: {},
-    /** Fixture posts owned by bot A, which only the immutability cases replace. */
-    own: {},
-    replyId: null,
-    likedTagged: false,
-    tombstonedId: null,
-    tombstonedFull: null,
-    f1Ran: false,
+    /** `posts` are owned by bot B; `own` by bot A, and only the F-cases replace those. */
+    posts: {}, own: {},
+    replyId: null, likedTagged: false, tombstonedId: null, tombstonedFull: null, f1Ran: false,
   }),
   summarize: (ctx) => {
     console.log(`run tag: #${ctx.tag}`);

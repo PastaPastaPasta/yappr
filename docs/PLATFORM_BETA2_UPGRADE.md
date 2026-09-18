@@ -307,14 +307,13 @@ array.
 ## Battery
 
 `scripts/verify-v7.mjs` is a thin file of v7 cases on top of
-`scripts/verify-lib.mjs`, which holds the machinery every battery shares — the
-devnet SDK with its quorum-rotation reconnect proxy, readback-decided write
-outcomes, the strict wrong-reason-fails rejection matchers, the PASS/FAIL ledger,
-and a `runBattery()` shell owning the CLI, the dry run and the report. That
-machinery was extracted verbatim from `verify-v5.mjs`, which is deliberately left
-untouched: it is the frozen record of the v5 cut, its `--dry-run` only exercises
-shape building, and a rewrite of its live paths could not be validated without
-re-running it against a v5 contract that no longer exists on chain.
+`scripts/verify-lib.mjs`, which holds the machinery — the devnet SDK with its
+quorum-rotation reconnect proxy, readback-decided write outcomes, the strict
+wrong-reason-fails rejection matchers, the PASS/FAIL ledger, and a
+`runBattery()` shell owning the CLI, the dry run and the report. Each case is a
+table of `[label, write, ACCEPT | expected-rejection]` rows: a refused write
+leaves the chain untouched, so rejection rows are order-independent and the
+table is as strong as the same cases written out longhand.
 
 | Case | What it proves |
 | --- | --- |
@@ -331,9 +330,9 @@ It runs live only with `--contract <id>` (or `V7_CONTRACT_ID`) and has no defaul
 id. `--self-test` (or `--dry-run`) builds every shape the live run writes,
 including both tombstone replaces, and makes no network call.
 
-The v7 battery deliberately does not re-prove v6's query surface: the indexes,
-ranked axes and windowed twins are byte-identical, and `verify-v5.mjs`'s A/B/C/D
-cases already covered them live.
+The v7 battery deliberately does not re-prove the previous cut's query surface:
+the indexes, ranked axes and windowed twins are byte-identical, and the previous
+cut's battery covered them live.
 
 ## Local validation
 
