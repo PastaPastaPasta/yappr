@@ -7,7 +7,7 @@ import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
-import { STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_COSTS, YAPP_TOKEN_POSITION, keyNetwork, storefrontIsV2 } from '../constants';
+import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_COSTS, YAPP_TOKEN_POSITION, blogIsV2, keyNetwork, storefrontIsV2 } from '../constants';
 import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError } from '../error-utils';
 import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
@@ -307,6 +307,11 @@ class StateTransitionService {
       // Storefront reviews spend the SOCIAL contract's YAPP (cross-contract
       // tokenCost), so the agreement names that contract explicitly.
       const amount = (STOREFRONT_YAPP_TOKEN_COSTS as Record<string, number>)[documentType];
+      return amount ? { paymentTokenContractId: YAPPR_CONTRACT_ID, maximumTokenCost: amount } : undefined;
+    }
+    if (contractId === YAPPR_BLOG_CONTRACT_ID && blogIsV2()) {
+      // Blog comments spend the SOCIAL contract's YAPP the same way.
+      const amount = (BLOG_YAPP_TOKEN_COSTS as Record<string, number>)[documentType];
       return amount ? { paymentTokenContractId: YAPPR_CONTRACT_ID, maximumTokenCost: amount } : undefined;
     }
     return undefined;

@@ -59,6 +59,27 @@ export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CON
 export const YAPPR_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_VAULT_CONTRACT_ID ?? '7RQoHtVZaRZDSrR22s8KcbCJmwSwetJHBcFjx6FJdkJD' // Testnet - Vault contract (contract-bound encryption keys + encrypted storage)
 export const YAPPR_AUTH_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID ?? '64RTgHjGXhtiN9t5S4u6hVDps7oHuTBaaHrQEFYcxt9M'
 export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID ?? '9jfarXPwRoKXK4v2JBDaiFg3j78diQuLnHMyVqBZfZNc' // Testnet - Blog contract v4 (BlockNote 0.47 upgrade)
+// ---- blog v2 topology — owned by the blog work, edit here only ----
+// `v1` is the testnet contract: plain indexes, no attested `author`, no token
+// cost — comment counts and follower counts are client-side page scans. `v2`
+// (contracts/yappr-blog-contract-v2.json, docs/BLOG_V2.md) adds the refersTo
+// chain, the countable/ranked comment and follower trees, and YAPP-priced
+// comments; writes carry the v2 fields and consensus rejects them on a v1
+// contract, so the switch must match the deployed contract.
+//
+// Read at CALL time (like `getContractTopology`, unlike `STOREFRONT_TOPOLOGY`):
+// `NEXT_PUBLIC_*` is inlined at build time either way, and a function keeps the
+// gate stubbable from unit tests.
+export const blogTopology = (): 'v1' | 'v2' =>
+  process.env.NEXT_PUBLIC_BLOG_TOPOLOGY === 'v2' ? 'v2' : 'v1'
+export const blogIsV2 = () => blogTopology() === 'v2'
+// Blog comments are priced in YAPP, charged from the SOCIAL contract's token
+// through `tokenCost.create.contractId` (a cross-contract token cost), so their
+// payment agreement must name that contract — see resolveTokenPayment.
+export const BLOG_YAPP_TOKEN_COSTS = {
+  blogComment: 1,
+} as const
+// ---- end blog v2 block ----
 export const BLOG_CHUNK_SIZE = 5120         // 5 KiB — platform max_field_value_size
 export const BLOG_MAX_CHUNKS = 4            // Number of data fields in contract (data0–data3)
 export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (leaves headroom within 4 × 5120 = 20KB)

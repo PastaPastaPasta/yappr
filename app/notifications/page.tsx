@@ -47,8 +47,8 @@ function getNotificationUrl(notification: Notification): string | null {
     return null
   }
 
-  // For blog post notifications, navigate to the blog post
-  if (notification.type === 'blogPost' && notification.blogId && notification.blogPostSlug) {
+  // Blog notifications navigate to the blog post (the comment lives on it)
+  if ((notification.type === 'blogPost' || notification.type === 'blogComment') && notification.blogId && notification.blogPostSlug) {
     return getBlogPostUrl(notification.blogId, notification.blogPostSlug)
   }
 
@@ -96,6 +96,7 @@ const NOTIFICATION_TYPE_TO_SETTING: Record<Notification['type'], string | null> 
   follow: 'follows',
   mention: 'mentions',
   blogPost: 'blogPosts',
+  blogComment: 'blogPosts',
   // Private feed notifications always show (no setting)
   privateFeedRequest: null,
   privateFeedApproved: null,
@@ -122,6 +123,7 @@ const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
   repost: <ArrowPathRoundedSquareIcon className="h-5 w-5 text-green-500" />,
   reply: <ChatBubbleLeftIcon className="h-5 w-5 text-blue-500" />,
   blogPost: <BookOpenIcon className="h-5 w-5 text-yappr-500" />,
+  blogComment: <ChatBubbleLeftIcon className="h-5 w-5 text-yappr-500" />,
   privateFeedRequest: <LockClosedIcon className="h-5 w-5 text-blue-500" />,
   privateFeedApproved: <LockOpenIcon className="h-5 w-5 text-green-500" />,
   privateFeedRevoked: <ShieldExclamationIcon className="h-5 w-5 text-red-500" />
@@ -134,6 +136,7 @@ const NOTIFICATION_MESSAGES: Record<Notification['type'], string> = {
   repost: 'reposted your post',
   reply: 'replied to your post',
   blogPost: 'published a new blog post',
+  blogComment: 'commented on your blog post',
   privateFeedRequest: 'requested access to your private feed',
   privateFeedApproved: 'approved your private feed request',
   privateFeedRevoked: 'revoked your private feed access'
@@ -146,7 +149,7 @@ const EMPTY_STATE_MESSAGES: Record<NotificationFilter, string> = {
   reply: 'When someone replies to your post, you\'ll see it here',
   follow: 'When someone follows you, you\'ll see it here',
   mention: 'When someone mentions you, you\'ll see it here',
-  blogPost: 'When a blog you follow publishes, you\'ll see it here',
+  blogPost: 'When a blog you follow publishes, or someone comments on your post, you\'ll see it here',
   privateFeed: 'Private feed requests and updates will appear here'
 }
 
@@ -177,6 +180,8 @@ function NotificationsPage() {
         n.type === 'privateFeedRevoked'
       )
     }
+    // The Blog tab covers both blog sources: new posts and comments on yours.
+    if (tabFilter === 'blogPost') return notifs.filter(n => n.type === 'blogPost' || n.type === 'blogComment')
     return notifs.filter(n => n.type === tabFilter)
   }
 

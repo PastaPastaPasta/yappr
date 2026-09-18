@@ -17,6 +17,7 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { BlogViewer } from './blog-viewer'
 import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
+import { BlogPostHistory } from './blog-post-history'
 import { EmbedPreview } from './embed-preview'
 import { decodeSummary, estimateReadingTime, getBlogPostUrl } from '@/lib/blog/content-utils'
 import { getReaderOverrideStyle, getReaderFontSize, getAppThemeForReadingMode } from '@/lib/blog/reader-preferences'
@@ -227,12 +228,18 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
             className="mt-4 flex items-center justify-between gap-3 border-y py-2.5"
             style={{ borderColor: 'var(--blog-border)' }}
           >
-            <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--blog-text)', opacity: 0.6 }}>
+            <div className="flex flex-wrap items-center gap-2 text-xs" style={{ color: 'var(--blog-text)', opacity: 0.6 }}>
               <span>{readingTime} min read</span>
               {post.labels && (
                 <>
                   <span>·</span>
                   <span>{post.labels}</span>
+                </>
+              )}
+              {(post.$revision ?? 1) > 1 && (
+                <>
+                  <span>·</span>
+                  <BlogPostHistory postId={post.id} revision={post.$revision} />
                 </>
               )}
             </div>
@@ -317,7 +324,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
           <div ref={commentsRef} className="mt-8">
             <BlogComments
               blogPostId={post.id}
-              blogPostOwnerId={post.ownerId}
+              blogPostOwnerId={post.author || post.ownerId}
               commentsEnabled={post.commentsEnabled !== false}
               onCommentCountChange={setCommentCount}
             />

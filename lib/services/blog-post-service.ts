@@ -1,6 +1,6 @@
 import { queryDocumentBundle } from './document-query-bundle'
 import { BaseDocumentService, type QueryOptions } from './document-service'
-import { BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
+import { BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID, blogIsV2 } from '@/lib/constants'
 import type { BlogPost } from '@/lib/types'
 import { identifierToBase58, normalizeBytes, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { compressContent, decompressContent, joinChunks, splitIntoChunks } from '@/lib/utils/compression'
@@ -46,6 +46,14 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   protected extractContentFields(doc: BlogPost): Record<string, unknown> {
     const fields = super.extractContentFields(doc)
     delete fields.content
+    // `update()` merges these back into a full replace, and the transform hands
+    // identifiers back as base58 — restore the raw-byte form the create path
+    // writes so an edit keeps blogId (and the v2 `author`) byte-identical.
+    for (const key of ['blogId', 'author']) {
+      if (typeof fields[key] === 'string') {
+        fields[key] = requireDocumentIdentifierBytes(fields[key] as string, key)
+      }
+    }
     // Re-compress and chunk content into data0–data3 (only set chunks that exist)
     if (doc.content && Array.isArray(doc.content) && doc.content.length > 0) {
       const compressed = compressContent(doc.content)
@@ -87,6 +95,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       updatedAt: (doc.$updatedAt || doc.updatedAt) ? new Date((doc.$updatedAt || doc.updatedAt) as number) : undefined,
       $revision: (doc.$revision || doc.revision) as number | undefined,
       blogId: identifierToBase58(rawBlogId) || '',
+      // v2 only; on v1 the property does not exist and the owner IS the author.
+      author: identifierToBase58(data.author || doc.author) || undefined,
       title: (data.title || doc.title || '') as string,
       subtitle: (data.subtitle ?? doc.subtitle) as string | undefined,
       content,
@@ -115,6 +125,10 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const buildPayload = (finalSlug: string): Record<string, unknown> => {
       const payload: Record<string, unknown> = {
         blogId: requireDocumentIdentifierBytes(data.blogId, 'blogId'),
+        // Poster-attested on v2: consensus pins every comment's
+        // blogPostOwnerId to this value, and the app requires it to equal
+        // $ownerId. The v1 contract has no such property.
+        ...(blogIsV2() ? { author: requireDocumentIdentifierBytes(ownerId, 'author') } : {}),
         title: data.title,
         data0: chunks[0],
         slug: finalSlug,
