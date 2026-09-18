@@ -640,7 +640,10 @@ export const RETRYABLE = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket|net
 /** Identity (contract) nonce desync — cured by a reconnect (fresh nonce cache). */
 export const NONCE_DESYNC = /nonce/i;
 /** Structural duplicate (unique index) — the end state already holds. */
-export const DUPLICATE_UNIQUE = /40105|duplicate unique properties/i;
+// The code is anchored: several callers treat a duplicate as SUCCESS
+// (`duplicateIsSuccess`), so an unbounded `40105` matching a credit amount or a
+// document id would silently skip a write that never landed.
+export const DUPLICATE_UNIQUE = /\b40105\b|duplicate unique properties/i;
 
 export function createSdkHandle({ contractIds, timeoutMs = 30000, log = console.log }) {
   let activeSdk = null;

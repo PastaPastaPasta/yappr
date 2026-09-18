@@ -93,8 +93,11 @@ function printAudit(documentSchemas, dataContract) {
     }
     // A declared list the parser did not pick up is the failure this audit
     // exists to catch: it would validate offline and be ignored on chain.
-    const declared = schema.immutable ?? [];
-    if (declared.length !== frozen.immutable.length) {
+    // Compared by CONTENT, not length — a same-length list naming different
+    // properties is the same silent divergence. `documentTypeImmutableProperties`
+    // returns its arrays sorted, so the declaration is sorted to match.
+    const declared = [...(schema.immutable ?? [])].sort();
+    if (JSON.stringify(declared) !== JSON.stringify([...frozen.immutable].sort())) {
       throw new Error(`${name}: schema declares immutable ${JSON.stringify(declared)} but the parsed contract reports ${JSON.stringify(frozen.immutable)}`);
     }
   }
