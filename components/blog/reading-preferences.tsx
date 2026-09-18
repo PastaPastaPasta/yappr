@@ -42,7 +42,6 @@ export function ReadingPreferencesPopover() {
           align="end"
           sideOffset={8}
           className="z-[100] w-[220px] animate-in fade-in-0 zoom-in-95 rounded-xl border border-gray-800 bg-neutral-900 p-3 shadow-lg"
-          onOpenAutoFocus={(e) => e.preventDefault()}
         >
           {/* Font size */}
           <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-gray-400">
