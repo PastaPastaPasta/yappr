@@ -1,5 +1,5 @@
 /**
- * The v3 interaction topology, exercised against a real chain.
+ * The devnet (`v7`) interaction topology, exercised against a real chain.
  *
  * Everything here is a claim the contract's shape makes that the client has to
  * honour, and that a unit test could not check because it depends on consensus:
@@ -9,9 +9,9 @@
  * not exist on a reply card at all; a quote of a reply goes in `quotedReplyId`;
  * and `post`/`reply` are `canBeDeleted: false`, so "delete" leaves a tombstone.
  *
- * This runs against the moutai devnet (`.env.devnet` — the only deployment on the
- * v3 contract) and self-skips anywhere else, since on v2 every assertion below is
- * either meaningless or actively wrong. Drive it with:
+ * This runs against the moutai devnet (`.env.devnet` — the only deployment on
+ * the v7 contract) and self-skips anywhere else, since on v2 every assertion
+ * below is either meaningless or actively wrong. Drive it with:
  *
  *   npm run build:devnet
  *   E2E_BASE_PATH=/devnet E2E_ENV_FILE=.env.devnet NETWORK=devnet npx playwright test topology
@@ -56,7 +56,7 @@ async function openReadyExplore(page: Page): Promise<void> {
  */
 const IS_DEVNET_RUN = (process.env.E2E_ENV_FILE ?? '').includes('devnet')
 const NOT_DEVNET_REASON =
-  'E2E_ENV_FILE does not select the devnet deployment — the v3+ topologies are only deployed there'
+  'E2E_ENV_FILE does not select the devnet deployment — the v7 topology is only deployed there'
 
 /**
  * Synchronous topology read (same sources `expectedTopology()` uses), so the
@@ -78,24 +78,18 @@ function compiledTopology(): string {
 const SPEC_TOPOLOGY = compiledTopology()
 
 /**
- * Oldest → newest, mirroring `CONTRACT_TOPOLOGIES` in lib/constants.ts. The
- * describe gates below ask "is the compiled contract this cut or later?"
- * rather than listing every cut, so a new topology inherits the suites its
- * contract still satisfies instead of silently skipping all of them.
+ * The one non-default topology in `CONTRACT_TOPOLOGIES` (lib/constants.ts),
+ * hand-copied because e2e/ cannot import from lib/ — it reads the COMPILED
+ * bundle, and Playwright runs outside the app's module graph.
+ * `lib/contract-topology.test.ts` fails if this literal drifts, which matters
+ * because drift would silently skip every devnet suite below rather than error.
  */
-const TOPOLOGY_ORDER = ['v2', 'v3', 'v4', 'v5', 'v6', 'v7']
-const specTopologyAtLeast = (floor: string) =>
-  TOPOLOGY_ORDER.indexOf(SPEC_TOPOLOGY) >= TOPOLOGY_ORDER.indexOf(floor)
+const DEVNET_TOPOLOGY = 'v7'
+const WRONG_TOPOLOGY_REASON = `the compiled topology is not ${DEVNET_TOPOLOGY}`
 
-// Everything in the first describe holds on v3, v4 AND v5: the v4/v5 contracts
-// keep v3's document graph (flat threads, likeReply, posts-only
-// repost/bookmark, dual quote fields, tombstones) and change only how likes
-// and hashtags are stored — which makes the reply-like test double as live
-// coverage of the v4/v5 indexOnly likeReply path (agreement-bound create +
-// delete-by-values unlike).
-test.describe('v3+ interaction topology on the devnet contract', () => {
+test.describe('interaction topology on the devnet contract', () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(!specTopologyAtLeast('v3'), 'the compiled topology predates the v3 document graph')
+  test.skip(SPEC_TOPOLOGY !== DEVNET_TOPOLOGY, WRONG_TOPOLOGY_REASON)
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
@@ -120,13 +114,11 @@ test.describe('v3+ interaction topology on the devnet contract', () => {
     expect(contractId, 'the env file must define NEXT_PUBLIC_YAPPR_CONTRACT_ID').not.toBe('')
 
     // The describe already skipped anything that is not the devnet run, so a
-    // topology outside the v3 family here means the devnet env file lost its
-    // flag — which would make every assertion below fail against the UI instead
-    // of naming the real problem.
-    expect(
-      TOPOLOGY_ORDER.slice(TOPOLOGY_ORDER.indexOf('v3')),
-      'the devnet env file must set NEXT_PUBLIC_CONTRACT_TOPOLOGY to v3 or later'
-    ).toContain(topology)
+    // different topology here means the devnet env file lost its flag — which
+    // would make every assertion below fail against the UI instead of naming
+    // the real problem.
+    expect(topology, `the devnet env file must set NEXT_PUBLIC_CONTRACT_TOPOLOGY=${DEVNET_TOPOLOGY}`)
+      .toBe(DEVNET_TOPOLOGY)
     expect(topology, 'sync and async topology reads must agree').toBe(SPEC_TOPOLOGY)
 
     await page.goto(appUrl('/about/'))
@@ -308,214 +300,14 @@ test.describe('v3+ interaction topology on the devnet contract', () => {
 })
 
 /**
- * The v4-only surfaces: indexOnly post likes end to end, the inline single
- * hashtag, and the server-ranked profile Top tab.
+ * Optional hashtags and the proved prefix rankings.
  *
  * What each step proves on-chain:
- * - the tagged post carries `author` + `hashtag` (consensus rejects a v4 post
- *   without them, so its very existence is the assertion), and appears on the
- *   tag page via `post.tagAndTime` — no postHashtag documents exist to serve it;
- * - a like is an indexOnly create whose agreement-bound values matched (40127
- *   rejects otherwise), read back through `byLiker` after reload;
- * - the visible count comes from the countable `byPost` axis;
- * - the profile feed's pressed state is the batched `in`-membership query;
- * - unlike is a delete-by-values whose tuple (incl. the consensus `$createdAt`)
- *   was recovered from `byAuthorTimePost`; re-like proves the entries really
- *   left the trees (a duplicate would be rejected structurally, 40105);
- * - the Top tab renders from a proved `documents.ranked()` page on
- *   `byAuthorPost` pinned to the author;
- * - the explore Top tab renders the GLOBAL ranked page (`byPost`, unpinned) and
- *   the tag page's Top toggle the tag-pinned one (`byHashtagPost` — fed by the
- *   like's agreement-bound `hashtag` copy);
- * - the trending widget is client-derived activity (inline hashtags of recent
- *   posts, deliberately unproven) and is labeled as such.
- */
-test.describe('v4 indexOnly like lifecycle on the devnet contract', () => {
-  test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  // NOT generalized to specTopologyAtLeast('v4'): the stated reason below is
-  // stale — v5, v6 and v7 all have indexOnly likes — but the assertions inside
-  // are written against v4's `''` hashtag sentinel, which v5 removed, so they
-  // would fail rather than pass on a later cut. Widening this suite means
-  // porting those assertions to optional hashtags first.
-  test.skip(SPEC_TOPOLOGY !== 'v4', 'this suite asserts v4\'s \'\' hashtag sentinel, which v5+ replaced with property absence')
-  test.skip(!hasSeedPhrase, NO_SEED_REASON)
-
-  let runTag = ''
-  let hashtag = ''
-  let postId = ''
-  let postText = ''
-
-  test('a tagged post is created and listed on its tag page', async ({ page, bot }) => {
-    test.setTimeout(420_000)
-
-    runTag = uniqueTag(bot.index)
-    // A run-unique tag, so the tag page assertion can only match this run's post.
-    hashtag = `v4${runTag.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 63)
-    postText = `${runTag} v4 like target #${hashtag}`
-
-    await page.goto(appUrl('/feed/'))
-    await page.getByTestId('open-compose-btn').click()
-    const composeDialog = page.getByRole('dialog', { name: 'Create a new post' })
-    await expect(composeDialog).toBeVisible()
-    await composeDialog.getByTestId('compose-textarea').first().fill(postText)
-    await composeDialog.getByTestId('compose-submit-btn').click()
-    await expect(composeDialog).toBeHidden({ timeout: COMPOSE_TIMEOUT })
-
-    const card = await reloadUntilVisible(
-      page,
-      appUrl(`/user?id=${bot.identityId}`),
-      (p) => p.locator('[data-testid^="post-card-"]').filter({ hasText: runTag })
-    )
-    postId = ((await card.getAttribute('data-testid')) ?? '').replace('post-card-', '')
-    expect(postId, 'the post card should expose the document id').not.toBe('')
-
-    // Inline hashtag: the tag page lists the post straight off post.tagAndTime.
-    await reloadUntilVisible(page, appUrl(`/hashtag?tag=${hashtag}`), (p) =>
-      p.locator('[data-testid^="post-card-"]').filter({ hasText: runTag })
-    )
-  })
-
-  test('liking the post persists and its count is served from the count tree', async ({ page }) => {
-    test.setTimeout(300_000)
-
-    await page.goto(appUrl(`/post?id=${postId}`))
-    const likeButton = page.getByTestId(`like-btn-${postId}`)
-    await expect(likeButton).toBeVisible({ timeout: 60_000 })
-    await expect(likeButton).toHaveAttribute('aria-pressed', 'false')
-
-    await likeButton.click()
-    await expect(likeButton).toHaveAttribute('aria-pressed', 'true')
-    await expect(likeButton).toBeEnabled({ timeout: 60_000 })
-    await expect(likeButton).toHaveAttribute('aria-pressed', 'true')
-
-    // Reload: pressed state must come back out of the byLiker readback, and the
-    // rendered count out of the countable byPost axis.
-    const persisted = await reloadUntilVisible(page, appUrl(`/post?id=${postId}`), (p) =>
-      p.getByTestId(`like-btn-${postId}`).and(p.locator('[aria-pressed="true"]'))
-    )
-    await expect(persisted).toContainText('1')
-  })
-
-  test('the liked state survives a feed listing (batched membership)', async ({ page, bot }) => {
-    test.setTimeout(180_000)
-
-    // The profile feed resolves liked-state for the whole page in ONE
-    // owner-pinned `in` query — the batch shape that lowers onto byLiker.
-    await reloadUntilVisible(page, appUrl(`/user?id=${bot.identityId}`), (p) =>
-      p.getByTestId(`like-btn-${postId}`).and(p.locator('[aria-pressed="true"]'))
-    )
-  })
-
-  test('unliking deletes by values and re-liking works', async ({ page }) => {
-    test.setTimeout(420_000)
-
-    await page.goto(appUrl(`/post?id=${postId}`))
-    const likeButton = page.getByTestId(`like-btn-${postId}`)
-    await expect(likeButton).toBeVisible({ timeout: 60_000 })
-    await expect(likeButton).toHaveAttribute('aria-pressed', 'true')
-
-    // Unlike: tuple recovery (byAuthorTimePost) + delete-by-values.
-    await likeButton.click()
-    await expect(likeButton).toHaveAttribute('aria-pressed', 'false')
-    await expect(likeButton).toBeEnabled({ timeout: 120_000 })
-    await expect(likeButton).toHaveAttribute('aria-pressed', 'false')
-
-    // Reload: absence must ALSO come back out of the chain.
-    await reloadUntilVisible(page, appUrl(`/post?id=${postId}`), (p) =>
-      p.getByTestId(`like-btn-${postId}`).and(p.locator('[aria-pressed="false"]'))
-    )
-
-    // Re-like: only possible if the delete really removed the index entries
-    // (a leftover would reject the duplicate structurally).
-    const again = page.getByTestId(`like-btn-${postId}`)
-    await again.click()
-    await expect(again).toHaveAttribute('aria-pressed', 'true')
-    await expect(again).toBeEnabled({ timeout: 60_000 })
-    await expect(again).toHaveAttribute('aria-pressed', 'true')
-
-    await reloadUntilVisible(page, appUrl(`/post?id=${postId}`), (p) =>
-      p.getByTestId(`like-btn-${postId}`).and(p.locator('[aria-pressed="true"]'))
-    )
-  })
-
-  test('the profile Top tab renders the ranked top post', async ({ page, bot }) => {
-    test.setTimeout(180_000)
-
-    await page.goto(appUrl(`/user?id=${bot.identityId}`))
-    const topFilter = page.getByTestId('profile-top-filter')
-    await expect(topFilter).toBeVisible({ timeout: 60_000 })
-    await topFilter.click()
-
-    // The just-liked post has a proved count of 1 on byAuthorPost, so the
-    // author-pinned ranked page must contain it.
-    // .first(): a quote of the tagged post renders its text inside the embed,
-    // so more than one card on the surface can contain the run tag.
-    await expect(
-      page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag }).first()
-    ).toBeVisible({ timeout: 60_000 })
-  })
-
-  test('the explore Top tab lists the liked post', async ({ page }) => {
-    test.setTimeout(180_000)
-
-    // The liked post has a proved count on the GLOBAL byPost axis, so the
-    // explore Top tab — one unpinned ranked page hydrated into post cards —
-    // must list it. (Top-20 only; if the devnet ever accumulates more than 20
-    // higher-ranked posts, the run tag ages out and this needs a re-think.)
-    await page.goto(appUrl('/explore/'))
-    const topTab = page.getByTestId('explore-top-tab')
-    await expect(topTab).toBeVisible({ timeout: 60_000 })
-    await topTab.click()
-
-    // .first(): a quote of the tagged post renders its text inside the embed,
-    // so more than one card on the surface can contain the run tag.
-    await expect(
-      page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag }).first()
-    ).toBeVisible({ timeout: 60_000 })
-  })
-
-  test('the tag page Top toggle lists the liked post under its hashtag', async ({ page }) => {
-    test.setTimeout(180_000)
-
-    // The like repeated the post's hashtag (agreement-bound), so the tag-pinned
-    // byHashtagPost axis ranks the post inside its own tag group. The tag is
-    // run-unique, so the Top listing can only contain this run's post.
-    await page.goto(appUrl(`/hashtag?tag=${hashtag}`))
-    const topToggle = page.getByTestId('hashtag-sort-top')
-    await expect(topToggle).toBeVisible({ timeout: 60_000 })
-    await topToggle.click()
-
-    // .first(): a quote of the tagged post renders its text inside the embed,
-    // so more than one card on the surface can contain the run tag.
-    await expect(
-      page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag }).first()
-    ).toBeVisible({ timeout: 60_000 })
-  })
-
-  test('the trending widget surfaces the tag from recent activity', async ({ page }) => {
-    test.setTimeout(180_000)
-
-    // v4 trending is client-derived (activity-based, unproven by design until
-    // prefix-level ranked aggregation ships upstream): the inline hashtags of
-    // the most recent posts, newest-first. The tagged post from this run is
-    // among the newest posts on the chain, so its tag must surface — and the
-    // surface must be labeled as activity-based rather than a proved count.
-    await reloadUntilVisible(page, appUrl('/explore/'), (p) =>
-      p.getByText(`#${hashtag}`, { exact: true })
-    )
-    await expect(page.getByTestId('trending-activity-note')).toBeVisible()
-  })
-})
-
-/**
- * The v5-only surfaces: OPTIONAL hashtags and the proved prefix rankings.
- *
- * What each step proves on-chain:
- * - a tagged post carries its `hashtag` (maxLength 61 now) and lists on the
- *   tag page via `post.tagAndTime`, exactly as on v4;
- * - an UNTAGGED post omits the property entirely — consensus would reject the
- *   v4 `''` sentinel outright (`minLength: 1`), so the post existing at all is
- *   the assertion;
+ * - a tagged post carries its `hashtag` (maxLength 61) and lists on the tag
+ *   page via `post.tagAndTime`;
+ * - an UNTAGGED post omits the property entirely — consensus rejects a `''`
+ *   sentinel outright (`minLength: 1`), so the post existing at all is the
+ *   assertion;
  * - a like of the untagged post MIRRORS the absence: the absence-aware
  *   propertyAgreement only accepts both-absent (a client still writing `''`
  *   would get 40127), and `skipIfAbsent` keeps the like out of byHashtagPost
@@ -525,19 +317,18 @@ test.describe('v4 indexOnly like lifecycle on the devnet contract', () => {
  *   document and fail); re-like proves the entries really left the trees;
  * - the tagged like/unlike pair covers the value-carrying twin of the same
  *   agreement;
- * - trending is now a PROVED prefix ranked page (groupBy at `hashtag` on
- *   `byHashtagPost {at: hashtag}`) counting likes per tag — so the liked tag
- *   must appear WITH its count, and the v4 "Based on recent activity"
- *   disclaimer must be gone;
+ * - trending is a PROVED prefix ranked page (groupBy at `hashtag` on
+ *   `byHashtagPost {at: hashtag}`) counting likes per tag — so the surface must
+ *   show like counts, with no "Based on recent activity" disclaimer;
  * - the Creators tab renders the proved leaderboard (groupBy at `postAuthor`
  *   on `byAuthorPost {at: [postAuthor, postId]}`) and must list the bot, who
  *   just received a like;
  * - the profile Top tab still rides the same index's TERMINAL ranking, proving
  *   the at-form serves both levels at once.
  */
-test.describe('v5 optional-hashtag topology and prefix rankings on the devnet contract', () => {
+test.describe('optional hashtags and prefix rankings on the devnet contract', () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(!specTopologyAtLeast('v5'), 'the compiled topology predates optional hashtags and prefix rankings')
+  test.skip(SPEC_TOPOLOGY !== DEVNET_TOPOLOGY, WRONG_TOPOLOGY_REASON)
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
@@ -613,10 +404,10 @@ test.describe('v5 optional-hashtag topology and prefix rankings on the devnet co
     test.setTimeout(420_000)
 
     runTag = uniqueTag(bot.index)
-    // Run-unique tag, capped at the v5 ranked-key ceiling of 61 (was 63).
-    hashtag = `v5${runTag.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 61)
+    // Run-unique tag, capped at the ranked-key ceiling of 61.
+    hashtag = `tag${runTag.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 61)
 
-    taggedPostId = await composePost(page, bot.identityId, `${runTag} v5 tagged target #${hashtag}`)
+    taggedPostId = await composePost(page, bot.identityId, `${runTag} tagged target #${hashtag}`)
 
     // Inline hashtag: the tag page lists the post straight off post.tagAndTime.
     await reloadUntilVisible(page, appUrl(`/hashtag?tag=${hashtag}`), (p) =>
@@ -627,10 +418,10 @@ test.describe('v5 optional-hashtag topology and prefix rankings on the devnet co
   test('an untagged post is created with the hashtag property absent', async ({ page, bot }) => {
     test.setTimeout(420_000)
 
-    // No '#' anywhere: the client must OMIT `hashtag` (v4 wrote ''), and v5
-    // consensus would reject '' against `minLength: 1` — so the post landing
-    // and rendering at all proves the omission happened.
-    untaggedPostId = await composePost(page, bot.identityId, `${runTag} v5 untagged target`)
+    // No '#' anywhere: the client must OMIT `hashtag`, and consensus would
+    // reject '' against `minLength: 1` — so the post landing and rendering at
+    // all proves the omission happened.
+    untaggedPostId = await composePost(page, bot.identityId, `${runTag} untagged target`)
   })
 
   test('liking and unliking the TAGGED post round-trips the agreement value', async ({ page }) => {
@@ -665,11 +456,11 @@ test.describe('v5 optional-hashtag topology and prefix rankings on the devnet co
   test('trending is the PROVED ranking (like counts, no disclaimer) and the tag ranks on its pinned surface', async ({ page }) => {
     test.setTimeout(180_000)
 
-    // v5 trending is a proved prefix ranked page on byHashtagPost {at: hashtag}
+    // Trending is a proved prefix ranked page on byHashtagPost {at: hashtag}
     // counting likes per tag — ALL-TIME, top-K. On a populated network a
     // run-unique tag holding one like can never crack the widget (seeded tags
     // carry dozens of likes), so the widget assertions are structural: it must
-    // be the proved variant — tags with like-count rows and no v4 "Based on
+    // be the proved variant — tags with like-count rows and no "Based on
     // recent activity" disclaimer.
     await reloadUntilVisible(page, appUrl('/explore/'), (p) =>
       p.getByText(/\d+ likes?$/).first()
@@ -739,15 +530,14 @@ test.describe('v5 optional-hashtag topology and prefix rankings on the devnet co
   })
 })
 
-// The v6+ block: the same optional-hashtag graph as v5, plus DAILY-WINDOWED
-// rankings (dev.8, contract v6, carried unchanged into v7). A like of a TAGGED post writes a `beat`
-// companion as a second transition once the like lands, and every ranked surface gains a
+// DAILY-WINDOWED rankings. A like of a TAGGED post writes a `beat` companion
+// as a second transition once the like lands, and every ranked surface gains a
 // Today | All time switch. The assertions pin the run's own writes on the
 // TODAY window. Tag/author pins guarantee inclusion for the run's own writes;
 // global top-K assertions allow seeded posts and tags to outrank the CI bot.
-test.describe('v6+ daily-windowed rankings on the devnet contract', () => {
+test.describe('daily-windowed rankings on the devnet contract', () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(!specTopologyAtLeast('v6'), 'the compiled topology has no daily-windowed ranked twins')
+  test.skip(SPEC_TOPOLOGY !== DEVNET_TOPOLOGY, WRONG_TOPOLOGY_REASON)
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
@@ -776,7 +566,7 @@ test.describe('v6+ daily-windowed rankings on the devnet contract', () => {
       taggedPostId = ((await card.getAttribute('data-testid')) ?? '').replace('post-card-', '')
       expect(taggedPostId).not.toBe('')
 
-      // Like it: v6 writes the like, then a beat in a second transition.
+      // Like it: the client writes the like, then a beat in a second transition.
       await page.goto(appUrl(`/post?id=${taggedPostId}`))
       const likeButton = page.getByTestId(`like-btn-${taggedPostId}`)
       await expect(likeButton).toBeVisible({ timeout: 60_000 })

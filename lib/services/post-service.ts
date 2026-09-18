@@ -7,7 +7,7 @@ import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
-import { authorFieldIsRequired, likesAreIndexOnly, groupByInteractionSurface, hashtagIsOptional, hashtagMaxLength, hashtagsAreInline, quoteFieldFor, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { HASHTAG_MAX_LENGTH, likesAreIndexOnly, groupByInteractionSurface, hashtagIsOptional, hashtagsAreInline, quoteFieldFor, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { firstIndexedTag } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
@@ -426,27 +426,15 @@ class PostService extends BaseDocumentService<Post> {
     // Language is required - default to 'en' if not provided
     data.language = options.language || 'en';
 
-    // v4-v6: the poster-attested author, which must equal $ownerId because a
-    // propertyAgreement could not yet name a system field. v7 binds the likes
-    // straight to `post.$ownerId`, so the column is gone from the schema and
-    // nothing is written here ({@link authorFieldIsRequired}).
-    if (authorFieldIsRequired()) {
-      data.author = identifierStringToDocumentBytes(ownerId);
-    }
-
     // The single indexed tag — first hashtag, or first cashtag when no hashtag
     // exists, from the PUBLIC content only (`data.content` is already the
     // teaser/placeholder for private posts, so encrypted text never leaks into
-    // the index); '' when untagged.
+    // the index). An untagged post OMITS the optional property: likes mirror
+    // the absence under the absence-aware propertyAgreement, and `skipIfAbsent`
+    // keeps untagged likes out of byHashtagPost entirely.
     if (hashtagsAreInline()) {
-      const tag = firstIndexedTag(data.content as string, hashtagMaxLength());
-      // v5: an untagged post OMITS the optional property — likes mirror the
-      // absence under the absence-aware propertyAgreement, and `skipIfAbsent`
-      // keeps untagged likes out of byHashtagPost entirely. v4 has no optional
-      // hashtag and writes the '' sentinel.
-      if (tag !== '' || !hashtagIsOptional()) {
-        data.hashtag = tag;
-      }
+      const tag = firstIndexedTag(data.content as string, HASHTAG_MAX_LENGTH);
+      if (tag !== '') data.hashtag = tag;
     }
 
     // Add optional fields (use contract field names)

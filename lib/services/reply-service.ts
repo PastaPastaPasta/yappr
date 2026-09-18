@@ -11,7 +11,6 @@ import { documentCount, groupedDocumentCount } from './pagination-utils';
 import { profileDataByOwnerId } from './post-enrichment-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import {
-  authorFieldIsRequired,
   hasFlatThreads,
   replyCountFieldFor,
   replyLinkage,
@@ -22,7 +21,7 @@ import {
 
 /**
  * Replies per page in a thread view. v2 keeps its historical 20 (one level of a
- * tree); on v3 one query covers the whole thread, so the page is larger.
+ * tree); on v7 one query covers the whole thread, so the page is larger.
  */
 function replyPageSize(): number {
   return hasFlatThreads() ? 50 : 20;
@@ -213,13 +212,6 @@ class ReplyService extends BaseDocumentService<Reply> {
     if (replyToReplyField && target.replyToReplyId) {
       data[replyToReplyField] = identifierStringToDocumentBytes(target.replyToReplyId);
     }
-    // v4-v6: poster-attested author (== $ownerId), the propertyAgreement
-    // source for likeReply.replyAuthor. v7 binds it to `reply.$ownerId`
-    // directly, so nothing is written here.
-    if (authorFieldIsRequired()) {
-      data.author = identifierStringToDocumentBytes(ownerId);
-    }
-
     // Handle encryption if provided
     if (options.encryption) {
       const { prepareOwnerEncryption, prepareInheritedEncryption } = await import('./private-feed-service');

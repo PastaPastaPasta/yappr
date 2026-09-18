@@ -65,11 +65,10 @@ export function extractHashtags(content: string): string[] {
  * single-hashtag model indexes exactly one tag per post, and "first in the
  * text" is the rule the client applies.
  *
- * `maxLength` is the contract's pattern ceiling — 63 on v4, 61 on v5 (the
- * ranked key-size limit; see `hashtagMaxLength()` in lib/contract-topology).
- * A longer tag is truncated to the ceiling, matching how the v4 regex already
- * treated 64+-char tags. How `''` is spelled on-chain is the CALLER's concern:
- * v4 writes it verbatim, v5 omits the property.
+ * `maxLength` is the contract's pattern ceiling (`HASHTAG_MAX_LENGTH` in
+ * lib/contract-topology). A longer tag is truncated to the ceiling. How `''`
+ * is spelled on-chain is the CALLER's concern: on the inline-hashtag topology
+ * the property is simply omitted.
  */
 export function firstHashtag(content: string, maxLength: number = 63): string {
   const match = content.match(new RegExp(`#([a-zA-Z0-9_]{1,${maxLength}})`))

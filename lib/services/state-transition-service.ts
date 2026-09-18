@@ -768,13 +768,13 @@ class StateTransitionService {
   /**
    * Delete an **indexOnly** document by its full value tuple.
    *
-   * indexOnly doctypes (v4 `like`/`likeReply`) store nothing under the document
-   * id — the index entries ARE the rows — so the identifier-only delete path is
-   * useless there. Drive instead needs every property value plus the consensus
-   * `$createdAt` to recompute and remove each index entry, which means the
-   * delete must be handed a fully-populated Document (the from_document /
-   * index-only-delete route in the SDK) — the exact call shape the v4 verify
-   * battery (scripts/verify-v4.mjs, b8/b10/b11) proved live on moutai.
+   * indexOnly doctypes (`like`/`likeReply`/`beat`) store nothing under the
+   * document id — the index entries ARE the rows — so the identifier-only
+   * delete path is useless there. Drive instead needs every property value plus
+   * the consensus `$createdAt` to recompute and remove each index entry, which
+   * means the delete must be handed a fully-populated Document (the
+   * from_document / index-only-delete route in the SDK) — the exact call shape
+   * `scripts/verify-v7.mjs` g1 proves live on moutai.
    *
    * indexOnly transitions never resolve as `ExecutionProved`, so the facade's
    * internal wait can fail after a broadcast that landed; the transient wait

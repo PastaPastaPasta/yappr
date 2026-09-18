@@ -23,15 +23,15 @@
  *   PROFILE   create the persona's profile document on the unified profile
  *             contract (validated against its maxLengths)
  *   DPNS      register the persona's handle
- *   YAPP      fund each identity with YAPP (the v4 social contract charges
+ *   YAPP      fund each identity with YAPP (the social contract charges
  *             YAPP per post/reply/like create). Two sources:
  *               --yapp-source purchase  direct purchase with the identity's own
  *                                       credits — requires the token's
  *                                       direct-purchase price to be set on THIS
  *                                       contract (scripts/set-yapp-price.mjs
  *                                       --contract <id> --owner <makerId>
- *                                       --owner-index 9). As of 2026-08-30 the
- *                                       v4 draft (Aux325if…) has NO price set.
+ *                                       --owner-index 9). A freshly registered
+ *                                       contract has NO price set.
  *               --yapp-source maker     (default) token transfer from the
  *                                       devnet maker (seed index 9, keys from
  *                                       E2E_SEED_PHRASE, id from

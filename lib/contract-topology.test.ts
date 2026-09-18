@@ -3,8 +3,8 @@
  * chain, so the parts of it that consensus ENFORCES have to be pinned against
  * the contract JSON rather than reviewed by eye.
  *
- * The expensive one is the tombstone preserve set. From v7 the `post` and
- * `reply` doctypes declare `immutable` lists, and a replace that changes, adds
+ * The expensive one is the tombstone preserve set. The v7 `post` and `reply`
+ * doctypes declare `immutable` lists, and a replace that changes, adds
  * OR DROPS a frozen property is rejected with 40128 — so a preserve set that
  * has drifted below the contract's list turns every delete into a hard
  * failure, at runtime, on chain. This test makes that drift a red unit test.
@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import socialContractV7 from '@/contracts/yappr-social-contract-v7.json'
-import { CONTRACT_TOPOLOGIES } from './constants'
+import { CONTRACT_TOPOLOGIES, DEFAULT_CONTRACT_TOPOLOGY } from './constants'
 
 /** The doctype schema as the committed JSON declares it. */
 function doctype(name: 'post' | 'reply') {
@@ -36,16 +36,17 @@ async function topologyModule(topology: string) {
 }
 
 describe('contract topology', () => {
-  it('keeps the e2e spec\'s hand-copied topology order in sync', () => {
+  it('keeps the e2e spec\'s hand-copied devnet topology in sync', () => {
     // e2e/ cannot import from lib/ (it reads the COMPILED bundle, and Playwright
-    // runs outside the app's module graph), so `TOPOLOGY_ORDER` there is a
-    // literal copy. Drift would not error — it would silently skip whole devnet
-    // suites, which is exactly what the ordered gates were introduced to stop.
+    // runs outside the app's module graph), so `DEVNET_TOPOLOGY` there is a
+    // literal copy. Drift would not error — it would silently skip every devnet
+    // suite, which is exactly what the gate was introduced to stop.
     const spec = readFileSync(join(process.cwd(), 'e2e/write/topology.spec.ts'), 'utf8')
-    const literal = spec.match(/const TOPOLOGY_ORDER = \[([^\]]*)\]/)?.[1] ?? ''
-    expect(literal, 'e2e/write/topology.spec.ts must declare TOPOLOGY_ORDER').not.toBe('')
-    expect(literal.split(',').map((entry) => entry.trim().replace(/'/g, '')))
-      .toEqual([...CONTRACT_TOPOLOGIES])
+    const literal = spec.match(/const DEVNET_TOPOLOGY = '([^']*)'/)?.[1] ?? ''
+    expect(literal, 'e2e/write/topology.spec.ts must declare DEVNET_TOPOLOGY').not.toBe('')
+    expect([literal]).toEqual(
+      CONTRACT_TOPOLOGIES.filter((topology) => topology !== DEFAULT_CONTRACT_TOPOLOGY)
+    )
   })
 
   it('resolves every declared topology to its own descriptor', async () => {
@@ -58,31 +59,35 @@ describe('contract topology', () => {
     expect(topologyDescriptor().topology).toBe('v2')
   })
 
-  it('turns the attested author off exactly on v4..v6', async () => {
-    const enabled: string[] = []
-    for (const topology of CONTRACT_TOPOLOGIES) {
-      const { authorFieldIsRequired } = await topologyModule(topology)
-      if (authorFieldIsRequired()) enabled.push(topology)
-    }
-    expect(enabled).toEqual(['v4', 'v5', 'v6'])
-    // v7 keeps every capability v6 gained; only the author column went away.
+  it('enables every v7 capability and none of them on v2', async () => {
+    const capabilities = (module: Awaited<ReturnType<typeof topologyModule>>) => [
+      module.hashtagsAreInline(),
+      module.hashtagIsOptional(),
+      module.prefixRankingsAvailable(),
+      module.followRankingsAvailable(),
+      module.windowedRankingsAvailable(),
+      module.likesAreIndexOnly(),
+      module.deletesAreTombstones(),
+      module.referencesAreEnforced(),
+      module.hasFlatThreads(),
+      module.quoteFieldsAreSplit(),
+      module.likeSurfacesAreSplit(),
+    ]
     const v7 = await topologyModule('v7')
-    expect([
-      v7.hashtagsAreInline(),
-      v7.hashtagIsOptional(),
-      v7.prefixRankingsAvailable(),
-      v7.followRankingsAvailable(),
-      v7.windowedRankingsAvailable(),
-      v7.likesAreIndexOnly(),
-      v7.deletesAreTombstones(),
-    ]).toEqual([true, true, true, true, true, true, true])
-    expect(v7.hashtagMaxLength()).toBe(61)
+    expect(capabilities(v7)).toEqual(Array(11).fill(true))
     expect(v7.beatCompanionFor('post', 'dash')).toEqual({ docType: 'beat' })
     expect(v7.beatCompanionFor('post', '')).toBeNull()
+    expect(v7.beatCompanionFor('reply', 'dash')).toBeNull()
+    expect(v7.quoteListingOrderProperty()).toBe('$createdAt')
+
+    const v2 = await topologyModule('v2')
+    expect(capabilities(v2)).toEqual(Array(11).fill(false))
+    expect(v2.beatCompanionFor('post', 'dash')).toBeNull()
+    expect(v2.quoteListingOrderProperty()).toBe('$ownerId')
   })
 
   it.each(['post', 'reply'] as const)(
-    'preserves exactly the v7 contract\'s immutable properties when tombstoning a %s',
+    'preserves exactly the contract\'s immutable properties when tombstoning a %s',
     async (kind) => {
       const { tombstonePreservationFor } = await topologyModule('v7')
       const { identifiers, scalars } = tombstonePreservationFor(kind)
@@ -114,16 +119,10 @@ describe('contract topology', () => {
     }
   })
 
-  it('stops writing the author column on v7 while v6 still requires it', async () => {
-    expect(doctype('post').required).not.toContain('author')
-    expect(doctype('post').properties.author).toBeUndefined()
-    expect(doctype('reply').required).not.toContain('author')
-    expect(doctype('reply').properties.author).toBeUndefined()
-
-    // ...and the v6 preserve set still names it, so older deployments keep
-    // producing valid tombstones from the same code path.
-    const { tombstonePreservationFor } = await topologyModule('v6')
-    expect(tombstonePreservationFor('post').identifiers).toContain('author')
-    expect(tombstonePreservationFor('reply').identifiers).toContain('author')
+  it('declares no attested author column, so nothing may write one', () => {
+    for (const kind of ['post', 'reply'] as const) {
+      expect(doctype(kind).required).not.toContain('author')
+      expect(doctype(kind).properties.author).toBeUndefined()
+    }
   })
 })

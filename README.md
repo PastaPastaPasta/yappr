@@ -76,11 +76,11 @@ docs/           private-feed spec, testing guide, deployment runbooks
 
 ### Contract topology
 
-The social contract has been re-cut several times as Platform gained features (v2 on testnet and production; v5, v6 and v7 on devnet, adding proved rankings, a beat doctype, and consensus-enforced ownership and immutability). `lib/contract-topology.ts` answers questions like "can a reply be reposted here" and "is the hashtag inline on the post", and everything that differs between shapes dispatches on it rather than on a version string. `/about` prints the topology a build was compiled with; the e2e suite checks it.
+The social contract has been re-cut several times as Platform gained features; two cuts exist on chain today (v2 on testnet and production, v7 on devnet — the latter adding proved rankings, a beat doctype, and consensus-enforced ownership and immutability). `lib/contract-topology.ts` answers questions like "can a reply be reposted here" and "is the hashtag inline on the post", and everything that differs between shapes dispatches on it rather than on a version string. `/about` prints the topology a build was compiled with; the e2e suite checks it.
 
 ### Documents
 
-Ownership is the platform's `$ownerId`; documents never carry their own author field (v4-v6 needed an attested copy for likes to bind to, which v7 dropped once a propertyAgreement could name `$ownerId` directly). Notifications are derived client-side from other documents, not stored. Deletes are tombstones where the shape makes posts permanent.
+Ownership is the platform's `$ownerId`; documents never carry their own author field (earlier cuts needed an attested copy for likes to bind to, which v7 dropped once a propertyAgreement could name `$ownerId` directly). Notifications are derived client-side from other documents, not stored. Deletes are tombstones where the shape makes posts permanent.
 
 ### Writes
 

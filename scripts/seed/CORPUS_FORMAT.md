@@ -69,12 +69,12 @@ the executor cannot deadlock.
 {"type":"bookmark","author":1,"targetRef":"p003"}
 ```
 
-| type | fields | maps to (social contract; see the topology note below for `hashtag`) |
+| type | fields | maps to (social contract; see the field rules below for `hashtag`) |
 |---|---|---|
-| `post` | `ref`, `author`, `content`, `hashtag`, `mediaUrl?`, `sensitive?` | `post` — `author` = owner id bytes (poster-attested), `language` always `"en"` |
+| `post` | `ref`, `author`, `content`, `hashtag`, `mediaUrl?`, `sensitive?` | `post` — ownership is the platform's `$ownerId`, `language` always `"en"` |
 | `quote` | `ref`, `author`, `content`, `quotedRef`, `hashtag`, `mediaUrl?` | `post` with `quotedPostId` + `quotedPostOwnerId` resolved from the ref map |
 | `reply` | `ref`, `author`, `rootRef`, `parentRef`, `content`, `mediaUrl?` | `reply` — `rootPostId` from `rootRef`; `parentOwnerId` = owner of `parentRef`; `replyToReplyId` set iff `parentRef` is a reply |
-| `like` | `author`, `targetRef` (post) | indexOnly `like` `{postId, hashtag?, postAuthor}` — `hashtag`/`postAuthor` **copied from the target post's recorded values** (propertyAgreement: a mismatch is consensus error 40127; under v5, an untagged target means like.`hashtag` is **omitted**, exactly like the post's) |
+| `like` | `author`, `targetRef` (post) | indexOnly `like` `{postId, hashtag?, postAuthor}` — `hashtag`/`postAuthor` **copied from the target post's recorded values** (propertyAgreement: a mismatch is consensus error 40127; an untagged target means like.`hashtag` is **omitted**, exactly like the post's) |
 | `likeReply` | `author`, `targetRef` (reply) | indexOnly `likeReply` `{replyId, replyAuthor}` |
 | `repost` | `author`, `targetRef` (post) | `repost` `{postId, postOwnerId}` |
 | `follow` | `author`, `target` (persona idx) | `follow` `{followingId}` |
@@ -84,15 +84,11 @@ the executor cannot deadlock.
 
 - `author` / `follow.target`: a persona `idx`. Self-follow is invalid.
 - `hashtag`: required on `post`/`quote`; `''` always means **untagged** in
-  corpus files — the executor maps it per `--topology`:
-  - **v4** — the contract requires the field; untagged writes the `''`
-    sentinel. Tags match `^[a-z0-9_]{1,63}$`.
-  - **v5** — `hashtag` is optional (`contracts/yappr-social-contract-v5.json`);
-    untagged **omits the property entirely** on the post AND on every like of
-    it (propertyAgreement treats both-absent as agreement; writing `''` is
-    consensus error 40127; the like's `byHashtagPost` index is `skipIfAbsent`,
-    so absence writes no entry). Tags match `^[a-z0-9_]{1,61}$` — the tighter
-    maxLength 61 is enforced at parse time.
+  corpus files. The contract's `hashtag` is optional, so untagged **omits the
+  property entirely** on the post AND on every like of it (propertyAgreement
+  treats both-absent as agreement; writing `''` is consensus error 40127, and
+  the like's `byHashtagPost` index is `skipIfAbsent`, so absence writes no
+  entry). Tags match `^[a-z0-9_]{1,61}$`, enforced at parse time.
 - `content`: `language` is always `"en"`. May contain `{{link:REF}}`
   placeholders, where `REF` must be an **earlier post/quote ref**; the executor
   replaces each with `https://yap.pr/devnet/post/?id=<realPostId>`. The
@@ -111,12 +107,12 @@ The executor materializes each `ref` into `{kind, id, ownerId, hashtag}`
 checkpoints the map in `.seed-progress.local.json`, so likes created on a
 resumed run still carry the exact propertyAgreement values of the original
 post. A ref's `hashtag` recorded as `''` and one missing the key entirely are
-equivalent ("untagged") and replay to identical documents — under v5 both omit
-the property, under v4 both write the `''` sentinel.
+equivalent ("untagged") and replay to identical documents — both omit the
+property.
 
 ### Token costs (why the generator's op mix matters)
 
-Creates are token-priced on the v4 contract: post/quote **10 YAPP**, reply
+Creates are token-priced by the contract: post/quote **10 YAPP**, reply
 **3**, like/likeReply/repost **1**, follow/bookmark/profile **free**.
 `run-seeder.mjs` prints the total and per-author worst case before executing;
 `provision-seed-identities.mjs --yapp <n>` funds each identity.

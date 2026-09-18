@@ -49,7 +49,6 @@ shares, no duplicate contents, …). Any failure exits non-zero.
 | `--seed N` | 42 | PRNG seed (sfc32); same seed + same banks ⇒ identical output |
 | `--out PATH` | `.seed-corpus.local/mass` | output prefix |
 | `--banks DIR` | `.seed-corpus.local/banks` | bank directory; missing banks fall back to the built-in ones |
-| `--topology v4\|v5\|v6` | v6 | hashtag max length passed to `parseCorpus` |
 | `--mix k=v,…` | see below | op-mix shares |
 | `--quiet` | | only print failures |
 

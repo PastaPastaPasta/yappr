@@ -403,7 +403,7 @@ try {
 
   console.log('');
   console.log(`.env.devnet → NEXT_PUBLIC_YAPPR_CONTRACT_ID=${contractId}`);
-  console.log(`battery     → node scripts/verify-v5.mjs --contract ${contractId} …`);
+  console.log(`battery     → node scripts/verify-v7.mjs --contract ${contractId} …`);
 } catch (e) {
   console.error('ERROR:', describeErr(e));
   process.exit(1);
