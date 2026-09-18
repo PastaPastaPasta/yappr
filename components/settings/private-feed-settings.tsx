@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
+import { useId, useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -29,7 +29,8 @@ interface PrivateFeedSettingsProps {
  * Implements PRD §4.1 - Enable Private Feed UI
  */
 export function PrivateFeedSettings({ openReset = false, onResetOpened }: PrivateFeedSettingsProps) {
-  const { user } = useAuth()
+  const encryptionKeyId = useId()
+  const { user, mergeSecretsIntoAuthVault } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const refreshKey = usePrivateFeedRefreshStore((state) => state.refreshKey)
   const [isEnabled, setIsEnabled] = useState(false)
@@ -174,6 +175,31 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
         toast.success('Private feed enabled successfully!')
         setShowKeyInput(false)
         setEncryptionKeyInput('')
+        // Keep the accepted key available just as the manual key-entry flow does.
+        // Storage/backup failures cannot undo the feed that was already enabled.
+        try {
+          const { storeEncryptionKey, getEncryptionKey, getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+          const { bytesEqual } = await import('@/lib/bytes')
+          storeEncryptionKey(user.identityId, trimmedKey)
+          const normalizedEncryptionKey = getEncryptionKey(user.identityId)
+          // The store swallows write failures, so a non-null readback can still be a stale
+          // key left over from an earlier session. Compare the decoded secret with the key
+          // that was actually accepted before backing anything up.
+          const storedKeyBytes = getEncryptionKeyBytes(user.identityId)
+          if (!normalizedEncryptionKey || !storedKeyBytes || !bytesEqual(storedKeyBytes, validation.privateKey)) {
+            throw new Error('Encryption key was not saved')
+          }
+
+          try {
+            await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: normalizedEncryptionKey })
+          } catch (error) {
+            logger.error('Failed to back up encryption key after enabling private feed:', error)
+            toast.error('Private feed enabled, but key backup failed. Your key is available for this session.')
+          }
+        } catch (error) {
+          logger.error('Failed to store encryption key after enabling private feed:', error)
+          toast.error('Private feed enabled, but your key could not be saved. Enter it again to manage your feed.')
+        }
         // Refresh all status to ensure consistent UI state
         await checkPrivateFeedStatus()
       } else {
@@ -443,10 +469,11 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">
+                  <label htmlFor={encryptionKeyId} className="text-sm font-medium">
                     Encryption Private Key
                   </label>
                   <Input
+                    id={encryptionKeyId}
                     type="password"
                     placeholder="WIF (cXyz...) or hex (64 chars)"
                     value={encryptionKeyInput}

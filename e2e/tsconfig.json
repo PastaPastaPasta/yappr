@@ -15,5 +15,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["**/*.ts", "../playwright.config.ts"]
+  "include": ["**/*.ts", "../playwright.config.ts"],
+  "exclude": ["components"]
 }
