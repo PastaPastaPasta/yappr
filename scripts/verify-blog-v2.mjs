@@ -365,7 +365,7 @@ async function caseB12Immutable(ctx) {
   const { battery, author } = ctx;
   console.log('\n--- b12. immutable blogId, write-once publishedAt ---');
   if (!ctx.post2) { battery.check('b12 immutability', false, 'no post fixture'); return; }
-  const revisionOf = async (id) => BigInt((await battery.fetchDocument('blogPost', id))?.revision ?? 1);
+  const revisionOf = (id) => battery.revisionOf('blogPost', id);
   const edit = (id, data, revision) => battery.attemptReplace(author, 'blogPost', id, data, revision);
   const post2Base = { title: `Second ${ctx.run}`, slug: `second-${ctx.run}` };
 

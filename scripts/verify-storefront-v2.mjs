@@ -54,9 +54,24 @@
 import { IdentitySigner, TokenPaymentInfo, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID } from './derive-identities.mjs';
-import { selfTest } from './battery-lib.mjs';
+// This battery predates battery-lib.mjs and still carries its own copies of the
+// write helpers (attemptCreate/attemptReplace/check/…). The consensus rejection
+// SHAPES are shared from there regardless: two copies of the same regex are how
+// one of them silently stops matching what Drive renders.
 import {
+  DELETE_FORBIDDEN,
   DUPLICATE_UNIQUE,
+  IMMUTABLE_CHANGED,
+  MIN_YAPP_PURCHASE,
+  POLL_ATTEMPTS,
+  PROPERTY_MISMATCH,
+  REFERENCE_NOT_FOUND,
+  TOKEN_AGREEMENT_MISSING,
+  id32,
+  selfTest,
+  settle,
+} from './battery-lib.mjs';
+import {
   YAPP_TOKEN_POSITION,
   buildDocument,
   createSdkHandle,
@@ -65,19 +80,13 @@ import {
   loadLedger,
   randomEntropy,
   readback as readbackWith,
-  sleep,
   socialContractId,
   wifFromHex,
 } from './seed/seed-lib.mjs';
 
-const SETTLE_MS = 3000;
-const POLL_ATTEMPTS = 3;
 const REVIEW_COST = { storeReview: 3n, itemReview: 1n };
 const DEFAULT_YAPP = 60n;
-const MIN_YAPP_PURCHASE = 100n;
 
-const REFERENCE_NOT_FOUND = /\b40120\b|referenced .*not found/i;
-const PROPERTY_MISMATCH = /\b40127\b|does not agree with the referenced document/i;
 /**
  * A writer gate (`propertyAgreement` with `$ownerId` on the REFERRING side)
  * fails as the same ReferencedDocumentPropertyMismatchError a value pair does —
@@ -85,10 +94,6 @@ const PROPERTY_MISMATCH = /\b40127\b|does not agree with the referenced document
  * under the name that says what was refused.
  */
 const WRITER_GATE_REFUSED = PROPERTY_MISMATCH;
-/** DocumentImmutablePropertyChangedError: a replace touched a frozen property. */
-const IMMUTABLE_CHANGED = /\b40128\b|is immutable and cannot be changed/i;
-const DELETE_FORBIDDEN = /can ?not be deleted/i;
-const TOKEN_AGREEMENT_MISSING = /token|payment|agree/i;
 
 let failures = 0;
 const capturedErrors = [];
@@ -98,9 +103,6 @@ function check(name, condition, detail = '') {
   console.log(`${condition ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
   if (!condition) failures += 1;
 }
-
-const settle = () => sleep(SETTLE_MS);
-const id32 = (base58) => bs58.decode(base58);
 
 // ---- SDK + actors -----------------------------------------------------------
 

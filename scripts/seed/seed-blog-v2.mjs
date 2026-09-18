@@ -2776,12 +2776,13 @@ async function seed({ battery, plan, state, stateFile, args, tokenId }) {
     // so the edit can meet a post created under a different anchor. Take the
     // stored value, which is by definition what consensus will compare against.
     const stored = current?.toObject ? current.toObject() : current;
+    const storedPublishedAt = stored?.publishedAt ?? null;
     const data = { ...edit.data, blogId: id32(blogIds.get(post.blogKey)) };
     // Mirror the stored value exactly, ABSENCE INCLUDED: dropping a frozen
     // property is the same 40128 as changing it, and so is adding one the
     // stored draft does not have.
-    if (stored?.publishedAt === undefined || stored?.publishedAt === null) delete data.publishedAt;
-    else data.publishedAt = Number(stored.publishedAt);
+    if (storedPublishedAt === null) delete data.publishedAt;
+    else data.publishedAt = Number(storedPublishedAt);
     const outcome = await battery.attemptReplace(actor, 'blogPost', postId, data, revision);
     if (outcome.ok) {
       recorder.record(edit.key, postId);

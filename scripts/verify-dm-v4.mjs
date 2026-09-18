@@ -394,11 +394,10 @@ CASES.set('d8', async (ctx) => {
   const { battery, sender, recipient } = ctx;
 
   if (ctx.receiptId) {
-    const stored = await battery.fetchDocument('readReceipt', ctx.receiptId);
     battery.expectRejected(
       'd8a a readReceipt replace re-pointing conversationId is rejected (40128) — only $updatedAt may move',
       await battery.attemptReplace(recipient, 'readReceipt', ctx.receiptId,
-        { conversationId: ctx.c2 }, stored?.revision ?? 1n),
+        { conversationId: ctx.c2 }, await battery.revisionOf('readReceipt', ctx.receiptId)),
       IMMUTABLE_CHANGED
     );
   } else {
@@ -416,7 +415,7 @@ CASES.set('d8', async (ctx) => {
     await battery.attemptCreate(sender, 'directMessage', { conversationId: ctx.c2, encryptedContent: content })
   );
   if (message.ok) {
-    const revision = (await battery.fetchDocument('directMessage', message.id))?.revision ?? 1n;
+    const revision = await battery.revisionOf('directMessage', message.id);
     battery.expectRejected(
       'd8c rewriting a sent message\'s encryptedContent is rejected (40128)',
       await battery.attemptReplace(sender, 'directMessage', message.id,
@@ -437,11 +436,11 @@ CASES.set('d8', async (ctx) => {
   });
   if (invites[0]) {
     const inviteId = battery.b58(invites[0].$id);
-    const stored = await battery.fetchDocument('conversationInvite', inviteId);
     battery.expectRejected(
       'd8e re-pointing an invite at another conversation is rejected (40128)',
       await battery.attemptReplace(sender, 'conversationInvite', inviteId,
-        { recipientId: bs58.decode(recipient.ownerId), conversationId: ctx.c2 }, stored?.revision ?? 1n),
+        { recipientId: bs58.decode(recipient.ownerId), conversationId: ctx.c2 },
+        await battery.revisionOf('conversationInvite', inviteId)),
       IMMUTABLE_CHANGED
     );
   } else {

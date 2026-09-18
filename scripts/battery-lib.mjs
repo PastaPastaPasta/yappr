@@ -109,6 +109,17 @@ export function createBattery({ handle, contractId, socialId }) {
     return readback(async () => (await sdk.documents.get(contract, docType, id)) ?? null);
   }
 
+  /**
+   * A stored document's current revision, as the BigInt `attemptReplace` wants.
+   * Falls back to 1n when the document does not read back, so a replace built
+   * on it still reaches consensus and fails with the reason under test rather
+   * than with a revision error.
+   */
+  async function revisionOf(docType, id, contract = contractId) {
+    const stored = await fetchDocument(docType, id, contract);
+    return BigInt(stored?.revision ?? 1);
+  }
+
   async function attemptWrite({ accepted }, write) {
     let error = null;
     try {
@@ -244,7 +255,7 @@ export function createBattery({ handle, contractId, socialId }) {
   }
 
   return {
-    sdk, readback, check, personaActor, yappBalance, ensureYapp, fetchDocument, attemptWrite, paymentInfo,
+    sdk, readback, check, personaActor, yappBalance, ensureYapp, fetchDocument, revisionOf, attemptWrite, paymentInfo,
     attemptCreate, attemptReplace, attemptDelete, attemptDeleteByValues, expectAccepted, expectRejected,
     countBy, groupedCount, averageBy, sumBy, ranked, queryDocs, groupValueOf, avgOf, approx, b58,
     workingShapes, report, get failures() { return failures; },
@@ -291,28 +302,28 @@ export function selfTest(file, expect) {
   const parsed = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', file), 'utf8'));
   const schemas = parsed.documentSchemas ?? parsed;
   const problems = [];
-  const sorted = (values) => [...(values ?? [])].sort();
   // Both comparisons are order-insensitive: a propertyAgreement is a SET of
   // pairs and an immutable list a set of names, so a build script that emits
   // them in a different order has changed nothing consensus can see.
-  const canonical = (pairs) => (pairs === undefined ? undefined
+  const sortedNames = (values) => [...(values ?? [])].sort();
+  const sortedPairs = (pairs) => (pairs === undefined ? undefined
     : Object.fromEntries(Object.entries(pairs).sort(([a], [b]) => (a < b ? -1 : 1))));
+  const compare = (what, actual, expected) => {
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      problems.push(`${what} is ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`);
+    }
+  };
 
   for (const [docType, rules] of Object.entries(expect)) {
     const schema = schemas[docType];
     if (!schema) { problems.push(`${docType}: document type is missing`); continue; }
     for (const [property, agreement] of Object.entries(rules.agreements ?? {})) {
-      const actual = canonical(schema.properties?.[property]?.refersTo?.propertyAgreement);
-      if (JSON.stringify(actual) !== JSON.stringify(canonical(agreement))) {
-        problems.push(`${docType}.${property} propertyAgreement is ${JSON.stringify(actual)}, expected ${JSON.stringify(canonical(agreement))}`);
-      }
+      compare(`${docType}.${property} propertyAgreement`,
+        sortedPairs(schema.properties?.[property]?.refersTo?.propertyAgreement), sortedPairs(agreement));
     }
     for (const key of ['immutable', 'immutableAllowSetting']) {
       if (rules[key] === undefined) continue;
-      const actual = sorted(schema[key]);
-      if (JSON.stringify(actual) !== JSON.stringify(sorted(rules[key]))) {
-        problems.push(`${docType} ${key} is ${JSON.stringify(actual)}, expected ${JSON.stringify(sorted(rules[key]))}`);
-      }
+      compare(`${docType} ${key}`, sortedNames(schema[key]), sortedNames(rules[key]));
     }
   }
 
