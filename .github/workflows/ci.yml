@@ -69,6 +69,34 @@ jobs:
       - name: Run Vitest
         run: npm run test
 
+  browser-components:
+    name: Browser Component Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Type check component fixtures
+        run: npx tsc --noEmit -p e2e/components/tsconfig.json
+
+      # Isolated component fixtures simulate service failures; no live network
+      # credentials or Platform writes are involved in these browser checks.
+      - name: Run browser component regressions
+        run: npm run test:components
+
   dead-code:
     name: Dead Code (knip)
     runs-on: ubuntu-latest
