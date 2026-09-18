@@ -254,6 +254,19 @@ describe('global unread total', () => {
     expect(await directMessageService.getUnreadTotal(viewer)).toBeNull();
   });
 
+  it('reports null when a conversation\'s message page cannot be read, rather than counting it as 0 unread', async () => {
+    vi.stubEnv('NEXT_PUBLIC_DM_TOPOLOGY', 'v4');
+    // The list tolerates a failed page (empty preview); the badge must not,
+    // because an empty page is indistinguishable from "no messages".
+    mocks.composite.mockRejectedValue(new Error('unavailable composite'));
+    mocks.query.mockRejectedValueOnce(new Error('unavailable conversation'))
+      .mockResolvedValueOnce(new Map(messages(1, 1).map(doc => [doc.$id, doc])))
+      .mockResolvedValueOnce(new Map());
+    mocks.count.mockResolvedValue(new Map([['', 3n]]));
+    const { directMessageService } = await import('./direct-message-service');
+    expect(await directMessageService.getUnreadTotal(viewer)).toBeNull();
+  });
+
   it('reports null when any single conversation count fails, since a partial total is not a total', async () => {
     vi.stubEnv('NEXT_PUBLIC_DM_TOPOLOGY', 'v4');
     mocks.composite.mockResolvedValue({

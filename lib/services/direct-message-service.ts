@@ -245,11 +245,18 @@ class DirectMessageService {
    * `messageLimit` is the whole v3/v4 difference on the read path: v3 must pull
    * a 100-message page because it counts unread in JS, while v4 needs only the
    * newest message for the preview and gets unread from the count tree.
+   *
+   * `tolerateFailures` (default true) lets the conversation LIST keep every
+   * conversation whose page did load and show the failed one without a
+   * preview. The global badge passes false: a failed page comes back as an
+   * empty one, which reads as "no messages, 0 unread", and a total built on
+   * that would be wrong in the one direction a badge must never be.
    */
   private async loadMessagePagesAndReceipts(
     userId: string,
     conversationIds: string[],
-    messageLimit: number
+    messageLimit: number,
+    tolerateFailures = true
   ): Promise<{ messagesByConversation: Map<string, Record<string, unknown>[]>; lastReadByConversation: Map<string, number> }> {
     // Preserve each conversation's own page. A global IN page could let one busy
     // conversation hide every other conversation.
@@ -263,7 +270,7 @@ class DirectMessageService {
       where: [['$ownerId', '==', userId], ['conversationId', 'in', ids.map(id => bytesToBase64QueryOperand(bs58.decode(id)))]] as DocumentWhereClause[],
       orderBy: [['conversationId', 'asc']] as Array<['conversationId', 'asc']>, limit: ids.length,
     }))
-    const pages = await queryDocumentBundle([...messageQueries, ...receiptQueries], true)
+    const pages = await queryDocumentBundle([...messageQueries, ...receiptQueries], tolerateFailures)
     return {
       messagesByConversation: new Map(conversationIds.map((id, index) => [id, pages[index]])),
       // v3 and v4 both use the receipt's $updatedAt as the last-read timestamp.
@@ -321,7 +328,9 @@ class DirectMessageService {
         // NOTE: this is also what a MISCONFIGURED deployment looks like. Point
         // NEXT_PUBLIC_DM_TOPOLOGY=v4 at a contract without the count flags (the
         // id and the switch are separate env vars) and every count fails here.
-        logger.warn(`Unread count failed for conversation ${conversationId} — if this is every conversation, NEXT_PUBLIC_DM_TOPOLOGY=v4 is pointed at a contract without the countable flags:`, error)
+        // Debug level per conversation: this runs on the 30 s badge poll, and
+        // the caller reports the misconfiguration once per pass instead.
+        logger.debug(`Unread count failed for conversation ${conversationId}:`, error)
         return null
       }
     })
@@ -340,19 +349,24 @@ class DirectMessageService {
    * fetching profiles would be wrong.
    */
   async getUnreadTotal(userId: string): Promise<number | null> {
-    if (!dmIsV4()) return 0
-    // With read receipts switched off the app never writes a readReceipt, so
-    // every conversation's lastReadAt is 0 and the count is its ENTIRE history
-    // — a badge that is permanently non-zero and that no amount of reading can
-    // clear. v3 had no global badge at all; keep it hidden rather than wrong.
-    // (The per-conversation numbers on /messages are unaffected and match v3's
-    // own behaviour with receipts disabled.)
-    if (!useSettingsStore.getState().sendReadReceipts) return 0
+    // Everything is inside the try: the sidebar runs this alongside the
+    // notification fetch in one Promise.all, so a rejection here would throw
+    // away a notification page that had already loaded.
     try {
+      if (!dmIsV4()) return 0
+      // With read receipts switched off the app never writes a readReceipt, so
+      // every conversation's lastReadAt is 0 and the count is its ENTIRE
+      // history — a badge that is permanently non-zero and that no amount of
+      // reading can clear. v3 had no global badge at all; keep it hidden
+      // rather than wrong. (The per-conversation numbers on /messages are
+      // unaffected and match v3's own behaviour with receipts disabled.)
+      if (!useSettingsStore.getState().sendReadReceipts) return 0
       const conversationIds = Array.from((await this.loadConversationIndex(userId)).keys())
       if (conversationIds.length === 0) return 0
+      // No tolerated failures here (see loadMessagePagesAndReceipts): a
+      // conversation whose page could not be read must fail the whole total.
       const { messagesByConversation, lastReadByConversation } =
-        await this.loadMessagePagesAndReceipts(userId, conversationIds, 1)
+        await this.loadMessagePagesAndReceipts(userId, conversationIds, 1, false)
       const unread = await this.countUnreadByConversation(userId, conversationIds.map(conversationId => ({
         conversationId,
         lastReadAt: lastReadByConversation.get(conversationId) ?? 0,
@@ -360,7 +374,10 @@ class DirectMessageService {
       })))
       const counts = Array.from(unread.values())
       // A partial total is not a total.
-      if (counts.some(count => count === null)) return null
+      if (counts.some(count => count === null)) {
+        logger.warn('Unread total unavailable: a per-conversation count failed. If every count fails, NEXT_PUBLIC_DM_TOPOLOGY=v4 is pointed at a contract without the countable flags.')
+        return null
+      }
       return counts.reduce((total: number, count) => total + (count ?? 0), 0)
     } catch (error) {
       logger.error('Error getting unread total:', error)

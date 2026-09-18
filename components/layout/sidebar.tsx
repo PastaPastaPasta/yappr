@@ -157,8 +157,10 @@ export function Sidebar() {
       try {
         const readIds = store.getReadIdsSet()
         // The DM unread total rides this same cadence rather than adding a
-        // second timer. It never rejects (the service reports 0 on failure and
-        // on the v3 topology), so it cannot take the notification fetch down.
+        // second timer. The service never rejects (its whole body is inside a
+        // try; it answers 0 on v3 and null when it cannot tell), and the catch
+        // below is belt and braces so it can never take the notification
+        // fetch down with it.
         const [result] = await Promise.all([
           isInitial
             ? notificationService.getInitialNotifications(userId, readIds)
@@ -167,7 +169,7 @@ export function Sidebar() {
             // `null` is "could not tell": hold the previous badge rather than
             // blinking it off for 30s and reading as "all caught up".
             if (!cancelled && total !== null) store.setDmUnreadCount(total)
-          }),
+          }).catch((error) => logger.warn('DM unread total failed:', error)),
         ])
 
         if (cancelled) return
