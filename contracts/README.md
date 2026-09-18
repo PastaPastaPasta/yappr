@@ -24,7 +24,8 @@ Historical drafts (`-actual`, `-clean`, `-ready`, `-deploy`, `-updated`,
 ## Feature contracts
 
 - `yappr-profile-contract.json` — unified profile contract (avatar/banner live here, not in the social contract)
-- `yappr-dm-contract.json` — encrypted direct messages
+- `yappr-dm-contract.json` — encrypted direct messages (v3, testnet: `conversationInvite`, `directMessage`, `readReceipt`)
+- `yappr-dm-contract-v4.json` — **deployed on moutai** (`BSLkjKCb…`): v3 plus exactly two additive flags — `countable` + `rangeCountable` on `directMessage.conversation`, so unread is a count query instead of a 100-message download, and `refersTo: {type: identity}` on `conversationInvite.recipientId`. No token costs, no ranked/timeRange indexes, no indexOnly rewrite: DMs stay cheap. Built by `scripts/build-dm-v4-contract.py`, verified by `scripts/verify-dm-v4.mjs`; see `docs/DM_V4.md`
 - `yappr-blog-contract.json` — long-form blog posts, comments, follows (v1, testnet)
 - `yappr-blog-contract-v2.json` — **deployed on moutai** (`4pSFqC9Q…`): v1 plus a poster-attested `blogPost.author`, the refersTo chain (post→blog, comment→post with a `blogPostOwnerId` agreement, follow→blog), countable/ranked comment and follower trees, a daily-grid `followersByDay`, and YAPP-priced comments. Built by `scripts/build-blog-v2-contract.py`, verified by `scripts/verify-blog-v2.mjs`; see `docs/BLOG_V2.md`
 - `yappr-storefront-contract.json` — stores, items, orders, reviews, shipping (v1, testnet)
