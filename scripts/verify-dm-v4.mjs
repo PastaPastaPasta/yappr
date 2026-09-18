@@ -406,24 +406,28 @@ CASES.set('d8', async (ctx) => {
   }
 
   // A message of its own rather than one of d2's, so the exact-count cases stay
-  // independent of this one whatever order the cases are selected in.
+  // independent of this one whatever order the cases are selected in. The
+  // content is held here rather than re-read off the stored document: d8d needs
+  // to resend it byte-identically, and a round-trip through `toObject()` could
+  // hand back a shape the write path rejects for an unrelated reason.
+  const content = randomBytes(64);
   const message = battery.expectAccepted(
     'd8b a message to edit is created in C2',
-    await battery.attemptCreate(sender, 'directMessage', { conversationId: ctx.c2, encryptedContent: randomBytes(64) })
+    await battery.attemptCreate(sender, 'directMessage', { conversationId: ctx.c2, encryptedContent: content })
   );
   if (message.ok) {
-    const stored = await battery.fetchDocument('directMessage', message.id);
-    const revision = stored?.revision ?? 1n;
+    const revision = (await battery.fetchDocument('directMessage', message.id))?.revision ?? 1n;
     battery.expectRejected(
       'd8c rewriting a sent message\'s encryptedContent is rejected (40128)',
       await battery.attemptReplace(sender, 'directMessage', message.id,
         { conversationId: ctx.c2, encryptedContent: randomBytes(64) }, revision),
       IMMUTABLE_CHANGED
     );
+    // Only conversationId differs, so the rejection can only be about the move.
     battery.expectRejected(
       'd8d moving a message into another conversation is rejected (40128) — the count tree cannot be re-keyed',
       await battery.attemptReplace(sender, 'directMessage', message.id,
-        { conversationId: ctx.c1, encryptedContent: stored?.toObject()?.encryptedContent }, revision),
+        { conversationId: ctx.c1, encryptedContent: content }, revision),
       IMMUTABLE_CHANGED
     );
   }
