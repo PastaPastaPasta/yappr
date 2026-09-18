@@ -34,23 +34,17 @@ describe('identifier encoding on the edit path', () => {
     expect(Array.from(payload.blogId as Uint8Array)).toEqual(Array.from(bs58.decode(blogId)));
   });
 
-  it('restores the v2 author the same way', () => {
-    const payload = replacePayload({ author: ownerId });
-    expect(payload.author).toBeInstanceOf(Uint8Array);
-    expect(Array.from(payload.author as Uint8Array)).toEqual(Array.from(bs58.decode(ownerId)));
-  });
-
   it('drops an undecodable identifier instead of throwing, so the required-field error speaks', () => {
     // transformDocument reports a field it could not decode as ''.
-    const payload = replacePayload({ author: '' });
-    expect(payload.author).toBeUndefined();
-    expect(payload.blogId).toBeInstanceOf(Uint8Array);
+    const payload = replacePayload({ blogId: '' });
+    expect(payload.blogId).toBeUndefined();
+    expect(payload.title).toBe('T');
   });
 
-  it('carries no author on v1, where the property does not exist', () => {
-    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v1');
+  it('carries no attested author on either topology — the post owner IS the author', () => {
     const payload = replacePayload({});
     expect(payload.author).toBeUndefined();
-    expect(payload.blogId).toBeInstanceOf(Uint8Array);
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v1');
+    expect(replacePayload({}).author).toBeUndefined();
   });
 });

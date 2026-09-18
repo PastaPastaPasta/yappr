@@ -8,12 +8,14 @@ for the rationale and the query shapes each index serves.
 What v2 adds, per document type:
 
   blog        unchanged (already permanent + keepHistory)
-  blogPost    required poster-attested `author` (must equal $ownerId; the app
-              checks) — the propertyAgreement source that pins a comment's
-              blogPostOwnerId to the real post author; blogId refersTo blog
+  blogPost    blogId refersTo blog and is frozen (`immutable`); `publishedAt`
+              is immutable-but-settable, so a draft can be published once and
+              never re-dated afterwards. No attested `author` copy: comments
+              bind to the post's real $ownerId instead
   blogComment blogPostId refersTo blogPost with propertyAgreement
-              {blogPostOwnerId: 'author'}, closing the forged-owner-id
-              notification hole; countable/ranked `commentCount [blogPostId]`
+              {blogPostOwnerId: '$ownerId'}, closing the forged-owner-id
+              notification hole against the post's REAL owner;
+              countable/ranked `commentCount [blogPostId]`
               ("most discussed posts"); `postOwnerAndTime` for the
               "comments on my posts" notification source; YAPP cost 1
   blogFollow  blogId refersTo blog; countable/ranked `followerCount [blogId]`
@@ -40,13 +42,14 @@ SOCIAL_CONTRACT_ID_PLACEHOLDER = 'SOCIAL_CONTRACT_ID'
 YAPP_TOKEN_POSITION = 0
 COMMENT_COST = 1
 
-# The full ranked-count chain, spelled out. `rankedCountable` alone is refused
-# at registration ("rangeCountable" / "countable" is a required property): the
-# meta-schema's dependency rules run on the literal keys, and the offline wasm
-# validator compiles that check out — so it passes locally and fails on chain
-# (dashpay/platform#4809).
+# The ranked-count chain. `rankedCountable` still needs `rangeCountable` spelled
+# out — that dependency runs on the literal keys and the offline wasm validator
+# compiles the check out, so a missing one passes locally and fails on chain
+# (dashpay/platform#4809). `countable` is NOT spelled out any more: since
+# 4.2.0-beta.2 `rangeCountable: true` implies `countable: "countable"`, in the
+# meta-schema (its dependentRequired row is gone) and in the structural parser
+# (which promotes the omitted value).
 COUNT_FLAGS = {
-    'countable': 'countable',
     'rangeCountable': True,
     'rankedCountable': True,
 }
@@ -101,13 +104,12 @@ def build(src):
     post = out['blogPost']
     post['description'] = (
         'A published post. Permanent and history-keeping, so every edit is '
-        'retrievable through documents.history. `author` is poster-attested '
-        '(must equal $ownerId; the app checks) and is the propertyAgreement '
-        'source that pins each comment\'s blogPostOwnerId to the real author.'
+        'retrievable through documents.history. The author IS $ownerId: a '
+        "comment binds its blogPostOwnerId to the post's $ownerId through a "
+        'system-field propertyAgreement, so no attested copy is carried.'
     )
     props = {
         'blogId': identifier(0, 'Reference to parent blog document', permanent('blog')),
-        'author': identifier(1, 'Post author; must equal $ownerId (poster-attested). Source of the comment propertyAgreement.'),
         'title': post['properties']['title'],
         'subtitle': post['properties']['subtitle'],
         'data0': post['properties']['data0'],
@@ -122,24 +124,30 @@ def build(src):
     }
     renumber(props)
     post['properties'] = props
-    post['required'] = ['$createdAt', 'blogId', 'author', 'title', 'data0', 'slug']
-    # No `authorAndTime [author, $createdAt]`: `author` is required to equal
-    # $ownerId, so the v1 `ownerAndTime` index already serves every
-    # "posts by this author" query at the same cost. A second index would only
-    # add write cost for a query nothing makes.
+    post['required'] = ['$createdAt', 'blogId', 'title', 'data0', 'slug']
+    # `blogId` is structural: an edit may never move a post between blogs, and
+    # the merge-replace in blog-post-service already resends it verbatim.
+    # `publishedAt` is the one write-once field — absent means draft, and a
+    # draft may be published exactly once (immutableAllowSetting) but never
+    # re-dated or un-published afterwards. Both are enforced by consensus now
+    # (40128) rather than by the client remembering to resend them.
+    post['immutable'] = ['blogId', 'publishedAt']
+    post['immutableAllowSetting'] = ['publishedAt']
+    # No `authorAndTime` index: the author IS $ownerId, so the v1
+    # `ownerAndTime` index already serves every "posts by this author" query.
 
     # ---- blogComment --------------------------------------------------------
     comment = out['blogComment']
     comment['description'] = (
-        'A comment on a post. blogPostId must name a real post whose `author` '
+        'A comment on a post. blogPostId must name a real post whose $ownerId '
         'equals this document\'s blogPostOwnerId, so the notification key '
         'cannot be forged and comments on ghost posts are impossible.'
     )
     props = {
         'blogPostId': identifier(
             0, 'Reference to parent blog post document',
-            permanent('blogPost', {'blogPostOwnerId': 'author'})),
-        'blogPostOwnerId': identifier(1, "Author of the parent post, copied from its `author` (consensus-checked)"),
+            permanent('blogPost', {'blogPostOwnerId': '$ownerId'})),
+        'blogPostOwnerId': identifier(1, "Owner of the parent post, consensus-bound to its $ownerId"),
         'content': comment['properties']['content'],
     }
     renumber(props)

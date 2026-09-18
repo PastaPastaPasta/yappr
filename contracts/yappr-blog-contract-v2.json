@@ -114,7 +114,6 @@
     "required": [
       "$createdAt",
       "blogId",
-      "author",
       "title",
       "data0",
       "slug"
@@ -133,26 +132,17 @@
           "documentType": "blog"
         }
       },
-      "author": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 32,
-        "maxItems": 32,
-        "contentMediaType": "application/x.dash.dpp.identifier",
-        "position": 1,
-        "description": "Post author; must equal $ownerId (poster-attested). Source of the comment propertyAgreement."
-      },
       "title": {
         "type": "string",
         "minLength": 1,
         "maxLength": 128,
-        "position": 2,
+        "position": 1,
         "description": "Post title"
       },
       "subtitle": {
         "type": "string",
         "maxLength": 256,
-        "position": 3,
+        "position": 2,
         "description": "Post subtitle"
       },
       "data0": {
@@ -160,63 +150,70 @@
         "byteArray": true,
         "minItems": 1,
         "maxItems": 5120,
-        "position": 4,
+        "position": 3,
         "description": "Compressed content chunk 0 (max 5120 bytes per platform field limit)"
       },
       "data1": {
         "type": "array",
         "byteArray": true,
         "maxItems": 5120,
-        "position": 5,
+        "position": 4,
         "description": "Compressed content chunk 1 (overflow)"
       },
       "data2": {
         "type": "array",
         "byteArray": true,
         "maxItems": 5120,
-        "position": 6,
+        "position": 5,
         "description": "Compressed content chunk 2 (overflow)"
       },
       "data3": {
         "type": "array",
         "byteArray": true,
         "maxItems": 5120,
-        "position": 7,
+        "position": 6,
         "description": "Compressed content chunk 3 (overflow)"
       },
       "coverImage": {
         "type": "string",
         "maxLength": 256,
-        "position": 8,
+        "position": 7,
         "description": "ipfs:// URI for cover image"
       },
       "labels": {
         "type": "string",
         "maxLength": 256,
-        "position": 9,
+        "position": 8,
         "description": "Comma-separated labels from blog taxonomy"
       },
       "commentsEnabled": {
         "type": "boolean",
-        "position": 10,
+        "position": 9,
         "description": "Whether comments are enabled"
       },
       "slug": {
         "type": "string",
         "minLength": 1,
         "maxLength": 63,
-        "position": 11,
+        "position": 10,
         "description": "URL-safe slug derived from title"
       },
       "publishedAt": {
         "type": "integer",
         "minimum": 0,
-        "position": 12,
+        "position": 11,
         "description": "Publication timestamp (ms since epoch)"
       }
     },
     "additionalProperties": false,
-    "description": "A published post. Permanent and history-keeping, so every edit is retrievable through documents.history. `author` is poster-attested (must equal $ownerId; the app checks) and is the propertyAgreement source that pins each comment's blogPostOwnerId to the real author."
+    "description": "A published post. Permanent and history-keeping, so every edit is retrievable through documents.history. The author IS $ownerId: a comment binds its blogPostOwnerId to the post's $ownerId through a system-field propertyAgreement, so no attested copy is carried.",
+    "immutable": [
+      "blogId",
+      "publishedAt"
+    ],
+    "immutableAllowSetting": [
+      "publishedAt"
+    ]
   },
   "blogComment": {
     "type": "object",
@@ -262,7 +259,6 @@
             "blogPostId": "asc"
           }
         ],
-        "countable": "countable",
         "rangeCountable": true,
         "rankedCountable": true
       }
@@ -286,7 +282,7 @@
           "type": "permanentDocument",
           "documentType": "blogPost",
           "propertyAgreement": {
-            "blogPostOwnerId": "author"
+            "blogPostOwnerId": "$ownerId"
           }
         }
       },
@@ -297,7 +293,7 @@
         "maxItems": 32,
         "contentMediaType": "application/x.dash.dpp.identifier",
         "position": 1,
-        "description": "Author of the parent post, copied from its `author` (consensus-checked)"
+        "description": "Owner of the parent post, consensus-bound to its $ownerId"
       },
       "content": {
         "type": "string",
@@ -308,7 +304,7 @@
       }
     },
     "additionalProperties": false,
-    "description": "A comment on a post. blogPostId must name a real post whose `author` equals this document's blogPostOwnerId, so the notification key cannot be forged and comments on ghost posts are impossible.",
+    "description": "A comment on a post. blogPostId must name a real post whose $ownerId equals this document's blogPostOwnerId, so the notification key cannot be forged and comments on ghost posts are impossible.",
     "tokenCost": {
       "create": {
         "contractId": "SOCIAL_CONTRACT_ID",
@@ -362,7 +358,6 @@
             "blogId": "asc"
           }
         ],
-        "countable": "countable",
         "rangeCountable": true,
         "rankedCountable": true
       },
@@ -376,7 +371,6 @@
             "blogId": "asc"
           }
         ],
-        "countable": "countable",
         "rangeCountable": true,
         "rankedCountable": true,
         "timeRange": {

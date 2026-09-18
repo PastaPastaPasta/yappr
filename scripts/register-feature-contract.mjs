@@ -54,7 +54,14 @@ function buildContract({ file, ownerId, identityNonce, socialId, platformVersion
   return { dataContract: DataContract.fromJSON(json, true, platformVersion), documentSchemas };
 }
 
-function printAudit(documentSchemas) {
+/**
+ * Prints the built contract's shape, reading the frozen-property and reference
+ * declarations back off the PARSED DataContract rather than the raw JSON: the
+ * keywords are only recognised from protocol 14 onward, so a list that shows up
+ * here is one consensus will actually enforce, while one that silently prints
+ * empty means the keyword was not parsed at all.
+ */
+function printAudit(documentSchemas, dataContract) {
   for (const [name, schema] of Object.entries(documentSchemas)) {
     const flags = [
       `mutable=${schema.documentsMutable ?? 'default'}`,
@@ -78,6 +85,18 @@ function printAudit(documentSchemas) {
     console.log(`  ${name.padEnd(18)} ${flags.join(' ')}`);
     console.log(`  ${''.padEnd(18)} ${indices.join(' ')}`);
     if (refs.length > 0) console.log(`  ${''.padEnd(18)} refersTo: ${refs.join(' ')}`);
+    const frozen = dataContract.documentTypeImmutableProperties(name);
+    if (frozen.immutable.length > 0) {
+      const settable = new Set(frozen.immutableAllowSetting);
+      const rendered = frozen.immutable.map((property) => (settable.has(property) ? `${property}(set-once)` : property));
+      console.log(`  ${''.padEnd(18)} immutable: ${rendered.join(' ')}`);
+    }
+    // A declared list the parser did not pick up is the failure this audit
+    // exists to catch: it would validate offline and be ignored on chain.
+    const declared = schema.immutable ?? [];
+    if (declared.length !== frozen.immutable.length) {
+      throw new Error(`${name}: schema declares immutable ${JSON.stringify(declared)} but the parsed contract reports ${JSON.stringify(frozen.immutable)}`);
+    }
   }
 }
 
@@ -130,7 +149,7 @@ try {
   if (args.dryRun) {
     const { dataContract, documentSchemas } = buildContract({ file: args.file, ownerId: DRY_RUN_OWNER, identityNonce: 1n, socialId, platformVersion });
     console.log(`dry run: ${contractPath(args.file)} — ${Object.keys(dataContract.toJSON(platformVersion).documentSchemas).length} document types, YAPP from ${socialId}`);
-    printAudit(documentSchemas);
+    printAudit(documentSchemas, dataContract);
     process.exit(0);
   }
 
@@ -148,7 +167,7 @@ try {
   console.log(`owner=${owner.label}`);
   const identityNonce = ((await sdk.identities.nonce(owner.ownerId)) ?? 0n) + 1n;
   const { dataContract, documentSchemas } = buildContract({ file: args.file, ownerId: owner.ownerId, identityNonce, socialId, platformVersion });
-  printAudit(documentSchemas);
+  printAudit(documentSchemas, dataContract);
   console.log(`publishing ${args.file} (${Object.keys(documentSchemas).length} document types) …`);
   const published = await sdk.contracts.publish({ dataContract, identityKey: owner.identityKey, signer: owner.signer });
   console.log(`published: ${published.id.toBase58()}`);

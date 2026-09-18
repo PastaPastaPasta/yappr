@@ -325,7 +325,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
           <div ref={commentsRef} className="mt-8">
             <BlogComments
               blogPostId={post.id}
-              blogPostOwnerId={post.author || post.ownerId}
+              blogPostOwnerId={post.ownerId}
               commentsEnabled={post.commentsEnabled !== false}
               onCommentCountChange={setCommentCount}
             />

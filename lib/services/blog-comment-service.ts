@@ -32,10 +32,10 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
 
   /**
    * The value `blogPostOwnerId` must carry. On v2 consensus checks it against
-   * the post's own `author` property (propertyAgreement on `blogPostId`), so a
-   * caller's idea of who owns the post is not good enough — the post is fetched
-   * and its attested `author` used verbatim. On v1 nothing is checked and the
-   * caller's value stands.
+   * the post's own `$ownerId` (a system-field propertyAgreement on
+   * `blogPostId`), so a caller's idea of who owns the post is not good enough —
+   * the post is fetched and its real owner used verbatim. On v1 nothing is
+   * checked and the caller's value stands.
    */
   private async resolvePostOwnerId(blogPostId: string, fallback: string): Promise<string> {
     if (!blogIsV2()) return fallback
@@ -45,9 +45,9 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
     // refusing to comment: consensus (40127) is the real arbiter, and a
     // rejected create charges no YAPP.
     const post = await blogPostService.getPost(blogPostId)
-    const attested = post?.author || post?.ownerId || fallback
-    if (!attested) throw new Error('Cannot resolve the post author for this comment')
-    return attested
+    const owner = post?.ownerId || fallback
+    if (!owner) throw new Error('Cannot resolve the post owner for this comment')
+    return owner
   }
 
   async createComment(
