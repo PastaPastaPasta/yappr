@@ -11,7 +11,6 @@ import { documentCount, groupedDocumentCount } from './pagination-utils';
 import { profileDataByOwnerId } from './post-enrichment-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import {
-  authorFieldIsRequired,
   hasFlatThreads,
   replyCountFieldFor,
   replyLinkage,
@@ -22,7 +21,7 @@ import {
 
 /**
  * Replies per page in a thread view. v2 keeps its historical 20 (one level of a
- * tree); on v3 one query covers the whole thread, so the page is larger.
+ * tree); on v7 one query covers the whole thread, so the page is larger.
  */
 function replyPageSize(): number {
   return hasFlatThreads() ? 50 : 20;
@@ -158,17 +157,14 @@ class ReplyService extends BaseDocumentService<Reply> {
   /**
    * Blank a reply in place, leaving a tombstone.
    *
-   * The v3 `reply` doctype is `canBeDeleted: false`, so this is what "delete"
-   * means there. Content, media and every encrypted field are dropped; the parent
-   * linkage survives, INCLUDING the optional `replyToReplyId` — a tombstone is
-   * still rendered in the thread, so losing its nesting would move it (and every
-   * live reply under it) to the top of the thread.
+   * v7's `reply` doctype is `canBeDeleted: false`, so this is what "delete"
+   * means there. Content, media and every encrypted field are dropped;
+   * {@link tombstonePreservationFor} names what survives, INCLUDING the optional
+   * `replyToReplyId` — a tombstone is still rendered in the thread, so losing its
+   * nesting would move it (and every live reply under it) to the top of the
+   * thread.
    */
   async tombstoneReply(replyId: string, ownerId: string): Promise<boolean> {
-    // On v4-v6 the required poster-attested `author` is part of the preserved
-    // set (it must keep equalling $ownerId, and existing likeReply rows repeat
-    // it under the consensus-checked agreement); on v7 the column is gone and
-    // the preserved set is exactly the doctype's `immutable` list.
     const ok = await tombstoneDocument({
       contractId: this.contractId,
       documentType: this.documentType,
@@ -213,13 +209,6 @@ class ReplyService extends BaseDocumentService<Reply> {
     if (replyToReplyField && target.replyToReplyId) {
       data[replyToReplyField] = identifierStringToDocumentBytes(target.replyToReplyId);
     }
-    // v4-v6: poster-attested author (== $ownerId), the propertyAgreement
-    // source for likeReply.replyAuthor. v7 binds it to `reply.$ownerId`
-    // directly, so nothing is written here.
-    if (authorFieldIsRequired()) {
-      data.author = identifierStringToDocumentBytes(ownerId);
-    }
-
     // Handle encryption if provided
     if (options.encryption) {
       const { prepareOwnerEncryption, prepareInheritedEncryption } = await import('./private-feed-service');

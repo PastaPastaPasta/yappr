@@ -120,7 +120,7 @@ export function isFrozenBalanceError(error: unknown): boolean {
  * Checks if an error indicates Platform refused a write because something the
  * document points at does not exist (or is not usable as a reference target).
  *
- * This is the `refersTo` family introduced with protocol v14. On the yappr v3
+ * This is the `refersTo` family introduced with protocol v14. On the v7
  * contract `follow.followingId` and `postMention.mentionedUserId` declare
  * `refersTo: { type: 'identity' }`, so following or mentioning an identity that
  * is not on chain is rejected by consensus instead of creating a dangling
@@ -213,13 +213,12 @@ export function isWriteGateError(error: unknown): boolean {
  * the document type freezes — `DocumentImmutablePropertyChangedError`, state
  * code **40128**, new in protocol v14 / Platform 4.2.0-beta.2.
  *
- * Contract v7 declares `immutable` lists on `post` and `reply` (language, the
- * tag, the quote graph, the embed triple, a reply's parent linkage, and
- * `deleted` as immutable-but-settable). "Touched" covers a changed value, a
- * newly added property AND one the replacement dropped, so the only way to
- * hit this from the app is a tombstone whose preserve set has drifted from
- * the contract — a permanent, code-level rejection that must never be retried
- * or read as a transient failure.
+ * `post` and `reply` declare `immutable` lists; {@link tombstonePreservationFor}
+ * holds the app's copy of them. "Touched" covers a changed value, a newly added
+ * property AND one the replacement dropped, so the only way to hit this from
+ * the app is a tombstone whose preserve set has drifted from the contract — a
+ * permanent, code-level rejection that must never be retried or read as a
+ * transient failure.
  *
  * Matches the consensus error name and Drive's rendered phrasing, "property
  * '<p>' of document <id> (type '<t>') is immutable and cannot be changed by a

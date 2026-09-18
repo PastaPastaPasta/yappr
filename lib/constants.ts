@@ -211,63 +211,63 @@ export function keyNetwork(): KeyNetwork {
 
 // Contract interaction topology.
 //
-// `v2` is the shape every deployed contract has today: replies chain through a
-// single polymorphic `parentId`, and like/repost/bookmark/quote all address
-// posts and replies through the same `postId`/`quotedPostId` keyspace.
+// Two social contracts exist on chain, so two topologies do:
 //
-// `v3` is the topology from PLAN_CONTRACT_V3_TOPOLOGY.md: flat threads
-// (`rootPostId` + `replyToReplyId`), a separate `likeReply` doctype, posts-only
-// repost/bookmark, and dual quote fields — each reference `refersTo`-checked by
-// consensus, which is only possible once every field points at exactly one
-// document type.
+// `v2` — testnet (staging/prod), `contracts/yappr-social-contract-v2.json`.
+// Replies chain through a single polymorphic `parentId`, and
+// like/repost/bookmark/quote all address posts and replies through the same
+// `postId`/`quotedPostId` keyspace. Posts and replies are ordinary deletable
+// documents.
 //
-// `v4` is the like-overhaul topology (PLAN_LIKE_OVERHAUL.md,
-// contracts/yappr-social-contract-v4.json): same document graph as v3 plus
-// indexOnly `like`/`likeReply` doctypes (no stored body, delete-by-values,
-// ranked/count axes), a single inline `post.hashtag` property replacing the
-// `postHashtag` doctype, and required poster-attested `author` fields on
-// post/reply serving the likes' propertyAgreement.
+// `v7` — the moutai devnet, `contracts/yappr-social-contract-v7.json`
+// (docs/SOCIAL_CONTRACT.md, docs/PLATFORM_BETA2_UPGRADE.md). Flat threads
+// (`rootPostId` + `replyToReplyId`) with a separate `likeReply` doctype,
+// posts-only repost/bookmark and dual quote fields, each reference
+// `refersTo`-checked; indexOnly `like`/`likeReply`/`beat` with ranked, count
+// and daily-windowed axes; one OPTIONAL inline `post.hashtag` (absent =
+// untagged, maxLength 61); permanent post/reply documents whose "delete" is a
+// tombstone; and two invariants consensus now owns — a like's `postAuthor`
+// binds to the post's `$ownerId` through a system-field `propertyAgreement`,
+// and `post`/`reply` declare `immutable` property lists with `deleted`
+// immutable-but-settable.
 //
-// `v5` is the dev.6 re-cut (PLAN_DEV6_V5.md,
-// contracts/yappr-social-contract-v5.json): same graph as v4, but `hashtag` is
-// OPTIONAL (an untagged post/like omits the property instead of writing the
-// `''` sentinel; `like.byHashtagPost` is `skipIfAbsent`, so untagged likes
-// write no per-tag index entries at all), hashtag maxLength shrinks to 61 (the
-// ranked key-size ceiling), and the at-form `rankedCountable` chains unlock
-// proved prefix rankings: trending hashtags, the creator leaderboard, and
-// most-followed.
-//
-// `v6` is the dev.8 windowed-rankings cut (docs/V6_WINDOWED_RANKINGS.md,
-// contracts/yappr-social-contract-v6.json): v5's graph plus daily `timeRange`
-// twins of the ranked like axes and a tagged-only indexOnly `beat` doctype
-// carrying the windowed hashtag rankings, so "top posts / top creators /
-// trending tags TODAY" are proved top-K reads rather than client arithmetic.
-//
-// `v7` is the 4.2.0-beta.2 cut (docs/PLATFORM_BETA2_UPGRADE.md,
-// contracts/yappr-social-contract-v7.json): v6's indexes and query surface
-// exactly, with two client conventions handed to consensus. The attested
-// `author` column is GONE from post/reply — beta.2 lets a `propertyAgreement`
-// name the referenced document's `$ownerId`, so likes bind to the real owner —
-// and post/reply declare `immutable` property lists, so the structural fields
-// a tombstone always had to copy by hand are frozen by the chain, with
-// `deleted` immutable-but-settable.
+// Superseded cuts (v3–v6) are gone: none exists on any chain, and the repo
+// does not retain contracts, generators or batteries that cannot be
+// registered.
 //
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-//
-// ORDER IS SIGNIFICANT: `lib/contract-topology.ts` compares positions in this
-// array to decide when a capability first appeared, so new cuts append.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v3', 'v4', 'v5', 'v6', 'v7'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v7'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 
 export const DEFAULT_CONTRACT_TOPOLOGY: ContractTopology = 'v2'
 
-/** The interaction topology of the configured contract, from `NEXT_PUBLIC_CONTRACT_TOPOLOGY`. */
+/**
+ * The interaction topology of the configured contract, from
+ * `NEXT_PUBLIC_CONTRACT_TOPOLOGY`.
+ *
+ * An ABSENT value defaults to v2, which is what keeps testnet/staging/prod
+ * working without the flag. A value that is SET but unrecognized THROWS: it
+ * names a cut that no longer exists on any chain (a stale `v6`, say), and
+ * silently resolving that to v2 would build a client for the wrong contract —
+ * a config fault that presents as every write failing schema validation. The
+ * throw happens during `next build`, because `app/contract/page.tsx` resolves
+ * the topology at module scope, so a mismatched env file cannot ship.
+ */
 export function getContractTopology(): ContractTopology {
   const configured = process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY
-  return CONTRACT_TOPOLOGIES.find((topology) => topology === configured) ?? DEFAULT_CONTRACT_TOPOLOGY
+  if (configured === undefined || configured === '') return DEFAULT_CONTRACT_TOPOLOGY
+  const topology = CONTRACT_TOPOLOGIES.find((candidate) => candidate === configured)
+  if (!topology) {
+    throw new Error(
+      `NEXT_PUBLIC_CONTRACT_TOPOLOGY="${configured}" is not a topology this build knows ` +
+      `(expected one of ${CONTRACT_TOPOLOGIES.join(', ')}). The contract id and this flag must ` +
+      'move as a unit; see docs/SOCIAL_CONTRACT.md.'
+    )
+  }
+  return topology
 }
 
 // Devnet wiring. A devnet has no public masternode discovery, so the DAPI

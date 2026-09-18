@@ -1,7 +1,7 @@
 # Devnet content seeding — ops runbook
 
 Seeds the moutai devnet (social contract `NEXT_PUBLIC_YAPPR_CONTRACT_ID` in
-`.env.devnet`, v4 or v5 topology) with synthetic users and content. Built for a 10-user /
+`.env.devnet`, topology `v7`) with synthetic users and content. Built for a 10-user /
 ~1100-op pilot first, but resumable and parallel from the start so the same
 scripts scale to 500 users / 50k posts.
 
@@ -24,13 +24,13 @@ The treasury key and the identity ledger contain PRIVATE KEYS.
 
 - `NETWORK=devnet` on every invocation (scripts read the rest of the wiring —
   DAPI pool, Insight URL, contract ids — from `.env.devnet`).
-- YAPP funding (the v4 contract charges YAPP per post/reply/like create):
+- YAPP funding (the contract charges YAPP per post/reply/like create):
   - default `--yapp-source maker` transfers from the devnet maker (seed
     index 9) and therefore needs `E2E_SEED_PHRASE` in the environment or
     `.env.local`, plus `DEVNET_MAKER_IDENTITY_ID` (already in `.env.devnet`);
   - `--yapp-source purchase` has each identity buy YAPP with its own credits,
-    but requires a direct-purchase price on **this** contract first — as of
-    2026-08-30 the v4 draft (`Aux325if…`) has **no price set**; set one with
+    but requires a direct-purchase price on **this** contract first — a freshly
+    registered contract has none; set one with
     `NETWORK=devnet node scripts/set-yapp-price.mjs --contract <id> --owner <makerId> --owner-index 9`.
 
 ## 1. Fund the treasury
@@ -105,15 +105,18 @@ Exit code is non-zero while any selected identity is not `ready`.
 NETWORK=devnet node scripts/seed/run-seeder.mjs \
   --personas scripts/seed/personas.pilot.json \
   --corpus  scripts/seed/corpus.pilot.jsonl \
-  [--concurrency 10] [--max-ops 50] [--topology v4|v5]
+  [--concurrency 10] [--max-ops 50] [--topology v7]
 ```
 
-- `--topology` selects the target contract's hashtag semantics (default:
-  `NEXT_PUBLIC_CONTRACT_TOPOLOGY` from the env / `.env.devnet`, else `v4`).
-  The corpus `"hashtag": ""` convention always means "untagged"; v4 writes the
-  `''` sentinel, v5 **omits the hashtag property** on untagged posts and on
-  their likes (propertyAgreement both-absent; `''` under v5 is consensus
-  error 40127). v5 also tightens the tag maxLength to 61 at parse time.
+- `--topology` guards the target contract's shape (default:
+  `NEXT_PUBLIC_CONTRACT_TOPOLOGY` from the env / `.env.devnet`). Only the
+  devnet cut `v7` is seedable — the testnet `v2` contract is production data —
+  and both the flag and the env value throw on anything else, so an env file
+  left on a retired cut aborts before spending credits.
+  The corpus `"hashtag": ""` convention means "untagged", which **omits the
+  hashtag property** on the post and on every like of it (propertyAgreement
+  both-absent; `''` is consensus error 40127). Tag maxLength is 61 at parse
+  time.
 - Per-author ops are strictly sequential (identity contract nonce); different
   authors run in parallel behind a global in-flight cap (`--concurrency`).
 - `--max-ops N` executes at most N new ops then stops cleanly (useful as a
@@ -158,5 +161,5 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
 
 ```bash
 node scripts/seed/provision-seed-identities.mjs --self-test   # split/asset-lock construction, validation, ledger states
-node scripts/seed/run-seeder.mjs --self-test                  # corpus parsing, ref resolution, scheduling, resume, max-ops, v4/v5 hashtag shapes
+node scripts/seed/run-seeder.mjs --self-test                  # corpus parsing, ref resolution, scheduling, resume, max-ops, document shapes
 ```

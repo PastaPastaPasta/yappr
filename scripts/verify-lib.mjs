@@ -1,23 +1,13 @@
 /**
- * Shared infrastructure for the registration-day contract batteries.
- *
- * `scripts/verify-v7.mjs` is a thin file of v7 CASES on top of this module:
- * the devnet SDK with its quorum-rotation reconnect, the readback-decided
- * write helpers, the strict wrong-reason-fails rejection matchers, the
- * PASS/FAIL ledger and the CLI/dry-run/report shell all live here.
- *
- * Extracted from `scripts/verify-v5.mjs` — verbatim apart from the parts v7
- * has no analogue for, which were dropped rather than left as unreachable
- * residue (delete-by-id, the reference/foreign-delete matchers, the
- * bookmark/postMention shapes). `verify-v5.mjs` is deliberately NOT
- * refactored onto this module: it is the frozen record of the v5 cut, its
- * `--dry-run` only exercises shape building, and a rewrite of its live paths
- * could not be validated without re-running the whole battery against a v5
- * contract that no longer exists on chain.
+ * Shared infrastructure for the registration-day contract batteries: the devnet
+ * SDK with its quorum-rotation reconnect, readback-decided write helpers, the
+ * strict wrong-reason-fails rejection matchers, the PASS/FAIL ledger and the
+ * CLI/dry-run/report shell. `scripts/verify-v7.mjs` is a thin file of cases on
+ * top of it.
  *
  * Nothing here is topology-specific. The `post`/`reply` data builders are NOT
- * here on purpose: their required properties changed between cuts (v7 removed
- * the attested `author`), so each battery declares its own.
+ * here on purpose: their required properties change between cuts, so each
+ * battery declares its own.
  */
 import {
   Document,
@@ -30,6 +20,7 @@ import {
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
+
 const SDK_TIMEOUT_MS = 30000;
 const DEFAULT_DEVNET_NAME = 'moutai';
 const DEFAULT_SEED_COUNT = 5;
@@ -43,14 +34,8 @@ const DRY_RUN_ID = '11111111111111111111111111111111';
 const YAPP_TOKEN_POSITION = 0;
 /** Below this the run cannot finish, so it aborts instead of failing cases. */
 const MIN_YAPP_BALANCE = 150n;
-// ---- Devnet SDK -------------------------------------------------------------
 
-function defaultDevnetAddresses(devnetName) {
-  return Array.from(
-    { length: DEFAULT_SEED_COUNT },
-    (_, i) => `https://seed-${i + 1}.${devnetName}.networks.dash.org:1443`
-  );
-}
+// ---- Devnet SDK -------------------------------------------------------------
 
 function devnetSdk() {
   const devnetName = process.env.DEVNET_NAME?.trim() || DEFAULT_DEVNET_NAME;
@@ -59,7 +44,10 @@ function devnetSdk() {
     .map((address) => address.trim())
     .filter(Boolean)
     .map((address) => (address.includes('://') ? address : `https://${address}`));
-  const addresses = configured.length > 0 ? configured : defaultDevnetAddresses(devnetName);
+  const addresses = configured.length > 0 ? configured : Array.from(
+    { length: DEFAULT_SEED_COUNT },
+    (_, i) => `https://seed-${i + 1}.${devnetName}.networks.dash.org:1443`
+  );
   const sdk = new EvoSDK({
     network: 'devnet',
     devnetName,
@@ -76,15 +64,11 @@ function devnetSdk() {
 
 // ---- Resilient connection ---------------------------------------------------
 //
-// Long runs (~20 min) outlive devnet quorum rotations: the trusted context
-// prefetches quorum keys at connect, a mid-run DKG makes newer proofs verify
-// against a quorum it never learned ("invalid quorum: Quorum not found"), the
-// failing proofs ban every DAPI address ("no available addresses …"), and the
-// SDK instance is dead. There is no refresh API, so the cure is a FULL
-// reconnect: build a fresh EvoSDK (fresh quorum prefetch + address pool),
-// re-ratchet the protocol version, re-cache the contract, and swap it in. All
-// battery code holds `sdkHandle` — a proxy that always forwards to the current
-// instance — so a swap is transparent to in-flight helpers.
+// A mid-run quorum rotation makes newer proofs verify against a quorum the
+// prefetched trusted context never learned; the failing proofs ban every DAPI
+// address and the SDK instance is dead. There is no refresh API, so the cure is
+// a FULL reconnect behind `sdkHandle`, a proxy that always forwards to the
+// current instance.
 
 /** Errors that mean "this SDK instance is dead", not "this request was refused". */
 const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
@@ -93,15 +77,12 @@ let activeSdk = null;
 let reconnectContractId = null;
 let reconnectPromise = null;
 
-const sdkHandle = new Proxy(
-  {},
-  {
-    get(_, prop) {
-      const value = activeSdk[prop];
-      return typeof value === 'function' ? value.bind(activeSdk) : value;
-    },
-  }
-);
+const sdkHandle = new Proxy({}, {
+  get(_, prop) {
+    const value = activeSdk[prop];
+    return typeof value === 'function' ? value.bind(activeSdk) : value;
+  },
+});
 
 /** Connect + protocol-version ratchet + contract cache: everything a fresh instance needs. */
 async function buildConnectedSdk(contractId) {
@@ -109,12 +90,10 @@ async function buildConnectedSdk(contractId) {
   await sdk.connect();
   // PROTOCOL-VERSION RATCHET (load-bearing): rs-sdk starts every devnet at
   // protocol version 12 and only ratchets upward from *verified* response
-  // metadata (rs-sdk sdk.rs `min_protocol_version` + `maybe_update_protocol_version`).
-  // Parsing the v5 contract needs the PV14+ ranked-index grammar, so any proved
-  // query that touches it before the ratchet dies inside proof verification
-  // with "dash drive: protocol: value wrong type error: unexpected property
-  // name" — and the thrown verify never ratchets. One proved epoch query
-  // teaches the SDK the chain's real version first.
+  // metadata. Parsing the contract needs the PV14+ ranked-index grammar, so any
+  // proved query that touches it before the ratchet dies inside proof
+  // verification ("unexpected property name") — and the thrown verify never
+  // ratchets. One proved epoch query teaches the SDK the chain's real version.
   const epochInfo = await sdk.epoch.current();
   // Cache the contract so the trusted SDK can verify token-cost result proofs
   // ("unknown contract … in token verification" otherwise).
@@ -130,9 +109,7 @@ async function reconnectSdk(reason) {
       const { sdk, protocolVersion } = await buildConnectedSdk(reconnectContractId);
       activeSdk = sdk;
       console.log(`     (reconnected, PV${protocolVersion})`);
-    })().finally(() => {
-      reconnectPromise = null;
-    });
+    })().finally(() => { reconnectPromise = null; });
   }
   return reconnectPromise;
 }
@@ -142,13 +119,10 @@ async function reconnectSdk(reason) {
 let failures = 0;
 /** Every rejection text seen, printed verbatim at the end. */
 const capturedErrors = [];
+
 export function check(name, condition, detail = '') {
   console.log(`${condition ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
   if (!condition) failures += 1;
-}
-
-function capture(label, message) {
-  if (message) capturedErrors.push({ label, message });
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
@@ -162,20 +136,17 @@ export const randomIdBytes = () => crypto.getRandomValues(new Uint8Array(32));
  */
 export function buildDocument({ contractId, docType, ownerId, data, entropy, revision = 1n, createdAt, id }) {
   const idBytes = id ?? Document.generateId(docType, ownerId, contractId, entropy);
-  const document = Document.fromObject(
-    {
-      $formatVersion: '0',
-      $id: idBytes,
-      $ownerId: bs58.decode(ownerId),
-      $dataContractId: bs58.decode(contractId),
-      $type: docType,
-      $revision: revision,
-      ...(entropy ? { $entropy: entropy } : {}),
-      ...(createdAt !== undefined ? { $createdAt: createdAt } : {}),
-      ...data,
-    },
-    PlatformVersion.current()
-  );
+  const document = Document.fromObject({
+    $formatVersion: '0',
+    $id: idBytes,
+    $ownerId: bs58.decode(ownerId),
+    $dataContractId: bs58.decode(contractId),
+    $type: docType,
+    $revision: revision,
+    ...(entropy ? { $entropy: entropy } : {}),
+    ...(createdAt !== undefined ? { $createdAt: createdAt } : {}),
+    ...data,
+  }, PlatformVersion.current());
   return { document, id: bs58.encode(idBytes) };
 }
 
@@ -190,8 +161,8 @@ export async function readback(fn) {
     } catch (e) {
       lastError = e;
       if (TRANSPORT_COLLAPSE.test(describeErr(e))) {
-        // A failed reconnect (e.g. a second quorum rotation mid-rebuild) must
-        // consume this attempt and back off, not abort the whole case.
+        // A failed reconnect (e.g. a second rotation mid-rebuild) must consume
+        // this attempt and back off, not abort the whole case.
         try {
           await reconnectSdk(describeErr(e));
           continue;
@@ -220,18 +191,15 @@ export function asBase58(value) {
 
 /**
  * "Does <owner>'s entry for this target exist?" — the indexOnly acceptance
- * read. Equality on the entry index's leading property plus the terminal
- * lowers onto the entry level's member keys.
+ * read. Equality on the entry index's leading property plus the terminal lowers
+ * onto the entry level's member keys.
  */
 export async function entryExists(sdk, contractId, docType, keyField, keyValue, ownerId) {
   return readback(async () => {
     const result = await sdk.documents.query({
       dataContractId: contractId,
       documentTypeName: docType,
-      where: [
-        [keyField, '==', keyValue],
-        ['$ownerId', '==', ownerId],
-      ],
+      where: [[keyField, '==', keyValue], ['$ownerId', '==', ownerId]],
     });
     return result.size > 0;
   });
@@ -257,7 +225,7 @@ const NOT_THROWN_BUT_ABSENT = 'the SDK reported no error, but the write is not o
  * holds, or the attempts run out. The CHAIN — not the SDK's throw/no-throw —
  * decides: the DAPI gateway routinely 504s the wait for a transition that DID
  * land, and js documents.create() can throw post-broadcast for indexOnly types
- * even when the write landed. Readback covers both.
+ * even when the write landed.
  */
 async function attemptWrite({ accepted }, write) {
   let error = null;
@@ -275,8 +243,6 @@ async function attemptWrite({ accepted }, write) {
         await write();
         error = null;
       } catch (retryError) {
-        // Keep whichever error the retry (or the reconnect itself) produced;
-        // the readback polls below still decide the write's real fate.
         error = describeErr(retryError);
       }
     }
@@ -289,95 +255,52 @@ async function attemptWrite({ accepted }, write) {
 }
 
 /** The token-payment agreement a token-priced doctype's create must carry. */
-function paymentInfo(tokenCost) {
-  return tokenCost
-    ? {
-        tokenPaymentInfo: new TokenPaymentInfo({
-          tokenContractPosition: YAPP_TOKEN_POSITION,
-          maximumTokenCost: BigInt(tokenCost),
-        }),
-      }
-    : {};
-}
-
-/** Creates a STORED document; acceptance = it reads back by id. */
-export async function attemptCreate(sdk, who, { contractId, docType, data, tokenCost }) {
-  const { document, id } = buildDocument({
-    contractId,
-    docType,
-    ownerId: who.ownerId,
-    data,
-    entropy: randomIdBytes(),
-  });
-  const outcome = await attemptWrite(
-    { accepted: async () => (await fetchDocument(sdk, contractId, docType, id)) !== null },
-    () =>
-      sdk.documents.create({
-        document,
-        identityKey: who.identityKey,
-        signer: who.signer,
-        ...paymentInfo(tokenCost),
-      })
-  );
-  return { ...outcome, id };
-}
+const paymentInfo = (tokenCost) => (tokenCost
+  ? { tokenPaymentInfo: new TokenPaymentInfo({ tokenContractPosition: YAPP_TOKEN_POSITION, maximumTokenCost: BigInt(tokenCost) }) }
+  : {});
 
 /**
- * Creates an INDEX-ONLY document. There is no primary tree, so the caller
- * supplies the acceptance probe (entry-exists for fresh likes, a count bound
- * for duplicate probes — an existing entry satisfies entry-exists and would
- * mask the refusal). The create-returned Document is deliberately discarded.
+ * Creates a document and lets the chain decide acceptance.
+ *
+ * A STORED doctype reads back by `$id`, which is the default probe and is
+ * reported. An INDEX-ONLY doctype has no primary tree, so the caller supplies
+ * `accepted` (entry-exists for a fresh like; a count bound for a duplicate
+ * probe, where an existing entry would satisfy entry-exists and mask the
+ * refusal) and no id is reported — create-time and query-synthesized ids differ.
  */
-export async function attemptCreateIndexOnly(sdk, who, { contractId, docType, data, tokenCost, accepted }) {
-  const { document } = buildDocument({
-    contractId,
-    docType,
-    ownerId: who.ownerId,
-    data,
-    entropy: randomIdBytes(),
+export async function attemptCreate(sdk, who, { contractId, docType, data, tokenCost, accepted }) {
+  const { document, id } = buildDocument({
+    contractId, docType, ownerId: who.ownerId, data, entropy: randomIdBytes(),
   });
-  return attemptWrite({ accepted }, () =>
-    sdk.documents.create({
-      document,
-      identityKey: who.identityKey,
-      signer: who.signer,
-      ...paymentInfo(tokenCost),
-    })
+  const outcome = await attemptWrite(
+    { accepted: accepted ?? (async () => (await fetchDocument(sdk, contractId, docType, id)) !== null) },
+    () => sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer, ...paymentInfo(tokenCost) })
   );
+  return accepted ? outcome : { ...outcome, id };
 }
 
 /** Replaces a stored document with a full data set at `revision + 1`. */
 export async function attemptReplace(sdk, who, { contractId, docType, id, data, revision }) {
   const nextRevision = revision + 1n;
   const { document } = buildDocument({
-    contractId,
-    docType,
-    ownerId: who.ownerId,
-    data,
-    revision: nextRevision,
-    id: bs58.decode(id),
+    contractId, docType, ownerId: who.ownerId, data, revision: nextRevision, id: bs58.decode(id),
   });
-  return attemptWrite(
-    {
-      accepted: async () => {
-        const d = await fetchDocument(sdk, contractId, docType, id);
-        return d?.revision !== undefined && d.revision >= nextRevision;
-      },
-    },
-    () => sdk.documents.replace({ document, identityKey: who.identityKey, signer: who.signer })
-  );
+  const accepted = async () => {
+    const stored = await fetchDocument(sdk, contractId, docType, id);
+    return stored?.revision !== undefined && stored.revision >= nextRevision;
+  };
+  return attemptWrite({ accepted }, () =>
+    sdk.documents.replace({ document, identityKey: who.identityKey, signer: who.signer }));
 }
 
 /**
  * indexOnly delete-by-values: the Document instance carries the whole value
- * tuple (including `$createdAt`, which v5 keeps in `required` for the
- * notification index). `accepted` is supplied because "the entry is gone" is
- * the caller's predicate (and for the foreign-delete probe it never holds).
+ * tuple, `$createdAt` included. `accepted` is supplied because "the entry is
+ * gone" is the caller's predicate.
  */
 export async function attemptDeleteByValues(sdk, who, { document, accepted }) {
   return attemptWrite({ accepted }, () =>
-    sdk.documents.delete({ document, identityKey: who.identityKey, signer: who.signer })
-  );
+    sdk.documents.delete({ document, identityKey: who.identityKey, signer: who.signer }));
 }
 
 export function expectAccepted(label, outcome) {
@@ -386,23 +309,15 @@ export function expectAccepted(label, outcome) {
 }
 
 // ---- Expected rejection shapes ---------------------------------------------
-
-// The patterns run against describeErr()'s output, which concatenates the
-// error's message AND a JSON dump of it — so the numeric alternatives key on
-// the SDK-attached consensus code, the most stable discriminator, while the
-// text alternatives document the human-readable message observed live.
 //
-// Each numeric alternative is ANCHORED to a `code` label rather than matched
-// as a bare substring. That JSON dump carries credit amounts, millisecond
-// timestamps and nonces, any of which can contain "40127" or "40105" — and a
-// rejection scored for the wrong reason is exactly what expectRejected below
-// exists to prevent. The optional quote covers the `"code":40127` rendering.
+// The patterns run against describeErr()'s output, which concatenates the
+// error's message AND a JSON dump of it. Each numeric alternative is ANCHORED
+// to a `code` label rather than matched as a bare substring, because that dump
+// carries credit amounts, timestamps and nonces, any of which can contain
+// "40127" or "40105" — and a rejection scored for the wrong reason is exactly
+// what expectRejected exists to prevent.
 
-/**
- * propertyAgreement violation (ReferencedDocumentPropertyMismatchError,
- * 40127). Live message: "the document's <p> does not agree with the referenced
- * document's <q> (propertyAgreement on <field>)".
- */
+/** propertyAgreement violation (ReferencedDocumentPropertyMismatchError, 40127). */
 export const PROPERTY_MISMATCH = /\bcode"?\s*[=:]\s*40127\b|does not agree with the referenced document/i;
 /** Structural uniqueness / unique index (DuplicateUniqueIndexError family, 40105). */
 export const DUPLICATE_UNIQUE = /\bcode"?\s*[=:]\s*40105\b|duplicate unique properties/i;
@@ -419,47 +334,41 @@ export function expectRejected(label, outcome, pattern) {
     check(label, false, 'ACCEPTED (BAD)');
     return outcome;
   }
-  capture(label, reason);
+  if (reason) capturedErrors.push({ label, message: reason });
   const matched = pattern.test(reason);
-  check(
-    label,
-    matched,
-    matched
-      ? reason.slice(0, 220)
-      : `rejected, but NOT for the expected reason ${pattern}: ${reason.slice(0, 180)}`
-  );
+  check(label, matched, matched
+    ? reason.slice(0, 220)
+    : `rejected, but NOT for the expected reason ${pattern}: ${reason.slice(0, 180)}`);
   return outcome;
 }
+
 // ---- Topology-independent document shapes ----------------------------------
 
 export const TOKEN_COST = { post: 10, reply: 3, like: 1, likeReply: 1, repost: 1 };
-export const likeData = ({ postId, hashtag, postAuthor }) => ({
-  postId,
-  ...(hashtag === undefined ? {} : { hashtag }),
-  postAuthor,
-});
+
+/**
+ * Drops `undefined` values, so an optional property is genuinely ABSENT rather
+ * than present-and-empty — the difference an absence-aware propertyAgreement
+ * turns into 40127.
+ */
+export const defined = (fields) => Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
+
+export const likeData = ({ postId, hashtag, postAuthor }) => defined({ postId, hashtag, postAuthor });
 export const likeReplyData = ({ replyId, replyAuthor }) => ({ replyId, replyAuthor });
 export const repostData = ({ postId, postOwnerId }) => ({ postId, postOwnerId });
 export const followData = ({ followingId }) => ({ followingId });
-// ---- Identities -------------------------------------------------------------
 
-function poolIdentityIds() {
-  const raw = process.env.DEVNET_IDENTITY_IDS ?? '';
-  const ids = raw.split(',').map((id) => id.trim()).filter(Boolean);
-  if (ids.length > 0) return { ids, source: 'DEVNET_IDENTITY_IDS' };
-  return { ids: loadIdentityIds(), source: 'E2E_IDENTITY_IDS (set NETWORK=devnet to read .env.devnet)' };
-}
+// ---- Identities -------------------------------------------------------------
 
 async function botSigner(sdk, index, explicitOwnerId) {
   let ownerId = explicitOwnerId;
   if (!ownerId) {
-    const { ids, source } = poolIdentityIds();
-    ownerId = ids[index];
+    const raw = (process.env.DEVNET_IDENTITY_IDS ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+    const source = raw.length > 0 ? 'DEVNET_IDENTITY_IDS' : 'E2E_IDENTITY_IDS (set NETWORK=devnet to read .env.devnet)';
+    ownerId = (raw.length > 0 ? raw : loadIdentityIds())[index];
     if (ownerId) console.log(`     (bot ${index} identity from ${source})`);
   }
-  if (!ownerId) {
-    throw new Error(`No identity id for bot index ${index}: pass --owner/--owner2 or set DEVNET_IDENTITY_IDS`);
-  }
+  if (!ownerId) throw new Error(`No identity id for bot index ${index}: pass --owner/--owner2 or set DEVNET_IDENTITY_IDS`);
   const { wif } = criticalAuthKey(deriveIdentityKeys(index));
   const identity = await sdk.identities.fetch(ownerId);
   if (!identity) throw new Error(`Identity ${ownerId} not found on this devnet`);
@@ -484,7 +393,7 @@ async function requireYapp(sdk, contractId, bots) {
   if (short.length > 0) {
     throw new Error(
       `YAPP balance below ${MIN_YAPP_BALANCE} for ${short.join(', ')} on token ${tokenId}. ` +
-      `Fund them from the contract owner (maker, seed index 9).`
+      'Fund them from the contract owner (maker, seed index 9).'
     );
   }
 }
@@ -492,18 +401,13 @@ async function requireYapp(sdk, contractId, bots) {
 // ---- CLI, dry run and the report shell --------------------------------------
 
 /**
- * Parses the flags every battery shares. `cases` is the ordered Map of case
- * key → handler, so `--only` can reject an unknown key before connecting.
+ * Parses the flags every battery shares. `cases` is the ordered Map of case key
+ * → handler, so `--only` can reject an unknown key before connecting.
  */
 function parseBatteryArgs(argv, { cases, contractEnvVar }) {
   const args = {
     contract: process.env[contractEnvVar]?.trim() || null,
-    botIndex: 0,
-    bot2Index: 1,
-    ownerId: null,
-    owner2Id: null,
-    only: null,
-    dryRun: false,
+    botIndex: 0, bot2Index: 1, ownerId: null, owner2Id: null, only: null, dryRun: false,
   };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -521,9 +425,7 @@ function parseBatteryArgs(argv, { cases, contractEnvVar }) {
   for (const [flag, value] of [['--bot', args.botIndex], ['--bot2', args.bot2Index]]) {
     if (!Number.isInteger(value) || value < 0) throw new Error(`${flag} takes a non-negative integer index`);
   }
-  if (args.botIndex === args.bot2Index) {
-    throw new Error('--bot and --bot2 must be different identities');
-  }
+  if (args.botIndex === args.bot2Index) throw new Error('--bot and --bot2 must be different identities');
   if (args.only !== null) {
     args.only = args.only.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
     if (args.only.length === 0) throw new Error('--only takes a comma-separated list of case keys');
@@ -545,17 +447,14 @@ function selectedCases(args, cases) {
 
 /**
  * `--dry-run` / `--self-test`: no network, no keys. Proves the arguments parse
- * and that every document shape the battery writes builds cleanly — so a live
- * failure is Platform's answer, not a bug in the battery.
- *
- * `shapes` is `[label, docType, data, createdAt]` per shape the live run
- * writes; `replaceShapes` the same for the replace path, which builds at an
- * explicit revision against a known id.
+ * and that every shape the battery writes builds cleanly, so a live failure is
+ * Platform's answer rather than a bug here. `shapes` is
+ * `[label, docType, data, createdAt]`; `replaceShapes` the same for the replace
+ * path, which builds at an explicit revision against a known id.
  */
 function dryRun(args, { cases, shapes, replaceShapes = [] }) {
   const contractId = args.contract ?? DRY_RUN_ID;
   const ownerId = args.ownerId ?? DRY_RUN_ID;
-
   for (const [label, docType, data, createdAt] of shapes) {
     const { id } = buildDocument({ contractId, docType, ownerId, data, entropy: randomIdBytes(), createdAt });
     console.log(`document shape ok: ${label.padEnd(34)} (${docType}) → ${id}`);
@@ -564,7 +463,6 @@ function dryRun(args, { cases, shapes, replaceShapes = [] }) {
     buildDocument({ contractId, docType, ownerId, data, revision: 2n, id: bs58.decode(DRY_RUN_ID) });
     console.log(`document shape ok: ${label.padEnd(34)} (${docType}, replace at revision 2)`);
   }
-
   const { devnetName, addresses } = devnetSdk();
   console.log(
     `would run cases ${selectedCases(args, cases).join(', ')} on devnet "${devnetName}" ` +
@@ -574,24 +472,13 @@ function dryRun(args, { cases, shapes, replaceShapes = [] }) {
 }
 
 /**
- * The whole battery lifecycle: parse, dry-run-or-connect, run every selected
- * case, print the captured rejections and working shapes, exit non-zero on any
- * failed check. Never returns — it calls `process.exit`.
- *
- * `makeContext({ sdk, contractId, botA, botB })` returns the per-run context
- * the cases share; `summarize(ctx)` prints whatever the battery wants echoed
- * before the verdict.
+ * Parse, dry-run-or-connect, run every selected case, print the captured
+ * rejections, exit non-zero on any failed check. Never returns.
+ * `makeContext({ sdk, contractId, botA, botB })` builds the shared per-run
+ * context; `summarize(ctx)` prints whatever the battery echoes before the
+ * verdict.
  */
-export async function runBattery({
-  name,
-  usage,
-  contractEnvVar,
-  cases,
-  shapes,
-  replaceShapes,
-  makeContext,
-  summarize = () => {},
-}) {
+export async function runBattery({ name, usage, contractEnvVar, cases, shapes, replaceShapes, makeContext, summarize = () => {} }) {
   let args;
   try {
     args = parseBatteryArgs(process.argv.slice(2), { cases, contractEnvVar });
@@ -603,7 +490,6 @@ export async function runBattery({
 
   try {
     await ensureInitialized();
-
     if (args.dryRun) {
       dryRun(args, { cases, shapes, replaceShapes });
       process.exit(0);
@@ -623,7 +509,6 @@ export async function runBattery({
     await requireYapp(sdk, args.contract, [botA, botB]);
 
     const ctx = makeContext({ sdk, contractId: args.contract, botA, botB });
-
     for (const key of selectedCases(args, cases)) {
       try {
         await cases.get(key)(ctx);

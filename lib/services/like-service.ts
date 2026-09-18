@@ -4,7 +4,7 @@ import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
 import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
-import { hashtagIsOptional, indexOnlyLikeShapeFor, likeIndexFor, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor } from '../contract-topology';
+import { indexOnlyLikeShapeFor, likeIndexFor, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor } from '../contract-topology';
 
 export interface LikeDocument {
   $id: string;
@@ -249,12 +249,12 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * how a value (or its absence) is spelled.
    *
    * The hashtag translation happens here, once: the client-side '' sentinel
-   * ("known untagged") becomes an OMITTED property on v5, where `hashtag` is
+   * ("known untagged") becomes an OMITTED property, because `hashtag` is
    * optional and the propertyAgreement is absence-aware (both absent = agree;
    * writing '' against an absent `post.hashtag` is a 40127 mismatch, and ''
-   * fails the v5 pattern anyway). v4 keeps writing '' verbatim. Because the
-   * unlike path rebuilds its tuple through this same method, the delete
-   * reproduces the create's absence exactly.
+   * fails the pattern anyway). Because the unlike path rebuilds its tuple
+   * through this same method, the delete reproduces the create's absence
+   * exactly.
    */
   private indexOnlyLikeData(
     targetId: string,
@@ -264,16 +264,16 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   ): Record<string, unknown> {
     const { field } = likeIndexFor(kind);
     const tag = info.hashtag ?? '';
-    const writesHashtag = shape.hashtagField !== null && !(hashtagIsOptional() && tag === '');
-    return {
+    const data: Record<string, unknown> = {
       [field]: identifierStringToDocumentBytes(targetId),
       [shape.authorField]: identifierStringToDocumentBytes(info.author),
-      ...(writesHashtag && shape.hashtagField !== null ? { [shape.hashtagField]: tag } : {}),
     };
+    if (shape.hashtagField !== null && tag !== '') data[shape.hashtagField] = tag;
+    return data;
   }
 
   /**
-   * v6 `beat` tuple for a like of a tagged post: `{ postId, hashtag }`. The
+   * The `beat` tuple for a like of a tagged post: `{ postId, hashtag }`. The
    * same tuple serves the create AND the delete-by-values, and its `postId`
    * refersTo the post with propertyAgreement on `hashtag`, so consensus
    * rejects a beat whose tag disagrees with the post.
@@ -286,7 +286,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * v4 like: create an indexOnly document.
+   * Create an indexOnly like document.
    *
    * The create carries the target's agreement-bound values and confirms via
    * affected-state (indexOnly never yields ExecutionProved). KNOWN SDK QUIRK:

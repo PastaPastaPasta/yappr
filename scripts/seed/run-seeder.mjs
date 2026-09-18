@@ -3,11 +3,12 @@
  * CORPUS_FORMAT.md) against the devnet social contract as the seed
  * identities provisioned by provision-seed-identities.mjs.
  *
- * `--topology v4|v5|v6|v7` selects the document shape of the target contract
- * (default: NEXT_PUBLIC_CONTRACT_TOPOLOGY from the env, else v4): the corpus
- * `''` convention still means "untagged", but v4 writes the `''` sentinel
- * while v5 OMITS the hashtag property on post/quote/like docs entirely
- * (writing `''` under v5 is propertyAgreement consensus error 40127).
+ * `--topology` guards the document shape of the target contract (default:
+ * NEXT_PUBLIC_CONTRACT_TOPOLOGY from the env, else the only seedable cut).
+ * Only the devnet cut `v7` can be seeded — the testnet `v2` contract is
+ * production data — and BOTH the flag and the env value THROW on anything
+ * else, so an env file left on a retired cut aborts before spending credits on
+ * writes the chain would reject.
  *
  * Execution model:
  *  - per-author ops run STRICTLY SEQUENTIALLY in corpus line order (one
@@ -27,7 +28,7 @@
  * documents are built with per-attempt-stable entropy, so even a retry of a
  * broadcast that DID land reads back as the same document.
  *
- * Devnet quirks handled (from scripts/verify-v4.mjs):
+ * Devnet quirks handled:
  *  - DAPI 504 on the confirmation wait ≠ rejection — readback decides;
  *  - indexOnly like/likeReply creates can THROW post-broadcast even when the
  *    write landed (no confirmed Document comes back) — acceptance is decided
@@ -38,7 +39,7 @@
  *
  * Run:
  *   NETWORK=devnet node scripts/seed/run-seeder.mjs --personas <file> --corpus <file> \
- *     [--concurrency 10] [--max-ops N] [--topology v4|v5|v6|v7] [--pipeline [--window 8]]
+ *     [--concurrency 10] [--max-ops N] [--topology v7] [--pipeline [--window 8]]
  *   node scripts/seed/run-seeder.mjs --self-test
  *
  * `--pipeline` swaps the confirm-per-op executor for scripts/seed/pipeline.mjs:
@@ -72,8 +73,6 @@ import {
   describeErr,
   expandedContentLength,
   hashtagProps,
-  atLeastTopology,
-  authorProps,
   ledgerEntry,
   likeValueTuple,
   beatValueTuple,
@@ -305,16 +304,13 @@ const DUPLICATE_IS_SUCCESS = new Set(['like', 'likeReply', 'follow', 'bookmark',
  * Maps one corpus op to {docType, data, tokenCost, indexOnly, refRecord,
  * existenceKey}. Pure (exported for the self-test): the acceptance query for
  * indexOnly types is described by `existenceKey` and bound to the network in
- * buildExecutor. `topology` drives the hashtag shape — from v5 on an untagged
- * post/quote/like OMITS the property (the corpus '' convention and an absent
- * checkpoint hashtag are equivalent); under v4 the '' sentinel is written. It
- * also drives the attested `author` column, which v7 removed.
+ * buildExecutor. An untagged post/quote/like OMITS the `hashtag` property (the
+ * corpus '' convention and an absent checkpoint hashtag are equivalent).
  */
-export function planOp(op, { actors, resolveRef, topology }) {
+export function planOp(op, { actors, resolveRef }) {
   const bytes = (base58) => bs58.decode(base58);
   const actor = actors.get(op.author);
   if (!actor) throw new Error(`author ${op.author} has no provisioned identity`);
-  const ownerBytes = bytes(actor.ownerId);
   const finalContent = typeof op.content === 'string'
     ? substituteLinks(op.content, (ref) => resolveRef(ref).id)
     : undefined;
@@ -332,8 +328,7 @@ export function planOp(op, { actors, resolveRef, topology }) {
         data: {
           content: finalContent ?? '',
           language: 'en',
-          ...authorProps(ownerBytes, topology),
-          ...hashtagProps(op.hashtag, topology),
+          ...hashtagProps(op.hashtag),
           ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
           ...(op.sensitive !== undefined ? { sensitive: op.sensitive } : {}),
           ...(quoted ? { quotedPostId: bytes(quoted.id), quotedPostOwnerId: bytes(quoted.ownerId) } : {}),
@@ -351,7 +346,6 @@ export function planOp(op, { actors, resolveRef, topology }) {
           content: finalContent ?? '',
           rootPostId: bytes(root.id),
           parentOwnerId: bytes(parent.ownerId),
-          ...authorProps(ownerBytes, topology),
           ...(parent.kind === 'reply' ? { replyToReplyId: bytes(parent.id) } : {}),
           ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
         },
@@ -360,21 +354,18 @@ export function planOp(op, { actors, resolveRef, topology }) {
     }
     case 'like': {
       const target = resolveRef(op.targetRef);
-      const beat = beatValueTuple(target, topology);
+      const beat = beatValueTuple(target);
       return {
         docType: 'like',
         tokenCost: TOKEN_COST.like,
         indexOnly: true,
-        // propertyAgreement: hashtag and postAuthor MUST mirror the post —
-        // including hashtag ABSENCE from v5 on (both-absent = agreement; '' on
-        // a like of an untagged v5 post is consensus error 40127). The same
-        // tuple is what a delete-by-values would have to carry. The tuple is
-        // unchanged on v7: `postAuthor` is still the post owner's id, only the
-        // referenced side of the agreement moved from `post.author` to
-        // `post.$ownerId`.
-        data: likeValueTuple(target, topology),
+        // propertyAgreement: hashtag and postAuthor MUST mirror the post,
+        // hashtag ABSENCE included (both-absent = agreement; '' on a like of an
+        // untagged post is consensus error 40127). The same tuple is what a
+        // delete-by-values has to carry.
+        data: likeValueTuple(target),
         existenceKey: { keyField: 'postId', keyValue: target.id },
-        // v6+: a like of a tagged post carries a `beat` companion (today's
+        // A like of a tagged post carries a `beat` companion (today's
         // trending rides beat.byDayHashtagPost). Written as a second
         // indexOnly create after the like lands; its own existence read is
         // the acceptance probe, and a duplicate (resume) is success.
@@ -413,7 +404,7 @@ export function planOp(op, { actors, resolveRef, topology }) {
   }
 }
 
-function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
+function buildExecutor({ handle, contractId, actors, progressRefs }) {
   const resolveRef = (ref) => {
     const record = progressRefs.get(ref);
     if (!record) throw new Error(`ref "${ref}" not materialized (checkpoint out of sync)`);
@@ -428,7 +419,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
    */
   return async function executeOp(op) {
     const actor = actors.get(op.author);
-    const plan = planOp(op, { actors, resolveRef, topology });
+    const plan = planOp(op, { actors, resolveRef });
     const { document, id } = buildDocument({
       contractId,
       docType: plan.docType,
@@ -441,7 +432,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
       : (async () =>
         (await readback(handle, () => handle.sdk.documents.get(contractId, plan.docType, id))) != null);
 
-    // v6: a like of a tagged post carries a `beat` companion. It is written
+    // A like of a tagged post carries a `beat` companion. It is written
     // AFTER the like is confirmed on chain (a beat without its like would be a
     // phantom trending vote), through the same indexOnly acceptance loop: the
     // chain decides, a duplicate on resume is success, transport collapse
@@ -814,93 +805,54 @@ async function selfTest() {
   });
   check('max-ops: executes exactly the cap', results4.done === 3 && journal4.length === 3, `done=${results4.done}`);
 
-  // ---- Topology: v5 hashtag ABSENCE vs the v4 '' sentinel --------------------
+  // ---- Document shapes: hashtag ABSENCE, the beat companion, no author -------
   const owner = bs58.encode(new Uint8Array(32).fill(1));
   const targetId = bs58.encode(new Uint8Array(32).fill(2));
-  const planCtx = (topology, refHashtag) => ({
+  const planCtx = (refHashtag) => ({
     actors: new Map([[0, { ownerId: owner }], [1, { ownerId: owner }]]),
     resolveRef: () => ({ kind: 'post', id: targetId, ownerId: owner, hashtag: refHashtag }),
-    topology,
   });
   const postOp = { type: 'post', ref: 'p1', author: 0, content: 'x', hashtag: '', line: 1 };
   const quoteOp = { type: 'quote', ref: 'p2', author: 0, content: 'q', quotedRef: 'p1', hashtag: '', line: 2 };
   const likeOp = { type: 'like', author: 1, targetRef: 'p1', line: 3 };
-
-  // v7 drops the attested `author` column; everything else is v6's shapes.
   const replyOp = { type: 'reply', author: 1, rootRef: 'p1', parentRef: 'p1', content: 'r', line: 4 };
-  for (const topology of ['v4', 'v5', 'v6']) {
-    check(`${topology}: post and reply carry the attested author column`,
-      planOp(postOp, planCtx(topology, '')).data.author instanceof Uint8Array &&
-        planOp(replyOp, planCtx(topology, '')).data.author instanceof Uint8Array);
-  }
-  const v7Post = planOp(postOp, planCtx('v7', '')).data;
-  const v7Reply = planOp(replyOp, planCtx('v7', '')).data;
-  check('v7: post OMITS the attested author column (additionalProperties would reject it)',
-    !('author' in v7Post) && v7Post.language === 'en');
-  check('v7: reply OMITS the attested author column, keeping its parent linkage',
-    !('author' in v7Reply) && v7Reply.rootPostId instanceof Uint8Array && v7Reply.parentOwnerId instanceof Uint8Array);
-  check('v7: the like value tuple is byte-identical to v6 (only the agreement moved)',
-    JSON.stringify(likeValueTuple({ id: targetId, ownerId: owner, hashtag: 'dash' }, 'v7')) ===
-      JSON.stringify(likeValueTuple({ id: targetId, ownerId: owner, hashtag: 'dash' }, 'v6')));
-  check('v7: tagged like still plans a beat companion', (() => {
-    const plan = planOp(likeOp, planCtx('v7', 'dash'));
-    return plan.companion?.docType === 'beat' && plan.companion.data.hashtag === 'dash';
-  })());
-  check('v7: untagged post still OMITS hashtag and plans no companion',
-    !('hashtag' in planOp(postOp, planCtx('v7', '')).data) &&
-      planOp(likeOp, planCtx('v7', '')).companion === undefined);
-  check('parse: 61-char tag accepted under v7, 62 rejected', (() => {
-    const longV7 = (n) => `{"type":"post","ref":"pL","author":0,"content":"x","hashtag":"${'a'.repeat(n)}"}`;
-    if (parseCorpus(longV7(61), personas, { topology: 'v7' }).ops.length !== 1) return false;
-    try { parseCorpus(longV7(62), personas, { topology: 'v7' }); return false; }
+
+  const untaggedPost = planOp(postOp, planCtx('')).data;
+  const reply = planOp(replyOp, planCtx('')).data;
+  check('post OMITS the attested author column (additionalProperties would reject it)',
+    !('author' in untaggedPost) && untaggedPost.language === 'en');
+  check('reply OMITS the attested author column, keeping its parent linkage',
+    !('author' in reply) && reply.rootPostId instanceof Uint8Array && reply.parentOwnerId instanceof Uint8Array);
+  check('untagged post OMITS hashtag', !('hashtag' in untaggedPost));
+  check('tagged post keeps its hashtag', planOp({ ...postOp, hashtag: 'dash' }, planCtx('')).data.hashtag === 'dash');
+  const untaggedQuote = planOp(quoteOp, planCtx('')).data;
+  check('untagged quote OMITS hashtag (quote fields intact)',
+    !('hashtag' in untaggedQuote) && untaggedQuote.quotedPostId instanceof Uint8Array);
+
+  const untaggedLike = planOp(likeOp, planCtx(''));
+  check('like of an untagged post OMITS like.hashtag and plans no beat companion',
+    !('hashtag' in untaggedLike.data) && untaggedLike.data.postAuthor instanceof Uint8Array
+      && untaggedLike.existenceKey.keyValue === targetId && untaggedLike.companion === undefined);
+  const taggedLike = planOp(likeOp, planCtx('dash'));
+  check('like of a tagged post copies the hashtag and plans a beat { postId, hashtag }',
+    taggedLike.data.hashtag === 'dash' && taggedLike.companion?.docType === 'beat'
+      && taggedLike.companion.data.hashtag === 'dash' && taggedLike.companion.data.postId instanceof Uint8Array
+      && taggedLike.companion.existenceKey.keyField === 'postId');
+
+  // The delete-by-values tuple is the same value tuple — it must reproduce the absence.
+  const deleteTupleAbsent = likeValueTuple({ id: targetId, ownerId: owner }); // ref with no hashtag key at all
+  const deleteTupleEmpty = likeValueTuple({ id: targetId, ownerId: owner, hashtag: '' });
+  check("like delete tuple OMITS hashtag, for '' and absent refs alike",
+    !('hashtag' in deleteTupleAbsent)
+      && JSON.stringify(Object.keys(deleteTupleAbsent)) === JSON.stringify(Object.keys(deleteTupleEmpty)));
+
+  // Parse-time tag length: the contract's hashtag maxLength is 61.
+  const longTag = (n) => `{"type":"post","ref":"pL","author":0,"content":"x","hashtag":"${'a'.repeat(n)}"}`;
+  check('parse: 61-char tag accepted', parseCorpus(longTag(61), personas).ops.length === 1);
+  check('parse: 62-char tag rejected', (() => {
+    try { parseCorpus(longTag(62), personas); return false; }
     catch (e) { return e.message.includes('maxLength 61'); }
   })());
-
-  check('v6: tagged like plans a beat companion { postId, hashtag }', (() => {
-    const plan = planOp(likeOp, planCtx('v6', 'dash'));
-    return plan.companion?.docType === 'beat' && plan.companion.data.hashtag === 'dash' && plan.companion.data.postId instanceof Uint8Array && plan.companion.existenceKey.keyField === 'postId';
-  })());
-  check('v6: untagged like plans NO companion', planOp(likeOp, planCtx('v6', '')).companion === undefined);
-  check('v5: tagged like plans NO companion (beat is v6-only)', planOp(likeOp, planCtx('v5', 'dash')).companion === undefined);
-  check('v6: untagged post OMITS hashtag (v5 rule carries over)', !('hashtag' in planOp(postOp, planCtx('v6', '')).data));
-  check('v5: untagged post OMITS hashtag', !('hashtag' in planOp(postOp, planCtx('v5', '')).data));
-  check('v5: tagged post keeps its hashtag', planOp({ ...postOp, hashtag: 'dash' }, planCtx('v5', '')).data.hashtag === 'dash');
-  const v5Quote = planOp(quoteOp, planCtx('v5', '')).data;
-  check('v5: untagged quote OMITS hashtag (quote fields intact)', !('hashtag' in v5Quote) && v5Quote.quotedPostId instanceof Uint8Array);
-  const v5Like = planOp(likeOp, planCtx('v5', ''));
-  check(
-    'v5: like of an untagged post OMITS like.hashtag',
-    !('hashtag' in v5Like.data) && v5Like.data.postAuthor instanceof Uint8Array && v5Like.existenceKey.keyValue === targetId
-  );
-  check('v5: like of a tagged post copies the hashtag', planOp(likeOp, planCtx('v5', 'dash')).data.hashtag === 'dash');
-  // The delete-by-values tuple is the same value tuple — it must reproduce the absence.
-  const deleteTupleAbsent = likeValueTuple({ id: targetId, ownerId: owner }, 'v5'); // ref with no hashtag key at all
-  const deleteTupleEmpty = likeValueTuple({ id: targetId, ownerId: owner, hashtag: '' }, 'v5');
-  check(
-    'v5: like delete tuple OMITS hashtag, for \'\' and absent refs alike',
-    !('hashtag' in deleteTupleAbsent) && JSON.stringify(Object.keys(deleteTupleAbsent)) === JSON.stringify(Object.keys(deleteTupleEmpty))
-  );
-  check("v4: untagged post writes the '' sentinel (unchanged)", planOp(postOp, planCtx('v4', '')).data.hashtag === '');
-  check("v4: like of an untagged post writes hashtag '' (unchanged)", planOp(likeOp, planCtx('v4', '')).data.hashtag === '');
-  check(
-    'v4: tagged shapes unchanged',
-    planOp({ ...postOp, hashtag: 'dash' }, planCtx('v4', '')).data.hashtag === 'dash' &&
-      planOp(likeOp, planCtx('v4', 'dash')).data.hashtag === 'dash'
-  );
-
-  // Parse-time tag length: v5 tightens the hashtag maxLength to 61
-  const longTag = (n) => `{"type":"post","ref":"pL","author":0,"content":"x","hashtag":"${'a'.repeat(n)}"}`;
-  const rejectsV5 = (line, why) => {
-    try {
-      parseCorpus(line, personas, { topology: 'v5' });
-      return false;
-    } catch (e) {
-      return e.message.includes(why);
-    }
-  };
-  check('parse: 61-char tag accepted under v5', parseCorpus(longTag(61), personas, { topology: 'v5' }).ops.length === 1);
-  check('parse: 62-char tag rejected under v5', rejectsV5(longTag(62), 'maxLength 61'));
-  check('parse: 62-char tag still accepted under v4', parseCorpus(longTag(62), personas).ops.length === 1);
 
   // Journal round-trip: a ref recorded with hashtag '' and one recorded with
   // NO hashtag key must fold and replay to identical documents.
@@ -908,14 +860,11 @@ async function selfTest() {
   appendProgress({ line: 1, status: 'done', type: 'post', ref: 'pA', kind: 'post', id: targetId, ownerId: owner }, tmpJournal);
   appendProgress({ line: 2, status: 'done', type: 'post', ref: 'pB', kind: 'post', id: targetId, ownerId: owner, hashtag: '' }, tmpJournal);
   const folded = loadProgress(tmpJournal);
-  const likeFromRef = (ref, topology) => likeValueTuple(folded.refs.get(ref), topology);
-  check(
-    "journal: absent-hashtag ref replays identically to a '' ref (v5 omits, v4 writes '')",
-    folded.refs.size === 2 &&
-      JSON.stringify(Object.keys(likeFromRef('pA', 'v5'))) === JSON.stringify(Object.keys(likeFromRef('pB', 'v5'))) &&
-      !('hashtag' in likeFromRef('pA', 'v5')) &&
-      likeFromRef('pA', 'v4').hashtag === '' && likeFromRef('pB', 'v4').hashtag === ''
-  );
+  const likeFromRef = (ref) => likeValueTuple(folded.refs.get(ref));
+  check("journal: absent-hashtag ref replays identically to a '' ref",
+    folded.refs.size === 2
+      && JSON.stringify(Object.keys(likeFromRef('pA'))) === JSON.stringify(Object.keys(likeFromRef('pB')))
+      && !('hashtag' in likeFromRef('pA')));
 
   console.log(failures === 0 ? '\nSELF-TEST PASSED (no network calls)' : `\n${failures} SELF-TEST CHECK(S) FAILED`);
   process.exit(failures === 0 ? 0 : 1);
@@ -946,10 +895,9 @@ if (network() !== 'devnet') {
 try {
   await ensureInitialized();
   const personas = loadPersonas(args.personas);
-  const { ops, stats } = parseCorpus(readFileSync(args.corpus, 'utf8'), personas, { topology: args.topology });
+  const { ops, stats } = parseCorpus(readFileSync(args.corpus, 'utf8'), personas);
   const { total: yappNeeded, perAuthor } = corpusYappCost(ops);
-  console.log(`topology: ${args.topology} (untagged posts/likes ${atLeastTopology(args.topology, 'v5') ? 'OMIT the hashtag property' : "write the '' sentinel"}; ` +
-    `post/reply ${atLeastTopology(args.topology, 'v7') ? 'omit the attested author column' : 'carry the attested author column'})`);
+  console.log(`topology: ${args.topology} (untagged posts/likes OMIT the hashtag property; post/reply carry no attested author column)`);
   console.log(`corpus: ${ops.length} ops (${Object.entries(stats).filter(([, n]) => n > 0).map(([t, n]) => `${n} ${t}`).join(', ')})`);
   console.log(`YAPP required if run from scratch: ${yappNeeded} total, max ${Math.max(0, ...perAuthor.values())} for one author`);
 
@@ -971,10 +919,10 @@ try {
 
   const executor = args.pipeline
     ? (await import('./pipeline.mjs')).buildPipelinedExecutor({
-        handle, contractId, actors, ledger, progressRefs: progress.refs, topology: args.topology,
+        handle, contractId, actors, ledger, progressRefs: progress.refs,
         planOp, entryExists, window: args.window, log: (m) => console.log(`  ${m}`),
       })
-    : buildExecutor({ handle, contractId, actors, progressRefs: progress.refs, topology: args.topology });
+    : buildExecutor({ handle, contractId, actors, progressRefs: progress.refs });
   if (args.pipeline) console.log(`executor: PIPELINED (window ${args.window} in flight per identity, concurrency ${args.concurrency})`);
   // The engine publishes refs through deferreds; the executor reads settled
   // records from progress.refs, so keep the two in sync as records land.

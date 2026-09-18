@@ -7,7 +7,7 @@
  * asset-lock-lib.mjs, so the `--self-test` harnesses can exercise this module
  * without touching the devnet.
  *
- * Hard-won gotchas honored here (see scripts/verify-v4.mjs and
+ * Hard-won gotchas honored here (see scripts/verify-lib.mjs and
  * scripts/provision-test-identity.mjs for their origin stories):
  *  - `Document.fromObject` with raw-byte identifiers is the only document
  *    construction that survives wasm-sdk 4.1+ (the `Document` constructor
@@ -44,7 +44,7 @@ export const REPORT_FILE = join(REPO_ROOT, '.seed-report.local.json');
 // ---- Network / contract constants --------------------------------------------
 
 export const YAPP_TOKEN_POSITION = 0;
-/** YAPP create costs per doctype (contracts/yappr-social-contract-v4.json tokenCost). */
+/** YAPP create costs per doctype (the social contract's `tokenCost`). */
 export const TOKEN_COST = { post: 10, reply: 3, like: 1, likeReply: 1, repost: 1 };
 /** Base URL posts are linked as in seeded content ({{link:REF}} substitution). */
 export const POST_LINK_BASE = 'https://yap.pr/devnet/post/?id=';
@@ -70,44 +70,44 @@ export function profileContractId() {
   return id;
 }
 
-// ---- Contract topology (hashtag semantics) -------------------------------------
+// ---- Contract topology ---------------------------------------------------------
 //
-// The corpus format is topology-agnostic: `"hashtag": ""` always means
-// "untagged". What that maps to on chain differs:
-//   v4 — `hashtag` is REQUIRED on post/like; untagged writes the `''` sentinel.
-//   v5 — `hashtag` is OPTIONAL (pattern ^[a-z0-9_]{1,61}$, maxLength 61,
-//        contracts/yappr-social-contract-v5.json); an untagged post OMITS the
-//        property entirely, and a like of an untagged post OMITS like.hashtag
-//        too: propertyAgreement treats both-absent as agreement, while sending
-//        `''` is consensus mismatch 40127. The like's delete-by-values tuple
-//        must reproduce the same absence (it is the same value tuple). The v5
-//        like `byHashtagPost` index is skipIfAbsent — absence simply writes no
-//        entry, which needs no seeder action beyond the correct doc shape.
-
-//   v6 — v5 plus the windowed rankings: a like of a TAGGED post also writes a
-//        `beat` companion (contracts/yappr-social-contract-v6.json), which is
-//        what carries today's trending-hashtag axis.
-//   v7 — v6's shapes on the 4.2.0-beta.2 grammar
-//        (contracts/yappr-social-contract-v7.json): post/reply no longer carry
-//        the attested `author` column, because a like's `postAuthor` now binds
-//        to the post's `$ownerId` through a system-field propertyAgreement.
-//        Every value tuple this module builds is otherwise identical — a
-//        like's postAuthor is the same identity it always was.
+// The seeder targets the devnet social contract (`v7`) only; the testnet `v2`
+// contract is production data and is never seeded. The corpus format stays
+// topology-agnostic — `"hashtag": ""` always means "untagged" — and this
+// module maps that onto the contract's shapes:
 //
-// ORDER IS SIGNIFICANT: `atLeastTopology` compares positions in this array, so
-// new cuts append. Mirrors CONTRACT_TOPOLOGIES in lib/constants.ts.
-export const TOPOLOGIES = ['v4', 'v5', 'v6', 'v7'];
-export const HASHTAG_MAX = { v4: 63, v5: 61, v6: 61, v7: 61 };
+//  - `hashtag` is OPTIONAL on post/like (pattern ^[a-z0-9_]{1,61}$), so an
+//    untagged post OMITS the property entirely, and so does a like of it:
+//    propertyAgreement treats both-absent as agreement, while sending `''` is
+//    consensus error 40127. The like's delete-by-values tuple must reproduce
+//    the same absence (it is the same value tuple). `byHashtagPost` is
+//    `skipIfAbsent`, so absence simply writes no entry.
+//  - a like of a TAGGED post also writes a `beat` companion, which carries
+//    today's trending-hashtag axis.
+//  - post/reply carry NO attested `author` column: a like's `postAuthor` binds
+//    to the post's `$ownerId` through a system-field propertyAgreement, and
+//    `additionalProperties: false` would reject the duplicate.
+export const TOPOLOGIES = ['v7'];
+export const HASHTAG_MAX = 61;
 
-/** True when `topology` is `floor` or any later cut. */
-export function atLeastTopology(topology, floor) {
-  return TOPOLOGIES.indexOf(topology) >= TOPOLOGIES.indexOf(floor);
-}
-
-/** Topology the run targets: NEXT_PUBLIC_CONTRACT_TOPOLOGY (env or the env file), else v4. */
+/**
+ * Topology the run targets: NEXT_PUBLIC_CONTRACT_TOPOLOGY (env or the env file),
+ * defaulting to the only seedable cut when unset. A value that is SET but
+ * unseedable THROWS rather than falling through — the env file naming an older
+ * contract while the seeder writes v7 shapes would spend real credits on writes
+ * the chain rejects.
+ */
 export function defaultTopology() {
   const configured = envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY');
-  return TOPOLOGIES.includes(configured) ? configured : 'v4';
+  if (!configured) return TOPOLOGIES[0];
+  if (!TOPOLOGIES.includes(configured)) {
+    throw new Error(
+      `NEXT_PUBLIC_CONTRACT_TOPOLOGY="${configured}" is not seedable (expected ${TOPOLOGIES.join('|')}). ` +
+      'Pass --topology explicitly only if the env file is genuinely out of date.'
+    );
+  }
+  return configured;
 }
 
 /**
@@ -115,31 +115,19 @@ export function defaultTopology() {
  * `''` and absent inputs are equivalent ("untagged") so a checkpoint ref
  * recorded either way replays to an identical document.
  */
-export function hashtagProps(hashtag, topology) {
+export function hashtagProps(hashtag) {
   const tag = hashtag ?? '';
-  if (atLeastTopology(topology, 'v5')) return tag === '' ? {} : { hashtag: tag };
-  return { hashtag: tag };
+  return tag === '' ? {} : { hashtag: tag };
 }
 
 /**
- * The poster-attested `author` property a post/reply document carries, or `{}`
- * from v7 where the column was removed: consensus binds a like's `postAuthor`
- * to the post's `$ownerId` directly, so writing the duplicate is no longer
- * possible (`additionalProperties: false` would reject it).
+ * The `beat` companion a like of a TAGGED post writes beside itself — the
+ * tagged-only indexOnly doctype whose byDayHashtagPost serves today's trending
+ * hashtags / per-tag top. `null` for an untagged target, since `beat.hashtag`
+ * is required. Its postId refersTo the post with propertyAgreement on
+ * `hashtag`, so consensus checks the tag.
  */
-export function authorProps(ownerBytes, topology) {
-  return atLeastTopology(topology, 'v7') ? {} : { author: ownerBytes };
-}
-
-/**
- * v6+: the `beat` companion a like of a TAGGED post writes beside itself —
- * the tagged-only indexOnly doctype whose byDayHashtagPost serves today's
- * trending hashtags / per-tag top. `null` when no beat is written (pre-v6,
- * or an untagged target: beat.hashtag is required). Its postId refersTo the
- * post with propertyAgreement on hashtag, so consensus checks the tag.
- */
-export function beatValueTuple(target, topology) {
-  if (!atLeastTopology(topology, 'v6')) return null;
+export function beatValueTuple(target) {
   const tag = target.hashtag ?? '';
   if (tag === '') return null;
   return { postId: bs58.decode(target.id), hashtag: tag };
@@ -149,12 +137,12 @@ export function beatValueTuple(target, topology) {
  * The like doc's data value tuple for a target post ref record. Used for the
  * create AND for delete-by-values (indexOnly deletes carry the whole value
  * tuple) — both must mirror the post's propertyAgreement values exactly,
- * including hashtag ABSENCE from v5 on.
+ * hashtag ABSENCE included.
  */
-export function likeValueTuple(target, topology) {
+export function likeValueTuple(target) {
   return {
     postId: bs58.decode(target.id),
-    ...hashtagProps(target.hashtag, topology),
+    ...hashtagProps(target.hashtag),
     postAuthor: bs58.decode(target.ownerId),
   };
 }
@@ -385,16 +373,13 @@ export function substituteLinks(content, resolve) {
  *    liking/reposting/bookmarking/following the same target twice) are
  *    rejected up front as generator bugs.
  *
- * The `topology` option tightens the hashtag length to the target contract's
- * maxLength (63 under v4, 61 from v5 on) — an over-long tag is a generator bug
- * and is rejected, never rewritten.
+ * Hashtags are held to the contract's `maxLength` — an over-long tag is a
+ * generator bug and is rejected, never rewritten.
  *
  * Returns `{ ops, stats }`; each op carries its 1-based `line`.
  */
-export function parseCorpus(text, personas, { topology = 'v4' } = {}) {
-  if (!TOPOLOGIES.includes(topology)) throw new Error(`unknown topology "${topology}" (expected ${TOPOLOGIES.join('/')})`);
-  const hashtagMax = HASHTAG_MAX[topology];
-  const hashtagPattern = new RegExp(`^$|^[a-z0-9_]{1,${hashtagMax}}$`);
+export function parseCorpus(text, personas) {
+  const hashtagPattern = new RegExp(`^$|^[a-z0-9_]{1,${HASHTAG_MAX}}$`);
   const personaIdxSet = new Set(personas.map((p) => p.idx));
   const refs = new Map(); // ref -> 'post' | 'reply'
   const dedupe = new Set();
@@ -468,7 +453,7 @@ export function parseCorpus(text, personas, { topology = 'v4' } = {}) {
         checkContent(op.content);
         checkMediaUrl(op.mediaUrl);
         if (typeof op.hashtag !== 'string' || !hashtagPattern.test(op.hashtag)) {
-          fail(line, `hashtag "${op.hashtag}" must match ^$|^[a-z0-9_]{1,${hashtagMax}}$ ('' = untagged; ${topology} maxLength ${hashtagMax})`);
+          fail(line, `hashtag "${op.hashtag}" must match ^$|^[a-z0-9_]{1,${HASHTAG_MAX}}$ ('' = untagged; maxLength ${HASHTAG_MAX})`);
         }
         if (op.sensitive !== undefined && typeof op.sensitive !== 'boolean') fail(line, 'sensitive must be a boolean');
         break;
@@ -547,9 +532,8 @@ export function corpusYappCost(ops) {
 //
 // A ref's `hashtag` may be recorded as '' OR be absent from the record — both
 // mean "untagged" and MUST replay identically: the fold normalizes to '' here,
-// and the doc builders (`hashtagProps`) map '' to the topology's shape (''
-// sentinel under v4, property absence from v5 on). Never treat the journal's
-// hashtag as always-a-meaningful-string.
+// and the doc builders (`hashtagProps`) map '' to property absence. Never
+// treat the journal's hashtag as always-a-meaningful-string.
 
 export function loadProgress(file = PROGRESS_FILE) {
   const completed = new Map(); // line -> record
@@ -588,7 +572,7 @@ export function appendProgress(record, file = PROGRESS_FILE) {
 /**
  * `Document.fromObject` with raw-byte identifiers — the only construction that
  * survives wasm-sdk 4.1+ (the `Document` constructor corrupts Uint8Array
- * properties). Mirrors scripts/verify-v4.mjs `buildDocument`.
+ * properties). Mirrors scripts/verify-lib.mjs `buildDocument`.
  */
 export function buildDocument({ contractId, docType, ownerId, data, entropy, revision = 1n, createdAt, id }) {
   const idBytes = id ?? Document.generateId(docType, ownerId, contractId, entropy);
@@ -625,7 +609,7 @@ export const randomEntropy = () => crypto.getRandomValues(new Uint8Array(32));
 
 // ---- Resilient SDK handle ------------------------------------------------------
 //
-// Lifted from verify-v4.mjs: quorum rotations invalidate the trusted context's
+// Quorum rotations invalidate the trusted context's
 // prefetched keys mid-run and there is no refresh API — the cure is a FULL
 // reconnect (fresh EvoSDK + protocol-version ratchet + contract re-cache). The
 // returned `sdk` is a proxy that always forwards to the live instance, so a

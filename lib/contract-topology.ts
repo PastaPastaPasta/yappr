@@ -1,15 +1,15 @@
 /**
- * Everything that differs between the v2 and v3 contract interaction
- * topologies, in one frozen descriptor.
+ * Everything that differs between the two contract interaction topologies that
+ * exist on chain — `v2` (testnet/production) and `v7` (devnet) — in one frozen
+ * descriptor. See `docs/SOCIAL_CONTRACT.md`.
  *
- * The v3 contract (PLAN_CONTRACT_V3_TOPOLOGY.md) replaces every polymorphic
- * identifier field with a mono-typed, `refersTo`-checked one. That splits what
- * used to be a single query surface in two: a like of a post lands in `like`, a
- * like of a reply in `likeReply`; a reply names its thread root and its
- * presentational parent separately; reposts and bookmarks stop accepting reply
- * ids at all. Which surface a lookup uses therefore depends on whether the thing
- * being looked at is a `post` document or a `reply` document — its
- * {@link TargetKind}.
+ * v7 replaces every polymorphic identifier field with a mono-typed,
+ * `refersTo`-checked one. That splits what used to be a single query surface in
+ * two: a like of a post lands in `like`, a like of a reply in `likeReply`; a
+ * reply names its thread root and its presentational parent separately; reposts
+ * and bookmarks stop accepting reply ids at all. Which surface a lookup uses
+ * therefore depends on whether the thing being looked at is a `post` document
+ * or a `reply` document — its {@link TargetKind}.
  *
  * On **v2 both kinds resolve to identical surfaces**, which is what lets the
  * kind-aware plumbing issue byte-identical queries to the pre-topology code:
@@ -21,7 +21,7 @@
  * app believes it is talking to part-way through a session.
  */
 
-import { CONTRACT_TOPOLOGIES, getContractTopology, type ContractTopology } from './constants'
+import { getContractTopology, type ContractTopology } from './constants'
 
 /**
  * Whether a Post-shaped object is backed by a `post` document or a `reply`
@@ -70,12 +70,10 @@ export interface IndexOnlyLikeShape {
   authorField: string
   /**
    * Property carrying the post's hashtag (agreement-bound to `post.hashtag`),
-   * or null on a doctype without one (`likeReply`). How "untagged" is spelled
-   * depends on the topology: v4 writes the `''` sentinel, while on v5 the
-   * property is optional and an untagged like OMITS it — absence-aware
-   * propertyAgreement treats both-absent as agreement, and sending `''`
-   * against an absent `post.hashtag` would be a 40127 mismatch. See
-   * {@link hashtagIsOptional}.
+   * or null on a doctype without one (`likeReply`). The property is OPTIONAL:
+   * an untagged like OMITS it — absence-aware propertyAgreement treats
+   * both-absent as agreement, and sending `''` against an absent
+   * `post.hashtag` would be a 40127 mismatch. See {@link hashtagIsOptional}.
    */
   hashtagField: string | null
 }
@@ -85,11 +83,11 @@ export interface InteractionSurface {
   /** Likes of this kind. */
   like: OwnedTargetIndex
   /**
-   * Set when this kind's like doctype is `indexOnly` (v4): creates must carry
-   * the agreement-bound denormalizations, unlike is a delete-by-values needing
-   * the full tuple (including the consensus `$createdAt`), and nothing may key
+   * Set when this kind's like doctype is `indexOnly`: creates must carry the
+   * agreement-bound denormalizations, unlike is a delete-by-values needing the
+   * full tuple (including the consensus `$createdAt`), and nothing may key
    * state off a like document's `$id` (create-time and query-synthesized ids
-   * differ). Null on v2/v3, where likes are ordinary stored documents.
+   * differ). Null on v2, where likes are ordinary stored documents.
    */
   indexOnlyLike: IndexOnlyLikeShape | null
   /** Reposts of this kind, or null when the topology forbids reposting it. */
@@ -105,7 +103,7 @@ export interface InteractionSurface {
   /**
    * The `reply` property whose count tree answers "how many replies does this
    * have?" for this kind. On v2 both kinds group on the polymorphic `parentId`.
-   * On v3 a post's reply count is its whole thread (`rootPostId`) while a
+   * On v7 a post's reply count is its whole thread (`rootPostId`) while a
    * reply's is its direct children (`replyToReplyId`).
    */
   replyCountField: string
@@ -116,7 +114,7 @@ export interface ReplyLinkage {
   /**
    * The field a whole-thread fetch and the thread-size count tree key on. On v2
    * this is the polymorphic `parentId` (the *direct* parent, so a thread must be
-   * walked); on v3 it is `rootPostId`, which every reply in a thread shares.
+   * walked); on v7 it is `rootPostId`, which every reply in a thread shares.
    */
   root: string
   /**
@@ -130,12 +128,10 @@ export interface ReplyLinkage {
  * The properties a tombstone REPLACE has to carry over from the stored
  * document, split by how `tombstoneDocument` has to re-encode them.
  *
- * On v3–v6 this is "whatever the contract lists as `required`, plus the fields
- * blanking would break" — a convention maintained by hand. On v7 it is exactly
- * the doctype's `immutable` list minus `deleted` (which the tombstone sets
- * itself, under `immutableAllowSetting`): consensus rejects a replace that
- * changes, adds OR DROPS a frozen property with 40128, so an incomplete
- * preserve set is no longer a silent data loss but a hard rejection.
+ * On v7 this is exactly the doctype's `immutable` list minus `deleted` (which
+ * the tombstone sets itself, under `immutableAllowSetting`): consensus rejects
+ * a replace that changes, adds OR DROPS a frozen property with 40128, so an
+ * incomplete preserve set is not a silent data loss but a hard rejection.
  * `lib/contract-topology.test.ts` pins these lists against the contract JSON.
  */
 export interface TombstonePreservation {
@@ -159,29 +155,17 @@ export interface ContractTopologyDescriptor {
 const NOTHING_PRESERVED: TombstonePreservation = { identifiers: [], scalars: [] }
 
 /**
- * A reply's parent linkage, preserved on every topology that tombstones.
- * `replyToReplyId` is optional and `tombstoneDocument` skips absent fields, so
- * a direct reply reproduces its absence; losing it would move the tombstone —
- * and every live reply nested under it — to the top of the thread.
- */
-const REPLY_LINKAGE_PRESERVED: TombstonePreservation = {
-  identifiers: ['rootPostId', 'replyToReplyId', 'parentOwnerId'],
-  scalars: [],
-}
-
-/**
- * The engagement surface of a `post`, encoded exactly as the chain declares it.
+ * The engagement surface of a v2 `post`, encoded exactly as the chain declares
+ * it.
  *
  * The index orders matter and are NOT uniform: `like.postAndOwner` is
  * `[postId, $ownerId]` while `repost.ownerAndPost` and `bookmark.ownerAndPost`
  * are `[$ownerId, postId]`.
  *
- * Both topologies keep this surface unchanged, and on v2 a *reply* resolves to
- * it too — every v2 identifier field is polymorphic over post|reply — so it is
- * shared by all three slots below and the descriptors differ only where the
- * topologies genuinely differ.
+ * On v2 a *reply* resolves to this surface too — every v2 identifier field is
+ * polymorphic over post|reply — so both kinds share it.
  */
-const POST_INTERACTIONS: InteractionSurface = {
+const V2_POST_INTERACTIONS: InteractionSurface = {
   like: { docType: 'like', field: 'postId', ownerFirst: false, ownerField: 'postOwnerId' },
   indexOnlyLike: null,
   repost: { docType: 'repost', field: 'postId', ownerFirst: true, ownerField: 'postOwnerId' },
@@ -190,190 +174,58 @@ const POST_INTERACTIONS: InteractionSurface = {
   replyCountField: 'parentId',
 }
 
-/**
- * v3's post surface: same engagement doctypes, thread-wide reply count — and an
- * OWNER-FIRST like index. The v3 contract declares `like.ownerAndPost` as
- * `[$ownerId, postId]` (v2's `postAndOwner` was `[postId, $ownerId]`), which is
- * what lets `queryOwnedPostIds` batch the whole "did I like these?" page into
- * one `in` query instead of a per-target fan-out. Uniqueness is order-
- * independent; likers listings ride `byPost`; see PLAN_CONTRACT_V3_TOPOLOGY.md.
- */
-const V3_POST_INTERACTIONS: InteractionSurface = {
-  ...POST_INTERACTIONS,
-  like: { ...POST_INTERACTIONS.like, ownerFirst: true },
-  replyCountField: 'rootPostId',
-}
-
-/** v2 — today's deployed contract. Both kinds share every surface. */
+/** v2 — testnet/production. Both kinds share every surface. */
 const V2_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v2',
   replyLinkage: { root: 'parentId', replyToReply: null },
-  interactions: { post: POST_INTERACTIONS, reply: POST_INTERACTIONS },
+  interactions: { post: V2_POST_INTERACTIONS, reply: V2_POST_INTERACTIONS },
   // v2 posts and replies are ordinary deletable documents, so a delete is a
   // delete and no tombstone is ever built ({@link deletesAreTombstones}).
   tombstonePreserves: { post: NOTHING_PRESERVED, reply: NOTHING_PRESERVED },
 }
 
 /**
- * v3 — the flat-thread interaction topology. Never promoted beyond devnet and
- * superseded on-chain by v4; its contract JSON was dropped from the repo (see
- * git history for `contracts/yappr-social-contract-v3-topology.json`).
- *
- * Reply likes move to `likeReply.replyId`; repost and bookmark keep only their
- * post surfaces (consensus rejects a reply id outright now, so the nulls here
- * mirror a chain-level rule rather than a client convention); quotes of replies
- * use the second `post.quotedReplyId` field.
- */
-const V3_DESCRIPTOR: ContractTopologyDescriptor = {
-  topology: 'v3',
-  replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId' },
-  tombstonePreserves: {
-    // `language` is the only required content property on v3's post.
-    post: { identifiers: [], scalars: ['language'] },
-    reply: REPLY_LINKAGE_PRESERVED,
-  },
-  interactions: {
-    post: V3_POST_INTERACTIONS,
-    reply: {
-      like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyOwnerId' },
-      indexOnlyLike: null,
-      repost: null,
-      bookmark: null,
-      quoteField: 'quotedReplyId',
-      replyCountField: 'replyToReplyId',
-    },
-  },
-}
-
-/**
- * v4 — `contracts/yappr-social-contract-v4.json` (the like overhaul).
- *
- * Same document graph as v3 except for likes and hashtags:
- *
- * - `like`/`likeReply` are **indexOnly**: no stored body, structural
- *   one-like-per-(target, owner) uniqueness, delete-by-values with refund. The
- *   liked-state queries keep v3's owner-first shapes — `[$ownerId ==, target ==]`
- *   and the batched `[$ownerId ==, target in [...]]` — which lower onto the
- *   `byLiker [$ownerId] → target` projection. `postOwnerId`/`replyOwnerId` are
- *   replaced by the agreement-bound `postAuthor`/`replyAuthor`, and the
- *   notification index becomes `byAuthorTimePost [postAuthor, $createdAt,
- *   postId]` / `byAuthorTimeReply` — the same `[ownerField, $createdAt]` query
- *   shape the v2/v3 notification reads use.
- * - `like` additionally repeats the post's `hashtag` (agreement-bound), feeding
- *   the per-tag ranked axis.
- * - The `postHashtag` doctype is GONE: a post carries one inline `hashtag`
- *   property (`''` = untagged) and tag listings ride `post.tagAndTime`.
- * - `post`/`reply` gain a required poster-attested `author` identifier that the
- *   like agreements bind to; the client writes it equal to `$ownerId`.
- */
-const V4_DESCRIPTOR: ContractTopologyDescriptor = {
-  topology: 'v4',
-  replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId' },
-  tombstonePreserves: {
-    // `author` must keep equalling `$ownerId`, and `hashtag` cannot be blanked
-    // because existing likes repeat it under a consensus-checked agreement.
-    post: { identifiers: ['author'], scalars: ['language', 'hashtag'] },
-    reply: { identifiers: [...REPLY_LINKAGE_PRESERVED.identifiers, 'author'], scalars: [] },
-  },
-  interactions: {
-    post: {
-      ...V3_POST_INTERACTIONS,
-      like: { docType: 'like', field: 'postId', ownerFirst: true, ownerField: 'postAuthor' },
-      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag' },
-    },
-    reply: {
-      like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyAuthor' },
-      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null },
-      repost: null,
-      bookmark: null,
-      quoteField: 'quotedReplyId',
-      replyCountField: 'replyToReplyId',
-    },
-  },
-}
-
-/**
- * v5 — `contracts/yappr-social-contract-v5.json` (the dev.6 re-cut,
- * PLAN_DEV6_V5.md).
- *
- * The document graph and every doctype/field name are v4's — the descriptor
- * shape is identical — and what changes is expressed through the capability
- * helpers below rather than new fields:
- *
- * - `hashtag` (post AND like) is **optional**: an untagged post omits the
- *   property instead of writing v4's `''` sentinel, and a like mirrors the
- *   post's absence exactly ({@link hashtagIsOptional}). `like.byHashtagPost`
- *   is `skipIfAbsent`, so untagged likes write no per-tag index entries and
- *   the index is a tagged-only sparse projection. maxLength shrinks 63 → 61
- *   (the ranked key-size ceiling; {@link hashtagMaxLength}).
- * - the at-form `rankedCountable` chains (`byHashtagPost {at: hashtag}`,
- *   `byAuthorPost {at: [postAuthor, postId]}`) serve proved PREFIX rankings —
- *   trending hashtags and the creator leaderboard
- *   ({@link prefixRankingsAvailable}) — on top of the terminal rankings v4
- *   already had.
- * - `follow.followerCount [followingId]` gains the full ranked chain, so
- *   most-followed is a proved ranking too ({@link followRankingsAvailable}).
- */
-const V5_DESCRIPTOR: ContractTopologyDescriptor = {
-  ...V4_DESCRIPTOR,
-  topology: 'v5',
-}
-
-/**
- * v6 — `contracts/yappr-social-contract-v6.json` (the dev.8 cut,
- * docs/V6_WINDOWED_RANKINGS.md).
- *
- * v5's graph and fields, plus TIME-BOUNDED rankings — the same three ranked
- * axes v5 already serves, each twinned under a daily `timeRange` bucket so the
- * node returns the top-K of TODAY, ordered and proved, in one query:
- *
- * - `like.byDayPost` / `like.byDayAuthorPost` — today's most-liked posts,
- *   today's top creators, today's top posts per author
- *   ({@link windowedRankingsAvailable}).
- * - a tagged-only indexOnly `beat` doctype carrying `byDayHashtagPost` —
- *   today's trending hashtags and today's top posts per tag. `like.hashtag`
- *   is optional (v5), and an optional property may only lead a
- *   `skipIfAbsent` index, so the windowed hashtag axis cannot live on `like`;
- *   the client writes one `beat` beside every like of a TAGGED post, in the
- *   second transition once the like has landed (a document batch is capped
- *   at ONE transition on this network, so the pair is sequential, not
- *   atomic), and deletes it beside the unlike
- *   ({@link beatCompanionFor}).
- */
-const V6_DESCRIPTOR: ContractTopologyDescriptor = {
-  ...V4_DESCRIPTOR,
-  topology: 'v6',
-}
-
-/**
- * v7 — `contracts/yappr-social-contract-v7.json` (the 4.2.0-beta.2 cut,
+ * v7 — `contracts/yappr-social-contract-v7.json` (docs/SOCIAL_CONTRACT.md,
  * docs/PLATFORM_BETA2_UPGRADE.md).
  *
- * Every index, terminal, ranked axis and `timeRange` window is v6's, so every
- * read this module describes is unchanged and the descriptor differs only in
- * what the CLIENT no longer has to do:
+ * The post surface keeps v2's engagement doctypes but gains a thread-wide reply
+ * count and an OWNER-FIRST like index: `like.ownerAndPost` is `[$ownerId,
+ * postId]` (v2's `postAndOwner` was `[postId, $ownerId]`), which is what lets
+ * `queryOwnedPostIds` batch the whole "did I like these?" page into one `in`
+ * query instead of a per-target fan-out. Uniqueness is order-independent and
+ * likers listings ride `byPost`.
  *
- * - **No attested `author`.** beta.2 lets a `propertyAgreement` name the
- *   referenced document's `$ownerId`, so `like.postAuthor` binds to
- *   `post.$ownerId` and `likeReply.replyAuthor` to `reply.$ownerId` directly.
- *   The duplicated column is gone from both doctypes
- *   ({@link authorFieldIsRequired} is false): posts and replies stop writing
- *   it, tombstones stop preserving it, and `Post.author.id` keeps coming from
- *   `$ownerId` as it always did. The value tuples a like writes are
- *   shape-identical — `postAuthor` is still the target's owner id, which is
- *   exactly what the client already passed.
- * - **Consensus-enforced immutability.** `post` and `reply` declare
- *   `immutable` lists, so the structural fields a tombstone had to copy by
- *   convention are frozen by the chain, and a replace that drops one is
- *   refused with 40128 ({@link isImmutablePropertyChangedError}). The preserve
- *   sets below are exactly those lists minus `deleted`, which the tombstone
- *   sets itself under `immutableAllowSetting`.
- * - `repost.postId` binds `{ postOwnerId: '$ownerId' }`, which needs no client
- *   change: the one caller already passes the reposted post's owner.
+ * `like` is indexOnly and carries two agreement-bound denormalizations:
+ * `postAuthor`, which consensus checks against the post's `$ownerId`, and the
+ * optional `hashtag`, checked against `post.hashtag` (absence included).
  */
+const V7_POST_INTERACTIONS: InteractionSurface = {
+  ...V2_POST_INTERACTIONS,
+  like: { docType: 'like', field: 'postId', ownerFirst: true, ownerField: 'postAuthor' },
+  indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag' },
+  replyCountField: 'rootPostId',
+}
+
+/**
+ * v7's reply surface. Reply likes move to the indexOnly `likeReply.replyId`
+ * (no hashtag axis); repost and bookmark keep only their post surfaces, because
+ * consensus rejects a reply id outright now — the nulls mirror a chain-level
+ * rule rather than a client convention; quotes of replies use the second
+ * `post.quotedReplyId` field.
+ */
+const V7_REPLY_INTERACTIONS: InteractionSurface = {
+  like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyAuthor' },
+  indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null },
+  repost: null,
+  bookmark: null,
+  quoteField: 'quotedReplyId',
+  replyCountField: 'replyToReplyId',
+}
+
 const V7_DESCRIPTOR: ContractTopologyDescriptor = {
-  ...V4_DESCRIPTOR,
   topology: 'v7',
+  replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId' },
+  interactions: { post: V7_POST_INTERACTIONS, reply: V7_REPLY_INTERACTIONS },
   tombstonePreserves: {
     post: {
       // post.immutable minus `deleted`: the quote graph and the embed triple
@@ -384,7 +236,11 @@ const V7_DESCRIPTOR: ContractTopologyDescriptor = {
       identifiers: ['quotedPostId', 'quotedReplyId', 'quotedPostOwnerId', 'embedContractId', 'embedId'],
       scalars: ['language', 'hashtag', 'embedDocType'],
     },
-    reply: REPLY_LINKAGE_PRESERVED,
+    // reply.immutable: the parent linkage. `replyToReplyId` is optional and
+    // `tombstoneDocument` skips absent fields, so a direct reply reproduces its
+    // absence; losing it would move the tombstone — and every live reply nested
+    // under it — to the top of the thread.
+    reply: { identifiers: ['rootPostId', 'replyToReplyId', 'parentOwnerId'], scalars: [] },
   },
 }
 
@@ -399,10 +255,6 @@ function deepFreeze<T>(value: T): T {
 
 const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>> = {
   v2: V2_DESCRIPTOR,
-  v3: V3_DESCRIPTOR,
-  v4: V4_DESCRIPTOR,
-  v5: V5_DESCRIPTOR,
-  v6: V6_DESCRIPTOR,
   v7: V7_DESCRIPTOR,
 }
 
@@ -415,15 +267,14 @@ export function topologyDescriptor(): ContractTopologyDescriptor {
 }
 
 /**
- * True when the configured topology is `floor` or any later cut.
+ * True on the devnet cut, false on the testnet/production one.
  *
- * Every capability below appeared in one cut and stayed, so "which topologies
- * have X" is a suffix of {@link CONTRACT_TOPOLOGIES} rather than a list to
- * extend on every re-cut. `authorFieldIsRequired` is the one capability that
- * was later REMOVED, and it says so as a half-open range.
+ * Every capability predicate below is this test; they stay named apart because
+ * each documents a DIFFERENT reason a call site branches, and a future third
+ * cut will not gain them all at once.
  */
-function atLeast(floor: ContractTopology): boolean {
-  return CONTRACT_TOPOLOGIES.indexOf(topologyDescriptor().topology) >= CONTRACT_TOPOLOGIES.indexOf(floor)
+function isV7(): boolean {
+  return topologyDescriptor().topology === 'v7'
 }
 
 /** How reply documents name their parents on this topology. */
@@ -460,12 +311,12 @@ export function quoteFieldFor(kind: TargetKind): string | null {
  * The second property of the index a quote LISTING query must order by.
  *
  * v2's only quote index is the unique `quotedPostAndOwner [quotedPostId,
- * $ownerId]`. v3 replaces it with chronological `quotesOfPost`/`quotesOfReply
+ * $ownerId]`. v7 replaces it with chronological `quotesOfPost`/`quotesOfReply
  * [<field>, $createdAt]` indexes, because uniqueness was dropped (quotes are
  * content, not toggles) and a newest-first listing is what the UI wants.
  */
 export function quoteListingOrderProperty(): '$ownerId' | '$createdAt' {
-  return atLeast('v3') ? '$createdAt' : '$ownerId'
+  return isV7() ? '$createdAt' : '$ownerId'
 }
 
 /** The `reply` property whose count tree holds this kind's reply count. */
@@ -474,7 +325,7 @@ export function replyCountFieldFor(kind: TargetKind): string {
 }
 
 /**
- * True when replies name their thread root directly (v3's `rootPostId`) rather
+ * True when replies name their thread root directly (v7's `rootPostId`) rather
  * than chaining through a polymorphic direct parent — i.e. when a whole thread
  * is one query and nesting is a client-side grouping.
  */
@@ -510,7 +361,7 @@ export function likeSurfacesAreSplit(): boolean {
  * wait for an unconfirmed parent instead of racing it.
  */
 export function referencesAreEnforced(): boolean {
-  return atLeast('v3')
+  return isV7()
 }
 
 /**
@@ -519,13 +370,13 @@ export function referencesAreEnforced(): boolean {
  * rather than a document removal.
  */
 export function deletesAreTombstones(): boolean {
-  return atLeast('v3')
+  return isV7()
 }
 
 /**
  * The properties a tombstone of this kind must reproduce verbatim.
  *
- * From v7 these are exactly the doctype's consensus-`immutable` properties
+ * On v7 these are exactly the doctype's consensus-`immutable` properties
  * minus `deleted` (which the tombstone sets itself). Under-listing one is a
  * hard 40128 rejection rather than a silent field loss, so the list is pinned
  * against the contract JSON in `lib/contract-topology.test.ts`.
@@ -536,7 +387,7 @@ export function tombstonePreservationFor(kind: TargetKind): TombstonePreservatio
 
 /**
  * The indexOnly shape of this kind's like doctype, or null when likes are
- * ordinary stored documents (v2/v3). Non-null means: creates must carry the
+ * ordinary stored documents (v2). Non-null means: creates must carry the
  * agreement-bound fields, unlikes are deletes-by-values, confirmation resolves
  * as AffectedState rather than ExecutionProved, and like `$id`s must never be
  * used as keys or compared across sources.
@@ -545,109 +396,87 @@ export function indexOnlyLikeShapeFor(kind: TargetKind): IndexOnlyLikeShape | nu
   return interactionsFor(kind).indexOnlyLike
 }
 
-/** True when the configured topology's like doctypes are indexOnly (v4). */
+/** True when the configured topology's like doctypes are indexOnly. */
 export function likesAreIndexOnly(): boolean {
   return indexOnlyLikeShapeFor('post') !== null
 }
 
 /**
  * True when a post carries its (single) hashtag inline in `post.hashtag` and
- * the `postHashtag` doctype does not exist (v4/v5). Tag listings then query
+ * the `postHashtag` doctype does not exist. Tag listings then query
  * `post.tagAndTime` directly, the compose flow writes no secondary hashtag
  * documents, and there is nothing to "recover" when one is missing.
  */
 export function hashtagsAreInline(): boolean {
-  return atLeast('v4')
+  return isV7()
 }
 
 /**
- * True when `post`/`reply` documents must carry the poster-attested `author`
- * identifier (v4–v6) — the propertyAgreement source for likes. The client
- * always writes it equal to the signing `$ownerId`.
+ * True when `post.hashtag`/`like.hashtag` are OPTIONAL properties: an untagged
+ * post omits the property entirely, and a like must mirror the post's absence —
+ * absence-aware propertyAgreement treats both-absent as agreement, while
+ * writing `''` against an absent `post.hashtag` is a 40127 mismatch.
+ * `like.byHashtagPost` is `skipIfAbsent`, so untagged likes write no per-tag
+ * index entries at all and reads of that index only ever see tagged likes.
  *
- * FALSE again from v7: beta.2 lets the referenced side of a `propertyAgreement`
- * name the referenced document's `$ownerId`, so the like binds to the post's
- * real owner and the attested column — which consensus could only ever check
- * against ITSELF — is gone from the schema. Nothing downstream changes:
- * `Post.author.id` has always been transformed from `$ownerId`, and a like's
- * `postAuthor` value is the same identity it always was.
- */
-export function authorFieldIsRequired(): boolean {
-  return atLeast('v4') && !atLeast('v7')
-}
-
-/**
- * True when `hashtag` is an OPTIONAL property (v5): an untagged post omits it
- * entirely instead of writing v4's `''` sentinel, and a like must mirror the
- * post's absence — absence-aware propertyAgreement treats both-absent as
- * agreement, while writing `''` against an absent `post.hashtag` is a 40127
- * mismatch. `like.byHashtagPost` is `skipIfAbsent` there, so untagged likes
- * write no per-tag index entries at all and reads of that index only ever see
- * tagged likes.
- *
- * The CLIENT-side convention is unchanged across v4/v5: `Post.hashtag === ''`
- * still means "known untagged" everywhere in memory (and `undefined` means
- * "unknown — fetch the post"), so caches, `LikeTargetInfo` and the tuple
- * plumbing round-trip absence without a third state. The `''` ↔ absent
- * translation happens exactly once, at the chain boundary (post create, like
- * create, unlike delete-by-values, post transform).
+ * The CLIENT-side convention does not change: `Post.hashtag === ''` means
+ * "known untagged" everywhere in memory (and `undefined` means "unknown —
+ * fetch the post"), so caches, `LikeTargetInfo` and the tuple plumbing
+ * round-trip absence without a third state. The `''` ↔ absent translation
+ * happens exactly once, at the chain boundary (post create, like create,
+ * unlike delete-by-values, post transform).
  */
 export function hashtagIsOptional(): boolean {
-  return atLeast('v5')
+  return isV7()
 }
 
 /**
  * The longest hashtag the contract's `post.hashtag`/`like.hashtag` pattern
- * accepts. v5 shrinks it 63 → 61: an at-level ranked string key must fit the
- * 247-byte encoded ceiling, and 63 was rejected at contract validation
- * (PLAN_DEV6_V5.md D-V5-1).
+ * accepts. An at-level ranked string key must fit the 247-byte encoded
+ * ceiling, and 63 was rejected at contract validation.
  */
-export function hashtagMaxLength(): number {
-  return hashtagIsOptional() ? 61 : 63
-}
+export const HASHTAG_MAX_LENGTH = 61
 
 /**
  * True when the like doctype's at-form `rankedCountable` chains can answer
- * proved PREFIX-level ranked groupBy queries (v5): trending hashtags off
+ * proved PREFIX-level ranked groupBy queries: trending hashtags off
  * `byHashtagPost {at: hashtag}` and the creator leaderboard off
- * `byAuthorPost {at: [postAuthor, postId]}`. On v4 the boolean ranked chains
- * only rank at the terminal (per-post) level and a prefix groupBy is refused
- * by the node.
+ * `byAuthorPost {at: [postAuthor, postId]}`.
  */
 export function prefixRankingsAvailable(): boolean {
-  return atLeast('v5')
+  return isV7()
 }
 
 /**
  * True when `follow.followerCount [followingId]` carries the full ranked
- * chain (v5), making "most followed" a proved ranked groupBy on `followingId`.
- * The O(1) follower COUNT (countable chain) exists on every topology and is
- * not gated here.
+ * chain, making "most followed" a proved ranked groupBy on `followingId`. The
+ * O(1) follower COUNT (countable chain) exists on every topology and is not
+ * gated here.
  */
 export function followRankingsAvailable(): boolean {
-  return atLeast('v5')
+  return isV7()
 }
 
 /**
- * True when the like axes have DAILY-WINDOWED ranked twins (v6):
- * `like.byDayPost` (today's top posts), `like.byDayAuthorPost` (today's top
- * creators / per-author top) and `beat.byDayHashtagPost` (today's trending
- * tags / per-tag top). A `timeRange: [{ field: '$createdAt', selector }]`
- * entry on `documents.ranked()` pins the bucket; `newest` is today (UTC day,
+ * True when the like axes have DAILY-WINDOWED ranked twins: `like.byDayPost`
+ * (today's top posts), `like.byDayAuthorPost` (today's top creators /
+ * per-author top) and `beat.byDayHashtagPost` (today's trending tags /
+ * per-tag top). A `timeRange: [{ field: '$createdAt', selector }]` entry on
+ * `documents.ranked()` pins the bucket; `newest` is today (UTC day,
  * `range == step == 86400`).
  */
 export function windowedRankingsAvailable(): boolean {
-  return atLeast('v6')
+  return isV7()
 }
 
-/** The daily grid every v6 windowed index shares (seconds, as the contract declares them). */
+/** The daily grid every windowed index shares (seconds, as the contract declares them). */
 export const WINDOWED_DAY_GRID = { range: 86400, step: 86400 } as const
 
 /**
- * The `beat` companion a like must carry on v6: the tagged-only indexOnly
- * doctype whose `byDayHashtagPost` serves the windowed hashtag rankings.
- * `null` when no companion is written — pre-v6 topologies, reply likes (no
- * hashtag axis), and likes of UNTAGGED posts (`beat.hashtag` is required, so
+ * The `beat` companion a like must carry: the tagged-only indexOnly doctype
+ * whose `byDayHashtagPost` serves the windowed hashtag rankings. `null` when
+ * no companion is written — topologies without windowed rankings, reply likes
+ * (no hashtag axis), and likes of UNTAGGED posts (`beat.hashtag` is required, so
  * an untagged like writes no beat, which is the skipIfAbsent economy by other
  * means). Consensus checks `beat.hashtag` against the post through the same
  * propertyAgreement `like.hashtag` uses.
@@ -676,14 +505,14 @@ interface KindBearing {
 /** A Post/Reply-shaped object reduced to what thread-root resolution needs. */
 export interface ThreadBearing extends KindBearing {
   id: string
-  /** Set on v3 reply shapes: the post every reply in the thread hangs off. */
+  /** Set on v7 reply shapes: the post every reply in the thread hangs off. */
   rootPostId?: string
 }
 
 /**
  * The id of the post at the root of this object's thread.
  *
- * A top-level post is its own root. A reply names its root directly on v3; on v2
+ * A top-level post is its own root. A reply names its root directly on v7; on v2
  * the best available answer is its direct parent, which is what the pre-topology
  * code used everywhere a "root" was wanted, so v2 behaviour is unchanged.
  */
@@ -718,7 +547,7 @@ export function replyLinkageTo(target: ThreadBearing): { rootPostId: string; rep
  * when present. Untagged objects fall back to the pre-topology probe — a
  * `parentId` is only ever set on a reply — so a Post shape built somewhere this
  * refactor did not reach still resolves correctly instead of silently being
- * treated as a top-level post (which on v3 would send its like to `like` instead
+ * treated as a top-level post (which on v7 would send its like to `like` instead
  * of `likeReply`, and its delete to the post doctype). Literals that can only
  * describe a real `post` document (optimistic composes, mock data, blog-quote
  * adapters) have neither field and resolve to `post`.
@@ -760,7 +589,7 @@ export interface SurfaceGroup {
  *
  * When the topology makes both kinds identical (v2) this returns a SINGLE group
  * holding every id, so the caller issues exactly the queries it issued before
- * kinds existed. On v3 it returns up to one group per kind, preserving input
+ * kinds existed. On v7 it returns up to one group per kind, preserving input
  * order within each.
  */
 export function groupByInteractionSurface(targets: readonly KindedTarget[]): SurfaceGroup[] {

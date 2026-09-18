@@ -7,7 +7,7 @@ import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
-import { authorFieldIsRequired, likesAreIndexOnly, groupByInteractionSurface, hashtagIsOptional, hashtagMaxLength, hashtagsAreInline, quoteFieldFor, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { HASHTAG_MAX_LENGTH, likesAreIndexOnly, groupByInteractionSurface, hashtagIsOptional, hashtagsAreInline, quoteFieldFor, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { firstIndexedTag } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
@@ -241,12 +241,12 @@ class PostService extends BaseDocumentService<Post> {
       quotedReplyId,
       deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
       sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
-      // v4/v5 only: the single indexed hashtag ('' = untagged in memory).
-      // Absent on v2/v3 documents; the like path reads it for the
-      // consensus-checked agreement. On v5 the chain spells "untagged" as an
-      // ABSENT property — normalized back to the client's '' sentinel here, so
+      // The single indexed hashtag, on the inline-hashtag topology only
+      // ('' = untagged in memory); the like path reads it for the
+      // consensus-checked agreement. The chain spells "untagged" as an ABSENT
+      // property — normalized back to the client's '' sentinel here, so
       // downstream consumers (like path, caches) keep one convention:
-      // '' = known untagged, undefined = unknown/not-a-v4+ document.
+      // '' = known untagged, undefined = unknown / no inline hashtag column.
       hashtag: typeof (data.hashtag ?? doc.hashtag) === 'string'
         ? (data.hashtag ?? doc.hashtag) as string
         : hashtagIsOptional() ? '' : undefined,
@@ -318,23 +318,18 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Blank a post in place, leaving a tombstone.
    *
-   * The v3+ `post` doctype is `canBeDeleted: false`, so this is what "delete"
-   * means there. The body, media and every encrypted field are dropped; what
-   * survives is {@link tombstonePreservationFor}('post'), carried over VERBATIM.
+   * v7's `post` doctype is `canBeDeleted: false`, so this is what "delete"
+   * means there. The body, media and every encrypted field are
+   * dropped; {@link tombstonePreservationFor} names what is carried over
+   * VERBATIM.
    *
-   * That set grew for a consensus reason each time. `hashtag` joined on v4
-   * because existing likes repeat it under a checked agreement: blanking it
-   * would leave the post claiming "untagged" while its likes still carry the
-   * original tag (and any later like sourced from the stale post would be
-   * rejected with 40127), so a tombstone stays in its tag's `tagAndTime`
-   * listing, rendered as a deleted card — the same treatment `language`
-   * timelines already give it. On v7 the contract freezes that whole set with
-   * `immutable`, which pulls the quote graph and the embed triple in too:
-   * dropping a frozen property is the same 40128 rejection as changing it.
-   * A tombstoned quote or poll post therefore keeps its reference; `PostCard`
-   * short-circuits on `deleted`, so nothing of it renders.
-   *
-   * An UNTAGGED post has no `hashtag` property at all from v5 on;
+   * `hashtag` is in that set for a reason the descriptor cannot show: existing
+   * likes repeat it under a consensus-checked agreement, so blanking it would
+   * leave the post claiming "untagged" while its likes still carry the original
+   * tag (and any later like sourced from the stale post would be rejected with
+   * 40127). A tombstone therefore stays in its tag's `tagAndTime` listing,
+   * rendered as a deleted card — the same treatment `language` timelines
+   * already give it. An UNTAGGED post has no `hashtag` property at all;
    * `tombstoneDocument` skips absent fields, so the tombstone reproduces the
    * absence verbatim (writing `''` instead would both fail the pattern and
    * break the likes' absence agreement).
@@ -426,27 +421,15 @@ class PostService extends BaseDocumentService<Post> {
     // Language is required - default to 'en' if not provided
     data.language = options.language || 'en';
 
-    // v4-v6: the poster-attested author, which must equal $ownerId because a
-    // propertyAgreement could not yet name a system field. v7 binds the likes
-    // straight to `post.$ownerId`, so the column is gone from the schema and
-    // nothing is written here ({@link authorFieldIsRequired}).
-    if (authorFieldIsRequired()) {
-      data.author = identifierStringToDocumentBytes(ownerId);
-    }
-
     // The single indexed tag — first hashtag, or first cashtag when no hashtag
     // exists, from the PUBLIC content only (`data.content` is already the
     // teaser/placeholder for private posts, so encrypted text never leaks into
-    // the index); '' when untagged.
+    // the index). An untagged post OMITS the optional property: likes mirror
+    // the absence under the absence-aware propertyAgreement, and `skipIfAbsent`
+    // keeps untagged likes out of byHashtagPost entirely.
     if (hashtagsAreInline()) {
-      const tag = firstIndexedTag(data.content as string, hashtagMaxLength());
-      // v5: an untagged post OMITS the optional property — likes mirror the
-      // absence under the absence-aware propertyAgreement, and `skipIfAbsent`
-      // keeps untagged likes out of byHashtagPost entirely. v4 has no optional
-      // hashtag and writes the '' sentinel.
-      if (tag !== '' || !hashtagIsOptional()) {
-        data.hashtag = tag;
-      }
+      const tag = firstIndexedTag(data.content as string, HASHTAG_MAX_LENGTH);
+      if (tag !== '') data.hashtag = tag;
     }
 
     // Add optional fields (use contract field names)
