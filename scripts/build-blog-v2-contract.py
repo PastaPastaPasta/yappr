@@ -188,7 +188,19 @@ def build(src):
 
     # Stable doctype order for reviewable diffs.
     order_of = ['blog', 'blogPost', 'blogComment', 'blogFollow']
-    return {name: out[name] for name in order_of}
+    built = {name: out[name] for name in order_of}
+
+    # Self-guard: the transforms above REPLACE whole `properties` maps, so a
+    # property added to v1 later would be silently dropped. v2 may add
+    # properties; it may never lose one.
+    for name, schema in built.items():
+        dropped = set(src[name]['properties']) - set(schema['properties'])
+        if dropped:
+            raise AssertionError(f'{name}: v1 properties dropped by the transform: {sorted(dropped)}')
+        missing = set(src[name].get('required', [])) - set(schema.get('required', []))
+        if missing:
+            raise AssertionError(f'{name}: v1 required fields dropped by the transform: {sorted(missing)}')
+    return built
 
 
 def main(argv):

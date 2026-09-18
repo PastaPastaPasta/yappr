@@ -15,7 +15,9 @@
  * Cases:
  *   b1  fixtures: author blog + two posts; reader and stranger follow it;
  *       three comments (2 on post one, 1 on post two)
- *   b2  refersTo on blogId: post and follow naming a GHOST blog rejected (40120)
+ *   b2  refersTo on blogId: post and follow naming a GHOST blog rejected
+ *       (40120); a post whose author is not its owner is ACCEPTED (the
+ *       documented gap consensus cannot close)
  *   b3  comments: wrong blogPostOwnerId rejected (40127); ghost blogPostId
  *       rejected (40120); a comment WITHOUT a token payment agreement rejected
  *   b4  counts: countable `commentCount` per post, one grouped count over
@@ -29,6 +31,8 @@
  *   b8  permanence: blogPost and blog delete rejected (canBeDeleted:false)
  *   b9  tokens: the reader's YAPP dropped by exactly 1 per accepted comment
  *   b10 a deleted comment decrements the count tree
+ *   b11 an unfollow (a delete on a stored doctype carrying a TTL'd windowed
+ *       index) is accepted and decrements both the all-time and daily axes
  *
  * Run:
  *   NETWORK=devnet node scripts/verify-blog-v2.mjs --contract <id> \
@@ -133,6 +137,18 @@ async function caseB2BlogRefs(ctx) {
     'b2b follow naming a GHOST blog is rejected (40120)',
     await battery.attemptCreate(reader, 'blogFollow', { blogId: randomEntropy() }),
     REFERENCE_NOT_FOUND
+  );
+  // DOCUMENTED HOLE: propertyAgreement cannot bind $ownerId, so consensus does
+  // not check that a post's `author` is its own owner. A post naming someone
+  // else is ACCEPTED here; the client is what keeps the two equal (it writes
+  // author = $ownerId and only notifies a post's real owner). When upstream
+  // ships owner-agreement this check flips and tells you.
+  battery.expectAccepted(
+    'b2c post whose author is NOT its owner is accepted (documented gap, client-enforced)',
+    await battery.attemptCreate(reader, 'blogPost', postData({
+      blogId: id32(ctx.blogId), author: id32(ctx.author.ownerId),
+      title: `Impostor ${ctx.run}`, slug: `impostor-${ctx.run}`,
+    }))
   );
 }
 
@@ -301,10 +317,46 @@ async function caseB10CommentDelete(ctx) {
   battery.check('b10b commentCount reflects the delete', count === 1, `post1=${count}`);
 }
 
+async function caseB11FollowDelete(ctx) {
+  const { battery, stranger } = ctx;
+  console.log('\n--- b11. unfollow: a stored, deletable doc under a TTL\'d windowed index ---');
+  // blogFollow is the first stored (non-indexOnly) doctype carrying a
+  // timeRange+ttl index, so the delete path is worth proving explicitly.
+  const follow = await battery.queryDocs('blogFollow', {
+    where: [['$ownerId', '==', stranger.ownerId], ['blogId', '==', ctx.blogId]], limit: 1,
+  });
+  const followId = follow[0] ? battery.b58(follow[0].$id) : null;
+  if (!followId) { battery.check('b11 unfollow', false, 'no follow fixture'); return; }
+
+  battery.expectAccepted('b11a unfollow (blogFollow delete) is accepted',
+    await battery.attemptDelete(stranger, 'blogFollow', followId));
+  const count = await battery.countBy('blogFollow', [['blogId', '==', ctx.blogId]]);
+  battery.check('b11b followerCount reflects the unfollow', count === 1, `followers=${count}`);
+
+  const { page } = await battery.ranked('blogFollow', 'blogId', { type: 'count' }, { direction: 'desc' });
+  const ours = battery.groupValueOf(page, ctx.blogId);
+  battery.check('b11c "most followed blogs" reflects the unfollow',
+    Number(ours?.value ?? -1) === 1, `blog=${ours?.value}`);
+
+  try {
+    const { page: today } = await battery.ranked('blogFollow', 'blogId', { type: 'count' }, {
+      direction: 'desc',
+      timeRange: [{ field: '$createdAt', selector: 'newest', grid: { ...DAY_GRID } }],
+    });
+    const windowed = battery.groupValueOf(today, ctx.blogId);
+    battery.check('b11d the windowed axis reflects the unfollow too',
+      Number(windowed?.value ?? -1) === 1, `blog=${windowed?.value}`);
+  } catch (e) {
+    const message = describeErr(e);
+    battery.check('b11d the windowed axis reflects the unfollow too',
+      COLD_BUCKET.test(message), message.slice(0, 200));
+  }
+}
+
 const CASES = new Map([
   ['b1', caseB1Fixtures], ['b2', caseB2BlogRefs], ['b3', caseB3Comments], ['b4', caseB4Counts],
   ['b5', caseB5Rankings], ['b6', caseB6Windowed], ['b7', caseB7History], ['b8', caseB8Permanence],
-  ['b9', caseB9Tokens], ['b10', caseB10CommentDelete],
+  ['b9', caseB9Tokens], ['b10', caseB10CommentDelete], ['b11', caseB11FollowDelete],
 ]);
 
 function parseArgs(argv) {

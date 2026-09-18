@@ -40,9 +40,14 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
   private async resolvePostOwnerId(blogPostId: string, fallback: string): Promise<string> {
     if (!blogIsV2()) return fallback
     const { blogPostService } = await import('./blog-post-service')
+    // `get()` swallows read failures and returns null, so an absent post is
+    // indistinguishable from a timed-out node. Prefer the caller's value over
+    // refusing to comment: consensus (40127) is the real arbiter, and a
+    // rejected create charges no YAPP.
     const post = await blogPostService.getPost(blogPostId)
-    if (!post) throw new Error('Cannot comment on a post that does not exist')
-    return post.author || post.ownerId
+    const attested = post?.author || post?.ownerId || fallback
+    if (!attested) throw new Error('Cannot resolve the post author for this comment')
+    return attested
   }
 
   async createComment(
