@@ -7,6 +7,16 @@ vi.mock('./state-transition-service', () => ({ stateTransitionService: {} }))
 const CONTRACT_ID = new Uint8Array(32).fill(7)
 const HASH = new Uint8Array(20).fill(9)
 const HASH_BASE64 = Buffer.from(HASH).toString('base64')
+/**
+ * The polling read's `where`, spelled out rather than re-encoded with bs58:
+ * `contractId` is an identifier property, so its operand is base58, while the
+ * plain byte array `appEphemeralPubKeyHash` is base64. Both topologies must
+ * issue exactly this.
+ */
+const POLL_WHERE = [
+  ['contractId', '==', 'US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx'],
+  ['appEphemeralPubKeyHash', '==', HASH_BASE64],
+]
 
 /** What the v3 `byContractAndEphemeralKey` entry synthesizes: no keyIndex, no $createdAt. */
 const responseDoc = {
@@ -22,17 +32,17 @@ const responseDoc = {
 const metaDoc = { ...responseDoc, keyIndex: 5, $createdAt: 1789695369474 }
 
 async function loadService(topology: 'v2' | 'v3') {
-  process.env.NEXT_PUBLIC_KEY_EXCHANGE_TOPOLOGY = topology
-  vi.resetModules()
+  vi.stubEnv('NEXT_PUBLIC_KEY_EXCHANGE_TOPOLOGY', topology)
   return (await import('./key-exchange-service')).keyExchangeService
 }
 
 const whereOf = (call: number) => query.mock.calls[call][0].where
 
-beforeEach(() => query.mockReset())
-afterEach(() => {
-  delete process.env.NEXT_PUBLIC_KEY_EXCHANGE_TOPOLOGY
+beforeEach(() => {
+  vi.resetModules()
+  query.mockReset()
 })
+afterEach(() => vi.unstubAllEnvs())
 
 describe('getResponse query shapes', () => {
   it('v2 issues the one composite query and nothing else', async () => {
@@ -42,10 +52,7 @@ describe('getResponse query shapes', () => {
     const response = await service.getResponse(CONTRACT_ID, HASH)
 
     expect(query).toHaveBeenCalledTimes(1)
-    expect(whereOf(0)).toEqual([
-      ['contractId', '==', 'US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx'],
-      ['appEphemeralPubKeyHash', '==', HASH_BASE64],
-    ])
+    expect(whereOf(0)).toEqual(POLL_WHERE)
     expect(response?.keyIndex).toBe(5)
   })
 
@@ -58,10 +65,7 @@ describe('getResponse query shapes', () => {
     expect(query).toHaveBeenCalledTimes(2)
     // The poll is byte-for-byte v2's shape — it must stay servable by
     // byContractAndEphemeralKey alone.
-    expect(whereOf(0)).toEqual([
-      ['contractId', '==', 'US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx'],
-      ['appEphemeralPubKeyHash', '==', HASH_BASE64],
-    ])
+    expect(whereOf(0)).toEqual(POLL_WHERE)
     // The second read pins the hash ALONE: naming contractId too would route
     // it back to byContractAndEphemeralKey, which carries neither level.
     expect(whereOf(1)).toEqual([['appEphemeralPubKeyHash', '==', HASH_BASE64]])
