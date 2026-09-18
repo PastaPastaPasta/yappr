@@ -116,15 +116,19 @@ function makeRng(seed) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+  const int = (max) => Math.floor(next() * max);
   return {
     next,
-    int: (max) => Math.floor(next() * max),
-    pick: (list) => list[Math.floor(next() * list.length)],
+    int,
+    pick: (list) => list[int(list.length)],
     /** `count` distinct members of `list`, order-stable, without replacement. */
     sample: (list, count) => {
       const pool = [...list];
       const out = [];
-      while (out.length < count && pool.length > 0) out.push(...pool.splice(Math.floor(next() * pool.length), 1));
+      while (out.length < count && pool.length > 0) {
+        const [drawn] = pool.splice(int(pool.length), 1);
+        out.push(drawn);
+      }
       return out;
     },
   };
@@ -280,6 +284,15 @@ function blocksFromMarkdown(markdown, key) {
   }
   flush(paragraph);
   return blocks;
+}
+
+/** Words in a block array, for the dry-run table. Link nodes carry no text. */
+function countWords(blocks) {
+  return blocks.reduce((sum, block) => {
+    if (!Array.isArray(block.content)) return sum;
+    const text = block.content.map((node) => node.text ?? '').join(' ');
+    return sum + text.split(/\s+/).filter(Boolean).length;
+  }, 0);
 }
 
 /** zlib-compress JSON the way lib/utils/compression.ts does. */
@@ -2426,28 +2439,29 @@ function buildPlan({ seed, only, publishAnchor }) {
 
       const commentsEnabled = !COMMENTS_OFF.has(key);
       const published = !DRAFTS.has(key);
+      // Every blogPost field except the chunked payload. The create and the
+      // edit differ only in their data0–dataN, so both spread this.
+      const meta = {
+        title: post.title,
+        ...(post.subtitle ? { subtitle: post.subtitle } : {}),
+        ...(post.labels ? { labels: post.labels } : {}),
+        coverImage: coverUrl(post.cover),
+        commentsEnabled,
+        slug: post.slug,
+        ...(published ? { publishedAt: publishAnchor - daysBack * 86_400_000 } : {}),
+      };
       posts.push({
         key,
         blogKey: blog.key,
         owner: blog.owner,
         slug: post.slug,
         title: post.title,
-        words: blocks.reduce((sum, block) => sum
-          + (Array.isArray(block.content) ? block.content.map((n) => n.text ?? '').join(' ').split(/\s+/).filter(Boolean).length : 0), 0),
+        words: countWords(blocks),
         chunks,
         bytes: compressed.byteLength,
         commentsEnabled,
         published,
-        data: {
-          title: post.title,
-          ...(post.subtitle ? { subtitle: post.subtitle } : {}),
-          ...(post.labels ? { labels: post.labels } : {}),
-          coverImage: coverUrl(post.cover),
-          commentsEnabled,
-          slug: post.slug,
-          ...(published ? { publishedAt: publishAnchor - daysBack * 86_400_000 } : {}),
-          ...fields,
-        },
+        data: { ...meta, ...fields },
       });
 
       if (post.edit) {
@@ -2459,16 +2473,7 @@ function buildPlan({ seed, only, publishAnchor }) {
         edits.push({
           key: `${key}@edit`, postKey: key, owner: blog.owner, note: post.edit.note,
           chunks: edited.chunks, bytes: editedBytes.byteLength,
-          data: {
-            title: post.title,
-            ...(post.subtitle ? { subtitle: post.subtitle } : {}),
-            ...(post.labels ? { labels: post.labels } : {}),
-            coverImage: coverUrl(post.cover),
-            commentsEnabled,
-            slug: post.slug,
-            ...(published ? { publishedAt: publishAnchor - daysBack * 86_400_000 } : {}),
-            ...edited.fields,
-          },
+          data: { ...meta, ...edited.fields },
         });
       }
       daysBack += 4 + rng.int(9);
@@ -2534,6 +2539,15 @@ function saveState(file, state) {
 
 // ---- Execution ---------------------------------------------------------------
 
+/** Every persona the plan touches, as a blog owner, a commenter or a follower. */
+function planPersonas(plan) {
+  return [...new Set([
+    ...plan.blogs.map((blog) => blog.owner),
+    ...plan.comments.map((comment) => comment.author),
+    ...plan.follows.map((follow) => follow.follower),
+  ])];
+}
+
 /**
  * Runs each actor's tasks strictly in order (one state transition in flight per
  * identity — the contract nonce demands it) while up to `concurrency` actors
@@ -2552,9 +2566,12 @@ async function runPerActor(tasksByActor, concurrency) {
   await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, queues.length)) }, worker));
 }
 
-/** Groups tasks by the identity that signs them, preserving plan order. */
-function groupByActor(items, actorOf, taskOf) {
-  const groups = new Map();
+/**
+ * Groups tasks by the identity that signs them, preserving plan order. Pass
+ * `groups` to append to an existing map, so several item lists can share one
+ * per-actor queue (a follow, then a comment, then an edit).
+ */
+function groupByActor(items, actorOf, taskOf, groups = new Map()) {
   for (const item of items) {
     const actor = actorOf(item);
     if (!groups.has(actor)) groups.set(actor, []);
@@ -2569,7 +2586,7 @@ function createRecorder({ state, stateFile }) {
   return {
     tally,
     failures,
-    get: (key) => state.items[key] ?? null,
+    get(key) { return state.items[key] ?? null; },
     skip(key) { tally.skipped += 1; return state.items[key]; },
     record(key, id, kind = 'created') {
       state.items[key] = id;
@@ -2589,14 +2606,16 @@ async function seed({ battery, plan, state, stateFile, args, tokenId }) {
   const recorder = createRecorder({ state, stateFile });
   /** A state file with nothing in it is a fresh run: no recovery reads needed. */
   const fresh = Object.keys(state.items).length === 0;
+  /** A recovery read, skipped on a fresh run because nothing can be on chain. */
+  const alreadyOnChain = (lookup) => (fresh ? null : lookup());
+  const postByKey = new Map(plan.posts.map((post) => [post.key, post]));
   const actors = new Map();
   const actorFor = async (idx) => {
     if (!actors.has(idx)) actors.set(idx, await battery.personaActor(idx));
     return actors.get(idx);
   };
 
-  const personaIdxs = [...new Set([...plan.blogs.map((b) => b.owner), ...plan.comments.map((c) => c.author), ...plan.follows.map((f) => f.follower)])];
-  await Promise.all(personaIdxs.map((idx) => actorFor(idx)));
+  await Promise.all(planPersonas(plan).map((idx) => actorFor(idx)));
 
   // ---- YAPP: one token per comment, bought with credits when the maker
   // transfer was unavailable (the battery's documented fallback).
@@ -2621,19 +2640,21 @@ async function seed({ battery, plan, state, stateFile, args, tokenId }) {
     const actor = actors.get(blog.owner);
     // `blog` has no unique index, so a lost state entry would duplicate it —
     // match the owner's existing blogs by name before writing.
-    if (!fresh) {
+    const recoverByName = async () => {
       if (!ownerBlogCache.has(blog.owner)) {
         ownerBlogCache.set(blog.owner, await battery.queryDocs('blog', {
           where: [['$ownerId', '==', actor.ownerId]],
           orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100,
         }));
       }
-      const existing = ownerBlogCache.get(blog.owner).find((doc) => doc.name === blog.name);
-      if (existing) {
-        blogIds.set(blog.key, recorder.record(key, battery.b58(existing.$id), 'recovered'));
-        console.log(`  = ${blog.key} (already on chain)`);
-        return;
-      }
+      const found = ownerBlogCache.get(blog.owner).find((doc) => doc.name === blog.name);
+      return found ? battery.b58(found.$id) : null;
+    };
+    const resumed = await alreadyOnChain(recoverByName);
+    if (resumed) {
+      blogIds.set(blog.key, recorder.record(key, resumed, 'recovered'));
+      console.log(`  = ${blog.key} (already on chain)`);
+      return;
     }
     const outcome = await battery.attemptCreate(actor, 'blog', blog.data);
     if (!outcome.ok) { recorder.fail(key, outcome.error); console.log(`  ! ${blog.key}: ${String(outcome.error).slice(0, 140)}`); return; }
@@ -2657,13 +2678,11 @@ async function seed({ battery, plan, state, stateFile, args, tokenId }) {
       });
       return found ? battery.b58(found.$id) : null;
     };
-    if (!fresh) {
-      const existing = await recoverBySlug();
-      if (existing) {
-        postIds.set(post.key, recorder.record(post.key, existing, 'recovered'));
-        console.log(`  = ${post.key} (already on chain)`);
-        return;
-      }
+    const resumed = await alreadyOnChain(recoverBySlug);
+    if (resumed) {
+      postIds.set(post.key, recorder.record(post.key, resumed, 'recovered'));
+      console.log(`  = ${post.key} (already on chain)`);
+      return;
     }
     const outcome = await battery.attemptCreate(actor, 'blogPost', {
       blogId: id32(blogId),
@@ -2703,87 +2722,76 @@ async function seed({ battery, plan, state, stateFile, args, tokenId }) {
     return commentIndex.get(postId);
   };
 
-  const tasks = new Map();
-  const enqueue = (actorIdx, task) => {
-    if (!tasks.has(actorIdx)) tasks.set(actorIdx, []);
-    tasks.get(actorIdx).push(task);
+  const writeFollow = async (follow) => {
+    const key = `follow:${follow.key}`;
+    if (recorder.get(key)) { recorder.skip(key); return; }
+    const actor = actors.get(follow.follower);
+    const blogId = blogIds.get(follow.blogKey);
+    const recover = async () => {
+      const [found] = await battery.queryDocs('blogFollow', {
+        where: [['$ownerId', '==', actor.ownerId], ['blogId', '==', blogId]], limit: 1,
+      });
+      return found ? battery.b58(found.$id) : null;
+    };
+    const resumed = await alreadyOnChain(recover);
+    if (resumed) { recorder.record(key, resumed, 'recovered'); return; }
+    const outcome = await battery.attemptCreate(actor, 'blogFollow', { blogId: id32(blogId) });
+    if (outcome.ok) { recorder.record(key, outcome.id); return; }
+    const existing = await recover();
+    if (existing) { recorder.record(key, existing, 'recovered'); return; }
+    recorder.fail(key, outcome.error);
+    console.log(`  ! follow ${follow.key}: ${String(outcome.error).slice(0, 160)}`);
   };
 
-  for (const follow of plan.follows) {
-    if (!blogIds.has(follow.blogKey)) continue;
-    enqueue(follow.follower, async () => {
-      const key = `follow:${follow.key}`;
-      if (recorder.get(key)) { recorder.skip(key); return; }
-      const actor = actors.get(follow.follower);
-      const blogId = blogIds.get(follow.blogKey);
-      const recover = async () => {
-        const [found] = await battery.queryDocs('blogFollow', {
-          where: [['$ownerId', '==', actor.ownerId], ['blogId', '==', blogId]], limit: 1,
-        });
-        return found ? battery.b58(found.$id) : null;
-      };
-      if (!fresh) {
-        const existing = await recover();
-        if (existing) { recorder.record(key, existing, 'recovered'); return; }
-      }
-      const outcome = await battery.attemptCreate(actor, 'blogFollow', { blogId: id32(blogId) });
-      if (outcome.ok) { recorder.record(key, outcome.id); return; }
-      const existing = await recover();
-      if (existing) { recorder.record(key, existing, 'recovered'); return; }
-      recorder.fail(key, outcome.error);
-      console.log(`  ! follow ${follow.key}: ${String(outcome.error).slice(0, 160)}`);
-    });
-  }
-
-  for (const comment of plan.comments) {
+  const writeComment = async (comment) => {
+    const key = `comment:${comment.key}`;
+    if (recorder.get(key)) { recorder.skip(key); return; }
+    const actor = actors.get(comment.author);
+    const post = postByKey.get(comment.postKey);
     const postId = postIds.get(comment.postKey);
-    if (!postId) continue;
-    const post = plan.posts.find((candidate) => candidate.key === comment.postKey);
-    enqueue(comment.author, async () => {
-      const key = `comment:${comment.key}`;
-      if (recorder.get(key)) { recorder.skip(key); return; }
-      const actor = actors.get(comment.author);
-      if (!fresh) {
-        const existing = (await commentsOn(postId)).find((doc) => doc.ownerId === actor.ownerId && doc.content === comment.content);
-        if (existing) { recorder.record(key, existing.id, 'recovered'); return; }
-      }
-      const outcome = await battery.attemptCreate(actor, 'blogComment', {
-        blogPostId: id32(postId),
-        // Must equal the post's attested `author` or consensus rejects (40127).
-        blogPostOwnerId: id32(actors.get(post.owner).ownerId),
-        content: comment.content,
-      }, { tokenCost: COMMENT_COST });
-      if (outcome.ok) { recorder.record(key, outcome.id); return; }
-      recorder.fail(key, outcome.error);
-      console.log(`  ! comment ${comment.key}: ${String(outcome.error).slice(0, 160)}`);
-    });
-  }
+    const resumed = await alreadyOnChain(async () => (await commentsOn(postId))
+      .find((doc) => doc.ownerId === actor.ownerId && doc.content === comment.content));
+    if (resumed) { recorder.record(key, resumed.id, 'recovered'); return; }
+    const outcome = await battery.attemptCreate(actor, 'blogComment', {
+      blogPostId: id32(postId),
+      // Must equal the post's attested `author` or consensus rejects (40127).
+      blogPostOwnerId: id32(actors.get(post.owner).ownerId),
+      content: comment.content,
+    }, { tokenCost: COMMENT_COST });
+    if (outcome.ok) { recorder.record(key, outcome.id); return; }
+    recorder.fail(key, outcome.error);
+    console.log(`  ! comment ${comment.key}: ${String(outcome.error).slice(0, 160)}`);
+  };
 
-  for (const edit of plan.edits) {
+  const writeEdit = async (edit) => {
+    if (recorder.get(edit.key)) { recorder.skip(edit.key); return; }
+    const actor = actors.get(edit.owner);
+    const post = postByKey.get(edit.postKey);
     const postId = postIds.get(edit.postKey);
-    if (!postId) continue;
-    enqueue(edit.owner, async () => {
-      if (recorder.get(edit.key)) { recorder.skip(edit.key); return; }
-      const actor = actors.get(edit.owner);
-      const current = await battery.fetchDocument('blogPost', postId);
-      const revision = BigInt(current?.revision ?? 1);
-      // Already edited (by an earlier run whose state file was lost).
-      if (revision > 1n) { recorder.record(edit.key, postId, 'recovered'); return; }
-      const outcome = await battery.attemptReplace(actor, 'blogPost', postId, {
-        blogId: id32(blogIds.get(plan.posts.find((p) => p.key === edit.postKey).blogKey)),
-        author: id32(actor.ownerId),
-        ...edit.data,
-      }, revision);
-      if (outcome.ok) {
-        recorder.record(edit.key, postId);
-        console.log(`  ~ edited ${edit.postKey} (rev ${revision + 1n}, ${edit.bytes}B) — ${edit.note}`);
-        return;
-      }
-      recorder.fail(edit.key, outcome.error);
-      console.log(`  ! edit ${edit.postKey}: ${String(outcome.error).slice(0, 160)}`);
-    });
-  }
+    const current = await battery.fetchDocument('blogPost', postId);
+    const revision = BigInt(current?.revision ?? 1);
+    // Already edited (by an earlier run whose state file was lost).
+    if (revision > 1n) { recorder.record(edit.key, postId, 'recovered'); return; }
+    const outcome = await battery.attemptReplace(actor, 'blogPost', postId, {
+      blogId: id32(blogIds.get(post.blogKey)),
+      author: id32(actor.ownerId),
+      ...edit.data,
+    }, revision);
+    if (outcome.ok) {
+      recorder.record(edit.key, postId);
+      console.log(`  ~ edited ${edit.postKey} (rev ${revision + 1n}, ${edit.bytes}B) — ${edit.note}`);
+      return;
+    }
+    recorder.fail(edit.key, outcome.error);
+    console.log(`  ! edit ${edit.postKey}: ${String(outcome.error).slice(0, 160)}`);
+  };
 
+  // One queue per signer, in this order: an actor's follows, then its comments,
+  // then its edits. Items whose parent write failed are dropped.
+  const tasks = new Map();
+  groupByActor(plan.follows.filter((follow) => blogIds.has(follow.blogKey)), (follow) => follow.follower, writeFollow, tasks);
+  groupByActor(plan.comments.filter((comment) => Boolean(postIds.get(comment.postKey))), (comment) => comment.author, writeComment, tasks);
+  groupByActor(plan.edits.filter((edit) => Boolean(postIds.get(edit.postKey))), (edit) => edit.owner, writeEdit, tasks);
   await runPerActor(tasks, args.concurrency);
   return { recorder, blogIds, postIds, actors };
 }
@@ -2794,10 +2802,8 @@ async function seed({ battery, plan, state, stateFile, args, tokenId }) {
 // ranked pages, blog-comment-service.ts grouped counts, blog-follow-service.ts
 // counts) rather than through whatever the writes happened to return.
 
-async function verify({ battery, plan, blogIds, postIds }) {
-  const blogName = new Map(plan.blogs.map((blog) => [blogIds.get(blog.key), blog.name]));
-  const postTitle = new Map(plan.posts.map((post) => [postIds.get(post.key), `${post.title}`]));
-  const postBlog = new Map(plan.posts.map((post) => [postIds.get(post.key), post.blogKey]));
+async function verify({ battery, contractId, plan, blogIds, postIds }) {
+  const postById = new Map(plan.posts.map((post) => [postIds.get(post.key), post]));
 
   console.log('\n=== read back through the app\'s query shapes ===');
 
@@ -2854,8 +2860,8 @@ async function verify({ battery, plan, blogIds, postIds }) {
   const { page: discussed } = await battery.ranked('blogComment', 'blogPostId', { type: 'count' }, { direction: 'desc', limit: 10 });
   console.log('\nMost discussed posts (ranked commentCount axis)');
   for (const entry of discussed.entries.filter((e) => e.value > 0n).slice(0, 8)) {
-    const title = postTitle.get(entry.groupValue);
-    console.log(`  ${String(Number(entry.value)).padStart(3)}  ${title ? `${title} [${postBlog.get(entry.groupValue)}]` : `(a post from another run) ${entry.groupValue}`}`);
+    const post = postById.get(entry.groupValue);
+    console.log(`  ${String(Number(entry.value)).padStart(3)}  ${post ? `${post.title} [${post.blogKey}]` : `(a post from another run) ${entry.groupValue}`}`);
   }
 
   // documents.history on every edited post.
@@ -2865,7 +2871,7 @@ async function verify({ battery, plan, blogIds, postIds }) {
     if (!postId) continue;
     try {
       const history = await battery.readback(() => battery.sdk.documents.history({
-        dataContractId: battery.contractId, documentTypeName: 'blogPost', documentId: postId,
+        dataContractId: contractId, documentTypeName: 'blogPost', documentId: postId,
       }));
       const revisions = [...history.values()].map((doc) => Number(doc.toObject().$revision ?? 0));
       console.log(`  ${edit.postKey}: ${history.size} revision(s) [${revisions.join(', ')}]`);
@@ -2902,12 +2908,12 @@ function printPlan(plan) {
     }
   }
 
-  const words = plan.posts.reduce((sum, post) => sum + post.words, 0);
+  const wordCounts = plan.posts.map((post) => post.words).sort((a, b) => a - b);
+  const words = wordCounts.reduce((sum, count) => sum + count, 0);
+  const median = wordCounts[Math.floor(wordCounts.length / 2)];
   console.log(`\nblocks by type: ${[...blockTypes.entries()].sort((a, b) => b[1] - a[1]).map(([type, count]) => `${type}=${count}`).join(' ')}`);
   console.log(`chunk spread: ${[1, 2, 3, 4].map((n) => `${n}→${plan.posts.filter((post) => post.chunks === n).length}`).join(' ')}`);
-  console.log(`totals: ${plan.blogs.length} blogs, ${plan.posts.length} posts (${words} words, median ${
-    plan.posts.map((p) => p.words).sort((a, b) => a - b)[Math.floor(plan.posts.length / 2)]}w), ${
-    plan.edits.length} edits, ${plan.comments.length} comments, ${plan.follows.length} follows`);
+  console.log(`totals: ${plan.blogs.length} blogs, ${plan.posts.length} posts (${words} words, median ${median}w), ${plan.edits.length} edits, ${plan.comments.length} comments, ${plan.follows.length} follows`);
   console.log(`YAPP required: ${plan.comments.length} (1 per comment)`);
   console.log('\nfirst three blocks of the first post (the shape BlockNote is handed back):');
   console.log(JSON.stringify(blocksFromMarkdown(BLOGS[0].posts[0].body, 'sample').slice(0, 3), null, 1));
@@ -2932,7 +2938,6 @@ try {
   const handle = createSdkHandle({ contractIds: [socialId, args.contract] });
   const { protocolVersion } = await handle.connect();
   const battery = createBattery({ handle, contractId: args.contract, socialId });
-  battery.contractId = args.contract;
   console.log(`connected (PV${protocolVersion}); blog v2 ${args.contract}; YAPP from ${socialId}`);
   const tokenId = await battery.readback(() => battery.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
 
@@ -2950,10 +2955,12 @@ try {
     saveState(args.state, state);
   }
 
-  const rows = await verify({ battery, plan, blogIds: result.blogIds, postIds: result.postIds });
+  const rows = await verify({
+    battery, contractId: args.contract, plan, blogIds: result.blogIds, postIds: result.postIds,
+  });
 
   console.log('\n=== personas ===');
-  const personaIdxs = [...new Set([...plan.blogs.map((b) => b.owner), ...plan.comments.map((c) => c.author), ...plan.follows.map((f) => f.follower)])].sort((a, b) => a - b);
+  const personaIdxs = planPersonas(plan).sort((a, b) => a - b);
   const actorList = await Promise.all(personaIdxs.map(async (idx) => result.actors.get(idx) ?? battery.personaActor(idx)));
   const credits = await battery.readback(() => battery.sdk.identities.balances(actorList.map((actor) => actor.ownerId)));
   for (const actor of actorList) {
