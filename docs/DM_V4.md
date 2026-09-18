@@ -124,9 +124,12 @@ effective cadence is the slower of the two.
 Two lifecycle details the badge depends on:
 
 - `getUnreadTotal` returns **`null`**, not 0, when it cannot tell (any single
-  conversation's count failed, or the whole pass threw). The caller then leaves
-  the badge alone; publishing 0 would read as "all caught up". A partial total
-  is not a total.
+  conversation's count failed, any conversation's message page failed to load,
+  or the whole pass threw). The caller then leaves the badge alone; publishing
+  0 would read as "all caught up". A partial total is not a total. The list on
+  `/messages` is the opposite: it tolerates a failed page (that conversation
+  shows without a preview) so one bad read cannot hide every other
+  conversation.
 - Opening a conversation decrements `dmUnreadCount` immediately rather than
   waiting up to 30 s for the next poll, and the sidebar effect resets it to 0
   when there is no signed-in user, so a logout or user switch cannot leave the
