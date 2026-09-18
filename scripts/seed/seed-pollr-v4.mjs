@@ -261,6 +261,9 @@ function prngFor(seed, label) {
 
 const randInt = (rng, min, max) => min + Math.floor(rng() * (max - min + 1));
 
+/** Total of a numeric array — weights, apportionments and tallies all want one. */
+const sum = (values) => values.reduce((total, value) => total + value, 0);
+
 /** Fisher-Yates on a copy, driven by the poll's PRNG. */
 function shuffled(rng, items) {
   const out = [...items];
@@ -280,23 +283,23 @@ function shuffled(rng, items) {
  * defeats the point of seeding a varied feed.
  */
 function apportion(weights, total) {
-  const sum = weights.reduce((a, b) => a + b, 0);
-  if (sum <= 0 || total <= 0) return weights.map(() => 0);
-  const exact = weights.map((weight) => (weight / sum) * total);
+  const totalWeight = sum(weights);
+  if (totalWeight <= 0 || total <= 0) return weights.map(() => 0);
+  const exact = weights.map((weight) => (weight / totalWeight) * total);
   const counts = exact.map(Math.floor);
   const order = exact
     .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
     .sort((a, b) => b.fraction - a.fraction || a.index - b.index);
   // `remaining` is strictly below the option count, so `order` always has a
   // next-largest remainder to hand the extra ballot to.
-  let remaining = total - counts.reduce((a, b) => a + b, 0);
-  for (let i = 0; remaining > 0; i++, remaining--) counts[order[i].index] += 1;
+  const remaining = total - sum(counts);
+  for (let i = 0; i < remaining; i++) counts[order[i].index] += 1;
   return counts;
 }
 
 /** Index sampled from `weights` proportionally; -1 only when every weight is 0. */
 function weightedPick(rng, weights) {
-  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  const total = sum(weights);
   if (total <= 0) return -1;
   let threshold = rng() * total;
   for (let i = 0; i < weights.length; i++) {
@@ -352,8 +355,9 @@ function buildPlan({ seed, nowMs }) {
   return POLL_BANK.map((entry) => {
     const rng = prngFor(seed, entry.key);
     const optionCount = entry.options.length;
-    const weights = entry.pattern === 'zero' ? new Array(optionCount).fill(0) : weightsFor(rng, entry.pattern, optionCount);
-    const turnout = entry.pattern === 'zero' ? 0 : randInt(rng, 6, PERSONAS.length);
+    const unvoted = entry.pattern === 'zero'; // a poll nobody has answered yet
+    const weights = unvoted ? new Array(optionCount).fill(0) : weightsFor(rng, entry.pattern, optionCount);
+    const turnout = unvoted ? 0 : randInt(rng, 6, PERSONAS.length);
     const voters = shuffled(rng, PERSONAS).slice(0, turnout);
     const docType = entry.multiChoice ? 'multiVote' : 'vote';
 
@@ -376,7 +380,7 @@ function buildPlan({ seed, nowMs }) {
       // result is decided up front and the voters are dealt into it.
       const perChoice = apportion(weights, voters.length);
       const deck = shuffled(rng, perChoice.flatMap((count, choice) => new Array(count).fill(choice)));
-      voters.forEach((voter, index) => ballots.push({ voter, choice: deck[index] }));
+      ballots.push(...voters.map((voter, index) => ({ voter, choice: deck[index] })));
     }
     ballots.sort((a, b) => a.voter - b.voter || a.choice - b.choice);
 
@@ -506,7 +510,7 @@ async function createDocument(handle, { actor, contractId, docType, data, entrop
       if (await landed()) return { id };
       // A clean return with nothing on chain still means the write may be a
       // block behind; settle before spending another (duplicate-id) transition.
-      for (let poll = 0; poll < SETTLE_POLLS; poll++) {
+      for (let i = 0; i < SETTLE_POLLS; i++) {
         await sleep(SETTLE_MS);
         if (await landed()) return { id };
       }
@@ -522,10 +526,12 @@ async function createDocument(handle, { actor, contractId, docType, data, entrop
         if (await landed()) return { id };
         throw new Error(`rejected as a duplicate, but this exact entry is not on chain — the voter already voted differently: ${text.slice(0, 160)}`);
       }
-      if (TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text)) {
+      const deadSdk = TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text);
+      if (deadSdk) {
         try { await handle.reconnect(text); } catch { /* the next attempt rebuilds */ }
       }
-      for (let poll = 0; poll < SETTLE_POLLS; poll++) {
+      // A read that faults here is noise, not a verdict: keep settling.
+      for (let i = 0; i < SETTLE_POLLS; i++) {
         await sleep(SETTLE_MS);
         try {
           if (await landed()) return { id };
@@ -533,7 +539,7 @@ async function createDocument(handle, { actor, contractId, docType, data, entrop
           lastError = readError;
         }
       }
-      const retryable = TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text) || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text);
+      const retryable = deadSdk || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text);
       if (!retryable && (/code=4\d{4}/.test(text) || /consensus/i.test(text))) throw error; // Platform said no
     }
     await sleep(2_000 * attempt);
@@ -571,6 +577,12 @@ async function runChains(chains, limit, runOp) {
 }
 
 // ---- Reads (the app's own shapes) --------------------------------------------
+
+/** A fetched document's properties, whichever of the two shapes the SDK returns. */
+const fieldsOf = (document) => (typeof document?.toObject === 'function' ? document.toObject() : document);
+
+/** A raw identifier property (poll `author`, post `embedId`) as base58, or null when absent. */
+const identifierFrom = (bytes) => (bytes ? bs58.encode(Uint8Array.from(bytes)) : null);
 
 /**
  * A grouped count's integer key, in either form the SDK produces: the hex of
@@ -649,17 +661,16 @@ async function winnerOf(handle, contractId, poll, pollId) {
  * other script in the repo writes.
  */
 async function checkPollDocument(handle, contractId, poll, pollId, creatorOwnerId) {
-  const document = await readback(handle, () => handle.sdk.documents.get(contractId, 'poll', pollId));
-  const fields = typeof document?.toObject === 'function' ? document.toObject() : document;
+  const fields = fieldsOf(await readback(handle, () => handle.sdk.documents.get(contractId, 'poll', pollId)));
   if (!fields) return ['the poll document does not read back'];
   const problems = [];
-  const author = fields.author ? bs58.encode(Uint8Array.from(fields.author)) : null;
+  const author = identifierFrom(fields.author);
   if (author !== creatorOwnerId) problems.push(`author=${author} but the creator is ${creatorOwnerId}`);
   if (Boolean(fields.multiChoice) !== poll.multiChoice) problems.push(`multiChoice=${fields.multiChoice}, planned ${poll.multiChoice}`);
   const endsAt = fields.endsAt === undefined || fields.endsAt === null ? undefined : Number(fields.endsAt);
   if (endsAt !== poll.endsAtMs) problems.push(`endsAt=${endsAt}, planned ${poll.endsAtMs}`);
-  const options = poll.options.filter((option, index) => fields[`option${index}`] !== option);
-  if (options.length > 0) problems.push(`${options.length} option(s) differ from the plan`);
+  const wrongOptions = poll.options.filter((option, index) => fields[`option${index}`] !== option);
+  if (wrongOptions.length > 0) problems.push(`${wrongOptions.length} option(s) differ from the plan`);
   return problems;
 }
 
@@ -668,7 +679,7 @@ async function checkPollDocument(handle, contractId, poll, pollId, creatorOwnerI
 const bar = (count, total) => '#'.repeat(total > 0 ? Math.round((count / total) * 24) : 0);
 
 function printTally(poll, pollId, counts, winner) {
-  const total = counts.reduce((sum, count) => sum + count, 0);
+  const total = sum(counts);
   const mismatch = counts.join(',') !== poll.expected.join(',');
   console.log(`\n  ${poll.key} [${poll.docType}${poll.closed ? ', closed' : ''}] ${pollId}`);
   console.log(`    ${poll.question}`);
@@ -709,15 +720,12 @@ function parseArgs(argv) {
   if (!Number.isFinite(args.seed)) throw new Error('--seed must be a number');
   if (!Number.isInteger(args.concurrency) || args.concurrency < 1) throw new Error('--concurrency must be a positive integer');
   if (!Number.isFinite(args.nowMs) || args.nowMs <= 0) throw new Error('--now must be a positive epoch in ms');
-  if (!args.contract) {
-    args.contract = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID
-      || readEnvFile(join(REPO_ROOT, '.env.devnet')).NEXT_PUBLIC_POLLR_CONTRACT_ID;
-  }
+  const env = readEnvFile(join(REPO_ROOT, '.env.devnet'));
+  if (!args.contract) args.contract = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID || env.NEXT_PUBLIC_POLLR_CONTRACT_ID;
   if (!args.contract) throw new Error('Pass --contract <id> or set NEXT_PUBLIC_POLLR_CONTRACT_ID');
   // The poll shape here is v4-only: `author` is required, and v3's
   // additionalProperties:false would refuse all fourteen of them.
-  const topology = process.env.NEXT_PUBLIC_POLLR_TOPOLOGY
-    || readEnvFile(join(REPO_ROOT, '.env.devnet')).NEXT_PUBLIC_POLLR_TOPOLOGY;
+  const topology = process.env.NEXT_PUBLIC_POLLR_TOPOLOGY || env.NEXT_PUBLIC_POLLR_TOPOLOGY;
   if (topology && topology !== 'v4') {
     throw new Error(`this seeder writes v4 poll and ballot shapes, but NEXT_PUBLIC_POLLR_TOPOLOGY is ${topology}`);
   }
@@ -725,9 +733,9 @@ function parseArgs(argv) {
 }
 
 function printPlan(plan, socialId, contractId) {
-  const ballots = plan.reduce((sum, poll) => sum + poll.ballots.length, 0);
-  const single = plan.filter((poll) => !poll.multiChoice);
-  console.log(`plan: ${plan.length} polls (${single.length} single-choice, ${plan.length - single.length} multi-choice), `
+  const ballots = sum(plan.map((poll) => poll.ballots.length));
+  const singleChoice = plan.filter((poll) => !poll.multiChoice).length;
+  console.log(`plan: ${plan.length} polls (${singleChoice} single-choice, ${plan.length - singleChoice} multi-choice), `
     + `${plan.length} embedding posts, ${ballots} ballots`);
   console.log(`  pollr contract ${contractId}`);
   console.log(`  social contract ${socialId} (posts cost ${TOKEN_COST.post} YAPP each = ${plan.length * TOKEN_COST.post} YAPP total)`);
@@ -741,6 +749,196 @@ function printPlan(plan, socialId, contractId) {
     console.log(`    options: ${poll.options.map((option, index) => `${index}=${option}`).join(' | ')}`);
     console.log(`    voters (${poll.voters.length}): ${poll.voters.join(', ') || 'none'}`);
     console.log(`    planned tally: ${poll.expected.join(', ')} (${poll.ballots.length} ballots)`);
+  }
+}
+
+// ---- Seeding phases ----------------------------------------------------------
+
+/** `key`'s op chain — the list it runs sequentially — started on first use. */
+function chainFor(chains, key) {
+  if (!chains.has(key)) chains.set(key, []);
+  return chains.get(key);
+}
+
+/**
+ * Creates one of a poll's two documents — the `poll` itself, or the `post` that
+ * embeds it — unless the checkpoint already holds its id.
+ *
+ * The id is recorded under `<docType>Id` and checkpointed the moment it lands,
+ * and the entropy label is `<docType>/<poll key>`: that is what lets a later run
+ * recompute the id from the plan instead of writing a second copy. `data` is a
+ * thunk because the post's payload reads the poll id the previous op recorded.
+ */
+async function ensurePollDocument(run, { poll, actor, record, contractId, docType, data, tokenCost }) {
+  const field = `${docType}Id`;
+  if (record[field]) {
+    run.skipped[docType] += 1;
+    return;
+  }
+  const outcome = await createDocument(run.handle, {
+    actor,
+    contractId,
+    docType,
+    data: data(),
+    entropy: entropyFor(run.seed, contractId, `${docType}/${poll.key}`),
+    tokenCost,
+    accepted: (id) => documentExists(run.handle, contractId, docType, id),
+  });
+  record[field] = outcome.id;
+  run.save();
+  if (outcome.skipped) run.skipped[docType] += 1; else run.written[docType] += 1;
+  console.log(`  ${docType} ${poll.key} ${outcome.skipped ? 'already on chain' : 'created'} by ${actor.handle}: ${outcome.id}`);
+}
+
+/** Phase 1: the poll and the post that embeds it, one chain per creator. */
+async function seedPollsAndPosts(run, plan) {
+  const chains = new Map();
+  for (const poll of plan) chainFor(chains, poll.creator).push(poll);
+
+  await runChains(chains, run.concurrency, async (poll, actorIdx) => {
+    const actor = run.actors.get(actorIdx);
+    const record = (run.state.polls[poll.key] ??= { docType: poll.docType, votes: {} });
+    try {
+      // Polls are immutable, so a bank entry whose multiChoice flag changed
+      // after its poll landed can never be reconciled — the ballots would go
+      // to the other doctype and every tally would read empty.
+      if (record.docType !== poll.docType) {
+        throw new Error(`the poll on chain is a ${record.docType} poll but the bank now says ${poll.docType}; `
+          + 'polls are immutable — give the edited entry a new key');
+      }
+      await ensurePollDocument(run, {
+        poll, actor, record,
+        contractId: run.contractId,
+        docType: 'poll',
+        data: () => ({
+          question: poll.question,
+          ...Object.fromEntries(poll.options.map((option, index) => [`option${index}`, option])),
+          ...(poll.multiChoice ? { multiChoice: true } : {}),
+          ...(poll.endsAtMs === undefined ? {} : { endsAt: poll.endsAtMs }),
+          author: bs58.decode(actor.ownerId),
+        }),
+      });
+      await ensurePollDocument(run, {
+        poll, actor, record,
+        contractId: run.socialId,
+        docType: 'post',
+        tokenCost: TOKEN_COST.post,
+        data: () => ({
+          content: poll.caption,
+          language: 'en',
+          author: bs58.decode(actor.ownerId),
+          hashtag: poll.hashtag,
+          embedContractId: bs58.decode(run.contractId),
+          embedDocType: 'poll',
+          embedId: bs58.decode(record.pollId),
+        }),
+      });
+    } catch (error) {
+      const message = describeErr(error);
+      run.failures.push({ poll: poll.key, stage: record.pollId ? 'post' : 'poll', error: message });
+      console.error(`  FAIL ${poll.key}: ${message.slice(0, 220)}`);
+    }
+  });
+}
+
+/** Phase 2: every ballot, one chain per voter. */
+async function seedBallots(run, plan) {
+  const chains = new Map();
+  for (const poll of plan) {
+    const record = run.state.polls[poll.key];
+    if (!record?.pollId) continue; // its poll never landed; nothing to vote on
+    for (const ballot of poll.ballots) {
+      chainFor(chains, ballot.voter).push({ poll, record, choice: ballot.choice });
+    }
+  }
+
+  await runChains(chains, run.concurrency, async ({ poll, record, choice }, actorIdx) => {
+    const actor = run.actors.get(actorIdx);
+    const key = ballotKey(actorIdx, choice);
+    if (record.votes?.[key]) { run.skipped[poll.docType] += 1; return; }
+    try {
+      const outcome = await createDocument(run.handle, {
+        actor,
+        contractId: run.contractId,
+        docType: poll.docType,
+        data: {
+          pollId: bs58.decode(record.pollId),
+          pollOwnerId: bs58.decode(run.actors.get(poll.creator).ownerId),
+          choice,
+        },
+        entropy: entropyFor(run.seed, run.contractId, `ballot/${poll.key}/${actorIdx}/${choice}`),
+        // Structural uniqueness makes a repeat ballot a 40105; that means the
+        // voter already voted, which is the end state this op wanted.
+        duplicateIsSuccess: true,
+        accepted: () => ballotExists(run.handle, run.contractId, poll.docType, record.pollId, actor.ownerId, choice),
+      });
+      record.votes ??= {};
+      record.votes[key] = true;
+      run.save();
+      if (outcome.skipped) run.skipped[poll.docType] += 1; else run.written[poll.docType] += 1;
+    } catch (error) {
+      const message = describeErr(error);
+      run.failures.push({ poll: poll.key, stage: `${poll.docType} ${actorIdx}->${choice}`, error: message });
+      console.error(`  FAIL ballot ${poll.key} ${actor.handle} choice ${choice}: ${message.slice(0, 200)}`);
+    }
+  });
+}
+
+// ---- Verification ------------------------------------------------------------
+
+/** Re-reads every poll through the app's own shapes; returns the ones that differ from the plan. */
+async function verifyPolls(run, plan) {
+  console.log('\n=== tallies (grouped count per choice + ranked winner, the shapes the poll card uses) ===');
+  const badPolls = [];
+  let ballotsOnChain = 0;
+  for (const poll of plan) {
+    const record = run.state.polls[poll.key];
+    if (!record?.pollId) {
+      console.log(`\n  ${poll.key}: no poll on chain`);
+      badPolls.push(poll.key);
+      continue;
+    }
+    const creatorOwnerId = run.actors.get(poll.creator).ownerId;
+    const problems = await checkPollDocument(run.handle, run.contractId, poll, record.pollId, creatorOwnerId);
+    const counts = await tallyOf(run.handle, run.contractId, poll, record.pollId);
+    if (!counts) {
+      console.log(`\n  ${poll.key} [${poll.docType}] ${record.pollId}: the grouped tally decoded to nothing (key encoding changed?)`);
+      badPolls.push(poll.key);
+      continue;
+    }
+    const winner = await winnerOf(run.handle, run.contractId, poll, record.pollId);
+    const { total, mismatch } = printTally(poll, record.pollId, counts, winner);
+    ballotsOnChain += total;
+    if (mismatch) problems.push('the tally does not match the plan');
+
+    const post = record.postId
+      ? await readback(run.handle, () => run.handle.sdk.documents.get(run.socialId, 'post', record.postId))
+      : null;
+    const embedded = identifierFrom(fieldsOf(post)?.embedId);
+    console.log(`      post ${record.postId ?? '(missing)'} embed ${embedded === record.pollId ? 'OK' : `BAD (${embedded})`}`);
+    if (embedded !== record.pollId) problems.push(`the post does not embed this poll (${embedded})`);
+
+    if (problems.length > 0) {
+      badPolls.push(poll.key);
+      for (const problem of problems) console.log(`      PROBLEM: ${problem}`);
+    }
+  }
+  return { badPolls, ballotsOnChain };
+}
+
+/** What each persona has left — the first thing to read when a post failed for want of YAPP. */
+async function printPersonas(run, plan) {
+  console.log('\n=== personas ===');
+  const ids = [...run.actors.values()].map((actor) => actor.ownerId);
+  const tokenId = await readback(run.handle, () => run.handle.sdk.tokens.calculateId(run.socialId, YAPP_TOKEN_POSITION));
+  const credits = await readback(run.handle, () => run.handle.sdk.identities.balances(ids));
+  const yapp = await readback(run.handle, () => run.handle.sdk.tokens.balances(ids, tokenId));
+  for (const actor of run.actors.values()) {
+    const creditBalance = (credits instanceof Map ? credits.get(actor.ownerId) : undefined) ?? 0n;
+    const yappBalance = (yapp instanceof Map ? yapp.get(actor.ownerId) : undefined) ?? 0n;
+    const created = plan.filter((poll) => poll.creator === actor.personaIdx).length;
+    console.log(`  ${String(actor.personaIdx).padEnd(4)} ${actor.handle.padEnd(16)} ${actor.ownerId}  `
+      + `credits=${(Number(creditBalance) / 1e9).toFixed(3)}G  YAPP=${yappBalance}  polls=${created}`);
   }
 }
 
@@ -769,197 +967,42 @@ async function main() {
     network: network(), contractId: args.contract, socialId, seed: args.seed,
   });
 
-  const written = { poll: 0, post: 0, vote: 0, multiVote: 0 };
-  const skipped = { poll: 0, post: 0, vote: 0, multiVote: 0 };
-  const failures = [];
+  /** Everything the phases share: the connection, the plan's wiring, the checkpoint and the counters. */
+  const run = {
+    handle,
+    actors,
+    state,
+    seed: args.seed,
+    contractId: args.contract,
+    socialId,
+    concurrency: args.concurrency,
+    save: () => saveState(args.state, state),
+    written: { poll: 0, post: 0, vote: 0, multiVote: 0 },
+    skipped: { poll: 0, post: 0, vote: 0, multiVote: 0 },
+    failures: [],
+  };
 
   if (!args.verifyOnly) {
-    // --- phase 1: poll + its embedding post, one chain per creator ---
-    const creatorChains = new Map();
-    for (const poll of plan) {
-      if (!creatorChains.has(poll.creator)) creatorChains.set(poll.creator, []);
-      creatorChains.get(poll.creator).push(poll);
-    }
-
-    await runChains(creatorChains, args.concurrency, async (poll, actorIdx) => {
-      const actor = actors.get(actorIdx);
-      const record = (state.polls[poll.key] ??= { docType: poll.docType, votes: {} });
-      try {
-        // Polls are immutable, so a bank entry whose multiChoice flag changed
-        // after its poll landed can never be reconciled — the ballots would go
-        // to the other doctype and every tally would read empty.
-        if (record.docType !== poll.docType) {
-          throw new Error(`the poll on chain is a ${record.docType} poll but the bank now says ${poll.docType}; `
-            + 'polls are immutable — give the edited entry a new key');
-        }
-        if (!record.pollId) {
-          const entropy = entropyFor(args.seed, args.contract, `poll/${poll.key}`);
-          const data = {
-            question: poll.question,
-            ...Object.fromEntries(poll.options.map((option, index) => [`option${index}`, option])),
-            ...(poll.multiChoice ? { multiChoice: true } : {}),
-            ...(poll.endsAtMs === undefined ? {} : { endsAt: poll.endsAtMs }),
-            author: bs58.decode(actor.ownerId),
-          };
-          const outcome = await createDocument(handle, {
-            actor,
-            contractId: args.contract,
-            docType: 'poll',
-            data,
-            entropy,
-            accepted: (id) => documentExists(handle, args.contract, 'poll', id),
-          });
-          const id = outcome.id;
-          record.pollId = id;
-          saveState(args.state, state);
-          if (outcome.skipped) skipped.poll += 1; else written.poll += 1;
-          console.log(`  poll ${poll.key} ${outcome.skipped ? 'already on chain' : 'created'} by ${actor.handle}: ${id}`);
-        } else {
-          skipped.poll += 1;
-        }
-
-        if (!record.postId) {
-          const entropy = entropyFor(args.seed, socialId, `post/${poll.key}`);
-          const data = {
-            content: poll.caption,
-            language: 'en',
-            author: bs58.decode(actor.ownerId),
-            hashtag: poll.hashtag,
-            embedContractId: bs58.decode(args.contract),
-            embedDocType: 'poll',
-            embedId: bs58.decode(record.pollId),
-          };
-          const outcome = await createDocument(handle, {
-            actor,
-            contractId: socialId,
-            docType: 'post',
-            data,
-            entropy,
-            tokenCost: TOKEN_COST.post,
-            accepted: (id) => documentExists(handle, socialId, 'post', id),
-          });
-          const id = outcome.id;
-          record.postId = id;
-          saveState(args.state, state);
-          if (outcome.skipped) skipped.post += 1; else written.post += 1;
-          console.log(`  post ${poll.key} ${outcome.skipped ? 'already on chain' : 'created'} by ${actor.handle}: ${id}`);
-        } else {
-          skipped.post += 1;
-        }
-      } catch (error) {
-        const message = describeErr(error);
-        failures.push({ poll: poll.key, stage: record.pollId ? 'post' : 'poll', error: message });
-        console.error(`  FAIL ${poll.key}: ${message.slice(0, 220)}`);
-      }
-    });
-
-    // --- phase 2: ballots, one chain per voter ---
-    const voterChains = new Map();
-    for (const poll of plan) {
-      const record = state.polls[poll.key];
-      if (!record?.pollId) continue; // its poll never landed; nothing to vote on
-      for (const ballot of poll.ballots) {
-        if (!voterChains.has(ballot.voter)) voterChains.set(ballot.voter, []);
-        voterChains.get(ballot.voter).push({ poll, record, choice: ballot.choice });
-      }
-    }
-
-    await runChains(voterChains, args.concurrency, async ({ poll, record, choice }, actorIdx) => {
-      const actor = actors.get(actorIdx);
-      const key = ballotKey(actorIdx, choice);
-      if (record.votes?.[key]) { skipped[poll.docType] += 1; return; }
-      try {
-        const outcome = await createDocument(handle, {
-          actor,
-          contractId: args.contract,
-          docType: poll.docType,
-          data: {
-            pollId: bs58.decode(record.pollId),
-            pollOwnerId: bs58.decode(actors.get(poll.creator).ownerId),
-            choice,
-          },
-          entropy: entropyFor(args.seed, args.contract, `ballot/${poll.key}/${actorIdx}/${choice}`),
-          // Structural uniqueness makes a repeat ballot a 40105; that means the
-          // voter already voted, which is the end state this op wanted.
-          duplicateIsSuccess: true,
-          accepted: () => ballotExists(handle, args.contract, poll.docType, record.pollId, actor.ownerId, choice),
-        });
-        record.votes ??= {};
-        record.votes[key] = true;
-        saveState(args.state, state);
-        if (outcome.skipped) skipped[poll.docType] += 1; else written[poll.docType] += 1;
-      } catch (error) {
-        const message = describeErr(error);
-        failures.push({ poll: poll.key, stage: `${poll.docType} ${actorIdx}->${choice}`, error: message });
-        console.error(`  FAIL ballot ${poll.key} ${actor.handle} choice ${choice}: ${message.slice(0, 200)}`);
-      }
-    });
+    await seedPollsAndPosts(run, plan);
+    await seedBallots(run, plan);
   }
 
-  // --- verification with the app's read shapes ---
-  console.log('\n=== tallies (grouped count per choice + ranked winner, the shapes the poll card uses) ===');
-  const badPolls = [];
-  let ballotsOnChain = 0;
-  for (const poll of plan) {
-    const record = state.polls[poll.key];
-    if (!record?.pollId) {
-      console.log(`\n  ${poll.key}: no poll on chain`);
-      badPolls.push(poll.key);
-      continue;
-    }
-    const problems = await checkPollDocument(handle, args.contract, poll, record.pollId, actors.get(poll.creator).ownerId);
-    const counts = await tallyOf(handle, args.contract, poll, record.pollId);
-    if (!counts) {
-      console.log(`\n  ${poll.key} [${poll.docType}] ${record.pollId}: the grouped tally decoded to nothing (key encoding changed?)`);
-      badPolls.push(poll.key);
-      continue;
-    }
-    const winner = await winnerOf(handle, args.contract, poll, record.pollId);
-    const { total, mismatch } = printTally(poll, record.pollId, counts, winner);
-    ballotsOnChain += total;
-    if (mismatch) problems.push('the tally does not match the plan');
-
-    const post = record.postId
-      ? await readback(handle, () => handle.sdk.documents.get(socialId, 'post', record.postId))
-      : null;
-    const postFields = typeof post?.toObject === 'function' ? post.toObject() : post;
-    const embedded = postFields?.embedId ? bs58.encode(Uint8Array.from(postFields.embedId)) : null;
-    console.log(`      post ${record.postId ?? '(missing)'} embed ${embedded === record.pollId ? 'OK' : `BAD (${embedded})`}`);
-    if (embedded !== record.pollId) problems.push(`the post does not embed this poll (${embedded})`);
-
-    if (problems.length > 0) {
-      badPolls.push(poll.key);
-      for (const problem of problems) console.log(`      PROBLEM: ${problem}`);
-    }
-  }
-
-  // --- balances left on the personas ---
-  console.log('\n=== personas ===');
-  const ids = [...actors.values()].map((actor) => actor.ownerId);
-  const tokenId = await readback(handle, () => handle.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
-  const credits = await readback(handle, () => handle.sdk.identities.balances(ids));
-  const yapp = await readback(handle, () => handle.sdk.tokens.balances(ids, tokenId));
-  for (const actor of actors.values()) {
-    const creditBalance = (credits instanceof Map ? credits.get(actor.ownerId) : undefined) ?? 0n;
-    const yappBalance = (yapp instanceof Map ? yapp.get(actor.ownerId) : undefined) ?? 0n;
-    const created = plan.filter((poll) => poll.creator === actor.personaIdx).length;
-    console.log(`  ${String(actor.personaIdx).padEnd(4)} ${actor.handle.padEnd(16)} ${actor.ownerId}  `
-      + `credits=${(Number(creditBalance) / 1e9).toFixed(3)}G  YAPP=${yappBalance}  polls=${created}`);
-  }
+  const { badPolls, ballotsOnChain } = await verifyPolls(run, plan);
+  await printPersonas(run, plan);
 
   console.log('\n=== summary ===');
-  console.log(`  written: poll=${written.poll} post=${written.post} vote=${written.vote} multiVote=${written.multiVote}`);
-  console.log(`  already present: poll=${skipped.poll} post=${skipped.post} vote=${skipped.vote} multiVote=${skipped.multiVote}`);
+  console.log(`  written: poll=${run.written.poll} post=${run.written.post} vote=${run.written.vote} multiVote=${run.written.multiVote}`);
+  console.log(`  already present: poll=${run.skipped.poll} post=${run.skipped.post} vote=${run.skipped.vote} multiVote=${run.skipped.multiVote}`);
   console.log(`  ballots on chain across all polls: ${ballotsOnChain}`);
   console.log(`  checkpoint: ${args.state}`);
-  if (failures.length > 0) {
-    console.log(`  ${failures.length} FAILURE(S):`);
-    for (const failure of failures) console.log(`    ${failure.poll} [${failure.stage}]: ${failure.error.slice(0, 200)}`);
+  if (run.failures.length > 0) {
+    console.log(`  ${run.failures.length} FAILURE(S):`);
+    for (const failure of run.failures) console.log(`    ${failure.poll} [${failure.stage}]: ${failure.error.slice(0, 200)}`);
   }
-  console.log(badPolls.length === 0 && failures.length === 0
+  console.log(badPolls.length === 0 && run.failures.length === 0
     ? '  all polls seeded, embedded and tallying as planned'
     : `  ${badPolls.length} poll(s) do not match the plan: ${badPolls.join(', ')}`);
-  return failures.length === 0 && badPolls.length === 0 ? 0 : 1;
+  return run.failures.length === 0 && badPolls.length === 0 ? 0 : 1;
 }
 
 try {
