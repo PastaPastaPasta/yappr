@@ -2769,13 +2769,20 @@ async function seed({ battery, plan, state, stateFile, args, tokenId }) {
     const revision = BigInt(current?.revision ?? 1);
     // Already edited (by an earlier run whose state file was lost).
     if (revision > 1n) { recorder.record(edit.key, postId, 'recovered'); return; }
-    // `edit.data` spreads the same `meta` the create used, so `publishedAt`
-    // comes back byte-identical — required, because v2 freezes it (and blogId)
-    // and a replace that changed or dropped either is rejected with 40128.
-    const outcome = await battery.attemptReplace(actor, 'blogPost', postId, {
-      blogId: id32(blogIds.get(post.blogKey)),
-      ...edit.data,
-    }, revision);
+    // v2 freezes `blogId` and `publishedAt`; a replace that changes or drops
+    // either is rejected with 40128. `edit.data` carries the same `meta` the
+    // create used, but its `publishedAt` is derived from `state.publishAnchor`,
+    // which a lost state file RE-ROLLS — and posts recover from chain by slug,
+    // so the edit can meet a post created under a different anchor. Take the
+    // stored value, which is by definition what consensus will compare against.
+    const stored = current?.toObject ? current.toObject() : current;
+    const data = { ...edit.data, blogId: id32(blogIds.get(post.blogKey)) };
+    // Mirror the stored value exactly, ABSENCE INCLUDED: dropping a frozen
+    // property is the same 40128 as changing it, and so is adding one the
+    // stored draft does not have.
+    if (stored?.publishedAt === undefined || stored?.publishedAt === null) delete data.publishedAt;
+    else data.publishedAt = Number(stored.publishedAt);
+    const outcome = await battery.attemptReplace(actor, 'blogPost', postId, data, revision);
     if (outcome.ok) {
       recorder.record(edit.key, postId);
       console.log(`  ~ edited ${edit.postKey} (rev ${revision + 1n}, ${edit.bytes}B) — ${edit.note}`);

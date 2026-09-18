@@ -76,8 +76,8 @@ const REVIEW_COST = { storeReview: 3n, itemReview: 1n };
 const DEFAULT_YAPP = 60n;
 const MIN_YAPP_PURCHASE = 100n;
 
-const REFERENCE_NOT_FOUND = /40120|referenced .*not found/i;
-const PROPERTY_MISMATCH = /40127|does not agree with the referenced document/i;
+const REFERENCE_NOT_FOUND = /\b40120\b|referenced .*not found/i;
+const PROPERTY_MISMATCH = /\b40127\b|does not agree with the referenced document/i;
 /**
  * A writer gate (`propertyAgreement` with `$ownerId` on the REFERRING side)
  * fails as the same ReferencedDocumentPropertyMismatchError a value pair does —
@@ -86,7 +86,7 @@ const PROPERTY_MISMATCH = /40127|does not agree with the referenced document/i;
  */
 const WRITER_GATE_REFUSED = PROPERTY_MISMATCH;
 /** DocumentImmutablePropertyChangedError: a replace touched a frozen property. */
-const IMMUTABLE_CHANGED = /40128|is immutable and cannot be changed/i;
+const IMMUTABLE_CHANGED = /\b40128\b|is immutable and cannot be changed/i;
 const DELETE_FORBIDDEN = /can ?not be deleted/i;
 const TOKEN_AGREEMENT_MISSING = /token|payment|agree/i;
 

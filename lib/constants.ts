@@ -77,11 +77,14 @@ export const dmIsV4 = () => DM_TOPOLOGY === 'v4'
 export const DPNS_CONTRACT_ID = process.env.NEXT_PUBLIC_DPNS_CONTRACT_ID || 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec'
 export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID ?? '2AUBj86MGTsXP7A3ekD62YoTeDwtJe5b9MxwkWwdg6Ba' // Testnet - legacy storefront (v1 topology, with savedAddress)
 // Storefront contract topology. `v1` is the testnet contract: plain indexes,
-// no buyerId/sellerId attestation, no itemReview, no token cost — aggregates
-// are client-side scans. `v2` (contracts/yappr-storefront-contract-v2.json,
-// docs/STOREFRONT_V2.md) adds the proved rating trees, the refersTo chain
-// and YAPP-priced reviews; writes carry the v2 fields and consensus rejects
-// them on a v1 contract, so the switch must match the deployed contract.
+// no reference integrity, no itemReview, no token cost — aggregates are
+// client-side scans, and nothing stops a stranger writing a status update or a
+// review on someone else's order. `v2` (contracts/yappr-storefront-contract-v2.json,
+// docs/STOREFRONT_V2.md) adds the proved rating trees, the refersTo chain with
+// WRITER GATES (only a store's owner lists under it, only an order's seller
+// posts its status, only its buyer reviews it) and YAPP-priced reviews; writes
+// differ and consensus rejects v2 writes on a v1 contract, so the switch must
+// match the deployed contract.
 export const STOREFRONT_TOPOLOGY: 'v1' | 'v2' =
   process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY === 'v2' ? 'v2' : 'v1'
 export const storefrontIsV2 = () => STOREFRONT_TOPOLOGY === 'v2'
@@ -92,12 +95,15 @@ export const YAPPR_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_VAULT_CONTR
 export const YAPPR_AUTH_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID ?? '64RTgHjGXhtiN9t5S4u6hVDps7oHuTBaaHrQEFYcxt9M'
 export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID ?? '9jfarXPwRoKXK4v2JBDaiFg3j78diQuLnHMyVqBZfZNc' // Testnet - Blog contract v4 (BlockNote 0.47 upgrade)
 // ---- blog v2 topology — owned by the blog work, edit here only ----
-// `v1` is the testnet contract: plain indexes, no attested `author`, no token
-// cost — comment counts and follower counts are client-side page scans. `v2`
+// `v1` is the testnet contract: plain indexes, no reference integrity, no token
+// cost — comment counts and follower counts are client-side page scans, and a
+// comment can name any post owner it likes. `v2`
 // (contracts/yappr-blog-contract-v2.json, docs/BLOG_V2.md) adds the refersTo
-// chain, the countable/ranked comment and follower trees, and YAPP-priced
-// comments; writes carry the v2 fields and consensus rejects them on a v1
-// contract, so the switch must match the deployed contract.
+// chain (a comment's `blogPostOwnerId` is bound by consensus to the post's own
+// `$ownerId`), the countable/ranked comment and follower trees, frozen
+// `blogId`/`publishedAt`, and YAPP-priced comments; writes carry the v2 fields
+// and consensus rejects them on a v1 contract, so the switch must match the
+// deployed contract.
 //
 // Read at CALL time (like `getContractTopology`, unlike `STOREFRONT_TOPOLOGY`):
 // `NEXT_PUBLIC_*` is inlined at build time either way, and a function keeps the
@@ -126,10 +132,11 @@ export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID ?? 'G
 // may name a poll that does not exist. `v4` (contracts/pollr-contract-v4.json,
 // docs/POLLR_V4.md) makes both ballot doctypes indexOnly (the entries ARE the
 // ballot), binds `pollId` to a real poll with a `pollOwnerId` agreement against
-// the poll's attested `author`, and adds the ranked winner query. The two
-// write shapes are incompatible in both directions — a v4 ballot carries no
-// `$createdAt` and a v4 poll carries `author`, which v3's schema refuses — so
-// the switch must match the deployed contract.
+// the poll's own `$ownerId`, and adds the ranked winner query. The two BALLOT
+// shapes are incompatible — a v4 ballot carries no `$createdAt`, which v3
+// requires, and its `pollOwnerId` is consensus-bound where v3's is unchecked —
+// so the switch must match the deployed contract. (A v4 POLL is written exactly
+// like a v3 one.)
 export const POLLR_TOPOLOGY: 'v3' | 'v4' =
   process.env.NEXT_PUBLIC_POLLR_TOPOLOGY === 'v4' ? 'v4' : 'v3'
 export const pollrIsV4 = () => POLLR_TOPOLOGY === 'v4'

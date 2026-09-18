@@ -21,6 +21,16 @@ feature DMs adopt.
 | Doctype | frozen | why it is the right call here |
 | --- | --- | --- |
 | `conversationInvite` | `recipientId`, `conversationId`, `senderPubKey` | nothing replaces an invite; `senderPubKey` is listed plain, not allow-setting, because the key belongs to the invite's moment |
+
+One consequence of freezing `senderPubKey` plain, taken deliberately:
+`needsPubKeyInInvite` is decided from the sender's key type when the invite is
+written, and `senderAndRecipient` is unique per `[$ownerId, recipientId]`, so a
+sender who later rotates to a hash160 key cannot add the key to the existing
+invite (40128 on an add). `conversationInvite` is deletable, so the repair is
+delete-and-recreate — there is simply no client path for it today. Putting
+`senderPubKey` under `immutableAllowSetting` would make the repair an edit
+instead; it is not, because an invite whose sender key appears later is a
+different claim about a moment that has passed.
 | `directMessage` | `conversationId`, `encryptedContent` | a sent message is never edited, and freezing `conversationId` stops a replace re-keying its count-tree entry into another conversation |
 | `readReceipt` | `conversationId` | the case that earns the keyword: `markAsRead` replaces the receipt purely to move `$updatedAt`, and freezing its only property makes that the only thing a replace CAN do |
 

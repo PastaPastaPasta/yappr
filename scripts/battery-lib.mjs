@@ -33,7 +33,7 @@ export const POLL_ATTEMPTS = 3;
 export const MIN_YAPP_PURCHASE = 100n;
 
 // ---- Expected consensus rejection shapes (matched against describeErr text) ----
-export const REFERENCE_NOT_FOUND = /40120|referenced .*not found/i;
+export const REFERENCE_NOT_FOUND = /\b40120\b|referenced .*not found/i;
 /**
  * ReferencedDocumentPropertyMismatchError. Covers BOTH agreement shapes: a value
  * pair that disagrees with the referenced document, and a WRITER GATE
@@ -41,11 +41,11 @@ export const REFERENCE_NOT_FOUND = /40120|referenced .*not found/i;
  * document at all — the gate is an agreement pair with the signing identity on
  * the referring side, so consensus reports it the same way.
  */
-export const PROPERTY_MISMATCH = /40127|does not agree with the referenced document/i;
+export const PROPERTY_MISMATCH = /\b40127\b|does not agree with the referenced document/i;
 /** DocumentImmutablePropertyChangedError: a replace touched a frozen property. */
-export const IMMUTABLE_CHANGED = /40128|is immutable and cannot be changed/i;
+export const IMMUTABLE_CHANGED = /\b40128\b|is immutable and cannot be changed/i;
 export const DELETE_FORBIDDEN = /can ?not be deleted/i;
-export const DUPLICATE_UNIQUE = /40105|duplicate unique properties/i;
+export const DUPLICATE_UNIQUE = /\b40105\b|duplicate unique properties/i;
 export const TOKEN_AGREEMENT_MISSING = /token|payment|agree/i;
 export const FOREIGN_SIGNATURE = /invalid.{0,40}signature|signature.{0,40}(invalid|mismatch)|4020\d/i;
 

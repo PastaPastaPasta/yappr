@@ -200,11 +200,11 @@ Contract:
 
 - `store`, `storeItem`, `storeOrder`: `canBeDeleted: false` (add a `deleted`/`status` flag; storefront already has `status`).
 - `storeItem.storeId`: `refersTo: {type: 'permanentDocument', documentType: 'store'}`.
-- `storeOrder.storeId` → store; add `buyerId` (poster-attested, like `post.author`).
-- `storeOrder.sellerId`: `refersTo: {type: 'identity'}`.
+- `storeOrder.storeId` → store with `propertyAgreement: {sellerId: '$ownerId'}`, which makes `sellerId` the store's REAL owner. (As planned at beta.1 this was a plain reference plus a poster-attested `buyerId`; beta.2 needs neither — the buyer is the order's `$ownerId`.)
+- ~~`storeOrder.sellerId`: `refersTo: {type: 'identity'}`.~~ Subsumed by the agreement above: an identity that owns a document necessarily exists, and "the store's owner" is strictly stronger than "some identity".
 - `orderStatusUpdate.orderId` → storeOrder with `propertyAgreement: {$ownerId: 'sellerId'}` — the **writer gate**: only the order's seller may write one, so no `sellerId` copy and no client check. (As planned at beta.1 this was `{sellerId: 'sellerId'}` plus a client comparison; see `docs/STOREFRONT_V2.md`.)
-- `storeReview.orderId` → storeOrder with `propertyAgreement: {storeId: 'storeId', sellerId: 'sellerId', buyerId: 'buyerId'}`; client checks `review.$ownerId == review.buyerId` for the "verified purchase" badge.
-- `shippingZone.storeId` → store.
+- `storeReview.orderId` → storeOrder with `propertyAgreement: {storeId: 'storeId', sellerId: 'sellerId', $ownerId: '$ownerId'}` — the value pairs plus the **writer gate**, so only the identity that placed the order can review it and "verified purchase" needs no client check. (As planned at beta.1 the third pair was `buyerId: 'buyerId'` plus a client comparison.)
+- `storeItem.storeId` and `shippingZone.storeId` → store with `propertyAgreement: {$ownerId: '$ownerId'}`: only the store's owner may list under it.
 
 What it fixes: spoofed status updates, reviews of orders that never existed,
 reviews aimed at the wrong store, ghost stores on items. Write errors surface
@@ -324,7 +324,8 @@ With `countable` flags on `storeOrder.sellerOrders`, `storeReview.sellerReviews`
 `directMessage.conversation`, each badge is a count since a timestamp
 instead of a document page, and the seven-source social composite can gain
 order/review/comment/DM siblings. `orderStatusUpdate` lacks a buyer key; a
-`buyerId` copied under `propertyAgreement` from the order fixes that.
+`buyerId` bound under `propertyAgreement` to the order's `$ownerId` fixes that
+(which is what the v2 cut does).
 
 ### 3.11 Token economics beyond the social contract
 
