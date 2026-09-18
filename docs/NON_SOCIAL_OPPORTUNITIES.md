@@ -241,6 +241,14 @@ Contract:
 
 ### 3.7 Polls (Pollr v3, externally owned contract)
 
+**Shipped** as Pollr v4 (`HRuWcjcG…` on moutai, `docs/POLLR_V4.md`), with two
+corrections to the sketch below: `preallocated` cannot cover `[pollId, choice]`
+(`choice` is neither the refersTo property nor an agreement key), so it lands on
+the plain `vote.byPoll`/`byPollOwner` and nowhere on `multiVote`; and the
+trending-polls timeRange index was dropped, which let `$createdAt` leave
+`required` and made the unvote tuple a single hop. The standalone Pollr repo
+still needs the same cut.
+
 Already on count trees; remaining gaps need a Pollr v4:
 
 - `vote.pollId` `refersTo: permanentDocument poll` (poll is immutable; add `canBeDeleted: false`) with `propertyAgreement: {pollOwnerId: 'author'}` after adding poster-attested `author` to `poll`.
