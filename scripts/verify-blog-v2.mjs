@@ -189,16 +189,18 @@ async function caseB4Counts(ctx) {
   const followers = await battery.countBy('blogFollow', [['blogId', '==', ctx.blogId]]);
   battery.check('b4c followerCount is exact', followers === 2, `followers=${followers}`);
 
-  const mine = await battery.queryDocs('blogComment', {
-    where: [['blogPostOwnerId', '==', ctx.author.ownerId], ['$createdAt', '>', ctx.startedAt]],
-    orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'asc']],
-    limit: 100,
-  });
-  battery.check('b4d postOwnerAndTime serves "comments on my posts" since a timestamp',
-    mine.length === 3, `comments=${mine.length}`);
+  // The exact shape notification-service uses: newest first, which the index
+  // serves in either direction.
+  const where = [['blogPostOwnerId', '==', ctx.author.ownerId], ['$createdAt', '>', ctx.startedAt]];
+  const [asc, desc] = await Promise.all([
+    battery.queryDocs('blogComment', { where, orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'asc']], limit: 100 }),
+    battery.queryDocs('blogComment', { where, orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'desc']], limit: 100 }),
+  ]);
+  battery.check('b4d postOwnerAndTime serves "comments on my posts" since a timestamp, both directions',
+    asc.length === 3 && desc.length === 3, `asc=${asc.length} desc=${desc.length}`);
   battery.workingShapes.push({
     label: 'comments on my blog posts since last seen',
-    shape: { documentTypeName: 'blogComment', where: [['blogPostOwnerId', '==', '<me>'], ['$createdAt', '>', '<lastSeen>']], orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'asc']] },
+    shape: { documentTypeName: 'blogComment', where: [['blogPostOwnerId', '==', '<me>'], ['$createdAt', '>', '<lastSeen>']], orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'desc']] },
   });
 }
 
