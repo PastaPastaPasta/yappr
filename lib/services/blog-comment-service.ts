@@ -5,6 +5,7 @@ import { YAPPR_BLOG_CONTRACT_ID, blogIsV2 } from '@/lib/constants'
 import type { BlogComment } from '@/lib/types'
 import { identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
+import { blogStatsService } from './blog-stats-service'
 
 export interface BlogCommentQueryOptions {
   limit?: number
@@ -59,11 +60,14 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
     }
 
     const postOwnerId = await this.resolvePostOwnerId(blogPostId, blogPostOwnerId)
-    return this.create(ownerId, {
+    const comment = await this.create(ownerId, {
       blogPostId: requireDocumentIdentifierBytes(blogPostId, 'blogPostId'),
       blogPostOwnerId: requireDocumentIdentifierBytes(postOwnerId, 'blogPostOwnerId'),
       content: trimmedContent,
     })
+    // The comment changed this post's count tree and the "most discussed" page.
+    blogStatsService.invalidate()
+    return comment
   }
 
   async deleteComment(commentId: string, ownerId: string): Promise<boolean> {
@@ -71,7 +75,9 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
     if (!comment || comment.ownerId !== ownerId) {
       return false
     }
-    return this.delete(commentId, ownerId)
+    const deleted = await this.delete(commentId, ownerId)
+    if (deleted) blogStatsService.invalidate()
+    return deleted
   }
 
   async getCommentsByPost(blogPostId: string, options: BlogCommentQueryOptions = {}): Promise<BlogComment[]> {
