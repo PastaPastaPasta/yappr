@@ -87,7 +87,19 @@ export const STOREFRONT_TOPOLOGY: 'v1' | 'v2' =
 export const storefrontIsV2 = () => STOREFRONT_TOPOLOGY === 'v2'
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
+// ---- key exchange block ----
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID ?? '7UaqHGBJBbRLJ4fUWS45cnud8PPUugJWoGTt1SKwHJ2P' // Key exchange protocol contract
+// Key-exchange contract topology. `v2` is the deployed stored-document
+// contract. `v3` (contracts/key-exchange-v3.json, docs/KEY_EXCHANGE_V3.md)
+// makes `loginKeyResponse` indexOnly: the read that polls for the wallet's
+// answer keeps v2's exact query shape, but the synthesized document stops at
+// `encryptedPayload`, so `keyIndex` and `$createdAt` need a second query. The
+// switch must match the deployed contract — on v2 that second query has no
+// index to land on.
+export const KEY_EXCHANGE_TOPOLOGY: 'v2' | 'v3' =
+  process.env.NEXT_PUBLIC_KEY_EXCHANGE_TOPOLOGY === 'v3' ? 'v3' : 'v2'
+export const keyExchangeIsV3 = () => KEY_EXCHANGE_TOPOLOGY === 'v3'
+// ---- end key exchange block ----
 export const YAPPR_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_VAULT_CONTRACT_ID ?? '7RQoHtVZaRZDSrR22s8KcbCJmwSwetJHBcFjx6FJdkJD' // Testnet - Vault contract (contract-bound encryption keys + encrypted storage)
 export const YAPPR_AUTH_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID ?? '64RTgHjGXhtiN9t5S4u6hVDps7oHuTBaaHrQEFYcxt9M'
 export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID ?? '9jfarXPwRoKXK4v2JBDaiFg3j78diQuLnHMyVqBZfZNc' // Testnet - Blog contract v4 (BlockNote 0.47 upgrade)
