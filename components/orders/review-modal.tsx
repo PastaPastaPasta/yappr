@@ -27,6 +27,8 @@ interface ReviewModalProps {
 
 const TITLE_LIMIT = 100
 const CONTENT_LIMIT = 1000
+/** Indexed by the star rating, 0 meaning "not rated yet". */
+const RATING_LABELS = ['Tap a star to rate', 'Poor', 'Fair', 'Good', 'Very Good', 'Excellent']
 
 export function ReviewModal({
   isOpen,
@@ -157,14 +159,7 @@ export function ReviewModal({
                           size="lg"
                           disabled={isSubmitting}
                         />
-                        <p className="text-sm text-gray-500">
-                          {rating === 0 && 'Tap a star to rate'}
-                          {rating === 1 && 'Poor'}
-                          {rating === 2 && 'Fair'}
-                          {rating === 3 && 'Good'}
-                          {rating === 4 && 'Very Good'}
-                          {rating === 5 && 'Excellent'}
-                        </p>
+                        <p className="text-sm text-gray-500">{RATING_LABELS[rating]}</p>
                       </div>
 
                       {/* Title Input */}

@@ -54,6 +54,10 @@ type ModalState =
 type PaymentTab = 'yapp' | 'credits' | 'crypto'
 type KeySource = 'prefilled' | 'manual' | null
 
+/** The tip flow's primary-action styling, on every step that has one. */
+const AMBER_BUTTON = 'flex-1 bg-amber-500 hover:bg-amber-600 text-white'
+const AMBER_BUTTON_WIDE = 'w-full bg-amber-500 hover:bg-amber-600 text-white'
+
 // Only these steps retitle the modal; every other one is still "Send Tip".
 const MODAL_TITLES: Partial<Record<ModalState, string>> = {
   success: 'Tip Sent!',
@@ -513,11 +517,6 @@ export function TipModal() {
     close()
   }
 
-  const handleRetry = () => {
-    setState('input')
-    setError(null)
-  }
-
   // Handle saving the transfer key for future use
   const handleSaveKey = async () => {
     if (!user || !usedTransferKeyRef.current) {
@@ -552,13 +551,6 @@ export function TipModal() {
     setState('success')
   }
 
-  // Handle showing QR code for an external payment URI
-  const handleShowQr = (paymentUri: ParsedPaymentUri) => {
-    setSelectedQrPayment(paymentUri)
-    setShowQrDialog(true)
-  }
-
-  // Handle closing QR dialog
   const handleCloseQrDialog = () => {
     setShowQrDialog(false)
     setSelectedQrPayment(null)
@@ -574,30 +566,15 @@ export function TipModal() {
   // The confirm step's primary action: which tab is open, and for YAPP whether
   // this browser can sign a token transition at all or has to ask the wallet.
   function confirmAction() {
-    if (!isYapp) {
-      return (
-        <Button onClick={handleSendTip} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">
-          Confirm &amp; Send
-        </Button>
-      )
+    if (isYapp && canSignLocally === null) {
+      return <Button disabled className="flex-1 bg-amber-500 text-white">Checking your keys…</Button>
     }
-    if (canSignLocally === null) {
-      return (
-        <Button disabled className="flex-1 bg-amber-500 text-white">
-          Checking your keys…
-        </Button>
-      )
-    }
-    if (canSignLocally) {
-      return (
-        <Button onClick={handleSendYappTip} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">
-          Confirm &amp; Send
-        </Button>
-      )
+    if (isYapp && !canSignLocally) {
+      return <Button onClick={startWalletSign} className={AMBER_BUTTON}>Sign with wallet</Button>
     }
     return (
-      <Button onClick={startWalletSign} className="flex-1 bg-amber-500 hover:bg-amber-600 text-white">
-        Sign with wallet
+      <Button onClick={isYapp ? handleSendYappTip : handleSendTip} className={AMBER_BUTTON}>
+        Confirm &amp; Send
       </Button>
     )
   }
@@ -720,7 +697,7 @@ export function TipModal() {
 
                         <Button
                           onClick={handleContinue}
-                          className="w-full bg-amber-500 hover:bg-amber-600 text-white"
+                          className={AMBER_BUTTON_WIDE}
                           disabled={yappAmountBig <= BigInt(0) || loadingBalance}
                         >
                           Continue
@@ -809,7 +786,7 @@ export function TipModal() {
                         {/* Continue button */}
                         <Button
                           onClick={handleContinue}
-                          className="w-full bg-amber-500 hover:bg-amber-600 text-white"
+                          className={AMBER_BUTTON_WIDE}
                           disabled={!amount || !transferKey}
                         >
                           Continue
@@ -832,7 +809,7 @@ export function TipModal() {
                               <button
                                 key={idx}
                                 type="button"
-                                onClick={() => handleShowQr(paymentUri)}
+                                onClick={() => { setSelectedQrPayment(paymentUri); setShowQrDialog(true) }}
                                 className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-amber-400 dark:hover:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/10 text-left transition-all group"
                               >
                                 <div className="flex items-center gap-3">
@@ -1084,7 +1061,7 @@ export function TipModal() {
                       </Button>
                       <Button
                         onClick={handleSaveKey}
-                        className="flex-1 bg-amber-500 hover:bg-amber-600 text-white"
+                        className={AMBER_BUTTON}
                       >
                         Save key
                       </Button>
@@ -1131,7 +1108,7 @@ export function TipModal() {
                       <Button onClick={close} variant="outline" className="flex-1">
                         Close
                       </Button>
-                      <Button onClick={handleRetry} className="flex-1">
+                      <Button onClick={() => { setState('input'); setError(null) }} className="flex-1">
                         Try Again
                       </Button>
                     </div>

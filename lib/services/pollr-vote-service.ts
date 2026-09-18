@@ -129,7 +129,7 @@ export function isDuplicateVoteError(error: unknown): boolean {
  * `poll` is immutable, so the flag can't be flipped after ballots land, and
  * documents written to the doctype a poll doesn't use are never read.
  *
- * On v4 (docs/POLLR_V4.md) both doctypes are indexOnly and the same two rules
+ * On v4 (docs/NON_SOCIAL_CONTRACTS.md) both doctypes are indexOnly and the same two rules
  * become STRUCTURAL rather than declared: `vote.byPoll [pollId]` terminal
  * `$ownerId` admits one entry per (poll, voter), `multiVote.byPollChoice`
  * admits one per (poll, choice, voter). indexOnly types cannot carry `unique`
@@ -265,16 +265,24 @@ class PollrVoteService {
    * evidence for neither side. Each caller passes the value that leaves the
    * write path's own verdict standing, and the next remount re-reads the real
    * state either way.
+   *
+   * The probe is polled rather than read once: an indexOnly write is not
+   * query-visible the instant its transition settles, so a single immediate
+   * read would call a landed ballot missing (like-service polls the same way).
    */
   private async ballotLanded(
     poll: Poll,
     choice: number,
     ownerId: string,
-    { whenUnknown }: { whenUnknown: boolean }
+    { whenUnknown, attempts = 4, intervalMs = 2_500 }: { whenUnknown: boolean; attempts?: number; intervalMs?: number }
   ): Promise<boolean> {
     if (!pollrIsV4()) return whenUnknown;
     try {
-      return await this.waitForBallot(poll, choice, ownerId);
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        if (await this.ballotExists(poll, choice, ownerId)) return true;
+        if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+      return false;
     } catch (error) {
       logger.warn('PollrVoteService: could not check a ballot against the chain', {
         pollId: poll.id,
@@ -284,26 +292,6 @@ class PollrVoteService {
       });
       return whenUnknown;
     }
-  }
-
-  /**
-   * Polls the entry probe briefly: an indexOnly write is not query-visible the
-   * instant its transition settles, so a single immediate read would call a
-   * landed ballot missing (like-service polls the same way).
-   */
-  private async waitForBallot(
-    poll: Poll,
-    choice: number,
-    ownerId: string,
-    { attempts = 4, intervalMs = 2_500 } = {}
-  ): Promise<boolean> {
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      if (await this.ballotExists(poll, choice, ownerId)) return true;
-      if (attempt < attempts - 1) {
-        await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      }
-    }
-    return false;
   }
 
   /**
@@ -411,25 +399,18 @@ class PollrVoteService {
         orderBy: [['choice', 'asc']],
         limit: POLL_MAX_OPTIONS,
       };
-    } else if (poll.multiChoice) {
-      query = {
-        where: [
-          ['pollId', '==', poll.id],
-          ['$ownerId', '==', userId],
-        ],
-        orderBy: [['pollId', 'asc'], ['$ownerId', 'asc'], ['choice', 'asc']],
-        limit: POLL_MAX_OPTIONS,
-      };
     } else {
       // `vote`'s unique index stops at $ownerId, so it neither orders by choice
-      // nor can hold more than the one ballot.
+      // nor can hold more than the one ballot; `multiVote`'s continues.
       query = {
         where: [
           ['pollId', '==', poll.id],
           ['$ownerId', '==', userId],
         ],
-        orderBy: [['pollId', 'asc'], ['$ownerId', 'asc']],
-        limit: 1,
+        orderBy: poll.multiChoice
+          ? [['pollId', 'asc'], ['$ownerId', 'asc'], ['choice', 'asc']]
+          : [['pollId', 'asc'], ['$ownerId', 'asc']],
+        limit: poll.multiChoice ? POLL_MAX_OPTIONS : 1,
       };
     }
 

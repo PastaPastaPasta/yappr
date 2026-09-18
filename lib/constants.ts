@@ -38,7 +38,7 @@ export const STOREFRONT_YAPP_TOKEN_COSTS = {
 // into it for every transfer of a token whose config sets
 // `keepsTransferHistory` (YAPP does), owned by the sender and carrying the
 // exact amount, the recipient and the sender's `publicNote`. That document IS
-// the tip proof — see docs/TIPS_YAPP.md.
+// the tip proof — see docs/NON_SOCIAL_CONTRACTS.md.
 //
 // System contracts share an id across chains, so this is hardcoded; overridable
 // all the same for a devnet genesised with a different registration.
@@ -57,7 +57,7 @@ export const YAPPR_DM_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID
 // ---- DM topology — owned by the DM v4 work, edit here only ----
 // `v3` is the testnet contract: no count flags, so the conversation list has to
 // download a 100-message page per conversation and count unread in JS. `v4`
-// (contracts/yappr-dm-contract.json, docs/DM_V4.md) adds countable +
+// (contracts/yappr-dm-contract.json, docs/NON_SOCIAL_CONTRACTS.md) adds countable +
 // rangeCountable to directMessage's conversation index, so unread is a count
 // query and the list fetches only each conversation's newest message.
 //
@@ -80,7 +80,7 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // no reference integrity, no itemReview, no token cost — aggregates are
 // client-side scans, and nothing stops a stranger writing a status update or a
 // review on someone else's order. `v2` (contracts/yappr-storefront-contract.json,
-// docs/STOREFRONT_V2.md) adds the proved rating trees, the refersTo chain with
+// docs/NON_SOCIAL_CONTRACTS.md) adds the proved rating trees, the refersTo chain with
 // WRITER GATES (only a store's owner lists under it, only an order's seller
 // posts its status, only its buyer reviews it) and YAPP-priced reviews; writes
 // differ and consensus rejects v2 writes on a v1 contract, so the switch must
@@ -98,7 +98,7 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // `v1` is the testnet contract: plain indexes, no reference integrity, no token
 // cost — comment counts and follower counts are client-side page scans, and a
 // comment can name any post owner it likes. `v2`
-// (contracts/yappr-blog-contract.json, docs/BLOG_V2.md) adds the refersTo
+// (contracts/yappr-blog-contract.json, docs/NON_SOCIAL_CONTRACTS.md) adds the refersTo
 // chain (a comment's `blogPostOwnerId` is bound by consensus to the post's own
 // `$ownerId`), the countable/ranked comment and follower trees, frozen
 // `blogId`/`publishedAt`, and YAPP-priced comments; writes carry the v2 fields
@@ -130,7 +130,7 @@ export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID ?? 'G
 // Pollr contract topology. `v3` is the testnet contract: stored ballots whose
 // single-choice rule is a `unique` index, and no reference integrity — a vote
 // may name a poll that does not exist. `v4` (contracts/pollr-contract.json,
-// docs/POLLR_V4.md) makes both ballot doctypes indexOnly (the entries ARE the
+// docs/NON_SOCIAL_CONTRACTS.md) makes both ballot doctypes indexOnly (the entries ARE the
 // ballot), binds `pollId` to a real poll with a `pollOwnerId` agreement against
 // the poll's own `$ownerId`, and adds the ranked winner query. The two BALLOT
 // shapes are incompatible — a v4 ballot carries no `$createdAt`, which v3

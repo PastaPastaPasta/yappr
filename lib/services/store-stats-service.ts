@@ -2,7 +2,7 @@
  * Proved storefront aggregates on the v2 storefront contract.
  *
  * Every read here is one DAPI request against a count/sum/average tree or its
- * ranked secondary (docs/STOREFRONT_V2.md): store and item rating summaries,
+ * ranked secondary (docs/NON_SOCIAL_CONTRACTS.md): store and item rating summaries,
  * rating distributions, "top rated" / "most reviewed" / "most ordered"
  * rankings, and the composite store page (items + per-item review counts) —
  * replacing the review scans the v1 client did per store.

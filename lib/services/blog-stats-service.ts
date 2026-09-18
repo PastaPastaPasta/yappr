@@ -2,7 +2,7 @@
  * Proved blog rankings on the v2 blog contract.
  *
  * Each read here is one DAPI request against a ranked count tree
- * (docs/BLOG_V2.md): "most followed blogs" and "trending today" ride
+ * (docs/NON_SOCIAL_CONTRACTS.md): "most followed blogs" and "trending today" ride
  * `blogFollow.followerCount [blogId]` / `followersByDay [$createdAt, blogId]`,
  * "most discussed posts" rides `blogComment.commentCount [blogPostId]` —
  * replacing the crawl-every-blog discovery the v1 client did.
@@ -15,22 +15,12 @@ import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { DOCUMENT_TYPES, YAPPR_BLOG_CONTRACT_ID, blogIsV2 } from '../constants';
 import { getEvoSdk } from './evo-sdk-service';
+import { isColdBucketError } from './ranked-likes';
 
 const RANKING_TTL_MS = 60 * 1000;
 
 /** The daily grid `followersByDay` buckets on (contract `timeRange` range/step). */
 const DAY_GRID = { range: 86400, step: 86400 } as const;
-
-/**
- * A ranked read on a bucket no document ever landed in (a cold UTC day) fails
- * proof generation instead of proving an empty ranking. Until upstream proves
- * absence, that error IS the empty answer — same handling as the social
- * contract's windowed rankings (lib/services/ranked-likes.ts).
- */
-function isColdBucketError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /single-path axis read must produce exactly one axis descent/i.test(message);
-}
 
 /** One group of a proved ranking. */
 export interface RankedBlogEntry {

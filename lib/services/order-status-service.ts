@@ -89,19 +89,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
   }
 
   /**
-   * Get status history for an order
-   */
-  async getOrderHistory(orderId: string): Promise<OrderStatusUpdate[]> {
-    const { documents } = await this.query({
-      where: [['orderId', '==', orderId]],
-      orderBy: [['orderId', 'asc'], ['$createdAt', 'asc']],
-      limit: 100
-    });
-
-    return documents;
-  }
-
-  /**
    * Get the latest status for an order.
    *
    * One row: only the order's seller can write an update (the writer gate), so
@@ -117,26 +104,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
     return documents[0] ?? null;
   }
 
-  /**
-   * Get all status updates by a seller
-   */
-  async getSellerStatusUpdates(sellerId: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ updates: OrderStatusUpdate[]; nextCursor?: string }> {
-    const { documents } = await this.query({
-      where: [['$ownerId', '==', sellerId]],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
-      limit: options.limit || 50,
-      startAfter: options.startAfter
-    });
-
-    return {
-      updates: documents,
-      nextCursor: documents.length > 0 ? documents[documents.length - 1].id : undefined
-    };
-  }
-
-  /**
-   * Create a status update (seller only)
-   */
   async createStatusUpdate(
     sellerId: string,
     orderId: string,
@@ -165,9 +132,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
     return this.create(sellerId, documentData);
   }
 
-  /**
-   * Get tracking URL for a carrier
-   */
   getTrackingUrl(carrier: string, trackingNumber: string): string | null {
     const carrierUrls: Record<string, string> = {
       'usps': `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`,
@@ -183,9 +147,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
     return carrierUrls[normalizedCarrier] || null;
   }
 
-  /**
-   * Get human-readable status label
-   */
   getStatusLabel(status: OrderStatus): string {
     const labels: Record<OrderStatus, string> = {
       'pending': 'Pending',
@@ -200,9 +161,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
     return labels[status] || status;
   }
 
-  /**
-   * Get status color for UI
-   */
   getStatusColor(status: OrderStatus): string {
     const colors: Record<OrderStatus, string> = {
       'pending': 'text-yellow-600',
@@ -215,13 +173,6 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       'disputed': 'text-red-600'
     };
     return colors[status] || 'text-gray-600';
-  }
-
-  /**
-   * Check if order is in a terminal state
-   */
-  isTerminalStatus(status: OrderStatus): boolean {
-    return ['delivered', 'cancelled', 'refunded'].includes(status);
   }
 }
 

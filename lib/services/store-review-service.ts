@@ -49,17 +49,6 @@ class StoreReviewService extends BaseDocumentService<StoreReview> {
     return { reviews: documents, nextCursor: documents.length > 0 ? documents[documents.length - 1].id : undefined };
   }
 
-  /** Reviews written by a buyer. */
-  async getBuyerReviews(buyerId: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ reviews: StoreReview[]; nextCursor?: string }> {
-    const { documents } = await this.query({
-      where: [['$ownerId', '==', buyerId]],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
-      limit: options.limit || 20,
-      startAfter: options.startAfter,
-    });
-    return { reviews: documents, nextCursor: documents.length > 0 ? documents[documents.length - 1].id : undefined };
-  }
-
   /** Reviews on many orders in one `in` query (unique per order, so at most one each). */
   async getOrderReviews(orderIds: string[]): Promise<Map<string, StoreReview>> {
     const result = new Map<string, StoreReview>();

@@ -36,16 +36,6 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
     return transformDocumentWithField<BlogFollowDocument>(doc, 'blogId', 'BlogFollowService');
   }
 
-  /**
-   * A landed follow/unfollow changes this blog's follower count and the
-   * follower rankings, so the TTL-cached ranked pages are dropped. The count
-   * itself is not cached (`RequestDeduplicator` only collapses in-flight
-   * calls), so nothing else needs clearing.
-   */
-  private invalidateCounts(): void {
-    blogStatsService.invalidate();
-  }
-
   async followBlog(userId: string, blogId: string): Promise<{ success: boolean; error?: string }> {
     try {
       const existing = await this.getFollow(userId, blogId);
@@ -60,7 +50,10 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
         userId,
         { blogId: identifierStringToDocumentBytes(blogId) }
       );
-      if (result.success) this.invalidateCounts();
+      // A landed follow/unfollow changes the follower count and the ranked pages
+      // built on it. The count itself is not cached (RequestDeduplicator only
+      // collapses in-flight calls), so nothing else needs clearing.
+      if (result.success) blogStatsService.invalidate();
       return result;
     } catch (error) {
       logger.error('Error following blog:', error);
@@ -85,7 +78,7 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
         follow.$id,
         userId
       );
-      if (result.success) this.invalidateCounts();
+      if (result.success) blogStatsService.invalidate();
       return result;
     } catch (error) {
       logger.error('Error unfollowing blog:', error);

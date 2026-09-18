@@ -52,13 +52,13 @@ function windowClause(window: RankingWindow): { timeRange: { field: string; sele
 }
 
 /**
- * A ranked read on a v6 bucket that no document has ever landed in (a cold
- * UTC day) fails proof generation on dev.8 instead of proving an empty
- * ranking: "a single-path axis read must produce exactly one axis descent …
- * the walk produced 0". Until upstream proves absence, that error IS the
- * empty answer.
+ * A ranked read on a bucket that no document has ever landed in (a cold UTC
+ * day) fails proof generation on dev.8 instead of proving an empty ranking:
+ * "a single-path axis read must produce exactly one axis descent … the walk
+ * produced 0". Until upstream proves absence, that error IS the empty answer.
+ * Shared with the blog contract's windowed rankings, which hit the same edge.
  */
-function isColdBucketError(error: unknown): boolean {
+export function isColdBucketError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /single-path axis read must produce exactly one axis descent/i.test(message);
 }

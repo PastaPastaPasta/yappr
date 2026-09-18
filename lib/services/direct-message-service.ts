@@ -42,7 +42,7 @@ import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
  * - readReceipt has single index (userConversation) - query other party directly
  * - encryptedContent max reduced to 5000 bytes
  *
- * v4 changes (NEXT_PUBLIC_DM_TOPOLOGY=v4, docs/DM_V4.md) — READS ONLY, writes
+ * v4 changes (NEXT_PUBLIC_DM_TOPOLOGY=v4, docs/NON_SOCIAL_CONTRACTS.md) — READS ONLY, writes
  * are identical:
  * - directMessage's conversation index is countable + rangeCountable, so unread
  *   is `count(conversationId == C, $createdAt > lastReadAt)` and the list fetches
@@ -189,49 +189,33 @@ class DirectMessageService {
       limit: 100
     })
 
-    const receivedInvites = this.extractDocuments(receivedInvitesResponse)
-    const sentInvites = this.extractDocuments(sentInvitesResponse)
-
-    // 3. Build conversation map from invites
+    // 3. Build conversation map from invites. The other party is the invite's
+    // sender on an invite I received and its recipient on one I sent; the first
+    // invite seen for a conversation names the participant, later ones only add
+    // to its invite list.
     const conversationMap = new Map<string, {
       participantId: string
       invites: Record<string, unknown>[]
     }>()
 
-    // Process received invites (they sent to me)
-    for (const invite of receivedInvites) {
-      const inviteData = invite.data as Record<string, unknown> | undefined
-      const convIdBytes = this.extractByteArray(invite.conversationId || inviteData?.conversationId)
-      const convId = bs58.encode(convIdBytes)
-      const senderId = invite.$ownerId
+    const sources: Array<[Record<string, unknown>[], (invite: Record<string, unknown>) => string]> = [
+      [this.extractDocuments(receivedInvitesResponse), (invite) => invite.$ownerId as string],
+      [this.extractDocuments(sentInvitesResponse), (invite) => {
+        const inviteData = invite.data as Record<string, unknown> | undefined
+        return bs58.encode(this.extractByteArray(invite.recipientId || inviteData?.recipientId))
+      }],
+    ]
 
-      const existingConv = conversationMap.get(convId)
-      if (!existingConv) {
-        conversationMap.set(convId, {
-          participantId: senderId as string,
-          invites: [invite]
-        })
-      } else {
-        existingConv.invites.push(invite)
-      }
-    }
-
-    // Process sent invites (I sent to them)
-    for (const invite of sentInvites) {
-      const inviteData = invite.data as Record<string, unknown> | undefined
-      const convIdBytes = this.extractByteArray(invite.conversationId || inviteData?.conversationId)
-      const convId = bs58.encode(convIdBytes)
-      const recipientIdBytes = this.extractByteArray(invite.recipientId || inviteData?.recipientId)
-      const recipientId = bs58.encode(recipientIdBytes)
-
-      const existingSentConv = conversationMap.get(convId)
-      if (!existingSentConv) {
-        conversationMap.set(convId, {
-          participantId: recipientId,
-          invites: [invite]
-        })
-      } else {
-        existingSentConv.invites.push(invite)
+    for (const [invites, participantOf] of sources) {
+      for (const invite of invites) {
+        const inviteData = invite.data as Record<string, unknown> | undefined
+        const convId = bs58.encode(this.extractByteArray(invite.conversationId || inviteData?.conversationId))
+        const existing = conversationMap.get(convId)
+        if (existing) {
+          existing.invites.push(invite)
+        } else {
+          conversationMap.set(convId, { participantId: participantOf(invite), invites: [invite] })
+        }
       }
     }
 
@@ -302,14 +286,16 @@ class DirectMessageService {
    * A grouped `conversationId in [...]` count would answer all conversations in
    * one call, but only WITHOUT a range clause; adding `$createdAt >` makes
    * Platform return an empty map rather than an error (verified in
-   * scripts/verify-dm-v4.mjs case d6b), so per-conversation counts it is.
+   * scripts/verify-dm.mjs case d6b), so per-conversation counts it is.
    */
   private async countUnreadByConversation(
     userId: string,
-    entries: Array<{ conversationId: string; lastReadAt: number; latest?: Record<string, unknown> }>
+    conversationIds: string[],
+    pages: { messagesByConversation: Map<string, Record<string, unknown>[]>; lastReadByConversation: Map<string, number> }
   ): Promise<Map<string, number | null>> {
     const sdk = await getEvoSdk()
-    const counts = await mapLimit(entries, UNREAD_COUNT_CONCURRENCY, async ({ conversationId, lastReadAt, latest }) => {
+    const counts = await mapLimit(conversationIds, UNREAD_COUNT_CONCURRENCY, async (conversationId) => {
+      const latest = pages.messagesByConversation.get(conversationId)?.[0]
       if (!latest || latest.$ownerId === userId) return 0
       try {
         return await documentCount(sdk, {
@@ -317,7 +303,7 @@ class DirectMessageService {
           documentTypeName: 'directMessage',
           where: [
             ['conversationId', '==', bytesToBase64QueryOperand(bs58.decode(conversationId))],
-            ['$createdAt', '>', lastReadAt],
+            ['$createdAt', '>', pages.lastReadByConversation.get(conversationId) ?? 0],
           ],
         })
       } catch (error) {
@@ -334,7 +320,7 @@ class DirectMessageService {
         return null
       }
     })
-    return new Map(entries.map((entry, index) => [entry.conversationId, counts[index]]))
+    return new Map(conversationIds.map((conversationId, index) => [conversationId, counts[index]]))
   }
 
   /**
@@ -365,13 +351,8 @@ class DirectMessageService {
       if (conversationIds.length === 0) return 0
       // No tolerated failures here (see loadMessagePagesAndReceipts): a
       // conversation whose page could not be read must fail the whole total.
-      const { messagesByConversation, lastReadByConversation } =
-        await this.loadMessagePagesAndReceipts(userId, conversationIds, 1, false)
-      const unread = await this.countUnreadByConversation(userId, conversationIds.map(conversationId => ({
-        conversationId,
-        lastReadAt: lastReadByConversation.get(conversationId) ?? 0,
-        latest: messagesByConversation.get(conversationId)?.[0],
-      })))
+      const pages = await this.loadMessagePagesAndReceipts(userId, conversationIds, 1, false)
+      const unread = await this.countUnreadByConversation(userId, conversationIds, pages)
       const counts = Array.from(unread.values())
       // A partial total is not a total.
       if (counts.some(count => count === null)) {
@@ -397,15 +378,11 @@ class DirectMessageService {
       const conversationMap = await this.loadConversationIndex(userId)
 
       const conversationIds = Array.from(conversationMap.keys())
-      const { messagesByConversation, lastReadByConversation } =
-        await this.loadMessagePagesAndReceipts(userId, conversationIds, dmIsV4() ? 1 : V3_UNREAD_SCAN_PAGE)
+      const pages = await this.loadMessagePagesAndReceipts(userId, conversationIds, dmIsV4() ? 1 : V3_UNREAD_SCAN_PAGE)
+      const { messagesByConversation, lastReadByConversation } = pages
       // v4 asks the count tree; v3 counts the page it just downloaded.
       const unreadByConversation = dmIsV4()
-        ? await this.countUnreadByConversation(userId, conversationIds.map(conversationId => ({
-            conversationId,
-            lastReadAt: lastReadByConversation.get(conversationId) ?? 0,
-            latest: messagesByConversation.get(conversationId)?.[0],
-          })))
+        ? await this.countUnreadByConversation(userId, conversationIds, pages)
         : null
       const participantIds = Array.from(new Set(Array.from(conversationMap.values()).map(data => data.participantId)))
       const { usernames, profiles } = includeParticipantInfo
