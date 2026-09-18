@@ -121,30 +121,36 @@ class TipHistoryService {
 
   /**
    * One page of `transfer` documents off a token-history index, newest first.
-   * `extraWhere` narrows within the token (the `from` / `to` index tails).
+   *
+   * `field` picks the index: `toIdentityId` for transfers in, `$ownerId` for
+   * transfers out. Both the filter and the ordering are derived from it —
+   * every index on `transfer` is prefixed by tokenId and orderBy has to name
+   * the index fields in order, including the equality-constrained ones, so
+   * writing the field down once is what keeps the two from disagreeing.
    */
   private async queryTransfers(
-    cacheKey: string,
-    extraWhere: DocumentWhereClause[],
-    orderFields: string[],
+    field: 'toIdentityId' | '$ownerId',
+    identityId: string,
     fresh = false
   ): Promise<ProvedTip[]> {
+    const cacheKey = `${field}:${identityId}`;
     const cached = fresh ? undefined : this.cache.get(cacheKey);
     if (cached) return cached;
 
     const [sdk, tokenId] = await Promise.all([getEvoSdk(), tokenService.getTokenId()]);
-    // Every index on `transfer` is prefixed by tokenId, and orderBy has to name
-    // the index fields in order — including the equality-constrained ones.
-    const orderBy = [
-      ...orderFields.map((field): DocumentOrderByClause => [field, 'asc']),
-      ['$createdAt', 'desc'] as DocumentOrderByClause,
-    ];
 
     const response = await sdk.documents.query({
       dataContractId: TOKEN_HISTORY_CONTRACT_ID,
       documentTypeName: TRANSFER_DOC_TYPE,
-      where: [['tokenId', '==', tokenId] as DocumentWhereClause, ...extraWhere],
-      orderBy,
+      where: [
+        ['tokenId', '==', tokenId],
+        [field, '==', identityId],
+      ] as DocumentWhereClause[],
+      orderBy: [
+        ['tokenId', 'asc'],
+        [field, 'asc'],
+        ['$createdAt', 'desc'],
+      ] as DocumentOrderByClause[],
       limit: TIP_PAGE_LIMIT,
     });
 
@@ -181,11 +187,7 @@ class TipHistoryService {
   /** The identity's newest incoming YAPP transfers (tip-noted or not). */
   async getTipsReceived(identityId: string): Promise<ProvedTip[]> {
     if (!identityId) return [];
-    return this.queryTransfers(
-      `to:${identityId}`,
-      [['toIdentityId', '==', identityId]],
-      ['tokenId', 'toIdentityId']
-    );
+    return this.queryTransfers('toIdentityId', identityId);
   }
 
   /**
@@ -196,12 +198,7 @@ class TipHistoryService {
    */
   async getTipsSent(identityId: string, { fresh = false } = {}): Promise<ProvedTip[]> {
     if (!identityId) return [];
-    return this.queryTransfers(
-      `from:${identityId}`,
-      [['$ownerId', '==', identityId]],
-      ['tokenId', '$ownerId'],
-      fresh
-    );
+    return this.queryTransfers('$ownerId', identityId, fresh);
   }
 
   /**
