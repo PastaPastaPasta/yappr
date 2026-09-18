@@ -26,10 +26,12 @@ import { identityService } from '@/lib/services/identity-service'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
+import { storeStatsService } from '@/lib/services/store-stats-service'
+import { storefrontIsV2 } from '@/lib/constants'
 import { cartService } from '@/lib/services/cart-service'
 import { parseStorePolicies } from '@/lib/utils/policies'
 import { saveStoreViewCache, loadStoreViewCache } from '@/lib/caches/store-view-cache'
-import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy } from '@/lib/types'
+import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy, ItemRatingSummary } from '@/lib/types'
 
 function LoadingFallback() {
   return (
@@ -58,6 +60,7 @@ function StoreDetailContent() {
   const [items, setItems] = useState<StoreItem[]>([])
   const [reviews, setReviews] = useState<StoreReview[]>([])
   const [ratingSummary, setRatingSummary] = useState<StoreRatingSummary | null>(null)
+  const [itemRatings, setItemRatings] = useState<Record<string, ItemRatingSummary>>({})
   const [storePolicies, setStorePolicies] = useState<StorePolicy[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
@@ -72,7 +75,7 @@ function StoreDetailContent() {
   // Search, filter, sort state
   const [searchQuery, setSearchQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
-  const [sortField, setSortField] = useState<'newest' | 'title' | 'price'>('newest')
+  const [sortField, setSortField] = useState<'newest' | 'title' | 'price' | 'rating'>('newest')
 
   // Cache restoration tracking
   const restoredFromCache = useRef(false)
@@ -97,6 +100,7 @@ function StoreDetailContent() {
       setItems(cached.items)
       setReviews(cached.reviews)
       setRatingSummary(cached.ratingSummary)
+      setItemRatings(cached.itemRatings ?? {})
       setStorePolicies(cached.storePolicies)
       setHasMoreItems(cached.hasMoreItems)
       setLastCursor(cached.lastCursor)
@@ -123,12 +127,22 @@ function StoreDetailContent() {
       try {
         setIsLoading(true)
 
-        const [storeData, itemsData, reviewsData, ratingData] = await Promise.all([
+        const [storeData, itemsData, reviewsData, ratingData, rankedItems] = await Promise.all([
           storeService.getById(storeId),
           storeItemService.getByStore(storeId, { limit: 100 }),
           storeReviewService.getStoreReviews(storeId, { limit: 20 }),
-          storeReviewService.calculateRatingSummary(storeId)
+          // Proved (v2): average tree + one grouped count, not a review scan.
+          storefrontIsV2() ? storeStatsService.getStoreRatingSummary(storeId) : Promise.resolve(null),
+          // Per-item averages from the store-pinned ranked read (v2).
+          storefrontIsV2() ? storeStatsService.topItemsInStore(storeId) : Promise.resolve([])
         ])
+        const itemCounts = await storeStatsService.getItemReviewCounts(rankedItems.map((entry) => entry.id))
+        const ratings: Record<string, ItemRatingSummary> = {}
+        for (const entry of rankedItems) {
+          // A ranked entry proves at least one review; the count query refines it.
+          ratings[entry.id] = { averageRating: entry.value, reviewCount: Math.max(1, itemCounts.get(entry.id) ?? 0) }
+        }
+        setItemRatings(ratings)
 
         setStore(storeData)
         setItems(itemsData.items.filter(i => i.status === 'active'))
@@ -232,6 +246,7 @@ function StoreDetailContent() {
         items,
         reviews,
         ratingSummary,
+        itemRatings,
         storePolicies,
         hasMoreItems,
         lastCursor,
@@ -286,12 +301,15 @@ function StoreDetailContent() {
           return a.title.localeCompare(b.title)
         case 'price':
           return (a.basePrice ?? 0) - (b.basePrice ?? 0)
+        case 'rating':
+          // Proved per-item averages (store-pinned ranked read); unrated items last.
+          return (itemRatings[b.id]?.averageRating ?? 0) - (itemRatings[a.id]?.averageRating ?? 0)
         case 'newest':
         default:
           return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       }
     })
-  }, [items, searchQuery, categoryFilter, sortField])
+  }, [items, searchQuery, categoryFilter, sortField, itemRatings])
 
   // Whether animations should be skipped (cache-restored items should appear instantly)
   const skipAnimations = restoredFromCache.current
@@ -501,7 +519,7 @@ function StoreDetailContent() {
                   : 'text-gray-500 hover:text-gray-700'
               }`}
             >
-              Reviews ({reviews.length})
+              Reviews ({ratingSummary?.reviewCount ?? reviews.length})
               {activeTab === 'reviews' && (
                 <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-1 bg-yappr-500 rounded-full" />
               )}
@@ -561,12 +579,13 @@ function StoreDetailContent() {
                     )}
                     <select
                       value={sortField}
-                      onChange={(e) => setSortField(e.target.value as 'newest' | 'title' | 'price')}
+                      onChange={(e) => setSortField(e.target.value as 'newest' | 'title' | 'price' | 'rating')}
                       className="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm border-none focus:outline-none focus:ring-2 focus:ring-yappr-500"
                     >
                       <option value="newest">Newest</option>
                       <option value="title">Name</option>
                       <option value="price">Price</option>
+                      <option value="rating">Top rated</option>
                     </select>
                   </div>
                 </div>
@@ -622,6 +641,13 @@ function StoreDetailContent() {
                           </div>
                           <div className="mt-2">
                             <h3 className="font-medium truncate">{item.title}</h3>
+                            {itemRatings[item.id] && itemRatings[item.id].reviewCount > 0 && (
+                              <RatingStars
+                                rating={itemRatings[item.id].averageRating}
+                                reviewCount={itemRatings[item.id].reviewCount}
+                                size="sm"
+                              />
+                            )}
                             <PriceRangeDisplay
                               minPrice={priceRange.min}
                               maxPrice={priceRange.max}

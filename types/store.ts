@@ -264,6 +264,7 @@ export interface OrderPayload {
 
 // Store order document (from platform)
 export interface StoreOrderDocument {
+  buyerId?: Uint8Array | string // v2: poster-attested, equals $ownerId
   $id: string
   $ownerId: string // buyer
   $createdAt: number
@@ -298,6 +299,8 @@ export interface OrderStatusUpdateDocument {
   $ownerId: string // seller
   $createdAt: number
   orderId: Uint8Array | string
+  sellerId?: Uint8Array | string // v2: agreed with the order by consensus
+  buyerId?: Uint8Array | string // v2: agreed with the order by consensus
   status: OrderStatus
   trackingNumber?: string
   trackingCarrier?: string
@@ -309,6 +312,9 @@ export interface OrderStatusUpdate {
   id: string
   ownerId: string
   orderId: string
+  /** v2: the order's seller. Consensus binds it to the order; the app treats an update whose ownerId != sellerId as spoofed. */
+  sellerId?: string
+  buyerId?: string
   createdAt: Date
   status: OrderStatus
   trackingNumber?: string
@@ -324,6 +330,7 @@ export interface StoreReviewDocument {
   storeId: Uint8Array | string
   orderId: Uint8Array | string
   sellerId: Uint8Array | string
+  buyerId?: Uint8Array | string // v2: agreed with the order by consensus
   rating: number
   title?: string
   content?: string
@@ -336,6 +343,9 @@ export interface StoreReview {
   storeId: string
   orderId: string
   sellerId: string
+  /** v2: the order's buyer, bound by consensus. `verifiedPurchase` is `reviewerId === buyerId`. */
+  buyerId?: string
+  verifiedPurchase: boolean
   createdAt: Date
   rating: number
   title?: string
@@ -346,7 +356,37 @@ export interface StoreReview {
   reviewerAvatar?: string
 }
 
-// Store rating summary
+// Item review document (v2, one per order line)
+export interface ItemReviewDocument {
+  $id: string
+  $ownerId: string
+  $createdAt: number
+  storeId: Uint8Array | string
+  itemId: Uint8Array | string
+  orderId: Uint8Array | string
+  buyerId: Uint8Array | string
+  rating: number
+  content?: string
+}
+
+// Parsed item review for UI
+export interface ItemReview {
+  id: string
+  reviewerId: string
+  storeId: string
+  itemId: string
+  orderId: string
+  buyerId: string
+  verifiedPurchase: boolean
+  createdAt: Date
+  rating: number
+  content?: string
+  reviewerUsername?: string
+  reviewerDisplayName?: string
+  reviewerAvatar?: string
+}
+
+// Proved rating summary (count + sum from the contract's average tree; the client divides)
 export interface StoreRatingSummary {
   averageRating: number
   reviewCount: number
@@ -357,6 +397,12 @@ export interface StoreRatingSummary {
     4: number
     5: number
   }
+}
+
+// Proved item rating (no distribution index on itemReview)
+export interface ItemRatingSummary {
+  averageRating: number
+  reviewCount: number
 }
 
 // Saved address for encrypted storage

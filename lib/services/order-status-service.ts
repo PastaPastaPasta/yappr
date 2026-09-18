@@ -6,7 +6,8 @@
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV2 } from '../constants';
+import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import type {
   OrderStatusUpdate,
@@ -29,12 +30,68 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       id: (doc.$id || doc.id) as string,
       ownerId: (doc.$ownerId || doc.ownerId) as string,
       orderId,
+      sellerId: identifierToBase58(data.sellerId) || undefined,
+      buyerId: identifierToBase58(data.buyerId) || undefined,
       createdAt: new Date((doc.$createdAt || doc.createdAt) as number),
       status: data.status,
       trackingNumber: data.trackingNumber,
       trackingCarrier: data.trackingCarrier,
       message: data.message
     };
+  }
+
+  /**
+   * v2 binds `sellerId` to the order by consensus but cannot bind `$ownerId`,
+   * so a stranger can post an update carrying the right ids. An update is
+   * genuine only when the seller signed it. On v1 there is no attested seller
+   * to compare against, so every update is taken as-is (the v1 behaviour).
+   */
+  isGenuine(update: OrderStatusUpdate): boolean {
+    if (update.sellerId === undefined) return !storefrontIsV2();
+    return update.ownerId === update.sellerId;
+  }
+
+  /** Newest genuine update per order from an unordered list of updates. */
+  latestPerOrder(updates: OrderStatusUpdate[]): Map<string, OrderStatusUpdate> {
+    const latest = new Map<string, OrderStatusUpdate>();
+    for (const update of updates) {
+      if (!this.isGenuine(update)) continue;
+      const current = latest.get(update.orderId);
+      if (
+        !current ||
+        update.createdAt > current.createdAt ||
+        (update.createdAt.getTime() === current.createdAt.getTime() && update.id > current.id)
+      ) {
+        latest.set(update.orderId, update);
+      }
+    }
+    return latest;
+  }
+
+  /**
+   * Latest genuine status for many orders. Status history is append-only, so
+   * an `in` page is walked with a cursor until it runs short — a single
+   * 100-row page would silently drop the orders that sort last.
+   */
+  async getLatestStatuses(orderIds: string[]): Promise<Map<string, OrderStatusUpdate>> {
+    const all: OrderStatusUpdate[] = [];
+    // Small batches keep each cursor walk short: ~10 updates per order fit
+    // in one page for a batch of ten.
+    for (const batch of chunk(orderIds, Math.min(MAX_IN_CLAUSE_VALUES, 10))) {
+      let startAfter: string | undefined;
+      for (;;) {
+        const { documents } = await this.query({
+          where: [['orderId', 'in', batch]],
+          orderBy: [['orderId', 'asc'], ['$createdAt', 'asc']],
+          limit: 100,
+          startAfter,
+        });
+        all.push(...documents);
+        if (documents.length < 100) break;
+        startAfter = documents[documents.length - 1].id;
+      }
+    }
+    return this.latestPerOrder(all);
   }
 
   /**
@@ -47,20 +104,28 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       limit: 100
     });
 
-    return documents;
+    return documents.filter((update) => this.isGenuine(update));
   }
 
   /**
    * Get the latest status for an order
    */
   async getLatestStatus(orderId: string): Promise<OrderStatusUpdate | null> {
-    const { documents } = await this.query({
-      where: [['orderId', '==', orderId]],
-      orderBy: [['orderId', 'asc'], ['$createdAt', 'desc']],
-      limit: 1
-    });
-
-    return documents[0] || null;
+    // Walk newest-first until a genuine update turns up: spoofed updates are
+    // cheap and unbounded, so a fixed page could hide the seller's real one.
+    let startAfter: string | undefined;
+    for (;;) {
+      const { documents } = await this.query({
+        where: [['orderId', '==', orderId]],
+        orderBy: [['orderId', 'asc'], ['$createdAt', 'desc']],
+        limit: 20,
+        startAfter,
+      });
+      const genuine = documents.find((update) => this.isGenuine(update));
+      if (genuine) return genuine;
+      if (documents.length < 20) return null;
+      startAfter = documents[documents.length - 1].id;
+    }
   }
 
   /**
@@ -91,10 +156,15 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       trackingNumber?: string;
       trackingCarrier?: string;
       message?: string;
+      /** The order's buyer (v2 propertyAgreement; required). */
+      buyerId: string;
     }
   ): Promise<OrderStatusUpdate> {
     const documentData: Record<string, unknown> = {
       orderId: identifierStringToDocumentBytes(orderId),
+      ...(storefrontIsV2()
+        ? { sellerId: identifierStringToDocumentBytes(sellerId), buyerId: identifierStringToDocumentBytes(data.buyerId) }
+        : {}),
       status: data.status
     };
 

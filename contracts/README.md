@@ -26,7 +26,8 @@ Historical drafts (`-actual`, `-clean`, `-ready`, `-deploy`, `-updated`,
 - `yappr-profile-contract.json` — unified profile contract (avatar/banner live here, not in the social contract)
 - `yappr-dm-contract.json` — encrypted direct messages
 - `yappr-blog-contract.json` — long-form blog posts, comments, follows
-- `yappr-storefront-contract.json` — stores, items, orders, reviews, shipping
+- `yappr-storefront-contract.json` — stores, items, orders, reviews, shipping (v1, testnet)
+- `yappr-storefront-contract-v2.json` — **deployed on moutai** (`57k7LnhQ…`): v1 plus proved rating averages/rankings, item reviews, refersTo chain, countable orders, YAPP-priced reviews. Built by `scripts/build-storefront-v2-contract.py`; see `docs/STOREFRONT_V2.md`
 - `yappr-vault-contract.json` — contract-bound encryption keys + encrypted storage
 - `yappr-auth-vault-contract.json` — auth vault + access grants
 - `encrypted-key-backup-contract.json` — passphrase-encrypted key backups
