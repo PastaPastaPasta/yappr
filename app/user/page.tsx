@@ -17,6 +17,7 @@ import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useBlock } from '@/hooks/use-block'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { useTipModal } from '@/hooks/use-tip-modal'
+import { YappFlow } from '@/components/profile/yapp-flow'
 import { useProfileTabs } from '@/hooks/use-profile-tabs'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
@@ -527,6 +528,8 @@ function UserProfileContent() {
                 onEditBanner: () => setIsEditingBanner(true),
               }}
             />
+
+            <YappFlow identityId={userId} isOwnProfile={isOwnProfile} />
 
             {isBlockedByMe && !isOwnProfile && (
               <div className="p-4 bg-gray-50 dark:bg-gray-950 border-y border-gray-200 dark:border-gray-800">

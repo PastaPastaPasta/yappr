@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { DataContract, EvoSDK, PlatformVersion } from '@dashevo/evo-sdk';
 import { bundleKey, bundledContractsFor, staleContractIds } from '@/lib/contracts/bundled-contracts';
 import { instrumentSdk } from '@/lib/query-inspector/capture';
-import { YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
+import { YAPPR_DM_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, TOKEN_HISTORY_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
 import type { AppNetwork } from '../constants';
 
 export interface EvoSdkConfig {
@@ -192,6 +192,10 @@ class EvoSdkService {
     }
     if (POLLR_CONTRACT_ID) {
       contractsToFetch.push({ id: POLLR_CONTRACT_ID, name: 'Pollr' });
+    }
+    // System token-history contract — where proved YAPP tips are read from.
+    if (TOKEN_HISTORY_CONTRACT_ID) {
+      contractsToFetch.push({ id: TOKEN_HISTORY_CONTRACT_ID, name: 'TokenHistory' });
     }
 
     // Add Key Exchange contract if configured

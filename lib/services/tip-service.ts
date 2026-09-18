@@ -2,49 +2,37 @@ import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { identityService } from './identity-service';
 import { signerService } from './signer-service';
-import { TipInfo } from '../../types';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose } from '@/lib/crypto/identity-keys';
-import { isInsufficientTokenError } from '@/lib/error-utils';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
-import { keyNetwork } from '@/lib/constants'
-import { replyLinkageTo, type ThreadBearing } from '@/lib/contract-topology'
-
-/**
- * What a tip announcement needs to know about the tipped item: enough to place a
- * reply under the right thread root. Any `Post` satisfies it.
- */
-export type TipTarget = ThreadBearing;
+import { keyNetwork, MIN_YAPP_TIP } from '@/lib/constants'
+import { encodeTipNote, type TipTargetKind } from '@/lib/tip-note'
+import { isNonFatalWaitError, isTimeoutError } from '@/lib/error-utils'
+import { tokenService } from './token-service'
+import { tipHistoryService, type SentTipMatch } from './tip-history-service'
 
 export interface TipResult {
   success: boolean;
   transactionHash?: string;
   error?: string;
-  errorCode?: 'INSUFFICIENT_BALANCE' | 'SELF_TIP' | 'NETWORK_ERROR' | 'INVALID_AMOUNT' | 'INVALID_KEY';
-  /**
-   * Whether the public "X tipped Y" announcement reply posted. False when the
-   * tip's credit transfer succeeded but the reply (a YAPP-costed doc) was
-   * rejected — e.g. the tipper holds no YAPP. Only meaningful when a postId was given.
-   */
-  announcementPosted?: boolean;
-  /**
-   * Why the announcement reply failed when `announcementPosted` is false:
-   * the tipper lacked YAPP for the reply's tokenCost, or any other posting
-   * failure (timeout, transport, rejection).
-   */
-  announcementError?: 'INSUFFICIENT_YAPP' | 'POST_FAILED';
+  errorCode?:
+    | 'INSUFFICIENT_BALANCE'
+    | 'INSUFFICIENT_CREDITS'
+    | 'SELF_TIP'
+    | 'NETWORK_ERROR'
+    | 'NOT_AUTHORIZED'
+    | 'INVALID_AMOUNT'
+    | 'INVALID_KEY'
+    | 'BELOW_MINIMUM'
+    | 'NEEDS_CRITICAL_KEY'
+    /**
+     * The transfer was broadcast, the confirmation wait failed, and no matching
+     * transfer document turned up within the confirmation window. The tip may
+     * still land — the UI must offer "check again", never a blind retry, or the
+     * user sends their money twice.
+     */
+    | 'UNCONFIRMED';
 }
-
-// Regex to parse tip content: tip:AMOUNT_CREDITS followed by optional message
-// Format: tip:CREDITS\nmessage (message is optional)
-// Using [\s\S]* instead of .* with 's' flag for cross-line matching
-//
-// TODO: Once the Dash Platform SDK exposes transition IDs from creditTransfer(),
-// update format to: tip:CREDITS@TRANSITION_ID\nmessage
-// This will allow on-chain verification of tip amounts.
-// See: wasm-sdk/src/state_transitions/identity/mod.rs - identity_credit_transfer
-// currently returns { status, senderId, recipientId, amount, message } but no hash.
-const TIP_CONTENT_REGEX = /^tip:(\d+)(?:\n([\s\S]*))?$/;
 
 // Conversion: 1 DASH = 100,000,000,000 credits on Dash Platform
 // (Platform credits are different from core duffs)
@@ -79,22 +67,25 @@ class TipService {
   }
 
   /**
-   * Send a tip (credit transfer) to another user and optionally create a tip post
+   * Send a DASH **credit** tip to another identity.
+   *
+   * A credit transfer leaves no readable document behind — the SDK returns no
+   * transition id and nothing on chain says who was tipped for what — so this
+   * path is unprovable by construction and is kept only as the plain
+   * "send someone DASH" option. Nothing is announced on the user's behalf; a
+   * tip that Yappr can display is a YAPP tip (`sendYappTipLocal`).
+   *
    * @param senderId - The sender's identity ID
-   * @param recipientId - The recipient's identity ID (post author or user being tipped)
-   * @param target - The post or reply being tipped (optional - when null, no tip post is created)
+   * @param recipientId - The recipient's identity ID
    * @param amountCredits - Amount in credits
    * @param transferKeyWif - The sender's transfer private key in WIF format
-   * @param message - Optional tip message
-   * @param keyId - Optional key ID to use (if identity has multiple keys)
+   * @param keyId - Optional key ID to use (if identity has multiple transfer keys)
    */
   async sendTip(
     senderId: string,
     recipientId: string,
-    target: TipTarget | null,
     amountCredits: number,
     transferKeyWif: string,
-    message?: string,
     keyId?: number
   ): Promise<TipResult> {
     // Validation: prevent self-tipping
@@ -187,21 +178,10 @@ class TipService {
 
       logger.debug('Tip transfer result:', result);
 
-      // Create tip post as a reply to the tipped post (only if postId provided)
-      // TODO: Once SDK returns transition ID, pass it for on-chain verification
-      // The tip (credit transfer) already succeeded; the announcement reply is a
-      // `reply` doc with a YAPP tokenCost, so a 0-YAPP tipper's reply can fail —
-      // report that so the UI can tell the user rather than losing it silently.
-      const announcement = target
-        ? await this.createTipPost(senderId, target, recipientId, amountCredits, message)
-        : { posted: true as const };
-
       return {
         success: true,
         // TODO: Return actual transaction hash once SDK exposes it
         transactionHash: 'confirmed',
-        announcementPosted: announcement.posted,
-        announcementError: announcement.posted ? undefined : announcement.reason,
       };
 
     } catch (error) {
@@ -216,16 +196,9 @@ class TipService {
         // Assume success - clear cache and return optimistic result
         identityService.clearCache(senderId);
 
-        // Create tip post (amount is known even if confirmation timed out)
-        const announcement = target
-          ? await this.createTipPost(senderId, target, recipientId, amountCredits, message)
-          : { posted: true as const };
-
         return {
           success: true,
           transactionHash: 'pending-confirmation',
-          announcementPosted: announcement.posted,
-          announcementError: announcement.posted ? undefined : announcement.reason,
         };
       }
 
@@ -258,46 +231,136 @@ class TipService {
   }
 
   /**
-   * Create a tip post as a reply to the tipped post
+   * Send a **YAPP** tip, signing locally with a CRITICAL key.
    *
-   * TODO: Once SDK exposes transition IDs, include it in content for verification:
-   * Format will become: tip:CREDITS@TRANSITION_ID\nmessage
+   * This is the provable path: Platform records the transfer in the system
+   * token-history contract with the exact amount, the sender and the
+   * recipient, plus the `publicNote` this builds — so the badge Yappr renders
+   * is read back off chain rather than taken on the tipper's word.
+   *
+   * Every batch carrying a token transition needs a CRITICAL authentication
+   * key. Wallet-login users don't have one in the browser: they get
+   * NEEDS_CRITICAL_KEY here, and the caller hands
+   * `buildUnsignedYappTipTransition` to their wallet instead.
+   *
+   * @param senderId - The tipper
+   * @param recipientId - The tipped author
+   * @param amount - Whole YAPP tokens
+   * @param target - The tipped post/reply the note should name, if any
+   * @param message - Optional text signed with the transfer
+   * @param criticalKeyWif - A CRITICAL key the user just entered (never stored)
    */
-  private async createTipPost(
+  async sendYappTipLocal(
     senderId: string,
-    target: TipTarget,
-    postOwnerId: string,
-    amountCredits: number,
-    tipMessage?: string
-  ): Promise<{ posted: true } | { posted: false; reason: 'INSUFFICIENT_YAPP' | 'POST_FAILED' }> {
-    try {
-      // Format: tip:CREDITS\nmessage (message is optional)
-      // Amount is self-reported until SDK provides transition ID for verification
-      const content = tipMessage
-        ? `tip:${amountCredits}\n${tipMessage}`
-        : `tip:${amountCredits}`;
+    recipientId: string,
+    amount: bigint,
+    target?: { kind: TipTargetKind; id: string },
+    message?: string,
+    criticalKeyWif?: string
+  ): Promise<TipResult> {
+    const invalid = this.validateYappTip(senderId, recipientId, amount);
+    if (invalid) return invalid;
 
-      // Tips are announced as a reply to the tipped item. Tipping a REPLY is
-      // allowed, so the announcement has to hang off the right thread root
-      // rather than assuming the target is a top-level post.
-      const { replyService } = await import('./reply-service');
-      await replyService.createReply(senderId, content, {
-        ...replyLinkageTo(target),
-        parentOwnerId: postOwnerId,
-      });
-
-      logger.debug('Tip reply created successfully');
-      return { posted: true };
-    } catch (error) {
-      // Log but don't fail the tip - the credit transfer already succeeded.
-      // Distinguish "tipper has no YAPP for the reply's tokenCost" from any
-      // other posting failure so the UI doesn't misattribute the cause.
-      logger.error('Failed to create tip post:', error);
+    const result = await tokenService.transfer(
+      senderId,
+      recipientId,
+      amount,
+      this.tipNoteFor(target, message),
+      criticalKeyWif
+    );
+    if (!result.success) {
+      // A failed CONFIRMATION is not a failed transfer: DAPI 504s on
+      // `wait_for_state_transition_result` for transitions that landed. Ask the
+      // chain instead of guessing — reporting failure here would put a
+      // "Try Again" button in front of a tip that already went out.
+      if (result.errorCode === 'NETWORK_ERROR' && this.looksUnconfirmed(result.error)) {
+        return this.confirmYappTip(senderId, this.tipMatch(recipientId, amount, target, message));
+      }
       return {
-        posted: false,
-        reason: isInsufficientTokenError(error) ? 'INSUFFICIENT_YAPP' : 'POST_FAILED',
+        success: false,
+        error: result.error ?? 'Tip failed',
+        errorCode: result.errorCode ?? 'NETWORK_ERROR',
       };
     }
+
+    // The transfer document appears a block or two later; drop the cached
+    // pages so the next read can pick it up instead of serving a stale page.
+    tipHistoryService.clearCache();
+    return { success: true, transactionHash: 'confirmed' };
+  }
+
+  /**
+   * What the tip just sent should look like on chain. Shared by the local
+   * path's confirmation and the wallet path's landing check so the two can
+   * never disagree about which transfer counts as "this tip".
+   */
+  tipMatch(
+    recipientId: string,
+    amount: bigint,
+    target?: { kind: TipTargetKind; id: string },
+    message?: string,
+    since?: number
+  ): SentTipMatch {
+    return {
+      to: recipientId,
+      amount,
+      postId: target?.id,
+      // A profile tip's note is the bare message, which never parses as a tip
+      // note, so the proved row carries no message to compare against.
+      message: target ? message?.trim() || undefined : undefined,
+      since,
+    };
+  }
+
+  /**
+   * Look for the proof of a tip whose broadcast could not be confirmed.
+   * Success only when the transfer document is actually found.
+   */
+  async confirmYappTip(senderId: string, match: SentTipMatch): Promise<TipResult> {
+    const landed = await tipHistoryService.awaitSentTip(senderId, match);
+    tipHistoryService.clearCache();
+    if (landed) return { success: true, transactionHash: 'confirmed' };
+    return {
+      success: false,
+      error: "Your tip was sent but we couldn't confirm it landed. Check again before sending another — it may still be settling.",
+      errorCode: 'UNCONFIRMED',
+    };
+  }
+
+  /** Whether a failure is a confirmation-wait problem rather than a rejection. */
+  private looksUnconfirmed(error?: string): boolean {
+    if (!error) return false;
+    return (
+      isTimeoutError(error) ||
+      isNonFatalWaitError(error) ||
+      /504|gateway|wait_for_state_transition_result/i.test(error)
+    );
+  }
+
+  /**
+   * The `publicNote` for a tip: the encoded target when one is known, the bare
+   * message when the tip is aimed at a profile rather than a post, and nothing
+   * at all when there is neither.
+   */
+  tipNoteFor(target?: { kind: TipTargetKind; id: string }, message?: string): string | undefined {
+    if (target) return encodeTipNote(target.kind, target.id, message);
+    const trimmed = message?.trim();
+    return trimmed ? trimmed : undefined;
+  }
+
+  /** Shared pre-flight for both YAPP tip paths (local signing and wallet signing). */
+  validateYappTip(senderId: string, recipientId: string, amount: bigint): TipResult | null {
+    if (senderId === recipientId) {
+      return { success: false, error: 'Cannot tip yourself', errorCode: 'SELF_TIP' };
+    }
+    if (amount < MIN_YAPP_TIP) {
+      return {
+        success: false,
+        error: `Minimum tip is ${MIN_YAPP_TIP} YAPP`,
+        errorCode: 'INVALID_AMOUNT',
+      };
+    }
+    return null;
   }
 
   /**
@@ -322,30 +385,6 @@ class TipService {
       return `${(dash * CREDITS_PER_DASH).toFixed(0)} credits`;
     }
     return `${dash.toFixed(4)} DASH`;
-  }
-
-  /**
-   * Parse tip content from post content
-   * Returns TipInfo if the content is a tip post, null otherwise
-   *
-   * Current format: tip:CREDITS\nmessage
-   * TODO: Future format with verification: tip:CREDITS@TRANSITION_ID\nmessage
-   */
-  parseTipContent(content: string): TipInfo | null {
-    const match = content.match(TIP_CONTENT_REGEX);
-    if (!match) return null;
-
-    return {
-      amount: parseInt(match[1], 10),
-      message: (match[2] || '').trim()
-    };
-  }
-
-  /**
-   * Check if post content is a tip
-   */
-  isTipPost(content: string): boolean {
-    return TIP_CONTENT_REGEX.test(content);
   }
 
 }
