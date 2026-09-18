@@ -203,7 +203,7 @@ export function stateRank(state) {
 }
 
 /** Atomic, owner-only write: temp file + rename, chmod 600. */
-function writePrivateFile(path, contents) {
+export function writePrivateFile(path, contents) {
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync(tmp, contents, { mode: 0o600 });
   renameSync(tmp, path);

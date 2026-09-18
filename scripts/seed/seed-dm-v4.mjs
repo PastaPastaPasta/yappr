@@ -56,7 +56,7 @@
  * reads back. Per-actor writes are strictly sequential (identity nonce);
  * conversations run in parallel behind a semaphore.
  */
-import { existsSync, readFileSync, renameSync, writeFileSync, chmodSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { IdentitySigner, ensureInitialized } from '@dashevo/evo-sdk';
 import * as secp256k1 from '@noble/secp256k1';
@@ -79,6 +79,7 @@ import {
   readback,
   sleep,
   wifFromHex,
+  writePrivateFile,
 } from './seed-lib.mjs';
 
 // ---- Constants mirrored from the client ---------------------------------------
@@ -577,10 +578,7 @@ function loadState(file) {
 }
 
 function saveState(state, file) {
-  const tmp = `${file}.tmp-${process.pid}`;
-  writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  renameSync(tmp, file);
-  chmodSync(file, 0o600);
+  writePrivateFile(file, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 // ---- Plan ----------------------------------------------------------------------
@@ -627,60 +625,90 @@ function buildPlan(actorsByIdx, seed) {
     const lastSpeaker = messages.at(-1).from;
     const reader = lastSpeaker === actorA ? actorB : actorA;
 
+    // Receipts to write, in write order: owner → the message count that must
+    // precede the receipt.
     const scenario = deck[index];
-    // Receipt goes after this many messages; `null` means "at the end".
-    // A stale receipt lands between 45% and 80% of the way through, so there
-    // is always something after it and always something before it.
-    const readAfter =
-      scenario === 'stale'
-        ? Math.max(1, Math.min(messages.length - 1, Math.floor(messages.length * (0.45 + rng() * 0.35))))
-        : null;
+    let receipts;
+    switch (scenario) {
+      case 'read':
+        receipts = [
+          { owner: actorA, after: messages.length },
+          { owner: actorB, after: messages.length },
+        ];
+        break;
+      case 'stale': {
+        // A stale receipt lands between 45% and 80% of the way through, so there
+        // is always something after it and always something before it.
+        const readAfter = Math.max(1, Math.min(messages.length - 1, Math.floor(messages.length * (0.45 + rng() * 0.35))));
+        receipts = [
+          { owner: reader, after: readAfter },
+          { owner: lastSpeaker, after: messages.length },
+        ];
+        break;
+      }
+      default: // cold — the reader never acknowledges the thread at all.
+        receipts = [{ owner: lastSpeaker, after: messages.length }];
+    }
 
+    const conversationIdBytes = conversationIdFor(actorA.identityId, actorB.identityId);
     return {
       index,
-      conversationIdBytes: conversationIdFor(actorA.identityId, actorB.identityId),
-      get key() {
-        return bs58.encode(this.conversationIdBytes);
-      },
+      conversationIdBytes,
+      key: bs58.encode(conversationIdBytes),
       actorA,
       actorB,
       messages,
-      lastSpeaker,
-      reader,
       scenario,
-      readAfter,
-      /** Receipts to write: owner → the message count that must precede it. */
-      receipts:
-        scenario === 'read'
-          ? [
-              { owner: actorA, after: messages.length },
-              { owner: actorB, after: messages.length },
-            ]
-          : scenario === 'stale'
-            ? [
-                { owner: reader, after: readAfter },
-                { owner: lastSpeaker, after: messages.length },
-              ]
-            : [{ owner: lastSpeaker, after: messages.length }],
+      receipts,
     };
   });
 }
 
 // ---- Actors --------------------------------------------------------------------
 
+/** Enum orderings the wasm getters return as strings and the JSON shape as indexes. */
+const KEY_TYPE_NAMES = ['ecdsa_secp256k1', 'bls12_381', 'ecdsa_hash160', 'bip13_script_hash', 'eddsa_25519_hash160'];
+const KEY_PURPOSE_NAMES = ['authentication', 'encryption', 'decryption', 'transfer', 'system', 'voting', 'owner'];
+const KEY_SECURITY_LEVEL_NAMES = ['master', 'critical', 'high', 'medium'];
+
+function enumIndex(value, names) {
+  if (typeof value === 'number') return value;
+  const index = names.indexOf(String(value));
+  return index === -1 ? null : index;
+}
+
 /** Normalizes an identity public key from either the wasm getter or JSON shape. */
 function keyFacts(key) {
-  const asNumber = (value, names) => {
-    if (typeof value === 'number') return value;
-    const index = names.indexOf(String(value));
-    return index === -1 ? null : index;
-  };
   return {
     keyId: key.keyId ?? key.id,
-    type: asNumber(key.keyTypeNumber ?? key.keyType ?? key.type, ['ecdsa_secp256k1', 'bls12_381', 'ecdsa_hash160', 'bip13_script_hash', 'eddsa_25519_hash160']),
-    purpose: asNumber(key.purposeNumber ?? key.purpose, ['authentication', 'encryption', 'decryption', 'transfer', 'system', 'voting', 'owner']),
-    securityLevel: asNumber(key.securityLevelNumber ?? key.securityLevel, ['master', 'critical', 'high', 'medium']),
+    type: enumIndex(key.keyTypeNumber ?? key.keyType ?? key.type, KEY_TYPE_NAMES),
+    purpose: enumIndex(key.purposeNumber ?? key.purpose, KEY_PURPOSE_NAMES),
+    securityLevel: enumIndex(key.securityLevelNumber ?? key.securityLevel, KEY_SECURITY_LEVEL_NAMES),
     data: toBytes(typeof key.data === 'string' && /^[0-9a-f]+$/i.test(key.data) ? hexToBytes(key.data) : key.data),
+  };
+}
+
+/**
+ * The half of an actor that comes from the ledger alone: its handle, identity
+ * id and the key 2 ECDH pair. Enough to encrypt with, which is all the offline
+ * dry run needs; the live run hands the result to `buildActor` for signing
+ * material and the on-chain key proof.
+ */
+function ledgerActor(ledger, personaIdx) {
+  const entry = ledgerEntry(ledger, personaIdx);
+  if (!entry) throw new Error(`persona ${personaIdx} is not in the seed ledger`);
+  if (!entry.identityId) throw new Error(`persona ${personaIdx} (${entry.handle}) has no identity yet — provision it first`);
+  const ecdhKey = entry.identityKeys.find((key) => key.keyId === DM_ECDH_KEY_ID);
+  if (!ecdhKey) throw new Error(`persona ${personaIdx} (${entry.handle}) is missing key ${DM_ECDH_KEY_ID}`);
+  return {
+    entry,
+    actor: {
+      personaIdx,
+      handle: entry.handle,
+      identityId: entry.identityId,
+      ecdhPrivateKey: hexToBytes(ecdhKey.privateKeyHex),
+      ecdhPublicKey: hexToBytes(ecdhKey.publicKeyHex),
+    },
   };
 }
 
@@ -691,16 +719,12 @@ function keyFacts(key) {
  * this script writes would be undecryptable in the browser, so that is a hard
  * stop rather than a warning.
  */
-async function buildActor(battery, personaIdx) {
-  const entry = ledgerEntry(loadLedger(), personaIdx);
-  if (!entry) throw new Error(`persona ${personaIdx} is not in the seed ledger`);
-  if (!entry.identityId) throw new Error(`persona ${personaIdx} (${entry.handle}) has no identity yet — provision it first`);
-
+async function buildActor(writer, ledger, personaIdx) {
+  const { entry, actor } = ledgerActor(ledger, personaIdx);
   const authKey = entry.identityKeys.find((key) => key.keyId === CRITICAL_AUTH_KEY_ID);
-  const ecdhKey = entry.identityKeys.find((key) => key.keyId === DM_ECDH_KEY_ID);
-  if (!authKey || !ecdhKey) throw new Error(`persona ${personaIdx} is missing key ${CRITICAL_AUTH_KEY_ID} or ${DM_ECDH_KEY_ID}`);
+  if (!authKey) throw new Error(`persona ${personaIdx} (${entry.handle}) is missing key ${CRITICAL_AUTH_KEY_ID}`);
 
-  const identity = await battery.readback(() => battery.sdk.identities.fetch(entry.identityId));
+  const identity = await writer.readback(() => writer.sdk.identities.fetch(entry.identityId));
   if (!identity) throw new Error(`identity ${entry.identityId} (${entry.handle}) not found on this devnet`);
 
   const facts = identity.publicKeys.map(keyFacts);
@@ -712,7 +736,7 @@ async function buildActor(battery, personaIdx) {
         key.purpose === KEY_PURPOSE_AUTHENTICATION
     ) ?? facts.find((key) => key.type === KEY_TYPE_ECDSA_SECP256K1 && key.securityLevel === KEY_SECURITY_LEVEL_HIGH);
   if (!appChoice) throw new Error(`${entry.handle}: the identity has no HIGH secp256k1 key — the app could not encrypt to it`);
-  if (bytesToHex(appChoice.data) !== ecdhKey.publicKeyHex) {
+  if (bytesToHex(appChoice.data) !== bytesToHex(actor.ecdhPublicKey)) {
     throw new Error(
       `${entry.handle}: the app would do ECDH with on-chain key ${appChoice.keyId}, but the ledger's key ${DM_ECDH_KEY_ID} is a different point. ` +
         'Seeding with the ledger key would produce messages the app cannot decrypt.'
@@ -726,13 +750,9 @@ async function buildActor(battery, personaIdx) {
   signer.addKeyFromWif(wifFromHex(authKey.privateKeyHex));
 
   return {
-    personaIdx,
-    handle: entry.handle,
-    identityId: entry.identityId,
+    ...actor,
     identityKey: identity.getPublicKeyById(CRITICAL_AUTH_KEY_ID),
     signer,
-    ecdhPrivateKey: hexToBytes(ecdhKey.privateKeyHex),
-    ecdhPublicKey: hexToBytes(ecdhKey.publicKeyHex),
     usesHash160,
     lock: makeMutex(),
   };
@@ -740,12 +760,21 @@ async function buildActor(battery, personaIdx) {
 
 // ---- Write plumbing ------------------------------------------------------------
 
+/** Polls the chain a few times, letting the write quorum settle between tries. */
+async function settlesInto(accepted) {
+  for (let poll = 0; poll < SETTLE_POLLS; poll++) {
+    await sleep(SETTLE_MS);
+    if (await accepted()) return true;
+  }
+  return false;
+}
+
 /**
  * Creates a document, deciding acceptance by READBACK rather than by
  * throw/no-throw: a 504 on the confirmation wait does not mean the write was
  * refused, and a document a previous run already wrote reads back at once.
  */
-function makeWriter({ handle, contractId, dryRun }) {
+function makeWriter({ handle, contractId }) {
   const sdk = handle.sdk;
   const get = (docType, id) => readback(handle, async () => (await sdk.documents.get(contractId, docType, id)) ?? null);
 
@@ -767,26 +796,19 @@ function makeWriter({ handle, contractId, dryRun }) {
           continue;
         }
         if (WAIT_MAYBE_LANDED.test(lastError) || RETRYABLE.test(lastError)) {
-          for (let poll = 0; poll < SETTLE_POLLS; poll++) {
-            await sleep(SETTLE_MS);
-            if (await accepted()) return;
-          }
+          if (await settlesInto(accepted)) return;
           continue;
         }
         break;
       }
     }
     // Last word belongs to the chain, not to the SDK.
-    for (let poll = 0; poll < SETTLE_POLLS; poll++) {
-      await sleep(SETTLE_MS);
-      if (await accepted()) return;
-    }
+    if (await settlesInto(accepted)) return;
     throw new Error(`${label} failed: ${lastError ?? 'the SDK reported no error, but the write is not on chain'}`);
   }
 
   async function create(actor, docType, data, entropy, { probeFirst = false } = {}) {
     const { document, id } = buildDocument({ contractId, docType, ownerId: actor.identityId, data, entropy });
-    if (dryRun) return { id, skipped: 'dry-run' };
     if (probeFirst && (await get(docType, id))) return { id, skipped: 'already on chain' };
     await attempt(
       actor,
@@ -801,7 +823,6 @@ function makeWriter({ handle, contractId, dryRun }) {
   async function replace(actor, docType, id, data, revision) {
     const next = BigInt(revision) + 1n;
     const { document } = buildDocument({ contractId, docType, ownerId: actor.identityId, data, revision: next, id: bs58.decode(id) });
-    if (dryRun) return { id, skipped: 'dry-run' };
     await attempt(
       actor,
       `replace ${docType} ${id} for ${actor.handle}`,
@@ -815,7 +836,6 @@ function makeWriter({ handle, contractId, dryRun }) {
   }
 
   async function remove(actor, docType, id) {
-    if (dryRun) return;
     await actor.lock(() =>
       sdk.documents.delete({
         document: { id, ownerId: actor.identityId, dataContractId: contractId, documentTypeName: docType },
@@ -823,10 +843,7 @@ function makeWriter({ handle, contractId, dryRun }) {
         signer: actor.signer,
       })
     );
-    for (let poll = 0; poll < SETTLE_POLLS; poll++) {
-      await sleep(SETTLE_MS);
-      if (!(await get(docType, id))) return;
-    }
+    if (await settlesInto(async () => !(await get(docType, id)))) return;
     throw new Error(`delete ${docType} ${id} did not take effect`);
   }
 
@@ -859,8 +876,8 @@ function makeWriter({ handle, contractId, dryRun }) {
  * an invite would make the app render a phantom, empty conversation, so it is
  * replaced rather than left in place.
  */
-async function ensureInvite(writer, state, from, to, conversationIdBytes, log) {
-  const record = (state.invites ??= {});
+async function ensureInvite(writer, entry, from, to, conversationIdBytes) {
+  const record = (entry.invites ??= {});
   const key = `${from.personaIdx}->${to.personaIdx}`;
   if (record[key]) return 'journal';
 
@@ -878,7 +895,7 @@ async function ensureInvite(writer, state, from, to, conversationIdBytes, log) {
       return 'existing';
     }
     const staleId = bs58.encode(toBytes(existing[0].$id));
-    log(`     replacing ${from.handle}→${to.handle} invite ${shortId(staleId)}: it names conversation ${shortId(bs58.encode(onChain))}, not ${shortId(bs58.encode(conversationIdBytes))}`);
+    console.log(`     replacing ${from.handle}→${to.handle} invite ${shortId(staleId)}: it names conversation ${shortId(bs58.encode(onChain))}, not ${shortId(bs58.encode(conversationIdBytes))}`);
     await writer.remove(from, 'conversationInvite', staleId);
   }
 
@@ -903,7 +920,7 @@ async function ensureInvite(writer, state, from, to, conversationIdBytes, log) {
  * `$updatedAt`. Replacing advances it, which is the entire point: `$updatedAt`
  * IS the last-read timestamp.
  */
-async function ensureReceipt(writer, entry, owner, conversationIdBytes, log) {
+async function ensureReceipt(writer, entry, owner, conversationIdBytes) {
   const ownerKey = String(owner.personaIdx);
   if (entry.receipts[ownerKey]) return 'journal';
 
@@ -919,7 +936,7 @@ async function ensureReceipt(writer, entry, owner, conversationIdBytes, log) {
 
   if (existing) {
     const id = bs58.encode(toBytes(existing.$id));
-    log(`     ${owner.handle} already has a receipt here (${shortId(id)}) — replacing it to advance $updatedAt`);
+    console.log(`     ${owner.handle} already has a receipt here (${shortId(id)}) — replacing it to advance $updatedAt`);
     await writer.replace(owner, 'readReceipt', id, { conversationId: conversationIdBytes }, existing.$revision ?? 1n);
     entry.receipts[ownerKey] = id;
     return 'replaced';
@@ -937,7 +954,7 @@ async function ensureReceipt(writer, entry, owner, conversationIdBytes, log) {
 }
 
 /** One conversation, strictly in order: invites, messages, and receipts interleaved. */
-async function seedConversation(writer, plan, state, { dryRun, log, resume }) {
+async function seedConversation(writer, plan, state, { resume }) {
   const entry = (state.conversations[plan.key] ??= {
     pair: [plan.actorA.handle, plan.actorB.handle],
     scenario: plan.scenario,
@@ -949,21 +966,22 @@ async function seedConversation(writer, plan, state, { dryRun, log, resume }) {
 
   // Reconcile against the chain before writing anything: if the journal was
   // lost, the count tree says how much of this conversation already exists.
-  if (!dryRun && resume) {
+  if (resume) {
     const onChain = await writer.count('directMessage', [['conversationId', '==', b64(plan.conversationIdBytes)]]);
     const known = Object.keys(entry.messages).length;
-    if (onChain > known) log(`     ${plan.key.slice(0, 8)}… journal knows ${known} messages, the chain has ${onChain} — probing ids`);
+    if (onChain > known) console.log(`     ${plan.key.slice(0, 8)}… journal knows ${known} messages, the chain has ${onChain} — probing ids`);
   }
 
   const written = { invites: 0, messages: 0, receipts: 0 };
   const receiptsByPosition = new Map();
-  for (const receipt of plan.receipts) receiptsByPosition.set(receipt.after, [...(receiptsByPosition.get(receipt.after) ?? []), receipt.owner]);
+  for (const receipt of plan.receipts) {
+    const owners = receiptsByPosition.get(receipt.after) ?? [];
+    owners.push(receipt.owner);
+    receiptsByPosition.set(receipt.after, owners);
+  }
 
   for (const message of plan.messages) {
-    if (!entry.invites[`${message.from.personaIdx}->${message.to.personaIdx}`]) {
-      const outcome = dryRun ? 'dry-run' : await ensureInvite(writer, entry, message.from, message.to, plan.conversationIdBytes, log);
-      if (outcome === 'created') written.invites += 1;
-    }
+    if ((await ensureInvite(writer, entry, message.from, message.to, plan.conversationIdBytes)) === 'created') written.invites += 1;
 
     const slot = String(message.position);
     if (!entry.messages[slot]) {
@@ -980,11 +998,11 @@ async function seedConversation(writer, plan, state, { dryRun, log, resume }) {
     }
 
     for (const owner of receiptsByPosition.get(message.position + 1) ?? []) {
-      if (entry.receipts[String(owner.personaIdx)]) continue;
-      const outcome = await ensureReceipt(writer, entry, owner, plan.conversationIdBytes, log);
+      const outcome = await ensureReceipt(writer, entry, owner, plan.conversationIdBytes);
+      if (outcome === 'journal') continue;
       if (outcome === 'created' || outcome === 'replaced') written.receipts += 1;
       // Only a receipt with messages still to come needs the gap.
-      if (!dryRun && message.position + 1 < plan.messages.length) await sleep(RECEIPT_GAP_MS);
+      if (message.position + 1 < plan.messages.length) await sleep(RECEIPT_GAP_MS);
     }
   }
 
@@ -1072,7 +1090,7 @@ async function verify(writer, plans, state) {
  * never be a side effect; `--only` narrows phase 1 but phase 2 always sweeps
  * every actor, so run it without `--only`.
  */
-async function pruneForeign(writer, plans, actors, state, log) {
+async function pruneForeign(writer, plans, actors, state) {
   const byIdentity = new Map(actors.map((actor) => [actor.identityId, actor]));
   const seeded = new Set(plans.map((plan) => plan.key));
   let removed = 0;
@@ -1089,10 +1107,10 @@ async function pruneForeign(writer, plans, actors, state, log) {
       if (keep.has(id)) continue;
       const owner = byIdentity.get(bs58.encode(toBytes(doc.$ownerId)));
       if (!owner) {
-        log(`     ${conversationKey.slice(0, 8)}… message ${shortId(id)} belongs to an identity this seeder does not hold — leaving it`);
+        console.log(`     ${conversationKey.slice(0, 8)}… message ${shortId(id)} belongs to an identity this seeder does not hold — leaving it`);
         continue;
       }
-      log(`     ${conversationKey.slice(0, 8)}… deleting foreign message ${shortId(id)} (${owner.handle})`);
+      console.log(`     ${conversationKey.slice(0, 8)}… deleting foreign message ${shortId(id)} (${owner.handle})`);
       await writer.remove(owner, 'directMessage', id);
       removed += 1;
     }
@@ -1120,7 +1138,7 @@ async function pruneForeign(writer, plans, actors, state, log) {
       const key = bs58.encode(toBytes(invite.conversationId ?? invite.data?.conversationId));
       if (seeded.has(key)) continue;
       const inviteId = bs58.encode(toBytes(invite.$id));
-      log(`     ${actor.handle}: invite ${shortId(inviteId)} advertises unseeded conversation ${key.slice(0, 8)}… — removing it`);
+      console.log(`     ${actor.handle}: invite ${shortId(inviteId)} advertises unseeded conversation ${key.slice(0, 8)}… — removing it`);
       await sweep(key, new Set());
       await writer.remove(actor, 'conversationInvite', inviteId);
       removed += 1;
@@ -1131,37 +1149,44 @@ async function pruneForeign(writer, plans, actors, state, log) {
 
 // ---- Reporting -----------------------------------------------------------------
 
+/** Fixed-width table: `columns` is [heading, width] pairs, `rows` arrays of cells. */
+function printColumns(columns, rows) {
+  const line = (cells) => cells.map((cell, i) => (i === columns.length - 1 ? String(cell) : String(cell).padEnd(columns[i][1]))).join('  ');
+  console.log(line(columns.map(([heading]) => heading)));
+  console.log(columns.map(([, width]) => '-'.repeat(width)).join('  '));
+  for (const row of rows) console.log(line(row));
+}
+
+const participantsOf = (plan) => `${plan.actorA.handle} ↔ ${plan.actorB.handle}`.slice(0, 28);
+
 function printTable(rows) {
-  const columns = [
-    ['conversation', 14],
-    ['participants', 28],
-    ['msgs', 5],
-    ['extra', 5],
-    ['scenario', 9],
-    ['unread', 13],
-    ['newest message (decrypted)', 46],
-  ];
-  const line = (cells) => cells.map((cell, i) => String(cell).padEnd(columns[i][1])).join('  ');
-  console.log(`\n${line(columns.map((c) => c[0]))}`);
-  console.log(columns.map((c) => '-'.repeat(c[1])).join('  '));
-  for (const row of rows) {
-    const [a, b] = row.sides;
-    const unread = `${a.viewer.handle.slice(0, 5)}:${a.unread} ${b.viewer.handle.slice(0, 5)}:${b.unread}`;
-    const preview = row.decryptError
-      ? `DECRYPT FAILED: ${row.decryptError.slice(0, 30)}`
-      : (row.preview ?? '(no messages)').replace(/\s+/g, ' ').slice(0, 44);
-    console.log(
-      line([
+  console.log('');
+  printColumns(
+    [
+      ['conversation', 14],
+      ['participants', 28],
+      ['msgs', 5],
+      ['extra', 5],
+      ['scenario', 9],
+      ['unread', 13],
+      ['newest message (decrypted)', 46],
+    ],
+    rows.map((row) => {
+      const [a, b] = row.sides;
+      const preview = row.decryptError
+        ? `DECRYPT FAILED: ${row.decryptError.slice(0, 30)}`
+        : (row.preview ?? '(no messages)').replace(/\s+/g, ' ').slice(0, 44);
+      return [
         row.plan.key.slice(0, 12),
-        `${row.plan.actorA.handle} ↔ ${row.plan.actorB.handle}`.slice(0, 28),
+        participantsOf(row.plan),
         row.total,
         row.foreign || '-',
         row.plan.scenario,
-        unread,
+        `${a.viewer.handle.slice(0, 5)}:${a.unread} ${b.viewer.handle.slice(0, 5)}:${b.unread}`,
         preview,
-      ])
-    );
-  }
+      ];
+    })
+  );
 }
 
 // ---- Entry point ----------------------------------------------------------------
@@ -1198,39 +1223,28 @@ function parseArgs(argv) {
  */
 async function dryRun(args) {
   const ledger = loadLedger();
-  const actorsByIdx = new Map(
-    ACTORS.map((personaIdx) => {
-      const entry = ledgerEntry(ledger, personaIdx);
-      if (!entry?.identityId) throw new Error(`persona ${personaIdx} is not provisioned in the seed ledger`);
-      const ecdhKey = entry.identityKeys.find((key) => key.keyId === DM_ECDH_KEY_ID);
-      return [
-        personaIdx,
-        {
-          personaIdx,
-          handle: entry.handle,
-          identityId: entry.identityId,
-          ecdhPrivateKey: hexToBytes(ecdhKey.privateKeyHex),
-          ecdhPublicKey: hexToBytes(ecdhKey.publicKeyHex),
-        },
-      ];
-    })
-  );
+  const actorsByIdx = new Map(ACTORS.map((personaIdx) => [personaIdx, ledgerActor(ledger, personaIdx).actor]));
 
   const plans = buildPlan(actorsByIdx, args.seed);
-  let messages = 0;
-  let receipts = 0;
+  const messages = plans.reduce((sum, plan) => sum + plan.messages.length, 0);
+  const receipts = plans.reduce((sum, plan) => sum + plan.receipts.length, 0);
   console.log(`DRY RUN — contract ${args.contract}, seed ${args.seed}, ${plans.length} conversations\n`);
-  console.log(`${'conversation'.padEnd(14)}  ${'participants'.padEnd(28)}  ${'msgs'.padEnd(5)}  ${'scenario'.padEnd(9)}  receipts`);
-  console.log(`${'-'.repeat(14)}  ${'-'.repeat(28)}  ${'-'.repeat(5)}  ${'-'.repeat(9)}  ${'-'.repeat(40)}`);
-  for (const plan of plans) {
-    messages += plan.messages.length;
-    receipts += plan.receipts.length;
-    const describe = plan.receipts.map((r) => `${r.owner.handle}@${r.after}`).join(' ');
-    console.log(
-      `${plan.key.slice(0, 12).padEnd(14)}  ${`${plan.actorA.handle} ↔ ${plan.actorB.handle}`.slice(0, 28).padEnd(28)}  ` +
-        `${String(plan.messages.length).padEnd(5)}  ${plan.scenario.padEnd(9)}  ${describe}`
-    );
-  }
+  printColumns(
+    [
+      ['conversation', 14],
+      ['participants', 28],
+      ['msgs', 5],
+      ['scenario', 9],
+      ['receipts', 40],
+    ],
+    plans.map((plan) => [
+      plan.key.slice(0, 12),
+      participantsOf(plan),
+      plan.messages.length,
+      plan.scenario,
+      plan.receipts.map((receipt) => `${receipt.owner.handle}@${receipt.after}`).join(' '),
+    ])
+  );
 
   // Encrypt/decrypt every planned message with the real key pair — the same
   // check the live run makes against the chain, minus the chain.
@@ -1259,8 +1273,9 @@ async function main() {
   const { protocolVersion } = await handle.connect();
   console.log(`connected (PV${protocolVersion}); DM v4 ${args.contract}`);
 
-  const writer = makeWriter({ handle, contractId: args.contract, dryRun: false });
-  const actors = await mapLimit(ACTORS, 8, (personaIdx) => buildActor(writer, personaIdx));
+  const writer = makeWriter({ handle, contractId: args.contract });
+  const ledger = loadLedger();
+  const actors = await mapLimit(ACTORS, 8, (personaIdx) => buildActor(writer, ledger, personaIdx));
   const actorsByIdx = new Map(actors.map((actor) => [actor.personaIdx, actor]));
   console.log(`actors: ${actors.map((a) => `${a.handle}(${a.personaIdx})`).join(', ')}`);
   console.log(`ECDH key check: all ${actors.length} identities resolve key ${DM_ECDH_KEY_ID} (authentication/HIGH) — the key the app encrypts to`);
@@ -1278,7 +1293,7 @@ async function main() {
     const pilotMessage = pilot.messages[0];
     console.log(`\nproving the ciphertext before writing the rest: ${pilot.actorA.handle} ↔ ${pilot.actorB.handle}`);
     const pilotEntry = (state.conversations[pilot.key] ??= { pair: [pilot.actorA.handle, pilot.actorB.handle], scenario: pilot.scenario, messages: {}, invites: {}, receipts: {} });
-    await ensureInvite(writer, pilotEntry, pilotMessage.from, pilotMessage.to, pilot.conversationIdBytes, console.log);
+    await ensureInvite(writer, pilotEntry, pilotMessage.from, pilotMessage.to, pilot.conversationIdBytes);
     const blob = await encryptToBinary(pilotMessage.text, pilotMessage.from.ecdhPrivateKey, pilotMessage.to.ecdhPublicKey);
     const { id } = await writer.create(
       pilotMessage.from,
@@ -1306,7 +1321,7 @@ async function main() {
     // run: a conversation that throws is recorded and reported, not rethrown.
     await mapLimit(plans, args.concurrency, async (plan) => {
       try {
-        const written = await seedConversation(writer, plan, state, { dryRun: false, log: console.log, resume });
+        const written = await seedConversation(writer, plan, state, { resume });
         totals.invites += written.invites;
         totals.messages += written.messages;
         totals.receipts += written.receipts;
@@ -1327,7 +1342,7 @@ async function main() {
   }
 
   if (args.pruneForeign) {
-    const removed = await pruneForeign(writer, plans, actors, state, console.log);
+    const removed = await pruneForeign(writer, plans, actors, state);
     console.log(`pruned ${removed} document(s) this seeder did not write`);
   }
 
