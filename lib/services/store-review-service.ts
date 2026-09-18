@@ -13,7 +13,7 @@ import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV2
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import { storeStatsService } from './store-stats-service';
-import type { StoreReview, StoreReviewDocument, StoreRatingSummary } from '../../types';
+import type { StoreReview, StoreReviewDocument } from '../../types';
 
 class StoreReviewService extends BaseDocumentService<StoreReview> {
   constructor() {
@@ -94,11 +94,6 @@ class StoreReviewService extends BaseDocumentService<StoreReview> {
     const created = await this.create(reviewerId, documentData);
     storeStatsService.invalidateStore(data.storeId);
     return created;
-  }
-
-  /** Proved summary from the contract's average tree (delegates to storeStatsService). */
-  getRatingSummary(storeId: string): Promise<StoreRatingSummary> {
-    return storeStatsService.getStoreRatingSummary(storeId);
   }
 }
 
