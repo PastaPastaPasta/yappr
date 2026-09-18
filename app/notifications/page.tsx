@@ -48,9 +48,13 @@ function getNotificationUrl(notification: Notification): string | null {
     return null
   }
 
-  // Blog notifications navigate to the blog post (the comment lives on it)
-  if ((notification.type === 'blogPost' || notification.type === 'blogComment') && notification.blogId && notification.blogPostSlug) {
-    return getBlogPostUrl(notification.blogId, notification.blogPostSlug)
+  // Blog notifications navigate to the blog post (the comment lives on it);
+  // without the blog coordinates there is nowhere to go — a blog post id is
+  // not a social post id, so never fall through to /post below.
+  if (notification.type === 'blogPost' || notification.type === 'blogComment') {
+    return notification.blogId && notification.blogPostSlug
+      ? getBlogPostUrl(notification.blogId, notification.blogPostSlug)
+      : null
   }
 
   // A v3 reply links to ITSELF: usePostDetail renders a reply as the main card

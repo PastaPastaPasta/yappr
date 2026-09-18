@@ -5,7 +5,7 @@ Registered on moutai 2026-09-17 as `4pSFqC9Q5amtmrJtL1oC8nWTW15e8LiZ7WqevB3AbEpB
 can re-publish the same JSON when the next full re-provision happens). Built by
 `scripts/build-blog-v2-contract.py` from the v1 file, published by
 `scripts/register-feature-contract.mjs --file yappr-blog-contract-v2.json`,
-verified live by `scripts/verify-blog-v2.mjs` (27 checks, all passing on the
+verified live by `scripts/verify-blog-v2.mjs` (32 checks, all passing on the
 first run). Protocol 14, Platform 4.2.0-beta.1 or later.
 
 ## What changed and why
@@ -58,12 +58,20 @@ same reason (`referenced permanent document … not found for path blogPostId`,
 40120).
 
 The residual gap is the mirror of storefront v2's: consensus cannot check that
-a post's `author` equals its own `$ownerId`. A hand-rolled post could name
-someone else as author, which would route its comments into that person's
-notifications. The app always writes `author = $ownerId`, and
-`blog-comment-service.ts` reads the post's attested `author` (not the caller's
-opinion) before commenting, so the two always agree. Closing it fully needs an
-upstream "owner agreement" on `refersTo`.
+a post's `author` equals its own `$ownerId`. Battery case b2c proves it — a
+post naming someone else as author is **accepted**. Left unhandled, its
+comments would carry the victim's id and land in the victim's notification
+feed. Two client rules close it:
+
+- writes: the app always sets `author = $ownerId`
+  (`blog-post-service.ts`), and `blog-comment-service.ts` reads the post's
+  attested `author` rather than the caller's opinion before commenting;
+- reads: `notification-service.ts` fetches each named post anyway (for the
+  title and link) and **drops any row whose post is not actually owned by the
+  reader** — so an impostor post cannot inject into someone else's feed.
+
+Closing it in consensus needs an upstream "owner agreement" on `refersTo`;
+b2c flips from `expectAccepted` to a rejection the day that ships.
 
 ## Query shapes that serve, verified live
 
@@ -91,7 +99,8 @@ sdk.documents.ranked({ dataContractId, documentTypeName: 'blogFollow',
   groupBy: 'blogId', aggregate: { type: 'count' }, direction: 'desc', limit: 20,
   timeRange: [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 86400 } }] })
 
-// Comments on my posts since last seen (notification source).
+// Comments on my posts since last seen (notification source). Verified in
+// both directions (b4d); the client reads newest first.
 sdk.documents.query({ dataContractId, documentTypeName: 'blogComment',
   where: [['blogPostOwnerId', '==', me], ['$createdAt', '>', lastSeen]],
   orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'desc']], limit: 100 })
@@ -108,7 +117,7 @@ Page budgets after the client migration (cold load, DAPI requests):
 | Blog home follower badge | ⌈followers / 100⌉ | 1 count |
 | `/blog` discovery, "Most followed" / "Trending today" | not possible (would be 1 + one follower scan per blog) | 1 ranked + 1 by-id batch |
 | Post view comment count | the 100-comment page it already loads | unchanged (the page is rendered anyway) |
-| "Comments on my posts" notifications | not possible (forgeable key, no index) | 1 page + 1 by-id post batch |
+| "Comments on my posts" notifications | not possible (forgeable key, no index) | 1 page + 1 by-id post batch (which also proves ownership) |
 
 ## Gotchas found on the way
 
@@ -123,6 +132,20 @@ Page budgets after the client migration (cold load, DAPI requests):
    and `followersByDay` registered and served fine. The ttl drains that index's
    entries after seven days; the follow documents themselves stay (only an
    `indexOnly` doctype self-deletes).
+
+   This is the first stored, deletable doctype in this codebase carrying a
+   TTL'd windowed index (every previous one — `like.byDayPost`,
+   `beat.byDayHashtagPost` — sits on an `indexOnly` type that self-deletes), so
+   the delete interaction was proved explicitly rather than assumed:
+
+   - **warm bucket**: battery b11 unfollows and asserts the all-time count, the
+     ranked page and the windowed page all drop to the new value;
+   - **drained bucket**: a scratch registration of the same JSON with a 60-second
+     grid and a 120-second ttl (`A1TjAxphoHwtnLKx5qihArQEJfZf5iauSdy4gskbgd2a`)
+     was followed, left until the windowed count fell from 1 to 0 while the
+     all-time count stayed 1, and then deleted. **The delete was accepted and
+     the all-time count decremented to 0.** Drive does not require the drained
+     index entry to exist, so an unfollow a week later cannot strand a user.
 3. A ranked read on a daily bucket no document ever landed in fails proof
    generation instead of proving an empty ranking: *"a single-path axis read
    must produce exactly one axis descent"*. That error IS the empty answer —
@@ -153,6 +176,22 @@ Page budgets after the client migration (cold load, DAPI requests):
   would cost something and prove nothing.
 - Comment counts on the post view still come from the comment page the view
   loads anyway; there is no separate count request.
+- `blogStatsService.mostDiscussedPosts()` is proved (battery b5a) and exposed,
+  but has no page: the app has no cross-blog post feed to rank, and the ranked
+  axis is global so it cannot be pinned to one blog. It is the ready-made read
+  for such a surface when one exists.
 - The blog-home composite (page posts + bound comment counts in one proof) is
   not wired up; the grouped count is already one request and the composite
   would not reduce it below that.
+
+## Operational notes
+
+- The registration above is owned by a seed persona, not the deployment maker.
+  The next full devnet re-provision should re-register the same JSON under the
+  maker and update `NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID` in `.env.devnet`.
+- Repointing that id orphans the devnet's v1 blogs and posts: they live in the
+  old contract, and a v1 post has no `author`, so on v2 no comment can be
+  written against it at all. Acceptable on moutai; not a migration path.
+- Commenting costs YAPP on v2. `components/blog/blog-comments.tsx` labels the
+  button with the cost and routes an insufficient-balance failure into the
+  shared Buy-YAPP modal, the same as posts and storefront reviews.

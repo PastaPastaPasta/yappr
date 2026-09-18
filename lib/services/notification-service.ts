@@ -316,9 +316,8 @@ class NotificationService {
   /**
    * Comments other people left on the user's own blog posts — one page of the
    * v2 `postOwnerAndTime` index plus one by-id fetch for the posts they name
-   * (needed for the link and the title). Consensus pins `blogPostOwnerId` to
-   * the post's attested author, so this key cannot be forged; on v1 the index
-   * does not exist and the source is empty.
+   * (needed for the link and the title, and to confirm the post really belongs
+   * to this user). On v1 the index does not exist and the source is empty.
    */
   async getBlogCommentNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
     if (!blogIsV2()) return [];
@@ -335,7 +334,12 @@ class NotificationService {
       );
       return comments.flatMap(comment => {
         const post = posts.get(comment.blogPostId);
-        if (!post) return [];
+        // `blogPostOwnerId` is pinned to the post's ATTESTED `author`, which
+        // consensus cannot check against its `$ownerId` — a hand-rolled post
+        // naming someone else as author would route its comments into that
+        // person's feed. The post is already fetched, so require that it is
+        // genuinely theirs. Every post this app writes has author == $ownerId.
+        if (!post || post.ownerId !== userId) return [];
         return [{
           id: `blogComment-${comment.id}`, type: 'blogComment' as const, fromUserId: comment.ownerId,
           postId: post.id, blogId: post.blogId, blogPostTitle: post.title, blogPostSlug: post.slug,

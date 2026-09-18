@@ -6,9 +6,10 @@ import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 
 interface Revision {
-  revision: number
   /** Platform's history key: the ms timestamp the revision was committed at. */
   at: Date
+  /** The stored `$revision`, or 0 when the object form omits it. */
+  revision: number
   title: string
 }
 
@@ -35,7 +36,9 @@ async function loadRevisions(postId: string): Promise<Revision[]> {
         title: (data.title as string) || '',
       }
     })
-    .sort((a, b) => b.revision - a.revision)
+    // Keyed and ordered on the commit timestamp: it is the map key, so it is
+    // always present and unique, whereas `$revision` may be absent.
+    .sort((a, b) => b.at.getTime() - a.at.getTime())
 }
 
 /**
@@ -86,11 +89,13 @@ export function BlogPostHistory({ postId, revision }: { postId: string; revision
           <ol className="mt-2 space-y-2">
             {revisions.map((entry) => (
               <li
-                key={entry.revision}
+                key={entry.at.getTime()}
                 className="rounded-lg border border-gray-200 p-3 text-sm dark:border-gray-800"
               >
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="font-medium">Revision {entry.revision}</span>
+                  <span className="font-medium">
+                    {entry.revision > 0 ? `Revision ${entry.revision}` : 'Revision'}
+                  </span>
                   <span className="text-xs text-gray-500 dark:text-gray-400">
                     {entry.at.toLocaleString()}
                   </span>

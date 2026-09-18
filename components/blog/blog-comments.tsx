@@ -12,6 +12,8 @@ import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { truncateId } from '@/lib/utils'
 import { normalizeDpnsUsername } from '@/lib/post-helpers'
 import { logger } from '@/lib/logger'
+import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
+import { BLOG_YAPP_TOKEN_COSTS, blogIsV2 } from '@/lib/constants'
 import type { BlogComment } from '@/lib/types'
 import { blogCommentService } from '@/lib/services'
 
@@ -23,6 +25,8 @@ interface BlogCommentsProps {
 }
 
 const MAX_COMMENT_LENGTH = 500
+// On the v2 contract a comment carries a YAPP token cost; on v1 it is free.
+const COMMENT_YAPP_COST = BLOG_YAPP_TOKEN_COSTS.blogComment
 
 function CommentTimestamp({ createdAt }: { createdAt: Date }) {
   const relativeTime = useRelativeTime(createdAt)
@@ -101,7 +105,9 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
       await loadComments()
     } catch (error) {
       logger.error('Failed to post blog comment:', error)
-      toast.error('Failed to post comment. Please try again.')
+      if (!handleInsufficientYapp(error, `A comment costs ${COMMENT_YAPP_COST} YAPP.`)) {
+        toast.error('Failed to post comment. Please try again.')
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -158,7 +164,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
             {trimmedContent.length}/{MAX_COMMENT_LENGTH}
           </p>
           <Button type="button" size="sm" onClick={handleSubmit} disabled={!canSubmit}>
-            {isSubmitting ? 'Posting...' : 'Post comment'}
+            {isSubmitting ? 'Posting...' : blogIsV2() ? `Post comment (${COMMENT_YAPP_COST} YAPP)` : 'Post comment'}
           </Button>
         </div>
       </div>

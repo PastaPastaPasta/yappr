@@ -291,9 +291,12 @@ class StateTransitionService {
    * double post, enforced at the protocol level.
    */
   /**
-   * Resolve the automatic token-payment agreement for a token-paid document type
-   * on the v2 social contract (post/reply/like/repost). Returns undefined for
-   * free document types or documents on other contracts.
+   * Resolve the automatic token-payment agreement for a token-paid document
+   * type. Three contracts declare a `tokenCost` today: the social contract
+   * charges its own YAPP (post/reply/like/repost), while storefront v2 and
+   * blog v2 charge the SOCIAL contract's YAPP — a cross-contract cost, so
+   * those agreements name that contract explicitly. Returns undefined for free
+   * document types and for contracts that declare no cost.
    */
   private resolveTokenPayment(
     contractId: string,

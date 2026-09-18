@@ -50,8 +50,11 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     // identifiers back as base58 — restore the raw-byte form the create path
     // writes so an edit keeps blogId (and the v2 `author`) byte-identical.
     for (const key of ['blogId', 'author']) {
+      // An empty string is how the transform reports a field it could not
+      // decode; drop it rather than throwing, so the required-field error
+      // describes the real problem.
       if (typeof fields[key] === 'string') {
-        fields[key] = requireDocumentIdentifierBytes(fields[key] as string, key)
+        fields[key] = fields[key] ? requireDocumentIdentifierBytes(fields[key] as string, key) : undefined
       }
     }
     // Re-compress and chunk content into data0–data3 (only set chunks that exist)
