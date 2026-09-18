@@ -102,7 +102,7 @@ export function InventoryTable({
           comparison = a.title.localeCompare(b.title)
           break
         case 'price':
-          comparison = (a.basePrice || 0) - (b.basePrice || 0)
+          comparison = storeItemService.getPriceRange(a).min - storeItemService.getPriceRange(b).min
           break
         case 'stock': {
           const stockA = storeItemService.getStock(a)
