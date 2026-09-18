@@ -79,13 +79,15 @@ export interface TopLikedPostsOptions {
   limit?: number;
   /** `'today'` reads the v6 daily-windowed twin of the pinned axis; default `'all'`. */
   window?: RankingWindow;
+  /** Reject failed reads so callers can retain an existing page and retry. */
+  throwOnError?: boolean;
 }
 
 /**
  * The top posts by like count — global, per-hashtag, or per-author depending on
  * which pin is supplied (at most one; the axes are separate indexes).
  * Zero-count groups (preallocated like trees of never-liked posts) are
- * filtered. Returns `[]` on failure — ranking surfaces degrade to empty.
+ * filtered. Returns `[]` on failure unless `throwOnError` is requested.
  */
 export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise<RankedLikedPost[]> {
   const { hashtag, postAuthor, limit = 10, window = 'all' } = options;
@@ -129,6 +131,7 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
   } catch (error) {
     if (window === 'today' && isColdBucketError(error)) return [];
     logger.error('topLikedPosts: ranked query failed:', error);
+    if (options.throwOnError) throw error;
     return [];
   }
 }
@@ -229,6 +232,8 @@ export interface HydratedTopPostsOptions {
   window?: RankingWindow;
   /** Skip the 60-second hydrated cache (an explicit user refresh). */
   force?: boolean;
+  /** Reject failed ranking or hydration reads instead of returning an empty page. */
+  throwOnError?: boolean;
 }
 
 /**
@@ -250,10 +255,10 @@ const hydratedCache = new TtlMap<string, Post[]>(60_000);
  * a "top posts" surface.
  *
  * v4-only, same as the underlying ranked query — callers gate on
- * `likesAreIndexOnly()`. Returns `[]` on failure.
+ * `likesAreIndexOnly()`. Returns `[]` on failure unless `throwOnError` is requested.
  */
 export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {}): Promise<Post[]> {
-  const { hashtag, postAuthor, limit = 20, window = 'all', force = false } = options;
+  const { hashtag, postAuthor, limit = 20, window = 'all', force = false, throwOnError = false } = options;
   if (hashtag === '') {
     // The '' group is the untagged bucket, not a tag — nothing should ask for it.
     logger.warn('topLikedPostsHydrated: refusing the empty hashtag group');
@@ -261,8 +266,8 @@ export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {
   }
 
   const cacheKey = `${window}:${limit}:${postAuthor ? `author:${postAuthor}` : hashtag === undefined ? 'global' : `tag:${hashtag}`}`;
-  return hydrateRankedCached(cacheKey, force, () =>
-    topLikedPosts({ ...(postAuthor ? { postAuthor } : hashtag === undefined ? {} : { hashtag }), limit, window })
+  return hydrateRankedCached(cacheKey, force, throwOnError, () =>
+    topLikedPosts({ ...(postAuthor ? { postAuthor } : hashtag === undefined ? {} : { hashtag }), limit, window, throwOnError: true })
   );
 }
 
@@ -289,17 +294,17 @@ const TOP_BY_AUTHORS_CONCURRENCY = 8;
  * {@link TOP_BY_AUTHORS_MAX_AUTHORS} are skipped.
  */
 export async function topLikedPostsByAuthorsHydrated(options: HydratedTopPostsByAuthorsOptions): Promise<Post[]> {
-  const { limit = 20, window = 'all', force = false } = options;
+  const { limit = 20, window = 'all', force = false, throwOnError = false } = options;
   // Sorted so the cache key is order-independent; above the cap this keeps a
   // fixed (alphabetical by id) subset rather than a different one per call.
   const authorIds = Array.from(new Set(options.authorIds)).sort().slice(0, TOP_BY_AUTHORS_MAX_AUTHORS);
   if (authorIds.length === 0) return [];
 
   const cacheKey = `${window}:${limit}:authors:${authorIds.join(',')}`;
-  return hydrateRankedCached(cacheKey, force, async () => {
+  return hydrateRankedCached(cacheKey, force, throwOnError, async () => {
     const { mapLimit } = await import('./pagination-utils');
     const perAuthor = await mapLimit(authorIds, TOP_BY_AUTHORS_CONCURRENCY, (postAuthor) =>
-      topLikedPosts({ postAuthor, limit, window })
+      topLikedPosts({ postAuthor, limit, window, throwOnError: true })
     );
     return perAuthor
       .flat()
@@ -312,11 +317,13 @@ export async function topLikedPostsByAuthorsHydrated(options: HydratedTopPostsBy
  * Serve a hydrated ranking from the 60-second cache, or run `rank` and
  * hydrate its result. `force` bypasses the cache read but still refills it.
  * Keys carry the page size, so callers asking for different limits never
- * share (and truncate) each other's page.
+ * share (and truncate) each other's page. `rank` must reject failed reads so
+ * fail-soft callers cannot cache an empty or partial page for strict callers.
  */
 async function hydrateRankedCached(
   cacheKey: string,
   force: boolean,
+  throwOnError: boolean,
   rank: () => Promise<RankedLikedPost[]>
 ): Promise<Post[]> {
   const { getCurrentUserId } = await import('./sdk-helpers');
@@ -332,6 +339,7 @@ async function hydrateRankedCached(
     return posts;
   } catch (error) {
     logger.error('topLikedPostsHydrated: hydration failed:', error);
+    if (throwOnError) throw error;
     return [];
   }
 }
