@@ -259,7 +259,7 @@ jobs:
               "https://quorums.moutai.networks.dash.org/$path" || true
           done
 
-      - name: Run the devnet topology specs
+      - name: Run the devnet topology and username entry specs
         if: env.HAS_SEED == 'true'
         continue-on-error: true
         env:
@@ -267,7 +267,7 @@ jobs:
           E2E_BASE_PATH: /devnet
           E2E_ENV_FILE: .env.devnet
           NETWORK: devnet
-        run: npx playwright test --project=write --trace=off topology
+        run: npx playwright test --project=write --trace=off topology dpns-username-entry
 
       - name: Upload Playwright report
         if: always()
