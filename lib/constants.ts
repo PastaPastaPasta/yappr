@@ -147,20 +147,37 @@ export function keyNetwork(): KeyNetwork {
 // proved prefix rankings: trending hashtags, the creator leaderboard, and
 // most-followed.
 //
+// `v6` is the dev.8 windowed-rankings cut (docs/V6_WINDOWED_RANKINGS.md,
+// contracts/yappr-social-contract-v6.json): v5's graph plus daily `timeRange`
+// twins of the ranked like axes and a tagged-only indexOnly `beat` doctype
+// carrying the windowed hashtag rankings, so "top posts / top creators /
+// trending tags TODAY" are proved top-K reads rather than client arithmetic.
+//
+// `v7` is the 4.2.0-beta.2 cut (docs/PLATFORM_BETA2_UPGRADE.md,
+// contracts/yappr-social-contract-v7.json): v6's indexes and query surface
+// exactly, with two client conventions handed to consensus. The attested
+// `author` column is GONE from post/reply — beta.2 lets a `propertyAgreement`
+// name the referenced document's `$ownerId`, so likes bind to the real owner —
+// and post/reply declare `immutable` property lists, so the structural fields
+// a tombstone always had to copy by hand are frozen by the chain, with
+// `deleted` immutable-but-settable.
+//
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export type ContractTopology = 'v2' | 'v3' | 'v4' | 'v5' | 'v6'
+//
+// ORDER IS SIGNIFICANT: `lib/contract-topology.ts` compares positions in this
+// array to decide when a capability first appeared, so new cuts append.
+export const CONTRACT_TOPOLOGIES = ['v2', 'v3', 'v4', 'v5', 'v6', 'v7'] as const
+
+export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 
 export const DEFAULT_CONTRACT_TOPOLOGY: ContractTopology = 'v2'
 
 /** The interaction topology of the configured contract, from `NEXT_PUBLIC_CONTRACT_TOPOLOGY`. */
 export function getContractTopology(): ContractTopology {
   const configured = process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY
-  if (configured === 'v2' || configured === 'v3' || configured === 'v4' || configured === 'v5' || configured === 'v6') {
-    return configured
-  }
-  return DEFAULT_CONTRACT_TOPOLOGY
+  return CONTRACT_TOPOLOGIES.find((topology) => topology === configured) ?? DEFAULT_CONTRACT_TOPOLOGY
 }
 
 // Devnet wiring. A devnet has no public masternode discovery, so the DAPI

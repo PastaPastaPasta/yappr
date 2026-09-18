@@ -8,6 +8,7 @@ import socialContractV2 from '@/contracts/yappr-social-contract-v2.json'
 import socialContractV4 from '@/contracts/yappr-social-contract-v4.json'
 import socialContractV5 from '@/contracts/yappr-social-contract-v5.json'
 import socialContractV6 from '@/contracts/yappr-social-contract-v6.json'
+import socialContractV7 from '@/contracts/yappr-social-contract-v7.json'
 import { getContractTopology } from '@/lib/constants'
 
 // The deployed social contract for this build's topology, reshaped for display.
@@ -19,6 +20,7 @@ const CONTRACTS_BY_TOPOLOGY = {
   v4: socialContractV4,
   v5: socialContractV5,
   v6: socialContractV6,
+  v7: socialContractV7,
 }
 const socialContract = CONTRACTS_BY_TOPOLOGY[getContractTopology()]
 const dataContract = {

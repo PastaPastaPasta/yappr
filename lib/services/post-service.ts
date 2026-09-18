@@ -7,7 +7,7 @@ import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
-import { authorFieldIsRequired, likesAreIndexOnly, groupByInteractionSurface, hashtagIsOptional, hashtagMaxLength, hashtagsAreInline, quoteFieldFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { authorFieldIsRequired, likesAreIndexOnly, groupByInteractionSurface, hashtagIsOptional, hashtagMaxLength, hashtagsAreInline, quoteFieldFor, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { firstIndexedTag } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
@@ -318,22 +318,26 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Blank a post in place, leaving a tombstone.
    *
-   * The v3/v4 `post` doctype is `canBeDeleted: false`, so this is what "delete"
-   * means there. Only the required content properties survive; body, media,
-   * quote, embed and every encrypted field are dropped. On v3 that is just
-   * `language`; v4 adds `author` and `hashtag`, both carried over VERBATIM:
-   * `author` must keep equalling `$ownerId`, and `hashtag` is client-immutable
-   * because existing likes repeated it under a consensus-checked agreement —
-   * blanking it on the tombstone REPLACE would leave the post claiming
-   * "untagged" while its likes still carry the original tag (and any later
-   * like sourced from a stale UI object would be rejected with 40127). The
-   * tombstone therefore stays in its tag's `tagAndTime` listing, rendered as a
-   * deleted card — same treatment `language` timelines already get.
+   * The v3+ `post` doctype is `canBeDeleted: false`, so this is what "delete"
+   * means there. The body, media and every encrypted field are dropped; what
+   * survives is {@link tombstonePreservationFor}('post'), carried over VERBATIM.
    *
-   * On v5 an UNTAGGED post has no `hashtag` property at all;
-   * `tombstoneDocument` skips absent preserveScalars, so the tombstone
-   * reproduces the absence verbatim (writing `''` instead would both fail the
-   * pattern and break the likes' absence agreement).
+   * That set grew for a consensus reason each time. `hashtag` joined on v4
+   * because existing likes repeat it under a checked agreement: blanking it
+   * would leave the post claiming "untagged" while its likes still carry the
+   * original tag (and any later like sourced from the stale post would be
+   * rejected with 40127), so a tombstone stays in its tag's `tagAndTime`
+   * listing, rendered as a deleted card — the same treatment `language`
+   * timelines already give it. On v7 the contract freezes that whole set with
+   * `immutable`, which pulls the quote graph and the embed triple in too:
+   * dropping a frozen property is the same 40128 rejection as changing it.
+   * A tombstoned quote or poll post therefore keeps its reference; `PostCard`
+   * short-circuits on `deleted`, so nothing of it renders.
+   *
+   * An UNTAGGED post has no `hashtag` property at all from v5 on;
+   * `tombstoneDocument` skips absent fields, so the tombstone reproduces the
+   * absence verbatim (writing `''` instead would both fail the pattern and
+   * break the likes' absence agreement).
    */
   async tombstonePost(postId: string, ownerId: string): Promise<boolean> {
     const ok = await tombstoneDocument({
@@ -341,8 +345,7 @@ class PostService extends BaseDocumentService<Post> {
       documentType: this.documentType,
       documentId: postId,
       ownerId,
-      preserveScalars: hashtagsAreInline() ? ['language', 'hashtag'] : ['language'],
-      preserveIdentifiers: authorFieldIsRequired() ? ['author'] : undefined,
+      preserve: tombstonePreservationFor('post'),
     });
     // The inherited 2-minute content cache would otherwise re-serve the
     // pre-tombstone plaintext to a detail view reached via SPA navigation.
@@ -423,15 +426,18 @@ class PostService extends BaseDocumentService<Post> {
     // Language is required - default to 'en' if not provided
     data.language = options.language || 'en';
 
-    // v4: the poster-attested author (must equal $ownerId — consensus can't
-    // bind the agreement to a system field, so the client writes it) and the
-    // single indexed tag — first hashtag, or first cashtag when no hashtag
-    // exists, from the PUBLIC content only
-    // (`data.content` is already the teaser/placeholder for private posts, so
-    // encrypted text never leaks into the index), '' when untagged.
+    // v4-v6: the poster-attested author, which must equal $ownerId because a
+    // propertyAgreement could not yet name a system field. v7 binds the likes
+    // straight to `post.$ownerId`, so the column is gone from the schema and
+    // nothing is written here ({@link authorFieldIsRequired}).
     if (authorFieldIsRequired()) {
       data.author = identifierStringToDocumentBytes(ownerId);
     }
+
+    // The single indexed tag — first hashtag, or first cashtag when no hashtag
+    // exists, from the PUBLIC content only (`data.content` is already the
+    // teaser/placeholder for private posts, so encrypted text never leaks into
+    // the index); '' when untagged.
     if (hashtagsAreInline()) {
       const tag = firstIndexedTag(data.content as string, hashtagMaxLength());
       // v5: an untagged post OMITS the optional property — likes mirror the

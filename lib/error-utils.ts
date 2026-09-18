@@ -165,9 +165,42 @@ export function isReferenceNotFoundError(error: unknown): boolean {
 }
 
 /**
+ * Checks if an error is Platform refusing a REPLACE that touched a property
+ * the document type freezes — `DocumentImmutablePropertyChangedError`, state
+ * code **40128**, new in protocol v14 / Platform 4.2.0-beta.2.
+ *
+ * Contract v7 declares `immutable` lists on `post` and `reply` (language, the
+ * tag, the quote graph, the embed triple, a reply's parent linkage, and
+ * `deleted` as immutable-but-settable). "Touched" covers a changed value, a
+ * newly added property AND one the replacement dropped, so the only way to
+ * hit this from the app is a tombstone whose preserve set has drifted from
+ * the contract — a permanent, code-level rejection that must never be retried
+ * or read as a transient failure.
+ *
+ * Matches the consensus error name and Drive's rendered phrasing, "property
+ * '<p>' of document <id> (type '<t>') is immutable and cannot be changed by a
+ * replace" (rs-dpp `document_immutable_property_changed_error.rs`), as well as
+ * the bare numeric code the SDK attaches.
+ */
+export function isImmutablePropertyChangedError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  return (
+    msg.includes('documentimmutablepropertychanged') ||
+    msg.includes('40128') ||
+    (msg.includes('is immutable') && msg.includes('replace'))
+  )
+}
+
+/**
  * Categorizes common Dash Platform errors and returns a user-friendly message.
  */
 export function categorizeError(error: unknown): string {
+  // Permanent and specific, like the reference family below: no amount of
+  // YAPP, retrying or reconnecting changes the outcome.
+  if (isImmutablePropertyChangedError(error)) {
+    return 'Part of this post can no longer be changed once it has been published.'
+  }
+
   // A reference rejection is permanent and specific: say what is actually wrong
   // rather than offering YAPP or a retry.
   if (isReferenceNotFoundError(error)) {

@@ -21,7 +21,7 @@
  * app believes it is talking to part-way through a session.
  */
 
-import { getContractTopology, type ContractTopology } from './constants'
+import { CONTRACT_TOPOLOGIES, getContractTopology, type ContractTopology } from './constants'
 
 /**
  * Whether a Post-shaped object is backed by a `post` document or a `reply`
@@ -126,12 +126,33 @@ export interface ReplyLinkage {
   replyToReply: string | null
 }
 
+/**
+ * The properties a tombstone REPLACE has to carry over from the stored
+ * document, split by how `tombstoneDocument` has to re-encode them.
+ *
+ * On v3–v6 this is "whatever the contract lists as `required`, plus the fields
+ * blanking would break" — a convention maintained by hand. On v7 it is exactly
+ * the doctype's `immutable` list minus `deleted` (which the tombstone sets
+ * itself, under `immutableAllowSetting`): consensus rejects a replace that
+ * changes, adds OR DROPS a frozen property with 40128, so an incomplete
+ * preserve set is no longer a silent data loss but a hard rejection.
+ * `lib/contract-topology.test.ts` pins these lists against the contract JSON.
+ */
+export interface TombstonePreservation {
+  /** Identifier-typed properties; re-encoded to raw bytes for the write path. */
+  readonly identifiers: readonly string[]
+  /** Scalar properties, carried over as-is. */
+  readonly scalars: readonly string[]
+}
+
 export interface ContractTopologyDescriptor {
   readonly topology: ContractTopology
   /** Reply parent linkage field names. */
   readonly replyLinkage: Readonly<ReplyLinkage>
   /** Engagement surfaces per target kind. */
   readonly interactions: Readonly<Record<TargetKind, InteractionSurface>>
+  /** What a tombstone of each doctype must reproduce verbatim. */
+  readonly tombstonePreserves: Readonly<Record<TargetKind, TombstonePreservation>>
 }
 
 /**
@@ -146,6 +167,20 @@ export interface ContractTopologyDescriptor {
  * shared by all three slots below and the descriptors differ only where the
  * topologies genuinely differ.
  */
+/** Nothing to carry over: the topology deletes documents instead of blanking them. */
+const NOTHING_PRESERVED: TombstonePreservation = { identifiers: [], scalars: [] }
+
+/**
+ * A reply's parent linkage, preserved on every topology that tombstones.
+ * `replyToReplyId` is optional and `tombstoneDocument` skips absent fields, so
+ * a direct reply reproduces its absence; losing it would move the tombstone —
+ * and every live reply nested under it — to the top of the thread.
+ */
+const REPLY_LINKAGE_PRESERVED: TombstonePreservation = {
+  identifiers: ['rootPostId', 'replyToReplyId', 'parentOwnerId'],
+  scalars: [],
+}
+
 const POST_INTERACTIONS: InteractionSurface = {
   like: { docType: 'like', field: 'postId', ownerFirst: false, ownerField: 'postOwnerId' },
   indexOnlyLike: null,
@@ -174,6 +209,9 @@ const V2_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v2',
   replyLinkage: { root: 'parentId', replyToReply: null },
   interactions: { post: POST_INTERACTIONS, reply: POST_INTERACTIONS },
+  // v2 posts and replies are ordinary deletable documents, so a delete is a
+  // delete and no tombstone is ever built ({@link deletesAreTombstones}).
+  tombstonePreserves: { post: NOTHING_PRESERVED, reply: NOTHING_PRESERVED },
 }
 
 /**
@@ -189,6 +227,11 @@ const V2_DESCRIPTOR: ContractTopologyDescriptor = {
 const V3_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v3',
   replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId' },
+  tombstonePreserves: {
+    // `language` is the only required content property on v3's post.
+    post: { identifiers: [], scalars: ['language'] },
+    reply: REPLY_LINKAGE_PRESERVED,
+  },
   interactions: {
     post: V3_POST_INTERACTIONS,
     reply: {
@@ -226,6 +269,12 @@ const V3_DESCRIPTOR: ContractTopologyDescriptor = {
 const V4_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v4',
   replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId' },
+  tombstonePreserves: {
+    // `author` must keep equalling `$ownerId`, and `hashtag` cannot be blanked
+    // because existing likes repeat it under a consensus-checked agreement.
+    post: { identifiers: ['author'], scalars: ['language', 'hashtag'] },
+    reply: { identifiers: [...REPLY_LINKAGE_PRESERVED.identifiers, 'author'], scalars: [] },
+  },
   interactions: {
     post: {
       ...V3_POST_INTERACTIONS,
@@ -296,6 +345,49 @@ const V6_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v6',
 }
 
+/**
+ * v7 — `contracts/yappr-social-contract-v7.json` (the 4.2.0-beta.2 cut,
+ * docs/PLATFORM_BETA2_UPGRADE.md).
+ *
+ * Every index, terminal, ranked axis and `timeRange` window is v6's, so every
+ * read this module describes is unchanged and the descriptor differs only in
+ * what the CLIENT no longer has to do:
+ *
+ * - **No attested `author`.** beta.2 lets a `propertyAgreement` name the
+ *   referenced document's `$ownerId`, so `like.postAuthor` binds to
+ *   `post.$ownerId` and `likeReply.replyAuthor` to `reply.$ownerId` directly.
+ *   The duplicated column is gone from both doctypes
+ *   ({@link authorFieldIsRequired} is false): posts and replies stop writing
+ *   it, tombstones stop preserving it, and `Post.author.id` keeps coming from
+ *   `$ownerId` as it always did. The value tuples a like writes are
+ *   shape-identical — `postAuthor` is still the target's owner id, which is
+ *   exactly what the client already passed.
+ * - **Consensus-enforced immutability.** `post` and `reply` declare
+ *   `immutable` lists, so the structural fields a tombstone had to copy by
+ *   convention are frozen by the chain, and a replace that drops one is
+ *   refused with 40128 ({@link isImmutablePropertyChangedError}). The preserve
+ *   sets below are exactly those lists minus `deleted`, which the tombstone
+ *   sets itself under `immutableAllowSetting`.
+ * - `repost.postId` binds `{ postOwnerId: '$ownerId' }`, which needs no client
+ *   change: the one caller already passes the reposted post's owner.
+ */
+const V7_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V4_DESCRIPTOR,
+  topology: 'v7',
+  tombstonePreserves: {
+    post: {
+      // post.immutable minus `deleted`: the quote graph and the embed triple
+      // join `language`/`hashtag`, because dropping a frozen property is the
+      // same 40128 rejection as changing one. A tombstoned quote or poll post
+      // keeps pointing at its target; PostCard short-circuits on `deleted`, so
+      // none of it renders.
+      identifiers: ['quotedPostId', 'quotedReplyId', 'quotedPostOwnerId', 'embedContractId', 'embedId'],
+      scalars: ['language', 'hashtag', 'embedDocType'],
+    },
+    reply: REPLY_LINKAGE_PRESERVED,
+  },
+}
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -305,25 +397,33 @@ function deepFreeze<T>(value: T): T {
   return value
 }
 
+const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>> = {
+  v2: V2_DESCRIPTOR,
+  v3: V3_DESCRIPTOR,
+  v4: V4_DESCRIPTOR,
+  v5: V5_DESCRIPTOR,
+  v6: V6_DESCRIPTOR,
+  v7: V7_DESCRIPTOR,
+}
+
 let resolved: ContractTopologyDescriptor | null = null
 
 /** The descriptor for the configured topology, resolved once and frozen. */
 export function topologyDescriptor(): ContractTopologyDescriptor {
-  if (!resolved) {
-    const topology = getContractTopology()
-    resolved = deepFreeze(
-      topology === 'v6'
-        ? V6_DESCRIPTOR
-        : topology === 'v5'
-          ? V5_DESCRIPTOR
-          : topology === 'v4'
-          ? V4_DESCRIPTOR
-          : topology === 'v3'
-            ? V3_DESCRIPTOR
-            : V2_DESCRIPTOR
-    )
-  }
+  if (!resolved) resolved = deepFreeze(DESCRIPTORS[getContractTopology()])
   return resolved
+}
+
+/**
+ * True when the configured topology is `floor` or any later cut.
+ *
+ * Every capability below appeared in one cut and stayed, so "which topologies
+ * have X" is a suffix of {@link CONTRACT_TOPOLOGIES} rather than a list to
+ * extend on every re-cut. `authorFieldIsRequired` is the one capability that
+ * was later REMOVED, and it says so as a half-open range.
+ */
+function atLeast(floor: ContractTopology): boolean {
+  return CONTRACT_TOPOLOGIES.indexOf(topologyDescriptor().topology) >= CONTRACT_TOPOLOGIES.indexOf(floor)
 }
 
 /** How reply documents name their parents on this topology. */
@@ -365,7 +465,7 @@ export function quoteFieldFor(kind: TargetKind): string | null {
  * content, not toggles) and a newest-first listing is what the UI wants.
  */
 export function quoteListingOrderProperty(): '$ownerId' | '$createdAt' {
-  return topologyDescriptor().topology === 'v2' ? '$ownerId' : '$createdAt'
+  return atLeast('v3') ? '$createdAt' : '$ownerId'
 }
 
 /** The `reply` property whose count tree holds this kind's reply count. */
@@ -410,7 +510,7 @@ export function likeSurfacesAreSplit(): boolean {
  * wait for an unconfirmed parent instead of racing it.
  */
 export function referencesAreEnforced(): boolean {
-  return topologyDescriptor().topology !== 'v2'
+  return atLeast('v3')
 }
 
 /**
@@ -419,7 +519,19 @@ export function referencesAreEnforced(): boolean {
  * rather than a document removal.
  */
 export function deletesAreTombstones(): boolean {
-  return topologyDescriptor().topology !== 'v2'
+  return atLeast('v3')
+}
+
+/**
+ * The properties a tombstone of this kind must reproduce verbatim.
+ *
+ * From v7 these are exactly the doctype's consensus-`immutable` properties
+ * minus `deleted` (which the tombstone sets itself). Under-listing one is a
+ * hard 40128 rejection rather than a silent field loss, so the list is pinned
+ * against the contract JSON in `lib/contract-topology.test.ts`.
+ */
+export function tombstonePreservationFor(kind: TargetKind): TombstonePreservation {
+  return topologyDescriptor().tombstonePreserves[kind]
 }
 
 /**
@@ -445,18 +557,23 @@ export function likesAreIndexOnly(): boolean {
  * documents, and there is nothing to "recover" when one is missing.
  */
 export function hashtagsAreInline(): boolean {
-  const topology = topologyDescriptor().topology
-  return topology === 'v4' || topology === 'v5' || topology === 'v6'
+  return atLeast('v4')
 }
 
 /**
  * True when `post`/`reply` documents must carry the poster-attested `author`
- * identifier (v4/v5) — the propertyAgreement source for likes. The client
+ * identifier (v4–v6) — the propertyAgreement source for likes. The client
  * always writes it equal to the signing `$ownerId`.
+ *
+ * FALSE again from v7: beta.2 lets the referenced side of a `propertyAgreement`
+ * name the referenced document's `$ownerId`, so the like binds to the post's
+ * real owner and the attested column — which consensus could only ever check
+ * against ITSELF — is gone from the schema. Nothing downstream changes:
+ * `Post.author.id` has always been transformed from `$ownerId`, and a like's
+ * `postAuthor` value is the same identity it always was.
  */
 export function authorFieldIsRequired(): boolean {
-  const topology = topologyDescriptor().topology
-  return topology === 'v4' || topology === 'v5' || topology === 'v6'
+  return atLeast('v4') && !atLeast('v7')
 }
 
 /**
@@ -476,8 +593,7 @@ export function authorFieldIsRequired(): boolean {
  * create, unlike delete-by-values, post transform).
  */
 export function hashtagIsOptional(): boolean {
-  const topology = topologyDescriptor().topology
-  return topology === 'v5' || topology === 'v6'
+  return atLeast('v5')
 }
 
 /**
@@ -499,8 +615,7 @@ export function hashtagMaxLength(): number {
  * by the node.
  */
 export function prefixRankingsAvailable(): boolean {
-  const topology = topologyDescriptor().topology
-  return topology === 'v5' || topology === 'v6'
+  return atLeast('v5')
 }
 
 /**
@@ -510,8 +625,7 @@ export function prefixRankingsAvailable(): boolean {
  * not gated here.
  */
 export function followRankingsAvailable(): boolean {
-  const topology = topologyDescriptor().topology
-  return topology === 'v5' || topology === 'v6'
+  return atLeast('v5')
 }
 
 /**
@@ -523,7 +637,7 @@ export function followRankingsAvailable(): boolean {
  * `range == step == 86400`).
  */
 export function windowedRankingsAvailable(): boolean {
-  return topologyDescriptor().topology === 'v6'
+  return atLeast('v6')
 }
 
 /** The daily grid every v6 windowed index shares (seconds, as the contract declares them). */

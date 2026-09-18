@@ -3,7 +3,7 @@
  * CORPUS_FORMAT.md) against the devnet social contract as the seed
  * identities provisioned by provision-seed-identities.mjs.
  *
- * `--topology v4|v5` selects the hashtag semantics of the target contract
+ * `--topology v4|v5|v6|v7` selects the document shape of the target contract
  * (default: NEXT_PUBLIC_CONTRACT_TOPOLOGY from the env, else v4): the corpus
  * `''` convention still means "untagged", but v4 writes the `''` sentinel
  * while v5 OMITS the hashtag property on post/quote/like docs entirely
@@ -38,7 +38,7 @@
  *
  * Run:
  *   NETWORK=devnet node scripts/seed/run-seeder.mjs --personas <file> --corpus <file> \
- *     [--concurrency 10] [--max-ops N] [--topology v4|v5|v6] [--pipeline [--window 8]]
+ *     [--concurrency 10] [--max-ops N] [--topology v4|v5|v6|v7] [--pipeline [--window 8]]
  *   node scripts/seed/run-seeder.mjs --self-test
  *
  * `--pipeline` swaps the confirm-per-op executor for scripts/seed/pipeline.mjs:
@@ -72,6 +72,8 @@ import {
   describeErr,
   expandedContentLength,
   hashtagProps,
+  atLeastTopology,
+  authorProps,
   ledgerEntry,
   likeValueTuple,
   beatValueTuple,
@@ -303,9 +305,10 @@ const DUPLICATE_IS_SUCCESS = new Set(['like', 'likeReply', 'follow', 'bookmark',
  * Maps one corpus op to {docType, data, tokenCost, indexOnly, refRecord,
  * existenceKey}. Pure (exported for the self-test): the acceptance query for
  * indexOnly types is described by `existenceKey` and bound to the network in
- * buildExecutor. `topology` drives the hashtag shape — under v5 an untagged
+ * buildExecutor. `topology` drives the hashtag shape — from v5 on an untagged
  * post/quote/like OMITS the property (the corpus '' convention and an absent
- * checkpoint hashtag are equivalent); under v4 the '' sentinel is written.
+ * checkpoint hashtag are equivalent); under v4 the '' sentinel is written. It
+ * also drives the attested `author` column, which v7 removed.
  */
 export function planOp(op, { actors, resolveRef, topology }) {
   const bytes = (base58) => bs58.decode(base58);
@@ -329,7 +332,7 @@ export function planOp(op, { actors, resolveRef, topology }) {
         data: {
           content: finalContent ?? '',
           language: 'en',
-          author: ownerBytes,
+          ...authorProps(ownerBytes, topology),
           ...hashtagProps(op.hashtag, topology),
           ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
           ...(op.sensitive !== undefined ? { sensitive: op.sensitive } : {}),
@@ -348,7 +351,7 @@ export function planOp(op, { actors, resolveRef, topology }) {
           content: finalContent ?? '',
           rootPostId: bytes(root.id),
           parentOwnerId: bytes(parent.ownerId),
-          author: ownerBytes,
+          ...authorProps(ownerBytes, topology),
           ...(parent.kind === 'reply' ? { replyToReplyId: bytes(parent.id) } : {}),
           ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
         },
@@ -363,12 +366,15 @@ export function planOp(op, { actors, resolveRef, topology }) {
         tokenCost: TOKEN_COST.like,
         indexOnly: true,
         // propertyAgreement: hashtag and postAuthor MUST mirror the post —
-        // including hashtag ABSENCE under v5 (both-absent = agreement; '' on
+        // including hashtag ABSENCE from v5 on (both-absent = agreement; '' on
         // a like of an untagged v5 post is consensus error 40127). The same
-        // tuple is what a delete-by-values would have to carry.
+        // tuple is what a delete-by-values would have to carry. The tuple is
+        // unchanged on v7: `postAuthor` is still the post owner's id, only the
+        // referenced side of the agreement moved from `post.author` to
+        // `post.$ownerId`.
         data: likeValueTuple(target, topology),
         existenceKey: { keyField: 'postId', keyValue: target.id },
-        // v6: a like of a tagged post carries a `beat` companion (today's
+        // v6+: a like of a tagged post carries a `beat` companion (today's
         // trending rides beat.byDayHashtagPost). Written as a second
         // indexOnly create after the like lands; its own existence read is
         // the acceptance probe, and a duplicate (resume) is success.
@@ -820,6 +826,36 @@ async function selfTest() {
   const quoteOp = { type: 'quote', ref: 'p2', author: 0, content: 'q', quotedRef: 'p1', hashtag: '', line: 2 };
   const likeOp = { type: 'like', author: 1, targetRef: 'p1', line: 3 };
 
+  // v7 drops the attested `author` column; everything else is v6's shapes.
+  const replyOp = { type: 'reply', author: 1, rootRef: 'p1', parentRef: 'p1', content: 'r', line: 4 };
+  for (const topology of ['v4', 'v5', 'v6']) {
+    check(`${topology}: post and reply carry the attested author column`,
+      planOp(postOp, planCtx(topology, '')).data.author instanceof Uint8Array &&
+        planOp(replyOp, planCtx(topology, '')).data.author instanceof Uint8Array);
+  }
+  const v7Post = planOp(postOp, planCtx('v7', '')).data;
+  const v7Reply = planOp(replyOp, planCtx('v7', '')).data;
+  check('v7: post OMITS the attested author column (additionalProperties would reject it)',
+    !('author' in v7Post) && v7Post.language === 'en');
+  check('v7: reply OMITS the attested author column, keeping its parent linkage',
+    !('author' in v7Reply) && v7Reply.rootPostId instanceof Uint8Array && v7Reply.parentOwnerId instanceof Uint8Array);
+  check('v7: the like value tuple is byte-identical to v6 (only the agreement moved)',
+    JSON.stringify(likeValueTuple({ id: targetId, ownerId: owner, hashtag: 'dash' }, 'v7')) ===
+      JSON.stringify(likeValueTuple({ id: targetId, ownerId: owner, hashtag: 'dash' }, 'v6')));
+  check('v7: tagged like still plans a beat companion', (() => {
+    const plan = planOp(likeOp, planCtx('v7', 'dash'));
+    return plan.companion?.docType === 'beat' && plan.companion.data.hashtag === 'dash';
+  })());
+  check('v7: untagged post still OMITS hashtag and plans no companion',
+    !('hashtag' in planOp(postOp, planCtx('v7', '')).data) &&
+      planOp(likeOp, planCtx('v7', '')).companion === undefined);
+  check('parse: 61-char tag accepted under v7, 62 rejected', (() => {
+    const longV7 = (n) => `{"type":"post","ref":"pL","author":0,"content":"x","hashtag":"${'a'.repeat(n)}"}`;
+    if (parseCorpus(longV7(61), personas, { topology: 'v7' }).ops.length !== 1) return false;
+    try { parseCorpus(longV7(62), personas, { topology: 'v7' }); return false; }
+    catch (e) { return e.message.includes('maxLength 61'); }
+  })());
+
   check('v6: tagged like plans a beat companion { postId, hashtag }', (() => {
     const plan = planOp(likeOp, planCtx('v6', 'dash'));
     return plan.companion?.docType === 'beat' && plan.companion.data.hashtag === 'dash' && plan.companion.data.postId instanceof Uint8Array && plan.companion.existenceKey.keyField === 'postId';
@@ -893,7 +929,7 @@ try {
 } catch (e) {
   console.error(e.message);
   console.error('Usage: NETWORK=devnet node scripts/seed/run-seeder.mjs --personas <file> --corpus <file>');
-  console.error('         [--concurrency 10] [--max-ops N] [--topology v4|v5]');
+  console.error(`         [--concurrency 10] [--max-ops N] [--topology ${TOPOLOGIES.join('|')}]`);
   console.error('       node scripts/seed/run-seeder.mjs --self-test');
   process.exit(1);
 }
@@ -912,7 +948,8 @@ try {
   const personas = loadPersonas(args.personas);
   const { ops, stats } = parseCorpus(readFileSync(args.corpus, 'utf8'), personas, { topology: args.topology });
   const { total: yappNeeded, perAuthor } = corpusYappCost(ops);
-  console.log(`topology: ${args.topology} (untagged posts/likes ${args.topology === 'v5' ? 'OMIT the hashtag property' : "write the '' sentinel"})`);
+  console.log(`topology: ${args.topology} (untagged posts/likes ${atLeastTopology(args.topology, 'v5') ? 'OMIT the hashtag property' : "write the '' sentinel"}; ` +
+    `post/reply ${atLeastTopology(args.topology, 'v7') ? 'omit the attested author column' : 'carry the attested author column'})`);
   console.log(`corpus: ${ops.length} ops (${Object.entries(stats).filter(([, n]) => n > 0).map(([t, n]) => `${n} ${t}`).join(', ')})`);
   console.log(`YAPP required if run from scratch: ${yappNeeded} total, max ${Math.max(0, ...perAuthor.values())} for one author`);
 

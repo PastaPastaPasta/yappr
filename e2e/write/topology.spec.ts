@@ -77,6 +77,16 @@ function compiledTopology(): string {
 }
 const SPEC_TOPOLOGY = compiledTopology()
 
+/**
+ * Oldest → newest, mirroring `CONTRACT_TOPOLOGIES` in lib/constants.ts. The
+ * describe gates below ask "is the compiled contract this cut or later?"
+ * rather than listing every cut, so a new topology inherits the suites its
+ * contract still satisfies instead of silently skipping all of them.
+ */
+const TOPOLOGY_ORDER = ['v2', 'v3', 'v4', 'v5', 'v6', 'v7']
+const specTopologyAtLeast = (floor: string) =>
+  TOPOLOGY_ORDER.indexOf(SPEC_TOPOLOGY) >= TOPOLOGY_ORDER.indexOf(floor)
+
 // Everything in the first describe holds on v3, v4 AND v5: the v4/v5 contracts
 // keep v3's document graph (flat threads, likeReply, posts-only
 // repost/bookmark, dual quote fields, tombstones) and change only how likes
@@ -85,7 +95,7 @@ const SPEC_TOPOLOGY = compiledTopology()
 // delete-by-values unlike).
 test.describe('v3+ interaction topology on the devnet contract', () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(!['v3', 'v4', 'v5', 'v6'].includes(SPEC_TOPOLOGY), 'the compiled topology predates the v3 document graph')
+  test.skip(!specTopologyAtLeast('v3'), 'the compiled topology predates the v3 document graph')
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
@@ -113,7 +123,10 @@ test.describe('v3+ interaction topology on the devnet contract', () => {
     // topology outside the v3 family here means the devnet env file lost its
     // flag — which would make every assertion below fail against the UI instead
     // of naming the real problem.
-    expect(['v3', 'v4', 'v5', 'v6'], 'the devnet env file must set NEXT_PUBLIC_CONTRACT_TOPOLOGY to v3, v4, v5 or v6').toContain(topology)
+    expect(
+      TOPOLOGY_ORDER.slice(TOPOLOGY_ORDER.indexOf('v3')),
+      'the devnet env file must set NEXT_PUBLIC_CONTRACT_TOPOLOGY to v3 or later'
+    ).toContain(topology)
     expect(topology, 'sync and async topology reads must agree').toBe(SPEC_TOPOLOGY)
 
     await page.goto(appUrl('/about/'))
@@ -519,7 +532,7 @@ test.describe('v4 indexOnly like lifecycle on the devnet contract', () => {
  */
 test.describe('v5 optional-hashtag topology and prefix rankings on the devnet contract', () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(!['v5', 'v6'].includes(SPEC_TOPOLOGY), 'the compiled topology predates optional hashtags and prefix rankings')
+  test.skip(!specTopologyAtLeast('v5'), 'the compiled topology predates optional hashtags and prefix rankings')
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
@@ -721,15 +734,15 @@ test.describe('v5 optional-hashtag topology and prefix rankings on the devnet co
   })
 })
 
-// The v6 block: the same optional-hashtag graph as v5, plus DAILY-WINDOWED
-// rankings (dev.8, contract v6). A like of a TAGGED post writes a `beat`
+// The v6+ block: the same optional-hashtag graph as v5, plus DAILY-WINDOWED
+// rankings (dev.8, contract v6, carried unchanged into v7). A like of a TAGGED post writes a `beat`
 // companion as a second transition once the like lands, and every ranked surface gains a
 // Today | All time switch. The assertions pin the run's own writes on the
 // TODAY window. Tag/author pins guarantee inclusion for the run's own writes;
 // global top-K assertions allow seeded posts and tags to outrank the CI bot.
-test.describe('v6 daily-windowed rankings on the devnet contract', () => {
+test.describe('v6+ daily-windowed rankings on the devnet contract', () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(SPEC_TOPOLOGY !== 'v6', 'the compiled topology has no daily-windowed ranked twins')
+  test.skip(!specTopologyAtLeast('v6'), 'the compiled topology has no daily-windowed ranked twins')
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
@@ -739,7 +752,7 @@ test.describe('v6 daily-windowed rankings on the devnet contract', () => {
   test.beforeAll(async ({ browser, bot }) => {
     test.setTimeout(420_000)
     runTag = uniqueTag(bot.index)
-    hashtag = `v6${runTag.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 61)
+    hashtag = `win${runTag.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 61)
 
     const context = await browser.newContext()
     try {
@@ -749,7 +762,7 @@ test.describe('v6 daily-windowed rankings on the devnet contract', () => {
       await page.getByTestId('open-compose-btn').click()
       const composeDialog = page.getByRole('dialog', { name: 'Create a new post' })
       await expect(composeDialog).toBeVisible()
-      await composeDialog.getByTestId('compose-textarea').first().fill(`${runTag} v6 windowed target #${hashtag}`)
+      await composeDialog.getByTestId('compose-textarea').first().fill(`${runTag} windowed ranking target #${hashtag}`)
       await composeDialog.getByTestId('compose-submit-btn').click()
       await expect(composeDialog).toBeHidden({ timeout: COMPOSE_TIMEOUT })
       const card = await reloadUntilVisible(page, appUrl(`/user?id=${bot.identityId}`), (p) =>
@@ -778,7 +791,7 @@ test.describe('v6 daily-windowed rankings on the devnet contract', () => {
     await reloadUntilVisible(page, appUrl(`/hashtag?tag=${hashtag}`), (p) => p.getByTestId('hashtag-sort-top'))
     await page.getByTestId('hashtag-sort-top').click()
     const today = page.getByTestId('hashtag-top-today')
-    await expect(today, 'the v6 window toggle must render on the tag page').toBeVisible({ timeout: 30_000 })
+    await expect(today, 'the windowed-ranking toggle must render on the tag page').toBeVisible({ timeout: 30_000 })
     await today.click()
     await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toBeVisible({ timeout: 60_000 })
   })

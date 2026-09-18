@@ -4,7 +4,7 @@
  *
  *   node scripts/seed/generate-corpus.mjs --users 1000 --posts 100000 --ops 1000000 \
  *        --seed 42 --out .seed-corpus.local/mass [--banks .seed-corpus.local/banks] \
- *        [--topology v6] [--mix likes=0.55,replies=0.2,...] [--quiet]
+ *        [--topology v7] [--mix likes=0.55,replies=0.2,...] [--quiet]
  *   node scripts/seed/generate-corpus.mjs --self-test
  *
  * Writes <out>.personas.json, <out>.corpus.jsonl, <out>.summary.json, then
@@ -471,7 +471,7 @@ function makeDecks(rng) {
 // ---------------------------------------------------------------------------
 export function generate(opts) {
   const {
-    users, posts: postTarget, ops: opsTarget, seed, topology = 'v6', mix = DEFAULT_MIX, banksDir, loadedBanks = null, log = () => {},
+    users, posts: postTarget, ops: opsTarget, seed, topology = 'v7', mix = DEFAULT_MIX, banksDir, loadedBanks = null, log = () => {},
   } = opts;
   const rng = makeRng(seed);
   const deal = makeDecks(rng);
@@ -1380,7 +1380,7 @@ async function main() {
   const selfTest = flag('self-test', false) === true;
   const quiet = flag('quiet', false) === true;
   const log = quiet ? () => {} : (...a) => console.log(...a);
-  const topology = String(flag('topology', 'v6'));
+  const topology = String(flag('topology', 'v7'));
   const banksDir = resolve(String(flag('banks', '.seed-corpus.local/banks')));
   if (selfTest) {
     const outDir = join(tmpdir(), `yappr-corpus-selftest-${process.pid}`);
