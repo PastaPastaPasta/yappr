@@ -1,10 +1,10 @@
 /**
  * Realistic FAKE-DATA seeder for the **blog v2 contract** on the moutai devnet
- * (`contracts/yappr-blog-contract-v2.json`, docs/BLOG_V2.md), so the /devnet
+ * (`contracts/yappr-blog-contract.json`, docs/BLOG_V2.md), so the /devnet
  * deployment's blog surfaces look lived-in instead of empty.
  *
  * It writes the four v2 doctypes in the shapes the APP writes them, not the
- * battery's placeholder shapes (`scripts/verify-blog-v2.mjs` is still the
+ * battery's placeholder shapes (`scripts/verify-blog.mjs` is still the
  * reference for the write MECHANICS — token payment, permanent-document
  * references):
  *

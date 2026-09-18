@@ -2,15 +2,14 @@
  * Publishes any checked-in contract JSON from `contracts/` as a brand-new
  * contract on a devnet, owned by a seed-ledger persona or an e2e bot.
  *
- * Generalises scripts/register-storefront-v2.mjs: every feature contract
- * re-cut (storefront v2, blog v2, DM v4, pollr v4, key-exchange v3) goes
- * through here. Doctypes priced in YAPP name the social contract through the
+ * Every feature-contract re-cut (storefront, blog, DM, pollr, key-exchange)
+ * goes through here. Doctypes priced in YAPP name the social contract through the
  * `SOCIAL_CONTRACT_ID` placeholder, which is replaced with the deployment's
  * social contract id as a 32-byte array (the form registration requires).
  *
  * Run:
- *   NETWORK=devnet node scripts/register-feature-contract.mjs --file yappr-blog-contract-v2.json --dry-run
- *   NETWORK=devnet node scripts/register-feature-contract.mjs --file yappr-blog-contract-v2.json --persona 260
+ *   NETWORK=devnet node scripts/register-feature-contract.mjs --file yappr-blog-contract.json --dry-run
+ *   NETWORK=devnet node scripts/register-feature-contract.mjs --file yappr-blog-contract.json --persona 260
  *   NETWORK=devnet node scripts/register-feature-contract.mjs --file … --bot 0 --owner <identityId>
  */
 import { readFileSync } from 'node:fs';

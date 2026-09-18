@@ -1,6 +1,6 @@
 /**
  * Registration-day battery for **storefront contract v2**
- * (`contracts/yappr-storefront-contract-v2.json`, docs/STOREFRONT_V2.md).
+ * (`contracts/yappr-storefront-contract.json`, docs/STOREFRONT_V2.md).
  * Runs live against a freshly registered contract on a beta.1+ devnet; there is
  * no default contract id (`--contract` or `STOREFRONT_V2_CONTRACT_ID`).
  *
@@ -47,9 +47,9 @@
  *       shippingZone to another REAL store is rejected (40128)
  *
  * Run:
- *   NETWORK=devnet node scripts/verify-storefront-v2.mjs --contract <id> \
+ *   NETWORK=devnet node scripts/verify-storefront.mjs --contract <id> \
  *     [--seller 200] [--buyer 201] [--stranger 202] [--yapp 60] [--only s5,s7]
- *   node scripts/verify-storefront-v2.mjs --self-test   # offline: contract declares what the cases assert
+ *   node scripts/verify-storefront.mjs --self-test   # offline: contract declares what the cases assert
  */
 import { IdentitySigner, TokenPaymentInfo, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
@@ -756,7 +756,7 @@ function parseArgs(argv) {
 
 if (process.argv.includes('--self-test')) {
   const ownedByStoreOwner = { agreements: { storeId: { $ownerId: '$ownerId' } }, immutable: ['storeId'] };
-  process.exit(selfTest('yappr-storefront-contract-v2.json', {
+  process.exit(selfTest('yappr-storefront-contract.json', {
     // s2d/s2e + s13: only the store owner may list under it, and never move it.
     storeItem: ownedByStoreOwner,
     shippingZone: ownedByStoreOwner,

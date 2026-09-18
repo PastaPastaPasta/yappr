@@ -1,6 +1,6 @@
 /**
  * Shared harness for the registration-day contract batteries
- * (verify-storefront-v2.mjs, verify-blog-v2.mjs, verify-dm-v4.mjs, …).
+ * (verify-storefront.mjs, verify-blog.mjs, verify-dm.mjs, …).
  *
  * Every helper decides a write's outcome by READING IT BACK from the chain,
  * never from the SDK's throw/no-throw: DAPI 504s on confirmation waits for

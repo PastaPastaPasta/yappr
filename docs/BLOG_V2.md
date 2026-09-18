@@ -5,7 +5,7 @@
 the moutai wipe, and the JSON has since been re-cut for **4.2.0-beta.2** — see
 "beta.2 re-cut" below. Built by `scripts/build-blog-v2-contract.py` from the v1
 file, published by `scripts/register-feature-contract.mjs --file
-yappr-blog-contract-v2.json`, verified live by `scripts/verify-blog-v2.mjs`.
+yappr-blog-contract.json`, verified live by `scripts/verify-blog.mjs`.
 Protocol 14, Platform 4.2.0-beta.2 or later.
 
 ## beta.2 re-cut

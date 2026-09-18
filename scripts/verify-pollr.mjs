@@ -1,6 +1,6 @@
 /**
  * Registration-day battery for **Pollr contract v4**
- * (`contracts/pollr-contract-v4.json`, docs/POLLR_V4.md). Runs live against a
+ * (`contracts/pollr-contract.json`, docs/POLLR_V4.md). Runs live against a
  * freshly registered contract on a beta.1+ devnet; there is no default contract
  * id (`--contract` or `POLLR_V4_CONTRACT_ID`).
  *
@@ -43,9 +43,9 @@
  *   p11 permanence: the poll cannot be deleted (canBeDeleted:false)
  *
  * Run:
- *   NETWORK=devnet node scripts/verify-pollr-v4.mjs --contract <id> \
+ *   NETWORK=devnet node scripts/verify-pollr.mjs --contract <id> \
  *     [--creator 230] [--voter 231] [--voter2 232] [--v3 <v3 contract id>] [--only p3,p6]
- *   node scripts/verify-pollr-v4.mjs --self-test   # offline: contract declares what the cases assert
+ *   node scripts/verify-pollr.mjs --self-test   # offline: contract declares what the cases assert
  */
 import { ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
@@ -516,7 +516,7 @@ function parseArgs(argv) {
 if (process.argv.includes('--self-test')) {
   // p2c/p2d: a ballot can only ever name the poll's real creator.
   const ballot = { agreements: { pollId: { pollOwnerId: '$ownerId' } } };
-  process.exit(selfTest('pollr-contract-v4.json', { vote: ballot, multiVote: ballot }));
+  process.exit(selfTest('pollr-contract.json', { vote: ballot, multiVote: ballot }));
 }
 
 try {

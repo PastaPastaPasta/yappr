@@ -1,6 +1,6 @@
 /**
  * Registration-day battery for **blog contract v2**
- * (`contracts/yappr-blog-contract-v2.json`, docs/BLOG_V2.md). Runs live
+ * (`contracts/yappr-blog-contract.json`, docs/BLOG_V2.md). Runs live
  * against a freshly registered contract on a beta.1+ devnet; there is no
  * default contract id (`--contract` or `BLOG_V2_CONTRACT_ID`).
  *
@@ -38,9 +38,9 @@
  *       from then on
  *
  * Run:
- *   NETWORK=devnet node scripts/verify-blog-v2.mjs --contract <id> \
+ *   NETWORK=devnet node scripts/verify-blog.mjs --contract <id> \
  *     [--author 210] [--reader 211] [--stranger 212] [--yapp 20] [--only b4,b5]
- *   node scripts/verify-blog-v2.mjs --self-test   # offline: contract declares what the cases assert
+ *   node scripts/verify-blog.mjs --self-test   # offline: contract declares what the cases assert
  */
 import { ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
@@ -434,7 +434,7 @@ function parseArgs(argv) {
 }
 
 if (process.argv.includes('--self-test')) {
-  process.exit(selfTest('yappr-blog-contract-v2.json', {
+  process.exit(selfTest('yappr-blog-contract.json', {
     // b3a: the notification key binds to the post's REAL owner.
     blogComment: { agreements: { blogPostId: { blogPostOwnerId: '$ownerId' } } },
     // b12: blogId frozen, publishedAt write-once.

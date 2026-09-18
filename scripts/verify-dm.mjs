@@ -1,6 +1,6 @@
 /**
  * Registration-day battery for **DM contract v4**
- * (`contracts/yappr-dm-contract-v4.json`, docs/DM_V4.md). Runs live against a
+ * (`contracts/yappr-dm-contract.json`, docs/DM_V4.md). Runs live against a
  * freshly registered contract on a beta.1+ devnet; there is no default contract
  * id (`--contract` or `DM_V4_CONTRACT_ID`).
  *
@@ -42,10 +42,10 @@
  *       never edited" a consensus rule instead of a client convention.
  *
  * Run:
- *   NETWORK=devnet node scripts/verify-dm-v4.mjs --contract <id> \
+ *   NETWORK=devnet node scripts/verify-dm.mjs --contract <id> \
  *     [--sender 220] [--recipient 221] [--stranger 222] [--messages 5] \
  *     [--run <tag>] [--only d4,d5]
- *   node scripts/verify-dm-v4.mjs --self-test   # offline: contract declares what the cases assert
+ *   node scripts/verify-dm.mjs --self-test   # offline: contract declares what the cases assert
  *
  * Re-runnable: conversation ids are salted per run (see `conversationIdFor`), so
  * the exact-count cases never measure a previous run's messages. The invite
@@ -477,7 +477,7 @@ function parseArgs(argv) {
 
 if (process.argv.includes('--self-test')) {
   // d8: everything a DM document says is frozen; only $updatedAt may move.
-  process.exit(selfTest('yappr-dm-contract-v4.json', {
+  process.exit(selfTest('yappr-dm-contract.json', {
     conversationInvite: { immutable: ['conversationId', 'recipientId', 'senderPubKey'] },
     directMessage: { immutable: ['conversationId', 'encryptedContent'] },
     readReceipt: { immutable: ['conversationId'] },

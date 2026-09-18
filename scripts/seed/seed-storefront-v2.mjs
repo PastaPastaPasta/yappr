@@ -1,6 +1,6 @@
 /**
  * Content seeder for the **storefront v2 contract** on the moutai devnet
- * (`contracts/yappr-storefront-contract-v2.json`, docs/STOREFRONT_V2.md).
+ * (`contracts/yappr-storefront-contract.json`, docs/STOREFRONT_V2.md).
  *
  * Fills the /devnet deployment's shop surfaces with plausible stores, catalogs,
  * orders, status histories and reviews so `/store`, `/store/view`, `/orders`

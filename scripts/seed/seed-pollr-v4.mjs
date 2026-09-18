@@ -33,7 +33,7 @@
  * global in-flight cap. Polls and their posts go first (the post embeds an id
  * that must exist), ballots second.
  *
- * Devnet quirks handled, from run-seeder.mjs / verify-pollr-v4.mjs: a DAPI 504
+ * Devnet quirks handled, from run-seeder.mjs / verify-pollr.mjs: a DAPI 504
  * on the confirmation wait is not a rejection (readback decides), indexOnly
  * creates can throw post-broadcast even when they landed, quorum rotation kills
  * the SDK (full reconnect), nonce desync needs a fresh SDK.
@@ -588,7 +588,7 @@ const identifierFrom = (bytes) => (bytes ? bs58.encode(Uint8Array.from(bytes)) :
  * A grouped count's integer key, in either form the SDK produces: the hex of
  * 0x80 + choice (`documents.count`) or the decoded number (`documents.ranked`).
  * `null` for anything else, so an encoding change fails loudly instead of
- * reading as choice 0 — verify-pollr-v4.mjs `decodeChoiceKey`.
+ * reading as choice 0 — verify-pollr.mjs `decodeChoiceKey`.
  */
 function decodeChoiceKey(key) {
   if (typeof key === 'number') return key;
