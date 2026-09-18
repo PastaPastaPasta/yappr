@@ -1,0 +1,51 @@
+[
+  {
+    "idx": 270,
+    "handle": "seller-mae7",
+    "displayName": "Mae Okonkwo",
+    "bio": "Potter. Wood-fired stoneware and the occasional gold seam. Kintsugi Ceramics, open since 2014.",
+    "location": "Kyoto, Japan",
+    "website": "https://yap.pr/devnet",
+    "avatarSeed": "mae-kintsugi"
+  },
+  {
+    "idx": 271,
+    "handle": "seller-tom3",
+    "displayName": "Tom Brandt",
+    "bio": "Third-generation leatherworker. Veg-tanned, hand-stitched, built to outlive me.",
+    "location": "Madison, Wisconsin",
+    "avatarSeed": "tom-brandt"
+  },
+  {
+    "idx": 272,
+    "handle": "seller-nia4",
+    "displayName": "Nia Ferreira",
+    "bio": "Herbalist and soap-maker. Everything grows on the roof before it reaches the shelf.",
+    "location": "Lisbon, Portugal",
+    "avatarSeed": "nia-verdant"
+  },
+  {
+    "idx": 273,
+    "handle": "seller-raf5",
+    "displayName": "Rafael Costa",
+    "bio": "Film cameras, notebooks, and other stubbornly analog objects. Shipping is slow, sorry.",
+    "location": "Sao Paulo, Brazil",
+    "avatarSeed": "raf-analog"
+  },
+  {
+    "idx": 274,
+    "handle": "buyer-ivy6",
+    "displayName": "Ivy Chen",
+    "bio": "Buys too many mugs. Reviews all of them.",
+    "location": "Vancouver, Canada",
+    "avatarSeed": "ivy-chen"
+  },
+  {
+    "idx": 275,
+    "handle": "buyer-otto8",
+    "displayName": "Otto Lindgren",
+    "bio": "Coffee, film, and a weakness for well-made bags.",
+    "location": "Gothenburg, Sweden",
+    "avatarSeed": "otto-lind"
+  }
+]
