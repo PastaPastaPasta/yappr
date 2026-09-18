@@ -70,6 +70,11 @@ function normalizeChoices(choices: number[]): number[] {
   return Array.from(new Set(choices)).filter(isValidChoice).sort((a, b) => a - b);
 }
 
+/** A ballot refused before anything was written. */
+function refused(error: string, failed: number[] = []): CastVoteResult {
+  return { success: false, created: [], alreadyVoted: [], failed, error };
+}
+
 /** Read the `choice` field off a raw vote document (nested `data` or flat). */
 function readChoice(doc: Record<string, unknown>): number {
   return Number((doc.data as Record<string, unknown> | undefined)?.choice ?? doc.choice);
@@ -146,20 +151,14 @@ class PollrVoteService {
     const selected = normalizeChoices(choices);
 
     if (selected.length === 0) {
-      return { success: false, created: [], alreadyVoted: [], failed: [], error: 'No choice selected' };
+      return refused('No choice selected');
     }
 
     // Not reachable through the UI (the ballot renders radios for this mode), so
     // this is a caller bug rather than user input — refuse instead of silently
     // dropping selections, which would report a ballot the voter didn't cast.
     if (!poll.multiChoice && selected.length > 1) {
-      return {
-        success: false,
-        created: [],
-        alreadyVoted: [],
-        failed: selected,
-        error: 'This poll takes a single choice',
-      };
+      return refused('This poll takes a single choice', selected);
     }
 
     // A v4 poll attests its own `author`, and consensus binds every ballot's
@@ -168,27 +167,41 @@ class PollrVoteService {
     // file the ballot under the forged creator's "votes on my polls"; refuse it
     // instead. (Always true on v3, where `author` falls back to the owner.)
     if (!poll.authorIsOwner) {
-      return {
-        success: false,
-        created: [],
-        alreadyVoted: [],
-        failed: selected,
-        error: 'This poll names an author that is not its creator',
-      };
+      return refused('This poll names an author that is not its creator', selected);
     }
 
     // The close time is advisory — the contract can't enforce it — so clients
     // are the ones that have to refuse a late ballot.
     const { endsAt } = poll;
     if (typeof endsAt === 'number' && Number.isFinite(endsAt) && Date.now() > endsAt) {
-      return { success: false, created: [], alreadyVoted: [], failed: [], error: 'This poll has closed' };
+      return refused('This poll has closed');
     }
 
+    const isV4 = pollrIsV4();
     const docType = pollrVoteDocType(poll.multiChoice);
     const created: number[] = [];
     const alreadyVoted: number[] = [];
     const failed: number[] = [];
     let firstError: string | undefined;
+
+    // What a write Platform refused actually means. The order is load-bearing,
+    // and the create path reports a refusal two ways (a failed result or a
+    // throw), so both go through here.
+    const recordRejection = async (choice: number, error: unknown, message: string): Promise<void> => {
+      if (isDuplicateVoteError(error)) {
+        // Checked BEFORE the landed probe: on a duplicate the entry is already
+        // there from an earlier ballot, so the probe would happily report this
+        // rejected write as created.
+        alreadyVoted.push(...(await this.resolveDuplicate(poll, choice, ownerId)));
+      } else if (await this.ballotLanded(poll, choice, ownerId, { whenUnknown: false })) {
+        created.push(choice);
+      } else {
+        // Keep going: the remaining choices are independent documents, and
+        // re-submitting a landed one is idempotent thanks to the unique index.
+        failed.push(choice);
+        firstError ??= message;
+      }
+    };
 
     for (const choice of selected) {
       try {
@@ -203,16 +216,19 @@ class PollrVoteService {
             // propertyAgreement, and `author` need not equal `$ownerId` — a
             // ballot carrying the owner instead would be rejected with 40127.
             // On v3 the two are the same value (no `author` field exists).
-            pollOwnerId: identifierStringToDocumentBytes(pollrIsV4() ? poll.author : poll.ownerId),
+            pollOwnerId: identifierStringToDocumentBytes(isV4 ? poll.author : poll.ownerId),
             choice,
           },
           // v4 ballots are indexOnly: there is no id-addressable row for the
           // strict confirmation probes to find, and the transition proves as an
           // affected-state snapshot rather than ExecutionProved.
-          pollrIsV4() ? { confirmation: 'affectedState' } : undefined
+          isV4 ? { confirmation: 'affectedState' } : undefined
         );
 
-        if (result.success && (result.confirmed !== false || !(await this.mustVerify(poll, choice, ownerId)))) {
+        if (
+          result.success &&
+          (result.confirmed !== false || (await this.ballotLanded(poll, choice, ownerId, { whenUnknown: true })))
+        ) {
           created.push(choice);
         } else if (result.success) {
           // v4 only: an UNCONFIRMED success that the chain does not show.
@@ -224,28 +240,11 @@ class PollrVoteService {
           // never actually filed.
           failed.push(choice);
           firstError ??= 'The network did not confirm your vote — try again';
-        } else if (isDuplicateVoteError(result.error)) {
-          // Checked BEFORE the landed probe: on a duplicate the entry is
-          // already there from an earlier ballot, so the probe would happily
-          // report this rejected write as created.
-          alreadyVoted.push(...(await this.resolveDuplicate(poll, choice, ownerId)));
-        } else if (await this.landedDespiteFailure(poll, choice, ownerId)) {
-          created.push(choice);
         } else {
-          // Keep going: the remaining choices are independent documents, and
-          // re-submitting a landed one is idempotent thanks to the unique index.
-          failed.push(choice);
-          firstError ??= result.error || 'Failed to cast vote';
+          await recordRejection(choice, result.error, result.error || 'Failed to cast vote');
         }
       } catch (error) {
-        if (isDuplicateVoteError(error)) {
-          alreadyVoted.push(...(await this.resolveDuplicate(poll, choice, ownerId)));
-        } else if (await this.landedDespiteFailure(poll, choice, ownerId)) {
-          created.push(choice);
-        } else {
-          failed.push(choice);
-          firstError ??= extractErrorMessage(error);
-        }
+        await recordRejection(choice, error, extractErrorMessage(error));
       }
     }
 
@@ -260,44 +259,39 @@ class PollrVoteService {
   }
 
   /**
-   * v4: is an UNCONFIRMED write still missing from the chain?
+   * Is this voter's entry on chain? The chain, not the write path's verdict,
+   * decides whether a v4 ballot counts as cast — and it is consulted from both
+   * sides, because v4's create path can be wrong in either direction:
+   * `affectedState` reports optimistic success when the confirmation wait times
+   * out (and its own get-by-id landed-check can never resolve for an indexOnly
+   * doctype), while the js create path can fail *after* a successful broadcast
+   * without ever returning a usable Document — the same quirk `like-service`
+   * handles.
    *
-   * True means "do not report this as cast". A read failure answers false —
-   * the write path did report success, and an unreachable DAPI is not evidence
-   * against it; the next remount re-reads the real state either way.
+   * `whenUnknown` is the answer when the chain cannot be asked: on v3, where a
+   * ballot is a stored document with real confirmation and there is nothing to
+   * second-guess, and on a read that failed, since an unreachable DAPI is
+   * evidence for neither side. Each caller passes the value that leaves the
+   * write path's own verdict standing, and the next remount re-reads the real
+   * state either way.
    */
-  private async mustVerify(poll: Poll, choice: number, ownerId: string): Promise<boolean> {
-    if (!pollrIsV4()) return false;
-    try {
-      return !(await this.waitForBallot(poll, choice, ownerId));
-    } catch (error) {
-      logger.warn('PollrVoteService: could not verify an unconfirmed ballot against the chain', {
-        pollId: poll.id,
-        error: extractErrorMessage(error),
-      });
-      return false;
-    }
-  }
-
-  /**
-   * Did a ballot the write path reported as FAILED actually land?
-   *
-   * v4 ballots are indexOnly, and the js create path can fail *after* a
-   * successful broadcast without ever returning a usable Document — the same
-   * quirk `like-service` handles. So a reported failure is re-checked against
-   * the chain before being believed. On v3 the create is a stored document with
-   * real confirmation, so there is nothing to second-guess.
-   */
-  private async landedDespiteFailure(poll: Poll, choice: number, ownerId: string): Promise<boolean> {
-    if (!pollrIsV4()) return false;
+  private async ballotLanded(
+    poll: Poll,
+    choice: number,
+    ownerId: string,
+    { whenUnknown }: { whenUnknown: boolean }
+  ): Promise<boolean> {
+    if (!pollrIsV4()) return whenUnknown;
     try {
       return await this.waitForBallot(poll, choice, ownerId);
     } catch (error) {
-      logger.warn('PollrVoteService: could not re-check a failed ballot against the chain', {
+      logger.warn('PollrVoteService: could not check a ballot against the chain', {
         pollId: poll.id,
+        choice,
+        assumedLanded: whenUnknown,
         error: extractErrorMessage(error),
       });
-      return false;
+      return whenUnknown;
     }
   }
 
@@ -398,7 +392,7 @@ class PollrVoteService {
    * read. v4 has no such index — its terminal must be `$ownerId` or a refersTo
    * identifier, and `choice` is an integer, so no index can be keyed
    * (poll, voter) → choice. Instead the read walks `byPollChoice`'s choice
-   * level with an `in` over the poll's real options and pins the terminal:
+   * level with an `in` over every schema-valid choice and pins the terminal:
    * `pollId ==`, `choice in [...]`, `$ownerId ==`. An `in` on an indexOnly
    * prefix property REQUIRES the matching orderBy, or the query is refused.
    *
@@ -407,33 +401,53 @@ class PollrVoteService {
    * Platform will reject outright.
    */
   async getMyVotes(poll: Poll, userId: string): Promise<number[]> {
+    // One branch per topology/mode, each spelling its whole query: the three
+    // clauses have to agree with one another and with the index being read.
+    let query: { where: DocumentWhereClause[]; orderBy: DocumentOrderByClause[]; limit: number };
+
+    if (pollrIsV4()) {
+      query = {
+        where: [
+          ['pollId', '==', poll.id],
+          // The FULL 0-9 range, not the poll's option count: `choice` is
+          // schema-valid for 0-9 whatever the poll declares, and a ballot
+          // this read cannot see reopens a ballot Platform will reject.
+          // (getTally narrows on purpose — there the out-of-range groups
+          // are noise; here they are the voter's own state.)
+          ['choice', 'in', choiceRange(POLL_MAX_OPTIONS)],
+          ['$ownerId', '==', userId],
+        ],
+        orderBy: [['choice', 'asc']],
+        limit: POLL_MAX_OPTIONS,
+      };
+    } else if (poll.multiChoice) {
+      query = {
+        where: [
+          ['pollId', '==', poll.id],
+          ['$ownerId', '==', userId],
+        ],
+        orderBy: [['pollId', 'asc'], ['$ownerId', 'asc'], ['choice', 'asc']],
+        limit: POLL_MAX_OPTIONS,
+      };
+    } else {
+      // `vote`'s unique index stops at $ownerId, so it neither orders by choice
+      // nor can hold more than the one ballot.
+      query = {
+        where: [
+          ['pollId', '==', poll.id],
+          ['$ownerId', '==', userId],
+        ],
+        orderBy: [['pollId', 'asc'], ['$ownerId', 'asc']],
+        limit: 1,
+      };
+    }
+
     try {
       const sdk = await getEvoSdk();
       const response = await sdk.documents.query({
         dataContractId: POLLR_CONTRACT_ID,
         documentTypeName: pollrVoteDocType(poll.multiChoice),
-        where: pollrIsV4()
-          ? [
-              ['pollId', '==', poll.id],
-              // The FULL 0-9 range, not the poll's option count: `choice` is
-              // schema-valid for 0-9 whatever the poll declares, and a ballot
-              // this read cannot see reopens a ballot Platform will reject.
-              // (getTally narrows on purpose — there the out-of-range groups
-              // are noise; here they are the voter's own state.)
-              ['choice', 'in', choiceRange(POLL_MAX_OPTIONS)],
-              ['$ownerId', '==', userId],
-            ]
-          : [
-              ['pollId', '==', poll.id],
-              ['$ownerId', '==', userId],
-            ],
-        orderBy: pollrIsV4()
-          ? [['choice', 'asc']]
-          // `vote`'s unique index stops at $ownerId; only `multiVote` orders by choice.
-          : poll.multiChoice
-            ? [['pollId', 'asc'], ['$ownerId', 'asc'], ['choice', 'asc']]
-            : [['pollId', 'asc'], ['$ownerId', 'asc']],
-        limit: poll.multiChoice || pollrIsV4() ? POLL_MAX_OPTIONS : 1,
+        ...query,
       });
 
       return normalizeChoices(normalizeSDKResponse(response).map(readChoice));

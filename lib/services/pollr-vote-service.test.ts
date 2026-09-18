@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import bs58 from 'bs58';
+import type { Poll } from './pollr-poll-service';
 
 // Exercises the v3/v4 branch points of the ballot service at an in-memory SDK
 // boundary: what gets written, what query shape reads it back, and how a
@@ -15,7 +16,7 @@ const CREATOR = id(1);
 const VOTER = id(2);
 const IMPOSTOR = id(3);
 
-const poll = (overrides: Record<string, unknown> = {}) => ({
+const poll = (overrides: Partial<Poll> = {}): Poll => ({
   id: id(9),
   ownerId: CREATOR,
   createdAt: new Date(0),
@@ -25,7 +26,7 @@ const poll = (overrides: Record<string, unknown> = {}) => ({
   author: CREATOR,
   authorIsOwner: true,
   ...overrides,
-}) as Parameters<Awaited<ReturnType<typeof loadService>>['castVote']>[0];
+});
 
 async function loadService(topology: 'v3' | 'v4') {
   vi.stubEnv('NEXT_PUBLIC_POLLR_TOPOLOGY', topology);
@@ -34,7 +35,7 @@ async function loadService(topology: 'v3' | 'v4') {
 }
 
 /** The `where` clause the single `documents.query` call was made with. */
-const whereOf = (call = 0) => mocks.query.mock.calls[call][0].where as unknown[][];
+const whereOf = () => mocks.query.mock.calls[0][0].where as unknown[][];
 
 beforeEach(() => {
   vi.resetModules();
