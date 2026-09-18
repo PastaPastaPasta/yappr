@@ -82,6 +82,12 @@ describe('propertyAgreement rejections (40127)', () => {
     expect(isPropertyAgreementError(new Error('state error 40127'))).toBe(true)
   })
 
+  it('recognises a frozen blogPost property as the same permanent 40128', () => {
+    // The write-once `publishedAt` on blogPost — the one place in the app where
+    // this rejection is a state, not a bug: the post is already published.
+    expect(isImmutablePropertyChangedError(new Error(IMMUTABLE))).toBe(true)
+  })
+
   it('tells the user who may act, not to retry, when a gate refuses them', () => {
     expect(categorizeError(new Error(WRITER_GATE))).toMatch(/only the owner/i)
     expect(categorizeError(new Error(VALUE_MISMATCH))).toMatch(/reload/i)
