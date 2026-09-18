@@ -211,10 +211,14 @@ reviews aimed at the wrong store, ghost stores on items. Write errors surface
 as consensus codes 40120–40127, which the app already maps for the social
 contract (`isReferenceNotFoundError`).
 
-Catch: `propertyAgreement` cannot bind `$ownerId`, so buyer identity is
+~~Catch: `propertyAgreement` cannot bind `$ownerId`, so buyer identity is
 self-attested at order time and the review-owner check stays client-side. A
 forger could front-run the real buyer's single allowed review on the unique
-`orderReview` index; a cheap mitigation is a YAPP `tokenCost` on reviews.
+`orderReview` index; a cheap mitigation is a YAPP `tokenCost` on reviews.~~
+**Resolved in beta.2:** the writer gate `{$ownerId: $ownerId}` on
+`storeReview.orderId` admits only the order's owner, so the front-run is
+refused at write time and the buyer identity is not attested at all. The YAPP
+cost stayed, for its own reasons.
 
 ### 3.3 Item-level ratings and sales signals
 
