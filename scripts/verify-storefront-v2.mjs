@@ -666,7 +666,10 @@ async function caseS10Composite(ctx) {
     );
     const reviews = orders.subResults[0]?.kind === 'documents' ? orders.subResults[0].documents : [];
     const statuses = orders.subResults[1]?.kind === 'documents' ? orders.subResults[1].documents : [];
-    check('s10b orders page composite: orders + review-exists + status history + store join', orders.pageDocuments.length >= 2 && reviews.length >= 2 && statuses.length >= 3, `orders=${orders.pageDocuments.length} reviews=${reviews.length} statuses=${statuses.length}`);
+    // Two status updates, not three: s4 writes `processing` and `shipped`, and
+    // the stranger's `cancelled` that used to make a third is now refused by
+    // the writer gate.
+    check('s10b orders page composite: orders + review-exists + status history + store join', orders.pageDocuments.length >= 2 && reviews.length >= 2 && statuses.length >= 2, `orders=${orders.pageDocuments.length} reviews=${reviews.length} statuses=${statuses.length}`);
     workingShapes.push({ label: 'buyer orders composite', shape: { documentType: 'storeOrder', where: [['$ownerId', '==', '<buyerId>']], subQueries: ['storeReview by orderId', 'orderStatusUpdate by orderId', 'store by $id'] } });
   } catch (e) {
     check('s10b orders page composite', false, describeErr(e).slice(0, 220));
