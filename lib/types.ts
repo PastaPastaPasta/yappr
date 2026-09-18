@@ -92,6 +92,12 @@ export interface BlogPost {
   updatedAt?: Date
   $revision?: number
   blogId: string
+  /**
+   * Poster-attested author, v2 contract only (undefined on v1). Equal to
+   * `ownerId` for anything this app wrote; consensus pins every comment's
+   * `blogPostOwnerId` to THIS value, so comment writes must use it verbatim.
+   */
+  author?: string
   title: string
   subtitle?: string
   content: Record<string, unknown>[]

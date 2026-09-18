@@ -3,8 +3,8 @@ import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
-import { YAPPR_BLOG_CONTRACT_ID } from '../constants';
-import { paginateCount, paginateFetchAll } from './pagination-utils';
+import { YAPPR_BLOG_CONTRACT_ID, blogIsV2 } from '../constants';
+import { documentCount, paginateCount, paginateFetchAll } from './pagination-utils';
 import type { BlogFollow } from '@/lib/types';
 
 interface BlogFollowDocument {
@@ -163,10 +163,19 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
     }
   }
 
+  /** One proved count on v2's `followerCount` tree; a cursor scan on v1. */
   async countBlogFollowers(blogId: string): Promise<number> {
     return this.countFollowersDeduplicator.dedupe(blogId, async () => {
       try {
         const sdk = await getEvoSdk();
+
+        if (blogIsV2()) {
+          return await documentCount(sdk, {
+            dataContractId: this.contractId,
+            documentTypeName: this.documentType,
+            where: [['blogId', '==', blogId]],
+          });
+        }
 
         const { count } = await paginateCount(
           sdk,
