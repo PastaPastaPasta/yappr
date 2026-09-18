@@ -292,14 +292,19 @@ export function selfTest(file, expect) {
   const schemas = parsed.documentSchemas ?? parsed;
   const problems = [];
   const sorted = (values) => [...(values ?? [])].sort();
+  // Both comparisons are order-insensitive: a propertyAgreement is a SET of
+  // pairs and an immutable list a set of names, so a build script that emits
+  // them in a different order has changed nothing consensus can see.
+  const canonical = (pairs) => (pairs === undefined ? undefined
+    : Object.fromEntries(Object.entries(pairs).sort(([a], [b]) => (a < b ? -1 : 1))));
 
   for (const [docType, rules] of Object.entries(expect)) {
     const schema = schemas[docType];
     if (!schema) { problems.push(`${docType}: document type is missing`); continue; }
     for (const [property, agreement] of Object.entries(rules.agreements ?? {})) {
-      const actual = schema.properties?.[property]?.refersTo?.propertyAgreement;
-      if (JSON.stringify(actual) !== JSON.stringify(agreement)) {
-        problems.push(`${docType}.${property} propertyAgreement is ${JSON.stringify(actual)}, expected ${JSON.stringify(agreement)}`);
+      const actual = canonical(schema.properties?.[property]?.refersTo?.propertyAgreement);
+      if (JSON.stringify(actual) !== JSON.stringify(canonical(agreement))) {
+        problems.push(`${docType}.${property} propertyAgreement is ${JSON.stringify(actual)}, expected ${JSON.stringify(canonical(agreement))}`);
       }
     }
     for (const key of ['immutable', 'immutableAllowSetting']) {
