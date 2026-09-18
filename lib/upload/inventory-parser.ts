@@ -8,6 +8,7 @@
  */
 
 import type { ItemVariants, VariantAxis, VariantCombination } from '../types'
+import { toSmallestUnit } from '../utils/format'
 
 // CSV column mapping to internal field names
 export interface InventoryCSVColumns {
@@ -44,7 +45,7 @@ export interface ParsedInventoryRow {
   tags: string[]
   variant?: string
   subVariant?: string
-  price: number           // Price in cents
+  price: number           // Price in the currency's smallest unit (cents, duffs, or satoshis)
   quantity?: number | string  // Number or formula string
   quantityFormula?: string    // Original formula if quantity was a formula
   shippingCost?: number
@@ -196,9 +197,9 @@ function mapHeaders(headers: string[]): Record<keyof InventoryCSVColumns, number
 }
 
 /**
- * Parse a price string into cents
+ * Parse a display price into the currency's smallest unit.
  */
-function parsePrice(value: string): number | null {
+function parsePrice(value: string, currency: string): number | null {
   if (!value) return null
 
   // Remove currency symbols and whitespace
@@ -207,8 +208,8 @@ function parsePrice(value: string): number | null {
   const num = parseFloat(cleaned)
   if (isNaN(num)) return null
 
-  // Convert to cents (assuming input is in dollars/main currency unit)
-  return Math.round(num * 100)
+  const amount = toSmallestUnit(num, currency)
+  return Number.isSafeInteger(amount) ? amount : null
 }
 
 /**
@@ -233,7 +234,7 @@ function parseQuantity(value: string): { value: number | null; formula: string |
 /**
  * Parse combine shipping value
  */
-function parseCombineShipping(value: string): { type: 'free' | 'extra' | 'no'; extra?: number } {
+function parseCombineShipping(value: string, currency: string): { type: 'free' | 'extra' | 'no'; extra?: number } {
   if (!value) return { type: 'no' }
 
   const lower = value.toLowerCase().trim()
@@ -247,7 +248,7 @@ function parseCombineShipping(value: string): { type: 'free' | 'extra' | 'no'; e
   }
 
   // Check for extra cost like "$0.05" or "0.05"
-  const extraCost = parsePrice(value)
+  const extraCost = parsePrice(value, currency)
   if (extraCost !== null && extraCost > 0) {
     return { type: 'extra', extra: extraCost }
   }
@@ -630,14 +631,14 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
     }
 
     const priceStr = getValue('price')
-    const price = parsePrice(priceStr)
+    const price = parsePrice(priceStr, currency)
     if (price === null) {
       errors.push({ row: rowNumber, column: 'price', message: `Invalid price: "${priceStr}"` })
       continue
     }
 
     const quantityResult = parseQuantity(getValue('quantity'))
-    const combineResult = parseCombineShipping(getValue('combine'))
+    const combineResult = parseCombineShipping(getValue('combine'), currency)
 
     const tagsStr = getValue('tags')
     const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(t => t) : []
@@ -654,7 +655,7 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
     const weight = weightStr ? parseFloat(weightStr.replace(/[^\d.]/g, '')) : undefined
 
     const shippingCostStr = getValue('shippingCost')
-    const shippingCost = shippingCostStr ? parsePrice(shippingCostStr) : undefined
+    const shippingCost = shippingCostStr ? parsePrice(shippingCostStr, currency) : undefined
 
     parsedRows.push({
       group: getValue('group') || undefined,
