@@ -251,7 +251,7 @@ export function MobileBottomNav() {
           {navItems.slice(2, 3).map((item) => {
             const isActive = item.match(pathname)
             const Icon = isActive ? item.activeIcon : item.icon
-            const badgeCount = isHydrated ? unreadMessageCount : 0
+            const badgeCount = isHydrated && user ? unreadMessageCount : 0
             return (
               <Link
                 key={item.name}

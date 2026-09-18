@@ -62,8 +62,11 @@ export const YAPPR_DM_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID
 // query and the list fetches only each conversation's newest message.
 //
 // Unlike the storefront switch, this one changes READS ONLY — v4 writes are
-// byte-identical to v3 writes, so a mismatched switch degrades performance or
-// unread accuracy, it does not get anything rejected by consensus.
+// byte-identical to v3 writes, so a mismatch is never rejected by consensus.
+// It is not harmless, though: point `v4` at a contract WITHOUT the count flags
+// (the id and this switch are separate env vars) and every count query fails,
+// so unread reads as 0 everywhere and the badge silently never appears. The
+// service logs a warning naming this cause on each failed count.
 export const DM_TOPOLOGY: 'v3' | 'v4' =
   process.env.NEXT_PUBLIC_DM_TOPOLOGY === 'v4' ? 'v4' : 'v3'
 export const dmIsV4 = () => DM_TOPOLOGY === 'v4'

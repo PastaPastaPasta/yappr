@@ -247,10 +247,39 @@ describe('global unread total', () => {
     expect(mocks.count).not.toHaveBeenCalled();
   });
 
-  it('reports 0 when the conversation index cannot be loaded', async () => {
+  it('reports null, not 0, when it cannot tell — the badge must not read "all caught up"', async () => {
     vi.stubEnv('NEXT_PUBLIC_DM_TOPOLOGY', 'v4');
     mocks.query.mockReset().mockRejectedValue(new Error('offline'));
     const { directMessageService } = await import('./direct-message-service');
-    expect(await directMessageService.getUnreadTotal(viewer)).toBe(0);
+    expect(await directMessageService.getUnreadTotal(viewer)).toBeNull();
+  });
+
+  it('reports null when any single conversation count fails, since a partial total is not a total', async () => {
+    vi.stubEnv('NEXT_PUBLIC_DM_TOPOLOGY', 'v4');
+    mocks.composite.mockResolvedValue({
+      pageDocuments: [{ ...messages(0, 100).reverse()[0], $ownerId: participants[0] }],
+      subResults: [
+        { kind: 'documents', documents: [messages(1, 3).reverse()[0]] },
+        { kind: 'documents', documents: [] },
+      ],
+    });
+    mocks.count.mockResolvedValueOnce(new Map([['', 3n]])).mockRejectedValueOnce(new Error('count tree unavailable'));
+    const { directMessageService } = await import('./direct-message-service');
+    expect(await directMessageService.getUnreadTotal(viewer)).toBeNull();
+  });
+
+  it('reports 0 when read receipts are disabled, where every message would count as unread forever', async () => {
+    vi.stubEnv('NEXT_PUBLIC_DM_TOPOLOGY', 'v4');
+    const { useSettingsStore } = await import('../store');
+    useSettingsStore.setState({ sendReadReceipts: false });
+    try {
+      const { directMessageService } = await import('./direct-message-service');
+      expect(await directMessageService.getUnreadTotal(viewer)).toBe(0);
+      // No receipt means no lastReadAt basis, so nothing is even queried.
+      expect(mocks.query).not.toHaveBeenCalled();
+      expect(mocks.count).not.toHaveBeenCalled();
+    } finally {
+      useSettingsStore.setState({ sendReadReceipts: true });
+    }
   });
 });

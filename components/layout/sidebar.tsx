@@ -127,7 +127,12 @@ export function Sidebar() {
 
   // Initial notification fetch and polling
   useEffect(() => {
-    if (!user?.identityId) return
+    if (!user?.identityId) {
+      // Logout / user switch: drop the previous user's DM count. Nothing polls
+      // while logged out, so a survivor would be shown until the next login.
+      useNotificationStore.getState().setDmUnreadCount(0)
+      return
+    }
 
     const userId = user.identityId
     let timeoutId: NodeJS.Timeout | null = null
@@ -159,7 +164,9 @@ export function Sidebar() {
             ? notificationService.getInitialNotifications(userId, readIds)
             : notificationService.pollNewNotifications(userId, store.lastFetchTimestamp, readIds),
           directMessageService.getUnreadTotal(userId).then((total) => {
-            if (!cancelled) store.setDmUnreadCount(total)
+            // `null` is "could not tell": hold the previous badge rather than
+            // blinking it off for 30s and reading as "all caught up".
+            if (!cancelled && total !== null) store.setDmUnreadCount(total)
           }),
         ])
 

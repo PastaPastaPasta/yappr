@@ -25,6 +25,7 @@ import { directMessageService, dpnsService, followService, identityService, unif
 import { getPrimaryUsername } from '@/lib/utils/username'
 import { base58ToBytes } from '@/lib/services/sdk-helpers'
 import { useSettingsStore } from '@/lib/store'
+import { useNotificationStore } from '@/lib/stores/notification-store'
 import { DirectMessage, Conversation } from '@/lib/types'
 import toast from 'react-hot-toast'
 import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
@@ -281,10 +282,20 @@ function MessagesPage() {
           await directMessageService.markAsRead(currentConversation.id, user.identityId)
         }
 
+        // Keep the global Messages badge in step with the row the user just
+        // read, instead of lagging up to one notification poll behind. Done
+        // outside the state updater below, which React may invoke twice.
+        if (cancelled) return
+        if (currentConversation.unreadCount > 0) {
+          const notifications = useNotificationStore.getState()
+          notifications.setDmUnreadCount(
+            Math.max(0, notifications.dmUnreadCount - currentConversation.unreadCount)
+          )
+        }
+
         // Update conversation unread count in UI. Only touch state when a count
         // actually changes - replacing conversation objects here re-triggers the
         // selected-conversation sync effect and would loop message loading forever.
-        if (cancelled) return
         setConversations(prev => {
           const needsUpdate = prev.some(conv => conv.id === currentConversation.id && conv.unreadCount !== 0)
           if (!needsUpdate) return prev

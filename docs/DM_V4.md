@@ -30,9 +30,12 @@ preview) and asks the count tree for the rest.
 The client selects the topology with `NEXT_PUBLIC_DM_TOPOLOGY=v4`
 (`DM_TOPOLOGY` in `lib/constants.ts`). Unlike the storefront switch this one
 changes **reads only** — v4 writes are byte-identical to v3 writes — so a
-mismatched switch degrades unread accuracy or performance, it does not get
-anything rejected by consensus. `v3` remains the default and its code path is
-untouched.
+mismatch is never rejected by consensus. It is not harmless either: the contract
+id and the switch are separate env vars, and pointing `v4` at a contract without
+the count flags makes every count query fail, so **unread reads as 0 everywhere
+and the badge silently never appears**. `countUnreadByConversation` logs a
+warning naming that cause on each failed count. `v3` remains the default and its
+code path is untouched.
 
 ## Query shapes that serve, verified live
 
@@ -61,7 +64,7 @@ conversations):
 | --- | --- | --- |
 | `/messages` conversation list | 2 invites + N × 100-message pages + ⌈N/100⌉ receipts | 2 invites + N × 1-message previews + ⌈N/100⌉ receipts + ≤ N counts (6 at a time) |
 | bytes moved for the list | every ciphertext in the newest 100 messages of every conversation | one ciphertext per conversation |
-| global unread badge | did not exist (unaffordable) | the same shape, on the existing 30 s notification poll |
+| global unread badge | did not exist (unaffordable) | ~2 + N + ⌈N/100⌉ requests on the existing 30 s notification poll; hidden entirely when read receipts are off |
 
 ## Unread is not exactly v3's unread
 
@@ -77,9 +80,25 @@ Two things keep the number honest:
   opens a conversation, i.e. immediately before any message they send from it.
 
 Adding an `$ownerId` axis would mean a second index branch on every message
-write. That is the cost DMs are not allowed to pay. Note that v3 has its own
-version of this: with read receipts disabled in settings no receipt exists, so
-`lastReadAt` is 0 and both topologies count the whole conversation.
+write. That is the cost DMs are not allowed to pay.
+
+One nuance the mitigation depends on: `markAsRead` is itself gated on
+`unreadCount > 0`, and a conversation where the viewer spoke last reports 0, so
+opening it writes no receipt — which is the very state that allows the next
+overcount. It still converges (the first open after the other party replies does
+write one), but the chain is a step longer than "the app writes a receipt
+immediately before any message sent from that conversation" suggests.
+
+**Read receipts disabled is the one case that does not converge.** The app only
+ever writes a `readReceipt` when `sendReadReceipts` is on (a user setting,
+`/settings`). With it off no receipt exists at all, `lastReadAt` stays 0, and the
+count is the conversation's *entire* history — including the viewer's own
+messages, which v3's JS filter removed and v4 cannot. v3 was at least bounded to
+the newest 100 per conversation and had no global badge; a v4 badge built on this
+would sit at `99+` with no user action able to clear it. So
+`getUnreadTotal` returns 0 outright when the setting is off and the badge stays
+hidden, matching v3's "no badge". The per-conversation numbers on `/messages`
+are unchanged and behave as v3 did.
 
 ## Global unread badge
 
@@ -89,8 +108,29 @@ and feeds `dmUnreadCount` in the notification store, which the Messages entry in
 render. It rides the **existing** 30 s notification poll in the sidebar — there
 is deliberately no second timer — and never decrypts or resolves participant
 identities, because prompting for a private key from a background poll would be
-wrong. On `v3` it returns 0 before issuing any request, so the badge stays
-hidden rather than costing a message page per conversation per poll.
+wrong (`decryptMessage` calls `promptForAuthKey` as a side effect, which from a
+30 s timer would be an auth prompt every 30 seconds). On `v3` it returns 0
+before issuing any request, so the badge stays hidden rather than costing a
+message page per conversation per poll.
+
+Riding the existing cadence is not the same as being free. On `v4` each poll
+costs 2 invite queries + the preview/receipt bundle + up to N count queries at
+concurrency 6 — roughly 24 DAPI requests for a user with 20 conversations, and
+it duplicates work `/messages` is already doing while that page is open. The
+poll is skipped entirely while the tab is hidden. Because the notification fetch
+and this one share a `Promise.all` before the next poll is scheduled, the
+effective cadence is the slower of the two.
+
+Two lifecycle details the badge depends on:
+
+- `getUnreadTotal` returns **`null`**, not 0, when it cannot tell (any single
+  conversation's count failed, or the whole pass threw). The caller then leaves
+  the badge alone; publishing 0 would read as "all caught up". A partial total
+  is not a total.
+- Opening a conversation decrements `dmUnreadCount` immediately rather than
+  waiting up to 30 s for the next poll, and the sidebar effect resets it to 0
+  when there is no signed-in user, so a logout or user switch cannot leave the
+  previous user's count on screen.
 
 ## Registration gotchas found on the way
 
