@@ -4,6 +4,7 @@ import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
 import { YAPPR_BLOG_CONTRACT_ID, blogIsV2 } from '../constants';
+import { blogStatsService } from './blog-stats-service';
 import { documentCount, paginateCount, paginateFetchAll } from './pagination-utils';
 import type { BlogFollow } from '@/lib/types';
 
@@ -35,6 +36,16 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
     return transformDocumentWithField<BlogFollowDocument>(doc, 'blogId', 'BlogFollowService');
   }
 
+  /**
+   * A landed follow/unfollow changes this blog's follower count and the
+   * follower rankings, so the TTL-cached ranked pages are dropped. The count
+   * itself is not cached (`RequestDeduplicator` only collapses in-flight
+   * calls), so nothing else needs clearing.
+   */
+  private invalidateCounts(): void {
+    blogStatsService.invalidate();
+  }
+
   async followBlog(userId: string, blogId: string): Promise<{ success: boolean; error?: string }> {
     try {
       const existing = await this.getFollow(userId, blogId);
@@ -43,12 +54,14 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
         return { success: true };
       }
 
-      return await stateTransitionService.createDocument(
+      const result = await stateTransitionService.createDocument(
         this.contractId,
         this.documentType,
         userId,
         { blogId: identifierStringToDocumentBytes(blogId) }
       );
+      if (result.success) this.invalidateCounts();
+      return result;
     } catch (error) {
       logger.error('Error following blog:', error);
       return {
@@ -66,12 +79,14 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
         return { success: true };
       }
 
-      return await stateTransitionService.deleteDocument(
+      const result = await stateTransitionService.deleteDocument(
         this.contractId,
         this.documentType,
         follow.$id,
         userId
       );
+      if (result.success) this.invalidateCounts();
+      return result;
     } catch (error) {
       logger.error('Error unfollowing blog:', error);
       return {
