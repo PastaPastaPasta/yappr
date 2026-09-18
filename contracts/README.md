@@ -29,19 +29,22 @@ Historical drafts (`-actual`, `-clean`, `-ready`, `-deploy`, `-updated`,
 ## Feature contracts
 
 - `yappr-profile-contract.json` — unified profile contract (avatar/banner live here, not in the social contract)
-- `yappr-dm-contract.json` — encrypted direct messages (`conversationInvite`, `directMessage`, `readReceipt`). The beta.2 re-cut adds `rangeCountable` on `directMessage.conversation` (unread is a count query, not a 100-message download), `refersTo: {type: identity}` on `conversationInvite.recipientId`, and an `immutable` list per doctype. Testnet still runs the previous cut; see `docs/NON_SOCIAL_CONTRACTS.md`
-- `yappr-blog-contract.json` — long-form blog posts, comments, follows. The beta.2 re-cut adds the refersTo chain (post→blog, comment→post with a `blogPostOwnerId` agreement against the post's `$ownerId`, follow→blog), countable/ranked comment and follower trees, a daily-grid `followersByDay`, frozen `blogId`/write-once `publishedAt`, and YAPP-priced comments
-- `yappr-storefront-contract.json` — stores, items, orders, reviews, shipping. The beta.2 re-cut adds proved rating averages/rankings, item reviews, and a refersTo chain with writer gates (only a store's owner lists under it, only an order's seller posts its status, only its buyer reviews it), frozen `storeId`, countable orders, YAPP-priced reviews
-- `pollr-contract.json` — polls. The beta.2 re-cut adds a permanent poll, indexOnly `vote`/`multiVote` whose single-choice rule is structural rather than a `unique` index and whose `pollOwnerId` is bound to the poll's `$ownerId`, preallocated ballot trees, and the ranked winner query. The standalone Pollr repo needs the same cut before a shared testnet v4 exists
+- `yappr-dm-contract.json` — encrypted direct messages (`conversationInvite`, `directMessage`, `readReceipt`). **This file is the beta.2 re-cut, registered on the moutai devnet; testnet (`J7MP9YU1…`) still runs the previous cut.** It adds `rangeCountable` on `directMessage.conversation` (unread is a count query, not a 100-message download), `refersTo: {type: identity}` on `conversationInvite.recipientId`, and an `immutable` list per doctype. See `docs/NON_SOCIAL_CONTRACTS.md`
+- `yappr-blog-contract.json` — long-form blog posts, comments, follows. **This file is the beta.2 re-cut, registered on the moutai devnet; testnet (`9jfarXPw…`) still runs the previous cut.** It adds the refersTo chain (post→blog, comment→post with a `blogPostOwnerId` agreement against the post's `$ownerId`, follow→blog), countable/ranked comment and follower trees, a daily-grid `followersByDay`, frozen `blogId`/write-once `publishedAt`, and YAPP-priced comments
+- `yappr-storefront-contract.json` — stores, items, orders, reviews, shipping. **This file is the beta.2 re-cut, registered on the moutai devnet; testnet (`2AUBj86M…`) still runs the previous cut.** It adds proved rating averages/rankings, item reviews, and a refersTo chain with writer gates (only a store's owner lists under it, only an order's seller posts its status, only its buyer reviews it), frozen `storeId`, countable orders, YAPP-priced reviews
+- `pollr-contract.json` — polls. **This file is the beta.2 re-cut, registered on the moutai devnet; the testnet contract (`GBCR8Jqt…`) is externally owned and still runs the previous cut.** It adds a permanent poll, indexOnly `vote`/`multiVote` whose single-choice rule is structural rather than a `unique` index and whose `pollOwnerId` is bound to the poll's `$ownerId`, preallocated ballot trees, and the ranked winner query. The standalone Pollr repo needs the same cut before a shared testnet v4 exists
 - `yappr-vault-contract.json` — contract-bound encryption keys + encrypted storage
 - `yappr-auth-vault-contract.json` — auth vault + access grants
 - `encrypted-key-backup-contract.json` — passphrase-encrypted key backups
 - `key-exchange-v2.json` — QR login key-exchange protocol (deployed everywhere). An indexOnly + TTL re-cut was built and measured 2026-09-18: 42% more credits per response (93.8M vs 66.3M) because the payload must stay in a permanent index, so it was dropped
 
-The four re-cut contracts above are registered with
-`scripts/register-feature-contract.mjs --file <name>` and verified live by the
-`scripts/verify-*.mjs` batteries. Superseded versions are not kept in the tree;
-recover them from git history. See `docs/NON_SOCIAL_CONTRACTS.md`.
+So for those four, this directory is the source of record for the **next**
+registration, not for what testnet runs today; the client picks between them at
+runtime with `NEXT_PUBLIC_{STOREFRONT,BLOG,DM,POLLR}_TOPOLOGY`. They are
+published with `scripts/register-feature-contract.mjs --file <name>` and
+verified live by the `scripts/verify-*.mjs` batteries. Superseded versions are
+not kept in the tree; recover them from git history. Devnet ids and the full
+per-contract reference are in `docs/NON_SOCIAL_CONTRACTS.md`.
 
 ## Legacy (merged into the social contract)
 
