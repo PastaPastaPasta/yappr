@@ -16,6 +16,7 @@ import {
   replyCountFieldFor,
   replyLinkage,
   threadRootIdOf,
+  tombstonePreservationFor,
   type TargetKind,
 } from '../contract-topology';
 
@@ -164,17 +165,16 @@ class ReplyService extends BaseDocumentService<Reply> {
    * live reply under it) to the top of the thread.
    */
   async tombstoneReply(replyId: string, ownerId: string): Promise<boolean> {
-    // On v4 the required poster-attested `author` must survive the tombstone
-    // REPLACE verbatim (it must keep equalling $ownerId, and existing likeReply
-    // rows repeated it under the consensus-checked agreement).
+    // On v4-v6 the required poster-attested `author` is part of the preserved
+    // set (it must keep equalling $ownerId, and existing likeReply rows repeat
+    // it under the consensus-checked agreement); on v7 the column is gone and
+    // the preserved set is exactly the doctype's `immutable` list.
     const ok = await tombstoneDocument({
       contractId: this.contractId,
       documentType: this.documentType,
       documentId: replyId,
       ownerId,
-      preserveIdentifiers: authorFieldIsRequired()
-        ? ['rootPostId', 'replyToReplyId', 'parentOwnerId', 'author']
-        : ['rootPostId', 'replyToReplyId', 'parentOwnerId'],
+      preserve: tombstonePreservationFor('reply'),
     });
     // Mirror tombstonePost: drop the cached pre-tombstone document.
     if (ok) this.cache.delete(replyId);
@@ -213,8 +213,9 @@ class ReplyService extends BaseDocumentService<Reply> {
     if (replyToReplyField && target.replyToReplyId) {
       data[replyToReplyField] = identifierStringToDocumentBytes(target.replyToReplyId);
     }
-    // v4: poster-attested author (== $ownerId), the propertyAgreement source
-    // for likeReply.replyAuthor.
+    // v4-v6: poster-attested author (== $ownerId), the propertyAgreement
+    // source for likeReply.replyAuthor. v7 binds it to `reply.$ownerId`
+    // directly, so nothing is written here.
     if (authorFieldIsRequired()) {
       data.author = identifierStringToDocumentBytes(ownerId);
     }

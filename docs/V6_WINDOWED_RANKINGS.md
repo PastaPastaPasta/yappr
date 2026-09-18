@@ -1,5 +1,16 @@
 # Contract v6 — windowed rankings and retention
 
+> **Superseded by v7, but still current for the windowed rankings.**
+> `contracts/yappr-social-contract-v7.json` (the 4.2.0-beta.2 cut) keeps every
+> index, terminal, ranked axis and `timeRange` window on this page **verbatim**,
+> including the `beat` doctype and the seven-day TTL, so everything below still
+> describes the deployed read surface. What v7 changes is elsewhere: the
+> attested `author` column is gone and `post`/`reply` declare `immutable`
+> property lists. See [PLATFORM_BETA2_UPGRADE.md](PLATFORM_BETA2_UPGRADE.md).
+> The one cosmetic difference in these indexes is that v7 drops the now-redundant
+> explicit `"countable": "countable"` wherever `rangeCountable: true` already
+> implies it.
+
 `contracts/yappr-social-contract-v6.json` is v5 (live on moutai, `verify-v5.mjs`
 91/91) plus server-ordered **time-bounded** rankings, written in the grammar
 that landed upstream on 2026-09-01. Regenerate with

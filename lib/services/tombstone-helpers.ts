@@ -20,6 +20,8 @@
  */
 
 import { logger } from '@/lib/logger';
+import type { TombstonePreservation } from '@/lib/contract-topology';
+import { isImmutablePropertyChangedError } from '@/lib/error-utils';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { documentToPlainObject, identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
@@ -30,13 +32,17 @@ export interface TombstoneParams {
   documentId: string;
   ownerId: string;
   /**
-   * Contract properties of identifier type to carry over verbatim — the ones the
-   * document type lists as `required`, so the replacement still validates.
-   * Re-encoded to raw bytes, which is what the typed write path expects.
+   * The properties to carry over verbatim, from
+   * {@link tombstonePreservationFor}. Identifiers are re-encoded to raw bytes,
+   * which is what the typed write path expects; scalars are copied as-is, and
+   * an absent one stays absent (an untagged post has no `hashtag`, a direct
+   * reply no `replyToReplyId`).
+   *
+   * From contract v7 this set is the doctype's consensus-`immutable` list, so
+   * omitting an entry is no longer a silent field loss: a replace that DROPS a
+   * frozen property is rejected with 40128 exactly like one that changes it.
    */
-  preserveIdentifiers?: string[];
-  /** Contract properties of scalar type to carry over verbatim. */
-  preserveScalars?: string[];
+  preserve: TombstonePreservation;
 }
 
 /**
@@ -64,11 +70,21 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
     // and `content` being blank are different documents.
     const replacement: Record<string, unknown> = { content: '', deleted: true };
 
-    for (const field of params.preserveIdentifiers ?? []) {
-      const base58 = identifierToBase58(data[field] ?? raw[field]);
+    for (const field of params.preserve.identifiers) {
+      const stored = data[field] ?? raw[field];
+      const base58 = identifierToBase58(stored);
       if (base58) replacement[field] = identifierStringToDocumentBytes(base58);
+      else if (stored !== undefined && stored !== null) {
+        // Present but undecodable. Dropping it silently used to lose a field;
+        // on v7 it becomes a 40128, which the handler below would otherwise
+        // blame on the descriptor. Name the real cause here instead.
+        logger.error(
+          `Tombstone of ${documentType} ${documentId}: stored ${field} could not be decoded as an ` +
+            'identifier, so it cannot be preserved; the replace will be rejected if it is immutable.'
+        );
+      }
     }
-    for (const field of params.preserveScalars ?? []) {
+    for (const field of params.preserve.scalars) {
       const value = data[field] ?? raw[field];
       if (value !== undefined && value !== null) replacement[field] = value;
     }
@@ -83,7 +99,19 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
     );
 
     if (!result.success) {
-      logger.error(`Failed to tombstone ${documentType} ${documentId}:`, result.error);
+      // 40128 here means the preserve set above is missing a property the
+      // contract freezes — a contract/descriptor drift bug, not a user or
+      // network problem, so name it rather than letting it read as a
+      // transient failure.
+      if (isImmutablePropertyChangedError(result.error)) {
+        logger.error(
+          `Failed to tombstone ${documentType} ${documentId}: the replacement dropped or changed an immutable ` +
+            `property, so tombstonePreservationFor('${documentType}') is out of sync with the contract.`,
+          result.error
+        );
+      } else {
+        logger.error(`Failed to tombstone ${documentType} ${documentId}:`, result.error);
+      }
       return false;
     }
     return true;

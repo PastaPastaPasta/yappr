@@ -84,8 +84,25 @@ export function profileContractId() {
 //        like `byHashtagPost` index is skipIfAbsent — absence simply writes no
 //        entry, which needs no seeder action beyond the correct doc shape.
 
-export const TOPOLOGIES = ['v4', 'v5', 'v6'];
-export const HASHTAG_MAX = { v4: 63, v5: 61, v6: 61 };
+//   v6 — v5 plus the windowed rankings: a like of a TAGGED post also writes a
+//        `beat` companion (contracts/yappr-social-contract-v6.json), which is
+//        what carries today's trending-hashtag axis.
+//   v7 — v6's shapes on the 4.2.0-beta.2 grammar
+//        (contracts/yappr-social-contract-v7.json): post/reply no longer carry
+//        the attested `author` column, because a like's `postAuthor` now binds
+//        to the post's `$ownerId` through a system-field propertyAgreement.
+//        Every value tuple this module builds is otherwise identical — a
+//        like's postAuthor is the same identity it always was.
+//
+// ORDER IS SIGNIFICANT: `atLeastTopology` compares positions in this array, so
+// new cuts append. Mirrors CONTRACT_TOPOLOGIES in lib/constants.ts.
+export const TOPOLOGIES = ['v4', 'v5', 'v6', 'v7'];
+export const HASHTAG_MAX = { v4: 63, v5: 61, v6: 61, v7: 61 };
+
+/** True when `topology` is `floor` or any later cut. */
+export function atLeastTopology(topology, floor) {
+  return TOPOLOGIES.indexOf(topology) >= TOPOLOGIES.indexOf(floor);
+}
 
 /** Topology the run targets: NEXT_PUBLIC_CONTRACT_TOPOLOGY (env or the env file), else v4. */
 export function defaultTopology() {
@@ -100,19 +117,29 @@ export function defaultTopology() {
  */
 export function hashtagProps(hashtag, topology) {
   const tag = hashtag ?? '';
-  if (topology === 'v5' || topology === 'v6') return tag === '' ? {} : { hashtag: tag };
+  if (atLeastTopology(topology, 'v5')) return tag === '' ? {} : { hashtag: tag };
   return { hashtag: tag };
 }
 
 /**
- * v6: the `beat` companion a like of a TAGGED post writes beside itself —
+ * The poster-attested `author` property a post/reply document carries, or `{}`
+ * from v7 where the column was removed: consensus binds a like's `postAuthor`
+ * to the post's `$ownerId` directly, so writing the duplicate is no longer
+ * possible (`additionalProperties: false` would reject it).
+ */
+export function authorProps(ownerBytes, topology) {
+  return atLeastTopology(topology, 'v7') ? {} : { author: ownerBytes };
+}
+
+/**
+ * v6+: the `beat` companion a like of a TAGGED post writes beside itself —
  * the tagged-only indexOnly doctype whose byDayHashtagPost serves today's
  * trending hashtags / per-tag top. `null` when no beat is written (pre-v6,
  * or an untagged target: beat.hashtag is required). Its postId refersTo the
  * post with propertyAgreement on hashtag, so consensus checks the tag.
  */
 export function beatValueTuple(target, topology) {
-  if (topology !== 'v6') return null;
+  if (!atLeastTopology(topology, 'v6')) return null;
   const tag = target.hashtag ?? '';
   if (tag === '') return null;
   return { postId: bs58.decode(target.id), hashtag: tag };
@@ -122,7 +149,7 @@ export function beatValueTuple(target, topology) {
  * The like doc's data value tuple for a target post ref record. Used for the
  * create AND for delete-by-values (indexOnly deletes carry the whole value
  * tuple) — both must mirror the post's propertyAgreement values exactly,
- * including hashtag ABSENCE under v5.
+ * including hashtag ABSENCE from v5 on.
  */
 export function likeValueTuple(target, topology) {
   return {
@@ -359,7 +386,7 @@ export function substituteLinks(content, resolve) {
  *    rejected up front as generator bugs.
  *
  * The `topology` option tightens the hashtag length to the target contract's
- * maxLength (63 under v4, 61 under v5) — an over-long tag is a generator bug
+ * maxLength (63 under v4, 61 from v5 on) — an over-long tag is a generator bug
  * and is rejected, never rewritten.
  *
  * Returns `{ ops, stats }`; each op carries its 1-based `line`.
@@ -521,7 +548,7 @@ export function corpusYappCost(ops) {
 // A ref's `hashtag` may be recorded as '' OR be absent from the record — both
 // mean "untagged" and MUST replay identically: the fold normalizes to '' here,
 // and the doc builders (`hashtagProps`) map '' to the topology's shape (''
-// sentinel under v4, property absence under v5). Never treat the journal's
+// sentinel under v4, property absence from v5 on). Never treat the journal's
 // hashtag as always-a-meaningful-string.
 
 export function loadProgress(file = PROGRESS_FILE) {
