@@ -44,11 +44,10 @@ a proof format. **v7's read surface is byte-for-byte v6's**, which is why
 
 ## Contract v7
 
-`contracts/yappr-social-contract-v7.json` is generated from v6 by
-`scripts/build-v7-contract.py`, a deterministic transform (running it twice
-produces byte-identical output) whose `--self-test` asserts the committed JSON is
-a fresh build and re-checks every invariant below. The diff against v6 is four
-things and nothing else.
+`contracts/yappr-social-contract-v7.json` is the artifact — it is not generated
+at build time. `scripts/validate-contract-offline.mjs` parses it through the
+real beta.2 wasm and then re-checks every invariant below. The diff against the
+previous cut was four things and nothing else.
 
 ### 1. System-field `propertyAgreement` retires the attested `author`
 
@@ -348,7 +347,6 @@ With the beta.2 packages, on `beta2/social-v7`:
   e2e spec's copied topology order. The five read-surface suites now stub `v7`
   rather than `v6`, so the deployed topology is the one under test.
 - `npm run build:devnet` — the static export succeeds.
-- `python3 scripts/build-v7-contract.py --self-test` — 42 checks pass.
 - `node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v7.json`
   — full-validation parse at protocol 14.
 - `node scripts/verify-v7.mjs --self-test`, `node scripts/seed/run-seeder.mjs
