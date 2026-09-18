@@ -30,7 +30,8 @@ Historical drafts (`-actual`, `-clean`, `-ready`, `-deploy`, `-updated`,
 
 - `yappr-profile-contract.json` — unified profile contract (avatar/banner live here, not in the social contract)
 - `yappr-dm-contract.json` — encrypted direct messages
-- `yappr-blog-contract.json` — long-form blog posts, comments, follows
+- `yappr-blog-contract.json` — long-form blog posts, comments, follows (v1, testnet)
+- `yappr-blog-contract-v2.json` — **deployed on moutai** (`4pSFqC9Q…`): v1 plus a poster-attested `blogPost.author`, the refersTo chain (post→blog, comment→post with a `blogPostOwnerId` agreement, follow→blog), countable/ranked comment and follower trees, a daily-grid `followersByDay`, and YAPP-priced comments. Built by `scripts/build-blog-v2-contract.py`, verified by `scripts/verify-blog-v2.mjs`; see `docs/BLOG_V2.md`
 - `yappr-storefront-contract.json` — stores, items, orders, reviews, shipping (v1, testnet)
 - `yappr-storefront-contract-v2.json` — **deployed on moutai** (`57k7LnhQ…`): v1 plus proved rating averages/rankings, item reviews, refersTo chain, countable orders, YAPP-priced reviews. Built by `scripts/build-storefront-v2-contract.py`; see `docs/STOREFRONT_V2.md`
 - `yappr-vault-contract.json` — contract-bound encryption keys + encrypted storage
