@@ -50,6 +50,8 @@ function StoreManagePage() {
 
   const [store, setStore] = useState<Store | null>(null)
   const [items, setItems] = useState<StoreItem[]>([])
+  const [itemsLoadError, setItemsLoadError] = useState(false)
+  const [isReloadingItems, setIsReloadingItems] = useState(false)
   const [zones, setZones] = useState<ShippingZone[]>([])
   const [pendingOrdersCount, setPendingOrdersCount] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
@@ -78,6 +80,7 @@ function StoreManagePage() {
 
       try {
         setIsLoading(true)
+        setItemsLoadError(false)
 
         // If no storeId, try to get user's store
         let currentStoreId = storeId
@@ -101,16 +104,17 @@ function StoreManagePage() {
 
         // Load items, zones, pending orders count, and check encryption key - handle each independently
         const [itemsResult, zonesResult, ordersResult, encKeyResult] = await Promise.allSettled([
-          storeItemService.getByStore(currentStoreId, { limit: 100 }),
+          storeItemService.getAllByStore(currentStoreId),
           shippingZoneService.getByStore(currentStoreId),
           storeOrderService.getSellerOrders(user.identityId, { limit: 100 }),
           identityService.hasEncryptionKey(user.identityId)
         ])
 
         if (itemsResult.status === 'fulfilled') {
-          setItems(itemsResult.value.items)
+          setItems(itemsResult.value)
         } else {
           logger.error('Failed to load items:', itemsResult.reason)
+          setItemsLoadError(true)
         }
 
         if (zonesResult.status === 'fulfilled') {
@@ -140,6 +144,22 @@ function StoreManagePage() {
 
     loadData().catch((error) => logger.error(error))
   }, [sdkReady, storeId, user?.identityId, router])
+
+  const reloadItems = async () => {
+    if (!store?.id || isReloadingItems) return
+
+    setIsReloadingItems(true)
+    try {
+      const allItems = await storeItemService.getAllByStore(store.id)
+      setItems(allItems)
+      setItemsLoadError(false)
+    } catch (error) {
+      logger.error('Failed to reload items:', error)
+      setItemsLoadError(true)
+    } finally {
+      setIsReloadingItems(false)
+    }
+  }
 
   const handleDeleteItem = async () => {
     if (!user?.identityId || !deleteItemId) return
@@ -462,7 +482,7 @@ function StoreManagePage() {
           {activeTab === 'items' && (
             <div className="p-4">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-medium">Products ({items.length})</h3>
+                <h3 className="font-medium">Products{!itemsLoadError || items.length > 0 ? ` (${items.length})` : ''}</h3>
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm"
@@ -491,7 +511,20 @@ function StoreManagePage() {
                 </div>
               </div>
 
-              {items.length === 0 ? (
+              {itemsLoadError && (
+                <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30">
+                  <p className="text-sm text-red-700 dark:text-red-300">
+                    {items.length > 0
+                      ? 'Could not refresh all products. Your previous list is shown.'
+                      : 'Could not load all products. Please try again.'}
+                  </p>
+                  <Button className="mt-3" size="sm" variant="outline" onClick={reloadItems} disabled={isReloadingItems}>
+                    {isReloadingItems ? 'Retrying…' : 'Retry products'}
+                  </Button>
+                </div>
+              )}
+
+              {items.length === 0 && !itemsLoadError && (
                 <div className="py-12 text-center">
                   <CubeIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
                   <p className="text-gray-500">No products yet</p>
@@ -500,7 +533,8 @@ function StoreManagePage() {
                     Add Your First Product
                   </Button>
                 </div>
-              ) : (
+              )}
+              {items.length > 0 && (
                 <div className="space-y-3">
                   {items.map((item, index) => {
                     const priceRange = storeItemService.getPriceRange(item)
@@ -756,11 +790,7 @@ function StoreManagePage() {
           if (addedCount > 0) {
             toast.success(`Added ${addedCount} item${addedCount !== 1 ? 's' : ''} to your store`)
             // Reload items
-            if (store?.id) {
-              storeItemService.getByStore(store.id, { limit: 100 })
-                .then(result => setItems(result.items))
-                .catch((error) => logger.error(error))
-            }
+            void reloadItems()
           }
         }}
       />

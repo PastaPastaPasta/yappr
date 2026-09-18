@@ -74,6 +74,28 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
   }
 
   /**
+   * Get the complete product list for store management.
+   * Keep each query within Platform's 100-document page limit.
+   */
+  async getAllByStore(storeId: string): Promise<StoreItem[]> {
+    const items = new Map<string, StoreItem>();
+    const seenCursors = new Set<string>();
+    let startAfter: string | undefined;
+
+    while (true) {
+      const page = await this.getByStore(storeId, { limit: 100, startAfter });
+      for (const item of page.items) items.set(item.id, item);
+      if (page.items.length < 100) return Array.from(items.values());
+
+      if (!page.nextCursor || seenCursors.has(page.nextCursor)) {
+        throw new Error('Store product pagination did not advance');
+      }
+      seenCursors.add(page.nextCursor);
+      startAfter = page.nextCursor;
+    }
+  }
+
+  /**
    * Get items by category
    */
   async getByCategory(section: string, category?: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ items: StoreItem[]; nextCursor?: string }> {
