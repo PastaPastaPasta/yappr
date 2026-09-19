@@ -7,24 +7,11 @@
  * as live handles.
  */
 
-/** Every SDK facade the inspector instruments, in panel order. */
-export const INSPECTOR_FACADES = [
-  'documents',
-  'identities',
-  'contracts',
-  'dpns',
-  'tokens',
-  'epoch',
-  'protocol',
-  'system',
-  'voting',
-  'group',
-  'addresses',
-  'shielded',
-  'stateTransitions',
-] as const
+import { SDK_FACADES, type SdkFacade } from '@/lib/services/sdk-facades'
 
-export type InspectorFacade = (typeof INSPECTOR_FACADES)[number]
+/** Every SDK facade the inspector instruments, in panel order. */
+export const INSPECTOR_FACADES = SDK_FACADES
+export type InspectorFacade = SdkFacade
 
 export type ProofStatus = 'proven' | 'unavailable' | 'proof-failed'
 
