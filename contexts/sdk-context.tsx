@@ -6,6 +6,10 @@ import { evoSdkService } from '@/lib/services/evo-sdk-service'
 import { YAPPR_CONTRACT_ID, getConfiguredNetwork } from '@/lib/constants'
 
 interface SdkContextType {
+  // True once the bootstrap has succeeded, and stays true while the service
+  // rebuilds its instance after a connection failure: consumers keyed on it
+  // must not reload their forms and discard edits. getSdk() waits for the
+  // replacement.
   isReady: boolean
   error: string | null
 }
@@ -17,37 +21,36 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const initializeSdk = async () => {
-      try {
-        // This provider is the app-wide SDK bootstrap and usually wins the race
-        // against the on-demand callers (services, platform-auth), so
-        // it has to agree with them on the network. Hardcoding it would leave a
-        // /devnet build reading testnet through every `useSdk()` consumer until
-        // some later caller forced a reinit.
-        const network = getConfiguredNetwork()
-        logger.debug(`SdkProvider: Starting EvoSDK initialization for ${network}...`)
-
-        await evoSdkService.initialize({
-          network,
-          contractId: YAPPR_CONTRACT_ID
-        })
-
+    let cancelled = false
+    const settle = (task: Promise<void>, what: string) => {
+      task.then(() => {
+        if (cancelled) return
+        setError(null)
         setIsReady(true)
-        logger.debug('SdkProvider: EvoSDK initialized successfully, isReady = true')
-      } catch (err) {
-        logger.error('SdkProvider: Failed to initialize EvoSDK:', err)
+        logger.debug(`SdkProvider: ${what} succeeded, isReady = true`)
+      }).catch((err: unknown) => {
+        logger.error(`SdkProvider: ${what} failed:`, err)
+        if (cancelled) return
         setError(err instanceof Error ? err.message : 'Failed to initialize SDK')
-        // Still set isReady to false explicitly
-        setIsReady(false)
-      }
+      })
     }
 
-    // Only initialize in browser
-    if (typeof window !== 'undefined') {
-      logger.debug('SdkProvider: Running in browser, starting initialization...')
-      initializeSdk().catch((err) => logger.error('SdkProvider: initialization failed:', err))
-    } else {
-      logger.debug('SdkProvider: Not in browser, skipping initialization')
+    // This provider is the app-wide SDK bootstrap and usually wins the race
+    // against the on-demand callers (services, platform-auth), so
+    // it has to agree with them on the network. Hardcoding it would leave a
+    // /devnet build reading testnet through every `useSdk()` consumer until
+    // some later caller forced a reinit.
+    const network = getConfiguredNetwork()
+    logger.debug(`SdkProvider: Starting EvoSDK initialization for ${network}...`)
+    settle(evoSdkService.initialize({ network, contractId: YAPPR_CONTRACT_ID }), 'initialization')
+
+    // Requests made while offline ban endpoints inside the instance, and the
+    // bootstrap itself may have failed; either is repaired once we are back.
+    const restore = () => settle(evoSdkService.restoreConnection(), 'connection restore')
+    window.addEventListener('online', restore)
+    return () => {
+      cancelled = true
+      window.removeEventListener('online', restore)
     }
   }, [])
 
