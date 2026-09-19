@@ -108,19 +108,6 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
     return data
   }
 
-  private async recoverAndRetry<T>(
-    operation: () => Promise<T>,
-    logPrefix: string,
-    error: unknown,
-  ): Promise<T> {
-    if (await evoSdkService.handleConnectionError(error)) {
-      return operation()
-    }
-
-    logger.error(logPrefix, error)
-    throw error
-  }
-
   async getActiveAccesses(
     identityId: string,
     kind?: AuthVaultAccessKind,
@@ -141,20 +128,15 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
 
       return [...result.documents].sort((left, right) => right.$createdAt - left.$createdAt)
     } catch (error) {
-      if (!allowReconnect) {
-        logger.error('AuthVaultAccessService: Failed to load access docs:', error)
-        return []
+      // The SDK service has already started rebuilding its instance by the time
+      // a connection-level failure reaches us; the retry's getSdk() waits for
+      // that rebuild, and reports its own failure if it fails too.
+      if (allowReconnect && evoSdkService.isConnectionError(error)) {
+        return this.getActiveAccesses(identityId, kind, false)
       }
 
-      try {
-        return await this.recoverAndRetry(
-          async () => this.getActiveAccesses(identityId, kind, false),
-          'AuthVaultAccessService: Failed to load access docs:',
-          error,
-        )
-      } catch {
-        return []
-      }
+      logger.error('AuthVaultAccessService: Failed to load access docs:', error)
+      return []
     }
   }
 
@@ -212,20 +194,13 @@ class AuthVaultAccessService extends BaseDocumentService<AuthVaultAccessDocument
 
       return documents
     } catch (error) {
-      if (!allowReconnect) {
-        logger.error('AuthVaultAccessService: Failed to load global passkey access docs:', error)
-        return []
+      // See getActiveAccesses: one retry behind the SDK service's rebuild.
+      if (allowReconnect && evoSdkService.isConnectionError(error)) {
+        return this.getAllActivePasskeyAccesses(rpId, limit, false)
       }
 
-      try {
-        return await this.recoverAndRetry(
-          async () => this.getAllActivePasskeyAccesses(rpId, limit, false),
-          'AuthVaultAccessService: Failed to load global passkey access docs:',
-          error,
-        )
-      } catch {
-        return []
-      }
+      logger.error('AuthVaultAccessService: Failed to load global passkey access docs:', error)
+      return []
     }
   }
 
