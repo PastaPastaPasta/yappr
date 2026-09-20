@@ -225,7 +225,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "A published post. Permanent and history-keeping, so every edit is retrievable through documents.history. The author IS $ownerId: a comment binds its blogPostOwnerId to the post's $ownerId through a system-field propertyAgreement, so no attested copy is carried.",
+      "description": "A published post. Permanent for its owner (blog v3 keeps no revision history; the contract's moderators may remove it). The author IS $ownerId: a comment binds its blogPostOwnerId to the post's $ownerId through a system-field propertyAgreement, so no attested copy is carried.",
       "immutable": [
         "blogId",
         "publishedAt"
