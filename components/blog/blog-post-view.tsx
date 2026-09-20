@@ -17,7 +17,6 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { BlogViewer } from './blog-viewer'
 import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
-import { BlogPostHistory } from './blog-post-history'
 import { EmbedPreview } from './embed-preview'
 import { decodeSummary, estimateReadingTime, getBlogPostUrl } from '@/lib/blog/content-utils'
 import { getReaderOverrideStyle, getReaderFontSize, getAppThemeForReadingMode } from '@/lib/blog/reader-preferences'
@@ -240,7 +239,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
               {(post.$revision ?? 1) > 1 && (
                 <>
                   <span>·</span>
-                  <BlogPostHistory postId={post.id} revision={post.$revision} />
+                  <span>edited</span>
                 </>
               )}
             </div>

@@ -3,7 +3,7 @@
  * into data0–data3 exactly like lib/services/blog-post-service.ts), `blogComment` (1 YAPP each through the cross-
  * contract tokenCost on the social contract, `blogPostOwnerId` bound to the post's `$ownerId`) and `blogFollow`
  * (unevenly distributed so "Most followed" and "Trending today" have a clear leader). A few posts are EDITED after
- * creation so `documents.history` has real revisions to show. Article bodies are generated from a fragment bank into
+ * creation so the replace path (frozen `blogId`/`publishedAt`) is exercised. Article bodies are generated from a fragment bank into
  * a small markdown dialect and converted to blocks here — the converter is what the app will read back, so it stays
  * faithful even though the prose is synthetic.
  */
@@ -262,7 +262,7 @@ const FOLLOWERS = {
   'devnet-desk': [281, 284, 211],
   'quiet-hours': [211, 212],
 };
-/** Posts edited after creation, so `documents.history` has real revisions. */
+/** Posts edited after creation, exercising the replace path; blog v3 keeps no revision history. */
 const EDITS = new Map([
   ['marginalia/borrowed-light', 'author adds a closing section and a corrected attribution'],
   ['runbook-diaries/the-postmortem-nobody-wanted-to-write', 'follow-up section added after the review meeting'],
@@ -629,18 +629,14 @@ async function run({ args, handle, battery, socialId, contractId }) {
       return [Number(entry.value), post ? `${post.title} [${post.blogKey}]` : `(another run) ${entry.groupValue}`];
     }), 'Most discussed posts (ranked commentCount axis)');
 
-  const history = [];
+  const edited = [];
   for (const edit of plan.edits) {
     const postId = postIds.get(edit.postKey);
     if (!postId) continue;
-    try {
-      const page = await battery.readback(() => battery.sdk.documents.history({ dataContractId: contractId, documentTypeName: 'blogPost', documentId: postId }));
-      history.push([edit.postKey, page.size, [...page.values()].map((doc) => Number(doc.toObject().$revision ?? 0)).join(', ')]);
-    } catch (error) {
-      history.push([edit.postKey, 'failed', describeErr(error).slice(0, 60)]);
-    }
+    const current = await battery.fetchDocument('blogPost', postId);
+    edited.push([edit.postKey, Number(current?.revision ?? 0)]);
   }
-  printTable([['edited post', 50], ['revisions', -9], ['', 20]], history, 'Revision history (documents.history)');
+  printTable([['edited post', 50], ['revision', -9]], edited, 'Edited posts (blog v3 keeps no revision history; the stored revision is the proof)');
   return recorder.summary(`; checkpoint ${args.state}`) === 0 && rows.length > 0 ? 0 : 1;
 }
 

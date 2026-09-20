@@ -15,7 +15,7 @@ import {
   DELETE_FORBIDDEN, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND, TOKEN_AGREEMENT_MISSING,
   id32, runBattery, selfTest,
 } from './battery-lib.mjs';
-import { describeErr, randomEntropy } from './seed/seed-lib.mjs';
+import { randomEntropy } from './seed/seed-lib.mjs';
 
 const COMMENT_COST = 1n;
 const DEFAULT_YAPP = 20n;
@@ -133,20 +133,16 @@ async function caseB6Windowed(ctx) {
   if (today) battery.workingShapes.push({ label: 'trending blogs today', shape: today.shape });
 }
 
-async function caseB7History(ctx) {
+async function caseB7Edit(ctx) {
   const { battery, author, run } = ctx;
-  console.log('\n--- b7. documents.history on an edited post ---');
-  if (!ctx.post1) { battery.check('b7 history', false, 'no post fixture'); return; }
-  // blogId and publishedAt come back byte-identical: both are frozen.
+  console.log('\n--- b7. a post edit (replace) with the frozen fields resent verbatim ---');
+  if (!ctx.post1) { battery.check('b7 edit', false, 'no post fixture'); return; }
+  // blogId and publishedAt come back byte-identical: both are frozen. v3 keeps
+  // no revision history (`documentsKeepHistory` was dropped so moderators can
+  // delete posts), so the edit is the only thing to assert.
   await battery.probeReplace('b7a post edit (replace) is accepted', null, author, 'blogPost', ctx.post1, postData({ blogId: id32(ctx.blogId), title: `First ${run} (edited)`, slug: `first-${run}`, publishedAt: ctx.publishedAt }), await battery.revisionOf('blogPost', ctx.post1));
-  try {
-    const history = await battery.readback(() => battery.sdk.documents.history({ dataContractId: ctx.contractId, documentTypeName: 'blogPost', documentId: ctx.post1 }));
-    const revisions = [...history.values()].map((doc) => Number(doc.toObject().$revision ?? 0));
-    battery.check('b7b documents.history returns every revision', history.size >= 2, `entries=${history.size} revisions=${revisions.join(',')}`);
-    battery.workingShapes.push({ label: 'post revision history', shape: { documentTypeName: 'blogPost', documentId: '<postId>', returns: 'Map<bigint timestamp, Document>' } });
-  } catch (e) {
-    battery.check('b7b documents.history returns every revision', false, describeErr(e).slice(0, 200));
-  }
+  const edited = await battery.fetchDocument('blogPost', ctx.post1);
+  battery.check('b7b the stored post carries the edit at a higher revision', Number(edited?.revision ?? 0) >= 2 && edited?.toObject?.().title === `First ${run} (edited)`, `revision=${edited?.revision}`);
 }
 
 async function caseB8Permanence(ctx) {
@@ -215,7 +211,7 @@ async function caseB12Immutable(ctx) {
 
 const CASES = new Map([
   ['b1', caseB1Fixtures], ['b2', caseB2BlogRefs], ['b3', caseB3Comments], ['b4', caseB4Counts],
-  ['b5', caseB5Rankings], ['b6', caseB6Windowed], ['b7', caseB7History], ['b8', caseB8Permanence],
+  ['b5', caseB5Rankings], ['b6', caseB6Windowed], ['b7', caseB7Edit], ['b8', caseB8Permanence],
   ['b9', caseB9Tokens], ['b10', caseB10CommentDelete], ['b11', caseB11FollowDelete], ['b12', caseB12Immutable],
 ]);
 

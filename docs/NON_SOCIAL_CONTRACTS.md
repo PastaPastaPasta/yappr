@@ -135,10 +135,24 @@ gated the other way rather than a loosened gate; `immutable` on
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
-| `blog` | `canBeDeleted: false`, `documentsKeepHistory` | permanentDocument target |
-| `blogPost` | `blogId`→blog; `immutable [blogId, publishedAt]` with `publishedAt` under `immutableAllowSetting` | ghost-blog rejection; a post cannot change blogs or be re-dated |
-| `blogComment` | `blogPostId`→blogPost with `{blogPostOwnerId: '$ownerId'}`; ranked `commentCount [blogPostId]`; `postOwnerAndTime`; 1 YAPP | exact counts, "most discussed", unforgeable "comments on my posts" |
-| `blogFollow` | `blogId`→blog; ranked `followerCount [blogId]`; `followersByDay [$createdAt, blogId]` on the daily grid with a 7-day ttl | exact follower counts, "most followed", "trending today" |
+| `blog` | `canBeDeleted: false`, `canBeDeletedByModerators` | deletableDocument target (its owner can never delete it; a moderator can) |
+| `blogPost` | `blogId`→blog (deletableDocument); `immutable [blogId, publishedAt]` with `publishedAt` under `immutableAllowSetting`; `canBeDeletedByModerators` | ghost-blog rejection; a post cannot change blogs or be re-dated |
+| `blogComment` | `blogPostId`→blogPost (deletableDocument) with `{blogPostOwnerId: '$ownerId'}`; ranked `commentCount [blogPostId]`; `postOwnerAndTime`; 1 YAPP; `canBeDeletedByModerators` | exact counts, "most discussed", unforgeable "comments on my posts" |
+| `blogFollow` | `blogId`→blog (deletableDocument); ranked `followerCount [blogId]`; `followersByDay [$createdAt, blogId]` on the daily grid with a 7-day ttl | exact follower counts, "most followed", "trending today" |
+
+**v3 (4.2.0-beta.3) is the moderated cut.** The contract config declares
+`moderation: { banlist, suspensions, moderators }` (see `docs/SOCIAL_V8.md`
+for the grammar), and `blog`, `blogPost` and `blogComment` carry
+`canBeDeletedByModerators`, so the moderation team can take an abusive blog,
+post or comment down. Two consequences: every reference at those types is a
+`deletableDocument` reference (a moderator-deletable type counts as deletable;
+`permanentDocument` at it is refused with 40122), so a reader must expect
+`blogPost.blogId`/`blogComment.blogPostId`/`blogFollow.blogId` to resolve to
+nothing after a takedown; and **the edit-history feature is gone** —
+`documentsKeepHistory` was dropped from `blog` and `blogPost`, because Drive
+refuses moderator deletes on a history-keeping type. `blogPost.$revision > 1`
+still marks an edited post, but the previous revisions are no longer stored
+and `documents.history` has nothing to return.
 
 `blogPost` carries no `author`: the author IS `$ownerId`, which the comment
 agreement binds to directly and which `ownerAndTime` already indexes. Because
@@ -165,8 +179,6 @@ sdk.documents.ranked({ dataContractId, documentTypeName: 'blogFollow',
 sdk.documents.query({ dataContractId, documentTypeName: 'blogComment',
   where: [['blogPostOwnerId', '==', me], ['$createdAt', '>', lastSeen]],
   orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'desc']], limit: 100 })
-// Every stored revision of a post: Map<bigint timestampMs, Document>.
-sdk.documents.history({ dataContractId, documentTypeName: 'blogPost', documentId: P })
 ```
 
 Cold-load budgets: blog home goes from 1 posts page + a full cursor scan per
