@@ -4,7 +4,7 @@
  *
  * The name is historical — the script is file-agnostic. It publishes any
  * contract JSON from `contracts/` as a brand-new contract; pick the file with
- * `--contract-file` (default `yappr-social-contract-v7.json`, the shape the
+ * `--contract-file` (default `yappr-social-contract-v8.json`, the shape the
  * /devnet build runs). The v3-era inputs it was written for
  * (`yappr-social-contract-v3-draft.json`, `-v3-topology.json`) were removed
  * from the repo 2026-08-31; see git history if an old shape is ever needed.
@@ -79,8 +79,16 @@
  * `--dry-run` assembles and validates the contract locally and prints a summary
  * without touching the network.
  *
+ * ## Moderators (beta.3 cuts)
+ *
+ * A contract file whose `config` declares `moderation` names the owner as the
+ * moderator by default. `--moderators <id,id>` appoints identities beside the
+ * owner at publish time (the owner always moderates, named or not). Every
+ * appointed identity must exist on chain — registration refuses a missing
+ * one, paid (41110) — so they are fetched before anything is signed.
+ *
  * Run:  node scripts/register-social-v3-draft.mjs (--bot <index> | --maker) [--owner <identityId>]
- *       [--contract-file <name|path>] [--fund <id,id>] [--fund-amount <n>] [--dry-run]
+ *       [--contract-file <name|path>] [--moderators <id,id>] [--fund <id,id>] [--fund-amount <n>] [--dry-run]
  *       node scripts/register-social-v3-draft.mjs --bot <index> --owner <id> --fund-only <contractId> --fund <id,id>
  */
 import { readFileSync } from 'node:fs';
@@ -88,10 +96,11 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DataContract, EvoSDK, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
+import { auditModeration, requireModeratorsExist, withModerators } from './register-lib.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONTRACTS_DIR = join(REPO_ROOT, 'contracts');
-const DEFAULT_CONTRACT_FILE = 'yappr-social-contract-v7.json';
+const DEFAULT_CONTRACT_FILE = 'yappr-social-contract-v8.json';
 /** YAPP is defined at token position 0 of every yappr social contract. */
 const YAPP_TOKEN_POSITION = 0;
 /** Enough YAPP for a battery run: posts cost 10, replies 3, likes/reposts 1. */
@@ -149,7 +158,7 @@ function contractPath(name) {
  * `ownerId`. `identityNonce` seeds a locally-derived id; the authoritative id is
  * whatever `contracts.publish` returns, which is what gets printed.
  */
-function buildDraftContract({ contractFile, ownerId, identityNonce, platformVersion }) {
+function buildDraftContract({ contractFile, ownerId, identityNonce, platformVersion, moderators = [] }) {
   const file = JSON.parse(readFileSync(contractFile, 'utf8'));
   if (!file.documentSchemas || Object.keys(file.documentSchemas).length === 0) {
     throw new Error(`${contractFile} has no documentSchemas`);
@@ -160,7 +169,7 @@ function buildDraftContract({ contractFile, ownerId, identityNonce, platformVers
     ownerId,
     version: file.version ?? 1,
     documentSchemas: file.documentSchemas,
-    ...(file.config ? { config: file.config } : {}),
+    ...(file.config ? { config: withModerators(file.config, moderators) } : {}),
     ...(file.tokens ? { tokens: file.tokens } : {}),
   };
   return { dataContract: DataContract.fromJSON(json, true, platformVersion), file };
@@ -190,9 +199,12 @@ function printSchemaAudit(documentSchemas) {
       `mutable=${schema.documentsMutable ?? 'default'}`,
       `canBeDeleted=${schema.canBeDeleted ?? 'default'}`,
       ...(schema.documentsCountable ? ['countable'] : []),
+      ...(schema.canBeDeletedByModerators ? ['moderatorDelete'] : []),
     ];
     const cost = schema.tokenCost?.create;
-    if (cost) flags.push(`create=${cost.amount} token@${cost.tokenPosition}`);
+    if (cost) flags.push(`create=${cost.amount} token@${cost.tokenPosition}${cost.optional ? ' (optional)' : ''}${cost.gasFeesPaidBy ? ` gas=${cost.gasFeesPaidBy}` : ''}`);
+    const fees = schema.actionFees;
+    if (fees) flags.push(`fees=${JSON.stringify(fees)}`);
     const indices = (schema.indices ?? []).map(describeIndex);
     console.log(`  ${name.padEnd(AUDIT_NAME_WIDTH)} ${flags.join(' ')}  (${indices.length} indexes)`);
     if (indices.length > 0) console.log(`  ${continuation} ${indices.join(' ')}`);
@@ -205,22 +217,28 @@ function printSchemaAudit(documentSchemas) {
     if (refs.length > 0) console.log(`  ${continuation} refersTo: ${refs.join(' ')}`);
   }
 
-  // A reference target that stays deletable is refused at registration (40122),
-  // so surface the mismatch here where the fix is obvious.
-  const targets = new Set();
+  // A permanentDocument target that stays deletable — by its owner OR by a
+  // moderator — is refused at registration (40122), so surface the mismatch
+  // here where the fix is obvious.
+  const targets = new Map();
   for (const schema of Object.values(documentSchemas)) {
     for (const property of Object.values(schema.properties ?? {})) {
-      if (property.refersTo?.type === 'permanentDocument') targets.add(property.refersTo.documentType);
+      const { refersTo } = property;
+      if (refersTo?.documentType) targets.set(refersTo.documentType, refersTo.type);
     }
   }
-  for (const target of targets) {
+  for (const [target, type] of targets) {
     const schema = documentSchemas[target];
     if (!schema) throw new Error(`refersTo names document type "${target}", which this contract does not define`);
-    if (schema.canBeDeleted !== false) {
-      throw new Error(`document type "${target}" is a permanentDocument target but is not canBeDeleted: false`);
+    const deletable = schema.canBeDeleted !== false || schema.canBeDeletedByModerators === true;
+    if (type === 'permanentDocument' && deletable) {
+      throw new Error(`document type "${target}" is a permanentDocument target but can be deleted (by its owner or by moderators)`);
+    }
+    if (type === 'deletableDocument' && !deletable) {
+      throw new Error(`document type "${target}" is a deletableDocument target but nothing can delete it (40131)`);
     }
   }
-  console.log(`  permanentDocument targets: ${targets.size > 0 ? [...targets].join(', ') : 'none'} (all canBeDeleted:false)`);
+  console.log(`  reference targets: ${[...targets].map(([t, type]) => `${t}(${type})`).join(', ') || 'none'}`);
 }
 
 /**
@@ -271,6 +289,7 @@ function parseArgs(argv) {
     botIndex: null,
     ownerId: null,
     contractFile: DEFAULT_CONTRACT_FILE,
+    moderators: [],
     fund: [],
     fundAmount: DEFAULT_FUND_AMOUNT,
     fundOnly: null,
@@ -282,6 +301,7 @@ function parseArgs(argv) {
       case '--bot': args.botIndex = Number(argv[++i]); break;
       case '--owner': args.ownerId = argv[++i]; break;
       case '--contract-file': args.contractFile = argv[++i]; break;
+      case '--moderators': args.moderators = argv[++i].split(',').map((id) => id.trim()).filter(Boolean); break;
       case '--fund': args.fund = argv[++i].split(',').map((id) => id.trim()).filter(Boolean); break;
       case '--fund-amount': args.fundAmount = BigInt(argv[++i]); break;
       case '--fund-only': args.fundOnly = argv[++i]; break;
@@ -310,7 +330,7 @@ try {
   console.error(e.message);
   console.error(
     'Usage: node scripts/register-social-v3-draft.mjs (--bot <index> | --maker) [--owner <identityId>]\n' +
-    '       [--contract-file <name|path>] [--fund <id,id>] [--fund-amount <n>] [--dry-run]'
+    '       [--contract-file <name|path>] [--moderators <id,id>] [--fund <id,id>] [--fund-amount <n>] [--dry-run]'
   );
   process.exit(1);
 }
@@ -324,7 +344,7 @@ try {
   if (args.dryRun) {
     // No identity, no network: prove the JSON assembles into a valid contract.
     const ownerId = args.ownerId ?? DRY_RUN_OWNER;
-    const { dataContract, file } = buildDraftContract({ contractFile, ownerId, identityNonce: 1n, platformVersion });
+    const { dataContract, file } = buildDraftContract({ contractFile, ownerId, identityNonce: 1n, platformVersion, moderators: args.moderators });
     const roundTrip = dataContract.toJSON(platformVersion);
     console.log(`dry run: ${contractFile}`);
     console.log(`  document types : ${Object.keys(roundTrip.documentSchemas).length}`);
@@ -336,6 +356,7 @@ try {
     );
     console.log(`  provisional id : ${roundTrip.id}`);
     printSchemaAudit(file.documentSchemas);
+    auditModeration(file.documentSchemas, dataContract);
     if (args.fund.length > 0) {
       console.log(`  would fund     : ${args.fund.join(', ')} with ${args.fundAmount} YAPP each`);
     }
@@ -364,6 +385,7 @@ try {
     process.exit(0);
   }
 
+  await requireModeratorsExist(sdk, args.moderators);
   const identityNonce = ((await sdk.identities.nonce(owner.ownerId)) ?? 0n) + 1n;
 
   const { dataContract, file } = buildDraftContract({
@@ -371,9 +393,11 @@ try {
     ownerId: owner.ownerId,
     identityNonce,
     platformVersion,
+    moderators: args.moderators,
   });
   console.log(`contract file: ${contractFile}`);
   printSchemaAudit(file.documentSchemas);
+  auditModeration(file.documentSchemas, dataContract);
 
   console.log(`publishing yappr social contract (${Object.keys(file.documentSchemas).length} document types) …`);
   const published = await sdk.contracts.publish({ dataContract, identityKey, signer });
@@ -403,7 +427,7 @@ try {
 
   console.log('');
   console.log(`.env.devnet → NEXT_PUBLIC_YAPPR_CONTRACT_ID=${contractId}`);
-  console.log(`battery     → node scripts/verify-v5.mjs --contract ${contractId} …`);
+  console.log(`battery     → NETWORK=devnet node scripts/verify-v8.mjs --contract ${contractId} …`);
 } catch (e) {
   console.error('ERROR:', describeErr(e));
   process.exit(1);
