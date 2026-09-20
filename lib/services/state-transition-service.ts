@@ -321,16 +321,24 @@ class StateTransitionService {
    * 6. Broadcast via sdk.stateTransitions.broadcastStateTransition()
    * 7. Wait via sdk.stateTransitions.waitForResponse()
    *
-   * On timeout/retry, we reload the cached bytes and rebroadcast the
-   * SAME signed ST. Platform either accepts it (first broadcast) or
-   * recognizes it's already processed (replay). No new nonce = no
-   * double post, enforced at the protocol level.
+   * When a call finds cached bytes under its id it rebroadcasts that SAME
+   * signed ST instead of building a new one: Platform either accepts it or
+   * reports it already processed, and no new nonce is spent.
    *
-   * The id is a function of the nonce, so it is only known once the nonce is:
-   * a fresh call always derives a fresh id (fresh entropy AND the next nonce),
-   * which is why there is no pre-create "already exists" probe by id — a
-   * document under this id can only exist if THIS signed transition already
-   * landed, and that is exactly what the cached-bytes path checks.
+   * Be clear about what that buys today. The id is a function of the nonce and
+   * of fresh entropy, so a fresh call always derives a fresh id and never finds
+   * its predecessor's bytes; the cache only replays when a caller re-derives
+   * the same id, which none does (equally true before protocol 14, when the id
+   * was a function of fresh entropy alone). The guard against a double write
+   * on a timed-out wait is therefore the optimistic `confirmed: false` return
+   * below, which callers surface as "may have succeeded" rather than retrying.
+   * Making the cache reachable needs a caller-supplied idempotency key to key
+   * it by — a separate change.
+   *
+   * There is no pre-create "already exists" probe by id for the same reason:
+   * a document under a freshly derived id can only exist if THIS signed
+   * transition already landed, which is exactly what the cached-bytes path
+   * checks.
    */
   async createDocument(
     contractId: string,

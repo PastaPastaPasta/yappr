@@ -30,7 +30,7 @@ import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
 import { connectSdk } from './sdk-env.mjs';
-import { deriveDocumentId } from './seed/seed-lib.mjs';
+import { deriveDocumentIdBytes } from './seed/seed-lib.mjs';
 
 const SDK_TIMEOUT_MS = 30000;
 /** DIP-30: lower 40 bits of the identity contract nonce are the sequence number. */
@@ -56,7 +56,7 @@ function check(name, condition, detail = '') {
 
 /** The id commits to the create transition's nonce (protocol 14), so it is derived from the nonce the batch carries. */
 function canonicalDoc({ contractId, docType, ownerId, entropy, data, nonce }) {
-  const idBytes = deriveDocumentId({ contractId, ownerId, docType, entropy, nonce });
+  const idBytes = deriveDocumentIdBytes({ contractId, ownerId, docType, entropy, nonce });
   const doc = Document.fromObject(
     {
       $formatVersion: '0',

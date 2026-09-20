@@ -243,14 +243,11 @@ export function isImmutablePropertyChangedError(error: unknown): boolean {
 }
 
 /**
- * Matches a labelled consensus code (`code=41107`, `"code":41107`) or, when
- * `bare` is set, the code on word boundaries. The labelled form is the safe
- * default: five-digit codes occur inside timestamps and credit amounts.
+ * Matches a labelled consensus code (`code=41107`, `"code":41107`), never the
+ * bare digits: five-digit codes occur inside timestamps and credit amounts.
  */
-function hasConsensusCode(message: string, codes: readonly number[], bare = false): boolean {
-  return codes.some((code) =>
-    new RegExp(`\\bcode"?\\s*[=:]\\s*${code}\\b`).test(message) || (bare && new RegExp(`\\b${code}\\b`).test(message))
-  )
+function hasConsensusCode(message: string, codes: readonly number[]): boolean {
+  return codes.some((code) => new RegExp(`\\bcode"?\\s*[=:]\\s*${code}\\b`).test(message))
 }
 
 /**

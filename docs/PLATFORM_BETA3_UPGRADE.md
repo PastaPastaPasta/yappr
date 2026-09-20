@@ -143,13 +143,21 @@ replay cache, which makes a timed-out write idempotent by rebroadcasting the
 4. build the `DocumentCreateTransition` and set the same nonce on the
    `StateTransition`, sign, cache the bytes under the derived id, broadcast, wait.
 
-The replay cache survives because the id is known before signing. The
-pre-create "already exists on Platform" probe by id is **gone**: a fresh call
-always derives a fresh id (fresh entropy and the next nonce), so a document
-under that id can only exist if this exact signed transition already landed —
-which is precisely what the cached-bytes branch checks. The probe could only
-ever have found a document from the same cached transition, and that branch
-runs first.
+The ST-byte replay cache is still keyed by the id, which is known before
+signing — but be clear about what it buys. A fresh call always derives a fresh
+id (fresh entropy and the next nonce), so no caller ever finds its
+predecessor's bytes; the cache replays only if a caller re-derives the same
+id, and none does. That was equally true before protocol 14, when the id was a
+function of fresh entropy alone: the cache was already unreachable, and this
+PR corrects the comments in `createDocument` and `retryPostCreation` that
+claimed otherwise. The real guard against a double write on a timed-out wait
+is the optimistic `confirmed: false` return, which callers surface as "may have
+succeeded" rather than retrying. Making the cache reachable needs a
+caller-supplied idempotency key to key it by — a separate change.
+
+The pre-create "already exists on Platform" probe by id is **gone**: a document
+under a freshly derived id can only exist if this exact signed transition
+already landed, which is precisely what the cached-bytes branch checks.
 
 `documentData` may now be a **function of the id**. `createDocument` calls it
 once with the derived id and uses that exact nonce for the broadcast, so data
@@ -188,12 +196,19 @@ nobody client-side knows. The fix per path:
 - an **indexOnly** doctype never had an id to read by; its `existenceKey` probe
   is unchanged;
 - a **stored doctype without a unique index** (post, reply) is reconciled by
-  `findRecentByValues`: the owner's most recent documents of the type, matched
-  on every written field. Two identical documents by one author in one run
-  cannot be told apart this way, so a retry after such a throw may write the
-  document twice. This is the residual duplicate risk of the nonce-committed
-  id and it is documented in the helper rather than hidden; the seeders already
-  tolerate duplicates for the like/follow/bookmark/repost types.
+  `findRecentByValues`: the owner's most recent documents of the type (up to
+  100), matched on every written field. The batteries bound the scan to
+  documents created since the write began, so a byte-identical fixture from an
+  earlier run cannot score a refused write as accepted; the seeders' pre-write
+  probe is deliberately unbounded so a resume with a lost checkpoint adopts
+  its own earlier document. The residual risks are stated in the helper rather
+  than hidden: two identical documents by one author cannot be told apart, so
+  a retry after such a throw may write one twice (the seeders already tolerate
+  duplicates for like/follow/bookmark/repost); a payload with non-deterministic
+  bytes (a DM's fresh AES-GCM IV) is recognisable only within the call that
+  built it, so after a lost checkpoint it is written again; and a retried post
+  may adopt an OLDER identical post by the same author and hand that id to the
+  ops that reference it.
 
 `scripts/seed/seed-lib.mjs` carries a copy of the derivation (the `.mjs`
 scripts cannot import the TypeScript module), and `run-seeder.mjs --self-test`
@@ -292,8 +307,11 @@ With the beta.3 packages, on `beta3/sdk-and-ids`:
 
 ### What is verified and what is not
 
-**Verified offline:** the derivation matches the platform's consensus test
-vector; the shipped wasm SDK still generates v0 ids in the two places Yappr
+**Verified offline:** the derivation matches the vector transcribed from
+rs-dpp's `should_pin_the_nonce_derived_id` at tag `v4.2.0-beta.3` (read with
+`git show v4.2.0-beta.3:packages/rs-dpp/src/document/generate_document_id.rs`
+in the platform checkout; a reviewer should re-read it rather than trust the
+transcription); the shipped wasm SDK still generates v0 ids in the two places Yappr
 used them; every write path compiles and its self-tests pass.
 
 **Observed, not written to:** moutai answered `getStatus` during this work with

@@ -30,7 +30,7 @@ import {
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
-import { createdId, deriveDocumentId, findRecentByValues } from './seed/seed-lib.mjs';
+import { createdId, deriveDocumentIdBytes, findRecentByValues } from './seed/seed-lib.mjs';
 const SDK_TIMEOUT_MS = 30000;
 const DEFAULT_DEVNET_NAME = 'moutai';
 const DEFAULT_SEED_COUNT = 5;
@@ -169,7 +169,7 @@ export const randomIdBytes = () => crypto.getRandomValues(new Uint8Array(32));
  */
 export function buildDocument({ contractId, docType, ownerId, data, entropy, revision = 1n, createdAt, id, nonce }) {
   const idBytes = id
-    ?? (nonce !== undefined ? deriveDocumentId({ contractId, ownerId, docType, entropy, nonce }) : randomIdBytes());
+    ?? (nonce !== undefined ? deriveDocumentIdBytes({ contractId, ownerId, docType, entropy, nonce }) : randomIdBytes());
   const document = Document.fromObject(
     {
       $formatVersion: '0',
@@ -184,7 +184,7 @@ export function buildDocument({ contractId, docType, ownerId, data, entropy, rev
     },
     PlatformVersion.current()
   );
-  return { document, id: id || nonce !== undefined ? bs58.encode(idBytes) : null };
+  return { document, id: (id || nonce !== undefined) ? bs58.encode(idBytes) : null };
 }
 
 const READ_ATTEMPTS = 4;
@@ -324,11 +324,14 @@ export async function attemptCreate(sdk, who, { contractId, docType, data, token
     entropy: randomIdBytes(),
   });
   let id = null;
+  // Bounded to THIS write: a byte-identical document from an earlier run must
+  // not score a refused write as accepted.
+  const since = Date.now();
   const outcome = await attemptWrite(
     {
       accepted: async (created) => {
         id = createdId(created) ?? id
-          ?? await readback(() => findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data }));
+          ?? await readback(() => findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data, since }));
         return id !== null && (await fetchDocument(sdk, contractId, docType, id)) !== null;
       },
     },

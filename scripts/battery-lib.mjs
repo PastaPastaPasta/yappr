@@ -207,15 +207,20 @@ export function createBattery({ handle, contractId, socialId }) {
    * Creates a stored document; accepted = it reads back by id (or `accepted` for indexOnly types).
    * Protocol 14: the stored id is derived from the nonce the SDK picks, so it is read off the
    * Document `create()` returns. A create that threw (504 after broadcast) has no known id: for a
-   * stored type it is reconciled by value against the owner's recent documents, so `id` is set
-   * whenever `ok` is and `null` for an indexOnly type (no row to address).
+   * stored type it is reconciled by value against the owner's documents created since this call
+   * began (so an identical document from an earlier run cannot score a refused write as accepted).
+   * For an indexOnly type `id` is whatever the returned Document carries — it addresses no stored
+   * row and is reported for the log only; `document` is the SDK's confirmed instance when the
+   * create returned (it carries the consensus `$createdAt` a delete-by-values needs), else the
+   * local placeholder.
    */
   async function attemptCreate(who, docType, data, { tokenCost, noPayment, accepted, contract = contractId } = {}) {
     const { document } = buildDocument({ contractId: contract, docType, ownerId: who.ownerId, data, entropy: randomEntropy() });
     let id = null;
+    const since = Date.now();
     const storedById = async (created) => {
       id = createdId(created) ?? id
-        ?? await readback(() => findRecentByValues(sdk, { contractId: contract, docType, ownerId: who.ownerId, data }));
+        ?? await readback(() => findRecentByValues(sdk, { contractId: contract, docType, ownerId: who.ownerId, data, since }));
       return id !== null && (await fetchDocument(docType, id, contract)) !== null;
     };
     const outcome = await attemptWrite(

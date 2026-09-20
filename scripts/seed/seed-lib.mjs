@@ -597,7 +597,7 @@ const DOCUMENT_ID_V1_DOMAIN_TAG = new TextEncoder().encode('dash:document-id:v1'
  * exists only once that nonce is assigned. `Document.generateId` still returns
  * the pre-14 entropy-only id, which consensus now refuses.
  */
-export function deriveDocumentId({ contractId, ownerId, docType, entropy, nonce }) {
+export function deriveDocumentIdBytes({ contractId, ownerId, docType, entropy, nonce }) {
   const idBytes = (v, label) => {
     const bytes = typeof v === 'string' ? bs58.decode(v) : v;
     if (bytes.length !== 32) throw new Error(`${label} must be 32 bytes`);
@@ -633,7 +633,7 @@ export function deriveDocumentId({ contractId, ownerId, docType, entropy, nonce 
  */
 export function buildDocument({ contractId, docType, ownerId, data, entropy, revision = 1n, createdAt, id, nonce }) {
   const idBytes = id
-    ?? (nonce !== undefined ? deriveDocumentId({ contractId, ownerId, docType, entropy, nonce }) : randomEntropy());
+    ?? (nonce !== undefined ? deriveDocumentIdBytes({ contractId, ownerId, docType, entropy, nonce }) : randomEntropy());
   const document = Document.fromObject(
     {
       $formatVersion: '0',
@@ -648,7 +648,7 @@ export function buildDocument({ contractId, docType, ownerId, data, entropy, rev
     },
     PlatformVersion.current()
   );
-  return { document, id: id || nonce !== undefined ? bs58.encode(idBytes) : null };
+  return { document, id: (id || nonce !== undefined) ? bs58.encode(idBytes) : null };
 }
 
 /**
@@ -678,10 +678,15 @@ export function asBase58(value) {
 
 /** Value equality between a field as written and as Platform returns it (BigInt integers, byte arrays). */
 function sameValue(written, stored) {
-  if (written instanceof Uint8Array) return stored !== undefined && stored !== null && asBase58(stored) === bs58.encode(written);
-  if (typeof written === 'bigint' || typeof stored === 'bigint') return BigInt(written) === BigInt(stored);
-  if (typeof written === 'object' && written !== null) return JSON.stringify(written) === JSON.stringify(stored);
-  return written === stored;
+  if (stored === undefined || stored === null) return false;
+  try {
+    if (written instanceof Uint8Array) return asBase58(stored) === bs58.encode(written);
+    if (typeof written === 'bigint' || typeof stored === 'bigint') return BigInt(written) === BigInt(stored);
+    if (typeof written === 'object' && written !== null) return JSON.stringify(written) === JSON.stringify(stored);
+    return written === stored;
+  } catch {
+    return false; // a value that cannot even be coerced is not the one we wrote
+  }
 }
 
 /**
@@ -691,27 +696,54 @@ function sameValue(written, stored) {
  * that landed but reported an error left no id behind; this scans the owner's
  * most recent documents of the type (`$ownerId` is indexed on every stored
  * social doctype, `$createdAt` on most) for one whose every written field
- * matches. Returns the base58 id, or `null`. A stored doctype with neither a
- * unique index nor a distinctive value set (two identical posts by one author
- * in the same run) cannot be told apart this way, and a retry after such a
- * throw may write the document twice — the residual duplicate risk of the
- * nonce-committed id, accepted and logged rather than hidden.
+ * matches, and returns its base58 id or `null`.
+ *
+ * `since` (ms) bounds the scan to documents created at or after that instant
+ * (minus a clock-skew allowance): a battery MUST pass the time it started its
+ * write, or a byte-identical document from an earlier run would score a
+ * refused write as accepted. Seeders deliberately omit it on the pre-write
+ * probe so a resumed run with a lost checkpoint adopts its own earlier
+ * document, which also means two logical keys with identical payloads would
+ * resolve to one document, and a retried post may adopt an OLDER identical
+ * post by the same author and hand that id to the ops that reference it.
+ *
+ * The residual risks, accepted and stated rather than hidden: a stored doctype
+ * without a distinctive value set (two identical posts by one author) cannot
+ * be told apart, so a retry after such a throw may write the document twice;
+ * a payload with non-deterministic bytes (a DM's fresh AES-GCM IV) is only
+ * recognisable within the call that built it, so after a lost checkpoint it
+ * is written again; and an owner with more than `limit` documents of the type
+ * newer than the one sought is not recognised at all.
  */
-export async function findRecentByValues(sdk, { contractId, docType, ownerId, data, limit = 20 }) {
+export async function findRecentByValues(sdk, { contractId, docType, ownerId, data, since, limit = 100 }) {
+  const fields = Object.entries(data ?? {});
+  if (fields.length === 0) return null; // nothing to match on — every candidate would "match"
   const base = { dataContractId: contractId, documentTypeName: docType, where: [['$ownerId', '==', ownerId]], limit };
   let result;
   try {
     result = await sdk.documents.query({ ...base, orderBy: [['$createdAt', 'desc']] });
-  } catch {
-    result = await sdk.documents.query(base); // a doctype whose owner index carries no $createdAt
+  } catch (e) {
+    // Only an index-shape refusal falls back to an unordered page (a doctype
+    // whose owner index carries no $createdAt); transport faults propagate so
+    // the caller's `readback` retries them instead of scanning a random page.
+    const text = describeErr(e);
+    if (TRANSPORT_COLLAPSE.test(text) || RETRYABLE.test(text)) throw e;
+    result = await sdk.documents.query(base);
   }
+  const floor = since === undefined ? null : BigInt(Math.floor(since - CLOCK_SKEW_MS));
   const docs = result instanceof Map ? [...result.values()] : Object.values(result ?? {});
   for (const doc of docs) {
-    const fields = doc?.toObject ? doc.toObject() : doc;
-    if (Object.entries(data).every(([name, value]) => sameValue(value, fields?.[name]))) return asBase58(fields.$id ?? doc.id);
+    if (!doc) continue;
+    const stored = doc.toObject ? doc.toObject() : doc;
+    if (!stored) continue;
+    if (floor !== null && stored.$createdAt !== undefined && BigInt(stored.$createdAt) < floor) continue;
+    if (fields.every(([name, value]) => sameValue(value, stored[name]))) return asBase58(stored.$id ?? doc.id);
   }
   return null;
 }
+
+/** Tolerance between this machine's clock and the block time Platform stamps into `$createdAt`. */
+const CLOCK_SKEW_MS = 120_000;
 
 /** Token-payment agreement for token-priced doctypes (post/reply/like/likeReply/repost). */
 export function paymentInfo(tokenCost) {

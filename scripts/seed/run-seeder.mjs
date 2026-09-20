@@ -70,7 +70,7 @@ import {
   createSdkHandle,
   createdId,
   defaultTopology,
-  deriveDocumentId,
+  deriveDocumentIdBytes,
   describeErr,
   expandedContentLength,
   findRecentByValues,
@@ -424,10 +424,12 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
   };
 
   /**
-   * One op, end to end. The document is built ONCE (stable entropy → stable
-   * $id), so a retry of a broadcast that DID land converges on the same
-   * document instead of duplicating it. Acceptance is decided by the chain:
-   * readback by id for stored doctypes, entry-existence for indexOnly ones.
+   * One op, end to end. Acceptance is decided by the chain: readback by id for
+   * stored doctypes, entry-existence for indexOnly ones. Protocol 14 derives
+   * the id from the nonce `documents.create()` picks, so a retry of a
+   * broadcast that DID land converges on the landed document only through the
+   * value readback in `accepted` (`findRecentByValues`) — not through a stable
+   * id, which no longer exists before the write.
    */
   return async function executeOp(op) {
     const actor = actors.get(op.author);
@@ -444,11 +446,12 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
     // from that return; a stored-doctype create that threw is reconciled by a
     // value readback of the owner's recent documents instead (see `accepted`).
     let id = null;
+    const startedAt = Date.now();
     const accepted = plan.existenceKey
       ? () => entryExists(handle, contractId, plan.docType, plan.existenceKey.keyField, plan.existenceKey.keyValue, actor.ownerId)
       : async () => {
         if (id) return (await readback(handle, () => handle.sdk.documents.get(contractId, plan.docType, id))) != null;
-        id = await readback(handle, () => findRecentByValues(handle.sdk, { contractId, docType: plan.docType, ownerId: actor.ownerId, data: plan.data }));
+        id = await readback(handle, () => findRecentByValues(handle.sdk, { contractId, docType: plan.docType, ownerId: actor.ownerId, data: plan.data, since: startedAt }));
         return id != null;
       };
 
@@ -937,11 +940,11 @@ async function selfTest() {
   // type "note", entropy [7;32], nonce 1. `lib/document-id.test.ts` pins the
   // browser copy to the same vector.
   const ones = new Uint8Array(32).fill(1), twos = new Uint8Array(32).fill(2), sevens = new Uint8Array(32).fill(7);
-  const pinnedHex = Buffer.from(deriveDocumentId({ contractId: ones, ownerId: twos, docType: 'note', entropy: sevens, nonce: 1n })).toString('hex');
+  const pinnedHex = Buffer.from(deriveDocumentIdBytes({ contractId: ones, ownerId: twos, docType: 'note', entropy: sevens, nonce: 1n })).toString('hex');
   check('document id: derivation matches the platform pinned v1 vector', pinnedHex === 'e574ae73396611a517691d1f89275b6e99642cb9c176ce8cf879b1665c50f15f', pinnedHex);
   await ensureInitialized();
   const withNonce = buildDocument({ contractId: bs58.encode(ones), docType: 'note', ownerId: bs58.encode(twos), data: {}, entropy: sevens, nonce: 1n });
-  check('document id: buildDocument with a nonce carries the derived id', withNonce.id === bs58.encode(deriveDocumentId({ contractId: ones, ownerId: twos, docType: 'note', entropy: sevens, nonce: 1n })) && String(withNonce.document.id) === withNonce.id);
+  check('document id: buildDocument with a nonce carries the derived id', withNonce.id === bs58.encode(deriveDocumentIdBytes({ contractId: ones, ownerId: twos, docType: 'note', entropy: sevens, nonce: 1n })) && String(withNonce.document.id) === withNonce.id);
   const placeholder = buildDocument({ contractId: bs58.encode(ones), docType: 'note', ownerId: bs58.encode(twos), data: {}, entropy: sevens });
   check('document id: buildDocument without a nonce returns no id (placeholder for documents.create)', placeholder.id === null && String(placeholder.document.id) !== withNonce.id);
   check('document id: createdId reads the confirmed document, never the placeholder', createdId(withNonce.document) === withNonce.id && createdId(null) === null && createdId(undefined) === null);

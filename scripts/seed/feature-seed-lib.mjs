@@ -17,7 +17,7 @@ import { getPublicKey } from '@noble/secp256k1';
 import bs58 from 'bs58';
 import {
   DUPLICATE_UNIQUE, NONCE_DESYNC, REPO_ROOT, RETRYABLE, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
-  buildDocument, createdId, describeErr, findRecentByValues, ledgerEntry, loadLedger, network, readEnvFile, sleep, writePrivateFile,
+  buildDocument, createdId, describeErr, findRecentByValues, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
 } from './seed-lib.mjs';
 
 export const utf8 = (text) => new TextEncoder().encode(text);
@@ -176,10 +176,12 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo })
     // then checkpointed by the caller under the key); a create that threw after landing is
     // recognised by the caller's `accepted` probe, or by a value readback for a stored type.
     let id = null;
+    // Unbounded in time on purpose: the pre-write probe is how a resumed run
+    // with a lost checkpoint recognises its own earlier document.
     const landed = async () => {
       if (accepted) return accepted(id);
       if (id) return (await stored(docType, id, contract)) != null;
-      id = await findRecentByValues(handle.sdk, { contractId: contract, docType, ownerId: actor.ownerId, data });
+      id = await readback(handle, () => findRecentByValues(handle.sdk, { contractId: contract, docType, ownerId: actor.ownerId, data }));
       return id != null;
     };
     if (await landed()) return { id, skipped: true };

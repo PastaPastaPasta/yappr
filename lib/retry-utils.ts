@@ -152,9 +152,13 @@ export async function retryPostCreation<T>(
       // 'consensus error' text that the allowlist below would retry.
       if (isPermanentProtocol14Error(error)) return false
 
-      // defaultRetryCondition covers network/timeout errors — these are safe to retry
-      // because state-transition-service.createDocument() performs idempotency checks
-      // before each attempt (verifies on Platform + checks pending store).
+      // defaultRetryCondition covers network/timeout errors. A timed-out WAIT never
+      // reaches here: createDocument returns optimistic success (`confirmed: false`)
+      // for it, so what is retried is a failure before or at broadcast. A retry
+      // builds a fresh transition under a fresh nonce-derived id (protocol 14), so a
+      // broadcast that landed but then failed the wait for another reason would be
+      // written twice — createDocument no longer probes Platform by id before a
+      // create, because the id does not exist before the nonce does.
       if (defaultRetryCondition(error)) return true
 
       const errorMessage = error instanceof Error ? error.message.toLowerCase() : ''

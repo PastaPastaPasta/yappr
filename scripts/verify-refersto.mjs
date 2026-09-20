@@ -68,7 +68,7 @@ import {
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
-import { createdId, deriveDocumentId, findRecentByValues } from './seed/seed-lib.mjs';
+import { createdId, deriveDocumentIdBytes, findRecentByValues } from './seed/seed-lib.mjs';
 
 const SDK_TIMEOUT_MS = 30000;
 const DEFAULT_DEVNET_NAME = 'moutai';
@@ -278,7 +278,7 @@ function buildDocument({ contractId, docType, ownerId, data, entropy, revision =
   // so without `nonce` the `$id` built here is a placeholder and `id` is null —
   // the stored id is read off the Document `create()` returns.
   const idBytes = id
-    ?? (nonce !== undefined ? deriveDocumentId({ contractId, ownerId, docType, entropy, nonce }) : randomIdBytes());
+    ?? (nonce !== undefined ? deriveDocumentIdBytes({ contractId, ownerId, docType, entropy, nonce }) : randomIdBytes());
   const document = Document.fromObject(
     {
       $formatVersion: '0',
@@ -292,7 +292,7 @@ function buildDocument({ contractId, docType, ownerId, data, entropy, revision =
     },
     PlatformVersion.current()
   );
-  return { document, id: id || nonce !== undefined ? bs58.encode(idBytes) : null };
+  return { document, id: (id || nonce !== undefined) ? bs58.encode(idBytes) : null };
 }
 
 const READ_ATTEMPTS = 4;
@@ -337,6 +337,7 @@ const NOT_THROWN_BUT_ABSENT = 'the SDK reported no error, but the write is not o
  */
 async function attemptWrite(sdk, { contractId, docType, ownerId, data, id, accepted }, write) {
   let error = null;
+  const since = Date.now(); // bound the value readback to THIS write
   try {
     const result = await write();
     id = id ?? createdId(result);
@@ -345,7 +346,7 @@ async function attemptWrite(sdk, { contractId, docType, ownerId, data, id, accep
   }
   for (let poll = 0; poll < POLL_ATTEMPTS; poll++) {
     await settle();
-    if (!id && data) id = await findRecentByValues(sdk, { contractId, docType, ownerId, data });
+    if (!id && data) id = await findRecentByValues(sdk, { contractId, docType, ownerId, data, since });
     if (id && accepted(await fetchDocument(sdk, contractId, docType, id))) return { ok: true, id, error: null };
   }
   return { ok: false, id, error: error ?? NOT_THROWN_BUT_ABSENT };
