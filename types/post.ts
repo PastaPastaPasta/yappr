@@ -49,6 +49,13 @@ export interface Post {
    */
   quotedReplyId?: string
   quotedPost?: Post
+  /**
+   * True when the quoted post/reply is PROVEN ABSENT: a composite by-id join
+   * listed its id in `missingIds`, which on a v8 contract means the contract's
+   * moderators removed it (every reference at post/reply is a deletableDocument
+   * reference). The card renders the removed stub and fetches nothing.
+   */
+  quotedPostRemoved?: boolean
   // Cross-contract embed (e.g. a Pollr poll). All three are set together.
   embedContractId?: string // base58 contract id the embedded document lives on
   embedDocType?: string    // document type name on that contract (e.g. 'poll')

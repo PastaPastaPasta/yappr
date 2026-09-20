@@ -29,7 +29,9 @@ const BATCH_GRACE_MS = 2000
  */
 export function useQuotedPost(post: Post): UseQuotedPostResult {
   const attached = post.quotedPost ?? null
-  const targetId = quoteTargetOf(post)?.id ?? null
+  // A join already proved the target absent (a moderator removed it): there
+  // is nothing to fetch, so the card goes straight to the removed stub.
+  const targetId = post.quotedPostRemoved ? null : quoteTargetOf(post)?.id ?? null
 
   const [fetched, setFetched] = useState<Post | null>(null)
   const [settled, setSettled] = useState(false)
@@ -82,6 +84,6 @@ export function useQuotedPost(post: Post): UseQuotedPostResult {
   return {
     quotedPost,
     loading: unresolved && !settled,
-    unavailable: unresolved && settled,
+    unavailable: (unresolved && settled) || post.quotedPostRemoved === true,
   }
 }

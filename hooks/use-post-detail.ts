@@ -4,7 +4,7 @@ import { Post, Reply, ReplyThread } from '@/lib/types'
 import { postService, replyToPost } from '@/lib/services/post-service'
 import { replyService } from '@/lib/services/reply-service'
 import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
-import { hasFlatThreads, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
+import { hasFlatThreads, referencesMayDangle, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
@@ -31,6 +31,12 @@ interface UsePostDetailResult {
   replyThreads: ReplyThread[]
   /** Chain of parent posts/replies leading up to the main post (for nested replies) */
   replyChain: Post[]
+  /**
+   * Thread root ids the chain could not load (v8: the contract's moderators
+   * removed the root while this reply stayed). Rendered as removed stubs
+   * above the chain.
+   */
+  removedChainIds: string[]
   /** Whether initial load is in progress (false if using cached data) */
   isLoading: boolean
   /** Whether replies are still loading (separate from main post) */
@@ -299,6 +305,7 @@ export function usePostDetail({
   })
 
   const [error, setError] = useState<string | null>(null)
+  const [removedChainIds, setRemovedChainIds] = useState<string[]>([])
 
   // Track loaded post to prevent duplicate loads
   const loadedPostIdRef = useRef<string | null>(null)
@@ -343,12 +350,18 @@ export function usePostDetail({
    * context. On v2 the only link is the polymorphic direct parent, so the chain
    * has to be walked one lookup at a time.
    */
-  const fetchReplyChain = useCallback(async (mainPost: Post): Promise<Post[]> => {
+  const fetchReplyChain = useCallback(async (mainPost: Post): Promise<{ chain: Post[]; removed: string[] }> => {
     const chain: Post[] = []
+    const removed: string[] = []
 
     if (hasFlatThreads()) {
-      const rootPost = await postService.getPostById(threadRootIdOf(mainPost), { skipEnrichment: true })
+      const rootId = threadRootIdOf(mainPost)
+      const rootPost = await postService.getPostById(rootId, { skipEnrichment: true })
       if (rootPost) chain.push(rootPost)
+      // The reply's `rootPostId` is a deletableDocument reference from v8: a
+      // missing root is a moderator takedown, not a transport fault, and the
+      // page says so instead of showing an orphaned reply.
+      else if (referencesMayDangle()) removed.push(rootId)
     } else {
       let currentParentId: string | undefined = mainPost.parentId
       const MAX_DEPTH = 50 // Safety limit to prevent infinite loops
@@ -385,13 +398,13 @@ export function usePostDetail({
       try {
         // The chain is not in state yet, so the enrichment callback cannot
         // update it. Install the returned authors and stats with the chain.
-        return await enrich(chain)
+        return { chain: await enrich(chain), removed }
       } catch (err) {
         logger.error('usePostDetail: Failed to enrich reply chain:', err)
       }
     }
 
-    return chain
+    return { chain, removed }
   }, [enrich])
 
   const loadPost = useCallback(async () => {
@@ -444,8 +457,12 @@ export function usePostDetail({
       // If the loaded item is a reply, show the context it hangs off
       let replyChain: Post[] = []
       if (targetKindOf(loadedPost) === 'reply') {
-        replyChain = await fetchReplyChain(loadedPost)
+        const resolved = await fetchReplyChain(loadedPost)
         if (!isCurrent()) return
+        replyChain = resolved.chain
+        setRemovedChainIds(resolved.removed)
+      } else {
+        setRemovedChainIds([])
       }
 
       // Show the main post as soon as it's available
@@ -700,6 +717,7 @@ export function usePostDetail({
     replies: state.replies,
     replyThreads: state.replyThreads,
     replyChain: state.replyChain,
+    removedChainIds,
     isLoading,
     isLoadingReplies,
     hasMoreReplies,

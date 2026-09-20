@@ -250,6 +250,23 @@ function documentsAt(result: CompositeDocumentsResult, index: number): Record<st
   return sub.documents.map((doc) => documentToPlainObject(doc));
 }
 
+/**
+ * The derived ids a by-id join PROVED absent. Always empty off a
+ * `deletableDocument` join property; on v8 these are the quoted posts the
+ * contract's moderators removed since the quoting posts were written.
+ */
+function missingIdsAt(result: CompositeDocumentsResult, index: number): Set<string> {
+  const missing = new Set<string>();
+  if (index < 0) return missing;
+  const sub = result.subResults[index];
+  if (!sub || sub.kind !== 'documents') return missing;
+  for (const id of sub.missingIds ?? []) {
+    const base58 = identifierToBase58(id);
+    if (base58) missing.add(base58);
+  }
+  return missing;
+}
+
 function countsAt(result: CompositeDocumentsResult, index: number): Map<string, number> {
   const counts = new Map<string, number>();
   if (index < 0) return counts;
@@ -389,6 +406,15 @@ async function decodeFeedPage(
     for (const post of posts) {
       const quoted = post.quotedPostId ? quotedById.get(post.quotedPostId) : undefined;
       if (quoted) post.quotedPost = quoted;
+    }
+  }
+  // A join is matched by id, never by position: a quoted post a moderator
+  // removed has no entry above and its id here, so the card can say so
+  // without a per-card fetch that would only prove the same absence again.
+  const removedQuotes = missingIdsAt(result, slots.quotedPosts);
+  if (removedQuotes.size > 0) {
+    for (const post of posts) {
+      if (post.quotedPostId && removedQuotes.has(post.quotedPostId)) post.quotedPostRemoved = true;
     }
   }
 

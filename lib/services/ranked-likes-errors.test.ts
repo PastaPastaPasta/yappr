@@ -11,6 +11,7 @@ vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn() } }));
 vi.mock('../constants', () => ({ YAPPR_CONTRACT_ID: 'contract' }));
 vi.mock('../contract-topology', () => ({
   windowedRankingsAvailable: () => true,
+  referencesMayDangle: () => false,
   WINDOWED_DAY_GRID: { range: 86400000, step: 86400000 },
 }));
 
