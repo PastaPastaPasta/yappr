@@ -9,7 +9,7 @@ const queries = Array.from({ length: 13 }, (_, index) => ({
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
-  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v7');
+  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v8');
   mocks.query.mockResolvedValue(new Map());
   mocks.composite.mockImplementation(async query => ({
     pageDocuments: [], subResults: query.subQueries.map(() => ({ kind: 'documents', documents: [] })),

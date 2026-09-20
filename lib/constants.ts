@@ -85,9 +85,20 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // posts its status, only its buyer reviews it) and YAPP-priced reviews; writes
 // differ and consensus rejects v2 writes on a v1 contract, so the switch must
 // match the deployed contract.
-export const STOREFRONT_TOPOLOGY: 'v1' | 'v2' =
-  process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY === 'v2' ? 'v2' : 'v1'
-export const storefrontIsV2 = () => STOREFRONT_TOPOLOGY === 'v2'
+// `v3` (4.2.0-beta.3) is v2's write surface exactly, plus contract moderation:
+// the contract keeps a banlist and a suspension list, and `storeReview`/
+// `itemReview` are moderator-deletable (docs/SOCIAL_V8.md). Nothing references
+// a review, so no read changes; the gate exists so the moderation UI knows the
+// contract can be moderated. A v3 client against a v2 contract only loses the
+// moderation calls (41100), so the switch is forgiving in that direction.
+export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3'] as const
+export type StorefrontTopology = (typeof STOREFRONT_TOPOLOGIES)[number]
+export const STOREFRONT_TOPOLOGY: StorefrontTopology =
+  STOREFRONT_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY) ?? 'v1'
+/** True on v2 and every later cut (the v2 write surface). */
+export const storefrontIsV2 = () => STOREFRONT_TOPOLOGY !== 'v1'
+/** True when the storefront contract declares moderation (v3). */
+export const storefrontIsModerated = () => STOREFRONT_TOPOLOGY === 'v3'
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID ?? '7UaqHGBJBbRLJ4fUWS45cnud8PPUugJWoGTt1SKwHJ2P' // Key exchange protocol contract
@@ -108,9 +119,20 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // Read at CALL time (like `getContractTopology`, unlike `STOREFRONT_TOPOLOGY`):
 // `NEXT_PUBLIC_*` is inlined at build time either way, and a function keeps the
 // gate stubbable from unit tests.
-export const blogTopology = (): 'v1' | 'v2' =>
-  process.env.NEXT_PUBLIC_BLOG_TOPOLOGY === 'v2' ? 'v2' : 'v1'
-export const blogIsV2 = () => blogTopology() === 'v2'
+//
+// `v3` (4.2.0-beta.3) keeps v2's write surface and adds contract moderation:
+// `blog`/`blogPost`/`blogComment` are moderator-deletable, every reference at
+// them is a `deletableDocument` reference (a followed blog or a commented post
+// may resolve to nothing after a takedown), and `documentsKeepHistory` is
+// GONE from blog/blogPost — the edit-history viewer with it. See docs/SOCIAL_V8.md.
+export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3'] as const
+export type BlogTopology = (typeof BLOG_TOPOLOGIES)[number]
+export const blogTopology = (): BlogTopology =>
+  BLOG_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_BLOG_TOPOLOGY) ?? 'v1'
+/** True on v2 and every later cut (the v2 write surface). */
+export const blogIsV2 = () => blogTopology() !== 'v1'
+/** True when the blog contract declares moderation (v3). */
+export const blogIsModerated = () => blogTopology() === 'v3'
 // Blog comments are priced in YAPP, charged from the SOCIAL contract's token
 // through `tokenCost.create.contractId` (a cross-contract token cost), so their
 // payment agreement must name that contract — see resolveTokenPayment.
@@ -252,13 +274,23 @@ export function keyNetwork(): KeyNetwork {
 // a tombstone always had to copy by hand are frozen by the chain, with
 // `deleted` immutable-but-settable.
 //
+// `v8` is the 4.2.0-beta.3 cut (docs/SOCIAL_V8.md,
+// contracts/yappr-social-contract-v8.json): v7's indexes and query surface
+// exactly, plus the beta.3 grammar a live contract cannot gain by update:
+// contract moderation (banlist + suspensions; post/reply moderator-deletable,
+// so every reference at them is a `deletableDocument` reference and a joined
+// post may be ABSENT), optional YAPP cost with contract-owner gas sponsorship
+// (free usage), a once-per-identity 100 YAPP starter grant, and credit action
+// fees on post/reply creation paid into the moderators pot (every such create
+// must carry an action fee agreement).
+//
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
 //
 // ORDER IS SIGNIFICANT: `lib/contract-topology.ts` compares positions in this
 // array to decide when a capability first appeared, so new cuts append.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v3', 'v4', 'v5', 'v6', 'v7'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 

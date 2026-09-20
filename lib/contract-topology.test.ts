@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import socialContractV7 from '@/contracts/yappr-social-contract-v7.json'
+import socialContractV8 from '@/contracts/yappr-social-contract-v8.json'
 import { CONTRACT_TOPOLOGIES } from './constants'
 
 /** The doctype schema as the committed JSON declares it. */
@@ -67,6 +68,7 @@ describe('contract topology', () => {
     expect(enabled).toEqual(['v4', 'v5', 'v6'])
     // v7 keeps every capability v6 gained; only the author column went away.
     const v7 = await topologyModule('v7')
+    expect(v7.likeCountsArePreallocated()).toBe(true)
     expect([
       v7.hashtagsAreInline(),
       v7.hashtagIsOptional(),
@@ -85,6 +87,9 @@ describe('contract topology', () => {
     'preserves exactly the v7 contract\'s immutable properties when tombstoning a %s',
     async (kind) => {
       const { tombstonePreservationFor } = await topologyModule('v7')
+      // v8 declares the same lists, so the same preserve sets hold there.
+      expect((await topologyModule('v8')).tombstonePreservationFor(kind)).toEqual(tombstonePreservationFor(kind))
+      expect((socialContractV8.documentSchemas[kind] as { immutable: string[] }).immutable).toEqual(doctype(kind).immutable)
       const { identifiers, scalars } = tombstonePreservationFor(kind)
       const schema = doctype(kind)
 
@@ -125,5 +130,74 @@ describe('contract topology', () => {
     const { tombstonePreservationFor } = await topologyModule('v6')
     expect(tombstonePreservationFor('post').identifiers).toContain('author')
     expect(tombstonePreservationFor('reply').identifiers).toContain('author')
+  })
+
+  describe('v8 grammar', () => {
+    it('reports nothing moderated, priced or granted before v8', async () => {
+      const v7 = await topologyModule('v7')
+      expect(v7.contractIsModerated()).toBe(false)
+      expect(v7.referencesMayDangle()).toBe(false)
+      expect(v7.moderatorDeletableTypes()).toEqual([])
+      expect(v7.declaredActionFee('post', 'create')).toBeNull()
+      expect(v7.starterGrantAmount()).toBeNull()
+      // The YAPP price is the same number on every priced cut, but before v8
+      // it is required and never sponsored.
+      expect(v7.tokenCostFor('post')).toEqual({ amount: 10, optional: false, gasFeesPaidBy: 0 })
+    })
+
+    it('keeps every v7 capability on v8', async () => {
+      const v8 = await topologyModule('v8')
+      expect([
+        v8.hashtagsAreInline(), v8.hashtagIsOptional(), v8.prefixRankingsAvailable(), v8.followRankingsAvailable(),
+        v8.windowedRankingsAvailable(), v8.likesAreIndexOnly(), v8.deletesAreTombstones(), v8.authorFieldIsRequired(),
+      ]).toEqual([true, true, true, true, true, true, true, false])
+      expect(v8.likeCountsArePreallocated()).toBe(false)
+    })
+
+    it('pins the moderation declarations against the v8 JSON', async () => {
+      const v8 = await topologyModule('v8')
+      expect(v8.contractIsModerated()).toBe(true)
+      expect(v8.referencesMayDangle()).toBe(true)
+      expect(v8.moderatorDeletableTypes()).toEqual(['post', 'reply'])
+      expect(socialContractV8.config).toMatchObject({
+        $formatVersion: '2',
+        moderation: { banlist: true, suspensions: true, moderators: { $type: 'contractOwner' } },
+      })
+      // Every reference at a moderator-deletable type is deletable, and no
+      // like index is preallocated any more.
+      const schemas = socialContractV8.documentSchemas as unknown as Record<string, {
+        properties: Record<string, { refersTo?: { type: string; documentType?: string } }>
+        indices?: Array<{ preallocated?: boolean }>
+      }>
+      for (const schema of Object.values(schemas)) {
+        for (const property of Object.values(schema.properties)) {
+          if (property.refersTo?.documentType && ['post', 'reply'].includes(property.refersTo.documentType)) {
+            expect(property.refersTo.type).toBe('deletableDocument')
+          }
+        }
+        expect((schema.indices ?? []).some((index) => index.preallocated)).toBe(false)
+      }
+    })
+
+    it('pins the free-usage, grant and action-fee numbers against the v8 JSON', async () => {
+      const v8 = await topologyModule('v8')
+      const sponsored = { optional: true, gasFeesPaidBy: 2 }
+      expect(v8.tokenCostFor('post')).toEqual({ amount: 10, ...sponsored })
+      expect(v8.tokenCostFor('reply')).toEqual({ amount: 3, ...sponsored })
+      expect(v8.tokenCostFor('like')).toEqual({ amount: 1, ...sponsored })
+      expect(v8.tokenCostFor('likeReply')).toEqual({ amount: 1, ...sponsored })
+      expect(v8.tokenCostFor('repost')).toEqual({ amount: 1, ...sponsored })
+      expect(v8.tokenCostFor('follow')).toBeNull()
+      expect(v8.tokenCostFor('nope')).toBeNull()
+
+      expect(v8.starterGrantAmount()).toBe(100n)
+
+      // ~$0.05 and ~$0.01 at $60/DASH (1 DASH = 1e11 credits), moderators pot only.
+      expect(v8.declaredActionFee('post', 'create')).toEqual({ owner: 0n, moderators: 80_000_000n, pricing: 'feeMultiplier' })
+      expect(v8.declaredActionFee('reply', 'create')).toEqual({ owner: 0n, moderators: 16_000_000n, pricing: 'feeMultiplier' })
+      for (const [docType, action] of [['post', 'replace'], ['post', 'delete'], ['like', 'create'], ['repost', 'create'], ['follow', 'create']] as const) {
+        expect(v8.declaredActionFee(docType, action)).toBeNull()
+      }
+    })
   })
 })
