@@ -243,9 +243,192 @@ export function isImmutablePropertyChangedError(error: unknown): boolean {
 }
 
 /**
+ * Matches a labelled consensus code (`code=41107`, `"code":41107`) or, when
+ * `bare` is set, the code on word boundaries. The labelled form is the safe
+ * default: five-digit codes occur inside timestamps and credit amounts.
+ */
+function hasConsensusCode(message: string, codes: readonly number[], bare = false): boolean {
+  return codes.some((code) =>
+    new RegExp(`\\bcode"?\\s*[=:]\\s*${code}\\b`).test(message) || (bare && new RegExp(`\\b${code}\\b`).test(message))
+  )
+}
+
+/**
+ * Checks if Platform refused a create because the document id the client
+ * built does not match the one consensus derives — `InvalidDocumentTransitionIdError`,
+ * basic code **10405**, made reachable by protocol 14 (Platform 4.2.0-beta.3,
+ * platform#4859), where the id commits to the identity contract nonce of the
+ * create transition.
+ *
+ * Yappr derives that id itself (`lib/document-id.ts`), so hitting this means
+ * the derivation, the nonce or the entropy on the transition disagree with
+ * what was signed — a code-level bug, never a user situation. Permanent: the
+ * same transition is refused every time, and a fresh attempt builds a fresh
+ * one anyway. Drive's phrasing: "Invalid document transition id <id>, expected <id>".
+ */
+export function isInvalidDocumentIdError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /invaliddocumenttransitionid/i.test(msg) ||
+    /invalid document transition id .* expected/i.test(msg) ||
+    hasConsensusCode(msg, [10405])
+  )
+}
+
+/**
+ * Checks if Platform refused a document action because contract moderation
+ * bars the signer — new in protocol 14 (platform#4830):
+ *
+ * - **41107** `ContractUserBannedError` — "Identity X is banned on contract Y
+ *   and can not act on its documents";
+ * - **41108** `ContractUserSuspendedError` — "... is suspended on contract Y
+ *   until T and can not act on its documents";
+ * - **41114** `ContractModerationCounterpartyBarredError` — the OTHER party is
+ *   barred: "Identity X is banned or suspended on contract Y and can not be the
+ *   <role> of a document" (e.g. a transfer or purchase whose recipient is banned).
+ *
+ * Permanent for the signer (a suspension lifts on its own, but not by
+ * retrying), and distinct from a frozen token account: buying YAPP does not
+ * help and the message must not suggest it.
+ */
+export function isModerationBarredError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /contractuserbanned|contractusersuspended|contractmoderationcounterpartybarred/i.test(msg) ||
+    /is (banned|suspended|banned or suspended) on contract .* and can not (act on its documents|be the)/i.test(msg) ||
+    hasConsensusCode(msg, [41107, 41108, 41114])
+  )
+}
+
+/**
+ * Checks if Platform refused a write over WHO PAYS THE GAS — the contract-owner
+ * sponsorship of token-paid document actions, new in protocol 14
+ * (platform#4826):
+ *
+ * - **40129** `GasFeesPaidByNotAllowedError` — the transition asked for a payer
+ *   the document type does not offer;
+ * - **40130** `InconsistentGasFeesPaidByInBatchError` — one batch, two payers;
+ * - **40222** `GasSponsorInsufficientBalanceError` — the sponsoring contract
+ *   owner cannot cover the fee right now.
+ *
+ * The first two are client bugs; the third is a state the user cannot fix and
+ * that a retry will not change on its own. All permanent for the transition.
+ */
+export function isGasPayerError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /gasfeespaidbynotallowed|inconsistentgasfeespaidbyinbatch|gassponsorinsufficientbalance/i.test(msg) ||
+    /asks for gas fees paid by .* but the document type only offers/i.test(msg) ||
+    /the gas of a batch is paid by one identity/i.test(msg) ||
+    /sponsoring the gas has balance .* is required/i.test(msg) ||
+    hasConsensusCode(msg, [40129, 40130, 40222])
+  )
+}
+
+/**
+ * Checks if Platform refused a document action over its ACTION FEE agreement —
+ * fees a document type charges to the contract owner and moderators, new in
+ * protocol 14 (platform#4851, #4858):
+ *
+ * - **40132** `DocumentActionFeeAgreementNotSetError` — the type charges a fee
+ *   and the transition carries no agreement;
+ * - **40133** `DocumentActionFeeAgreementMismatchError` — the agreement names
+ *   different amounts or pricing than the type declares;
+ * - **40134** `DocumentActionFeeMultiplierNotToleratedError` — the network fee
+ *   multiplier moved past the tolerance the agreement allowed.
+ *
+ * Yappr's live contracts declare no action fees, so today any of these means a
+ * contract Yappr writes to has been re-cut and the client is behind it.
+ * Permanent for the transition as built.
+ */
+export function isActionFeeAgreementError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentactionfeeagreementnotset|documentactionfeeagreementmismatch|documentactionfeemultipliernottolerated/i.test(msg) ||
+    /charges an action fee of .* and the transition carries no action fee agreement/i.test(msg) ||
+    /charges an action fee of .* but the transition agreed to/i.test(msg) ||
+    /agreed to an action fee priced with a fee multiplier/i.test(msg) ||
+    hasConsensusCode(msg, [40132, 40133, 40134])
+  )
+}
+
+/**
+ * `ReferencedDocumentTypeNotDeletableError`, state code **40131** (protocol 14,
+ * platform#4860): a `refersTo: deletableDocument` declaration points at a
+ * document type whose documents cannot be deleted. Purely a contract-authoring
+ * mistake, matched so it never falls through to a retry; the message is
+ * "documents of referenced document type <t> in contract <c> can not be
+ * deleted; a deletableDocument reference at path <p> requires ...".
+ */
+export function isReferencedTypeNotDeletableError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /referenceddocumenttypenotdeletable/i.test(msg) ||
+    /a deletabledocument reference at path .* requires a document type whose documents can be deleted/i.test(msg) ||
+    hasConsensusCode(msg, [40131])
+  )
+}
+
+/**
+ * `TokenOncePerIdentityDistributionAlreadyClaimedError`, state code **40722**
+ * (protocol 14, platform#4827): the identity already took a once-per-identity
+ * token grant. Reached when a YAPP faucet-style grant is claimed twice; the
+ * second claim is refused for good, and the user simply already has the tokens.
+ * Message: "Token claim error: identity '<i>' already claimed the
+ * once-per-identity distribution of token '<t>' at <ms>".
+ */
+export function isOncePerIdentityAlreadyClaimedError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /tokenonceperidentitydistributionalreadyclaimed/i.test(msg) ||
+    /already claimed the once-per-identity distribution/i.test(msg) ||
+    hasConsensusCode(msg, [40722])
+  )
+}
+
+/**
+ * Every protocol-14 rejection above that is permanent for the transition as
+ * built — the set `retryPostCreation` must never retry and `categorizeError`
+ * must never present as transient. `isReferenceNotFoundError` and
+ * `isImmutablePropertyChangedError` stay separate because they carry their own
+ * user-facing messages and retry rules.
+ */
+export function isPermanentProtocol14Error(error: unknown): boolean {
+  return (
+    isInvalidDocumentIdError(error) ||
+    isModerationBarredError(error) ||
+    isGasPayerError(error) ||
+    isActionFeeAgreementError(error) ||
+    isReferencedTypeNotDeletableError(error) ||
+    isOncePerIdentityAlreadyClaimedError(error)
+  )
+}
+
+/**
  * Categorizes common Dash Platform errors and returns a user-friendly message.
  */
 export function categorizeError(error: unknown): string {
+  // Protocol-14 rejections, all permanent for the transition as built. Ordered
+  // most-specific first; none may fall through to the "buy YAPP" or "network"
+  // messages below, which would send the user chasing the wrong fix.
+  if (isModerationBarredError(error)) {
+    return 'Your account has been banned or suspended here by a moderator, so this action isn\'t allowed right now.'
+  }
+  if (isOncePerIdentityAlreadyClaimedError(error)) {
+    return 'You\'ve already claimed this — it can only be claimed once per account.'
+  }
+  if (isGasPayerError(error)) {
+    return 'This action can\'t be paid for right now. Nothing was charged — try again later.'
+  }
+  if (isActionFeeAgreementError(error)) {
+    return 'This app is out of date with the network\'s fee rules. Reload to get the latest version.'
+  }
+  if (isInvalidDocumentIdError(error) || isReferencedTypeNotDeletableError(error)) {
+    // Both are code-level defects, not user situations; say so rather than
+    // dressing them up as something the user can act on.
+    return 'Something went wrong building this action, so the network refused it. Nothing was charged. Please report this.'
+  }
+
   // Permanent and specific, like the reference family below: no amount of
   // YAPP, retrying or reconnecting changes the outcome.
   if (isImmutablePropertyChangedError(error)) {

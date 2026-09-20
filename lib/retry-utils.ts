@@ -1,4 +1,4 @@
-import { isImmutablePropertyChangedError, isReferenceNotFoundError } from '@/lib/error-utils';
+import { isImmutablePropertyChangedError, isPermanentProtocol14Error, isReferenceNotFoundError } from '@/lib/error-utils';
 import { logger } from '@/lib/logger';
 /**
  * Retry utility functions for handling network errors and transient failures
@@ -145,6 +145,12 @@ export async function retryPostCreation<T>(
       // error' allowlist below is broad enough that it would retry one if a
       // replace ever reached here.
       if (isImmutablePropertyChangedError(error)) return false
+
+      // The protocol-14 family (wrong derived id, moderation ban/suspension,
+      // gas payer, action fee agreement, once-per-identity grant): every one is
+      // refused identically on a rebuild, and several of them still render as
+      // 'consensus error' text that the allowlist below would retry.
+      if (isPermanentProtocol14Error(error)) return false
 
       // defaultRetryCondition covers network/timeout errors — these are safe to retry
       // because state-transition-service.createDocument() performs idempotency checks
