@@ -12,6 +12,7 @@ import { ModeratorRemoveModal } from '@/components/moderation/moderator-remove-m
 import { DashPayContactsModal } from '@/components/contacts/dashpay-contacts-modal'
 import { EncryptionKeyModal } from '@/components/auth/encryption-key-modal'
 import { BuyYappModal } from '@/components/token/buy-yapp-modal'
+import { StarterGrantModal } from '@/components/token/starter-grant-modal'
 import { QueryInspectorGate } from '@/components/query-inspector/inspector-gate'
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -29,6 +30,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <KeyBackupModal />
           <TipModal />
           <BuyYappModal />
+          <StarterGrantModal />
           <RecoveryModal />
           <DeleteConfirmationModal />
           <ModeratorRemoveModal />

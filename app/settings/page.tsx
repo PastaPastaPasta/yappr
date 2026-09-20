@@ -44,6 +44,8 @@ import { PinataSettings } from '@/components/settings/pinata-settings'
 import { ModerationSettings } from '@/components/settings/moderation-settings'
 import { ContractModerationSettings } from '@/components/settings/contract-moderation-settings'
 import { useIsModerator } from '@/hooks/use-is-moderator'
+import { paymentIsChoosable } from '@/lib/payment-preference'
+import type { PayWith } from '@/lib/store'
 import { DeveloperSettings } from '@/components/settings/developer-settings'
 import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -127,6 +129,8 @@ function SettingsPage() {
   const setFeedLanguage = useSettingsStore((s) => s.setFeedLanguage)
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const setSensitiveContentMode = useSettingsStore((s) => s.setSensitiveContentMode)
+  const payWith = useSettingsStore((s) => s.payWith)
+  const setPayWith = useSettingsStore((s) => s.setPayWith)
 
   // Derive active section from URL search params
   const sectionParam = searchParams.get('section')
@@ -264,6 +268,25 @@ function SettingsPage() {
 
       {/* DPNS Username Registration */}
       <div>
+        {paymentIsChoosable('post') && (
+          <div className="mb-6">
+            <h3 className="font-semibold mb-4"><label htmlFor="settings-pay-with">Pay for posts with</label></h3>
+            <p id="settings-pay-with-description" className="text-sm text-gray-500 mb-4">
+              Posts, replies, likes and reposts can be paid in YAPP (Yappr then covers the network fee while it can) or in
+              Dash credits. YAPP falls back to credits automatically when your balance does not cover the cost.
+            </p>
+            <select
+              id="settings-pay-with"
+              aria-describedby="settings-pay-with-description"
+              value={payWith}
+              onChange={(e) => setPayWith(e.target.value as PayWith)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
+            >
+              <option value="yapp">YAPP when I have enough, else credits</option>
+              <option value="credits">Always credits</option>
+            </select>
+          </div>
+        )}
         <h3 className="font-semibold mb-4">DPNS Usernames</h3>
         <div className="space-y-4">
           {dpnsUsernames.length > 0 ? (

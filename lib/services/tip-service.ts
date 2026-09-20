@@ -24,6 +24,7 @@ export interface TipResult {
     | 'INVALID_AMOUNT'
     | 'INVALID_KEY'
     | 'BELOW_MINIMUM'
+    | 'ALREADY_CLAIMED'
     | 'NEEDS_CRITICAL_KEY'
     /**
      * The transfer was broadcast, the confirmation wait failed, and no matching
