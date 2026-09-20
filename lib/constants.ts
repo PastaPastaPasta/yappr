@@ -88,17 +88,14 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // `v3` (4.2.0-beta.3) is v2's write surface exactly, plus contract moderation:
 // the contract keeps a banlist and a suspension list, and `storeReview`/
 // `itemReview` are moderator-deletable (docs/SOCIAL_V8.md). Nothing references
-// a review, so no read changes; the gate exists so the moderation UI knows the
-// contract can be moderated. A v3 client against a v2 contract only loses the
-// moderation calls (41100), so the switch is forgiving in that direction.
+// a review, so no read or write changes: the value records which cut is
+// deployed (the moderation UI for feature contracts is a follow-up).
 export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3'] as const
 export type StorefrontTopology = (typeof STOREFRONT_TOPOLOGIES)[number]
 export const STOREFRONT_TOPOLOGY: StorefrontTopology =
   STOREFRONT_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY) ?? 'v1'
 /** True on v2 and every later cut (the v2 write surface). */
 export const storefrontIsV2 = () => STOREFRONT_TOPOLOGY !== 'v1'
-/** True when the storefront contract declares moderation (v3). */
-export const storefrontIsModerated = () => STOREFRONT_TOPOLOGY === 'v3'
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID ?? '7UaqHGBJBbRLJ4fUWS45cnud8PPUugJWoGTt1SKwHJ2P' // Key exchange protocol contract
@@ -131,8 +128,6 @@ export const blogTopology = (): BlogTopology =>
   BLOG_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_BLOG_TOPOLOGY) ?? 'v1'
 /** True on v2 and every later cut (the v2 write surface). */
 export const blogIsV2 = () => blogTopology() !== 'v1'
-/** True when the blog contract declares moderation (v3). */
-export const blogIsModerated = () => blogTopology() === 'v3'
 // Blog comments are priced in YAPP, charged from the SOCIAL contract's token
 // through `tokenCost.create.contractId` (a cross-contract token cost), so their
 // payment agreement must name that contract — see resolveTokenPayment.

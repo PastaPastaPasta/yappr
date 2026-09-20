@@ -7,15 +7,20 @@
  * aggregates are exact without a baseline; only the YAPP balance is a delta.
  *
  *   NETWORK=devnet node scripts/verify-blog.mjs --contract <id> \
- *     [--author 210] [--reader 211] [--stranger 212] [--yapp 20] [--only b4,b5]
+ *     [--author 210] [--reader 211] [--stranger 212] [--moderator 260] [--yapp 20] [--only b4,b5]
+ *
+ * `--moderator` is the persona the contract was published under (its owner) or
+ * one appointed at publish time; v3 (beta.3) is a moderated cut, so b13/b14
+ * ban the stranger and take a comment and a post down.
  *   node scripts/verify-blog.mjs --self-test   # offline: contract declares what the cases assert
  */
 import bs58 from 'bs58';
 import {
   DELETE_FORBIDDEN, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND, TOKEN_AGREEMENT_MISSING,
-  id32, runBattery, selfTest,
+  id32, runBattery,
 } from './battery-lib.mjs';
 import { randomEntropy } from './seed/seed-lib.mjs';
+import { REFERENCE_NOT_FOUND_DELETABLE, caseBan, caseModeratorDelete, selfTestModerated } from './battery-moderation.mjs';
 
 const COMMENT_COST = 1n;
 const DEFAULT_YAPP = 20n;
@@ -209,25 +214,55 @@ async function caseB12Immutable(ctx) {
   await edit('b12e re-dating the now-published draft is rejected (40128) — allow-setting is once only', IMMUTABLE_CHANGED, ctx.draftId, postData({ ...draftBase, publishedAt: firstPublish + 1000 }), await battery.revisionOf('blogPost', ctx.draftId));
 }
 
+async function caseB13Ban(ctx) {
+  const { battery, stranger, author, run } = ctx;
+  const comment = () => battery.attemptCreate(stranger, 'blogComment', commentData({ blogPostId: id32(ctx.post1), blogPostOwnerId: id32(author.ownerId), content: `banned ${run} ${Date.now()}` }), { tokenCost: COMMENT_COST });
+  await caseBan(ctx, { prefix: 'b13', target: stranger, writeWhileBanned: comment, writeAfterUnban: comment });
+}
+
+async function caseB14ModeratorDelete(ctx) {
+  const { battery, author, reader, run } = ctx;
+  // A fresh comment by the reader, then the post it hangs off: the takedown of
+  // the post must leave the comment's `blogPostId` dangling (deletableDocument).
+  const post = await battery.attemptCreate(author, 'blogPost', postData({ blogId: id32(ctx.blogId), title: `Doomed ${run}`, slug: `doomed-${run}`, publishedAt: ctx.publishedAt }));
+  if (!post.ok) { battery.check('b14 fixture', false, 'no post to take down'); return; }
+  const comment = await battery.attemptCreate(reader, 'blogComment', commentData({ blogPostId: id32(post.id), blogPostOwnerId: id32(author.ownerId), content: `on the doomed post ${run}` }), { tokenCost: COMMENT_COST });
+  if (comment.ok) ctx.readerComments += 1;
+  await caseModeratorDelete(ctx, { prefix: 'b14', docType: 'blogComment', documentId: comment.ok ? comment.id : null, ownerId: reader.ownerId });
+  await caseModeratorDelete(ctx, {
+    prefix: 'b15', docType: 'blogPost', documentId: post.id, ownerId: author.ownerId,
+    afterwards: async () => {
+      // A comment on the removed post: the reference no longer resolves.
+      await battery.probeCreate('b15d a comment on the removed post is refused (40120)', REFERENCE_NOT_FOUND_DELETABLE, reader, 'blogComment', commentData({ blogPostId: id32(post.id), blogPostOwnerId: id32(author.ownerId), content: `too late ${run}` }), { tokenCost: COMMENT_COST });
+      // blog is moderator-deletable too, but the fixture blog carries every
+      // other case's documents, so a THROWAWAY blog is what goes.
+      const doomedBlog = await battery.attemptCreate(author, 'blog', blogData(`${run}-doomed`));
+      if (doomedBlog.ok) await caseModeratorDelete(ctx, { prefix: 'b16', docType: 'blog', documentId: doomedBlog.id, ownerId: author.ownerId });
+    },
+  });
+}
+
 const CASES = new Map([
   ['b1', caseB1Fixtures], ['b2', caseB2BlogRefs], ['b3', caseB3Comments], ['b4', caseB4Counts],
   ['b5', caseB5Rankings], ['b6', caseB6Windowed], ['b7', caseB7Edit], ['b8', caseB8Permanence],
   ['b9', caseB9Tokens], ['b10', caseB10CommentDelete], ['b11', caseB11FollowDelete], ['b12', caseB12Immutable],
+  ['b13', caseB13Ban], ['b14', caseB14ModeratorDelete],
 ]);
 
 await runBattery({
   label: 'blog',
   contract: { env: 'BLOG_CONTRACT_ID' },
   cases: CASES,
-  actors: { author: 210, reader: 211, stranger: 212 },
+  actors: { author: 210, reader: 211, stranger: 212, moderator: 260 },
   yapp: { default: DEFAULT_YAPP, actors: ['reader', 'stranger'], require: true },
   banner: ({ socialId }) => `; YAPP from ${socialId}`,
-  selfTest: () => selfTest('yappr-blog-contract.json', {
+  selfTest: () => selfTestModerated('yappr-blog-contract.json', {
     // b3a: the notification key binds to the post's REAL owner.
-    blogComment: { agreements: { blogPostId: { blogPostOwnerId: '$ownerId' } } },
-    // b12: blogId frozen, publishedAt write-once.
-    blogPost: { immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'] },
-  }),
-  setup: async ({ battery, tokenId, reader }) => ({ startedAt: Date.now() - 60_000, readerComments: 0, strangerCommentId: null, draftId: null, publishedAt: null, readerYappBefore: await battery.yappBalance(tokenId, reader.ownerId) }),
+    blogComment: { agreements: { blogPostId: { blogPostOwnerId: '$ownerId' } }, moderatorDeletable: true },
+    // b12: blogId frozen, publishedAt write-once. b15: moderators may remove a post.
+    blogPost: { immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'], moderatorDeletable: true, keepsHistory: false },
+    blog: { moderatorDeletable: true, keepsHistory: false },
+  }, { moderation: { banlist: true, suspensions: true } }),
+  setup: async ({ battery, tokenId, reader, moderator }) => ({ startedAt: Date.now() - 60_000, readerComments: 0, strangerCommentId: null, draftId: null, publishedAt: null, readerYappBefore: await battery.yappBalance(tokenId, reader.ownerId), moderator: { ...moderator, identity: await battery.readback(() => battery.sdk.identities.fetch(moderator.ownerId)) } }),
   summary: (ctx) => `blog=${ctx.blogId} posts=${ctx.post1},${ctx.post2}`,
 });
