@@ -159,48 +159,36 @@ class AuthVaultService extends BaseDocumentService<AuthVaultDocument> {
       updatedAt: Date.now(),
     }
 
-    let vault = existing
-    if (!vault) {
+    /** The stored fields of a vault, create and replace alike: only the id the ciphertext is bound to differs. */
+    function vaultFields(encrypted: Awaited<ReturnType<typeof encryptBundle>>): Record<string, unknown> {
+      return {
+        version: DEFAULT_VERSION,
+        secretKind: activeBundle.secretKind,
+        ciphertext: toDocumentBytes(encrypted.ciphertext),
+        iv: toDocumentBytes(encrypted.iv),
+        bundleHash: toDocumentBytes(encrypted.bundleHash),
+        updatedAt: activeBundle.updatedAt,
+        active: true,
+      }
+    }
+
+    let vault: AuthVaultDocument
+    if (existing) {
+      vault = await this.update(existing.$id, identityId, vaultFields(await encryptBundle(activeBundle, dek, existing.$id)))
+    } else {
       // The ciphertext is bound to the vault id (AEAD associated data), and from
       // protocol 14 that id is derived from the create transition's nonce. The
       // write path hands us the id it is about to broadcast under and uses that
       // exact nonce for the broadcast, so the id we encrypt against is the id
       // Platform stores — and the one `decryptVault` reads back as `$id`.
-      vault = await this.createWithOptions(identityId, async (vaultId) => {
-        const encrypted = await encryptBundle(activeBundle, dek, vaultId)
-        return {
-          version: DEFAULT_VERSION,
-          secretKind: activeBundle.secretKind,
-          ciphertext: toDocumentBytes(encrypted.ciphertext),
-          iv: toDocumentBytes(encrypted.iv),
-          bundleHash: toDocumentBytes(encrypted.bundleHash),
-          updatedAt: activeBundle.updatedAt,
-          active: true,
-        }
-      })
-
-      return {
-        identityId,
-        vault,
-        bundle: activeBundle,
-        dek,
-      }
+      vault = await this.createWithOptions(identityId, async (vaultId) =>
+        vaultFields(await encryptBundle(activeBundle, dek, vaultId))
+      )
     }
-
-    const encrypted = await encryptBundle(activeBundle, dek, vault.$id)
-    const updated = await this.update(vault.$id, identityId, {
-      version: DEFAULT_VERSION,
-      secretKind: activeBundle.secretKind,
-      ciphertext: toDocumentBytes(encrypted.ciphertext),
-      iv: toDocumentBytes(encrypted.iv),
-      bundleHash: toDocumentBytes(encrypted.bundleHash),
-      updatedAt: activeBundle.updatedAt,
-      active: true,
-    })
 
     return {
       identityId,
-      vault: updated,
+      vault,
       bundle: activeBundle,
       dek,
     }

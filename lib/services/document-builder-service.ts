@@ -84,7 +84,7 @@ class DocumentBuilderService {
    * @param data - The document data fields (`Uint8Array` for binary fields on typed writes)
    * @param identity.entropy - The 32 bytes of entropy the create transition will carry
    * @param identity.identityContractNonce - The nonce the create transition will carry
-   * @returns The WASM Document and its base58 id
+   * @returns A WASM Document carrying the derived id, ready for creation
    */
   async buildDocumentForCreate(
     contractId: string,
@@ -95,7 +95,7 @@ class DocumentBuilderService {
       entropy: Uint8Array;
       identityContractNonce: bigint;
     }
-  ): Promise<{ document: InstanceType<typeof Document>; id: string }> {
+  ): Promise<InstanceType<typeof Document>> {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
 
@@ -107,7 +107,7 @@ class DocumentBuilderService {
       identityContractNonce: identity.identityContractNonce,
     });
 
-    const document = Document.fromObject(
+    return Document.fromObject(
       toCanonicalDocumentObject({
         id,
         ownerId,
@@ -119,7 +119,6 @@ class DocumentBuilderService {
       }),
       PlatformVersion.current()
     );
-    return { document, id };
   }
 
   /**

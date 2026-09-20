@@ -244,7 +244,7 @@ export abstract class BaseDocumentService<T> {
    */
   async createWithOptions(
     ownerId: string,
-    data: Record<string, unknown> | ((documentId: string) => Promise<Record<string, unknown>> | Record<string, unknown>),
+    data: Parameters<typeof stateTransitionService.createDocument>[3],
     options?: Parameters<typeof stateTransitionService.createDocument>[4]
   ): Promise<T> {
     try {

@@ -408,7 +408,7 @@ class StateTransitionService {
       logger.debug(`Creating ${documentType} document ${documentId} with data:`, resolvedData);
 
       // Build the typed Document. Binary fields remain Uint8Array on this path.
-      const { document } = await documentBuilderService.buildDocumentForCreate(
+      const document = await documentBuilderService.buildDocumentForCreate(
         contractId,
         documentType,
         ownerId,
@@ -625,6 +625,10 @@ class StateTransitionService {
     }
   }
 
+  /**
+   * Update a document using the typed API.
+   * `documentData` should already use `Uint8Array` for binary fields.
+   */
   async updateDocument(
     contractId: string,
     documentType: string,

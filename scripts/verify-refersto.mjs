@@ -328,8 +328,7 @@ const NOT_THROWN_BUT_ABSENT = 'the SDK reported no error, but the write is not o
  * call that does not wait would report success for a transition consensus later
  * refuses. Reading back covers both; the SDK's error, when there was one, is
  * only reported as the reason for a write that never showed up.
- */
-/**
+ *
  * `id` may be null for a create, whose id is only known from what `write()`
  * returns (protocol 14): it is then read off the returned Document, or, when
  * the create threw after broadcasting, recovered by value from the owner's

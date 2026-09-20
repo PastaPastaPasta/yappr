@@ -940,12 +940,14 @@ async function selfTest() {
   // type "note", entropy [7;32], nonce 1. `lib/document-id.test.ts` pins the
   // browser copy to the same vector.
   const ones = new Uint8Array(32).fill(1), twos = new Uint8Array(32).fill(2), sevens = new Uint8Array(32).fill(7);
-  const pinnedHex = Buffer.from(deriveDocumentIdBytes({ contractId: ones, ownerId: twos, docType: 'note', entropy: sevens, nonce: 1n })).toString('hex');
+  const pinnedId = deriveDocumentIdBytes({ contractId: ones, ownerId: twos, docType: 'note', entropy: sevens, nonce: 1n });
+  const pinnedHex = Buffer.from(pinnedId).toString('hex');
   check('document id: derivation matches the platform pinned v1 vector', pinnedHex === 'e574ae73396611a517691d1f89275b6e99642cb9c176ce8cf879b1665c50f15f', pinnedHex);
   await ensureInitialized();
-  const withNonce = buildDocument({ contractId: bs58.encode(ones), docType: 'note', ownerId: bs58.encode(twos), data: {}, entropy: sevens, nonce: 1n });
-  check('document id: buildDocument with a nonce carries the derived id', withNonce.id === bs58.encode(deriveDocumentIdBytes({ contractId: ones, ownerId: twos, docType: 'note', entropy: sevens, nonce: 1n })) && String(withNonce.document.id) === withNonce.id);
-  const placeholder = buildDocument({ contractId: bs58.encode(ones), docType: 'note', ownerId: bs58.encode(twos), data: {}, entropy: sevens });
+  const note = { contractId: bs58.encode(ones), docType: 'note', ownerId: bs58.encode(twos), data: {}, entropy: sevens };
+  const withNonce = buildDocument({ ...note, nonce: 1n });
+  check('document id: buildDocument with a nonce carries the derived id', withNonce.id === bs58.encode(pinnedId) && String(withNonce.document.id) === withNonce.id);
+  const placeholder = buildDocument(note);
   check('document id: buildDocument without a nonce returns no id (placeholder for documents.create)', placeholder.id === null && String(placeholder.document.id) !== withNonce.id);
   check('document id: createdId reads the confirmed document, never the placeholder', createdId(withNonce.document) === withNonce.id && createdId(null) === null && createdId(undefined) === null);
 

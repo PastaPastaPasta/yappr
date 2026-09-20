@@ -661,11 +661,7 @@ export function buildDocument({ contractId, docType, ownerId, data, entropy, rev
  * (`findRecentByValues`) or not at all.
  */
 export function createdId(created) {
-  const raw = created?.id;
-  if (raw === undefined || raw === null) return null;
-  if (typeof raw === 'string') return raw;
-  if (typeof raw.toBase58 === 'function') return raw.toBase58();
-  return bs58.encode(Uint8Array.from(raw));
+  return asBase58(created?.id);
 }
 
 /** Base58 of an identifier however a query surface hands it back (string, Identifier, bytes). */
@@ -688,6 +684,9 @@ function sameValue(written, stored) {
     return false; // a value that cannot even be coerced is not the one we wrote
   }
 }
+
+/** Tolerance between this machine's clock and the block time Platform stamps into `$createdAt`. */
+const CLOCK_SKEW_MS = 120_000;
 
 /**
  * The stored id of a document known only by its values — the readback for a
@@ -741,9 +740,6 @@ export async function findRecentByValues(sdk, { contractId, docType, ownerId, da
   }
   return null;
 }
-
-/** Tolerance between this machine's clock and the block time Platform stamps into `$createdAt`. */
-const CLOCK_SKEW_MS = 120_000;
 
 /** Token-payment agreement for token-priced doctypes (post/reply/like/likeReply/repost). */
 export function paymentInfo(tokenCost) {

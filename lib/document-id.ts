@@ -27,7 +27,8 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import bs58 from 'bs58'
 
-const DOCUMENT_ID_V1_DOMAIN_TAG = new TextEncoder().encode('dash:document-id:v1')
+const utf8 = new TextEncoder()
+const DOCUMENT_ID_V1_DOMAIN_TAG = utf8.encode('dash:document-id:v1')
 
 /**
  * DIP-30: an identity contract nonce is a u64 whose lower 40 bits are the
@@ -69,20 +70,20 @@ export function deriveDocumentIdBytes(inputs: DocumentIdInputs): Uint8Array {
   if (inputs.identityContractNonce < BigInt(0) || inputs.identityContractNonce >> BigInt(64) !== BigInt(0)) {
     throw new Error('identityContractNonce must fit in a u64')
   }
-  const typeName = new TextEncoder().encode(inputs.documentTypeName)
   const nonce = new Uint8Array(8)
   new DataView(nonce.buffer).setBigUint64(0, inputs.identityContractNonce)
 
-  const preimage = new Uint8Array(DOCUMENT_ID_V1_DOMAIN_TAG.length + 32 + 32 + typeName.length + 32 + 8)
-  let offset = 0
-  for (const part of [
+  const parts = [
     DOCUMENT_ID_V1_DOMAIN_TAG,
     identifierBytes(inputs.contractId, 'contractId'),
     identifierBytes(inputs.ownerId, 'ownerId'),
-    typeName,
+    utf8.encode(inputs.documentTypeName),
     inputs.entropy,
     nonce,
-  ]) {
+  ]
+  const preimage = new Uint8Array(parts.reduce((total, part) => total + part.length, 0))
+  let offset = 0
+  for (const part of parts) {
     preimage.set(part, offset)
     offset += part.length
   }
