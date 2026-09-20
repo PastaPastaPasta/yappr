@@ -29,7 +29,9 @@ interface RemovedPostStubProps {
  * intact posts pays nothing for it.
  */
 export function RemovedPostStub({ documentId, kind, className, variant = 'embed', proven = false }: RemovedPostStubProps) {
-  const [removal, setRemoval] = useState<DocumentRemoval | null | undefined>(undefined)
+  // Null until (and unless) a record is found: the stub reads the same either
+  // way, so there is no separate "still looking" rendering to distinguish.
+  const [removal, setRemoval] = useState<DocumentRemoval | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -48,7 +50,7 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
   }, [documentId, kind])
 
   const noun = kind === 'reply' ? 'reply' : 'post'
-  const removed = proven || removal !== null && removal !== undefined
+  const removed = proven || removal !== null
   return (
     <div
       data-testid={`removed-${noun}-${documentId}`}

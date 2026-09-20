@@ -60,8 +60,10 @@ export async function requireModeratorsExist(sdk, moderators = []) {
  */
 export function auditModeration(documentSchemas, dataContract) {
   const parsedModeration = dataContract.config.moderation;
-  const declaredModeration = Object.values(documentSchemas).some((schema) => schema.canBeDeletedByModerators)
-    || Object.values(documentSchemas).some((schema) => Object.entries(schema.actionFees ?? {}).some(([k, fee]) => k !== 'pricing' && fee.moderators));
+  // `actionFees.pricing` sits beside the per-action entries and is not one.
+  const declaredModeration = Object.values(documentSchemas).some((schema) =>
+    schema.canBeDeletedByModerators
+    || Object.entries(schema.actionFees ?? {}).some(([action, fee]) => action !== 'pricing' && fee.moderators));
   console.log(`  moderation: ${parsedModeration ? renderModeration(parsedModeration) : 'none'}`);
   if (declaredModeration && !parsedModeration) {
     throw new Error('document types rely on moderation (canBeDeletedByModerators / moderators fees) but the parsed config carries no `moderation` — is the config $formatVersion "2"?');

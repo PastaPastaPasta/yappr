@@ -92,6 +92,17 @@ const NO_STANDING: ModerationStanding = { banned: false, banReason: null, suspen
 const reasonText = (reason: ContractModerationReason | undefined): string | null =>
   reason === undefined ? null : reason.text;
 
+/** A `documentRemovals` entry as the app models it — both removal reads decode it identically. */
+type RemovalEntry = Awaited<ReturnType<EvoSDK['contracts']['documentRemovals']>>['removals'][number];
+
+const toRemoval = (entry: RemovalEntry): DocumentRemoval => ({
+  documentId: entry.documentId,
+  documentOwnerId: entry.documentOwnerId,
+  moderatorId: entry.moderatorId,
+  reason: entry.reason.text,
+  removedAt: Number(entry.removedAt),
+});
+
 class ModerationService {
   /** The in-flight or resolved team fetch: a feed of cards asks once, not once per card. */
   private teamPromise: Promise<ModerationTeam> | null = null;
@@ -205,15 +216,7 @@ class ModerationService {
         documentTypeName: kind,
         documentIds: Array.from(new Set(documentIds)).slice(0, 100),
       });
-      for (const entry of page.removals) {
-        removals.set(entry.documentId, {
-          documentId: entry.documentId,
-          documentOwnerId: entry.documentOwnerId,
-          moderatorId: entry.moderatorId,
-          reason: entry.reason.text,
-          removedAt: Number(entry.removedAt),
-        });
-      }
+      for (const entry of page.removals) removals.set(entry.documentId, toRemoval(entry));
     } catch (error) {
       logger.warn('moderationService: document removals read failed', error);
     }
@@ -225,16 +228,7 @@ class ModerationService {
     if (!this.canRemove(kind)) return { removals: [] };
     const sdk = await getEvoSdk();
     const page = await sdk.contracts.documentRemovals({ contractId: YAPPR_CONTRACT_ID, documentTypeName: kind, startAfter, limit: 100 });
-    return {
-      removals: page.removals.map((entry) => ({
-        documentId: entry.documentId,
-        documentOwnerId: entry.documentOwnerId,
-        moderatorId: entry.moderatorId,
-        reason: entry.reason.text,
-        removedAt: Number(entry.removedAt),
-      })),
-      nextStartAfter: page.nextStartAfter,
-    };
+    return { removals: page.removals.map(toRemoval), nextStartAfter: page.nextStartAfter };
   }
 
   /** The contract's two fee pots. */

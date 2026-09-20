@@ -13,12 +13,16 @@ import {
   type DocumentRemoval,
   type FeePotState,
   type ModerationEntry,
+  type ModerationResult,
 } from '@/lib/services/moderation-service'
 
 const INPUT = 'w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500'
 const SUSPENSION_DAYS = [1, 3, 7, 30] as const
+const DAY_MS = 86_400_000
 
 type Action = 'ban' | 'unban' | 'suspend' | 'unsuspend' | 'claim'
+
+const dayLabel = (days: number) => `${days} day${days === 1 ? '' : 's'}`
 
 /**
  * Contract moderation for the social contract's moderation team (its owner
@@ -71,23 +75,36 @@ export function ContractModerationSettings() {
     setBusy(action)
     const me = user.identityId
     const text = reason.trim()
-    const result = action === 'ban' ? await moderationService.ban(me, id, text)
-      : action === 'unban' ? await moderationService.unban(me, id)
-      : action === 'suspend' ? await moderationService.suspend(me, id, Date.now() + days * 86_400_000, text)
-      : action === 'unsuspend' ? await moderationService.unsuspend(me, id)
-      : await moderationService.claimModeratorsPot(me)
+    let result: ModerationResult
+    let succeeded: string
+    switch (action) {
+      case 'ban':
+        result = await moderationService.ban(me, id, text)
+        succeeded = 'Identity banned'
+        break
+      case 'unban':
+        result = await moderationService.unban(me, id)
+        succeeded = 'Identity unbanned'
+        break
+      case 'suspend':
+        result = await moderationService.suspend(me, id, Date.now() + days * DAY_MS, text)
+        succeeded = `Identity suspended for ${dayLabel(days)}`
+        break
+      case 'unsuspend':
+        result = await moderationService.unsuspend(me, id)
+        succeeded = 'Suspension lifted'
+        break
+      case 'claim':
+        result = await moderationService.claimModeratorsPot(me)
+        succeeded = 'Moderators pot paid out to the team'
+        break
+    }
     setBusy(null)
     if (!result.success) {
       toast.error(result.error || 'Action failed')
       return
     }
-    toast.success(
-      action === 'ban' ? 'Identity banned'
-        : action === 'unban' ? 'Identity unbanned'
-        : action === 'suspend' ? `Identity suspended for ${days} day${days === 1 ? '' : 's'}`
-        : action === 'unsuspend' ? 'Suspension lifted'
-        : 'Moderators pot paid out to the team'
-    )
+    toast.success(succeeded)
     refresh().catch(() => { /* reported inside */ })
   }
 
@@ -116,7 +133,7 @@ export function ContractModerationSettings() {
           <div>
             <label htmlFor="contract-moderation-days" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Suspension length</label>
             <select id="contract-moderation-days" value={days} onChange={(e) => setDays(Number(e.target.value))} className={INPUT}>
-              {SUSPENSION_DAYS.map((d) => <option key={d} value={d}>{d} day{d === 1 ? '' : 's'}</option>)}
+              {SUSPENSION_DAYS.map((d) => <option key={d} value={d}>{dayLabel(d)}</option>)}
             </select>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -148,7 +165,7 @@ export function ContractModerationSettings() {
           <div className="text-sm">
             <p className="font-semibold">{pot ? `${(Number(pot.credits) / CREDITS_PER_DASH).toFixed(6)} DASH` : '—'}</p>
             <p className="text-gray-500 dark:text-gray-400">
-              {pot?.lastClaimEpoch === null || pot?.lastClaimEpoch === undefined
+              {pot?.lastClaimEpoch == null
                 ? 'Never claimed'
                 : `Last claimed in epoch ${pot.lastClaimEpoch}${pot.lastClaimantId ? ` by ${pot.lastClaimantId.slice(0, 8)}…` : ''}`}
             </p>
@@ -160,13 +177,14 @@ export function ContractModerationSettings() {
       </Card>
 
       <EntryList title="Banned identities" empty="Nobody is banned." entries={banned}
-        render={(entry) => <>{entry.identityId}{entry.reason ? ` — ${entry.reason}` : ''}</>} onPick={setTargetId} />
+        render={(entry) => <>{entry.identityId}{entry.reason ? ` — ${entry.reason}` : ''}</>}
+        onPick={(entry) => setTargetId(entry.identityId)} />
       <EntryList title="Suspended identities" empty="Nobody is suspended." entries={suspended}
         render={(entry) => <>{entry.identityId} until {entry.until ? new Date(entry.until).toLocaleString() : '?'}{entry.reason ? ` — ${entry.reason}` : ''}</>}
-        onPick={setTargetId} />
+        onPick={(entry) => setTargetId(entry.identityId)} />
       <EntryList title="Removed posts and replies" empty="Nothing has been removed." entries={removals}
         render={(removal) => <>{removal.documentId} by {removal.moderatorId.slice(0, 8)}… on {new Date(removal.removedAt).toLocaleDateString()}{removal.reason ? ` — ${removal.reason}` : ''}</>}
-        onPick={(removal) => setTargetId(removal.documentOwnerId)} pick={(removal) => removal} />
+        onPick={(removal) => setTargetId(removal.documentOwnerId)} />
     </div>
   )
 }
@@ -177,11 +195,10 @@ interface EntryListProps<T> {
   entries: T[]
   render: (entry: T) => React.ReactNode
   /** Fills the identity field from a row, so "unban this one" is one click. */
-  onPick: (value: T extends ModerationEntry ? string : T) => void
-  pick?: (entry: T) => T
+  onPick: (entry: T) => void
 }
 
-function EntryList<T extends ModerationEntry | DocumentRemoval>({ title, empty, entries, render, onPick, pick }: EntryListProps<T>) {
+function EntryList<T>({ title, empty, entries, render, onPick }: EntryListProps<T>) {
   return (
     <Card>
       <CardHeader>
@@ -194,8 +211,7 @@ function EntryList<T extends ModerationEntry | DocumentRemoval>({ title, empty, 
           <ul className="space-y-1 text-sm font-mono break-all">
             {entries.map((entry, index) => (
               <li key={index}>
-                <button type="button" className="text-left hover:underline"
-                  onClick={() => onPick((pick ? pick(entry) : (entry as ModerationEntry).identityId) as T extends ModerationEntry ? string : T)}>
+                <button type="button" className="text-left hover:underline" onClick={() => onPick(entry)}>
                   {render(entry)}
                 </button>
               </li>

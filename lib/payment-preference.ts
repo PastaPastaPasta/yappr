@@ -42,9 +42,16 @@ export interface PaymentPlan {
 export function planPayment(docType: string, action: DocumentAction, balance: bigint | null, payWith: PayWith): PaymentPlan {
   const cost = tokenCostFor(docType)
   const actionFee = declaredActionFee(docType, action)
-  if (!cost || action !== 'create') {
-    return { payWith: 'credits', yapp: 0n, gasFeesPaidBy: 0, gasMayBeSponsored: false, actionFee, fallbackReason: null }
-  }
+  // Credits never carry a token or a gas offer; only the reason differs.
+  const inCredits = (fallbackReason: PaymentPlan['fallbackReason']): PaymentPlan => ({
+    payWith: 'credits',
+    yapp: 0n,
+    gasFeesPaidBy: 0,
+    gasMayBeSponsored: false,
+    actionFee,
+    fallbackReason,
+  })
+  if (!cost || action !== 'create') return inCredits(null)
   const amount = BigInt(cost.amount)
   const inYapp = (fallbackReason: PaymentPlan['fallbackReason']): PaymentPlan => ({
     payWith: 'yapp',
@@ -57,14 +64,7 @@ export function planPayment(docType: string, action: DocumentAction, balance: bi
   if (!cost.optional) return inYapp(payWith === 'credits' ? 'token-required' : null)
   const canAfford = balance !== null && balance >= amount
   if (payWith === 'yapp' && canAfford) return inYapp(null)
-  return {
-    payWith: 'credits',
-    yapp: 0n,
-    gasFeesPaidBy: 0,
-    gasMayBeSponsored: false,
-    actionFee,
-    fallbackReason: payWith === 'yapp' ? 'insufficient-yapp' : null,
-  }
+  return inCredits(payWith === 'yapp' ? 'insufficient-yapp' : null)
 }
 
 /** True when the user may choose the currency of `docType` creates at all. */

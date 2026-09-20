@@ -10,6 +10,9 @@ import { isBarredFromContractError, moderationService } from '@/lib/services/mod
  */
 export function reportBarredWrite(error: unknown, identityId: string | undefined): boolean {
   if (!identityId || !isBarredFromContractError(error)) return false
+  // What to say when the standing read cannot name the list or its reason: the
+  // refusal itself already proved the account is barred.
+  const barred = () => toast.error('This contract\'s moderators have barred your account from writing.')
   moderationService.getStanding(identityId, { fresh: true }).then((standing) => {
     if (standing.banned) {
       toast.error(`You are banned from this contract${standing.banReason ? `: ${standing.banReason}` : '.'}`, { duration: 8000 })
@@ -17,8 +20,8 @@ export function reportBarredWrite(error: unknown, identityId: string | undefined
       const until = new Date(standing.suspendedUntil).toLocaleString()
       toast.error(`You are suspended until ${until}${standing.suspensionReason ? `: ${standing.suspensionReason}` : '.'}`, { duration: 8000 })
     } else {
-      toast.error('This contract\'s moderators have barred your account from writing.')
+      barred()
     }
-  }).catch(() => toast.error('This contract\'s moderators have barred your account from writing.'))
+  }).catch(barred)
   return true
 }

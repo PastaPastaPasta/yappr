@@ -102,6 +102,20 @@ const SUSPENSION_MS = 25_000;
 const SETTLE_MS = 3000;
 const settle = (ms = SETTLE_MS) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Runs `action` and answers the described error, or null when it landed — the
+ * half of a battery outcome the cases that bypass verify-lib's `attemptCreate`
+ * have to assemble themselves.
+ */
+async function errorOf(action) {
+  try {
+    await action();
+    return null;
+  } catch (e) {
+    return describeErr(e);
+  }
+}
+
 // ---- Expected rejections (code-anchored, see verify-lib) ---------------------
 
 const BANNED = /\bcode"?\s*[=:]\s*41107\b|contractuserbanned|is banned/i;
@@ -159,7 +173,12 @@ export function documentIdV1({ contractId, ownerId, docType, entropy, nonce }) {
   return sha256(sha256(payload));
 }
 
-const idOf = (value) => (typeof value === 'string' ? value : typeof value?.toBase58 === 'function' ? value.toBase58() : bs58.encode(Uint8Array.from(value)));
+/** An id as base58, whichever of the three shapes the SDK handed back. */
+function idOf(value) {
+  if (typeof value === 'string') return value;
+  if (typeof value?.toBase58 === 'function') return value.toBase58();
+  return bs58.encode(Uint8Array.from(value));
+}
 
 /**
  * A create built by hand so it can carry `$actionFeeAgreement` (and, when the
@@ -253,6 +272,9 @@ async function caseM1Ban(ctx) {
   expectAccepted('m1a B follows A before the ban', existing);
   // The create path assigns the id; only the RETURNED document knows it.
   const followId = existing.id;
+  // The probe run before and after the ban: a DIFFERENT unpriced create from
+  // the follow above, which B already holds (`follow` is unique per pair).
+  const bookmarkFixture = () => attemptCreate(sdk, botB, { contractId, docType: 'bookmark', data: { postId: bs58.decode(ctx.posts.fixture) } });
 
   try {
     await sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, reason: { text: 'v8 battery ban' }, signer: moderator.signer });
@@ -262,28 +284,25 @@ async function caseM1Ban(ctx) {
     return;
   }
   try {
-  await settle();
-  const status = await standingOf(ctx, botB.ownerId);
-  check('m1c moderationStatus proves the ban with its reason', status.banned === true && status.banReason?.text === 'v8 battery ban', JSON.stringify(status));
-  const entries = await readback(() => sdk.contracts.moderationEntries({ contractId, list: 'banlist' }));
-  check('m1d the banlist page lists B', entries.entries.some((entry) => entry.identityId === botB.ownerId), `entries=${entries.entries.length}`);
-
-  // A banned identity cannot create; the follow B holds is a duplicate anyway,
-  // so the probe is a DIFFERENT unpriced create: a bookmark of a fixture post.
-  const bookmarkWhileBanned = await attemptCreate(sdk, botB, { contractId, docType: 'bookmark', data: { postId: bs58.decode(ctx.posts.fixture) } });
-  expectRejected('m1e B\'s create while banned is refused (41107)', bookmarkWhileBanned, BANNED);
-
-  if (followId) {
-    let deleteError = null;
-    try {
-      await sdk.documents.delete({ document: { id: followId, ownerId: botB.ownerId, dataContractId: contractId, documentTypeName: 'follow' }, identityKey: botB.identityKey, signer: botB.signer, settings: { identityNonceStaleTimeS: 0 } });
-    } catch (e) {
-      deleteError = describeErr(e);
-    }
     await settle();
-    const gone = (await fetchDocument(sdk, contractId, 'follow', followId)) === null;
-    check('m1f B\'s DELETE while banned still lands (a ban bars writes, not exits)', gone, gone ? '' : `still present; ${(deleteError ?? '').slice(0, 160)}`);
-  }
+    const status = await standingOf(ctx, botB.ownerId);
+    check('m1c moderationStatus proves the ban with its reason', status.banned === true && status.banReason?.text === 'v8 battery ban', JSON.stringify(status));
+    const entries = await readback(() => sdk.contracts.moderationEntries({ contractId, list: 'banlist' }));
+    check('m1d the banlist page lists B', entries.entries.some((entry) => entry.identityId === botB.ownerId), `entries=${entries.entries.length}`);
+
+    expectRejected('m1e B\'s create while banned is refused (41107)', await bookmarkFixture(), BANNED);
+
+    if (followId) {
+      let deleteError = null;
+      try {
+        await sdk.documents.delete({ document: { id: followId, ownerId: botB.ownerId, dataContractId: contractId, documentTypeName: 'follow' }, identityKey: botB.identityKey, signer: botB.signer, settings: { identityNonceStaleTimeS: 0 } });
+      } catch (e) {
+        deleteError = describeErr(e);
+      }
+      await settle();
+      const gone = (await fetchDocument(sdk, contractId, 'follow', followId)) === null;
+      check('m1f B\'s DELETE while banned still lands (a ban bars writes, not exits)', gone, gone ? '' : `still present; ${(deleteError ?? '').slice(0, 160)}`);
+    }
   } finally {
     // A ban outlives the run: whatever the probes did, B is unbanned.
     try {
@@ -296,7 +315,7 @@ async function caseM1Ban(ctx) {
   await settle();
   const after = await standingOf(ctx, botB.ownerId);
   check('m1h moderationStatus proves B is no longer banned', after.banned === false, JSON.stringify(after));
-  expectAccepted('m1i B\'s create lands again after the unban', await attemptCreate(sdk, botB, { contractId, docType: 'bookmark', data: { postId: bs58.decode(ctx.posts.fixture) } }));
+  expectAccepted('m1i B\'s create lands again after the unban', await bookmarkFixture());
 }
 
 async function caseM2Suspend(ctx) {
@@ -317,14 +336,15 @@ async function caseM2Suspend(ctx) {
   // `bookmark.ownerAndPost` is unique and m1i already bookmarked the fixture, so
   // the unpriced probes here target a post of their own (A's, so B may bookmark it).
   const target = ctx.posts.m2 ?? (ctx.posts.m2 = await createPost(ctx, ctx.botA, postData({ content: 'm2 bookmark target' }), 'the m2 target'));
+  const bookmarkTarget = () => attemptCreate(sdk, botB, { contractId, docType: 'bookmark', data: { postId: bs58.decode(target) } });
   if (target) {
-    expectRejected('m2d …and so is an unpriced create, for the same reason', await attemptCreate(sdk, botB, { contractId, docType: 'bookmark', data: { postId: bs58.decode(target) } }), SUSPENDED);
+    expectRejected('m2d …and so is an unpriced create, for the same reason', await bookmarkTarget(), SUSPENDED);
   }
   const remaining = until - Date.now() + 8000;
   console.log(`     (waiting ${Math.ceil(remaining / 1000)} s for the suspension to lapse)`);
   await settle(Math.max(remaining, 0));
   // The lapsed entry is swept by B's first transition at or after `until`.
-  if (target) expectAccepted('m2e B\'s create lands once the suspension lapsed', await attemptCreate(sdk, botB, { contractId, docType: 'bookmark', data: { postId: bs58.decode(target) } }));
+  if (target) expectAccepted('m2e B\'s create lands once the suspension lapsed', await bookmarkTarget());
   const swept = await standingOf(ctx, botB.ownerId);
   check('m2f the lapsed suspension was swept by that write', swept.suspendedUntil === undefined, JSON.stringify(swept));
 }
@@ -391,13 +411,10 @@ async function caseT1OptionalTokenCost(ctx) {
   const [ownerBefore, aCreditsBefore, aYappBefore] = await Promise.all([creditsOf(ctx, ownerId), creditsOf(ctx, botA.ownerId), yappOf(ctx, botA.ownerId)]);
   // verify-lib's payment info carries no gas offer, so the paid like is sent
   // by hand through the same SDK call it wraps, with PreferContractOwner.
-  let paidError = null;
-  try {
+  const paidError = await errorOf(async () => {
     const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, data: likeData({ postId: bs58.decode(targets[1]), postAuthor: bs58.decode(botB.ownerId) }), entropy: randomIdBytes() });
     await sdk.documents.create({ document, identityKey: botA.identityKey, signer: botA.signer, tokenPaymentInfo: yappPayment(TOKEN_COST.like), settings: { identityNonceStaleTimeS: 0 } });
-  } catch (e) {
-    paidError = describeErr(e);
-  }
+  });
   await settle();
   const landed = await entryExists(sdk, contractId, 'like', 'postId', targets[1], botA.ownerId);
   check('t1c like WITH payment info (PreferContractOwner gas) lands', landed, landed ? '' : (paidError ?? '').slice(0, 220));
@@ -414,13 +431,10 @@ async function caseT2InsufficientYapp(ctx) {
   if (balance > 0n) { console.log(`SKIP  t2: ${poor.label} holds ${balance} YAPP; pick a --poor bot with none`); return; }
   const target = await createPost(ctx, botB, postData({ content: 'poor bot target' }), 'the poor bot\'s target');
   if (!target) { check('t2 fixture', false, 'no target post'); return; }
-  let error = null;
-  try {
+  const error = await errorOf(async () => {
     const { document } = buildDocument({ contractId, docType: 'like', ownerId: poor.ownerId, data: likeData({ postId: bs58.decode(target), postAuthor: bs58.decode(botB.ownerId) }), entropy: randomIdBytes() });
     await sdk.documents.create({ document, identityKey: poor.identityKey, signer: poor.signer, tokenPaymentInfo: yappPayment(TOKEN_COST.like) });
-  } catch (e) {
-    error = describeErr(e);
-  }
+  });
   await settle();
   const landed = await entryExists(sdk, contractId, 'like', 'postId', target, poor.ownerId);
   expectRejected('t2a like with payment info and 0 YAPP is refused (40700)', { ok: landed, error }, INSUFFICIENT_TOKENS);
@@ -487,26 +501,14 @@ async function caseA4Claim(ctx) {
   await settle();
   const after = await creditsOf(ctx, moderator.ownerId);
   check('a4c the claimant\'s credits rose (net of the claim\'s own fee)', after > before, `${before}→${after}`);
-  let second = null;
-  try {
-    await sdk.contracts.claimFees({ identity: moderator.identity, contractId, pot: 'moderators', signer: moderator.signer });
-  } catch (e) {
-    second = describeErr(e);
-  }
+  const second = await errorOf(() => sdk.contracts.claimFees({ identity: moderator.identity, contractId, pot: 'moderators', signer: moderator.signer }));
   expectRejected('a4d a second claim in the same epoch is refused (41111)', { ok: second === null, error: second }, ALREADY_CLAIMED_EPOCH);
 }
 
 async function caseG1StarterGrant(ctx) {
   const { sdk, contractId, botA } = ctx;
   console.log('\n--- g1. oncePerIdentity: one grant per identity (40722 after) ---');
-  const claim = async () => {
-    try {
-      await sdk.tokens.claim({ dataContractId: contractId, tokenPosition: YAPP_POSITION, identityId: botA.ownerId, distributionType: 'oncePerIdentity', identityKey: botA.identityKey, signer: botA.signer });
-      return null;
-    } catch (e) {
-      return describeErr(e);
-    }
-  };
+  const claim = () => errorOf(() => sdk.tokens.claim({ dataContractId: contractId, tokenPosition: YAPP_POSITION, identityId: botA.ownerId, distributionType: 'oncePerIdentity', identityKey: botA.identityKey, signer: botA.signer }));
   const before = await yappOf(ctx, botA.ownerId);
   const first = await claim();
   await settle();

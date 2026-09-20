@@ -71,19 +71,17 @@ async function main() {
   // dropped would validate here and be ignored on chain.
   const moderation = contract.config.moderation;
   console.log(`    moderation:       ${moderation ? renderModeration(moderation) : '(none)'}`);
-  const moderatorDeletable = Object.entries(source.documentSchemas)
+  const moderatorDeletable = new Set(Object.entries(source.documentSchemas)
     .filter(([, schema]) => schema.canBeDeletedByModerators)
-    .map(([name]) => name);
-  console.log(`    moderator delete: ${moderatorDeletable.join(', ') || '(none)'}`);
-  for (const name of moderatorDeletable) {
-    // `documentTypeReferences` reports the type consensus enforces, so a
-    // permanentDocument reference at a moderator-deletable type — refused at
-    // registration with 40122 — shows up here first.
-    for (const [referrer] of Object.entries(source.documentSchemas)) {
-      for (const reference of contract.documentTypeReferences(referrer)) {
-        if (reference.documentType === name && reference.type !== 'deletableDocument') {
-          throw new Error(`${referrer}.${reference.path} references moderator-deletable "${name}" as ${reference.type}`);
-        }
+    .map(([name]) => name));
+  console.log(`    moderator delete: ${[...moderatorDeletable].join(', ') || '(none)'}`);
+  // `documentTypeReferences` reports the type consensus enforces, so a
+  // permanentDocument reference at a moderator-deletable type — refused at
+  // registration with 40122 — shows up here first.
+  for (const referrer of Object.keys(source.documentSchemas)) {
+    for (const reference of contract.documentTypeReferences(referrer)) {
+      if (moderatorDeletable.has(reference.documentType) && reference.type !== 'deletableDocument') {
+        throw new Error(`${referrer}.${reference.path} references moderator-deletable "${reference.documentType}" as ${reference.type}`);
       }
     }
   }

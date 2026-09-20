@@ -934,12 +934,13 @@ export function tokenCostFor(docType: string): TokenCostDeclaration | null {
 export function declaredActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
   if (!atLeast('v8')) return null
   const fees = V8_SCHEMAS[docType]?.actionFees
-  const fee = fees?.[action]
+  if (!fees) return null
+  const fee = fees[action]
   if (!fee) return null
   return {
     owner: BigInt(fee.owner ?? 0),
     moderators: BigInt(fee.moderators ?? 0),
-    pricing: fees?.pricing === 'fixed' ? 'fixed' : 'feeMultiplier',
+    pricing: fees.pricing === 'fixed' ? 'fixed' : 'feeMultiplier',
   }
 }
 

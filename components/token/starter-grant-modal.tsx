@@ -65,8 +65,12 @@ export function StarterGrantModal() {
     setBusy(false)
     if (result.success || result.errorCode === 'ALREADY_CLAIMED') {
       markSettled(identityId)
-      toast[result.success ? 'success' : 'error'](result.success ? `${amount} YAPP claimed` : result.error ?? 'Already claimed')
-      if (result.success && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
+      if (result.success) {
+        toast.success(`${amount} YAPP claimed`)
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
+      } else {
+        toast.error(result.error ?? 'Already claimed')
+      }
       setWif('')
       close()
       return
