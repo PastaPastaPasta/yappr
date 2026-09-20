@@ -23,6 +23,7 @@
 import { readFileSync } from 'node:fs';
 import { DataContract, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
+import { renderModeration } from './register-lib.mjs';
 
 /** Any valid 32-byte identifier; schema validation never looks at it. */
 const PLACEHOLDER_ID = '11111111111111111111111111111111';
@@ -69,7 +70,7 @@ async function main() {
   // beta.3 grammar, read back off the PARSED contract: a keyword the parser
   // dropped would validate here and be ignored on chain.
   const moderation = contract.config.moderation;
-  console.log(`    moderation:       ${moderation ? JSON.stringify(moderation) : '(none)'}`);
+  console.log(`    moderation:       ${moderation ? renderModeration(moderation) : '(none)'}`);
   const moderatorDeletable = Object.entries(source.documentSchemas)
     .filter(([, schema]) => schema.canBeDeletedByModerators)
     .map(([name]) => name);

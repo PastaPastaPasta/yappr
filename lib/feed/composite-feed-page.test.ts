@@ -131,6 +131,26 @@ describe('composite feed page', () => {
     expect(page?.posts.map(post => post.id)).toEqual(ids);
   });
 
+  it('marks a quoting post whose quoted id the join proved absent, matched by id not position', async () => {
+    // docs[1] quotes a REMOVED post, docs[2] quotes a live one; the join returns
+    // only the live document and lists the removed id in missingIds.
+    const page = docs.map((doc, i) => ({ ...doc, ...(i === 1 ? { quotedPostId: 'removedAA' } : i === 2 ? { quotedPostId: 'quotedBBB' } : {}) }));
+    const response: { pageDocuments: unknown[]; subResults: unknown[] } = result(names, page);
+    response.subResults[4] = {
+      kind: 'documents',
+      documents: [{ $id: 'quotedBBB', $ownerId: ownerIds[3], $createdAt: 900, content: 'quoted', language: 'en' }],
+      missingIds: ['removedAA'],
+    };
+    mocks.composite.mockResolvedValue(response);
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const { posts } = await loadCompositeFeedPage({ language: 'en', limit: 4 });
+    expect(posts[1].quotedPostRemoved).toBe(true);
+    expect(posts[1].quotedPost).toBeUndefined();
+    expect(posts[2].quotedPostRemoved).toBeUndefined();
+    expect(posts[2].quotedPost?.id).toBe('quotedBBB');
+    expect(posts[0].quotedPostRemoved).toBeUndefined();
+  });
+
   it('should keep tombstones in the raw cursor page and remove them from cards', async () => {
     mocks.composite.mockResolvedValue(result(names, docs.map((doc, i) => ({ ...doc, deleted: i === 3 }))));
     const { loadCompositeFeedPage } = await import('./composite-feed-page');

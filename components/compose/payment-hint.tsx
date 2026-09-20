@@ -16,7 +16,8 @@ export function PaymentHint({ docType }: { docType: 'post' | 'reply' }) {
   const { user } = useAuth()
   const payWith = useSettingsStore((s) => s.payWith)
   const setPayWith = useSettingsStore((s) => s.setPayWith)
-  const [balance, setBalance] = useState<bigint | null>(null)
+  // `undefined` = not fetched yet (render nothing), `null` = fetch failed.
+  const [balance, setBalance] = useState<bigint | null | undefined>(undefined)
   const identityId = user?.identityId
 
   useEffect(() => {
@@ -30,14 +31,14 @@ export function PaymentHint({ docType }: { docType: 'post' | 'reply' }) {
     }
   }, [identityId, docType])
 
-  if (!identityId || !paymentIsChoosable(docType)) return null
+  if (!identityId || !paymentIsChoosable(docType) || balance === undefined) return null
   const plan = planPayment(docType, 'create', balance, payWith)
   const fee = plan.actionFee && plan.actionFee.moderators + plan.actionFee.owner > BigInt(0)
     ? ` + ${(Number(plan.actionFee.moderators + plan.actionFee.owner) / CREDITS_PER_DASH).toFixed(4)} DASH moderation fee`
     : ''
   const text = plan.payWith === 'yapp'
     ? `Pays ${plan.yapp.toString()} YAPP${plan.gasMayBeSponsored ? ', network fee covered by Yappr' : ''}${fee}`
-    : `Pays in credits${plan.fallbackReason === 'insufficient-yapp' ? ' (not enough YAPP)' : ''}${fee}`
+    : `Pays in credits${plan.fallbackReason === 'insufficient-yapp' ? (balance === null ? ' (YAPP balance unavailable)' : ' (not enough YAPP)') : ''}${fee}`
   return (
     <div data-testid="compose-payment-hint" className="flex items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
       <span>{text}</span>

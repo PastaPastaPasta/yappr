@@ -9,10 +9,17 @@ import { moderationService, type DocumentRemoval } from '@/lib/services/moderati
 interface RemovedPostStubProps {
   /** The id the reader expected and the chain no longer has. */
   documentId: string
-  kind: TargetKind
+  /** Omit when the caller cannot tell a post from a reply (an absent detail page). */
+  kind?: TargetKind
   className?: string
   /** `card` renders as a feed item; `embed` as an inline quote box. */
   variant?: 'card' | 'embed'
+  /**
+   * True when a join PROVED the document absent (`missingIds`). Only then does
+   * the stub assert a takedown before the removal record is in hand; a document
+   * that merely failed to load says "unavailable" until a record proves otherwise.
+   */
+  proven?: boolean
 }
 
 /**
@@ -21,22 +28,27 @@ interface RemovedPostStubProps {
  * only trace is the removal record, which this resolves lazily so a page of
  * intact posts pays nothing for it.
  */
-export function RemovedPostStub({ documentId, kind, className, variant = 'embed' }: RemovedPostStubProps) {
+export function RemovedPostStub({ documentId, kind, className, variant = 'embed', proven = false }: RemovedPostStubProps) {
   const [removal, setRemoval] = useState<DocumentRemoval | null | undefined>(undefined)
 
   useEffect(() => {
     let cancelled = false
-    moderationService.getRemovals(kind, [documentId]).then((removals) => {
-      if (!cancelled) setRemoval(removals.get(documentId) ?? null)
-    }).catch(() => {
-      if (!cancelled) setRemoval(null)
-    })
+    // Removal records are kept per document type; an unknown kind asks both.
+    const kinds: TargetKind[] = kind ? [kind] : ['post', 'reply']
+    Promise.all(kinds.map((k) => moderationService.getRemovals(k, [documentId])))
+      .then((pages) => {
+        if (!cancelled) setRemoval(pages.map((page) => page.get(documentId)).find(Boolean) ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) setRemoval(null)
+      })
     return () => {
       cancelled = true
     }
   }, [documentId, kind])
 
   const noun = kind === 'reply' ? 'reply' : 'post'
+  const removed = proven || removal !== null && removal !== undefined
   return (
     <div
       data-testid={`removed-${noun}-${documentId}`}
@@ -50,7 +62,7 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
     >
       <p className="flex items-center gap-2 italic">
         <ShieldExclamationIcon className="h-4 w-4 shrink-0" />
-        This {noun} was removed by the contract&apos;s moderators.
+        {removed ? `This ${noun} was removed by the contract's moderators.` : `This ${noun} is unavailable.`}
       </p>
       {removal?.reason && <p className="mt-1 not-italic">Reason: {removal.reason}</p>}
     </div>

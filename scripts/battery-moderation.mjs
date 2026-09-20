@@ -82,16 +82,19 @@ export async function caseBan(ctx, { prefix, target, writeWhileBanned, writeAfte
     battery.check(`${prefix}a moderator bans ${target.label}`, false, describeErr(e).slice(0, 220));
     return;
   }
-  await sleep(3000);
-  const status = await battery.readback(() => sdk.contracts.moderationStatus({ contractId, identityId: target.ownerId, lists: ['banlist'] }));
-  battery.check(`${prefix}b moderationStatus proves the ban with its reason`, status.banned === true && status.banReason?.text === `${prefix} battery ban`, JSON.stringify(status));
-  battery.expectRejected(`${prefix}c ${target.label}'s create while banned is refused (41107)`, await writeWhileBanned(), BANNED);
+  // A ban outlives the run, so whatever the probes do the unban is attempted.
   try {
-    await sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: target.ownerId, signer: moderator.signer });
-    battery.check(`${prefix}d moderator unbans ${target.label}`, true);
-  } catch (e) {
-    battery.check(`${prefix}d moderator unbans ${target.label}`, false, describeErr(e).slice(0, 220));
-    return;
+    await sleep(3000);
+    const status = await battery.readback(() => sdk.contracts.moderationStatus({ contractId, identityId: target.ownerId, lists: ['banlist'] }));
+    battery.check(`${prefix}b moderationStatus proves the ban with its reason`, status.banned === true && status.banReason?.text === `${prefix} battery ban`, JSON.stringify(status));
+    battery.expectRejected(`${prefix}c ${target.label}'s create while banned is refused (41107)`, await writeWhileBanned(), BANNED);
+  } finally {
+    try {
+      await sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: target.ownerId, signer: moderator.signer });
+      battery.check(`${prefix}d moderator unbans ${target.label}`, true);
+    } catch (e) {
+      battery.check(`${prefix}d moderator unbans ${target.label}`, false, `${describeErr(e).slice(0, 200)} — ${target.label} MAY STILL BE BANNED; unban by hand`);
+    }
   }
   await sleep(3000);
   const after = await battery.readback(() => sdk.contracts.moderationStatus({ contractId, identityId: target.ownerId, lists: ['banlist'] }));

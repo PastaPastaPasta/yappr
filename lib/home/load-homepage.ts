@@ -57,9 +57,10 @@ const FEATURED_LIMIT = 5;
  * Ranked pages on PREALLOCATED indexes (v4–v7) carry zero-count groups for
  * never-liked posts, so the page over-asks and trims. v8 lost preallocation
  * (a moderator-deletable post is not a permanentDocument target) and its
- * ranked pages hold liked posts only.
+ * ranked pages hold liked posts only — but a moderator-removed post drops out
+ * of the hydrated page, so a little headroom keeps five featured cards.
  */
-const rankedLimit = () => (likeCountsArePreallocated() ? 10 : FEATURED_LIMIT);
+const rankedLimit = () => (likeCountsArePreallocated() ? 10 : FEATURED_LIMIT + 2);
 const TOP_USERS_LIMIT = 6;
 
 export async function loadHomepage(): Promise<HomepageSnapshot> {

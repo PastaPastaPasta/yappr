@@ -9,16 +9,19 @@
  *
  * ## Two things this battery does that the v7 one did not
  *
- * 1. **Document ids commit to the identity contract nonce** (#4859). A create
- *    that goes through `sdk.documents.create` gets its id assigned by the SDK
- *    and handed back on the returned Document, and THAT is the id every case
- *    reads. The post/reply creates cannot go that way: they must carry an
+ * 1. **Document ids commit to the identity contract nonce** (#4859). The
+ *    post/reply creates here are manual batches — they must carry an
  *    `$actionFeeAgreement` (40132 without), which `sdk.documents.create` has no
- *    option for, so they are built as a manual batch. A manual batch has to
- *    set the document's v1 id itself — `dsha256("dash:document-id:v1" ‖
- *    contract ‖ owner ‖ type ‖ entropy ‖ nonce u64 BE)` — and the id the proof
- *    result returns is compared against it (case a3), which is the live proof
- *    of the derivation the client will need.
+ *    option for — so they set the document's v1 id themselves:
+ *    `dsha256("dash:document-id:v1" ‖ contract ‖ owner ‖ type ‖ entropy ‖ nonce
+ *    u64 BE)`, and the id the proof result returns is compared against it
+ *    (case a3): the live proof of the derivation the client needs.
+ *
+ *    Every OTHER create goes through verify-lib's `attemptCreate`, which on
+ *    this branch still probes the pre-beta.3 `Document.generateId` id. Those
+ *    cases (m1, m2, t2, a1 and the blog/storefront moderated cases) score
+ *    correctly only once `beta3/sdk-and-ids` (PR A) has taught verify-lib to
+ *    read the id off the create RESULT — run this battery after that merge.
  *
  * 2. **A moderator signs.** The contract owner (`--moderator maker`, the
  *    default) or an appointed moderator (`--moderator bot:2`) bans, suspends,
@@ -258,6 +261,7 @@ async function caseM1Ban(ctx) {
     check('m1b moderator bans B', false, describeErr(e).slice(0, 220));
     return;
   }
+  try {
   await settle();
   const status = await standingOf(ctx, botB.ownerId);
   check('m1c moderationStatus proves the ban with its reason', status.banned === true && status.banReason?.text === 'v8 battery ban', JSON.stringify(status));
@@ -280,12 +284,14 @@ async function caseM1Ban(ctx) {
     const gone = (await fetchDocument(sdk, contractId, 'follow', followId)) === null;
     check('m1f B\'s DELETE while banned still lands (a ban bars writes, not exits)', gone, gone ? '' : `still present; ${(deleteError ?? '').slice(0, 160)}`);
   }
-
-  try {
-    await sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer });
-    check('m1g moderator unbans B', true);
-  } catch (e) {
-    check('m1g moderator unbans B', false, describeErr(e).slice(0, 220));
+  } finally {
+    // A ban outlives the run: whatever the probes did, B is unbanned.
+    try {
+      await sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer });
+      check('m1g moderator unbans B', true);
+    } catch (e) {
+      check('m1g moderator unbans B', false, `${describeErr(e).slice(0, 200)} — B MAY STILL BE BANNED; unban by hand`);
+    }
   }
   await settle();
   const after = await standingOf(ctx, botB.ownerId);
@@ -306,17 +312,19 @@ async function caseM2Suspend(ctx) {
   }
   const status = await standingOf(ctx, botB.ownerId);
   check('m2b moderationStatus proves the suspension and its end', status.suspendedUntil !== undefined && Number(status.suspendedUntil) === until, JSON.stringify(status));
-  const post = await createPost(ctx, botB, postData({ content: 'suspended post' }), 'a post while suspended');
-  check('m2c B\'s post while suspended is refused (41108)', post === null, post ? `ACCEPTED id=${post}` : '');
-  if (post === null) {
-    const probe = await attemptCreate(sdk, botB, { contractId, docType: 'bookmark', data: { postId: bs58.decode(ctx.posts.fixture) } });
-    expectRejected('m2d …and so is an unpriced create, for the same reason', probe, SUSPENDED);
+  const { agreement } = await feeAgreement(ctx, POST_FEE);
+  expectRejected('m2c B\'s post while suspended is refused (41108)', await manualCreate(ctx, botB, { docType: 'post', data: postData({ content: 'suspended post' }), agreement }), SUSPENDED);
+  // `bookmark.ownerAndPost` is unique and m1i already bookmarked the fixture, so
+  // the unpriced probes here target a post of their own (A's, so B may bookmark it).
+  const target = ctx.posts.m2 ?? (ctx.posts.m2 = await createPost(ctx, ctx.botA, postData({ content: 'm2 bookmark target' }), 'the m2 target'));
+  if (target) {
+    expectRejected('m2d …and so is an unpriced create, for the same reason', await attemptCreate(sdk, botB, { contractId, docType: 'bookmark', data: { postId: bs58.decode(target) } }), SUSPENDED);
   }
   const remaining = until - Date.now() + 8000;
   console.log(`     (waiting ${Math.ceil(remaining / 1000)} s for the suspension to lapse)`);
   await settle(Math.max(remaining, 0));
   // The lapsed entry is swept by B's first transition at or after `until`.
-  expectAccepted('m2e B\'s create lands once the suspension lapsed', await attemptCreate(sdk, botB, { contractId, docType: 'bookmark', data: { postId: bs58.decode(ctx.posts.fixture) } }));
+  if (target) expectAccepted('m2e B\'s create lands once the suspension lapsed', await attemptCreate(sdk, botB, { contractId, docType: 'bookmark', data: { postId: bs58.decode(target) } }));
   const swept = await standingOf(ctx, botB.ownerId);
   check('m2f the lapsed suspension was swept by that write', swept.suspendedUntil === undefined, JSON.stringify(swept));
 }
@@ -529,7 +537,7 @@ async function caseL1FirstLikeCounts(ctx) {
   check('l1c byPost counts exactly 1', (await countBy(sdk, contractId, 'like', 'postId', post)) === 1);
   const ranked = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 100 }));
   const entry = ranked.entries.find((e) => e.groupValue === post);
-  check('l1d the ranked byPost axis carries the post at 1 (and no zero-count groups)', Number(entry?.value ?? -1) === 1 && ranked.entries.every((e) => e.value !== 0n), `groups=${ranked.entries.length}`);
+  check('l1d the ranked byPost axis carries the post at 1 (and no zero-count groups)', Number(entry?.value ?? -1) === 1 && ranked.entries.every((e) => Number(e.value) !== 0), `groups=${ranked.entries.length}`);
 }
 
 // ---- Registry ------------------------------------------------------------------------
@@ -541,8 +549,18 @@ async function caseL1FirstLikeCounts(ctx) {
  * every later one sees the same error.
  */
 async function ensurePrepared(ctx) {
-  if (ctx.prepared) return;
-  ctx.prepared = true;
+  if (ctx.prepared === true) return;
+  if (ctx.prepared instanceof Error) throw ctx.prepared;
+  try {
+    await prepare(ctx);
+    ctx.prepared = true;
+  } catch (e) {
+    ctx.prepared = e instanceof Error ? e : new Error(String(e));
+    throw ctx.prepared;
+  }
+}
+
+async function prepare(ctx) {
   const contract = await readback(() => ctx.sdk.contracts.fetch(ctx.contractId));
   ctx.ownerId = contract.ownerId.toBase58();
   ctx.tokenId = await readback(() => ctx.sdk.tokens.calculateId(ctx.contractId, YAPP_POSITION));

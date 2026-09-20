@@ -445,7 +445,7 @@ export function PostCard({
 
             {!isTombstoned && quotedPostLoading && <EmbeddedPostSkeleton />}
             {!isTombstoned && quotedPostUnavailable && (quotedTarget && quotedTarget.where !== 'blogPost' && referencesMayDangle()
-              ? <RemovedPostStub documentId={quotedTarget.id} kind={quotedTarget.where} />
+              ? <RemovedPostStub documentId={quotedTarget.id} kind={quotedTarget.where} proven={post.quotedPostRemoved === true} />
               : <EmbeddedPostUnavailable />)}
             {!isTombstoned && quotedPost && (isEmbeddedBlogPostLike(quotedPost) ? <EmbeddedBlogPostCard post={quotedPost} /> : <EmbeddedPostCard post={quotedPost} />)}
 

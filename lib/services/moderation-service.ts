@@ -93,7 +93,8 @@ const reasonText = (reason: ContractModerationReason | undefined): string | null
   reason === undefined ? null : reason.text;
 
 class ModerationService {
-  private teamCache: ModerationTeam | null = null;
+  /** The in-flight or resolved team fetch: a feed of cards asks once, not once per card. */
+  private teamPromise: Promise<ModerationTeam> | null = null;
   private standingCache = new Map<string, { standing: ModerationStanding; at: number }>();
   /** Standing rarely changes; a page of cards must not re-query it per card. */
   private static readonly STANDING_TTL_MS = 60_000;
@@ -107,17 +108,21 @@ class ModerationService {
    */
   async getTeam(): Promise<ModerationTeam | null> {
     if (!contractIsModerated()) return null;
-    if (this.teamCache) return this.teamCache;
-    const sdk = await getEvoSdk();
-    const contract = await sdk.contracts.fetch(YAPPR_CONTRACT_ID);
-    if (!contract) throw new Error('Social contract not found');
-    const moderation = contract.config.moderation;
-    const moderators = moderation?.moderators;
-    const appointed = moderators && moderators.$type === 'appointedModerators'
-      ? moderators.identities.map((id) => identifierToBase58(id) ?? String(id))
-      : [];
-    this.teamCache = { ownerId: contract.ownerId.toBase58(), appointed };
-    return this.teamCache;
+    if (!this.teamPromise) {
+      this.teamPromise = (async () => {
+        const sdk = await getEvoSdk();
+        const contract = await sdk.contracts.fetch(YAPPR_CONTRACT_ID);
+        if (!contract) throw new Error('Social contract not found');
+        const moderators = contract.config.moderation?.moderators;
+        const appointed = moderators && moderators.$type === 'appointedModerators'
+          ? moderators.identities.map((id) => identifierToBase58(id) ?? String(id))
+          : [];
+        return { ownerId: contract.ownerId.toBase58(), appointed };
+      })();
+      // A failed fetch must not pin "not a moderator" for the session.
+      this.teamPromise.catch(() => { this.teamPromise = null; });
+    }
+    return this.teamPromise;
   }
 
   /** True when `identityId` is the contract owner or an appointed moderator. */
@@ -361,10 +366,10 @@ class ModerationService {
     if (code(41100) || lower.includes('moderationnotenabled')) {
       return { success: false, error: 'The contract declares no moderation', errorCode: 'NOT_MODERATED' };
     }
-    if (code(41111) || lower.includes('alreadyclaimedthisepoch')) {
+    if (code(41111) || /already.{0,30}claimed.{0,30}epoch|alreadyclaimedthisepoch/.test(lower)) {
       return { success: false, error: 'The moderators pot was already paid out this epoch', errorCode: 'ALREADY_CLAIMED' };
     }
-    if (code(41112) || lower.includes('nothingtoclaim')) {
+    if (code(41112) || /nothing.{0,10}to.{0,10}claim/.test(lower)) {
       return { success: false, error: 'The moderators pot is empty', errorCode: 'NOTHING_TO_CLAIM' };
     }
     if (lower.includes('private key not found')) {

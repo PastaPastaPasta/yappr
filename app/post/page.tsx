@@ -242,9 +242,10 @@ function PostDetailContent() {
             </div>
           </>
         ) : referencesMayDangle() ? (
-          // On a moderated contract an absent post is most likely a takedown;
-          // the stub resolves the removal record and says why, when there is one.
-          <RemovedPostStub documentId={postId} kind="post" variant="card" />
+          // On a moderated contract an absent document may be a takedown: the
+          // stub looks for a post OR reply removal record and only claims one
+          // when it finds it; otherwise it says "unavailable".
+          <RemovedPostStub documentId={postId} variant="card" />
         ) : (
           <div className="p-8 text-center">
             <p className="text-gray-500">Post not found</p>

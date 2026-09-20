@@ -31,9 +31,13 @@ import { auditModeration, requireModeratorsExist, withModerators } from './regis
 const SOCIAL_PLACEHOLDER = 'SOCIAL_CONTRACT_ID';
 const DRY_RUN_OWNER = '11111111111111111111111111111111';
 
-/** The config a bare-schemas contract file registers with (no moderation). */
+/**
+ * The config a bare-schemas contract file registers with (no moderation) — the
+ * beta.2 block, unchanged, so DM/pollr/vault/… republish exactly as before. A
+ * moderated cut carries its own `config` (format version 2) in its file.
+ */
 const DEFAULT_CONFIG = {
-  $formatVersion: '2', canBeDeleted: false, readonly: false, keepsHistory: false,
+  $formatVersion: '1', canBeDeleted: false, readonly: false, keepsHistory: false,
   documentsKeepHistoryContractDefault: false, documentsMutableContractDefault: true,
   documentsCanBeDeletedContractDefault: true, requiresIdentityEncryptionBoundedKey: null,
   requiresIdentityDecryptionBoundedKey: null, sizedIntegerTypes: true,

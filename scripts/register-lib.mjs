@@ -7,7 +7,7 @@ import bs58 from 'bs58';
 import { describeErr } from './owner-keys.mjs';
 
 /** The parsed config hands appointed identities back as bytes; print them as ids. */
-function renderModeration(moderation) {
+export function renderModeration(moderation) {
   const identities = moderation.moderators?.identities;
   if (!identities) return JSON.stringify(moderation);
   const rendered = identities.map((id) => (typeof id === 'string' ? id : bs58.encode(Uint8Array.from(Object.values(id)))));

@@ -220,25 +220,30 @@ function printSchemaAudit(documentSchemas) {
   // A permanentDocument target that stays deletable — by its owner OR by a
   // moderator — is refused at registration (40122), so surface the mismatch
   // here where the fix is obvious.
+  // Every reference type seen per target, so a half-converted cut (one
+  // permanentDocument left beside eight deletableDocument) cannot hide.
   const targets = new Map();
-  for (const schema of Object.values(documentSchemas)) {
-    for (const property of Object.values(schema.properties ?? {})) {
-      const { refersTo } = property;
-      if (refersTo?.documentType) targets.set(refersTo.documentType, refersTo.type);
+  for (const [name, schema] of Object.entries(documentSchemas)) {
+    for (const [property, { refersTo }] of Object.entries(schema.properties ?? {})) {
+      if (!refersTo?.documentType) continue;
+      if (!targets.has(refersTo.documentType)) targets.set(refersTo.documentType, []);
+      targets.get(refersTo.documentType).push({ from: `${name}.${property}`, type: refersTo.type });
     }
   }
-  for (const [target, type] of targets) {
+  for (const [target, references] of targets) {
     const schema = documentSchemas[target];
     if (!schema) throw new Error(`refersTo names document type "${target}", which this contract does not define`);
     const deletable = schema.canBeDeleted !== false || schema.canBeDeletedByModerators === true;
-    if (type === 'permanentDocument' && deletable) {
-      throw new Error(`document type "${target}" is a permanentDocument target but can be deleted (by its owner or by moderators)`);
-    }
-    if (type === 'deletableDocument' && !deletable) {
-      throw new Error(`document type "${target}" is a deletableDocument target but nothing can delete it (40131)`);
+    for (const { from, type } of references) {
+      if (type === 'permanentDocument' && deletable) {
+        throw new Error(`${from}: "${target}" is a permanentDocument target but can be deleted (by its owner or by moderators)`);
+      }
+      if (type === 'deletableDocument' && !deletable) {
+        throw new Error(`${from}: "${target}" is a deletableDocument target but nothing can delete it (40131)`);
+      }
     }
   }
-  console.log(`  reference targets: ${[...targets].map(([t, type]) => `${t}(${type})`).join(', ') || 'none'}`);
+  console.log(`  reference targets: ${[...targets].map(([t, refs]) => `${t}(${[...new Set(refs.map((r) => r.type))].join('|')})`).join(', ') || 'none'}`);
 }
 
 /**
