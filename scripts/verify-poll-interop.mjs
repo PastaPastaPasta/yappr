@@ -30,6 +30,7 @@ import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
 import { connectSdk } from './sdk-env.mjs';
+import { deriveDocumentId } from './seed/seed-lib.mjs';
 
 const SDK_TIMEOUT_MS = 30000;
 /** DIP-30: lower 40 bits of the identity contract nonce are the sequence number. */
@@ -53,8 +54,9 @@ function check(name, condition, detail = '') {
   if (!condition) failures += 1;
 }
 
-function canonicalDoc({ contractId, docType, ownerId, entropy, data }) {
-  const idBytes = Document.generateId(docType, ownerId, contractId, entropy);
+/** The id commits to the create transition's nonce (protocol 14), so it is derived from the nonce the batch carries. */
+function canonicalDoc({ contractId, docType, ownerId, entropy, data, nonce }) {
+  const idBytes = deriveDocumentId({ contractId, ownerId, docType, entropy, nonce });
   const doc = Document.fromObject(
     {
       $formatVersion: '0',
@@ -97,7 +99,7 @@ async function createDocumentsBatch(sdk, signerInfo, { contractId, docType, data
   const nonce = (rawNonce & SEQUENCE_MASK) + 1n;
 
   const built = datas.map((data) =>
-    canonicalDoc({ contractId, docType, ownerId, entropy: crypto.getRandomValues(new Uint8Array(32)), data })
+    canonicalDoc({ contractId, docType, ownerId, entropy: crypto.getRandomValues(new Uint8Array(32)), data, nonce })
   );
   const batched = built.map(({ doc }) => {
     const create = new DocumentCreateTransition({ document: doc, identityContractNonce: nonce });

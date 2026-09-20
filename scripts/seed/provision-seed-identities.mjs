@@ -481,7 +481,7 @@ async function phaseProfile(handle, ledger, only, personasByIdx, parallel) {
       if (!identity) throw new Error(`identity ${entry.identityId} not readable`);
       const identityKey = identity.getPublicKeyById(CRITICAL_AUTH_KEY_ID);
       const signer = buildSignerFor(entry);
-      const { document, id } = buildDocument({
+      const { document } = buildDocument({
         contractId,
         docType: 'profile',
         ownerId: entry.identityId,
@@ -503,8 +503,13 @@ async function phaseProfile(handle, ledger, only, personasByIdx, parallel) {
         } else if (WAIT_MAYBE_LANDED.test(text) || TRANSPORT_COLLAPSE.test(text)) {
           if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
           await sleep(3000);
-          const landed = await readback(handle, () => sdk.documents.get(contractId, 'profile', id));
-          if (!landed) throw e;
+          // The id is only known from a create that RETURNED (protocol 14: it is
+          // derived from the nonce the SDK picked); profile is unique by $ownerId,
+          // so read it back the same way the idempotency check above does.
+          const landed = await readback(handle, () => sdk.documents.query({
+            dataContractId: contractId, documentTypeName: 'profile', where: [['$ownerId', '==', entry.identityId]], limit: 1,
+          }));
+          if (!landed || landed.size === 0) throw e;
         } else {
           throw e;
         }

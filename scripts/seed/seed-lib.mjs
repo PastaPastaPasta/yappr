@@ -585,13 +585,55 @@ export function appendProgress(record, file = PROGRESS_FILE) {
 
 // ---- Documents ----------------------------------------------------------------
 
+export const randomEntropy = () => crypto.getRandomValues(new Uint8Array(32));
+
+const DOCUMENT_ID_V1_DOMAIN_TAG = new TextEncoder().encode('dash:document-id:v1');
+
+/**
+ * Protocol 14 document id (platform#4859; mirror of `lib/document-id.ts`, pinned
+ * to the same rs-dpp test vector by the self-test):
+ *   dsha256("dash:document-id:v1" || contractId || ownerId || typeName || entropy || nonce as u64 BE)
+ * The id commits to the identity contract nonce of the create transition, so it
+ * exists only once that nonce is assigned. `Document.generateId` still returns
+ * the pre-14 entropy-only id, which consensus now refuses.
+ */
+export function deriveDocumentId({ contractId, ownerId, docType, entropy, nonce }) {
+  const idBytes = (v, label) => {
+    const bytes = typeof v === 'string' ? bs58.decode(v) : v;
+    if (bytes.length !== 32) throw new Error(`${label} must be 32 bytes`);
+    return bytes;
+  };
+  if (entropy.length !== 32) throw new Error('entropy must be 32 bytes');
+  const nonceBytes = new Uint8Array(8);
+  new DataView(nonceBytes.buffer).setBigUint64(0, BigInt(nonce));
+  const preimage = new Uint8Array([
+    ...DOCUMENT_ID_V1_DOMAIN_TAG,
+    ...idBytes(contractId, 'contractId'),
+    ...idBytes(ownerId, 'ownerId'),
+    ...new TextEncoder().encode(docType),
+    ...entropy,
+    ...nonceBytes,
+  ]);
+  return sha256(sha256(preimage));
+}
+
 /**
  * `Document.fromObject` with raw-byte identifiers — the only construction that
  * survives wasm-sdk 4.1+ (the `Document` constructor corrupts Uint8Array
  * properties). Mirrors scripts/verify-v4.mjs `buildDocument`.
+ *
+ * The id a create carries depends on its identity contract nonce (protocol 14):
+ *  - pass `nonce` when the transition is built by hand with a known nonce
+ *    (pipeline.mjs) — the id is derived here and is the one Platform stores;
+ *  - pass `id` for a replace or a delete of an existing document;
+ *  - pass neither for a create that goes through `sdk.documents.create()`: the
+ *    SDK assigns the nonce, derives the id, sets it back on `document` and
+ *    returns the confirmed Document. The `$id` built here is then a PLACEHOLDER
+ *    and the returned `id` is `null` — read the real one with `createdId()`.
  */
-export function buildDocument({ contractId, docType, ownerId, data, entropy, revision = 1n, createdAt, id }) {
-  const idBytes = id ?? Document.generateId(docType, ownerId, contractId, entropy);
+export function buildDocument({ contractId, docType, ownerId, data, entropy, revision = 1n, createdAt, id, nonce }) {
+  const idBytes = id
+    ?? (nonce !== undefined ? deriveDocumentId({ contractId, ownerId, docType, entropy, nonce }) : randomEntropy());
   const document = Document.fromObject(
     {
       $formatVersion: '0',
@@ -606,7 +648,69 @@ export function buildDocument({ contractId, docType, ownerId, data, entropy, rev
     },
     PlatformVersion.current()
   );
-  return { document, id: bs58.encode(idBytes) };
+  return { document, id: id || nonce !== undefined ? bs58.encode(idBytes) : null };
+}
+
+/**
+ * The id of a document `sdk.documents.create()` just stored, from the confirmed
+ * Document it RETURNED. Deliberately not read off the caller's document: the SDK
+ * only writes the final id back onto it after the wait succeeds, so on a throw
+ * (the DAPI 504 quirk) the caller's `$id` is still the placeholder and trusting
+ * it would "confirm" a document that does not exist. A create that threw landed
+ * (if it landed) under an id nobody client-side knows — read it back by value
+ * (`findRecentByValues`) or not at all.
+ */
+export function createdId(created) {
+  const raw = created?.id;
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === 'string') return raw;
+  if (typeof raw.toBase58 === 'function') return raw.toBase58();
+  return bs58.encode(Uint8Array.from(raw));
+}
+
+/** Base58 of an identifier however a query surface hands it back (string, Identifier, bytes). */
+export function asBase58(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value.toBase58 === 'function') return value.toBase58();
+  return bs58.encode(Uint8Array.from(value));
+}
+
+/** Value equality between a field as written and as Platform returns it (BigInt integers, byte arrays). */
+function sameValue(written, stored) {
+  if (written instanceof Uint8Array) return stored !== undefined && stored !== null && asBase58(stored) === bs58.encode(written);
+  if (typeof written === 'bigint' || typeof stored === 'bigint') return BigInt(written) === BigInt(stored);
+  if (typeof written === 'object' && written !== null) return JSON.stringify(written) === JSON.stringify(stored);
+  return written === stored;
+}
+
+/**
+ * The stored id of a document known only by its values — the readback for a
+ * create that threw after broadcasting. From protocol 14 the id of a document
+ * is derived from the nonce `documents.create()` picked internally, so a create
+ * that landed but reported an error left no id behind; this scans the owner's
+ * most recent documents of the type (`$ownerId` is indexed on every stored
+ * social doctype, `$createdAt` on most) for one whose every written field
+ * matches. Returns the base58 id, or `null`. A stored doctype with neither a
+ * unique index nor a distinctive value set (two identical posts by one author
+ * in the same run) cannot be told apart this way, and a retry after such a
+ * throw may write the document twice — the residual duplicate risk of the
+ * nonce-committed id, accepted and logged rather than hidden.
+ */
+export async function findRecentByValues(sdk, { contractId, docType, ownerId, data, limit = 20 }) {
+  const base = { dataContractId: contractId, documentTypeName: docType, where: [['$ownerId', '==', ownerId]], limit };
+  let result;
+  try {
+    result = await sdk.documents.query({ ...base, orderBy: [['$createdAt', 'desc']] });
+  } catch {
+    result = await sdk.documents.query(base); // a doctype whose owner index carries no $createdAt
+  }
+  const docs = result instanceof Map ? [...result.values()] : Object.values(result ?? {});
+  for (const doc of docs) {
+    const fields = doc?.toObject ? doc.toObject() : doc;
+    if (Object.entries(data).every(([name, value]) => sameValue(value, fields?.[name]))) return asBase58(fields.$id ?? doc.id);
+  }
+  return null;
 }
 
 /** Token-payment agreement for token-priced doctypes (post/reply/like/likeReply/repost). */
@@ -620,8 +724,6 @@ export function paymentInfo(tokenCost) {
       }
     : {};
 }
-
-export const randomEntropy = () => crypto.getRandomValues(new Uint8Array(32));
 
 // ---- Resilient SDK handle ------------------------------------------------------
 //
