@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
+import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
 import { logger } from '@/lib/logger'
 import type { Post } from '@/lib/types'
 import { canBookmark, canRepost, type TargetKind } from '@/lib/contract-topology'
@@ -18,7 +19,8 @@ export interface EngagementSnapshot {
 }
 
 /** Frozen accounts cannot spend at all, so say that instead of offering YAPP. */
-function reportSpendError(error: unknown, buyReason: string, fallback: string) {
+function reportSpendError(error: unknown, viewerId: string | undefined, buyReason: string, fallback: string) {
+  if (reportBarredWrite(error, viewerId)) return
   if (isFrozenBalanceError(error)) toast.error(categorizeError(error))
   else if (!handleInsufficientYapp(error, buyReason)) toast.error(fallback)
 }
@@ -78,7 +80,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       setLiked(wasLiked)
       setLikes(prevLikes)
       logger.error('Like error:', error)
-      reportSpendError(error, 'You need YAPP to like posts. Buy some to continue.', 'Failed to update like. Please try again.')
+      reportSpendError(error, viewerId, 'You need YAPP to like posts. Buy some to continue.', 'Failed to update like. Please try again.')
     } finally {
       setLikeLoading(false)
     }
@@ -104,7 +106,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       setReposted(wasReposted)
       setReposts(prevReposts)
       logger.error('Repost error:', error)
-      reportSpendError(error, 'You need YAPP to repost. Buy some to continue.', 'Failed to update repost. Please try again.')
+      reportSpendError(error, viewerId, 'You need YAPP to repost. Buy some to continue.', 'Failed to update repost. Please try again.')
     } finally {
       setRepostLoading(false)
     }

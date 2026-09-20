@@ -42,6 +42,8 @@ import { SavedAddressesSettings } from '@/components/settings/saved-addresses-se
 import { StorachaSettings } from '@/components/settings/storacha-settings'
 import { PinataSettings } from '@/components/settings/pinata-settings'
 import { ModerationSettings } from '@/components/settings/moderation-settings'
+import { ContractModerationSettings } from '@/components/settings/contract-moderation-settings'
+import { useIsModerator } from '@/hooks/use-is-moderator'
 import { DeveloperSettings } from '@/components/settings/developer-settings'
 import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -53,7 +55,7 @@ import { UsernameModal } from '@/components/dpns/username-modal'
 type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'developer' | 'about' | 'moderation'
 const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'privateFeed', 'storage', 'appearance', 'developer', 'about', 'moderation']
 
-const MODERATION_SECTION = { id: 'moderation', label: 'Moderation', icon: NoSymbolIcon, description: 'Freeze or slash YAPP balances (token authority only)' }
+const MODERATION_SECTION = { id: 'moderation', label: 'Moderation', icon: NoSymbolIcon, description: 'Ban, suspend and remove content; freeze or slash YAPP (moderators only)' }
 
 const settingsSections = [
   { id: 'account', label: 'Account', icon: UserIcon, description: 'Manage your account details' },
@@ -98,9 +100,13 @@ function SettingsPage() {
   const searchParams = useSearchParams()
   const { user, logout } = useAuth()
   const isAuthority = user?.identityId === YAPP_TOKEN_AUTHORITY_ID
-  // Moderation is authority-only; keep the visible-sections list in one place so
-  // the menu, the section title, and the render gate can't drift apart.
-  const visibleSections = isAuthority ? [...settingsSections, MODERATION_SECTION] : settingsSections
+  // The contract's moderation team (owner + appointed moderators, read off the
+  // contract) gets contract moderation; the token authority gets YAPP
+  // freeze/slash. Keep the visible-sections list in one place so the menu, the
+  // section title, and the render gate can't drift apart.
+  const isContractModerator = useIsModerator()
+  const canModerate = isAuthority || isContractModerator
+  const visibleSections = canModerate ? [...settingsSections, MODERATION_SECTION] : settingsSections
   const { theme, setTheme } = useTheme()
   const [encryptionKeyVersion, setEncryptionKeyVersion] = useState(0)
   const handleEncryptionKeyChanged = useCallback(() => {
@@ -759,7 +765,12 @@ function SettingsPage() {
       case 'about':
         return renderAboutSettings()
       case 'moderation':
-        return isAuthority ? <ModerationSettings /> : renderMainSettings()
+        return canModerate ? (
+          <div className="space-y-4">
+            {isContractModerator && <ContractModerationSettings />}
+            {isAuthority && <ModerationSettings />}
+          </div>
+        ) : renderMainSettings()
       default:
         return renderMainSettings()
     }
