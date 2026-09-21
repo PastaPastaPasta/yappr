@@ -8,9 +8,13 @@
  */
 import bs58 from 'bs58';
 import { normalizeId, reportSelfTest } from '../../battery-lib.mjs';
-import { POST_LINK_BASE, WAIT_MAYBE_LANDED, YAPP_TOKEN_POSITION, atLeastTopology, describeErr, profileContractId, readback, sleep, tokenCostFor } from '../seed-lib.mjs';
 import {
-  actorsFor, counts, createDocWriter, ensureTokens, entropySource, fakeId, loadCheckpoint, network, pick, printTable,
+  DUPLICATE_UNIQUE, PREFER_CONTRACT_OWNER, POST_LINK_BASE, WAIT_MAYBE_LANDED, YAPP_TOKEN_POSITION, atLeastTopology,
+  buildDocument, createDocument, createdId, defaultTopology, describeErr, paymentInfo, profileContractId, readback, sleep,
+  tokenCostFor,
+} from '../seed-lib.mjs';
+import {
+  actorsFor, counts, ensureTokens, entropySource, fakeId, loadCheckpoint, network, pick, printTable,
   rngFrom, saveCheckpoint, shuffled, weightedPick,
 } from '../feature-seed-lib.mjs';
 
@@ -339,7 +343,71 @@ async function run({ args, handle, battery, socialId }) {
     }
   }
 
-  // ---- VERIFY: the app's own read — newest 100 incoming transfers, filtered by note.
+  // ---- RECORD: on v9+, the transfer is only the payment; the tip is a document
+  // citing it. Without this step a seeded corpus moves YAPP that no post shows,
+  // because the app reads tips off these documents and never off the transfers.
+  //
+  // Separate from the send loop on purpose: a transfer whose tip could not be
+  // recorded is not a lost tip, and a resumed run records it without moving
+  // money again. The citation is checked by consensus, so a tip that lands here
+  // is one the app can render with no verification of its own.
+  if (atLeastTopology(args.topology, 'v9')) {
+    const tipCost = tokenCostFor('tip', args.topology)?.amount;
+    const entropyFor = entropySource(`yappr/tips-seed/${socialId}`);
+    let recorded = 0;
+    const unrecorded = [];
+
+    await Promise.all([...actors.values()].map(async (actor) => {
+      for (const tip of plan.filter((item) => item.sender === actor.personaIdx)) {
+        const done = state.done[tip.seq];
+        const docType = TIP_DOCTYPE[tip.kind];
+        // A profile tip names nothing to attach to; it stays a bare transfer.
+        if (!done?.transferId || !docType || done.tipId) continue;
+
+        const data = {
+          transferId: bs58.decode(done.transferId),
+          amount: Number(tip.amount),
+          recipientId: bs58.decode(tip.to),
+          [tip.kind === 'post' ? 'postId' : 'replyId']: bs58.decode(tip.targetId),
+        };
+        const entropy = entropyFor(`tip/${tip.seq}`);
+        const { document } = buildDocument({ contractId: socialId, docType, ownerId: actor.ownerId, data, entropy });
+        try {
+          const created = await actor.lock(() => createDocument(handle.sdk, {
+            contractId: socialId, actor, docType, document, data, entropy,
+            payment: paymentInfo(tipCost, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }),
+          }));
+          // Protocol 14 derives the stored id from the nonce the SDK picked, so
+          // it is only knowable from what the create returned.
+          state.done[tip.seq] = { ...done, tipId: createdId(created) ?? true };
+          recorded += 1;
+        } catch (error) {
+          const text = describeErr(error);
+          // The unique index on transferId refusing this means the tip is
+          // already recorded — an earlier run got there, which is success.
+          if (DUPLICATE_UNIQUE.test(text)) {
+            state.done[tip.seq] = { ...done, tipId: true };
+            recorded += 1;
+          } else {
+            unrecorded.push([tip.seq, actor.label, docType, text.slice(0, 60)]);
+          }
+        }
+        saveCheckpoint(args.state, state);
+      }
+    }));
+
+    console.log(`  ${recorded} tip document(s) recorded on ${args.topology}`);
+    if (unrecorded.length > 0) {
+      printTable([['tip', -4], ['sender', 18], ['type', 10], ['error', 60]], unrecorded.slice(0, 10),
+        `${unrecorded.length} transfer(s) sent but not yet recorded as tips — re-run to attach them`);
+    }
+  }
+
+  // ---- VERIFY: that the PAYMENTS landed, by the transfer rows they wrote.
+  // On v9 this is no longer the app's own read — the app reads the tip
+  // documents recorded above, and the per-target totals below are what those
+  // documents should agree with. Keeping the transfer-side view is the point:
+  // it is the independent number to compare the documents against.
   const byTarget = new Map();
   const perAuthor = [];
   for (const author of state.authors) {
@@ -367,7 +435,21 @@ async function run({ args, handle, battery, socialId }) {
   printTable([['author', 18], ['YAPP received', -13], ['transfers', -9], ['tip-noted', -9], ['profile', 46]],
     perAuthor.sort((a, b) => Number(b.received - a.received))
       .map((a) => [a.label, String(a.received), a.rows, a.noted, `/user?id=${a.id}`]),
-    'per author (what the profile "YAPP received" reads)');
+    'per author (every incoming transfer, tips and everything else)');
+
+  // What the app will actually show on v9: one count-tree read per author, the
+  // same query `provedTipService.countTipsReceived` makes.
+  if (atLeastTopology(args.topology, 'v9')) {
+    const tipCounts = [];
+    for (const author of state.authors) {
+      const [onPosts, onReplies] = await Promise.all(Object.values(TIP_DOCTYPE).map((docType) =>
+        battery.countBy(docType, [['recipientId', '==', author.id]], socialId).catch(() => 0)));
+      tipCounts.push([author.label, onPosts, onReplies, onPosts + onReplies, `/user?id=${author.id}`]);
+    }
+    printTable([['author', 18], ['tip', -4], ['tipReply', -8], ['total', -5], ['profile', 46]],
+      tipCounts.sort((a, b) => b[3] - a[3]),
+      'per author (the proved tip COUNT the profile reads, off the count trees)');
+  }
 
   const confirmed = Object.keys(state.done).length;
   console.log(`\n${confirmed}/${plan.length} planned tips confirmed on chain; checkpoint ${args.state}`);
@@ -463,11 +545,13 @@ export default {
     // busiest-author list rather than the busiest of an arbitrary prefix.
     authorCount: 12, scanPages: 80, language: 'en', replan: false,
     postTips: 100, replyTips: 10, profileTips: 10, postsPerAuthor: 4, maxTips: Infinity,
+    topology: defaultTopology(),
   },
   flags: {
     '--replan': ['replan', 'bool'], '--senders': ['senders', 'numlist'], '--authors': ['authors', 'list'], '--author-count': ['authorCount', 'number'],
     '--scan-pages': ['scanPages', 'number'], '--post-tips': ['postTips', 'number'], '--reply-tips': ['replyTips', 'number'],
     '--profile-tips': ['profileTips', 'number'], '--posts-per-author': ['postsPerAuthor', 'number'], '--max-tips': ['maxTips', 'number'],
+    '--topology': ['topology', 'string'],
   },
   plan: (args) => buildPlan({ ...args, ...fixture(args) }),
   dryRun,
