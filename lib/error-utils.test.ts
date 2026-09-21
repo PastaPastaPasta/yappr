@@ -9,7 +9,10 @@ import { describe, expect, it } from 'vitest'
 import {
   categorizeError,
   isActionFeeAgreementError,
+  isBarredFromContractError,
+  isFeeMultiplierNotToleratedError,
   isGasPayerError,
+  isGasSponsorShortError,
   isImmutablePropertyChangedError,
   isInvalidDocumentIdError,
   isModerationBarredError,
@@ -125,15 +128,15 @@ describe('protocol-14 rejections', () => {
     ['InconsistentGasFeesPaidByInBatchError', isGasPayerError,
       'The gas of a batch is paid by one identity: it cannot be paid by the document owner for one transition and by the contract owner for another', /try again later/i],
     ['GasSponsorInsufficientBalanceError', isGasPayerError,
-      'The contract owner 9t2e sponsoring the gas has balance 1200, but 38000 is required', /try again later/i],
-    ['40222 by labelled code', isGasPayerError, 'consensus error code=40222', /try again later/i],
+      'The contract owner 9t2e sponsoring the gas has balance 1200, but 38000 is required', /couldn't cover the network fee/i],
+    ['40222 by labelled code', isGasPayerError, 'consensus error code=40222', /couldn't cover the network fee/i],
     // state 40132 / 40133 / 40134 — action fee agreement
     ['DocumentActionFeeAgreementNotSetError', isActionFeeAgreementError,
       'Document create of type post charges an action fee of 1000 credits to the owner and 500 credits to the moderators (fixed pricing), and the transition carries no action fee agreement', /out of date/i],
     ['DocumentActionFeeAgreementMismatchError', isActionFeeAgreementError,
       'Document create of type post charges an action fee of 1000 credits to the owner and 500 credits to the moderators (fixed pricing), but the transition agreed to 100 and 50 credits (fixed pricing)', /out of date/i],
     ['DocumentActionFeeMultiplierNotToleratedError', isActionFeeAgreementError,
-      'Document create of type post agreed to an action fee priced with a fee multiplier of 1000 permille and at most 10% more, but the fee multiplier is 1500 permille', /out of date/i],
+      'Document create of type post agreed to an action fee priced with a fee multiplier of 1000 permille and at most 10% more, but the fee multiplier is 1500 permille', /fee level changed/i],
     ['40133 by labelled code', isActionFeeAgreementError, 'rejected: code=40133', /out of date/i],
     // state 40131 — referenced_document_type_not_deletable_error.rs
     ['ReferencedDocumentTypeNotDeletableError', isReferencedTypeNotDeletableError,
@@ -166,6 +169,38 @@ describe('protocol-14 rejections', () => {
     'no available addresses',
   ])('does not claim %s', (message) => {
     expect(isPermanentProtocol14Error(new Error(message))).toBe(false)
+  })
+
+  it('splits the two gas-payer situations: a short sponsor is not the client asking for the wrong payer', () => {
+    const sponsorShort = new Error('The contract owner 9t2e sponsoring the gas has balance 1200, but 38000 is required')
+    const wrongPayer = new Error('Document create of type post asks for gas fees paid by contract owner, but the document type only offers document owner')
+    // Both stay in the gas-payer family (and permanent), but only one is the sponsor.
+    expect([isGasPayerError(sponsorShort), isGasPayerError(wrongPayer)]).toEqual([true, true])
+    expect([isGasSponsorShortError(sponsorShort), isGasSponsorShortError(wrongPayer)]).toEqual([true, false])
+    // The sponsor case is the only one a user can route around (pay in credits).
+    expect(categorizeError(sponsorShort)).toMatch(/credits/i)
+  })
+
+  it('splits 40134 from the stale-client members of the fee-agreement family', () => {
+    const multiplier = new Error('Document create of type post agreed to an action fee priced with a fee multiplier of 1000 permille and at most 10% more, but the fee multiplier is 1500 permille')
+    const notSet = new Error('Document create of type post charges an action fee of 1000 credits to the owner and 500 credits to the moderators (fixed pricing), and the transition carries no action fee agreement')
+    expect([isActionFeeAgreementError(multiplier), isActionFeeAgreementError(notSet)]).toEqual([true, true])
+    // Only 40134 tells the write path its cached multiplier is stale.
+    expect([isFeeMultiplierNotToleratedError(multiplier), isFeeMultiplierNotToleratedError(notSet)]).toEqual([true, false])
+    // …and it is not "reload the app": nothing about the client was wrong.
+    expect(categorizeError(multiplier)).not.toMatch(/out of date/i)
+  })
+
+  it('recognises the SIGNER being barred without claiming the counterparty case', () => {
+    const banned = new Error('Identity 9t2e is banned on contract 8Xv3 and can not act on its documents')
+    const suspended = new Error('{"code":41108,"identityId":"9t2e"}')
+    const counterparty = new Error('Identity 9t2e is banned or suspended on contract 8Xv3 and can not be the recipient of a document')
+    expect([banned, suspended].map(isBarredFromContractError)).toEqual([true, true])
+    // 41114 bars the OTHER party, so the viewer's own standing explains nothing.
+    expect(isBarredFromContractError(counterparty)).toBe(false)
+    expect(isModerationBarredError(counterparty)).toBe(true)
+    // A frozen token account is a different situation from a moderation ban.
+    expect(isBarredFromContractError(new Error('Identity 9t2e account is frozen for token AwyQ'))).toBe(false)
   })
 
   it('keeps the frozen-account message for a frozen token account, not the moderation one', () => {

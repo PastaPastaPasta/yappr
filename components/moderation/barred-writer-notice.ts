@@ -1,5 +1,6 @@
 import toast from 'react-hot-toast'
-import { isBarredFromContractError, moderationService } from '@/lib/services/moderation-service'
+import { isBarredFromContractError } from '@/lib/error-utils'
+import { moderationService } from '@/lib/services/moderation-service'
 
 /**
  * When a write was refused because the SIGNER is banned or suspended from

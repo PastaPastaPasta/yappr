@@ -375,13 +375,3 @@ class ModerationService {
 
 export const moderationService = new ModerationService();
 
-/**
- * True when a write was refused because the SIGNER is barred from the
- * contract: banned (ContractUserBannedError, 41107) or suspended
- * (ContractUserSuspendedError, 41108). The refusal is paid and bumps the
- * nonce, so retrying is pointless; the UI shows the standing instead.
- */
-export function isBarredFromContractError(error: unknown): boolean {
-  const msg = extractErrorMessage(error);
-  return /\bcode"?\s*[=:]\s*4110[78]\b|contractuser(banned|suspended)|is (banned|suspended) (from|on) (this|the) contract/i.test(msg);
-}

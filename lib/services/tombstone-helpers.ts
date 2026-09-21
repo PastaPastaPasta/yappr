@@ -20,8 +20,8 @@
  */
 
 import { logger } from '@/lib/logger';
-import type { TombstonePreservation } from '@/lib/contract-topology';
-import { isImmutablePropertyChangedError } from '@/lib/error-utils';
+import { clearableReferencesFor, type TombstonePreservation } from '@/lib/contract-topology';
+import { isImmutablePropertyChangedError, isReferenceNotFoundError } from '@/lib/error-utils';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { documentToPlainObject, identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
@@ -49,6 +49,15 @@ export interface TombstoneParams {
  * Replace a document with a tombstone: empty content, `deleted: true`, and
  * nothing else beyond the named required fields. Returns false (without
  * throwing) when the document cannot be read or the replace is rejected.
+ *
+ * From v8 the references a post carries are `deletableDocument` references,
+ * and a replace re-validates every one of them: a quote of a post a moderator
+ * has since removed cannot be tombstoned with its `quotedPostId` intact
+ * (40120, ReferencedEntityNotFound). Clearing that dead reference is the one
+ * change to an `immutable` property consensus allows, so on a 40120 the
+ * replace is retried ONCE with the clearable references dropped
+ * ({@link clearableReferencesFor}). `quotedPostOwnerId` is not a reference and
+ * stays: dropping it would be a plain 40128.
  */
 export async function tombstoneDocument(params: TombstoneParams): Promise<boolean> {
   const { contractId, documentType, documentId, ownerId } = params;
@@ -89,14 +98,22 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
       if (value !== undefined && value !== null) replacement[field] = value;
     }
 
-    const result = await stateTransitionService.updateDocument(
-      contractId,
-      documentType,
-      documentId,
-      ownerId,
-      replacement,
-      revision
-    );
+    const replace = (data: Record<string, unknown>) =>
+      stateTransitionService.updateDocument(contractId, documentType, documentId, ownerId, data, revision);
+    let result = await replace(replacement);
+
+    if (!result.success && isReferenceNotFoundError(result.error)) {
+      const dead = clearableReferencesFor(documentType).filter((field) => field in replacement);
+      if (dead.length > 0) {
+        logger.warn(
+          `Tombstone of ${documentType} ${documentId}: a referenced document no longer exists; ` +
+            `retrying with ${dead.join(', ')} cleared.`
+        );
+        const cleared = { ...replacement };
+        for (const field of dead) delete cleared[field];
+        result = await replace(cleared);
+      }
+    }
 
     if (!result.success) {
       // 40128 here means the preserve set above is missing a property the

@@ -291,9 +291,26 @@ export function isInvalidDocumentIdError(error: unknown): boolean {
 export function isModerationBarredError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
   return (
-    /contractuserbanned|contractusersuspended|contractmoderationcounterpartybarred/i.test(msg) ||
-    /is (banned|suspended|banned or suspended) on contract .* and can not (act on its documents|be the)/i.test(msg) ||
-    hasConsensusCode(msg, [41107, 41108, 41114])
+    isBarredFromContractError(error) ||
+    /contractmoderationcounterpartybarred/i.test(msg) ||
+    /is banned or suspended on contract .* and can not be the/i.test(msg) ||
+    hasConsensusCode(msg, [41114])
+  )
+}
+
+/**
+ * The SIGNER is barred: banned (41107) or suspended (41108) from the contract,
+ * as opposed to the counterparty case above. The UI resolves the standing and
+ * its recorded reason for exactly these two (`reportBarredWrite`); a refusal
+ * is paid and bumps the nonce, so retrying is pointless.
+ */
+export function isBarredFromContractError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /contractuser(banned|suspended)/i.test(msg) ||
+    /is (banned|suspended) (from|on) (this|the )?contract/i.test(msg) ||
+    /is (banned|suspended) on contract .* and can not act on its documents/i.test(msg) ||
+    hasConsensusCode(msg, [41107, 41108])
   )
 }
 
@@ -341,11 +358,42 @@ export function isGasPayerError(error: unknown): boolean {
 export function isActionFeeAgreementError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
   return (
-    /documentactionfeeagreementnotset|documentactionfeeagreementmismatch|documentactionfeemultipliernottolerated/i.test(msg) ||
+    isFeeMultiplierNotToleratedError(error) ||
+    /documentactionfeeagreementnotset|documentactionfeeagreementmismatch/i.test(msg) ||
     /charges an action fee of .* and the transition carries no action fee agreement/i.test(msg) ||
     /charges an action fee of .* but the transition agreed to/i.test(msg) ||
+    hasConsensusCode(msg, [40132, 40133])
+  )
+}
+
+/**
+ * The 40134 member of the family on its own: the agreement's amounts were
+ * right, but the epoch fee multiplier rose past the tolerance the signer
+ * allowed. Unlike 40132/40133 this is not a stale client — the write path
+ * forgets the multiplier it knew and the NEXT attempt re-reads it.
+ */
+export function isFeeMultiplierNotToleratedError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentactionfeemultipliernottolerated/i.test(msg) ||
     /agreed to an action fee priced with a fee multiplier/i.test(msg) ||
-    hasConsensusCode(msg, [40132, 40133, 40134])
+    hasConsensusCode(msg, [40134])
+  )
+}
+
+/**
+ * 40222 on its own: the contract owner the transition PREFERRED as gas
+ * sponsor is short of credits. Under `preferContractOwner` (the only offer
+ * Yappr asks for) the network falls back to the signer instead of raising
+ * this, so seeing it means the signer's own credits could not cover the write
+ * either, or the transition insisted (`contractOwner`), which Yappr never does.
+ */
+export function isGasSponsorShortError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /gassponsorinsufficientbalance/i.test(msg) ||
+    /sponsoring the gas has balance .* is required/i.test(msg) ||
+    hasConsensusCode(msg, [40222])
   )
 }
 
@@ -414,8 +462,14 @@ export function categorizeError(error: unknown): string {
   if (isOncePerIdentityAlreadyClaimedError(error)) {
     return 'You\'ve already claimed this — it can only be claimed once per account.'
   }
+  if (isGasSponsorShortError(error)) {
+    return 'Yappr couldn\'t cover the network fee for this right now, and it wasn\'t charged to you. Try again, or switch to paying in credits.'
+  }
   if (isGasPayerError(error)) {
     return 'This action can\'t be paid for right now. Nothing was charged — try again later.'
+  }
+  if (isFeeMultiplierNotToleratedError(error)) {
+    return 'The network\'s fee level changed while this was being sent. Nothing was posted — try again.'
   }
   if (isActionFeeAgreementError(error)) {
     return 'This app is out of date with the network\'s fee rules. Reload to get the latest version.'
