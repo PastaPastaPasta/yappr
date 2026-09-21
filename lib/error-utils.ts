@@ -368,9 +368,10 @@ export function isGasPayerError(error: unknown): boolean {
  * - **40134** `DocumentActionFeeMultiplierNotToleratedError` — the network fee
  *   multiplier moved past the tolerance the agreement allowed.
  *
- * Yappr's live contracts declare no action fees, so today any of these means a
- * contract Yappr writes to has been re-cut and the client is behind it.
- * Permanent for the transition as built.
+ * Social v8 charges post and reply creates a fee to the moderators pot, so
+ * 40132/40133 mean the client and the deployed contract disagree about the
+ * amounts — either the contract was re-cut under the client, or the agreement
+ * was not attached. Permanent for the transition as built.
  */
 export function isActionFeeAgreementError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
