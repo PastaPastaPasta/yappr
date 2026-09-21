@@ -1023,19 +1023,18 @@ export interface TipSurface {
   docType: string
   /** The identifier property naming the tipped document. */
   tippedField: string
-  /**
-   * The property naming the thread a tip belongs to, when the tipped document
-   * is not itself the thread root — and it is a QUERY HINT, not a fact: no
-   * agreement binds it, so a reader must confirm the cited item really is in
-   * the thread before rendering the tip there. Null for tips on posts, where
-   * the tipped post IS the thread.
-   */
-  threadField: string | null
 }
 
+/**
+ * Neither doctype names a thread. A tip on a reply could have denormalized its
+ * thread root to make "tips in this thread" one query, but nothing on chain
+ * could check that claim — so a thread reads its tips by asking about the
+ * replies it is already showing, and can only ever surface a tip on something
+ * in front of the reader.
+ */
 const TIP_SURFACES: Readonly<Record<TargetKind, TipSurface>> = {
-  post: { docType: 'tip', tippedField: 'postId', threadField: null },
-  reply: { docType: 'tipReply', tippedField: 'replyId', threadField: 'rootPostId' },
+  post: { docType: 'tip', tippedField: 'postId' },
+  reply: { docType: 'tipReply', tippedField: 'replyId' },
 }
 
 /**

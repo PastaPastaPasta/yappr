@@ -558,3 +558,29 @@ export class RequestDeduplicator<K, V> {
     return [...ids].sort().join(',');
   }
 }
+
+/**
+ * A document's own identifier fields (`$id`, `$ownerId`), which arrive as a
+ * base58 string on some paths and as raw bytes on others.
+ *
+ * Not the same as `identifierToBase58`: a string is passed through rather than
+ * decoded, so a value the SDK already resolved survives even if it is not
+ * something this client could decode itself.
+ */
+export function systemIdentifier(value: unknown): string | null {
+  return typeof value === 'string' ? value : identifierToBase58(value);
+}
+
+/** A document property Platform stores as an integer, whatever shape it arrives in. */
+export function documentBigInt(value: unknown): bigint {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value));
+  if (typeof value === 'string' && /^\d+$/.test(value)) return BigInt(value);
+  return BigInt(0);
+}
+
+/** A document's `$createdAt`, or the epoch when it is missing or unreadable. */
+export function documentCreatedAt(value: unknown): Date {
+  const createdAt = new Date(Number(value ?? 0));
+  return Number.isFinite(createdAt.getTime()) ? createdAt : new Date(0);
+}

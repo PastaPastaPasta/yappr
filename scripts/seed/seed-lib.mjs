@@ -114,7 +114,7 @@ export function profileContractId() {
 //
 // ORDER IS SIGNIFICANT: `atLeastTopology` compares positions in this array, so
 // new cuts append. Mirrors CONTRACT_TOPOLOGIES in lib/constants.ts.
-export const TOPOLOGIES = ['v4', 'v5', 'v6', 'v7', 'v8'];
+export const TOPOLOGIES = ['v4', 'v5', 'v6', 'v7', 'v8', 'v9'];
 export const HASHTAG_MAX = { v4: 63, v5: 61, v6: 61, v7: 61, v8: 61 };
 
 /** True when `topology` is `floor` or any later cut. */
@@ -819,6 +819,17 @@ export const DEFAULT_FEE_MULTIPLIER_PERMILLE = 1000n;
 const V8_DOCUMENT_SCHEMAS = JSON.parse(
   readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v8.json'), 'utf8')
 ).documentSchemas;
+const V9_DOCUMENT_SCHEMAS = JSON.parse(
+  readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v9.json'), 'utf8')
+).documentSchemas;
+
+/**
+ * The committed schemas the cost helpers read, per topology. v9 carries every
+ * v8 doctype over byte for byte and adds the two tip types, so reading v9 on a
+ * v9 run changes nothing except making the tips' costs visible — the twin of
+ * `grammarSchemas()` in lib/contract-topology.ts.
+ */
+const schemasFor = (topology) => (atLeastTopology(topology, 'v9') ? V9_DOCUMENT_SCHEMAS : V8_DOCUMENT_SCHEMAS);
 
 /**
  * What `docType`'s create costs in YAPP on `topology`, and how that payment may
@@ -829,7 +840,7 @@ const V8_DOCUMENT_SCHEMAS = JSON.parse(
  * inferring one from the other would send a payer the type never offered (40129).
  */
 export function tokenCostFor(docType, topology) {
-  const create = V8_DOCUMENT_SCHEMAS[docType]?.tokenCost?.create;
+  const create = schemasFor(topology)[docType]?.tokenCost?.create;
   if (!create) return null;
   if (!atLeastTopology(topology, 'v8')) return { amount: create.amount, optional: false, gasFeesPaidBy: 0 };
   return { amount: create.amount, optional: create.optional === true, gasFeesPaidBy: create.gasFeesPaidBy ?? 0 };
@@ -843,7 +854,7 @@ export function tokenCostFor(docType, topology) {
  */
 export function actionFeeFor(docType, topology) {
   if (!atLeastTopology(topology, 'v8')) return null;
-  const fees = V8_DOCUMENT_SCHEMAS[docType]?.actionFees;
+  const fees = schemasFor(topology)[docType]?.actionFees;
   const create = fees?.create;
   if (!create) return null;
   return {

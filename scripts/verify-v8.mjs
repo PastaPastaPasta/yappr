@@ -90,6 +90,7 @@ import {
   fetchDocument,
   followData,
   likeData,
+  manualCreate as manualCreateShared,
   randomIdBytes,
   readback,
   runBattery,
@@ -177,56 +178,8 @@ const replyData = ({ content = 'v8 battery reply', rootPostId, parentOwnerId }) 
  */
 const documentIdV1 = deriveDocumentIdBytes;
 
-/** An id as base58, whichever of the three shapes the SDK handed back. */
-function idOf(value) {
-  if (typeof value === 'string') return value;
-  if (typeof value?.toBase58 === 'function') return value.toBase58();
-  return bs58.encode(Uint8Array.from(value));
-}
-
-/**
- * A create built by hand so it can carry `$actionFeeAgreement` (and, when the
- * caller pays in YAPP, `$tokenPaymentInfo` with a gas offer). Returns the id
- * the PROOF RESULT names, plus the id derived locally so a3 can compare them.
- * Acceptance is decided by reading the result id back; when the broadcast
- * threw before a result existed (a gateway 504 on the wait), the derived id is
- * probed instead and the outcome says so.
- */
-async function manualCreate(ctx, who, { docType, data, agreement, payment }) {
-  const { sdk, contractId } = ctx;
-  const nonce = ((await readback(() => sdk.identities.contractNonce(who.ownerId, contractId))) ?? 0n) + 1n;
-  const entropy = randomIdBytes();
-  const derivedId = documentIdV1({ contractId, ownerId: who.ownerId, docType, entropy, nonce });
-  const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, entropy, id: derivedId });
-  const transition = new DocumentCreateTransition({
-    document,
-    identityContractNonce: nonce,
-    ...(payment ? { tokenPaymentInfo: payment } : {}),
-    ...(agreement ? { actionFeeAgreement: agreement } : {}),
-  });
-  const batch = BatchTransition.fromBatchedTransitions([new BatchedTransition(transition.toDocumentTransition())], who.ownerId, 0);
-  const stateTransition = batch.toStateTransition();
-  stateTransition.setIdentityContractNonce(nonce);
-  stateTransition.sign(PrivateKey.fromWIF(who.wif), who.identityKey);
-
-  let error = null;
-  let resultId = null;
-  try {
-    const result = await sdk.stateTransitions.broadcastAndWait(stateTransition);
-    const documents = result?.documents;
-    if (documents instanceof Map) for (const key of documents.keys()) resultId = idOf(key);
-  } catch (e) {
-    error = describeErr(e);
-  }
-  const probeId = resultId ?? bs58.encode(derivedId);
-  for (let poll = 0; poll < 3; poll++) {
-    await settle();
-    if ((await fetchDocument(sdk, contractId, docType, probeId)) !== null) {
-      return { ok: true, error: null, id: probeId, derivedId: bs58.encode(derivedId), resultId, fromResult: resultId !== null };
-    }
-  }
-  return { ok: false, error: error ?? 'the SDK reported no error, but the write is not on chain', id: probeId, derivedId: bs58.encode(derivedId), resultId };
-}
+/** verify-lib's manual batch, with this battery's ctx-shaped call site. */
+const manualCreate = (ctx, who, options) => manualCreateShared(ctx.sdk, who, { contractId: ctx.contractId, ...options });
 
 /**
  * The agreement a post/reply create must carry: the declared fee at the

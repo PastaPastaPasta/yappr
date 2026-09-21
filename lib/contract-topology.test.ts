@@ -11,6 +11,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import bs58 from 'bs58'
 import { describe, expect, it, vi } from 'vitest'
 import socialContractV7 from '@/contracts/yappr-social-contract-v7.json'
 import socialContractV8 from '@/contracts/yappr-social-contract-v8.json'
@@ -253,8 +254,8 @@ describe('contract topology', () => {
     it('names the doctype and tipped field each kind\'s tips live in', async () => {
       const v9 = await topologyModule('v9')
       expect(v9.provedTipsAvailable()).toBe(true)
-      expect(v9.tipSurfaceFor('post')).toEqual({ docType: 'tip', tippedField: 'postId', threadField: null })
-      expect(v9.tipSurfaceFor('reply')).toEqual({ docType: 'tipReply', tippedField: 'replyId', threadField: 'rootPostId' })
+      expect(v9.tipSurfaceFor('post')).toEqual({ docType: 'tip', tippedField: 'postId' })
+      expect(v9.tipSurfaceFor('reply')).toEqual({ docType: 'tipReply', tippedField: 'replyId' })
     })
 
     it('pins the tip fields the client writes against the v9 JSON', async () => {
@@ -275,6 +276,22 @@ describe('contract topology', () => {
         })
         expect(schema.properties[tippedField].refersTo?.propertyAgreement).toEqual({ recipientId: '$ownerId' })
         expect(schema.properties.transferId.refersTo?.contractId).toHaveLength(32)
+      }
+    })
+
+    it('cites the same token-history contract the client reads transfers from', async () => {
+      // The v9 contract hardcodes the token-history id as bytes; the client
+      // reads transfers from `TOKEN_HISTORY_CONTRACT_ID`, which a deployment
+      // can override. Point them at different contracts and every tip cites a
+      // transfer the app cannot see (and vice versa), so pin them together —
+      // an override would have to be accompanied by a re-cut contract.
+      const { TOKEN_HISTORY_CONTRACT_ID } = await import('./constants')
+      const schemas = socialContractV9.documentSchemas as unknown as Record<string, {
+        properties: Record<string, { refersTo?: { contractId?: number[] } }>
+      }>
+      for (const docType of ['tip', 'tipReply']) {
+        const bytes = schemas[docType].properties.transferId.refersTo?.contractId
+        expect(bs58.encode(Uint8Array.from(bytes ?? []))).toBe(TOKEN_HISTORY_CONTRACT_ID)
       }
     })
 

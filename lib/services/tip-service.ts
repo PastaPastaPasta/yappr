@@ -1,8 +1,8 @@
 import { logger } from '@/lib/logger';
 import { MIN_YAPP_TIP, YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { encodeTipNote, type TipTargetKind } from '@/lib/tip-note'
-import { isAlreadyExistsError, isNonFatalWaitError, isTimeoutError } from '@/lib/error-utils'
-import { tipSurfaceFor, provedTipsAvailable } from '@/lib/contract-topology'
+import { extractErrorMessage, isAlreadyExistsError, isNonFatalWaitError, isTimeoutError } from '@/lib/error-utils'
+import { tipSurfaceFor } from '@/lib/contract-topology'
 import { tokenService } from './token-service'
 import { stateTransitionService } from './state-transition-service'
 import { identifierStringToDocumentBytes } from './sdk-helpers'
@@ -22,7 +22,6 @@ export interface TipResult {
   transferId?: string;
   error?: string;
   errorCode?:
-    | 'INSUFFICIENT_BALANCE'
     | 'INSUFFICIENT_CREDITS'
     | 'SELF_TIP'
     | 'NETWORK_ERROR'
@@ -192,23 +191,30 @@ class TipService {
         }
       );
       if (!result.success) {
+        // The unique index on `transferId` refusing this create means the tip
+        // is ALREADY on the post — a retry of something that worked, not a
+        // failure. Reporting it as one would leave the user pressing "attach
+        // again" at a tip that is already there.
+        if (this.looksAlreadyRecorded(result.error)) {
+          provedTipService.clearCache();
+          return { success: true, transactionHash: 'confirmed', transferId: record.transferId };
+        }
         return { success: false, error: result.error ?? 'Could not record the tip', errorCode: 'NETWORK_ERROR' };
       }
       provedTipService.clearCache();
       return { success: true, transactionHash: 'confirmed', transferId: record.transferId };
     } catch (error) {
       logger.error('Failed to record a tip document', error);
+      if (this.looksAlreadyRecorded(extractErrorMessage(error))) {
+        provedTipService.clearCache();
+        return { success: true, transactionHash: 'confirmed', transferId: record.transferId };
+      }
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Could not record the tip',
         errorCode: 'NETWORK_ERROR',
       };
     }
-  }
-
-  /** True when this deployment can show a tip on the post it was for. */
-  tipsAreRecordable(): boolean {
-    return provedTipsAvailable();
   }
 
   /**
@@ -247,6 +253,15 @@ class TipService {
       error: "Your tip was sent but we couldn't confirm it landed. Check again before sending another — it may still be settling.",
       errorCode: 'UNCONFIRMED',
     };
+  }
+
+  /**
+   * Whether a tip create was refused because this transfer is already recorded
+   * (40105 on the unique `transferId` index). Same shape `isDuplicateVoteError`
+   * matches on the Pollr contract.
+   */
+  private looksAlreadyRecorded(error?: string): boolean {
+    return Boolean(error) && /duplicate unique properties|\b40105\b/i.test(error ?? '');
   }
 
   /**

@@ -29,6 +29,7 @@ import { AvatarCustomization } from '@/components/settings/avatar-customization'
 import { BannerCustomization } from '@/components/settings/banner-customization'
 import { UsernameModal } from '@/components/dpns/username-modal'
 import { ProfileHeader, type ProfileData } from '@/components/profile/profile-header'
+import { TipsReceived } from '@/components/profile/tips-received'
 import { ProfileTabs, type ProfileBlog } from '@/components/profile/profile-tabs'
 import { ImageCustomizationModal } from '@/components/profile/image-customization-modal'
 import { EMPTY_DRAFT, type ProfileDraft } from '@/components/profile/profile-edit-form'
@@ -533,6 +534,8 @@ function UserProfileContent() {
                 onEditBanner: () => setIsEditingBanner(true),
               }}
             />
+
+            <TipsReceived identityId={userId} />
 
             {isBlockedByMe && !isOwnProfile && (
               <div className="p-4 bg-gray-50 dark:bg-gray-950 border-y border-gray-200 dark:border-gray-800">

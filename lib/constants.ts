@@ -12,23 +12,18 @@ export const YAPP_TOKEN_POSITION = 0
 // so the settings moderation gate must compare against that owner there.
 // Mainnet TODO: move moderation to a Group and drop this single-identity gate.
 export const YAPP_TOKEN_AUTHORITY_ID = process.env.NEXT_PUBLIC_YAPP_TOKEN_AUTHORITY_ID || 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A'
-// Per-action token cost baked into the contract's tokenCost.create (immutable ratio).
-// Used as the `maximumTokenCost` guard when creating token-paid documents.
+// What the priced social actions cost in YAPP, for the screens that QUOTE a
+// price before the user commits: "this buys N posts", "you need N YAPP to post".
 //
-// A doctype MISSING from this table gets no token-payment agreement attached, and
-// consensus then rejects its create outright — so every doctype that declares a
-// tokenCost on any deployed contract must appear here, keyed by document type
-// name. `likeReply` only exists on the v3 topology; on v2 nothing looks it up.
+// NOT the write path's source of truth — `tokenCostFor` in lib/contract-topology.ts
+// reads the configured contract's own `tokenCost.create`, so a cut that repriced
+// an action would be paid correctly whatever this says. Only the doctypes a
+// screen actually quotes need an entry.
 export const YAPP_TOKEN_COSTS = {
   post: 10,
   reply: 3,
   like: 1,
-  likeReply: 1,
   repost: 1,
-  // v9 proved tip receipts. The tip itself moves YAPP; this is only the
-  // anti-spam cost of recording it.
-  tip: 1,
-  tipReply: 1,
 } as const
 // Storefront v2 reviews are priced in YAPP too, charged from the social
 // contract's token through `tokenCost.create.contractId` (a cross-contract

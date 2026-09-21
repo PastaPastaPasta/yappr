@@ -13,8 +13,8 @@ vi.mock('../contract-topology', async (importOriginal) => {
     provedTipsAvailable: () => true,
     tipSurfaceFor: (kind: 'post' | 'reply') =>
       kind === 'post'
-        ? { docType: 'tip', tippedField: 'postId', threadField: null }
-        : { docType: 'tipReply', tippedField: 'replyId', threadField: null },
+        ? { docType: 'tip', tippedField: 'postId' }
+        : { docType: 'tipReply', tippedField: 'replyId' },
   }
 })
 
@@ -128,14 +128,26 @@ describe('reading tips on a thread\'s replies', () => {
     expect(totalTipped(byReply.get(REPLY_ID) ?? [])).toBe(BigInt(6))
   })
 
-  it('batches past the 100-value `in` cap', async () => {
+  it('asks in small batches, so one heavily tipped reply cannot crowd out a whole page', async () => {
     query.mockResolvedValue(new Map())
-    const ids = Array.from({ length: 150 }, (_, index) => `${REPLY_ID.slice(0, -3)}${index.toString().padStart(3, '0')}`)
+    const ids = Array.from({ length: 50 }, (_, index) => `${REPLY_ID.slice(0, -3)}${index.toString().padStart(3, '0')}`)
     await provedTipService.getTipsForReplies(ids)
 
-    expect(query).toHaveBeenCalledTimes(2)
-    expect(query.mock.calls[0][0].where[0][2]).toHaveLength(100)
-    expect(query.mock.calls[1][0].where[0][2]).toHaveLength(50)
+    const batchSizes = query.mock.calls.map((call) => call[0].where[0][2].length)
+    expect(batchSizes).toEqual([20, 20, 10])
+    // Every batch is far smaller than the document limit it shares.
+    expect(Math.max(...batchSizes)).toBeLessThan(query.mock.calls[0][0].limit)
+  })
+
+  it('caches per reply, including the replies with no tips, so scrolling does not re-ask', async () => {
+    query.mockResolvedValueOnce(new Map([['a', tipDoc({ postId: undefined, replyId: bs58.decode(REPLY_ID) })]]))
+    await provedTipService.getTipsForReplies([REPLY_ID, POST_ID])
+    expect(query).toHaveBeenCalledTimes(1)
+
+    const again = await provedTipService.getTipsForReplies([REPLY_ID, POST_ID])
+    expect(query).toHaveBeenCalledTimes(1)
+    expect(again.get(REPLY_ID)).toHaveLength(1)
+    expect(again.has(POST_ID)).toBe(false)
   })
 
   it('queries nothing for an empty thread', async () => {

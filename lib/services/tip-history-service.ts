@@ -29,7 +29,7 @@ import { parseTipNote, type TipTargetKind } from '@/lib/tip-note';
 import { TOKEN_HISTORY_CONTRACT_ID } from '../constants';
 import { getEvoSdk } from './evo-sdk-service';
 import { tokenService } from './token-service';
-import { identifierToBase58, normalizeSDKResponse, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
+import { documentBigInt, documentCreatedAt, identifierToBase58, normalizeSDKResponse, systemIdentifier, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 
 const TRANSFER_DOC_TYPE = 'transfer';
 const CACHE_TTL_MS = 60 * 1000;
@@ -84,29 +84,21 @@ export function matchesSentTip(tip: SentTransfer, match: SentTipMatch): boolean 
   );
 }
 
-function toBigInt(value: unknown): bigint {
-  if (typeof value === 'bigint') return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value));
-  if (typeof value === 'string' && /^\d+$/.test(value)) return BigInt(value);
-  return BigInt(0);
-}
-
 /** A raw `transfer` document → SentTransfer, or null when it is not readable as one. */
 function toSentTransfer(doc: Record<string, unknown>): SentTransfer | null {
-  const id = typeof doc.$id === 'string' ? doc.$id : identifierToBase58(doc.$id);
-  const from = typeof doc.$ownerId === 'string' ? doc.$ownerId : identifierToBase58(doc.$ownerId);
+  const id = systemIdentifier(doc.$id);
+  const from = systemIdentifier(doc.$ownerId);
   const to = identifierToBase58(doc.toIdentityId);
   if (!id || !from || !to) return null;
 
   const note = parseTipNote(doc.publicNote);
-  const createdAt = new Date(Number(doc.$createdAt ?? 0));
 
   return {
     id,
-    amount: toBigInt(doc.amount),
+    amount: documentBigInt(doc.amount),
     from,
     to,
-    createdAt: Number.isFinite(createdAt.getTime()) ? createdAt : new Date(0),
+    createdAt: documentCreatedAt(doc.$createdAt),
     ...(note ? { postId: note.targetId, targetKind: note.kind } : {}),
     ...(note?.message ? { message: note.message } : {}),
   };
@@ -121,19 +113,18 @@ class TipHistoryService {
   }
 
   /**
-   * One page of `transfer` documents off a token-history index, newest first.
+   * The identity's newest outgoing YAPP transfers, newest first.
    *
-   * The filter and the ordering are both derived from `field` — every index on
-   * `transfer` is prefixed by tokenId and orderBy has to name the index fields
-   * in order, including the equality-constrained ones, so writing the field
-   * down once is what keeps the two from disagreeing.
+   * Every index on `transfer` is prefixed by `tokenId`, and `orderBy` has to
+   * name the index fields in order including the equality-constrained ones, so
+   * the two clauses below are one shape and have to stay that way.
+   *
+   * `fresh` bypasses the TTL cache — used while polling for a wallet-signed tip
+   * to land, where a 60s-stale page would read as "not sent yet".
    */
-  private async queryTransfers(
-    field: '$ownerId',
-    identityId: string,
-    fresh = false
-  ): Promise<SentTransfer[]> {
-    const cacheKey = `${field}:${identityId}`;
+  async getTipsSent(identityId: string, { fresh = false } = {}): Promise<SentTransfer[]> {
+    if (!identityId) return [];
+    const cacheKey = `$ownerId:${identityId}`;
     const cached = fresh ? undefined : this.cache.get(cacheKey);
     if (cached) return cached;
 
@@ -144,32 +135,21 @@ class TipHistoryService {
       documentTypeName: TRANSFER_DOC_TYPE,
       where: [
         ['tokenId', '==', tokenId],
-        [field, '==', identityId],
+        ['$ownerId', '==', identityId],
       ] as DocumentWhereClause[],
       orderBy: [
         ['tokenId', 'asc'],
-        [field, 'asc'],
+        ['$ownerId', 'asc'],
         ['$createdAt', 'desc'],
       ] as DocumentOrderByClause[],
       limit: SENT_PAGE_LIMIT,
     });
 
-    const tips = normalizeSDKResponse(response)
+    const transfers = normalizeSDKResponse(response)
       .map(toSentTransfer)
-      .filter((tip): tip is SentTransfer => tip !== null);
-    this.cache.set(cacheKey, tips);
-    return tips;
-  }
-
-  /**
-   * The identity's newest outgoing YAPP transfers.
-   *
-   * `fresh` bypasses the TTL cache — used while polling for a wallet-signed
-   * tip to land, where a 60s-stale page would read as "not sent yet".
-   */
-  async getTipsSent(identityId: string, { fresh = false } = {}): Promise<SentTransfer[]> {
-    if (!identityId) return [];
-    return this.queryTransfers('$ownerId', identityId, fresh);
+      .filter((transfer): transfer is SentTransfer => transfer !== null);
+    this.cache.set(cacheKey, transfers);
+    return transfers;
   }
 
   /**

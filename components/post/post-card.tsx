@@ -70,10 +70,8 @@ export interface ProgressiveEnrichment {
 export interface TipBadge {
   /** YAPP this reply's author sent along with it, when the reply IS a tip message. */
   sentAmount?: bigint
-  /** YAPP this reply has been tipped. */
-  receivedAmount?: bigint
-  /** How many tips make up `receivedAmount`. */
-  receivedCount?: number
+  /** What this reply has been tipped, when it has. */
+  received?: { amount: bigint; count: number }
 }
 
 interface PostCardProps {
@@ -114,23 +112,26 @@ const CARD_MENU_ITEM = 'px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-9
  * the contract only admits a tip document whose amount, sender and payee match
  * the YAPP transfer it cites.
  */
+function TipChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+      <CurrencyDollarIcon className="h-3.5 w-3.5" aria-hidden="true" />
+      {children}
+    </span>
+  )
+}
+
 function TipBadgeRow({ badge }: { badge: TipBadge }) {
-  const { sentAmount, receivedAmount, receivedCount = 0 } = badge
-  if (!sentAmount && !receivedAmount) return null
+  const { sentAmount, received } = badge
+  if (!sentAmount && !received) return null
 
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-      {sentAmount ? (
-        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
-          <CurrencyDollarIcon className="h-3.5 w-3.5" aria-hidden="true" />
-          Tipped {sentAmount.toString()} YAPP
-        </span>
-      ) : null}
-      {receivedAmount ? (
-        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
-          <CurrencyDollarIcon className="h-3.5 w-3.5" aria-hidden="true" />
-          {receivedAmount.toString()} YAPP from {receivedCount} {receivedCount === 1 ? 'tip' : 'tips'}
-        </span>
+      {sentAmount ? <TipChip>Tipped {sentAmount.toString()} YAPP</TipChip> : null}
+      {received ? (
+        <TipChip>
+          {received.amount.toString()} YAPP from {received.count} {received.count === 1 ? 'tip' : 'tips'}
+        </TipChip>
       ) : null}
     </div>
   )

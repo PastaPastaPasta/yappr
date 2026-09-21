@@ -20,10 +20,14 @@
  * the attested `author`), so each battery declares its own.
  */
 import {
+  BatchTransition,
+  BatchedTransition,
   Document,
+  DocumentCreateTransition,
   EvoSDK,
   IdentitySigner,
   PlatformVersion,
+  PrivateKey,
   TokenPaymentInfo,
   ensureInitialized,
 } from '@dashevo/evo-sdk';
@@ -370,6 +374,62 @@ export async function attemptCreateIndexOnly(sdk, who, { contractId, docType, da
   );
 }
 
+/** An id as base58, whichever of the three shapes the SDK hands back. */
+export function idOf(value) {
+  if (typeof value === 'string') return value;
+  if (typeof value?.toBase58 === 'function') return value.toBase58();
+  return bs58.encode(Uint8Array.from(value));
+}
+
+/**
+ * A create built by hand, so it can carry things `sdk.documents.create` has no
+ * option for: an `$actionFeeAgreement` (40132 without one, on a type that
+ * prices its create) and a `$tokenPaymentInfo` naming a gas payer.
+ *
+ * It sets the document's v1 id itself — `dsha256("dash:document-id:v1" ‖
+ * contract ‖ owner ‖ type ‖ entropy ‖ nonce u64 BE)`, through the SHIPPED
+ * `deriveDocumentIdBytes` rather than a battery-local copy — and returns both
+ * that id and the one the proof result named, so a caller can compare them.
+ *
+ * Acceptance is decided by reading the result id back. When the broadcast threw
+ * before a result existed (a gateway 504 on the wait, which happens to writes
+ * that landed), the derived id is probed instead and the outcome says which.
+ */
+export async function manualCreate(sdk, who, { contractId, docType, data, agreement, payment }) {
+  const nonce = ((await readback(() => sdk.identities.contractNonce(who.ownerId, contractId))) ?? 0n) + 1n;
+  const entropy = randomIdBytes();
+  const derivedId = deriveDocumentIdBytes({ contractId, ownerId: who.ownerId, docType, entropy, nonce });
+  const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, entropy, id: derivedId });
+  const transition = new DocumentCreateTransition({
+    document,
+    identityContractNonce: nonce,
+    ...(payment ? { tokenPaymentInfo: payment } : {}),
+    ...(agreement ? { actionFeeAgreement: agreement } : {}),
+  });
+  const batch = BatchTransition.fromBatchedTransitions([new BatchedTransition(transition.toDocumentTransition())], who.ownerId, 0);
+  const stateTransition = batch.toStateTransition();
+  stateTransition.setIdentityContractNonce(nonce);
+  stateTransition.sign(PrivateKey.fromWIF(who.wif), who.identityKey);
+
+  let error = null;
+  let resultId = null;
+  try {
+    const result = await sdk.stateTransitions.broadcastAndWait(stateTransition);
+    const documents = result?.documents;
+    if (documents instanceof Map) for (const key of documents.keys()) resultId = idOf(key);
+  } catch (e) {
+    error = describeErr(e);
+  }
+  const probeId = resultId ?? bs58.encode(derivedId);
+  for (let poll = 0; poll < POLL_ATTEMPTS; poll++) {
+    await settle();
+    if ((await fetchDocument(sdk, contractId, docType, probeId)) !== null) {
+      return { ok: true, error: null, id: probeId, derivedId: bs58.encode(derivedId), resultId, fromResult: resultId !== null };
+    }
+  }
+  return { ok: false, error: error ?? 'the SDK reported no error, but the write is not on chain', id: probeId, derivedId: bs58.encode(derivedId), resultId };
+}
+
 /** Replaces a stored document with a full data set at `revision + 1`. */
 export async function attemptReplace(sdk, who, { contractId, docType, id, data, revision }) {
   const nextRevision = revision + 1n;
@@ -456,7 +516,7 @@ export function expectRejected(label, outcome, pattern) {
 }
 // ---- Topology-independent document shapes ----------------------------------
 
-export const TOKEN_COST = { post: 10, reply: 3, like: 1, likeReply: 1, repost: 1 };
+export const TOKEN_COST = { post: 10, reply: 3, like: 1, likeReply: 1, repost: 1, tip: 1, tipReply: 1 };
 export const likeData = ({ postId, hashtag, postAuthor }) => ({
   postId,
   ...(hashtag === undefined ? {} : { hashtag }),

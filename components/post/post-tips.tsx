@@ -26,14 +26,28 @@ function shortIdentity(identityId: string): string {
  * that transfer (docs/SOCIAL_V9.md). There is nothing to caveat and nothing to
  * verify on read — a tip that could not be written is not here.
  *
- * Two DAPI requests, which is why this belongs to the detail view rather than a
- * feed card: one page of tips, and the count tree that says whether the page is
- * all of them.
+ * One indexed query, plus a profile lookup for the tippers' names — and the
+ * count tree only when the page came back full, to say whether it is all of
+ * them. Still a per-post cost, which is why this belongs to the detail view
+ * rather than a feed card.
  */
 export function PostTips({ targetId, kind }: PostTipsProps) {
   const [tips, setTips] = useState<ProvedTip[] | null>(null)
   const [total, setTotal] = useState(0)
   const [names, setNames] = useState<Map<string, string>>(new Map())
+  // Bumped when a tip is recorded from this tab, so a tip the user just sent
+  // appears without a reload — the service cache has already been dropped by
+  // then, so this only has to ask again.
+  const [reloads, setReloads] = useState(0)
+
+  useEffect(() => {
+    const onTipCreated = (event: Event) => {
+      const detail = (event as CustomEvent<{ targetId?: string }>).detail
+      if (detail?.targetId === targetId) setReloads((count) => count + 1)
+    }
+    window.addEventListener('tip-created', onTipCreated)
+    return () => window.removeEventListener('tip-created', onTipCreated)
+  }, [targetId])
 
   useEffect(() => {
     let active = true
@@ -71,7 +85,7 @@ export function PostTips({ targetId, kind }: PostTipsProps) {
         if (active) setTips([])
       })
     return () => { active = false }
-  }, [targetId, kind])
+  }, [targetId, kind, reloads])
 
   if (!tips || tips.length === 0) return null
 

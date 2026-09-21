@@ -8,11 +8,20 @@
  */
 import bs58 from 'bs58';
 import { normalizeId, reportSelfTest } from '../../battery-lib.mjs';
-import { POST_LINK_BASE, WAIT_MAYBE_LANDED, YAPP_TOKEN_POSITION, describeErr, profileContractId, readback, sleep } from '../seed-lib.mjs';
+import { POST_LINK_BASE, WAIT_MAYBE_LANDED, YAPP_TOKEN_POSITION, atLeastTopology, describeErr, profileContractId, readback, sleep, tokenCostFor } from '../seed-lib.mjs';
 import {
-  actorsFor, counts, ensureTokens, fakeId, loadCheckpoint, network, pick, printTable, rngFrom, saveCheckpoint,
-  shuffled, weightedPick,
+  actorsFor, counts, createDocWriter, ensureTokens, entropySource, fakeId, loadCheckpoint, network, pick, printTable,
+  rngFrom, saveCheckpoint, shuffled, weightedPick,
 } from '../feature-seed-lib.mjs';
+
+/**
+ * On v9 and later a confirmed transfer is followed by a `tip` document CITING it,
+ * which is what the app reads: the contract checks the citation's amount, sender
+ * and payee against the transfer itself, so a seeded tip is a proved one rather
+ * than a note the reader has to take on trust. Below v9 the transfer is all there
+ * is, and the app shows no tips at all.
+ */
+const TIP_DOCTYPE = { post: 'tip', reply: 'tipReply' };
 
 /** The system token-history contract — identical on every chain. */
 const TOKEN_HISTORY_CONTRACT_ID = '43gujrzZgXqcKBiScLa4T8XTDnRhenR9BLx8GWVHjPxF';

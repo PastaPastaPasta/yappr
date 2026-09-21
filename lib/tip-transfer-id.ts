@@ -13,10 +13,14 @@
  *
  * The write path does NOT rely on this: it reads the transfer document back off
  * the sender's own history, which is also how it confirms the transfer landed at
- * all, and the local signing path never surfaces the nonce the SDK spent. This
- * is the independent check on that read-back — same input, same id, computed
- * without asking anyone — and it is what the verification battery asserts
- * against a live transfer.
+ * all, and the local signing path never surfaces the nonce the SDK spent.
+ *
+ * What this is for is checking that read-back against the derivation, which
+ * `scripts/verify-v9.mjs` (case p1c) does live on devnet — it RESTATES the
+ * formula rather than importing this module, so a live run proves the formula
+ * itself rather than proving the client agrees with itself. This copy is the
+ * client-side statement of the same rule, pinned by its own tests, ready for a
+ * caller that knows the nonce it spent (the wallet-signed path builds one).
  */
 
 import { sha256 } from '@noble/hashes/sha2.js'

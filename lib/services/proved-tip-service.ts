@@ -29,10 +29,13 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { tipSurfaceFor, provedTipsAvailable, type TargetKind } from '../contract-topology';
 import { getEvoSdk } from './evo-sdk-service';
-import { chunk, documentCount, groupedDocumentCount, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
+import { chunk, documentCount } from './pagination-utils';
 import {
+  documentBigInt,
+  documentCreatedAt,
   identifierToBase58,
   normalizeSDKResponse,
+  systemIdentifier,
   type DocumentWhereClause,
   type DocumentOrderByClause,
 } from './sdk-helpers';
@@ -45,6 +48,13 @@ const CACHE_TTL_MS = 60 * 1000;
  * showing the newest ones.
  */
 export const TIP_PAGE_SIZE = 100;
+
+/**
+ * Replies asked about per query. Small on purpose: the page limit counts tips,
+ * so a batch this size cannot be exhausted by one reply unless that reply alone
+ * carries five pages' worth.
+ */
+const REPLY_TIP_BATCH = 20;
 
 /** One tip, every field of which consensus checked when it was written. */
 export interface ProvedTip {
@@ -70,35 +80,27 @@ export function totalTipped(tips: ProvedTip[]): bigint {
   return tips.reduce((sum, tip) => sum + tip.amount, BigInt(0));
 }
 
-function toBigInt(value: unknown): bigint {
-  if (typeof value === 'bigint') return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value));
-  if (typeof value === 'string' && /^\d+$/.test(value)) return BigInt(value);
-  return BigInt(0);
-}
-
 /** A raw tip document → ProvedTip, or null when it is not readable as one. */
 function toProvedTip(doc: Record<string, unknown>, tippedField: string): ProvedTip | null {
   const data = (doc.data ?? doc) as Record<string, unknown>;
-  const id = typeof doc.$id === 'string' ? doc.$id : identifierToBase58(doc.$id);
-  const from = typeof doc.$ownerId === 'string' ? doc.$ownerId : identifierToBase58(doc.$ownerId);
+  const id = systemIdentifier(doc.$id);
+  const from = systemIdentifier(doc.$ownerId);
   const transferId = identifierToBase58(data.transferId);
   const to = identifierToBase58(data.recipientId);
   const tippedId = identifierToBase58(data[tippedField]);
   if (!id || !from || !transferId || !to || !tippedId) return null;
 
   const messageReplyId = data.messageReplyId ? identifierToBase58(data.messageReplyId) : null;
-  const createdAt = new Date(Number(doc.$createdAt ?? 0));
 
   return {
     id,
     transferId,
-    amount: toBigInt(data.amount),
+    amount: documentBigInt(data.amount),
     from,
     to,
     tippedId,
     ...(messageReplyId ? { messageReplyId } : {}),
-    createdAt: Number.isFinite(createdAt.getTime()) ? createdAt : new Date(0),
+    createdAt: documentCreatedAt(doc.$createdAt),
   };
 }
 
@@ -153,17 +155,31 @@ class ProvedTipService {
    * already showing, so it can only ever surface a tip on something in front of
    * the reader. There is deliberately no "tips in this thread" index — a tip
    * would have to name its own thread, and nothing could check that claim.
+   *
+   * Asked in small batches, and each answer cached per reply. The `limit` caps
+   * DOCUMENTS, not replies, so a batch is kept well under the page: one heavily
+   * tipped reply can then only ever crowd out the handful it shares a query
+   * with, and the next thread page re-reads none of what this one resolved.
    */
   async getTipsForReplies(replyIds: string[]): Promise<Map<string, ProvedTip[]>> {
     const surface = tipSurfaceFor('reply');
     const byReply = new Map<string, ProvedTip[]>();
     if (!surface || replyIds.length === 0) return byReply;
 
+    const missing: string[] = [];
+    for (const replyId of new Set(replyIds)) {
+      const cached = this.tips.get(`${surface.docType}:${replyId}`);
+      if (cached) {
+        if (cached.length > 0) byReply.set(replyId, cached);
+      } else {
+        missing.push(replyId);
+      }
+    }
+    if (missing.length === 0) return byReply;
+
     try {
       const sdk = await getEvoSdk();
-      // Platform caps `in` clauses at 100 values; a thread page is smaller than
-      // that, but a fully expanded thread need not be.
-      for (const batch of chunk(replyIds, MAX_IN_CLAUSE_VALUES)) {
+      for (const batch of chunk(missing, REPLY_TIP_BATCH)) {
         const response = await sdk.documents.query({
           dataContractId: YAPPR_CONTRACT_ID,
           documentTypeName: surface.docType,
@@ -171,12 +187,20 @@ class ProvedTipService {
           orderBy: [[surface.tippedField, 'asc']] as DocumentOrderByClause[],
           limit: TIP_PAGE_SIZE,
         });
+        const found = new Map<string, ProvedTip[]>();
         for (const doc of normalizeSDKResponse(response)) {
           const tip = toProvedTip(doc, surface.tippedField);
           if (!tip) continue;
-          const existing = byReply.get(tip.tippedId);
+          const existing = found.get(tip.tippedId);
           if (existing) existing.push(tip);
-          else byReply.set(tip.tippedId, [tip]);
+          else found.set(tip.tippedId, [tip]);
+        }
+        // Cache the empties too — "this reply has no tips" is the common answer
+        // and worth not asking again on every scroll.
+        for (const replyId of batch) {
+          const tips = found.get(replyId) ?? [];
+          this.tips.set(`${surface.docType}:${replyId}`, tips);
+          if (tips.length > 0) byReply.set(replyId, tips);
         }
       }
       return byReply;
@@ -210,24 +234,6 @@ class ProvedTipService {
     } catch (error) {
       logger.warn(`provedTips: tip count for ${kind} ${tippedId} failed`, error);
       return 0;
-    }
-  }
-
-  /** Tip counts for many posts at once, in one grouped count-tree query. */
-  async countTipsForPosts(postIds: string[]): Promise<Map<string, number>> {
-    const surface = tipSurfaceFor('post');
-    if (!surface || postIds.length === 0) return new Map();
-    try {
-      const sdk = await getEvoSdk();
-      return await groupedDocumentCount(
-        sdk,
-        { dataContractId: YAPPR_CONTRACT_ID, documentTypeName: surface.docType, groupField: surface.tippedField },
-        postIds,
-        (postId) => this.countTipsFor('post', postId)
-      );
-    } catch (error) {
-      logger.warn('provedTips: grouped tip counts failed', error);
-      return new Map();
     }
   }
 

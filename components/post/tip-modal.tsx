@@ -18,7 +18,7 @@ import { tokenService } from '@/lib/services/token-service'
 import { buildUnsignedYappTipTransition } from '@/lib/services/token-transfer-builder'
 import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
-import { targetKindOf } from '@/lib/contract-topology'
+import { provedTipsAvailable, targetKindOf } from '@/lib/contract-topology'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import type { ParsedPaymentUri } from '@/lib/types'
@@ -129,12 +129,22 @@ export function TipModal() {
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
   const [showQrDialog, setShowQrDialog] = useState(false)
 
-  // Remote wallet signing (dash-st: QR): the unsigned transfer URI, whether the
-  // silent wait ran out, and the moment the QR went up — the tip is detected by
-  // its own `transfer` document appearing on chain after that moment.
-  // The transfer whose tip could not be attached, so the retry cites the same
-  // one rather than sending anything new.
-  const [attachTransferId, setAttachTransferId] = useState<string | null>(null)
+  // What a failed attach has to resume from: the transfer to cite, and the
+  // reply ALREADY posted for it. Keeping the reply id is what stops "attach
+  // again" from posting the message a second time and paying for it again.
+  const [pendingAttach, setPendingAttach] = useState<{ transferId: string; messageReplyId?: string } | null>(null)
+  // Discards a late attach whose modal has moved on — the twin of
+  // walletSessionRef. Without it, an attach resolving after the modal closed
+  // would set state for a tip the next session knows nothing about.
+  const attachSessionRef = useRef(0)
+  // Floor for the floor-less "check again": a tip sent from THIS modal cannot
+  // predate it, so an identical older transfer can never be adopted as this one.
+  const openedAtRef = useRef(Date.now())
+
+  // Remote wallet signing (dash-st: QR): the unsigned transfer URI and whether
+  // the silent wait ran out. The tip is detected by its own `transfer` document
+  // appearing on chain after the moment the QR went up, which is the time floor
+  // in `walletMatchRef`.
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
   const walletMatchRef = useRef<SentTipMatch | null>(null)
@@ -164,6 +174,7 @@ export function TipModal() {
 
   // Reset state when modal closes
   useEffect(() => {
+    if (isOpen) openedAtRef.current = Date.now()
     if (!isOpen) {
       setYappAmount('1')
       setTipMessage('')
@@ -175,7 +186,8 @@ export function TipModal() {
       setShowQrDialog(false)
       setCriticalKeyWif('')
       setShowKeyEntry(false)
-      setAttachTransferId(null)
+      setPendingAttach(null)
+      attachSessionRef.current++
       setWalletUri(null)
       setWalletExpired(false)
       setYappBalance(null)
@@ -239,32 +251,42 @@ export function TipModal() {
    * refused), and when it does the money is still gone, so the failure screen
    * offers to attach the tip again and never to send another.
    */
-  const attachTip = useCallback(async (transferId: string): Promise<boolean> => {
+  const attachTip = useCallback(async (
+    transferId: string,
+    alreadyPostedReplyId?: string
+  ): Promise<boolean> => {
     if (!user || !recipientInfo || !post || !tipTarget) return false
+    const session = ++attachSessionRef.current
+    const stale = () => attachSessionRef.current !== session
     setState('attaching')
 
-    let messageReplyId: string | undefined
-    if (noteMessage) {
+    // Posted once, then remembered: a retry re-records the tip, it does not
+    // re-publish the words (which would cost another reply and orphan the first).
+    let messageReplyId = alreadyPostedReplyId
+    if (noteMessage && !messageReplyId) {
       try {
         const { replyService } = await import('@/lib/services/reply-service')
         const { replyLinkageTo } = await import('@/lib/contract-topology')
+        const { markUnconfirmed } = await import('@/lib/unconfirmed-writes')
         const reply = await replyService.createReply(user.identityId, noteMessage, {
           ...replyLinkageTo(post),
           parentOwnerId: post.author.id,
         })
+        const confirmed = (reply as { __createConfirmed?: boolean }).__createConfirmed !== false
         // A reply the chain has not acknowledged cannot be cited yet: the tip
         // would be a paid rejection. Record the tip without it rather than lose
-        // the tip as well as the words.
-        messageReplyId = (reply as { __createConfirmed?: boolean }).__createConfirmed === false ? undefined : reply.id
+        // the tip as well as the words, and list it so the session's next write
+        // against it waits instead of paying for a 40120.
+        if (confirmed) messageReplyId = reply.id
+        else markUnconfirmed('reply', reply.id)
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('reply-created', {
-            detail: { reply, replyId: reply.id, confirmed: messageReplyId !== undefined },
-          }))
+          window.dispatchEvent(new CustomEvent('reply-created', { detail: { reply, replyId: reply.id, confirmed } }))
         }
       } catch (err) {
         logger.error('Could not post the message that went with the tip:', err)
       }
     }
+    if (stale()) return false
 
     const recorded = await tipService.recordTip({
       senderId: user.identityId,
@@ -274,13 +296,20 @@ export function TipModal() {
       transferId,
       messageReplyId,
     })
+    if (stale()) return false
+
     if (!recorded.success) {
       setError(recorded.error ?? 'Your YAPP was sent, but the tip could not be attached to this post.')
-      setAttachTransferId(transferId)
+      setPendingAttach({ transferId, messageReplyId })
       setState('attach-failed')
       return false
     }
-    setAttachTransferId(null)
+    setPendingAttach(null)
+    // The strip on the post is already mounted and has its own cache; tell it
+    // to re-read rather than leave the success screen claiming a tip it cannot see.
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tip-created', { detail: { targetId: tipTarget.id, kind: tipTarget.kind } }))
+    }
     return true
   }, [user, recipientInfo, post, tipTarget, noteMessage, yappAmountBig])
 
@@ -289,11 +318,16 @@ export function TipModal() {
    * result. A tip aimed at a profile rather than a post has nothing to attach.
    */
   const settleYappTip = useCallback(async (transferId: string | undefined) => {
+    // Balances and caches settle either way: the money moved whether or not the
+    // tip can be shown yet.
     finishYappTip()
-    if (!tipTarget || !tipService.tipsAreRecordable()) return
+    if (!tipTarget || !provedTipsAvailable()) return
     if (!transferId) {
-      setError('Your YAPP was sent, but we could not find the transfer to attach it to this post yet.')
-      setAttachTransferId(null)
+      // The transfer went out but its document has not surfaced within the
+      // confirmation window. Citing it now would be a paid 40120, so the tip
+      // waits for the user to check again rather than being lost.
+      setError('Your YAPP was sent. Its transfer record hasn\'t appeared on chain yet, so the tip isn\'t on the post.')
+      setPendingAttach(null)
       setState('attach-failed')
       return
     }
@@ -342,13 +376,25 @@ export function TipModal() {
   /**
    * Re-ask the chain whether a tip we could not confirm has landed.
    *
-   * Deliberately no time floor, unlike the wallet path's own match: if the
-   * chain's clock ran behind ours the tip is real but sits before the moment
-   * we sent it, and a floor would hide it.
+   * The floor is wide on purpose — the whole time this modal has been open,
+   * less clock skew — rather than the send-time floor the automatic polls use:
+   * a chain clock running behind ours must not hide a tip and prompt a second
+   * send. It is not absent, though, or an identical tip from an earlier session
+   * could be adopted as this one and an unsent tip reported as delivered.
    */
   const recheckTip = useCallback(async () => {
     if (!user || !recipientInfo) return false
-    const match = tipService.tipMatch(recipientInfo.id, yappAmountBig, tipTarget, noteMessage)
+    // Floored at the moment this modal OPENED (less clock skew), not at the
+    // moment of sending: a chain clock running behind ours must not hide the
+    // tip, but an identical tip the user sent yesterday must never be adopted
+    // as this one — which would report an unsent tip as delivered.
+    const match = tipService.tipMatch(
+      recipientInfo.id,
+      yappAmountBig,
+      tipTarget,
+      noteMessage,
+      openedAtRef.current - CLOCK_SKEW_MARGIN_MS
+    )
     const result = await tipService.confirmYappTip(user.identityId, match)
     if (result.success) {
       await settleYappTip(result.transferId)
@@ -466,7 +512,10 @@ export function TipModal() {
   }, [state, walletUri, user, settleYappTip])
 
   const handleClose = () => {
-    if (state === 'processing') return // Don't allow closing during processing
+    // 'attaching' is as uninterruptible as 'processing': the transfer has
+    // already gone out and the tip record is the only thing that puts it on the
+    // post. Closing here would leave it unattached with nothing holding its id.
+    if (state === 'processing' || state === 'attaching') return
     // Clear sensitive data
     setCriticalKeyWif('')
     close()
@@ -479,17 +528,17 @@ export function TipModal() {
 
   if (!recipientInfo) return null
 
-  const isYapp = activeTab === 'yapp'
   const recipientName = recipientInfo.displayName || recipientInfo.username || 'this user'
   const amountLabel = `${yappAmountBig.toString()} YAPP`
 
-  // The confirm step's primary action: which tab is open, and for YAPP whether
-  // this browser can sign a token transition at all or has to ask the wallet.
+  // The confirm step's primary action. Only the YAPP tab reaches it — the
+  // crypto tab just opens a payment QR — so the only question is whether this
+  // browser can sign a token transition or has to ask the wallet.
   function confirmAction() {
-    if (isYapp && canSignLocally === null) {
+    if (canSignLocally === null) {
       return <Button disabled className="flex-1 bg-amber-500 text-white">Checking your keys…</Button>
     }
-    if (isYapp && !canSignLocally) {
+    if (!canSignLocally) {
       return <Button onClick={startWalletSign} className={AMBER_BUTTON}>Sign with wallet</Button>
     }
     return (
@@ -522,7 +571,7 @@ export function TipModal() {
                   onClick={handleClose}
                   aria-label="Close tip modal"
                   className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
-                  disabled={state === 'processing'}
+                  disabled={state === 'processing' || state === 'attaching'}
                 >
                   <XMarkIcon className="h-5 w-5" />
                 </button>
@@ -675,7 +724,7 @@ export function TipModal() {
                         <span className="text-gray-600 dark:text-gray-400">To</span>
                         <span className="font-medium">{recipientName}</span>
                       </div>
-                      {isYapp && tipMessage.trim() && (
+                      {tipMessage.trim() && (
                         <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
                           <span className="text-gray-600 dark:text-gray-400 text-sm">Message:</span>
                           <p className="text-sm mt-1">{tipMessage}</p>
@@ -700,7 +749,7 @@ export function TipModal() {
                       {confirmAction()}
                     </div>
 
-                    {isYapp && canSignLocally && (
+                    {canSignLocally && (
                       <button
                         type="button"
                         onClick={startWalletSign}
@@ -850,15 +899,19 @@ export function TipModal() {
                       </Button>
                       <Button
                         onClick={() => {
-                          if (attachTransferId) {
-                            void attachTip(attachTransferId).then((attached) => { if (attached) setState('success') })
+                          if (pendingAttach) {
+                            void attachTip(pendingAttach.transferId, pendingAttach.messageReplyId)
+                              .then((attached) => { if (attached) setState('success') })
                           } else {
-                            void recheckTip()
+                            // No transfer id yet: the first thing to establish
+                            // is which transfer this was, and that read is what
+                            // `checkTipLanded` shows a spinner for.
+                            checkTipLanded(() => setState('attach-failed'))
                           }
                         }}
                         className={AMBER_BUTTON}
                       >
-                        Attach again
+                        {pendingAttach ? 'Attach again' : 'Check again'}
                       </Button>
                     </div>
                   </div>
@@ -905,7 +958,7 @@ export function TipModal() {
                         You sent {amountLabel} to {recipientName}
                       </p>
                     </div>
-                    {tipTarget && tipService.tipsAreRecordable() && (
+                    {tipTarget && provedTipsAvailable() && (
                       <p className="text-sm text-gray-500">
                         It now shows on this post{noteMessage ? ', with your reply' : ''}.
                       </p>
