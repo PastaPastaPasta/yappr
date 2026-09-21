@@ -58,7 +58,6 @@
  * Both bots need YAPP on the contract under test (funded by the registration
  * script's `--fund`) AND credits (posts on v8 also cost a credit action fee).
  */
-import { sha256 } from '@noble/hashes/sha2.js';
 import bs58 from 'bs58';
 import {
   BatchTransition,
@@ -66,8 +65,15 @@ import {
   DocumentActionFeeAgreement,
   DocumentCreateTransition,
   PrivateKey,
-  TokenPaymentInfo,
 } from '@dashevo/evo-sdk';
+import {
+  PREFER_CONTRACT_OWNER,
+  actionFeeAgreementOptions,
+  actionFeeFor,
+  deriveDocumentIdBytes,
+  feeMultiplierPermille,
+  paymentInfo,
+} from './seed/seed-lib.mjs';
 import { criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import {
@@ -89,14 +95,18 @@ import {
   runBattery,
 } from './verify-lib.mjs';
 
-// ---- v8 numbers (pinned by build-v8-contract.py --self-test) ----------------
+// ---- v8 numbers ------------------------------------------------------------
+//
+// The fees are READ OFF the committed contract (`actionFeeFor`), the same
+// helper the seeders use and the twin of the client's `declaredActionFee`, so
+// this battery cannot pass against numbers the app would never send.
 
-const POST_FEE = 80_000_000n;
-const REPLY_FEE = 16_000_000n;
+const POST_ACTION_FEE = actionFeeFor('post', 'v8');
+const REPLY_ACTION_FEE = actionFeeFor('reply', 'v8');
+const POST_FEE = POST_ACTION_FEE.moderators;
+const REPLY_FEE = REPLY_ACTION_FEE.moderators;
 const STARTER_GRANT = 100n;
 const YAPP_POSITION = 0;
-const PREFER_CONTRACT_OWNER = 2;
-const INCREASE_TOLERANCE_PERCENT = 20;
 /** Long enough for the refused write to run, short enough to wait out. */
 const SUSPENSION_MS = 25_000;
 const SETTLE_MS = 3000;
@@ -157,21 +167,15 @@ const replyData = ({ content = 'v8 battery reply', rootPostId, parentOwnerId }) 
 
 // ---- Nonce-committed ids and the manual batch ---------------------------------
 
-const ID_V1_DOMAIN = new TextEncoder().encode('dash:document-id:v1');
-
-/** `dsha256(tag ‖ contract ‖ owner ‖ type ‖ entropy ‖ nonce BE)` — the id consensus recomputes (#4859). */
-export function documentIdV1({ contractId, ownerId, docType, entropy, nonce }) {
-  const type = new TextEncoder().encode(docType);
-  const nonceBytes = new Uint8Array(8);
-  new DataView(nonceBytes.buffer).setBigUint64(0, BigInt(nonce));
-  const payload = new Uint8Array(ID_V1_DOMAIN.length + 64 + type.length + entropy.length + 8);
-  let offset = 0;
-  for (const part of [ID_V1_DOMAIN, bs58.decode(contractId), bs58.decode(ownerId), type, entropy, nonceBytes]) {
-    payload.set(part, offset);
-    offset += part.length;
-  }
-  return sha256(sha256(payload));
-}
+/**
+ * `dsha256(tag ‖ contract ‖ owner ‖ type ‖ entropy ‖ nonce BE)` — the id
+ * consensus recomputes (#4859). Deliberately the SHIPPED helper rather than a
+ * copy: case a3 compares what this derives against the id the proof result
+ * names, so a live run proves the derivation the seeders use and the twin of
+ * the one the browser signs with (`lib/document-id.ts`), not a battery-local
+ * transcription that could agree with neither.
+ */
+const documentIdV1 = deriveDocumentIdBytes;
 
 /** An id as base58, whichever of the three shapes the SDK handed back. */
 function idOf(value) {
@@ -224,23 +228,23 @@ async function manualCreate(ctx, who, { docType, data, agreement, payment }) {
   return { ok: false, error: error ?? 'the SDK reported no error, but the write is not on chain', id: probeId, derivedId: bs58.encode(derivedId), resultId };
 }
 
-/** The agreement a post/reply create must carry: the declared fee at the multiplier the signer read. */
-async function feeAgreement(ctx, moderators) {
-  const epoch = await readback(() => ctx.sdk.epoch.current());
-  const knownPermille = BigInt(epoch.feeMultiplierPermille);
-  return { agreement: new DocumentActionFeeAgreement({ moderators, feeMultiplier: { knownPermille, increaseTolerancePercent: INCREASE_TOLERANCE_PERCENT } }), knownPermille };
+/**
+ * The agreement a post/reply create must carry: the declared fee at the
+ * multiplier the signer read. Built by the same `actionFeeAgreementOptions`
+ * the client and the seeders use, so what this battery proves live is the
+ * shape the app sends.
+ */
+async function feeAgreement(ctx, fee) {
+  const knownPermille = await readback(() => feeMultiplierPermille(ctx.sdk));
+  return { agreement: new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, knownPermille)), knownPermille };
 }
 
 /** YAPP payment with the contract owner asked to pay the gas when able. */
-const yappPayment = (maximumTokenCost) => new TokenPaymentInfo({
-  tokenContractPosition: YAPP_POSITION,
-  maximumTokenCost: BigInt(maximumTokenCost),
-  gasFeesPaidBy: PREFER_CONTRACT_OWNER,
-});
+const yappPayment = (maximumTokenCost) => paymentInfo(maximumTokenCost, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }).tokenPaymentInfo;
 
 /** A post by `who`, paid in credits, with the correct agreement: the fixture path. */
 async function createPost(ctx, who, data, label) {
-  const { agreement } = await feeAgreement(ctx, POST_FEE);
+  const { agreement } = await feeAgreement(ctx, POST_ACTION_FEE);
   const created = await manualCreate(ctx, who, { docType: 'post', data, agreement });
   if (!created.ok) console.log(`     (could not create ${label}: ${(created.error ?? '').slice(0, 200)})`);
   return created.ok ? created.id : null;
@@ -331,7 +335,7 @@ async function caseM2Suspend(ctx) {
   }
   const status = await standingOf(ctx, botB.ownerId);
   check('m2b moderationStatus proves the suspension and its end', status.suspendedUntil !== undefined && Number(status.suspendedUntil) === until, JSON.stringify(status));
-  const { agreement } = await feeAgreement(ctx, POST_FEE);
+  const { agreement } = await feeAgreement(ctx, POST_ACTION_FEE);
   expectRejected('m2c B\'s post while suspended is refused (41108)', await manualCreate(ctx, botB, { docType: 'post', data: postData({ content: 'suspended post' }), agreement }), SUSPENDED);
   // `bookmark.ownerAndPost` is unique and m1i already bookmarked the fixture, so
   // the unpriced probes here target a post of their own (A's, so B may bookmark it).
@@ -450,10 +454,10 @@ async function caseA1NoAgreement(ctx) {
 
 async function caseA2MismatchedAgreement(ctx) {
   console.log('\n--- a2. post create with a mismatched agreement → 40133 ---');
-  const { knownPermille } = await feeAgreement(ctx, POST_FEE);
-  const wrong = new DocumentActionFeeAgreement({ moderators: 1n, feeMultiplier: { knownPermille, increaseTolerancePercent: INCREASE_TOLERANCE_PERCENT } });
+  const { knownPermille } = await feeAgreement(ctx, POST_ACTION_FEE);
+  const wrong = new DocumentActionFeeAgreement(actionFeeAgreementOptions({ ...POST_ACTION_FEE, moderators: 1n }, knownPermille));
   expectRejected('a2a agreement naming the wrong moderators amount is refused (40133)', await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'wrong fee' }), agreement: wrong }), AGREEMENT_MISMATCH);
-  const fixed = new DocumentActionFeeAgreement({ moderators: POST_FEE });
+  const fixed = new DocumentActionFeeAgreement(actionFeeAgreementOptions({ ...POST_ACTION_FEE, pricing: 'fixed' }, knownPermille));
   expectRejected('a2b agreement to FIXED pricing on a feeMultiplier fee is the same mismatch (40133)', await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'fixed pricing' }), agreement: fixed }), AGREEMENT_MISMATCH);
 }
 
@@ -461,7 +465,7 @@ async function caseA3AgreedFee(ctx) {
   const { botA } = ctx;
   console.log('\n--- a3. the agreed fee lands, the derived id matches, the moderators pot grows ---');
   const potBefore = (await moderatorsPot(ctx)).credits;
-  const { agreement, knownPermille } = await feeAgreement(ctx, POST_FEE);
+  const { agreement, knownPermille } = await feeAgreement(ctx, POST_ACTION_FEE);
   const post = await manualCreate(ctx, botA, { docType: 'post', data: postData({ content: 'agreed fee', hashtag: ctx.tag }), agreement });
   expectAccepted('a3a post with the declared agreement lands', post);
   if (!post.ok) return;
@@ -472,7 +476,7 @@ async function caseA3AgreedFee(ctx) {
   const expectedPostFee = (POST_FEE * knownPermille) / 1000n;
   check('a3c the moderators pot grew by 80M credits × the epoch multiplier', potAfterPost - potBefore === expectedPostFee, `pot ${potBefore}→${potAfterPost} (Δ${potAfterPost - potBefore}, expected ${expectedPostFee} at ${knownPermille}‰)`);
 
-  const { agreement: replyAgreement } = await feeAgreement(ctx, REPLY_FEE);
+  const { agreement: replyAgreement } = await feeAgreement(ctx, REPLY_ACTION_FEE);
   const reply = await manualCreate(ctx, botA, { docType: 'reply', data: replyData({ rootPostId: bs58.decode(post.id), parentOwnerId: bs58.decode(botA.ownerId) }), agreement: replyAgreement });
   expectAccepted('a3d reply with its own declared agreement lands', reply);
   await settle();
@@ -632,6 +636,12 @@ if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) 
   const c = bs58.encode(documentIdV1({ ...fixed, nonce: 2n }));
   console.log(`v1 id derivation: deterministic=${a === b} nonce-sensitive=${a !== c} (${a})`);
   if (a !== b || a === c) { console.error('FAIL  v1 id derivation'); process.exit(1); }
+  // The cases assert pot growth against these, so a transcription would make
+  // a3/a2 prove nothing: they must be the contract's own numbers.
+  const feesFromContract = POST_FEE === 80_000_000n && REPLY_FEE === 16_000_000n
+    && POST_ACTION_FEE.owner === 0n && POST_ACTION_FEE.pricing === 'feeMultiplier';
+  console.log(`action fees off the contract: post=${POST_FEE} reply=${REPLY_FEE} pricing=${POST_ACTION_FEE.pricing} owner=${POST_ACTION_FEE.owner}`);
+  if (!feesFromContract) { console.error('FAIL  action fees do not match contracts/yappr-social-contract-v8.json'); process.exit(1); }
 }
 
 await runBattery({

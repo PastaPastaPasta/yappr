@@ -3,11 +3,19 @@
  * CORPUS_FORMAT.md) against the devnet social contract as the seed
  * identities provisioned by provision-seed-identities.mjs.
  *
- * `--topology v4|v5|v6|v7` selects the document shape of the target contract
+ * `--topology v4|v5|v6|v7|v8` selects the document shape of the target contract
  * (default: NEXT_PUBLIC_CONTRACT_TOPOLOGY from the env, else v4): the corpus
  * `''` convention still means "untagged", but v4 writes the `''` sentinel
  * while v5 OMITS the hashtag property on post/quote/like docs entirely
  * (writing `''` under v5 is propertyAgreement consensus error 40127).
+ *
+ * On v8 two things change, both about what a create CARRIES rather than what it
+ * says: `post` and `reply` must agree to the action fee their type declares
+ * (`$actionFeeAgreement`, 40132 without), which `sdk.documents.create` cannot
+ * express — so those creates are hand-built batches — and their token costs are
+ * `optional`, so `--credits-fraction` of the actors omit `$tokenPaymentInfo`
+ * and pay credits while the rest pay YAPP with the contract owner offered the
+ * gas. An actor's currency is fixed by its persona index, so a resume keeps it.
  *
  * Execution model:
  *  - per-author ops run STRICTLY SEQUENTIALLY in corpus line order (one
@@ -38,7 +46,8 @@
  *
  * Run:
  *   NETWORK=devnet node scripts/seed/run-seeder.mjs --personas <file> --corpus <file> \
- *     [--concurrency 10] [--max-ops N] [--topology v4|v5|v6|v7] [--pipeline [--window 8]]
+ *     [--concurrency 10] [--max-ops N] [--topology v4|v5|v6|v7|v8] [--pipeline [--window 8]]
+ *     [--credits-fraction 0.25]
  *   node scripts/seed/run-seeder.mjs --self-test
  *
  * `--pipeline` swaps the confirm-per-op executor for scripts/seed/pipeline.mjs:
@@ -61,12 +70,16 @@ import {
   RETRYABLE,
   TOKEN_COST,
   TOPOLOGIES,
+  PREFER_CONTRACT_OWNER,
   TRANSPORT_COLLAPSE,
   WAIT_MAYBE_LANDED,
   YAPP_TOKEN_POSITION,
+  actionFeeAgreementOptions,
+  actionFeeFor,
   appendProgress,
   buildDocument,
   corpusYappCost,
+  createWithAgreement,
   createSdkHandle,
   createdId,
   defaultTopology,
@@ -86,6 +99,8 @@ import {
   network,
   parseCorpus,
   paymentInfo,
+  paysInCredits,
+  feeAgreementFor,
   randomEntropy,
   readback,
   sleep,
@@ -96,6 +111,12 @@ import {
 } from './seed-lib.mjs';
 
 const SDK_TIMEOUT_MS = 30_000;
+/**
+ * Share of a v8 run's actors that pay their token-priced writes in CREDITS
+ * (no `$tokenPaymentInfo`) rather than YAPP, so a seeded devnet exercises both
+ * halves of the optional-token-cost path. `--credits-fraction` overrides it.
+ */
+const DEFAULT_CREDITS_FRACTION = 0.25;
 const MAX_ATTEMPTS = 4;
 /** Reads settle behind the write quorum; poll cadence for landed-or-not checks. */
 const SETTLE_MS = 3_000;
@@ -108,7 +129,7 @@ const ACTOR_FETCH_CONCURRENCY = 16;
 // ---- CLI ------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { personas: null, corpus: null, concurrency: 10, maxOps: Infinity, topology: null, selfTest: false, pipeline: false, window: 8 };
+  const args = { personas: null, corpus: null, concurrency: 10, maxOps: Infinity, topology: null, selfTest: false, pipeline: false, window: 8, creditsFraction: null };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--personas': args.personas = argv[++i]; break;
@@ -118,6 +139,7 @@ function parseArgs(argv) {
       case '--topology': args.topology = argv[++i]; break;
       case '--pipeline': args.pipeline = true; break;
       case '--window': args.window = Number(argv[++i]); break;
+      case '--credits-fraction': args.creditsFraction = Number(argv[++i]); break;
       case '--self-test': args.selfTest = true; break;
       default: throw new Error(`Unknown flag: ${argv[i]}`);
     }
@@ -125,11 +147,18 @@ function parseArgs(argv) {
   if (args.topology !== null && !TOPOLOGIES.includes(args.topology)) {
     throw new Error(`--topology must be one of ${TOPOLOGIES.join('|')}`);
   }
+  if (args.creditsFraction !== null && !(args.creditsFraction >= 0 && args.creditsFraction <= 1)) {
+    throw new Error('--credits-fraction must be between 0 and 1');
+  }
   if (!args.selfTest) {
     if (!args.personas || !args.corpus) throw new Error('--personas and --corpus are required');
     if (!Number.isInteger(args.concurrency) || args.concurrency < 1) throw new Error('--concurrency must be a positive integer');
     if (args.maxOps !== Infinity && (!Number.isInteger(args.maxOps) || args.maxOps < 1)) throw new Error('--max-ops must be a positive integer');
     args.topology ??= defaultTopology();
+    // Only v8 can pay in credits: before it, a token cost is required and a
+    // create without payment info is 40115.
+    const v8 = atLeastTopology(args.topology, 'v8');
+    args.creditsFraction = v8 ? (args.creditsFraction ?? DEFAULT_CREDITS_FRACTION) : 0;
   }
   return args;
 }
@@ -416,7 +445,49 @@ export function planOp(op, { actors, resolveRef, topology }) {
   }
 }
 
+/**
+ * How one create is sent on `topology`, shared by the confirm-per-op executor
+ * and the pipelined one.
+ *
+ * On v8 a `post` or `reply` create must carry an `$actionFeeAgreement` (40132
+ * without one), and `sdk.documents.create` has no option for it — its
+ * `DocumentCreateOptions` are document / identityKey / signer /
+ * tokenPaymentInfo / settings — so those creates are hand-built batches
+ * (`createWithAgreement`), which also means their id is known before the
+ * broadcast rather than read off the return. Everything else keeps the facade
+ * path exactly as before.
+ *
+ * What a create PAYS is per actor: `actor.paysCredits` omits the token payment
+ * entirely (v8's `optional: true` costs, the signer paying credits), while the
+ * rest pay YAPP and ask the contract owner to cover the gas
+ * (PreferContractOwner). Before v8 the cost is required and the bag is the
+ * historical one.
+ */
+function writeShapeFor({ handle, topology }) {
+  const paymentFor = (actor, tokenCost) => {
+    if (!tokenCost) return {};
+    if (actor.paysCredits) return {};
+    return paymentInfo(tokenCost, { gasFeesPaidBy: actionFeeFor('post', topology) ? PREFER_CONTRACT_OWNER : 0 });
+  };
+  return {
+    paymentFor,
+    /** Resolves to something `createdId` can read an id off, or `{ id }` from the manual path. */
+    async create({ contractId, actor, document, entropy, docType, data, tokenCost }) {
+      const payment = paymentFor(actor, tokenCost);
+      const agreement = await feeAgreementFor(handle.sdk, docType, topology);
+      if (!agreement) {
+        return handle.sdk.documents.create({ document, identityKey: actor.identityKey, signer: actor.signer, ...payment });
+      }
+      return createWithAgreement(handle.sdk, {
+        contractId, docType, ownerId: actor.ownerId, wif: actor.wif, identityKey: actor.identityKey,
+        data, entropy, agreement, payment,
+      });
+    },
+  };
+}
+
 function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
+  const writeShape = writeShapeFor({ handle, topology });
   const resolveRef = (ref) => {
     const record = progressRefs.get(ref);
     if (!record) throw new Error(`ref "${ref}" not materialized (checkpoint out of sync)`);
@@ -434,12 +505,15 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
   return async function executeOp(op) {
     const actor = actors.get(op.author);
     const plan = planOp(op, { actors, resolveRef, topology });
+    // Stable for the whole op: a retry that rebuilds the transition reuses it,
+    // so a broadcast that DID land is recognised rather than written twice.
+    const entropy = randomEntropy();
     const { document } = buildDocument({
       contractId,
       docType: plan.docType,
       ownerId: actor.ownerId,
       data: plan.data,
-      entropy: randomEntropy(),
+      entropy,
     });
     // Protocol 14: the stored id is derived from the nonce `documents.create()`
     // picks, so it is only known from a create that RETURNED. `id` is filled in
@@ -477,6 +551,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
       let companionError = null;
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
+          // A beat is unpriced and unagreed on every topology: the plain facade create.
           await handle.sdk.documents.create({ document: companionDoc, identityKey: actor.identityKey, signer: actor.signer });
           if (await companionAccepted()) return;
           companionError = new Error(`${companion.docType} create returned but the entry is not on chain`);
@@ -502,11 +577,8 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const created = await handle.sdk.documents.create({
-          document,
-          identityKey: actor.identityKey,
-          signer: actor.signer,
-          ...paymentInfo(plan.tokenCost),
+        const created = await writeShape.create({
+          contractId, actor, document, entropy, docType: plan.docType, data: plan.data, tokenCost: plan.tokenCost,
         });
         if (!plan.indexOnly) {
           id = createdId(created) ?? id;
@@ -556,7 +628,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
 
 // ---- Actors ---------------------------------------------------------------------------
 
-async function buildActors(handle, ledger, personas, ops) {
+async function buildActors(handle, ledger, personas, ops, creditsFraction = 0) {
   const authors = new Set(ops.map((op) => op.author));
   for (const op of ops) if (op.type === 'follow') authors.add(op.target);
   const actors = new Map();
@@ -577,9 +649,15 @@ async function buildActors(handle, ledger, personas, ops) {
     if (!identityKey) throw new Error(`identity ${entry.identityId} has no key ${CRITICAL_AUTH_KEY_ID}`);
     const authKey = entry.identityKeys.find((key) => key.keyId === CRITICAL_AUTH_KEY_ID);
     if (!authKey) throw new Error(`ledger entry for persona ${idx} has no key ${CRITICAL_AUTH_KEY_ID}`);
+    const wif = wifFromHex(authKey.privateKeyHex);
     const signer = new IdentitySigner();
-    signer.addKeyFromWif(wifFromHex(authKey.privateKeyHex));
-    actors.set(idx, { personaIdx: idx, ownerId: entry.identityId, handle: entry.handle, identityKey, signer });
+    signer.addKeyFromWif(wif);
+    // `wif` signs the hand-built batches an action fee agreement needs;
+    // `paysCredits` fixes this actor's currency for the whole run.
+    actors.set(idx, {
+      personaIdx: idx, ownerId: entry.identityId, handle: entry.handle, identityKey, signer, wif,
+      paysCredits: paysInCredits(idx, creditsFraction),
+    });
   };
   await Promise.all(
     Array.from({ length: Math.min(ACTOR_FETCH_CONCURRENCY, queue.length) }, async () => {
@@ -935,6 +1013,66 @@ async function selfTest() {
       likeFromRef('pA', 'v4').hashtag === '' && likeFromRef('pB', 'v4').hashtag === ''
   );
 
+  // ---- v8: what a create CARRIES (shapes are v7's) --------------------------
+  //
+  // v8 changes nothing about the documents themselves, so the shape checks
+  // above carry over; what it adds is the action fee agreement and the choice
+  // between YAPP and credits. Both are pure and pinned here.
+  const v8Post = planOp(postOp, planCtx('v8', '')).data;
+  const v8Reply = planOp(replyOp, planCtx('v8', '')).data;
+  check('v8: post and reply shapes are byte-identical to v7 (only the carried options differ)',
+    JSON.stringify(Object.keys(v8Post)) === JSON.stringify(Object.keys(planOp(postOp, planCtx('v7', '')).data)) &&
+      JSON.stringify(Object.keys(v8Reply)) === JSON.stringify(Object.keys(planOp(replyOp, planCtx('v7', '')).data)));
+  check('v8: tagged like still plans a beat companion', (() => {
+    const plan = planOp(likeOp, planCtx('v8', 'dash'));
+    return plan.companion?.docType === 'beat' && plan.companion.data.hashtag === 'dash';
+  })());
+
+  const postFee = actionFeeFor('post', 'v8');
+  const replyFee = actionFeeFor('reply', 'v8');
+  check('v8: the action fees come off the committed contract JSON (80M post / 16M reply, moderators only)',
+    postFee?.moderators === 80_000_000n && postFee.owner === 0n && postFee.pricing === 'feeMultiplier' &&
+      replyFee?.moderators === 16_000_000n && replyFee.owner === 0n,
+    `post=${postFee?.moderators} reply=${replyFee?.moderators}`);
+  check('v8: nothing but post and reply charges an action fee',
+    ['like', 'likeReply', 'repost', 'follow', 'bookmark', 'beat'].every((docType) => actionFeeFor(docType, 'v8') === null));
+  check('v7 and earlier charge no action fee at all',
+    ['v4', 'v5', 'v6', 'v7'].every((t) => actionFeeFor('post', t) === null && actionFeeFor('reply', t) === null));
+
+  const agreed = actionFeeAgreementOptions(postFee, 1000n);
+  check('v8: the agreement names the exact declared amounts, each pot on its own, plus the known multiplier',
+    agreed.owner === 0n && agreed.moderators === 80_000_000n &&
+      agreed.feeMultiplier.knownPermille === 1000n && agreed.feeMultiplier.increaseTolerancePercent === 20,
+    JSON.stringify(agreed, (_k, v) => (typeof v === 'bigint' ? String(v) : v)));
+  check('v8: a fixed-priced fee names NO multiplier (naming one is the same 40133)',
+    actionFeeAgreementOptions({ owner: 1n, moderators: 2n, pricing: 'fixed' }).feeMultiplier === undefined);
+  check('v8: the agreement carries the multiplier it is given, not a constant',
+    actionFeeAgreementOptions(postFee, 1250n).feeMultiplier.knownPermille === 1250n);
+
+  // The payment bags are wasm objects, unlike everything above them.
+  await ensureInitialized();
+  const yappBag = paymentInfo(TOKEN_COST.post, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }).tokenPaymentInfo.toJSON();
+  check('v8: a YAPP payment asks the contract owner to pay the gas (PreferContractOwner), never insists',
+    yappBag.gasFeesPaidBy === 'PreferContractOwner' && Number(yappBag.maximumTokenCost) === TOKEN_COST.post,
+    JSON.stringify(yappBag));
+  check('pre-v8: the payment bag is unchanged — position and cap, the signer paying the gas',
+    paymentInfo(TOKEN_COST.post).tokenPaymentInfo.toJSON().gasFeesPaidBy === 'DocumentOwner');
+  check('a credits write carries NO token payment info at all (that is what makes it pay credits)',
+    JSON.stringify(paymentInfo(undefined)) === '{}');
+
+  // The currency is a property of the ACTOR, fixed by persona index, so a
+  // resumed run never moves an author between the two funding models.
+  const share = (fraction) => Array.from({ length: 1000 }, (_, i) => paysInCredits(i, fraction)).filter(Boolean).length / 1000;
+  check('credits fraction: 0 pays everyone in YAPP, 1 pays everyone in credits',
+    share(0) === 0 && share(1) === 1);
+  check('credits fraction: 0.25 splits about a quarter of actors onto credits', Math.abs(share(0.25) - 0.25) < 0.05, `${share(0.25)}`);
+  check('credits fraction: an actor keeps its currency across calls (a resume must not switch it)',
+    Array.from({ length: 50 }, (_, i) => paysInCredits(i, 0.25)).every((v, i) => v === paysInCredits(i, 0.25)));
+  const creditsAuthors = new Set([0, 1, 2].filter((idx) => paysInCredits(idx, 1)));
+  check('credits actors are excluded from the YAPP estimate (counting them over-funds the run)',
+    corpusYappCost(ops, { paysCredits: (idx) => creditsAuthors.has(idx) }).total === 0 &&
+      corpusYappCost(ops).total === 39);
+
   // Protocol 14 document id: the derivation is consensus, pinned to rs-dpp's
   // `PINNED_V1_ID` (generate_document_id.rs) — contract [1;32], owner [2;32],
   // type "note", entropy [7;32], nonce 1. `lib/document-id.test.ts` pins the
@@ -963,7 +1101,7 @@ try {
 } catch (e) {
   console.error(e.message);
   console.error('Usage: NETWORK=devnet node scripts/seed/run-seeder.mjs --personas <file> --corpus <file>');
-  console.error(`         [--concurrency 10] [--max-ops N] [--topology ${TOPOLOGIES.join('|')}]`);
+  console.error(`         [--concurrency 10] [--max-ops N] [--topology ${TOPOLOGIES.join('|')}] [--credits-fraction 0.25]`);
   console.error('       node scripts/seed/run-seeder.mjs --self-test');
   process.exit(1);
 }
@@ -981,10 +1119,17 @@ try {
   await ensureInitialized();
   const personas = loadPersonas(args.personas);
   const { ops, stats } = parseCorpus(readFileSync(args.corpus, 'utf8'), personas, { topology: args.topology });
-  const { total: yappNeeded, perAuthor } = corpusYappCost(ops);
+  const { total: yappNeeded, perAuthor } = corpusYappCost(ops, { paysCredits: (idx) => paysInCredits(idx, args.creditsFraction) });
   console.log(`topology: ${args.topology} (untagged posts/likes ${atLeastTopology(args.topology, 'v5') ? 'OMIT the hashtag property' : "write the '' sentinel"}; ` +
     `post/reply ${atLeastTopology(args.topology, 'v7') ? 'omit the attested author column' : 'carry the attested author column'})`);
   console.log(`corpus: ${ops.length} ops (${Object.entries(stats).filter(([, n]) => n > 0).map(([t, n]) => `${n} ${t}`).join(', ')})`);
+  if (args.creditsFraction > 0) {
+    console.log(`payment: ${Math.round(args.creditsFraction * 100)}% of actors pay CREDITS (no $tokenPaymentInfo), the rest pay YAPP with the contract owner offered the gas`);
+  }
+  if (actionFeeFor('post', args.topology)) {
+    const [post, reply] = [actionFeeFor('post', args.topology), actionFeeFor('reply', args.topology)];
+    console.log(`action fees: post ${post.moderators} + reply ${reply.moderators} credits to the moderators pot, ${post.pricing} pricing — every post/reply create is a hand-built batch carrying the agreement`);
+  }
   console.log(`YAPP required if run from scratch: ${yappNeeded} total, max ${Math.max(0, ...perAuthor.values())} for one author`);
 
   const ledger = loadLedger();
@@ -998,7 +1143,7 @@ try {
   const { protocolVersion } = await handle.connect();
   console.log(`connected to devnet (PV${protocolVersion ?? '?'}), contract ${contractId}`);
 
-  const actors = await buildActors(handle, ledger, personas, ops);
+  const actors = await buildActors(handle, ledger, personas, ops, args.creditsFraction);
   console.log(`actors: ${actors.size} identities loaded from the ledger`);
   const tokenId = await readback(handle, () => handle.sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
   const before = await snapshotBalances(handle, actors, tokenId);
@@ -1006,7 +1151,8 @@ try {
   const executor = args.pipeline
     ? (await import('./pipeline.mjs')).buildPipelinedExecutor({
         handle, contractId, actors, ledger, progressRefs: progress.refs, topology: args.topology,
-        planOp, entryExists, window: args.window, log: (m) => console.log(`  ${m}`),
+        planOp, entryExists, paymentFor: writeShapeFor({ handle, topology: args.topology }).paymentFor,
+        window: args.window, log: (m) => console.log(`  ${m}`),
       })
     : buildExecutor({ handle, contractId, actors, progressRefs: progress.refs, topology: args.topology });
   if (args.pipeline) console.log(`executor: PIPELINED (window ${args.window} in flight per identity, concurrency ${args.concurrency})`);

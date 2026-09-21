@@ -26,16 +26,15 @@ import {
   BatchedTransition,
   DocumentCreateTransition,
   PrivateKey,
-  TokenPaymentInfo,
 } from '@dashevo/evo-sdk';
 import {
   DUPLICATE_UNIQUE,
   NONCE_DESYNC,
   RETRYABLE,
   TRANSPORT_COLLAPSE,
-  YAPP_TOKEN_POSITION,
   buildDocument,
   describeErr,
+  feeAgreementFor,
   randomEntropy,
   readback,
   sleep,
@@ -71,14 +70,22 @@ class NonceTrack {
   }
 }
 
-/** A signed, ready-to-broadcast create transition for one document. */
-function buildSignedCreate({ contractId, actor, docType, data, nonce, tokenCost, privateKey }) {
+/**
+ * A signed, ready-to-broadcast create transition for one document.
+ *
+ * This path already builds transitions by hand, so carrying v8's
+ * `$actionFeeAgreement` is just one more option on the create — no separate
+ * shape, unlike the facade path the confirm-per-op executor uses.
+ * `payment` is the caller's bag: empty for an actor paying credits.
+ */
+function buildSignedCreate({ contractId, actor, docType, data, nonce, payment, agreement, privateKey }) {
   // The nonce is assigned here, so the id can be derived up front (protocol 14) and IS the stored id.
   const { document, id } = buildDocument({ contractId, docType, ownerId: actor.ownerId, data, entropy: randomEntropy(), nonce });
   const create = new DocumentCreateTransition({
     document,
     identityContractNonce: nonce,
-    ...(tokenCost ? { tokenPaymentInfo: new TokenPaymentInfo({ tokenContractPosition: YAPP_TOKEN_POSITION, maximumTokenCost: BigInt(tokenCost) }) } : {}),
+    ...payment,
+    ...(agreement ? { actionFeeAgreement: agreement } : {}),
   });
   const batch = BatchTransition.fromBatchedTransitions([new BatchedTransition(create.toDocumentTransition())], actor.ownerId, 0);
   const st = batch.toStateTransition();
@@ -87,7 +94,7 @@ function buildSignedCreate({ contractId, actor, docType, data, nonce, tokenCost,
   return { st, id };
 }
 
-export function buildPipelinedExecutor({ handle, contractId, actors, ledger, progressRefs, topology, planOp, entryExists, window = DEFAULT_WINDOW, log = () => {} }) {
+export function buildPipelinedExecutor({ handle, contractId, actors, ledger, progressRefs, topology, planOp, entryExists, paymentFor, window = DEFAULT_WINDOW, log = () => {} }) {
   const resolveRef = (ref) => {
     const record = progressRefs.get(ref);
     if (!record) throw new Error(`ref "${ref}" not materialized (checkpoint out of sync)`);
@@ -115,10 +122,12 @@ export function buildPipelinedExecutor({ handle, contractId, actors, ledger, pro
   /** Broadcast one prepared create; returns once the chain shows it (or throws). */
   async function submit({ actor, docType, data, tokenCost, existenceKeyPlan, duplicateIsSuccess }) {
     const track = trackFor(actor);
+    const payment = paymentFor(actor, tokenCost);
+    const agreement = await feeAgreementFor(handle.sdk, docType, topology);
     let lastError = null;
     for (let attempt = 1; attempt <= BROADCAST_ATTEMPTS; attempt++) {
       const nonce = await track.take();
-      const { st, id } = buildSignedCreate({ contractId, actor, docType, data, nonce, tokenCost, privateKey: keyFor(actor) });
+      const { st, id } = buildSignedCreate({ contractId, actor, docType, data, nonce, payment, agreement, privateKey: keyFor(actor) });
       const accepted = acceptedProbe(existenceKeyPlan, actor, id);
       try {
         await handle.sdk.stateTransitions.broadcastStateTransition(st);
