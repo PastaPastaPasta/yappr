@@ -15,6 +15,15 @@ import { selfTest } from './battery-lib.mjs';
 import { REPO_ROOT, describeErr, sleep } from './seed/seed-lib.mjs';
 
 /**
+ * `JSON.stringify` that survives BigInt. A moderation status carries
+ * `suspendedUntil` and a removal record carries `removedAt`, both u64 and both
+ * BigInt in JS, so describing them straight threw "Do not know how to
+ * serialize a BigInt" and aborted the case mid-run.
+ */
+const describeValue = (value) => JSON.stringify(value, (_k, v) => (typeof v === 'bigint' ? String(v) : v));
+
+
+/**
  * battery-lib's offline `selfTest`, extended with the beta.3 declarations a
  * moderated battery is written against. Per document type, on top of
  * `agreements`/`immutable`/`immutableAllowSetting`:
@@ -86,7 +95,7 @@ export async function caseBan(ctx, { prefix, target, writeWhileBanned, writeAfte
   try {
     await sleep(3000);
     const status = await battery.readback(() => sdk.contracts.moderationStatus({ contractId, identityId: target.ownerId, lists: ['banlist'] }));
-    battery.check(`${prefix}b moderationStatus proves the ban with its reason`, status.banned === true && status.banReason?.text === `${prefix} battery ban`, JSON.stringify(status));
+    battery.check(`${prefix}b moderationStatus proves the ban with its reason`, status.banned === true && status.banReason?.text === `${prefix} battery ban`, describeValue(status));
     battery.expectRejected(`${prefix}c ${target.label}'s create while banned is refused (41107)`, await writeWhileBanned(), BANNED);
   } finally {
     try {
@@ -98,7 +107,7 @@ export async function caseBan(ctx, { prefix, target, writeWhileBanned, writeAfte
   }
   await sleep(3000);
   const after = await battery.readback(() => sdk.contracts.moderationStatus({ contractId, identityId: target.ownerId, lists: ['banlist'] }));
-  battery.check(`${prefix}e ${target.label} is no longer banned`, after.banned === false, JSON.stringify(after));
+  battery.check(`${prefix}e ${target.label} is no longer banned`, after.banned === false, describeValue(after));
   if (writeAfterUnban) battery.expectAccepted(`${prefix}f ${target.label}'s create lands again`, await writeAfterUnban());
 }
 
@@ -124,6 +133,6 @@ export async function caseModeratorDelete(ctx, { prefix, docType, documentId, ow
   battery.check(`${prefix}b the ${docType} no longer fetches`, (await battery.fetchDocument(docType, documentId)) === null);
   const page = await battery.readback(() => sdk.contracts.documentRemovals({ contractId, documentTypeName: docType, documentIds: [documentId] }));
   const record = page.removals.find((entry) => entry.documentId === documentId);
-  battery.check(`${prefix}c documentRemovals carries the record with the reason`, record?.reason?.text === `${prefix} battery takedown` && record?.documentOwnerId === ownerId, JSON.stringify(record ?? page));
+  battery.check(`${prefix}c documentRemovals carries the record with the reason`, record?.reason?.text === `${prefix} battery takedown` && record?.documentOwnerId === ownerId, describeValue(record ?? page));
   if (afterwards) await afterwards(ctx);
 }

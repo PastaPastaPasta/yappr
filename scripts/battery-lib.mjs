@@ -221,9 +221,21 @@ export function createBattery({ handle, contractId, socialId }) {
     const { document } = buildDocument({ contractId: contract, docType, ownerId: who.ownerId, data, entropy: randomEntropy() });
     let id = null;
     const since = Date.now();
+    // A value-identical document that existed BEFORE this create cannot be
+    // evidence that this create landed — and that is precisely the shape of a
+    // unique-index probe, where the document making the create fail is the one
+    // the value search finds. `since` alone does not exclude it: the floor
+    // allows 120 s of clock skew, so a fixture written seconds earlier in the
+    // same run matched and scored refused writes as ACCEPTED (BAD) — DM d1c
+    // (duplicate conversationInvite) and d3d (duplicate readReceipt).
+    const preExisting = accepted
+      ? null
+      : await readback(() => findRecentByValues(sdk, { contractId: contract, docType, ownerId: who.ownerId, data }));
     const storedById = async (created) => {
-      id = createdId(created) ?? id
+      const found = createdId(created) ?? id
         ?? await readback(() => findRecentByValues(sdk, { contractId: contract, docType, ownerId: who.ownerId, data, since }));
+      if (found !== null && found === preExisting) return false;
+      id = found;
       return id !== null && (await fetchDocument(docType, id, contract)) !== null;
     };
     const outcome = await attemptWrite(

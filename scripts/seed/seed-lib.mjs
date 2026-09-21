@@ -772,7 +772,20 @@ export async function findRecentByValues(sdk, { contractId, docType, ownerId, da
     // the caller's `readback` retries them instead of scanning a random page.
     const text = describeErr(e);
     if (TRANSPORT_COLLAPSE.test(text) || RETRYABLE.test(text)) throw e;
-    result = await sdk.documents.query(base);
+    try {
+      result = await sdk.documents.query(base);
+    } catch (inner) {
+      const innerText = describeErr(inner);
+      if (TRANSPORT_COLLAPSE.test(innerText) || RETRYABLE.test(innerText)) throw inner;
+      // Some doctypes cannot be reached by `$ownerId` at all — storefront's
+      // `shippingZone` indexes only (storeId, name) and (storeId, priority), so
+      // the query is refused "where clause on non indexed property". That is a
+      // permanent fact about the schema, not a fault to retry: answer "no
+      // match found" and let the caller decide the write did not land, rather
+      // than aborting every rejection probe on such a type.
+      if (NOT_QUERYABLE_BY_OWNER.test(innerText)) return null;
+      throw inner;
+    }
   }
   const floor = since === undefined ? null : BigInt(Math.floor(since - CLOCK_SKEW_MS));
   const docs = result instanceof Map ? [...result.values()] : Object.values(result ?? {});
@@ -981,6 +994,13 @@ export const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum 
 /** Confirmation-wait shapes that do NOT mean the write was refused (readback decides). */
 export const WAIT_MAYBE_LANDED = /504|gateway|deadline|timed? ?out|timeout|wait.*state.*transition|AffectedState/i;
 /** Retry-worthy transient transport noise. */
+/**
+ * A query refused because the doctype has no index for the where clause. Unlike
+ * a transport fault this never succeeds on retry, so `findRecentByValues`
+ * answers null instead of propagating it.
+ */
+export const NOT_QUERYABLE_BY_OWNER = /non indexed property|must be for valid indexes|invalid indexes/i;
+
 export const RETRYABLE = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket|network error|503|502|429|unavailable|rate limited|resource has been exhausted/i;
 /** Identity (contract) nonce desync — cured by a reconnect (fresh nonce cache). */
 export const NONCE_DESYNC = /nonce/i;

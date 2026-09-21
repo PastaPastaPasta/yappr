@@ -67,6 +67,7 @@ import {
   PrivateKey,
 } from '@dashevo/evo-sdk';
 import {
+  NONCE_SEQUENCE_MASK,
   PREFER_CONTRACT_OWNER,
   actionFeeAgreementOptions,
   actionFeeFor,
@@ -132,10 +133,24 @@ const BANNED = /\bcode"?\s*[=:]\s*41107\b|contractuserbanned|is banned/i;
 const SUSPENDED = /\bcode"?\s*[=:]\s*41108\b|contractusersuspended|is suspended/i;
 const REFERENCE_NOT_FOUND = /\bcode"?\s*[=:]\s*40120\b|referenced .{0,60}not found|referencedentitynotfound/i;
 const INSUFFICIENT_TOKENS = /\bcode"?\s*[=:]\s*40700\b|not have enough token|insufficient token|identitydoesnothaveenoughtokenbalance/i;
-const AGREEMENT_NOT_SET = /\bcode"?\s*[=:]\s*40132\b|fee agreement.{0,40}not set|actionfeeagreementnotset/i;
-const AGREEMENT_MISMATCH = /\bcode"?\s*[=:]\s*40133\b|fee agreement.{0,40}mismatch|actionfeeagreementmismatch/i;
+// 40132/40133 reach the SDK as prose with `code=-1`, not as a numbered variant:
+// "…charges an action fee of X credits to the owner and Y credits to the
+// moderators (Z pricing), and the transition carries no action fee agreement"
+// and "…, but the transition agreed to A and B credits (C pricing)". Anchoring
+// only on the number or on the phrase "fee agreement mismatch" scored those
+// verbatim refusals as unexpected on moutai (4.2.0-beta.3, 2026-09-21).
+const AGREEMENT_NOT_SET = /\bcode"?\s*[=:]\s*40132\b|fee agreement.{0,40}not set|actionfeeagreementnotset|carries no action fee agreement/i;
+const AGREEMENT_MISMATCH = /\bcode"?\s*[=:]\s*40133\b|fee agreement.{0,40}mismatch|actionfeeagreementmismatch|but the transition agreed to/i;
 const ALREADY_CLAIMED_EPOCH = /\bcode"?\s*[=:]\s*41111\b|already.{0,30}claimed.{0,30}epoch|alreadyclaimedthisepoch/i;
 const GRANT_ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|onceperidentity.{0,60}already|already claimed/i;
+
+/**
+ * `JSON.stringify` that survives BigInt. `moderationStatus.suspendedUntil` is a
+ * u64 and reaches JS as a BigInt, so stringifying the status straight threw
+ * "Do not know how to serialize a BigInt" and aborted m2 before its refusal
+ * probes — taking m3/t1/t2/l1 down with it, since they share the fixtures.
+ */
+const describeValue = (value) => JSON.stringify(value, (_k, v) => (typeof v === 'bigint' ? String(v) : v));
 
 // ---- Battery-only flags, stripped before verify-lib parses argv --------------
 //
@@ -194,7 +209,14 @@ function idOf(value) {
  */
 async function manualCreate(ctx, who, { docType, data, agreement, payment }) {
   const { sdk, contractId } = ctx;
-  const nonce = ((await readback(() => sdk.identities.contractNonce(who.ownerId, contractId))) ?? 0n) + 1n;
+  // Mask before incrementing, exactly as seed-lib's `createWithAgreement` does.
+  // A raw identity contract nonce carries missing-nonce marker bits above bit
+  // 40 once the identity has a gap (an aborted run that signed a nonce it never
+  // landed), and `raw + 1` then names a nonce far in the future: "is trying to
+  // set an invalid identity nonce. The current identity nonce is
+  // 2199023255558" (= 2^41 + 6), which wedged every later case on moutai.
+  const rawNonce = (await readback(() => sdk.identities.contractNonce(who.ownerId, contractId))) ?? 0n;
+  const nonce = (BigInt(rawNonce) & NONCE_SEQUENCE_MASK) + 1n;
   const entropy = randomIdBytes();
   const derivedId = documentIdV1({ contractId, ownerId: who.ownerId, docType, entropy, nonce });
   const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, entropy, id: derivedId });
@@ -290,7 +312,7 @@ async function caseM1Ban(ctx) {
   try {
     await settle();
     const status = await standingOf(ctx, botB.ownerId);
-    check('m1c moderationStatus proves the ban with its reason', status.banned === true && status.banReason?.text === 'v8 battery ban', JSON.stringify(status));
+    check('m1c moderationStatus proves the ban with its reason', status.banned === true && status.banReason?.text === 'v8 battery ban', describeValue(status));
     const entries = await readback(() => sdk.contracts.moderationEntries({ contractId, list: 'banlist' }));
     check('m1d the banlist page lists B', entries.entries.some((entry) => entry.identityId === botB.ownerId), `entries=${entries.entries.length}`);
 
@@ -318,7 +340,7 @@ async function caseM1Ban(ctx) {
   }
   await settle();
   const after = await standingOf(ctx, botB.ownerId);
-  check('m1h moderationStatus proves B is no longer banned', after.banned === false, JSON.stringify(after));
+  check('m1h moderationStatus proves B is no longer banned', after.banned === false, describeValue(after));
   expectAccepted('m1i B\'s create lands again after the unban', await bookmarkFixture());
 }
 
@@ -334,7 +356,7 @@ async function caseM2Suspend(ctx) {
     return;
   }
   const status = await standingOf(ctx, botB.ownerId);
-  check('m2b moderationStatus proves the suspension and its end', status.suspendedUntil !== undefined && Number(status.suspendedUntil) === until, JSON.stringify(status));
+  check('m2b moderationStatus proves the suspension and its end', status.suspendedUntil !== undefined && Number(status.suspendedUntil) === until, describeValue(status));
   const { agreement } = await feeAgreement(ctx, POST_ACTION_FEE);
   expectRejected('m2c B\'s post while suspended is refused (41108)', await manualCreate(ctx, botB, { docType: 'post', data: postData({ content: 'suspended post' }), agreement }), SUSPENDED);
   // `bookmark.ownerAndPost` is unique and m1i already bookmarked the fixture, so
@@ -347,10 +369,20 @@ async function caseM2Suspend(ctx) {
   const remaining = until - Date.now() + 8000;
   console.log(`     (waiting ${Math.ceil(remaining / 1000)} s for the suspension to lapse)`);
   await settle(Math.max(remaining, 0));
-  // The lapsed entry is swept by B's first transition at or after `until`.
-  if (target) expectAccepted('m2e B\'s create lands once the suspension lapsed', await bookmarkTarget());
+  // The lapsed entry is swept by B's first transition at or after `until` — but
+  // `until` is compared against the BLOCK time, which trails wall clock on a
+  // quiet devnet, so a fixed cushion off Date.now() is not enough on its own
+  // (moutai refused this create 41108 with a lapsed `until` on 2026-09-21).
+  // Retry until the block time catches up rather than scoring a timing gap as
+  // a consensus failure; a still-suspended answer is the only retryable one.
+  let lapsed = target ? await bookmarkTarget() : null;
+  for (let i = 0; i < 12 && lapsed && !lapsed.ok && SUSPENDED.test(lapsed.error ?? ''); i++) {
+    await settle(10_000);
+    lapsed = await bookmarkTarget();
+  }
+  if (target) expectAccepted('m2e B\'s create lands once the suspension lapsed', lapsed);
   const swept = await standingOf(ctx, botB.ownerId);
-  check('m2f the lapsed suspension was swept by that write', swept.suspendedUntil === undefined, JSON.stringify(swept));
+  check('m2f the lapsed suspension was swept by that write', swept.suspendedUntil === undefined, describeValue(swept));
 }
 
 async function caseM3ModeratorDelete(ctx) {
@@ -371,7 +403,7 @@ async function caseM3ModeratorDelete(ctx) {
   check('m3b the post no longer fetches', (await fetchDocument(sdk, contractId, 'post', removed)) === null);
   const removals = await readback(() => sdk.contracts.documentRemovals({ contractId, documentTypeName: 'post', documentIds: [removed] }));
   const record = removals.removals.find((entry) => entry.documentId === removed);
-  check('m3c documentRemovals carries the record with the reason', record?.reason?.text === 'v8 battery takedown' && record?.documentOwnerId === botB.ownerId, JSON.stringify(record ?? removals));
+  check('m3c documentRemovals carries the record with the reason', record?.reason?.text === 'v8 battery takedown' && record?.documentOwnerId === botB.ownerId, describeValue(record ?? removals));
 
   const like = await attemptCreateIndexOnly(sdk, botA, {
     contractId, docType: 'like',
@@ -543,7 +575,19 @@ async function caseL1FirstLikeCounts(ctx) {
   check('l1c byPost counts exactly 1', (await countBy(sdk, contractId, 'like', 'postId', post)) === 1);
   const ranked = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 100 }));
   const entry = ranked.entries.find((e) => e.groupValue === post);
-  check('l1d the ranked byPost axis carries the post at 1 (and no zero-count groups)', Number(entry?.value ?? -1) === 1 && ranked.entries.every((e) => Number(e.value) !== 0), `groups=${ranked.entries.length}`);
+  // v8 dropped `preallocated` from the like indexes, so a ranked page must not
+  // carry zero-count groups. That holds on any contract and is the real claim.
+  check('l1d the ranked byPost axis carries no zero-count groups', ranked.entries.every((e) => Number(e.value) !== 0), `groups=${ranked.entries.length}`);
+  // The page is `desc limit 100`, so a count-1 post only appears on a contract
+  // whose busiest hundred posts have one like. After a corpus replay it does
+  // not — asserting its presence there would fail for a reason that says
+  // nothing about v8 (l1c already proves the count is 1 via the count tree).
+  if (entry) {
+    check('l1e …and carries this post at 1 where the page reaches it', Number(entry.value) === 1, `value=${entry.value}`);
+  } else {
+    const floor = ranked.entries.at(-1)?.value;
+    console.log(`SKIP  l1e the desc page's hundredth group already counts ${floor}; a count-1 post is below it (seeded contract)`);
+  }
 }
 
 // ---- Registry ------------------------------------------------------------------------
@@ -574,7 +618,7 @@ async function prepare(ctx) {
   ctx.poor = await resolvePoorBot(ctx.sdk);
   console.log(`contract owner: ${ctx.ownerId}; moderator: ${ctx.moderator.label}; poor bot: ${ctx.poor?.label ?? 'none'}`);
   const moderation = contract.config.moderation;
-  check('the contract declares banlist + suspensions moderation', moderation?.banlist === true && moderation?.suspensions === true, JSON.stringify(moderation));
+  check('the contract declares banlist + suspensions moderation', moderation?.banlist === true && moderation?.suspensions === true, describeValue(moderation));
   // One fixture post by B that the ban/suspend probes bookmark.
   ctx.posts.fixture = await createPost(ctx, ctx.botB, postData({ content: 'v8 battery fixture' }), 'the fixture post');
   if (!ctx.posts.fixture) throw new Error('could not create the fixture post (does B hold credits, and did the agreement match?)');
