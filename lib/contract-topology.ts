@@ -22,6 +22,7 @@
  */
 
 import { CONTRACT_TOPOLOGIES, getContractTopology, type ContractTopology } from './constants'
+import socialContractV8 from '@/contracts/yappr-social-contract-v8.json'
 
 /**
  * Whether a Post-shaped object is backed by a `post` document or a `reply`
@@ -388,6 +389,37 @@ const V7_DESCRIPTOR: ContractTopologyDescriptor = {
   },
 }
 
+/**
+ * v8 — `contracts/yappr-social-contract-v8.json` (the 4.2.0-beta.3 cut,
+ * docs/SOCIAL_V8.md).
+ *
+ * v7's indexes, fields and preserve sets exactly; the descriptor is v7's with
+ * the name changed, and everything v8 adds is expressed through the grammar
+ * helpers below, read off the contract JSON itself:
+ *
+ * - **Contract moderation.** The contract keeps a banlist and a suspension
+ *   list, and `post`/`reply` are `canBeDeletedByModerators`. A moderator-
+ *   removed post is ABSENT: a fetch returns nothing, a composite by-id join
+ *   lists its id in `missingIds`, and every reference at it
+ *   (`like.postId`, `reply.rootPostId`, `post.quotedPostId`, ...) is a
+ *   `deletableDocument` reference that may resolve to nothing
+ *   ({@link referencesMayDangle}). `preallocated` is gone from the like
+ *   indexes with it ({@link likeCountsArePreallocated}).
+ * - **Free usage.** The five YAPP costs are `optional` with
+ *   `gasFeesPaidBy: PreferContractOwner`: a create MAY carry token payment
+ *   (YAPP charged, owner pays gas when able) or leave it out (credits, no
+ *   sponsorship) — {@link tokenCostFor}.
+ * - **Starter grant.** 100 YAPP claimable once per identity
+ *   ({@link starterGrantAmount}).
+ * - **Action fees.** `post.create` / `reply.create` charge credits into the
+ *   moderators pot, and the transition must agree to the exact declared
+ *   amounts ({@link declaredActionFee}).
+ */
+const V8_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V7_DESCRIPTOR,
+  topology: 'v8',
+}
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -404,6 +436,7 @@ const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>
   v5: V5_DESCRIPTOR,
   v6: V6_DESCRIPTOR,
   v7: V7_DESCRIPTOR,
+  v8: V8_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -777,4 +810,169 @@ export function groupByInteractionSurface(targets: readonly KindedTarget[]): Sur
     else byKind.set(target.kind, [target.id])
   }
   return Array.from(byKind, ([kind, ids]) => ({ kind, ids, key: surfaceKey(kind) }))
+}
+
+// ---------------------------------------------------------------------------
+// v8 grammar (4.2.0-beta.3), read off the committed contract JSON so that the
+// numbers the client shows and agrees to are the numbers consensus enforces.
+// `lib/contract-topology.test.ts` pins them.
+
+/** The six document actions a contract may price. */
+export type DocumentAction = 'create' | 'replace' | 'delete' | 'transfer' | 'update_price' | 'purchase'
+
+/**
+ * Who the contract owner offers to have pay the gas of a TOKEN-PAID action, as
+ * the contract declares it: 0 = the document owner (the default: no
+ * sponsorship), 1 = the contract owner always, 2 = the contract owner when
+ * their balance covers it. Only a create that carries `$tokenPaymentInfo` can
+ * be sponsored; one paid in credits never is.
+ */
+export type GasFeesPaidBy = 0 | 1 | 2
+
+/** What a document type's `tokenCost.create` declares. */
+export interface TokenCostDeclaration {
+  /** Tokens charged, at token position 0 (YAPP). */
+  readonly amount: number
+  /**
+   * True when a create may leave `$tokenPaymentInfo` out and pay credits
+   * instead (no fallback the other way: payment info present + insufficient
+   * tokens is a 40700 rejection).
+   */
+  readonly optional: boolean
+  /** The gas offer the payment info may ask for. */
+  readonly gasFeesPaidBy: GasFeesPaidBy
+}
+
+/** What a document type's `actionFees` declares for one action. */
+export interface ActionFeeDeclaration {
+  /** Credits into the owner pot, before the multiplier. */
+  readonly owner: bigint
+  /** Credits into the moderators pot, before the multiplier. */
+  readonly moderators: bigint
+  /**
+   * `feeMultiplier`: scaled by the epoch's fee multiplier, and the agreement
+   * must name the multiplier the signer knew plus a tolerance. `fixed`:
+   * charged as written, and the agreement must NOT name a multiplier.
+   */
+  readonly pricing: 'feeMultiplier' | 'fixed'
+}
+
+interface V8DocumentSchema {
+  canBeDeletedByModerators?: boolean
+  required?: string[]
+  properties?: Record<string, { refersTo?: { type?: string } }>
+  tokenCost?: { create?: { amount: number; optional?: boolean; gasFeesPaidBy?: number } }
+  actionFees?: { pricing?: string } & Partial<Record<DocumentAction, { owner?: number; moderators?: number }>>
+}
+
+const V8_SCHEMAS = socialContractV8.documentSchemas as unknown as Record<string, V8DocumentSchema>
+const V8_GRANT = (socialContractV8.tokens['0'].distributionRules as { oncePerIdentityDistribution?: { amount: number } })
+  .oncePerIdentityDistribution
+
+/**
+ * True when the configured contract declares `moderation` (v8): identities can
+ * be banned or suspended from it, posts and replies can be removed by its
+ * moderators, and `moderationStatus`/`documentRemovals` are answerable.
+ */
+export function contractIsModerated(): boolean {
+  return atLeast('v8')
+}
+
+/**
+ * True when a referenced post or reply may no longer exist (v8): every
+ * reference at `post`/`reply` is a `deletableDocument` reference, so a
+ * quoted post, a thread root or a liked post can be ABSENT after a moderator
+ * takedown. Readers match joins by id, never by position, and render the hole
+ * as a removed-post stub instead of failing the page.
+ */
+export function referencesMayDangle(): boolean {
+  return atLeast('v8')
+}
+
+/**
+ * True when the like count trees are `preallocated` (v4–v7): a ranked page
+ * then carries zero-count groups for posts nobody has liked, which callers
+ * over-ask and trim. v8 loses preallocation (it needs `permanentDocument`
+ * references, and a moderator-deletable post is not permanent), so the first
+ * like on a post creates its count entry and ranked pages hold liked posts
+ * only.
+ */
+export function likeCountsArePreallocated(): boolean {
+  return likesAreIndexOnly() && !atLeast('v8')
+}
+
+/**
+ * The identifier properties of `docType` a tombstone may DROP when their
+ * target has been removed by a moderator (v8: `post.quotedPostId`,
+ * `post.quotedReplyId`, `reply.replyToReplyId`): the optional
+ * `deletableDocument` references. A replace re-validates every such
+ * reference, so keeping a dead one is 40120, and clearing it is the one change
+ * to an `immutable` property consensus lets through. A REQUIRED deletable
+ * reference (`reply.rootPostId`) is not listed: it cannot be cleared, so a
+ * reply under a removed root cannot be tombstoned at all. Empty before v8,
+ * where nothing a post points at can disappear.
+ */
+export function clearableReferencesFor(docType: string): readonly string[] {
+  if (!referencesMayDangle()) return []
+  const schema = V8_SCHEMAS[docType]
+  if (!schema?.properties) return []
+  const required = new Set(schema.required ?? [])
+  return Object.entries(schema.properties)
+    .filter(([name, property]) => property.refersTo?.type === 'deletableDocument' && !required.has(name))
+    .map(([name]) => name)
+}
+
+/** The document types the contract's moderators may delete (v8: post, reply). */
+export function moderatorDeletableTypes(): readonly string[] {
+  if (!contractIsModerated()) return []
+  return Object.entries(V8_SCHEMAS)
+    .filter(([, schema]) => schema.canBeDeletedByModerators === true)
+    .map(([name]) => name)
+}
+
+/**
+ * The YAPP cost a create of `docType` declares on the configured contract, or
+ * null when the type is unpriced. Before v8 the cost is required and the
+ * document owner pays the gas, which is what `optional: false` and
+ * `gasFeesPaidBy: 0` say.
+ */
+export function tokenCostFor(docType: string): TokenCostDeclaration | null {
+  const create = V8_SCHEMAS[docType]?.tokenCost?.create
+  if (!create) return null
+  if (!atLeast('v8')) return { amount: create.amount, optional: false, gasFeesPaidBy: 0 }
+  return {
+    amount: create.amount,
+    optional: create.optional === true,
+    gasFeesPaidBy: (create.gasFeesPaidBy ?? 0) as GasFeesPaidBy,
+  }
+}
+
+/**
+ * The action fee a transition on `docType`/`action` must agree to, or null
+ * when the action charges nothing (every action before v8). The write path
+ * builds `$actionFeeAgreement` from exactly these numbers: a different owner
+ * or moderators amount, or the other pricing, is a 40133 rejection, and no
+ * agreement at all is 40132.
+ */
+export function declaredActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
+  if (!atLeast('v8')) return null
+  const fees = V8_SCHEMAS[docType]?.actionFees
+  if (!fees) return null
+  const fee = fees[action]
+  if (!fee) return null
+  return {
+    owner: BigInt(fee.owner ?? 0),
+    moderators: BigInt(fee.moderators ?? 0),
+    pricing: fees.pricing === 'fixed' ? 'fixed' : 'feeMultiplier',
+  }
+}
+
+/**
+ * The YAPP every identity may claim exactly once from the configured contract
+ * (v8: 100), or null when the token declares no once-per-identity grant. A
+ * second claim is refused with 40722.
+ */
+export function starterGrantAmount(): bigint | null {
+  if (!atLeast('v8') || !V8_GRANT) return null
+  return BigInt(V8_GRANT.amount)
 }

@@ -1,7 +1,7 @@
 import type { Post } from '@/lib/types';
 import type { CompositeDocumentsQuery } from '@dashevo/wasm-sdk';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, YAPPR_PROFILE_CONTRACT_ID } from '@/lib/constants';
-import { likesAreIndexOnly } from '@/lib/contract-topology';
+import { likeCountsArePreallocated, likesAreIndexOnly } from '@/lib/contract-topology';
 import { logger } from '@/lib/logger';
 import { loadCompositeFeedPage, usernamesByIdentity } from '@/lib/feed/composite-feed-page';
 import { dpnsService } from '@/lib/services/dpns-service';
@@ -53,8 +53,14 @@ export interface HomepageSnapshot {
 }
 
 const FEATURED_LIMIT = 5;
-/** Ranked pages on preallocated indexes carry zero-count groups; over-ask, then trim. */
-const RANKED_LIMIT = 10;
+/**
+ * Ranked pages on PREALLOCATED indexes (v4–v7) carry zero-count groups for
+ * never-liked posts, so the page over-asks and trims. v8 lost preallocation
+ * (a moderator-deletable post is not a permanentDocument target) and its
+ * ranked pages hold liked posts only — but a moderator-removed post drops out
+ * of the hydrated page, so a little headroom keeps five featured cards.
+ */
+const rankedLimit = () => (likeCountsArePreallocated() ? 10 : FEATURED_LIMIT + 2);
 const TOP_USERS_LIMIT = 6;
 
 export async function loadHomepage(): Promise<HomepageSnapshot> {
@@ -93,7 +99,7 @@ async function loadHomepageLegacy(): Promise<HomepageSnapshot> {
 async function loadHomepageRanked(): Promise<HomepageSnapshot> {
   // Wave 1.
   const [ranked, authorCounts, totalPosts] = await Promise.all([
-    topLikedPosts({ limit: RANKED_LIMIT, window: 'all' }),
+    topLikedPosts({ limit: rankedLimit(), window: 'all' }),
     postService.getAuthorPostCounts(),
     postService.countAllPosts(),
   ]);

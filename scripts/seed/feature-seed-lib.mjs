@@ -16,8 +16,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { getPublicKey } from '@noble/secp256k1';
 import bs58 from 'bs58';
 import {
-  DUPLICATE_UNIQUE, NONCE_DESYNC, REPO_ROOT, RETRYABLE, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
-  buildDocument, createdId, describeErr, findRecentByValues, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
+  DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, REPO_ROOT, RETRYABLE, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
+  buildDocument, createDocument, createdId, describeErr, findRecentByValues, forgetFeeMultiplier, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
 } from './seed-lib.mjs';
 
 export const utf8 = (text) => new TextEncoder().encode(text);
@@ -156,7 +156,7 @@ const MAX_ATTEMPTS = 4;
  * `duplicateIsSuccess` accepts a 40105 only when the exact entry is on chain — on a single-choice poll an earlier
  * ballot for a DIFFERENT choice raises the same code, and recording it would corrupt the tally.
  */
-export function createDocWriter({ handle, contractId, entropyFor, paymentInfo }) {
+export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, agreementFor = () => undefined }) {
   const stored = (docType, id, contract) => handle.sdk.documents.get(contract, docType, id);
   const settles = async (landed) => {
     for (let i = 0; i < SETTLE_POLLS; i++) {
@@ -170,7 +170,12 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo })
 
   async function createDoc(actor, docType, key, data, opts = {}) {
     const { tokenCost, accepted, duplicateIsSuccess, contract = contractId, payment = paymentInfo } = opts;
-    const { document } = buildDocument({ contractId: contract, docType, ownerId: actor.ownerId, data, entropy: entropyFor(key) });
+    const entropy = entropyFor(key);
+    const { document } = buildDocument({ contractId: contract, docType, ownerId: actor.ownerId, data, entropy });
+    // A doctype whose create is PRICED in credits (v8 post/reply) must agree to
+    // the fee, and `sdk.documents.create` has no option for it — so those go
+    // through a hand-built batch instead. Everything else is unchanged.
+    const agreement = await agreementFor(docType, contract);
     // Protocol 14: the stored id commits to the nonce `documents.create()` picks, so the id
     // a logical key used to determine is gone. It is learned from the create's RETURN (and
     // then checkpointed by the caller under the key); a create that threw after landing is
@@ -188,8 +193,8 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo })
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const created = await actor.lock(() => handle.sdk.documents.create({
-          document, identityKey: actor.identityKey, signer: actor.signer, ...payment(tokenCost),
+        const created = await actor.lock(() => createDocument(handle.sdk, {
+          contractId: contract, actor, docType, document, data, entropy, agreement, payment: payment(tokenCost),
         }));
         id = createdId(created) ?? id;
         if (await landed()) return { id };
@@ -205,7 +210,10 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo })
         const deadSdk = TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text);
         if (deadSdk) await handle.reconnect(text).catch(() => {});
         if (await settles(landed)) return { id };
-        const retryable = deadSdk || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text);
+        // A stale cached fee multiplier is the one consensus refusal a retry fixes.
+        const staleMultiplier = FEE_MULTIPLIER_NOT_TOLERATED.test(text);
+        if (staleMultiplier) forgetFeeMultiplier();
+        const retryable = deadSdk || staleMultiplier || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text);
         if (!retryable && (/code=4\d{4}/.test(text) || /consensus/i.test(text))) throw error; // Platform said no
       }
       await sleep(2_000 * attempt);

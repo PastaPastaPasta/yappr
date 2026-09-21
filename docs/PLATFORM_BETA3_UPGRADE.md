@@ -240,9 +240,9 @@ tests show fires on timestamps and credit amounts.
 | Code | Error | Matcher | User message |
 | --- | --- | --- | --- |
 | 10405 | `InvalidDocumentTransitionIdError` | `isInvalidDocumentIdError` | code-level defect; "report this" |
-| 41107 / 41108 / 41114 | `ContractUserBanned` / `ContractUserSuspended` / `ContractModerationCounterpartyBarred` | `isModerationBarredError` | banned or suspended by a moderator |
-| 40129 / 40130 / 40222 | `GasFeesPaidByNotAllowed` / `InconsistentGasFeesPaidByInBatch` / `GasSponsorInsufficientBalance` | `isGasPayerError` | can't be paid for right now |
-| 40132 / 40133 / 40134 | `DocumentActionFeeAgreementNotSet` / `…Mismatch` / `DocumentActionFeeMultiplierNotTolerated` | `isActionFeeAgreementError` | app is out of date with the fee rules |
+| 41107 / 41108 / 41114 | `ContractUserBanned` / `ContractUserSuspended` / `ContractModerationCounterpartyBarred` | `isModerationBarredError` (the signer-barred 41107/41108 half is `isBarredFromContractError`, which the v8 branch moved here from `moderation-service.ts`) | banned or suspended by a moderator |
+| 40129 / 40130 / 40222 | `GasFeesPaidByNotAllowed` / `InconsistentGasFeesPaidByInBatch` / `GasSponsorInsufficientBalance` | `isGasPayerError` (40222 also `isGasSponsorShortError` from the v8 branch, which gives it its own "pay in credits instead" message) | can't be paid for right now |
+| 40132 / 40133 / 40134 | `DocumentActionFeeAgreementNotSet` / `…Mismatch` / `DocumentActionFeeMultiplierNotTolerated` | `isActionFeeAgreementError` (40134 also `isFeeMultiplierNotToleratedError`, which the v8 write path uses to drop its cached multiplier) | app is out of date with the fee rules |
 | 40131 | `ReferencedDocumentTypeNotDeletable` | `isReferencedTypeNotDeletableError` | code-level defect |
 | 40722 | `TokenOncePerIdentityDistributionAlreadyClaimed` | `isOncePerIdentityAlreadyClaimedError` | already claimed |
 

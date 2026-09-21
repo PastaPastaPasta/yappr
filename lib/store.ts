@@ -200,7 +200,19 @@ interface SettingsState {
   /** How to treat posts the author flagged as sensitive */
   sensitiveContentMode: SensitiveContentMode
   setSensitiveContentMode: (mode: SensitiveContentMode) => void
+  /**
+   * How YAPP-priced writes are paid on a contract whose token cost is
+   * OPTIONAL (v8): in YAPP (the contract owner then sponsors the gas when
+   * able) or in credits (no token, no sponsorship). `yapp` is the default and
+   * falls back to credits when the balance does not cover the cost — see
+   * lib/payment-preference.ts.
+   */
+  payWith: PayWith
+  setPayWith: (payWith: PayWith) => void
 }
+
+/** Which currency a YAPP-priced write spends when the contract lets the user choose. */
+export type PayWith = 'yapp' | 'credits'
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
@@ -230,6 +242,8 @@ export const useSettingsStore = create<SettingsState>()(
       setFeedLanguage: (language) => set({ feedLanguage: language }),
       sensitiveContentMode: 'blur' as SensitiveContentMode,
       setSensitiveContentMode: (mode) => set({ sensitiveContentMode: mode }),
+      payWith: 'yapp' as PayWith,
+      setPayWith: (payWith) => set({ payWith }),
     }),
     {
       name: scopedKey('yappr-settings'),

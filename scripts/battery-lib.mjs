@@ -127,9 +127,12 @@ export function createBattery({ handle, contractId, socialId }) {
     const identityKey = identity.getPublicKeyById(CRITICAL_AUTH_KEY_ID);
     const authKey = entry.identityKeys.find((key) => key.keyId === CRITICAL_AUTH_KEY_ID);
     if (!identityKey || !authKey) throw new Error(`persona ${personaIdx} has no CRITICAL auth key`);
+    const wif = wifFromHex(authKey.privateKeyHex);
     const signer = new IdentitySigner();
-    signer.addKeyFromWif(wifFromHex(authKey.privateKeyHex));
-    return { ownerId: entry.identityId, identityKey, signer, label: `${entry.handle}(${personaIdx})` };
+    signer.addKeyFromWif(wif);
+    // `wif` is what a hand-built batch signs with — the only shape that can
+    // carry an `$actionFeeAgreement` (v8 post/reply); the signer covers the rest.
+    return { ownerId: entry.identityId, identityKey, signer, wif, label: `${entry.handle}(${personaIdx})` };
   }
 
   async function yappBalance(tokenId, ownerId) {

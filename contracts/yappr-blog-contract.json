@@ -1,406 +1,428 @@
 {
-  "blog": {
-    "type": "object",
-    "documentsKeepHistory": true,
+  "config": {
+    "$formatVersion": "2",
     "canBeDeleted": false,
-    "documentsMutable": true,
-    "indices": [
-      {
-        "name": "ownerAndTime",
-        "properties": [
-          {
-            "$ownerId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      }
-    ],
-    "required": [
-      "$createdAt",
-      "name"
-    ],
-    "properties": {
-      "name": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 64,
-        "position": 0,
-        "description": "Blog name"
-      },
-      "description": {
-        "type": "string",
-        "maxLength": 256,
-        "position": 1,
-        "description": "Blog description"
-      },
-      "headerImage": {
-        "type": "string",
-        "maxLength": 256,
-        "position": 2,
-        "description": "ipfs:// URI for header/banner image"
-      },
-      "avatar": {
-        "type": "string",
-        "maxLength": 256,
-        "position": 3,
-        "description": "ipfs:// URI for blog avatar"
-      },
-      "themeConfig": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 1,
-        "maxItems": 5000,
-        "position": 4,
-        "description": "Compressed JSON theme configuration"
-      },
-      "commentsEnabledDefault": {
-        "type": "boolean",
-        "position": 5,
-        "description": "Default comments setting for new posts"
-      },
-      "labels": {
-        "type": "string",
-        "maxLength": 1024,
-        "position": 6,
-        "description": "Comma-separated label taxonomy"
-      }
-    },
-    "additionalProperties": false,
-    "description": "A blog (many per user). Permanent so posts and follows can reference it; there is no tombstone flag \u2014 an abandoned blog is simply empty."
-  },
-  "blogPost": {
-    "type": "object",
-    "documentsKeepHistory": true,
-    "canBeDeleted": false,
-    "documentsMutable": true,
-    "indices": [
-      {
-        "name": "blogAndTime",
-        "properties": [
-          {
-            "blogId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
-        "name": "ownerAndTime",
-        "properties": [
-          {
-            "$ownerId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
-        "name": "blogAndSlug",
-        "unique": true,
-        "properties": [
-          {
-            "blogId": "asc"
-          },
-          {
-            "slug": "asc"
-          }
-        ]
-      }
-    ],
-    "required": [
-      "$createdAt",
-      "blogId",
-      "title",
-      "data0",
-      "slug"
-    ],
-    "properties": {
-      "blogId": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 32,
-        "maxItems": 32,
-        "contentMediaType": "application/x.dash.dpp.identifier",
-        "position": 0,
-        "description": "Reference to parent blog document",
-        "refersTo": {
-          "type": "permanentDocument",
-          "documentType": "blog"
-        }
-      },
-      "title": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 128,
-        "position": 1,
-        "description": "Post title"
-      },
-      "subtitle": {
-        "type": "string",
-        "maxLength": 256,
-        "position": 2,
-        "description": "Post subtitle"
-      },
-      "data0": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 1,
-        "maxItems": 5120,
-        "position": 3,
-        "description": "Compressed content chunk 0 (max 5120 bytes per platform field limit)"
-      },
-      "data1": {
-        "type": "array",
-        "byteArray": true,
-        "maxItems": 5120,
-        "position": 4,
-        "description": "Compressed content chunk 1 (overflow)"
-      },
-      "data2": {
-        "type": "array",
-        "byteArray": true,
-        "maxItems": 5120,
-        "position": 5,
-        "description": "Compressed content chunk 2 (overflow)"
-      },
-      "data3": {
-        "type": "array",
-        "byteArray": true,
-        "maxItems": 5120,
-        "position": 6,
-        "description": "Compressed content chunk 3 (overflow)"
-      },
-      "coverImage": {
-        "type": "string",
-        "maxLength": 256,
-        "position": 7,
-        "description": "ipfs:// URI for cover image"
-      },
-      "labels": {
-        "type": "string",
-        "maxLength": 256,
-        "position": 8,
-        "description": "Comma-separated labels from blog taxonomy"
-      },
-      "commentsEnabled": {
-        "type": "boolean",
-        "position": 9,
-        "description": "Whether comments are enabled"
-      },
-      "slug": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 63,
-        "position": 10,
-        "description": "URL-safe slug derived from title"
-      },
-      "publishedAt": {
-        "type": "integer",
-        "minimum": 0,
-        "position": 11,
-        "description": "Publication timestamp (ms since epoch)"
-      }
-    },
-    "additionalProperties": false,
-    "description": "A published post. Permanent and history-keeping, so every edit is retrievable through documents.history. The author IS $ownerId: a comment binds its blogPostOwnerId to the post's $ownerId through a system-field propertyAgreement, so no attested copy is carried.",
-    "immutable": [
-      "blogId",
-      "publishedAt"
-    ],
-    "immutableAllowSetting": [
-      "publishedAt"
-    ]
-  },
-  "blogComment": {
-    "type": "object",
-    "documentsMutable": false,
-    "indices": [
-      {
-        "name": "postAndTime",
-        "properties": [
-          {
-            "blogPostId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
-        "name": "ownerAndTime",
-        "properties": [
-          {
-            "$ownerId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
-        "name": "postOwnerAndTime",
-        "properties": [
-          {
-            "blogPostOwnerId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
-        "name": "commentCount",
-        "properties": [
-          {
-            "blogPostId": "asc"
-          }
-        ],
-        "rangeCountable": true,
-        "rankedCountable": true
-      }
-    ],
-    "required": [
-      "$createdAt",
-      "blogPostId",
-      "blogPostOwnerId",
-      "content"
-    ],
-    "properties": {
-      "blogPostId": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 32,
-        "maxItems": 32,
-        "contentMediaType": "application/x.dash.dpp.identifier",
-        "position": 0,
-        "description": "Reference to parent blog post document",
-        "refersTo": {
-          "type": "permanentDocument",
-          "documentType": "blogPost",
-          "propertyAgreement": {
-            "blogPostOwnerId": "$ownerId"
-          }
-        }
-      },
-      "blogPostOwnerId": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 32,
-        "maxItems": 32,
-        "contentMediaType": "application/x.dash.dpp.identifier",
-        "position": 1,
-        "description": "Owner of the parent post, consensus-bound to its $ownerId"
-      },
-      "content": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 500,
-        "position": 2,
-        "description": "Comment content"
-      }
-    },
-    "additionalProperties": false,
-    "description": "A comment on a post. blogPostId must name a real post whose $ownerId equals this document's blogPostOwnerId, so the notification key cannot be forged and comments on ghost posts are impossible.",
-    "tokenCost": {
-      "create": {
-        "contractId": "SOCIAL_CONTRACT_ID",
-        "tokenPosition": 0,
-        "amount": 1
+    "readonly": false,
+    "keepsHistory": false,
+    "documentsKeepHistoryContractDefault": false,
+    "documentsMutableContractDefault": true,
+    "documentsCanBeDeletedContractDefault": true,
+    "requiresIdentityEncryptionBoundedKey": null,
+    "requiresIdentityDecryptionBoundedKey": null,
+    "sizedIntegerTypes": true,
+    "moderation": {
+      "banlist": true,
+      "suspensions": true,
+      "moderators": {
+        "$type": "contractOwner"
       }
     }
   },
-  "blogFollow": {
-    "type": "object",
-    "documentsMutable": false,
-    "indices": [
-      {
-        "name": "ownerAndBlog",
-        "unique": true,
-        "properties": [
-          {
-            "$ownerId": "asc"
-          },
-          {
-            "blogId": "asc"
-          }
-        ]
-      },
-      {
-        "name": "following",
-        "properties": [
-          {
-            "$ownerId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
-        "name": "followers",
-        "properties": [
-          {
-            "blogId": "asc"
-          },
-          {
-            "$createdAt": "asc"
-          }
-        ]
-      },
-      {
-        "name": "followerCount",
-        "properties": [
-          {
-            "blogId": "asc"
-          }
-        ],
-        "rangeCountable": true,
-        "rankedCountable": true
-      },
-      {
-        "name": "followersByDay",
-        "properties": [
-          {
-            "$createdAt": "asc"
-          },
-          {
-            "blogId": "asc"
-          }
-        ],
-        "rangeCountable": true,
-        "rankedCountable": true,
-        "timeRange": {
-          "on": "$createdAt",
-          "range": 86400,
-          "step": 86400,
-          "ttl": 604800
+  "documentSchemas": {
+    "blog": {
+      "type": "object",
+      "canBeDeleted": false,
+      "documentsMutable": true,
+      "indices": [
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
         }
-      }
-    ],
-    "required": [
-      "$createdAt",
-      "blogId"
-    ],
-    "properties": {
-      "blogId": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 32,
-        "maxItems": 32,
-        "contentMediaType": "application/x.dash.dpp.identifier",
-        "position": 0,
-        "description": "Reference to the blog being followed",
-        "refersTo": {
-          "type": "permanentDocument",
-          "documentType": "blog"
+      ],
+      "required": [
+        "$createdAt",
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "position": 0,
+          "description": "Blog name"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 256,
+          "position": 1,
+          "description": "Blog description"
+        },
+        "headerImage": {
+          "type": "string",
+          "maxLength": 256,
+          "position": 2,
+          "description": "ipfs:// URI for header/banner image"
+        },
+        "avatar": {
+          "type": "string",
+          "maxLength": 256,
+          "position": 3,
+          "description": "ipfs:// URI for blog avatar"
+        },
+        "themeConfig": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5000,
+          "position": 4,
+          "description": "Compressed JSON theme configuration"
+        },
+        "commentsEnabledDefault": {
+          "type": "boolean",
+          "position": 5,
+          "description": "Default comments setting for new posts"
+        },
+        "labels": {
+          "type": "string",
+          "maxLength": 1024,
+          "position": 6,
+          "description": "Comma-separated label taxonomy"
         }
-      }
+      },
+      "additionalProperties": false,
+      "description": "A blog (many per user). Permanent so posts and follows can reference it; there is no tombstone flag \u2014 an abandoned blog is simply empty.",
+      "canBeDeletedByModerators": true
     },
-    "additionalProperties": false,
-    "description": "A follow of a blog, one per (follower, blog). Counted and ranked so discovery reads \"most followed\" and \"trending today\" instead of crawling every blog's followers."
+    "blogPost": {
+      "type": "object",
+      "canBeDeleted": false,
+      "documentsMutable": true,
+      "indices": [
+        {
+          "name": "blogAndTime",
+          "properties": [
+            {
+              "blogId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "blogAndSlug",
+          "unique": true,
+          "properties": [
+            {
+              "blogId": "asc"
+            },
+            {
+              "slug": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "blogId",
+        "title",
+        "data0",
+        "slug"
+      ],
+      "properties": {
+        "blogId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 0,
+          "description": "Reference to parent blog document",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "blog"
+          }
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "position": 1,
+          "description": "Post title"
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 256,
+          "position": 2,
+          "description": "Post subtitle"
+        },
+        "data0": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5120,
+          "position": 3,
+          "description": "Compressed content chunk 0 (max 5120 bytes per platform field limit)"
+        },
+        "data1": {
+          "type": "array",
+          "byteArray": true,
+          "maxItems": 5120,
+          "position": 4,
+          "description": "Compressed content chunk 1 (overflow)"
+        },
+        "data2": {
+          "type": "array",
+          "byteArray": true,
+          "maxItems": 5120,
+          "position": 5,
+          "description": "Compressed content chunk 2 (overflow)"
+        },
+        "data3": {
+          "type": "array",
+          "byteArray": true,
+          "maxItems": 5120,
+          "position": 6,
+          "description": "Compressed content chunk 3 (overflow)"
+        },
+        "coverImage": {
+          "type": "string",
+          "maxLength": 256,
+          "position": 7,
+          "description": "ipfs:// URI for cover image"
+        },
+        "labels": {
+          "type": "string",
+          "maxLength": 256,
+          "position": 8,
+          "description": "Comma-separated labels from blog taxonomy"
+        },
+        "commentsEnabled": {
+          "type": "boolean",
+          "position": 9,
+          "description": "Whether comments are enabled"
+        },
+        "slug": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63,
+          "position": 10,
+          "description": "URL-safe slug derived from title"
+        },
+        "publishedAt": {
+          "type": "integer",
+          "minimum": 0,
+          "position": 11,
+          "description": "Publication timestamp (ms since epoch)"
+        }
+      },
+      "additionalProperties": false,
+      "description": "A published post. Permanent for its owner (blog v3 keeps no revision history; the contract's moderators may remove it). The author IS $ownerId: a comment binds its blogPostOwnerId to the post's $ownerId through a system-field propertyAgreement, so no attested copy is carried.",
+      "immutable": [
+        "blogId",
+        "publishedAt"
+      ],
+      "immutableAllowSetting": [
+        "publishedAt"
+      ],
+      "canBeDeletedByModerators": true
+    },
+    "blogComment": {
+      "type": "object",
+      "documentsMutable": false,
+      "indices": [
+        {
+          "name": "postAndTime",
+          "properties": [
+            {
+              "blogPostId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "postOwnerAndTime",
+          "properties": [
+            {
+              "blogPostOwnerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "commentCount",
+          "properties": [
+            {
+              "blogPostId": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": true
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "blogPostId",
+        "blogPostOwnerId",
+        "content"
+      ],
+      "properties": {
+        "blogPostId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 0,
+          "description": "Reference to parent blog post document",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "blogPost",
+            "propertyAgreement": {
+              "blogPostOwnerId": "$ownerId"
+            }
+          }
+        },
+        "blogPostOwnerId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 1,
+          "description": "Owner of the parent post, consensus-bound to its $ownerId"
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "position": 2,
+          "description": "Comment content"
+        }
+      },
+      "additionalProperties": false,
+      "description": "A comment on a post. blogPostId must name a real post whose $ownerId equals this document's blogPostOwnerId, so the notification key cannot be forged and comments on ghost posts are impossible.",
+      "tokenCost": {
+        "create": {
+          "contractId": "SOCIAL_CONTRACT_ID",
+          "tokenPosition": 0,
+          "amount": 1
+        }
+      },
+      "canBeDeletedByModerators": true
+    },
+    "blogFollow": {
+      "type": "object",
+      "documentsMutable": false,
+      "indices": [
+        {
+          "name": "ownerAndBlog",
+          "unique": true,
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "blogId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "following",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "followers",
+          "properties": [
+            {
+              "blogId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "followerCount",
+          "properties": [
+            {
+              "blogId": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": true
+        },
+        {
+          "name": "followersByDay",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "blogId": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": true,
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 86400,
+            "step": 86400,
+            "ttl": 604800
+          }
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "blogId"
+      ],
+      "properties": {
+        "blogId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 0,
+          "description": "Reference to the blog being followed",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "blog"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "description": "A follow of a blog, one per (follower, blog). Counted and ranked so discovery reads \"most followed\" and \"trending today\" instead of crawling every blog's followers."
+    }
   }
 }

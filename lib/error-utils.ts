@@ -1,6 +1,7 @@
 /**
  * Utility functions for error handling and message extraction.
  */
+import { paymentIsChoosable } from '@/lib/payment-preference'
 
 const MAX_ERROR_DEPTH = 5
 
@@ -165,6 +166,22 @@ export function isReferenceNotFoundError(error: unknown): boolean {
 }
 
 /**
+ * The schema path a `ReferencedEntityNotFoundError` (40120) names, or null.
+ *
+ * Drive builds the message from rs-dpp's `#[error("referenced {entity_type}
+ * {entity_id} not found for path {path}")]`, where `path` is a key of the
+ * document type's flattened properties — for Yappr's references a top-level
+ * property name like `quotedPostId`. A caller that must clear a dead reference
+ * needs to know WHICH one died: dropping a reference whose target is still
+ * alive is a 40128 instead (the immutable check judges each removed property on
+ * its own), so guessing is worse than not retrying.
+ */
+export function referencedPathFromError(error: unknown): string | null {
+  const match = /\bfor path ([A-Za-z0-9_.]+)/.exec(extractErrorMessage(error))
+  return match ? match[1] : null
+}
+
+/**
  * Checks whether Platform refused a write because a `propertyAgreement` pair
  * disagreed with the referenced document (ReferencedDocumentPropertyMismatch,
  * state code 40127).
@@ -291,9 +308,26 @@ export function isInvalidDocumentIdError(error: unknown): boolean {
 export function isModerationBarredError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
   return (
-    /contractuserbanned|contractusersuspended|contractmoderationcounterpartybarred/i.test(msg) ||
-    /is (banned|suspended|banned or suspended) on contract .* and can not (act on its documents|be the)/i.test(msg) ||
-    hasConsensusCode(msg, [41107, 41108, 41114])
+    isBarredFromContractError(error) ||
+    /contractmoderationcounterpartybarred/i.test(msg) ||
+    /is banned or suspended on contract .* and can not be the/i.test(msg) ||
+    hasConsensusCode(msg, [41114])
+  )
+}
+
+/**
+ * The SIGNER is barred: banned (41107) or suspended (41108) from the contract,
+ * as opposed to the counterparty case above. The UI resolves the standing and
+ * its recorded reason for exactly these two (`reportBarredWrite`); a refusal
+ * is paid and bumps the nonce, so retrying is pointless.
+ */
+export function isBarredFromContractError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /contractuser(banned|suspended)/i.test(msg) ||
+    /is (banned|suspended) (from|on) (this|the )?contract/i.test(msg) ||
+    /is (banned|suspended) on contract .* and can not act on its documents/i.test(msg) ||
+    hasConsensusCode(msg, [41107, 41108])
   )
 }
 
@@ -341,11 +375,42 @@ export function isGasPayerError(error: unknown): boolean {
 export function isActionFeeAgreementError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
   return (
-    /documentactionfeeagreementnotset|documentactionfeeagreementmismatch|documentactionfeemultipliernottolerated/i.test(msg) ||
+    isFeeMultiplierNotToleratedError(error) ||
+    /documentactionfeeagreementnotset|documentactionfeeagreementmismatch/i.test(msg) ||
     /charges an action fee of .* and the transition carries no action fee agreement/i.test(msg) ||
     /charges an action fee of .* but the transition agreed to/i.test(msg) ||
+    hasConsensusCode(msg, [40132, 40133])
+  )
+}
+
+/**
+ * The 40134 member of the family on its own: the agreement's amounts were
+ * right, but the epoch fee multiplier rose past the tolerance the signer
+ * allowed. Unlike 40132/40133 this is not a stale client — the write path
+ * forgets the multiplier it knew and the NEXT attempt re-reads it.
+ */
+export function isFeeMultiplierNotToleratedError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentactionfeemultipliernottolerated/i.test(msg) ||
     /agreed to an action fee priced with a fee multiplier/i.test(msg) ||
-    hasConsensusCode(msg, [40132, 40133, 40134])
+    hasConsensusCode(msg, [40134])
+  )
+}
+
+/**
+ * 40222 on its own: the contract owner the transition PREFERRED as gas
+ * sponsor is short of credits. Under `preferContractOwner` (the only offer
+ * Yappr asks for) the network falls back to the signer instead of raising
+ * this, so seeing it means the signer's own credits could not cover the write
+ * either, or the transition insisted (`contractOwner`), which Yappr never does.
+ */
+export function isGasSponsorShortError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /gassponsorinsufficientbalance/i.test(msg) ||
+    /sponsoring the gas has balance .* is required/i.test(msg) ||
+    hasConsensusCode(msg, [40222])
   )
 }
 
@@ -414,8 +479,17 @@ export function categorizeError(error: unknown): string {
   if (isOncePerIdentityAlreadyClaimedError(error)) {
     return 'You\'ve already claimed this — it can only be claimed once per account.'
   }
+  if (isGasSponsorShortError(error)) {
+    // Only reachable for a transition that INSISTS on the contract owner; Yappr
+    // always prefers, which falls back to the signer instead of raising this.
+    // Kept so it never reads as "buy more YAPP" if that ever changes.
+    return 'Yappr couldn\'t cover the network fee for this right now. Try again, or switch to paying in credits.'
+  }
   if (isGasPayerError(error)) {
     return 'This action can\'t be paid for right now. Nothing was charged — try again later.'
+  }
+  if (isFeeMultiplierNotToleratedError(error)) {
+    return 'The network\'s fee level changed while this was being sent. Nothing was posted — try again.'
   }
   if (isActionFeeAgreementError(error)) {
     return 'This app is out of date with the network\'s fee rules. Reload to get the latest version.'
@@ -455,7 +529,14 @@ export function categorizeError(error: unknown): string {
   }
 
   if (isInsufficientTokenError(error)) {
-    return 'You don\'t have enough YAPP. Buy more to keep posting.'
+    // Where the contract prices actions OPTIONALLY (v8), YAPP is not the only
+    // way to act, and a balance that went stale between planning and signing
+    // lands here: offering only to sell more would hide the free option. The
+    // way out is read through the topology, so the advice never names one the
+    // contract does not offer.
+    return paymentIsChoosable('post')
+      ? 'You don\'t have enough YAPP. Buy more, or switch to paying in credits in Settings.'
+      : 'You don\'t have enough YAPP. Buy more to keep posting.'
   }
 
   const errorMessage = extractErrorMessage(error)

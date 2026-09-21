@@ -6,12 +6,13 @@ import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
+import { starterGrantAmount } from '../contract-topology';
 import { extractErrorMessage } from '../error-utils';
 
 export interface TokenResult {
   success: boolean;
   error?: string;
-  errorCode?: 'INVALID_KEY' | 'INSUFFICIENT_CREDITS' | 'BELOW_MINIMUM' | 'NOT_AUTHORIZED' | 'NETWORK_ERROR' | 'NEEDS_CRITICAL_KEY';
+  errorCode?: 'INVALID_KEY' | 'INSUFFICIENT_CREDITS' | 'BELOW_MINIMUM' | 'NOT_AUTHORIZED' | 'NETWORK_ERROR' | 'NEEDS_CRITICAL_KEY' | 'ALREADY_CLAIMED';
 }
 
 /** Minimum YAPP per direct purchase — enforced on-chain by the SetPrices tier, mirrored here for UX. */
@@ -185,6 +186,38 @@ class TokenService {
   }
 
   /**
+   * Claims the once-per-identity STARTER GRANT the v8 contract's token
+   * declares (`distributionRules.oncePerIdentityDistribution`, 100 YAPP): a
+   * fixed amount every identity may claim exactly once. A second claim is
+   * refused, paid, with TokenOncePerIdentityDistributionAlreadyClaimedError
+   * (40722), which comes back as ALREADY_CLAIMED so the prompt can stop for
+   * good. Like every token transition it needs a CRITICAL key.
+   */
+  async claimStarterGrant(identityId: string, criticalKeyWif?: string): Promise<TokenResult> {
+    if (starterGrantAmount() === null) {
+      return { success: false, error: 'This contract declares no starter grant', errorCode: 'NOT_AUTHORIZED' };
+    }
+    try {
+      const sdk = await getEvoSdk();
+      const { signer, identityKey } = await this.getAuthSigner(identityId, {
+        requireCritical: true,
+        overrideWif: criticalKeyWif,
+      });
+      await sdk.tokens.claim({
+        dataContractId: new Identifier(YAPPR_CONTRACT_ID),
+        tokenPosition: YAPP_TOKEN_POSITION,
+        identityId: new Identifier(identityId),
+        distributionType: 'oncePerIdentity',
+        identityKey,
+        signer,
+      } as Parameters<typeof sdk.tokens.claim>[0]);
+      return { success: true };
+    } catch (error) {
+      return this.toResult(error, 'Claim failed');
+    }
+  }
+
+  /**
    * Freeze an identity's YAPP balance (moderation — blocks posting + transfers).
    * Signed by the token authority (contract owner) identity.
    */
@@ -306,6 +339,9 @@ class TokenService {
         error: 'This action needs your CRITICAL key to authorize',
         errorCode: 'NEEDS_CRITICAL_KEY',
       };
+    }
+    if (/\bcode"?\s*[=:]\s*40722\b/.test(msg) || lower.includes('alreadyclaimed')) {
+      return { success: false, error: 'This identity already claimed its starter YAPP', errorCode: 'ALREADY_CLAIMED' };
     }
     if (lower.includes('not authorized') || lower.includes('noone')) {
       return { success: false, error: 'Not authorized to perform this action', errorCode: 'NOT_AUTHORIZED' };

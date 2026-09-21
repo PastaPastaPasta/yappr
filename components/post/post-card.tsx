@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, LockClosedIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, LockClosedIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
@@ -22,11 +22,14 @@ import { useQuotedPost } from '@/hooks/use-quoted-post'
 import { usePostFieldValidation } from '@/hooks/use-post-field-validation'
 import { useRecoveryModal } from '@/hooks/use-recovery-modal'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
+import { useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
+import { useIsModerator } from '@/hooks/use-is-moderator'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { usePostEngagement } from '@/hooks/use-post-engagement'
 import { shouldGateSensitive } from '@/lib/sensitive-content'
 import { findPollrPollLink, getEmbeddedPollId, stripPollrPollLink } from '@/lib/poll-embed'
-import { deletesAreTombstones, targetKindOf } from '@/lib/contract-topology'
+import { deletesAreTombstones, moderatorDeletableTypes, referencesMayDangle, targetKindOf } from '@/lib/contract-topology'
+import { quoteTargetOf } from '@/lib/feed/resolve-quoted-posts'
 import { stopPropagation } from '@/lib/utils/events'
 import { IconButton } from '@/components/ui/icon-button'
 import { UserAvatar } from '@/components/ui/avatar-image'
@@ -38,6 +41,7 @@ import { PostContent } from './post-content'
 import { PrivatePostContent, isPrivatePost } from './private-post-content'
 import { SensitiveContentGate } from './sensitive-content-gate'
 import { EmbeddedPostCard, EmbeddedPostSkeleton, EmbeddedPostUnavailable } from './embedded-post-card'
+import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
 import { GatedPostMedia } from './gated-media'
 import { PostActionBar, stopAndRun } from './post-action-bar'
 import { PostAuthorLine, hasRealProfile, resolveUsernameState, type UsernameState } from './post-author-line'
@@ -113,6 +117,9 @@ export function PostCard({
   // On v3 posts are permanent: "delete" blanks the document and flags it.
   const tombstones = deletesAreTombstones()
   const [locallyTombstoned, setLocallyTombstoned] = useState(false)
+  // A moderator removed it from this card: the document is GONE (not a
+  // tombstone), so the card renders the removed stub until the feed drops it.
+  const [locallyRemoved, setLocallyRemoved] = useState(false)
   // Beats EVERY content branch (tip, poll, quote, media), or a freshly
   // tombstoned card keeps exposing its former attachments until Platform data arrives.
   const isTombstoned = Boolean(post.deleted) || locallyTombstoned
@@ -174,6 +181,10 @@ export function PostCard({
   const { open: openTipModal } = useTipModal()
   const { open: openRecoveryModal } = useRecoveryModal()
   const { open: openDeleteModal } = useDeleteConfirmationModal()
+  const { open: openModeratorRemoveModal } = useModeratorRemoveModal()
+  // The contract's moderation team may delete someone else's post outright
+  // (v8). Their own posts they tombstone like everyone else.
+  const canModerate = useIsModerator() && !isOwnPost && moderatorDeletableTypes().includes(targetKind)
   // Whether each hashtag/mention index document actually landed on Platform.
   const { validations: hashtagValidations } = usePostFieldValidation('hashtag', post)
   const { validations: mentionValidations } = usePostFieldValidation('mention', post)
@@ -191,6 +202,9 @@ export function PostCard({
   const mediaGate = useMediaGate(post.author.id, authorIsFollowing)
   // Batch-resolved when the loader attached one, otherwise fetched here.
   const { quotedPost, loading: quotedPostLoading, unavailable: quotedPostUnavailable } = useQuotedPost(post)
+  // A blog quote that fails is "unavailable"; a social quote that fails on a
+  // moderated contract is most likely a takedown, and the stub says so.
+  const quotedTarget = quotedPostUnavailable ? quoteTargetOf(post) : null
   // For replies, access is checked against the root post owner, not the reply author.
   const { canReply: canReplyToPrivate, reason: cantReplyReason } = useCanReplyToPrivate(post, rootPostOwnerId)
 
@@ -286,6 +300,8 @@ export function PostCard({
   const authorLabel = usernameState ? `@${usernameState}` : displayName
   const optionsLabel = isReply ? 'Reply options' : 'Post options'
 
+  if (locallyRemoved) return <RemovedPostStub documentId={post.id} kind={targetKind} variant="card" />
+
   return (
     <article
       data-testid={`post-card-${post.id}`}
@@ -377,6 +393,22 @@ export function PostCard({
                     <DropdownMenu.Item onClick={(e) => stopAndRun(e, toggleBlock)} disabled={blockLoading} className={cn(CARD_MENU_ITEM, 'text-red-500 disabled:opacity-50')}>
                       {isBlocked ? 'Unblock' : 'Block'} {authorLabel}
                     </DropdownMenu.Item>
+                    {canModerate && (
+                      <DropdownMenu.Item
+                        data-testid={`moderator-remove-${post.id}`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          openModeratorRemoveModal(post, () => {
+                            setLocallyRemoved(true)
+                            onDelete?.(post.id)
+                          })
+                        }}
+                        className={cn(CARD_MENU_ITEM, 'flex items-center gap-2 text-red-500')}
+                      >
+                        <ShieldExclamationIcon className="h-4 w-4" />
+                        Remove {isReply ? 'reply' : 'post'} (moderator)
+                      </DropdownMenu.Item>
+                    )}
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
@@ -412,7 +444,9 @@ export function PostCard({
             {!isTombstoned && embeddedPollId && !isPrivatePost(post) && <PollCard pollId={embeddedPollId} postContent={displayContent} postAuthorId={post.author.id} />}
 
             {!isTombstoned && quotedPostLoading && <EmbeddedPostSkeleton />}
-            {!isTombstoned && quotedPostUnavailable && <EmbeddedPostUnavailable />}
+            {!isTombstoned && quotedPostUnavailable && (quotedTarget && quotedTarget.where !== 'blogPost' && referencesMayDangle()
+              ? <RemovedPostStub documentId={quotedTarget.id} kind={quotedTarget.where} proven={post.quotedPostRemoved === true} />
+              : <EmbeddedPostUnavailable />)}
             {!isTombstoned && quotedPost && (isEmbeddedBlogPostLike(quotedPost) ? <EmbeddedBlogPostCard post={quotedPost} /> : <EmbeddedPostCard post={quotedPost} />)}
 
             {!isTombstoned && post.media && post.media.length > 0 && (

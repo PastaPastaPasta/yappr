@@ -27,7 +27,17 @@ import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import bs58 from 'bs58';
 import bs58check from 'bs58check';
-import { Document, PlatformVersion, TokenPaymentInfo } from '@dashevo/evo-sdk';
+import {
+  BatchTransition,
+  BatchedTransition,
+  Document,
+  DocumentActionFeeAgreement,
+  DocumentCreateTransition,
+  Identifier,
+  PlatformVersion,
+  PrivateKey,
+  TokenPaymentInfo,
+} from '@dashevo/evo-sdk';
 import { REPO_ROOT, readEnvFile, privateKeyToWif } from '../derive-identities.mjs';
 import { describeErr } from '../owner-keys.mjs';
 import { buildSdk, insightUrl, keyNetwork, network } from '../sdk-env.mjs';
@@ -87,6 +97,14 @@ export function profileContractId() {
 //   v6 — v5 plus the windowed rankings: a like of a TAGGED post also writes a
 //        `beat` companion (contracts/yappr-social-contract-v6.json), which is
 //        what carries today's trending-hashtag axis.
+//   v8 — v7's document SHAPES exactly (every field, index and agreement is
+//        v7's), on the 4.2.0-beta.3 grammar
+//        (contracts/yappr-social-contract-v8.json). What changes is what a
+//        create must CARRY: post and reply declare an `actionFees` fee that
+//        the transition has to agree to, and their token costs are `optional`
+//        with the contract owner offering to pay the gas — so a create may
+//        pay YAPP (with the gas offer) or omit the payment info entirely and
+//        pay credits. See `actionFeeFor` / `paymentInfo` below.
 //   v7 — v6's shapes on the 4.2.0-beta.2 grammar
 //        (contracts/yappr-social-contract-v7.json): post/reply no longer carry
 //        the attested `author` column, because a like's `postAuthor` now binds
@@ -96,8 +114,8 @@ export function profileContractId() {
 //
 // ORDER IS SIGNIFICANT: `atLeastTopology` compares positions in this array, so
 // new cuts append. Mirrors CONTRACT_TOPOLOGIES in lib/constants.ts.
-export const TOPOLOGIES = ['v4', 'v5', 'v6', 'v7'];
-export const HASHTAG_MAX = { v4: 63, v5: 61, v6: 61, v7: 61 };
+export const TOPOLOGIES = ['v4', 'v5', 'v6', 'v7', 'v8'];
+export const HASHTAG_MAX = { v4: 63, v5: 61, v6: 61, v7: 61, v8: 61 };
 
 /** True when `topology` is `floor` or any later cut. */
 export function atLeastTopology(topology, floor) {
@@ -523,18 +541,43 @@ export function parseCorpus(text, personas, { topology = 'v4' } = {}) {
   return { ops, stats };
 }
 
-/** YAPP a corpus costs in total and per persona idx (create tokenCosts). */
-export function corpusYappCost(ops) {
+/**
+ * YAPP a corpus costs in total and per persona idx (create tokenCosts).
+ *
+ * `paysCredits(authorIdx)` excludes the authors a v8 run has paying in credits
+ * instead: their writes cost no YAPP at all, so counting them would over-fund
+ * the run and hide an actually underfunded author.
+ */
+export function corpusYappCost(ops, { paysCredits = () => false } = {}) {
   const perAuthor = new Map();
   let total = 0;
   const costOf = { post: TOKEN_COST.post, quote: TOKEN_COST.post, reply: TOKEN_COST.reply, like: TOKEN_COST.like, likeReply: TOKEN_COST.likeReply, repost: TOKEN_COST.repost };
   for (const op of ops) {
     const cost = costOf[op.type] ?? 0;
-    if (cost === 0) continue;
+    if (cost === 0 || paysCredits(op.author)) continue;
     total += cost;
     perAuthor.set(op.author, (perAuthor.get(op.author) ?? 0) + cost);
   }
   return { total, perAuthor };
+}
+
+/**
+ * Whether persona `idx` pays its token-priced writes in CREDITS rather than
+ * YAPP, for a run asking for `fraction` of its actors to do so (v8's optional
+ * token costs — the "free usage" path where the write carries no
+ * `$tokenPaymentInfo` and the signer pays credits as for an unpriced action).
+ *
+ * Deterministic in the persona index alone, so a resumed run keeps every actor
+ * on the currency it started with: switching mid-run would leave an author
+ * funded for neither path. The multiplier is coprime with 1000, so consecutive
+ * indexes land on a full-period permutation rather than in author-block
+ * buckets the way a bare `idx % n` would; the self-test pins the resulting
+ * share.
+ */
+export function paysInCredits(idx, fraction) {
+  if (!(fraction > 0)) return false;
+  if (fraction >= 1) return true;
+  return ((Number(idx) * 2654435761) % 1000) / 1000 < fraction;
 }
 
 // ---- Checkpoint journal (.seed-progress.local.json) ---------------------------
@@ -588,6 +631,8 @@ export function appendProgress(record, file = PROGRESS_FILE) {
 export const randomEntropy = () => crypto.getRandomValues(new Uint8Array(32));
 
 const DOCUMENT_ID_V1_DOMAIN_TAG = new TextEncoder().encode('dash:document-id:v1');
+/** DIP-30: the low 40 bits of an identity contract nonce are the sequence; the rest is a revision bitset. */
+export const NONCE_SEQUENCE_MASK = (1n << 40n) - 1n;
 
 /**
  * Protocol 14 document id (platform#4859; mirror of `lib/document-id.ts`, pinned
@@ -741,16 +786,186 @@ export async function findRecentByValues(sdk, { contractId, docType, ownerId, da
   return null;
 }
 
-/** Token-payment agreement for token-priced doctypes (post/reply/like/likeReply/repost). */
-export function paymentInfo(tokenCost) {
+/**
+ * Token payment for a token-priced doctype (post/reply/like/likeReply/repost).
+ *
+ * `gasFeesPaidBy: 2` (PreferContractOwner) is the offer v8's types make: the
+ * contract owner pays the gas of a token-paid create when it can, else the
+ * signer does. Never ask for `1` (ContractOwner, insisting) — the type does not
+ * offer it and insisting is 40129. Omitting the bag ENTIRELY is the credits
+ * path on v8's `optional: true` costs; there is no fallback the other way
+ * (payment info with too little YAPP is a 40700 refusal), so callers choose
+ * before signing.
+ */
+export function paymentInfo(tokenCost, { gasFeesPaidBy = 0 } = {}) {
   return tokenCost
     ? {
         tokenPaymentInfo: new TokenPaymentInfo({
           tokenContractPosition: YAPP_TOKEN_POSITION,
           maximumTokenCost: BigInt(tokenCost),
+          ...(gasFeesPaidBy ? { gasFeesPaidBy } : {}),
         }),
       }
     : {};
+}
+
+/** The gas offer v8's token-paid creates may ask for. */
+export const PREFER_CONTRACT_OWNER = 2;
+/** How far above the multiplier the signer knew the executing epoch's may be (percent). */
+export const FEE_MULTIPLIER_TOLERANCE_PERCENT = 20;
+/** Agreed when the epoch read fails: 40132 is certain without an agreement, 40134 unlikely at 1.0x. */
+export const DEFAULT_FEE_MULTIPLIER_PERMILLE = 1000n;
+
+const V8_DOCUMENT_SCHEMAS = JSON.parse(
+  readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v8.json'), 'utf8')
+).documentSchemas;
+
+/**
+ * What `docType`'s create costs in YAPP on `topology`, and how that payment may
+ * be made: `{ amount, optional, gasFeesPaidBy }`, read off the committed
+ * contract. Before v8 a declared cost is REQUIRED and the signer pays the gas,
+ * which is what `optional: false, gasFeesPaidBy: 0` says. The gas offer is a
+ * property of the doctype, independent of whether it charges an action fee —
+ * inferring one from the other would send a payer the type never offered (40129).
+ */
+export function tokenCostFor(docType, topology) {
+  const create = V8_DOCUMENT_SCHEMAS[docType]?.tokenCost?.create;
+  if (!create) return null;
+  if (!atLeastTopology(topology, 'v8')) return { amount: create.amount, optional: false, gasFeesPaidBy: 0 };
+  return { amount: create.amount, optional: create.optional === true, gasFeesPaidBy: create.gasFeesPaidBy ?? 0 };
+}
+
+/**
+ * The action fee `docType`'s create charges on `topology`, or null when it
+ * charges none (every doctype and every topology before v8; on v8, everything
+ * but `post` and `reply`). Read off the committed contract JSON so no amount is
+ * ever transcribed: a mismatch is a paid 40133.
+ */
+export function actionFeeFor(docType, topology) {
+  if (!atLeastTopology(topology, 'v8')) return null;
+  const fees = V8_DOCUMENT_SCHEMAS[docType]?.actionFees;
+  const create = fees?.create;
+  if (!create) return null;
+  return {
+    owner: BigInt(create.owner ?? 0),
+    moderators: BigInt(create.moderators ?? 0),
+    pricing: fees.pricing === 'fixed' ? 'fixed' : 'feeMultiplier',
+  };
+}
+
+/**
+ * The `$actionFeeAgreement` options for a declared fee: the exact amounts, each
+ * pot on its own, plus the multiplier the signer knew for `feeMultiplier`
+ * pricing (naming one for a `fixed` fee is the same 40133 mismatch). Pure, so
+ * `--self-test` pins it without a network.
+ */
+export function actionFeeAgreementOptions(fee, knownPermille) {
+  return {
+    owner: fee.owner,
+    moderators: fee.moderators,
+    ...(fee.pricing === 'feeMultiplier'
+      ? { feeMultiplier: { knownPermille: BigInt(knownPermille), increaseTolerancePercent: FEE_MULTIPLIER_TOLERANCE_PERCENT } }
+      : {}),
+  };
+}
+
+/** The current epoch's fee multiplier, read once per process (callers refresh on a 40134). */
+let cachedFeeMultiplierPermille = null;
+export async function feeMultiplierPermille(sdk) {
+  if (cachedFeeMultiplierPermille !== null) return cachedFeeMultiplierPermille;
+  try {
+    cachedFeeMultiplierPermille = BigInt((await sdk.epoch.current()).feeMultiplierPermille);
+  } catch (error) {
+    console.log(`     (epoch read failed, agreeing at ${DEFAULT_FEE_MULTIPLIER_PERMILLE} permille: ${describeErr(error).slice(0, 120)})`);
+    return DEFAULT_FEE_MULTIPLIER_PERMILLE;
+  }
+  return cachedFeeMultiplierPermille;
+}
+
+/**
+ * A rejection saying the epoch's fee multiplier outran what the agreement
+ * tolerated (40134). The amounts were right; only the multiplier this process
+ * cached went stale — which happens when a long run crosses an epoch boundary.
+ */
+export const FEE_MULTIPLIER_NOT_TOLERATED = /\bcode"?\s*[=:]\s*40134\b|documentactionfeemultipliernottolerated|fee multiplier is/i;
+
+/**
+ * Forgets the cached multiplier so the next agreement re-reads the epoch.
+ * Called from the retry loops on a 40134: without it every later create in the
+ * run re-agrees at the same stale value and is refused for the same reason.
+ */
+export function forgetFeeMultiplier() {
+  cachedFeeMultiplierPermille = null;
+}
+
+/**
+ * The agreement a create of `docType` must carry on `topology`, or undefined
+ * when the action is unpriced. Reads the epoch multiplier on first use.
+ */
+export async function feeAgreementFor(sdk, docType, topology) {
+  const fee = actionFeeFor(docType, topology);
+  if (!fee) return undefined;
+  return new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, await feeMultiplierPermille(sdk)));
+}
+
+/**
+ * A create built and signed BY HAND, the only shape that can carry an
+ * `$actionFeeAgreement`: `sdk.documents.create` (`DocumentCreateOptions`)
+ * offers `document`, `identityKey`, `signer`, `tokenPaymentInfo` and
+ * `settings` — and nothing for the agreement — so every post/reply create on a
+ * v8 contract goes through here or it is a paid 40132.
+ *
+ * Protocol 14 derives the id from the transition's identity contract nonce, so
+ * the nonce is taken first and the id derived locally
+ * (`deriveDocumentIdBytes`); the id is therefore known BEFORE the broadcast,
+ * unlike the facade path. Returns `{ id }` — the same shape `createdId` reads
+ * off a facade-created Document — so callers' acceptance logic is unchanged.
+ */
+export async function createWithAgreement(sdk, { contractId, docType, ownerId, wif, identityKey, data, entropy, agreement, payment = {} }) {
+  const rawNonce = (await sdk.wasm.getIdentityContractNonce(ownerId, contractId)) ?? 0n;
+  const nonce = (BigInt(rawNonce) & NONCE_SEQUENCE_MASK) + 1n;
+  const { document, id } = buildDocument({ contractId, docType, ownerId, data, entropy, nonce });
+  const transition = new DocumentCreateTransition({
+    document,
+    identityContractNonce: nonce,
+    ...payment,
+    ...(agreement ? { actionFeeAgreement: agreement } : {}),
+  });
+  const batch = BatchTransition.fromBatchedTransitions([new BatchedTransition(transition.toDocumentTransition())], ownerId, 0);
+  const stateTransition = batch.toStateTransition();
+  stateTransition.setIdentityContractNonce(nonce);
+  stateTransition.sign(PrivateKey.fromWIF(wif), identityKey);
+  await sdk.stateTransitions.broadcastAndWait(stateTransition);
+  // The nonce was managed by hand, so the facade's cached one is now behind:
+  // refresh it or the next `documents.create` by this actor reuses a spent
+  // nonce. The binding takes an `Identifier` (it `_assertClass`es, and consumes
+  // it), NOT a base58 string — and it throws SYNCHRONOUSLY, so this needs a
+  // try/catch rather than a rejection handler. Best effort: the write already
+  // landed, and a stale cache costs a retry, not the document.
+  try {
+    await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId));
+  } catch (error) {
+    console.log(`     (nonce cache refresh failed after ${docType} create: ${describeErr(error).slice(0, 120)})`);
+  }
+  return { id };
+}
+
+/**
+ * One create, sent whichever way its doctype demands: the facade when there is
+ * nothing to agree to, and the hand-built batch above when an
+ * `$actionFeeAgreement` has to ride along. Both resolve to something
+ * `createdId` can read an id off, so a caller's acceptance logic does not care
+ * which path ran. `actor` is a seeder actor: `{ ownerId, identityKey, signer,
+ * wif }`.
+ */
+export function createDocument(sdk, { contractId, actor, docType, document, data, entropy, agreement, payment = {} }) {
+  if (!agreement) {
+    return sdk.documents.create({ document, identityKey: actor.identityKey, signer: actor.signer, ...payment });
+  }
+  return createWithAgreement(sdk, {
+    contractId, docType, ownerId: actor.ownerId, wif: actor.wif, identityKey: actor.identityKey,
+    data, entropy, agreement, payment,
+  });
 }
 
 // ---- Resilient SDK handle ------------------------------------------------------

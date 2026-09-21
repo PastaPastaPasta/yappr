@@ -23,7 +23,7 @@ const messages = (index: number, count: number) => Array.from({ length: count },
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
-  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v7');
+  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v8');
   mocks.query.mockResolvedValueOnce(new Map(participants.map((id, index) => [String(index), {
     $id: `invite-${index}`, $ownerId: id, conversationId: conversationBytes[index], recipientId: viewer,
   }]))).mockResolvedValueOnce(new Map());

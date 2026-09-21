@@ -29,7 +29,7 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import { getEvoSdk } from './evo-sdk-service';
-import { WINDOWED_DAY_GRID, windowedRankingsAvailable } from '../contract-topology';
+import { WINDOWED_DAY_GRID, referencesMayDangle, windowedRankingsAvailable } from '../contract-topology';
 
 /**
  * Which slice of time a ranking covers. `'all'` is the all-time axis every
@@ -371,12 +371,13 @@ async function hydrateRankedPosts(ranked: RankedLikedPost[], currentUserId?: str
   });
 
   // A by-ids page proves the set exactly, so an id missing from it is
-  // authoritatively absent. Posts are tombstoned by edit, never removed, so a
-  // genuinely missing ranked id is an anomaly worth noting — but not a reason
-  // to withhold the page from the 60-second cache.
+  // authoritatively absent. Up to v7 posts are tombstoned by edit, never
+  // removed, so a missing ranked id is an anomaly worth noting; from v8 the
+  // contract's moderators may remove a post while its like entries stay, so
+  // a hole in a ranked page is expected and just drops out of the list.
   const provenIds = new Set(page.rawPosts.map((doc) => doc.$id));
   const missing = ranked.filter((entry) => !provenIds.has(entry.postId));
-  if (missing.length > 0) {
+  if (missing.length > 0 && !referencesMayDangle()) {
     logger.warn(
       'topLikedPostsHydrated: ranked ids proved absent (posts should be tombstoned, never removed):',
       missing.map((entry) => entry.postId)

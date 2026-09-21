@@ -5,15 +5,20 @@
  * a STRANGER; reviews cost YAPP, so the buyer and stranger are topped up first.
  *
  *   NETWORK=devnet node scripts/verify-storefront.mjs --contract <id> \
- *     [--seller 200] [--buyer 201] [--stranger 202] [--yapp 60] [--only s5,s7]
+ *     [--seller 200] [--buyer 201] [--stranger 202] [--moderator 203] [--yapp 60] [--only s5,s7]
+ *
+ * `--moderator` is the persona the contract was published under (its owner) or
+ * one appointed at publish time; v3 (beta.3) is a moderated cut, so s14/s15
+ * ban the stranger and take reviews down.
  *   node scripts/verify-storefront.mjs --self-test   # offline: contract declares what the cases assert
  */
 import bs58 from 'bs58';
 import {
   DELETE_FORBIDDEN, DUPLICATE_UNIQUE, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND,
-  TOKEN_AGREEMENT_MISSING, decodeIntGroupKey, id32, runBattery, selfTest, settle,
+  TOKEN_AGREEMENT_MISSING, decodeIntGroupKey, id32, runBattery, settle,
 } from './battery-lib.mjs';
 import { describeErr, randomEntropy } from './seed/seed-lib.mjs';
+import { caseBan, caseModeratorDelete, selfTestModerated } from './battery-moderation.mjs';
 
 const REVIEW_COST = { storeReview: 3n, itemReview: 1n };
 const DEFAULT_YAPP = 60n;
@@ -297,24 +302,49 @@ async function caseS13Immutable(ctx) {
   await battery.probeReplace('s13c a replace moving a shippingZone to another store is rejected (40128)', IMMUTABLE_CHANGED, seller, 'shippingZone', ctx.zoneId, zoneData({ storeId: id32(ctx.strangerStoreId), name: `zone${run}` }), await battery.revisionOf('shippingZone', ctx.zoneId));
 }
 
+async function caseS14Ban(ctx) {
+  const { battery, stranger, run } = ctx;
+  // The stranger owns a store; a new shipping zone under it is the cheapest write.
+  const zone = () => battery.attemptCreate(stranger, 'shippingZone', zoneData({ storeId: id32(ctx.strangerStoreId), name: `banned-${run}-${Date.now()}` }));
+  await caseBan(ctx, { prefix: 's14', target: stranger, writeWhileBanned: zone, writeAfterUnban: zone });
+}
+
+async function caseS15ModeratorDelete(ctx) {
+  const { battery, buyer } = ctx;
+  console.log('\n--- s15. moderator deletes reviews; the proved average follows ---');
+  if (!ctx.orderId || !ctx.item1) { battery.check('s15 fixtures', false, 'fixtures missing'); return; }
+  // The buyer's store review on order one (s5f) and item review on item one (s6c).
+  const [storeReview] = await battery.queryDocs('storeReview', { where: [['orderId', '==', ctx.orderId]], limit: 1 });
+  const [itemReview] = await battery.queryDocs('itemReview', { where: [['orderId', '==', ctx.orderId], ['itemId', '==', ctx.item1]], limit: 1 });
+  const before = await battery.averageBy('storeReview', 'rating', [['storeId', '==', ctx.storeId]]);
+  await caseModeratorDelete(ctx, {
+    prefix: 's15', docType: 'storeReview', documentId: storeReview ? battery.b58(storeReview.$id) : null, ownerId: buyer.ownerId,
+    afterwards: async () => {
+      const after = await battery.averageBy('storeReview', 'rating', [['storeId', '==', ctx.storeId]]);
+      battery.check('s15d the store\'s proved rating average dropped the removed review', after.count === before.count - 1, `count ${before.count}→${after.count}`);
+    },
+  });
+  await caseModeratorDelete(ctx, { prefix: 's16', docType: 'itemReview', documentId: itemReview ? battery.b58(itemReview.$id) : null, ownerId: buyer.ownerId });
+}
+
 const CASES = new Map([
   ['s1', caseS1Fixtures], ['s2', caseS2ItemRefs], ['s3', caseS3Orders], ['s4', caseS4Status],
   ['s5', caseS5StoreReviews], ['s6', caseS6ItemReviews], ['s7', caseS7Averages], ['s8', caseS8Rankings],
   ['s9', caseS9OrderCounts], ['s10', caseS10Composite], ['s11', caseS11Permanence], ['s12', caseS12Tokens],
-  ['s13', caseS13Immutable],
+  ['s13', caseS13Immutable], ['s14', caseS14Ban], ['s15', caseS15ModeratorDelete],
 ]);
 
 await runBattery({
   label: 'storefront',
   contract: { env: 'STOREFRONT_CONTRACT_ID' },
   cases: CASES,
-  actors: { seller: 200, buyer: 201, stranger: 202 },
+  actors: { seller: 200, buyer: 201, stranger: 202, moderator: 203 },
   yapp: { default: DEFAULT_YAPP, actors: ['buyer', 'stranger'], require: true },
   banner: ({ socialId }) => `; YAPP from ${socialId}`,
   selfTest: () => {
     // s2d/s2e + s13: only the store owner may list under a store, and never move it.
     const ownedByStoreOwner = { agreements: { storeId: { $ownerId: '$ownerId' } }, immutable: ['storeId'] };
-    return selfTest('yappr-storefront-contract.json', {
+    return selfTestModerated('yappr-storefront-contract.json', {
       storeItem: ownedByStoreOwner,
       shippingZone: ownedByStoreOwner,
       // s3d: sellerId is the store's real owner, not a buyer's claim.
@@ -322,10 +352,12 @@ await runBattery({
       // s4d/s4e: only the seller posts status updates.
       orderStatusUpdate: { agreements: { orderId: { buyerId: '$ownerId', $ownerId: 'sellerId' } } },
       // s5c/s6: only the identity that placed the order may review it.
-      storeReview: { agreements: { orderId: { storeId: 'storeId', sellerId: 'sellerId', $ownerId: '$ownerId' } } },
-      itemReview: { agreements: { itemId: { storeId: 'storeId' }, orderId: { storeId: 'storeId', $ownerId: '$ownerId' } } },
-    });
+      // s15/s16: reviews are the moderator-deletable types; nothing references them.
+      storeReview: { agreements: { orderId: { storeId: 'storeId', sellerId: 'sellerId', $ownerId: '$ownerId' } }, moderatorDeletable: true },
+      itemReview: { agreements: { itemId: { storeId: 'storeId' }, orderId: { storeId: 'storeId', $ownerId: '$ownerId' } }, moderatorDeletable: true },
+      store: { moderatorDeletable: false },
+    }, { moderation: { banlist: true, suspensions: true } });
   },
-  setup: async ({ battery, tokenId, buyer }) => ({ reviews: [], itemRatings: {}, zoneId: null, buyerYappBefore: await battery.yappBalance(tokenId, buyer.ownerId) }),
+  setup: async ({ battery, tokenId, buyer, moderator }) => ({ reviews: [], itemRatings: {}, zoneId: null, buyerYappBefore: await battery.yappBalance(tokenId, buyer.ownerId), moderator: { ...moderator, identity: await battery.readback(() => battery.sdk.identities.fetch(moderator.ownerId)) } }),
   summary: (ctx) => `store=${ctx.storeId} items=${ctx.item1},${ctx.item2} orders=${ctx.orderId},${ctx.orderId2}`,
 });

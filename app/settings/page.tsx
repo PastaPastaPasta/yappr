@@ -42,6 +42,10 @@ import { SavedAddressesSettings } from '@/components/settings/saved-addresses-se
 import { StorachaSettings } from '@/components/settings/storacha-settings'
 import { PinataSettings } from '@/components/settings/pinata-settings'
 import { ModerationSettings } from '@/components/settings/moderation-settings'
+import { ContractModerationSettings } from '@/components/settings/contract-moderation-settings'
+import { useIsModerator } from '@/hooks/use-is-moderator'
+import { paymentIsChoosable } from '@/lib/payment-preference'
+import type { PayWith } from '@/lib/store'
 import { DeveloperSettings } from '@/components/settings/developer-settings'
 import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -53,7 +57,7 @@ import { UsernameModal } from '@/components/dpns/username-modal'
 type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'developer' | 'about' | 'moderation'
 const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'privateFeed', 'storage', 'appearance', 'developer', 'about', 'moderation']
 
-const MODERATION_SECTION = { id: 'moderation', label: 'Moderation', icon: NoSymbolIcon, description: 'Freeze or slash YAPP balances (token authority only)' }
+const MODERATION_SECTION = { id: 'moderation', label: 'Moderation', icon: NoSymbolIcon, description: 'Ban, suspend and remove content; freeze or slash YAPP (moderators only)' }
 
 const settingsSections = [
   { id: 'account', label: 'Account', icon: UserIcon, description: 'Manage your account details' },
@@ -98,9 +102,13 @@ function SettingsPage() {
   const searchParams = useSearchParams()
   const { user, logout } = useAuth()
   const isAuthority = user?.identityId === YAPP_TOKEN_AUTHORITY_ID
-  // Moderation is authority-only; keep the visible-sections list in one place so
-  // the menu, the section title, and the render gate can't drift apart.
-  const visibleSections = isAuthority ? [...settingsSections, MODERATION_SECTION] : settingsSections
+  // The contract's moderation team (owner + appointed moderators, read off the
+  // contract) gets contract moderation; the token authority gets YAPP
+  // freeze/slash. Keep the visible-sections list in one place so the menu, the
+  // section title, and the render gate can't drift apart.
+  const isContractModerator = useIsModerator()
+  const canModerate = isAuthority || isContractModerator
+  const visibleSections = canModerate ? [...settingsSections, MODERATION_SECTION] : settingsSections
   const { theme, setTheme } = useTheme()
   const [encryptionKeyVersion, setEncryptionKeyVersion] = useState(0)
   const handleEncryptionKeyChanged = useCallback(() => {
@@ -121,6 +129,8 @@ function SettingsPage() {
   const setFeedLanguage = useSettingsStore((s) => s.setFeedLanguage)
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const setSensitiveContentMode = useSettingsStore((s) => s.setSensitiveContentMode)
+  const payWith = useSettingsStore((s) => s.payWith)
+  const setPayWith = useSettingsStore((s) => s.setPayWith)
 
   // Derive active section from URL search params
   const sectionParam = searchParams.get('section')
@@ -258,6 +268,25 @@ function SettingsPage() {
 
       {/* DPNS Username Registration */}
       <div>
+        {paymentIsChoosable('post') && (
+          <div className="mb-6">
+            <h3 className="font-semibold mb-4"><label htmlFor="settings-pay-with">Pay for posts with</label></h3>
+            <p id="settings-pay-with-description" className="text-sm text-gray-500 mb-4">
+              Posts, replies, likes and reposts can be paid in YAPP (Yappr then covers the network fee while it can) or in
+              Dash credits. YAPP falls back to credits automatically when your balance does not cover the cost.
+            </p>
+            <select
+              id="settings-pay-with"
+              aria-describedby="settings-pay-with-description"
+              value={payWith}
+              onChange={(e) => setPayWith(e.target.value as PayWith)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
+            >
+              <option value="yapp">YAPP when I have enough, else credits</option>
+              <option value="credits">Always credits</option>
+            </select>
+          </div>
+        )}
         <h3 className="font-semibold mb-4">DPNS Usernames</h3>
         <div className="space-y-4">
           {dpnsUsernames.length > 0 ? (
@@ -759,7 +788,12 @@ function SettingsPage() {
       case 'about':
         return renderAboutSettings()
       case 'moderation':
-        return isAuthority ? <ModerationSettings /> : renderMainSettings()
+        return canModerate ? (
+          <div className="space-y-4">
+            {isContractModerator && <ContractModerationSettings />}
+            {isAuthority && <ModerationSettings />}
+          </div>
+        ) : renderMainSettings()
       default:
         return renderMainSettings()
     }

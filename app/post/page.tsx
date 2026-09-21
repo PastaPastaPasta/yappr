@@ -19,6 +19,8 @@ import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { replyToPost } from '@/lib/services/post-service'
 import type { Post } from '@/lib/types'
+import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
+import { referencesMayDangle } from '@/lib/contract-topology'
 
 function PostDetailContent() {
   const router = useRouter()
@@ -34,6 +36,7 @@ function PostDetailContent() {
     post,
     replyThreads,
     replyChain,
+    removedChainIds,
     isLoading,
     isLoadingReplies,
     hasMoreReplies,
@@ -140,6 +143,11 @@ function PostDetailContent() {
           </div>
         ) : post ? (
           <>
+            {/* A thread root the contract's moderators removed (v8): the
+                reply still exists, its parent does not. */}
+            {removedChainIds.map((id) => (
+              <RemovedPostStub key={id} documentId={id} kind="post" variant="card" />
+            ))}
             {/* Reply chain - show predecessors leading up to this post */}
             {replyChain.length > 0 && (
               <div className="border-b border-gray-200 dark:border-gray-800">
@@ -233,6 +241,11 @@ function PostDetailContent() {
               )}
             </div>
           </>
+        ) : referencesMayDangle() ? (
+          // On a moderated contract an absent document may be a takedown: the
+          // stub looks for a post OR reply removal record and only claims one
+          // when it finds it; otherwise it says "unavailable".
+          <RemovedPostStub documentId={postId} variant="card" />
         ) : (
           <div className="p-8 text-center">
             <p className="text-gray-500">Post not found</p>

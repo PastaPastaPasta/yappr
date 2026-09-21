@@ -7,10 +7,17 @@
  * `SOCIAL_CONTRACT_ID` placeholder, which is replaced with the deployment's
  * social contract id as a 32-byte array (the form registration requires).
  *
+ * A contract file may carry its own `config` block beside `documentSchemas`
+ * (the beta.3 cuts do: `config.moderation` declares the banlist, the
+ * suspension list and who edits them); a bare-schemas file gets the default
+ * unmoderated config. `--moderators <id,id>` appoints identities beside the
+ * owner at publish time; every one must exist on chain (41110), so they are
+ * fetched before anything is signed.
+ *
  * Run:
  *   NETWORK=devnet node scripts/register-feature-contract.mjs --file yappr-blog-contract.json --dry-run
  *   NETWORK=devnet node scripts/register-feature-contract.mjs --file yappr-blog-contract.json --persona 260
- *   NETWORK=devnet node scripts/register-feature-contract.mjs --file … --bot 0 --owner <identityId>
+ *   NETWORK=devnet node scripts/register-feature-contract.mjs --file … --bot 0 --owner <identityId> --moderators <id,id>
  */
 import { readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
@@ -19,12 +26,17 @@ import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID } from './derive-identities.mjs';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { REPO_ROOT, createSdkHandle, ledgerEntry, loadLedger, socialContractId, wifFromHex } from './seed/seed-lib.mjs';
+import { auditModeration, requireModeratorsExist, withModerators } from './register-lib.mjs';
 
 const SOCIAL_PLACEHOLDER = 'SOCIAL_CONTRACT_ID';
 const DRY_RUN_OWNER = '11111111111111111111111111111111';
 
-/** The config block every yappr contract registers with on protocol 14. */
-const CONFIG = {
+/**
+ * The config a bare-schemas contract file registers with (no moderation) — the
+ * beta.2 block, unchanged, so DM/pollr/vault/… republish exactly as before. A
+ * moderated cut carries its own `config` (format version 2) in its file.
+ */
+const DEFAULT_CONFIG = {
   $formatVersion: '1', canBeDeleted: false, readonly: false, keepsHistory: false,
   documentsKeepHistoryContractDefault: false, documentsMutableContractDefault: true,
   documentsCanBeDeletedContractDefault: true, requiresIdentityEncryptionBoundedKey: null,
@@ -35,20 +47,27 @@ function contractPath(name) {
   return name.includes('/') || isAbsolute(name) ? name : join(REPO_ROOT, 'contracts', name);
 }
 
-/** Loads a contract file's document schemas, substituting the social contract id where priced. */
-export function loadSchemas(file, socialId) {
+/** Loads a contract file, substituting the social contract id where priced. */
+function loadContractFile(file, socialId) {
   const text = readFileSync(contractPath(file), 'utf8');
   const bytes = JSON.stringify(Array.from(bs58.decode(socialId)));
   const parsed = JSON.parse(text.replaceAll(`"${SOCIAL_PLACEHOLDER}"`, bytes));
-  return parsed.documentSchemas ?? parsed;
+  return parsed.documentSchemas
+    ? { documentSchemas: parsed.documentSchemas, config: parsed.config ?? DEFAULT_CONFIG }
+    : { documentSchemas: parsed, config: DEFAULT_CONFIG };
 }
 
-function buildContract({ file, ownerId, identityNonce, socialId, platformVersion }) {
-  const documentSchemas = loadSchemas(file, socialId);
+/** Loads a contract file's document schemas, substituting the social contract id where priced. */
+export function loadSchemas(file, socialId) {
+  return loadContractFile(file, socialId).documentSchemas;
+}
+
+function buildContract({ file, ownerId, identityNonce, socialId, platformVersion, moderators }) {
+  const { documentSchemas, config } = loadContractFile(file, socialId);
   const json = {
     $formatVersion: '1',
     id: DataContract.generateId(ownerId, identityNonce).toBase58(),
-    ownerId, version: 1, config: CONFIG, documentSchemas,
+    ownerId, version: 1, config: withModerators(config, moderators), documentSchemas,
   };
   return { dataContract: DataContract.fromJSON(json, true, platformVersion), documentSchemas };
 }
@@ -67,6 +86,7 @@ function printAudit(documentSchemas, dataContract) {
       `canBeDeleted=${schema.canBeDeleted ?? 'default'}`,
       ...(schema.indexOnly ? ['indexOnly'] : []),
       ...(schema.documentsKeepHistory ? ['keepHistory'] : []),
+      ...(schema.canBeDeletedByModerators ? ['moderatorDelete'] : []),
       ...(schema.tokenCost?.create ? [`create=${schema.tokenCost.create.amount} YAPP`] : []),
     ];
     const indices = (schema.indices ?? []).map((index) => {
@@ -80,7 +100,7 @@ function printAudit(documentSchemas, dataContract) {
     });
     const refs = Object.entries(schema.properties)
       .filter(([, property]) => property.refersTo)
-      .map(([property, { refersTo }]) => `${property}→${refersTo.documentType ?? refersTo.type}${refersTo.propertyAgreement ? `{${Object.keys(refersTo.propertyAgreement).join(',')}}` : ''}`);
+      .map(([property, { refersTo }]) => `${property}→${refersTo.documentType ?? refersTo.type}${refersTo.type === 'deletableDocument' ? '?' : ''}${refersTo.propertyAgreement ? `{${Object.keys(refersTo.propertyAgreement).join(',')}}` : ''}`);
     console.log(`  ${name.padEnd(18)} ${flags.join(' ')}`);
     console.log(`  ${''.padEnd(18)} ${indices.join(' ')}`);
     if (refs.length > 0) console.log(`  ${''.padEnd(18)} refersTo: ${refs.join(' ')}`);
@@ -100,6 +120,7 @@ function printAudit(documentSchemas, dataContract) {
       throw new Error(`${name}: schema declares immutable ${JSON.stringify(declared)} but the parsed contract reports ${JSON.stringify(frozen.immutable)}`);
     }
   }
+  auditModeration(documentSchemas, dataContract);
 }
 
 /** A signer for a seed-ledger persona (its CRITICAL auth key). */
@@ -117,7 +138,7 @@ export async function personaSigner(sdk, personaIdx) {
 }
 
 function parseArgs(argv) {
-  const args = { file: null, bot: null, persona: null, ownerId: null, social: null, dryRun: false };
+  const args = { file: null, bot: null, persona: null, ownerId: null, social: null, moderators: [], dryRun: false };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--file': args.file = argv[++i]; break;
@@ -125,6 +146,7 @@ function parseArgs(argv) {
       case '--persona': args.persona = Number(argv[++i]); break;
       case '--owner': args.ownerId = argv[++i]; break;
       case '--social': args.social = argv[++i]; break;
+      case '--moderators': args.moderators = argv[++i].split(',').map((id) => id.trim()).filter(Boolean); break;
       case '--dry-run': args.dryRun = true; break;
       default: throw new Error(`Unknown argument: ${argv[i]}`);
     }
@@ -139,7 +161,7 @@ try {
   args = parseArgs(process.argv.slice(2));
 } catch (e) {
   console.error(e.message);
-  console.error('Usage: NETWORK=devnet node scripts/register-feature-contract.mjs --file <json> (--bot <index> [--owner <id>] | --persona <idx>) [--social <id>] [--dry-run]');
+  console.error('Usage: NETWORK=devnet node scripts/register-feature-contract.mjs --file <json> (--bot <index> [--owner <id>] | --persona <idx>) [--social <id>] [--moderators <id,id>] [--dry-run]');
   process.exit(1);
 }
 
@@ -149,7 +171,7 @@ try {
   const socialId = args.social ?? socialContractId();
 
   if (args.dryRun) {
-    const { dataContract, documentSchemas } = buildContract({ file: args.file, ownerId: DRY_RUN_OWNER, identityNonce: 1n, socialId, platformVersion });
+    const { dataContract, documentSchemas } = buildContract({ file: args.file, ownerId: DRY_RUN_OWNER, identityNonce: 1n, socialId, platformVersion, moderators: args.moderators });
     console.log(`dry run: ${contractPath(args.file)} — ${Object.keys(dataContract.toJSON(platformVersion).documentSchemas).length} document types, YAPP from ${socialId}`);
     printAudit(documentSchemas, dataContract);
     process.exit(0);
@@ -167,8 +189,9 @@ try {
         return { ownerId: resolved.ownerId, identityKey, signer, label: resolved.label };
       })();
   console.log(`owner=${owner.label}`);
+  await requireModeratorsExist(sdk, args.moderators);
   const identityNonce = ((await sdk.identities.nonce(owner.ownerId)) ?? 0n) + 1n;
-  const { dataContract, documentSchemas } = buildContract({ file: args.file, ownerId: owner.ownerId, identityNonce, socialId, platformVersion });
+  const { dataContract, documentSchemas } = buildContract({ file: args.file, ownerId: owner.ownerId, identityNonce, socialId, platformVersion, moderators: args.moderators });
   printAudit(documentSchemas, dataContract);
   console.log(`publishing ${args.file} (${Object.keys(documentSchemas).length} document types) …`);
   const published = await sdk.contracts.publish({ dataContract, identityKey: owner.identityKey, signer: owner.signer });

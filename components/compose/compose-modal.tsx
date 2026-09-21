@@ -16,6 +16,8 @@ import { useComposePrivateFeed } from '@/hooks/use-compose-private-feed'
 import { useInheritedEncryption } from '@/hooks/use-inherited-encryption'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { extractErrorMessage, categorizeError } from '@/lib/error-utils'
+import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
+import { PaymentHint } from './payment-hint'
 import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { planPosts, publishThread } from '@/lib/compose/publish-thread'
 import { CHARACTER_LIMIT } from '@/lib/compose/limits'
@@ -318,7 +320,7 @@ export function ComposeModal() {
       }
     } catch (error) {
       logger.error('Failed to create post:', error)
-      if (!handleInsufficientYapp(error, 'You need YAPP to post. Buy some to continue.')) toast.error(categorizeError(error))
+      if (!reportBarredWrite(error, user?.identityId) && !handleInsufficientYapp(error, 'You need YAPP to post. Buy some to continue.')) toast.error(categorizeError(error))
       // The poll landed even though the post did not; a retry re-uses it.
       if (pollId) {
         const url = pollrPollUrl(pollId)
@@ -425,6 +427,9 @@ export function ComposeModal() {
 
                       {isPosting && postingProgress && <PostingProgressBar progress={postingProgress} />}
                       {replyingTo && <ReplyContext author={replyingTo.author} />}
+                      <div className="px-4 sm:px-5 pt-2 empty:hidden">
+                        <PaymentHint docType={replyingTo ? 'reply' : 'post'} />
+                      </div>
 
                       <div ref={scrollContainerRef} className="px-4 sm:px-5 py-4 max-h-[60vh] overflow-y-auto">
                         <div className="space-y-4">
