@@ -18,7 +18,7 @@ import { tokenService } from '@/lib/services/token-service'
 import { buildUnsignedYappTipTransition } from '@/lib/services/token-transfer-builder'
 import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
-import { provedTipsAvailable, targetKindOf } from '@/lib/contract-topology'
+import { provedTipsAvailable, targetKindOf, tokenCostFor } from '@/lib/contract-topology'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import type { ParsedPaymentUri } from '@/lib/types'
@@ -531,6 +531,19 @@ export function TipModal() {
   const recipientName = recipientInfo.displayName || recipientInfo.username || 'this user'
   const amountLabel = `${yappAmountBig.toString()} YAPP`
 
+  // What the tip costs BESIDES the tip: recording it is a document, and words
+  // are a reply, each with the contract's own price. Shown because the amount
+  // alone is not what leaves the account — and read off the contract rather
+  // than written down, so a re-priced cut cannot make this line a lie.
+  const recordingCosts = !post || !provedTipsAvailable() ? [] : [
+    { label: 'Tip receipt', docType: tipTarget?.kind === 'reply' ? 'tipReply' : 'tip' },
+    ...(tipMessage.trim() ? [{ label: 'Your reply', docType: 'reply' }] : []),
+  ].flatMap(({ label, docType }) => {
+    const cost = tokenCostFor(docType)
+    if (!cost) return []
+    return [{ label, cost: cost.optional ? `${cost.amount} YAPP or credits` : `${cost.amount} YAPP` }]
+  })
+
   // The confirm step's primary action. Only the YAPP tab reaches it — the
   // crypto tab just opens a payment QR — so the only question is whether this
   // browser can sign a token transition or has to ask the wallet.
@@ -635,13 +648,13 @@ export function TipModal() {
 
                         <div>
                           <label htmlFor="tip-yapp-message" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Message (optional)
+                            {post ? 'Say something (optional)' : 'Message (optional)'}
                           </label>
                           <textarea
                             id="tip-yapp-message"
                             value={tipMessage}
                             onChange={(e) => setTipMessage(e.target.value)}
-                            placeholder="Add a note with your tip..."
+                            placeholder={post ? 'Posted as your reply, with the tip on it…' : 'Add a note with your tip…'}
                             maxLength={TIP_MESSAGE_MAX_LENGTH}
                             rows={2}
                             className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
@@ -652,9 +665,13 @@ export function TipModal() {
                         </div>
 
                         <p className="text-xs text-gray-500">
-                          {post
-                            ? 'The transfer, the amount and this note are signed by you and recorded on Dash Platform, so the tip on this post can be verified by anyone.'
-                            : 'The transfer and the amount are signed by you and recorded on Dash Platform.'}
+                          {!post
+                            ? 'Sends YAPP to this person. Nothing is posted.'
+                            : provedTipsAvailable()
+                              ? tipMessage.trim()
+                                ? 'Your words are posted as a reply, with the tip shown on it.'
+                                : 'The tip is shown on this post.'
+                              : 'Sends YAPP to the author. This deployment cannot show tips on a post.'}
                         </p>
 
                         {error && <p className="text-red-500 text-sm">{error}</p>}
@@ -724,6 +741,16 @@ export function TipModal() {
                         <span className="text-gray-600 dark:text-gray-400">To</span>
                         <span className="font-medium">{recipientName}</span>
                       </div>
+                      {recordingCosts.length > 0 && (
+                        <div className="pt-2 border-t border-gray-200 dark:border-gray-700 space-y-1">
+                          {recordingCosts.map(({ label, cost }) => (
+                            <div key={label} className="flex justify-between text-sm text-gray-500">
+                              <span>{label}</span>
+                              <span>{cost}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {tipMessage.trim() && (
                         <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
                           <span className="text-gray-600 dark:text-gray-400 text-sm">Message:</span>
