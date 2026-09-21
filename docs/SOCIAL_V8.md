@@ -10,9 +10,9 @@ the ids in `.env.devnet`.
 
 The SDK/ids half of the upgrade — the beta.3 package pin, nonce-committed document
 ids (#4859), the manual create path — is PR A (`beta3/sdk-and-ids`). This document
-covers PR B: the contracts, their batteries and the client plumbing that does not
-touch the write path. The write-path wiring PR B could not do without PR A is the
-[TODO list](#write-path-todo-after-pr-a) at the end.
+covers PR B: the contracts, their batteries, the client plumbing and — once PR A
+merged — the [write path](#the-write-path) that carries v8's action fee
+agreements and its choice between YAPP and credits.
 
 ## The grammar, and where it is verified
 
@@ -88,7 +88,8 @@ supply and rules — is byte-identical to v7.
 - **A replace re-validates every deletable reference**, touched or not. A tombstone
   of a post quoting a removed post must CLEAR `quotedPostId` (the one change the
   `immutable` check lets through for a dead deletable ref); one that keeps it is
-  40120. `lib/services/tombstone-helpers.ts` needs this (TODO 5).
+  40120. `lib/services/tombstone-helpers.ts` does this on a 40120 retry
+  ([write path §3](#3-tombstoning-a-quote-of-a-removed-post)).
 - **Free usage.** The owner pays gas ONLY when the user pays in tokens: a create WITH
   `$tokenPaymentInfo` charges YAPP and the owner pays its gas when their balance
   covers gas + fees (else it falls back to the signer); a create WITHOUT payment info
@@ -129,7 +130,9 @@ supply and rules — is byte-identical to v7.
   storage on a claim or a 40722).
 - Chooser: a `payWith: 'yapp' | 'credits'` setting (default `yapp`) and
   `lib/payment-preference.ts` → `PaymentPlan {payWith, yapp, gasFeesPaidBy,
-  gasMayBeSponsored, actionFee, fallbackReason}`, shown by `components/compose/payment-hint.tsx`.
+  gasMayBeSponsored, actionFee, fallbackReason}`, shown by
+  `components/compose/payment-hint.tsx` and turned into the transition's options
+  by `lib/transition-agreements.ts` (see [the write path](#the-write-path)).
 
 ## Blog v3 (`contracts/yappr-blog-contract.json`, in place)
 
@@ -163,6 +166,7 @@ node scripts/register-feature-contract.mjs --file yappr-blog-contract.json --dry
 node scripts/verify-v8.mjs --self-test
 node scripts/verify-blog.mjs --self-test
 node scripts/verify-storefront.mjs --self-test
+node scripts/seed/run-seeder.mjs --self-test
 ```
 
 The offline validator (beta.3 wasm) accepts all three cuts under FULL validation,
@@ -184,89 +188,151 @@ NETWORK=devnet node scripts/verify-storefront.mjs --contract <id> --moderator <o
 ```
 
 `verify-v8` builds `post`/`reply` creates as manual batches (the only way to carry an
-agreement today), derives the nonce-committed v1 id locally and compares it to the id
-the proof result names (case a3) — the live proof of the derivation the client needs.
+agreement today — `sdk.documents.create` has no option for one), derives the
+nonce-committed v1 id with the SHIPPED helper and compares it to the id the proof
+result names (case a3) — the live proof of the derivation the client needs.
 Every other id is read from the create result.
 
-## Write-path TODO after PR A
+## The write path
 
-Files owned by PR A that v8 needs changed, once `beta3/sdk-and-ids` merges. The
-declarations to consume are already in `lib/contract-topology.ts` /
-`lib/payment-preference.ts`; nothing below invents a number.
+Implemented on this branch once PR A (`beta3/sdk-and-ids`) landed. Every number
+below is READ off `contracts/yappr-social-contract-v8.json` at runtime — by
+`declaredActionFee`/`tokenCostFor` in the client and `actionFeeFor` in the
+scripts — so nothing here is transcribed: a wrong amount is a paid 40133, and a
+battery asserting against a transcription would prove nothing.
 
-1. **`lib/services/state-transition-service.ts` `createDocument`: action fee
-   agreement.** When `declaredActionFee(documentType, 'create')` is non-null (v8:
-   `post`, `reply`), build
-   ```ts
-   new DocumentActionFeeAgreement({
-     owner: fee.owner,                 // 0n on v8 — pass it, the amounts must match EXACTLY
-     moderators: fee.moderators,       // 80_000_000n post / 16_000_000n reply
-     feeMultiplier: fee.pricing === 'feeMultiplier'
-       ? { knownPermille, increaseTolerancePercent: 20 }
-       : undefined,                    // omit for `fixed` pricing (naming it is the same 40133)
-   })
-   ```
-   and pass it as `actionFeeAgreement` in `DocumentCreateTransitionOptions` (the
-   manual path already builds `DocumentCreateTransition`; the option exists on
-   create/replace/delete/transfer/update_price/purchase transitions and on
-   `DocumentBaseTransition`). `knownPermille` = `(await sdk.epoch.current())
-   .feeMultiplierPermille` (wasm `ExtendedEpochInfo`; there is no dedicated
-   fee-multiplier query), cached per session and refreshed on a 40134. Today's
-   devnet multiplier is 1000‰; if the epoch read fails use `knownPermille: 1000n,
-   increaseTolerancePercent: 20` rather than omitting the agreement (40132 is
-   certain, 40134 is unlikely). Codes: 40132 not set, 40133 mismatch (re-read the
-   contract and rebuild), 40134 multiplier rose beyond tolerance (re-read the epoch
-   and rebuild). The agreement is part of the signed bytes, so the cached-ST replay
-   path replays it verbatim (correct: the amounts are fixed at type creation).
-   Replace/delete of `post`/`reply` charge nothing on v8, so tombstones need no
-   agreement; the generic path should still consult `declaredActionFee(type,
-   'replace' | 'delete')`.
-2. **`state-transition-service.ts` `resolveTokenPayment` / `TokenPaymentInfo`: the
-   chooser.** Replace the "auto-attach when the type has a tokenCost" rule with
-   `planPaymentForViewer(documentType, balance)`:
-   - `plan.payWith === 'yapp'` → `new TokenPaymentInfo({ tokenContractPosition: 0,
-     maximumTokenCost: plan.yapp, gasFeesPaidBy: plan.gasFeesPaidBy })` (2 =
-     PreferContractOwner on v8; `GasFeesPaidByLike` also accepts
-     `'preferContractOwner'`). Never ask for `1` (ContractOwner): the type offers
-     `2`, and insisting is 40129.
-   - `plan.payWith === 'credits'` → NO `tokenPaymentInfo` at all (v8 `optional:
-     true`; pre-v8 the plan never says credits for a priced type, `fallbackReason:
-     'token-required'`).
-   - The balance is `tokenService.getBalance(ownerId)`; a null (fetch failed) plans
-     credits so a 40700 cannot come from a stale balance. `plan.fallbackReason` is
-     what the compose hint already shows.
-   - Cross-contract costs (blog comment, storefront reviews) keep
-     `paymentTokenContractId` = the social contract and are NOT optional on their
-     contracts; `tokenCostFor` only describes the social contract.
-3. **Gas payer in a batch.** Yappr batches one transition per ST, so 40130
-   (inconsistent `gasFeesPaidBy` within a batch) cannot fire; if that ever changes,
-   every transition in the batch must ask for the same payer.
-4. **Error surfaces (`lib/error-utils.ts`).** Add predicates for 40132/40133/40134
-   (rebuild the agreement, do not offer YAPP), 40129/40130, 40222 (sponsor short:
-   the network fell back to the signer only under `preferContractOwner`; under an
-   insisted `contractOwner` it is an unpaid refusal — we never insist), and route
-   41107/41108 to `isBarredFromContractError` from `moderation-service.ts` (already
-   consumed by the compose/engagement error paths).
-5. **`lib/services/tombstone-helpers.ts` / `postService.tombstonePost`.** Before
-   the tombstone replace of a quote post on v8, resolve `quotedPostId`/`quotedReplyId`;
-   if the target is absent (fetch null, or a prior `quotedPostRemoved`), DROP the
-   reference from the tombstone (clearing a dead deletable ref is the one immutable
-   change consensus allows; keeping it is 40120). `quotedPostOwnerId` is not a
-   reference and stays.
-6. **Nonce-committed ids are PR A's**, but two v8 consequences ride on them: the
-   manual create must set `document.id` to the v1 derivation (see
-   `documentIdV1` in `scripts/verify-v8.mjs`, live-proved by a3) BEFORE signing,
-   and `savePendingSTBytes(documentId, …)` / the optimistic post's id must use that
-   id. Preallocation's absence means a fresh post's like count reads 0 until its
-   first like, which `PostStats` already treats as zero.
-7. **Seeder / battery libs (`scripts/seed/seed-lib.mjs`, `battery-lib.mjs`,
-   `verify-lib.mjs`, `feature-seed-lib.mjs`, `pipeline.mjs`, `run-seeder.mjs`).**
-   Their `post`/`reply` creates on v8 need the agreement (a `withAgreement` option
-   around the manual batch `verify-v8.mjs` already has); their id readbacks must use
-   the create result's id (PR A). The blog/storefront batteries are unaffected (no
-   action fees on those contracts).
-8. **Moderator delete of a post the viewer just created optimistically**: the
-   `RemovedPostStub` path is read-side only; nothing to do on the write side.
+### 1. The action fee agreement
+
+`createDocument` builds `$actionFeeAgreement` whenever the configured topology
+prices the (documentType, 'create') pair — v8: `post` 80M, `reply` 16M credits
+to the moderators pot, `feeMultiplier` pricing, no owner part:
+
+```ts
+new DocumentActionFeeAgreement({ owner: 0n, moderators: 80_000_000n,
+  feeMultiplier: { knownPermille, increaseTolerancePercent: 20 } })
+```
+
+built by the pure `actionFeeAgreementOptions` in `lib/transition-agreements.ts`
+and passed as `actionFeeAgreement` in the `DocumentCreateTransition` options.
+`knownPermille` is `(await sdk.epoch.current()).feeMultiplierPermille`, read
+once per session and cached; a failed epoch read agrees at `1000n` rather than
+sending no agreement (40132 is certain without one, 40134 unlikely at 1.0x with
+a 20% tolerance). A 40134 clears the cache, so the next write re-reads it.
+`fixed` pricing would name no multiplier at all — naming one is the same 40133 —
+and the agreement is part of the signed bytes, so the cached-ST replay path
+replays it verbatim.
+
+Replace and delete consult the same descriptor and **throw before signing** if
+an action they cannot carry an agreement for is ever priced: the facade's
+`DocumentReplaceOptions`/`DocumentDeleteOptions` have no agreement field, so a
+priced tombstone would be a paid 40132 rather than a caught bug. v8 prices
+nothing but `create`, and `lib/contract-topology.test.ts` pins that across every
+doctype so a future cut cannot silently under-wire this.
+
+### 2. Token or credits, chosen before signing
+
+`resolveTokenPayment` no longer auto-attaches: it asks
+`planPaymentForViewer(documentType, balance)` and turns the plan into a bag with
+`tokenPaymentOptions`.
+
+| Plan | What the create carries |
+| --- | --- |
+| `payWith: 'yapp'`, balance ≥ cost (v8) | `TokenPaymentInfo { tokenContractPosition: 0, maximumTokenCost, gasFeesPaidBy: 2 }` |
+| `payWith: 'credits'`, or balance < cost, or the balance read failed (v8) | **no `tokenPaymentInfo` at all** — that is what makes an `optional` cost charge credits |
+| Any priced type before v8 | `TokenPaymentInfo { tokenContractPosition: 0, maximumTokenCost }` — required, no gas offer |
+| Blog comment / storefront review (any cut) | `TokenPaymentInfo { paymentTokenContractId: <social>, … }` — cross-contract and required; neither contract declares `optional` |
+
+`2` is PreferContractOwner, the offer the type makes. `1` (ContractOwner,
+insisting) is never requested — the type does not offer it and insisting is
+40129 — and a batch is one transition here, so 40130 cannot fire. The balance is
+only read when there is a choice to make, and a failed read plans credits so a
+stale balance can never become a 40700 (payment info present with too little
+YAPP is a refusal, never a fallback).
+
+### 3. Tombstoning a quote of a removed post
+
+A replace re-validates every `deletableDocument` reference, touched or not, so a
+tombstone that keeps a `quotedPostId` a moderator has since removed is 40120,
+while clearing it is the one change to an `immutable` property consensus allows
+(`document_replace_transition_action/state_v1`: `cleared_a_dead_reference`).
+`tombstoneDocument` therefore retries **once** on 40120 with the OPTIONAL
+deletable references dropped — `clearableReferencesFor`: `post.quotedPostId`,
+`post.quotedReplyId`, `reply.replyToReplyId`. `quotedPostOwnerId` is not a
+reference and stays (dropping it is a plain 40128), and `reply.rootPostId` is
+required, so a reply whose thread root was removed cannot be tombstoned at all.
+v7 and earlier retry nothing: there, nothing a post points at can disappear.
+
+### 4. Error surfaces
+
+`isBarredFromContractError` (41107/41108, the SIGNER barred) now lives in
+`lib/error-utils.ts` — `moderation-service.ts` had a second copy — and
+`isModerationBarredError` builds on it, so the UI never claims 41114 (where the
+OTHER party is barred) as the viewer's own standing; `reportBarredWrite`
+resolves the ban or suspension reason through `moderationService.getStanding`.
+Two codes were split out of their families because they are not what the family
+says: **40222** is a short gas sponsor (the user can act on it — pay in
+credits), not the client asking for a payer the type refuses, and **40134** is a
+moved fee multiplier, not an app out of date with the fee rules. Both stay
+permanent for the transition as built, so `retryPostCreation` refuses the whole
+40129/40132–40134/40222/41107/41108 set — pinned by `lib/retry-utils.test.ts`.
+
+### 5. Seeders and batteries
+
+`sdk.documents.create` **cannot** carry an agreement: `DocumentCreateOptions` is
+`document` / `identityKey` / `signer` / `tokenPaymentInfo` / `settings`, and
+`PutSettings` is transport and nonce staleness only. So on a v8 contract every
+post/reply create is a hand-built batch — `createWithAgreement` in
+`seed-lib.mjs` (nonce → derived v1 id → transition with agreement and payment →
+sign → broadcast and wait), which returns `{ id }` so callers' `createdId`
+acceptance logic is unchanged. Unpriced creates keep the facade path.
+
+`--topology v8` shares v7's document shapes byte for byte; what differs is what
+a create carries. `--credits-fraction` (default 0.25 on v8) puts that share of
+actors on the credits path and the rest on YAPP with the gas offered to the
+contract owner; the currency is a pure function of the persona index, so a
+resume never moves an author between funding models, and the YAPP estimate
+excludes the credits actors. `verify-v8.mjs` builds its agreements, its YAPP
+payment and its id derivation with those same helpers, so a live run proves the
+shape the app sends. pollr's caption post lives on the social contract and gets
+the same treatment.
+
+### Validating the write path
+
+```
+npx tsc --noEmit && npm run lint && npm run lint:dead && npx vitest run
+npm run build:devnet
+node scripts/verify-v8.mjs --self-test
+node scripts/seed/run-seeder.mjs --self-test
+NETWORK=devnet node scripts/seed/seed-non-social.mjs --which pollr --self-test
+```
+
+### What the first live run on moutai must prove
+
+In this order, against a freshly registered v8 contract — the first three decide
+whether the client is sending the right bytes at all:
+
+1. **A post from the browser lands.** It proves the agreement, the derived id
+   and the nonce all agree with what Drive recomputes. `verify-v8` a3 proves the
+   same shape from Node and additionally compares the locally derived id with
+   the one the proof result names.
+2. **The moderators pot grew by `80_000_000 × multiplier ‰`** for that post and
+   16M for a reply (a3 c/e). A pot that did not move means the fee was not
+   charged and the agreement was ignored — the numbers are wrong somewhere.
+3. **A post with the payment chooser on `credits` charges credits and no YAPP**,
+   and one on `yapp` charges 10 YAPP while the CONTRACT OWNER's credit balance
+   moves (t1 b/d/e). Sponsorship is the one behaviour no offline test can reach.
+4. **A create with payment info and too little YAPP is refused 40700** (t2), not
+   silently charged credits — the client must have chosen before signing.
+5. **A tombstone of a quote whose target was moderator-removed** is refused with
+   the reference kept and lands with it cleared (m3 e/f) — the live form of the
+   retry in §3.
+6. **A banned identity's write is refused 41107 and its delete still lands**
+   (m1), and the compose surface shows the recorded reason rather than an offer
+   to buy YAPP.
+
+A seeded run afterwards should show both currencies in use: the credits actors'
+posts carry no token payment (their YAPP balance never moves) while the rest
+spend YAPP and leave the owner paying their gas.
 
 ## Follow-ups outside the write path
 

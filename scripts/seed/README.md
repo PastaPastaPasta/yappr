@@ -105,9 +105,17 @@ Exit code is non-zero while any selected identity is not `ready`.
 NETWORK=devnet node scripts/seed/run-seeder.mjs \
   --personas scripts/seed/personas.pilot.json \
   --corpus  scripts/seed/corpus.pilot.jsonl \
-  [--concurrency 10] [--max-ops 50] [--topology v4|v5]
+  [--concurrency 10] [--max-ops 50] [--topology v4|v5|v6|v7|v8] [--credits-fraction 0.25]
 ```
 
+- `--credits-fraction` (v8 only, default 0.25) is the share of actors that pay
+  their token-priced writes in CREDITS — the create carries no
+  `$tokenPaymentInfo` at all, which is what makes v8's `optional: true` token
+  costs charge credits — while the rest pay YAPP and offer the gas to the
+  contract owner. An actor's currency is fixed by its persona index, so a
+  resumed run never moves an author between funding models. On v8 every
+  post/reply create is also a hand-built batch carrying the contract's action
+  fee agreement (`sdk.documents.create` cannot express one; 40132 without).
 - `--topology` selects the target contract's hashtag semantics (default:
   `NEXT_PUBLIC_CONTRACT_TOPOLOGY` from the env / `.env.devnet`, else `v4`).
   The corpus `"hashtag": ""` convention always means "untagged"; v4 writes the
