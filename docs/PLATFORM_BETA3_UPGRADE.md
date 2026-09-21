@@ -330,13 +330,353 @@ anything is seeded.
 
 ## Deployment evidence
 
-> **Stub — to be filled by PR C.** Nothing below has been observed yet beyond
-> the `getStatus` reading above. Record here, with the same standard as the
-> beta.2 document: the live Drive/DAPI version and protocol at deploy time; one
-> document created through the browser path against the v7 contract with its
-> id read back by a proved `documents.get` (proves the derivation live); the
-> verbatim `InvalidDocumentTransitionIdError` text from a deliberately
-> mis-derived create, reconciled against `isInvalidDocumentIdError`; the
-> `verify-v7.mjs` result case by case; a seeder resume after a forced crash
-> between broadcast and record, showing `findRecentByValues` adopting the
-> landed post rather than duplicating it; and the deployed e2e run.
+Observed on 2026-09-21 against moutai. Live Drive and DAPI both report
+`4.2.0-beta.3`, Tenderdash 1.8.0, `drive.protocol.current = 14`. The Platform
+state was wiped for the upgrade and the Core chain persisted, so every identity
+was restored from its retained Core asset lock and kept its original id
+(phase 1); this section is phase 2, the contract publication and everything
+that runs on it.
+
+### Why all ten ids are new, and the twenty nonces that bought them
+
+A contract id is `generateId(owner, nonce)` and a group id is
+`contractGroupId(owner, nonce)` — pure functions of owner and nonce. The maker
+`3JKc6iVG74LEMSrAtB4VSHPQW2mtgKAw8s3Ki6tTFcRQ` was restored at identity nonce
+**0**, so nonces 1-10 reproduce beta.1's ten ids and 11-20 beta.2's, byte for
+byte, behind different schemas. `ops/fresh-id-check.mjs` proved that rather than
+assuming it: it re-derived all twenty superseded ids and both superseded group
+ids from the maker and matched them against the recorded values
+(`beta1Reproduced: 10, beta2Reproduced: 10, groupsReproduced: 2`), and it holds
+the same twenty as a hard blocklist the publisher refuses before any git or
+chain lookup. Its negative controls fired as they must — beta.2's social id
+scored 8 history hits and 48 ref hits, beta.1's group 46 and 200 — while all ten
+planned ids and the new group scored 0 / 0 and were proved absent on chain.
+
+Nonces 1-20 were therefore burned first, with twenty minimal credit transfers
+(an `IdentityCreditTransfer` carries the identity nonce; document batches and
+token transitions carry a separate `identityContractNonce` and do not move it).
+All twenty rounds confirmed by nonce readback rather than by the call's return,
+20 / 20, costing 56,946,000 credits in total. The chain nonce afterwards was
+exactly **20**, so `firstCreateNonce` equalled `plannedFirstNonce` at 21.
+
+### Ten contracts, one group
+
+Group `9eHKb3jFZwoG428DUHqJ9ftUbqeYrt7CCmGrwuGVHYbt`, registered on the social
+create at nonce 21, owner = the maker. Every other contract joins it through
+`setContractGroupMemberships` on its own create; only social calls
+`setContractGroup`.
+
+| nonce | contract | id |
+| ---: | --- | --- |
+| 21 | social v8 | `CuSB2obg51YgNsqw3hoqNLdxVVVSU4wgnL2BN5rx5S3u` |
+| 22 | profile | `BrTRnGoGQFLPdnqriu7H4jv6Pfk1S5aSdovTzXzZjdQh` |
+| 23 | key backup | `AVYWRFXXQr3eKj6dCi1beDeyRKWp7iq7e2pkXE8sZpRo` |
+| 24 | key exchange v2 | `D5pMHWHEDaYAHeFRk3rHS5reP5h3L8Sf4476jXjH2arS` |
+| 25 | vault | `CvxssNPzgvW1iJ51AxvLXtRu1vePDzkB1HiAxxBdVBr6` |
+| 26 | auth vault | `4KeUaXoJ61FqTibWBgiyKq9ZBz3rbm5xcs73vbtV3VeC` |
+| 27 | storefront v3 | `6tmPMAoURDrYhh7kquovbg4MotPqmLf6rKukTGmB4pgd` |
+| 28 | blog v3 | `4yaAufauUGCV2rm1FezyjQVbY1xW2a6dTskWAnsxQW3p` |
+| 29 | DM v4 | `En7AnUi3eGoVzHUMrMh5J2C5LeAGhCc4Ru8nymFg4Dxs` |
+| 30 | pollr v4 | `CR8aL9B85hT2y86DDRcF1ejUvnA3TLt2jQmmQwTqig9A` |
+
+Every published id equals the one the dry run planned, which is the check that
+the nonce assumption never slipped: publication was two-staged (A = 21-26,
+B = 27-30) and each stage refuses to start unless the maker's identity nonce is
+exactly what it expects, refuses any create it cannot cover at 1.5x the rest of
+the stage, and checkpoints each signed transition before broadcast so a rerun
+never allocates a second nonce. Stage A cost 187,000,000,000 credits of
+registration plus 730,377,000 of storage; stage B 131,000,000,000 plus
+767,313,000. The source JSONs were hash-asserted against the pinned
+`beta3/social-v8` archive before anything was built, and the three moderated
+cuts on `origin/staging` at `51d56fec` are byte-identical to those pins
+(sha256 match on social v8, blog v3, storefront v3).
+
+A proof-backed readback (`ops/verify-beta3-contracts.mjs`, live) then scored
+**194 checks, 0 problems** over all ten: present, maker-owned, version 1, each
+enrolled in the group by `forContract`, the group enumerating exactly ten
+members, `config.moderation` echoed back off the *published* contract,
+`documentTypeImmutableProperties` per doctype, every reference type checked
+against its target's deletability, the action fees, and the token rules.
+
+**The `$formatVersion` trap is real and is guarded.** A `"1"` config silently
+drops `moderation` on parse, so a publisher that forces one protocol-14 config
+onto every contract would have registered social v8, blog v3 and storefront v3
+*unmoderated* while validating perfectly. Each file's own `config` is used when
+it has one; the old default block is applied only to a bare-schemas file (DM and
+pollr, both verified unmoderated). The three moderated cuts published with
+`$formatVersion: "2"` and both moderation lists, and the readback proves it on
+chain rather than in the local JSON:
+
+```
+social:     banlist + suspensions, appointedModerators, moderator-deletable post, reply
+blog v3:    banlist + suspensions, appointedModerators, moderator-deletable blog, blogComment, blogPost
+storefront: banlist + suspensions, appointedModerators, moderator-deletable itemReview, storeReview
+```
+
+The appointed moderators are exactly
+`cLWB9tvMku6XLRwH7zwftos4BTTTgjtCP62MmRL4VfT` (the personal account) and the
+maker. Both were fetched **with proof** before anything was signed — a missing
+moderator is 41110 and the create is refused *paid*. The maker is appointed
+deliberately: the owner may moderate whether named or not, but
+`ContractModerators::team()` returns the *appointed* set and the moderators pot
+is split between that team, so without naming the maker the pot could not be
+claimed by the only identity the batteries can sign as.
+
+YAPP `4P2XyKsFhM2NNAWoKSqo5xuUoHQSvy2cP7PpA8uwWhqg`: base supply 1,000,000
+minted to the maker, direct-purchase price 1,000,000 credits per token with a
+100-token minimum tier; both `currentPrice` and `basePrice` read back as
+`1000000`. The `oncePerIdentityDistribution` of 100 YAPP is on chain with
+`distributionRules` at `$formatVersion "1"` — the +10,000,000,000 credit
+registration surcharge (`FEE_DATA_CONTRACT_REGISTRATION_VERSION3`, protocol 14
+only) is what bought it, and social's registration came to 117e9 because of it.
+
+### Gate 1 — the client write shape is accepted
+
+Before any bulk provisioning, one `post` create built the way the app builds it
+was put through `verify-v8.mjs --only a3`. It proves three unproven things at
+once — the nonce-committed id derivation, the `$actionFeeAgreement`, and the
+nonce all agreeing:
+
+```
+PASS  a3a post with the declared agreement lands — id=6uobqfmt5mDMWCacNFrZTBDYgx6eKEv4JKFwoukrKV6Q
+PASS  a3b the nonce-committed v1 id derived locally is the id Platform stored
+      derived=6uobqfmt5mDMWCacNFrZTBDYgx6eKEv4JKFwoukrKV6Q result=6uobqfmt5mDMWCacNFrZTBDYgx6eKEv4JKFwoukrKV6Q
+PASS  a3c the moderators pot grew by 80M credits × the epoch multiplier
+      pot 80000000→160000000 (Δ80000000, expected 80000000 at 1000‰)
+PASS  a3d reply with its own declared agreement lands
+PASS  a3e …growing the pot by 16M × multiplier — Δ16000000
+```
+
+The derivation under test is the **shipped** helper (`deriveDocumentIdBytes`),
+not a battery-local transcription, so this is the live proof that
+`dsha256("dash:document-id:v1" ‖ contract ‖ owner ‖ type ‖ entropy ‖ nonce u64
+BE)` is what consensus recomputes. The upstream wasm-dpp2 fix remains open as
+dashpay/platform#4868, so the shipped beta.3 SDK still returns a v0 id from
+`Document.generateId`; every path here avoids it.
+
+### Accounts and the starter grant
+
+The CI identity and the personal account were restored — DPNS name, profile
+document and YAPP — with every id read off the create result, never precomputed.
+Both claimed the once-per-identity grant, 0 → 100 YAPP each, the first live
+proof that the new distribution works on the freshly published contract.
+
+All **148** seed-ledger personas then claimed it: 128 landed on the first pass
+and the remaining 20 were confirmed on a second pass by the 40722 refusal, which
+is the same proof from the other direction. 148 / 148, 0 failures. The grant
+cannot fund the corpus (100 YAPP per identity against 3,396 for the busiest
+persona), so the provisioner topped each persona up to 4,000 YAPP afterwards —
+a claimed grant simply makes that transfer 100 smaller.
+
+100 corpus personas reached `ready` (profile + DPNS + 4,000 YAPP); 31 non-social
+seeder personas reached `ready` and bought 600 YAPP each by **direct purchase
+with their own credits**, which exercises the price that had just been set. The
+17 remaining ledger actors are battery actors that self-serve through
+`ensureYapp()` and need no provisioning.
+
+### Corpus
+
+18,000 operations replayed against social v8:
+
+| type | ops |
+| --- | ---: |
+| post | 5,700 |
+| quote | 268 |
+| reply | 2,144 |
+| like | 8,557 |
+| reply likes | 585 |
+| follows | 495 |
+| reposts | 234 |
+| bookmarks | 17 |
+| **total** | **18,000** |
+
+Folded journal: exactly **18,000 `done`, no unresolved failures**. Ten late
+dependency waits timed out on the first pass and every one succeeded on a
+resume, the same pattern beta.2 saw.
+
+A fresh read-only audit after the writer stopped re-proved every one:
+`corpus-verification-full-2026-09-21T06-42-33.937Z.json`, `passed: true`,
+**18,000 / 18,000 operations** and **2,905 / 2,905 beat companions**, against a
+recorded corpus hash, with per-type censuses of 5,968 stored posts, 2,144
+replies and the like / likeReply / repost / follow / bookmark pairs.
+
+`ops/verify-count-trees.mjs` re-proved live that the nine indexes which dropped
+the explicit `countable` keyword still answer counts — `post.byOwner` = 135 and
+`follow.followerCount` = 54 for corpus persona 0, plus the windowed like and
+beat ranked axes — 8 probes, 0 failures. Both figures match beta.2's for the
+same corpus.
+
+**Who pays the action fee is who pays the gas, and on v8 that is the contract
+owner.** Social v8 declares `gasFeesPaidBy: 2` (PreferContractOwner) on `post`,
+`reply`, `like`, `likeReply` and `repost`, and the seeder reads that offer off
+the contract rather than inventing one (asking for a payer the type does not
+offer is 40129). So for the ~75% of actors that pay YAPP — the default
+`--credits-fraction 0.25` leaves the other quarter paying credits and their own
+gas — the gas *and* the moderators action fee land on the maker, not on the
+persona. That is 17,488 of the 18,000 ops, not the 8,112 posts and replies a
+fee-only reading suggests. A bounded 300-op probe measured 13,849,766,860
+credits off the maker before the full replay was started, and the maker was
+topped up by 20 DASH from the devnet treasury as a precaution. In the event the
+replay plus every battery cost it 1,638,988,417,674 credits gross and returned
+256,256,550,560 from the moderators pot claim, so the pre-top-up balance of
+1,987,437,774,020 would in fact have covered it — the margin, not the
+affordability, was what the top-up bought.
+
+`t1e` is the same fact proved directly: a like carrying payment info moved the
+contract **owner's** credits and left the signer's untouched
+(`owner 2590932224442→2590831913562  A 497688248800→497688248800`).
+
+### Gate 2 — `verify-v8.mjs` and the feature batteries
+
+| battery | checks | result |
+| --- | ---: | --- |
+| `verify-v8.mjs` (m1-m3, t1-t2, a1-a4, g1, l1) | 44 | **ALL CHECKS PASSED** |
+| `verify-blog.mjs` (blog v3, moderated) | 53 | **ALL CHECKS PASSED** |
+| `verify-storefront.mjs` (storefront v3, moderated) | 76 | **ALL CHECKS PASSED** |
+| `verify-dm.mjs` (DM v4) | 31 | **ALL CHECKS PASSED** |
+| `verify-pollr.mjs` (pollr v4) | 39 | **ALL CHECKS PASSED** |
+| `verify-tips.mjs` (tips on YAPP) | 28 | **ALL CHECKS PASSED** |
+
+`l1` needed care to stay honest on a contract that already carries the corpus.
+The "no zero-count groups" claim (v8 dropped `preallocated` from four like
+indexes) is asserted on the **ascending** page, because zero counts sort first
+there; on the descending page it would be vacuous, since a page of a hundred
+groups that all count at least one cannot contain a zero however broken
+preallocation is. The ascending page returned 100 groups with a lowest count of
+**1**. Separately, `l1e` asks whether the fresh count-1 post appears on the
+descending page: it does not, and that absence is only accepted as evidence
+because the page is provably full (100 groups) with a floor above one (11).
+A short page would fail rather than skip.
+
+`m2e` took **7 block-time retries** — about 70 seconds past `until` — which is
+the lag worth knowing about: a suspension's expiry is compared against block
+time, not wall clock.
+
+The verbatim consensus texts for the new codes:
+
+- **41107**, banned: *"Identity H8bQ… is banned on contract CuSB2obg… and can
+  not act on its documents"*. The ban bars writes, not exits — B's DELETE still
+  landed while banned, and its create landed again after the unban.
+- **41108**, suspended: *"Identity H8bQ… is suspended on contract CuSB2obg…
+  until 1789967960149 and can not act on its documents"*, for a priced create
+  and an unpriced one alike.
+- **40120** on a tombstone, twice over: *"referenced deletable document (own
+  contract, document type post) 9BN7B3vn… not found for path postId"* for a like
+  on a moderator-removed post, and *"… not found for path quotedPostId"* for a
+  tombstone that KEEPS the dead quote. A tombstone that CLEARS it lands — the
+  one change immutability allows.
+- **40700**, insufficient tokens: *"Identity 47da17QA… does not have enough
+  balance for token 4P2XyKsF…: required 1, actual 0, action: Document create
+  token payment"* — payment info with too little YAPP is a refusal, never a
+  silent fallback to credits.
+- **40132**, no agreement: *"Document create of type post charges an action fee
+  of 0 credits to the owner and 80000000 credits to the moderators
+  (feeMultiplier pricing), and the transition carries no action fee agreement"*.
+- **40133**, mismatched agreement: the same sentence continuing *"…, but the
+  transition agreed to 0 and 1 credits (feeMultiplier pricing)"* for a wrong
+  amount, and *"…, but the transition agreed to 0 and 80000000 credits (fixed
+  pricing)"* for agreeing to FIXED pricing on a `feeMultiplier` fee.
+- **41111**, pot already claimed: *"The moderators fee pot of contract
+  CuSB2obg… was already claimed in epoch 0; a pot is claimed at most once per
+  epoch"*.
+- **40722**, grant already taken: *"Token claim error: identity 'EjVyhRot…'
+  already claimed the once-per-identity distribution of token '4P2XyKsF…' at
+  1789967236245"*.
+
+Note that **40132, 40133, 41107, 41108 and 41111 arrive as prose with
+`code = -1`**, not as a numbered variant the SDK surfaces; only 40120 and 40700
+came through as `StateTransitionBroadcastError` with the number attached. Any
+classifier that anchors on the number alone will miss five of the eight.
+
+The moderators pot is the corpus accounting end to end: it stood at
+**512,528,000,000 credits** after the replay — 5,968 posts × 80e6 plus 2,144
+replies × 16e6 is 511,744,000,000, the remainder being the batteries' own posts
+— and `a4` claimed it to zero, paying the claimant 256,256,550,560, an equal
+split between the two-member moderation team, with less than one share left
+behind.
+
+### Fixes this deployment forced
+
+Five defects were found by running the batteries against a real beta.3 node and
+are fixed in this PR. None of them is a chain defect; all five are places where
+the harness or the reconciliation helper was wrong about beta.3.
+
+1. **`verify-v8.mjs` did not mask the identity contract nonce.** `seed-lib`'s
+   `createWithAgreement` masks with `NONCE_SEQUENCE_MASK` before incrementing;
+   the battery's own `manualCreate` used the raw value. A raw nonce carries
+   missing-nonce marker bits above bit 40 once an identity has a gap, so
+   `raw + 1` named a nonce far in the future and wedged every later case:
+   *"is trying to set an invalid identity nonce. The current identity nonce is
+   2199023255558"* (= 2^41 + 6).
+2. **BigInt serialization aborted two moderation cases.**
+   `moderationStatus.suspendedUntil` and a removal record's `removedAt` are u64
+   and reach JS as BigInt, so describing them with a bare `JSON.stringify` threw
+   *"Do not know how to serialize a BigInt"* — taking `m2` down in `verify-v8`
+   and `b14` in the shared `battery-moderation.mjs`, and with `m2` the four
+   later cases that share its fixtures.
+3. **The 40132 / 40133 patterns matched nothing.** They anchored on the number
+   or on the phrase "fee agreement mismatch"; beta.3 sends neither. Both now
+   also match the shipped prose.
+4. **`findRecentByValues` aborted on doctypes with no `$ownerId` index.** It
+   reconciles by querying the owner's recent documents, but storefront's
+   `shippingZone` indexes only `(storeId, name)` and `(storeId, priority)`, so
+   the query was refused *"where clause on non indexed property"* — a permanent
+   fact about the schema, not a fault to retry. Every rejection probe on such a
+   type aborted. It now answers "no match" instead.
+5. **The same reconciliation scored unique-index refusals as ACCEPTED.** When a
+   create is refused because a value-identical document already exists, the
+   value search finds *that* document and reports the refused write as landed.
+   The `since` floor does not exclude it — it allows 120 s of clock skew, so a
+   fixture written seconds earlier in the same run matched. DM `d1c` (duplicate
+   `conversationInvite`) and `d3d` (duplicate `readReceipt`) both reported
+   ACCEPTED (BAD) against a contract whose unique indexes were in fact working.
+   `attemptCreate` now captures any pre-existing match before the write and
+   refuses to count it as evidence.
+
+Items 4 and 5 are regressions from PR A's `findRecentByValues` reconciliation
+and would have mis-scored any future battery run, in both directions.
+
+A review of the first round of those fixes caught two places where a fix would
+have made a test pass without proving anything, and both are corrected here:
+
+- `AGREEMENT_MISMATCH`'s new prose alternative now requires **both** amounts
+  (`agreed to N and M credits`), and `a2` rules out 40134 explicitly. The
+  stale-fee-multiplier refusal is also prose about what the transition agreed
+  to, so a run crossing an epoch boundary could otherwise have passed `a2`
+  while proving 40134 rather than 40133.
+- `l1d` originally kept the zero-count assertion on the descending page, where
+  it cannot fail; it now reads the ascending page, and `l1e` no longer skips
+  unconditionally.
+
+The same pre-existing-document guard was also ported to `verify-lib.mjs`'s
+`attemptCreate`, which is the parallel helper `verify-v7` and `verify-refersto`
+use — two copies with divergent correctness is how this class of bug returns —
+and `attemptCreateByValues` now documents that its default acceptance probe
+cannot express a duplicate probe on an indexOnly type, because an index entry
+that predates the write satisfies it exactly as it did before.
+
+### Balances at completion
+
+The maker holds **2,590,700,499,966** credits and **645,131** YAPP at identity
+nonce **30** — unchanged since the tenth create, because documents and tokens
+carry `identityContractNonce`, a separate per-(identity, contract) counter, and
+an `IdentityTopUpTransition` carries no identity nonce at all. The 100 corpus
+personas hold **2,975,750,643,330** credits between them. Platform height 4,485,
+core chain locked height 79,569.
+
+### Known-good operational notes
+
+- On devnet the maker is the **seed-index-9** identity, so the batteries take
+  `--moderator bot:9`, not `--moderator maker`; the latter reads
+  `~/Downloads/dash-identity-testnet-contract-maker.json`, which is the
+  *testnet* contract maker and a different identity entirely.
+- `E2E_IDENTITY_IDS` is positional and `filter(Boolean)` collapses empties, so
+  addressing bot index 9 needs ten non-empty entries.
+- The feature batteries resolve actors by persona index out of the seed ledger,
+  so an appointed moderator has to be present there to be usable as one.
+- Quorum rotations produce `Quorum not found in cache` on reads. Twice a
+  moderation write landed while its confirming read failed, leaving a target
+  banned; the battery says so (*"MAY STILL BE BANNED; unban by hand"*) and the
+  state must be cleared before a rerun.
+- Blog case `b4d` counts comments in a 60-second window, so two blog battery
+  runs less than a minute apart contaminate each other.
