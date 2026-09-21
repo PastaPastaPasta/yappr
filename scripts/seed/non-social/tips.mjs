@@ -376,8 +376,11 @@ async function run({ args, handle, battery, socialId }) {
         handle,
         contractId: socialId,
         entropyFor: entropySource(`yappr/tips-seed/${socialId}`),
-        // Per doctype, off the contract: inferring a gas offer a type never
-        // made is a 40129 (seed-lib), and the two tip types need not agree.
+        // Required by createDocWriter but never called: every createDoc below
+        // passes its own `payment`, built from the doctype's OWN declaration —
+        // inferring a gas offer a type never made is a 40129 (seed-lib), and
+        // the two tip types need not agree. An empty bag is the credits path,
+        // which an `optional` cost accepts, so even the dead branch fails safe.
         paymentInfo: () => ({}),
       });
       const recordable = plan.filter((tip) => TIP_DOCTYPE[tip.kind] && state.done[tip.seq]?.transferId && !state.done[tip.seq].tipId);
@@ -396,8 +399,13 @@ async function run({ args, handle, battery, socialId }) {
           const cost = tokenCostFor(docType, args.topology);
           const price = BigInt(cost?.amount ?? 0);
           // Recording is priced too, and the send loop spent this sender down
-          // to its reserve. Skipping with the remedy named beats 40700 per tip.
-          if (price > 0n && balance < price) { unfunded.push([tip.seq, actor.label, docType, String(balance)]); continue; }
+          // to its reserve. Skipping with the remedy named beats a 40700 per
+          // tip, and the reserve holds here as well: a seeded sender is meant
+          // to look like a funded account afterwards, not a drained one.
+          if (price > 0n && balance - price < MIN_SENDER_BALANCE) {
+            unfunded.push([tip.seq, actor.label, docType, String(balance)]);
+            continue;
+          }
 
           const data = {
             transferId: bs58.decode(done.transferId),
@@ -406,17 +414,29 @@ async function run({ args, handle, battery, socialId }) {
             [tip.kind === 'post' ? 'postId' : 'replyId']: bs58.decode(tip.targetId),
           };
           try {
-            const { id } = await writer.createDoc(actor, docType, `tip/${tip.seq}`, data, {
+            const { id, skipped } = await writer.createDoc(actor, docType, `tip/${tip.seq}`, data, {
               tokenCost: cost?.amount,
               payment: (amount) => paymentInfo(amount, { gasFeesPaidBy: cost?.gasFeesPaidBy ?? 0 }),
               // A 40105 on the unique transferId index means this transfer is
               // already cited — the writer only accepts that once it has READ
               // the document back, so a collision with someone else's tip
               // cannot be scored as ours.
+              //
+              // That readback (`findRecentByValues`) pages one owner's newest
+              // 100 documents of the type. A sender holding MORE than 100 tips
+              // of one doctype can therefore have an older duplicate fall off
+              // the page, and the writer then throws rather than accepting it —
+              // permanently, for that tip. Out of reach of the default plan
+              // (110 tips over 8 senders) but not of `--senders` naming one
+              // persona, or a large `--post-tips`.
               duplicateIsSuccess: true,
             });
             state.done[tip.seq] = { ...done, tipId: id ?? true };
-            balance -= price;
+            // `skipped` means the writer's pre-write probe found the document
+            // already on chain, so nothing was spent. Billing it here would
+            // walk a re-run with a lost checkpoint down to zero and then report
+            // a complete corpus as "sender out of YAPP".
+            if (!skipped) balance -= price;
             recorded += 1;
           } catch (error) {
             unrecorded.push([tip.seq, actor.label, docType, describeErr(error).slice(0, 60)]);
@@ -476,12 +496,18 @@ async function run({ args, handle, battery, socialId }) {
   if (atLeastTopology(args.topology, 'v9')) {
     const tipCounts = [];
     for (const author of state.authors) {
+      // A faulted count-tree read must NOT print as 0: directly above this sits
+      // the transfer-side count, and "9 transfers noted, 0 documents" is the
+      // signature of recording being broken — the one failure this pass exists
+      // to prevent. Reading it as that when the query merely faulted sends the
+      // reader to the wrong remedy.
       const [onPosts, onReplies] = await Promise.all(Object.values(TIP_DOCTYPE).map((docType) =>
-        battery.countBy(docType, [['recipientId', '==', author.id]], socialId).catch(() => 0)));
-      tipCounts.push([author.label, onPosts, onReplies, onPosts + onReplies, `/user?id=${author.id}`]);
+        battery.countBy(docType, [['recipientId', '==', author.id]], socialId).catch(() => null)));
+      const total = onPosts === null || onReplies === null ? 'err' : onPosts + onReplies;
+      tipCounts.push([author.label, onPosts ?? 'err', onReplies ?? 'err', total, `/user?id=${author.id}`]);
     }
     printTable([['author', 18], ['tip', -4], ['tipReply', -8], ['total', -5], ['profile', 46]],
-      tipCounts.sort((a, b) => b[3] - a[3]),
+      tipCounts.sort((a, b) => (typeof b[3] === 'number' ? b[3] : -1) - (typeof a[3] === 'number' ? a[3] : -1)),
       'per author (the proved tip COUNT the profile reads, off the count trees)');
   }
 
