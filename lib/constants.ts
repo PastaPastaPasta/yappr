@@ -25,6 +25,10 @@ export const YAPP_TOKEN_COSTS = {
   like: 1,
   likeReply: 1,
   repost: 1,
+  // v9 proved tip receipts. The tip itself moves YAPP; this is only the
+  // anti-spam cost of recording it.
+  tip: 1,
+  tipReply: 1,
 } as const
 // Storefront v2 reviews are priced in YAPP too, charged from the social
 // contract's token through `tokenCost.create.contractId` (a cross-contract
@@ -279,13 +283,20 @@ export function keyNetwork(): KeyNetwork {
 // fees on post/reply creation paid into the moderators pot (every such create
 // must carry an action fee agreement).
 //
+// `v9` is v8 plus the two proved-tip doctypes (docs/SOCIAL_V9.md,
+// contracts/yappr-social-contract-v9.json). Every v8 doctype is carried over
+// byte for byte; `tip` and `tipReply` cite the token-history `transfer`
+// document cross-contract, with propertyAgreements binding the sender, the
+// amount and the payee, so a tip is a consensus fact rather than a note on a
+// transfer. Below v9 there is no tip document and no per-post tip display.
+//
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
 //
 // ORDER IS SIGNIFICANT: `lib/contract-topology.ts` compares positions in this
 // array to decide when a capability first appeared, so new cuts append.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 
@@ -337,6 +348,9 @@ export const DOCUMENT_TYPES = {
   ENCRYPTED_KEY_BACKUP: 'encryptedKeyBackup',
   POST_HASHTAG: 'postHashtag',
   POST_MENTION: 'postMention',
+  // Proved tip receipts (v9 and later only)
+  TIP: 'tip',
+  TIP_REPLY: 'tipReply',
   // Private feed document types
   FOLLOW_REQUEST: 'followRequest',
   PRIVATE_FEED_GRANT: 'privateFeedGrant',

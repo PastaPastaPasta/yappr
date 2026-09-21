@@ -83,7 +83,7 @@ const SPEC_TOPOLOGY = compiledTopology()
  * rather than listing every cut, so a new topology inherits the suites its
  * contract still satisfies instead of silently skipping all of them.
  */
-const TOPOLOGY_ORDER = ['v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8']
+const TOPOLOGY_ORDER = ['v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9']
 const specTopologyAtLeast = (floor: string) =>
   TOPOLOGY_ORDER.indexOf(SPEC_TOPOLOGY) >= TOPOLOGY_ORDER.indexOf(floor)
 

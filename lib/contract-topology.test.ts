@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import socialContractV7 from '@/contracts/yappr-social-contract-v7.json'
 import socialContractV8 from '@/contracts/yappr-social-contract-v8.json'
+import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import { CONTRACT_TOPOLOGIES } from './constants'
 
 /** The doctype schema as the committed JSON declares it. */
@@ -215,6 +216,11 @@ describe('contract topology', () => {
       expect(v8.tokenCostFor('repost')).toEqual({ amount: 1, ...sponsored })
       expect(v8.tokenCostFor('follow')).toBeNull()
       expect(v8.tokenCostFor('nope')).toBeNull()
+      // The tip doctypes only exist from v9, so a v8 client must not think it
+      // can pay for one — it would attach a payment agreement for a type the
+      // contract does not have.
+      expect(v8.tokenCostFor('tip')).toBeNull()
+      expect(v8.tokenCostFor('tipReply')).toBeNull()
 
       expect(v8.starterGrantAmount()).toBe(100n)
 
@@ -233,6 +239,56 @@ describe('contract topology', () => {
         const priced = Object.keys(schema.actionFees ?? {}).filter((key) => key !== 'pricing')
         expect(priced, `${name} prices an action the client cannot agree to`).toEqual(schema.actionFees ? ['create'] : [])
       }
+    })
+  })
+
+  describe('v9 proved tips', () => {
+    it('has no tip surface before v9, so nothing reads or writes one', async () => {
+      const v8 = await topologyModule('v8')
+      expect(v8.provedTipsAvailable()).toBe(false)
+      expect(v8.tipSurfaceFor('post')).toBeNull()
+      expect(v8.tipSurfaceFor('reply')).toBeNull()
+    })
+
+    it('names the doctype and tipped field each kind\'s tips live in', async () => {
+      const v9 = await topologyModule('v9')
+      expect(v9.provedTipsAvailable()).toBe(true)
+      expect(v9.tipSurfaceFor('post')).toEqual({ docType: 'tip', tippedField: 'postId', threadField: null })
+      expect(v9.tipSurfaceFor('reply')).toEqual({ docType: 'tipReply', tippedField: 'replyId', threadField: 'rootPostId' })
+    })
+
+    it('pins the tip fields the client writes against the v9 JSON', async () => {
+      const schemas = socialContractV9.documentSchemas as unknown as Record<string, {
+        required: string[]
+        properties: Record<string, { refersTo?: { type: string; documentType?: string; contractId?: number[]; propertyAgreement?: Record<string, string> } }>
+      }>
+      for (const [docType, tippedField] of [['tip', 'postId'], ['tipReply', 'replyId']] as const) {
+        const schema = schemas[docType]
+        // Everything `recordTip` sends is required, so a missing field is a
+        // rejection rather than a tip that renders with a hole in it.
+        expect(schema.required.sort()).toEqual(['$createdAt', 'amount', 'recipientId', tippedField, 'transferId'].sort())
+        // The amount is bound to the cited transfer, and the payee to the
+        // tipped document's author — this is what makes the read path's
+        // numbers facts rather than the tipper's word.
+        expect(schema.properties.transferId.refersTo?.propertyAgreement).toEqual({
+          $ownerId: '$ownerId', amount: 'amount', recipientId: 'toIdentityId',
+        })
+        expect(schema.properties[tippedField].refersTo?.propertyAgreement).toEqual({ recipientId: '$ownerId' })
+        expect(schema.properties.transferId.refersTo?.contractId).toHaveLength(32)
+      }
+    })
+
+    it('carries every v8 capability into v9 unchanged', async () => {
+      const v9 = await topologyModule('v9')
+      expect(v9.contractIsModerated()).toBe(true)
+      expect(v9.referencesMayDangle()).toBe(true)
+      expect(v9.moderatorDeletableTypes()).toEqual(['post', 'reply'])
+      expect(v9.tokenCostFor('post')).toEqual({ amount: 10, optional: true, gasFeesPaidBy: 2 })
+      expect(v9.tokenCostFor('tip')).toEqual({ amount: 1, optional: true, gasFeesPaidBy: 2 })
+      expect(v9.declaredActionFee('reply', 'create')).toEqual({ owner: 0n, moderators: 16_000_000n, pricing: 'feeMultiplier' })
+      // A tip charges no action fee: the words it may carry live in a reply
+      // that pays one already.
+      expect(v9.declaredActionFee('tip', 'create')).toBeNull()
     })
   })
 })

@@ -23,6 +23,7 @@
 
 import { CONTRACT_TOPOLOGIES, getContractTopology, type ContractTopology } from './constants'
 import socialContractV8 from '@/contracts/yappr-social-contract-v8.json'
+import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 
 /**
  * Whether a Post-shaped object is backed by a `post` document or a `reply`
@@ -420,6 +421,24 @@ const V8_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v8',
 }
 
+/**
+ * v9 is v8's read and write surface plus two doctypes, so every interaction
+ * descriptor is v8's.
+ *
+ * What it adds is `tip` / `tipReply` ({@link tipSurfaceFor}): a tip is a
+ * document that CITES the token-history `transfer` it was paid with, and
+ * consensus checks the citation — the writer must be the sender, the recorded
+ * `amount` must equal the transfer's, and the payee must be both the
+ * transfer's recipient and the tipped document's author. So a tip on a post is
+ * an ordinary indexed query with a proved amount on it, where before v9 it
+ * could only be inferred by scanning the author's incoming transfers for notes
+ * naming the post.
+ */
+const V9_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V8_DESCRIPTOR,
+  topology: 'v9',
+}
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -437,6 +456,7 @@ const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>
   v6: V6_DESCRIPTOR,
   v7: V7_DESCRIPTOR,
   v8: V8_DESCRIPTOR,
+  v9: V9_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -866,8 +886,20 @@ interface V8DocumentSchema {
 }
 
 const V8_SCHEMAS = socialContractV8.documentSchemas as unknown as Record<string, V8DocumentSchema>
+const V9_SCHEMAS = socialContractV9.documentSchemas as unknown as Record<string, V8DocumentSchema>
 const V8_GRANT = (socialContractV8.tokens['0'].distributionRules as { oncePerIdentityDistribution?: { amount: number } })
   .oncePerIdentityDistribution
+
+/**
+ * The committed JSON the grammar helpers below read.
+ *
+ * v9 carries every v8 doctype over byte for byte, so the two agree on
+ * everything v8 declares; reading v9 on a v9 deployment only adds the two tip
+ * doctypes, whose costs would otherwise be invisible to the payment planner.
+ */
+function grammarSchemas(): Record<string, V8DocumentSchema> {
+  return atLeast('v9') ? V9_SCHEMAS : V8_SCHEMAS
+}
 
 /**
  * True when the configured contract declares `moderation` (v8): identities can
@@ -914,7 +946,7 @@ export function likeCountsArePreallocated(): boolean {
  */
 export function clearableReferencesFor(docType: string): readonly string[] {
   if (!referencesMayDangle()) return []
-  const schema = V8_SCHEMAS[docType]
+  const schema = grammarSchemas()[docType]
   if (!schema?.properties) return []
   const required = new Set(schema.required ?? [])
   return Object.entries(schema.properties)
@@ -925,7 +957,7 @@ export function clearableReferencesFor(docType: string): readonly string[] {
 /** The document types the contract's moderators may delete (v8: post, reply). */
 export function moderatorDeletableTypes(): readonly string[] {
   if (!contractIsModerated()) return []
-  return Object.entries(V8_SCHEMAS)
+  return Object.entries(grammarSchemas())
     .filter(([, schema]) => schema.canBeDeletedByModerators === true)
     .map(([name]) => name)
 }
@@ -937,7 +969,7 @@ export function moderatorDeletableTypes(): readonly string[] {
  * `gasFeesPaidBy: 0` say.
  */
 export function tokenCostFor(docType: string): TokenCostDeclaration | null {
-  const create = V8_SCHEMAS[docType]?.tokenCost?.create
+  const create = grammarSchemas()[docType]?.tokenCost?.create
   if (!create) return null
   if (!atLeast('v8')) return { amount: create.amount, optional: false, gasFeesPaidBy: 0 }
   return {
@@ -956,7 +988,7 @@ export function tokenCostFor(docType: string): TokenCostDeclaration | null {
  */
 export function declaredActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
   if (!atLeast('v8')) return null
-  const fees = V8_SCHEMAS[docType]?.actionFees
+  const fees = grammarSchemas()[docType]?.actionFees
   if (!fees) return null
   const fee = fees[action]
   if (!fee) return null
@@ -975,4 +1007,47 @@ export function declaredActionFee(docType: string, action: DocumentAction): Acti
 export function starterGrantAmount(): bigint | null {
   if (!atLeast('v8') || !V8_GRANT) return null
   return BigInt(V8_GRANT.amount)
+}
+
+/**
+ * Where one target kind's proved tips live, or null on a topology without them.
+ *
+ * A tip document cites the token-history `transfer` it was paid with, and the
+ * contract binds the citation: the writer must be the transfer's sender, the
+ * stored `amount` must equal the transfer's amount, and `recipientId` must be
+ * both the transfer's recipient and the tipped document's owner. A reader
+ * therefore renders `amount` as a fact without reading token history at all.
+ */
+export interface TipSurface {
+  /** Document type holding these tips. */
+  docType: string
+  /** The identifier property naming the tipped document. */
+  tippedField: string
+  /**
+   * The property naming the thread a tip belongs to, when the tipped document
+   * is not itself the thread root — and it is a QUERY HINT, not a fact: no
+   * agreement binds it, so a reader must confirm the cited item really is in
+   * the thread before rendering the tip there. Null for tips on posts, where
+   * the tipped post IS the thread.
+   */
+  threadField: string | null
+}
+
+const TIP_SURFACES: Readonly<Record<TargetKind, TipSurface>> = {
+  post: { docType: 'tip', tippedField: 'postId', threadField: null },
+  reply: { docType: 'tipReply', tippedField: 'replyId', threadField: 'rootPostId' },
+}
+
+/**
+ * True when tips are documents on the social contract (v9) rather than notes on
+ * a token transfer. Below v9 a tip still moves YAPP, but nothing on chain ties
+ * it to a post, so no tip is displayed anywhere.
+ */
+export function provedTipsAvailable(): boolean {
+  return atLeast('v9')
+}
+
+/** The tip doctype and fields for a target kind, or null before v9. */
+export function tipSurfaceFor(kind: TargetKind): TipSurface | null {
+  return provedTipsAvailable() ? TIP_SURFACES[kind] : null
 }
