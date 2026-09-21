@@ -1,13 +1,13 @@
-import { useSettingsStore, type PayWith } from '@/lib/store'
+import type { PayWith } from '@/lib/store'
 import { declaredActionFee, tokenCostFor, type ActionFeeDeclaration, type DocumentAction, type GasFeesPaidBy } from '@/lib/contract-topology'
 
 /**
  * What one document write is going to cost and how it will be paid, decided
  * BEFORE signing from the contract's declarations, the user's `payWith`
  * setting and their YAPP balance. Presentation layer only: this is what the
- * compose UI shows and what the write path (state-transition-service, after
- * the beta.3 id work lands) turns into `$tokenPaymentInfo` and
- * `$actionFeeAgreement` — see the TODO list in docs/SOCIAL_V8.md.
+ * compose UI shows and what the write path turns into `$tokenPaymentInfo` and
+ * `$actionFeeAgreement` (`lib/transition-agreements.ts`, applied in
+ * `state-transition-service.createDocument`) — see docs/SOCIAL_V8.md.
  */
 export interface PaymentPlan {
   /** The currency the write spends. `credits` when the type is unpriced. */
@@ -70,9 +70,4 @@ export function planPayment(docType: string, action: DocumentAction, balance: bi
 /** True when the user may choose the currency of `docType` creates at all. */
 export function paymentIsChoosable(docType: string): boolean {
   return tokenCostFor(docType)?.optional === true
-}
-
-/** The plan for the signed-in user's current setting. */
-export function planPaymentForViewer(docType: string, balance: bigint | null): PaymentPlan {
-  return planPayment(docType, 'create', balance, useSettingsStore.getState().payWith)
 }

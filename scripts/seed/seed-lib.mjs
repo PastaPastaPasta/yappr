@@ -33,6 +33,7 @@ import {
   Document,
   DocumentActionFeeAgreement,
   DocumentCreateTransition,
+  Identifier,
   PlatformVersion,
   PrivateKey,
   TokenPaymentInfo,
@@ -568,8 +569,10 @@ export function corpusYappCost(ops, { paysCredits = () => false } = {}) {
  *
  * Deterministic in the persona index alone, so a resumed run keeps every actor
  * on the currency it started with: switching mid-run would leave an author
- * funded for neither path. Knuth's multiplicative hash spreads consecutive
- * indexes, which a bare `idx % n` would bucket by author block.
+ * funded for neither path. The multiplier is coprime with 1000, so consecutive
+ * indexes land on a full-period permutation rather than in author-block
+ * buckets the way a bare `idx % n` would; the self-test pins the resulting
+ * share.
  */
 export function paysInCredits(idx, fraction) {
   if (!(fraction > 0)) return false;
@@ -818,6 +821,21 @@ const V8_DOCUMENT_SCHEMAS = JSON.parse(
 ).documentSchemas;
 
 /**
+ * What `docType`'s create costs in YAPP on `topology`, and how that payment may
+ * be made: `{ amount, optional, gasFeesPaidBy }`, read off the committed
+ * contract. Before v8 a declared cost is REQUIRED and the signer pays the gas,
+ * which is what `optional: false, gasFeesPaidBy: 0` says. The gas offer is a
+ * property of the doctype, independent of whether it charges an action fee —
+ * inferring one from the other would send a payer the type never offered (40129).
+ */
+export function tokenCostFor(docType, topology) {
+  const create = V8_DOCUMENT_SCHEMAS[docType]?.tokenCost?.create;
+  if (!create) return null;
+  if (!atLeastTopology(topology, 'v8')) return { amount: create.amount, optional: false, gasFeesPaidBy: 0 };
+  return { amount: create.amount, optional: create.optional === true, gasFeesPaidBy: create.gasFeesPaidBy ?? 0 };
+}
+
+/**
  * The action fee `docType`'s create charges on `topology`, or null when it
  * charges none (every doctype and every topology before v8; on v8, everything
  * but `post` and `reply`). Read off the committed contract JSON so no amount is
@@ -907,8 +925,17 @@ export async function createWithAgreement(sdk, { contractId, docType, ownerId, w
   stateTransition.setIdentityContractNonce(nonce);
   stateTransition.sign(PrivateKey.fromWIF(wif), identityKey);
   await sdk.stateTransitions.broadcastAndWait(stateTransition);
-  // The nonce was managed by hand; without this the facade's cached one is stale.
-  await sdk.wasm.refreshIdentityNonce(ownerId).catch(() => {});
+  // The nonce was managed by hand, so the facade's cached one is now behind:
+  // refresh it or the next `documents.create` by this actor reuses a spent
+  // nonce. The binding takes an `Identifier` (it `_assertClass`es, and consumes
+  // it), NOT a base58 string — and it throws SYNCHRONOUSLY, so this needs a
+  // try/catch rather than a rejection handler. Best effort: the write already
+  // landed, and a stale cache costs a retry, not the document.
+  try {
+    await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId));
+  } catch (error) {
+    console.log(`     (nonce cache refresh failed after ${docType} create: ${describeErr(error).slice(0, 120)})`);
+  }
   return { id };
 }
 

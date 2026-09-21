@@ -9,9 +9,10 @@ import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-s
 import { promptForAuthKey } from '../auth-utils';
 import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_POSITION, blogIsV2, keyNetwork, storefrontIsV2 } from '../constants';
 import { declaredActionFee, tokenCostFor, type DocumentAction } from '../contract-topology';
-import { planPaymentForViewer } from '../payment-preference';
+import { planPayment } from '../payment-preference';
 import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, tokenPaymentOptions } from '../transition-agreements';
 import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError } from '../error-utils';
+import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
 import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
@@ -308,12 +309,18 @@ class StateTransitionService {
    * agreements name that contract explicitly and stay required (neither
    * contract declares `optional`).
    *
-   * On the social contract the bag follows `planPaymentForViewer`: before v8
+   * On the social contract the bag follows the viewer's payment plan: before v8
    * the cost is required and this is the historical position-and-cap bag; on
    * v8 the `payWith` setting and the YAPP balance decide, a `yapp` plan adds
    * the contract's gas offer (PreferContractOwner) and a `credits` plan sends
-   * nothing at all. The balance is read only when there is a choice to make,
-   * and a failed read plans credits so a stale balance cannot become a 40700.
+   * nothing at all.
+   *
+   * A balance read that FAILS plans credits, so an unknown balance can never
+   * become a 40700. A read that succeeds but is STALE still can — Platform
+   * reads lag writes, two tabs plan against the same balance, and the cached-ST
+   * replay re-sends a payment the YAPP may since have left. Those surface as
+   * insufficient-YAPP, which on an optional cost tells the user they can switch
+   * to credits rather than only offering to sell them more.
    */
   private async resolveTokenPayment(
     contractId: string,
@@ -323,8 +330,13 @@ class StateTransitionService {
     if (contractId === YAPPR_CONTRACT_ID) {
       const cost = tokenCostFor(documentType);
       if (!cost) return undefined;
-      const balance = cost.optional ? await this.yappBalanceOrNull(ownerId) : null;
-      const plan = planPaymentForViewer(documentType, balance);
+      // The balance only matters when it can change the answer: paying in YAPP
+      // on an optional cost, where too little means planning credits instead. A
+      // user who chose credits, or a required cost consensus gives no choice
+      // about, must not pay a balance round-trip on every like.
+      const payWith = useSettingsStore.getState().payWith;
+      const balance = cost.optional && payWith === 'yapp' ? await this.yappBalanceOrNull(ownerId) : null;
+      const plan = planPayment(documentType, 'create', balance, payWith);
       if (plan.fallbackReason) logger.debug(`Paying ${documentType} in ${plan.payWith} (${plan.fallbackReason})`);
       return tokenPaymentOptions(plan, YAPP_TOKEN_POSITION);
     }
@@ -541,7 +553,11 @@ class StateTransitionService {
               return { success: true, transactionHash: documentId, document: doc, confirmed: true };
             }
           }
-          // Genuine failure on rebroadcast — clear cache and fall through to create fresh
+          // Genuine failure on rebroadcast — clear cache and fall through to create fresh.
+          // A 40134 here is about the multiplier the CACHED bytes agreed to, and the
+          // fresh transition built below prices its agreement from the same session
+          // cache: without this it is refused for the identical reason.
+          if (isFeeMultiplierNotToleratedError(rebroadcastErr)) knownFeeMultiplierPermille = null;
           logger.warn('Rebroadcast failed, will create fresh ST:', extractErrorMessage(rebroadcastErr));
           clearPendingSTBytes(documentId);
         }

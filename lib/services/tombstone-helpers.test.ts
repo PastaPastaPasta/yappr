@@ -34,12 +34,25 @@ function storedQuotePost() {
   }
 }
 
-const REFERENCE_NOT_FOUND = 'referenced document 1111 not found for path quotedPostId, code=40120'
+/** Drive's phrasing: rs-dpp `"referenced {entity_type} {entity_id} not found for path {path}"`. */
+const referenceNotFound = (path: string) => `referenced document 1111 not found for path ${path}, code=40120`
+const REFERENCE_NOT_FOUND = referenceNotFound('quotedPostId')
+
+/** A stored post quoting BOTH a post and a reply — nothing in the contract forbids it. */
+function storedDoubleQuotePost() {
+  return {
+    toObject: () => ({
+      $id: postId, $ownerId: ownerId, $revision: 2,
+      content: 'quoting both', language: 'en',
+      quotedPostId, quotedReplyId: quotedOwnerId, quotedPostOwnerId: quotedOwnerId,
+    }),
+  }
+}
 
 /** The data of the n-th replace attempt. */
 const attempt = (n: number) => updateDocument.mock.calls[n][4] as Record<string, unknown>
 
-async function tombstone(topology: string) {
+async function tombstone(topology: string, documentType: 'post' | 'reply' = 'post') {
   vi.resetModules()
   vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
   const [{ tombstoneDocument }, { tombstonePreservationFor }] = await Promise.all([
@@ -48,10 +61,10 @@ async function tombstone(topology: string) {
   ])
   return tombstoneDocument({
     contractId,
-    documentType: 'post',
+    documentType,
     documentId: postId,
     ownerId,
-    preserve: tombstonePreservationFor('post'),
+    preserve: tombstonePreservationFor(documentType),
   })
 }
 
@@ -109,6 +122,59 @@ describe('tombstoning a quote of a removed post', () => {
       .mockResolvedValueOnce({ success: false, error: REFERENCE_NOT_FOUND })
     await expect(tombstone('v8')).resolves.toBe(false)
     expect(updateDocument).toHaveBeenCalledTimes(2)
+  })
+
+  it('drops ONLY the reference the rejection names, not every clearable one', async () => {
+    // Both quote fields are set and only the POST target was removed. Dropping
+    // the live quotedReplyId too would trade the 40120 for a 40128, because
+    // the immutable check judges each removed property on its own.
+    get.mockResolvedValue(storedDoubleQuotePost())
+    updateDocument
+      .mockResolvedValueOnce({ success: false, error: referenceNotFound('quotedPostId') })
+      .mockResolvedValueOnce({ success: true })
+
+    await expect(tombstone('v8')).resolves.toBe(true)
+    expect(updateDocument).toHaveBeenCalledTimes(2)
+    expect(attempt(1)).not.toHaveProperty('quotedPostId')
+    expect(attempt(1).quotedReplyId).toBeInstanceOf(Uint8Array)
+  })
+
+  it('clears a second dead reference when the retry is refused for it too', async () => {
+    get.mockResolvedValue(storedDoubleQuotePost())
+    updateDocument
+      .mockResolvedValueOnce({ success: false, error: referenceNotFound('quotedPostId') })
+      .mockResolvedValueOnce({ success: false, error: referenceNotFound('quotedReplyId') })
+      .mockResolvedValueOnce({ success: true })
+
+    await expect(tombstone('v8')).resolves.toBe(true)
+    expect(updateDocument).toHaveBeenCalledTimes(3)
+    expect(attempt(2)).not.toHaveProperty('quotedPostId')
+    expect(attempt(2)).not.toHaveProperty('quotedReplyId')
+    // Still not a reference: dropping it would be a plain 40128.
+    expect(attempt(2).quotedPostOwnerId).toBeInstanceOf(Uint8Array)
+  })
+
+  it('does not clear a live nested reply when the REQUIRED thread root is what died', async () => {
+    // reply.rootPostId is required, so it can never be cleared: the tombstone
+    // of a reply under a removed root is simply impossible, and clearing the
+    // live replyToReplyId instead would be a 40128 plus a false descriptor-drift log.
+    get.mockResolvedValue({
+      toObject: () => ({
+        $id: postId, $ownerId: ownerId, $revision: 1, content: 'nested reply',
+        rootPostId: quotedPostId, replyToReplyId: quotedOwnerId, parentOwnerId: quotedOwnerId,
+      }),
+    })
+    updateDocument.mockResolvedValue({ success: false, error: referenceNotFound('rootPostId') })
+
+    await expect(tombstone('v8', 'reply')).resolves.toBe(false)
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not guess when the rejection names no readable path', async () => {
+    get.mockResolvedValue(storedDoubleQuotePost())
+    updateDocument.mockResolvedValue({ success: false, error: 'referencedentitynotfound, code=40120' })
+    await expect(tombstone('v8')).resolves.toBe(false)
+    expect(updateDocument).toHaveBeenCalledTimes(1)
   })
 
   it('sends one replace and preserves the quote when nothing is dead', async () => {

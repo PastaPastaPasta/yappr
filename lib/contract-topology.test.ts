@@ -145,6 +145,18 @@ describe('contract topology', () => {
       expect(v7.tokenCostFor('post')).toEqual({ amount: 10, optional: false, gasFeesPaidBy: 0 })
     })
 
+    it('reads pre-v8 token amounts that still match the v7 contract', async () => {
+      // `tokenCostFor` reads the v8 JSON whatever the configured topology, so an
+      // edit to the v8 contract's amounts would silently change what a
+      // v7-configured client sends — and v7 is what is live. Pin them together.
+      const v7 = await topologyModule('v7')
+      const v7Schemas = socialContractV7.documentSchemas as unknown as Record<string, { tokenCost?: { create?: { amount: number } } }>
+      for (const [docType, schema] of Object.entries(v7Schemas)) {
+        const declared = schema.tokenCost?.create?.amount
+        expect(v7.tokenCostFor(docType)?.amount ?? null, `${docType} token cost`).toBe(declared ?? null)
+      }
+    })
+
     it('keeps every v7 capability on v8', async () => {
       const v8 = await topologyModule('v8')
       expect([

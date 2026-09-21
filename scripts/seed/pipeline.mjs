@@ -122,7 +122,7 @@ export function buildPipelinedExecutor({ handle, contractId, actors, ledger, pro
   /** Broadcast one prepared create; returns once the chain shows it (or throws). */
   async function submit({ actor, docType, data, tokenCost, existenceKeyPlan, duplicateIsSuccess }) {
     const track = trackFor(actor);
-    const payment = paymentFor(actor, tokenCost);
+    const payment = paymentFor(actor, docType, tokenCost);
     const agreement = await feeAgreementFor(handle.sdk, docType, topology);
     let lastError = null;
     for (let attempt = 1; attempt <= BROADCAST_ATTEMPTS; attempt++) {

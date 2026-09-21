@@ -242,12 +242,21 @@ doctype so a future cut cannot silently under-wire this.
 | Any priced type before v8 | `TokenPaymentInfo { tokenContractPosition: 0, maximumTokenCost }` — required, no gas offer |
 | Blog comment / storefront review (any cut) | `TokenPaymentInfo { paymentTokenContractId: <social>, … }` — cross-contract and required; neither contract declares `optional` |
 
-`2` is PreferContractOwner, the offer the type makes. `1` (ContractOwner,
+`2` is PreferContractOwner, the offer the type makes, and it is read from the
+doctype's own `tokenCost.gasFeesPaidBy` — not inferred from whether the type
+charges an action fee, which is an independent property. `1` (ContractOwner,
 insisting) is never requested — the type does not offer it and insisting is
-40129 — and a batch is one transition here, so 40130 cannot fire. The balance is
-only read when there is a choice to make, and a failed read plans credits so a
-stale balance can never become a 40700 (payment info present with too little
-YAPP is a refusal, never a fallback).
+40129 — and a batch is one transition here, so 40130 cannot fire.
+
+The balance is read only when the answer can change the plan: paying YAPP on an
+optional cost. A user set to `credits`, and any required cost, costs no balance
+round-trip at all — which matters because on v8 `like` and `repost` are priced
+too, and they are the latency-sensitive writes. A read that FAILS plans credits,
+so an unknown balance can never become a 40700; a read that succeeds but is
+STALE still can (Platform reads lag writes, two tabs plan against one balance,
+and the cached-ST replay re-sends a payment verbatim). That surfaces as
+insufficient-YAPP, and where the contract prices optionally the message says the
+user can switch to credits instead of only offering to sell them more.
 
 ### 3. Tombstoning a quote of a removed post
 
@@ -255,12 +264,21 @@ A replace re-validates every `deletableDocument` reference, touched or not, so a
 tombstone that keeps a `quotedPostId` a moderator has since removed is 40120,
 while clearing it is the one change to an `immutable` property consensus allows
 (`document_replace_transition_action/state_v1`: `cleared_a_dead_reference`).
-`tombstoneDocument` therefore retries **once** on 40120 with the OPTIONAL
-deletable references dropped — `clearableReferencesFor`: `post.quotedPostId`,
-`post.quotedReplyId`, `reply.replyToReplyId`. `quotedPostOwnerId` is not a
-reference and stays (dropping it is a plain 40128), and `reply.rootPostId` is
-required, so a reply whose thread root was removed cannot be tombstoned at all.
-v7 and earlier retry nothing: there, nothing a post points at can disappear.
+`tombstoneDocument` therefore retries on 40120 with **exactly the property the
+rejection names** dropped — Drive's message carries it (`… not found for path
+quotedPostId`), and `clearableReferencesFor` says which properties the contract
+lets go: the OPTIONAL `deletableDocument` references, `post.quotedPostId`,
+`post.quotedReplyId` and `reply.replyToReplyId`.
+
+Dropping every clearable reference instead would be wrong, because the immutable
+check judges each removed property on its own: clearing one whose target is
+still alive is a 40128. A post may carry both quote fields (nothing forbids it),
+and a reply under a removed root has a required `rootPostId` — not clearable at
+all — beside a possibly live `replyToReplyId`. So a rejection naming a property
+the contract freezes for good, or one whose path cannot be read, is reported
+rather than guessed at; two dead references are cleared one rejection at a time.
+`quotedPostOwnerId` is not a reference and stays. v7 and earlier retry nothing:
+there, nothing a post points at can disappear.
 
 ### 4. Error surfaces
 
@@ -280,11 +298,14 @@ permanent for the transition as built, so `retryPostCreation` refuses the whole
 
 `sdk.documents.create` **cannot** carry an agreement: `DocumentCreateOptions` is
 `document` / `identityKey` / `signer` / `tokenPaymentInfo` / `settings`, and
-`PutSettings` is transport and nonce staleness only. So on a v8 contract every
-post/reply create is a hand-built batch — `createWithAgreement` in
-`seed-lib.mjs` (nonce → derived v1 id → transition with agreement and payment →
-sign → broadcast and wait), which returns `{ id }` so callers' `createdId`
-acceptance logic is unchanged. Unpriced creates keep the facade path.
+`PutSettings` is transport and nonce staleness only. (The underlying
+`DocumentCreateTransitionOptions` does take one — it is the facade that has no
+field for it.) So on a v8 contract every post/reply create is a hand-built batch
+— `createWithAgreement` in `seed-lib.mjs` (nonce → derived v1 id → transition
+with agreement and payment → sign → broadcast and wait → refresh the facade's
+now-stale nonce cache, which takes an `Identifier` and throws synchronously),
+returning `{ id }` so callers' `createdId` acceptance logic is unchanged.
+Unpriced creates keep the facade path.
 
 `--topology v8` shares v7's document shapes byte for byte; what differs is what
 a create carries. `--credits-fraction` (default 0.25 on v8) puts that share of

@@ -5,7 +5,7 @@
  * matcher is pinned against Drive's real phrasing AND against the strings it
  * must NOT claim.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   categorizeError,
   isActionFeeAgreementError,
@@ -201,6 +201,21 @@ describe('protocol-14 rejections', () => {
     expect(isModerationBarredError(counterparty)).toBe(true)
     // A frozen token account is a different situation from a moderation ban.
     expect(isBarredFromContractError(new Error('Identity 9t2e account is frozen for token AwyQ'))).toBe(false)
+  })
+
+  it('offers the credits way out of an insufficient balance only where the contract has one', async () => {
+    const shortOfYapp = new Error('Identity 9t2e does not have enough token balance, code=40700')
+    // v8 prices post/reply/like optionally, so credits are a real alternative.
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v8')
+    const v8 = await import('./error-utils')
+    expect(v8.categorizeError(shortOfYapp)).toMatch(/credits/i)
+    // v7's costs are required: naming credits there would be advice that cannot work.
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v7')
+    const v7 = await import('./error-utils')
+    expect(v7.categorizeError(shortOfYapp)).not.toMatch(/credits/i)
+    expect(v7.categorizeError(shortOfYapp)).toMatch(/enough YAPP/i)
   })
 
   it('keeps the frozen-account message for a frozen token account, not the moderation one', () => {

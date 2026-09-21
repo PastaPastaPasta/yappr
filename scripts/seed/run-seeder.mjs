@@ -59,7 +59,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { IdentitySigner, ensureInitialized } from '@dashevo/evo-sdk';
+import { DocumentActionFeeAgreement, IdentitySigner, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import {
   CRITICAL_AUTH_KEY_ID,
@@ -71,6 +71,7 @@ import {
   TOKEN_COST,
   TOPOLOGIES,
   PREFER_CONTRACT_OWNER,
+  tokenCostFor,
   TRANSPORT_COLLAPSE,
   WAIT_MAYBE_LANDED,
   YAPP_TOKEN_POSITION,
@@ -464,16 +465,18 @@ export function planOp(op, { actors, resolveRef, topology }) {
  * historical one.
  */
 function writeShapeFor({ handle, topology }) {
-  const paymentFor = (actor, tokenCost) => {
-    if (!tokenCost) return {};
-    if (actor.paysCredits) return {};
-    return paymentInfo(tokenCost, { gasFeesPaidBy: actionFeeFor('post', topology) ? PREFER_CONTRACT_OWNER : 0 });
+  const paymentFor = (actor, docType, tokenCost) => {
+    if (!tokenCost || actor.paysCredits) return {};
+    // The gas offer comes from the DOCTYPE's own tokenCost, not from whether
+    // anything charges an action fee: the two are independent in the grammar,
+    // and asking for a payer the type does not offer is 40129.
+    return paymentInfo(tokenCost, { gasFeesPaidBy: tokenCostFor(docType, topology)?.gasFeesPaidBy ?? 0 });
   };
   return {
     paymentFor,
     /** Resolves to something `createdId` can read an id off, or `{ id }` from the manual path. */
     async create({ contractId, actor, document, entropy, docType, data, tokenCost }) {
-      const payment = paymentFor(actor, tokenCost);
+      const payment = paymentFor(actor, docType, tokenCost);
       const agreement = await feeAgreementFor(handle.sdk, docType, topology);
       if (!agreement) {
         return handle.sdk.documents.create({ document, identityKey: actor.identityKey, signer: actor.signer, ...payment });
@@ -505,8 +508,10 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
   return async function executeOp(op) {
     const actor = actors.get(op.author);
     const plan = planOp(op, { actors, resolveRef, topology });
-    // Stable for the whole op: a retry that rebuilds the transition reuses it,
-    // so a broadcast that DID land is recognised rather than written twice.
+    // One draw per op, reused by every attempt. Under protocol 14 that does NOT
+    // make the id stable across a retry — the id commits to the nonce too — so
+    // what recognises a broadcast that landed is the by-value `accepted` probe
+    // below, not the entropy.
     const entropy = randomEntropy();
     const { document } = buildDocument({
       contractId,
@@ -1051,6 +1056,19 @@ async function selfTest() {
 
   // The payment bags are wasm objects, unlike everything above them.
   await ensureInitialized();
+  // Build the REAL wasm object, not just the options bag: the constructor
+  // deserializes through serde, so a field it stopped accepting (or a bigint it
+  // started rejecting) would leave every assertion above passing while every
+  // live post create is refused 40132.
+  const builtAgreement = new DocumentActionFeeAgreement(actionFeeAgreementOptions(postFee, 1000n));
+  check('v8: the constructed DocumentActionFeeAgreement carries the amounts, pricing and tolerance it was given',
+    builtAgreement.moderators === 80_000_000n && builtAgreement.owner === 0n &&
+      builtAgreement.pricing === 'feeMultiplier' && builtAgreement.knownFeeMultiplierPermille === 1000n &&
+      builtAgreement.feeMultiplierIncreaseTolerancePercent === 20,
+    `${builtAgreement.pricing} ${builtAgreement.moderators} @${builtAgreement.knownFeeMultiplierPermille}permille`);
+  check('v8: a fixed-priced agreement round-trips with NO multiplier',
+    new DocumentActionFeeAgreement(actionFeeAgreementOptions({ owner: 0n, moderators: 5n, pricing: 'fixed' })).knownFeeMultiplierPermille === undefined);
+
   const yappBag = paymentInfo(TOKEN_COST.post, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }).tokenPaymentInfo.toJSON();
   check('v8: a YAPP payment asks the contract owner to pay the gas (PreferContractOwner), never insists',
     yappBag.gasFeesPaidBy === 'PreferContractOwner' && Number(yappBag.maximumTokenCost) === TOKEN_COST.post,

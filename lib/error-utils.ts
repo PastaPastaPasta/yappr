@@ -1,6 +1,7 @@
 /**
  * Utility functions for error handling and message extraction.
  */
+import { tokenCostFor } from '@/lib/contract-topology'
 
 const MAX_ERROR_DEPTH = 5
 
@@ -162,6 +163,22 @@ export function isReferenceNotFoundError(error: unknown): boolean {
     // canBeDeleted: false".
     msg.includes('requires a document type with canbedeleted')
   )
+}
+
+/**
+ * The schema path a `ReferencedEntityNotFoundError` (40120) names, or null.
+ *
+ * Drive builds the message from rs-dpp's `#[error("referenced {entity_type}
+ * {entity_id} not found for path {path}")]`, where `path` is a key of the
+ * document type's flattened properties — for Yappr's references a top-level
+ * property name like `quotedPostId`. A caller that must clear a dead reference
+ * needs to know WHICH one died: dropping a reference whose target is still
+ * alive is a 40128 instead (the immutable check judges each removed property on
+ * its own), so guessing is worse than not retrying.
+ */
+export function referencedPathFromError(error: unknown): string | null {
+  const match = /\bfor path ([A-Za-z0-9_.]+)/.exec(extractErrorMessage(error))
+  return match ? match[1] : null
 }
 
 /**
@@ -450,6 +467,15 @@ export function isPermanentProtocol14Error(error: unknown): boolean {
 }
 
 /**
+ * True when the configured contract lets a write pay credits instead of YAPP —
+ * an `optional` token cost (v8). Read through the topology rather than assumed,
+ * so the advice never names a way out the contract does not offer.
+ */
+function creditsArePossible(): boolean {
+  return tokenCostFor('post')?.optional === true
+}
+
+/**
  * Categorizes common Dash Platform errors and returns a user-friendly message.
  */
 export function categorizeError(error: unknown): string {
@@ -463,7 +489,10 @@ export function categorizeError(error: unknown): string {
     return 'You\'ve already claimed this — it can only be claimed once per account.'
   }
   if (isGasSponsorShortError(error)) {
-    return 'Yappr couldn\'t cover the network fee for this right now, and it wasn\'t charged to you. Try again, or switch to paying in credits.'
+    // Only reachable for a transition that INSISTS on the contract owner; Yappr
+    // always prefers, which falls back to the signer instead of raising this.
+    // Kept so it never reads as "buy more YAPP" if that ever changes.
+    return 'Yappr couldn\'t cover the network fee for this right now. Try again, or switch to paying in credits.'
   }
   if (isGasPayerError(error)) {
     return 'This action can\'t be paid for right now. Nothing was charged — try again later.'
@@ -509,7 +538,12 @@ export function categorizeError(error: unknown): string {
   }
 
   if (isInsufficientTokenError(error)) {
-    return 'You don\'t have enough YAPP. Buy more to keep posting.'
+    // Where the contract prices actions OPTIONALLY (v8), YAPP is not the only
+    // way to act, and a balance that went stale between planning and signing
+    // lands here: offering only to sell more would hide the free option.
+    return creditsArePossible()
+      ? 'You don\'t have enough YAPP. Buy more, or switch to paying in credits in Settings.'
+      : 'You don\'t have enough YAPP. Buy more to keep posting.'
   }
 
   const errorMessage = extractErrorMessage(error)

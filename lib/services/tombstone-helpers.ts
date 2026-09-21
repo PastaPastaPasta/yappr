@@ -21,7 +21,7 @@
 
 import { logger } from '@/lib/logger';
 import { clearableReferencesFor, type TombstonePreservation } from '@/lib/contract-topology';
-import { isImmutablePropertyChangedError, isReferenceNotFoundError } from '@/lib/error-utils';
+import { isImmutablePropertyChangedError, isReferenceNotFoundError, referencedPathFromError } from '@/lib/error-utils';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { documentToPlainObject, identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
@@ -54,10 +54,15 @@ export interface TombstoneParams {
  * and a replace re-validates every one of them: a quote of a post a moderator
  * has since removed cannot be tombstoned with its `quotedPostId` intact
  * (40120, ReferencedEntityNotFound). Clearing that dead reference is the one
- * change to an `immutable` property consensus allows, so on a 40120 the
- * replace is retried ONCE with the clearable references dropped
- * ({@link clearableReferencesFor}). `quotedPostOwnerId` is not a reference and
- * stays: dropping it would be a plain 40128.
+ * change to an `immutable` property consensus allows, so a 40120 is retried
+ * with EXACTLY the property the rejection names dropped — never with every
+ * clearable reference dropped, because the immutable check judges each removed
+ * property on its own and dropping one whose target is still alive is a 40128.
+ * (A reply whose thread root was removed hits precisely that: `rootPostId` is
+ * required, so it is not clearable at all, while a live `replyToReplyId`
+ * beside it must be left alone.) `quotedPostOwnerId` is not a reference and
+ * stays. A rejection whose path cannot be read, or that names a property the
+ * contract does not let go, is reported rather than guessed at.
  */
 export async function tombstoneDocument(params: TombstoneParams): Promise<boolean> {
   const { contractId, documentType, documentId, ownerId } = params;
@@ -102,17 +107,23 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
       stateTransitionService.updateDocument(contractId, documentType, documentId, ownerId, data, revision);
     let result = await replace(replacement);
 
-    if (!result.success && isReferenceNotFoundError(result.error)) {
-      const dead = clearableReferencesFor(documentType).filter((field) => field in replacement);
-      if (dead.length > 0) {
-        logger.warn(
-          `Tombstone of ${documentType} ${documentId}: a referenced document no longer exists; ` +
-            `retrying with ${dead.join(', ')} cleared.`
-        );
-        const cleared = { ...replacement };
-        for (const field of dead) delete cleared[field];
-        result = await replace(cleared);
+    // One pass per clearable reference: a post quoting two removed documents
+    // is refused once for each, and each rejection names the next one.
+    const clearable = clearableReferencesFor(documentType);
+    const attempt = { ...replacement };
+    for (let dropped = 0; dropped < clearable.length; dropped++) {
+      if (result.success || !isReferenceNotFoundError(result.error)) break;
+      const path = referencedPathFromError(result.error);
+      if (!path || !clearable.includes(path) || !(path in attempt)) {
+        // Either the target of a reference the contract freezes for good (a
+        // reply's thread root), or a phrasing this cannot read. Dropping
+        // something else would trade a 40120 for a 40128 and a false
+        // "descriptor drift" diagnosis below.
+        break;
       }
+      logger.warn(`Tombstone of ${documentType} ${documentId}: ${path} points at a removed document; retrying with it cleared.`);
+      delete attempt[path];
+      result = await replace(attempt);
     }
 
     if (!result.success) {
