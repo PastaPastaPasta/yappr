@@ -213,7 +213,7 @@ function printSchemaAudit(documentSchemas) {
     const refs = Object.entries(schema.properties ?? {})
       .filter(([, property]) => property.refersTo)
       .map(([property, { refersTo }]) =>
-        `${property}→${refersTo.type}${refersTo.documentType ? `(${refersTo.documentType})` : ''}`);
+        `${property}→${refersTo.type}${refersTo.documentType ? `(${refersTo.documentType}${refersTo.contractId ? '@foreign' : ''})` : ''}`);
     if (refs.length > 0) console.log(`  ${continuation} refersTo: ${refs.join(' ')}`);
   }
 
@@ -223,12 +223,33 @@ function printSchemaAudit(documentSchemas) {
   // Every reference type seen per target, so a half-converted cut (one
   // permanentDocument left beside eight deletableDocument) cannot hide.
   const targets = new Map();
+  const foreign = [];
   for (const [name, schema] of Object.entries(documentSchemas)) {
     for (const [property, { refersTo }] of Object.entries(schema.properties ?? {})) {
       if (!refersTo?.documentType) continue;
+      // A reference naming `contractId` targets ANOTHER contract (v9 tips cite
+      // the system token-history `transfer`). Its rules are checked on chain
+      // against that contract, which this audit cannot read, so the local
+      // checks below — which would look the target up among these schemas —
+      // must not run on it. What can be checked here is the shape.
+      if (refersTo.contractId) {
+        const id = refersTo.contractId;
+        const bytes = Array.isArray(id) ? id.length : null;
+        if (bytes !== null && bytes !== 32) {
+          throw new Error(`${name}.${property}: refersTo.contractId must be 32 bytes, got ${bytes}`);
+        }
+        if (refersTo.type !== 'permanentDocument') {
+          throw new Error(`${name}.${property}: a cross-contract reference must be permanentDocument (the target must forbid deletion)`);
+        }
+        foreign.push(`${name}.${property}→${refersTo.documentType}`);
+        continue;
+      }
       if (!targets.has(refersTo.documentType)) targets.set(refersTo.documentType, []);
       targets.get(refersTo.documentType).push({ from: `${name}.${property}`, type: refersTo.type });
     }
+  }
+  if (foreign.length > 0) {
+    console.log(`  cross-contract references (checked on chain, not here): ${foreign.join(', ')}`);
   }
   for (const [target, references] of targets) {
     const schema = documentSchemas[target];

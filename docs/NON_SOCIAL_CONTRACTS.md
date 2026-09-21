@@ -329,74 +329,63 @@ against a v4 contract for the same reason.
 
 ---
 
-## Tips (YAPP token transfers, no contract of its own)
+## Tips (a YAPP transfer, cited by a document on the social contract)
 
-A tip is a **YAPP token transfer**, and the badge is read back off chain (it
-used to be a DASH credit transfer plus a `reply` whose text said
-`tip:<credits>` — a number nothing backed).
+A tip is a **YAPP token transfer**. YAPP's token config sets
+`keepsTransferHistory`, so consensus writes an immutable, undeletable
+`transfer` document into the system token-history contract
+(`43gujrzZgXqcKBiScLa4T8XTDnRhenR9BLx8GWVHjPxF`, the same id on every chain) as
+part of applying the transfer. Its `$ownerId` (sender), `toIdentityId`,
+`amount`, `tokenId` and `$createdAt` are therefore facts.
 
-YAPP's token config sets `keepsTransferHistory`, so consensus writes an
-immutable, undeletable `transfer` document into the system token-history
-contract (`43gujrzZgXqcKBiScLa4T8XTDnRhenR9BLx8GWVHjPxF`, the same id on every
-chain) as part of applying the transfer. Its `$ownerId` (sender),
-`toIdentityId`, `amount`, `tokenId`, `$createdAt` and `publicNote` are therefore
-facts, not claims.
+**What ties that payment to a post is a document, not a note.** From social v9
+(docs/SOCIAL_V9.md) a `tip` / `tipReply` document CITES the transfer by id,
+cross-contract, and the contract binds what it says about it: the writer must be
+the transfer's sender, `amount` must equal the transfer's amount, and
+`recipientId` must be both the transfer's recipient and the tipped document's
+author. So a post's tips are an ordinary indexed query with proved amounts on
+them, and the read path never touches token history at all.
 
-`lib/tip-note.ts` encodes the note (max 2048 on the doctype):
+Before v9 the link was the sender's `publicNote` (`lib/tip-note.ts`, encoding
+`yappr:tip:v1:post:<id>`), which consensus never reads — so a post's tips could
+only be found by scanning the author's newest 100 incoming transfers and parsing
+notes. **Deployments below v9 show no tips**: the note is still written, for
+wallets that display it, but nothing renders it as a tip on a post.
 
-```
-yappr:tip:v1:post:<base58 postId>
-yappr:tip:v1:reply:<base58 replyId>[\n<message up to 280 chars>]
-```
+What is still not proved, and is the only caveat left: self-tipping from a
+second identity — the money moves, it is just the tipper's own, which is why the
+strip names who each tip came from rather than showing a bare total.
 
-Anything that does not start with exactly `yappr:tip:v1:`, names an unknown
-kind, or names something that is not a 32-byte base58 identifier is ignored, so
-an ordinary "thanks!" transfer never becomes a tip on a post. A profile tip
-carries the bare message or no note.
-What is **not** proved, and is said so in the UI: nothing binds a transfer to a
-post (consensus never reads `publicNote` — the attribution is the sender's
-signed assertion); self-tipping from a second identity is possible, which is why
-the strip shows who each tip came from rather than only a total; totals are the
-sum over one bounded page (the newest 100 on an index), because the system
-contract has no count/sum trees; a tip note is attacker-controlled text stapled
-permanently under someone else's post for the 1 YAPP minimum (`post-tips.tsx`
-withholds notes from blocked identities but still counts the amounts — the
-transfer did happen); and a profile's "YAPP received / sent" is every incoming
-transfer, not a tip total.
+What CANNOT be had yet: a proved sum of amounts. `summable` on the tip's
+`amount` is not expressible, because the agreement that makes the amount
+trustworthy forces it to U64 and `summable` refuses U64
+(docs/PLATFORM_SUMMABLE_AGREEMENT_GAP.md). Count trees give a proved lifetime
+COUNT instead; a per-post total is summed from that post's own tips, which its
+count tree says is all of them.
 
 ```json
-{ "dataContractId": "43gujrzZgXqcKBiScLa4T8XTDnRhenR9BLx8GWVHjPxF",
-  "documentTypeName": "transfer",
-  "where": [["tokenId", "==", "<YAPP token id>"], ["toIdentityId", "==", "<identity>"]],
-  "orderBy": [["tokenId", "asc"], ["toIdentityId", "asc"], ["$createdAt", "desc"]],
-  "limit": 100 }
+{ "dataContractId": "<social v9>", "documentTypeName": "tip",
+  "where": [["postId", "==", "<post>"]],
+  "orderBy": [["postId", "asc"], ["$createdAt", "desc"]], "limit": 100 }
 ```
-
-Every index on `transfer` is prefixed by `tokenId`, and `orderBy` must name the
-index fields in order including the equality-constrained ones; tips **sent** is
-the same shape on `$ownerId`. Tips on one post are not a query — there is no
-index on `publicNote` — so `getTipsForPost` reads the author's newest 100
-incoming transfers and parses each note, which is why it runs on the post detail
-page only and never per feed card.
 
 **Signing.** A batch carrying a token transition requires a **CRITICAL**
 authentication key, which Yappr does not hold for wallet-login users, so the
-flow has two paths mirroring buy-YAPP: local (`tipService.sendYappTipLocal`)
-when this browser holds one or the user pastes one, otherwise an unsigned
-`TokenTransferTransition` in a `dash-st:` QR for a remote wallet. Wallet success
-is detected by polling the `from` index for *this tip's own transfer document*,
-not by watching the balance fall (which would also fire if the user posted from
-another tab). The unsigned transition embeds the sender's next
-identity-contract nonce, so build it right before showing the QR.
+transfer has two paths mirroring buy-YAPP: local
+(`tipService.sendYappTipLocal`) when this browser holds one or the user pastes
+one, otherwise an unsigned `TokenTransferTransition` in a `dash-st:` QR. Either
+way the transfer document is then read back off the SENDER's own index — that
+id is what the tip cites, and seeing it is the only evidence the transfer
+landed.
 
 **Never retry a tip blindly.** DAPI 504s on transitions that landed, and a tip
 is money, so "the SDK threw" must never become a Try Again button. Every
 confirmation-shaped failure funnels into `tipService.confirmYappTip`, which
-polls the chain and otherwise reports a distinct `UNCONFIRMED` state whose only
-actions are Close and Check again. The automatic polls carry a 60 s clock-skew
-time floor so an identical earlier tip cannot pass for this one; the Check-again
-buttons deliberately carry none, so a chain clock behind the browser's cannot
-hide a real tip and prompt a second send. See `tip-service.ts` for the details.
+polls the chain. Recording the tip is a SEPARATE write that can fail on its own
+(a citation Drive cannot resolve yet is a paid 40120), and its retry re-records
+the same transfer — reusing the reply already posted for it — rather than
+sending anything. A 40105 on the unique `transferId` index means the tip is
+already there.
 
 A deployment whose social contract has no YAPP token has no YAPP tips: the
 `/testing` social contract predates the token, so its YAPP tab reads 0.

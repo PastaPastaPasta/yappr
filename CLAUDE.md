@@ -151,12 +151,13 @@ Singleton service classes handle all Dash Platform operations:
 - State transitions retrieve private keys on-demand for signing
 
 ### Data Contract Structure
-The deployed social contract (`contracts/yappr-social-contract-v2.json` on staging/prod; the /devnet build runs the v8 contract, `contracts/yappr-social-contract-v8.json`, see `docs/SOCIAL_V8.md`) defines 16 document types:
+The deployed social contract (`contracts/yappr-social-contract-v2.json` on staging/prod; the /devnet build runs the v9 contract, `contracts/yappr-social-contract-v9.json`, see `docs/SOCIAL_V9.md`) defines 16 document types:
 - `profile` - User data (name, bio, avatar/banner references)
 - `post`, `reply` - Content; `post` is 500 chars, optional media
 - `like`, `repost`, `follow`, `followRequest` - Social interactions
 - `bookmark`, `block`, `blockFilter`, `blockFollow` - User preferences and moderation
 - `postHashtag`, `postMention` - Discovery indexes written alongside posts
+- `tip`, `tipReply` (v9 only) - Proved tip receipts: each cites the YAPP transfer that paid it, and consensus binds the amount, the sender and the payee to that transfer
 - `privateFeedGrant`, `privateFeedRekey`, `privateFeedState` - Private (encrypted) feed key management
 
 Not in this contract:
