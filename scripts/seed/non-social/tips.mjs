@@ -1,20 +1,27 @@
 /**
- * YAPP tips. A tip is not a Yappr document: it is a YAPP token transfer whose `publicNote` names the post (`lib/tip-
- * note.ts`). The proof is the `transfer` row Platform writes into the SYSTEM token-history contract because YAPP sets
- * `keepsTransferHistory` — which is what the app reads back, and how every tip here is confirmed: by finding that row
- * on the recipient's `to` index, never by trusting the SDK's throw/no-throw. Senders are seed-ledger personas holding
- * YAPP (transfers need their CRITICAL auth key), never spent below MIN_SENDER_BALANCE, and never a recipient — the
- * app refuses self-tips.
+ * YAPP tips: the payment, and — from social v9 — the document that records it.
+ *
+ * A tip is a YAPP token transfer. Platform writes a `transfer` row into the SYSTEM token-history contract because YAPP
+ * sets `keepsTransferHistory`, and that row is how every transfer here is confirmed: by finding it on the recipient's
+ * `to` index, never by trusting the SDK's throw/no-throw.
+ *
+ * What ties a payment to a post depends on the cut. Before v9 it was the sender's `publicNote` naming the post
+ * (`lib/tip-note.ts`), which consensus never reads. From v9 it is a `tip`/`tipReply` document CITING the transfer, whose
+ * amount, sender and payee consensus checks against it — and that document is what the app reads, so this seeder writes
+ * one per attachable tip (see the RECORD pass). Seeded tips are wordless: a tip's words are a separate `reply`
+ * document, which the app writes and `scripts/verify-v9.mjs` covers.
+ *
+ * Senders are seed-ledger personas holding YAPP (transfers need their CRITICAL auth key), never spent below
+ * MIN_SENDER_BALANCE, and never a recipient — the app refuses self-tips.
  */
 import bs58 from 'bs58';
 import { normalizeId, reportSelfTest } from '../../battery-lib.mjs';
 import {
-  DUPLICATE_UNIQUE, PREFER_CONTRACT_OWNER, POST_LINK_BASE, WAIT_MAYBE_LANDED, YAPP_TOKEN_POSITION, atLeastTopology,
-  buildDocument, createDocument, createdId, defaultTopology, describeErr, paymentInfo, profileContractId, readback, sleep,
-  tokenCostFor,
+  POST_LINK_BASE, WAIT_MAYBE_LANDED, YAPP_TOKEN_POSITION, atLeastTopology, defaultTopology, describeErr, paymentInfo,
+  profileContractId, readback, sleep, tokenCostFor,
 } from '../seed-lib.mjs';
 import {
-  actorsFor, counts, ensureTokens, entropySource, fakeId, loadCheckpoint, network, pick, printTable,
+  actorsFor, counts, createDocWriter, ensureTokens, entropySource, fakeId, loadCheckpoint, network, pick, printTable,
   rngFrom, saveCheckpoint, shuffled, weightedPick,
 } from '../feature-seed-lib.mjs';
 
@@ -259,7 +266,14 @@ async function run({ args, handle, battery, socialId }) {
     // The target is the mean planned tip (6.52 YAPP over AMOUNT_WEIGHTS) times
     // this run's tip count, split across the senders, plus the reserve.
     const meanTip = AMOUNT_WEIGHTS.reduce((t, [amount, weight]) => t + Number(amount) * weight, 0) / 100;
-    const share = BigInt(Math.ceil((meanTip * (args.postTips + args.replyTips + args.profileTips)) / args.senders.length));
+    // On v9 every post/reply tip ALSO writes a priced tip document, so the
+    // budget covers the transfer value plus one document per attachable tip —
+    // without it the senders finish the send loop at their reserve and every
+    // recording is a 40700.
+    const perTipDocument = atLeastTopology(args.topology, 'v9') ? (tokenCostFor('tip', args.topology)?.amount ?? 0) : 0;
+    const planned = args.postTips + args.replyTips + args.profileTips;
+    const documents = perTipDocument * (args.postTips + args.replyTips);
+    const share = BigInt(Math.ceil((meanTip * planned + documents) / args.senders.length));
     await ensureTokens(battery, tokenId, actors, new Map(args.senders.map((idx) => [idx, share + MIN_SENDER_BALANCE])),
       { headroom: share / 4n });
     const balances = await yappBalances([...actors.values()].map((actor) => actor.ownerId), tokenId);
@@ -341,65 +355,85 @@ async function run({ args, handle, battery, socialId }) {
       printTable([['tip', -4], ['sender', 18], ['amount', -6], ['balance', -8]], skips.slice(0, 10),
         `${skips.length} tip(s) skipped to keep senders above ${MIN_SENDER_BALANCE} YAPP`);
     }
-  }
 
-  // ---- RECORD: on v9+, the transfer is only the payment; the tip is a document
-  // citing it. Without this step a seeded corpus moves YAPP that no post shows,
-  // because the app reads tips off these documents and never off the transfers.
-  //
-  // Separate from the send loop on purpose: a transfer whose tip could not be
-  // recorded is not a lost tip, and a resumed run records it without moving
-  // money again. The citation is checked by consensus, so a tip that lands here
-  // is one the app can render with no verification of its own.
-  if (atLeastTopology(args.topology, 'v9')) {
-    const tipCost = tokenCostFor('tip', args.topology)?.amount;
-    const entropyFor = entropySource(`yappr/tips-seed/${socialId}`);
-    let recorded = 0;
-    const unrecorded = [];
+    // ---- RECORD: on v9+ the transfer is only the payment. The app reads tips
+    // off `tip`/`tipReply` documents that CITE a transfer, so a corpus without
+    // this step moves YAPP that no post ever shows.
+    //
+    // A second pass rather than part of the send loop: a transfer whose tip
+    // could not be recorded is not a lost tip, and a resumed run attaches it
+    // without moving money again. It goes through the same `createDocWriter`
+    // every other seeder writes with, so a 504 is probed rather than believed
+    // and a dead SDK is reconnected — this file's own rule that confirmation
+    // comes from chain, never from throw/no-throw.
+    //
+    // Seeded tips are deliberately WORDLESS: a tip's words are a `reply` the
+    // tipper posts and names in the tip, which would be a second priced
+    // document per tip. The planned message still rides in the transfer's
+    // publicNote; `scripts/verify-v9.mjs` (p9) covers the messageReplyId path.
+    if (atLeastTopology(args.topology, 'v9')) {
+      const writer = createDocWriter({
+        handle,
+        contractId: socialId,
+        entropyFor: entropySource(`yappr/tips-seed/${socialId}`),
+        // Per doctype, off the contract: inferring a gas offer a type never
+        // made is a 40129 (seed-lib), and the two tip types need not agree.
+        paymentInfo: () => ({}),
+      });
+      const recordable = plan.filter((tip) => TIP_DOCTYPE[tip.kind] && state.done[tip.seq]?.transferId && !state.done[tip.seq].tipId);
+      const recordBalances = recordable.length > 0
+        ? await yappBalances([...actors.values()].map((actor) => actor.ownerId), tokenId)
+        : new Map();
+      let recorded = 0;
+      const unrecorded = [];
+      const unfunded = [];
 
-    await Promise.all([...actors.values()].map(async (actor) => {
-      for (const tip of plan.filter((item) => item.sender === actor.personaIdx)) {
-        const done = state.done[tip.seq];
-        const docType = TIP_DOCTYPE[tip.kind];
-        // A profile tip names nothing to attach to; it stays a bare transfer.
-        if (!done?.transferId || !docType || done.tipId) continue;
+      await Promise.all([...actors.values()].map(async (actor) => {
+        let balance = recordBalances.get(actor.ownerId) ?? 0n;
+        for (const tip of recordable.filter((item) => item.sender === actor.personaIdx)) {
+          const done = state.done[tip.seq];
+          const docType = TIP_DOCTYPE[tip.kind];
+          const cost = tokenCostFor(docType, args.topology);
+          const price = BigInt(cost?.amount ?? 0);
+          // Recording is priced too, and the send loop spent this sender down
+          // to its reserve. Skipping with the remedy named beats 40700 per tip.
+          if (price > 0n && balance < price) { unfunded.push([tip.seq, actor.label, docType, String(balance)]); continue; }
 
-        const data = {
-          transferId: bs58.decode(done.transferId),
-          amount: Number(tip.amount),
-          recipientId: bs58.decode(tip.to),
-          [tip.kind === 'post' ? 'postId' : 'replyId']: bs58.decode(tip.targetId),
-        };
-        const entropy = entropyFor(`tip/${tip.seq}`);
-        const { document } = buildDocument({ contractId: socialId, docType, ownerId: actor.ownerId, data, entropy });
-        try {
-          const created = await actor.lock(() => createDocument(handle.sdk, {
-            contractId: socialId, actor, docType, document, data, entropy,
-            payment: paymentInfo(tipCost, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }),
-          }));
-          // Protocol 14 derives the stored id from the nonce the SDK picked, so
-          // it is only knowable from what the create returned.
-          state.done[tip.seq] = { ...done, tipId: createdId(created) ?? true };
-          recorded += 1;
-        } catch (error) {
-          const text = describeErr(error);
-          // The unique index on transferId refusing this means the tip is
-          // already recorded — an earlier run got there, which is success.
-          if (DUPLICATE_UNIQUE.test(text)) {
-            state.done[tip.seq] = { ...done, tipId: true };
+          const data = {
+            transferId: bs58.decode(done.transferId),
+            amount: Number(tip.amount),
+            recipientId: bs58.decode(tip.to),
+            [tip.kind === 'post' ? 'postId' : 'replyId']: bs58.decode(tip.targetId),
+          };
+          try {
+            const { id } = await writer.createDoc(actor, docType, `tip/${tip.seq}`, data, {
+              tokenCost: cost?.amount,
+              payment: (amount) => paymentInfo(amount, { gasFeesPaidBy: cost?.gasFeesPaidBy ?? 0 }),
+              // A 40105 on the unique transferId index means this transfer is
+              // already cited — the writer only accepts that once it has READ
+              // the document back, so a collision with someone else's tip
+              // cannot be scored as ours.
+              duplicateIsSuccess: true,
+            });
+            state.done[tip.seq] = { ...done, tipId: id ?? true };
+            balance -= price;
             recorded += 1;
-          } else {
-            unrecorded.push([tip.seq, actor.label, docType, text.slice(0, 60)]);
+          } catch (error) {
+            unrecorded.push([tip.seq, actor.label, docType, describeErr(error).slice(0, 60)]);
           }
+          saveCheckpoint(args.state, state);
         }
-        saveCheckpoint(args.state, state);
-      }
-    }));
+      }));
 
-    console.log(`  ${recorded} tip document(s) recorded on ${args.topology}`);
-    if (unrecorded.length > 0) {
-      printTable([['tip', -4], ['sender', 18], ['type', 10], ['error', 60]], unrecorded.slice(0, 10),
-        `${unrecorded.length} transfer(s) sent but not yet recorded as tips — re-run to attach them`);
+      console.log(`\n  ${recorded}/${recordable.length} tip document(s) recorded on ${args.topology}`);
+      if (unfunded.length > 0) {
+        printTable([['tip', -4], ['sender', 18], ['type', 10], ['YAPP left', -9]], unfunded.slice(0, 10),
+          `${unfunded.length} tip(s) not recorded — sender out of YAPP; top up and re-run (--replan re-funds)`);
+      }
+      if (unrecorded.length > 0) {
+        printTable([['tip', -4], ['sender', 18], ['type', 10], ['error', 60]], unrecorded.slice(0, 10),
+          `${unrecorded.length} transfer(s) sent but not recorded as tips — re-run to attach them`);
+      }
     }
   }
 
