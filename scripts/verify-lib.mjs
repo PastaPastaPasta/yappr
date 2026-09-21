@@ -325,13 +325,21 @@ export async function attemptCreate(sdk, who, { contractId, docType, data, token
   });
   let id = null;
   // Bounded to THIS write: a byte-identical document from an earlier run must
-  // not score a refused write as accepted.
+  // not score a refused write as accepted. `since` alone is not enough — its
+  // floor allows 120 s of clock skew, so a value-identical document written
+  // seconds earlier still matches. That is exactly the shape of a unique-index
+  // probe, where the document causing the refusal is the one the search finds,
+  // so capture it first and refuse to treat it as evidence. (Kept in step with
+  // the same guard in battery-lib.mjs `attemptCreate`.)
   const since = Date.now();
+  const preExisting = await readback(() => findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data }));
   const outcome = await attemptWrite(
     {
       accepted: async (created) => {
-        id = createdId(created) ?? id
+        const found = createdId(created) ?? id
           ?? await readback(() => findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data, since }));
+        if (found !== null && found === preExisting) return false;
+        id = found;
         return id !== null && (await fetchDocument(sdk, contractId, docType, id)) !== null;
       },
     },

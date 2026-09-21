@@ -67,6 +67,7 @@ import {
   PrivateKey,
 } from '@dashevo/evo-sdk';
 import {
+  FEE_MULTIPLIER_NOT_TOLERATED,
   NONCE_SEQUENCE_MASK,
   PREFER_CONTRACT_OWNER,
   actionFeeAgreementOptions,
@@ -140,7 +141,11 @@ const INSUFFICIENT_TOKENS = /\bcode"?\s*[=:]\s*40700\b|not have enough token|ins
 // only on the number or on the phrase "fee agreement mismatch" scored those
 // verbatim refusals as unexpected on moutai (4.2.0-beta.3, 2026-09-21).
 const AGREEMENT_NOT_SET = /\bcode"?\s*[=:]\s*40132\b|fee agreement.{0,40}not set|actionfeeagreementnotset|carries no action fee agreement/i;
-const AGREEMENT_MISMATCH = /\bcode"?\s*[=:]\s*40133\b|fee agreement.{0,40}mismatch|actionfeeagreementmismatch|but the transition agreed to/i;
+// The prose alternative names BOTH amounts, so it cannot be satisfied by the
+// 40134 stale-multiplier refusal, which is also prose about what the transition
+// agreed to. `expectMismatch` additionally rules 40134 out explicitly: passing
+// a2 on a stale multiplier would claim to have proved 40133 without doing so.
+const AGREEMENT_MISMATCH = /\bcode"?\s*[=:]\s*40133\b|fee agreement.{0,40}mismatch|actionfeeagreementmismatch|but the transition agreed to [\d,]+ and [\d,]+ credits/i;
 const ALREADY_CLAIMED_EPOCH = /\bcode"?\s*[=:]\s*41111\b|already.{0,30}claimed.{0,30}epoch|alreadyclaimedthisepoch/i;
 const GRANT_ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|onceperidentity.{0,60}already|already claimed/i;
 
@@ -376,11 +381,15 @@ async function caseM2Suspend(ctx) {
   // Retry until the block time catches up rather than scoring a timing gap as
   // a consensus failure; a still-suspended answer is the only retryable one.
   let lapsed = target ? await bookmarkTarget() : null;
-  for (let i = 0; i < 12 && lapsed && !lapsed.ok && SUSPENDED.test(lapsed.error ?? ''); i++) {
+  let retries = 0;
+  for (; retries < 12 && lapsed && !lapsed.ok && SUSPENDED.test(lapsed.error ?? ''); retries++) {
+    console.log(`     (still suspended ${Math.round((Date.now() - until) / 1000)} s past \`until\`; retry ${retries + 1}/12)`);
     await settle(10_000);
     lapsed = await bookmarkTarget();
   }
-  if (target) expectAccepted('m2e B\'s create lands once the suspension lapsed', lapsed);
+  // The retry count is reported so a systematic drift in how `until` is
+  // interpreted shows up in the transcript instead of being absorbed silently.
+  if (target) expectAccepted(`m2e B's create lands once the suspension lapsed (after ${retries} block-time retr${retries === 1 ? 'y' : 'ies'})`, lapsed);
   const swept = await standingOf(ctx, botB.ownerId);
   check('m2f the lapsed suspension was swept by that write', swept.suspendedUntil === undefined, describeValue(swept));
 }
@@ -484,13 +493,27 @@ async function caseA1NoAgreement(ctx) {
   expectRejected('a1a post without $actionFeeAgreement is refused (40132)', outcome, AGREEMENT_NOT_SET);
 }
 
+/**
+ * a2's refusals must be the AGREEMENT mismatch, not the stale-MULTIPLIER one
+ * (40134), whose message is also prose about what the transition agreed to. A
+ * long run crossing an epoch boundary produces 40134 for amounts that were
+ * right, and scoring that as a2 would claim a proof a2 never made.
+ */
+function expectMismatch(label, outcome) {
+  if (!outcome.ok && FEE_MULTIPLIER_NOT_TOLERATED.test(outcome.error ?? '')) {
+    check(label, false, `refused for the stale fee multiplier (40134), not the agreement: ${(outcome.error ?? '').slice(0, 160)}`);
+    return outcome;
+  }
+  return expectRejected(label, outcome, AGREEMENT_MISMATCH);
+}
+
 async function caseA2MismatchedAgreement(ctx) {
   console.log('\n--- a2. post create with a mismatched agreement → 40133 ---');
   const { knownPermille } = await feeAgreement(ctx, POST_ACTION_FEE);
   const wrong = new DocumentActionFeeAgreement(actionFeeAgreementOptions({ ...POST_ACTION_FEE, moderators: 1n }, knownPermille));
-  expectRejected('a2a agreement naming the wrong moderators amount is refused (40133)', await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'wrong fee' }), agreement: wrong }), AGREEMENT_MISMATCH);
+  expectMismatch('a2a agreement naming the wrong moderators amount is refused (40133)', await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'wrong fee' }), agreement: wrong }));
   const fixed = new DocumentActionFeeAgreement(actionFeeAgreementOptions({ ...POST_ACTION_FEE, pricing: 'fixed' }, knownPermille));
-  expectRejected('a2b agreement to FIXED pricing on a feeMultiplier fee is the same mismatch (40133)', await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'fixed pricing' }), agreement: fixed }), AGREEMENT_MISMATCH);
+  expectMismatch('a2b agreement to FIXED pricing on a feeMultiplier fee is the same mismatch (40133)', await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'fixed pricing' }), agreement: fixed }));
 }
 
 async function caseA3AgreedFee(ctx) {
@@ -575,18 +598,27 @@ async function caseL1FirstLikeCounts(ctx) {
   check('l1c byPost counts exactly 1', (await countBy(sdk, contractId, 'like', 'postId', post)) === 1);
   const ranked = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 100 }));
   const entry = ranked.entries.find((e) => e.groupValue === post);
-  // v8 dropped `preallocated` from the like indexes, so a ranked page must not
-  // carry zero-count groups. That holds on any contract and is the real claim.
-  check('l1d the ranked byPost axis carries no zero-count groups', ranked.entries.every((e) => Number(e.value) !== 0), `groups=${ranked.entries.length}`);
-  // The page is `desc limit 100`, so a count-1 post only appears on a contract
+  // v8 dropped `preallocated` from the like indexes, so the axis must carry no
+  // zero-count groups. Asserting that on the DESCENDING page would be vacuous:
+  // zero counts sort last, so a page of 100 groups that all count >= 1 cannot
+  // contain one however broken preallocation is. Ascending is where a
+  // preallocated zero would surface first, so that is the page to check.
+  const ascending = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, direction: 'asc', limit: 100 }));
+  check('l1d the ranked byPost axis carries no zero-count groups (ascending page: where a preallocated zero would sort first)',
+    ascending.entries.length > 0 && ascending.entries.every((e) => Number(e.value) !== 0),
+    `groups=${ascending.entries.length} lowest=${ascending.entries[0]?.value}`);
+  // The desc page is `limit 100`, so a count-1 post only appears on a contract
   // whose busiest hundred posts have one like. After a corpus replay it does
-  // not — asserting its presence there would fail for a reason that says
-  // nothing about v8 (l1c already proves the count is 1 via the count tree).
+  // not. Absence is only acceptable as evidence when the page is genuinely FULL
+  // and its floor is above 1 — otherwise absence is a real ranked-axis failure
+  // and must not be skipped past.
+  const floor = ranked.entries.at(-1)?.value;
   if (entry) {
-    check('l1e …and carries this post at 1 where the page reaches it', Number(entry.value) === 1, `value=${entry.value}`);
+    check('l1e …and the desc page carries this post at 1 where it reaches it', Number(entry.value) === 1, `value=${entry.value}`);
   } else {
-    const floor = ranked.entries.at(-1)?.value;
-    console.log(`SKIP  l1e the desc page's hundredth group already counts ${floor}; a count-1 post is below it (seeded contract)`);
+    check('l1e the post is absent from the desc page only because the page is full above 1',
+      ranked.entries.length >= 100 && Number(floor) > 1,
+      `groups=${ranked.entries.length} floor=${floor} (seeded contract)`);
   }
 }
 

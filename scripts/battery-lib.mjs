@@ -276,6 +276,18 @@ export function createBattery({ handle, contractId, socialId }) {
   }
 
   /** Creates an indexOnly document; accepted = an entry matching `where` appears. */
+  /**
+   * An INDEX-ONLY create: there is no primary tree, so acceptance is decided by
+   * the index entry existing.
+   *
+   * **This default cannot express a duplicate probe.** An entry that PREDATES
+   * the write satisfies `entryExists` exactly as it did before the write, so a
+   * create refused for colliding with it scores as ACCEPTED — the same trap
+   * `attemptCreate` guards against for stored types, which it cannot do here
+   * because an index entry carries no id to compare. A case asserting that a
+   * duplicate is refused MUST pass its own `accepted` that measures a CHANGE,
+   * e.g. a count delta across the write (see `probeRecast` in verify-pollr.mjs).
+   */
   function attemptCreateByValues(who, docType, data, where, options = {}) {
     const contract = options.contract ?? contractId;
     return attemptCreate(who, docType, data, {
