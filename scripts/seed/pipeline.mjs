@@ -29,12 +29,14 @@ import {
 } from '@dashevo/evo-sdk';
 import {
   DUPLICATE_UNIQUE,
+  FEE_MULTIPLIER_NOT_TOLERATED,
   NONCE_DESYNC,
   RETRYABLE,
   TRANSPORT_COLLAPSE,
   buildDocument,
   describeErr,
   feeAgreementFor,
+  forgetFeeMultiplier,
   randomEntropy,
   readback,
   sleep,
@@ -123,9 +125,11 @@ export function buildPipelinedExecutor({ handle, contractId, actors, ledger, pro
   async function submit({ actor, docType, data, tokenCost, existenceKeyPlan, duplicateIsSuccess }) {
     const track = trackFor(actor);
     const payment = paymentFor(actor, docType, tokenCost);
-    const agreement = await feeAgreementFor(handle.sdk, docType, topology);
     let lastError = null;
     for (let attempt = 1; attempt <= BROADCAST_ATTEMPTS; attempt++) {
+      // Per attempt, not once: the multiplier is cached, so this is free until
+      // a 40134 drops the cache and the rebuild is the whole point.
+      const agreement = await feeAgreementFor(handle.sdk, docType, topology);
       const nonce = await track.take();
       const { st, id } = buildSignedCreate({ contractId, actor, docType, data, nonce, payment, agreement, privateKey: keyFor(actor) });
       const accepted = acceptedProbe(existenceKeyPlan, actor, id);
@@ -137,6 +141,7 @@ export function buildPipelinedExecutor({ handle, contractId, actors, ledger, pro
         if (DUPLICATE_UNIQUE.test(text) && duplicateIsSuccess) return { id, duplicate: true };
         if (NONCE_DESYNC.test(text)) { await track.sync(); continue; }
         if (TRANSPORT_COLLAPSE.test(text)) { try { await handle.reconnect(text); } catch { /* retry rebuilds */ } await track.sync(); continue; }
+        if (FEE_MULTIPLIER_NOT_TOLERATED.test(text)) { forgetFeeMultiplier(); await track.sync(); continue; }
         if (RETRYABLE.test(text)) { await sleep(2_000 * attempt + Math.random() * 1_000); await track.sync(); continue; }
         if (/code=4\d{4}/.test(text) || /consensus/i.test(text)) throw e; // Platform said no
         await sleep(1_000 * attempt); await track.sync(); continue;

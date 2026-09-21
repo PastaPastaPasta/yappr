@@ -882,7 +882,18 @@ export async function feeMultiplierPermille(sdk) {
   return cachedFeeMultiplierPermille;
 }
 
-/** Forgets the multiplier so the next agreement re-reads it (after a 40134). */
+/**
+ * A rejection saying the epoch's fee multiplier outran what the agreement
+ * tolerated (40134). The amounts were right; only the multiplier this process
+ * cached went stale — which happens when a long run crosses an epoch boundary.
+ */
+export const FEE_MULTIPLIER_NOT_TOLERATED = /\bcode"?\s*[=:]\s*40134\b|documentactionfeemultipliernottolerated|fee multiplier is/i;
+
+/**
+ * Forgets the cached multiplier so the next agreement re-reads the epoch.
+ * Called from the retry loops on a 40134: without it every later create in the
+ * run re-agrees at the same stale value and is refused for the same reason.
+ */
 export function forgetFeeMultiplier() {
   cachedFeeMultiplierPermille = null;
 }
@@ -937,6 +948,24 @@ export async function createWithAgreement(sdk, { contractId, docType, ownerId, w
     console.log(`     (nonce cache refresh failed after ${docType} create: ${describeErr(error).slice(0, 120)})`);
   }
   return { id };
+}
+
+/**
+ * One create, sent whichever way its doctype demands: the facade when there is
+ * nothing to agree to, and the hand-built batch above when an
+ * `$actionFeeAgreement` has to ride along. Both resolve to something
+ * `createdId` can read an id off, so a caller's acceptance logic does not care
+ * which path ran. `actor` is a seeder actor: `{ ownerId, identityKey, signer,
+ * wif }`.
+ */
+export function createDocument(sdk, { contractId, actor, docType, document, data, entropy, agreement, payment = {} }) {
+  if (!agreement) {
+    return sdk.documents.create({ document, identityKey: actor.identityKey, signer: actor.signer, ...payment });
+  }
+  return createWithAgreement(sdk, {
+    contractId, docType, ownerId: actor.ownerId, wif: actor.wif, identityKey: actor.identityKey,
+    data, entropy, agreement, payment,
+  });
 }
 
 // ---- Resilient SDK handle ------------------------------------------------------

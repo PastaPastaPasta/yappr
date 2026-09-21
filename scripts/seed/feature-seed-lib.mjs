@@ -16,8 +16,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { getPublicKey } from '@noble/secp256k1';
 import bs58 from 'bs58';
 import {
-  DUPLICATE_UNIQUE, NONCE_DESYNC, REPO_ROOT, RETRYABLE, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
-  buildDocument, createWithAgreement, createdId, describeErr, findRecentByValues, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
+  DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, REPO_ROOT, RETRYABLE, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
+  buildDocument, createDocument, createdId, describeErr, findRecentByValues, forgetFeeMultiplier, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
 } from './seed-lib.mjs';
 
 export const utf8 = (text) => new TextEncoder().encode(text);
@@ -193,14 +193,9 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const created = await actor.lock(() => (agreement
-          ? createWithAgreement(handle.sdk, {
-              contractId: contract, docType, ownerId: actor.ownerId, wif: actor.wif, identityKey: actor.identityKey,
-              data, entropy, agreement, payment: payment(tokenCost),
-            })
-          : handle.sdk.documents.create({
-              document, identityKey: actor.identityKey, signer: actor.signer, ...payment(tokenCost),
-            })));
+        const created = await actor.lock(() => createDocument(handle.sdk, {
+          contractId: contract, actor, docType, document, data, entropy, agreement, payment: payment(tokenCost),
+        }));
         id = createdId(created) ?? id;
         if (await landed()) return { id };
         if (await settles(landed)) return { id };
@@ -215,7 +210,10 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
         const deadSdk = TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text);
         if (deadSdk) await handle.reconnect(text).catch(() => {});
         if (await settles(landed)) return { id };
-        const retryable = deadSdk || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text);
+        // A stale cached fee multiplier is the one consensus refusal a retry fixes.
+        const staleMultiplier = FEE_MULTIPLIER_NOT_TOLERATED.test(text);
+        if (staleMultiplier) forgetFeeMultiplier();
+        const retryable = deadSdk || staleMultiplier || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text);
         if (!retryable && (/code=4\d{4}/.test(text) || /consensus/i.test(text))) throw error; // Platform said no
       }
       await sleep(2_000 * attempt);

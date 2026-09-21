@@ -64,6 +64,7 @@ import bs58 from 'bs58';
 import {
   CRITICAL_AUTH_KEY_ID,
   DUPLICATE_UNIQUE,
+  FEE_MULTIPLIER_NOT_TOLERATED,
   NONCE_DESYNC,
   PROGRESS_FILE,
   REPORT_FILE,
@@ -80,7 +81,8 @@ import {
   appendProgress,
   buildDocument,
   corpusYappCost,
-  createWithAgreement,
+  createDocument,
+  forgetFeeMultiplier,
   createSdkHandle,
   createdId,
   defaultTopology,
@@ -98,6 +100,7 @@ import {
   loadPersonas,
   loadProgress,
   network,
+  feeMultiplierPermille,
   parseCorpus,
   paymentInfo,
   paysInCredits,
@@ -478,13 +481,7 @@ function writeShapeFor({ handle, topology }) {
     async create({ contractId, actor, document, entropy, docType, data, tokenCost }) {
       const payment = paymentFor(actor, docType, tokenCost);
       const agreement = await feeAgreementFor(handle.sdk, docType, topology);
-      if (!agreement) {
-        return handle.sdk.documents.create({ document, identityKey: actor.identityKey, signer: actor.signer, ...payment });
-      }
-      return createWithAgreement(handle.sdk, {
-        contractId, docType, ownerId: actor.ownerId, wif: actor.wif, identityKey: actor.identityKey,
-        data, entropy, agreement, payment,
-      });
+      return createDocument(handle.sdk, { contractId, actor, docType, document, data, entropy, agreement, payment });
     },
   };
 }
@@ -618,8 +615,13 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
             lastError = readError;
           }
         }
+        // A 40134 says only that this process's cached fee multiplier is stale
+        // (an epoch turned over mid-run): drop it and the next attempt prices a
+        // fresh agreement. Every other consensus refusal is final.
+        if (FEE_MULTIPLIER_NOT_TOLERATED.test(text)) forgetFeeMultiplier();
         const retryable =
-          TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text) || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text);
+          TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text) || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text)
+          || FEE_MULTIPLIER_NOT_TOLERATED.test(text);
         if (!retryable) {
           const isConsensus = /code=4\d{4}/.test(text) || /consensus/i.test(text);
           if (isConsensus) throw e; // Platform said no — retrying cannot help
@@ -1077,6 +1079,33 @@ async function selfTest() {
     paymentInfo(TOKEN_COST.post).tokenPaymentInfo.toJSON().gasFeesPaidBy === 'DocumentOwner');
   check('a credits write carries NO token payment info at all (that is what makes it pay credits)',
     JSON.stringify(paymentInfo(undefined)) === '{}');
+
+  // A 40134 is the one consensus refusal a retry can fix — but only after the
+  // cached multiplier is dropped, so the matcher must not swallow its
+  // neighbours (40132/40133 mean the client is wrong and retrying is waste).
+  check('v8: the stale-multiplier matcher recognises 40134 by code and by name', (() => {
+    const byCode = FEE_MULTIPLIER_NOT_TOLERATED.test('rejected: code=40134');
+    const byName = FEE_MULTIPLIER_NOT_TOLERATED.test('DocumentActionFeeMultiplierNotToleratedError: ... but the fee multiplier is 1500 permille');
+    return byCode && byName;
+  })());
+  check('v8: it does not claim the agreement codes a retry cannot fix, or digits inside an amount',
+    !FEE_MULTIPLIER_NOT_TOLERATED.test('code=40132') && !FEE_MULTIPLIER_NOT_TOLERATED.test('code=40133') &&
+      !FEE_MULTIPLIER_NOT_TOLERATED.test('insufficient balance: 4013400 credits required'));
+  // A stub epoch source: the multiplier is cached per process, so the only way
+  // to see the cache work (and the only way to see it dropped) is to change
+  // what the source says between reads.
+  let epochReads = 0;
+  const epochSaying = (permille) => ({ epoch: { current: async () => { epochReads += 1; return { feeMultiplierPermille: permille }; } } });
+  forgetFeeMultiplier();
+  const first = await feeMultiplierPermille(epochSaying(1000n));
+  const cached = await feeMultiplierPermille(epochSaying(1500n));
+  check('v8: the epoch multiplier is read once per process, not per create',
+    first === 1000n && cached === 1000n && epochReads === 1, `reads=${epochReads} first=${first} cached=${cached}`);
+  forgetFeeMultiplier();
+  const afterForget = await feeMultiplierPermille(epochSaying(1500n));
+  check('v8: forgetting it (after a 40134) makes the next agreement re-read the epoch',
+    afterForget === 1500n && epochReads === 2, `reads=${epochReads} after=${afterForget}`);
+  forgetFeeMultiplier();
 
   // The currency is a property of the ACTOR, fixed by persona index, so a
   // resumed run never moves an author between the two funding models.

@@ -1,7 +1,7 @@
 /**
  * Utility functions for error handling and message extraction.
  */
-import { tokenCostFor } from '@/lib/contract-topology'
+import { paymentIsChoosable } from '@/lib/payment-preference'
 
 const MAX_ERROR_DEPTH = 5
 
@@ -467,15 +467,6 @@ export function isPermanentProtocol14Error(error: unknown): boolean {
 }
 
 /**
- * True when the configured contract lets a write pay credits instead of YAPP —
- * an `optional` token cost (v8). Read through the topology rather than assumed,
- * so the advice never names a way out the contract does not offer.
- */
-function creditsArePossible(): boolean {
-  return tokenCostFor('post')?.optional === true
-}
-
-/**
  * Categorizes common Dash Platform errors and returns a user-friendly message.
  */
 export function categorizeError(error: unknown): string {
@@ -540,8 +531,10 @@ export function categorizeError(error: unknown): string {
   if (isInsufficientTokenError(error)) {
     // Where the contract prices actions OPTIONALLY (v8), YAPP is not the only
     // way to act, and a balance that went stale between planning and signing
-    // lands here: offering only to sell more would hide the free option.
-    return creditsArePossible()
+    // lands here: offering only to sell more would hide the free option. The
+    // way out is read through the topology, so the advice never names one the
+    // contract does not offer.
+    return paymentIsChoosable('post')
       ? 'You don\'t have enough YAPP. Buy more, or switch to paying in credits in Settings.'
       : 'You don\'t have enough YAPP. Buy more to keep posting.'
   }

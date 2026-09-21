@@ -103,12 +103,14 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
       if (value !== undefined && value !== null) replacement[field] = value;
     }
 
-    const replace = (data: Record<string, unknown>) =>
-      stateTransitionService.updateDocument(contractId, documentType, documentId, ownerId, data, revision);
+    const replace = (fields: Record<string, unknown>) =>
+      stateTransitionService.updateDocument(contractId, documentType, documentId, ownerId, fields, revision);
     let result = await replace(replacement);
 
     // One pass per clearable reference: a post quoting two removed documents
-    // is refused once for each, and each rejection names the next one.
+    // is refused once for each, and each rejection names the next one. The
+    // drops accumulate on a COPY, so the first attempt's replacement — already
+    // handed to the write path — is never mutated underneath it.
     const clearable = clearableReferencesFor(documentType);
     const attempt = { ...replacement };
     for (let dropped = 0; dropped < clearable.length; dropped++) {
