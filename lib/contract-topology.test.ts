@@ -179,6 +179,20 @@ describe('contract topology', () => {
       }
     })
 
+    it('names exactly the optional deletable references a tombstone may clear', async () => {
+      const v8 = await topologyModule('v8')
+      expect(v8.clearableReferencesFor('post')).toEqual(['quotedPostId', 'quotedReplyId'])
+      // rootPostId is a deletable reference too, but required: it can never be cleared.
+      expect(v8.clearableReferencesFor('reply')).toEqual(['replyToReplyId'])
+      expect(v8.clearableReferencesFor('like')).toEqual([])
+      const v7 = await topologyModule('v7')
+      expect(v7.clearableReferencesFor('post')).toEqual([])
+      // Every clearable reference is one the tombstone would otherwise preserve.
+      for (const kind of ['post', 'reply'] as const) {
+        for (const name of v8.clearableReferencesFor(kind)) expect(v8.tombstonePreservationFor(kind).identifiers).toContain(name)
+      }
+    })
+
     it('pins the free-usage, grant and action-fee numbers against the v8 JSON', async () => {
       const v8 = await topologyModule('v8')
       const sponsored = { optional: true, gasFeesPaidBy: 2 }
@@ -197,6 +211,15 @@ describe('contract topology', () => {
       expect(v8.declaredActionFee('reply', 'create')).toEqual({ owner: 0n, moderators: 16_000_000n, pricing: 'feeMultiplier' })
       for (const [docType, action] of [['post', 'replace'], ['post', 'delete'], ['like', 'create'], ['repost', 'create'], ['follow', 'create']] as const) {
         expect(v8.declaredActionFee(docType, action)).toBeNull()
+      }
+      // The write path can only agree to a fee on CREATE (the facade's replace
+      // and delete carry no agreement, and the tombstone path is a replace), so
+      // a cut pricing any other action would turn every tombstone into a paid
+      // 40132. Pin that no type prices anything but create.
+      const schemas = socialContractV8.documentSchemas as unknown as Record<string, { actionFees?: Record<string, unknown> }>
+      for (const [name, schema] of Object.entries(schemas)) {
+        const priced = Object.keys(schema.actionFees ?? {}).filter((key) => key !== 'pricing')
+        expect(priced, `${name} prices an action the client cannot agree to`).toEqual(schema.actionFees ? ['create'] : [])
       }
     })
   })

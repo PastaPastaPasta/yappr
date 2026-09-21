@@ -859,6 +859,8 @@ export interface ActionFeeDeclaration {
 
 interface V8DocumentSchema {
   canBeDeletedByModerators?: boolean
+  required?: string[]
+  properties?: Record<string, { refersTo?: { type?: string } }>
   tokenCost?: { create?: { amount: number; optional?: boolean; gasFeesPaidBy?: number } }
   actionFees?: { pricing?: string } & Partial<Record<DocumentAction, { owner?: number; moderators?: number }>>
 }
@@ -897,6 +899,27 @@ export function referencesMayDangle(): boolean {
  */
 export function likeCountsArePreallocated(): boolean {
   return likesAreIndexOnly() && !atLeast('v8')
+}
+
+/**
+ * The identifier properties of `docType` a tombstone may DROP when their
+ * target has been removed by a moderator (v8: `post.quotedPostId`,
+ * `post.quotedReplyId`, `reply.replyToReplyId`): the optional
+ * `deletableDocument` references. A replace re-validates every such
+ * reference, so keeping a dead one is 40120, and clearing it is the one change
+ * to an `immutable` property consensus lets through. A REQUIRED deletable
+ * reference (`reply.rootPostId`) is not listed: it cannot be cleared, so a
+ * reply under a removed root cannot be tombstoned at all. Empty before v8,
+ * where nothing a post points at can disappear.
+ */
+export function clearableReferencesFor(docType: string): readonly string[] {
+  if (!referencesMayDangle()) return []
+  const schema = V8_SCHEMAS[docType]
+  if (!schema?.properties) return []
+  const required = new Set(schema.required ?? [])
+  return Object.entries(schema.properties)
+    .filter(([name, property]) => property.refersTo?.type === 'deletableDocument' && !required.has(name))
+    .map(([name]) => name)
 }
 
 /** The document types the contract's moderators may delete (v8: post, reply). */

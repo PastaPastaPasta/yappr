@@ -7,12 +7,17 @@ import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
-import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_COSTS, YAPP_TOKEN_POSITION, blogIsV2, keyNetwork, storefrontIsV2 } from '../constants';
-import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError } from '../error-utils';
+import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_POSITION, blogIsV2, keyNetwork, storefrontIsV2 } from '../constants';
+import { declaredActionFee, tokenCostFor, type DocumentAction } from '../contract-topology';
+import { planPaymentForViewer } from '../payment-preference';
+import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, tokenPaymentOptions } from '../transition-agreements';
+import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError } from '../error-utils';
+import { tokenService } from './token-service';
 import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
 import { deriveDocumentId, nextIdentityContractNonce } from '@/lib/document-id';
 import {
+  DocumentActionFeeAgreement,
   DocumentCreateTransition,
   BatchedTransition,
   BatchTransition,
@@ -21,6 +26,7 @@ import {
   Identifier,
   TokenPaymentInfo,
 } from '@dashevo/evo-sdk';
+import type { TokenPaymentInfoOptions } from '@dashevo/wasm-sdk';
 
 
 export interface StateTransitionResult {
@@ -46,6 +52,30 @@ interface CachedSTEntry {
   data: string;
   /** Timestamp when cached (ms since epoch) */
   cachedAt: number;
+}
+
+/**
+ * The epoch fee multiplier (permille) the last action fee agreement was priced
+ * with. Read once per session from `epoch.current()`, forgotten on a 40134 so
+ * the next write re-reads it. Consensus charges the EXECUTING epoch's
+ * multiplier whatever this says; the agreement only bounds how far above the
+ * known value it may be.
+ */
+let knownFeeMultiplierPermille: bigint | null = null;
+
+type ConnectedSdk = Awaited<ReturnType<typeof getEvoSdk>>;
+
+async function currentFeeMultiplierPermille(sdk: ConnectedSdk): Promise<bigint> {
+  if (knownFeeMultiplierPermille !== null) return knownFeeMultiplierPermille;
+  try {
+    knownFeeMultiplierPermille = BigInt((await sdk.epoch.current()).feeMultiplierPermille);
+    return knownFeeMultiplierPermille;
+  } catch (error) {
+    // Better to agree at the default than to send no agreement: 40132 is
+    // certain without one, 40134 unlikely at the default with a 20% tolerance.
+    logger.warn('Epoch read failed; agreeing to the action fee at the default multiplier:', extractErrorMessage(error));
+    return DEFAULT_FEE_MULTIPLIER_PERMILLE;
+  }
 }
 
 /**
@@ -270,33 +300,85 @@ class StateTransitionService {
   }
 
   /**
-   * Resolve the automatic token-payment agreement for a token-paid document
-   * type. Three contracts declare a `tokenCost` today: the social contract
-   * charges its own YAPP (post/reply/like/repost), while storefront v2 and
-   * blog v2 charge the SOCIAL contract's YAPP — a cross-contract cost, so
-   * those agreements name that contract explicitly. Returns undefined for free
-   * document types and for contracts that declare no cost.
+   * The `$tokenPaymentInfo` a create of `documentType` should carry, or
+   * undefined when it pays credits (an unpriced type, or an `optional` cost the
+   * viewer chose not to pay in YAPP). Three contracts declare a `tokenCost`:
+   * the social contract charges its own YAPP, while storefront v2+ and blog
+   * v2+ charge the SOCIAL contract's YAPP — a cross-contract cost, so those
+   * agreements name that contract explicitly and stay required (neither
+   * contract declares `optional`).
+   *
+   * On the social contract the bag follows `planPaymentForViewer`: before v8
+   * the cost is required and this is the historical position-and-cap bag; on
+   * v8 the `payWith` setting and the YAPP balance decide, a `yapp` plan adds
+   * the contract's gas offer (PreferContractOwner) and a `credits` plan sends
+   * nothing at all. The balance is read only when there is a choice to make,
+   * and a failed read plans credits so a stale balance cannot become a 40700.
    */
-  private resolveTokenPayment(
+  private async resolveTokenPayment(
     contractId: string,
-    documentType: string
-  ): { tokenContractPosition?: number; paymentTokenContractId?: string; maximumTokenCost: number } | undefined {
+    documentType: string,
+    ownerId: string
+  ): Promise<TokenPaymentInfoOptions | undefined> {
     if (contractId === YAPPR_CONTRACT_ID) {
-      const amount = (YAPP_TOKEN_COSTS as Record<string, number>)[documentType];
-      return amount ? { maximumTokenCost: amount } : undefined;
+      const cost = tokenCostFor(documentType);
+      if (!cost) return undefined;
+      const balance = cost.optional ? await this.yappBalanceOrNull(ownerId) : null;
+      const plan = planPaymentForViewer(documentType, balance);
+      if (plan.fallbackReason) logger.debug(`Paying ${documentType} in ${plan.payWith} (${plan.fallbackReason})`);
+      return tokenPaymentOptions(plan, YAPP_TOKEN_POSITION);
     }
+    const crossContract = (amount: number | undefined): TokenPaymentInfoOptions | undefined =>
+      amount ? { paymentTokenContractId: YAPPR_CONTRACT_ID, tokenContractPosition: YAPP_TOKEN_POSITION, maximumTokenCost: BigInt(amount) } : undefined;
     if (contractId === YAPPR_STOREFRONT_CONTRACT_ID && storefrontIsV2()) {
-      // Storefront reviews spend the SOCIAL contract's YAPP (cross-contract
-      // tokenCost), so the agreement names that contract explicitly.
-      const amount = (STOREFRONT_YAPP_TOKEN_COSTS as Record<string, number>)[documentType];
-      return amount ? { paymentTokenContractId: YAPPR_CONTRACT_ID, maximumTokenCost: amount } : undefined;
+      return crossContract((STOREFRONT_YAPP_TOKEN_COSTS as Record<string, number>)[documentType]);
     }
     if (contractId === YAPPR_BLOG_CONTRACT_ID && blogIsV2()) {
-      // Blog comments spend the SOCIAL contract's YAPP the same way.
-      const amount = (BLOG_YAPP_TOKEN_COSTS as Record<string, number>)[documentType];
-      return amount ? { paymentTokenContractId: YAPPR_CONTRACT_ID, maximumTokenCost: amount } : undefined;
+      return crossContract((BLOG_YAPP_TOKEN_COSTS as Record<string, number>)[documentType]);
     }
     return undefined;
+  }
+
+  private async yappBalanceOrNull(ownerId: string): Promise<bigint | null> {
+    try {
+      return await tokenService.getBalance(ownerId);
+    } catch (error) {
+      logger.warn('YAPP balance unavailable; paying in credits:', extractErrorMessage(error));
+      return null;
+    }
+  }
+
+  /**
+   * The `$actionFeeAgreement` a transition on `documentType`/`action` must
+   * carry, or undefined when the contract charges nothing for it (every action
+   * before v8; every action but `post`/`reply` create on v8). Built from the
+   * contract's declared amounts and the multiplier this session knows: a
+   * different amount is 40133, no agreement is 40132.
+   */
+  private async resolveActionFeeAgreement(
+    sdk: ConnectedSdk,
+    contractId: string,
+    documentType: string,
+    action: DocumentAction
+  ): Promise<DocumentActionFeeAgreement | undefined> {
+    if (contractId !== YAPPR_CONTRACT_ID) return undefined;
+    const fee = declaredActionFee(documentType, action);
+    if (!fee) return undefined;
+    const agreement = new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, await currentFeeMultiplierPermille(sdk)));
+    logger.debug(`Agreeing to the ${documentType} ${action} fee: moderators=${fee.moderators} owner=${fee.owner} at ${agreement.knownFeeMultiplierPermille ?? 'fixed'} permille`);
+    return agreement;
+  }
+
+  /**
+   * The facade's `replace`/`delete` options cannot carry an action fee
+   * agreement, so a priced replace or delete would be a paid 40132. No cut
+   * prices those actions (`lib/contract-topology.test.ts` pins it); should one,
+   * this fails BEFORE signing rather than after paying.
+   */
+  private assertUnpricedAction(contractId: string, documentType: string, action: DocumentAction): void {
+    if (contractId === YAPPR_CONTRACT_ID && declaredActionFee(documentType, action)) {
+      throw new Error(`${documentType} ${action} charges an action fee, which this write path cannot agree to yet`);
+    }
   }
 
   /**
@@ -347,10 +429,10 @@ class StateTransitionService {
     documentData: Record<string, unknown> | ((documentId: string) => Promise<Record<string, unknown>> | Record<string, unknown>),
     options?: {
       /**
-       * Token payment agreement for document types that declare a tokenCost.create
-       * (e.g. post/reply/like/repost). `maximumTokenCost` is the cap the user agrees
-       * to spend — set it to the contract's declared amount to guard against price
-       * changes. Token position defaults to 0 (the YAPP token).
+       * An explicit token payment agreement, overriding the one resolved from
+       * the contract's declarations and the viewer's payment plan.
+       * `maximumTokenCost` is the cap the user agrees to spend. Token position
+       * defaults to 0 (the YAPP token).
        */
       tokenPayment?: {
         tokenContractPosition?: number;
@@ -467,24 +549,23 @@ class StateTransitionService {
 
       // --- Build the StateTransition manually ---
 
-      // Build the token payment agreement for token-paid document types
-      // (post/reply/like/repost on the v2 social contract). Callers may pass an
-      // explicit `options.tokenPayment`; otherwise we auto-attach based on the
-      // document type's declared tokenCost so every write path is covered. The
-      // signed bytes that include this are cached below, so the rebroadcast path
-      // above replays the same agreement verbatim.
-      const effectivePayment = options?.tokenPayment ?? this.resolveTokenPayment(contractId, documentType);
-      let tokenPaymentInfo: TokenPaymentInfo | undefined;
-      if (effectivePayment) {
-        tokenPaymentInfo = new TokenPaymentInfo({
-          ...(effectivePayment.paymentTokenContractId
-            ? { paymentTokenContractId: effectivePayment.paymentTokenContractId }
-            : {}),
-          tokenContractPosition: effectivePayment.tokenContractPosition ?? YAPP_TOKEN_POSITION,
-          maximumTokenCost: BigInt(effectivePayment.maximumTokenCost),
-        });
-        logger.debug(`Attaching tokenPaymentInfo for ${documentType}: maxCost=${effectivePayment.maximumTokenCost}`);
+      // What the write pays and agrees to: the token payment (or none, for a
+      // credits write on an optional cost) and the action fee agreement the
+      // type demands. Both are part of the signed bytes cached below, so the
+      // rebroadcast path above replays them verbatim — correct, since the
+      // amounts are fixed at type creation.
+      const paymentOptions: TokenPaymentInfoOptions | undefined = options?.tokenPayment
+        ? {
+            ...(options.tokenPayment.paymentTokenContractId ? { paymentTokenContractId: options.tokenPayment.paymentTokenContractId } : {}),
+            tokenContractPosition: options.tokenPayment.tokenContractPosition ?? YAPP_TOKEN_POSITION,
+            maximumTokenCost: BigInt(options.tokenPayment.maximumTokenCost),
+          }
+        : await this.resolveTokenPayment(contractId, documentType, ownerId);
+      const tokenPaymentInfo = paymentOptions ? new TokenPaymentInfo(paymentOptions) : undefined;
+      if (paymentOptions) {
+        logger.debug(`Attaching tokenPaymentInfo for ${documentType}: maxCost=${paymentOptions.maximumTokenCost} gasFeesPaidBy=${paymentOptions.gasFeesPaidBy ?? 0}`);
       }
+      const actionFeeAgreement = await this.resolveActionFeeAgreement(sdk, contractId, documentType, 'create');
 
       // The transition copies `document.id` verbatim, so it carries the id
       // derived above — consensus recomputes it from this same nonce and entropy.
@@ -492,6 +573,7 @@ class StateTransitionService {
         document,
         identityContractNonce: newNonce,
         ...(tokenPaymentInfo ? { tokenPaymentInfo } : {}),
+        ...(actionFeeAgreement ? { actionFeeAgreement } : {}),
       });
 
       // Wrap in a BatchTransition
@@ -617,6 +699,10 @@ class StateTransitionService {
 
       return { success: true, transactionHash: documentId, document: resultDocument, confirmed: true };
     } catch (error) {
+      // The epoch multiplier outran the tolerance the agreement allowed: the
+      // known value is stale, so the next write re-reads it. Not retried here
+      // (a paid refusal bumped the nonce; the caller decides).
+      if (isFeeMultiplierNotToleratedError(error)) knownFeeMultiplierPermille = null;
       logger.error('Error creating document:', error);
       return {
         success: false,
@@ -638,6 +724,7 @@ class StateTransitionService {
     revision: number
   ): Promise<StateTransitionResult> {
     try {
+      this.assertUnpricedAction(contractId, documentType, 'replace');
       const sdk = await getEvoSdk();
       const privateKey = await this.getPrivateKey(ownerId);
 
@@ -705,6 +792,7 @@ class StateTransitionService {
     ownerId: string
   ): Promise<StateTransitionResult> {
     try {
+      this.assertUnpricedAction(contractId, documentType, 'delete');
       const sdk = await getEvoSdk();
       const privateKey = await this.getPrivateKey(ownerId);
 
@@ -783,6 +871,7 @@ class StateTransitionService {
   ): Promise<StateTransitionResult> {
     const { documentId, createdAtMs, data } = tuple;
     try {
+      this.assertUnpricedAction(contractId, documentType, 'delete');
       const sdk = await getEvoSdk();
       const privateKeyWif = await this.getPrivateKey(ownerId);
 
