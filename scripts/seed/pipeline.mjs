@@ -73,7 +73,8 @@ class NonceTrack {
 
 /** A signed, ready-to-broadcast create transition for one document. */
 function buildSignedCreate({ contractId, actor, docType, data, nonce, tokenCost, privateKey }) {
-  const { document, id } = buildDocument({ contractId, docType, ownerId: actor.ownerId, data, entropy: randomEntropy() });
+  // The nonce is assigned here, so the id can be derived up front (protocol 14) and IS the stored id.
+  const { document, id } = buildDocument({ contractId, docType, ownerId: actor.ownerId, data, entropy: randomEntropy(), nonce });
   const create = new DocumentCreateTransition({
     document,
     identityContractNonce: nonce,

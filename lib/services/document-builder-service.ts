@@ -21,10 +21,10 @@
  * converter, so `Uint8Array` properties survive as `Value::Bytes`.
  */
 import { getEvoSdk } from './evo-sdk-service';
-import { documentToPlainObject, identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers';
+import { documentToPlainObject, requireDocumentIdentifierBytes } from './sdk-helpers';
+import { deriveDocumentId } from '@/lib/document-id';
 import { Document, PlatformVersion } from '@dashevo/evo-sdk';
 import type { DocumentObject } from '@dashevo/evo-sdk';
-import bs58 from 'bs58';
 
 /**
  * Assemble the canonical tagged object shape `Document.fromObject` expects.
@@ -68,53 +68,44 @@ async function ensureWasmReady(): Promise<void> {
 }
 
 class DocumentBuilderService {
-  async generateDocumentIdentity(
-    contractId: string,
-    documentTypeName: string,
-    ownerId: string
-  ): Promise<{ id: string; entropy: Uint8Array }> {
-    await ensureWasmReady();
-
-    const entropy = crypto.getRandomValues(new Uint8Array(32));
-    const idBytes = Document.generateId(documentTypeName, ownerId, contractId, entropy);
-
-    return {
-      id: bs58.encode(idBytes),
-      entropy,
-    };
-  }
-
   /**
-   * Build a Document object for document creation
+   * Build a Document object for document creation.
    *
-   * Creates a new WASM Document with the provided data. The document ID
-   * will be generated automatically based on entropy.
+   * From protocol 14 a new document's id commits to the identity contract
+   * nonce of its create transition (`lib/document-id.ts`), so the id is
+   * derived HERE from the nonce the caller is about to sign with, never
+   * precomputed. The wasm `Document` constructor and `Document.generateId`
+   * still return the pre-14 entropy-only id, which consensus now refuses
+   * (InvalidDocumentTransitionIdError), so neither is used on this path.
    *
    * @param contractId - The data contract ID
    * @param documentTypeName - The document type name (e.g., 'post', 'profile')
    * @param ownerId - The identity ID that owns this document
    * @param data - The document data fields (`Uint8Array` for binary fields on typed writes)
-   * @returns A WASM Document object ready for creation
+   * @param identity.entropy - The 32 bytes of entropy the create transition will carry
+   * @param identity.identityContractNonce - The nonce the create transition will carry
+   * @returns A WASM Document carrying the derived id, ready for creation
    */
   async buildDocumentForCreate(
     contractId: string,
     documentTypeName: string,
     ownerId: string,
     data: Record<string, unknown>,
-    options?: {
-      id?: string;
-      entropy?: Uint8Array;
+    identity: {
+      entropy: Uint8Array;
+      identityContractNonce: bigint;
     }
   ): Promise<InstanceType<typeof Document>> {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
 
-    // The constructor generated missing entropy and derived the id from it; `fromObject`
-    // takes both as given, so fill them in the same way here.
-    const entropy = options?.entropy ?? crypto.getRandomValues(new Uint8Array(32));
-    const id = options?.id ?? bs58.encode(
-      Document.generateId(documentTypeName, ownerId, contractId, entropy)
-    );
+    const id = deriveDocumentId({
+      contractId,
+      ownerId,
+      documentTypeName,
+      entropy: identity.entropy,
+      identityContractNonce: identity.identityContractNonce,
+    });
 
     return Document.fromObject(
       toCanonicalDocumentObject({
@@ -123,7 +114,7 @@ class DocumentBuilderService {
         contractId,
         documentTypeName,
         revision: 1,
-        entropy,
+        entropy: identity.entropy,
         data,
       }),
       PlatformVersion.current()
@@ -272,35 +263,6 @@ class DocumentBuilderService {
         )
       ),
     };
-  }
-
-  /**
-   * Get the document ID from a newly created document
-   *
-   * After calling documentCreate, the document object has its ID populated.
-   * This helper extracts the ID in string format.
-   *
-   * @param document - The WASM Document after creation
-   * @returns The document ID as a string
-   */
-  getDocumentId(document: Document): string {
-    // The document.id property returns an Identifier which can be converted to string
-    const id = document.id;
-    if (typeof id === 'string') {
-      return id;
-    }
-    if (id && typeof (id as { toString?: () => string }).toString === 'function') {
-      return (id as { toString: () => string }).toString();
-    }
-    // Fallback: convert via toObject() and extract the id field
-    const obj = document.toObject() as { $id?: unknown };
-    if (obj.$id) {
-      const rawId = obj.$id;
-      if (typeof rawId === 'string') return rawId;
-      const base58 = identifierToBase58(rawId);
-      if (base58) return base58;
-    }
-    throw new Error('Unable to extract document ID from Document object');
   }
 }
 

@@ -8,8 +8,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   categorizeError,
+  isActionFeeAgreementError,
+  isGasPayerError,
   isImmutablePropertyChangedError,
+  isInvalidDocumentIdError,
+  isModerationBarredError,
+  isOncePerIdentityAlreadyClaimedError,
+  isPermanentProtocol14Error,
   isPropertyAgreementError,
+  isReferencedTypeNotDeletableError,
   isWriteGateError,
 } from './error-utils'
 
@@ -91,5 +98,78 @@ describe('propertyAgreement rejections (40127)', () => {
   it('tells the user who may act, not to retry, when a gate refuses them', () => {
     expect(categorizeError(new Error(WRITER_GATE))).toMatch(/only the owner/i)
     expect(categorizeError(new Error(VALUE_MISMATCH))).toMatch(/reload/i)
+  })
+})
+
+// Protocol 14 (Platform 4.2.0-beta.3) rejections the app can hit against the
+// live v7 contract. Each message is quoted from its `#[error(...)]` format in
+// rs-dpp so the matchers pin what Drive renders, and each is asserted permanent
+// (never retried, never categorised as a network or YAPP problem).
+describe('protocol-14 rejections', () => {
+  const cases: Array<[string, (error: unknown) => boolean, string, RegExp]> = [
+    // basic 10405 — invalid_document_transition_id_error.rs
+    ['InvalidDocumentTransitionIdError', isInvalidDocumentIdError,
+      'Invalid document transition id 9t2eeU6CjzJbpckxXWhgaApbdRB4dVDHFNfcEum9KS2H, expected 8Xv3QrLm2nKqP5wYtZcVbNdFgHjJkLpRsTuWxYzAbCdE', /report this/i],
+    ['10405 by labelled code', isInvalidDocumentIdError, 'state transition rejected, code=10405', /report this/i],
+    // state 41107 / 41108 / 41114 — contract_moderation/*.rs
+    ['ContractUserBannedError', isModerationBarredError,
+      'Identity 9t2eeU6CjzJbpckxXWhgaApbdRB4dVDHFNfcEum9KS2H is banned on contract 8Xv3QrLm2nKqP5wYtZcVbNdFgHjJkLpRsTuWxYzAbCdE and can not act on its documents', /banned or suspended/i],
+    ['ContractUserSuspendedError', isModerationBarredError,
+      'Identity 9t2e is suspended on contract 8Xv3 until 1790000000000 and can not act on its documents', /banned or suspended/i],
+    ['ContractModerationCounterpartyBarredError', isModerationBarredError,
+      'Identity 9t2e is banned or suspended on contract 8Xv3 and can not be the recipient of a document', /banned or suspended/i],
+    ['41108 by labelled code', isModerationBarredError, '{"code":41108,"identityId":"9t2e"}', /banned or suspended/i],
+    // state 40129 / 40130 / 40222 — gas payer
+    ['GasFeesPaidByNotAllowedError', isGasPayerError,
+      'Document create of type post asks for gas fees paid by contract owner, but the document type only offers document owner', /try again later/i],
+    ['InconsistentGasFeesPaidByInBatchError', isGasPayerError,
+      'The gas of a batch is paid by one identity: it cannot be paid by the document owner for one transition and by the contract owner for another', /try again later/i],
+    ['GasSponsorInsufficientBalanceError', isGasPayerError,
+      'The contract owner 9t2e sponsoring the gas has balance 1200, but 38000 is required', /try again later/i],
+    ['40222 by labelled code', isGasPayerError, 'consensus error code=40222', /try again later/i],
+    // state 40132 / 40133 / 40134 — action fee agreement
+    ['DocumentActionFeeAgreementNotSetError', isActionFeeAgreementError,
+      'Document create of type post charges an action fee of 1000 credits to the owner and 500 credits to the moderators (fixed pricing), and the transition carries no action fee agreement', /out of date/i],
+    ['DocumentActionFeeAgreementMismatchError', isActionFeeAgreementError,
+      'Document create of type post charges an action fee of 1000 credits to the owner and 500 credits to the moderators (fixed pricing), but the transition agreed to 100 and 50 credits (fixed pricing)', /out of date/i],
+    ['DocumentActionFeeMultiplierNotToleratedError', isActionFeeAgreementError,
+      'Document create of type post agreed to an action fee priced with a fee multiplier of 1000 permille and at most 10% more, but the fee multiplier is 1500 permille', /out of date/i],
+    ['40133 by labelled code', isActionFeeAgreementError, 'rejected: code=40133', /out of date/i],
+    // state 40131 — referenced_document_type_not_deletable_error.rs
+    ['ReferencedDocumentTypeNotDeletableError', isReferencedTypeNotDeletableError,
+      'documents of referenced document type post in contract 8Xv3 can not be deleted; a deletableDocument reference at path postId requires a document type whose documents can be deleted, and a permanentDocument reference is the one for a document type with canBeDeleted: false', /report this/i],
+    // state 40722 — token_once_per_identity_distribution_already_claimed_error.rs
+    ['TokenOncePerIdentityDistributionAlreadyClaimedError', isOncePerIdentityAlreadyClaimedError,
+      "Token claim error: identity '9t2e' already claimed the once-per-identity distribution of token 'AwyQ' at 1790000000000", /already claimed/i],
+    ['40722 by labelled code', isOncePerIdentityAlreadyClaimedError, '{"code":40722}', /already claimed/i],
+  ]
+
+  it.each(cases)('%s is recognised, permanent and given its own message', (_label, matcher, message, expected) => {
+    const error = new Error(message)
+    expect(matcher(error)).toBe(true)
+    expect(isPermanentProtocol14Error(error)).toBe(true)
+    expect(categorizeError(error)).toMatch(expected)
+  })
+
+  it.each([
+    // Digits inside timestamps, amounts and ids must not read as codes.
+    'broadcast timed out at 1741107000000',
+    'insufficient balance: 40129000 credits required',
+    'document 8Xv40722Qr not found',
+    // The 40105 duplicate and 40127 agreement keep their own handling.
+    'duplicate unique properties, code=40105',
+    "the document's hashtag does not agree with the referenced document's hashtag (propertyAgreement on postId), code=40127",
+    // A frozen TOKEN account is a different situation from a moderation ban.
+    'Identity 9t2e account is frozen for token AwyQ. Action attempted: Document create token payment',
+    // "is not frozen" from destroyFrozen, and a plain transport failure.
+    'wait for state transition result timed out',
+    'no available addresses',
+  ])('does not claim %s', (message) => {
+    expect(isPermanentProtocol14Error(new Error(message))).toBe(false)
+  })
+
+  it('keeps the frozen-account message for a frozen token account, not the moderation one', () => {
+    expect(categorizeError(new Error('Identity 9t2e account is frozen for token AwyQ. Action attempted: Document create token payment')))
+      .toMatch(/suspended \(frozen\)/i)
   })
 })

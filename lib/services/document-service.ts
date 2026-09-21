@@ -235,16 +235,20 @@ export abstract class BaseDocumentService<T> {
     return this.createWithOptions(ownerId, data)
   }
 
+  /**
+   * `data` may be a function of the new document's id, for content that must
+   * commit to the id before the document exists (see
+   * `stateTransitionService.createDocument`). From protocol 14 the id is only
+   * known once the create transition's nonce is, so this is the ONLY way to
+   * learn it ahead of the write.
+   */
   async createWithOptions(
     ownerId: string,
-    data: Record<string, unknown>,
-    options?: {
-      documentId?: string;
-      entropy?: Uint8Array;
-    }
+    data: Parameters<typeof stateTransitionService.createDocument>[3],
+    options?: Parameters<typeof stateTransitionService.createDocument>[4]
   ): Promise<T> {
     try {
-      logger.debug(`Creating ${this.documentType} document:`, data);
+      logger.debug(`Creating ${this.documentType} document`);
 
       const result = await stateTransitionService.createDocument(
         this.contractId,

@@ -30,6 +30,7 @@ import {
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
+import { createdId, deriveDocumentIdBytes, findRecentByValues } from './seed/seed-lib.mjs';
 const SDK_TIMEOUT_MS = 30000;
 const DEFAULT_DEVNET_NAME = 'moutai';
 const DEFAULT_SEED_COUNT = 5;
@@ -159,9 +160,16 @@ export const randomIdBytes = () => crypto.getRandomValues(new Uint8Array(32));
 /**
  * `Document.fromObject` with raw-byte ids is the only shape that survives
  * wasm-sdk 4.1+ (the `Document` constructor corrupts Uint8Array properties).
+ *
+ * Protocol 14: a create's id commits to the transition's identity contract
+ * nonce, which `documents.create()` assigns internally — so a create built
+ * here carries a PLACEHOLDER `$id` and `id` is `null`; the stored id is read
+ * off the Document `create()` returns (`createdId`). Pass `nonce` to derive the
+ * real id when the transition is built by hand, or `id` for a replace/delete.
  */
-export function buildDocument({ contractId, docType, ownerId, data, entropy, revision = 1n, createdAt, id }) {
-  const idBytes = id ?? Document.generateId(docType, ownerId, contractId, entropy);
+export function buildDocument({ contractId, docType, ownerId, data, entropy, revision = 1n, createdAt, id, nonce }) {
+  const idBytes = id
+    ?? (nonce !== undefined ? deriveDocumentIdBytes({ contractId, ownerId, docType, entropy, nonce }) : randomIdBytes());
   const document = Document.fromObject(
     {
       $formatVersion: '0',
@@ -176,7 +184,7 @@ export function buildDocument({ contractId, docType, ownerId, data, entropy, rev
     },
     PlatformVersion.current()
   );
-  return { document, id: bs58.encode(idBytes) };
+  return { document, id: (id || nonce !== undefined) ? bs58.encode(idBytes) : null };
 }
 
 const READ_ATTEMPTS = 4;
@@ -261,18 +269,19 @@ const NOT_THROWN_BUT_ABSENT = 'the SDK reported no error, but the write is not o
  */
 async function attemptWrite({ accepted }, write) {
   let error = null;
+  let result;
   try {
-    await write();
+    result = await write();
   } catch (e) {
     error = describeErr(e);
     // A dead SDK instance is not a consensus verdict: reconnect and retry the
-    // broadcast once. The retry reuses the same document (same entropy → same
-    // $id), so a first broadcast that DID land surfaces as a duplicate and the
-    // readback below still scores it accepted.
+    // broadcast once. The retry reuses the same document and entropy; for a
+    // stored type a first broadcast that DID land is then found by the value
+    // readback below, for a unique-indexed one it surfaces as a duplicate.
     if (TRANSPORT_COLLAPSE.test(error)) {
       try {
         await reconnectSdk(error);
-        await write();
+        result = await write();
         error = null;
       } catch (retryError) {
         // Keep whichever error the retry (or the reconnect itself) produced;
@@ -283,7 +292,7 @@ async function attemptWrite({ accepted }, write) {
   }
   for (let poll = 0; poll < POLL_ATTEMPTS; poll++) {
     await settle();
-    if (await accepted()) return { ok: true, error: null };
+    if (await accepted(result)) return { ok: true, error: null, result };
   }
   return { ok: false, error: error ?? NOT_THROWN_BUT_ABSENT };
 }
@@ -300,17 +309,32 @@ function paymentInfo(tokenCost) {
     : {};
 }
 
-/** Creates a STORED document; acceptance = it reads back by id. */
+/**
+ * Creates a STORED document; acceptance = it reads back by id. The id is the
+ * one `create()` RETURNED (protocol 14 derives it from the nonce the SDK
+ * picked); when the call threw after broadcasting, the owner's recent
+ * documents are scanned for one carrying exactly these values instead.
+ */
 export async function attemptCreate(sdk, who, { contractId, docType, data, tokenCost }) {
-  const { document, id } = buildDocument({
+  const { document } = buildDocument({
     contractId,
     docType,
     ownerId: who.ownerId,
     data,
     entropy: randomIdBytes(),
   });
+  let id = null;
+  // Bounded to THIS write: a byte-identical document from an earlier run must
+  // not score a refused write as accepted.
+  const since = Date.now();
   const outcome = await attemptWrite(
-    { accepted: async () => (await fetchDocument(sdk, contractId, docType, id)) !== null },
+    {
+      accepted: async (created) => {
+        id = createdId(created) ?? id
+          ?? await readback(() => findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data, since }));
+        return id !== null && (await fetchDocument(sdk, contractId, docType, id)) !== null;
+      },
+    },
     () =>
       sdk.documents.create({
         document,
@@ -557,7 +581,8 @@ function dryRun(args, { cases, shapes, replaceShapes = [] }) {
   const ownerId = args.ownerId ?? DRY_RUN_ID;
 
   for (const [label, docType, data, createdAt] of shapes) {
-    const { id } = buildDocument({ contractId, docType, ownerId, data, entropy: randomIdBytes(), createdAt });
+    // A fixed nonce so the dry run shows the id the live transition WOULD carry at that nonce.
+    const { id } = buildDocument({ contractId, docType, ownerId, data, entropy: randomIdBytes(), createdAt, nonce: 1n });
     console.log(`document shape ok: ${label.padEnd(34)} (${docType}) → ${id}`);
   }
   for (const [label, docType, data] of replaceShapes) {

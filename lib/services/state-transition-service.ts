@@ -11,6 +11,7 @@ import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT
 import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError } from '../error-utils';
 import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
+import { deriveDocumentId, nextIdentityContractNonce } from '@/lib/document-id';
 import {
   DocumentCreateTransition,
   BatchedTransition,
@@ -269,28 +270,6 @@ class StateTransitionService {
   }
 
   /**
-   * Create a document with idempotent retry via ST byte caching.
-   *
-   * This is the typed write path: `documentData` should already use `Uint8Array` for binary
-   * fields before it is wrapped in a `Document`.
-   *
-   * Instead of using sdk.documents.create() (which atomically builds,
-   * signs, broadcasts, and waits — bumping the nonce each time), we:
-   *
-   * 1. Build the Document and wrap it in a DocumentCreateTransition
-   * 2. Bundle into a BatchTransition → StateTransition
-   * 3. Fetch the identity contract nonce from Platform and set it
-   * 4. Sign the StateTransition
-   * 5. Cache the signed ST bytes (localStorage)
-   * 6. Broadcast via sdk.stateTransitions.broadcastStateTransition()
-   * 7. Wait via sdk.stateTransitions.waitForResponse()
-   *
-   * On timeout/retry, we reload the cached bytes and rebroadcast the
-   * SAME signed ST. Platform either accepts it (first broadcast) or
-   * recognizes it's already processed (replay). No new nonce = no
-   * double post, enforced at the protocol level.
-   */
-  /**
    * Resolve the automatic token-payment agreement for a token-paid document
    * type. Three contracts declare a `tokenCost` today: the social contract
    * charges its own YAPP (post/reply/like/repost), while storefront v2 and
@@ -320,14 +299,53 @@ class StateTransitionService {
     return undefined;
   }
 
+  /**
+   * Create a document with idempotent retry via ST byte caching.
+   *
+   * This is the typed write path: `documentData` should already use `Uint8Array` for binary
+   * fields before it is wrapped in a `Document`. It may be a function of the document's id
+   * for data that must commit to the id before the document exists (the auth vault binds
+   * its ciphertext to the vault id as AEAD associated data): the function is called once,
+   * with the id the create transition WILL carry, and the same nonce is then used for the
+   * broadcast, so the id the data was built against is the id Platform stores.
+   *
+   * Instead of using sdk.documents.create() (which atomically builds,
+   * signs, broadcasts, and waits — bumping the nonce each time), we:
+   *
+   * 1. Fetch the identity contract nonce from Platform and pick the next one
+   * 2. Derive the document id from that nonce (protocol 14, `lib/document-id.ts`)
+   *    and build the Document with it, wrapped in a DocumentCreateTransition
+   * 3. Bundle into a BatchTransition → StateTransition carrying the same nonce
+   * 4. Sign the StateTransition
+   * 5. Cache the signed ST bytes (localStorage), keyed by the id
+   * 6. Broadcast via sdk.stateTransitions.broadcastStateTransition()
+   * 7. Wait via sdk.stateTransitions.waitForResponse()
+   *
+   * When a call finds cached bytes under its id it rebroadcasts that SAME
+   * signed ST instead of building a new one: Platform either accepts it or
+   * reports it already processed, and no new nonce is spent.
+   *
+   * Be clear about what that buys today. The id is a function of the nonce and
+   * of fresh entropy, so a fresh call always derives a fresh id and never finds
+   * its predecessor's bytes; the cache only replays when a caller re-derives
+   * the same id, which none does (equally true before protocol 14, when the id
+   * was a function of fresh entropy alone). The guard against a double write
+   * on a timed-out wait is therefore the optimistic `confirmed: false` return
+   * below, which callers surface as "may have succeeded" rather than retrying.
+   * Making the cache reachable needs a caller-supplied idempotency key to key
+   * it by — a separate change.
+   *
+   * There is no pre-create "already exists" probe by id for the same reason:
+   * a document under a freshly derived id can only exist if THIS signed
+   * transition already landed, which is exactly what the cached-bytes path
+   * checks.
+   */
   async createDocument(
     contractId: string,
     documentType: string,
     ownerId: string,
-    documentData: Record<string, unknown>,
+    documentData: Record<string, unknown> | ((documentId: string) => Promise<Record<string, unknown>> | Record<string, unknown>),
     options?: {
-      documentId?: string;
-      entropy?: Uint8Array;
       /**
        * Token payment agreement for document types that declare a tokenCost.create
        * (e.g. post/reply/like/repost). `maximumTokenCost` is the cap the user agrees
@@ -363,8 +381,6 @@ class StateTransitionService {
       const wasm = sdk.wasm;
       const privateKeyWif = await this.getPrivateKey(ownerId);
 
-      logger.debug(`Creating ${documentType} document with data:`, documentData);
-
       // Validate signing key
       const identity = await sdk.identities.fetch(ownerId);
       if (!identity) {
@@ -379,19 +395,27 @@ class StateTransitionService {
 
       logger.debug(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
+      // --- The nonce comes first: the document id is derived from it ---
+      // DIP-30: nonce is u64 where lower 40 bits = sequence number,
+      // upper 24 bits = missing revision bitset. Only increment the sequence part.
+      const currentNonce = await wasm.getIdentityContractNonce(ownerId, contractId);
+      const newNonce = nextIdentityContractNonce(currentNonce);
+      logger.debug(`Nonce: current=${currentNonce}, using=${newNonce}`);
+
+      const entropy = crypto.getRandomValues(new Uint8Array(32));
+      const documentId = deriveDocumentId({ contractId, ownerId, documentTypeName: documentType, entropy, identityContractNonce: newNonce });
+      const resolvedData = typeof documentData === 'function' ? await documentData(documentId) : documentData;
+      logger.debug(`Creating ${documentType} document ${documentId} with data:`, resolvedData);
+
       // Build the typed Document. Binary fields remain Uint8Array on this path.
       const document = await documentBuilderService.buildDocumentForCreate(
         contractId,
         documentType,
         ownerId,
-        documentData,
-        {
-          id: options?.documentId,
-          entropy: options?.entropy,
-        }
+        resolvedData,
+        { entropy, identityContractNonce: newNonce }
       );
-      const documentId = documentBuilderService.getDocumentId(document);
-      logger.debug(`Built document, ID: ${documentId}`);
+      const resultDocument = { $id: documentId, $ownerId: ownerId, $type: documentType, ...resolvedData };
 
       // --- Check for a cached ST from a previous timed-out attempt ---
       // Meaningless in affectedState mode: the replay flow settles through
@@ -417,12 +441,7 @@ class StateTransitionService {
           logger.debug(`Rebroadcast succeeded for ${documentId}`, result);
           clearPendingSTBytes(documentId);
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-          return {
-            success: true,
-            transactionHash: documentId,
-            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
-            confirmed: true
-          };
+          return { success: true, transactionHash: documentId, document: resultDocument, confirmed: true };
         } catch (rebroadcastErr) {
           if (isAlreadyExistsError(rebroadcastErr)) {
             // Already processed — confirm on Platform
@@ -446,26 +465,7 @@ class StateTransitionService {
         }
       }
 
-      // --- Check if document already on Platform (e.g., from a previous session) ---
-      if (!affectedStateMode) {
-        const existingDoc = await this.checkDocumentExists(contractId, documentType, documentId);
-        if (existingDoc) {
-          logger.debug(`Document ${documentId} already exists on Platform — skipping creation`);
-          return { success: true, transactionHash: documentId, document: existingDoc, confirmed: true };
-        }
-      }
-
       // --- Build the StateTransition manually ---
-
-      // Fetch current identity contract nonce from Platform
-      // DIP-30: nonce is u64 where lower 40 bits = sequence number,
-      // upper 24 bits = missing revision bitset. Only increment the sequence part.
-      const SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1); // 0xFFFFFFFFFF
-      const currentNonce = await wasm.getIdentityContractNonce(ownerId, contractId);
-      const rawNonce = currentNonce ?? BigInt(0);
-      const sequenceNumber = rawNonce & SEQUENCE_MASK;
-      const newNonce = sequenceNumber + BigInt(1);
-      logger.debug(`Nonce: current=${currentNonce}, sequence=${sequenceNumber}, using=${newNonce}`);
 
       // Build the token payment agreement for token-paid document types
       // (post/reply/like/repost on the v2 social contract). Callers may pass an
@@ -486,6 +486,8 @@ class StateTransitionService {
         logger.debug(`Attaching tokenPaymentInfo for ${documentType}: maxCost=${effectivePayment.maximumTokenCost}`);
       }
 
+      // The transition copies `document.id` verbatim, so it carries the id
+      // derived above — consensus recomputes it from this same nonce and entropy.
       const createTransition = new DocumentCreateTransition({
         document,
         identityContractNonce: newNonce,
@@ -576,12 +578,7 @@ class StateTransitionService {
           // Leave ST bytes cached for next retry — don't throw yet, return optimistic success
           // since broadcast succeeded and the ST is valid
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-          return {
-            success: true,
-            transactionHash: documentId,
-            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
-            confirmed: false
-          };
+          return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
         }
         if (isAlreadyExistsError(waitErr)) {
           let doc = null;
@@ -593,7 +590,7 @@ class StateTransitionService {
           return {
             success: true,
             transactionHash: documentId,
-            document: doc || { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
+            document: doc || resultDocument,
             confirmed: Boolean(doc)
           };
         }
@@ -610,12 +607,7 @@ class StateTransitionService {
             return { success: true, transactionHash: documentId, document: doc, confirmed: true };
           }
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-          return {
-            success: true,
-            transactionHash: documentId,
-            document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
-            confirmed: false
-          };
+          return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
         }
         throw waitErr;
       }
@@ -623,12 +615,7 @@ class StateTransitionService {
       // Cleanup old entries periodically
       cleanupOldPendingSTs();
 
-      return {
-        success: true,
-        transactionHash: documentId,
-        document: { $id: documentId, $ownerId: ownerId, $type: documentType, ...documentData },
-        confirmed: true
-      };
+      return { success: true, transactionHash: documentId, document: resultDocument, confirmed: true };
     } catch (error) {
       logger.error('Error creating document:', error);
       return {

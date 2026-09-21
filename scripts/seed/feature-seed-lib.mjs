@@ -2,9 +2,10 @@
  * Shared plumbing for the five non-social content seeders (`scripts/seed/seed-non-social.mjs --which
  * storefront|blog|dm|pollr|tips`). Rules encoded here, each learned the expensive way:  - Acceptance is decided by
  * READBACK, never by throw/no-throw: a DAPI 504 on    `wait_for_state_transition_result` is the normal case for a
- * transition that    landed, and an indexOnly create can throw after a successful broadcast.  - Every `$id` is a pure
- * function of a logical key, so a resumed run probes and    recognises its own earlier write instead of writing a
- * second copy.  - One in-flight transition per identity (identity contract nonce); actors run    in parallel behind a
+ * transition that    landed, and an indexOnly create can throw after a successful broadcast.  - A document's `$id`
+ * is only known from the create that returned it (protocol 14 derives it from    the transition's nonce), so ids
+ * are checkpointed under a logical key the moment they land and a resumed    run recognises its earlier write by
+ * the checkpoint, by a unique-index adoption probe or by value.  - One in-flight transition per identity (identity contract nonce); actors run    in parallel behind a
  * global cap.  - A checkpoint from different wiring names documents that do not exist here,    so a provenance
  * mismatch throws rather than silently skipping the run.
  */
@@ -16,7 +17,7 @@ import { getPublicKey } from '@noble/secp256k1';
 import bs58 from 'bs58';
 import {
   DUPLICATE_UNIQUE, NONCE_DESYNC, REPO_ROOT, RETRYABLE, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
-  buildDocument, describeErr, ledgerEntry, loadLedger, network, readEnvFile, sleep, writePrivateFile,
+  buildDocument, createdId, describeErr, findRecentByValues, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
 } from './seed-lib.mjs';
 
 export const utf8 = (text) => new TextEncoder().encode(text);
@@ -169,15 +170,28 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo })
 
   async function createDoc(actor, docType, key, data, opts = {}) {
     const { tokenCost, accepted, duplicateIsSuccess, contract = contractId, payment = paymentInfo } = opts;
-    const { document, id } = buildDocument({ contractId: contract, docType, ownerId: actor.ownerId, data, entropy: entropyFor(key) });
-    const landed = async () => (accepted ? accepted(id) : (await stored(docType, id, contract)) != null);
+    const { document } = buildDocument({ contractId: contract, docType, ownerId: actor.ownerId, data, entropy: entropyFor(key) });
+    // Protocol 14: the stored id commits to the nonce `documents.create()` picks, so the id
+    // a logical key used to determine is gone. It is learned from the create's RETURN (and
+    // then checkpointed by the caller under the key); a create that threw after landing is
+    // recognised by the caller's `accepted` probe, or by a value readback for a stored type.
+    let id = null;
+    // Unbounded in time on purpose: the pre-write probe is how a resumed run
+    // with a lost checkpoint recognises its own earlier document.
+    const landed = async () => {
+      if (accepted) return accepted(id);
+      if (id) return (await stored(docType, id, contract)) != null;
+      id = await readback(handle, () => findRecentByValues(handle.sdk, { contractId: contract, docType, ownerId: actor.ownerId, data }));
+      return id != null;
+    };
     if (await landed()) return { id, skipped: true };
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        await actor.lock(() => handle.sdk.documents.create({
+        const created = await actor.lock(() => handle.sdk.documents.create({
           document, identityKey: actor.identityKey, signer: actor.signer, ...payment(tokenCost),
         }));
+        id = createdId(created) ?? id;
         if (await landed()) return { id };
         if (await settles(landed)) return { id };
         lastError = new Error('create returned but the document is not on chain');
