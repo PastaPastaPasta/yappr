@@ -229,16 +229,21 @@ export function TipModal() {
     setError(null)
   }
 
-  // Shared tail of both YAPP paths: refresh balances and drop the cached
-  // transfer pages so the next read sees the new one.
-  const finishYappTip = useCallback(() => {
+  /**
+   * The money moved: refresh balances and drop the cached transfer pages so the
+   * next read sees the new one.
+   *
+   * Deliberately sets no state. What the user should be looking at depends on
+   * whether the tip still has to be attached, and deciding that here would mean
+   * showing "Tip Sent!" for the instant before the attach screen replaces it.
+   */
+  const settleBalances = useCallback(() => {
     if (user) tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
     // The transfer also burned a little DASH in fees, so the credit balance the
     // auth context caches is stale too.
     refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
     tipHistoryService.clearCache()
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
-    setState('success')
   }, [user, refreshBalance])
 
   /**
@@ -320,8 +325,9 @@ export function TipModal() {
   const settleYappTip = useCallback(async (transferId: string | undefined) => {
     // Balances and caches settle either way: the money moved whether or not the
     // tip can be shown yet.
-    finishYappTip()
-    if (!tipTarget || !provedTipsAvailable()) return
+    settleBalances()
+    // Nothing to attach: a profile tip, or a contract with no tip documents.
+    if (!tipTarget || !provedTipsAvailable()) { setState('success'); return }
     if (!transferId) {
       // The transfer went out but its document has not surfaced within the
       // confirmation window. Citing it now would be a paid 40120, so the tip
@@ -332,7 +338,7 @@ export function TipModal() {
       return
     }
     if (await attachTip(transferId)) setState('success')
-  }, [attachTip, finishYappTip, tipTarget])
+  }, [attachTip, settleBalances, tipTarget])
 
   const handleSendYappTip = async () => {
     if (!user || !recipientInfo) return
