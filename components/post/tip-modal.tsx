@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Modal, ModalTitle } from '@/components/ui/modal'
-import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon, BookmarkIcon, ChevronDownIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon, ChevronDownIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { buildYapprStateTransitionUri } from 'platform-auth'
 import { Button } from '@/components/ui/button'
@@ -12,25 +12,18 @@ import { Spinner } from '@/components/ui/spinner'
 import { KeyExchangeQR } from '@/components/auth/key-exchange-qr'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { useAuth } from '@/contexts/auth-context'
-import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
+import { tipService } from '@/lib/services/tip-service'
 import { tipHistoryService, matchesSentTip, type SentTipMatch } from '@/lib/services/tip-history-service'
 import { tokenService } from '@/lib/services/token-service'
 import { buildUnsignedYappTipTransition } from '@/lib/services/token-transfer-builder'
-import { identityService } from '@/lib/services/identity-service'
 import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
 import { targetKindOf } from '@/lib/contract-topology'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import type { ParsedPaymentUri } from '@/lib/types'
-import {
-  getTransferKey,
-  hasTransferKey,
-  storeTransferKey,
-} from '@/lib/secure-storage'
 
-// Preset tip amounts in DASH (credits tab) and whole YAPP (YAPP tab).
-const PRESET_AMOUNTS = [0.001, 0.005, 0.01, 0.05]
+// Preset tip amounts, in whole YAPP.
 const YAPP_PRESETS = [1, 5, 25, 100]
 
 // How long the dash-st: QR stays valid before the flow gives up waiting for
@@ -47,12 +40,12 @@ type ModalState =
   | 'walletSign'
   | 'processing'
   | 'confirming-landed'
+  | 'attaching'
   | 'success'
-  | 'save-prompt'
+  | 'attach-failed'
   | 'unconfirmed'
   | 'error'
-type PaymentTab = 'yapp' | 'credits' | 'crypto'
-type KeySource = 'prefilled' | 'manual' | null
+type PaymentTab = 'yapp' | 'crypto'
 
 /** The tip flow's primary-action styling, on every step that has one. */
 const AMBER_BUTTON = 'flex-1 bg-amber-500 hover:bg-amber-600 text-white'
@@ -66,15 +59,13 @@ const MODAL_TITLES: Partial<Record<ModalState, string>> = {
 
 interface AmountPresetsProps {
   presets: number[]
-  /** Unit shown on each chip, e.g. "YAPP" or "DASH". */
-  unit: string
   /** The amount currently in the input, as typed. */
   value: string
   onSelect: (preset: string) => void
 }
 
-/** The row of quick-pick amount chips, shared by the YAPP and DASH tabs. */
-function AmountPresets({ presets, unit, value, onSelect }: AmountPresetsProps) {
+/** The row of quick-pick amount chips. */
+function AmountPresets({ presets, value, onSelect }: AmountPresetsProps) {
   return (
     <div className="flex gap-2 overflow-x-auto">
       {presets.map((preset) => (
@@ -87,7 +78,7 @@ function AmountPresets({ presets, unit, value, onSelect }: AmountPresetsProps) {
               : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
           }`}
         >
-          {preset} {unit}
+          {preset} YAPP
         </button>
       ))}
     </div>
@@ -96,7 +87,7 @@ function AmountPresets({ presets, unit, value, onSelect }: AmountPresetsProps) {
 
 export function TipModal() {
   const { isOpen, post, recipient, close } = useTipModal()
-  const { user, refreshBalance, mergeSecretsIntoAuthVault } = useAuth()
+  const { user, refreshBalance } = useAuth()
 
   // Derive recipient info from either post.author or direct recipient
   const recipientInfo = useMemo(() => {
@@ -120,13 +111,10 @@ export function TipModal() {
     [post]
   )
 
-  const [amount, setAmount] = useState('')
   const [yappAmount, setYappAmount] = useState('1')
   const [tipMessage, setTipMessage] = useState('')
-  const [transferKey, setTransferKey] = useState('')
   const [state, setState] = useState<ModalState>('input')
   const [error, setError] = useState<string | null>(null)
-  const [balance, setBalance] = useState<number | null>(null)
   const [loadingBalance, setLoadingBalance] = useState(false)
   const [yappBalance, setYappBalance] = useState<bigint | null>(null)
   // Whether this browser holds a CRITICAL key for the tipper. Token
@@ -144,24 +132,23 @@ export function TipModal() {
   // Remote wallet signing (dash-st: QR): the unsigned transfer URI, whether the
   // silent wait ran out, and the moment the QR went up — the tip is detected by
   // its own `transfer` document appearing on chain after that moment.
+  // The transfer whose tip could not be attached, so the retry cites the same
+  // one rather than sending anything new.
+  const [attachTransferId, setAttachTransferId] = useState<string | null>(null)
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
   const walletMatchRef = useRef<SentTipMatch | null>(null)
   const walletSessionRef = useRef(0)
 
-  // Transfer key persistence (credits tab only)
-  const [keySource, setKeySource] = useState<KeySource>(null)
-  const usedTransferKeyRef = useRef<string | null>(null)
-
-  // Fetch user balances when modal opens
+  // Fetch the tipper's YAPP balance when the modal opens
   useEffect(() => {
     if (isOpen && user) {
       setLoadingBalance(true)
       const identityId = user.identityId
-      void Promise.all([
-        identityService.getBalance(identityId).then(b => setBalance(b.confirmed)).catch(() => setBalance(null)),
-        tokenService.getBalance(identityId).then(setYappBalance).catch(() => setYappBalance(null)),
-      ]).finally(() => setLoadingBalance(false))
+      tokenService.getBalance(identityId)
+        .then(setYappBalance)
+        .catch(() => setYappBalance(null))
+        .finally(() => setLoadingBalance(false))
     }
   }, [isOpen, user])
 
@@ -175,42 +162,26 @@ export function TipModal() {
     }
   }, [isOpen, recipientInfo])
 
-  // Check for stored transfer key when modal opens
-  useEffect(() => {
-    if (isOpen && user) {
-      const storedKey = getTransferKey(user.identityId)
-      if (storedKey) {
-        setTransferKey(storedKey)
-        setKeySource('prefilled')
-      } else {
-        setKeySource(null)
-      }
-    }
-  }, [isOpen, user])
-
   // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
-      setAmount('')
       setYappAmount('1')
       setTipMessage('')
-      setTransferKey('')
       setState('input')
       setError(null)
       setActiveTab('yapp')
       setPaymentUris([])
       setSelectedQrPayment(null)
       setShowQrDialog(false)
-      setKeySource(null)
       setCriticalKeyWif('')
       setShowKeyEntry(false)
+      setAttachTransferId(null)
       setWalletUri(null)
       setWalletExpired(false)
       setYappBalance(null)
       setCanSignLocally(null)
       walletMatchRef.current = null
       walletSessionRef.current++
-      usedTransferKeyRef.current = null
     }
   }, [isOpen])
 
@@ -219,14 +190,6 @@ export function TipModal() {
   // gets signed and the match used to find it again must never disagree.
   const noteMessage = tipMessage.trim() || undefined
 
-  const handleAmountChange = (value: string) => {
-    // Only allow valid decimal numbers with up to 8 decimal places
-    if (/^\d*\.?\d{0,8}$/.test(value) || value === '') {
-      setAmount(value)
-      setError(null)
-    }
-  }
-
   const handleYappAmountChange = (value: string) => {
     if (/^\d*$/.test(value)) {
       setYappAmount(value)
@@ -234,69 +197,28 @@ export function TipModal() {
     }
   }
 
-  const handleTransferKeyChange = (value: string) => {
-    setTransferKey(value)
-    // If user types anything different from the prefilled key, mark as manual
-    if (keySource === 'prefilled' && user) {
-      const storedKey = getTransferKey(user.identityId)
-      if (value !== storedKey) {
-        setKeySource('manual')
-      }
-    } else if (value && keySource === null) {
-      setKeySource('manual')
-    }
-  }
-
   const handleContinue = () => {
-    if (activeTab === 'yapp') {
-      if (yappAmountBig < MIN_YAPP_TIP) {
-        setError(`Minimum tip is ${MIN_YAPP_TIP.toString()} YAPP`)
-        return
-      }
-      if (yappBalance !== null && yappAmountBig > yappBalance) {
-        setError('Not enough YAPP for this tip')
-        return
-      }
-      // Probed here rather than on open: it costs an identity fetch, and a user
-      // who only wanted the DASH or crypto tab should never pay for it.
-      if (user && canSignLocally === null) {
-        tokenService.canSignTokenTransitions(user.identityId)
-          .then(setCanSignLocally)
-          .catch(() => setCanSignLocally(false))
-      }
-      setState('confirming')
-      setError(null)
+    if (yappAmountBig < MIN_YAPP_TIP) {
+      setError(`Minimum tip is ${MIN_YAPP_TIP.toString()} YAPP`)
       return
     }
-
-    const dashAmount = parseFloat(amount)
-    if (isNaN(dashAmount) || dashAmount <= 0) {
-      setError('Please enter a valid amount')
+    if (yappBalance !== null && yappAmountBig > yappBalance) {
+      setError('Not enough YAPP for this tip')
       return
     }
-
-    const credits = tipService.dashToCredits(dashAmount)
-    if (credits < MIN_TIP_CREDITS) {
-      setError(`Minimum tip is ${tipService.formatDash(tipService.creditsToDash(MIN_TIP_CREDITS))}`)
-      return
+    // Probed here rather than on open: it costs an identity fetch, and a user
+    // who only wanted the crypto tab should never pay for it.
+    if (user && canSignLocally === null) {
+      tokenService.canSignTokenTransitions(user.identityId)
+        .then(setCanSignLocally)
+        .catch(() => setCanSignLocally(false))
     }
-
-    if (balance !== null && credits > balance) {
-      setError('Insufficient balance')
-      return
-    }
-
-    if (!transferKey.trim()) {
-      setError('Please enter your transfer key')
-      return
-    }
-
     setState('confirming')
     setError(null)
   }
 
-  // Shared tail of both YAPP paths: refresh balances, drop the cached tip
-  // pages so the new proof can show up, and land on the success screen.
+  // Shared tail of both YAPP paths: refresh balances and drop the cached
+  // transfer pages so the next read sees the new one.
   const finishYappTip = useCallback(() => {
     if (user) tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
     // The transfer also burned a little DASH in fees, so the credit balance the
@@ -306,6 +228,77 @@ export function TipModal() {
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
     setState('success')
   }, [user, refreshBalance])
+
+  /**
+   * Put the tip on the post: the message becomes a reply, and a tip document
+   * cites the transfer that paid for it.
+   *
+   * This is the step that makes the tip visible — the transfer alone moves YAPP
+   * and says nothing about any post. It can fail on its own (the reply is a
+   * separate write, and a tip naming a transfer Drive has not indexed yet is
+   * refused), and when it does the money is still gone, so the failure screen
+   * offers to attach the tip again and never to send another.
+   */
+  const attachTip = useCallback(async (transferId: string): Promise<boolean> => {
+    if (!user || !recipientInfo || !post || !tipTarget) return false
+    setState('attaching')
+
+    let messageReplyId: string | undefined
+    if (noteMessage) {
+      try {
+        const { replyService } = await import('@/lib/services/reply-service')
+        const { replyLinkageTo } = await import('@/lib/contract-topology')
+        const reply = await replyService.createReply(user.identityId, noteMessage, {
+          ...replyLinkageTo(post),
+          parentOwnerId: post.author.id,
+        })
+        // A reply the chain has not acknowledged cannot be cited yet: the tip
+        // would be a paid rejection. Record the tip without it rather than lose
+        // the tip as well as the words.
+        messageReplyId = (reply as { __createConfirmed?: boolean }).__createConfirmed === false ? undefined : reply.id
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('reply-created', {
+            detail: { reply, replyId: reply.id, confirmed: messageReplyId !== undefined },
+          }))
+        }
+      } catch (err) {
+        logger.error('Could not post the message that went with the tip:', err)
+      }
+    }
+
+    const recorded = await tipService.recordTip({
+      senderId: user.identityId,
+      target: tipTarget,
+      recipientId: recipientInfo.id,
+      amount: yappAmountBig,
+      transferId,
+      messageReplyId,
+    })
+    if (!recorded.success) {
+      setError(recorded.error ?? 'Your YAPP was sent, but the tip could not be attached to this post.')
+      setAttachTransferId(transferId)
+      setState('attach-failed')
+      return false
+    }
+    setAttachTransferId(null)
+    return true
+  }, [user, recipientInfo, post, tipTarget, noteMessage, yappAmountBig])
+
+  /**
+   * The whole YAPP path's tail: the transfer landed, so attach it and show the
+   * result. A tip aimed at a profile rather than a post has nothing to attach.
+   */
+  const settleYappTip = useCallback(async (transferId: string | undefined) => {
+    finishYappTip()
+    if (!tipTarget || !tipService.tipsAreRecordable()) return
+    if (!transferId) {
+      setError('Your YAPP was sent, but we could not find the transfer to attach it to this post yet.')
+      setAttachTransferId(null)
+      setState('attach-failed')
+      return
+    }
+    if (await attachTip(transferId)) setState('success')
+  }, [attachTip, finishYappTip, tipTarget])
 
   const handleSendYappTip = async () => {
     if (!user || !recipientInfo) return
@@ -334,7 +327,7 @@ export function TipModal() {
     setCriticalKeyWif('')
 
     if (result.success) {
-      finishYappTip()
+      await settleYappTip(result.transferId)
     } else if (result.errorCode === 'UNCONFIRMED') {
       // Broadcast went out, the proof has not shown up yet. Never offer a plain
       // retry here — a second press would move the money twice.
@@ -358,12 +351,12 @@ export function TipModal() {
     const match = tipService.tipMatch(recipientInfo.id, yappAmountBig, tipTarget, noteMessage)
     const result = await tipService.confirmYappTip(user.identityId, match)
     if (result.success) {
-      finishYappTip()
+      await settleYappTip(result.transferId)
       return true
     }
     setError(result.error ?? null)
     return false
-  }, [user, recipientInfo, yappAmountBig, tipTarget, noteMessage, finishYappTip])
+  }, [user, recipientInfo, yappAmountBig, tipTarget, noteMessage, settleYappTip])
 
   /**
    * Ask the chain first, act second. Both "check again" buttons go through
@@ -457,9 +450,10 @@ export function TipModal() {
     const poll = setInterval(() => {
       tipHistoryService.getTipsSent(identityId, { fresh: true }).then(sent => {
         if (finished) return
-        if (!sent.some(tip => matchesSentTip(tip, match))) return
+        const landed = sent.find(tip => matchesSentTip(tip, match))
+        if (!landed) return
         finished = true
-        finishYappTip()
+        void settleYappTip(landed.id)
       }).catch(() => {
         // Transient read failures — keep polling.
       })
@@ -469,86 +463,13 @@ export function TipModal() {
       clearTimeout(budget)
       clearInterval(poll)
     }
-  }, [state, walletUri, user, finishYappTip])
-
-  const handleSendTip = async () => {
-    if (!user || !recipientInfo) return
-
-    setState('processing')
-
-    const dashAmount = parseFloat(amount)
-    const credits = tipService.dashToCredits(dashAmount)
-
-    if (keySource === 'manual') {
-      usedTransferKeyRef.current = transferKey
-    }
-
-    const result = await tipService.sendTip(user.identityId, recipientInfo.id, credits, transferKey)
-
-    // Clear sensitive data from input immediately
-    setTransferKey('')
-
-    if (result.success) {
-      // Refresh balance display and persist to auth context
-      identityService.getBalance(user.identityId)
-        .then(b => setBalance(b.confirmed))
-        .catch(() => {})
-      // Update global balance in auth context (persists to localStorage)
-      refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
-
-      // If key was manually entered and not already saved, offer to save
-      if (keySource === 'manual' && usedTransferKeyRef.current && !hasTransferKey(user.identityId)) {
-        setState('save-prompt')
-      } else {
-        setState('success')
-      }
-    } else {
-      usedTransferKeyRef.current = null
-      setState('error')
-      setError(result.error || 'Transfer failed')
-    }
-  }
+  }, [state, walletUri, user, settleYappTip])
 
   const handleClose = () => {
     if (state === 'processing') return // Don't allow closing during processing
     // Clear sensitive data
-    setTransferKey('')
     setCriticalKeyWif('')
     close()
-  }
-
-  // Handle saving the transfer key for future use
-  const handleSaveKey = async () => {
-    if (!user || !usedTransferKeyRef.current) {
-      setState('success')
-      return
-    }
-
-    let normalizedTransferKey: string | null = null
-    try {
-      storeTransferKey(user.identityId, usedTransferKeyRef.current)
-      normalizedTransferKey = getTransferKey(user.identityId)
-    } catch (err) {
-      logger.error('Failed to store transfer key:', err)
-      setError('Failed to save transfer key')
-      setState('error')
-      return
-    }
-
-    if (normalizedTransferKey) {
-      try {
-        await mergeSecretsIntoAuthVault(user.identityId, { transferKeyWif: normalizedTransferKey })
-      } catch (err) {
-        logger.error('Failed to merge transfer key into auth vault:', err)
-      }
-    }
-    usedTransferKeyRef.current = null
-    setState('success')
-  }
-
-  const handleSkipSave = () => {
-    usedTransferKeyRef.current = null
-    setState('success')
   }
 
   const handleCloseQrDialog = () => {
@@ -559,9 +480,8 @@ export function TipModal() {
   if (!recipientInfo) return null
 
   const isYapp = activeTab === 'yapp'
-  const dashAmount = parseFloat(amount) || 0
   const recipientName = recipientInfo.displayName || recipientInfo.username || 'this user'
-  const amountLabel = isYapp ? `${yappAmountBig.toString()} YAPP` : `${dashAmount} DASH`
+  const amountLabel = `${yappAmountBig.toString()} YAPP`
 
   // The confirm step's primary action: which tab is open, and for YAPP whether
   // this browser can sign a token transition at all or has to ask the wallet.
@@ -573,7 +493,7 @@ export function TipModal() {
       return <Button onClick={startWalletSign} className={AMBER_BUTTON}>Sign with wallet</Button>
     }
     return (
-      <Button onClick={isYapp ? handleSendYappTip : handleSendTip} className={AMBER_BUTTON}>
+      <Button onClick={handleSendYappTip} className={AMBER_BUTTON}>
         Confirm &amp; Send
       </Button>
     )
@@ -619,10 +539,6 @@ export function TipModal() {
                         <SparklesIcon className="w-4 h-4" />
                         YAPP
                       </button>
-                      <button type="button" onClick={() => { setActiveTab('credits'); setError(null) }} className={tabClass('credits')}>
-                        <CurrencyDollarIcon className="w-4 h-4" />
-                        DASH
-                      </button>
                       {paymentUris.length > 0 && (
                         <button type="button" onClick={() => { setActiveTab('crypto'); setError(null) }} className={tabClass('crypto')}>
                           <WalletIcon className="w-4 h-4" />
@@ -664,7 +580,6 @@ export function TipModal() {
 
                         <AmountPresets
                           presets={YAPP_PRESETS}
-                          unit="YAPP"
                           value={yappAmount}
                           onSelect={(preset) => { setYappAmount(preset); setError(null) }}
                         />
@@ -699,95 +614,6 @@ export function TipModal() {
                           onClick={handleContinue}
                           className={AMBER_BUTTON_WIDE}
                           disabled={yappAmountBig <= BigInt(0) || loadingBalance}
-                        >
-                          Continue
-                        </Button>
-                      </div>
-                    )}
-
-                    {/* Credits Tab Content */}
-                    {activeTab === 'credits' && (
-                      <div className="space-y-4">
-                        {/* Balance display */}
-                        <div className="text-sm text-gray-500">
-                          {loadingBalance ? (
-                            'Loading balance...'
-                          ) : balance !== null ? (
-                            <>Your balance: <span className="font-medium">{tipService.formatDash(tipService.creditsToDash(balance))}</span></>
-                          ) : (
-                            'Could not load balance'
-                          )}
-                        </div>
-
-                        {/* Amount input */}
-                        <div>
-                          <label htmlFor="tip-dash-amount" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Amount (DASH)
-                          </label>
-                          <input
-                            id="tip-dash-amount"
-                            type="text"
-                            inputMode="decimal"
-                            value={amount}
-                            onChange={(e) => handleAmountChange(e.target.value)}
-                            placeholder="0.001"
-                            className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-lg font-mono placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                          />
-                        </div>
-
-                        <AmountPresets
-                          presets={PRESET_AMOUNTS}
-                          unit="DASH"
-                          value={amount}
-                          onSelect={(preset) => { setAmount(preset); setError(null) }}
-                        />
-
-                        {/* Transfer key input */}
-                        <div>
-                          <label htmlFor="tip-transfer-key" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Transfer Private Key (WIF)
-                          </label>
-                          <div className="relative">
-                            <input
-                              id="tip-transfer-key"
-                              type="password"
-                              value={transferKey}
-                              onChange={(e) => handleTransferKeyChange(e.target.value)}
-                              placeholder="Enter your transfer private key"
-                              autoComplete="off"
-                              autoCorrect="off"
-                              autoCapitalize="off"
-                              spellCheck={false}
-                              className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                            />
-                            {keySource === 'prefilled' && (
-                              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full">
-                                Saved
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-1 text-xs text-gray-500">
-                            {keySource === 'prefilled'
-                              ? 'Using your saved transfer key.'
-                              : 'Your key is cleared after the transaction unless you choose to save it.'}
-                          </p>
-                        </div>
-
-                        <p className="text-xs text-gray-500">
-                          A DASH credit transfer leaves nothing readable on chain, so Yappr cannot show this tip on the
-                          post. Tip in YAPP if you want it to be verifiable.
-                        </p>
-
-                        {/* Error message */}
-                        {error && (
-                          <p className="text-red-500 text-sm">{error}</p>
-                        )}
-
-                        {/* Continue button */}
-                        <Button
-                          onClick={handleContinue}
-                          className={AMBER_BUTTON_WIDE}
-                          disabled={!amount || !transferKey}
                         >
                           Continue
                         </Button>
@@ -994,6 +820,50 @@ export function TipModal() {
                   </div>
                 )}
 
+                {/* The money moved; now the tip is being put on the post */}
+                {state === 'attaching' && (
+                  <div className="py-8 text-center space-y-4">
+                    <Spinner size="lg" className="mx-auto border-amber-500" />
+                    <p className="text-gray-600 dark:text-gray-400">
+                      {noteMessage ? 'Posting your reply and attaching the tip…' : 'Attaching the tip to this post…'}
+                    </p>
+                    <p className="text-xs text-gray-500">Your YAPP has already been sent.</p>
+                  </div>
+                )}
+
+                {/* The transfer landed, the tip document did not. Never a
+                    "send again" screen — the money is already gone. */}
+                {state === 'attach-failed' && (
+                  <div className="py-4 text-center space-y-4">
+                    <ExclamationCircleIcon className="h-16 w-16 text-amber-500 mx-auto" />
+                    <div className="space-y-2">
+                      <p className="text-lg font-medium">Tip sent, not yet shown</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">{error}</p>
+                      <p className="text-xs text-gray-500">
+                        The {amountLabel} reached {recipientName}. Only the record that puts it on this post is
+                        missing, and attaching it again costs nothing but a moment.
+                      </p>
+                    </div>
+                    <div className="flex gap-3">
+                      <Button onClick={close} variant="outline" className="flex-1">
+                        Close
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          if (attachTransferId) {
+                            void attachTip(attachTransferId).then((attached) => { if (attached) setState('success') })
+                          } else {
+                            void recheckTip()
+                          }
+                        }}
+                        className={AMBER_BUTTON}
+                      >
+                        Attach again
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Asking the chain whether an unconfirmed tip landed */}
                 {state === 'confirming-landed' && (
                   <div className="py-8 text-center space-y-4">
@@ -1026,50 +896,6 @@ export function TipModal() {
                   </div>
                 )}
 
-                {/* Save Prompt State - offer to save manually entered key */}
-                {state === 'save-prompt' && (
-                  <div className="py-4 space-y-4">
-                    <div className="text-center">
-                      <CheckCircleIcon className="h-12 w-12 text-green-500 mx-auto mb-2" />
-                      <p className="text-lg font-medium">Tip sent successfully!</p>
-                      <p className="text-gray-600 dark:text-gray-400">
-                        You sent {dashAmount} DASH to {recipientName}
-                      </p>
-                    </div>
-
-                    <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg p-4">
-                      <div className="flex items-start gap-3">
-                        <BookmarkIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                        <div className="flex-1">
-                          <p className="font-medium text-amber-800 dark:text-amber-300">
-                            Save transfer key for future tips?
-                          </p>
-                          <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">
-                            Your transfer key will be securely stored so you won&apos;t need to enter it again.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-3">
-                      <Button
-                        onClick={handleSkipSave}
-                        variant="outline"
-                        className="flex-1"
-                      >
-                        No thanks
-                      </Button>
-                      <Button
-                        onClick={handleSaveKey}
-                        className={AMBER_BUTTON}
-                      >
-                        Save key
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Success State */}
                 {state === 'success' && (
                   <div className="py-4 text-center space-y-4">
                     <CheckCircleIcon className="h-16 w-16 text-green-500 mx-auto" />
@@ -1079,16 +905,10 @@ export function TipModal() {
                         You sent {amountLabel} to {recipientName}
                       </p>
                     </div>
-                    {isYapp ? (
+                    {tipTarget && tipService.tipsAreRecordable() && (
                       <p className="text-sm text-gray-500">
-                        Recorded on Dash Platform — reload the post to see the proof.
+                        It now shows on this post{noteMessage ? ', with your reply' : ''}.
                       </p>
-                    ) : (
-                      balance !== null && (
-                        <p className="text-sm text-gray-500">
-                          New balance: {tipService.formatDash(tipService.creditsToDash(balance))}
-                        </p>
-                      )
                     )}
                     <Button onClick={close} className="w-full">
                       Done

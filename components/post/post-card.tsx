@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, LockClosedIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, ChatBubbleOvalLeftIcon, CurrencyDollarIcon, EllipsisHorizontalIcon, LockClosedIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
@@ -60,6 +60,22 @@ export interface ProgressiveEnrichment {
   replyTo?: { id: string; authorId: string; authorUsername: string | null }
 }
 
+/**
+ * A proved tip attached to this card, if any.
+ *
+ * Both figures are consensus facts read off `tip`/`tipReply` documents, whose
+ * amounts the contract binds to the YAPP transfers they cite — there is no
+ * self-reported number anywhere in them.
+ */
+export interface TipBadge {
+  /** YAPP this reply's author sent along with it, when the reply IS a tip message. */
+  sentAmount?: bigint
+  /** YAPP this reply has been tipped. */
+  receivedAmount?: bigint
+  /** How many tips make up `receivedAmount`. */
+  receivedCount?: number
+}
+
 interface PostCardProps {
   post: Post
   /** Hide the avatar and author line, and make the like button show who liked instead. */
@@ -77,6 +93,8 @@ interface PostCardProps {
   onDelete?: (postId: string) => void
   /** Let a saved-post list coordinate removal with its other bookmark mutations. */
   bookmarkAction?: { active: boolean; loading: boolean; onClick: () => void }
+  /** Proved tips to show on this card (thread views only — it costs a query per thread). */
+  tipBadge?: TipBadge
 }
 
 /**
@@ -91,6 +109,33 @@ function parentHandleOf(parent: Post): string {
 
 const CARD_MENU_ITEM = 'px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none'
 
+/**
+ * The tips on a card, stated plainly because nothing about them is a claim:
+ * the contract only admits a tip document whose amount, sender and payee match
+ * the YAPP transfer it cites.
+ */
+function TipBadgeRow({ badge }: { badge: TipBadge }) {
+  const { sentAmount, receivedAmount, receivedCount = 0 } = badge
+  if (!sentAmount && !receivedAmount) return null
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+      {sentAmount ? (
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+          <CurrencyDollarIcon className="h-3.5 w-3.5" aria-hidden="true" />
+          Tipped {sentAmount.toString()} YAPP
+        </span>
+      ) : null}
+      {receivedAmount ? (
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+          <CurrencyDollarIcon className="h-3.5 w-3.5" aria-hidden="true" />
+          {receivedAmount.toString()} YAPP from {receivedCount} {receivedCount === 1 ? 'tip' : 'tips'}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
 export function PostCard({
   post,
   hideAvatar = false,
@@ -101,6 +146,7 @@ export function PostCard({
   parentPostLoading = false,
   onDelete,
   bookmarkAction,
+  tipBadge,
 }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
@@ -471,6 +517,8 @@ export function PostCard({
               </div>
             )}
           </SensitiveContentGate>
+
+          {tipBadge && <TipBadgeRow badge={tipBadge} />}
 
           <PostActionBar
             postId={post.id}

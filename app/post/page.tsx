@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect } from 'react'
+import { Suspense, useEffect, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
@@ -17,10 +17,11 @@ import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
+import { useThreadTips } from '@/hooks/use-thread-tips'
 import { replyToPost } from '@/lib/services/post-service'
+import { referencesMayDangle, targetKindOf } from '@/lib/contract-topology'
 import type { Post } from '@/lib/types'
 import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
-import { referencesMayDangle } from '@/lib/contract-topology'
 
 function PostDetailContent() {
   const router = useRouter()
@@ -70,6 +71,18 @@ function PostDetailContent() {
   // which is not the same identity when the item being viewed is a reply by
   // someone else. replyChain[0] is the root (v3) or the oldest known ancestor (v2).
   const rootPostOwnerId = (replyChain[0] ?? post)?.author.id ?? ''
+
+  // Proved tips for this thread: one query for the post's own tips, one for
+  // tips on the replies being shown. Both are cached per document, so the
+  // strip below re-reads them without a second round trip.
+  const renderedReplyIds = useMemo(
+    () => flattenReplyThreads(replyThreads).map((thread) => thread.content.id),
+    [replyThreads]
+  )
+  const getTipBadge = useThreadTips(
+    post ? { id: post.id, kind: targetKindOf(post) } : null,
+    renderedReplyIds
+  )
   const { canReply: canReplyToPrivate, isLoading: isCheckingAccess, reason: cantReplyReason } = useCanReplyToPrivate(post, rootPostOwnerId)
 
   useEffect(() => {
@@ -171,8 +184,8 @@ function PostDetailContent() {
               <PostCard post={post} enrichment={postEnrichment} rootPostOwnerId={rootPostOwnerId} />
             </div>
 
-            {/* Proved YAPP tips on this post — one token-history read, detail view only */}
-            <PostTips postId={post.id} authorId={post.author.id} />
+            {/* Proved YAPP tips on this post — indexed tip documents, detail view only */}
+            <PostTips targetId={post.id} kind={targetKindOf(post)} />
 
             {user ? (
               isCheckingAccess ? (
@@ -227,6 +240,7 @@ function PostDetailContent() {
                     thread={thread}
                     rootPostOwnerId={rootPostOwnerId}
                     getPostEnrichment={getReplyEnrichment}
+                    getTipBadge={getTipBadge}
                   />
                 ))
               )}

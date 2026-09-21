@@ -1,19 +1,25 @@
 import { logger } from '@/lib/logger';
-import { getEvoSdk } from './evo-sdk-service';
-import { identityService } from './identity-service';
-import { signerService } from './signer-service';
-import { matchIdentityKey } from '@/lib/crypto/keys';
-import { KeyPurpose } from '@/lib/crypto/identity-keys';
-import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
-import { keyNetwork, MIN_YAPP_TIP } from '@/lib/constants'
+import { MIN_YAPP_TIP, YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { encodeTipNote, type TipTargetKind } from '@/lib/tip-note'
 import { isAlreadyExistsError, isNonFatalWaitError, isTimeoutError } from '@/lib/error-utils'
+import { tipSurfaceFor, provedTipsAvailable } from '@/lib/contract-topology'
 import { tokenService } from './token-service'
+import { stateTransitionService } from './state-transition-service'
+import { identifierStringToDocumentBytes } from './sdk-helpers'
+import { provedTipService } from './proved-tip-service'
 import { tipHistoryService, type SentTipMatch } from './tip-history-service'
 
 export interface TipResult {
   success: boolean;
   transactionHash?: string;
+  /**
+   * The token-history `transfer` document this tip was paid with, once it has
+   * been seen on chain. A successful transfer whose document has not surfaced
+   * yet leaves this unset: the money moved, but the tip cannot be recorded
+   * against the post until the citation would resolve (40120 otherwise), so the
+   * caller offers to attach it rather than pretending it failed.
+   */
+  transferId?: string;
   error?: string;
   errorCode?:
     | 'INSUFFICIENT_BALANCE'
@@ -41,206 +47,38 @@ const SENT_TIP_SKEW_MARGIN_MS = 60_000;
 // Conversion: 1 DASH = 100,000,000,000 credits on Dash Platform
 // (Platform credits are different from core duffs)
 export const CREDITS_PER_DASH = 100_000_000_000;
-export const MIN_TIP_CREDITS = 100_000_000; // 0.001 DASH minimum
+
+/**
+ * What the tip document records, once the transfer it cites is on chain.
+ *
+ * Every field is checked by consensus against the cited transfer and the
+ * tipped document when the tip is written, so a rejected `recordTip` means the
+ * claim was false — never that the money did not move.
+ */
+export interface TipRecord {
+  /** The tipper. */
+  senderId: string;
+  /** What was tipped, and which of the two tip doctypes that puts it in. */
+  target: { kind: TipTargetKind; id: string };
+  /** The tipped document's author, who received the transfer. */
+  recipientId: string;
+  amount: bigint;
+  /** The token-history transfer document that paid it. */
+  transferId: string;
+  /** The tipper's own reply carrying the words that went with the tip, if any. */
+  messageReplyId?: string;
+}
 
 class TipService {
-  /**
-   * The enabled transfer key the private key corresponds to, so signer and key
-   * can never disagree. `specificKeyId` pins the match to one key.
-   */
-  private findMatchingTransferKey(
-    privateKeyWif: string,
-    wasmPublicKeys: WasmIdentityPublicKey[],
-    specificKeyId?: number
-  ): WasmIdentityPublicKey | null {
-    const result = matchIdentityKey(privateKeyWif, wasmPublicKeys, {
-      network: keyNetwork(),
-      purpose: KeyPurpose.TRANSFER,
-      keyId: specificKeyId,
-    });
-    if (!result.ok) {
-      if (result.reason === 'wrong-key-id') {
-        logger.error(`Requested key ID ${specificKeyId} but private key matches key ID ${result.match.keyId}`);
-      } else {
-        logger.error('Transfer private key does not match any transfer key on this identity');
-      }
-      return null;
-    }
-    logger.debug(`Matched transfer key: id=${result.match.keyId}`);
-    return result.key;
-  }
-
-  /**
-   * Send a DASH **credit** tip to another identity.
-   *
-   * A credit transfer leaves no readable document behind — the SDK returns no
-   * transition id and nothing on chain says who was tipped for what — so this
-   * path is unprovable by construction and is kept only as the plain
-   * "send someone DASH" option. Nothing is announced on the user's behalf; a
-   * tip that Yappr can display is a YAPP tip (`sendYappTipLocal`).
-   *
-   * @param senderId - The sender's identity ID
-   * @param recipientId - The recipient's identity ID
-   * @param amountCredits - Amount in credits
-   * @param transferKeyWif - The sender's transfer private key in WIF format
-   * @param keyId - Optional key ID to use (if identity has multiple transfer keys)
-   */
-  async sendTip(
-    senderId: string,
-    recipientId: string,
-    amountCredits: number,
-    transferKeyWif: string,
-    keyId?: number
-  ): Promise<TipResult> {
-    // Validation: prevent self-tipping
-    if (senderId === recipientId) {
-      return { success: false, error: 'Cannot tip yourself', errorCode: 'SELF_TIP' };
-    }
-
-    // Validation: minimum amount
-    if (amountCredits < MIN_TIP_CREDITS) {
-      return {
-        success: false,
-        error: `Minimum tip is ${this.formatDash(this.creditsToDash(MIN_TIP_CREDITS))}`,
-        errorCode: 'INVALID_AMOUNT'
-      };
-    }
-
-    // Validation: transfer key provided
-    if (!transferKeyWif || transferKeyWif.trim().length === 0) {
-      return { success: false, error: 'Transfer key is required', errorCode: 'INVALID_KEY' };
-    }
-
-    try {
-      // Check sender balance. If the balance fetch itself fails, don't treat
-      // that as "0 credits" — skip the pre-check and let the transfer be the
-      // authority (the chain rejects underfunded transfers anyway).
-      let confirmedBalance: number | null = null;
-      try {
-        confirmedBalance = (await identityService.getBalance(senderId)).confirmed;
-      } catch (error) {
-        logger.warn('Could not fetch balance before tip; proceeding without pre-check:', error);
-      }
-      if (confirmedBalance !== null && confirmedBalance < amountCredits) {
-        return {
-          success: false,
-          error: `Insufficient balance. You have ${this.formatDash(this.creditsToDash(confirmedBalance))}.`,
-          errorCode: 'INSUFFICIENT_BALANCE'
-        };
-      }
-
-      const sdk = await getEvoSdk();
-
-      // Fetch sender identity WASM object
-      const identity = await sdk.identities.fetch(senderId);
-      if (!identity) {
-        return {
-          success: false,
-          error: 'Sender identity not found',
-          errorCode: 'NETWORK_ERROR'
-        };
-      }
-
-      // Get WASM public keys and find the transfer key that matches the private key
-      const wasmPublicKeys = identity.publicKeys;
-      const transferKey = this.findMatchingTransferKey(transferKeyWif.trim(), wasmPublicKeys, keyId);
-      if (!transferKey) {
-        return {
-          success: false,
-          error: 'No matching transfer key found. The provided private key does not match any transfer key on this identity.',
-          errorCode: 'INVALID_KEY'
-        };
-      }
-
-      // Log transfer details
-      logger.debug('Transfer args:', JSON.stringify({
-        senderId,
-        recipientId,
-        amount: amountCredits.toString(),
-        keyId: transferKey.keyId
-      }, null, 2));
-
-      // Create signer with the transfer key
-      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
-        transferKeyWif.trim(),
-        transferKey
-      );
-
-      logger.debug('Calling sdk.identities.creditTransfer...');
-      // Cast needed: SDK has duplicate IdentityCreditTransferOptions interfaces that get merged.
-      // The high-level facade only needs { identity, recipientId, amount, signer, signingKey? }.
-      const result = await sdk.identities.creditTransfer({
-        identity,
-        recipientId,
-        amount: BigInt(amountCredits),
-        signer,
-        signingKey
-      } as Parameters<typeof sdk.identities.creditTransfer>[0]);
-
-      // Clear sender's balance cache so it refreshes
-      identityService.clearCache(senderId);
-
-      logger.debug('Tip transfer result:', result);
-
-      return {
-        success: true,
-        // TODO: Return actual transaction hash once SDK exposes it
-        transactionHash: 'confirmed',
-      };
-
-    } catch (error) {
-      logger.error('Tip transfer error:', error);
-      // Handle both standard Error and WasmSdkError (which has .message but isn't instanceof Error)
-      const errorMessage = (error instanceof Error ? error.message : null) ||
-        ((error as { message?: string })?.message) ||
-        (typeof error === 'string' ? error : 'Unknown error');
-
-      // Handle known DAPI timeout issue (like in state-transition-service)
-      if (errorMessage.includes('504') || errorMessage.includes('timeout') || errorMessage.includes('wait_for_state_transition_result')) {
-        // Assume success - clear cache and return optimistic result
-        identityService.clearCache(senderId);
-
-        return {
-          success: true,
-          transactionHash: 'pending-confirmation',
-        };
-      }
-
-      // Check for invalid key errors - match various SDK error patterns
-      const lowerError = errorMessage.toLowerCase();
-      if (
-        lowerError.includes('private') ||
-        lowerError.includes('key') ||
-        lowerError.includes('signature') ||
-        lowerError.includes('wif') ||
-        lowerError.includes('invalid') ||
-        lowerError.includes('mismatch') ||
-        lowerError.includes('security') ||
-        lowerError.includes('authentication') ||
-        lowerError.includes('verify')
-      ) {
-        return {
-          success: false,
-          error: 'Invalid transfer key. The key you provided does not match this identity.',
-          errorCode: 'INVALID_KEY'
-        };
-      }
-
-      return {
-        success: false,
-        error: `Transfer failed: ${errorMessage}`,
-        errorCode: 'NETWORK_ERROR'
-      };
-    }
-  }
-
   /**
    * Send a **YAPP** tip, signing locally with a CRITICAL key.
    *
    * This is the provable path: Platform records the transfer in the system
    * token-history contract with the exact amount, the sender and the
-   * recipient, plus the `publicNote` this builds — so the badge Yappr renders
-   * is read back off chain rather than taken on the tipper's word.
+   * recipient, and this returns that transfer document's id so
+   * {@link recordTip} can cite it. The citation is what ties the payment to a
+   * post — consensus checks it — and the `publicNote` written here is only so
+   * the transfer reads as a tip in a wallet that knows nothing about Yappr.
    *
    * Every batch carrying a token transition needs a CRITICAL authentication
    * key. Wallet-login users don't have one in the browser: they get
@@ -297,7 +135,80 @@ class TipService {
     // The transfer document appears a block or two later; drop the cached
     // pages so the next read can pick it up instead of serving a stale page.
     tipHistoryService.clearCache();
-    return { success: true, transactionHash: 'confirmed' };
+
+    // Find the transfer document itself. Two things ride on this: it is the id
+    // the tip document has to cite, and it is the only evidence the transfer
+    // really landed — the SDK returning success is not the same as the
+    // transfer being readable, and a tip citing a transfer Drive cannot yet
+    // see is a paid 40120.
+    const landed = await tipHistoryService.awaitSentTip(
+      senderId,
+      this.tipMatch(recipientId, amount, target, message, sentAt)
+    );
+    return { success: true, transactionHash: 'confirmed', transferId: landed?.id };
+  }
+
+  /**
+   * Record a confirmed transfer as a tip on the post or reply it paid for.
+   *
+   * The tip document names the transfer, and the contract binds what it says
+   * about it: the writer must be the transfer's sender, `amount` must equal the
+   * transfer's amount, and `recipientId` must be both the transfer's recipient
+   * and the tipped document's author. So there is nothing to verify on read —
+   * and nothing here can make a tip look bigger, or aimed at someone else, than
+   * it was.
+   *
+   * Safe to retry: the unique index on `transferId` means a second attempt for
+   * a tip that already landed is refused rather than double-counted.
+   */
+  async recordTip(record: TipRecord): Promise<TipResult> {
+    const surface = tipSurfaceFor(record.target.kind);
+    if (!surface) {
+      return {
+        success: false,
+        error: 'This deployment\'s contract has no tip documents',
+        errorCode: 'NOT_AUTHORIZED',
+      };
+    }
+
+    try {
+      const result = await stateTransitionService.createDocument(
+        YAPPR_CONTRACT_ID,
+        surface.docType,
+        record.senderId,
+        {
+          transferId: identifierStringToDocumentBytes(record.transferId),
+          // A plain number, like every other integer property the client
+          // writes. YAPP has no decimals and a supply of 1e6, so the whole
+          // token amount is nowhere near the exact-integer limit — and if it
+          // ever were, consensus would reject the mismatch against the
+          // transfer rather than record a rounded tip.
+          amount: Number(record.amount),
+          recipientId: identifierStringToDocumentBytes(record.recipientId),
+          [surface.tippedField]: identifierStringToDocumentBytes(record.target.id),
+          ...(record.messageReplyId
+            ? { messageReplyId: identifierStringToDocumentBytes(record.messageReplyId) }
+            : {}),
+        }
+      );
+      if (!result.success) {
+        return { success: false, error: result.error ?? 'Could not record the tip', errorCode: 'NETWORK_ERROR' };
+      }
+      provedTipService.clearCache();
+      return { success: true, transactionHash: 'confirmed', transferId: record.transferId };
+    } catch (error) {
+      logger.error('Failed to record a tip document', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Could not record the tip',
+        errorCode: 'NETWORK_ERROR',
+      };
+    }
+  }
+
+  /** True when this deployment can show a tip on the post it was for. */
+  tipsAreRecordable(): boolean {
+    return provedTipsAvailable();
   }
 
   /**
@@ -330,7 +241,7 @@ class TipService {
   async confirmYappTip(senderId: string, match: SentTipMatch): Promise<TipResult> {
     const landed = await tipHistoryService.awaitSentTip(senderId, match);
     tipHistoryService.clearCache();
-    if (landed) return { success: true, transactionHash: 'confirmed' };
+    if (landed) return { success: true, transactionHash: 'confirmed', transferId: landed.id };
     return {
       success: false,
       error: "Your tip was sent but we couldn't confirm it landed. Check again before sending another — it may still be settling.",
@@ -377,13 +288,6 @@ class TipService {
       };
     }
     return null;
-  }
-
-  /**
-   * Convert Dash amount to credits
-   */
-  dashToCredits(dashAmount: number): number {
-    return Math.floor(dashAmount * CREDITS_PER_DASH);
   }
 
   /**

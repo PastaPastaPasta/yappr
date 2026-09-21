@@ -7,7 +7,7 @@ const TOKEN_ID = 'BQP2VQvGSKGZJbtJnSVfXfHytHJVgRKkm7VbP2Nk2Nkh'
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }))
 vi.mock('./token-service', () => ({ tokenService: { getTokenId: async () => TOKEN_ID } }))
 
-import { tipHistoryService, totalTipped, matchesSentTip, type ProvedTip } from './tip-history-service'
+import { tipHistoryService, matchesSentTip, type SentTransfer } from './tip-history-service'
 
 const POST_ID = '9oDC6xdg8WRixTD2j3FCBq3vtsrf6bRGjXSJbhtFoma9'
 const OTHER_POST_ID = 'FZSnZdKsLAuWxE7iZJq12eEz6xfGTgKPxK7uZJapTQxe'
@@ -36,35 +36,23 @@ beforeEach(() => {
 })
 
 describe('reading transfers off the token-history contract', () => {
-  it('queries the `to` index for the token, newest first, bounded', async () => {
-    query.mockResolvedValueOnce(new Map([['a', transferDoc()]]))
-    await tipHistoryService.getTipsReceived(AUTHOR)
+  it('reads the sender\'s OWN transfers off the `from` index, newest first, bounded', async () => {
+    query.mockResolvedValueOnce(new Map())
+    await tipHistoryService.getTipsSent(TIPPER)
 
     const shape = query.mock.calls[0][0]
     expect(shape.documentTypeName).toBe('transfer')
     expect(shape.where).toEqual([
       ['tokenId', '==', TOKEN_ID],
-      ['toIdentityId', '==', AUTHOR],
-    ])
-    expect(shape.orderBy).toEqual([['tokenId', 'asc'], ['toIdentityId', 'asc'], ['$createdAt', 'desc']])
-    expect(shape.limit).toBe(100)
-  })
-
-  it('queries the `from` index for sent tips', async () => {
-    query.mockResolvedValueOnce(new Map())
-    await tipHistoryService.getTipsSent(TIPPER)
-
-    const shape = query.mock.calls[0][0]
-    expect(shape.where).toEqual([
-      ['tokenId', '==', TOKEN_ID],
       ['$ownerId', '==', TIPPER],
     ])
     expect(shape.orderBy).toEqual([['tokenId', 'asc'], ['$ownerId', 'asc'], ['$createdAt', 'desc']])
+    expect(shape.limit).toBe(100)
   })
 
-  it('maps a transfer document onto the proved shape', async () => {
+  it('maps a transfer document onto the sent-transfer shape', async () => {
     query.mockResolvedValueOnce(new Map([['a', transferDoc({ publicNote: `yappr:tip:v1:post:${POST_ID}\nnice` })]]))
-    const [tip] = await tipHistoryService.getTipsReceived(AUTHOR)
+    const [tip] = await tipHistoryService.getTipsSent(TIPPER)
 
     expect(tip.amount).toBe(BigInt(5))
     expect(tip.from).toBe(TIPPER)
@@ -77,7 +65,7 @@ describe('reading transfers off the token-history contract', () => {
 
   it('keeps a transfer with no tip note, but attributes it to no post', async () => {
     query.mockResolvedValueOnce(new Map([['a', transferDoc({ publicNote: 'here you go' })]]))
-    const [tip] = await tipHistoryService.getTipsReceived(AUTHOR)
+    const [tip] = await tipHistoryService.getTipsSent(TIPPER)
 
     expect(tip.amount).toBe(BigInt(5))
     expect(tip.postId).toBeUndefined()
@@ -86,12 +74,12 @@ describe('reading transfers off the token-history contract', () => {
 
   it('caches a page for the TTL rather than re-querying', async () => {
     query.mockResolvedValue(new Map([['a', transferDoc()]]))
-    await tipHistoryService.getTipsReceived(AUTHOR)
-    await tipHistoryService.getTipsReceived(AUTHOR)
+    await tipHistoryService.getTipsSent(TIPPER)
+    await tipHistoryService.getTipsSent(TIPPER)
     expect(query).toHaveBeenCalledTimes(1)
 
     tipHistoryService.clearCache()
-    await tipHistoryService.getTipsReceived(AUTHOR)
+    await tipHistoryService.getTipsSent(TIPPER)
     expect(query).toHaveBeenCalledTimes(2)
   })
 
@@ -106,44 +94,8 @@ describe('reading transfers off the token-history contract', () => {
   })
 })
 
-describe('attributing tips to a post', () => {
-  it('keeps only the transfers whose note names this post', async () => {
-    query.mockResolvedValueOnce(new Map([
-      ['a', transferDoc({ $id: 'DR5sJvjXkZm3hDZPzRRvqbYvJGLsPAGGvHLxbJqaCiz9', amount: BigInt(5) })],
-      ['b', transferDoc({ $id: '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts', amount: BigInt(2), publicNote: `yappr:tip:v1:post:${OTHER_POST_ID}` })],
-      ['c', transferDoc({ $id: 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7', amount: BigInt(7), publicNote: 'unrelated payment' })],
-      ['d', transferDoc({ $id: 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec', amount: BigInt(3) })],
-    ]))
-
-    const tips = await tipHistoryService.getTipsForPost(POST_ID, AUTHOR)
-    expect(tips.map((tip) => tip.amount)).toEqual([BigInt(5), BigInt(3)])
-    expect(totalTipped(tips)).toBe(BigInt(8))
-  })
-
-  it('does not attribute a REPLY-noted transfer to the post with the same id', async () => {
-    query.mockResolvedValueOnce(new Map([
-      ['a', transferDoc({ publicNote: `yappr:tip:v1:reply:${POST_ID}` })],
-    ]))
-    const tips = await tipHistoryService.getTipsForPost(POST_ID, AUTHOR)
-    // The note names the same id, so it is this item's tip whichever doctype it is.
-    expect(tips).toHaveLength(1)
-    expect(tips[0].targetKind).toBe('reply')
-  })
-
-  it('degrades to no tips rather than throwing when the read fails', async () => {
-    query.mockRejectedValueOnce(new Error('offline'))
-    await expect(tipHistoryService.getTipsForPost(POST_ID, AUTHOR)).resolves.toEqual([])
-  })
-
-  it('needs both a post and an author before it queries anything', async () => {
-    await expect(tipHistoryService.getTipsForPost('', AUTHOR)).resolves.toEqual([])
-    await expect(tipHistoryService.getTipsForPost(POST_ID, '')).resolves.toEqual([])
-    expect(query).not.toHaveBeenCalled()
-  })
-})
-
 describe('confirming a tip landed', () => {
-  const sent: ProvedTip = {
+  const sent: SentTransfer = {
     id: 'DR5sJvjXkZm3hDZPzRRvqbYvJGLsPAGGvHLxbJqaCiz9',
     amount: BigInt(5),
     from: TIPPER,
@@ -170,7 +122,7 @@ describe('confirming a tip landed', () => {
   })
 
   it('does not treat an untagged transfer as a tip on a post', () => {
-    const untagged: ProvedTip = { ...sent, postId: undefined, message: undefined }
+    const untagged: SentTransfer = { ...sent, postId: undefined, message: undefined }
     expect(matchesSentTip(untagged, match)).toBe(false)
     expect(matchesSentTip(untagged, { to: AUTHOR, amount: BigInt(5) })).toBe(true)
   })

@@ -42,6 +42,5 @@ export const {
   clearEncryptionKeyType,
   storeTransferKey,
   getTransferKey,
-  hasTransferKey,
   clearTransferKey,
 } = browserSecretStore

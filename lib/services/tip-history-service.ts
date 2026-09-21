@@ -1,5 +1,5 @@
 /**
- * Proved tips, read from the SYSTEM token-history contract.
+ * The sender's own YAPP transfers, read from the SYSTEM token-history contract.
  *
  * YAPP sets `keepsTransferHistory`, so Platform writes a `transfer` document
  * for every YAPP transfer: `$ownerId` is the sender, `toIdentityId` the
@@ -12,9 +12,15 @@
  * consensus facts, while the link to a post is only the sender's own claim in
  * `publicNote`.
  *
- * The contract is a system contract: it has no count/sum trees (aggregates are
- * not available), so every read here is a bounded page over an index, newest
- * first, and the UI says so.
+ * This is NOT how tips are displayed. A tip on a post is a `tip` document on
+ * the social contract citing one of these transfers by id, and consensus checks
+ * the citation (lib/services/proved-tip-service.ts) — no reader ever has to
+ * find a transfer to render a tip.
+ *
+ * What is left here is the one job that genuinely belongs to transfer history:
+ * a sender looking up their OWN just-sent transfer, to learn its document id
+ * and to prove to themselves that it landed. That is a bounded page over one
+ * identity's own index, not a scan of someone else's incoming payments.
  */
 
 import { logger } from '@/lib/logger';
@@ -28,11 +34,11 @@ import { identifierToBase58, normalizeSDKResponse, type DocumentWhereClause, typ
 const TRANSFER_DOC_TYPE = 'transfer';
 const CACHE_TTL_MS = 60 * 1000;
 
-/** Hard page cap. The history contract has no count trees, so totals are "over the last N". */
-export const TIP_PAGE_LIMIT = 100;
+/** Hard page cap on the sender's own newest transfers. */
+const SENT_PAGE_LIMIT = 100;
 
-/** One proved YAPP transfer. */
-export interface ProvedTip {
+/** One YAPP transfer the sender made, as Platform recorded it. */
+export interface SentTransfer {
   /** Token-history document id — the on-chain handle for this proof. */
   id: string;
   /** Exact tokens transferred, as recorded by consensus. */
@@ -47,11 +53,6 @@ export interface ProvedTip {
   targetKind?: TipTargetKind;
   /** Free text the sender signed with the transfer. */
   message?: string;
-}
-
-/** Sum of a tip page — "N YAPP over these M transfers", never a global total. */
-export function totalTipped(tips: ProvedTip[]): bigint {
-  return tips.reduce((sum, tip) => sum + tip.amount, BigInt(0));
 }
 
 /** What a just-sent tip should look like on chain, for confirming it landed. */
@@ -73,7 +74,7 @@ export interface SentTipMatch {
  * indistinguishable, and mistaking an older one for the new one would report a
  * tip as landed that never did.
  */
-export function matchesSentTip(tip: ProvedTip, match: SentTipMatch): boolean {
+export function matchesSentTip(tip: SentTransfer, match: SentTipMatch): boolean {
   return (
     tip.to === match.to &&
     tip.amount === match.amount &&
@@ -90,8 +91,8 @@ function toBigInt(value: unknown): bigint {
   return BigInt(0);
 }
 
-/** A raw `transfer` document → ProvedTip, or null when it is not readable as one. */
-function toProvedTip(doc: Record<string, unknown>): ProvedTip | null {
+/** A raw `transfer` document → SentTransfer, or null when it is not readable as one. */
+function toSentTransfer(doc: Record<string, unknown>): SentTransfer | null {
   const id = typeof doc.$id === 'string' ? doc.$id : identifierToBase58(doc.$id);
   const from = typeof doc.$ownerId === 'string' ? doc.$ownerId : identifierToBase58(doc.$ownerId);
   const to = identifierToBase58(doc.toIdentityId);
@@ -112,9 +113,9 @@ function toProvedTip(doc: Record<string, unknown>): ProvedTip | null {
 }
 
 class TipHistoryService {
-  private readonly cache = new TtlMap<string, ProvedTip[]>(CACHE_TTL_MS);
+  private readonly cache = new TtlMap<string, SentTransfer[]>(CACHE_TTL_MS);
 
-  /** Drop every cached page (call right after a tip is known to have landed). */
+  /** Drop every cached page (call right after a transfer is known to have landed). */
   clearCache(): void {
     this.cache.clear();
   }
@@ -122,17 +123,16 @@ class TipHistoryService {
   /**
    * One page of `transfer` documents off a token-history index, newest first.
    *
-   * `field` picks the index: `toIdentityId` for transfers in, `$ownerId` for
-   * transfers out. Both the filter and the ordering are derived from it —
-   * every index on `transfer` is prefixed by tokenId and orderBy has to name
-   * the index fields in order, including the equality-constrained ones, so
-   * writing the field down once is what keeps the two from disagreeing.
+   * The filter and the ordering are both derived from `field` — every index on
+   * `transfer` is prefixed by tokenId and orderBy has to name the index fields
+   * in order, including the equality-constrained ones, so writing the field
+   * down once is what keeps the two from disagreeing.
    */
   private async queryTransfers(
-    field: 'toIdentityId' | '$ownerId',
+    field: '$ownerId',
     identityId: string,
     fresh = false
-  ): Promise<ProvedTip[]> {
+  ): Promise<SentTransfer[]> {
     const cacheKey = `${field}:${identityId}`;
     const cached = fresh ? undefined : this.cache.get(cacheKey);
     if (cached) return cached;
@@ -151,43 +151,14 @@ class TipHistoryService {
         [field, 'asc'],
         ['$createdAt', 'desc'],
       ] as DocumentOrderByClause[],
-      limit: TIP_PAGE_LIMIT,
+      limit: SENT_PAGE_LIMIT,
     });
 
     const tips = normalizeSDKResponse(response)
-      .map(toProvedTip)
-      .filter((tip): tip is ProvedTip => tip !== null);
+      .map(toSentTransfer)
+      .filter((tip): tip is SentTransfer => tip !== null);
     this.cache.set(cacheKey, tips);
     return tips;
-  }
-
-  /**
-   * Proved tips the sender attributed to `postId`.
-   *
-   * There is no index on `publicNote`, so this reads the recipient's newest
-   * `TIP_PAGE_LIMIT` incoming YAPP transfers off the `to` index and keeps the
-   * ones whose note names this post. A very heavily tipped author can
-   * therefore have older tips fall off the page — the UI labels the figure as
-   * "recent", it is never presented as a lifetime total.
-   *
-   * @param postId - The tipped post or reply
-   * @param authorId - Its author; tips are transfers TO them
-   */
-  async getTipsForPost(postId: string, authorId: string): Promise<ProvedTip[]> {
-    if (!postId || !authorId) return [];
-    try {
-      const received = await this.getTipsReceived(authorId);
-      return received.filter((tip) => tip.postId === postId);
-    } catch (error) {
-      logger.warn(`tipHistory: tips for post ${postId} failed`, error);
-      return [];
-    }
-  }
-
-  /** The identity's newest incoming YAPP transfers (tip-noted or not). */
-  async getTipsReceived(identityId: string): Promise<ProvedTip[]> {
-    if (!identityId) return [];
-    return this.queryTransfers('toIdentityId', identityId);
   }
 
   /**
@@ -196,7 +167,7 @@ class TipHistoryService {
    * `fresh` bypasses the TTL cache — used while polling for a wallet-signed
    * tip to land, where a 60s-stale page would read as "not sent yet".
    */
-  async getTipsSent(identityId: string, { fresh = false } = {}): Promise<ProvedTip[]> {
+  async getTipsSent(identityId: string, { fresh = false } = {}): Promise<SentTransfer[]> {
     if (!identityId) return [];
     return this.queryTransfers('$ownerId', identityId, fresh);
   }
@@ -214,7 +185,7 @@ class TipHistoryService {
     senderId: string,
     match: SentTipMatch,
     { attempts = 5, delayMs = 3000 } = {}
-  ): Promise<ProvedTip | null> {
+  ): Promise<SentTransfer | null> {
     for (let attempt = 0; attempt < attempts; attempt++) {
       if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
       try {

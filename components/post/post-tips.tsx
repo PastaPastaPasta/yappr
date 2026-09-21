@@ -4,12 +4,13 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { CurrencyDollarIcon } from '@heroicons/react/24/outline'
 import { logger } from '@/lib/logger'
-import { useAuth } from '@/contexts/auth-context'
-import { tipHistoryService, totalTipped, TIP_PAGE_LIMIT, type ProvedTip } from '@/lib/services/tip-history-service'
+import { provedTipService, totalTipped, TIP_PAGE_SIZE, type ProvedTip } from '@/lib/services/proved-tip-service'
+import type { TargetKind } from '@/lib/contract-topology'
 
 interface PostTipsProps {
-  postId: string
-  authorId: string
+  /** The tipped post or reply. */
+  targetId: string
+  kind: TargetKind
 }
 
 /** A tipper we have no profile for: show enough of the identity to be checkable. */
@@ -18,73 +19,73 @@ function shortIdentity(identityId: string): string {
 }
 
 /**
- * Tips on one post, read back from the token-history contract.
+ * The tips on one post, read straight off the `tip` documents.
  *
- * Deliberately NOT rendered on feed cards: this costs a DAPI request per post,
- * so it belongs to the detail view where the user asked for this post.
- * Nothing renders until at least one proved transfer names the post — there is
- * no "0 tips" state and no self-reported number to fall back to.
+ * Every number here is a consensus fact: a tip document cites the YAPP transfer
+ * that paid it, and the contract binds the amount, the sender and the payee to
+ * that transfer (docs/SOCIAL_V9.md). There is nothing to caveat and nothing to
+ * verify on read — a tip that could not be written is not here.
  *
- * Tip notes are permanent, immutable and written by whoever paid the minimum
- * tip, so the note is attacker-controlled text on someone else's post. Amounts
- * from blocked identities still count (the transfer happened, and hiding it
- * would make the total wrong), but their notes are not rendered.
+ * Two DAPI requests, which is why this belongs to the detail view rather than a
+ * feed card: one page of tips, and the count tree that says whether the page is
+ * all of them.
  */
-export function PostTips({ postId, authorId }: PostTipsProps) {
-  const { user } = useAuth()
-  const viewerId = user?.identityId
+export function PostTips({ targetId, kind }: PostTipsProps) {
   const [tips, setTips] = useState<ProvedTip[] | null>(null)
+  const [total, setTotal] = useState(0)
   const [names, setNames] = useState<Map<string, string>>(new Map())
-  const [blocked, setBlocked] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     let active = true
     setTips(null)
     setNames(new Map())
-    setBlocked(new Set())
-    // The proved tips are the payload; names and block status only decorate
-    // them. A failed profile or block lookup must not erase tips that DID load,
-    // so the decorations run in their own chains with their own catches.
-    tipHistoryService
-      .getTipsForPost(postId, authorId)
-      .then((result) => {
+
+    // The tips are the payload; the count and the tippers' names only decorate
+    // them, so a failure in either must not erase tips that DID load.
+    provedTipService
+      .getTipsFor(kind, targetId)
+      .then((loaded) => {
         if (!active) return
-        setTips(result)
-        if (result.length === 0) return
-        const senders = result.map((tip) => tip.from)
+        setTips(loaded)
+        setTotal(loaded.length)
+        if (loaded.length === 0) return
 
         import('@/lib/services/unified-profile-service')
-          .then(({ unifiedProfileService }) => unifiedProfileService.getProfilesByIdentityIds(senders))
+          .then(({ unifiedProfileService }) =>
+            unifiedProfileService.getProfilesByIdentityIds(loaded.map((tip) => tip.from))
+          )
           .then((profiles) => {
             if (active) setNames(new Map(profiles.map((profile) => [profile.$ownerId, profile.displayName])))
           })
           .catch((error) => logger.warn('PostTips: could not resolve tipper names', error))
 
-        if (!viewerId) return
-        import('@/lib/services/block-service')
-          .then(({ blockService }) => blockService.checkBlockedBatch(viewerId, senders))
-          .then((statuses) => {
-            if (active) setBlocked(new Set([...statuses].filter(([, isBlocked]) => isBlocked).map(([id]) => id)))
-          })
-          .catch((error) => logger.warn('PostTips: could not check block status', error))
+        // Only worth asking once the page could be hiding something.
+        if (loaded.length < TIP_PAGE_SIZE) return
+        provedTipService
+          .countTipsFor(kind, targetId)
+          .then((count) => { if (active) setTotal(Math.max(count, loaded.length)) })
+          .catch((error) => logger.warn('PostTips: could not read the tip count', error))
       })
       .catch((error) => {
         logger.warn('PostTips: could not load tips', error)
         if (active) setTips([])
       })
     return () => { active = false }
-  }, [postId, authorId, viewerId])
+  }, [targetId, kind])
 
   if (!tips || tips.length === 0) return null
 
   const tippers = new Set(tips.map((tip) => tip.from)).size
+  const showingAll = total <= tips.length
 
   return (
     <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
       <div className="flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-400">
         <CurrencyDollarIcon className="h-4 w-4" aria-hidden="true" />
         <span>
-          Tipped {totalTipped(tips).toString()} YAPP by {tippers} {tippers === 1 ? 'person' : 'people'}
+          {showingAll
+            ? `Tipped ${totalTipped(tips).toString()} YAPP by ${tippers} ${tippers === 1 ? 'person' : 'people'}`
+            : `${total} tips — showing the newest ${tips.length}`}
         </span>
       </div>
       <ul className="mt-2 space-y-1">
@@ -95,17 +96,9 @@ export function PostTips({ postId, authorId }: PostTipsProps) {
             <Link href={`/user?id=${tip.from}`} className="hover:underline">
               {names.get(tip.from) || shortIdentity(tip.from)}
             </Link>
-            {tip.message && !blocked.has(tip.from) && (
-              <span className="block text-gray-500">{tip.message}</span>
-            )}
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-xs text-gray-500">
-        Each line is a signed YAPP transfer recorded on Dash Platform: the amount and the sender are proved. That a
-        transfer was meant for this post is the sender&apos;s own note. Read from the author&apos;s last {TIP_PAGE_LIMIT}{' '}
-        incoming transfers.
-      </p>
     </div>
   )
 }

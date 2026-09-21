@@ -4,12 +4,14 @@ import Link from 'next/link'
 import { ChevronRightIcon } from '@heroicons/react/24/outline'
 import { ReplyThread, Post } from '@/lib/types'
 import { replyToPost } from '@/lib/services/post-service'
-import { PostCard, ProgressiveEnrichment } from './post-card'
+import { PostCard, ProgressiveEnrichment, TipBadge } from './post-card'
 
 interface ReplyThreadItemProps {
   thread: ReplyThread
   rootPostOwnerId: string
   getPostEnrichment?: (post: Post) => ProgressiveEnrichment | undefined
+  /** Proved tips sent with, or received by, a reply in this thread. */
+  getTipBadge?: (postId: string) => TipBadge | undefined
 }
 
 /**
@@ -27,7 +29,7 @@ export function flattenReplyThreads(threads: ReplyThread[]): ReplyThread[] {
  * - Author's thread posts show a connecting vertical line
  * - Nested replies are indented with a left border
  */
-export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment }: ReplyThreadItemProps) {
+export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment, getTipBadge }: ReplyThreadItemProps) {
   const { content, isAuthorThread, isThreadContinuation, nestedReplies } = thread
   const postLike = replyToPost(content)
 
@@ -55,6 +57,7 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment }: 
         post={postLike}
         enrichment={getPostEnrichment?.(postLike)}
         rootPostOwnerId={rootPostOwnerId}
+        tipBadge={getTipBadge?.(postLike.id)}
       />
 
       {/* Nested replies - flattened to a single indent level */}
@@ -66,6 +69,7 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment }: 
               thread={nested}
               rootPostOwnerId={rootPostOwnerId}
               getPostEnrichment={getPostEnrichment}
+              getTipBadge={getTipBadge}
             />
           ))}
         </div>
@@ -78,7 +82,7 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment }: 
  * Renders a nested reply. The indentation and left border visually indicate
  * the reply hierarchy without explicit "Replying to" text.
  */
-function NestedReply({ thread, rootPostOwnerId, getPostEnrichment }: ReplyThreadItemProps) {
+function NestedReply({ thread, rootPostOwnerId, getPostEnrichment, getTipBadge }: ReplyThreadItemProps) {
   const postLike = replyToPost(thread.content)
   const enrichment = getPostEnrichment?.(postLike)
 
@@ -98,6 +102,7 @@ function NestedReply({ thread, rootPostOwnerId, getPostEnrichment }: ReplyThread
         post={postLike}
         enrichment={enrichment}
         rootPostOwnerId={rootPostOwnerId}
+        tipBadge={getTipBadge?.(postLike.id)}
       />
 
       {/* Continuation affordance: refocuses the page on this reply, showing its
