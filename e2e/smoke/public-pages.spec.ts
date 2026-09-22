@@ -68,6 +68,7 @@ test('login page shows the login affordance', async ({ page }) => {
   await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
   await expect(dialog.locator('#loginCredential')).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: /passkey/i })).toHaveCount(1)
 })
 
 test('primary navigation moves between sections', async ({ page }) => {

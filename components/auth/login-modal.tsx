@@ -11,8 +11,18 @@ import { useLoginModal } from '@/hooks/use-login-modal'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { identityBridgeUrl } from '@/lib/identity-bridge'
+import { getConfiguredNetwork } from '@/lib/constants'
 import { WalletLoginPanel } from './wallet-login-panel'
 import { KeyLoginForm } from './key-login-form'
+
+/** Where "New to Dash?" sends people: the wallet on mainnet, the identity bridge elsewhere. */
+const DASH_WALLET_DOWNLOAD_URL = 'https://www.dash.org/download/'
+
+function newUserLink(): { href: string; label: string } {
+  return getConfiguredNetwork() === 'mainnet'
+    ? { href: DASH_WALLET_DOWNLOAD_URL, label: 'Get the Dash wallet' }
+    : { href: identityBridgeUrl(), label: 'Create an identity' }
+}
 
 /**
  * Global sign-in dialog.
@@ -32,6 +42,7 @@ export function LoginModal() {
   const advancedId = useId()
   const opener = useRef<HTMLElement | null>(null)
 
+  const newUser = newUserLink()
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [walletKey, setWalletKey] = useState(0)
   const [passkeyBusy, setPasskeyBusy] = useState(false)
@@ -190,12 +201,12 @@ export function LoginModal() {
               <p className="mt-5 text-center text-sm text-gray-600 dark:text-gray-400">
                 New to Dash?{' '}
                 <a
-                  href={identityBridgeUrl()}
+                  href={newUser.href}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="font-medium text-yappr-600 dark:text-yappr-400 hover:underline underline-offset-4"
                 >
-                  Create an identity
+                  {newUser.label}
                 </a>
               </p>
             </div>

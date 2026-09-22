@@ -139,6 +139,20 @@ class IdentityService {
   }
 
   /**
+   * Find the identity that holds a public key, by the key's hash160. Platform
+   * indexes ECDSA_SECP256K1 keys as unique and ECDSA_HASH160 keys as
+   * non-unique; a non-unique hash shared by several identities is ambiguous,
+   * so it resolves to null. Returns the identity ID, or null.
+   */
+  async getIdentityIdByPublicKeyHash(publicKeyHash: Uint8Array): Promise<string | null> {
+    const sdk = await getEvoSdk();
+    const identity = await sdk.identities.byPublicKeyHash(publicKeyHash);
+    if (identity) return identity.id.toBase58();
+    const shared = await sdk.identities.byNonUniquePublicKeyHash(publicKeyHash);
+    return shared.length === 1 ? shared[0].id.toBase58() : null;
+  }
+
+  /**
    * Get identity balance
    */
   async getBalance(identityId: string): Promise<IdentityBalance> {
