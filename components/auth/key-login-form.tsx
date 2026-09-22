@@ -11,7 +11,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { identityService } from '@/lib/services/identity-service'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { keyValidationService, type KeyValidationResult } from '@/lib/services/key-validation-service'
+import { keyValidationService } from '@/lib/services/key-validation-service'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
 import { authVaultService } from '@/lib/services/auth-vault-service'
 import { isLikelyWif, validateWifNetwork, wifToPrivateKey } from '@/lib/crypto/wif'
@@ -30,6 +30,11 @@ interface ResolvedIdentity {
 }
 
 type CredentialType = 'key' | 'password' | null
+
+function credentialTypeOf(credential: string): CredentialType {
+  if (!credential) return null
+  return isLikelyWif(credential) ? 'key' : 'password'
+}
 
 /** The identity that holds this key, found through Platform's public-key-hash index. */
 async function identityForKey(wif: string): Promise<ResolvedIdentity | null> {
@@ -95,14 +100,13 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
   // Unified credential field (password OR private key)
   const [credential, setCredential] = useState('')
   const [showCredential, setShowCredential] = useState(false)
-  const [detectedCredentialType, setDetectedCredentialType] = useState<CredentialType>(null)
   const [hasOnchainBackup, setHasOnchainBackup] = useState<boolean | null>(null)
   // Identity found from the key itself when no username or ID was typed.
   const [keyIdentity, setKeyIdentity] = useState<ResolvedIdentity | null>(null)
 
   // Key validation states
   const [keyValidationStatus, setKeyValidationStatus] = useState<'idle' | 'validating' | 'valid' | 'invalid'>('idle')
-  const [keyValidationResult, setKeyValidationResult] = useState<KeyValidationResult | null>(null)
+  const [keyError, setKeyError] = useState<string | null>(null)
 
   // Form states
   const [isLoading, setIsLoading] = useState(false)
@@ -135,14 +139,14 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
     setResolvedIdentity(null)
     setLookupError(null)
     setHasOnchainBackup(null)
-    if (identityInput.trim().length < 3) return
+    const trimmedInput = identityInput.trim()
+    if (trimmedInput.length < 3) return
 
     let cancelled = false
     const timeoutId = setTimeout(async () => {
       setIsLookingUp(true)
 
       try {
-        const trimmedInput = identityInput.trim()
         const inputIsIdentityId = isLikelyIdentityId(trimmedInput)
         let identityId = trimmedInput
 
@@ -237,25 +241,17 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
   // from the key.
   useEffect(() => {
     setKeyValidationStatus('idle')
-    setKeyValidationResult(null)
+    setKeyError(null)
     setKeyIdentity(null)
-
-    if (!credential) {
-      setDetectedCredentialType(null)
-      return
-    }
-
-    const isKey = isLikelyWif(credential)
-    setDetectedCredentialType(isKey ? 'key' : 'password')
-    if (!isKey) return
+    if (!credential || !isLikelyWif(credential)) return
 
     const identityTyped = identityInput.trim().length > 0
     if (identityTyped && !resolvedIdentity) return
 
     let cancelled = false
-    const reject = (error: string, errorType: KeyValidationResult['errorType']) => {
+    const reject = (message: string) => {
       setKeyValidationStatus('invalid')
-      setKeyValidationResult({ isValid: false, error, errorType })
+      setKeyError(message)
     }
 
     const timeoutId = setTimeout(async () => {
@@ -265,13 +261,13 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
         let target = resolvedIdentity
         if (!target) {
           if (!validateWifNetwork(wifToPrivateKey(credential).prefix, keyNetwork())) {
-            reject('This key is for a different network', 'NETWORK_MISMATCH')
+            reject('This key is for a different network')
             return
           }
           target = await identityForKey(credential)
           if (cancelled) return
           if (!target) {
-            reject('No identity uses this key', 'IDENTITY_NOT_FOUND')
+            reject('No identity uses this key')
             return
           }
           setKeyIdentity(target)
@@ -279,11 +275,11 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
 
         const result = await keyValidationService.validatePrivateKey(credential, target.id, keyNetwork())
         if (cancelled) return
-        setKeyValidationResult(result)
+        setKeyError(result.isValid ? null : result.error ?? null)
         setKeyValidationStatus(result.isValid ? 'valid' : 'invalid')
       } catch (err) {
         logger.error('Key validation error:', err)
-        if (!cancelled) reject('Failed to validate key', 'INVALID_WIF')
+        if (!cancelled) reject('Failed to validate key')
       }
     }, 300)
 
@@ -292,6 +288,9 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
       clearTimeout(timeoutId)
     }
   }, [credential, identityInput, resolvedIdentity])
+
+  const detectedCredentialType = credentialTypeOf(credential)
+  const typedIdentity = identityInput.trim()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -302,6 +301,10 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
     if (isLoading || !credential || !target) {
       return
     }
+    if (detectedCredentialType === 'key' && keyValidationStatus !== 'valid') {
+      setErrorWithShake('Private key does not match this identity')
+      return
+    }
 
     setError(null)
     setIsLoading(true)
@@ -310,12 +313,6 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
       const identityId = target.id
 
       if (detectedCredentialType === 'key') {
-        if (keyValidationStatus !== 'valid') {
-          setErrorWithShake('Private key does not match this identity')
-          setIsLoading(false)
-          return
-        }
-
         await login(identityId, credential)
 
         if (!sessionStorage.getItem(scopedKey('yappr_backup_prompt_shown'))) {
@@ -361,7 +358,7 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
       case 'key':
         return keyValidationStatus === 'valid'
       case 'password':
-        return Boolean(resolvedIdentity) && hasOnchainBackup && credential.length >= 16
+        return resolvedIdentity !== null && hasOnchainBackup === true && credential.length >= 16
       default:
         return false
     }
@@ -373,10 +370,10 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
     if (keyIdentity && keyValidationStatus === 'valid') {
       return `Signing in as ${keyIdentity.dpnsUsername ?? keyIdentity.id}.`
     }
-    if (detectedCredentialType === 'password' && !identityInput.trim()) {
+    if (detectedCredentialType === 'password' && !typedIdentity) {
       return 'Enter your Dash username to sign in with a password.'
     }
-    if (detectedCredentialType === 'key' && identityInput.trim() && !resolvedIdentity && !isLookingUp) {
+    if (detectedCredentialType === 'key' && typedIdentity && !resolvedIdentity && !isLookingUp) {
       return 'Fix the username, or clear it to sign in with the key alone.'
     }
     return 'Your key stays on this device. Every signature happens locally.'
@@ -440,7 +437,7 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
                 {keyValidationStatus === 'validating' && <Spinner size="sm" className="text-gray-400" />}
                 {keyValidationStatus === 'valid' && <VerifiedIcon label="Key matches this identity" />}
                 {keyValidationStatus === 'invalid' && (
-                  <RejectedIcon message={keyValidationResult?.error || 'Invalid private key'} />
+                  <RejectedIcon message={keyError ?? 'Invalid private key'} />
                 )}
               </>
             )}
