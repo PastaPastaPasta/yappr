@@ -62,6 +62,11 @@ export function getPublicKey(privateKey: Uint8Array): Uint8Array {
   return secp256k1.getPublicKey(privateKey, true)
 }
 
+/** hash160 of the compressed public key for a WIF, the index Platform keys identities by. */
+export function publicKeyHashFromWif(privateKeyWif: string): Uint8Array {
+  return hash160(getPublicKey(wifToPrivateKey(privateKeyWif).privateKey))
+}
+
 /**
  * Find which identity key matches the given private key WIF.
  * Returns the matching key info including id, securityLevel, and purpose, or null if no match.
