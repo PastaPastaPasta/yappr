@@ -1,7 +1,9 @@
 # DM v5: unlinkable 1:1 and group messaging
 
-Status: **design, not implemented.** Revised 2026-09-23 after a simplification
-review (§12.3). Supersedes the 1:1-only DM contract
+Status: **implemented; live on the moutai devnet.** Revised 2026-09-23 after a
+simplification review (§12.3). The client is `lib/dm` and `lib/services/dm-v5`,
+behind `NEXT_PUBLIC_DM_TOPOLOGY=v5` (on for /devnet only); the devnet e2e suite
+is `e2e/write/dm-v5-*.spec.ts`. Supersedes the 1:1-only DM contract
 (`contracts/yappr-dm-contract.json`, topology v3/v4) for new conversations. It
 merges the metadata-privacy research with `DM_V5_GROUPS.md` (branch
 `design/dm-v5-groups`).
