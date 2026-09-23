@@ -275,21 +275,24 @@ nonce    = 12 random bytes
 e        = HKDF(hintKey, "yappr/dm/v5", "invite-eph\0" || nonce) mod n     // re-derivable by the sender on any device
 epk      = e·G                                                             // 33 B, stored
 ik       = HKDF(ECDH_x(e, encPub_R), "yappr/dm/v5", "invite\0" || epk)     // recipient: ECDH_x(encPriv_R, epk)
-auth     = HKDF(Z_SR, "yappr/dm/v5", "invite-auth\0" || epk)[0:16]         // Z_SR = static ECDH, sender ↔ recipient
-sealed   = nonce | AES-256-GCM(ik, iv=nonce, pad128(senderId | auth | grant), aad="yappr/dm/invite/v5" || $ownerId)
+sealed   = nonce | AES-256-GCM(ik, iv=nonce, pad128(grant), aad="yappr/dm/invite/v5" || $ownerId || epk)
 selfHint = recipientId XOR HKDF(hintKey, "yappr/dm/v5", "invite-self\0" || nonce)[0:32]
 ```
 
-`ik` is unique per `epk`, so using the nonce as the GCM IV is safe.
+`ik` is unique per `epk`, so using the nonce as the GCM IV is safe. The sender
+is `$ownerId`, which Platform signs. Binding it in the AAD means a copy of the
+invite under another identity fails to decrypt, so the plaintext needs no
+sender field. `Z_SR` below is the static ECDH between sender and recipient
+(§4.3).
 
 **Every invite is exactly the same size.** The plaintext is always padded to
 128 bytes, so `sealed` is always 156 bytes and a whole invite document is
-about 300 bytes. That leaves 128 − 32 (sender) − 16 (auth) = 80 bytes of
+about 300 bytes. After the 2-byte length prefix, 126 bytes are left for the
 grant.
 
 **Grant contents:**
 - **1:1:** `0x01 | optional first message`. The recipient derives `gid` and
-  `K` from `Z_SR`. A first message short enough to fit (up to about 75 bytes,
+  `K` from `Z_SR`. A first message short enough to fit (up to 125 bytes,
   e.g. "hey, saw your post about…") rides in the invite as **index 0 of the
   inviter's stream** (§6.1), saving a document. A longer one is sent as a
   normal `dmMessage` at `i = 0`. Either way the invite looks the same.
@@ -305,10 +308,9 @@ invite:
 1. One ECDH with its own key and `epk`, then one AES-GCM trial. A GCM failure
    means the invite is for someone else. There is no identity fetch and no
    per-inviter cache, and the trial reads only data already downloaded.
-2. On success, check that the decrypted `senderId` equals `$ownerId`.
-3. Fetch the sender's identity, compute `Z_SR` (trying keys as in §4.2), and
-   check `auth`. This proves the sender, not just someone who knows the
-   recipient's public key, wrote the invite. The UI fetches the sender's
+2. On success, fetch the sender's identity to compute `Z_SR` for a 1:1 grant
+   (trying keys as in §4.2). A forged 1:1 invite yields a key nobody else
+   holds, so it simply leads to an empty thread. The UI fetches the sender's
    profile at this point anyway to show the request, so the fetch reveals
    nothing extra to the node.
 
