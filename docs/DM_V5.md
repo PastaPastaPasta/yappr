@@ -110,6 +110,13 @@ away. A counterpart without an encryption key cannot be messaged. The UI says
 so and links to the add-key flow. Contract-bound keys stay off, for the reason
 given in `NON_SOCIAL_CONTRACTS.md`.
 
+**Key source today and later.** v5 uses the unbound ENCRYPTION key Yappr
+derives at login. Once DashPay Connect v2 ships
+(`~/workspace/DASHPAY_CONNECT_PROTOCOL_V2.md`), DMs move to the DM contract's
+bound key pair, which the wallet hands to the app at every login. That move is a
+key rotation as far as this design is concerned: one bridge (§4.6), and 1:1
+threads follow on their own (§4.3).
+
 **No document carries a key id.** Wherever a reader must pick keys, it tries:
 - the counterpart's ENCRYPTION keys, *including disabled ones*, which stay on
   the identity;
@@ -245,9 +252,9 @@ New contract, `yappr-dm-contract-v5.json`.
 
 | Doctype | Owner | Fields | Indexes | Mutability |
 | --- | --- | --- | --- | --- |
-| `dmInvite` | inviter | `bucket` u16 (heap-encoded, §5.1), `epk` b33, `sealed` b156 (fixed), `selfHint` b32 | `[bucket, $createdAt]`; `[$ownerId, $createdAt]` | immutable, **not deletable** |
-| `dmMessage` | sender | `tag` b16, `body` bytes 156–5120, optional `body2`/`body3` bytes ≤ 5120 (§5.3) | **unique** `[tag, $ownerId]` | immutable, **not deletable** |
-| `dmRoster` | group owner | `handle` b10, `blob` bytes 156–4124 | **unique** `[$ownerId, handle]` | mutable, not deletable |
+| `dmInvite` | inviter | `bucket` u16 (heap-encoded, §5.1), `epk` b33, `sealed` b156 (fixed), `selfHint` b32 | `[bucket, $createdAt]`; `[$ownerId, $createdAt]` | immutable, deleted by the sweep (§5.7) |
+| `dmMessage` | sender | `tag` b16, `body` bytes 156–5120, optional `body2`/`body3` bytes ≤ 5120 (§5.3) | **unique** `[tag, $ownerId]` | immutable, deleted by the sweep (§5.7) |
+| `dmRoster` | group owner | `handle` b10, `blob` bytes 156–4124 | **unique** `[$ownerId, handle]` | mutable, deleted when the group ends |
 | `dmKeyring` | group owner | `handle` b10, `slots` bytes 264–5120 | **unique** `[$ownerId, handle]` | immutable, not deletable |
 | `encryptionKeyBridge` | key owner | `payload` b81 | `[$ownerId, $createdAt]` | immutable, not deletable |
 | `dmSelfState` | user | `slot` u8, `blob` bytes 156–4124 | **unique** `[$ownerId, slot]` | mutable |
@@ -258,10 +265,9 @@ New contract, `yappr-dm-contract-v5.json`.
 - **Spoofing is prevented with owner-scoped unique indexes and secret
   handles.** A stranger cannot compute a handle. A removed member who knows
   `gid` can write only under their own `$ownerId`, where no reader looks.
-- **Nothing is deletable except by replacing `dmSelfState`.** A burst of
-  deletes would cluster exactly the documents that tags keep apart, and
-  deletion does not remove anything from block history anyway. "Delete
-  conversation" is a local action.
+- **Deletion is by age, never by conversation** (§5.7). A burst of deletes
+  aimed at one conversation would cluster exactly the documents that tags keep
+  apart.
 
 ### 5.1 `dmInvite`: sealed, fixed-size, bucketed first contact
 
@@ -306,6 +312,16 @@ grant.
 
 An observer cannot tell a 1:1 invite from a group invite, or whether a first
 message is attached.
+
+**Who can reach you.** Anyone can invite you; the chain cannot filter without
+revealing the recipient. The client sorts:
+- From someone you follow: the conversation appears in the inbox.
+- From anyone else: it appears under **Requests**. Replying or accepting moves
+  it to the inbox. Declining hides it and adds the sender to the local block
+  list.
+- **Group invites add you directly** (WhatsApp style) when the owner is someone
+  you follow. Otherwise the group lands in Requests too.
+- Invites from blocked identities are dropped after decryption.
 
 **Discovery.** The recipient polls
 `bucket in [mine at k_m, mine at k_{m−1}], $createdAt > lastScan`. For each
@@ -518,14 +534,57 @@ every membership change and every rename. It does three jobs:
 blob = iv(12) | AES-256-GCM(HKDF(stateKey, "slot\0" || u8(slot)), iv, pad(state))
 ```
 
-The blob holds read positions, stream heads, contacts, and a **client-side**
-block list, split across up to 8 slot docs of about 5 KB each. That is room for
+The blob holds read positions, stream heads, contacts (each conversation's
+`gid`, counterpart or owner, and current epoch), and a **client-side** block
+list. Once the sweep (§5.7) has deleted old invites and old messages, this is
+the only place a new device can find its conversations, so it is required, not
+a cache. It is split across up to 8 slot docs of about 5 KB each. That is room for
 about 1,000 conversations.
 
 **Writes are debounced (at least 5 minutes) and never happen immediately on
 read**, because a state update seconds after someone's message is a timing
 signal. It ships in Phase 1: without it, read state and blocks would differ
 between a user's devices.
+
+### 5.7 Deletion and fee reclaim
+
+Deleting a document removes it from Platform state and refunds most of its
+storage fee to the owner (a measured like delete refunded 93% of its create,
+`INDEXONLY_PHASE1_RESULTS.md`). Only the owner can delete, so each user
+reclaims the fees for what *they* wrote. Deletion does not remove the
+transition from block history: anyone archiving blocks keeps the ciphertext.
+Deletion reclaims fees and stops nodes serving the data; it is not a privacy
+erasure.
+
+**The sweep.** The client deletes its own DM documents in `$createdAt` order,
+across all conversations at once, once they pass the retention age:
+
+| Doctype | Deleted after | Why that long |
+| --- | --- | --- |
+| `dmMessage` | the retention age (decision 12) | |
+| `dmInvite` | the retention age, and never under 90 days | Recipients who have not scanned yet must still find it, and the `k` estimate reads last month's invites |
+| `dmRoster` | when the group ends | The group needs it until then |
+| `dmKeyring`, `encryptionKeyBridge`, `dmSelfState` | never | Small, and needed to read anything still on chain |
+
+- **It reveals nothing new.** The deletes remove the owner's oldest documents,
+  whose creation times are already public, in time order. They say nothing
+  about which conversation any document belonged to.
+- **"Delete conversation"** hides it locally at once. Its documents leave
+  the chain with the next sweep, at their normal age. Deleting them early would
+  cluster them.
+- **Cost.** One delete per document (Platform's batch cap is 1). Each delete
+  pays a small processing fee and receives the storage refund, so the net is
+  well positive. The sweep runs in the background while the app is open.
+
+**What the other side sees.** When A's sweep deletes A's old messages, B's
+*new* devices can no longer load them. B's existing devices keep whatever they
+already decrypted in the local cache. So the retention age is also how far back
+history follows a user to a new browser.
+
+**Effects on recovery.** A deleted prefix leaves a stream starting above
+`i = 0`, and deleted invites no longer point at their conversations. A new
+device therefore starts from `dmSelfState` (contacts and stream heads), not
+from probing, and treats a missing tag below a known head as swept, not lost.
 
 ## 6. Messages
 
@@ -572,7 +631,8 @@ never collide across participants.
 - `0x03` read receipt: opt-in and delayed (§8).
 - `0x04` roster nudge: sent by the new member after joining, so members pick up
   the new ratchet early.
-- `0x10` and up: reserved for replies, reactions and edits.
+- `0x10` and up: reserved for replies, reactions and edits. Phase 1 is text
+  only: no attachments, images or voice notes.
 
 ### 6.2 Sending
 
@@ -604,12 +664,13 @@ never collide across participants.
   window fills, the display becomes "N+" until the conversation opens. This
   replaces v4's count queries and its read receipts.
 - **Recovery on a new device:**
-  1. Scan your bucket for incoming invites.
-  2. Read your own invites through `selfHint`.
-  3. For each conversation, probe its streams forward in 100-tag batches, with
-     exponential probe points to find the end.
-  4. If `dmSelfState` is enabled, it caches stream heads, so step 3 is mostly
-     skipped.
+  1. Load `dmSelfState`: every conversation, its epoch, and its stream heads.
+  2. Scan your bucket for invites newer than the last recorded scan.
+  3. Poll each stream forward from its recorded head.
+  4. Fallback if `dmSelfState` is lost: read your own invites through
+     `selfHint`, scan your bucket, and probe streams forward in 100-tag
+     batches. This recovers only conversations whose invites have not yet been
+     swept.
 
 ### 6.4 Reading
 
@@ -667,7 +728,7 @@ stream tags. A message on base `b` is rejected if keyring `b+1` exists and
 | Send | 1 message | **1** message | +16 B tag, plus padding (§5.3) |
 | Create a group of N | n/a | N−1 invites + 1 roster | The owner has no slot: `S` is derived |
 | Add a member | n/a | 1 invite + 1 roster replace | Nothing for existing members (ratchet) |
-| Remove a member | n/a | 1 keyring + 1 roster replace | Invites are never deleted |
+| Remove a member | n/a | 1 keyring + 1 roster replace | The removed member's invite is not deleted early (§5.7) |
 | Leave | n/a | 1 message, then the owner's Remove | |
 | Rename | n/a | 1 roster replace | |
 | Rotate encryption key | n/a | **1** bridge, total | 1:1 threads move on their own (§4.3) |
@@ -722,6 +783,8 @@ that matters most.
   - Tor.
 
   Decoy tags do not help, because the node can see which tags later get hits.
+- **Deletion** runs by age across all conversations (§5.7), so it clusters
+  nothing.
 - **Blocking** must stay client-side (in `dmSelfState`). An on-chain `block` of
   a DM contact would publish the relationship.
 - **Your own sender activity** (counts and times from `$ownerId`, `$createdAt`
@@ -802,7 +865,7 @@ Adding admins needs a second writer of keyrings, which is left for later.
 | Read receipts | Encrypted in-stream | Public `dmReadReceipt` | **Local / self-state, with opt-in in-stream receipts.** |
 | Padding | Size classes | None (storage cost) | **Size classes.** Under 10% of a document's cost (§5.3). |
 | Unread counts | `tag in` window | rangeCountable count | **Tag window.** There is no shared id to count by. |
-| Invite deletion | n/a | Deleted on removal (refund) | **Never deleted.** A delete would point at the removed member's bucket. |
+| Invite deletion | n/a | Deleted on removal (refund) | **Deleted by age in the sweep (§5.7),** never on removal. A delete on removal would point at the removed member's bucket. |
 | Key rotation | Not covered | One bridge doc | **Bridge,** plus 1:1 threads that move on their own. |
 
 ### 12.1 What was borrowed from Platform's shielded pool
@@ -882,3 +945,9 @@ Decided 2026-09-22:
 | 4 | Group size limit | **100** including the owner. |
 | 5 | Cross-device read sync | **Yes,** `dmSelfState` ships in Phase 1 (§5.6). |
 | 6 | Per-device ratchets ("sealed chat") | **No.** History must follow the user to any browser (§11). |
+| 7 | Key | The derived ENCRYPTION key for now; the DM contract's bound key once DashPay Connect v2 ships (§4.2). |
+| 8 | Who can start a conversation | Anyone. Non-followed senders go to Requests (§5.1). |
+| 9 | Content | Text only in Phase 1. |
+| 10 | Owner leaves a group | The group ends (§9). |
+| 11 | Joining a group | Added directly, if you follow the owner; otherwise via Requests (§5.1). |
+| 12 | Deletion | Owners delete their own documents by age to reclaim fees (§5.7). Retention age: **open**. |
