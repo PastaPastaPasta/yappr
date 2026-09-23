@@ -245,8 +245,8 @@ New contract, `yappr-dm-contract-v5.json`.
 
 | Doctype | Owner | Fields | Indexes | Mutability |
 | --- | --- | --- | --- | --- |
-| `dmInvite` | inviter | `bucket` u16 (heap-encoded, §5.1), `sealed` bytes 156–4124, `selfHint` b32 | `[bucket, $createdAt]`; `[$ownerId, $createdAt]` | immutable, **not deletable** |
-| `dmMessage` | sender | `tag` b16, `body` bytes 156–4124 | **unique** `[tag, $ownerId]` | immutable, **not deletable** |
+| `dmInvite` | inviter | `bucket` u16 (heap-encoded, §5.1), `epk` b33, `sealed` b156 (fixed), `selfHint` b32 | `[bucket, $createdAt]`; `[$ownerId, $createdAt]` | immutable, **not deletable** |
+| `dmMessage` | sender | `tag` b16, `body` bytes 156–5120, optional `body2`/`body3` bytes ≤ 5120 (§5.3) | **unique** `[tag, $ownerId]` | immutable, **not deletable** |
 | `dmRoster` | group owner | `handle` b10, `blob` bytes 156–4124 | **unique** `[$ownerId, handle]` | mutable, not deletable |
 | `dmKeyring` | group owner | `handle` b10, `slots` bytes 264–5120 | **unique** `[$ownerId, handle]` | immutable, not deletable |
 | `encryptionKeyBridge` | key owner | `payload` b81 | `[$ownerId, $createdAt]` | immutable, not deletable |
@@ -263,42 +263,61 @@ New contract, `yappr-dm-contract-v5.json`.
   deletion does not remove anything from block history anyway. "Delete
   conversation" is a local action.
 
-### 5.1 `dmInvite`: sealed, padded, bucketed first contact
+### 5.1 `dmInvite`: sealed, fixed-size, bucketed first contact
+
+The invite borrows Orchard's note encryption (§12.1): a fresh ephemeral key
+per invite, so a recipient recognises its invites with its own private key
+alone, without fetching anyone's identity.
 
 ```
 bucket   = (1 << k) | HKDF(recipientId, "yappr/dm/v5", "bucket\0")[0:2] >> (16 − k)   // heap-encoded, k = 0 → 1
 nonce    = 12 random bytes
-ik       = HKDF(Z_inviter_recipient, "yappr/dm/v5", "invite\0" || nonce)
-sealed   = nonce | AES-256-GCM(ik, iv=nonce, pad(grant), aad="yappr/dm/invite/v5" || $ownerId)
-selfHint = recipientId XOR HKDF(hintKey, info="invite-self\0" || nonce)[0:32]
+e        = HKDF(hintKey, "yappr/dm/v5", "invite-eph\0" || nonce) mod n     // re-derivable by the sender on any device
+epk      = e·G                                                             // 33 B, stored
+ik       = HKDF(ECDH_x(e, encPub_R), "yappr/dm/v5", "invite\0" || epk)     // recipient: ECDH_x(encPriv_R, epk)
+auth     = HKDF(Z_SR, "yappr/dm/v5", "invite-auth\0" || epk)[0:16]         // Z_SR = static ECDH, sender ↔ recipient
+sealed   = nonce | AES-256-GCM(ik, iv=nonce, pad128(senderId | auth | grant), aad="yappr/dm/invite/v5" || $ownerId)
+selfHint = recipientId XOR HKDF(hintKey, "yappr/dm/v5", "invite-self\0" || nonce)[0:32]
 ```
 
-Here `ik` is unique per nonce, so reusing the nonce as the GCM IV is safe.
+`ik` is unique per `epk`, so using the nonce as the GCM IV is safe.
+
+**Every invite is exactly the same size.** The plaintext is always padded to
+128 bytes, so `sealed` is always 156 bytes and a whole invite document is
+about 300 bytes. That leaves 128 − 32 (sender) − 16 (auth) = 80 bytes of
+grant.
 
 **Grant contents:**
 - **1:1:** `0x01 | optional first message`. The recipient derives `gid` and
-  `K` from `Z`. A first message carried in the invite **is index 0 of the
-  inviter's stream** (§6.1), so the inviter's next message uses `i = 1`. This
-  saves a document on every new conversation.
-- **Group:** `0x02 | gid(10) | S16(b) | S16(r) | K[b,r](32)`. The recipient
-  reads the name and roster from `dmRoster` (§5.5).
+  `K` from `Z_SR`. A first message short enough to fit (up to about 75 bytes,
+  e.g. "hey, saw your post about…") rides in the invite as **index 0 of the
+  inviter's stream** (§6.1), saving a document. A longer one is sent as a
+  normal `dmMessage` at `i = 0`. Either way the invite looks the same.
+- **Group:** `0x02 | gid(10) | S16(b) | S16(r) | K[b,r](32)`, 47 bytes. The
+  recipient reads the name and roster from `dmRoster` (§5.5).
 
-**Padding.** The grant pads to the §5.3 message size classes. The smallest class
-(128 bytes) holds any group grant and a 1:1 grant with no message or a short
-one. So an observer cannot tell a 1:1 invite from a group invite, and learns a
-first message's length only to the nearest class.
+An observer cannot tell a 1:1 invite from a group invite, or whether a first
+message is attached.
 
-**Discovery:**
-- The recipient polls `bucket in [mine at k_m, mine at k_{m−1}], $createdAt > lastScan`. For each distinct
-  `$ownerId` in the results, it fetches the identity (cached) and computes `Z`
-  for each combination of the inviter's keys and its own keys (§4.2), usually
-  one. For each invite it runs one HKDF and one AES-GCM trial. A GCM failure
-  means the invite is for someone else in the bucket.
-- At `k = 0`, the identity fetches, not the crypto, are the real cost.
+**Discovery.** The recipient polls
+`bucket in [mine at k_m, mine at k_{m−1}], $createdAt > lastScan`. For each
+invite:
+1. One ECDH with its own key and `epk`, then one AES-GCM trial. A GCM failure
+   means the invite is for someone else. There is no identity fetch and no
+   per-inviter cache, and the trial reads only data already downloaded.
+2. On success, check that the decrypted `senderId` equals `$ownerId`.
+3. Fetch the sender's identity, compute `Z_SR` (trying keys as in §4.2), and
+   check `auth`. This proves the sender, not just someone who knows the
+   recipient's public key, wrote the invite. The UI fetches the sender's
+   profile at this point anyway to show the request, so the fetch reveals
+   nothing extra to the node.
+
+A secp256k1 ECDH in the browser takes well under a millisecond, so even 6,000
+invites a day is a few seconds of CPU, spread over the day's polls.
 
 **Sender recovery.** On a new device, the sender reads their own invites via
-`[$ownerId, $createdAt]`, unmasks `selfHint`, re-derives `Z`, and confirms by
-decrypting.
+`[$ownerId, $createdAt]`, unmasks `selfHint` to get the recipient, re-derives
+`e` from `hintKey` and the nonce, and confirms by decrypting.
 
 **Duplicate 1:1 invites.** Before inviting B, A checks its own bucket scan for
 an invite from B, and writes nothing if one exists. If both invite at the same
@@ -306,9 +325,9 @@ moment, the result is two harmless invites.
 
 **Why this reverses the "hidden membership is too slow" objection in
 `DM_V5_GROUPS.md` §9.** A recipient scans only its own bucket, not the whole
-network. The costly step, ECDH, happens once per *distinct inviter* rather than
-once per invite. And invites are rare next to messages. The observer learns only
-"A invited someone in bucket x".
+network, and each trial is one ECDH on data already downloaded. Invites are
+small, fixed-size and rare next to messages. The observer learns only "A
+invited someone in bucket x", and at `k = 0` not even the bucket.
 
 #### Choosing `k`
 
@@ -320,10 +339,11 @@ network size. For someone who publicly talks with the same four people, `k = 2`
 roughly names the recipient. **`k = 0` leaks nothing,** and that is the target.
 
 **What forces `k` up.** At `k = 0` every recipient downloads and trial-decrypts
-every invite on the network: about 300 B each, microseconds of crypto, and one
-cached identity fetch plus ECDH per *new* inviter. With a per-recipient budget
-`B` of about 6,000 invites/day, `k = 0` holds until the network sends about that
-many invites a day. Invites are per new conversation or group add, not per
+every invite on the network: about 300 B and one ECDH each. Document queries
+return at most 100 per page, so the practical limits are bandwidth and page
+count. A per-recipient budget `B` of about 6,000 invites/day is about 1.8 MB and
+60 pages a day, spread across polls. `k = 0` holds until the network sends about
+that many invites a day. Invites are per new conversation or group add, not per
 message, and Yappr sends tens a day today.
 
 **Schedule.** `k` is computed by every client from chain data, identically, so
@@ -353,7 +373,7 @@ step down only if V_m < B · 2^(k−1) / 2                        // hysteresis
   boundary, with clock skew, or by a client that estimated differently are
   still found.
 - **Ceiling.** Past `K_CEIL` the leak per invite outweighs the benefit, so the
-  client stays at the ceiling and raises `B` instead (batched identity fetches,
+  client stays at the ceiling and raises `B` instead (faster scanning,
   a bigger bandwidth budget). If that runs out, bucketing is the wrong tool and
   discovery needs PIR or fuzzy message detection.
 - **Flooding.** Pushing `V` over `B` means paying for thousands of invites a
@@ -383,11 +403,20 @@ keyringHandle(b)  = HKDF(gid, "yappr/dm/v5", "keyring\0" || S16(b))[0:10]
 body = iv(12) | AES-256-GCM(mk_i, iv, pad(type | payload), aad) // ciphertext || tag(16)
 ```
 
-- **Size classes.** Padded plaintext is a power of two from **128 to 4096
-  bytes** (128, 256, 512, 1024, 2048, 4096), so the body is 28 bytes more
-  (156 to 4124). Every encrypted blob in this contract (invite grants, rosters,
-  self-state) uses the same classes. Plaintext above 4094 bytes (4096 minus the
-  length prefix) is split across messages.
+- **Size classes.** Padded plaintext is a power of two from **128 to 8192
+  bytes**, plus a top class of **14,336 bytes** (14 KiB). The ciphertext is 28
+  bytes longer.
+- **Why three fields.** Platform caps any one field at 5,120 bytes and a whole
+  state transition at 20,480 bytes, on every protocol version through v14.
+  A ciphertext larger than 5,120 bytes is cut at 5,120-byte boundaries into
+  `body`, `body2` and `body3`. The 14 KiB class is the largest that fits in one
+  transition with room for the signature and document overhead. It is still one
+  document with one index, so it costs about 27,400 credits per extra byte and
+  nothing more.
+- **Longer text** is split across several messages. A burst of top-class
+  messages shows that something long was sent.
+- **Other blobs.** Rosters and self-state use the same classes up to 4096
+  (their single field). Invites use only the 128 class (§5.1).
 - **Padding format:** `u16 length | plaintext | zeros`.
 
 `DM_V5_GROUPS.md` rejected padding as paid storage. Its own cost data says
@@ -638,8 +667,13 @@ that matters most.
   later match those tags to writes and link you to the counterpart. This is
   outside the "passive chain observer" goal, but it is realistic. Mitigations:
   - rotate nodes per query batch;
-  - an optional mode that downloads the global `dmMessage` window and matches
-    locally (fine at today's volume, not at scale);
+  - a "download everything" mode, as shielded wallets do (§12.1). The client
+    fetches every `dmMessage` by time and matches tags locally, so the node
+    learns nothing about which conversations you are in. This needs a second
+    index, `[$createdAt]`, on `dmMessage`, which adds cost to every message.
+    Battery item 7 measures it. If it is cheap, the client could use this mode
+    automatically while global message volume is small, as `k` does for
+    invites;
   - Tor.
 
   Decoy tags do not help, because the node can see which tags later get hits.
@@ -700,14 +734,18 @@ Adding admins needs a second writer of keyrings, which is left for later.
    key without a bridge (§4.6).
 3. **Phase 3: hiding the sender.** On Platform, signing is always done by
    `$ownerId`. Hiding the sender needs a throwaway identity per contact or per
-   epoch, funded untraceably through the shielded pool:
-   - The installed SDK has `sdk.addresses.createIdentity` and `topUpIdentity`.
-   - `sdk.shielded` is **read-only** for now; building shielded transitions
-     needs the Orchard prover, which the SDK has deferred. So this phase is
-     blocked on SDK work.
-   - A further option is Orchard note memos as the transport itself. That hides
-     everything, but hits the same trial-decrypt-everything scaling wall as Zcash
-     light clients.
+   epoch, funded untraceably. Platform already has the transitions:
+   `IdentityCreateFromShieldedPool` (fixed amounts of 0.1, 0.3, 0.5 or 1 DASH,
+   so the amount does not link) and `IdentityTopUpFromShieldedPool`
+   (platform#4711). The blocker is the browser: proving a shielded transition
+   needs the Halo 2 prover, which exists only in Rust behind the Swift and
+   Kotlin FFI. The WASM SDK left it out on purpose (platform#3235: over 10 MB of
+   bundle, about 30 s per proof). Phase 3 waits for a browser prover or a
+   companion wallet that funds the throwaway identity.
+4. **Later: tip with a message.** DIP-33 (dips#188) reserves a shielded memo kind
+   for pointing at "a larger encrypted context document". A shielded tip whose
+   memo carries a DM seed would let someone pay and open a private thread in one
+   step, with no document linking the two. Same browser-prover blocker.
 
 ## 12. Where the two drafts disagreed
 
@@ -721,6 +759,26 @@ Adding admins needs a second writer of keyrings, which is left for later.
 | Unread counts | `tag in` window | rangeCountable count | **Tag window.** There is no shared id to count by. |
 | Invite deletion | n/a | Deleted on removal (refund) | **Never deleted.** A delete would point at the removed member's bucket. |
 | Key rotation | Not covered | One bridge doc | **Bridge,** plus 1:1 threads that move on their own. |
+
+### 12.1 What was borrowed from Platform's shielded pool
+
+Researched 2026-09-22 against `dashpay/platform` v4.2-dev and DIP-33
+(`dashpay/dips#188`, the closest thing to an "OrchardPay"; no design by that
+name exists).
+
+| Orchard / shielded wallets | DM v5 |
+| --- | --- |
+| Each note has a fresh ephemeral key; a wallet recognises its notes with its own viewing key only | **Adopted** for invites (§5.1). The recipient needs no identity fetch per inviter. |
+| Every encrypted note is exactly 216 bytes | **Adopted.** Invites are one fixed size; messages use size classes. |
+| Wallets download *all* notes in index ranges (8,192 per query) and trial-decrypt locally, so the node learns nothing | **Adopted** for invites at `k = 0`. Offered as an optional mode for messages (§8), pending the index cost. Document queries return only 100 per page, so this is about 80× less efficient per request than note sync. |
+| Spends are detected from data already downloaded, not by querying nullifiers (which would leak ownership) | **Adopted in spirit.** Duplicate-invite checks and the `k` estimate reuse the bucket download. |
+| One viewing key covers unlimited diversified addresses (DIP-33 per-contact addresses) | Already present: one encryption key covers every per-conversation tag stream. |
+| Shielded notes with memos as the transport | **Rejected.** The memo is 36 bytes (32 usable), each transfer costs about 0.0016 DASH and about 30 s of proving, the sender needs shielded funds, and there is no browser prover. |
+| View tags, detection keys, fuzzy message detection | Not present in Platform's code, so there was nothing to borrow. |
+
+DIP-33's deferred appendix also warns that notification documents can be linked
+by timing to the payments they announce. That is the same timing leak §8
+accepts for messages.
 
 **Also rejected:**
 
@@ -756,7 +814,8 @@ Adding admins needs a second writer of keyrings, which is left for later.
    timing results are reported, not gated.
 3. **`scripts/verify-dm-v5.mjs` on devnet**, which must **measure real credits**
    for every row of §7 before client work starts. That covers:
-   - message size classes, invites with and without a first message, keyrings
+   - message size classes including the multi-field 8 KiB and 14 KiB ones,
+     invites, keyrings
      at 8/16/32/64/128 slots, roster replaces, bridges;
    - spoofed keyrings and rosters under a stranger's `$ownerId`;
    - squatted tags under `[tag, $ownerId]`;
@@ -766,6 +825,10 @@ Adding admins needs a second writer of keyrings, which is left for later.
    The answer decides the choice in §6.1.
 5. **`$createdAt` tolerance,** to set `GRACE`.
 6. **Service and UI,** then deployed e2e on /devnet.
+7. **The cost of a `[$createdAt]` index on `dmMessage`,** which decides whether
+   the download-everything mode (§8) is affordable.
+8. **Browser scan throughput:** invite pages per second and ECDH trials per
+   second in the deployed app, to confirm `B` (§5.1).
 
 ## 14. Decisions
 
@@ -774,7 +837,7 @@ Decided 2026-09-22:
 | # | Question | Decision |
 | --- | --- | --- |
 | 1 | Bucket width `k` | Start at `k = 0`, and scale automatically with invite volume (§5.1). The estimate comes from each recipient's own bucket scan, so it adds no index and no cost. |
-| 2 | Padding size classes | Powers of two, 128 to 4096 bytes. Keyring slots pad to powers of two, 8 to 128. |
+| 2 | Padding size classes | Powers of two, 128 to 8192 bytes, plus 14 KiB, using up to three 5,120-byte fields (Platform's per-field cap). Invites are always 128. Keyring slots pad to powers of two, 8 to 128. |
 | 3 | Send batching | **No.** Messages send immediately; timing correlation is an accepted leak (§8). |
 | 4 | Group size limit | **100** including the owner. |
 | 5 | Cross-device read sync | **Yes,** `dmSelfState` ships in Phase 1 (§5.6). |
