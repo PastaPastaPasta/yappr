@@ -558,6 +558,12 @@ SEND(c, text):
   message signed just before a week rollover or an epoch change. Inclusion
   takes seconds. If a straggler is missed anyway, the sender's next message
   links to it through `prev`.
+- **Nonce clashes.** Two devices of one identity writing at the same moment
+  can sign with the same identity-contract nonce; Platform refuses the second
+  and nothing is written. Every write (message, invite, roster, keyring) is
+  then retried with a fresh nonce up to three times, after `250 ms · 2^n`
+  plus up to that much jitter, so the user never retries by hand. (A client
+  retry delay, not a protocol one.)
 - **Opening a conversation on a new device** first finds the current messages
   (from `readAt` onward), then scrolls back through `prev`. A stream with
   nothing since `readAt` is probed further back when the conversation opens,
@@ -608,6 +614,7 @@ OWNER_WRITE(g, change):
       replace the roster under the new base; continue
     do the change (grant + roster replace, or keyring + roster replace, or rename)
     if Platform rejects a write as stale (40106) or duplicate (unique index): continue
+    (a nonce clash with my other device is retried in place first; see §6.3)
     break
 ```
 

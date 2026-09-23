@@ -50,6 +50,8 @@ export interface DmContext {
   recovering: boolean
   /** Called whenever anything visible changed. */
   changed(): void
+  /** Waits between write retries (a nonce clash); tests pass one that does not really wait. */
+  sleep?: (ms: number) => Promise<void>
 }
 
 /** A fresh context for `identityId`, with its self-state store and nothing attached yet. */

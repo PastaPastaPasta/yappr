@@ -64,6 +64,8 @@ export class MemoryChain implements DmChain {
   /** The next N writes are applied but reported unconfirmed (the DAPI timeout that still landed). */
   unconfirmed = 0
   writable = true
+  /** Backoff waits the client asked for (tests do not really wait). */
+  sleeps: number[] = []
 
   constructor(
     readonly ledger: MemoryLedger,
@@ -146,6 +148,8 @@ export class MemoryChain implements DmChain {
   }
 
   async createInvite(invite: DmInvite): Promise<WriteOutcome> {
+    const forced = this.override('createInvite', [invite])
+    if (forced) return forced
     const doc: ChainInvite = { id: this.ledger.id(), ownerId: this.me, createdAt: this.ledger.tick(), ...invite }
     this.ledger.invites.push(doc)
     return { ok: true, id: doc.id, confirmed: true }
@@ -234,5 +238,10 @@ export function makeContext(ledger: MemoryLedger, id: IdentityId, encPriv: Uint8
   ledger.register(id, encPriv)
   const chain = new MemoryChain(ledger, id)
   const cache = new LocalCache(kv, `dm-v5:${bs58.encode(id)}`)
-  return { ctx: createContext({ chain, identityId: id, encPriv, cache, scheduler: manualScheduler }), chain }
+  const ctx = createContext({ chain, identityId: id, encPriv, cache, scheduler: manualScheduler })
+  // Retry backoffs do not really wait in tests; the waits asked for are recorded on the chain.
+  ctx.sleep = async (ms) => {
+    chain.sleeps.push(ms)
+  }
+  return { ctx, chain }
 }

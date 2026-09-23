@@ -10,7 +10,7 @@ import { sendContent } from './sender'
 import { stream, timeline } from './conversation'
 import { MapKv, MemoryLedger, makeContext } from './test-chain'
 import { splitText, MAX_TEXT_BYTES } from './util'
-import { classifyWriteFailure } from './write-failure'
+import { MAX_NONCE_RETRIES, classifyWriteFailure, nonceBackoffMs, withNonceRetry } from './write-failure'
 
 const texts = (ctx: DmContext, peer: Uint8Array) =>
   timeline(directConv(ctx, peer) ?? (() => { throw new Error('no conversation') })())
@@ -271,6 +271,48 @@ describe('sender', () => {
     expect(calls).toBe(2)
     expect(held.pointer.j).toBe(0)
     expect(ledger.messages).toHaveLength(1)
+    // It waited before the retry, rather than hitting the lagging node again at once.
+    expect(alice.chain.sleeps).toHaveLength(1)
+    expect(alice.chain.sleeps[0]).toBeGreaterThanOrEqual(250)
+  })
+
+  it('backs off 250 ms · 2^n plus jitter between nonce retries, and gives up after three', async () => {
+    expect([0, 1, 2].map((n) => nonceBackoffMs(n, () => 0))).toEqual([250, 500, 1000])
+    expect([0, 1, 2].map((n) => nonceBackoffMs(n, () => 0.999))).toEqual([499, 999, 1999])
+    const waits: number[] = []
+    let calls = 0
+    const outcome = await withNonceRetry(
+      async () => {
+        calls++
+        return { ok: false as const, failure: 'nonce' as const, error: 'nonce already present at tip' }
+      },
+      async (ms) => {
+        waits.push(ms)
+      }
+    )
+    expect(outcome.ok).toBe(false)
+    expect(calls).toBe(1 + MAX_NONCE_RETRIES)
+    expect(waits).toHaveLength(MAX_NONCE_RETRIES)
+    waits.forEach((ms, n) => {
+      expect(ms).toBeGreaterThanOrEqual(250 * 2 ** n)
+      expect(ms).toBeLessThan(500 * 2 ** n)
+    })
+  })
+
+  it('retries the first-contact invite after a nonce clash instead of failing the send', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    makeContext(ledger, BOB_ID, BOB_PRIV)
+    let clashes = 0
+    alice.chain.hook = (method) => {
+      if (method !== 'createInvite' || clashes >= 2) return null
+      clashes++
+      return { ok: false, failure: 'nonce', error: 'invalid identity nonce … nonce already present at tip' }
+    }
+    await sendText(alice.ctx, BOB_ID, 'first contact')
+    expect(ledger.invites).toHaveLength(1)
+    expect(ledger.messages).toHaveLength(1)
+    expect(alice.chain.sleeps).toHaveLength(2)
   })
 
   it('classifies write refusals from their error text', () => {

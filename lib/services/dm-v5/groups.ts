@@ -30,6 +30,7 @@ import { ensureStarted, openDirect, startedDirect } from './directs'
 import { applyGroups, switchEpoch } from './group-apply'
 import { sendContent } from './sender'
 import type { WriteOutcome } from './types'
+import { withNonceRetry } from './write-failure'
 import { TAGS_PER_QUERY, hexId, includesId, range, sameEpoch } from './util'
 
 const MAX_OWNER_ROUNDS = 6
@@ -88,7 +89,11 @@ async function publicKeysOf(ctx: DmContext, ids: IdentityId[]): Promise<KeyringM
 async function writeRoster(ctx: DmContext, conv: GroupConv, content: RosterContent): Promise<WriteOutcome> {
   const blob = await encryptRoster(ownerKey(conv, content), conv.gid, content)
   const handle = rosterHandle(conv.gid)
-  const outcome = conv.roster ? await ctx.chain.replaceGroupDoc(conv.roster, handle, blob) : await ctx.chain.createGroupDoc(handle, blob)
+  const roster = conv.roster
+  const outcome = await withNonceRetry(
+    () => (roster ? ctx.chain.replaceGroupDoc(roster, handle, blob) : ctx.chain.createGroupDoc(handle, blob)),
+    ctx.sleep
+  )
   if (outcome.ok) {
     conv.roster = { id: conv.roster?.id ?? outcome.id, revision: (conv.roster?.revision ?? 0) + 1 }
     conv.lastRoster = content
@@ -262,7 +267,7 @@ export async function removeMember(ctx: DmContext, conv: GroupConv, member: Iden
       groupSecret: secret,
       members: await publicKeysOf(ctx, remaining.filter((m) => !bytesEqual(m, conv.owner))),
     })
-    const keyring = await ctx.chain.createGroupDoc(keyringHandle(conv.gid, b), built.blob)
+    const keyring = await withNonceRetry(() => ctx.chain.createGroupDoc(keyringHandle(conv.gid, b), built.blob), ctx.sleep)
     if (!keyring.ok) return keyring
     conv.keyrings.set(b, built.blob)
     conv.keyringAt.set(b, ctx.chain.now())

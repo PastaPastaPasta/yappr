@@ -17,6 +17,7 @@ import { logger } from '@/lib/logger'
 import { attachDirect, directConv, peerKey, type DmContext } from './context'
 import type { ChainInvite } from './types'
 import { hexId, runNow, type Exclusive } from './util'
+import { withNonceRetry } from './write-failure'
 
 /** Trial-decrypt one invite; the recipient is me when `check` verifies against its signed `$ownerId`. */
 function inviteIsForMe(ctx: DmContext, invite: ChainInvite): boolean {
@@ -68,7 +69,7 @@ export async function sendInvite(ctx: DmContext, peer: IdentityId): Promise<void
   const peerPub = await peerKey(ctx, peer)
   if (!peerPub) throw new Error('This account has no encryption key yet, so it cannot receive encrypted messages.')
   const invite = createInvite({ recipientPublicKey: peerPub, recipientId: peer, senderId: ctx.me.id, bucketLevel: ctx.cache.bucketLevel() })
-  const outcome = await ctx.chain.createInvite(invite)
+  const outcome = await withNonceRetry(() => ctx.chain.createInvite(invite), ctx.sleep)
   if (!outcome.ok) throw new Error(outcome.error)
 }
 

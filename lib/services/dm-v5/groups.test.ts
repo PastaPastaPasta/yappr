@@ -325,6 +325,50 @@ describe('owner group recovery', () => {
   })
 })
 
+describe('nonce clashes on owner writes', () => {
+  it('creates a group through nonce clashes on the roster and on a member\'s invite', async () => {
+    const { ledger, alice, bob, carol } = world()
+    let rosterClashes = 0
+    let inviteClashes = 0
+    alice.chain.hook = (method) => {
+      const clash = { ok: false as const, failure: 'nonce' as const, error: 'nonce already present at tip' }
+      if (method === 'createGroupDoc' && rosterClashes < 1) return (rosterClashes++, clash)
+      if (method === 'createInvite' && inviteClashes < 1) return (inviteClashes++, clash)
+      return null
+    }
+    const { conv, failed } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    expect(failed).toEqual([])
+    expect(ledger.groupDocs).toHaveLength(1)
+    expect(ledger.invites).toHaveLength(2)
+    await pollOnce(bob.ctx)
+    await pollOnce(carol.ctx)
+    expect(theGroup(bob.ctx, ALICE_ID, conv.gid).lastRoster?.name).toBe('Team')
+    expect(theGroup(carol.ctx, ALICE_ID, conv.gid).lastRoster?.name).toBe('Team')
+  })
+
+  it('removes a member through a nonce clash on the keyring and on the roster replace', async () => {
+    const { alice, bob, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    await pollOnce(carol.ctx)
+    const seen = new Set<string>()
+    alice.chain.hook = (method) => {
+      if ((method === 'createGroupDoc' || method === 'replaceGroupDoc') && !seen.has(method)) {
+        seen.add(method)
+        return { ok: false, failure: 'nonce', error: 'nonce already present at tip' }
+      }
+      return null
+    }
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    expect(seen).toEqual(new Set(['createGroupDoc', 'replaceGroupDoc']))
+    // Each clash was retried after a backoff (the owner loop alone would re-run at once, re-reading everything).
+    expect(alice.chain.sleeps).toHaveLength(2)
+    expect(currentEpoch(conv)).toEqual({ b: 1, r: 0 })
+    await pollOnce(carol.ctx)
+    expect(theGroup(carol.ctx, ALICE_ID, conv.gid).removed).toBe(true)
+  })
+})
+
 describe('joining is saved at once (§5.5)', () => {
   it('saves the self-state when a grant is accepted, so a reload after removal still shows the group as removed', async () => {
     const { ledger, alice, carol } = world()
