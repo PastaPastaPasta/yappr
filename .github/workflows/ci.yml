@@ -203,7 +203,7 @@ jobs:
   devnet-e2e:
     name: End-to-End (devnet, non-blocking)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     continue-on-error: true
     steps:
       - name: Checkout
@@ -268,6 +268,20 @@ jobs:
           E2E_ENV_FILE: .env.devnet
           NETWORK: devnet
         run: npx playwright test --project=write --trace=off topology
+
+      # DM v5 against the real chain with several identities (pool slots 1-5 of the
+      # same seed, listed in .env.devnet). Only the 1:1 and group files run here
+      # (about 15 min together); the history (120-message bulk write) and
+      # lost-state recovery files are local-only, see docs/TESTING.md.
+      - name: Run the devnet DM v5 specs
+        if: env.HAS_SEED == 'true'
+        continue-on-error: true
+        env:
+          E2E_SEED_PHRASE: ${{ secrets.E2E_DEVNET_SEED_PHRASE }}
+          E2E_BASE_PATH: /devnet
+          E2E_ENV_FILE: .env.devnet
+          NETWORK: devnet
+        run: npx playwright test --project=write --trace=off dm-v5-direct dm-v5-groups
 
       - name: Upload Playwright report
         if: always()
