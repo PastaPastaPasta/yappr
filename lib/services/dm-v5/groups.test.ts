@@ -325,6 +325,46 @@ describe('owner group recovery', () => {
   })
 })
 
+describe('joining is saved at once (§5.5)', () => {
+  it('saves the self-state when a grant is accepted, so a reload after removal still shows the group as removed', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    const before = ledger.selfStates.find((s) => bytesEqual(s.owner, CAROL_ID))?.revision ?? 0
+    await pollOnce(carol.ctx)
+    // No coalescing timer ran (manual scheduler): the join itself wrote the self-state.
+    const saved = ledger.selfStates.find((s) => bytesEqual(s.owner, CAROL_ID))
+    expect(saved?.revision ?? 0).toBeGreaterThan(before)
+
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    // Carol reloads (a fresh device state, same chain): the group comes back from the self-state, marked removed.
+    const reloaded = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    const group = groupConv(reloaded.ctx, ALICE_ID, conv.gid)
+    expect(group).not.toBeNull()
+    expect(group?.removed).toBe(true)
+  })
+
+  it('saves a re-add key at once, so a reload does not find the member removed again', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    await addMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    await pollOnce(carol.ctx)
+    expect(theGroup(carol.ctx, ALICE_ID, conv.gid).removed).toBe(false)
+
+    const reloaded = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    expect(groupConv(reloaded.ctx, ALICE_ID, conv.gid)?.removed).toBe(false)
+  })
+})
+
 describe('review regressions', () => {
   it('does not remove a re-added member because of the leave they sent before', async () => {
     const { alice, carol } = world()

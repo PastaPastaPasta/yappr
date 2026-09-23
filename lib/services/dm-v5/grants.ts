@@ -71,13 +71,27 @@ async function processGrant(ctx: DmContext, grant: PendingGrant): Promise<'done'
       ctx.store.replaceGroupEntry(existing.entry, { ...existing.entry, earliestEpoch: epoch, earliestKey: grant.key, since: entry.since })
     }
     await applyGroups(ctx, [existing])
+    await saveJoin(ctx)
     return 'done'
   }
 
   ctx.store.addGroup(entry)
   probe.entry = ctx.store.resolve(entry)
   ctx.convs.set(probe.key, probe)
+  await saveJoin(ctx)
   return 'done'
+}
+
+/**
+ * A join (or a re-add key) is saved at once, unlike an incoming 1:1 (§5.5):
+ * an invite is permanent and every scan finds it again, but a grant sits in a
+ * 1:1 stream the sweep deletes, and after a reload it is not accepted again
+ * once the roster has moved on (a removal lists the member no more). Recovery
+ * saves everything together at its end instead.
+ */
+async function saveJoin(ctx: DmContext): Promise<void> {
+  if (ctx.recovering) return
+  await ctx.store.flush()
 }
 
 /** Check every queued grant once. */

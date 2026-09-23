@@ -358,9 +358,12 @@ takes the minimum, so no invite is skipped) and saves again.
 **When it is written:** changes are coalesced to save fees, and flushed when
 the page is hidden or closed (`visibilitychange`/`pagehide`). It is also
 written immediately when the user starts a conversation, so their other devices
-find it. Incoming conversations need no immediate write, because invites are
-permanent and every device scans them. **The invite scan position never
-advances past an invite whose conversation is not yet saved.** It is written
+find it. Incoming 1:1s need no immediate write, because invites are permanent
+and every device scans them. **Joining a group does:** its grant sits in a 1:1
+stream the sweep deletes, and once the roster moves on (the member is later
+removed) the grant no longer verifies, so a join left to the coalesced save is
+lost with the page. **The invite scan position never advances past an invite
+whose conversation is not yet saved.** It is written
 together with the conversations found up to it, so a crash before a save, or
 a full state at the cap, means the next scan finds those invites again rather
 than skipping them.
