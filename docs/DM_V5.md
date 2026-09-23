@@ -286,7 +286,7 @@ New contract, `yappr-dm-contract-v5.json`.
 | `dmRoster` | group owner | `handle` b10, `blob` bytes 156–4124 | **unique** `[$ownerId, handle]` | mutable; replaced by a tombstone when the group ends, never deleted (§4.4) |
 | `dmKeyring` | group owner | `handle` b10, `slots` bytes 264–5120 | **unique** `[$ownerId, handle]` | immutable, not deletable |
 | `encryptionKeyBridge` | key owner | `payload` b81 | `[$ownerId, $createdAt]` | immutable, not deletable |
-| `dmSelfState` | user | `slot` u8 (copy × 8 + partIndex), `blob` bytes 156–4124 | **unique** `[$ownerId, slot]` | mutable, two alternating copies (§5.6) |
+| `dmSelfState` | user | `part` u8, `blob` bytes 156–5120, optional `blob2`/`blob3` ≤ 5120 | **unique** `[$ownerId, part]` | mutable; each replace is atomic and revision-checked (§5.6) |
 
 - **No doctype has a `recipientId`, `groupId` or `conversationId` field.**
 - **Messages, keyrings and rosters get no `refersTo` or `propertyAgreement`,**
@@ -498,8 +498,8 @@ prev = U32(week of the sender's previous message in this stream), or 0 if none
   nothing more.
 - **Longer text** is split across several messages. A burst of top-class
   messages shows that something long was sent.
-- **Other blobs.** Rosters and self-state use the same classes up to 4096
-  (their single field). Invites use only the 128 class (§5.1).
+- **Other blobs.** Rosters use the same classes up to 4096 (a single field);
+  self-state uses them up to 14 KiB, across three fields like messages. Invites use only the 128 class (§5.1).
 - **Padding format:** `u16 length | plaintext | zeros`.
 
 `DM_V5_GROUPS.md` rejected padding as paid storage. Its own cost data says
@@ -560,8 +560,8 @@ every membership change and every rename. It does three jobs:
 ### 5.6 `dmSelfState`: private cross-device sync
 
 ```
-blob = iv(12) | AES-256-GCM(HKDF(stateKey, "slot\0" || u8(slot)), iv, pad(U32(generation) | saveId(8) | part))
-slot = copy × 8 + partIndex        // copy ∈ {0, 1}, partIndex ∈ 0..7; part 0 also holds the manifest
+blob = iv(12) | AES-256-GCM(HKDF(stateKey, "part\0" || u8(part)), iv, pad(state for this part))
+part(chat) = HKDF(stateKey, "part-of\0" || chat id)[0] mod parts      // parts = 1 until it fills
 ```
 
 **What it holds:**
@@ -579,27 +579,24 @@ how far the *user* has read, are still stored.) Owners' groups:
 they re-derive from `gid_n` (§4.4). Members' groups can be re-requested from
 the owner (§6.5).
 
-**Two alternating copies, per part.** The state is split into up to 8 parts of
-about 4 KB, room for about 1,000 conversations. Each part has two slots (copy 0
-and copy 1). A save writes only the parts that changed, each into the slot
-*not* holding that part's newest good version, tagged with the save's
-generation and a random 8-byte save id. Part 0 carries a manifest: the
-generation and save id each other part must match.
-- **Reading:** take the newest part 0 that decrypts, then for each part the
-  slot whose generation and save id match the manifest.
-- **A crashed write** only damages slots the manifest does not point at, so the
-  previous good state is always readable.
-- **Two devices saving at once** get different save ids, so their parts cannot
-  be mixed. Before saving, a device re-reads the state and merges: contacts and
-  blocks are unions, and read positions take the maximum.
+**One document per part, each updated atomically.** A part is one document
+with up to three 5,120-byte fields (§5.3), about 15 KB. A 1:1 entry is about
+40 bytes and a group entry about 90, so one part holds roughly 300 chats; most
+users need only one. Chats are spread across parts by a hash of their id, so a
+save only ever changes one part at a time, and each change is a single
+atomic replace. Heavy users get more parts (up to 8).
+- **Two devices saving at once:** Platform requires every replace to carry
+  `revision = current + 1` and rejects anything else (error 40106). The losing
+  device re-reads the part, merges (chats and blocks are unions, read
+  positions take the maximum) and saves again. Nothing is ever half-written.
 
 **Writes are debounced (at least 5 minutes) and never happen immediately on
 read**, because a state update seconds after someone's message is a timing
 signal. It ships in Phase 1: without it, read state and blocks would differ
 between a user's devices.
 
-**If both copies are lost** (the key is lost, or a client bug destroys both),
-§6.3 describes what can still be recovered.
+**If the state is lost** (the key is lost, or a client bug overwrites it), §6.3
+describes what can still be recovered.
 
 ### 5.7 Deletion and fee reclaim
 
@@ -1077,8 +1074,8 @@ accepts for messages.
      derivation, `gid_n` derivation and owner probing;
    - invite sealing and recognition, and `selfHint`;
    - slot wrap and `kc` trial, and trial key selection across bridged keys;
-   - padding, body and roster encoding, and self-state copy selection
-     (highest complete generation wins);
+   - padding, body and roster encoding, and self-state part assignment and
+     merge on a revision conflict;
    - the pointer rule, the dual-poll rule, the stale-base rule, the week check,
      `prev` back-links and the end-of-week probe;
    - grant acceptance (only from the owner, only once the roster lists you);
