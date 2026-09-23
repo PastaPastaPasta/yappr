@@ -67,9 +67,21 @@ export const YAPPR_DM_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID
 // (the id and this switch are separate env vars) and every count query fails,
 // so unread reads as 0 everywhere and the badge silently never appears. The
 // service logs a warning naming this cause on each failed count.
-export const DM_TOPOLOGY: 'v3' | 'v4' =
-  process.env.NEXT_PUBLIC_DM_TOPOLOGY === 'v4' ? 'v4' : 'v3'
-export const dmIsV4 = () => DM_TOPOLOGY === 'v4'
+//
+// `v5` (docs/DM_V5.md) moves NEW conversations to the separate unlinkable DM v5
+// contract (`NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID`) and its client in
+// lib/services/dm-v5/. The contract at `NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID` stays
+// the LEGACY one, read-only in the UI and merged into the same timeline (§10),
+// and it is assumed to be the v4 re-cut: v5 was cut after v4 on every network
+// that runs it, so the legacy reads keep v4's count-tree path.
+export type DmTopology = 'v3' | 'v4' | 'v5'
+export const DM_TOPOLOGY: DmTopology =
+  process.env.NEXT_PUBLIC_DM_TOPOLOGY === 'v5' ? 'v5' : process.env.NEXT_PUBLIC_DM_TOPOLOGY === 'v4' ? 'v4' : 'v3'
+/** The legacy DM contract has v4's count flags (true for v4, and for v5's legacy contract). */
+export const dmIsV4 = () => DM_TOPOLOGY !== 'v3'
+export const YAPPR_DM_V5_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID ?? ''
+/** New conversations use DM v5. Needs both the flag and a v5 contract id, so a half-configured build stays on v4. */
+export const dmIsV5 = () => DM_TOPOLOGY === 'v5' && YAPPR_DM_V5_CONTRACT_ID !== ''
 // ---- end DM topology block ----
 // DPNS is a system contract, so its id is normally identical on every chain.
 // Overridable all the same: a freshly genesised devnet can be brought up with a
