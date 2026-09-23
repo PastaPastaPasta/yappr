@@ -127,6 +127,9 @@ export function ConversationList({
           {visible.map((row) => (
             <button
               key={row.key}
+              data-testid="dm-row"
+              data-key={row.key}
+              data-unread={row.unread}
               onClick={() => onSelect(row.key)}
               className={`w-full p-3 sm:p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors flex gap-3 ${selectedKey === row.key ? 'bg-gray-50 dark:bg-gray-950' : ''} ${row.hidden ? 'opacity-60' : ''}`}
             >

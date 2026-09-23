@@ -75,7 +75,7 @@ export function ThreadView({ row, messages, details, status, isLoading, blocked,
   }
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div data-testid="dm-thread" data-key={row.key} className="flex-1 flex flex-col min-w-0 overflow-hidden">
       <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800 px-2 sm:px-4 py-2 sm:py-3">
         <div className="flex items-center gap-2 sm:gap-3">
           <button aria-label="Back to conversations" onClick={onBack} className="md:hidden p-1.5 -ml-1 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full flex-shrink-0">
@@ -139,7 +139,7 @@ export function ThreadView({ row, messages, details, status, isLoading, blocked,
             const showSender = row.kind === 'group' && !message.own && messages[index - 1]?.senderId !== message.senderId
             const emojiOnly = isEmojiOnly(message.text)
             return (
-              <motion.div key={message.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex ${message.own ? 'justify-end' : 'justify-start'}`}>
+              <motion.div key={message.id} data-testid="dm-message" data-own={message.own} data-legacy={message.legacy} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex ${message.own ? 'justify-end' : 'justify-start'}`}>
                 <div className="max-w-[85%] sm:max-w-[75%] md:max-w-[70%]">
                   {showSender && <p className="text-xs text-gray-500 mb-1 px-2">{displayNameOf(details, message.senderId)}</p>}
                   {emojiOnly ? (
