@@ -72,6 +72,8 @@ them from block history. Migration must say this plainly (§10).
   group's size *class* (§5.5). The owner is the only identity linked to a group,
   and only as "owns some group".
 - That an identity rotated its encryption key (the bridge doc).
+- That an owner created a group of roughly N, from the burst of invites (§5.5).
+  At `k = 0` the burst says nothing about who.
 - The statistical leaks in §8, chiefly **timing correlation**.
 
 **Out of scope:**
@@ -243,12 +245,12 @@ New contract, `yappr-dm-contract-v5.json`.
 
 | Doctype | Owner | Fields | Indexes | Mutability |
 | --- | --- | --- | --- | --- |
-| `dmInvite` | inviter | `bucket` u16, `sealed` bytes 156–5000, `selfHint` b32 | `[bucket, $createdAt]`; `[$ownerId, $createdAt]` | immutable, **not deletable** |
-| `dmMessage` | sender | `tag` b16, `body` bytes 156–5000 | **unique** `[tag, $ownerId]` | immutable, **not deletable** |
-| `dmRoster` | group owner | `handle` b10, `blob` bytes 156–5120 | **unique** `[$ownerId, handle]` | mutable, not deletable |
+| `dmInvite` | inviter | `bucket` u16 (heap-encoded, §5.1), `sealed` bytes 156–4124, `selfHint` b32 | `[bucket, $createdAt]` rangeCountable (only if §5.1's cost gate passes); `[$ownerId, $createdAt]` | immutable, **not deletable** |
+| `dmMessage` | sender | `tag` b16, `body` bytes 156–4124 | **unique** `[tag, $ownerId]` | immutable, **not deletable** |
+| `dmRoster` | group owner | `handle` b10, `blob` bytes 156–4124 | **unique** `[$ownerId, handle]` | mutable, not deletable |
 | `dmKeyring` | group owner | `handle` b10, `slots` bytes 264–5120 | **unique** `[$ownerId, handle]` | immutable, not deletable |
 | `encryptionKeyBridge` | key owner | `payload` b81 | `[$ownerId, $createdAt]` | immutable, not deletable |
-| `dmSelfState` (optional) | user | `slot` u8, `blob` bytes 156–5120 | **unique** `[$ownerId, slot]` | mutable |
+| `dmSelfState` (optional) | user | `slot` u8, `blob` bytes 156–4124 | **unique** `[$ownerId, slot]` | mutable |
 
 - **No doctype has a `recipientId`, `groupId` or `conversationId` field.**
 - **Messages, keyrings and rosters get no `refersTo` or `propertyAgreement`,**
@@ -264,7 +266,7 @@ New contract, `yappr-dm-contract-v5.json`.
 ### 5.1 `dmInvite`: sealed, padded, bucketed first contact
 
 ```
-bucket   = HKDF(recipientId, "yappr/dm/v5", "bucket\0")[0:2] masked to k bits
+bucket   = (1 << k) | HKDF(recipientId, "yappr/dm/v5", "bucket\0")[0:2] >> (16 − k)   // heap-encoded, k = 0 → 1
 nonce    = 12 random bytes
 ik       = HKDF(Z_inviter_recipient, "yappr/dm/v5", "invite\0" || nonce)
 sealed   = nonce | AES-256-GCM(ik, iv=nonce, pad(grant), aad="yappr/dm/invite/v5" || $ownerId)
@@ -287,7 +289,7 @@ one. So an observer cannot tell a 1:1 invite from a group invite, and learns a
 first message's length only to the nearest class.
 
 **Discovery:**
-- The recipient polls `bucket == mine, $createdAt > lastScan`. For each distinct
+- The recipient polls `bucket in [mine at k_m, mine at k_{m−1}], $createdAt > lastScan`. For each distinct
   `$ownerId` in the results, it fetches the identity (cached) and computes `Z`
   for each combination of the inviter's keys and its own keys (§4.2), usually
   one. For each invite it runs one HKDF and one AES-GCM trial. A GCM failure
@@ -308,15 +310,55 @@ network. The costly step, ECDH, happens once per *distinct inviter* rather than
 once per invite. And invites are rare next to messages. The observer learns only
 "A invited someone in bucket x".
 
-| k | Anonymity set at 10k DM users | Trials per recipient at 1k invites/day network-wide |
-| --- | --- | --- |
-| 0 | everyone | 1000 |
-| 4 | ~625 | ~63 |
-| 8 | ~39 | ~4 |
+#### Choosing `k`
 
-`k` is a client constant, not part of the contract, so it can grow with the
-network. If `k` changes, recipients also query their bucket under earlier `k`
-values. Start at **k = 0–4**.
+**What `k` costs in privacy.** The observer already ranks A's likely DM partners
+from A's public activity: replies, mentions, likes, quotes, mutual follows.
+Every invite's bucket leaks exactly `k` bits about the recipient on top of that
+ranking. The damage depends on how predictable the sender already is, not on
+network size. For someone who publicly talks with the same four people, `k = 2`
+roughly names the recipient. **`k = 0` leaks nothing,** and that is the target.
+
+**What forces `k` up.** At `k = 0` every recipient downloads and trial-decrypts
+every invite on the network: about 300 B each, microseconds of crypto, and one
+cached identity fetch plus ECDH per *new* inviter. With a per-recipient budget
+`B` of about 6,000 invites/day, `k = 0` holds until the network sends about that
+many invites a day. Invites are per new conversation or group add, not per
+message, and Yappr sends tens a day today.
+
+**Schedule.** `k` is computed by every client from chain data, identically, so
+no one coordinates and no app or user picks its own `k`. A per-app or opt-in
+`k` would fingerprint the sender's app or privacy setting.
+
+```
+V_m   = invites/day in calendar month m−1 (UTC, by $createdAt)
+k_m   = clamp(ceil(log2(V_m / B)), k_{m−1} − 1, k_{m−1} + 1)   // one step per month at most
+k_m   = min(k_m, K_CEIL)                                       // K_CEIL = 2
+step down only if V_m < B · 2^(k−1) / 2                        // hysteresis
+```
+
+- **Counting.** Past months never change, because invites are never deleted, so
+  every client gets the same `V_m`. At `k = 0` it is free: recipients already
+  download every invite. At `k > 0` it is one proved count per month of the
+  all-zero-prefix bucket, times `2^k`. That needs the `[bucket, $createdAt]`
+  index to be `rangeCountable`.
+- **Cost gate.** Auto-scaling ships **only if battery item 7 measures the
+  `rangeCountable` flag as adding under ~2% to an invite create.** If it costs
+  more, the flag is left off and `k` becomes a client constant raised by
+  release. Either way it starts at `k = 0`.
+- **Transitions.** Senders use the `k` of the month they write in. Recipients
+  query both this month's and last month's level in one `bucket in [...]`
+  query, so boundary and clock-skew invites are still found.
+- **Ceiling.** Past `K_CEIL` the leak per invite outweighs the benefit, so the
+  client stays at the ceiling and raises `B` instead (batched identity fetches,
+  a bigger bandwidth budget). If that runs out, bucketing is the wrong tool and
+  discovery needs PIR or fuzzy message detection.
+- **Flooding.** Pushing `V` over `B` means paying for thousands of invites a
+  day for a month before `k` moves once. A flood that large already raises scan
+  cost, so raising `k` is the right response, and `K_CEIL` bounds it.
+- **Encoding.** `(1 << k) | prefix` gives every `(k, prefix)` a distinct value,
+  so an invite's level is never ambiguous. The contract needs no `k` limits: an
+  invite at a level nobody scans hurts only its sender.
 
 ### 5.2 Handles
 
@@ -338,30 +380,34 @@ keyringHandle(b)  = HKDF(gid, "yappr/dm/v5", "keyring\0" || S16(b))[0:10]
 body = iv(12) | AES-256-GCM(mk_i, iv, pad(type | payload), aad) // ciphertext || tag(16)
 ```
 
-- **Size classes.** Padded plaintext is **128, 512, 2048 or 4972 bytes**, so
-  the body is 156, 540, 2076 or 5000 bytes. Every encrypted blob in this
-  contract (invite grants, rosters, self-state) uses the same classes.
+- **Size classes.** Padded plaintext is a power of two from **128 to 4096
+  bytes** (128, 256, 512, 1024, 2048, 4096), so the body is 28 bytes more
+  (156 to 4124). Every encrypted blob in this contract (invite grants, rosters,
+  self-state) uses the same classes. Plaintext above 4094 bytes (4096 minus the
+  length prefix) is split across messages.
 - **Padding format:** `u16 length | plaintext | zeros`.
 
 `DM_V5_GROUPS.md` rejected padding as paid storage. Its own cost data says
 otherwise. Padding a short message to 128 bytes adds at most about 3.4M credits,
 against a document whose fixed cost is in the 46–59M class. That is under 10%.
-Size is a real correlation signal next to timing, so padding is always on, and
-the size classes themselves are open decision 2.
+Size is a real correlation signal next to timing, so padding is always on.
+Doubling classes waste at most half a message and about a quarter on average.
 
 ### 5.4 `dmKeyring.slots` (removal)
 
 `kc(K[b,0])(8) | wrap_1 | … | wrap_n`: one 32-byte slot per remaining non-owner
 member (§4.5), in shuffled order.
 
-- **Padding.** The slot count pads with random slots to the next of **8, 32 or
-  128**, so an observer learns only a coarse group size, and only when someone
-  is removed.
+- **Padding.** The slot count pads with random slots to the next power of two
+  from **8 to 128**, matching the message classes. An observer learns the group
+  size to within 2×, and only when someone is removed. Coarser classes would
+  hide more, but at 32 B a slot, padding 65 members to 128 instead of 64+
+  costs about 55M credits per removal.
 - **Unwrapping.** A member does one ECDH, derives its pad once, XORs each slot,
   and keeps the one whose `kc` matches.
 - **Size limit.** The largest class is 8 + 128 × 32 = 4104 bytes, which fits the
-  5120-byte field. That caps a group at **129 members including the owner**.
-  Proposed limit: 100.
+  5120-byte field. The group limit is **100 members including the owner**
+  (decided), well under the 129 the field allows.
 
 ### 5.5 `dmRoster`: the group's current state
 
@@ -381,13 +427,15 @@ every membership change and every rename. It does three jobs:
 - **No plaintext epoch.** A reader already knows the newest base from keyrings.
   It tries `rk` for `r`, `r+1`, … up to 16 steps ahead.
 - **Padded blob.** It pads to the size classes, so the member count is hidden to
-  about a 4× band. At 36 bytes per member, 100 members is about 3.6 KB, which
-  fits the 4972-byte class.
+  within 2×. At 36 bytes per member, 100 members is about 3.6 KB, which fits
+  the 4096-byte class.
 - **Timing jitter.** Every roster replace that follows an invite or a keyring is
   delayed by a random 1–30 minutes, carried in the owner's local queue and
-  retried on the next open. Invites for a new group go out on separate ticks.
-  Without jitter, "invite, then roster replace" ties the new member's bucket to
-  this group.
+  retried on the next open. Without jitter, "invite, then roster replace" ties
+  the new member's bucket to this group. This is a background write, not a
+  user-visible delay: the new member reads the roster late, not their messages.
+  Invites for a brand-new group go out immediately, so a burst of invites
+  reveals "A created a group of about N" (§3).
 - **Still visible:** `$revision`, which counts changes and renames (§3).
 
 **The pointer never regresses.**
@@ -458,9 +506,8 @@ link them. Battery item 4 settles this.
 
 1. **Groups only:** read the roster and check for a keyring at `b+1`. This is one
    query per owner, and a read costs nothing.
-2. **Wait for the send tick.** Outgoing messages leave on a randomised 15–60 s
-   tick (§8, open decision 3).
-3. **Write.** Write `dmMessage{tag_i, body}` at the current `(b, r)`, using the
+2. **Write.** Messages go out immediately; send batching was considered and
+   rejected for its latency (§8). Write `dmMessage{tag_i, body}` at the current `(b, r)`, using the
    next free `i`. Before advancing past `i`, read back `tag_i`. A 504 timeout
    does not prove the write failed or succeeded (CLAUDE.md, "DAPI Gateway
    Timeouts"). If the tag is missing, rebroadcast the same transition.
@@ -475,8 +522,9 @@ link them. Battery item 4 settles this.
   - Handles go into one query per owner.
   - Twenty 1:1 chats cost 2 queries.
   - A 100-member group costs 3. To reduce this, the client can poll members idle
-    for more than a day every *other* tick.
-  - Polling rides the existing 30 s notification poll.
+    for more than a day on every *other* poll.
+  - Polling rides the existing 30 s notification poll, and runs every few
+    seconds while a conversation is open.
 - **Gaps.** A tag found out of order is held until the window fills. A tag
   missing for 3 consecutive windows is treated as a gap, meaning the sender's
   write was lost after a timeout.
@@ -532,8 +580,7 @@ A removed member still holds the keys for base `b` and can still compute its
 stream tags. A message on base `b` is rejected if keyring `b+1` exists and
 `msg.$createdAt > keyring[b+1].$createdAt + GRACE`.
 
-- `GRACE` must exceed Platform's `$createdAt` tolerance plus the maximum send
-  tick. 10 minutes is proposed, and battery item 5 confirms it.
+- `GRACE` must exceed Platform's `$createdAt` tolerance. 10 minutes is proposed, and battery item 5 confirms it.
 - Honest late messages are rare, because of §6.2 step 1.
 
 ## 7. Operations and costs
@@ -564,12 +611,16 @@ that matters most.
 - **Timing correlation.** If A writes, then B writes 20 seconds later, over and
   over, the pair shows up in simple co-occurrence statistics. Mitigations, from
   cheapest:
-  1. **Send ticks.** Outgoing messages leave on randomised ticks (§6.2).
-  2. **Jittered owner writes.** Roster and removal writes are delayed (§5.5,
-     §6.5).
-  3. **Receipts** are delayed or off, and `dmSelfState` is debounced.
-  4. **Optional cover traffic:** dummy documents on random tags. These cost real
+  1. **Jittered owner writes.** Roster and removal writes are delayed (§5.5,
+     §6.5). They are background writes, so users do not wait on them.
+  2. **Receipts** are delayed or off, and `dmSelfState` is debounced.
+  3. **Optional cover traffic:** dummy documents on random tags. These cost real
      credits, so they are opt-in.
+
+  **Send batching** (holding outgoing messages for a random 15–60 s tick) was
+  rejected. It is the strongest cheap defence against back-and-forth
+  correlation, but it makes every chat feel laggy. Live conversations are
+  therefore linkable by a patient observer when few users are active at once.
 
   None of these defeats a global observer, and Signal does not claim to either.
   The UI should not over-promise.
@@ -707,7 +758,7 @@ Adding admins needs a second writer of keyrings, which is left for later.
 3. **`scripts/verify-dm-v5.mjs` on devnet**, which must **measure real credits**
    for every row of §7 before client work starts. That covers:
    - message size classes, invites with and without a first message, keyrings
-     at 8/32/128 slots, roster replaces, bridges;
+     at 8/16/32/64/128 slots, roster replaces, bridges;
    - spoofed keyrings and rosters under a stranger's `$ownerId`;
    - squatted tags under `[tag, $ownerId]`;
    - unique-index races.
@@ -716,14 +767,23 @@ Adding admins needs a second writer of keyrings, which is left for later.
    The answer decides the choice in §6.1.
 5. **`$createdAt` tolerance,** to set `GRACE`.
 6. **Service and UI,** then deployed e2e on /devnet.
+7. **The `rangeCountable` cost on `dmInvite`.** Measure an invite create with
+   and without the flag. Under ~2% extra enables automatic `k` scaling (§5.1).
 
-## 14. Open decisions
+## 14. Decisions
 
-1. **Bucket width `k`.** Start at 0–4.
-2. **Padding size classes.** They trade cost against the size leak.
-3. **Send-tick interval.** UX latency against timing privacy. Should ticks be
-   on by default?
-4. **Whether to ship `dmSelfState` in Phase 1,** or keep read state per device.
-5. **Group size limit.** 100 is proposed, and the ceiling is 129.
-6. **Whether Phase 2 "sealed chat"** (per-device sessions, true forward secrecy)
-   is worth its fan-out cost.
+Decided 2026-09-22:
+
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | Bucket width `k` | Start at `k = 0`. Scale automatically with invite volume (§5.1), **only if** the `rangeCountable` flag it needs is near-free (battery item 7). Otherwise `k` is a client constant raised by release. |
+| 2 | Padding size classes | Powers of two, 128 to 4096 bytes. Keyring slots pad to powers of two, 8 to 128. |
+| 3 | Send batching | **No.** Messages send immediately; timing correlation is an accepted leak (§8). |
+| 4 | Group size limit | **100** including the owner. |
+
+Still open:
+
+1. **Cross-device read sync (`dmSelfState`, §5.6):** ship in Phase 1, or keep
+   read state on each device.
+2. **Phase 2 "sealed chat" (§11):** whether per-device sessions with real
+   forward secrecy are worth their cost.
