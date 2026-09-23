@@ -9,10 +9,15 @@
 import { ecdhSharedX } from '@/lib/crypto/ecdh'
 import { bytesEqual } from '@/lib/bytes'
 import { assertIdentityId, dmHkdf, s16, u32 } from './kdf'
-import type { IdentityId } from './types'
+import type { Epoch, IdentityId } from './types'
 
 export const GID_LENGTH = 10
 export const KEY_CHECK_LENGTH = 8
+
+/** True when epoch `a` is older than epoch `b`: lower base, or same base and lower ratchet step. */
+export function epochBefore(a: Epoch, b: Epoch): boolean {
+  return a.b !== b.b ? a.b < b.b : a.r < b.r
+}
 
 /** Byte-order comparison of two identity ids. */
 export function compareIds(a: IdentityId, b: IdentityId): number {

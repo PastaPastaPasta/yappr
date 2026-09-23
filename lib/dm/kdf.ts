@@ -18,12 +18,17 @@ const U32_MAX = 0xffffffff
 export const KEY_LENGTH = 32
 export const IDENTITY_ID_LENGTH = 32
 
+/** Throw unless `bytes` is exactly `length` long. */
+export function assertLength(bytes: Uint8Array, length: number, name: string): void {
+  if (bytes.length !== length) throw new Error(`${name} must be ${length} bytes`)
+}
+
 /**
  * Identity ids go into derivations as fixed-width fields; a wrong length
  * would let two different inputs share an `info`, so reject it outright.
  */
 export function assertIdentityId(id: Uint8Array, name = 'identity id'): void {
-  if (id.length !== IDENTITY_ID_LENGTH) throw new Error(`${name} must be ${IDENTITY_ID_LENGTH} bytes`)
+  assertLength(id, IDENTITY_ID_LENGTH, name)
 }
 
 /** Strict UTF-8 decode that keeps a leading U+FEFF rather than stripping it. */

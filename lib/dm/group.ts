@@ -8,7 +8,7 @@
 
 import { ecdhSharedX } from '@/lib/crypto/ecdh'
 import { bytesEqual } from '@/lib/bytes'
-import { ByteReader, IDENTITY_ID_LENGTH, KEY_LENGTH, assertIdentityId, concat, decodeUtf8, dmHkdf, s16 } from './kdf'
+import { ByteReader, IDENTITY_ID_LENGTH, KEY_LENGTH, assertIdentityId, assertLength, concat, decodeUtf8, dmHkdf, s16 } from './kdf'
 import { GID_LENGTH, KEY_CHECK_LENGTH, keyCheck, ratchetKey } from './keys'
 import { MESSAGE_CLASSES } from './padding'
 import { sealPadded, tryOpenPadded } from './seal'
@@ -101,7 +101,7 @@ export interface BuildKeyringParams {
 
 /** `kc(K[b,0]) | slot | slot | …`, padded with random slots to 8..128 and shuffled. */
 export function buildKeyring(params: BuildKeyringParams): Uint8Array {
-  if (params.baseKey.length !== KEY_LENGTH) throw new Error('Base key must be 32 bytes')
+  assertLength(params.baseKey, KEY_LENGTH, 'Base key')
   if (params.members.length > MAX_GROUP_MEMBERS - 1) throw new Error(`Too many keyring members: ${params.members.length}`)
   const real = params.members.map((member) =>
     xor(
@@ -183,7 +183,7 @@ export function rosterKey(epochKey: Uint8Array): Uint8Array {
 
 /** `iv | AES-256-GCM(HKDF(K[b,r], "roster\0"), pad(roster), aad = handle)`. `epochKey` must be `K[roster.b, roster.r]`. */
 export async function encryptRoster(epochKey: Uint8Array, gid: Uint8Array, roster: RosterContent): Promise<Uint8Array> {
-  if (gid.length !== GID_LENGTH) throw new Error('gid must be 10 bytes')
+  assertLength(gid, GID_LENGTH, 'gid')
   return sealPadded(rosterKey(epochKey), encodeRoster(roster), MESSAGE_CLASSES, rosterHandle(gid))
 }
 

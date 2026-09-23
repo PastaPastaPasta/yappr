@@ -6,7 +6,7 @@
  * The body carries a back-link (`prev`) to the sender's previous message.
  */
 
-import { ByteReader, assertIdentityId, concat, decodeUtf8, dmHkdf, s16, u32 } from './kdf'
+import { ByteReader, KEY_LENGTH, assertIdentityId, assertLength, concat, decodeUtf8, dmHkdf, s16, u32 } from './kdf'
 import { GID_LENGTH } from './keys'
 import { MESSAGE_CLASSES } from './padding'
 import { openPadded, sealPadded } from './seal'
@@ -22,7 +22,7 @@ export const MessageType = {
 } as const
 
 const MESSAGE_AAD_PREFIX = new TextEncoder().encode('yappr/dm/msg/v5')
-const GRANT_LENGTH = GID_LENGTH + 2 + 2 + 32
+const GRANT_LENGTH = GID_LENGTH + 2 + 2 + KEY_LENGTH
 
 /** `SK = HKDF(K, "stream\0" || senderId)`. */
 export function deriveStreamKey(conversationKey: Uint8Array, senderId: IdentityId): Uint8Array {
@@ -57,7 +57,7 @@ export function encodePrev(prev: MessagePointer | null): Uint8Array {
  * is 1970's first message and never a real one, so zero is unambiguous.
  */
 export function decodePrev(bytes: Uint8Array): MessagePointer | null {
-  if (bytes.length !== PREV_LENGTH) throw new Error('prev must be 12 bytes')
+  assertLength(bytes, PREV_LENGTH, 'prev')
   if (bytes.every((byte) => byte === 0)) return null
   const reader = new ByteReader(bytes)
   const w = reader.u32()
@@ -69,18 +69,18 @@ export function decodePrev(bytes: Uint8Array): MessagePointer | null {
 
 /** `gid | S16(b) | S16(r) | K[b,r]`. */
 export function encodeGrant(grant: GroupGrant): Uint8Array {
-  if (grant.gid.length !== GID_LENGTH) throw new Error('gid must be 10 bytes')
-  if (grant.key.length !== 32) throw new Error('Group key must be 32 bytes')
+  assertLength(grant.gid, GID_LENGTH, 'gid')
+  assertLength(grant.key, KEY_LENGTH, 'Group key')
   return concat(grant.gid, s16(grant.b), s16(grant.r), grant.key)
 }
 
 export function decodeGrant(bytes: Uint8Array): GroupGrant {
-  if (bytes.length !== GRANT_LENGTH) throw new Error('Grant must be 46 bytes')
+  assertLength(bytes, GRANT_LENGTH, 'Grant')
   const reader = new ByteReader(bytes)
   const gid = reader.bytesOf(GID_LENGTH)
   const b = reader.u16()
   const r = reader.u16()
-  return { gid, b, r, key: reader.bytesOf(32) }
+  return { gid, b, r, key: reader.bytesOf(KEY_LENGTH) }
 }
 
 /** `type | payload`. */

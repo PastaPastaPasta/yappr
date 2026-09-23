@@ -9,6 +9,7 @@
  */
 
 import { bytesEqual } from '@/lib/bytes'
+import { epochBefore } from './keys'
 import type { GroupGrant, IdentityId, OpenedRoster } from './types'
 
 export interface GrantCheck {
@@ -41,8 +42,7 @@ export function checkGrant(check: GrantCheck): GrantVerdict {
   if (!bytesEqual(check.rosterOwner, check.streamSender)) return { accepted: false, reason: 'wrong-owner' }
   if (!check.roster) return { accepted: false, reason: 'roster-unreadable' }
   const { content } = check.roster
-  const { b, r } = check.grant
-  if (content.b < b || (content.b === b && content.r < r)) return { accepted: false, reason: 'stale-roster' }
+  if (epochBefore(content, check.grant)) return { accepted: false, reason: 'stale-roster' }
   if (content.ended) return { accepted: false, reason: 'ended' }
   if (!content.members.some((id) => bytesEqual(id, check.memberId))) return { accepted: false, reason: 'not-a-member' }
   return { accepted: true }

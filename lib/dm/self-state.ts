@@ -15,11 +15,11 @@
  */
 
 import { bytesEqual } from '@/lib/bytes'
-import { ByteReader, IDENTITY_ID_LENGTH as ID_LENGTH, KEY_LENGTH, concat, dmHkdf, s16, u32, u64 } from './kdf'
-import { GID_LENGTH } from './keys'
+import { ByteReader, IDENTITY_ID_LENGTH as ID_LENGTH, KEY_LENGTH, assertLength, concat, dmHkdf, s16, u32, u64 } from './kdf'
+import { GID_LENGTH, epochBefore } from './keys'
 import { SELF_STATE_CLASSES, joinFields, maxPlaintextLength, splitFields } from './padding'
 import { openPadded, sealPadded } from './seal'
-import type { DirectConversation, Epoch, GroupConversation, IdentityId, RetentionSetting, SelfState } from './types'
+import type { DirectConversation, GroupConversation, RetentionSetting, SelfState } from './types'
 
 const VERSION = 1
 const RETENTIONS: readonly RetentionSetting[] = ['30d', '90d', '1y', 'never']
@@ -39,10 +39,6 @@ export function emptySelfState(): SelfState {
     nextGroupNumber: 0,
     pastKeys: [],
   }
-}
-
-function assertLength(bytes: Uint8Array, length: number, name: string): void {
-  if (bytes.length !== length) throw new Error(`${name} must be ${length} bytes`)
 }
 
 export function encodeSelfState(state: SelfState): Uint8Array {
@@ -143,10 +139,6 @@ export async function decryptSelfState(stateKey: Uint8Array, fields: SelfStateFi
 // ---------------------------------------------------------------------------
 // Merge (§5.5): resolve a lost revision race (error 40106) by re-reading and merging.
 
-function epochBefore(a: Epoch, b: Epoch): boolean {
-  return a.b !== b.b ? a.b < b.b : a.r < b.r
-}
-
 function unionBy<T>(first: T[], second: T[], same: (a: T, b: T) => boolean, combine: (a: T, b: T) => T): T[] {
   const out = [...first]
   for (const item of second) {
@@ -172,7 +164,6 @@ function mergeGroup(a: GroupConversation, b: GroupConversation): GroupConversati
   }
 }
 
-const sameId = (a: IdentityId, b: IdentityId) => bytesEqual(a, b)
 const keepFirst = <T>(a: T) => a
 
 /**
@@ -190,17 +181,17 @@ const keepFirst = <T>(a: T) => a
  */
 export function mergeSelfStates(remote: SelfState, local: SelfState): SelfState {
   return {
-    directs: unionBy(remote.directs, local.directs, (a, b) => sameId(a.peer, b.peer), mergeDirect),
+    directs: unionBy(remote.directs, local.directs, (a, b) => bytesEqual(a.peer, b.peer), mergeDirect),
     groups: unionBy(
       remote.groups,
       local.groups,
-      (a, b) => sameId(a.gid, b.gid) && sameId(a.owner, b.owner),
+      (a, b) => bytesEqual(a.gid, b.gid) && bytesEqual(a.owner, b.owner),
       mergeGroup
     ),
-    blocks: unionBy(remote.blocks, local.blocks, sameId, keepFirst),
+    blocks: unionBy(remote.blocks, local.blocks, bytesEqual, keepFirst),
     settings: local.settings.updatedAt > remote.settings.updatedAt ? local.settings : remote.settings,
     inviteScanCursor: Math.min(remote.inviteScanCursor, local.inviteScanCursor),
     nextGroupNumber: Math.max(remote.nextGroupNumber, local.nextGroupNumber),
-    pastKeys: unionBy(remote.pastKeys, local.pastKeys, sameId, keepFirst),
+    pastKeys: unionBy(remote.pastKeys, local.pastKeys, bytesEqual, keepFirst),
   }
 }
