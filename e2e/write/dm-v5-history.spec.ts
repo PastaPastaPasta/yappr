@@ -27,6 +27,7 @@ import {
   closeDevices,
   composer,
   currentWeek,
+  decryptAt,
   directKey,
   directStream,
   dmBot,
@@ -213,19 +214,17 @@ test.describe('DM v5: history and concurrency', () => {
     await e1.page.waitForTimeout(10_000)
     const w = currentWeek()
     const before = (await streamWeek(directStream(E, F, E), w)).length
-    await Promise.all([composer(e1.page).fill(`${tag} collide 1`), composer(e2.page).fill(`${tag} collide 2`)])
-    await Promise.all([
-      thread(e1.page).getByRole('button', { name: 'Send message' }).click(),
-      thread(e2.page).getByRole('button', { name: 'Send message' }).click(),
-    ])
-    await Promise.all([
-      expect(composer(e1.page)).toHaveValue('', { timeout: 240_000 }),
-      expect(composer(e2.page)).toHaveValue('', { timeout: 240_000 }),
-    ])
+    // Both send at once. The loser's broadcast is refused (or only times out) and it retries at j + 1,
+    // linking its prev to the winner's message; a timed-out broadcast plus its read-back can take minutes.
+    await Promise.all([send(e1.page, `${tag} collide 1`, 420_000), send(e2.page, `${tag} collide 2`, 420_000)])
     const docs = await streamWeek(directStream(E, F, E), w)
     expect(docs.length).toBe(before + 2)
-    // The stream has no hole: j runs 0..n-1.
+    // The stream has no hole (j runs 0..n-1) and no fork: each message links to the one before it.
     expect(docs.map((d) => d.j)).toEqual(docs.map((_, i) => i))
+    for (const d of docs.slice(-2)) {
+      const m = await decryptAt(directStream(E, F, E), E, w, d.j, d.doc)
+      expect(m?.prev?.j, `prev of j = ${d.j}`).toBe(d.j - 1)
+    }
 
     f1 ??= await openDevice(browser, F, 'F1')
     await gotoMessages(f1.page)

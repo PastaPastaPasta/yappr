@@ -205,7 +205,7 @@ export async function openRow(page: Page, target: Locator, timeout = 120_000): P
 }
 
 /** Send from the open thread and wait for the app's own success signal (the draft clears). */
-export async function send(page: Page, text: string): Promise<void> {
+export async function send(page: Page, text: string, timeout = 180_000): Promise<void> {
   const box = composer(page)
   await expect(box).toBeEnabled({ timeout: 60_000 })
   await box.fill(text)
@@ -213,10 +213,11 @@ export async function send(page: Page, text: string): Promise<void> {
   // The draft clears on success. On failure it stays and the app shows a short-lived error toast,
   // whose text is the useful part of the report, so watch for one while waiting.
   let toast = ''
-  const watch = page.getByRole('status').first().waitFor({ timeout: 180_000 }).then(async () => {
-    toast = await page.getByRole('status').allInnerTexts().then((t) => t.join(' | ')).catch(() => '')
+  const toasts = page.getByRole('status').filter({ hasText: /\S/ })
+  const watch = toasts.first().waitFor({ timeout }).then(async () => {
+    toast = await toasts.allInnerTexts().then((t) => t.join(' | ')).catch(() => '')
   }).catch(() => undefined)
-  await expect(box).toHaveValue('', { timeout: 180_000 }).catch((error: Error) => {
+  await expect(box).toHaveValue('', { timeout }).catch((error: Error) => {
     throw new Error(`${error.message}\nerror toast: ${toast || '(none seen)'}`)
   })
   void watch
@@ -252,7 +253,7 @@ export async function expectAbsentFor(page: Page, locator: Locator, ms: number):
 // ---------------------------------------------------------------------------
 // Node actors
 
-type SdkHandle = { sdk: Sdk; connect: () => Promise<unknown> }
+type SdkHandle = { sdk: Sdk; connect: () => Promise<unknown>; reconnect: (reason: string) => Promise<unknown> }
 // The scripts are untyped .mjs; this is the slice of the SDK the specs use.
 type Sdk = {
   documents: {
@@ -264,9 +265,9 @@ type Sdk = {
   wasm: { getIdentityContractNonce(owner: string, contract: string): Promise<bigint | undefined> }
 }
 
-let handle: Promise<Sdk> | null = null
+let handle: Promise<SdkHandle> | null = null
 
-export function nodeSdk(): Promise<Sdk> {
+function sdkHandle(): Promise<SdkHandle> {
   if (!handle) {
     handle = (async () => {
       const { ensureInitialized } = await import('@dashevo/evo-sdk')
@@ -274,10 +275,21 @@ export function nodeSdk(): Promise<Sdk> {
       const seedLib = (await import('../../scripts/seed/seed-lib.mjs')) as unknown as { createSdkHandle: (o: { contractIds: string[] }) => SdkHandle }
       const created = seedLib.createSdkHandle({ contractIds: [DM_V5_CONTRACT_ID, LEGACY_DM_CONTRACT_ID].filter(Boolean) })
       await created.connect()
-      return created.sdk
+      return created
     })()
   }
   return handle
+}
+
+export async function nodeSdk(): Promise<Sdk> {
+  return (await sdkHandle()).sdk
+}
+
+/** The SDK banned every DAPI address it knows (it happens after a burst of errors): start a fresh client. */
+async function recoverTransport(error: unknown): Promise<void> {
+  const message = wasmMessage(error)
+  if (!/no available addresses|invalid quorum|quorum not found/i.test(message)) return
+  await (await sdkHandle()).reconnect(message).catch(() => undefined)
 }
 
 interface Signing {
@@ -324,6 +336,7 @@ export async function queryDocs(contractId: string, documentTypeName: string, sh
       return Array.from(result.values()).filter((doc): doc is { toObject(): Doc } => doc !== undefined).map((doc) => doc.toObject())
     } catch (error) {
       if (attempt >= 5) throw new Error(`${documentTypeName} query failed: ${wasmMessage(error)}`)
+      await recoverTransport(error)
       await new Promise((resolve) => setTimeout(resolve, 2_000 * attempt))
     }
   }
@@ -357,6 +370,7 @@ export async function createDoc(bot: DmBot, contractId: string, docType: string,
       await sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer })
     } catch (error) {
       lastError = wasmMessage(error)
+      await recoverTransport(error)
     }
     for (let i = 0; i < 20; i++) {
       if (await seen()) return
