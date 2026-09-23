@@ -27,8 +27,8 @@ disagreed, §12 records which side won and why.
 6. **Stateless recovery.** Any session on any device can rebuild every
    conversation from the login-derived encryption key
    (`deriveYapprEncryptionKeyFromLogin`) plus chain data. This is accepted, and
-   it means there is no forward secrecy against compromise of your own key (§11
-   covers the later path).
+   it means there is no forward secrecy against compromise of your own key. This
+   is a deliberate trade: Yappr does not try to replace Signal (§11).
 7. Static export, no backend, one document per state transition.
 
 The design rests on one rule. **No field on chain is shared between the
@@ -45,7 +45,7 @@ Each of these links is enough on its own to reveal a pair.
 | 1 | `conversationInvite` stores `$ownerId = A` next to `recipientId = B` in plaintext, with an index on recipient. It is a public edge list. | Invites carry no recipient field. They are sealed, padded, and filed under a coarse bucket (§5.1). |
 | 2 | `conversationId = sha256(A:B)[0:10]`. Anyone can hash every pair of users and reverse every conversation. | There is no conversation id on chain. Group and 1:1 ids are secrets. |
 | 3 | A's and B's messages share one `conversationId`, so the index groups the pair. | Every message has a one-time tag, and tags never repeat across documents (§6). |
-| 4 | `readReceipt` publishes `(B, conversationId, time B read it)`. | Read state is local, optionally synced through an encrypted self-state doc (§5.6). |
+| 4 | `readReceipt` publishes `(B, conversationId, time B read it)`. | Read state is synced through an encrypted self-state doc only the user can read (§5.6). |
 | 5 | Static ECDH on the auth key. | ENCRYPTION key, plus a rotation bridge (§4.6). |
 
 v4 history is **permanently** linkable. Deleting its documents does not remove
@@ -128,7 +128,7 @@ rotations, via the bridge.
 The static identity keys **replace a prekey document.** An earlier draft
 published a Signal-style signed prekey per user. That would add a document per
 user and buy first-message forward secrecy that stateless recovery (goal 6)
-throws away anyway. It comes back in Phase 2.
+throws away anyway.
 
 ### 4.3 1:1 keys: no key documents
 
@@ -245,12 +245,12 @@ New contract, `yappr-dm-contract-v5.json`.
 
 | Doctype | Owner | Fields | Indexes | Mutability |
 | --- | --- | --- | --- | --- |
-| `dmInvite` | inviter | `bucket` u16 (heap-encoded, §5.1), `sealed` bytes 156–4124, `selfHint` b32 | `[bucket, $createdAt]` rangeCountable (only if §5.1's cost gate passes); `[$ownerId, $createdAt]` | immutable, **not deletable** |
+| `dmInvite` | inviter | `bucket` u16 (heap-encoded, §5.1), `sealed` bytes 156–4124, `selfHint` b32 | `[bucket, $createdAt]`; `[$ownerId, $createdAt]` | immutable, **not deletable** |
 | `dmMessage` | sender | `tag` b16, `body` bytes 156–4124 | **unique** `[tag, $ownerId]` | immutable, **not deletable** |
 | `dmRoster` | group owner | `handle` b10, `blob` bytes 156–4124 | **unique** `[$ownerId, handle]` | mutable, not deletable |
 | `dmKeyring` | group owner | `handle` b10, `slots` bytes 264–5120 | **unique** `[$ownerId, handle]` | immutable, not deletable |
 | `encryptionKeyBridge` | key owner | `payload` b81 | `[$ownerId, $createdAt]` | immutable, not deletable |
-| `dmSelfState` (optional) | user | `slot` u8, `blob` bytes 156–4124 | **unique** `[$ownerId, slot]` | mutable |
+| `dmSelfState` | user | `slot` u8, `blob` bytes 156–4124 | **unique** `[$ownerId, slot]` | mutable |
 
 - **No doctype has a `recipientId`, `groupId` or `conversationId` field.**
 - **Messages, keyrings and rosters get no `refersTo` or `propertyAgreement`,**
@@ -337,18 +337,21 @@ k_m   = min(k_m, K_CEIL)                                       // K_CEIL = 2
 step down only if V_m < B · 2^(k−1) / 2                        // hysteresis
 ```
 
-- **Counting.** Past months never change, because invites are never deleted, so
-  every client gets the same `V_m`. At `k = 0` it is free: recipients already
-  download every invite. At `k > 0` it is one proved count per month of the
-  all-zero-prefix bucket, times `2^k`. That needs the `[bucket, $createdAt]`
-  index to be `rangeCountable`.
-- **Cost gate.** Auto-scaling ships **only if battery item 7 measures the
-  `rangeCountable` flag as adding under ~2% to an invite create.** If it costs
-  more, the flag is left off and `k` becomes a client constant raised by
-  release. Either way it starts at `k = 0`.
-- **Transitions.** Senders use the `k` of the month they write in. Recipients
-  query both this month's and last month's level in one `bucket in [...]`
-  query, so boundary and clock-skew invites are still found.
+- **Counting costs nothing extra.** Each recipient already downloads its own
+  bucket, so it estimates `V_m` as (invites in its own bucket last month) ×
+  `2^k`. At `k = 0` that is the exact network count. At `k > 0` a bucket holds
+  about `B` invites a day, roughly 180,000 a month, so each client's estimate is
+  within about 1% of everyone else's. Clients can only disagree when `V_m` sits
+  within about 1% of a step threshold, and hysteresis makes that rare.
+- **No new index or flag.** A `rangeCountable` index would give every client
+  the identical proved count, but it adds cost to every invite create for
+  something the scan already provides.
+- **Transitions and disagreement.** Senders use the `k` they computed for the
+  month they write in. Recipients query last month's level, this month's
+  level, and, when their estimate is within 5% of a threshold, the neighbouring
+  level. All of this is one `bucket in [...]` query, so invites sent around a
+  boundary, with clock skew, or by a client that estimated differently are
+  still found.
 - **Ceiling.** Past `K_CEIL` the leak per invite outweighs the benefit, so the
   client stays at the ceiling and raises `B` instead (batched identity fetches,
   a bigger bandwidth budget). If that runs out, bucketing is the wrong tool and
@@ -444,7 +447,7 @@ every membership change and every rename. It does three jobs:
 - A reader whose ratchet is ahead of the roster (the new member's invite landed
   but the roster has not) polls both `r` and `r+1` streams (§6.5).
 
-### 5.6 `dmSelfState`: optional private sync
+### 5.6 `dmSelfState`: private cross-device sync
 
 ```
 blob = iv(12) | AES-256-GCM(HKDF(stateKey, "slot\0" || u8(slot)), iv, pad(state))
@@ -456,7 +459,8 @@ about 1,000 conversations.
 
 **Writes are debounced (at least 5 minutes) and never happen immediately on
 read**, because a state update seconds after someone's message is a timing
-signal. With self-state disabled, read state stays on the device.
+signal. It ships in Phase 1: without it, read state and blocks would differ
+between a user's devices.
 
 ## 6. Messages
 
@@ -596,7 +600,7 @@ stream tags. A message on base `b` is rejected if keyring `b+1` exists and
 | Rename | n/a | 1 roster replace | |
 | Rotate encryption key | n/a | **1** bridge, total | 1:1 threads move on their own (§4.3) |
 | Restore a member who lost their key | n/a | 1 invite | |
-| Mark read | 1 receipt replace | **0** (local), or a debounced self-state replace | |
+| Mark read | 1 receipt replace | 0 immediately; a debounced self-state replace at most every 5 min | |
 
 On the read side, the bucket scan costs about one ECDH per new inviter, and
 polling costs one `in` query per ~33 member streams (3 tags each).
@@ -685,20 +689,15 @@ Adding admins needs a second writer of keyrings, which is left for later.
 
 1. **Phase 1: this document.** Unlinkable 1:1 chats and groups, stateless
    recovery, no forward secrecy.
-2. **Phase 2: forward secrecy and post-quantum keys.** This is more urgent than
-   for Signal, because every ciphertext is public forever ("harvest now, decrypt
-   later"). Planned pieces:
-   - A signed prekey plus an ML-KEM-768 key in a per-user doc, used for PQXDH on
-     first contact. The ciphertext alone is 1,088 bytes, which fits the invite's
-     2,048-byte class.
-   - Double Ratchet on 1:1 streams.
-   - Sender-chain ratchets in groups.
+2. **Phase 2: post-quantum first contact (optional).** A per-user ML-KEM-768
+   key, mixed into the 1:1 key agreement so that recorded ciphertext survives a
+   future quantum break of secp256k1. It keeps stateless recovery.
 
-   The cost is stateless recovery. Ratchet state cannot be recomputed, so each
-   device needs its own session (Signal's Sesame model), and every message is
-   sent once per device. This should be offered as an opt-in "sealed chat" mode
-   rather than the default. The coarse form of forward secrecy is already
-   available: rotate without a bridge (§4.6).
+   Per-device ratchets ("sealed chat", Signal's model) were **rejected**. They
+   give forward secrecy, but a new browser or device would start with an empty
+   history. That is not acceptable for a web app that users log into from many
+   browsers. The coarse form of forward secrecy remains: rotate your encryption
+   key without a bridge (§4.6).
 3. **Phase 3: hiding the sender.** On Platform, signing is always done by
    `$ownerId`. Hiding the sender needs a throwaway identity per contact or per
    epoch, funded untraceably through the shielded pool:
@@ -715,7 +714,7 @@ Adding admins needs a second writer of keyrings, which is left for later.
 | Topic | Privacy draft | `DM_V5_GROUPS.md` | Merged |
 | --- | --- | --- | --- |
 | Membership and the social graph | Hidden | Public `recipientId` / `groupId` (cheapest) | **Hidden.** It is goal 1. The bucketed scan answers the scaling objection (§5.1). |
-| Key material | Signed prekey doc + X3DH | ENCRYPTION key, no key docs | **ENCRYPTION key.** A prekey doc adds a document per user and buys forward secrecy that goal 6 gives up anyway. It moves to Phase 2. |
+| Key material | Signed prekey doc + X3DH | ENCRYPTION key, no key docs | **ENCRYPTION key.** A prekey doc adds a document per user and buys forward secrecy that goal 6 gives up anyway. |
 | Groups | Sender keys | Owner-derived `S`, ratchet on add, keyring on remove | **Groups draft,** with keyrings and rosters moved under secret handles. |
 | Read receipts | Encrypted in-stream | Public `dmReadReceipt` | **Local / self-state, with opt-in in-stream receipts.** |
 | Padding | Size classes | None (storage cost) | **Size classes.** Under 10% of a document's cost (§5.3). |
@@ -767,8 +766,6 @@ Adding admins needs a second writer of keyrings, which is left for later.
    The answer decides the choice in §6.1.
 5. **`$createdAt` tolerance,** to set `GRACE`.
 6. **Service and UI,** then deployed e2e on /devnet.
-7. **The `rangeCountable` cost on `dmInvite`.** Measure an invite create with
-   and without the flag. Under ~2% extra enables automatic `k` scaling (§5.1).
 
 ## 14. Decisions
 
@@ -776,14 +773,9 @@ Decided 2026-09-22:
 
 | # | Question | Decision |
 | --- | --- | --- |
-| 1 | Bucket width `k` | Start at `k = 0`. Scale automatically with invite volume (§5.1), **only if** the `rangeCountable` flag it needs is near-free (battery item 7). Otherwise `k` is a client constant raised by release. |
+| 1 | Bucket width `k` | Start at `k = 0`, and scale automatically with invite volume (§5.1). The estimate comes from each recipient's own bucket scan, so it adds no index and no cost. |
 | 2 | Padding size classes | Powers of two, 128 to 4096 bytes. Keyring slots pad to powers of two, 8 to 128. |
 | 3 | Send batching | **No.** Messages send immediately; timing correlation is an accepted leak (§8). |
 | 4 | Group size limit | **100** including the owner. |
-
-Still open:
-
-1. **Cross-device read sync (`dmSelfState`, §5.6):** ship in Phase 1, or keep
-   read state on each device.
-2. **Phase 2 "sealed chat" (§11):** whether per-device sessions with real
-   forward secrecy are worth their cost.
+| 5 | Cross-device read sync | **Yes,** `dmSelfState` ships in Phase 1 (§5.6). |
+| 6 | Per-device ratchets ("sealed chat") | **No.** History must follow the user to any browser (§11). |
