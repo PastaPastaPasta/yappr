@@ -404,6 +404,8 @@ export class SelfStateStore {
         logger.warn('DM v5 self-state save refused:', outcome.error)
         return false
       }
+      // My other device used the identity nonce first: nothing was written; it may have saved, so
+      // re-read like a revision race.
       // Another device saved first (40106), or created the document first (40105): merge and retry.
       const remote = await this.chain.selfState()
       if (!remote) {

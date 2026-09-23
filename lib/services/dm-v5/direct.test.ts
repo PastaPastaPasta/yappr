@@ -10,6 +10,7 @@ import { sendContent } from './sender'
 import { stream, timeline } from './conversation'
 import { MapKv, MemoryLedger, makeContext } from './test-chain'
 import { splitText, MAX_TEXT_BYTES } from './util'
+import { classifyWriteFailure } from './write-failure'
 
 const texts = (ctx: DmContext, peer: Uint8Array) =>
   timeline(directConv(ctx, peer) ?? (() => { throw new Error('no conversation') })())
@@ -250,6 +251,33 @@ describe('sender', () => {
     await attachSaved(reloaded.ctx)
     await pollOnce(reloaded.ctx)
     expect(texts(reloaded.ctx, ALICE_ID)).toEqual(['zero', 'from phone', 'from laptop'])
+  })
+
+  it('retries the same slot when my other device used the identity nonce first', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    makeContext(ledger, BOB_ID, BOB_PRIV)
+    const conv = await openDirect(alice.ctx, BOB_ID)
+    await ensureStarted(alice.ctx, conv)
+    let calls = 0
+    alice.chain.hook = (method) => {
+      if (method !== 'createMessage') return null
+      calls++
+      return calls === 1
+        ? { ok: false, failure: 'nonce', error: 'invalid identity nonce … nonce already present at tip' }
+        : null
+    }
+    const held = await sendContent(alice.ctx, conv, { type: 'text', text: 'after a nonce clash' })
+    expect(calls).toBe(2)
+    expect(held.pointer.j).toBe(0)
+    expect(ledger.messages).toHaveLength(1)
+  })
+
+  it('classifies write refusals from their error text', () => {
+    expect(classifyWriteFailure('Document X has duplicate unique properties ["tag"] with other documents')).toBe('duplicate')
+    expect(classifyWriteFailure('Document X has invalid revision Some(2). The desired revision is 2 | code=40106')).toBe('stale')
+    expect(classifyWriteFailure('Protocol error: Identity Y is trying to set an invalid identity nonce. The current identity nonce is 764, we are setting 764, error is nonce already present at tip')).toBe('nonce')
+    expect(classifyWriteFailure('insufficient balance')).toBe('other')
   })
 
   it('retries at j + 1 when another device took the tag (40105)', async () => {

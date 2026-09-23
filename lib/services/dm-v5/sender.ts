@@ -24,6 +24,8 @@ import type { ChainMessage } from './types'
 import { GROUP_FRESHNESS_MS, MAX_LOOKBACK_WEEKS, hexId, pointerKey } from './util'
 
 const MAX_J_ATTEMPTS = 20
+/** Retries of one slot after a nonce refusal (two devices of this identity writing at once). */
+const MAX_NONCE_RETRIES = 3
 
 export class SendError extends Error {}
 
@@ -68,6 +70,7 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
   let j = st.cur && st.cur.w === w ? st.cur.j + 1 : 0
   let prev: MessagePointer | null = newestOwn(conv, ctx.me.id)?.pointer ?? null
   let retriedUncertain = false
+  let nonceRetries = 0
 
   // One sealed body per slot: a rebroadcast after an uncertain result must be the same bytes, so a
   // late landing of the first broadcast is recognised as this message (a fresh IV would not match).
@@ -78,6 +81,13 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
     const outcome = await ctx.chain.createMessage(tag, body)
     const pointer = { w, j, b: epoch.b, r: epoch.r }
     if (outcome.ok && outcome.confirmed) return hold(ctx, conv, st, pointer, outcome.id, content, prev)
+    // My other device used this identity nonce first: nothing was written. Try the same slot again
+    // (the next write reads a fresh nonce); if its message took the slot, the 40105 path moves on.
+    if (!outcome.ok && outcome.failure === 'nonce' && nonceRetries < MAX_NONCE_RETRIES) {
+      nonceRetries++
+      attempt--
+      continue
+    }
     // A refusal other than a taken slot ends the send, unless an earlier uncertain broadcast of this
     // same body is what landed (then the user's retry would send it twice).
     if (!outcome.ok && outcome.failure !== 'duplicate') {

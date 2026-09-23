@@ -40,9 +40,10 @@ export interface ChainSelfState {
 /**
  * Why a write was refused. `duplicate` is a unique-index collision (40105: a
  * taken tag, handle or self-state slot), `stale` a replace built on an old
- * revision (40106). Everything else is `other`.
+ * revision (40106), `nonce` an identity-contract nonce another device of the
+ * same identity used first (nothing written; retry). Everything else is `other`.
  */
-export type WriteFailure = 'duplicate' | 'stale' | 'other'
+export type WriteFailure = 'duplicate' | 'stale' | 'nonce' | 'other'
 
 export type WriteOutcome =
   /** `confirmed: false` means the broadcast went out but its execution was never proved (DAPI timeout). */
