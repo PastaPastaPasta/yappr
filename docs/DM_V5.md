@@ -177,15 +177,17 @@ New contract, `yappr-dm-contract-v5.json`. Four doctypes.
 | Doctype | Owner | Fields | Indexes | Rules |
 | --- | --- | --- | --- | --- |
 | `dmInvite` | inviter | `bucket` u16, `epk` b33, `check` b16 | `[bucket, $createdAt]` | immutable, `canBeDeleted: false` |
-| `dmMessage` | sender | `tag` b16, `body` 156–5120 B, optional `body2`/`body3` ≤ 5120 B | `[tag]` (not unique) | immutable; deleted by the sweep |
+| `dmMessage` | sender | `tag` b16, `body` 156–5120 B, optional `body2`/`body3` ≤ 5120 B | unique `[tag]` | immutable; deleted by the sweep |
 | `dmGroupDoc` | group owner | `handle` b10, `blob` 156–5120 B | unique `[$ownerId, handle]` | mutable, `canBeDeleted: false` |
 | `dmSelfState` | user | `blob` 156–5120 B, optional `blob2`/`blob3` ≤ 5120 B | unique `[$ownerId]` | mutable |
 
 - **No doctype has a recipient, group or conversation field.**
 - **No `refersTo` or `propertyAgreement`:** each adds a read to every write.
-- `dmMessage`'s tag index is not unique. Uniqueness would add a check to every
-  message write and protects nothing, because readers already filter results
-  by `$ownerId` (§6.1). Battery item 3 measures the difference.
+- `dmMessage`'s tag index is **unique `[tag]`**, the cheapest layout. Drive
+  stores a unique index's reference directly under the value; a non-unique
+  index needs an extra subtree per value to hold several documents, and a
+  second property (`$ownerId`) adds another tree level. Every tag is distinct,
+  so that extra structure would be paid on every message for nothing.
 
 ### 5.1 `dmInvite`: first contact
 
@@ -416,9 +418,16 @@ prev      = U32(w) | S16(b) | S16(r) | U32(j)   // the sender's previous message
 - **Tags look random and never repeat,** so an observer cannot group one
   sender's messages by conversation.
 - **Readers accept a document only if `$ownerId` is the stream's sender.**
-  Anything else at that tag is ignored. A current member could write junk at
-  other members' tags, but they could just as well spam real messages. Readers
-  page through full result pages, so junk cannot hide real hits.
+  Anything else at that tag is ignored.
+- **One document per tag.** Two of your own devices picking the same `j` get
+  one rejection; the loser retries at `j + 1`, so each stream stays strictly
+  ordered.
+- **A member could squat another member's next tag** (only members can compute
+  tags). The victim's client just retries at the next `j`. The squatter pays a
+  document per blocked slot, is visible to the owner and can be removed; it is
+  the same insider abuse as spamming. The victim's rejected write, recorded in
+  a block next to the squatter's document, shows only that the two share a
+  conversation, which an insider can publish anyway.
 - **The count restarts each week.** Messages are deleted in whole weeks, so a
   device that knows nothing starts at the current week's `j = 0` and never
   mistakes "deleted" for "never sent".
@@ -472,7 +481,7 @@ POLL():
     if st.cur == none:  want += [(w, 0) for w in max(week(c.readAt), c.since, curWeek − 52) .. curWeek]
     else:               want += [(st.cur.w, st.cur.j + 1)] + [(w, 0) for w in st.cur.w + 1 .. curWeek]
     want += st.stale                                                 # old week or epoch, kept 10 minutes
-  for each hit in query dmMessage where tag in want (100 per query, paging while full), $ownerId == sender:
+  for each hit in query dmMessage where tag in want (100 per query), keeping docs whose $ownerId == sender:
     DRAIN(hit)
   for i in query dmInvite where bucket in myLevels, $createdAt > scanCursor:
     if check verifies, sender not blocked, no conversation with sender:  add 1:1 (since = week(i))
@@ -506,7 +515,7 @@ SWITCH(g, b, r):            # new epoch: every member stream restarts at the cur
 
 SEND(c, text):
   if c is a group and its documents were last polled over 10 s ago: APPLY(c, fresh query)   # never send on an old base
-  j = next free j this week on my stream (0 if new week)
+  j = next free j this week on my stream (0 if new week); on a unique-index rejection, j += 1 and retry
   broadcast dmMessage{tag[curWeek, j], body(prev = my newest message in c, 0x01, text)}
   if the broadcast result is uncertain (timeout) and the tag is not found: broadcast the same transition again
 ```
@@ -518,9 +527,6 @@ SEND(c, text):
   message signed just before a week rollover or an epoch change. Inclusion
   takes seconds. If a straggler is missed anyway, the sender's next message
   links to it through `prev`.
-- **Two of your own devices sending at once** can land two documents on one
-  tag. Both are shown. They use the same key with different random IVs, which
-  is safe.
 - **Opening a conversation on a new device** first finds the current messages
   (from `readAt` onward), then scrolls back through `prev`. A stream with
   nothing since `readAt` is probed further back when the conversation opens,
@@ -697,7 +703,7 @@ anyway. Read positions are lost too, so recovered conversations start as read.
 | Multi-party ECDH for groups | Impossible on secp256k1. |
 | LKH key tree (private feeds' model) | Bigger grants to save bytes on rare removals; right for 1,000-follower feeds, wrong for 100-member groups. |
 | A shared tag stream per conversation | Concurrent senders collide, and the rejected transition links them. |
-| Unique `[tag, $ownerId]` message index | A check on every write that protects nothing readers do not already filter (removed 2026-09-23). |
+| Non-unique `[tag]` or unique `[tag, $ownerId]` message index | Both add a tree level per message over unique `[tag]`; distinct tags never need either (2026-09-23). |
 | Separate roster and keyring doctypes | Same shape; merged into `dmGroupDoc` (2026-09-23). |
 | First message and group grants carried inside invites; `selfHint` | One payload path and a sender-recovery field for a rare case; the first message is a normal message (2026-09-23). |
 | Invite sweep and its index | An index entry per invite for a tiny refund, at the cost of lost-state recovery (2026-09-23). |
@@ -725,7 +731,8 @@ anyway. Read positions are lost too, so recovered conversations start as read.
    row of §7, plus:
    - a `bucket in [...]` query combined with a `$createdAt` range (else: three
      parallel queries);
-   - the cost of a unique vs. non-unique tag index;
+   - the cost of unique `[tag]` against non-unique `[tag]` and unique
+     `[tag, $ownerId]`, to confirm the layout choice;
    - a `tag in [...]` query paging past a page of junk;
    - rejected deletes of invites and group documents;
    - forged group documents under a stranger's `$ownerId`.
