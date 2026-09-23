@@ -339,7 +339,7 @@ Where each stream is up to is **not** stored. Devices find it from the chain
 (§6.3).
 
 **One document, one atomic replace.** About 15 KB across three fields,
-roughly 300 conversations (about 44 bytes per 1:1, 90 per group). **That is
+roughly 290 conversations (about 52 bytes per 1:1, 98 per group). **That is
 the Phase 1 cap, and it is a lifetime cap:** entries are never dropped,
 because a dropped entry would stop both polling and sweeping, and a 1:1 you
 started has no invite addressed to you to rediscover it from. "Delete
@@ -763,7 +763,7 @@ anyway. Read positions are lost too, so recovered conversations start as read.
 | 2 | Padding | Powers of two, 128–4096 in Phase 1 (one field); 8 KiB / 14 KiB later via `body2`/`body3`. |
 | 3 | Send batching and random delays | None (§8). |
 | 4 | Group size | 100 including the owner. |
-| 5 | Cross-device sync | One self-state document, coalesced writes, capped at about 300 conversations (§5.5). |
+| 5 | Cross-device sync | One self-state document, coalesced writes, capped at about 290 conversations (§5.5). |
 | 6 | Per-device ratchets | No. History follows the user. |
 | 7 | Key | The login-derived ENCRYPTION key; the bound key after DashPay Connect v2 (a rotation). |
 | 8 | Who can start a conversation | Anyone. It shows as a normal first DM. The invite carries no content, and the first message is a normal message (+1 document per new conversation). |
