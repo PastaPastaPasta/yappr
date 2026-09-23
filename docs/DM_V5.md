@@ -561,7 +561,7 @@ across all conversations at once, once they pass the retention age:
 
 | Doctype | Deleted after | Why that long |
 | --- | --- | --- |
-| `dmMessage` | the retention age (decision 12) | |
+| `dmMessage` | the user's retention age | |
 | `dmInvite` | the retention age, and never under 90 days | Recipients who have not scanned yet must still find it, and the `k` estimate reads last month's invites |
 | `dmRoster` | when the group ends | The group needs it until then |
 | `dmKeyring`, `encryptionKeyBridge`, `dmSelfState` | never | Small, and needed to read anything still on chain |
@@ -576,10 +576,28 @@ across all conversations at once, once they pass the retention age:
   pays a small processing fee and receives the storage refund, so the net is
   well positive. The sweep runs in the background while the app is open.
 
+**Retention age: a user setting, default 30 days.** Choices: 30 days, 90 days,
+1 year, or never (no sweep). The setting lives in `dmSelfState`, so it applies
+on every device. It governs only the user's *own* documents, because only the
+owner can delete.
+
 **What the other side sees.** When A's sweep deletes A's old messages, B's
 *new* devices can no longer load them. B's existing devices keep whatever they
-already decrypted in the local cache. So the retention age is also how far back
-history follows a user to a new browser.
+already decrypted in the local cache. So on a new browser, a conversation's
+history reaches back as far as each participant's own retention allows: with
+the default, about 30 days.
+
+**It must be presented as fee saving, not privacy.** The setting's label and
+help text say so plainly, for example:
+
+> **Reclaim message fees**
+> Delete your sent messages from Dash Platform after 30 days and get most of
+> their storage fee back.
+> This saves money. It does not make old messages private: copies remain in
+> the blockchain's history, and the people you messaged keep what they have.
+
+Never word it as "disappearing", "self-destructing" or "delete for
+everyone".
 
 **Effects on recovery.** A deleted prefix leaves a stream starting above
 `i = 0`, and deleted invites no longer point at their conversations. A new
@@ -950,4 +968,4 @@ Decided 2026-09-22:
 | 9 | Content | Text only in Phase 1. |
 | 10 | Owner leaves a group | The group ends (§9). |
 | 11 | Joining a group | Added directly, if you follow the owner; otherwise via Requests (§5.1). |
-| 12 | Deletion | Owners delete their own documents by age to reclaim fees (§5.7). Retention age: **open**. |
+| 12 | Deletion | Owners delete their own documents by age to reclaim fees (§5.7). Retention is a user setting, **default 30 days** (30 days / 90 days / 1 year / never), presented as fee saving, never as privacy. |
