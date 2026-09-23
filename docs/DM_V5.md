@@ -83,7 +83,9 @@ them from block history. Migration must say this plainly (§10).
 - Compromise of your own encryption key.
 - Members leaking content or membership. An insider can always publish the
   roster, so nothing here tries to hide members from each other.
-- The DAPI node you query (§8).
+- **The nodes that answer your queries** (decided 2026-09-22, §8). A node that
+  serves your polls learns your contact list and group memberships over time.
+  This is accepted for Phase 1.
 - Hiding the *sender* (§11, Phase 3).
 - Deniability.
 
@@ -916,22 +918,30 @@ that matters most.
 - **Removed members.** They know `gid` and the owner, so they can watch the
   owner's roster and keyring docs change. They learn *when* membership changes,
   never *who* changed.
-- **The DAPI node you query** sees your IP next to the tags you expect. It can
-  later match those tags to writes and link you to the counterpart. This is
-  outside the "passive chain observer" goal, but it is realistic. Mitigations:
-  - rotate nodes per query batch;
-  - a "download everything" mode, as shielded wallets do (§12.1). The client
-    fetches every `dmMessage` and matches tags locally, so the node learns
-    nothing about which conversations you are in. It needs no extra index:
-    walking the existing unique `[tag, $ownerId]` index in order,
-    `tag > last, limit 100`, returns every message. It cannot fetch only
-    *new* messages, though, because tags are random, so each pass is a full
-    walk. That is fine for a few thousand messages (about 1 s at the rates in
-    §5.1.1), but not at scale. So this mode suits small networks or occasional
-    audits, not the default poll;
-  - Tor.
+- **The nodes that answer your queries learn your contacts. Accepted for
+  Phase 1.** A client polls for the specific tags it expects (§6.3). The node
+  sees the asker's IP next to those tags, and later sees who writes each one,
+  so it links the asker to each counterpart. The asker also polls their own
+  next tag (to catch their other devices), and writing it tells the node who
+  the asker is, so hiding the IP alone does not help. Group handle queries leak
+  the same way. Any masternode operator can collect this, and a node that
+  watches many users can build much of the social graph.
 
-  Decoy tags do not help, because the node can see which tags later get hits.
+  This is the same position as Signal's server, which knows every message's
+  recipient; Signal relies on a no-logging policy. The chain-observer goal
+  (§1) still holds: someone reading only the chain learns none of this.
+
+  **Future fix: download everything.** Clients fetch every new `dmMessage` by
+  time and match tags locally, as shielded wallets sync the note pool, so the
+  node learns only that a user downloaded recent messages. It needs a
+  `[$createdAt]` index on `dmMessage` (a cost on every message, to measure), and
+  bandwidth grows with total network DM volume, not the user's own. Document
+  queries return at most 100 per page (about 2,700 docs/s measured, §5.1.1),
+  about 20–80× less efficient than shielded note sync. So it suits Yappr's
+  volume today and needs buckets later. A Platform query returning thousands
+  of documents per page would close most of that gap; worth raising upstream.
+  Rotating nodes per query and Tor reduce the leak but do not remove it. Decoy
+  tags do not help, because the node can see which tags later get hits.
 - **Deletion** runs by age across all conversations (§5.7), so it clusters
   nothing.
 - **Blocking** must stay client-side (in `dmSelfState`). An on-chain `block` of
@@ -1118,3 +1128,4 @@ Decided 2026-09-22:
 | 11 | Joining a group | Added directly, if you follow the owner; otherwise via Requests (§5.1). |
 | 12 | Deletion | Owners delete their own documents by age to reclaim fees (§5.7). Retention is a user setting, **default 30 days** (30 days / 90 days / 1 year / never), presented as fee saving, never as privacy. |
 | 13 | Group keys | Epoch keys delivered by grant or keyring (§4.4). Per-message pairwise wraps rejected: they would leak group size on every message. |
+| 14 | Query-serving nodes | Accepted as a leak for Phase 1: they learn contacts and group memberships (§3, §8). "Download everything" is the planned fix. |
