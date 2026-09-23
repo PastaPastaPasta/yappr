@@ -19,7 +19,7 @@ import type { DmContent, MessagePointer } from '@/lib/dm/types'
 import { currentEpoch, newestOwn, stream, type Conv, type HeldMessage, type StreamState } from './conversation'
 import { curWeek, type DmContext } from './context'
 import { applyGroups } from './group-apply'
-import { fetchWants, streamWants } from './poller'
+import { fetchWants, receive, streamWants } from './poller'
 import type { ChainMessage } from './types'
 import { GROUP_FRESHNESS_MS, MAX_LOOKBACK_WEEKS, hexId, pointerKey } from './util'
 
@@ -46,10 +46,10 @@ async function syncOwnStream(ctx: DmContext, conv: Conv, st: StreamState): Promi
  * someone else's. Only the exact body counts as landed: my other device
  * writes the same tags with the same key, and each seal draws a fresh IV.
  */
-async function slotAfter(ctx: DmContext, tag: Uint8Array, body: Uint8Array): Promise<{ state: 'landed'; doc: ChainMessage } | { state: 'taken' | 'empty' }> {
+async function slotAfter(ctx: DmContext, tag: Uint8Array, body: Uint8Array): Promise<{ state: 'landed' | 'taken'; doc: ChainMessage } | { state: 'empty' }> {
   const [doc] = await ctx.chain.messagesByTags([tag])
   if (!doc) return { state: 'empty' }
-  return bytesEqual(doc.ownerId, ctx.me.id) && bytesEqual(doc.body, body) ? { state: 'landed', doc } : { state: 'taken' }
+  return { state: bytesEqual(doc.ownerId, ctx.me.id) && bytesEqual(doc.body, body) ? 'landed' : 'taken', doc }
 }
 
 /** Write one message of `content` on my stream. Returns what was held for it. */
@@ -66,7 +66,7 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
 
   const w = curWeek(ctx)
   let j = st.cur && st.cur.w === w ? st.cur.j + 1 : 0
-  const prev: MessagePointer | null = newestOwn(conv, ctx.me.id)?.pointer ?? null
+  let prev: MessagePointer | null = newestOwn(conv, ctx.me.id)?.pointer ?? null
   let retriedUncertain = false
 
   // One sealed body per slot: a rebroadcast after an uncertain result must be the same bytes, so a
@@ -89,6 +89,7 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
       // Uncertain (a timeout): one read of the slot decides.
       const slot = await slotAfter(ctx, tag, body)
       if (slot.state === 'landed') return hold(ctx, conv, st, pointer, slot.doc.id, content, prev)
+      if (slot.state === 'taken') await adopt(ctx, conv, st, w, j, slot.doc)
       if (slot.state === 'empty') {
         // Nothing there yet: broadcast the same bytes once more, so a late landing reads as `landed`.
         // A second uncertain result with nothing visible is taken on trust (the DAPI quirk).
@@ -97,16 +98,28 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
         attempt--
         continue
       }
-    } else if (retriedUncertain) {
-      // A taken slot (40105) after an uncertain broadcast: that broadcast may be what took it.
+    } else {
+      // A taken slot (40105). After an uncertain broadcast, that broadcast may be what took it.
       const slot = await slotAfter(ctx, tag, body)
       if (slot.state === 'landed') return hold(ctx, conv, st, pointer, slot.doc.id, content, prev)
+      if (slot.state === 'taken') await adopt(ctx, conv, st, w, j, slot.doc)
     }
-    // Someone else's document holds the slot (my other device's message, or a squat): move on.
+    // Someone else's document holds the slot (my other device's message, or a squat): move on,
+    // linking `prev` to my other device's message if that is what it was, so the stream stays one chain.
+    prev = newestOwn(conv, ctx.me.id)?.pointer ?? null
     j += 1
     retriedUncertain = false
   }
   throw new SendError('Could not find a free message slot. Try again in a moment.')
+}
+
+/**
+ * Hold the document that took my slot if it is my other device's message
+ * (`receive` accepts only the stream sender's documents that decrypt), so the
+ * next attempt's `prev` points at it. A squat is ignored.
+ */
+async function adopt(ctx: DmContext, conv: Conv, st: StreamState, w: number, j: number, doc: ChainMessage): Promise<void> {
+  if (bytesEqual(doc.ownerId, ctx.me.id)) await receive(ctx, conv, st, w, j, doc, { backfilling: true })
 }
 
 function hold(ctx: DmContext, conv: Conv, st: StreamState, pointer: MessagePointer, docId: string, content: DmContent, prev: MessagePointer | null): HeldMessage {

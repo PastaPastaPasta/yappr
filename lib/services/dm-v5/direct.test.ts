@@ -3,17 +3,24 @@ import { bytesEqual } from '@/lib/bytes'
 import { weekOf, weekStart } from '@/lib/dm/kdf'
 import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, CAROL_ID, CAROL_PRIV } from '@/lib/dm/test-fixtures'
 import { encryptMessage } from '@/lib/dm/stream'
-import { directConv, type DmContext } from './context'
+import { attachSaved, directConv, type DmContext } from './context'
 import { openDirect, ensureStarted } from './directs'
 import { pollOnce } from './loop'
 import { sendContent } from './sender'
 import { stream, timeline } from './conversation'
-import { MemoryLedger, makeContext } from './test-chain'
+import { MapKv, MemoryLedger, makeContext } from './test-chain'
 import { splitText, MAX_TEXT_BYTES } from './util'
 
 const texts = (ctx: DmContext, peer: Uint8Array) =>
   timeline(directConv(ctx, peer) ?? (() => { throw new Error('no conversation') })())
     .map((m) => (m.content.type === 'text' ? m.content.text : `<${m.content.type}>`))
+
+/** Let a device catch up on its own stream in a conversation (what an open thread does). */
+async function syncOnce(ctx: DmContext, conv: Awaited<ReturnType<typeof openDirect>>) {
+  conv.open = true
+  await pollOnce(ctx)
+  conv.open = false
+}
 
 async function sendText(ctx: DmContext, peer: Uint8Array, text: string) {
   const conv = await openDirect(ctx, peer)
@@ -210,6 +217,39 @@ describe('sender', () => {
     // The phone's message at j = 0 is not the laptop's: the laptop's text must be on chain, at j = 1.
     expect(held.pointer.j).toBe(1)
     expect(ledger.messages).toHaveLength(2)
+  })
+
+  it('links the retry to my other device\'s message that took the slot, so a reader resuming from its head finds both', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const laptop = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const bobKv = new MapKv()
+    const bob = makeContext(ledger, BOB_ID, BOB_PRIV, bobKv)
+    await sendText(phone.ctx, BOB_ID, 'zero')
+    await pollOnce(bob.ctx)
+    const laptopConv = await openDirect(laptop.ctx, BOB_ID)
+    laptopConv.draft = false
+    await syncOnce(laptop.ctx, laptopConv)
+    // Both devices pick j = 1: the phone wins, the laptop's catch-up had not seen it yet.
+    const read = laptop.chain.messagesByTags.bind(laptop.chain)
+    let catchUp = true
+    laptop.chain.messagesByTags = async (tags) => (catchUp ? [] : read(tags))
+    laptop.chain.hook = (method) => {
+      if (method === 'createMessage') catchUp = false
+      return null
+    }
+    await sendText(phone.ctx, BOB_ID, 'from phone')
+    const held = await sendContent(laptop.ctx, laptopConv, { type: 'text', text: 'from laptop' })
+    expect(held.pointer.j).toBe(2)
+    // Bob caches the newest head (j = 2), then reloads with nothing else: he resumes at that head and
+    // reaches the rest only by walking prev back from it, so a fork past j = 1 would lose it.
+    await pollOnce(bob.ctx)
+    bob.ctx.cache.persist()
+    const reloaded = makeContext(ledger, BOB_ID, BOB_PRIV, bobKv)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    expect(texts(reloaded.ctx, ALICE_ID)).toEqual(['zero', 'from phone', 'from laptop'])
   })
 
   it('retries at j + 1 when another device took the tag (40105)', async () => {
