@@ -1,10 +1,10 @@
 # DM v5: unlinkable 1:1 and group messaging
 
-Status: **design, not implemented.** 2026-09-22. Supersedes the 1:1-only DM
-contract (`contracts/yappr-dm-contract.json`, topology v3/v4) for new
-conversations. This doc merges two earlier drafts: the metadata-privacy
-research and `DM_V5_GROUPS.md` (branch `design/dm-v5-groups`). Where they
-disagreed, §12 records which side won and why.
+Status: **design, not implemented.** Revised 2026-09-23 after a simplification
+review (§12.3). Supersedes the 1:1-only DM contract
+(`contracts/yappr-dm-contract.json`, topology v3/v4) for new conversations. It
+merges the metadata-privacy research with `DM_V5_GROUPS.md` (branch
+`design/dm-v5-groups`).
 
 ## 1. Goals and constraints
 
@@ -17,21 +17,20 @@ disagreed, §12 records which side won and why.
 3. All key agreement uses the identity's **ENCRYPTION** key (purpose 1,
    ECDSA secp256k1). v3/v4 use the HIGH AUTHENTICATION key, which is the wrong
    key for the job.
-4. Survive encryption-key rotation without losing history.
-5. **Store as little as possible.** Each stored byte costs 27,000 credits, but
-   the fixed cost of a document and each of its index entries dominates.
-   Measured costs: a follow is about 46M credits, a like about 59M, a post about
-   188M, and 100 payload bytes about 2.7M. Minimise, in this order: **documents
-   per operation, index entries per document, bytes per document.** Messages
-   stay at one document with one index.
-6. **History follows the user.** Any session on any device can rebuild every
-   conversation from the login-derived encryption key
-   (`deriveYapprEncryptionKeyFromLogin`) plus chain data: the user's encrypted
-   self-state (§5.6) and the messages still inside the retention window
-   (§5.7). This is accepted, and it means there is no forward secrecy against
-   compromise of your own key. This is a deliberate trade: Yappr does not try
-   to replace Signal (§11).
-7. Static export, no backend, one document per state transition.
+4. **Store as little as possible.** Each stored byte costs about 27,000
+   credits, but the fixed cost of a document and each of its index entries
+   dominates (a follow is about 46M credits, a like about 59M). Minimise, in
+   this order: **documents per operation, index entries per document, bytes
+   per document.**
+5. **History follows the user.** Any browser the user logs into rebuilds their
+   conversations from the login-derived encryption key plus chain data: their
+   encrypted self-state (§5.5) and messages still inside the retention window
+   (§5.6). So there is no forward secrecy against compromise of your own key.
+   This is deliberate: Yappr does not try to replace Signal.
+6. Static export, no backend, one document per state transition. Everything
+   runs in the browser, and only while the app is open.
+7. **Buildable and debuggable by one maintainer.** Prefer one mechanism over
+   several, and no protocol machinery for rare events.
 
 The design rests on one rule. **No field on chain is shared between the
 documents of two different participants, and no field can be derived from
@@ -44,11 +43,11 @@ Each of these links is enough on its own to reveal a pair.
 
 | # | v4 leak | v5 fix |
 | --- | --- | --- |
-| 1 | `conversationInvite` stores `$ownerId = A` next to `recipientId = B` in plaintext, with an index on recipient. It is a public edge list. | Invites carry no recipient field. They are sealed, padded, and filed under a coarse bucket (§5.1). |
-| 2 | `conversationId = sha256(A:B)[0:10]`. Anyone can hash every pair of users and reverse every conversation. | There is no conversation id on chain. Group and 1:1 ids are secrets. |
-| 3 | A's and B's messages share one `conversationId`, so the index groups the pair. | Every message has a one-time tag, and tags never repeat across documents (§6). |
-| 4 | `readReceipt` publishes `(B, conversationId, time B read it)`. | Read state is synced through an encrypted self-state doc only the user can read (§5.6). |
-| 5 | Static ECDH on the auth key. | ENCRYPTION key, plus past keys kept in the self-state (§4.6). |
+| 1 | `conversationInvite` stores `$ownerId = A` next to `recipientId = B` in plaintext, with an index on recipient. It is a public edge list. | Invites name no recipient. Each is a sealed check only the recipient can verify (§5.1). |
+| 2 | `conversationId = sha256(A:B)[0:10]`. Anyone can hash every pair of users and reverse every conversation. | There is no conversation id on chain. |
+| 3 | A's and B's messages share one `conversationId`, so the index groups the pair. | Every message has a one-time tag (§6.1). |
+| 4 | `readReceipt` publishes `(B, conversationId, time B read it)`. | Read state lives in an encrypted self-state only the user can read (§5.5). |
+| 5 | Static ECDH on the auth key. | ECDH on the ENCRYPTION key. |
 
 v4 history is **permanently** linkable. Deleting its documents does not remove
 them from block history. Migration must say this plainly (§10).
@@ -59,9 +58,10 @@ them from block history. Migration must say this plainly (§10).
 - **A passive chain observer linking participants.** They cannot tell who
   messages whom, which documents belong to the same conversation, or who is in
   a group.
-- **Non-members, and Platform itself, reading content,** group names or rosters.
-- **Removed members reading messages sent after their removal,** once a bounded
-  grace window has passed (§6.6).
+- **Non-members, and Platform itself, reading content,** group names or
+  rosters.
+- **Removed members reading messages sent after their removal,** once the
+  other members' clients have seen the keyring (seconds; §6.4).
 - **New members reading messages sent before they joined.**
 - **One member impersonating another.** Platform signs `$ownerId`, and readers
   accept a stream's documents only from that stream's sender (§6.1).
@@ -69,1093 +69,717 @@ them from block history. Migration must say this plainly (§10).
 **Still visible to a passive observer (accepted):**
 - Per identity: the number of DM documents, when they were written, and their
   size class.
-- Per group owner: how many group roster docs they own and each one's
-  `$revision` (how many membership changes and renames it has seen), and the
-  group's size *class* (§5.5). The owner is the only identity linked to a group,
-  and only as "owns some group".
-- That an identity rotated its encryption key (the identity update shows this
-  anyway).
-- That an owner created a group, or added someone, and how many people were
-  granted. The roster create or replace right after the grants (§5.5) marks
-  them as grants, and the number of grants gives the group's exact size at
-  creation. Who the grants went to stays hidden.
-- The statistical leaks in §8, chiefly **timing correlation**.
+- Per group owner: that they own some group documents, how often each changes
+  (`$revision`), and size classes.
+- That an owner created a group or added someone, and how many people were
+  granted. The roster write right after the grants marks them as grants, and
+  their count is the group's size at creation. Who they went to stays hidden.
+- **Timing correlation** (§8). There is no send batching and no random delay
+  anywhere.
 
 **Out of scope:**
+- **The nodes that answer your queries** (§8). A node that serves your polls
+  learns your contacts and group memberships over time. Accepted for Phase 1.
 - Compromise of your own encryption key.
-- Members leaking content or membership. An insider can always publish the
-  roster, so nothing here tries to hide members from each other.
-- **The nodes that answer your queries** (decided 2026-09-22, §8). A node that
-  serves your polls learns your contact list and group memberships over time.
-  This is accepted for Phase 1.
-- Hiding the *sender* (§11, Phase 3).
+- Members leaking content or membership.
+- Hiding the *sender* (§11).
 - Deniability.
 
 ## 4. Keys
 
 ### 4.1 Notation
 
-- **`HKDF(ikm, salt, info)`** is HKDF-SHA256 with a 32-byte output unless noted.
-  Every `info` starts with a fixed ASCII label, then a NUL byte, then
-  fixed-width fields. `S16(b)` and `S16(r)` are big-endian u16. Labels are never
-  prefixes of each other, so no two derivations share an input.
-- **`b` and `r` are u16 everywhere** (limit 65,535 each). `U32(x)` is a
-  big-endian u32. A two-argument `HKDF(ikm, info)` uses the salt
-  `"yappr/dm/v5"`.
-- **`week`** is a week number, `floor(time_ms / 604,800,000)`, as a u32 (weeks
-  counted from the Unix epoch, so they start on Thursday 00:00 UTC; any fixed
-  start works). Senders and readers both take `time_ms` from Platform block
-  time, never the device clock. A sender refreshes it right before signing and refuses to send
-  if the latest block time it has is more than 5 minutes old.
-- **Identity ids** are 32 bytes. `id_lo` and `id_hi` are a pair sorted by byte
-  order.
-- Every AES-256-GCM encryption uses a **fresh random 12-byte IV**. No IV is
-  ever derived, because two devices can deterministically produce the same key
-  (§4.3, §6.1).
+- `HKDF(ikm, info)` is HKDF-SHA256 with salt `"yappr/dm/v5"` and a 32-byte
+  output unless noted. Every `info` is a fixed ASCII label, a NUL byte, then
+  fixed-width fields, so no two derivations share an input.
+- `S16`, `U32` are big-endian u16 and u32. `b` and `r` are u16.
+- **`week`** is `floor(time_ms / 604,800,000)`, as a u32. Clients take
+  `time_ms` from the latest Platform block time the SDK has returned, never the
+  device clock. A slightly stale value costs latency, not messages (§6.3), so
+  a client never refuses to send because of it.
+- Every AES-256-GCM encryption uses a **fresh random 12-byte IV**, because two
+  devices can derive the same key.
 
-### 4.2 Identity keys and trial selection
+### 4.2 Identity keys
 
-Each participant needs an active ENCRYPTION key of type ECDSA_SECP256K1 (a full
-33-byte point). It is found with `findEncryptionKey`
-(`lib/crypto/encryption-key-lookup.ts`), and the private key comes from the
-existing encryption-key store, so the same key also serves private feeds.
-Hash160 key types are not supported, and v4's `senderPubKey` workaround goes
-away. A counterpart without an encryption key cannot be messaged. The UI says
-so and links to the add-key flow. Contract-bound keys stay off, for the reason
-given in `NON_SOCIAL_CONTRACTS.md`.
+Each participant needs an active ENCRYPTION key of type ECDSA_SECP256K1, found
+with `findEncryptionKey` (`lib/crypto/encryption-key-lookup.ts`). The private
+key is the login-derived one (`deriveYapprEncryptionKeyFromLogin`), the same
+key private feeds use. A counterpart without one cannot be messaged; the UI
+says so and links to the add-key flow. Contract-bound keys stay off for now
+(`NON_SOCIAL_CONTRACTS.md`). Once DashPay Connect v2 ships, DMs move to the DM
+contract's bound key; that is a key rotation (Appendix A).
 
-**Key source today and later.** v5 uses the unbound ENCRYPTION key Yappr
-derives at login. Once DashPay Connect v2 ships
-(`~/workspace/DASHPAY_CONNECT_PROTOCOL_V2.md`), DMs move to the DM contract's
-bound key pair, which the wallet hands to the app at every login. That move is a
-key rotation as far as this design is concerned: one self-state replace (§4.6), and 1:1
-threads follow on their own (§4.3).
+**No document carries a key id,** so which key a client uses is purely a
+client concern. That is what lets key rotation be designed now and built later
+(Appendix A).
 
-**No document carries a key id.** Wherever a reader must pick keys, it tries:
-- the counterpart's ENCRYPTION keys, *including disabled ones*, which stay on
-  the identity;
-- against its own current key and every past key in its self-state (§4.6);
+`selfRoot = HKDF(encPriv, "self\0")`. From it come `stateKey` (§5.5) and the
+ids of groups the user owns (§4.4).
 
-and keeps the combination whose AEAD or `kc` check passes. These sets are tiny,
-and a trial costs only an ECDH.
-
-`selfRoot` is derived from the login-derived encryption key:
-`selfRoot = HKDF(encPriv, salt="yappr/dm/v5", info="self\0")`. Three subkeys
-come from it: `hintKey = HKDF(selfRoot, info="self-hint\0")`,
-`stateKey = HKDF(selfRoot, info="self-state\0")`, and the group ids a user
-creates as owner (§4.4). All of them follow the user through rotations, via
-the past keys list (§4.6).
-
-The static identity keys **replace a prekey document.** An earlier draft
-published a Signal-style signed prekey per user. That would add a document per
-user and buy first-message forward secrecy that history-on-any-device (goal 6)
-throws away anyway.
-
-### 4.3 1:1 keys: no key documents
+### 4.3 1:1 keys: nothing stored
 
 ```
-Z    = ECDH_x(encPriv_A, encPub_B)                 // = ECDH_x(encPriv_B, encPub_A)
-gid  = HKDF(Z, "yappr/dm/v5", "direct-id\0"  || id_lo || id_hi)[0:10]
-K    = HKDF(Z, "yappr/dm/v5", "direct-key\0" || gid)
+Z    = ECDH_x(encPriv_A, encPub_B)                     // = ECDH_x(encPriv_B, encPub_A)
+gid  = HKDF(Z, "direct-id\0"  || id_lo || id_hi)[0:10]  // ids sorted by byte order
+K    = HKDF(Z, "direct-key\0" || gid)
 ```
 
-Both parties derive `gid` and `K` on their own, so no key is wrapped or stored.
-Starting a chat twice lands in the same thread. `gid` never appears on chain; it
-only seeds derivations. A 1:1 chat never turns into a group. Adding a third
-person creates a new group, as in Signal.
+Both parties derive `gid` and `K` alone, so no key is sent or stored, and
+starting a chat twice lands in the same thread. `gid` never appears on chain.
+A 1:1 chat never turns into a group; adding a third person creates a group.
 
-**After a key rotation, the thread moves on its own, with no writes.** The pair
-is always keyed by the two parties' *current* keys:
-- When A rotates, A's next send uses the new `Z`, and so a new `gid` and new
-  streams.
-- B notices A's new key whenever B refreshes A's identity. That happens on
-  conversation open, on the poll every few minutes, and whenever an expected
-  stream goes quiet for longer than usual.
-- B then polls both the old thread and the new thread until the old one has
-  been idle for a while.
+### 4.4 Group keys
 
-The UI shows every thread with the same counterpart as one timeline. Old threads
-stay readable through past keys. Because the new `Z` comes from the new key, a
-rotation after a compromise **heals** future 1:1 messages. It costs no writes
-beyond the rotation's self-state replace.
-
-### 4.4 Group key schedule
-
-The group **owner** (its creator) holds the root secret implicitly:
+Members of three or more cannot derive a shared key from public keys alone (it
+needs pairings or multilinear maps, which secp256k1 lacks). So the **owner**,
+the group's creator, derives it and hands it out.
 
 ```
-gid_n    = HKDF(selfRoot_owner, "group\0" || U32(n))[0:10]   // the owner's n-th group, n = 0, 1, 2, …
-S        = HKDF(encPriv_owner@creation, salt=gid_n, "group-secret\0")
-K[b,0]   = HKDF(S, "base\0" || S16(b))                // base epoch b
-K[b,r]   = HKDF(K[b,r-1], "ratchet\0" || S16(b) || S16(r))
-kc(K)    = HKDF(K, "kc\0")[0:8]                        // key check (public in keyrings; reveals nothing about K)
+gid_n   = HKDF(selfRoot_owner, "group\0" || U32(n))[0:10]   // the owner's n-th group
+S       = HKDF(encPriv_owner, "group-secret\0" || gid_n)     // never leaves the owner
+K[b,0]  = HKDF(S, "base\0" || S16(b))                        // new base b on each removal
+K[b,r]  = HKDF(K[b,r−1], "ratchet\0" || S16(b) || S16(r))    // one step on each add
+kc(K)   = HKDF(K, "kc\0")[0:8]                               // key check
 ```
 
-- **Nothing the owner needs is stored.** Group ids and `S` both derive from the
-  owner's key. To rebuild every group they own, the owner computes `gid_0,
-  gid_1, …` and queries the matching roster handles (§5.2) in batches of 100,
-  `$ownerId == me, handle in [...]`, stopping after a batch with no hits.
-- **An ended group keeps its roster handle.** Ending a group replaces its roster
-  with a minimal tombstone (156 bytes) instead of deleting it. So `n` is never
-  reused: a reused `gid_n` would give the same `S` and the same keys, letting
-  the old group's members read the new one, and would collide with the old
-  group's undeletable keyrings. It also means probing never meets a gap of
-  ended groups.
-- **Picking `n`.** A new group uses the next unused `n`. If two owner devices
-  pick the same `n`, the unique `[$ownerId, handle]` index rejects the second
-  roster create, and that device retries at `n + 1` before sending any grants.
-- **`S` and `gid_n` are bound to the key the owner held at creation.** After a
-  rotation, new groups number from 0 again under the new key, and the owner
-  probes old groups under each past key (§4.6).
-- **Members cannot derive any of this.** A shared secret for three or more
-  parties from public keys alone needs pairings (Joux's protocol, 3 parties) or
-  multilinear maps (N parties), and secp256k1 has neither. So each member
-  receives the group key once per base, in a grant (§6.5) or a keyring slot
-  (§5.4).
-- **A base step (`b+1`) happens only on removal.** Removed members do not have
-  `S`, so they cannot derive the new base.
-- **A ratchet step (`r+1`) happens on an add.** Existing members can derive it
-  themselves, so they need no document. The new member receives `K[b,r+1]` and
-  cannot step backwards to earlier messages.
-- **Keys are deterministic per `(gid, b, r)`.** Two owner devices adding at
-  the same time produce the same key, which removes one class of fork between
-  the owner's devices.
+- **The owner stores nothing.** On any device they rebuild their groups by
+  querying the roster handles (§5.2) of `gid_0, gid_1, …` in batches of 100
+  (`$ownerId == me, handle in [...]`), stopping at an empty batch.
+- **`n` is never reused.** An ended group's roster becomes a small tombstone
+  and group documents cannot be deleted (§5), so a new group never inherits an
+  old group's keys. If two owner devices pick the same `n`, the unique index
+  rejects the second roster create and that device takes `n + 1`.
+- **Adds cost existing members nothing.** Anyone holding `K[b,r]` can step to
+  `K[b,r+1]`. The new member receives `K[b,r+1]` and cannot step back.
+- **Removals need a new base.** Only the owner has `S`, so the removed member
+  cannot compute `K[b+1,0]`. It reaches the others in one keyring (§5.3).
+- **Keys are deterministic per `(gid, b, r)`,** so two owner devices doing the
+  same add produce the same key.
 
-**Consequences of rotating keys in a group:**
-- **An owner rotation does not heal the owner's groups.** All future base keys
-  still derive from the creation key. After a compromise, the only fix is to
-  recreate the group.
-- **An owner whose old key is unavailable** (neither in past keys nor
-  re-derivable) loses `S`, and can never remove anyone again.
-- **A member whose old key is unavailable** needs a new grant from each group
-  owner (a `0x06` request, §6.1). A member who still has it needs nothing: the
-  owner's next keyring wraps to their new key, found by trial selection.
+### 4.5 Sealing a key to a member
 
-### 4.5 Sealing to a member (static-static)
-
-Keyring slots use static-static ECDH with no ephemeral key. That saves 33 bytes
-per slot compared with ECIES.
+Keyring slots use static-static ECDH, with no ephemeral key:
 
 ```
-Z    = ECDH_x(encPriv_owner, encPub_member)
-pad  = HKDF(Z, "yappr/dm/v5", "slot\0" || gid || ownerId || memberId || S16(b) || S16(0), 32)
-wrap = K[b,0] XOR pad                                   // keyring for base b
+pad  = HKDF(ECDH_x(encPriv_owner, encPub_member), "slot\0" || gid || ownerId || memberId || S16(b))
+wrap = K[b,0] XOR pad
 ```
 
-**Why this is sound:**
-- The context `(pair, group, base)` fixes the key being wrapped: it is always
-  `K[b,0]`. So no pad ever masks two different values, even when two owner
-  devices race.
-- Integrity comes from Platform's signature on `$ownerId`. Readers accept
-  keyrings only from the group owner, and `kc` confirms the right key was found.
-- One member can compute another's pad only if they hold `Z` for that other
-  member. They do not.
-
-### 4.6 Rotating your encryption key: past keys in the self-state
-
-The self-state document (§5.6) carries a **past keys** list: every earlier
-encryption private key the user has rotated away from. It is encrypted like
-the rest of the self-state, so only the user can read it. No separate document
-is needed.
-
-**Rotating, in this order,** so the self-state is readable at every step:
-1. Add the new ENCRYPTION key to the identity. The old key stays active.
-2. Replace the self-state, now encrypted under the new key, with the old
-   private key appended to past keys.
-3. Disable the old key on the identity.
-
-If step 2 fails, the old key is still active and still held, so the client
-retries. A device reading the self-state tries its current key first, then any
-key it still holds.
-
-Anyone holding the new key opens the self-state and gets every past key. Old
-1:1 threads, group secrets, keyring slots and self hints all stay readable. It
-costs one replace per rotation, however many conversations exist. An observer
-learns only what the identity update already shows: the identity changed its
-keys. The same list would fix private feeds' rotation problem
-(`YAPPR_PRIVATE_FEED_SPEC.md` §11.4), but wiring private feeds to it is out of scope here.
-
-**Where keys come from.** Today the encryption key is
-`HKDF(loginKey, identityId, "encryption")`
-(`deriveYapprEncryptionKeyFromLogin`), and the wallet derives `loginKey` from
-its seed per `keyIndex` (`YAPPR_DET_SIGNER_SPEC.md` §5.1). A rotation therefore
-means moving to `keyIndex + 1`. The wallet can re-derive old keys from its seed, so the past keys list
-is a convenience, not the only copy. It also means dropping an old key is not
-forgetting it: whoever holds the wallet seed can derive it again. There is no
-"rotate to forget" option.
-
-A **lost** key cannot be added to past keys. A group owner restores a member by sending a
-new grant (§6.5). A 1:1 thread under a lost key is unreadable to the user who lost it.
+Each `(pair, group, base)` always wraps the same `K[b,0]`, so no pad masks two
+different values. Only the group owner can write the document (§5.2), and
+`kc` tells a member which slot is theirs.
 
 ## 5. Documents
 
-New contract, `yappr-dm-contract-v5.json`.
+New contract, `yappr-dm-contract-v5.json`. Four doctypes.
 
-| Doctype | Owner | Fields | Indexes | Mutability |
+| Doctype | Owner | Fields | Indexes | Rules |
 | --- | --- | --- | --- | --- |
-| `dmInvite` | inviter | `bucket` u16 (heap-encoded, §5.1), `epk` b33, `sealed` b156 (fixed), `selfHint` b32 | `[bucket, $createdAt]`; `[$ownerId, $createdAt]` | immutable, deleted by the sweep (§5.7) |
-| `dmMessage` | sender | `tag` b16, `body` bytes 156–5120, optional `body2`/`body3` bytes ≤ 5120 (§5.3) | **unique** `[tag, $ownerId]` | immutable, deleted by the sweep (§5.7) |
-| `dmRoster` | group owner | `handle` b10, `blob` bytes 156–4124 | **unique** `[$ownerId, handle]` | mutable, `canBeDeleted: false`; replaced by a tombstone when the group ends (§4.4) |
-| `dmKeyring` | group owner | `handle` b10, `slots` bytes 264–5120 | **unique** `[$ownerId, handle]` | `documentsMutable: false`, `canBeDeleted: false` |
-| `dmSelfState` | user | `blob` bytes 156–5120, optional `blob2`/`blob3` ≤ 5120 | **unique** `[$ownerId]` | mutable; one document, atomic, revision-checked (§5.6) |
+| `dmInvite` | inviter | `bucket` u16, `epk` b33, `check` b16 | `[bucket, $createdAt]` | immutable, `canBeDeleted: false` |
+| `dmMessage` | sender | `tag` b16, `body` 156–5120 B, optional `body2`/`body3` ≤ 5120 B | `[tag]` (not unique) | immutable; deleted by the sweep |
+| `dmGroupDoc` | group owner | `handle` b10, `blob` 156–5120 B | unique `[$ownerId, handle]` | mutable, `canBeDeleted: false` |
+| `dmSelfState` | user | `blob` 156–5120 B, optional `blob2`/`blob3` ≤ 5120 B | unique `[$ownerId]` | mutable |
 
-- **No doctype has a `recipientId`, `groupId` or `conversationId` field.**
-- **Messages, keyrings and rosters get no `refersTo` or `propertyAgreement`,**
-  because each adds a read to the write.
-- **Spoofing is prevented with owner-scoped unique indexes and secret
-  handles.** A stranger cannot compute a handle. A removed member who knows
-  `gid` can write only under their own `$ownerId`, where no reader looks.
-- **Deletion is by age, never by conversation** (§5.7). A burst of deletes
-  aimed at one conversation would cluster exactly the documents that tags keep
-  apart.
+- **No doctype has a recipient, group or conversation field.**
+- **No `refersTo` or `propertyAgreement`:** each adds a read to every write.
+- `dmMessage`'s tag index is not unique. Uniqueness would add a check to every
+  message write and protects nothing, because readers already filter results
+  by `$ownerId` (§6.1). Battery item 3 measures the difference.
 
-### 5.1 `dmInvite`: sealed, fixed-size, bucketed first contact
+### 5.1 `dmInvite`: first contact
 
-The invite borrows Orchard's note encryption (§12.1): a fresh ephemeral key
-per invite, so a recipient recognises its invites with its own private key
-alone, without fetching anyone's identity.
-
-The invite is sealed to the recipient's existing secp256k1 ENCRYPTION key
-(§4.2), so there is no extra key and no extra document. Trial decryption in
-JavaScript is fast enough, because fetching, not decryption, is the bottleneck
-(§5.1.1).
+An invite says only "I, `$ownerId`, want a 1:1 channel with you". It carries
+no content. It borrows Orchard's note trick: a fresh ephemeral key, so the
+recipient recognises its invites with its own private key alone.
 
 ```
-bucket   = (1 << k) | HKDF(recipientId, "yappr/dm/v5", "bucket\0")[0:2] >> (16 − k)   // heap-encoded, k = 0 → 1
-nonce    = 12 random bytes
-e        = HKDF(hintKey, "yappr/dm/v5", "invite-eph\0" || nonce) mod n     // re-derivable by the sender on any device
-epk      = e·G                                                             // 33 B, stored
-ik       = HKDF(ECDH_x(e, encPub_R), "yappr/dm/v5", "invite\0" || epk)     // recipient: ECDH_x(encPriv_R, epk)
-sealed   = nonce | AES-256-GCM(ik, iv=nonce, pad128(payload), aad="yappr/dm/invite/v5" || $ownerId || epk)
-selfHint = recipientId XOR HKDF(hintKey, "yappr/dm/v5", "invite-self\0" || nonce)[0:32]
+e      = random scalar;  epk = e·G                                         // 33 B
+check  = HKDF(ECDH_x(e, encPub_R), "invite\0" || $ownerId || epk)[0:16]    // R computes ECDH_x(encPriv_R, epk)
+bucket = (1 << k) | (HKDF(R, "bucket\0")[0:2] >> (16 − k))                  // §5.1.2; k = 0 gives 1
 ```
 
-`ik` is unique per `epk`, so using the nonce as the GCM IV is safe. The sender
-is `$ownerId`, which Platform signs. Binding it in the AAD means a copy of the
-invite under another identity fails to decrypt, so the plaintext needs no
-sender field. `Z_SR` below is the static ECDH between sender and recipient
-(§4.3).
+- **Every invite is the same size** (about 51 bytes of fields).
+- **The sender is `$ownerId`,** which Platform signs, and it is bound into
+  `check`. A copy re-posted by anyone else fails the check.
+- **Sending:** A writes one invite, then sends its first message as a normal
+  `dmMessage` (§6.1). Before inviting B, A checks whether a conversation with B
+  already exists: in its self-state, or as an invite from B in its own scan. If
+  it does, A writes no invite. At most one invite exists per started pair.
+- **Invites are never deleted.** That makes lost-state recovery of every
+  incoming chat possible (§9). At tens of invites a day network-wide, the
+  unclaimed refund is a few DASH a year across all users.
 
-**Every invite is exactly the same size.** The plaintext is always padded to
-128 bytes, so `sealed` is always 156 bytes and a whole invite document is
-about 300 bytes. After the 2-byte length prefix, 126 bytes are left.
+**Discovery.** Each poll, the recipient fetches new invites in its buckets
+(§5.1.2) and, for each, computes one ECDH with its own key and checks `check`.
+A mismatch means "not mine". On a match it fetches the sender's identity
+(needed anyway to show them), derives the 1:1 keys (§4.3), and the
+conversation appears in the inbox as a normal first DM.
 
-**There is only one kind of invite: "open a 1:1 channel with me".** The
-recipient derives `gid` and `K` from `Z_SR` (§4.3). The invite's `payload` may
-carry the inviter's first message, any plaintext type from §6.1, up to 125
-bytes, which saves a document. That message sits **outside** the stream
-numbering: the inviter's stream still starts at `j = 0` with its next message,
-so no reader ever finds a hole at `j = 0`. A longer first message is sent as a
-normal `dmMessage`.
-Group joins are not a kind of invite: a group grant (47 bytes) is a message on
-the owner's 1:1 stream (§6.5), so it can ride in the invite as its first
-message when owner and member have never chatted. The invite itself looks
-the same either way; only the roster replace that follows a group grant
-(§5.5) marks it as one.
-
-**Who can reach you.** Anyone can invite you; the chain cannot filter without
-revealing the recipient. In the client:
-- **Every new conversation appears in the inbox as a normal first DM,** from
-  anyone. There is no separate Requests folder.
-- **Group grants add you directly** (WhatsApp style), from any owner.
-- Blocking a sender (from the conversation) adds them to the local block list
-  in `dmSelfState`; their invites, messages and grants are then dropped after
-  decryption.
-
-**Discovery.** The recipient polls
-`bucket in [mine at k_m, mine at k_{m−1}], $createdAt > lastScan`. For each
-invite:
-1. One ECDH with its own encryption key and `epk`, then one AES-GCM trial.
-   The recipient tries its current key and any past keys (§4.6). A GCM failure
-   means the invite is for someone else. There is no identity fetch and no
-   per-inviter cache, and the trial reads only data already downloaded.
-2. On success, fetch the sender's identity to compute `Z_SR` (trying keys as
-   in §4.2). A forged invite yields a key nobody else holds, so it simply leads
-   to an empty thread. The UI fetches the sender's
-   profile at this point anyway to show the new conversation, so the fetch reveals
-   nothing extra to the node.
-
-Scanning is limited by fetching, not decryption (§5.1.1).
-
-**Sender recovery.** On a new device, the sender reads their own invites via
-`[$ownerId, $createdAt]`, unmasks `selfHint` to get the recipient, re-derives
-`e` from `hintKey` and the nonce, and confirms by decrypting. This matters
-only as a fallback: `dmSelfState` holds the contact list (§5.6).
-
-**Duplicate 1:1 invites.** Before inviting B, A checks its own bucket scan for
-an invite from B, and writes nothing if one exists. If both invite at the same
-moment, the result is two harmless invites.
-
-**Why this reverses the "hidden membership is too slow" objection in
-`DM_V5_GROUPS.md` §9.** A recipient scans only its own bucket, not the whole
-network, and each trial is one ECDH on data already downloaded. Invites are
-small, fixed-size and rare next to messages. The observer learns only "A
-invited someone in bucket x", and at `k = 0` not even the bucket.
+**Who can reach you.** Anyone. The chain cannot filter without revealing the
+recipient. Blocking someone adds them to the block list in the self-state;
+their invites, messages and grants are dropped after decryption.
 
 #### 5.1.1 Measured scan throughput (2026-09-22)
 
-The benchmark code is `scripts/bench-dm-scan*`. Crypto was measured in
-Chromium 152 (Electron) on a 14-core Mac, over 2,000–4,000 invites. Fetching was
-measured with 100-document pages of `post` against the moutai devnet, over an
-equality-plus-`$createdAt` index, the same shape as the invite bucket query.
+Benchmark: `scripts/bench-dm-scan*`. Crypto was measured in Chromium 152 on a
+14-core Mac. Fetching was measured with 100-document pages against the moutai
+devnet, over an equality-plus-`$createdAt` index.
 
 | Step | Per invite | Throughput |
 | --- | --- | --- |
-| Trial, one thread (`@noble/secp256k1` 3.1 ECDH + WebCrypto HKDF and AES-GCM) | 578 µs | ~1,700/s |
-| Trial, 2 Web Workers | 301 µs | ~3,300/s |
+| Trial, one thread (`@noble/secp256k1` ECDH + WebCrypto) | 578 µs | ~1,700/s |
 | Trial, 4 Web Workers | 151 µs | ~6,600/s |
-| Trial, 8 Web Workers | 93 µs | ~10,800/s |
-| Node 22, one thread | 1,888 µs | ~530/s |
-| Fetch, 1 query at a time | — | ~540/s (about 185 ms a page) |
+| Fetch, one query at a time | — | ~540/s |
 | Fetch, 16 parallel queries over disjoint `$createdAt` windows | — | ~2,700/s |
 
-Decryption scales almost linearly with workers, so 4 workers already outrun the
-network by more than 2×. Fetching is the bottleneck, and parallel windows help
-about 5×. Native X25519 would make a trial about 17× faster (34 µs), but it would
-need a second published key per user. It was rejected because decryption is not
-the bottleneck. Shielded
-wallets use the same trick (16 queries in flight). The first query on a cold
-connection took about 1 s.
+The measured trial used AES-GCM; the HKDF check costs about the same, since
+ECDH dominates. **Fetching is the bottleneck.** Native X25519 would decrypt
+17× faster but needs a second published key per user; rejected, because
+decryption is not the bottleneck.
 
-#### 5.1.2 Choosing `k`
+#### 5.1.2 Buckets (`k`)
 
-**What `k` costs in privacy.** The observer already ranks A's likely DM partners
-from A's public activity: replies, mentions, likes, quotes, mutual follows.
-Every invite's bucket leaks exactly `k` bits about the recipient on top of that
-ranking. The damage depends on how predictable the sender already is, not on
-network size. For someone who publicly talks with the same four people, `k = 2`
-roughly names the recipient. **`k = 0` leaks nothing,** and that is the target.
-
-**What forces `k` up.** At `k = 0` every recipient downloads and trial-decrypts
-every invite on the network. Steady-state polling is cheap at any volume a
-bucket would allow. The binding cost is a **cold start**: a new device, or a
-user returning after a long absence, has to catch up on everything since its
-last scan. With the throughput in §5.1.1 (about 2,700 invites/s fetched, about
-6,600/s decrypted on 4 workers), a budget of about 10 s for a 30-day catch-up gives
-`B ≈ 900 invites/day`, or 27,000 a month. `k = 0` holds until the network sends
-about that many invites a day. Invites are per new conversation or group add,
-not per message, and Yappr sends tens a day today. `dmSelfState` records the
-last scan position, so only a device that has never scanned, or a user away for
-longer than the window, pays the full cost.
-
-**Schedule.** `k` is computed by every client from chain data, identically, so
-no one coordinates and no app or user picks its own `k`. A per-app or opt-in
-`k` would fingerprint the sender's app or privacy setting.
+Each bucket level splits invites by recipient. A higher `k` means less to
+scan, but every invite then leaks `k` bits about its recipient on top of what
+the observer already guesses from public replies and follows. **`k = 0` leaks
+nothing and is the target.**
 
 ```
-V_m   = invites/day in calendar month m−1 (UTC, by $createdAt)
-k_m   = clamp(ceil(log2(V_m / B)), 0, K_CEIL)                  // K_CEIL = 2
+my levels : [bucket(me, 0), bucket(me, 1), bucket(me, 2)]     // = [1, 2|p1, 4|p2]
+recipient : always scans all three, in one `bucket in [...]` query
+sender    : k = clamp(ceil(log2(V / B)), 0, 2)
+            V ≈ n0 + 2·n1 + 4·n2   // invites/day the sender itself saw at each level, last 30 days
+            k = 0 with no scan history
 ```
 
-`k_m` depends only on last month, which is always still on chain (invites are
-kept at least 90 days), so a new client computes the same value as everyone
-else without replaying history.
+- **Disagreement is harmless.** Recipients scan every level, so a sender with
+  a different estimate still reaches them. No coordination, no transition
+  windows.
+- **`B` ≈ 900 invites/day** network-wide: the volume at which a device away for
+  30 days catches up in about 10 s (§5.1.1). Yappr sends tens a day. `k` stays
+  0 for a long time.
+- **The ceiling is 2.** Beyond that the leak outweighs the saving, and scanning
+  needs a different tool.
 
-- **Counting costs nothing extra.** Each recipient already downloads its own
-  bucket, so it estimates `V_m` as (invites in its own bucket last month) ×
-  `2^k`. At `k = 0` that is the exact network count. At `k > 0` a bucket holds
-  about `B` invites a day, roughly 27,000 a month, so each client's estimate is
-  within about 1% of everyone else's. Clients can only disagree when `V_m` sits
-  within about 1% of a step threshold, and the neighbouring-level scan below
-  covers that.
-- **No new index or flag.** A `rangeCountable` index would give every client
-  the identical proved count, but it adds cost to every invite create for
-  something the scan already provides.
-- **Transitions and disagreement.** Senders use the `k` they computed for the
-  month they write in. Recipients query last month's level, this month's
-  level, and, when their estimate is within 5% of a threshold, the neighbouring
-  level. All of this is one `bucket in [...]` query, so invites sent around a
-  boundary, with clock skew, or by a client that estimated differently are
-  still found.
-- **Ceiling.** Past `K_CEIL` the leak per invite outweighs the benefit, so the
-  client stays at the ceiling and raises `B` instead (faster scanning,
-  a bigger bandwidth budget). If that runs out, bucketing is the wrong tool and
-  discovery needs PIR or fuzzy message detection.
-- **Flooding.** Pushing `V` over `B` means paying for thousands of invites a
-  day for a month before `k` moves once. A flood that large already raises scan
-  cost, so raising `k` is the right response, and `K_CEIL` bounds it.
-- **Encoding.** `(1 << k) | prefix` gives every `(k, prefix)` a distinct value,
-  so an invite's level is never ambiguous. The contract needs no `k` limits: an
-  invite at a level nobody scans hurts only its sender.
+### 5.2 Group documents and handles
 
-### 5.2 Handles
+A group's roster and keyrings are all `dmGroupDoc`s owned by the group owner,
+told apart by handle:
 
 ```
-rosterHandle      = HKDF(gid, "yappr/dm/v5", "roster\0")[0:10]
-keyringHandle(b)  = HKDF(gid, "yappr/dm/v5", "keyring\0" || S16(b))[0:10]
+roster(g)      = HKDF(gid, "roster\0")[0:10]
+keyring(g, b)  = HKDF(gid, "keyring\0" || S16(b))[0:10]
 ```
 
-- **Handles are always paired with the owner's `$ownerId`** in a unique index,
-  so only the owner can occupy one.
-- **Members find them easily,** in one query per owner:
+- Only members can compute handles. The unique `[$ownerId, handle]` index
+  means only the owner can occupy one.
+- A member fetches everything for all groups of one owner in one query:
   `$ownerId == O, handle in [...]`.
-- **An observer cannot link handles to each other or to members by value.**
-  By timing, a roster replace right after a grant or keyring ties that
-  document to the group (§5.5); this is accepted.
+- Keyrings are never replaced. That is a client rule, since the owner is the
+  only writer.
 
-### 5.3 `dmMessage.body` and padding
+### 5.3 Keyring: removing someone
 
-```
-body = iv(12) | AES-256-GCM(mk[w, j], iv, pad(prev | type | payload), aad) // ciphertext || tag(16)
-prev = U32(week) | S16(b) | S16(r) | u8(keysBack)   // where the sender's previous message in this conversation is; all zero if none
-```
+`blob = kc(K[b,0]) (8 B) | slot | slot | …`, with one 32-byte slot (§4.5) per
+remaining member except the owner, in random order. The slot count is padded
+with random slots to a power of two from 8 to 128, so an observer learns the
+group's size only to within 2×. At the 100-member limit a keyring is about
+4.1 KB.
 
-- **Size classes.** Padded plaintext is a power of two from **128 to 8192
-  bytes**, plus a top class of **14,336 bytes** (14 KiB). The ciphertext is 28
-  bytes longer.
-- **Why three fields.** Platform caps any one field at 5,120 bytes and a whole
-  state transition at 20,480 bytes, on every protocol version through v14.
-  A ciphertext larger than 5,120 bytes is cut at 5,120-byte boundaries into
-  `body`, `body2` and `body3`. The 14 KiB class is the largest that fits in one
-  transition with room for the signature and document overhead. It is still one
-  document with one index, so it costs about 27,400 credits per extra byte
-  (27,000 storage + 400 processing) and
-  nothing more.
-- **Longer text** is split across several messages. A burst of top-class
-  messages shows that something long was sent.
-- **Other blobs.** Rosters use the same classes up to 4096 (a single field);
-  self-state uses them up to 14 KiB, across three fields like messages. Invites use only the 128 class (§5.1).
-- **Padding format:** `u16 length | plaintext | zeros`.
+Keyrings are permanent: each removal costs its owner a document that is never
+refunded. Removals are rare, so this is accepted.
 
-`DM_V5_GROUPS.md` rejected padding as paid storage. Its own cost data says
-otherwise. Padding a short message to 128 bytes adds at most about 3.4M credits,
-against a document whose fixed cost is in the 46–59M class. That is under 10%.
-Size is a real correlation signal next to timing, so padding is always on.
-Doubling classes waste at most half a message and about a quarter on average.
-
-### 5.4 `dmKeyring.slots` (removal)
-
-`kc(K[b,0])(8) | wrap_1 | … | wrap_n`: one 32-byte slot per remaining non-owner
-member (§4.5), in shuffled order.
-
-- **Padding.** The slot count pads with random slots to the next power of two
-  from **8 to 128**, matching the message classes. An observer learns the group
-  size to within 2×, and only when someone is removed. Coarser classes would
-  hide more, but at 32 B a slot, padding 65 members to 128 instead of 64+
-  costs about 55M credits per removal.
-- **Unwrapping.** A member does one ECDH, derives its pad once, XORs each slot,
-  and keeps the one whose `kc` matches.
-- **Size limit.** The largest class is 8 + 128 × 32 = 4104 bytes, which fits the
-  5120-byte field. The group limit is **100 members including the owner**
-  (decided), well under the 129 the field allows.
-
-### 5.5 `dmRoster`: the group's current state
+### 5.4 Roster: the group's current state
 
 ```
-rk    = HKDF(K[b,r], "roster\0")
-blob  = iv(12) | AES-256-GCM(rk, iv, pad({b, r, name, avatarRef, members: [id(32), joinedAt S16(b) S16(r)]…}), aad=rosterHandle)
+blob = iv | AES-256-GCM(HKDF(K[b,r], "roster\0"), pad({b, r, name, avatarRef, members[], ended?}), aad = handle)
 ```
 
-The owner creates the roster when the group is created, and **replaces** it on
-every membership change and every rename. It does three jobs:
-- **Epoch pointer.** It is the authoritative current `(b, r)`.
-- **Roster.** Members need it to know whose streams to poll. The UI derives
-  "X added Y" lines from the difference between versions.
-- **Name and avatar.**
+The owner replaces the roster immediately after every grant, keyring, or
+rename. It holds the current epoch `(b, r)`, the member list (whose streams to
+poll), and the name and avatar. The epoch is not in plaintext. A reader tries
+`K[b, r]`, `K[b, r+1]`, … until it decrypts. Each add is at least one roster
+replace, so at most `$revision − (last seen $revision)` steps are needed; the
+client caches the last seen `$revision` per group. Keyrings are applied first,
+so `r` restarts at 0 on a new base. When a group ends, the roster becomes a
+tombstone (`ended`).
 
-**Leak controls:**
-- **No plaintext epoch.** A reader already knows the newest base from keyrings.
-  It tries `rk` for `r`, `r+1`, … up to 16 steps ahead.
-- **Padded blob.** It pads to the size classes, so the member count is hidden to
-  within 2×. At 36 bytes per member, 100 members is about 3.6 KB, which fits
-  the 4096-byte class.
-- **No timing jitter (decided 2026-09-22).** The owner replaces the roster
-  immediately after a grant or keyring, so members see changes at once. An
-  observer can therefore tell that the owner's DM document just before a
-  roster replace was a group grant or keyring for that roster. It still cannot
-  tell who the grant was for, only that the owner added someone to some group.
-- **Still visible:** `$revision`, which counts changes and renames (§3).
-
-**The pointer never regresses.**
-- The owner never writes a roster under a base older than the newest keyring.
-- Readers use the maximum of `roster.b` and the newest keyring's base.
-- A reader whose ratchet is ahead of the roster (the new member's grant landed
-  but the roster has not) polls both `r` and `r+1` streams (§6.5).
-
-### 5.6 `dmSelfState`: private cross-device sync
+### 5.5 `dmSelfState`: cross-device state
 
 ```
-blob = iv(12) | AES-256-GCM(HKDF(stateKey, "state\0"), iv, pad(state))     // split across blob/blob2/blob3
+blob = iv | AES-256-GCM(HKDF(stateKey, "state\0"), pad(state))     // spread over blob/blob2/blob3
 ```
 
 **What it holds:**
-- The **contact list**: every 1:1 counterpart, and for each group its `gid`,
-  owner, and the earliest group key the member was granted, with its epoch.
-  Later epochs of the same base come from ratcheting forward, and later bases
-  from the member's keyring slots (never deleted), so this one key is enough
-  to read and sweep all of the member's group history.
-- Read positions, the last invite-scan position, the client-side block list,
-  and settings such as the retention age (§5.7).
-- **Past keys**: every earlier encryption private key (§4.6), 32 bytes each.
-- For owners, the next free group number `n` and the grants sent (§9). Both can
-  also be recovered from chain: `n` by probing, grants from the owner's own 1:1
-  streams.
+- **Conversations:** for a 1:1, the peer; for a group, `gid`, owner, and the
+  earliest group key the user was granted, with its epoch. Later epochs of the
+  same base come from ratcheting forward, and later bases from the user's
+  keyring slots, so one key reads all of the user's group history. Each
+  conversation also has `since` (the week it started) and `readAt` (a
+  `$createdAt`: everything newer is unread).
+- The block list, settings (including retention) with the time they were
+  last changed, the invite scan position, and, for owners, the next group
+  number `n`.
+- `pastKeys`, empty in Phase 1 (Appendix A).
 
-**What it no longer has to hold.** Where each stream currently ends: per-week
-tags (§6.1) let any device find that from nothing. (Read positions, which say
-how far the *user* has read, are still stored.) Owners' groups:
-they re-derive from `gid_n` (§4.4). Members' groups can be re-requested from
-the owner (`0x06`, §6.1 and §6.3).
+Where each stream is up to is **not** stored. Devices find it from the chain
+(§6.3).
 
-**One document, updated atomically.** The whole state is a single document
-with up to three 5,120-byte fields (§5.3), about 15 KB, so every save is one
-atomic replace. A 1:1 entry is about 40 bytes and a group entry about 90, so
-it holds roughly 300 chats. **That is the cap for Phase 1:** the client
-refuses to start a new conversation or join a group beyond it, and the user
-can archive old chats to make room. Splitting the state across several
-documents can come later if users need more.
-- **Two devices saving at once:** Platform requires every replace to carry
-  `revision = current + 1` and rejects anything else (error 40106). The losing
-  device re-reads, merges (chats and blocks are unions, read positions take the
-  maximum) and saves again. Nothing is ever half-written.
+**One document, one atomic replace.** About 15 KB across three fields,
+roughly 300 conversations (about 44 bytes per 1:1, 90 per group). **That is
+the Phase 1 cap, and it is a lifetime cap:** entries are never dropped,
+because a dropped entry would stop both polling and sweeping, and a 1:1 you
+started has no invite addressed to you to rediscover it from. "Delete
+conversation" hides it; it reappears if a new message arrives. Unanswered
+invites from strangers also take slots, so blocking spam matters. At the cap
+the app says so, and newly discovered conversations still show but are not
+saved until there is room. Splitting the state comes later if people hit the
+cap.
 
-**Writes are debounced (at least 5 minutes) and never happen immediately on
-read**, because a state update seconds after someone's message is a timing
-signal. It ships in Phase 1: without it, read state and blocks would differ
-between a user's devices.
+**Two devices saving at once:** Platform rejects a replace whose revision is
+not current + 1 (error 40106). The losing device re-reads, merges
+(conversations and blocks are unions, `readAt` takes the maximum, settings take
+the newer save) and saves again.
 
-**If the state is lost** (the key is lost, or a client bug overwrites it), §6.3
-describes what can still be recovered. Past keys can be re-derived by the
-wallet (§4.6), so losing the list costs a re-derivation, not history.
+**When it is written:** changes are coalesced to save fees, and flushed when
+the page is hidden or closed (`visibilitychange`/`pagehide`). It is also
+written immediately when the user starts a conversation, so their other devices
+find it. Incoming conversations need no immediate write, because invites are
+permanent and every device scans them. **The invite scan position never
+advances past an invite whose conversation is not yet saved.** It is written
+together with the conversations found up to it, so a crash before a save, or
+a full state at the cap, means the next scan finds those invites again rather
+than skipping them.
 
-### 5.7 Deletion and fee reclaim
+### 5.6 Deletion sweep: fee saving, not privacy
 
-Deleting a document removes it from Platform state and refunds most of its
-storage fee to the owner (a measured like delete refunded 93% of its create,
-`INDEXONLY_PHASE1_RESULTS.md`). Only the owner can delete, so each user
-reclaims the fees for what *they* wrote. Deletion does not remove the
-transition from block history: anyone archiving blocks keeps the ciphertext.
-Deletion reclaims fees and stops nodes serving the data; it is not a privacy
-erasure.
+Deleting a document refunds most of its storage fee (a measured delete
+refunded 93%). Only the owner can delete, so each user reclaims what they
+wrote. The write stays in block history forever.
 
-**The sweep.** The client deletes its own DM documents once they pass the
-retention age, across all conversations at once. Messages are swept by
-**whole tag weeks**: once every message in week `w` is older than the
-retention age, the client walks its own streams for week `w` (tags
-`(w, 0), (w, 1), …` in every conversation from the contact list) and deletes
-every hit. With the 30-day default, a message therefore stays 30 to 37 days. `dmMessage` has no
-owner-by-time index to list them any other way. Invites are swept by
-`$createdAt` through their `[$ownerId, $createdAt]` index.
+**The sweep** deletes the user's own messages by **whole tag weeks**, oldest
+first, in shuffled order across conversations. Per conversation it walks the
+user's own `prev` chain (§6.1) back from their newest message; that chain
+crosses weeks and group epochs, so no epoch has to be enumerated. Every own
+message in a week that is entirely older than the retention age is deleted.
+The client caches the oldest surviving own message per conversation, so later
+sweeps resume from there. Nothing else is swept: invites, group documents and
+the self-state are permanent.
 
-| Doctype | Deleted after | Why that long |
-| --- | --- | --- |
-| `dmMessage` | the user's retention age | |
-| `dmInvite` | the retention age, and never under 90 days | Recipients who have not scanned yet must still find it, and the `k` estimate reads last month's invites |
-| `dmRoster` | never (the contract forbids it); shrunk to a tombstone when the group ends | Keeps its group id from being reused (§4.4) |
-| `dmKeyring` | never (the contract forbids it) | Needed to read anything still on chain |
-| `dmSelfState` | never by the sweep | Holds the chat list and past keys |
+- **Retention is a user setting:** 30 days (default), 90 days, 1 year, or
+  never. A message lives 30 to 37 days on the default.
+- **It reveals nothing.** Creation times are already public, and a whole week
+  goes at once across all conversations.
+- **On a new device,** each side's history reaches back as far as that
+  sender's own retention allows.
+- **Wording.** The setting must say so plainly:
 
-- **It reveals nothing new.** The deletes remove a whole week of the owner's
-  documents at once, whose creation times are already public. The order within
-  the batch is shuffled, so it says nothing about which conversation any
-  document belonged to.
-- **"Delete conversation"** hides it locally at once. Its documents leave
-  the chain with the next sweep, at their normal age. Deleting them early would
-  cluster them.
-- **Cost.** One delete per document (Platform's batch cap is 1). Each delete
-  pays a small processing fee and receives the storage refund, so the net is
-  well positive. The sweep runs in the background while the app is open.
+  > **Reclaim message fees**
+  > Delete your sent messages from Dash Platform after 30 days and get most of
+  > their storage fee back. This saves money. It does not make old messages
+  > private: copies remain in the blockchain's history, and the people you
+  > messaged keep what they have.
 
-**Retention age: a user setting, default 30 days.** Choices: 30 days, 90 days,
-1 year, or never (no sweep). The setting lives in `dmSelfState`, so it applies
-on every device. It governs only the user's *own* documents, because only the
-owner can delete.
+  Never "disappearing", "self-destructing" or "delete for everyone".
 
-**What the other side sees.** When A's sweep deletes A's old messages, B's
-*new* devices can no longer load them. B's existing devices keep whatever they
-already decrypted in the local cache. So on a new browser, a conversation's
-history reaches back as far as each participant's own retention allows: with
-the default, about 30 days.
+### 5.7 Padding
 
-**It must be presented as fee saving, not privacy.** The setting's label and
-help text say so plainly, for example:
+Every encrypted blob is padded (`u16 length | plaintext | zeros`) to a size
+class, so its length reveals only the class:
 
-> **Reclaim message fees**
-> Delete your sent messages from Dash Platform after 30 days and get most of
-> their storage fee back.
-> This saves money. It does not make old messages private: copies remain in
-> the blockchain's history, and the people you messaged keep what they have.
+- **Messages, Phase 1:** one `body` field, classes 128, 256, 512, 1024, 2048,
+  4096 bytes. Longer text is split across messages. The contract keeps
+  `body2`/`body3`, so 8 KiB and 14 KiB classes (Platform caps a field at 5,120
+  bytes and a transition at 20,480) can be added for media without a re-cut.
+- **Roster:** the same classes up to 4096. **Self-state:** up to about 15 KB
+  over three fields.
 
-Never word it as "disappearing", "self-destructing" or "delete for
-everyone".
-
-**Effects on recovery.** Because the sweep removes whole tag weeks, every week
-still on chain is complete from `j = 0`. A device never needs to find where a
-stream "starts": it reads the weeks it wants. Swept invites no longer point at
-their conversations, which is why the contact list lives in `dmSelfState`.
+Padding a short message to 128 bytes costs about 3M credits, under 10% of the
+document.
 
 ## 6. Messages
 
-### 6.1 Streams and tags
+### 6.1 Streams, tags and back-links
 
-Every sender has their own stream in every epoch:
+Every sender has a stream in every conversation epoch:
 
 ```
-K          = the 1:1 key (§4.3) or K[b,r] (§4.4)
-SK         = HKDF(K, "stream\0" || senderId)
-tag[w, j]  = HKDF(SK, "tag\0" || U32(w) || U32(j))[0:16]     // w = week (§4.1), j = 0, 1, 2, … within that week
-mk[w, j]   = HKDF(SK, "msg\0" || U32(w) || U32(j))
-aad        = "yappr/dm/msg/v5" || tag || senderId
+K         = the 1:1 key (§4.3) or K[b,r] (§4.4)
+SK        = HKDF(K, "stream\0" || senderId)
+tag[w,j]  = HKDF(SK, "tag\0" || U32(w) || U32(j))[0:16]      // w = week, j = 0, 1, 2 … within the week
+mk[w,j]   = HKDF(SK, "msg\0" || U32(w) || U32(j))
+body      = iv | AES-256-GCM(mk[w,j], pad(prev | type | payload), aad = "yappr/dm/msg/v5" || tag || senderId)
+prev      = U32(w) | S16(b) | S16(r) | U32(j)   // the sender's previous message in this conversation, any epoch; zero if none
 ```
 
-**Tags are numbered per week.** The counter `j` restarts at 0 every week. The
-reason is deletion (§5.7). With one counter that never restarts, a device that
-does not know where a stream is up to (a lost `dmSelfState`, or a user away
-longer than the other side's retention) asks for message 400, finds it swept,
-and cannot tell "swept" from "never sent". With a weekly restart, any device
-that knows `K` starts from the current week's `j = 0`, with no saved position.
+- **Tags look random and never repeat,** so an observer cannot group one
+  sender's messages by conversation.
+- **Readers accept a document only if `$ownerId` is the stream's sender.**
+  Anything else at that tag is ignored. A current member could write junk at
+  other members' tags, but they could just as well spam real messages. Readers
+  page through full result pages, so junk cannot hide real hits.
+- **The count restarts each week.** Messages are deleted in whole weeks, so a
+  device that knows nothing starts at the current week's `j = 0` and never
+  mistakes "deleted" for "never sent".
+- **`prev` links each message to the sender's previous one,** across weeks and
+  epochs. A reader uses it to fill any gap and to scroll back without querying
+  empty weeks (§6.3).
+- **Why weeks.** Days roll over too often, months keep messages too long, and
+  Platform epochs differ between networks.
 
-- **Finding the end of a week quickly.** A device probes `j = 0, 1, 2, 4, 8,
-  16, …` in one query, then narrows between the last hit and the first miss.
-  Three queries find the end of even a very busy week.
-- **Scrolling back costs no empty queries.** Every message carries `prev`,
-  inside the encryption: where the sender's previous message in this
-  *conversation* is. That is its week, plus its group epoch `(b, r)` if it was
-  in an earlier epoch, or `keysBack` (how many of the sender's key rotations
-  ago) if it was in an earlier 1:1 thread (§4.3). A reader at the start of week `w` jumps straight to week `prev`,
-  and quiet weeks are never queried. Scroll-back costs one query per 100
-  messages, however sparse the chat, across epochs and key rotations. `prev`
-  is 9 bytes that fit in padding the message already has, so it costs
-  nothing.
-- **Why a week, not a day, a month or a Platform epoch.** With back-links the
-  period length no longer drives query count. A week keeps deletion reasonably
-  precise (a 30-day setting keeps messages 30 to 37 days) and rollovers rare.
-  A month would keep messages up to 61 days. Platform epochs differ in length
-  between networks and have no fixed start times, so clients would behave
-  differently on devnet and mainnet.
+**Why one stream per sender, not one per conversation.** With a shared stream,
+two members sending at once would write the same tag. The rejected transition
+is recorded in a block, so the collision would link them.
 
-**Properties:**
-- **Tags never repeat,** so an observer cannot group one sender's messages by
-  conversation. They see "A wrote N DM documents".
-- **Readers accept a document for `tag[w, j]` only if `$ownerId` equals the
-  stream's sender.**
-- **The unique index is `[tag, $ownerId]`, not `[tag]`.** So a member who
-  writes a document with another member's next tag blocks nothing: that write
-  is simply ignored.
-  - Two of the *same* sender's devices racing for one `j` still collide. The
-    loser retries at `j + 1`.
-  - A squatted tag does publicly show that two identities share a tag. That only
-    lets an insider expose a membership the insider could publish anyway (§3).
-  - A sender's own retry after a collision is a rejected transition in a block,
-    next to the accepted one. Both carry the same owner, so it reveals nothing
-    new.
-- **Each epoch has its own streams,** because `SK` derives from `K[b,r]`. A new
-  member starts at the current week's `j = 0` on the new epoch without any hint.
-- **Week rollover.** A reader keeps polling a stream's next tag in week `w`
-  until that stream has a message in week `w + 1`, or 24 hours pass. The next
-  message's `prev` also points back at week `w`, so a message whose signing and
-  inclusion straddle the boundary is still found.
-- **Week check.** A reader accepts a message for `tag[w, j]` only if
-  `week($createdAt)` is `w` or `w + 1`. A sender cannot pre-write messages under
-  future weeks, for example to post into a group after being removed (§6.6).
+### 6.2 Message types
 
-**Why each sender has their own stream, rather than one shared counter per
-conversation.** A shared counter would let readers poll a few tags per
-conversation regardless of group size. But concurrent senders would then collide
-by design. Rejected transitions are recorded in blocks (not in state), so the
-loser's attempt at the winner's tag would publicly link them. Per-sender streams
-never collide across participants.
+- `0x01` **text.**
+- `0x02` **leave** (groups). The owner's client removes the sender on its
+  next poll.
+- `0x05` **group grant**: `gid | S16(b) | S16(r) | K[b,r]`, sent by an owner on
+  its 1:1 stream to a member. The member accepts it only if:
+  - it came on the counterpart's stream;
+  - the roster at `roster(gid)` under `$ownerId == sender` decrypts with that
+    key (or one derived from it by ratchet or a newer keyring) and lists the
+    member.
 
-**Plaintext types:**
-- `0x01` text.
-- `0x02` leave.
-- `0x03` read receipt: opt-in, sent after a random 1–10 minute delay (§8).
-- `0x04` roster nudge: sent by a member added to an existing group right after
-  joining, so members pick up the new ratchet early. Not sent at group
-  creation, when every member starts on the same epoch.
-- `0x05` group grant: `gid(10) | S16(b) | S16(r) | K[b,r](32)`, sent by a group
-  owner on their 1:1 stream to a member (§6.5). The member accepts it only:
-  - from the counterpart: on their 1:1 stream, or inside an invite whose
-    `$ownerId` is the counterpart; never from the member's own stream;
-  - after the roster at `rosterHandle(gid)` under `$ownerId == sender` decrypts
-    with `K`, a key ratcheted forward from it, or a key from a newer keyring
-    slot, and lists the member.
-
-  Until then the grant is pending. So nobody but the group's owner can add you
-  to a group, and a member forwarding keys adds you to nothing. Of several
-  grants for one group, the highest `(b, r)` wins.
-- `0x06` resend grants: sent by a member on their 1:1 stream to an owner. The
-  owner's client answers with a `0x05` grant, but only:
-  - for groups where the requester is a current member at the newest base
-    (§9);
-  - if no grant for that group and epoch is already on the owner's 1:1 stream
-    to them or in an unswept invite to them;
-  - at most once per member, group and epoch per day;
-  - after a random 1–24 hour delay, so request and reply cannot be matched by
-    timing.
+  So only the real owner can add you, and forwarded keys add you to nothing.
+  A 1:1 that holds only grants is hidden from the inbox (the group shows
+  instead) until its first text message. It is still in the self-state, so
+  messaging that person never writes a second invite.
+- `0x03`, `0x04`, `0x06`: reserved. Read receipts, join nudges and automatic
+  key resends were removed in review (§12.3).
 - `0x10` and up: reserved for replies, reactions and edits. Phase 1 is text
-  only: no attachments, images or voice notes.
+  only.
 
-### 6.2 Sending
+### 6.3 The client loop
 
-1. **Groups only:** read the roster and check for a keyring at `b+1`. This is one
-   query per owner, and a read costs nothing.
-2. **Write.** Messages go out immediately; send batching was considered and
-   rejected for its latency (§8). Write `dmMessage{tag[w, j], body}` at the
-   current `(b, r)`, using this week's next free `j`. Before advancing past
-   `j`, read back the tag. A 504 timeout does not prove the write failed or
-   succeeded (CLAUDE.md, "DAPI Gateway Timeouts"). If the tag is missing,
-   rebroadcast the same transition. If the read-back shows the message landed
-   in a later week than its tag says (it was signed just before a rollover),
-   nothing is lost: readers still find it (§6.1). If it landed outside the
-   week check, the sender re-sends it under the current week.
+Streams are polled for their **next** tag. A hit pulls the rest of that week.
+`prev` fills any gap. Polling runs every 30 s, every few seconds while a
+conversation is open, and once when the app opens.
 
-### 6.3 Receiving, unread counts and recovery
+```
+# Local cache per stream: cur = newest (w, j) held, or none. Self-state as in §5.5.
+# A 1:1 is a group with members {me, peer}, one fixed epoch and no group documents.
 
-- **Polling.** Each stream contributes its **next tag**: for 1:1, the
-  counterpart's stream and your own (your own catches your other devices); for
-  groups, every member's stream. Groups also contribute their roster and
-  keyring handles.
-  - Tags batch into `tag in [...]` queries of up to 100. Twenty 1:1 chats (40
-    tags) cost 1 query, and so does a 100-member group. The dual polls around
-    a week rollover or an add (§6.5) can double that for a while.
-  - **On a hit, poll that stream again at once,** until a miss. A burst of
-    messages then arrives in one go, not one per 30 s poll.
-  - Handles go into one query per owner.
-  - Polling rides the existing 30 s notification poll, and runs every few
-    seconds while a conversation is open.
-- **Look-ahead.** When a conversation opens, or a stream has been quiet for
-  longer than usual, the client polls its next 4 tags once instead of 1. That
-  catches a gap left by a sender whose device died mid-send (the sender
-  normally reads back before moving on, §6.2). Any gap is bounded anyway: the
-  next week starts again at `j = 0`.
-- **Unread counts** are exact: new tags found past the read position. This
-  replaces v4's count queries and its read receipts.
-- **Recovery on a new device:**
-  1. Load `dmSelfState` (§5.6): the contact list, read positions, blocks,
-     settings.
-  2. Scan your bucket for invites newer than the last recorded scan.
-  3. For each stream, find the end of the current week (§6.1). For history,
-     follow the `prev` links back, 100 tags per query.
-- **If `dmSelfState` is lost:**
-  - **Groups you own** come back by probing `gid_n` (§4.4).
-  - **1:1 chats** come back for every counterpart the client can think to try,
-    by computing that pair's recent tags: people you follow, your followers,
-    and anyone whose invite is still unswept (at least 90 days, §5.7).
-  - **Groups you are in** come back from grants still on chain: in the
-    recovered 1:1 streams, and in invites found by the bucket scan. For older groups, the client sends `0x06` only to recovered
-    contacts the user picks, because a blanket request to every contact would
-    show, by who answers, which contacts own groups with you.
-  - **What is lost for good:** 1:1 chats with people you neither follow nor are
-    followed by, once their invites are swept.
+POLL():
+  for each group owner O:  APPLY(groups of O, query dmGroupDoc where $ownerId == O, handle in [roster, next keyring] of each)
+  want = []
+  for c in conversations, s in members(c):
+    if s == me and not (c.open or appJustOpened): continue          # own stream: catches your other devices
+    st = stream(c, s, c.epoch)
+    if st.cur == none:  want += [(w, 0) for w in max(week(c.readAt), c.since, curWeek − 52) .. curWeek]
+    else:               want += [(st.cur.w, st.cur.j + 1)] + [(w, 0) for w in st.cur.w + 1 .. curWeek]
+    want += st.stale                                                 # old week or epoch, kept 10 minutes
+  for each hit in query dmMessage where tag in want (100 per query, paging while full), $ownerId == sender:
+    DRAIN(hit)
+  for i in query dmInvite where bucket in myLevels, $createdAt > scanCursor:
+    if check verifies, sender not blocked, no conversation with sender:  add 1:1 (since = week(i))
+  advance scanCursor
 
-### 6.4 Reading
+DRAIN(st, w, j):            # a hit: take the rest of week w, 100 tags per query (holes are fine)
+  RECEIVE each doc from (w, j) onward until a page returns nothing
+  if w > st.cur.w: st.stale += next tag of the old week, for 10 minutes
+  st.cur = (w, last j found)
 
-1. Decrypt with `mk[w, j]`. On failure, drop the message as unreadable. It is
-   either spam or something sent before you joined.
-2. Apply the stale-base rule (§6.6).
+RECEIVE(st, doc):
+  m = decrypt with mk, else drop
+  if group, doc is on base b < g.b, sender not in roster, and doc.$createdAt > keyringAt[b+1]: drop   # removed member
+  if m.prev points at a message not held: BACKFILL(m.prev)
+  show m; unread if doc.$createdAt > readAt
 
-### 6.5 Epochs in groups
+BACKFILL(w, j, epoch):      # walk back along prev; 100 tags per query
+  while that message is not held:
+    fetch tags (w, j−99 .. j) of that stream and epoch; show them; (w, j, epoch) = oldest one's prev; stop at zero
 
-**Add:**
-1. The owner sends the new member a `0x05` grant for `(b, r+1)` on their 1:1
-   stream. If they have never chatted, the grant is the first message of an
-   invite (§5.1).
-2. Immediately after, the owner replaces the roster under `K[b,r+1]`.
-3. From then on, everyone sends on the `r+1` streams.
+APPLY(g, docs):
+  while a keyring for g.b + 1 is present:
+    unwrap my slot (kc tells which); none → I was removed: mark left, stop
+    keyringAt[g.b+1] = its $createdAt; SWITCH(g, g.b + 1, 0); fetch the next keyring handle
+  if the roster is present: decrypt it by ratcheting forward (bounded by $revision, §5.4)
+    ended → mark ended; newer (b, r) → SWITCH(g, b, r); take its member list
 
-Creating a group is the same with `r = 0`: one roster create, then one grant to
-each member, and no nudges.
+SWITCH(g, b, r):            # new epoch: every member stream restarts at the current week
+  for each member stream on the old epoch: st.stale += its next tag, for 10 minutes
+  g.epoch = (b, r)
 
-Until members see the new roster, they keep sending on `r`. So every reader
-polls **both `r` and `r+1` streams** from when it first learns of `r+1` until
-every member has been seen on `r+1`, or 24 hours have passed. The new member is
-the exception: it can only read `r+1`. It sends a `0x04` nudge on joining, and
-any member who sees a message on `r+1` switches at once. **Messages sent on `r`
-after the add are unreadable to the new member.** That is a delivery lag of at
-most one poll after the nudge, and the UI surfaces it.
+SEND(c, text):
+  if c is a group and its documents were last polled over 10 s ago: APPLY(c, fresh query)   # never send on an old base
+  j = next free j this week on my stream (0 if new week)
+  broadcast dmMessage{tag[curWeek, j], body(prev = my newest message in c, 0x01, text)}
+  if the broadcast result is uncertain (timeout) and the tag is not found: broadcast the same transition again
+```
 
-**Remove:**
-1. The owner writes keyring `b+1`.
-2. Immediately after, the owner replaces the roster under `K[b+1,0]`.
-3. Members poll `keyringHandle(b+1)` and unwrap their slot.
+- **One gap rule.** A message whose `prev` points at something not held
+  triggers a fetch. That covers week rollovers, epoch changes, a sender's
+  device dying mid-send, and history.
+- **The 10-minute stale window** is the only timing constant. It catches a
+  message signed just before a week rollover or an epoch change. Inclusion
+  takes seconds. If a straggler is missed anyway, the sender's next message
+  links to it through `prev`.
+- **Two of your own devices sending at once** can land two documents on one
+  tag. Both are shown. They use the same key with different random IVs, which
+  is safe.
+- **Opening a conversation on a new device** first finds the current messages
+  (from `readAt` onward), then scrolls back through `prev`. A stream with
+  nothing since `readAt` is probed further back when the conversation opens,
+  back to `max(since, curWeek − 52)`. Only retention "never" can hit the
+  52-week limit: a contact silent for over a year shows no history until
+  someone writes. The worst first poll on a fresh device is about 30 queries,
+  once.
 
-**Leave:**
-1. The member sends a `0x02` leave message.
-2. The owner's client runs Remove after a **random delay of 1–24 hours**, or
-   batched with the next membership change.
+**Poll cost, for a user with 28 1:1 chats and 2 groups of 15:** 56 tags (1
+query), 2 group-owner queries, 1 invite query. That is 4 queries per 30 s,
+against about 33 for one feed load. No credits.
 
-An immediate automatic removal would tie the leaver's write to the owner's
-keyring. Until removal, the leaver can technically still read, and the UI shows
-them as "left".
+### 6.4 Group membership changes
 
-### 6.6 Stale-base rule
+- **Create:** one roster create, then a `0x05` grant to each member on the
+  owner's 1:1 stream. For someone the owner has never messaged, that stream
+  starts with an invite (§5.1).
+- **Add:** a grant at `(b, r+1)`, then an immediate roster replace. Messages a
+  member sends on `r` in the seconds before they see the new roster are
+  unreadable to the newcomer.
+- **Remove:** a keyring at `b+1` (§5.3), then an immediate roster replace. The
+  removed member cannot compute any tag on the new base. Messages other members
+  send in the seconds before their clients see the keyring are still on the
+  old base, so the removed member can read those. Readers look at old-base tags
+  only for the 10-minute stale window, and drop anything there from a
+  non-member dated after the keyring. If the roster replace failed, readers
+  still list the removed member until the owner's repair loop fixes it (§6.5).
+  A member removed and later re-added shows their own old-base writes from the
+  gap; harmless.
+- **Leave:** the member sends `0x02`. The owner's client removes them on its
+  next poll. Until then they can still read.
+- **Owner leaves:** the group ends (tombstone roster).
+- **Resend keys (manual):** a member who cannot read a group sees "ask the
+  owner to resend your keys". The owner's group page has a **Resend keys**
+  action per member, which sends a fresh grant for the current epoch.
+- **Limit:** 100 members including the owner.
 
-A removed member still holds the keys for base `b` and can still compute its
-stream tags. A message on base `b` is rejected if keyring `b+1` exists and
-`msg.$createdAt > keyring[b+1].$createdAt + GRACE`.
+### 6.5 Owner writes: one repair loop
 
-- `$createdAt` is not chosen by the sender: Drive sets it to the block time of
-  the block that includes the transition. So `GRACE` only has to cover a
-  sender who checked for a new keyring (§6.2 step 1) just before it landed,
-  plus inclusion delay. **2 minutes** is enough for a few blocks, and the
-  client can widen it if blocks slow down.
-- Honest late messages are rare, because of §6.2 step 1.
+Every membership write by the owner follows one loop:
+
+```
+OWNER_WRITE(g, change):
+  loop:
+    read the roster and walk keyring handles b+1, b+2, … to the newest
+    if the newest keyring's base > roster.b:            # an earlier roster replace failed
+      members = old roster members who have a slot in it (test each pad)
+      replace the roster under the new base; continue
+    do the change (grant + roster replace, or keyring + roster replace, or rename)
+    if Platform rejects a write as stale (40106) or duplicate (unique index): continue
+    break
+```
+
+Every multi-device race (two adds, two removals, an add during a removal, a
+failed roster replace) is this loop re-running. The owner **never** grants or
+writes a keyring from a roster behind the newest keyring. Otherwise a stale
+device could hand the new key back to someone just removed. Duplicate grants
+from two devices are harmless, because keys are deterministic.
 
 ## 7. Operations and costs
 
 | Operation | v4 | v5 writes | Notes |
 | --- | --- | --- | --- |
-| Start a 1:1 | 2 invites | **1** invite, which can carry the first message | So often 1 write for invite and first message together |
-| Send | 1 message | **1** message | +16 B tag, plus padding (§5.3) |
-| Create a group of N | n/a | 1 roster + N−1 grants | Each grant is a 1:1 message, or an invite if owner and member have never chatted. The owner has no slot: `S` is derived |
-| Add a member | n/a | 1 grant + 1 roster replace, then 1 nudge from the new member | Nothing for existing members (ratchet) |
-| Remove a member | n/a | 1 keyring + 1 roster replace | |
-| End a group | n/a | 1 roster replace (tombstone) | |
-| Leave | n/a | 1 message, then the owner's Remove | |
-| Rename | n/a | 1 roster replace | |
-| Rotate encryption key | n/a | 2 identity updates (add new key, disable old) + **1** self-state replace | 1:1 threads move on their own (§4.3) |
-| Restore a member who lost their key or state | n/a | 1 grant per shared group | Sent on a `0x06` request, after a random delay |
-| Block or unblock | n/a | 1 self-state replace (debounced) | Never on chain in the clear |
-| Sweep | n/a | 1 delete per swept document | Most of each storage fee refunded (§5.7) |
-| Mark read | 1 receipt replace | 0 immediately; a debounced self-state replace at most every 5 min | |
+| Start a 1:1 | 2 invites | 1 invite + 1 message | About 100M credits |
+| Send | 1 message | 1 message | Padded (§5.7) |
+| Create a group of N | n/a | 1 roster + N−1 grants | + 1 invite per member the owner has never messaged |
+| Add a member | n/a | 1 grant + 1 roster replace | Existing members need nothing |
+| Remove a member | n/a | 1 keyring + 1 roster replace | The keyring is never refunded |
+| Leave | n/a | 1 message; owner removes on next open | |
+| Rename / end a group | n/a | 1 roster replace | |
+| Resend keys (manual) | n/a | 1 grant | |
+| Mark read, block | 1 receipt replace | 0 now; one coalesced self-state replace | |
+| Sweep | n/a | 1 delete per message | Most of each storage fee refunded |
 
-On the read side, the bucket scan costs one ECDH trial per invite, and
-polling costs one `in` query per 100 streams (1 tag each).
+## 8. Remaining leaks
 
-## 8. Remaining leaks, and what to do about them
+The design removes every structural link. What remains:
 
-The design removes every *structural* link. What remains is statistical. At
-Yappr's scale, **timing is the dominant attack**. The anonymity set is the set
-of DM users active *at the same time*, not all users. The first item is the one
-that matters most.
+- **Timing correlation.** If A writes and B writes 20 seconds later, over and
+  over, a patient observer can link them, especially when few users are
+  active. There is no send batching and no random delay anywhere: they would
+  make chat laggy and a static app cannot run timers while closed. The UI must
+  not over-promise.
+- **The nodes that answer your queries learn your contacts.** A client asks
+  for the tags it expects, and a node later sees who writes them. Polling your
+  own stream also reveals which asker you are. Group queries leak the same way.
+  Signal's server is in the same position and relies on not logging. The
+  chain-observer goal still holds.
+  **Future fix:** download every new `dmMessage` and match locally, as
+  shielded wallets sync. It needs a `[$createdAt]` index on messages, and
+  bandwidth grows with total network DM volume. Document queries return 100
+  per page, about 20–80× less efficient than shielded note sync, so this suits
+  today's volume and needs buckets later. A Platform query returning thousands
+  of documents per page would close that gap. Worth raising upstream.
+- **Group metadata:** the owner's group documents and their revisions, size
+  classes, the grant-then-roster timing link, and the group's size at
+  creation. Never the members.
+- **Removed members** know the group's handles, so they can see *when* the
+  roster changes. Not who changed.
+- **Your own activity** (counts, times, sizes) is visible.
 
-- **Timing correlation.** If A writes, then B writes 20 seconds later, over and
-  over, the pair shows up in simple co-occurrence statistics. Mitigations, from
-  cheapest:
-  1. **Receipts** are delayed or off, and `dmSelfState` is debounced.
-  2. **Removal after a leave** waits 1–24 hours (§6.5).
-  3. **Optional cover traffic:** dummy documents on random tags. These cost real
-     credits, so they are opt-in.
+## 9. Recovery when the self-state is lost
 
-  **Send batching** (holding outgoing messages for a random 15–60 s tick) was
-  rejected. It is the strongest cheap defence against back-and-forth
-  correlation, but it makes every chat feel laggy. Live conversations are
-  therefore linkable by a patient observer when few users are active at once.
+The self-state is one atomic document, so it is lost only through a client
+bug or a lost key. A device without it rebuilds what it can:
 
-  None of these defeats a global observer, and Signal does not claim to either.
-  The UI should not over-promise.
-- **Message and invite size** is limited to size classes (§5.3).
-- **Group metadata.** Only the owner is linked to a group. An observer sees the
-  roster's `$revision`, its size class, keyring size classes, and, from the
-  grants written just before a roster create, the group's exact size at
-  creation (§3). Never who the members are.
-- **Removed members.** They know `gid` and the owner, so they can watch the
-  owner's roster and keyring docs change. They learn *when* membership changes,
-  never *who* changed.
-- **The nodes that answer your queries learn your contacts. Accepted for
-  Phase 1.** A client polls for the specific tags it expects (§6.3). The node
-  sees the asker's IP next to those tags, and later sees who writes each one,
-  so it links the asker to each counterpart. The asker also polls their own
-  next tag (to catch their other devices), and writing it tells the node who
-  the asker is, so hiding the IP alone does not help. Group handle queries leak
-  the same way. Any masternode operator can collect this, and a node that
-  watches many users can build much of the social graph.
+1. **Every incoming 1:1:** rescan every invite ever sent to you, newest first,
+   in the background. Invites are permanent. That is about 4 s today, and about
+   2 minutes per year of history at the `B` ceiling.
+2. **1:1s you started:** probe the pair's streams for everyone you follow and
+   everyone who follows you: the last 4 weeks first, then back to 52 weeks in
+   the background. That is 104 tags per contact, so about 500 queries for 500
+   contacts. Show a progress indicator.
+3. **Groups you own:** probe `gid_n` (§4.4).
+4. **Groups you are in:** from grants in the recovered 1:1 streams with each
+   owner, within the owner's retention. Older ones: ask the owner to resend.
 
-  This is the same position as Signal's server, which knows every message's
-  recipient; Signal relies on a no-logging policy. The chain-observer goal
-  (§1) still holds: someone reading only the chain learns none of this.
-
-  **Future fix: download everything.** Clients fetch every new `dmMessage` by
-  time and match tags locally, as shielded wallets sync the note pool, so the
-  node learns only that a user downloaded recent messages. It needs a
-  `[$createdAt]` index on `dmMessage` (a cost on every message, to measure), and
-  bandwidth grows with total network DM volume, not the user's own. Document
-  queries return at most 100 per page (about 2,700 docs/s measured, §5.1.1),
-  about 20–80× less efficient than shielded note sync. So it suits Yappr's
-  volume today and needs buckets later. A Platform query returning thousands
-  of documents per page would close most of that gap; worth raising upstream.
-  Rotating nodes per query and Tor reduce the leak but do not remove it. Decoy
-  tags do not help, because the node can see which tags later get hits.
-- **Deletion** runs by age across all conversations (§5.7), so it clusters
-  nothing.
-- **Blocking** must stay client-side (in `dmSelfState`). An on-chain `block` of
-  a DM contact would publish the relationship.
-- **Your own sender activity** (counts and times from `$ownerId`, `$createdAt`
-  and nonces) stays visible, per goal 1.
-
-## 9. Multi-device and failure handling (owner)
-
-The owner's client **syncs before every membership write**: it reads the roster
-and the keyrings.
-
-After every write, it checks this invariant: **every roster member has either
-been sent a grant at the current base, or has a slot in the latest keyring.**
-Before sending a grant, the owner checks its own 1:1 stream to that member, and
-its own unswept invites to them, so two owner devices do not both send one.
-
-**Membership comes from the newest base.** If the roster's `b` is behind the
-newest keyring (a removal whose roster replace failed or has not landed yet),
-the current members are the slot holders of that keyring (the
-owner can test each identity's pad) plus anyone granted since. The owner
-**never** grants or writes a keyring from a roster older than the newest
-keyring. Otherwise a second owner device, or an auto-reply to `0x06`, could
-hand the new key straight back to the member who was just removed.
-
-- **Two devices add at once.** They produce the same deterministic key, so both
-  grants are valid. Platform's revision check rejects the second roster
-  replace (40106); that device re-reads, merges its member in, and replaces
-  again.
-- **Two devices remove at once.** The unique `[$ownerId, keyringHandle(b+1)]`
-  refuses one. That device re-syncs and, if its removal is still pending, writes
-  `b+2`.
-- **One device adds while another removes.** If the new member is missing from
-  the keyring, the invariant fails. The fix is one more keyring covering the
-  current members, taken from the newest base as above. An add-device roster written under an older base is overwritten,
-  because of the pointer rule (§5.5).
-- **The grant lands but the roster replace fails.** It is retried on the next
-  open. Meanwhile readers use the dual-poll rule in §6.5.
-- **The keyring lands but the roster replace fails.** It is retried on the next
-  open. Members find the keyring by handle anyway.
-
-The owner cannot hand the group over in v1. If the owner leaves, the group ends.
-Adding admins needs a second writer of keyrings, which is left for later.
+**Lost for good:** 1:1s you started with people you have no follow link to.
+Also, anything older than the sender's retention, which is gone for everyone
+anyway. Read positions are lost too, so recovered conversations start as read.
 
 ## 10. Migration
 
-- **v3/v4 threads stay readable** through the existing
-  `direct-message-service` read path. They merge into the same timeline as the
-  v5 thread with that counterpart. New sends always go to v5.
-- **Users get a one-time notice.** Earlier conversations are publicly linkable
-  and will stay that way. New ones are not.
-- **Rollout** uses the topology flag `NEXT_PUBLIC_DM_TOPOLOGY=v5`, with contract
-  ids and flag changed in one commit, as for the earlier re-cuts.
+- v3/v4 threads stay readable through the existing `direct-message-service`
+  read path, merged into the same timeline. New sends always go to v5.
+- Users get a one-time notice: earlier conversations are publicly linkable and
+  will stay that way; new ones are not.
+- Rollout uses `NEXT_PUBLIC_DM_TOPOLOGY=v5`, with contract ids and flag
+  changed in one commit, as for earlier re-cuts.
 
 ## 11. Roadmap
 
-1. **Phase 1: this document.** Unlinkable 1:1 chats and groups, history on
-   any device, no forward secrecy.
-2. **Phase 2: post-quantum first contact (optional).** A per-user ML-KEM-768
-   key, mixed into the 1:1 key agreement so that recorded ciphertext survives a
-   future quantum break of secp256k1. It keeps history on any device. It needs
-   a per-user key document for the ML-KEM public key and a larger invite
-   class, because an ML-KEM-768 ciphertext alone is 1,088 bytes.
+1. **Phase 1: this document.** Text only, unlinkable 1:1 chats and groups,
+   history on any device.
+2. **Key rotation** (Appendix A): designed, built when there is a rotation UI
+   or DashPay Connect v2 lands.
+3. **Post-quantum first contact (optional):** an ML-KEM-768 key mixed into
+   1:1 key agreement. It needs a per-user key document and a larger invite.
+   Per-device ratchets (Signal's model) were rejected: a new browser would
+   start with an empty history.
+4. **Hiding the sender:** a throwaway identity per contact, funded from the
+   shielded pool (`IdentityCreateFromShieldedPool`, fixed amounts). Blocked on
+   a browser Halo 2 prover (platform#3235).
+5. **Download-everything polling,** to close the node leak (§8).
 
-   Per-device ratchets ("sealed chat", Signal's model) were **rejected**. They
-   give forward secrecy, but a new browser or device would start with an empty
-   history. That is not acceptable for a web app that users log into from many
-   browsers.
-3. **Phase 3: hiding the sender.** On Platform, signing is always done by
-   `$ownerId`. Hiding the sender needs a throwaway identity per contact or per
-   epoch, funded untraceably. Platform already has the transitions:
-   `IdentityCreateFromShieldedPool` (fixed amounts of 0.1, 0.3, 0.5 or 1 DASH,
-   so the amount does not link) and `IdentityTopUpFromShieldedPool`
-   (platform#4711). The blocker is the browser: proving a shielded transition
-   needs the Halo 2 prover, which exists only in Rust behind the Swift and
-   Kotlin FFI. The WASM SDK left it out on purpose (platform#3235: over 10 MB of
-   bundle, about 30 s per proof). Phase 3 waits for a browser prover or a
-   companion wallet that funds the throwaway identity.
-4. **Later: tip with a message.** DIP-33 (dips#188) reserves a shielded memo kind
-   for pointing at "a larger encrypted context document". A shielded tip whose
-   memo carries a DM seed would let someone pay and open a private thread in one
-   step, with no document linking the two. Same browser-prover blocker.
+## 12. Design history
 
-## 12. Where the two drafts disagreed
+### 12.1 Choices between the two original drafts
 
-| Topic | Privacy draft | `DM_V5_GROUPS.md` | Merged |
+| Topic | Privacy draft | `DM_V5_GROUPS.md` | Chosen |
 | --- | --- | --- | --- |
-| Membership and the social graph | Hidden | Public `recipientId` / `groupId` (cheapest) | **Hidden.** It is goal 1. The bucketed scan answers the scaling objection (§5.1). |
-| Key material | Signed prekey doc + X3DH | ENCRYPTION key, no key docs | **ENCRYPTION key.** A prekey doc adds a document per user and buys forward secrecy that goal 6 gives up anyway. |
-| Groups | Sender keys | Owner-derived `S`, ratchet on add, keyring on remove | **Groups draft,** with keyrings and rosters moved under secret handles. |
-| Read receipts | Encrypted in-stream | Public `dmReadReceipt` | **Local / self-state, with opt-in in-stream receipts.** |
-| Padding | Size classes | None (storage cost) | **Size classes.** Under 10% of a document's cost (§5.3). |
-| Unread counts | `tag in` window | rangeCountable count | **Next-tag polling.** There is no shared id to count by. |
-| Invite deletion | n/a | Group invites deleted on removal (refund) | **Deleted by age in the sweep (§5.7).** Group joins are grants on the 1:1 channel, so removal deletes nothing. |
-| Key rotation | Not covered | One bridge doc | **Past keys in the self-state** (no extra document), plus 1:1 threads that move on their own. |
+| Membership | Hidden | Public `recipientId` / `groupId` | **Hidden** (goal 1) |
+| Key material | Prekey doc + X3DH | ENCRYPTION key, no key docs | **ENCRYPTION key** |
+| Groups | Sender keys | Owner-derived keys, ratchet on add, keyring on remove | **Groups draft**, under secret handles |
+| Padding | Size classes | None | **Size classes** (under 10% of a document) |
+| Key rotation | Not covered | Bridge document | **Past keys in the self-state** (Appendix A) |
 
-### 12.1 What was borrowed from Platform's shielded pool
+### 12.2 Borrowed from Platform's shielded pool (and DIP-33)
 
-Researched 2026-09-22 against `dashpay/platform` v4.2-dev and DIP-33
-(`dashpay/dips#188`, the closest thing to an "OrchardPay"; no design by that
-name exists).
+- **Adopted:** a fresh ephemeral key per invite, fixed-size invites, and
+  download-and-trial-decrypt for invites.
+- **Rejected:** shielded notes as the transport. Memos are 36 bytes, each
+  costs about 0.0016 DASH and 30 s of proving, and there is no browser prover.
+- **Not found:** nothing called "OrchardPay" exists; DIP-33 (dips#188) is the
+  closest design. There are no view tags or detection keys in Platform to
+  borrow.
 
-| Orchard / shielded wallets | DM v5 |
+### 12.3 Rejected or removed
+
+| Item | Why |
 | --- | --- |
-| Each note has a fresh ephemeral key; a wallet recognises its notes with its own viewing key only | **Adopted** for invites (§5.1). The recipient needs no identity fetch per inviter. |
-| Every encrypted note is exactly 216 bytes | **Adopted.** Invites are one fixed size; messages use size classes. |
-| Wallets download *all* notes in index ranges (8,192 per query) and trial-decrypt locally, so the node learns nothing | **Adopted** for invites at `k = 0`. Planned as the future fix for messages (§8). Document queries return only 100 per page, so this is about 20–80× less efficient than note sync. |
-| Spends are detected from data already downloaded, not by querying nullifiers (which would leak ownership) | **Adopted in spirit.** Duplicate-invite checks and the `k` estimate reuse the bucket download. |
-| One viewing key covers unlimited diversified addresses (DIP-33 per-contact addresses) | Already present: one encryption key covers every per-conversation tag stream. |
-| Shielded notes with memos as the transport | **Rejected.** The memo is 36 bytes (32 usable), each transfer costs about 0.0016 DASH and about 30 s of proving, the sender needs shielded funds, and there is no browser prover. |
-| View tags, detection keys, fuzzy message detection | Not present in Platform's code, so there was nothing to borrow. |
+| One-time prekeys; a BIP-47-style public notification doc | Consuming or publishing them links the pair. |
+| Per-message pairwise key wraps (no group key) | Every message's size would reveal the group's size. |
+| Multi-party ECDH for groups | Impossible on secp256k1. |
+| LKH key tree (private feeds' model) | Bigger grants to save bytes on rare removals; right for 1,000-follower feeds, wrong for 100-member groups. |
+| A shared tag stream per conversation | Concurrent senders collide, and the rejected transition links them. |
+| Unique `[tag, $ownerId]` message index | A check on every write that protects nothing readers do not already filter (removed 2026-09-23). |
+| Separate roster and keyring doctypes | Same shape; merged into `dmGroupDoc` (2026-09-23). |
+| First message and group grants carried inside invites; `selfHint` | One payload path and a sender-recovery field for a rare case; the first message is a normal message (2026-09-23). |
+| Invite sweep and its index | An index entry per invite for a tiny refund, at the cost of lost-state recovery (2026-09-23). |
+| Coordinated `k` schedule | Recipients scan every level instead, so no agreement is needed (2026-09-23). |
+| Stale-base rule with `GRACE`, week check, 24-hour dual polling, look-ahead, exponential probe | Replaced by `prev` gap-fill, one 10-minute stale window and the removed-member rule (2026-09-23). |
+| Random delays (receipts, key resends, leave-to-remove, self-state), cover traffic | Timing leaks are accepted anyway, and a static app cannot run delays while closed (2026-09-23). |
+| Read receipts, join nudges, automatic key-resend protocol | Cost, and automatic key release is where a bug becomes a security failure; key resend is a manual owner action (2026-09-23). |
+| Multi-part or two-copy self-state | One document replace is atomic; capped at about 300 conversations (2026-09-23). |
+| Separate key-bridge document | Past keys live in the self-state (Appendix A). |
+| Linkability audit script | Replaced by one assertion (§13). |
 
-DIP-33's deferred appendix also warns that notification documents can be linked
-by timing to the payments they announce. That is the same timing leak §8
-accepts for messages.
+## 13. Verification
 
-**Also rejected:**
-
-| Alternative | Why rejected |
-| --- | --- |
-| One-time prekeys | Using one up needs a write that links the pair. |
-| BIP-47-style public notification doc | Reintroduces leak #1. Bucketed scanning replaces it. |
-| A keyring doc per member per epoch | N documents per removal instead of one. |
-| The LKH tree from private feeds | Makes every grant about 250 bytes bigger to save about 2.5 KB per removal. Adds far outnumber removals. |
-| Signal sender keys / MLS (TreeKEM) | O(N²) wraps, or strictly ordered commits plus published key packages per member. |
-| Rekey on add | N−1 slots per add instead of zero. |
-| Per-message pairwise wraps (no group key; each message carries its key wrapped for every member) | Every message's size would grow by 32 bytes per member, revealing the group's size on every message and linking members' messages by their shared size. |
-| Group keys every member derives from public keys (multi-party ECDH) | Impossible on secp256k1: it needs pairings (3 parties) or multilinear maps (N parties) (§4.4). |
-| Group invites as their own invite kind | Grants ride the 1:1 channel instead (§6.5), so there is one invite kind and members can re-request grants. |
-| Unique `[tag]` index | Lets a member squat another member's tag and block their sends. |
-| A shared tag stream per conversation | Concurrent senders collide, and rejected transitions are visible in blocks, so a collision links them (§6.1). |
-
-## 13. Verification plan
-
-1. **Pure `lib/dm/` modules with Vitest specs.** Cover:
-   - the key schedule and label separation, handles, per-week tag and stream
-     derivation, `gid_n` derivation and owner probing;
-   - invite sealing and recognition, and `selfHint`;
-   - slot wrap and `kc` trial, and trial key selection across past keys;
-   - rotation order (self-state readable before, during and after);
-   - padding, body and roster encoding, and self-state merge on a revision
-     conflict;
-   - the pointer rule, the dual-poll rule, the stale-base rule, the week check,
-     `prev` back-links and the end-of-week probe;
-   - grant acceptance (only from the owner, only once the roster lists you);
-   - membership from the newest base when the roster lags;
-   - fixed test vectors.
-2. **A linkability audit script.** Given a dump of every v5 document the battery
-   wrote, it runs the known attacks:
-   - hashing pairs;
-   - joining on shared field values;
-   - joining handles across owners;
-   - clustering documents by size;
-   - naive timing joins (grant, then roster replace, is expected to link).
-
-   It must recover **no** pair or group edge from the structural attacks. The
-   timing results are reported, not gated.
-3. **`scripts/verify-dm-v5.mjs` on devnet**, which must **measure real credits**
-   for every row of §7 before client work starts. That covers:
-   - message size classes including the multi-field 8 KiB and 14 KiB ones,
-     invites, keyrings
-     at 8/16/32/64/128 slots, roster replaces, self-state replaces;
-   - that deleting a roster or keyring is rejected by the contract;
-   - spoofed keyrings and rosters under a stranger's `$ownerId`;
-   - squatted tags under `[tag, $ownerId]`;
-   - unique-index races.
-4. **Scan throughput on real hardware,** re-running
-   `scripts/bench-dm-scan-core.mjs` on a mid-range phone and against
-   testnet/mainnet nodes, to confirm `B` (§5.1.1).
-5. **Service and UI,** then deployed e2e on /devnet.
+1. **Pure `lib/dm/` modules with Vitest specs and fixed test vectors:** key
+   schedule and label separation, handles, tags and `prev`, invite check,
+   slot wrap and `kc`, padding, roster and self-state encoding, self-state
+   merge, grant acceptance, the removed-member rule, the client loop
+   (`DRAIN`, `BACKFILL`, `SWITCH`, the stale window, the scan position rule),
+   the owner repair loop (`OWNER_WRITE`, membership from the newest keyring),
+   and the `prev`-chain sweep, against a mock chain.
+2. **One linkability assertion:** across all v5 documents a battery wrote,
+   no field value repeats between documents of different owners, except
+   `bucket` and `$createdAt`.
+3. **`scripts/verify-dm-v5.mjs` on devnet**, measuring real credits for every
+   row of §7, plus:
+   - a `bucket in [...]` query combined with a `$createdAt` range (else: three
+     parallel queries);
+   - the cost of a unique vs. non-unique tag index;
+   - a `tag in [...]` query paging past a page of junk;
+   - rejected deletes of invites and group documents;
+   - forged group documents under a stranger's `$ownerId`.
+4. **Scan throughput** on a mid-range phone and against testnet/mainnet nodes
+   (`scripts/bench-dm-scan*`).
+5. **Service and UI,** then end-to-end tests on /devnet.
 
 ## 14. Decisions
 
-Decided 2026-09-22:
-
 | # | Question | Decision |
 | --- | --- | --- |
-| 1 | Bucket width `k` | Start at `k = 0`, and scale automatically with invite volume (§5.1). The estimate comes from each recipient's own bucket scan, so it adds no index and no cost. |
-| 2 | Padding size classes | Powers of two, 128 to 8192 bytes, plus 14 KiB, using up to three 5,120-byte fields (Platform's per-field cap). Invites are always 128. Keyring slots pad to powers of two, 8 to 128. |
-| 3 | Send batching | **No.** Messages send immediately; timing correlation is an accepted leak (§8). |
-| 4 | Group size limit | **100** including the owner. |
-| 5 | Cross-device read sync | **Yes,** `dmSelfState` ships in Phase 1 (§5.6). |
-| 6 | Per-device ratchets ("sealed chat") | **No.** History must follow the user to any browser (§11). |
-| 7 | Key | The derived ENCRYPTION key for now; the DM contract's bound key once DashPay Connect v2 ships (§4.2). |
-| 8 | Who can start a conversation | Anyone. A new conversation shows in the inbox as a normal first DM; no Requests folder (§5.1). |
+| 1 | Bucket width `k` | Starts at 0. Senders pick `k` from their own scan data; recipients always scan every level (§5.1.2). Ceiling 2. |
+| 2 | Padding | Powers of two, 128–4096 in Phase 1 (one field); 8 KiB / 14 KiB later via `body2`/`body3`. |
+| 3 | Send batching and random delays | None (§8). |
+| 4 | Group size | 100 including the owner. |
+| 5 | Cross-device sync | One self-state document, coalesced writes, capped at about 300 conversations (§5.5). |
+| 6 | Per-device ratchets | No. History follows the user. |
+| 7 | Key | The login-derived ENCRYPTION key; the bound key after DashPay Connect v2 (a rotation). |
+| 8 | Who can start a conversation | Anyone. It shows as a normal first DM. The invite carries no content, and the first message is a normal message (+1 document per new conversation). |
 | 9 | Content | Text only in Phase 1. |
-| 10 | Owner leaves a group | The group ends (§9). |
-| 11 | Joining a group | Added directly, from any owner (§5.1). |
-| 12 | Deletion | Owners delete their own documents by age to reclaim fees (§5.7). Retention is a user setting, **default 30 days** (30 days / 90 days / 1 year / never), presented as fee saving, never as privacy. |
-| 13 | Group keys | Epoch keys delivered by grant or keyring (§4.4). Per-message pairwise wraps rejected: they would leak group size on every message. |
-| 14 | Query-serving nodes | Accepted as a leak for Phase 1: they learn contacts and group memberships (§3, §8). "Download everything" is the planned fix. |
-| 15 | Chat limit | About 300 chats per user, the size of one self-state document (§5.6). Raise later by splitting the state if needed. |
+| 10 | Owner leaves | The group ends. |
+| 11 | Joining a group | Added directly, by any owner. |
+| 12 | Deletion | Own messages by whole weeks after retention (default 30 days; 90 days / 1 year / never), framed as fee saving. Invites and group documents are permanent. |
+| 13 | Group keys | Owner-derived epoch keys, delivered by grant or keyring. |
+| 14 | Query-serving nodes | Their view of contacts is accepted for Phase 1; download-everything is the planned fix. |
+| 15 | Key rotation | Designed (Appendix A), not built in Phase 1. |
+| 16 | Removing a member who left | On the owner's next app open; no delay. |
+| 17 | Lost group keys | The owner resends manually; no automatic protocol. |
+
+## Appendix A: key rotation (designed, not built in Phase 1)
+
+Rotation is purely client-side, because no document carries a key id. Phase 1
+data will read unchanged once it is built.
+
+- **Where keys come from.** The encryption key is
+  `HKDF(loginKey, identityId, "encryption")`, and the wallet derives `loginKey`
+  from its seed per `keyIndex` (`YAPPR_DET_SIGNER_SPEC.md` §5.1). Rotating
+  means moving to `keyIndex + 1`. The wallet can always re-derive old keys, so
+  there is no way to "rotate to forget".
+- **Order,** so the self-state stays readable throughout:
+  1. Add the new key to the identity.
+  2. Re-save the self-state under the new key, with the old private key
+     appended to `pastKeys`.
+  3. Disable the old key.
+- **1:1 chats** move to the new key by themselves. The next message uses the
+  new `Z`. The peer notices the new public key when refreshing the identity and
+  polls both threads for a while. Both show as one timeline. `prev` gains a
+  field for "previous thread", so scroll-back crosses the change.
+- **Readers try every key.** They try the counterpart's ENCRYPTION keys,
+  including disabled ones, against their own current and past keys.
+- **Groups.** A member's slot on the next keyring is wrapped to their new key.
+  An owner's `S` stays bound to the key they held at creation, so rotating
+  does not protect an owner's existing groups after a compromise; the fix is
+  to recreate them. Group numbering `n` restarts under a new key; the owner
+  probes old groups under each past key.
+- **Lost key:** 1:1 threads under it are unreadable to the user who lost it.
+  Groups they own end. Groups they are in need a manual resend.
