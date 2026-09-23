@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { deriveDirectKeys, deriveEpochKey, deriveGroupId, deriveGroupSecret, deriveSelfRoot } from './keys'
 import {
-  DIRECT_OWNER_ID,
+  directOwnerId,
   MessageType,
   decodeContent,
   decodeGrant,
@@ -23,7 +23,7 @@ import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, BOB_PUB, ALICE_PUB, CAROL_ID, h
 import type { DmPlaintext } from './types'
 
 const { key: DIRECT_KEY } = deriveDirectKeys(ALICE_PRIV, BOB_PUB, ALICE_ID, BOB_ID)
-const SK = deriveStreamKey(DIRECT_KEY, DIRECT_OWNER_ID, ALICE_ID)
+const SK = deriveStreamKey(DIRECT_KEY, directOwnerId(), ALICE_ID)
 const W = 2900
 
 // Alice's message (w = 2900, j = 1) to Bob: prev = (2900, 0, 0, 0), text "hi bob".
@@ -33,7 +33,7 @@ const FIXED_BODY =
 
 describe('stream keys and tags (§6.1)', () => {
   it('matches fixed vectors for a 1:1 SK (zero owner), tag and mk', () => {
-    expect(hex(DIRECT_OWNER_ID)).toBe('00'.repeat(32))
+    expect(hex(directOwnerId())).toBe('00'.repeat(32))
     expect(hex(SK)).toBe('a83a40eb15f9f4df92c1b74d4d4d4d359ca009856f09777b0eaaddbb15b951be')
     expect(hex(messageTag(SK, W, 0))).toBe('0f796b75dc98f2f2efad53c8b7e11293')
     expect(hex(messageTag(SK, W, 1))).toBe(FIXED_TAG)
@@ -52,13 +52,13 @@ describe('stream keys and tags (§6.1)', () => {
     const real = deriveStreamKey(DIRECT_KEY, ALICE_ID, BOB_ID)
     const forked = deriveStreamKey(DIRECT_KEY, CAROL_ID, BOB_ID)
     for (const j of [0, 1, 2]) expect(hex(messageTag(forked, W, j))).not.toBe(hex(messageTag(real, W, j)))
-    expect(hex(deriveStreamKey(DIRECT_KEY, DIRECT_OWNER_ID, BOB_ID))).not.toBe(hex(real))
+    expect(hex(deriveStreamKey(DIRECT_KEY, directOwnerId(), BOB_ID))).not.toBe(hex(real))
   })
 
   it('gives each sender its own stream, and both sides the same one', () => {
     const bobSide = deriveDirectKeys(BOB_PRIV, ALICE_PUB, BOB_ID, ALICE_ID).key
-    expect(deriveStreamKey(bobSide, DIRECT_OWNER_ID, ALICE_ID)).toEqual(SK)
-    expect(hex(deriveStreamKey(DIRECT_KEY, DIRECT_OWNER_ID, BOB_ID))).not.toBe(hex(SK))
+    expect(deriveStreamKey(bobSide, directOwnerId(), ALICE_ID)).toEqual(SK)
+    expect(hex(deriveStreamKey(DIRECT_KEY, directOwnerId(), BOB_ID))).not.toBe(hex(SK))
   })
 
   it('separates tag from msg, weeks from counters, and j = 0 from the week rollover', () => {
@@ -177,7 +177,7 @@ describe('message encryption (§6.1)', () => {
     await expect(decryptMessage({ ...position, j: 2 }, body)).rejects.toThrow()
     await expect(decryptMessage({ ...position, w: W + 1 }, body)).rejects.toThrow()
     await expect(decryptMessage({ ...position, senderId: CAROL_ID }, body)).rejects.toThrow()
-    await expect(decryptMessage({ ...position, streamKey: deriveStreamKey(DIRECT_KEY, DIRECT_OWNER_ID, BOB_ID) }, body)).rejects.toThrow()
+    await expect(decryptMessage({ ...position, streamKey: deriveStreamKey(DIRECT_KEY, directOwnerId(), BOB_ID) }, body)).rejects.toThrow()
     await expect(decryptMessage({ ...position, streamKey: deriveStreamKey(DIRECT_KEY, CAROL_ID, ALICE_ID) }, body)).rejects.toThrow()
   })
 
@@ -198,7 +198,7 @@ describe('message encryption (§6.1)', () => {
   })
 
   it('rejects sender ids that are not 32 bytes', () => {
-    expect(() => deriveStreamKey(DIRECT_KEY, DIRECT_OWNER_ID, ALICE_ID.slice(1))).toThrow('32 bytes')
+    expect(() => deriveStreamKey(DIRECT_KEY, directOwnerId(), ALICE_ID.slice(1))).toThrow('32 bytes')
     expect(() => deriveStreamKey(DIRECT_KEY, new Uint8Array(0), ALICE_ID)).toThrow('32 bytes')
     expect(() => messageAad(unhex(FIXED_TAG), new Uint8Array(33))).toThrow('32 bytes')
   })

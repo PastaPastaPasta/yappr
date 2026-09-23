@@ -91,6 +91,11 @@ describe('self-state encoding (§5.5)', () => {
     const badFlag = encodeSelfState(SIMPLE)
     badFlag[1 + 2 + 52 + 2 + 2 + 32] = 2
     expect(() => decodeSelfState(badFlag)).toThrow('blocked flag')
+    const dup = { ...emptySelfState(), blocks: [block(1, true, 1), block(1, false, 2)] }
+    expect(() => encodeSelfState(dup)).toThrow('Duplicate block entry')
+    const twice = encodeSelfState({ ...emptySelfState(), blocks: [block(1, true, 1), block(2, false, 2)] })
+    twice.set(twice.slice(3 + 2 + 2, 3 + 2 + 2 + 32), 3 + 2 + 2 + 41)
+    expect(() => decodeSelfState(twice)).toThrow('Duplicate block entry')
   })
 })
 
@@ -123,7 +128,7 @@ describe('self-state encryption', () => {
     await expect(decryptSelfState(STATE_KEY, { ...big, blob2: null, blob3: big.blob2 })).rejects.toThrow('blob3 without blob2')
   })
 
-  it('fits about 300 conversations in three fields', async () => {
+  it('fills all three fields near the cap (about 285 conversations)', async () => {
     // Capacity is 3 × 5120 − 28 (IV + tag) − 2 (length) = 15,330 bytes. 270 1:1s,
     // 10 groups and 5 blocks encode to 29 + 14,040 + 980 + 205 = 15,254.
     const atCap: SelfState = {

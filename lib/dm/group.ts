@@ -162,7 +162,7 @@ export function keyringNonce(keyring: Uint8Array): Uint8Array | null {
  */
 export function ownerKeyringBaseKey(groupSecret: Uint8Array, b: number, keyring: Uint8Array): Uint8Array | null {
   const nonce = keyringNonce(keyring)
-  if (!nonce || b < 1) return null
+  if (!nonce || !Number.isInteger(b) || b < 1 || b > 0xffff) return null
   const baseKey = deriveBaseKey(groupSecret, b, nonce)
   return bytesEqual(keyCheck(baseKey), keyringCheck(keyring)) ? baseKey : null
 }

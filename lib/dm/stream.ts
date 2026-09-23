@@ -24,12 +24,14 @@ export const MessageType = {
 const MESSAGE_AAD_PREFIX = new TextEncoder().encode('yappr/dm/msg/v5')
 const GRANT_LENGTH = GID_LENGTH + 2 + 2 + KEY_LENGTH
 
-/** The `ownerId` of a 1:1 stream: 32 zero bytes. */
-export const DIRECT_OWNER_ID: IdentityId = new Uint8Array(32)
+/** The `ownerId` of a 1:1 stream: 32 zero bytes (a fresh array, so no caller can alter a shared one). */
+export function directOwnerId(): IdentityId {
+  return new Uint8Array(32)
+}
 
 /**
  * `SK = HKDF(K, "stream\0" || ownerId || senderId)`. `ownerId` is the group
- * owner (`DIRECT_OWNER_ID` for a 1:1), so a member who re-posts a roster under
+ * owner (`directOwnerId()` for a 1:1), so a member who re-posts a roster under
  * their own id gets streams that never touch the real group's.
  */
 export function deriveStreamKey(conversationKey: Uint8Array, ownerId: IdentityId, senderId: IdentityId): Uint8Array {

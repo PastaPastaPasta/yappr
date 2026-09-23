@@ -65,6 +65,7 @@ export function encodeSelfState(state: SelfState): Uint8Array {
       u64(g.hiddenAt)
     )
   })
+  assertUniqueBlocks(state.blocks)
   const blocks = state.blocks.map((entry) => {
     assertLength(entry.id, ID_LENGTH, 'blocked id')
     return concat(entry.id, new Uint8Array([entry.blocked ? 1 : 0]), u64(entry.changedAt))
@@ -110,6 +111,7 @@ export function decodeSelfState(bytes: Uint8Array): SelfState {
     if (flag > 1) throw new Error('Invalid blocked flag')
     return { id, blocked: flag === 1, changedAt: reader.u64() }
   })
+  assertUniqueBlocks(blocks)
   const retention = RETENTIONS[reader.u8()]
   if (!retention) throw new Error('Unknown retention code')
   const settings = { retention, updatedAt: reader.u64() }
@@ -118,6 +120,13 @@ export function decodeSelfState(bytes: Uint8Array): SelfState {
   const pastKeys = Array.from({ length: reader.u8() }, () => reader.bytesOf(KEY_LENGTH))
   reader.end()
   return { directs, groups, blocks, settings, inviteScanCursor, nextGroupNumber, pastKeys }
+}
+
+/** One entry per identity: a duplicate would let a stale block outlive an unblock. */
+function assertUniqueBlocks(blocks: BlockEntry[]): void {
+  blocks.forEach((entry, i) => {
+    if (blocks.findIndex((other) => bytesEqual(other.id, entry.id)) !== i) throw new Error('Duplicate block entry')
+  })
 }
 
 /** True when `id` is currently blocked. */

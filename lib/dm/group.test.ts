@@ -10,14 +10,13 @@ import {
   keyringNonce,
   keyringSlotCount,
   openKeyringSlot,
-  ownerKeyringBaseKey,
   openRoster,
+  ownerKeyringBaseKey,
   rosterHandle,
   rosterKey,
   slotPad,
 } from './group'
 import { deriveBaseKey, deriveEpochKey, deriveGroupId, deriveGroupSecret, deriveSelfRoot, keyCheck } from './keys'
-
 import { FIELD_MAX } from './padding'
 import { ALICE_ID, ALICE_PRIV, ALICE_PUB, BOB_ID, BOB_PRIV, BOB_PUB, CAROL_ID, CAROL_PRIV, CAROL_PUB, hex, unhex } from './test-fixtures'
 import type { KeyringMember, RosterContent } from './types'
@@ -92,6 +91,10 @@ describe('keyring slots (§4.5, §5.3)', () => {
     expect(keyringNonce(built.blob)).toEqual(NONCE)
     expect(ownerKeyringBaseKey(SECRET, 1, built.blob)).toEqual(built.baseKey)
     expect(ownerKeyringBaseKey(SECRET, 2, built.blob)).toBeNull()
+    expect(ownerKeyringBaseKey(SECRET, 0x10000, built.blob)).toBeNull()
+    const badKc = built.blob.slice()
+    badKc[16] ^= 1
+    expect(ownerKeyringBaseKey(SECRET, 1, badKc)).toBeNull()
     expect(ownerKeyringBaseKey(deriveGroupSecret(BOB_PRIV, GID), 1, built.blob)).toBeNull()
     expect(keyringNonce(built.blob.slice(0, 24))).toBeNull()
   })
