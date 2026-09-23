@@ -21,6 +21,7 @@ const SELF_ROOT = '14ff63b2aa5fa46ba42ac6f719db5e143ca0288acc7b69ecb8d9cc47f5b7a
 const GID0 = '36bcf5d162c4be1412d2'
 const S = '09df887776f155aa1ada8c34c1fa9dc47e0d611349ee0885d9af89aa3f108ea2'
 const K00 = '3a0eae4626a88c84996ef6c3b02a46e99a6ec84627ea9ed7e1b240cd97d6b0e4'
+const NONCE = Uint8Array.from({ length: 16 }, (_, i) => 0xf0 + i)
 
 describe('fixture keys', () => {
   it('are the expected secp256k1 public keys', () => {
@@ -79,7 +80,8 @@ describe('group keys (§4.4)', () => {
     expect(hex(deriveGroupId(selfRoot, 1))).toBe('47dd97bf50711ee2a227')
     expect(hex(secret)).toBe(S)
     expect(hex(deriveBaseKey(secret, 0))).toBe(K00)
-    expect(hex(deriveBaseKey(secret, 1))).toBe('1f70f0fab150088a55608f9a044a41e7533dcba703034c09461ce4587a672954')
+    expect(hex(deriveBaseKey(secret, 1, NONCE))).toBe('8b709d3eb47470a89055afbc6bea97dabce4e4621c03fbe65ca6bff2ac5ef8b2')
+    expect(hex(keyCheck(deriveBaseKey(secret, 1, NONCE)))).toBe('e17886bd649503d6')
     expect(hex(deriveEpochKey(secret, 0, 1))).toBe('f99b9488a2b08f40dbad60e9d7f0e5c9608d4c307ab6ed14b14eba4e52f1a403')
     expect(hex(deriveEpochKey(secret, 0, 2))).toBe('67d6138636598796bcf0047ec1f0ee5da29ff72e32af6a475f7532ba6113d981')
     expect(hex(keyCheck(deriveBaseKey(secret, 0)))).toBe('39c7f9f34a8dd95c')
@@ -95,6 +97,18 @@ describe('group keys (§4.4)', () => {
   it('never steps back', () => {
     expect(() => ratchetTo(deriveEpochKey(secret, 0, 3), 0, 3, 2)).toThrow()
     expect(() => ratchetKey(deriveBaseKey(secret, 0), 0, 0)).toThrow()
+  })
+
+  it('takes no nonce for base 0 and requires a 16-byte nonce after it', () => {
+    expect(() => deriveBaseKey(secret, 0, NONCE)).toThrow()
+    expect(() => deriveBaseKey(secret, 1)).toThrow('nonce')
+    expect(() => deriveBaseKey(secret, 1, NONCE.slice(1))).toThrow('16 bytes')
+  })
+
+  it('gives two keyrings for the same base with different nonces different keys', () => {
+    const other = NONCE.map((b) => b ^ 0xff)
+    expect(hex(deriveBaseKey(secret, 1, other))).not.toBe(hex(deriveBaseKey(secret, 1, NONCE)))
+    expect(hex(deriveEpochKey(secret, 1, 2, other))).not.toBe(hex(deriveEpochKey(secret, 1, 2, NONCE)))
   })
 
   it('binds the base into each ratchet step', () => {

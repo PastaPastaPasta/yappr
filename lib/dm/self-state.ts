@@ -5,10 +5,10 @@
  * Binary layout (all integers big-endian):
  *
  *   u8  version (1)
- *   u16 count, then per 1:1:   peer (32) | U32 since | u64 readAt                  = 44 B
+ *   u16 count, then per 1:1:   peer (32) | U32 since | u64 readAt | u64 hiddenAt     = 52 B
  *   u16 count, then per group: gid (10) | owner (32) | S16 b | S16 r | key (32)
- *                              | U32 since | u64 readAt                           = 90 B
- *   u16 count, then per block: identity id (32)
+ *                              | U32 since | u64 readAt | u64 hiddenAt            = 98 B
+ *   u16 count, then per block: identity id (32) | u8 blocked | u64 changedAt     = 41 B
  *   u8  retention | u64 settings updatedAt
  *   u64 invite scan cursor | U32 next group number
  *   u8  count, then per past key: private key (32)
@@ -19,13 +19,14 @@ import { ByteReader, IDENTITY_ID_LENGTH as ID_LENGTH, KEY_LENGTH, assertLength, 
 import { GID_LENGTH, epochBefore } from './keys'
 import { SELF_STATE_CLASSES, joinFields, maxPlaintextLength, splitFields } from './padding'
 import { openPadded, sealPadded } from './seal'
-import type { DirectConversation, GroupConversation, RetentionSetting, SelfState } from './types'
+import type { BlockEntry, DirectConversation, GroupConversation, IdentityId, RetentionSetting, SelfState } from './types'
 
 const VERSION = 1
 const RETENTIONS: readonly RetentionSetting[] = ['30d', '90d', '1y', 'never']
 
-export const DIRECT_ENTRY_LENGTH = ID_LENGTH + 4 + 8
-export const GROUP_ENTRY_LENGTH = GID_LENGTH + ID_LENGTH + 2 + 2 + KEY_LENGTH + 4 + 8
+export const DIRECT_ENTRY_LENGTH = ID_LENGTH + 4 + 8 + 8
+export const GROUP_ENTRY_LENGTH = GID_LENGTH + ID_LENGTH + 2 + 2 + KEY_LENGTH + 4 + 8 + 8
+export const BLOCK_ENTRY_LENGTH = ID_LENGTH + 1 + 8
 /** The most encoded bytes a self-state can hold (three fields, sealed and padded). */
 export const SELF_STATE_MAX_BYTES = maxPlaintextLength(SELF_STATE_CLASSES)
 
@@ -47,15 +48,27 @@ export function encodeSelfState(state: SelfState): Uint8Array {
   if (state.pastKeys.length > 0xff) throw new Error('Too many past keys')
   const directs = state.directs.map((c) => {
     assertLength(c.peer, ID_LENGTH, 'peer')
-    return concat(c.peer, u32(c.since), u64(c.readAt))
+    return concat(c.peer, u32(c.since), u64(c.readAt), u64(c.hiddenAt))
   })
   const groups = state.groups.map((g) => {
     assertLength(g.gid, GID_LENGTH, 'gid')
     assertLength(g.owner, ID_LENGTH, 'owner')
     assertLength(g.earliestKey, KEY_LENGTH, 'group key')
-    return concat(g.gid, g.owner, s16(g.earliestEpoch.b), s16(g.earliestEpoch.r), g.earliestKey, u32(g.since), u64(g.readAt))
+    return concat(
+      g.gid,
+      g.owner,
+      s16(g.earliestEpoch.b),
+      s16(g.earliestEpoch.r),
+      g.earliestKey,
+      u32(g.since),
+      u64(g.readAt),
+      u64(g.hiddenAt)
+    )
   })
-  state.blocks.forEach((id) => assertLength(id, ID_LENGTH, 'blocked id'))
+  const blocks = state.blocks.map((entry) => {
+    assertLength(entry.id, ID_LENGTH, 'blocked id')
+    return concat(entry.id, new Uint8Array([entry.blocked ? 1 : 0]), u64(entry.changedAt))
+  })
   state.pastKeys.forEach((key) => assertLength(key, KEY_LENGTH, 'past key'))
   return concat(
     new Uint8Array([VERSION]),
@@ -63,8 +76,8 @@ export function encodeSelfState(state: SelfState): Uint8Array {
     ...directs,
     s16(groups.length),
     ...groups,
-    s16(state.blocks.length),
-    ...state.blocks,
+    s16(blocks.length),
+    ...blocks,
     new Uint8Array([retention]),
     u64(state.settings.updatedAt),
     u64(state.inviteScanCursor),
@@ -82,14 +95,21 @@ export function decodeSelfState(bytes: Uint8Array): SelfState {
     peer: reader.bytesOf(ID_LENGTH),
     since: reader.u32(),
     readAt: reader.u64(),
+    hiddenAt: reader.u64(),
   }))
   const groups = Array.from({ length: reader.u16() }, (): GroupConversation => {
     const gid = reader.bytesOf(GID_LENGTH)
     const owner = reader.bytesOf(ID_LENGTH)
     const earliestEpoch = { b: reader.u16(), r: reader.u16() }
-    return { gid, owner, earliestEpoch, earliestKey: reader.bytesOf(KEY_LENGTH), since: reader.u32(), readAt: reader.u64() }
+    const earliestKey = reader.bytesOf(KEY_LENGTH)
+    return { gid, owner, earliestEpoch, earliestKey, since: reader.u32(), readAt: reader.u64(), hiddenAt: reader.u64() }
   })
-  const blocks = Array.from({ length: reader.u16() }, () => reader.bytesOf(ID_LENGTH))
+  const blocks = Array.from({ length: reader.u16() }, (): BlockEntry => {
+    const id = reader.bytesOf(ID_LENGTH)
+    const flag = reader.u8()
+    if (flag > 1) throw new Error('Invalid blocked flag')
+    return { id, blocked: flag === 1, changedAt: reader.u64() }
+  })
   const retention = RETENTIONS[reader.u8()]
   if (!retention) throw new Error('Unknown retention code')
   const settings = { retention, updatedAt: reader.u64() }
@@ -98,6 +118,11 @@ export function decodeSelfState(bytes: Uint8Array): SelfState {
   const pastKeys = Array.from({ length: reader.u8() }, () => reader.bytesOf(KEY_LENGTH))
   reader.end()
   return { directs, groups, blocks, settings, inviteScanCursor, nextGroupNumber, pastKeys }
+}
+
+/** True when `id` is currently blocked. */
+export function isBlocked(state: SelfState, id: IdentityId): boolean {
+  return state.blocks.some((entry) => entry.blocked && bytesEqual(entry.id, id))
 }
 
 /** True when the state still fits the one self-state document (the ~300-conversation cap). */
@@ -150,7 +175,12 @@ function unionBy<T>(first: T[], second: T[], same: (a: T, b: T) => boolean, comb
 }
 
 function mergeDirect(a: DirectConversation, b: DirectConversation): DirectConversation {
-  return { peer: a.peer, since: Math.min(a.since, b.since), readAt: Math.max(a.readAt, b.readAt) }
+  return {
+    peer: a.peer,
+    since: Math.min(a.since, b.since),
+    readAt: Math.max(a.readAt, b.readAt),
+    hiddenAt: Math.max(a.hiddenAt, b.hiddenAt),
+  }
 }
 
 function mergeGroup(a: GroupConversation, b: GroupConversation): GroupConversation {
@@ -161,16 +191,23 @@ function mergeGroup(a: GroupConversation, b: GroupConversation): GroupConversati
     earliestKey: earliest.earliestKey,
     since: Math.min(a.since, b.since),
     readAt: Math.max(a.readAt, b.readAt),
+    hiddenAt: Math.max(a.hiddenAt, b.hiddenAt),
   }
+}
+
+/** The newer change wins; the saved (first) entry on a tie. */
+function newerBlock(a: BlockEntry, b: BlockEntry): BlockEntry {
+  return b.changedAt > a.changedAt ? b : a
 }
 
 const keepFirst = <T>(a: T) => a
 
 /**
  * Merge the saved state (`remote`) with this device's (`local`).
- * Conversations, blocks and past keys are unions; `readAt` takes the maximum
- * and `since` the minimum; a group keeps its earliest key; settings take the
- * newer save (the saved state on a tie). The next group number takes the
+ * Conversations and past keys are unions; `readAt` and `hiddenAt` take the
+ * maximum and `since` the minimum; a group keeps its earliest key. Each block
+ * entry and the settings take the newer change (the saved state on a tie), so
+ * an unblock survives. The next group number takes the
  * maximum, so `n` is never reused. The invite scan cursor takes the
  * MINIMUM: each device's cursor only covers the conversations it saved, so
  * the lower one is the only position both sets are known to cover, and a
@@ -188,7 +225,7 @@ export function mergeSelfStates(remote: SelfState, local: SelfState): SelfState 
       (a, b) => bytesEqual(a.gid, b.gid) && bytesEqual(a.owner, b.owner),
       mergeGroup
     ),
-    blocks: unionBy(remote.blocks, local.blocks, bytesEqual, keepFirst),
+    blocks: unionBy(remote.blocks, local.blocks, (a, b) => bytesEqual(a.id, b.id), newerBlock),
     settings: local.settings.updatedAt > remote.settings.updatedAt ? local.settings : remote.settings,
     inviteScanCursor: Math.min(remote.inviteScanCursor, local.inviteScanCursor),
     nextGroupNumber: Math.max(remote.nextGroupNumber, local.nextGroupNumber),

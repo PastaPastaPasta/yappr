@@ -7,7 +7,7 @@
  */
 
 import { ByteReader, KEY_LENGTH, assertIdentityId, assertLength, concat, decodeUtf8, dmHkdf, s16, u32 } from './kdf'
-import { GID_LENGTH } from './keys'
+import { GID_LENGTH, epochBefore } from './keys'
 import { MESSAGE_CLASSES } from './padding'
 import { openPadded, sealPadded } from './seal'
 import type { DmContent, DmPlaintext, GroupGrant, IdentityId, MessagePointer } from './types'
@@ -24,10 +24,18 @@ export const MessageType = {
 const MESSAGE_AAD_PREFIX = new TextEncoder().encode('yappr/dm/msg/v5')
 const GRANT_LENGTH = GID_LENGTH + 2 + 2 + KEY_LENGTH
 
-/** `SK = HKDF(K, "stream\0" || senderId)`. */
-export function deriveStreamKey(conversationKey: Uint8Array, senderId: IdentityId): Uint8Array {
+/** The `ownerId` of a 1:1 stream: 32 zero bytes. */
+export const DIRECT_OWNER_ID: IdentityId = new Uint8Array(32)
+
+/**
+ * `SK = HKDF(K, "stream\0" || ownerId || senderId)`. `ownerId` is the group
+ * owner (`DIRECT_OWNER_ID` for a 1:1), so a member who re-posts a roster under
+ * their own id gets streams that never touch the real group's.
+ */
+export function deriveStreamKey(conversationKey: Uint8Array, ownerId: IdentityId, senderId: IdentityId): Uint8Array {
+  assertIdentityId(ownerId, 'owner id')
   assertIdentityId(senderId, 'sender id')
-  return dmHkdf(conversationKey, 'stream', senderId)
+  return dmHkdf(conversationKey, 'stream', ownerId, senderId)
 }
 
 /** `tag[w,j] = HKDF(SK, "tag\0" || U32(w) || U32(j))[0:16]`. */
@@ -65,6 +73,17 @@ export function decodePrev(bytes: Uint8Array): MessagePointer | null {
   const r = reader.u16()
   const j = reader.u32()
   return { w, b, r, j }
+}
+
+/**
+ * True when `prev` points strictly before `current` in the sender's stream:
+ * an earlier epoch, or the same epoch and an earlier `(w, j)`. That is the
+ * lexicographic order on `(b, r, w, j)`. A `prev` that fails this is attacker-
+ * or clock-supplied and must not drive a backfill (§6.3).
+ */
+export function isStrictlyBefore(prev: MessagePointer, current: MessagePointer): boolean {
+  if (prev.b !== current.b || prev.r !== current.r) return epochBefore(prev, current)
+  return prev.w !== current.w ? prev.w < current.w : prev.j < current.j
 }
 
 /** `gid | S16(b) | S16(r) | K[b,r]`. */

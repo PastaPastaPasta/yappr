@@ -8,11 +8,13 @@
 
 import { ecdhSharedX } from '@/lib/crypto/ecdh'
 import { bytesEqual } from '@/lib/bytes'
-import { assertIdentityId, dmHkdf, s16, u32 } from './kdf'
+import { assertIdentityId, assertLength, dmHkdf, s16, u32 } from './kdf'
 import type { Epoch, IdentityId } from './types'
 
 export const GID_LENGTH = 10
 export const KEY_CHECK_LENGTH = 8
+/** Random bytes stored in keyring `b` and mixed into `K[b,0]` for `b ≥ 1` (§4.4). */
+export const BASE_NONCE_LENGTH = 16
 
 /** True when epoch `a` is older than epoch `b`: lower base, or same base and lower ratchet step. */
 export function epochBefore(a: Epoch, b: Epoch): boolean {
@@ -73,9 +75,20 @@ export function deriveGroupSecret(ownerEncPriv: Uint8Array, gid: Uint8Array): Ui
   return dmHkdf(ownerEncPriv, 'group-secret', gid)
 }
 
-/** `K[b,0] = HKDF(S, "base\0" || S16(b))`. */
-export function deriveBaseKey(groupSecret: Uint8Array, b: number): Uint8Array {
-  return dmHkdf(groupSecret, 'base', s16(b))
+/**
+ * `K[0,0] = HKDF(S, "base\0" || S16(0))` at creation;
+ * `K[b,0] = HKDF(S, "base\0" || S16(b) || nonce_b)` for each later base, with
+ * `nonce_b` read from keyring `b`. The nonce means a keyring rejected in an
+ * owner-device race wraps a key nobody uses.
+ */
+export function deriveBaseKey(groupSecret: Uint8Array, b: number, nonce?: Uint8Array): Uint8Array {
+  if (b === 0) {
+    if (nonce) throw new Error('Base 0 takes no nonce')
+    return dmHkdf(groupSecret, 'base', s16(0))
+  }
+  if (!nonce) throw new Error(`Base ${b} needs its keyring nonce`)
+  assertLength(nonce, BASE_NONCE_LENGTH, 'Base nonce')
+  return dmHkdf(groupSecret, 'base', s16(b), nonce)
 }
 
 /** One ratchet step: `K[b,r] = HKDF(K[b,r−1], "ratchet\0" || S16(b) || S16(r))`, where `r` is the new step. */
@@ -92,9 +105,9 @@ export function ratchetTo(key: Uint8Array, b: number, from: number, to: number):
   return current
 }
 
-/** `K[b,r]` for the owner, from `S`. */
-export function deriveEpochKey(groupSecret: Uint8Array, b: number, r: number): Uint8Array {
-  return ratchetTo(deriveBaseKey(groupSecret, b), b, 0, r)
+/** `K[b,r]` for the owner, from `S` (and keyring `b`'s nonce for `b ≥ 1`). */
+export function deriveEpochKey(groupSecret: Uint8Array, b: number, r: number, nonce?: Uint8Array): Uint8Array {
+  return ratchetTo(deriveBaseKey(groupSecret, b, nonce), b, 0, r)
 }
 
 /** `kc(K) = HKDF(K, "kc\0")[0:8]`: identifies a key without revealing it. */

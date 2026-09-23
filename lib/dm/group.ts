@@ -8,8 +8,8 @@
 
 import { ecdhSharedX } from '@/lib/crypto/ecdh'
 import { bytesEqual } from '@/lib/bytes'
-import { ByteReader, IDENTITY_ID_LENGTH, KEY_LENGTH, assertIdentityId, assertLength, concat, decodeUtf8, dmHkdf, s16 } from './kdf'
-import { GID_LENGTH, KEY_CHECK_LENGTH, keyCheck, ratchetKey } from './keys'
+import { ByteReader, IDENTITY_ID_LENGTH, assertIdentityId, assertLength, concat, decodeUtf8, dmHkdf, s16 } from './kdf'
+import { BASE_NONCE_LENGTH, GID_LENGTH, KEY_CHECK_LENGTH, deriveBaseKey, keyCheck, ratchetKey } from './keys'
 import { MESSAGE_CLASSES } from './padding'
 import { sealPadded, tryOpenPadded } from './seal'
 import type { Epoch, IdentityId, KeyringMember, OpenedRoster, RosterContent } from './types'
@@ -88,24 +88,43 @@ function shuffle<T>(items: T[]): T[] {
   return out
 }
 
+/** `nonce_b | kc(K[b,0])`, then the slots. */
+const KEYRING_HEADER_LENGTH = BASE_NONCE_LENGTH + KEY_CHECK_LENGTH
+
 export interface BuildKeyringParams {
   ownerPrivateKey: Uint8Array
   ownerId: IdentityId
   gid: Uint8Array
+  /** The new base, at least 1: base 0 is handed out by grants at creation. */
   b: number
-  /** `K[b,0]`. */
-  baseKey: Uint8Array
+  /** The group secret `S`. */
+  groupSecret: Uint8Array
   /** Every remaining member except the owner. */
   members: KeyringMember[]
+  /** `nonce_b`. Random unless given (test vectors only). */
+  nonce?: Uint8Array
 }
 
-/** `kc(K[b,0]) | slot | slot | …`, padded with random slots to 8..128 and shuffled. */
-export function buildKeyring(params: BuildKeyringParams): Uint8Array {
-  assertLength(params.baseKey, KEY_LENGTH, 'Base key')
+export interface BuiltKeyring {
+  blob: Uint8Array
+  nonce: Uint8Array
+  /** `K[b,0]`. */
+  baseKey: Uint8Array
+}
+
+/**
+ * Start base `b`: draw `nonce_b`, derive `K[b,0]` and build
+ * `nonce_b | kc(K[b,0]) | slot | slot | …`, padded with random slots to
+ * 8..128 and shuffled.
+ */
+export function buildKeyring(params: BuildKeyringParams): BuiltKeyring {
+  if (params.b < 1) throw new Error('Keyrings start at base 1')
   if (params.members.length > MAX_GROUP_MEMBERS - 1) throw new Error(`Too many keyring members: ${params.members.length}`)
+  const nonce = params.nonce ?? crypto.getRandomValues(new Uint8Array(BASE_NONCE_LENGTH))
+  const baseKey = deriveBaseKey(params.groupSecret, params.b, nonce)
   const real = params.members.map((member) =>
     xor(
-      params.baseKey,
+      baseKey,
       slotPad({
         myPrivateKey: params.ownerPrivateKey,
         otherPublicKey: member.publicKey,
@@ -119,7 +138,33 @@ export function buildKeyring(params: BuildKeyringParams): Uint8Array {
   const filler = Array.from({ length: keyringSlotCount(real.length) - real.length }, () =>
     crypto.getRandomValues(new Uint8Array(SLOT_LENGTH))
   )
-  return concat(keyCheck(params.baseKey), ...shuffle([...real, ...filler]))
+  return { blob: concat(nonce, keyCheck(baseKey), ...shuffle([...real, ...filler])), nonce, baseKey }
+}
+
+function isWellFormedKeyring(keyring: Uint8Array): boolean {
+  const body = keyring.length - KEYRING_HEADER_LENGTH
+  return body > 0 && body % SLOT_LENGTH === 0
+}
+
+function keyringCheck(keyring: Uint8Array): Uint8Array {
+  return keyring.slice(BASE_NONCE_LENGTH, KEYRING_HEADER_LENGTH)
+}
+
+/** The keyring's `nonce_b`, or null for a malformed keyring. */
+export function keyringNonce(keyring: Uint8Array): Uint8Array | null {
+  return isWellFormedKeyring(keyring) ? keyring.slice(0, BASE_NONCE_LENGTH) : null
+}
+
+/**
+ * The owner's view of its own keyring: re-derive `K[b,0]` from `S` and the
+ * stored nonce, and confirm it against `kc`. Null for a malformed keyring or
+ * one that is not this owner's base `b`.
+ */
+export function ownerKeyringBaseKey(groupSecret: Uint8Array, b: number, keyring: Uint8Array): Uint8Array | null {
+  const nonce = keyringNonce(keyring)
+  if (!nonce || b < 1) return null
+  const baseKey = deriveBaseKey(groupSecret, b, nonce)
+  return bytesEqual(keyCheck(baseKey), keyringCheck(keyring)) ? baseKey : null
 }
 
 /**
@@ -128,11 +173,10 @@ export function buildKeyring(params: BuildKeyringParams): Uint8Array {
  * owner runs the same check to learn who holds a slot (§6.5).
  */
 export function openKeyringSlot(keyring: Uint8Array, ctx: SlotContext): Uint8Array | null {
-  const body = keyring.length - KEY_CHECK_LENGTH
-  if (body <= 0 || body % SLOT_LENGTH !== 0) return null
-  const expected = keyring.slice(0, KEY_CHECK_LENGTH)
+  if (!isWellFormedKeyring(keyring)) return null
+  const expected = keyringCheck(keyring)
   const pad = slotPad(ctx)
-  for (let offset = KEY_CHECK_LENGTH; offset < keyring.length; offset += SLOT_LENGTH) {
+  for (let offset = KEYRING_HEADER_LENGTH; offset < keyring.length; offset += SLOT_LENGTH) {
     const candidate = xor(keyring.slice(offset, offset + SLOT_LENGTH), pad)
     if (bytesEqual(keyCheck(candidate), expected)) return candidate
   }
