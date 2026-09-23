@@ -187,7 +187,7 @@ New contract, `yappr-dm-contract-v5.json`. Four doctypes.
 | `dmInvite` | inviter | `bucket` u16, `epk` b33, `check` b16 | `[bucket, $createdAt]` | immutable, `canBeDeleted: false` |
 | `dmMessage` | sender | `tag` b16, `body` 156–5120 B, optional `body2`/`body3` ≤ 5120 B | unique `[tag]` | immutable; deleted by the sweep |
 | `dmGroupDoc` | group owner | `handle` b10, `blob` 156–5120 B | unique `[$ownerId, handle]` | mutable, `canBeDeleted: false` |
-| `dmSelfState` | user | `blob` 156–5120 B, optional `blob2`/`blob3` ≤ 5120 B | unique `[$ownerId]` | mutable |
+| `dmSelfState` | user | `blob` 156–5120 B, optional `blob2`/`blob3` ≤ 5120 B | unique `[$ownerId]` | mutable; deletable by its owner (the sweep never does) |
 
 - **No doctype has a recipient, group or conversation field.**
 - **No `refersTo` or `propertyAgreement`:** each adds a read to every write.
@@ -367,8 +367,9 @@ than skipping them.
 
 ### 5.6 Deletion sweep: fee saving, not privacy
 
-Deleting a document refunds most of its storage fee (a measured delete
-refunded 93%). Only the owner can delete, so each user reclaims what they
+Deleting a document refunds part of its storage fee: measured on moutai,
+about half for a 156-byte message and 76–90% for a 4 KB one (the fixed
+document cost is not refunded). Only the owner can delete, so each user reclaims what they
 wrote. The write stays in block history forever.
 
 **The sweep** deletes the user's own messages by **whole tag weeks**, oldest
@@ -377,8 +378,8 @@ user's own `prev` chain (§6.1) back from their newest message; that chain
 crosses weeks and group epochs, so no epoch has to be enumerated. Every own
 message in a week that is entirely older than the retention age is deleted.
 The client caches the oldest surviving own message per conversation, so later
-sweeps resume from there. Nothing else is swept: invites, group documents and
-the self-state are permanent.
+sweeps resume from there. Nothing else is swept: invites and group documents
+are permanent, and the self-state is only ever replaced.
 
 - **Retention is a user setting:** 30 days (default), 90 days, 1 year, or
   never. A message lives 30 to 37 days on the default.
@@ -487,7 +488,7 @@ conversation is open, and once when the app opens.
 # A 1:1 is a group with members {me, peer}, one fixed epoch and no group documents.
 
 POLL():
-  for each group owner O:  APPLY(groups of O, query dmGroupDoc where $ownerId == O, handle in [roster, next keyring] of each)
+  for each group owner O:  APPLY(groups of O, query dmGroupDoc where $ownerId == O, handle in [roster, next keyring] of each, orderBy handle)
   want = []
   for c in conversations, s in members(c):
     if s == me and not (c.open or appJustOpened): continue          # own stream: catches your other devices
@@ -495,11 +496,12 @@ POLL():
     if st.cur == none:  want += [(w, 0) for w in max(week(c.readAt), c.since, curWeek − 52) .. curWeek]
     else:               want += [(st.cur.w, st.cur.j + 1)] + [(w, 0) for w in st.cur.w + 1 .. curWeek]
     want += st.stale                                                 # old week or epoch, kept 10 minutes
-  for each hit in query dmMessage where tag in want (100 per query), keeping docs whose $ownerId == sender:
+  for each hit in query dmMessage where tag in want (100 per query, orderBy tag), keeping docs whose $ownerId == sender:
     DRAIN(hit)
-  for i in query dmInvite where bucket in myLevels, $createdAt >= scanCursor, skipping ids already seen at that exact time:
+  for i in query dmInvite where bucket in myLevels, $createdAt >= scanCursor, orderBy [bucket, $createdAt]
+           (results come bucket by bucket, so read them all before moving the cursor; skip ids already seen at scanCursor):
     if check verifies, sender not blocked, no conversation with sender:  add 1:1 (since = week(i))
-  advance scanCursor
+  advance scanCursor to the newest $createdAt read
 
 DRAIN(st, w, j):            # a hit: take the rest of week w, 100 tags per query (holes are fine)
   RECEIVE each doc from (w, j) onward until a page returns nothing
@@ -535,6 +537,9 @@ SEND(c, text):
   if the broadcast result is uncertain (timeout) and the tag is not found: broadcast the same transition again
 ```
 
+- **Every `in` query needs an `orderBy` on its `in` field** (Drive refuses it
+  otherwise). The three shapes above were verified on moutai
+  (`docs/evidence/dm-v5-battery.json`).
 - **One gap rule.** A message whose `prev` points at something not held
   triggers a fetch. That covers week rollovers, epoch changes, a sender's
   device dying mid-send, and history.
@@ -605,7 +610,7 @@ from two devices are harmless, because keys are deterministic.
 
 | Operation | v4 | v5 writes | Notes |
 | --- | --- | --- | --- |
-| Start a 1:1 | 2 invites | 1 invite + 1 message | About 100M credits |
+| Start a 1:1 | 2 invites | 1 invite + 1 message | About 52–60M credits measured |
 | Send | 1 message | 1 message | Padded (§5.7) |
 | Create a group of N | n/a | 1 roster + N−1 grants | + 1 invite per member the owner has never messaged |
 | Add a member | n/a | 1 grant + 1 roster replace | Existing members need nothing |
@@ -614,7 +619,7 @@ from two devices are harmless, because keys are deterministic.
 | Rename / end a group | n/a | 1 roster replace | |
 | Resend keys (manual) | n/a | 1 grant | |
 | Mark read, block | 1 receipt replace | 0 now; one coalesced self-state replace | |
-| Sweep | n/a | 1 delete per message | Most of each storage fee refunded |
+| Sweep | n/a | 1 delete per message | About half refunded for short messages, more for long ones |
 
 ## 8. Remaining leaks
 
