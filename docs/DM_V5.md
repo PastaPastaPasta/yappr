@@ -114,8 +114,9 @@ contract's bound key; that is a key rotation (Appendix A).
 client concern. That is what lets key rotation be designed now and built later
 (Appendix A).
 
-`selfRoot = HKDF(encPriv, "self\0")`. From it come `stateKey` (§5.5) and the
-ids of groups the user owns (§4.4).
+`selfRoot = HKDF(encPriv, "self\0")` and `stateKey = HKDF(selfRoot,
+"state-key\0")`. The self-state is sealed under `stateKey` (§5.5); group ids
+the user owns derive from `selfRoot` (§4.4).
 
 ### 4.3 1:1 keys: nothing stored
 
@@ -138,7 +139,9 @@ the group's creator, derives it and hands it out.
 ```
 gid_n   = HKDF(selfRoot_owner, "group\0" || U32(n))[0:10]   // the owner's n-th group
 S       = HKDF(encPriv_owner, "group-secret\0" || gid_n)     // never leaves the owner
-K[b,0]  = HKDF(S, "base\0" || S16(b))                        // new base b on each removal
+K[0,0]  = HKDF(S, "base\0" || S16(0))                        // first base, at creation
+K[b,0]  = HKDF(S, "base\0" || S16(b) || nonce_b)             // new base b on each removal; nonce_b is
+                                                               // 16 random bytes stored in keyring b
 K[b,r]  = HKDF(K[b,r−1], "ratchet\0" || S16(b) || S16(r))    // one step on each add
 kc(K)   = HKDF(K, "kc\0")[0:8]                               // key check
 ```
@@ -154,8 +157,13 @@ kc(K)   = HKDF(K, "kc\0")[0:8]                               // key check
   `K[b,r+1]`. The new member receives `K[b,r+1]` and cannot step back.
 - **Removals need a new base.** Only the owner has `S`, so the removed member
   cannot compute `K[b+1,0]`. It reaches the others in one keyring (§5.3).
-- **Keys are deterministic per `(gid, b, r)`,** so two owner devices doing the
-  same add produce the same key.
+- **Adds are deterministic per `(gid, b, r)`,** so two owner devices doing the
+  same add produce the same key. **Bases are not:** each keyring carries a
+  fresh random `nonce_b`. If two owner devices remove different members at
+  once, the unique index rejects one keyring, but its transition stays in
+  block history. Without the nonce it would wrap the *same* new key for the
+  member the other device removed. With it, the rejected keyring's key is
+  simply unused.
 
 ### 4.5 Sealing a key to a member
 
@@ -283,7 +291,7 @@ keyring(g, b)  = HKDF(gid, "keyring\0" || S16(b))[0:10]
 
 ### 5.3 Keyring: removing someone
 
-`blob = kc(K[b,0]) (8 B) | slot | slot | …`, with one 32-byte slot (§4.5) per
+`blob = nonce_b (16 B) | kc(K[b,0]) (8 B) | slot | slot | …`, with one 32-byte slot (§4.5) per
 remaining member except the owner, in random order. The slot count is padded
 with random slots to a power of two from 8 to 128, so an observer learns the
 group's size only to within 2×. At the 100-member limit a keyring is about
@@ -320,8 +328,10 @@ blob = iv | AES-256-GCM(HKDF(stateKey, "state\0"), pad(state))     // spread ove
   keyring slots, so one key reads all of the user's group history. Each
   conversation also has `since` (the week it started) and `readAt` (a
   `$createdAt`: everything newer is unread).
-- The block list, settings (including retention) with the time they were
-  last changed, the invite scan position, and, for owners, the next group
+- Blocks as `identity → (blocked, changedAt)`, so an unblock survives a
+  merge. Each conversation's `hiddenAt` ("delete conversation"; a message newer
+  than it un-hides the chat). Settings (including retention) with the time they
+  were last changed, the invite scan position, and, for owners, the next group
   number `n`.
 - `pastKeys`, empty in Phase 1 (Appendix A).
 
@@ -341,8 +351,9 @@ cap.
 
 **Two devices saving at once:** Platform rejects a replace whose revision is
 not current + 1 (error 40106). The losing device re-reads, merges
-(conversations and blocks are unions, `readAt` takes the maximum, settings take
-the newer save) and saves again.
+(conversations are a union; `readAt` and `hiddenAt` take the maximum; each
+block entry and the settings take the newer `changedAt`; the scan position
+takes the minimum, so no invite is skipped) and saves again.
 
 **When it is written:** changes are coalesced to save fees, and flushed when
 the page is hidden or closed (`visibilitychange`/`pagehide`). It is also
@@ -408,7 +419,7 @@ Every sender has a stream in every conversation epoch:
 
 ```
 K         = the 1:1 key (§4.3) or K[b,r] (§4.4)
-SK        = HKDF(K, "stream\0" || senderId)
+SK        = HKDF(K, "stream\0" || ownerId || senderId)        // ownerId: the group owner; 32 zero bytes for a 1:1
 tag[w,j]  = HKDF(SK, "tag\0" || U32(w) || U32(j))[0:16]      // w = week, j = 0, 1, 2 … within the week
 mk[w,j]   = HKDF(SK, "msg\0" || U32(w) || U32(j))
 body      = iv | AES-256-GCM(mk[w,j], pad(prev | type | payload), aad = "yappr/dm/msg/v5" || tag || senderId)
@@ -417,6 +428,9 @@ prev      = U32(w) | S16(b) | S16(r) | U32(j)   // the sender's previous message
 
 - **Tags look random and never repeat,** so an observer cannot group one
   sender's messages by conversation.
+- **Streams are bound to the group's owner.** A member who copies a roster
+  under their own identity and "adds" someone creates a separate, empty group:
+  its streams derive differently, so it never exposes the real group.
 - **Readers accept a document only if `$ownerId` is the stream's sender.**
   Anything else at that tag is ignored.
 - **One document per tag.** Two of your own devices picking the same `j` get
@@ -483,7 +497,7 @@ POLL():
     want += st.stale                                                 # old week or epoch, kept 10 minutes
   for each hit in query dmMessage where tag in want (100 per query), keeping docs whose $ownerId == sender:
     DRAIN(hit)
-  for i in query dmInvite where bucket in myLevels, $createdAt > scanCursor:
+  for i in query dmInvite where bucket in myLevels, $createdAt >= scanCursor, skipping ids already seen at that exact time:
     if check verifies, sender not blocked, no conversation with sender:  add 1:1 (since = week(i))
   advance scanCursor
 
@@ -495,12 +509,13 @@ DRAIN(st, w, j):            # a hit: take the rest of week w, 100 tags per query
 RECEIVE(st, doc):
   m = decrypt with mk, else drop
   if group, doc is on base b < g.b, sender not in roster, and doc.$createdAt > keyringAt[b+1]: drop   # removed member
-  if m.prev points at a message not held: BACKFILL(m.prev)
+  if m.prev points strictly before this message and at a message not held: BACKFILL(m.prev)   # ignore prev that points forward
   show m; unread if doc.$createdAt > readAt
 
 BACKFILL(w, j, epoch):      # walk back along prev; 100 tags per query
   while that message is not held:
-    fetch tags (w, j−99 .. j) of that stream and epoch; show them; (w, j, epoch) = oldest one's prev; stop at zero
+    fetch tags (w, j−99 .. j) of that stream and epoch; show them; (w, j, epoch) = oldest one's prev
+    stop at zero, at a prev that does not point strictly backwards, or past the retention horizon
 
 APPLY(g, docs):
   while a keyring for g.b + 1 is present:
