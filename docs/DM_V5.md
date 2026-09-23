@@ -286,7 +286,7 @@ New contract, `yappr-dm-contract-v5.json`.
 | `dmRoster` | group owner | `handle` b10, `blob` bytes 156–4124 | **unique** `[$ownerId, handle]` | mutable; replaced by a tombstone when the group ends, never deleted (§4.4) |
 | `dmKeyring` | group owner | `handle` b10, `slots` bytes 264–5120 | **unique** `[$ownerId, handle]` | immutable, not deletable |
 | `encryptionKeyBridge` | key owner | `payload` b81 | `[$ownerId, $createdAt]` | immutable, not deletable |
-| `dmSelfState` | user | `part` u8, `blob` bytes 156–5120, optional `blob2`/`blob3` ≤ 5120 | **unique** `[$ownerId, part]` | mutable; each replace is atomic and revision-checked (§5.6) |
+| `dmSelfState` | user | `blob` bytes 156–5120, optional `blob2`/`blob3` ≤ 5120 | **unique** `[$ownerId]` | mutable; one document, atomic, revision-checked (§5.6) |
 
 - **No doctype has a `recipientId`, `groupId` or `conversationId` field.**
 - **Messages, keyrings and rosters get no `refersTo` or `propertyAgreement`,**
@@ -560,8 +560,7 @@ every membership change and every rename. It does three jobs:
 ### 5.6 `dmSelfState`: private cross-device sync
 
 ```
-blob = iv(12) | AES-256-GCM(HKDF(stateKey, "part\0" || u8(part)), iv, pad(state for this part))
-part(chat) = HKDF(stateKey, "part-of\0" || chat id)[0] mod parts      // parts = 1 until it fills
+blob = iv(12) | AES-256-GCM(HKDF(stateKey, "state\0"), iv, pad(state))     // split across blob/blob2/blob3
 ```
 
 **What it holds:**
@@ -579,16 +578,17 @@ how far the *user* has read, are still stored.) Owners' groups:
 they re-derive from `gid_n` (§4.4). Members' groups can be re-requested from
 the owner (§6.5).
 
-**One document per part, each updated atomically.** A part is one document
-with up to three 5,120-byte fields (§5.3), about 15 KB. A 1:1 entry is about
-40 bytes and a group entry about 90, so one part holds roughly 300 chats; most
-users need only one. Chats are spread across parts by a hash of their id, so a
-save only ever changes one part at a time, and each change is a single
-atomic replace. Heavy users get more parts (up to 8).
+**One document, updated atomically.** The whole state is a single document
+with up to three 5,120-byte fields (§5.3), about 15 KB, so every save is one
+atomic replace. A 1:1 entry is about 40 bytes and a group entry about 90, so
+it holds roughly 300 chats. **That is the cap for Phase 1:** the client
+refuses to start a new conversation or join a group beyond it, and the user
+can archive old chats to make room. Splitting the state across several
+documents can come later if users need more.
 - **Two devices saving at once:** Platform requires every replace to carry
   `revision = current + 1` and rejects anything else (error 40106). The losing
-  device re-reads the part, merges (chats and blocks are unions, read
-  positions take the maximum) and saves again. Nothing is ever half-written.
+  device re-reads, merges (chats and blocks are unions, read positions take the
+  maximum) and saves again. Nothing is ever half-written.
 
 **Writes are debounced (at least 5 minutes) and never happen immediately on
 read**, because a state update seconds after someone's message is a timing
@@ -1074,8 +1074,8 @@ accepts for messages.
      derivation, `gid_n` derivation and owner probing;
    - invite sealing and recognition, and `selfHint`;
    - slot wrap and `kc` trial, and trial key selection across bridged keys;
-   - padding, body and roster encoding, and self-state part assignment and
-     merge on a revision conflict;
+   - padding, body and roster encoding, and self-state merge on a revision
+     conflict;
    - the pointer rule, the dual-poll rule, the stale-base rule, the week check,
      `prev` back-links and the end-of-week probe;
    - grant acceptance (only from the owner, only once the roster lists you);
@@ -1124,3 +1124,4 @@ Decided 2026-09-22:
 | 12 | Deletion | Owners delete their own documents by age to reclaim fees (§5.7). Retention is a user setting, **default 30 days** (30 days / 90 days / 1 year / never), presented as fee saving, never as privacy. |
 | 13 | Group keys | Epoch keys delivered by grant or keyring (§4.4). Per-message pairwise wraps rejected: they would leak group size on every message. |
 | 14 | Query-serving nodes | Accepted as a leak for Phase 1: they learn contacts and group memberships (§3, §8). "Download everything" is the planned fix. |
+| 15 | Chat limit | About 300 chats per user, the size of one self-state document (§5.6). Raise later by splitting the state if needed. |
