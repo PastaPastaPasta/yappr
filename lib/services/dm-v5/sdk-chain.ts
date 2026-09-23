@@ -218,9 +218,10 @@ export class SdkDmChain implements DmChain {
   }
 
   /**
-   * After a nonce clash, drop the SDK's cached identity nonce, so a retry
-   * signs with a fresh one. Creates read the nonce anew each time, but
-   * replaces and deletes go through the SDK's own cache.
+   * After a nonce clash, mark this identity's cached nonces (identity and
+   * identity-contract) stale, so the next replace or delete re-reads Platform
+   * and signs with the higher of that and the cached value. Creates read the
+   * nonce anew each time; replaces and deletes go through the SDK's cache.
    */
   private async afterWrite(outcome: WriteOutcome): Promise<WriteOutcome> {
     if (!outcome.ok && outcome.failure === 'nonce') {
