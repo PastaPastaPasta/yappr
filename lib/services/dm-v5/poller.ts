@@ -107,17 +107,24 @@ export function collectWants(ctx: DmContext, only?: Conv): Want[] {
 // ---------------------------------------------------------------------------
 // Fetching
 
-/** Fetch tags `(w, js)` of one stream; returns the stream sender's documents by index. */
-async function fetchStreamRange(ctx: DmContext, st: StreamState, w: number, js: number[]): Promise<Map<number, ChainMessage>> {
+/**
+ * Fetch tags `(w, js)` of one stream. `found` holds the stream sender's
+ * documents by index; `occupied` every index that holds any document, a
+ * squat included (§6.1): never a message, but a slot the sender moved past.
+ */
+async function fetchStreamRange(ctx: DmContext, st: StreamState, w: number, js: number[]): Promise<{ found: Map<number, ChainMessage>; occupied: number[] }> {
   const tags = js.map((j) => messageTag(st.key, w, j))
   const byTag = new Map(tags.map((tag, i) => [hexId(tag), js[i]]))
   const found = new Map<number, ChainMessage>()
+  const occupied: number[] = []
   for (const doc of await ctx.chain.messagesByTags(tags)) {
     const j = byTag.get(hexId(doc.tag))
+    if (j === undefined) continue
+    occupied.push(j)
     // Readers accept a document only if its $ownerId is the stream's sender (§6.1).
-    if (j !== undefined && bytesEqual(doc.ownerId, st.sender)) found.set(j, doc)
+    if (bytesEqual(doc.ownerId, st.sender)) found.set(j, doc)
   }
-  return found
+  return { found, occupied }
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +229,7 @@ export async function backfill(ctx: DmContext, conv: Conv, sender: IdentityId, s
     if (isHeld(conv, sender, pointer) || pointer.w < horizon) return
     const st = stream(conv, sender, pointer)
     if (!st) return
-    const found = await fetchStreamRange(ctx, st, pointer.w, range(Math.max(0, pointer.j - (TAGS_PER_QUERY - 1)), pointer.j))
+    const { found } = await fetchStreamRange(ctx, st, pointer.w, range(Math.max(0, pointer.j - (TAGS_PER_QUERY - 1)), pointer.j))
     if (!found.has(pointer.j)) return
     let oldest: HeldMessage | null = null
     for (const [j, doc] of Array.from(found.entries()).sort(([a], [b]) => b - a)) {
@@ -257,12 +264,11 @@ async function drain(ctx: DmContext, conv: Conv, st: StreamState, w: number, j: 
   if (first) await receive(ctx, conv, st, w, j, first)
   let last = j
   for (let from = j + 1; ; from += TAGS_PER_QUERY) {
-    const found = await fetchStreamRange(ctx, st, w, range(from, from + TAGS_PER_QUERY - 1))
-    if (found.size === 0) return last
-    for (const [k, doc] of Array.from(found.entries()).sort(([a], [b]) => a - b)) {
-      await receive(ctx, conv, st, w, k, doc)
-      last = Math.max(last, k)
-    }
+    const { found, occupied } = await fetchStreamRange(ctx, st, w, range(from, from + TAGS_PER_QUERY - 1))
+    if (occupied.length === 0) return last
+    for (const [k, doc] of Array.from(found.entries()).sort(([a], [b]) => a - b)) await receive(ctx, conv, st, w, k, doc)
+    // A run of squatted slots is read past in one pass, not one slot per poll.
+    last = Math.max(last, ...occupied)
   }
 }
 

@@ -357,6 +357,9 @@ describe('joining is saved at once (§5.5)', () => {
     await pollOnce(carol.ctx)
     expect(theGroup(carol.ctx, ALICE_ID, conv.gid).removed).toBe(false)
 
+    // Alice's sweep deletes her 1:1 messages (the grants among them): after a reload Carol has only
+    // her saved self-state to go on, so the re-add key must already be in it.
+    ledger.messages = ledger.messages.filter((m) => !bytesEqual(m.ownerId, ALICE_ID))
     const reloaded = makeContext(ledger, CAROL_ID, CAROL_PRIV)
     await reloaded.ctx.store.load()
     await attachSaved(reloaded.ctx)

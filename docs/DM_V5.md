@@ -355,8 +355,10 @@ not current + 1 (error 40106). The losing device re-reads, merges
 block entry and the settings take the newer `changedAt`; the scan position
 takes the minimum, so no invite is skipped) and saves again. The loser often
 sees only a DAPI timeout, not the 40106, so a replace whose result is
-uncertain is read back: unless the document now holds exactly its fields at
-the next revision, it merges and saves again.
+uncertain is read back once: exactly its fields at the next revision means it
+landed; a newer revision is merged and saved again; no change yet leaves the
+edits unsaved, and the save is retried later. A failed save is always retried
+on the coalescing timer, never left for the page to close.
 
 **When it is written:** changes are coalesced to save fees, and flushed when
 the page is hidden or closed (`visibilitychange`/`pagehide`). It is also

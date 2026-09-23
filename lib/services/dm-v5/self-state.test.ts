@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { bytesEqual } from '@/lib/bytes'
 import { createInvite } from '@/lib/dm/invite'
 import { weekOf } from '@/lib/dm/kdf'
@@ -10,6 +10,7 @@ import { SELF_STATE_CLASSES, splitFields } from '@/lib/dm/padding'
 import { deriveSelfRoot, deriveStateKey } from '@/lib/dm/keys'
 import { directConv } from './context'
 import { scanInvites } from './invites'
+import { SelfStateStore } from './self-state-store'
 import { MemoryChain, MemoryLedger, makeContext } from './test-chain'
 
 /** A distinct 32-byte id per n (n < 65536). */
@@ -73,6 +74,30 @@ describe('self-state store', () => {
     await fresh.ctx.store.load()
     expect(fresh.ctx.store.directs().map((d) => d.peer)).toEqual([BOB_ID, CAROL_ID])
     expect(fresh.ctx.store.isBlocked(BOB_ID)).toBe(true)
+  })
+
+  it('re-arms the coalesced save after a save fails, so a join is not left for page close', async () => {
+    const ledger = new MemoryLedger()
+    const timers = new Map<number, () => void>()
+    let nextHandle = 0
+    const scheduler = {
+      setTimeout: (fn: () => void) => (timers.set(++nextHandle, fn), nextHandle),
+      clearTimeout: (handle: unknown) => void timers.delete(handle as number),
+    }
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const store = new SelfStateStore(phone.chain, deriveStateKey(deriveSelfRoot(ALICE_PRIV)), scheduler)
+    await store.load()
+    store.addDirect(direct(BOB_ID))
+    // The first save is refused outright (and the reads that follow it throw).
+    phone.chain.hook = (method) => (method === 'createSelfState' ? { ok: false, failure: 'other', error: 'node unavailable' } : null)
+    expect(await store.flush()).toBe(false)
+    expect(store.isDirty).toBe(true)
+    // flush() cancelled the edit's timer; the failure armed a new one, which saves once the chain recovers.
+    phone.chain.hook = null
+    expect(timers.size).toBe(1)
+    Array.from(timers.values())[0]()
+    await vi.waitFor(() => expect(ledger.selfStates).toHaveLength(1))
+    expect(store.isDirty).toBe(false)
   })
 
   it('keeps an uncertain replace that is not visible yet dirty and schedules another save', async () => {

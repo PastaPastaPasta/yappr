@@ -109,6 +109,34 @@ describe('squatted tags (§6.1)', () => {
     expect(texts(bob.ctx, ALICE_ID)).toEqual(['one', 'two'])
   })
 
+  it('reads and writes past a run of squatted slots longer than the retry budget', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const bob = makeContext(ledger, BOB_ID, BOB_PRIV)
+    const carol = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await sendText(alice.ctx, BOB_ID, 'one')
+    await pollOnce(bob.ctx)
+    const conv = directConv(alice.ctx, BOB_ID)
+    const st = conv && stream(conv, ALICE_ID, { b: 0, r: 0 })
+    if (!st) throw new Error('no stream')
+    const w = weekOf(ledger.time)
+    // Carol fills j = 1..30 (more than the 20 attempts one send makes).
+    for (let j = 1; j <= 30; j++) {
+      const squat = await encryptMessage({ streamKey: st.key, senderId: ALICE_ID, w, j }, { prev: null, content: { type: 'text', text: `squat ${j}` } })
+      await carol.chain.createMessage(squat.tag, squat.body)
+    }
+    let attempts = 0
+    alice.chain.hook = (method) => {
+      if (method === 'createMessage') attempts++
+      return null
+    }
+    const held = await sendText(alice.ctx, BOB_ID, 'two')
+    expect(held.pointer.j).toBe(31)
+    expect(attempts).toBe(1)
+    await pollOnce(bob.ctx)
+    expect(texts(bob.ctx, ALICE_ID)).toEqual(['one', 'two'])
+  })
+
   it('skips a squatted slot on the next send instead of paying for a refused write', async () => {
     const ledger = new MemoryLedger()
     const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
@@ -226,6 +254,35 @@ describe('sender', () => {
     expect(bodies[1]).toEqual(bodies[0]) // the same bytes, so the late landing is recognised
     expect(held.pointer.j).toBe(0)
     expect(ledger.messages).toHaveLength(1)
+  })
+
+  it('does not send twice when an uncertain broadcast becomes visible during the read-back', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    makeContext(ledger, BOB_ID, BOB_PRIV)
+    const conv = await openDirect(alice.ctx, BOB_ID)
+    await ensureStarted(alice.ctx, conv)
+    // The broadcast times out; the node lags, so the transition becomes visible only after the first read.
+    const create = alice.chain.createMessage.bind(alice.chain)
+    const read = alice.chain.messagesByTags.bind(alice.chain)
+    let pending: (() => Promise<unknown>) | null = null
+    alice.chain.createMessage = async (tag, body) => {
+      pending = () => create(tag, body)
+      return { ok: true, id: 'timed-out', confirmed: false }
+    }
+    alice.chain.messagesByTags = async (tags) => {
+      const docs = await read(tags)
+      if (pending) {
+        const land = pending
+        pending = null
+        await land()
+      }
+      return docs
+    }
+    const held = await sendContent(alice.ctx, conv, { type: 'text', text: 'once' })
+    alice.chain.messagesByTags = read
+    expect(ledger.messages).toHaveLength(1)
+    expect(held.pointer.j).toBe(0)
   })
 
   it('does not rebroadcast an uncertain broadcast that landed', async () => {

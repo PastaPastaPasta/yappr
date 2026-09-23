@@ -324,12 +324,15 @@ export class SelfStateStore {
   markDirty(): void {
     this.dirty = true
     this.version++
-    if (this.timer === null) {
-      this.timer = this.scheduler.setTimeout(() => {
-        this.timer = null
-        this.runSave(() => this.flush()).catch((error) => logger.warn('DM v5 self-state save failed:', error))
-      }, COALESCE_MS)
-    }
+    this.armTimer()
+  }
+
+  private armTimer(): void {
+    if (this.timer !== null) return
+    this.timer = this.scheduler.setTimeout(() => {
+      this.timer = null
+      this.runSave(() => this.flush()).catch((error) => logger.warn('DM v5 self-state save failed:', error))
+    }, COALESCE_MS)
   }
 
   /** Cancel a pending coalesced save (the engine stopped). */
@@ -348,9 +351,17 @@ export class SelfStateStore {
     if (!this.chain.canWrite()) return Promise.resolve(false)
     // Never replace a state a newer client wrote.
     if (this.status === 'newer') return Promise.resolve(false)
-    this.saving = this.save().finally(() => {
-      this.saving = null
-    })
+    this.saving = this.save()
+      .catch((error: unknown) => {
+        logger.warn('DM v5 self-state save failed:', error)
+        return false
+      })
+      .finally(() => {
+        this.saving = null
+        // A save that failed (a refusal, a read that threw, repeated races) must not strand the
+        // edits until the page closes: try again on the coalescing timer.
+        if (this.dirty && this.status !== 'newer') this.armTimer()
+      })
     return this.saving
   }
 
@@ -367,15 +378,21 @@ export class SelfStateStore {
       // A replace whose result is uncertain (the DAPI timeout) may have been refused on chain because
       // another device saved first (40106). Treating it as saved would drop this device's edits for
       // good, so read it back: only our own fields at the next revision count as landed.
-      if (outcome.ok && !outcome.confirmed && doc && !(await this.landed(doc, fields))) {
+      if (outcome.ok && !outcome.confirmed && doc) {
+        // One read decides: our own fields at the next revision (landed), a newer state from another
+        // device (merge and save again), or nothing new yet (stay dirty; flush re-arms the timer, and
+        // the next save, a 40106 if this one did land after all, merges).
         const remote = await this.chain.selfState()
-        if (remote && remote.revision > doc.revision) {
-          if (!(await this.mergeRemote(remote)) && this.status === 'newer') return false
+        const landed = remote?.id === doc.id && remote.revision === doc.revision + 1 && sameFields(remote.fields, fields)
+        if (!landed) {
+          if (!remote || remote.revision <= doc.revision) return false
+          if (!(await this.mergeRemote(remote))) {
+            if (this.status === 'newer') return false
+            // It does not decrypt at all: replace it with what this device holds (§9).
+            this.doc = { id: remote.id, revision: remote.revision }
+          }
           continue
         }
-        // Not visible yet: stay dirty and save again later (a 40106 then, if it did land, merges).
-        this.markDirty()
-        return false
       }
       if (outcome.ok) {
         this.doc = doc ? { id: doc.id, revision: doc.revision + 1 } : { id: outcome.id, revision: 1 }
@@ -403,11 +420,11 @@ export class SelfStateStore {
     return false
   }
 
-  /** Did the replace of `doc` with `fields` land? (Its revision moved on and it holds exactly our fields.) */
-  private async landed(doc: { id: string; revision: number }, fields: SelfStateFields): Promise<boolean> {
-    const remote = await this.chain.selfState().catch(() => null)
-    if (!remote || remote.id !== doc.id || remote.revision !== doc.revision + 1) return false
-    const same = (a: Uint8Array | null, b: Uint8Array | null) => (a === null || b === null ? a === b : bytesEqual(a, b))
-    return same(remote.fields.blob, fields.blob) && same(remote.fields.blob2, fields.blob2) && same(remote.fields.blob3, fields.blob3)
-  }
+}
+
+const sameField = (a: Uint8Array | null, b: Uint8Array | null) => (a === null || b === null ? a === b : bytesEqual(a, b))
+
+/** Byte-identical self-state fields (each save seals with a fresh IV, so only our own write matches). */
+function sameFields(a: SelfStateFields, b: SelfStateFields): boolean {
+  return sameField(a.blob, b.blob) && sameField(a.blob2, b.blob2) && sameField(a.blob3, b.blob3)
 }
