@@ -48,7 +48,7 @@ Each of these links is enough on its own to reveal a pair.
 | 2 | `conversationId = sha256(A:B)[0:10]`. Anyone can hash every pair of users and reverse every conversation. | There is no conversation id on chain. Group and 1:1 ids are secrets. |
 | 3 | A's and B's messages share one `conversationId`, so the index groups the pair. | Every message has a one-time tag, and tags never repeat across documents (§6). |
 | 4 | `readReceipt` publishes `(B, conversationId, time B read it)`. | Read state is synced through an encrypted self-state doc only the user can read (§5.6). |
-| 5 | Static ECDH on the auth key. | ENCRYPTION key, plus a rotation bridge (§4.6). |
+| 5 | Static ECDH on the auth key. | ENCRYPTION key, plus past keys kept in the self-state (§4.6). |
 
 v4 history is **permanently** linkable. Deleting its documents does not remove
 them from block history. Migration must say this plainly (§10).
@@ -73,7 +73,8 @@ them from block history. Migration must say this plainly (§10).
   `$revision` (how many membership changes and renames it has seen), and the
   group's size *class* (§5.5). The owner is the only identity linked to a group,
   and only as "owns some group".
-- That an identity rotated its encryption key (the bridge doc).
+- That an identity rotated its encryption key (the identity update shows this
+  anyway).
 - That an owner wrote a burst of about N documents when creating a group.
   The grants are ordinary 1:1 messages or invites (§6.5), so the burst looks
   like messaging several people and says nothing about who.
@@ -126,14 +127,13 @@ given in `NON_SOCIAL_CONTRACTS.md`.
 derives at login. Once DashPay Connect v2 ships
 (`~/workspace/DASHPAY_CONNECT_PROTOCOL_V2.md`), DMs move to the DM contract's
 bound key pair, which the wallet hands to the app at every login. That move is a
-key rotation as far as this design is concerned: one bridge (§4.6), and 1:1
+key rotation as far as this design is concerned: one self-state replace (§4.6), and 1:1
 threads follow on their own (§4.3).
 
 **No document carries a key id.** Wherever a reader must pick keys, it tries:
 - the counterpart's ENCRYPTION keys, *including disabled ones*, which stay on
   the identity;
-- against its own current key and every key recovered through its bridge chain
-  (§4.6);
+- against its own current key and every past key in its self-state (§4.6);
 
 and keeps the combination whose AEAD or `kc` check passes. These sets are tiny,
 and a trial costs only an ECDH.
@@ -143,7 +143,7 @@ and a trial costs only an ECDH.
 come from it: `hintKey = HKDF(selfRoot, info="self-hint\0")`,
 `stateKey = HKDF(selfRoot, info="self-state\0")`, and the group ids a user
 creates as owner (§4.4). All of them follow the user through rotations, via
-the bridge.
+the past keys list (§4.6).
 
 The static identity keys **replace a prekey document.** An earlier draft
 published a Signal-style signed prekey per user. That would add a document per
@@ -174,9 +174,9 @@ is always keyed by the two parties' *current* keys:
   been idle for a while.
 
 The UI shows every thread with the same counterpart as one timeline. Old threads
-stay readable through the bridge. Because the new `Z` comes from the new key, a
-rotation after a compromise **heals** future 1:1 messages. It costs zero writes
-beyond the bridge.
+stay readable through past keys. Because the new `Z` comes from the new key, a
+rotation after a compromise **heals** future 1:1 messages. It costs no writes
+beyond the rotation's self-state replace.
 
 ### 4.4 Group key schedule
 
@@ -205,7 +205,7 @@ kc(K)    = HKDF(K, "kc\0")[0:8]                        // key check (public in k
   roster create, and that device retries at `n + 1` before sending any grants.
 - **`S` and `gid_n` are bound to the key the owner held at creation.** After a
   rotation, new groups number from 0 again under the new key, and the owner
-  probes old groups under each key recovered through the bridge chain (§4.6).
+  probes old groups under each past key (§4.6).
 - **Members cannot derive any of this.** A shared secret for three or more
   parties from public keys alone needs pairings (Joux's protocol, 3 parties) or
   multilinear maps (N parties), and secp256k1 has neither. So each member
@@ -224,11 +224,11 @@ kc(K)    = HKDF(K, "kc\0")[0:8]                        // key check (public in k
 - **An owner rotation does not heal the owner's groups.** All future base keys
   still derive from the creation key. After a compromise, the only fix is to
   recreate the group.
-- **An owner who rotates without a bridge loses `S`,** and can never remove
-  anyone again. The client refuses a bridgeless rotation while the user owns
+- **An owner who rotates without keeping the old key loses `S`,** and can never
+  remove anyone again. The client refuses such a rotation while the user owns
   groups, unless they confirm ending those groups.
-- **A member who rotates without a bridge** needs a new grant from each group
-  owner (a `0x06` request, §6.1). A member who rotates with a bridge needs nothing: the owner's next
+- **A member who rotates without keeping the old key** needs a new grant from
+  each group owner (a `0x06` request, §6.1). A member who keeps it needs nothing: the owner's next
   keyring wraps to their new key, found by trial selection.
 
 ### 4.5 Sealing to a member (static-static)
@@ -251,28 +251,36 @@ wrap = K[b,0] XOR pad                                   // keyring for base b
 - One member can compute another's pad only if they hold `Z` for that other
   member. They do not.
 
-### 4.6 Rotating your encryption key: one bridge document
+### 4.6 Rotating your encryption key: past keys in the self-state
 
-When a user replaces their encryption key while still holding the old one, the
-client writes one document:
+The self-state document (§5.6) carries a **past keys** list: every earlier
+encryption private key the user has rotated away from. It is encrypted like
+the rest of the self-state, so only the user can read it. No separate document
+is needed.
 
-```
-encryptionKeyBridge.payload = ECIES(encPub_new, encPriv_old, aad="yappr/dm/bridge/v5" || ownerId)
-```
+**Rotating, in this order,** so the self-state is readable at every step:
+1. Add the new ENCRYPTION key to the identity. The old key stays active.
+2. Replace the self-state, now encrypted under the new key, with the old
+   private key appended to past keys.
+3. Disable the old key on the identity.
 
-That is 81 bytes, and costs O(1) per rotation however many conversations exist.
-Anyone holding the new key can walk the bridge chain back to every old private
-key. Old 1:1 threads, group secrets, keyring slots, and self hints all stay
-readable. The bridge reveals only "this identity rotated". The same bridge fixes
-private feeds' rotation problem (§11.4 of that spec), although wiring private
-feeds to it is out of scope here.
+If step 2 fails, the old key is still active and still held, so the client
+retries. A device reading the self-state tries its current key first, then any
+key it still holds.
 
-**Rotating without writing a bridge** is also a deliberate option. It is a
-coarse, user-controlled form of forward secrecy: history under the old key
-becomes unreadable *to you*. Counterparts still hold their own keys and can
-still read it.
+Anyone holding the new key opens the self-state and gets every past key. Old
+1:1 threads, group secrets, keyring slots and self hints all stay readable. It
+costs one replace per rotation, however many conversations exist. An observer
+learns only what the identity update already shows: the identity changed its
+keys. The same list would fix private feeds' rotation problem (§11.4 of that
+spec), but wiring private feeds to it is out of scope here.
 
-A **lost** key cannot be bridged. A group owner restores a member by sending a
+**Rotating without keeping the old key** is also a deliberate option: skip
+step 2's append. It is a coarse, user-controlled form of forward secrecy:
+history under the old key becomes unreadable *to you*. Counterparts still hold
+their own keys and can still read it.
+
+A **lost** key cannot be added to past keys. A group owner restores a member by sending a
 new grant (§6.5). A 1:1 thread under a lost key is unreadable to the user who lost it.
 
 ## 5. Documents
@@ -283,9 +291,8 @@ New contract, `yappr-dm-contract-v5.json`.
 | --- | --- | --- | --- | --- |
 | `dmInvite` | inviter | `bucket` u16 (heap-encoded, §5.1), `epk` b33, `sealed` b156 (fixed), `selfHint` b32 | `[bucket, $createdAt]`; `[$ownerId, $createdAt]` | immutable, deleted by the sweep (§5.7) |
 | `dmMessage` | sender | `tag` b16, `body` bytes 156–5120, optional `body2`/`body3` bytes ≤ 5120 (§5.3) | **unique** `[tag, $ownerId]` | immutable, deleted by the sweep (§5.7) |
-| `dmRoster` | group owner | `handle` b10, `blob` bytes 156–4124 | **unique** `[$ownerId, handle]` | mutable; replaced by a tombstone when the group ends, never deleted (§4.4) |
-| `dmKeyring` | group owner | `handle` b10, `slots` bytes 264–5120 | **unique** `[$ownerId, handle]` | immutable, not deletable |
-| `encryptionKeyBridge` | key owner | `payload` b81 | `[$ownerId, $createdAt]` | immutable, not deletable |
+| `dmRoster` | group owner | `handle` b10, `blob` bytes 156–4124 | **unique** `[$ownerId, handle]` | mutable, `canBeDeleted: false`; replaced by a tombstone when the group ends (§4.4) |
+| `dmKeyring` | group owner | `handle` b10, `slots` bytes 264–5120 | **unique** `[$ownerId, handle]` | `documentsMutable: false`, `canBeDeleted: false` |
 | `dmSelfState` | user | `blob` bytes 156–5120, optional `blob2`/`blob3` ≤ 5120 | **unique** `[$ownerId]` | mutable; one document, atomic, revision-checked (§5.6) |
 
 - **No doctype has a `recipientId`, `groupId` or `conversationId` field.**
@@ -355,7 +362,7 @@ revealing the recipient. In the client:
 `bucket in [mine at k_m, mine at k_{m−1}], $createdAt > lastScan`. For each
 invite:
 1. One ECDH with its own encryption key and `epk`, then one AES-GCM trial.
-   The recipient tries its current key and any bridged keys (§4.6). A GCM failure
+   The recipient tries its current key and any past keys (§4.6). A GCM failure
    means the invite is for someone else. There is no identity fetch and no
    per-inviter cache, and the trial reads only data already downloaded.
 2. On success, fetch the sender's identity to compute `Z_SR` (trying keys as
@@ -568,6 +575,7 @@ blob = iv(12) | AES-256-GCM(HKDF(stateKey, "state\0"), iv, pad(state))     // sp
   owner, and the member's current group key and epoch.
 - Read positions, the last invite-scan position, the client-side block list,
   and settings such as the retention age (§5.7).
+- **Past keys**: every earlier encryption private key (§4.6), 32 bytes each.
 - For owners, the next free group number `n` and the grants sent (§9). Both can
   also be recovered from chain: `n` by probing, grants from the owner's own 1:1
   streams.
@@ -621,8 +629,9 @@ owner-by-time index to list them any other way. Invites are swept by
 | --- | --- | --- |
 | `dmMessage` | the user's retention age | |
 | `dmInvite` | the retention age, and never under 90 days | Recipients who have not scanned yet must still find it, and the `k` estimate reads last month's invites |
-| `dmRoster` | never; shrunk to a tombstone when the group ends | Keeps its group id from being reused (§4.4) |
-| `dmKeyring`, `encryptionKeyBridge`, `dmSelfState` | never | Small, and needed to read anything still on chain |
+| `dmRoster` | never (the contract forbids it); shrunk to a tombstone when the group ends | Keeps its group id from being reused (§4.4) |
+| `dmKeyring` | never (the contract forbids it) | Needed to read anything still on chain |
+| `dmSelfState` | never by the sweep | Holds the chat list and past keys |
 
 - **It reveals nothing new.** The deletes remove a whole week of the owner's
   documents at once, whose creation times are already public. The order within
@@ -878,7 +887,7 @@ stream tags. A message on base `b` is rejected if keyring `b+1` exists and
 | End a group | n/a | 1 roster replace (tombstone) | |
 | Leave | n/a | 1 message, then the owner's Remove | |
 | Rename | n/a | 1 roster replace | |
-| Rotate encryption key | n/a | **1** bridge, total | 1:1 threads move on their own (§4.3) |
+| Rotate encryption key | n/a | identity update + **1** self-state replace | 1:1 threads move on their own (§4.3) |
 | Restore a member who lost their key or state | n/a | 1 grant per shared group | Sent on a `0x06` request, after a random delay |
 | Mark read | 1 receipt replace | 0 immediately; a debounced self-state replace at most every 5 min | |
 
@@ -1002,7 +1011,7 @@ Adding admins needs a second writer of keyrings, which is left for later.
    give forward secrecy, but a new browser or device would start with an empty
    history. That is not acceptable for a web app that users log into from many
    browsers. The coarse form of forward secrecy remains: rotate your encryption
-   key without a bridge (§4.6).
+   key without keeping the old one (§4.6).
 3. **Phase 3: hiding the sender.** On Platform, signing is always done by
    `$ownerId`. Hiding the sender needs a throwaway identity per contact or per
    epoch, funded untraceably. Platform already has the transitions:
@@ -1029,7 +1038,7 @@ Adding admins needs a second writer of keyrings, which is left for later.
 | Padding | Size classes | None (storage cost) | **Size classes.** Under 10% of a document's cost (§5.3). |
 | Unread counts | `tag in` window | rangeCountable count | **Tag window.** There is no shared id to count by. |
 | Invite deletion | n/a | Group invites deleted on removal (refund) | **Deleted by age in the sweep (§5.7).** Group joins are grants on the 1:1 channel, so removal deletes nothing. |
-| Key rotation | Not covered | One bridge doc | **Bridge,** plus 1:1 threads that move on their own. |
+| Key rotation | Not covered | One bridge doc | **Past keys in the self-state** (no extra document), plus 1:1 threads that move on their own. |
 
 ### 12.1 What was borrowed from Platform's shielded pool
 
@@ -1073,7 +1082,8 @@ accepts for messages.
    - the key schedule and label separation, handles, per-week tag and stream
      derivation, `gid_n` derivation and owner probing;
    - invite sealing and recognition, and `selfHint`;
-   - slot wrap and `kc` trial, and trial key selection across bridged keys;
+   - slot wrap and `kc` trial, and trial key selection across past keys;
+   - rotation order (self-state readable before, during and after);
    - padding, body and roster encoding, and self-state merge on a revision
      conflict;
    - the pointer rule, the dual-poll rule, the stale-base rule, the week check,
@@ -1095,7 +1105,8 @@ accepts for messages.
    for every row of §7 before client work starts. That covers:
    - message size classes including the multi-field 8 KiB and 14 KiB ones,
      invites, keyrings
-     at 8/16/32/64/128 slots, roster replaces, bridges;
+     at 8/16/32/64/128 slots, roster replaces, self-state replaces;
+   - that deleting a roster or keyring is rejected by the contract;
    - spoofed keyrings and rosters under a stranger's `$ownerId`;
    - squatted tags under `[tag, $ownerId]`;
    - unique-index races.
