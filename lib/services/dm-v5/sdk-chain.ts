@@ -11,6 +11,7 @@
  */
 
 import bs58 from 'bs58'
+import { Identifier } from '@dashevo/evo-sdk'
 import { logger } from '@/lib/logger'
 import { YAPPR_DM_V5_CONTRACT_ID } from '@/lib/constants'
 import { normalizeBytes } from '@/lib/bytes'
@@ -216,8 +217,25 @@ export class SdkDmChain implements DmChain {
     return hasPrivateKey(this.me)
   }
 
+  /**
+   * After a nonce clash, drop the SDK's cached identity nonce, so a retry
+   * signs with a fresh one. Creates read the nonce anew each time, but
+   * replaces and deletes go through the SDK's own cache.
+   */
+  private async afterWrite(outcome: WriteOutcome): Promise<WriteOutcome> {
+    if (!outcome.ok && outcome.failure === 'nonce') {
+      try {
+        const sdk = await getEvoSdk()
+        await sdk.wasm.refreshIdentityNonce(new Identifier(this.me))
+      } catch (error) {
+        logger.debug('DM v5: identity nonce refresh failed:', error)
+      }
+    }
+    return outcome
+  }
+
   private create(type: string, data: Record<string, unknown>): Promise<WriteOutcome> {
-    return stateTransitionService.createDocument(this.contractId, type, this.me, data).then(fromResult)
+    return stateTransitionService.createDocument(this.contractId, type, this.me, data).then(fromResult).then((o) => this.afterWrite(o))
   }
 
   createMessage(tag: Uint8Array, body: Uint8Array): Promise<WriteOutcome> {
@@ -225,7 +243,7 @@ export class SdkDmChain implements DmChain {
   }
 
   async deleteMessage(id: string): Promise<WriteOutcome> {
-    return fromResult(await stateTransitionService.deleteDocument(this.contractId, 'dmMessage', id, this.me))
+    return this.afterWrite(fromResult(await stateTransitionService.deleteDocument(this.contractId, 'dmMessage', id, this.me)))
   }
 
   createInvite(invite: DmInvite): Promise<WriteOutcome> {
@@ -238,7 +256,7 @@ export class SdkDmChain implements DmChain {
 
   async replaceGroupDoc(doc: { id: string; revision: number }, handle: Uint8Array, blob: Uint8Array): Promise<WriteOutcome> {
     const result = await stateTransitionService.updateDocument(this.contractId, 'dmGroupDoc', doc.id, this.me, { handle, blob }, doc.revision)
-    return fromReplace(result, doc.id)
+    return this.afterWrite(fromReplace(result, doc.id))
   }
 
   createSelfState(fields: SelfStateFields): Promise<WriteOutcome> {
@@ -247,7 +265,7 @@ export class SdkDmChain implements DmChain {
 
   async replaceSelfState(doc: { id: string; revision: number }, fields: SelfStateFields): Promise<WriteOutcome> {
     const result = await stateTransitionService.updateDocument(this.contractId, 'dmSelfState', doc.id, this.me, selfStateData(fields), doc.revision)
-    return fromReplace(result, doc.id)
+    return this.afterWrite(fromReplace(result, doc.id))
   }
 
   async encryptionKey(identity: IdentityId): Promise<Uint8Array | null> {
