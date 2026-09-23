@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DM v5 invite scan benchmark</title>
+<pre id="out">running…</pre>
+<script type="importmap">
+{ "imports": { "@noble/secp256k1": "/node_modules/@noble/secp256k1/index.js", "@noble/hashes/hmac.js": "/node_modules/@noble/hashes/hmac.js", "@noble/hashes/sha2.js": "/node_modules/@noble/hashes/sha2.js" } }
+</script>
+<script type="module">
+import { runBench } from '/scripts/bench-dm-scan-core.mjs'
+const out = document.getElementById('out')
+runBench((line) => { out.textContent += '\n' + line }).then((r) => {
+  window.__benchResult = r
+  out.textContent += '\nDONE'
+}).catch((e) => { window.__benchResult = { error: String(e) }; out.textContent += '\nERROR ' + e })
+</script>
