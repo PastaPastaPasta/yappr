@@ -48,6 +48,66 @@ describe('self-state store', () => {
     expect(fresh.ctx.store.findDirect(BOB_ID)?.readAt).toBe(99)
   })
 
+  it('re-reads after a replace whose result is uncertain, and saves again if it did not land (DAPI timeout)', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const laptop = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    phone.ctx.store.addDirect(direct(BOB_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    await laptop.ctx.store.load()
+
+    // Both devices save on revision 1 at once. The phone wins; the laptop's broadcast times out
+    // (its transition is refused 40106 on chain, but the client only sees the timeout).
+    phone.ctx.store.addDirect(direct(CAROL_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    laptop.ctx.store.setBlocked(BOB_ID, true, ledger.time)
+    let timedOut = false
+    laptop.chain.hook = (method) => {
+      if (method !== 'replaceSelfState' || timedOut) return null
+      timedOut = true
+      return { ok: true, id: 'uncertain', confirmed: false }
+    }
+    expect(await laptop.ctx.store.flush()).toBe(true)
+
+    const fresh = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await fresh.ctx.store.load()
+    expect(fresh.ctx.store.directs().map((d) => d.peer)).toEqual([BOB_ID, CAROL_ID])
+    expect(fresh.ctx.store.isBlocked(BOB_ID)).toBe(true)
+  })
+
+  it('keeps an uncertain replace that is not visible yet dirty and schedules another save', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    phone.ctx.store.addDirect(direct(BOB_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    // The broadcast times out and nothing is visible on chain yet.
+    phone.chain.hook = (method) => (method === 'replaceSelfState' ? { ok: true, id: 'uncertain', confirmed: false } : null)
+    phone.ctx.store.setBlocked(CAROL_ID, true, ledger.time)
+    expect(await phone.ctx.store.flush()).toBe(false)
+    expect(phone.ctx.store.isDirty).toBe(true)
+    // The next save goes through once the chain answers normally.
+    phone.chain.hook = null
+    expect(await phone.ctx.store.flush()).toBe(true)
+    const fresh = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await fresh.ctx.store.load()
+    expect(fresh.ctx.store.isBlocked(CAROL_ID)).toBe(true)
+  })
+
+  it('does not save twice when an uncertain replace did land', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    phone.ctx.store.addDirect(direct(BOB_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    phone.chain.unconfirmed = 1
+    phone.ctx.store.setBlocked(CAROL_ID, true, ledger.time)
+    expect(await phone.ctx.store.flush()).toBe(true)
+    expect(ledger.selfStates[0].revision).toBe(2)
+    // The next edit builds on the landed revision (no 40106, no merge round).
+    phone.ctx.store.setBlocked(CAROL_ID, false, ledger.time + 1)
+    expect(await phone.ctx.store.flush()).toBe(true)
+    expect(ledger.selfStates[0].revision).toBe(3)
+  })
+
   it('merges a create race (40105 on the unique [$ownerId] index)', async () => {
     const ledger = new MemoryLedger()
     const a = makeContext(ledger, ALICE_ID, ALICE_PRIV)

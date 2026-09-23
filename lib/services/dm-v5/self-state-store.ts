@@ -26,6 +26,7 @@ import {
   encryptSelfState,
   mergeSelfStates,
   selfStateFits,
+  type SelfStateFields,
 } from '@/lib/dm/self-state'
 import type {
   BlockEntry,
@@ -363,6 +364,19 @@ export class SelfStateStore {
       const fields = await encryptSelfState(this.stateKey, this.state)
       const doc = this.doc
       const outcome = doc ? await this.chain.replaceSelfState(doc, fields) : await this.chain.createSelfState(fields)
+      // A replace whose result is uncertain (the DAPI timeout) may have been refused on chain because
+      // another device saved first (40106). Treating it as saved would drop this device's edits for
+      // good, so read it back: only our own fields at the next revision count as landed.
+      if (outcome.ok && !outcome.confirmed && doc && !(await this.landed(doc, fields))) {
+        const remote = await this.chain.selfState()
+        if (remote && remote.revision > doc.revision) {
+          if (!(await this.mergeRemote(remote)) && this.status === 'newer') return false
+          continue
+        }
+        // Not visible yet: stay dirty and save again later (a 40106 then, if it did land, merges).
+        this.markDirty()
+        return false
+      }
       if (outcome.ok) {
         this.doc = doc ? { id: doc.id, revision: doc.revision + 1 } : { id: outcome.id, revision: 1 }
         this.status = 'loaded'
@@ -387,5 +401,13 @@ export class SelfStateStore {
     }
     logger.warn('DM v5 self-state save gave up after repeated revision races')
     return false
+  }
+
+  /** Did the replace of `doc` with `fields` land? (Its revision moved on and it holds exactly our fields.) */
+  private async landed(doc: { id: string; revision: number }, fields: SelfStateFields): Promise<boolean> {
+    const remote = await this.chain.selfState().catch(() => null)
+    if (!remote || remote.id !== doc.id || remote.revision !== doc.revision + 1) return false
+    const same = (a: Uint8Array | null, b: Uint8Array | null) => (a === null || b === null ? a === b : bytesEqual(a, b))
+    return same(remote.fields.blob, fields.blob) && same(remote.fields.blob2, fields.blob2) && same(remote.fields.blob3, fields.blob3)
   }
 }

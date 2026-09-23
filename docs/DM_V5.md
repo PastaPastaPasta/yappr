@@ -353,7 +353,10 @@ cap.
 not current + 1 (error 40106). The losing device re-reads, merges
 (conversations are a union; `readAt` and `hiddenAt` take the maximum; each
 block entry and the settings take the newer `changedAt`; the scan position
-takes the minimum, so no invite is skipped) and saves again.
+takes the minimum, so no invite is skipped) and saves again. The loser often
+sees only a DAPI timeout, not the 40106, so a replace whose result is
+uncertain is read back: unless the document now holds exactly its fields at
+the next revision, it merges and saves again.
 
 **When it is written:** changes are coalesced to save fees, and flushed when
 the page is hidden or closed (`visibilitychange`/`pagehide`). It is also
