@@ -153,14 +153,14 @@ test.describe('DM v5: 1:1 conversations', () => {
   test('B\'s read position reached the self-state (readAt), so a reload keeps it read', async () => {
     test.setTimeout(300_000)
     const pb = b1!.page
+    const savedReadAt = async () => {
+      const saved = await selfStateOf(B)
+      return saved?.state.directs.find((d) => d.peer.every((byte, i) => byte === A.id[i]))?.readAt ?? 0
+    }
+    // Earlier runs left a readAt behind: wait for this run's read to move it, not merely for one to exist.
+    const before = await savedReadAt()
     await flushSelfState(b1!)
-    await expect
-      .poll(async () => {
-        const saved = await selfStateOf(B)
-        const entry = saved?.state.directs.find((d) => d.peer.every((byte, i) => byte === A.id[i]))
-        return entry?.readAt ?? 0
-      }, { timeout: 120_000, intervals: [3_000, 5_000] })
-      .toBeGreaterThan(0)
+    await expect.poll(savedReadAt, { timeout: 120_000, intervals: [3_000, 5_000] }).toBeGreaterThan(before)
     await gotoMessages(pb)
     await expect(row(pb, directKey(A))).toBeVisible({ timeout: DELIVERY_MS })
     await expect(row(pb, directKey(A))).toHaveAttribute('data-unread', '0')
