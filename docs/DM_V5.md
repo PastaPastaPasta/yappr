@@ -476,7 +476,8 @@ keyringHandle(b)  = HKDF(gid, "yappr/dm/v5", "keyring\0" || S16(b))[0:10]
 - **Members find them easily,** in one query per owner:
   `$ownerId == O, handle in [...]`.
 - **An observer cannot link handles to each other or to members by value.**
-  Linking by timing is prevented by jitter (§5.5).
+  By timing, a roster replace right after a grant or keyring ties that
+  document to the group (§5.5); this is accepted.
 
 ### 5.3 `dmMessage.body` and padding
 
@@ -543,12 +544,11 @@ every membership change and every rename. It does three jobs:
 - **Padded blob.** It pads to the size classes, so the member count is hidden to
   within 2×. At 36 bytes per member, 100 members is about 3.6 KB, which fits
   the 4096-byte class.
-- **Timing jitter.** Every roster replace that follows a grant or a keyring is
-  delayed by a random 1–30 minutes, carried in the owner's local queue and
-  retried on the next open. Without jitter, "grant, then roster replace" ties
-  the grant's document to this group. This is a background write, not a
-  user-visible delay: the new member reads the roster late, not their messages.
-  Grants for a brand-new group go out immediately (§3).
+- **No timing jitter (decided 2026-09-22).** The owner replaces the roster
+  immediately after a grant or keyring, so members see changes at once. An
+  observer can therefore tell that the owner's DM document just before a
+  roster replace was a group grant or keyring for that roster. It still cannot
+  tell who the grant was for, only that the owner added someone to some group.
 - **Still visible:** `$revision`, which counts changes and renames (§3).
 
 **The pointer never regresses.**
@@ -739,9 +739,9 @@ never collide across participants.
 - `0x01` text.
 - `0x02` leave.
 - `0x03` read receipt: opt-in and delayed (§8).
-- `0x04` roster nudge: sent by a member added to an existing group, after a
-  random 1–30 minute delay, so members pick up the new ratchet early. Not sent
-  at group creation, when every member starts on the same epoch.
+- `0x04` roster nudge: sent by a member added to an existing group right after
+  joining, so members pick up the new ratchet early. Not sent at group
+  creation, when every member starts on the same epoch.
 - `0x05` group grant: `gid(10) | S16(b) | S16(r) | K[b,r](32)`, sent by a group
   owner on their 1:1 stream to a member (§6.5). The member accepts it only:
   - from the counterpart's stream, never its own;
@@ -828,7 +828,7 @@ never collide across participants.
 1. The owner sends the new member a `0x05` grant for `(b, r+1)` on their 1:1
    stream. If they have never chatted, the grant is the first message of an
    invite (§5.1).
-2. After jitter, the owner replaces the roster under `K[b,r+1]`.
+2. Immediately after, the owner replaces the roster under `K[b,r+1]`.
 3. From then on, everyone sends on the `r+1` streams.
 
 Creating a group is the same with `r = 0`: one roster create, then one grant to
@@ -844,7 +844,7 @@ most one poll after the nudge, and the UI surfaces it.
 
 **Remove:**
 1. The owner writes keyring `b+1`.
-2. After jitter, the owner replaces the roster under `K[b+1,0]`.
+2. Immediately after, the owner replaces the roster under `K[b+1,0]`.
 3. Members poll `keyringHandle(b+1)` and unwrap their slot.
 
 **Leave:**
@@ -898,9 +898,8 @@ that matters most.
 - **Timing correlation.** If A writes, then B writes 20 seconds later, over and
   over, the pair shows up in simple co-occurrence statistics. Mitigations, from
   cheapest:
-  1. **Jittered owner writes.** Roster and removal writes are delayed (§5.5,
-     §6.5). They are background writes, so users do not wait on them.
-  2. **Receipts** are delayed or off, and `dmSelfState` is debounced.
+  1. **Receipts** are delayed or off, and `dmSelfState` is debounced.
+  2. **Removal after a leave** waits 1–24 hours (§6.5).
   3. **Optional cover traffic:** dummy documents on random tags. These cost real
      credits, so they are opt-in.
 
@@ -959,8 +958,8 @@ Before sending a grant, the owner checks its own 1:1 stream to that member on
 chain, so two owner devices do not both send one.
 
 **Membership comes from the newest base.** If the roster's `b` is behind the
-newest keyring (a removal whose roster replace is still waiting out its
-jitter, §5.5), the current members are the slot holders of that keyring (the
+newest keyring (a removal whose roster replace failed or has not landed yet),
+the current members are the slot holders of that keyring (the
 owner can test each identity's pad) plus anyone granted since. The owner
 **never** grants or writes a keyring from a roster older than the newest
 keyring. Otherwise a second owner device, or an auto-reply to `0x06`, could
@@ -1091,7 +1090,7 @@ accepts for messages.
    - joining on shared field values;
    - joining handles across owners;
    - clustering documents by size;
-   - naive timing joins with jitter turned off, and then with it on.
+   - naive timing joins (grant, then roster replace, is expected to link).
 
    It must recover **no** pair or group edge from the structural attacks. The
    timing results are reported, not gated.
