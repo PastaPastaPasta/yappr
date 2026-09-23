@@ -245,11 +245,10 @@ New contract, `yappr-dm-contract-v5.json`.
 
 | Doctype | Owner | Fields | Indexes | Mutability |
 | --- | --- | --- | --- | --- |
-| `dmInvite` | inviter | `bucket` u16 (heap-encoded, §5.1), `epk` b32, `sealed` b156 (fixed), `selfHint` b32 | `[bucket, $createdAt]`; `[$ownerId, $createdAt]` | immutable, **not deletable** |
+| `dmInvite` | inviter | `bucket` u16 (heap-encoded, §5.1), `epk` b33, `sealed` b156 (fixed), `selfHint` b32 | `[bucket, $createdAt]`; `[$ownerId, $createdAt]` | immutable, **not deletable** |
 | `dmMessage` | sender | `tag` b16, `body` bytes 156–5120, optional `body2`/`body3` bytes ≤ 5120 (§5.3) | **unique** `[tag, $ownerId]` | immutable, **not deletable** |
 | `dmRoster` | group owner | `handle` b10, `blob` bytes 156–4124 | **unique** `[$ownerId, handle]` | mutable, not deletable |
 | `dmKeyring` | group owner | `handle` b10, `slots` bytes 264–5120 | **unique** `[$ownerId, handle]` | immutable, not deletable |
-| `dmScanKey` | user | `scanPub` b32 | **unique** `[$ownerId]` | mutable (on key rotation) |
 | `encryptionKeyBridge` | key owner | `payload` b81 | `[$ownerId, $createdAt]` | immutable, not deletable |
 | `dmSelfState` | user | `slot` u8, `blob` bytes 156–4124 | **unique** `[$ownerId, slot]` | mutable |
 
@@ -270,30 +269,17 @@ The invite borrows Orchard's note encryption (§12.1): a fresh ephemeral key
 per invite, so a recipient recognises its invites with its own private key
 alone, without fetching anyone's identity.
 
-**Scan keys are X25519, not secp256k1.** Trial decryption is dominated by the
-key agreement, and the browser does X25519 natively in WebCrypto while
-secp256k1 runs in JavaScript: a full trial is 34 µs against 562 µs, a 17× gap
+The invite is sealed to the recipient's existing secp256k1 ENCRYPTION key
+(§4.2), so there is no extra key and no extra document. Trial decryption in
+JavaScript is fast enough, because fetching, not decryption, is the bottleneck
 (§5.1.1).
-Each user's X25519 scan key is derived from their encryption key:
-
-```
-scanPriv = HKDF(encPriv, "yappr/dm/v5", "scan\0")     // X25519 scalar
-scanPub  = X25519(scanPriv, base)                       // 32 B, published
-```
-
-`scanPub` has to be published because identity keys can only be secp256k1 or
-BLS. It goes in the `dmScanKey` doctype (§5), one per user, written once and
-refreshed after a key rotation. An inviter fetches it the same way it would
-fetch the recipient's identity key, so this adds one document per DM user and
-no per-invite cost. Everything else (1:1 keys, group keys, streams) stays on the
-secp256k1 encryption key.
 
 ```
 bucket   = (1 << k) | HKDF(recipientId, "yappr/dm/v5", "bucket\0")[0:2] >> (16 − k)   // heap-encoded, k = 0 → 1
 nonce    = 12 random bytes
-e        = HKDF(hintKey, "yappr/dm/v5", "invite-eph\0" || nonce)         // X25519 scalar, re-derivable by the sender
-epk      = X25519(e, base)                                             // 32 B, stored
-ik       = HKDF(X25519(e, scanPub_R), "yappr/dm/v5", "invite\0" || epk) // recipient: X25519(scanPriv_R, epk)
+e        = HKDF(hintKey, "yappr/dm/v5", "invite-eph\0" || nonce) mod n     // re-derivable by the sender on any device
+epk      = e·G                                                             // 33 B, stored
+ik       = HKDF(ECDH_x(e, encPub_R), "yappr/dm/v5", "invite\0" || epk)     // recipient: ECDH_x(encPriv_R, epk)
 sealed   = nonce | AES-256-GCM(ik, iv=nonce, pad128(grant), aad="yappr/dm/invite/v5" || $ownerId || epk)
 selfHint = recipientId XOR HKDF(hintKey, "yappr/dm/v5", "invite-self\0" || nonce)[0:32]
 ```
@@ -324,7 +310,8 @@ message is attached.
 **Discovery.** The recipient polls
 `bucket in [mine at k_m, mine at k_{m−1}], $createdAt > lastScan`. For each
 invite:
-1. One X25519 with its scan key and `epk`, then one AES-GCM trial. A GCM failure
+1. One ECDH with its own encryption key and `epk`, then one AES-GCM trial.
+   The recipient tries its current key and any bridged keys (§4.6). A GCM failure
    means the invite is for someone else. There is no identity fetch and no
    per-inviter cache, and the trial reads only data already downloaded.
 2. On success, fetch the sender's identity to compute `Z_SR` for a 1:1 grant
@@ -345,26 +332,32 @@ moment, the result is two harmless invites.
 
 **Why this reverses the "hidden membership is too slow" objection in
 `DM_V5_GROUPS.md` §9.** A recipient scans only its own bucket, not the whole
-network, and each trial is one native X25519 on data already downloaded. Invites are
+network, and each trial is one ECDH on data already downloaded. Invites are
 small, fixed-size and rare next to messages. The observer learns only "A
 invited someone in bucket x", and at `k = 0` not even the bucket.
 
 #### 5.1.1 Measured scan throughput (2026-09-22)
 
-The benchmark code is in `scripts/bench-dm-scan-core.mjs`. Crypto was measured
-in Chromium 152 (Electron) on a 14-core Mac, over 2,000 invites. Fetching was
+The benchmark code is `scripts/bench-dm-scan*`. Crypto was measured in
+Chromium 152 (Electron) on a 14-core Mac, over 2,000–4,000 invites. Fetching was
 measured with 100-document pages of `post` against the moutai devnet, over an
 equality-plus-`$createdAt` index, the same shape as the invite bucket query.
 
 | Step | Per invite | Throughput |
 | --- | --- | --- |
-| secp256k1 trial, `@noble/secp256k1` 3.1 (JS) | 562 µs | ~1,800/s |
-| X25519 trial, native WebCrypto | 34 µs | ~30,000/s |
-| Node 22: secp256k1 / X25519 trial | 1,888 / 86 µs | ~530 / ~11,600/s |
+| Trial, one thread (`@noble/secp256k1` 3.1 ECDH + WebCrypto HKDF and AES-GCM) | 578 µs | ~1,700/s |
+| Trial, 2 Web Workers | 301 µs | ~3,300/s |
+| Trial, 4 Web Workers | 151 µs | ~6,600/s |
+| Trial, 8 Web Workers | 93 µs | ~10,800/s |
+| Node 22, one thread | 1,888 µs | ~530/s |
 | Fetch, 1 query at a time | — | ~540/s (about 185 ms a page) |
 | Fetch, 16 parallel queries over disjoint `$createdAt` windows | — | ~2,700/s |
 
-Fetching is the bottleneck, and parallel windows help about 5×. Shielded
+Decryption scales almost linearly with workers, so 4 workers already outrun the
+network by more than 2×. Fetching is the bottleneck, and parallel windows help
+about 5×. Native X25519 would make a trial about 17× faster (34 µs), but it would
+need a second published key per user. It was rejected because decryption is not
+the bottleneck. Shielded
 wallets use the same trick (16 queries in flight). The first query on a cold
 connection took about 1 s.
 
@@ -382,7 +375,7 @@ every invite on the network. Steady-state polling is cheap at any volume a
 bucket would allow. The binding cost is a **cold start**: a new device, or a
 user returning after a long absence, has to catch up on everything since its
 last scan. With the throughput in §5.1.1 (about 2,700 invites/s fetched, about
-30,000/s decrypted), a budget of about 10 s for a 30-day catch-up gives
+6,600/s decrypted on 4 workers), a budget of about 10 s for a 30-day catch-up gives
 `B ≈ 900 invites/day`, or 27,000 a month. `k = 0` holds until the network sends
 about that many invites a day. Invites are per new conversation or group add,
 not per message, and Yappr sends tens a day today. `dmSelfState` records the
@@ -670,7 +663,6 @@ stream tags. A message on base `b` is rejected if keyring `b+1` exists and
 
 | Operation | v4 | v5 writes | Notes |
 | --- | --- | --- | --- |
-| Enable DMs (once per user) | n/a | **1** `dmScanKey` | |
 | Start a 1:1 | 2 invites | **1** invite, which can carry the first message | So often 1 write for invite and first message together |
 | Send | 1 message | **1** message | +16 B tag, plus padding (§5.3) |
 | Create a group of N | n/a | N−1 invites + 1 roster | The owner has no slot: `S` is derived |
@@ -678,11 +670,11 @@ stream tags. A message on base `b` is rejected if keyring `b+1` exists and
 | Remove a member | n/a | 1 keyring + 1 roster replace | Invites are never deleted |
 | Leave | n/a | 1 message, then the owner's Remove | |
 | Rename | n/a | 1 roster replace | |
-| Rotate encryption key | n/a | **1** bridge + 1 scan-key replace, total | 1:1 threads move on their own (§4.3) |
+| Rotate encryption key | n/a | **1** bridge, total | 1:1 threads move on their own (§4.3) |
 | Restore a member who lost their key | n/a | 1 invite | |
 | Mark read | 1 receipt replace | 0 immediately; a debounced self-state replace at most every 5 min | |
 
-On the read side, the bucket scan costs one X25519 trial per invite, and
+On the read side, the bucket scan costs one ECDH trial per invite, and
 polling costs one `in` query per ~33 member streams (3 tags each).
 
 ## 8. Remaining leaks, and what to do about them

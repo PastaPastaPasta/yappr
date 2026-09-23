@@ -6,10 +6,35 @@
 { "imports": { "@noble/secp256k1": "/node_modules/@noble/secp256k1/index.js", "@noble/hashes/hmac.js": "/node_modules/@noble/hashes/hmac.js", "@noble/hashes/sha2.js": "/node_modules/@noble/hashes/sha2.js" } }
 </script>
 <script type="module">
-import { runBench } from '/scripts/bench-dm-scan-core.mjs'
+// Serve the repo root (with node_modules installed) and open this page.
+import { makeFixture, runBench } from '/scripts/bench-dm-scan-core.mjs'
+
 const out = document.getElementById('out')
-runBench((line) => { out.textContent += '\n' + line }).then((r) => {
-  window.__benchResult = r
-  out.textContent += '\nDONE'
-}).catch((e) => { window.__benchResult = { error: String(e) }; out.textContent += '\nERROR ' + e })
+const log = (line) => { out.textContent += '\n' + line }
+
+async function workerBench(n, workers) {
+  const { priv, invites } = await makeFixture(n)
+  const pool = Array.from({ length: workers }, () => new Worker('/scripts/bench-dm-scan-worker.mjs', { type: 'module' }))
+  const run = () => {
+    const per = Math.ceil(invites.length / workers)
+    return Promise.all(pool.map((w, i) => new Promise((resolve) => {
+      w.onmessage = ({ data }) => resolve(data)
+      w.postMessage({ priv, invites: invites.slice(i * per, (i + 1) * per) })
+    })))
+  }
+  await run() // warm-up
+  const t = performance.now()
+  const hits = (await run()).reduce((a, b) => a + b, 0)
+  const trialUs = (performance.now() - t) * 1000 / invites.length
+  pool.forEach((w) => w.terminate())
+  const r = { mode: `${workers} workers`, n: invites.length, trialUs: +trialUs.toFixed(1),
+    perSec: Math.round(1e6 / trialUs), hits }
+  log(JSON.stringify(r))
+  return r
+}
+
+const results = [await runBench(log)]
+for (const w of [2, 4, 8]) results.push(await workerBench(4000, w))
+window.__benchResult = { results, cores: navigator.hardwareConcurrency }
+log('DONE')
 </script>
