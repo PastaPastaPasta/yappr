@@ -98,9 +98,10 @@ them from block history. Migration must say this plainly (§10).
 - **`b` and `r` are u16 everywhere** (limit 65,535 each). `U32(x)` is a
   big-endian u32. A two-argument `HKDF(ikm, info)` uses the salt
   `"yappr/dm/v5"`.
-- **`day`** is a UTC day number, `floor(time_ms / 86,400,000)`, as a u32.
-  Senders and readers both take `time_ms` from Platform block time, never the
-  device clock. A sender refreshes it right before signing and refuses to send
+- **`week`** is a week number, `floor(time_ms / 604,800,000)`, as a u32 (weeks
+  counted from the Unix epoch, so they start on Thursday 00:00 UTC; any fixed
+  start works). Senders and readers both take `time_ms` from Platform block
+  time, never the device clock. A sender refreshes it right before signing and refuses to send
   if the latest block time it has is more than 5 minutes old.
 - **Identity ids** are 32 bytes. `id_lo` and `id_hi` are a pair sorted by byte
   order.
@@ -479,7 +480,8 @@ keyringHandle(b)  = HKDF(gid, "yappr/dm/v5", "keyring\0" || S16(b))[0:10]
 ### 5.3 `dmMessage.body` and padding
 
 ```
-body = iv(12) | AES-256-GCM(mk[d, j], iv, pad(type | payload), aad) // ciphertext || tag(16)
+body = iv(12) | AES-256-GCM(mk[w, j], iv, pad(prev | type | payload), aad) // ciphertext || tag(16)
+prev = U32(week of the sender's previous message in this stream), or 0 if none
 ```
 
 - **Size classes.** Padded plaintext is a power of two from **128 to 8192
@@ -570,7 +572,7 @@ slot = copy × 8 + partIndex        // copy ∈ {0, 1}, partIndex ∈ 0..7; part
   also be recovered from chain: `n` by probing, grants from the owner's own 1:1
   streams.
 
-**What it no longer has to hold.** Where each stream currently ends: per-day
+**What it no longer has to hold.** Where each stream currently ends: per-week
 tags (§6.1) let any device find that from nothing. (Read positions, which say
 how far the *user* has read, are still stored.) Owners' groups:
 they re-derive from `gid_n` (§4.4). Members' groups can be re-requested from
@@ -610,9 +612,10 @@ erasure.
 
 **The sweep.** The client deletes its own DM documents once they pass the
 retention age, across all conversations at once. Messages are swept by
-**whole tag days**: when day `d` is older than the retention age, the client
-walks its own streams for day `d` (tags `(d, 0), (d, 1), …` in every
-conversation from the contact list) and deletes every hit. `dmMessage` has no
+**whole tag weeks**: once every message in week `w` is older than the
+retention age, the client walks its own streams for week `w` (tags
+`(w, 0), (w, 1), …` in every conversation from the contact list) and deletes
+every hit. With the 30-day default, a message therefore stays 30 to 37 days. `dmMessage` has no
 owner-by-time index to list them any other way. Invites are swept by
 `$createdAt` through their `[$ownerId, $createdAt]` index.
 
@@ -623,7 +626,7 @@ owner-by-time index to list them any other way. Invites are swept by
 | `dmRoster` | never; shrunk to a tombstone when the group ends | Keeps its group id from being reused (§4.4) |
 | `dmKeyring`, `encryptionKeyBridge`, `dmSelfState` | never | Small, and needed to read anything still on chain |
 
-- **It reveals nothing new.** The deletes remove a whole day of the owner's
+- **It reveals nothing new.** The deletes remove a whole week of the owner's
   documents at once, whose creation times are already public. The order within
   the batch is shuffled, so it says nothing about which conversation any
   document belonged to.
@@ -657,9 +660,9 @@ help text say so plainly, for example:
 Never word it as "disappearing", "self-destructing" or "delete for
 everyone".
 
-**Effects on recovery.** Because the sweep removes whole tag days, every day
+**Effects on recovery.** Because the sweep removes whole tag weeks, every week
 still on chain is complete from `j = 0`. A device never needs to find where a
-stream "starts": it reads the days it wants. Swept invites no longer point at
+stream "starts": it reads the weeks it wants. Swept invites no longer point at
 their conversations, which is why the contact list lives in `dmSelfState`.
 
 ## 6. Messages
@@ -671,20 +674,38 @@ Every sender has their own stream in every epoch:
 ```
 K          = the 1:1 key (§4.3) or K[b,r] (§4.4)
 SK         = HKDF(K, "stream\0" || senderId)
-tag[d, j]  = HKDF(SK, "tag\0" || U32(d) || U32(j))[0:16]     // d = day (§4.1), j = 0, 1, 2, … within that day
-mk[d, j]   = HKDF(SK, "msg\0" || U32(d) || U32(j))
+tag[w, j]  = HKDF(SK, "tag\0" || U32(w) || U32(j))[0:16]     // w = week (§4.1), j = 0, 1, 2, … within that week
+mk[w, j]   = HKDF(SK, "msg\0" || U32(w) || U32(j))
 aad        = "yappr/dm/msg/v5" || tag || senderId
 ```
 
-**Tags are numbered per day.** The counter `j` restarts at 0 every UTC day. So
-any device that knows `K` finds a stream's messages for any day by computing
-that day's `j = 0` tag and walking forward, with no saved position. Past days
-that were swept (§5.7), or that had no messages, simply return nothing.
+**Tags are numbered per week.** The counter `j` restarts at 0 every week. The
+reason is deletion (§5.7). With one counter that never restarts, a device that
+does not know where a stream is up to (a lost `dmSelfState`, or a user away
+longer than the other side's retention) asks for message 400, finds it swept,
+and cannot tell "swept" from "never sent". With a weekly restart, any device
+that knows `K` starts from the current week's `j = 0`, with no saved position.
+
+- **Finding the end of a week quickly.** A device probes `j = 0, 1, 2, 4, 8,
+  16, …` in one query, then narrows between the last hit and the first miss.
+  Three queries find the end of even a very busy week.
+- **Scrolling back costs no empty queries.** Every message carries `prev`,
+  the week of the sender's previous message in that stream, inside the
+  encryption. A reader at the start of week `w` jumps straight to week `prev`,
+  and quiet weeks are never queried. Scroll-back costs one query per 100
+  messages, however sparse the chat. `prev` is 4 bytes that fit in padding the
+  message already has, so it costs nothing.
+- **Why a week, not a day, a month or a Platform epoch.** With back-links the
+  period length no longer drives query count. A week keeps deletion reasonably
+  precise (a 30-day setting keeps messages 30 to 37 days) and rollovers rare.
+  A month would keep messages up to 61 days. Platform epochs differ in length
+  between networks and have no fixed start times, so clients would behave
+  differently on devnet and mainnet.
 
 **Properties:**
 - **Tags never repeat,** so an observer cannot group one sender's messages by
   conversation. They see "A wrote N DM documents".
-- **Readers accept a document for `tag[d, j]` only if `$ownerId` equals the
+- **Readers accept a document for `tag[w, j]` only if `$ownerId` equals the
   stream's sender.**
 - **The unique index is `[tag, $ownerId]`, not `[tag]`.** So a member who
   writes a document with another member's next tag blocks nothing: that write
@@ -697,13 +718,14 @@ that were swept (§5.7), or that had no messages, simply return nothing.
     next to the accepted one. Both carry the same owner, so it reveals nothing
     new.
 - **Each epoch has its own streams,** because `SK` derives from `K[b,r]`. A new
-  member starts at today's `j = 0` on the new epoch without any hint.
-- **Day rollover.** A reader keeps polling a stream's next tag on day `d` until
-  that stream has a message on day `d + 1`, or 24 hours pass. A message whose
-  signing and inclusion straddle midnight is therefore still found.
-- **Day check.** A reader accepts a message for `tag[d, j]` only if
-  `day($createdAt)` is `d` or `d + 1`. A sender cannot pre-write messages under
-  future days, for example to post into a group after being removed (§6.6).
+  member starts at the current week's `j = 0` on the new epoch without any hint.
+- **Week rollover.** A reader keeps polling a stream's next tag in week `w`
+  until that stream has a message in week `w + 1`, or 24 hours pass. The next
+  message's `prev` also points back at week `w`, so a message whose signing and
+  inclusion straddle the boundary is still found.
+- **Week check.** A reader accepts a message for `tag[w, j]` only if
+  `week($createdAt)` is `w` or `w + 1`. A sender cannot pre-write messages under
+  future weeks, for example to post into a group after being removed (§6.6).
 
 **Why each sender has their own stream, rather than one shared counter per
 conversation.** A shared counter would let readers poll a few tags per
@@ -745,11 +767,14 @@ never collide across participants.
 1. **Groups only:** read the roster and check for a keyring at `b+1`. This is one
    query per owner, and a read costs nothing.
 2. **Write.** Messages go out immediately; send batching was considered and
-   rejected for its latency (§8). Write `dmMessage{tag[d, j], body}` at the
-   current `(b, r)`, using today's next free `j`. Before advancing past `j`,
-   read back the tag. A 504 timeout
-   does not prove the write failed or succeeded (CLAUDE.md, "DAPI Gateway
-   Timeouts"). If the tag is missing, rebroadcast the same transition.
+   rejected for its latency (§8). Write `dmMessage{tag[w, j], body}` at the
+   current `(b, r)`, using this week's next free `j`. Before advancing past
+   `j`, read back the tag. A 504 timeout does not prove the write failed or
+   succeeded (CLAUDE.md, "DAPI Gateway Timeouts"). If the tag is missing,
+   rebroadcast the same transition. If the read-back shows the message landed
+   in a later week than its tag says (it was signed just before a rollover),
+   nothing is lost: readers still find it (§6.1). If it landed outside the
+   week check, the sender re-sends it under the current week.
 
 ### 6.3 Receiving, unread counts and recovery
 
@@ -759,7 +784,7 @@ never collide across participants.
   keyring handles.
   - Tags batch into `tag in [...]` queries of up to 100. Twenty 1:1 chats (40
     tags) cost 1 query, and so does a 100-member group. The dual polls around
-    a day rollover or an add (§6.5) can double that for a while.
+    a week rollover or an add (§6.5) can double that for a while.
   - **On a hit, poll that stream again at once,** until a miss. A burst of
     messages then arrives in one go, not one per 30 s poll.
   - Handles go into one query per owner.
@@ -769,16 +794,15 @@ never collide across participants.
   longer than usual, the client polls its next 4 tags once instead of 1. That
   catches a gap left by a sender whose device died mid-send (the sender
   normally reads back before moving on, §6.2). Any gap is bounded anyway: the
-  next day starts again at `j = 0`.
+  next week starts again at `j = 0`.
 - **Unread counts** are exact: new tags found past the read position. This
   replaces v4's count queries and its read receipts.
 - **Recovery on a new device:**
   1. Load `dmSelfState` (§5.6): the contact list, read positions, blocks,
      settings.
   2. Scan your bucket for invites newer than the last recorded scan.
-  3. For each stream, compute today's tags and walk forward. For history, do
-     the same for earlier days, back to the retention window, 100 tags per
-     query.
+  3. For each stream, find the end of the current week (§6.1). For history,
+     follow the `prev` links back, 100 tags per query.
 - **If `dmSelfState` is lost:**
   - **Groups you own** come back by probing `gid_n` (§4.4).
   - **1:1 chats** come back for every counterpart the client can think to try,
@@ -793,7 +817,7 @@ never collide across participants.
 
 ### 6.4 Reading
 
-1. Decrypt with `mk[d, j]`. On failure, drop the message as unreadable. It is
+1. Decrypt with `mk[w, j]`. On failure, drop the message as unreadable. It is
    either spam or something sent before you joined.
 2. Apply the stale-base rule (§6.6).
 
@@ -1041,13 +1065,14 @@ accepts for messages.
 ## 13. Verification plan
 
 1. **Pure `lib/dm/` modules with Vitest specs.** Cover:
-   - the key schedule and label separation, handles, per-day tag and stream
+   - the key schedule and label separation, handles, per-week tag and stream
      derivation, `gid_n` derivation and owner probing;
    - invite sealing and recognition, and `selfHint`;
    - slot wrap and `kc` trial, and trial key selection across bridged keys;
    - padding, body and roster encoding, and self-state copy selection
      (highest complete generation wins);
-   - the pointer rule, the dual-poll rule, the stale-base rule, the day check;
+   - the pointer rule, the dual-poll rule, the stale-base rule, the week check,
+     `prev` back-links and the end-of-week probe;
    - grant acceptance (only from the owner, only once the roster lists you);
    - membership from the newest base when the roster lags;
    - fixed test vectors.
