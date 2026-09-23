@@ -137,6 +137,29 @@ describe('squatted tags (§6.1)', () => {
     expect(texts(bob.ctx, ALICE_ID)).toEqual(['one', 'two'])
   })
 
+  it('does not let squats past a free slot hide the sender\'s next message there', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const bob = makeContext(ledger, BOB_ID, BOB_PRIV)
+    const carol = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await sendText(alice.ctx, BOB_ID, 'zero')
+    await pollOnce(bob.ctx)
+    const conv = directConv(alice.ctx, BOB_ID)
+    const st = conv && stream(conv, ALICE_ID, { b: 0, r: 0 })
+    if (!st) throw new Error('no stream')
+    const w = weekOf(ledger.time)
+    // Carol squats j = 3..5, leaving j = 1 and 2 free.
+    for (let j = 3; j <= 5; j++) {
+      const squat = await encryptMessage({ streamKey: st.key, senderId: ALICE_ID, w, j }, { prev: null, content: { type: 'text', text: `squat ${j}` } })
+      await carol.chain.createMessage(squat.tag, squat.body)
+    }
+    await sendText(alice.ctx, BOB_ID, 'one') // j = 1
+    await pollOnce(bob.ctx)
+    await sendText(alice.ctx, BOB_ID, 'two') // j = 2: must not be behind Bob's cursor
+    await pollOnce(bob.ctx)
+    expect(texts(bob.ctx, ALICE_ID)).toEqual(['zero', 'one', 'two'])
+  })
+
   it('skips a squatted slot on the next send instead of paying for a refused write', async () => {
     const ledger = new MemoryLedger()
     const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)

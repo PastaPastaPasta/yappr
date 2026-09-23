@@ -266,9 +266,15 @@ async function drain(ctx: DmContext, conv: Conv, st: StreamState, w: number, j: 
   for (let from = j + 1; ; from += TAGS_PER_QUERY) {
     const { found, occupied } = await fetchStreamRange(ctx, st, w, range(from, from + TAGS_PER_QUERY - 1))
     if (occupied.length === 0) return last
-    for (const [k, doc] of Array.from(found.entries()).sort(([a], [b]) => a - b)) await receive(ctx, conv, st, w, k, doc)
-    // A run of squatted slots is read past in one pass, not one slot per poll.
-    last = Math.max(last, ...occupied)
+    for (const [k, doc] of Array.from(found.entries()).sort(([a], [b]) => a - b)) {
+      await receive(ctx, conv, st, w, k, doc)
+      last = Math.max(last, k)
+    }
+    // Squatted slots right after the newest one held count as passed: the sender skips a squat only
+    // when it meets it at its own next slot. One after a free slot does not, or the sender's later
+    // message in that free slot would be behind the cursor.
+    const taken = new Set(occupied)
+    while (taken.has(last + 1)) last += 1
   }
 }
 
