@@ -343,14 +343,13 @@ cannot tell a chat invite from a group invite, or whether anything is
 attached.
 
 **Who can reach you.** Anyone can invite you; the chain cannot filter without
-revealing the recipient. The client sorts:
-- From someone you follow: the conversation appears in the inbox.
-- From anyone else: it appears under **Requests**. Replying or accepting moves
-  it to the inbox. Declining hides it and adds the sender to the local block
-  list.
-- **Group grants add you directly** (WhatsApp style) when the owner is someone
-  you follow. Otherwise the group lands in Requests too.
-- Invites from blocked identities are dropped after decryption.
+revealing the recipient. In the client:
+- **Every new conversation appears in the inbox as a normal first DM,** from
+  anyone. There is no separate Requests folder.
+- **Group grants add you directly** (WhatsApp style), from any owner.
+- Blocking a sender (from the conversation) adds them to the local block list
+  in `dmSelfState`; their invites, messages and grants are then dropped after
+  decryption.
 
 **Discovery.** The recipient polls
 `bucket in [mine at k_m, mine at k_{m−1}], $createdAt > lastScan`. For each
@@ -1122,10 +1121,10 @@ Decided 2026-09-22:
 | 5 | Cross-device read sync | **Yes,** `dmSelfState` ships in Phase 1 (§5.6). |
 | 6 | Per-device ratchets ("sealed chat") | **No.** History must follow the user to any browser (§11). |
 | 7 | Key | The derived ENCRYPTION key for now; the DM contract's bound key once DashPay Connect v2 ships (§4.2). |
-| 8 | Who can start a conversation | Anyone. Non-followed senders go to Requests (§5.1). |
+| 8 | Who can start a conversation | Anyone. A new conversation shows in the inbox as a normal first DM; no Requests folder (§5.1). |
 | 9 | Content | Text only in Phase 1. |
 | 10 | Owner leaves a group | The group ends (§9). |
-| 11 | Joining a group | Added directly, if you follow the owner; otherwise via Requests (§5.1). |
+| 11 | Joining a group | Added directly, from any owner (§5.1). |
 | 12 | Deletion | Owners delete their own documents by age to reclaim fees (§5.7). Retention is a user setting, **default 30 days** (30 days / 90 days / 1 year / never), presented as fee saving, never as privacy. |
 | 13 | Group keys | Epoch keys delivered by grant or keyring (§4.4). Per-message pairwise wraps rejected: they would leak group size on every message. |
 | 14 | Query-serving nodes | Accepted as a leak for Phase 1: they learn contacts and group memberships (§3, §8). "Download everything" is the planned fix. |
