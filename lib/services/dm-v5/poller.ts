@@ -250,10 +250,11 @@ export async function runDeferred(ctx: DmContext, conv: Conv): Promise<void> {
 /**
  * Take the rest of week `w` after a hit at `(w, j)` (§6.3 DRAIN): 100 tags per
  * query, holes are fine, until a page returns nothing. Returns the last index
- * found.
+ * found. `first` is null when the slot at `j` is squatted (§6.1): it holds no
+ * message, but it is taken, so the stream reads on past it.
  */
-async function drain(ctx: DmContext, conv: Conv, st: StreamState, w: number, j: number, first: ChainMessage): Promise<number> {
-  await receive(ctx, conv, st, w, j, first)
+async function drain(ctx: DmContext, conv: Conv, st: StreamState, w: number, j: number, first: ChainMessage | null): Promise<number> {
+  if (first) await receive(ctx, conv, st, w, j, first)
   let last = j
   for (let from = j + 1; ; from += TAGS_PER_QUERY) {
     const found = await fetchStreamRange(ctx, st, w, range(from, from + TAGS_PER_QUERY - 1))
@@ -287,10 +288,13 @@ export async function fetchWants(ctx: DmContext, wants: Want[]): Promise<void> {
   for (const want of wants) byTag.set(hexId(messageTag(want.st.key, want.w, want.j)), want)
   const docs = await ctx.chain.messagesByTags(Array.from(byTag.keys()).map((hex) => hexToBytes(hex)))
 
-  const hitList: Array<{ want: Want; doc: ChainMessage }> = []
+  // A document at a wanted tag from anyone but the stream's sender is a squat (§6.1): never a
+  // message, but the slot is taken and the sender has moved on to j + 1, so it counts as a hit
+  // whose drain skips it. Otherwise a live reader would ask for that one tag until the week ends.
+  const hitList: Array<{ want: Want; doc: ChainMessage | null }> = []
   for (const doc of docs) {
     const want = byTag.get(hexId(doc.tag))
-    if (want && bytesEqual(doc.ownerId, want.st.sender)) hitList.push({ want, doc })
+    if (want) hitList.push({ want, doc: bytesEqual(doc.ownerId, want.st.sender) ? doc : null })
   }
   const hitWants = new Set(hitList.map((hit) => hit.want))
   const hits = groupBy(hitList, (hit) => hit.want.st)

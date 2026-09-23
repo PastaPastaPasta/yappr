@@ -81,6 +81,58 @@ describe('1:1 first contact and messaging', () => {
   })
 })
 
+describe('squatted tags (§6.1)', () => {
+  it('a reader polling live reads on past a squatted next tag to the sender\'s retry', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const bob = makeContext(ledger, BOB_ID, BOB_PRIV)
+    const carol = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await sendText(alice.ctx, BOB_ID, 'one')
+    await pollOnce(bob.ctx)
+    expect(texts(bob.ctx, ALICE_ID)).toEqual(['one'])
+
+    // Carol takes Alice's next tag (in a group any member can compute it).
+    const conv = directConv(alice.ctx, BOB_ID)
+    const st = conv && stream(conv, ALICE_ID, { b: 0, r: 0 })
+    if (!st) throw new Error('no stream')
+    const w = weekOf(ledger.time)
+    const squat = await encryptMessage({ streamKey: st.key, senderId: ALICE_ID, w, j: 1 }, { prev: null, content: { type: 'text', text: 'squat' } })
+    await carol.chain.createMessage(squat.tag, squat.body)
+
+    // Alice's send is refused at j = 1 and lands at j = 2.
+    const held = await sendText(alice.ctx, BOB_ID, 'two')
+    expect(held.pointer.j).toBe(2)
+
+    // Bob, polling without a reload, still reaches it in the same week.
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    expect(texts(bob.ctx, ALICE_ID)).toEqual(['one', 'two'])
+  })
+
+  it('skips a squatted slot on the next send instead of paying for a refused write', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const carol = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    makeContext(ledger, BOB_ID, BOB_PRIV)
+    await sendText(alice.ctx, BOB_ID, 'one')
+    const conv = directConv(alice.ctx, BOB_ID)
+    const st = conv && stream(conv, ALICE_ID, { b: 0, r: 0 })
+    if (!st) throw new Error('no stream')
+    const w = weekOf(ledger.time)
+    const squat = await encryptMessage({ streamKey: st.key, senderId: ALICE_ID, w, j: 1 }, { prev: null, content: { type: 'text', text: 'squat' } })
+    await carol.chain.createMessage(squat.tag, squat.body)
+    // Alice's device catches up on its own stream before choosing j, and the squatted slot counts as taken.
+    let attempts = 0
+    alice.chain.hook = (method) => {
+      if (method === 'createMessage') attempts++
+      return null
+    }
+    const held = await sendText(alice.ctx, BOB_ID, 'two')
+    expect(held.pointer.j).toBe(2)
+    expect(attempts).toBe(1)
+  })
+})
+
 describe('sender', () => {
   it('retries at j + 1 when another device took the tag (40105)', async () => {
     const ledger = new MemoryLedger()
