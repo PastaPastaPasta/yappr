@@ -1,0 +1,215 @@
+{
+  "config": {
+    "$formatVersion": "2",
+    "canBeDeleted": false,
+    "readonly": false,
+    "keepsHistory": false,
+    "documentsKeepHistoryContractDefault": false,
+    "documentsMutableContractDefault": true,
+    "documentsCanBeDeletedContractDefault": true,
+    "requiresIdentityEncryptionBoundedKey": null,
+    "requiresIdentityDecryptionBoundedKey": null,
+    "sizedIntegerTypes": true
+  },
+  "documentSchemas": {
+    "dmInvite": {
+      "type": "object",
+      "description": "First contact (docs/DM_V5.md §5.1). Names no recipient: epk is a fresh ephemeral key and check lets only the recipient recognise the invite. Permanent, so lost-state recovery can rescan every invite.",
+      "documentsMutable": false,
+      "canBeDeleted": false,
+      "indices": [
+        {
+          "name": "bucketTime",
+          "properties": [
+            {
+              "bucket": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "bucket",
+        "epk",
+        "check"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "bucket": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "position": 0,
+          "description": "Scan bucket: (1 << k) | top k bits of HKDF(recipient, \"bucket\"). k = 0 gives 1."
+        },
+        "epk": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 33,
+          "maxItems": 33,
+          "position": 1,
+          "description": "Compressed secp256k1 ephemeral public key e·G"
+        },
+        "check": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 16,
+          "maxItems": 16,
+          "position": 2,
+          "description": "HKDF(ECDH_x(e, encPub_R), \"invite\" || $ownerId || epk)[0:16]"
+        }
+      }
+    },
+    "dmMessage": {
+      "type": "object",
+      "description": "One message on a sender's stream (docs/DM_V5.md §6.1). tag is a one-time pseudorandom value only conversation members can compute; body is iv | AES-256-GCM ciphertext padded to a size class. Immutable; the owner deletes it in the retention sweep.",
+      "documentsMutable": false,
+      "canBeDeleted": true,
+      "indices": [
+        {
+          "name": "tag",
+          "unique": true,
+          "properties": [
+            {
+              "tag": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "tag",
+        "body"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tag": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 16,
+          "maxItems": 16,
+          "position": 0,
+          "description": "HKDF(SK, \"tag\" || week || j)[0:16]"
+        },
+        "body": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 156,
+          "maxItems": 5120,
+          "position": 1,
+          "description": "iv | AES-256-GCM(mk, padded plaintext); the first 5120 bytes of the sealed blob"
+        },
+        "body2": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5120,
+          "position": 2,
+          "description": "Continuation of the sealed blob for size classes above one field"
+        },
+        "body3": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5120,
+          "position": 3,
+          "description": "Second continuation of the sealed blob"
+        }
+      }
+    },
+    "dmGroupDoc": {
+      "type": "object",
+      "description": "A group's roster or keyring (docs/DM_V5.md §5.2-5.4), told apart by a handle only members can compute. The unique [$ownerId, handle] index means only the group owner can occupy the owner's slot. Replaced in place; never deleted, so a group number is never reused.",
+      "documentsMutable": true,
+      "canBeDeleted": false,
+      "indices": [
+        {
+          "name": "ownerHandle",
+          "unique": true,
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "handle": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "handle",
+        "blob"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "handle": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 10,
+          "maxItems": 10,
+          "position": 0,
+          "description": "roster(gid) or keyring(gid, b): HKDF(gid, label)[0:10]"
+        },
+        "blob": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 156,
+          "maxItems": 5120,
+          "position": 1,
+          "description": "Sealed roster, or a keyring: nonce | kc | 32-byte slots"
+        }
+      }
+    },
+    "dmSelfState": {
+      "type": "object",
+      "description": "The owner's encrypted cross-device DM state (docs/DM_V5.md §5.5). One per identity; a replace is atomic and revision-checked, so two devices saving at once cannot both win.",
+      "documentsMutable": true,
+      "canBeDeleted": true,
+      "indices": [
+        {
+          "name": "owner",
+          "unique": true,
+          "properties": [
+            {
+              "$ownerId": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "blob"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "blob": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 156,
+          "maxItems": 5120,
+          "position": 0,
+          "description": "iv | AES-256-GCM(stateKey, padded state); the first 5120 bytes of the sealed blob"
+        },
+        "blob2": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5120,
+          "position": 1,
+          "description": "Continuation of the sealed self-state"
+        },
+        "blob3": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5120,
+          "position": 2,
+          "description": "Second continuation of the sealed self-state"
+        }
+      }
+    }
+  }
+}
