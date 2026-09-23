@@ -134,6 +134,33 @@ describe('squatted tags (§6.1)', () => {
 })
 
 describe('sender', () => {
+  it('does not mistake my other device\'s message at the same tag for its own uncertain send', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const laptop = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    makeContext(ledger, BOB_ID, BOB_PRIV)
+    const laptopConv = await openDirect(laptop.ctx, BOB_ID)
+    laptopConv.draft = false
+    await sendText(phone.ctx, BOB_ID, 'from phone')
+    // Both devices chose j = 0 at the same moment: the laptop's catch-up missed the phone's message,
+    // and its own broadcast was refused on chain but the client only saw the DAPI timeout.
+    const read = laptop.chain.messagesByTags.bind(laptop.chain)
+    let catchUp = true
+    laptop.chain.messagesByTags = async (tags) => (catchUp ? [] : read(tags))
+    let first = true
+    laptop.chain.hook = (method) => {
+      if (method !== 'createMessage') return null
+      catchUp = false
+      if (!first) return null
+      first = false
+      return { ok: true, id: 'timed-out', confirmed: false }
+    }
+    const held = await sendContent(laptop.ctx, laptopConv, { type: 'text', text: 'from laptop' })
+    // The phone's message at j = 0 is not the laptop's: the laptop's text must be on chain, at j = 1.
+    expect(held.pointer.j).toBe(1)
+    expect(ledger.messages).toHaveLength(2)
+  })
+
   it('retries at j + 1 when another device took the tag (40105)', async () => {
     const ledger = new MemoryLedger()
     const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
@@ -173,6 +200,32 @@ describe('sender', () => {
     expect(calls).toBe(2)
     expect(ledger.messages).toHaveLength(1)
     expect(held.pointer.j).toBe(0)
+  })
+
+  it('recognises a late landing of its own first broadcast when the rebroadcast is refused (40105)', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    makeContext(ledger, BOB_ID, BOB_PRIV)
+    const conv = await openDirect(alice.ctx, BOB_ID)
+    await ensureStarted(alice.ctx, conv)
+    // The first broadcast times out and is not visible yet; it lands while the rebroadcast is in flight.
+    const bodies: Uint8Array[] = []
+    let late: (() => Promise<unknown>) | null = null
+    const create = alice.chain.createMessage.bind(alice.chain)
+    alice.chain.createMessage = async (tag, body) => {
+      bodies.push(body)
+      if (bodies.length === 1) {
+        late = () => create(tag, body)
+        return { ok: true, id: 'timed-out', confirmed: false }
+      }
+      await late?.()
+      return create(tag, body)
+    }
+    const held = await sendContent(alice.ctx, conv, { type: 'text', text: 'x' })
+    expect(bodies).toHaveLength(2)
+    expect(bodies[1]).toEqual(bodies[0]) // the same bytes, so the late landing is recognised
+    expect(held.pointer.j).toBe(0)
+    expect(ledger.messages).toHaveLength(1)
   })
 
   it('does not rebroadcast an uncertain broadcast that landed', async () => {

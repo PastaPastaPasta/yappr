@@ -5,18 +5,21 @@
  * conversation's current epoch, with `prev` pointing at my newest message in
  * the conversation (any epoch). A unique-index rejection (40105: my other
  * device or a squatter took the tag) retries at `j + 1`. Only a broadcast
- * whose result is uncertain (the DAPI timeout) is read back: if the tag is
- * not there, the message is broadcast again; a 40105 on that second try is
- * checked against the tag's holder, since it is usually the first try landing.
+ * whose result is uncertain (the DAPI timeout) is read back, and only the
+ * exact body counts as landed (my other device writes the same tags with the
+ * same key): a slot someone else holds means this broadcast was refused, so
+ * it moves on; an empty one is broadcast again with the same bytes, and a
+ * 40105 on that second try is checked the same way, since it is usually the
+ * first try landing.
  */
 
 import { bytesEqual } from '@/lib/bytes'
-import { encryptMessage, messageTag, tryDecryptMessage } from '@/lib/dm/stream'
+import { encryptMessage, messageTag, type EncryptedMessage } from '@/lib/dm/stream'
 import type { DmContent, MessagePointer } from '@/lib/dm/types'
 import { currentEpoch, newestOwn, stream, type Conv, type HeldMessage, type StreamState } from './conversation'
 import { curWeek, type DmContext } from './context'
 import { applyGroups } from './group-apply'
-import { fetchWants, receive, streamWants } from './poller'
+import { fetchWants, streamWants } from './poller'
 import type { ChainMessage } from './types'
 import { GROUP_FRESHNESS_MS, MAX_LOOKBACK_WEEKS, hexId, pointerKey } from './util'
 
@@ -36,11 +39,15 @@ async function syncOwnStream(ctx: DmContext, conv: Conv, st: StreamState): Promi
   await fetchWants(ctx, streamWants(conv, st, Math.max(conv.entry.since, cw - MAX_LOOKBACK_WEEKS), cw))
 }
 
-/** Is the tag at `(w, j)` held by my document carrying this content? (The read-back after an uncertain broadcast.) */
-async function landed(ctx: DmContext, st: StreamState, w: number, j: number): Promise<ChainMessage | null> {
+/**
+ * Did this broadcast land at `(w, j)`? (The read-back after an uncertain one.)
+ * Only the exact body counts: my other device writes the same tags with the
+ * same key, so a document that is mine and decrypts may be its message, not
+ * this one. Each seal draws a fresh random IV, so another send never matches.
+ */
+async function landed(ctx: DmContext, st: StreamState, w: number, j: number, body: Uint8Array): Promise<ChainMessage | null> {
   const [doc] = await ctx.chain.messagesByTags([messageTag(st.key, w, j)])
-  if (!doc || !bytesEqual(doc.ownerId, ctx.me.id)) return null
-  return (await tryDecryptMessage({ streamKey: st.key, senderId: ctx.me.id, w, j }, doc.body)) ? doc : null
+  return doc && bytesEqual(doc.ownerId, ctx.me.id) && bytesEqual(doc.body, body) ? doc : null
 }
 
 /** Write one message of `content` on my stream. Returns what was held for it. */
@@ -60,13 +67,23 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
   const prev: MessagePointer | null = newestOwn(conv, ctx.me.id)?.pointer ?? null
   let retriedUncertain = false
 
+  // One sealed body per slot: a rebroadcast after an uncertain result must be the same bytes, so a
+  // late landing of the first broadcast is recognised as this message (a fresh IV would not match).
+  let sealed: (EncryptedMessage & { j: number }) | undefined
   for (let attempt = 0; attempt < MAX_J_ATTEMPTS; attempt++) {
-    const { tag, body } = await encryptMessage({ streamKey: st.key, senderId: ctx.me.id, w, j }, { prev, content })
+    if (sealed?.j !== j) sealed = { j, ...(await encryptMessage({ streamKey: st.key, senderId: ctx.me.id, w, j }, { prev, content })) }
+    const { tag, body } = sealed
     const outcome = await ctx.chain.createMessage(tag, body)
     if (outcome.ok) {
-      if (!outcome.confirmed) {
-        const doc = await landed(ctx, st, w, j)
-        if (!doc && !retriedUncertain) {
+      if (!outcome.confirmed && !(await landed(ctx, st, w, j, body))) {
+        // Not there as sent. If the slot holds someone else's document (my other device's, or a
+        // squat), this broadcast was refused: move on. If it is empty, broadcast once more.
+        const [taken] = await ctx.chain.messagesByTags([tag])
+        if (taken) {
+          j += 1
+          continue
+        }
+        if (!retriedUncertain) {
           retriedUncertain = true
           attempt--
           continue
@@ -76,12 +93,9 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
     }
     if (outcome.failure !== 'duplicate') throw new SendError(outcome.error)
     if (retriedUncertain) {
-      const doc = await landed(ctx, st, w, j)
-      if (doc) {
-        await receive(ctx, conv, st, w, j, doc)
-        const held = conv.held.get(pointerKey(ctx.me.id, { w, j, b: epoch.b, r: epoch.r }))
-        if (held) return held
-      }
+      // The first (uncertain) broadcast of this very body may be what took the slot.
+      const doc = await landed(ctx, st, w, j, body)
+      if (doc) return hold(ctx, conv, st, { w, j, b: epoch.b, r: epoch.r }, doc.id, content, prev)
       retriedUncertain = false
     }
     j += 1

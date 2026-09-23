@@ -540,7 +540,8 @@ SEND(c, text):
   if c is a group and its documents were last polled over 10 s ago: APPLY(c, fresh query)   # never send on an old base
   j = next free j this week on my stream (0 if new week); on a unique-index rejection, j += 1 and retry
   broadcast dmMessage{tag[curWeek, j], body(prev = my newest message in c, 0x01, text)}
-  if the broadcast result is uncertain (timeout) and the tag is not found: broadcast the same transition again
+  if the broadcast result is uncertain (timeout): it landed only if the tag holds exactly this body
+    (my other device writes the same tags); someone else's document there → j += 1; nothing → broadcast the same body again
 ```
 
 - **Every `in` query needs an `orderBy` on its `in` field** (Drive refuses it
