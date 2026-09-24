@@ -58,6 +58,8 @@ export interface DmContext {
    * block, so it cannot measure elapsed time (§6.3 SEND freshness).
    */
   clock: () => number
+  /** Wall-clock time (ms). A monotonic clock can pause during system sleep; freshness checks use both. */
+  wallClock: () => number
 }
 
 /** A fresh context for `identityId`, with its self-state store and nothing attached yet. */
@@ -86,6 +88,7 @@ export function createContext(options: {
     recovering: false,
     changed: options.changed ?? (() => undefined),
     clock: () => performance.now(),
+    wallClock: () => Date.now(),
   }
 }
 

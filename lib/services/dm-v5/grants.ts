@@ -59,7 +59,10 @@ async function processGrant(ctx: DmContext, grant: PendingGrant): Promise<'done'
 
   if (existing) {
     // A resend, or a re-add after removal: take the key and start reading again.
-    const wasCutOff = (existing.removed || existing.unreadable) && (await anchorCutOff(ctx, existing.entry, epoch))
+    const cutOff = existing.removed || existing.unreadable ? await anchorCutOff(ctx, existing.entry, epoch) : 'no'
+    // Cannot tell yet (the owner's key lookup failed): keep the grant and check again next poll.
+    if (cutOff === 'unknown') return 'retry'
+    const wasCutOff = cutOff === 'yes'
     existing.keys.set(epoch, grant.key)
     existing.removed = false
     existing.unreadable = false
@@ -85,16 +88,17 @@ async function processGrant(ctx: DmContext, grant: PendingGrant): Promise<'done'
 }
 
 /**
- * True only when the saved anchor alone provably cannot reach `epoch`: applied
- * from scratch, its keyrings end in one with no slot for me before `epoch`'s
- * base. A local `removed` flag is not enough (it can come from a failed
- * lookup), and swapping the anchor on a false one would lose the history
- * before it on every device (§5.5).
+ * `yes` only when the saved anchor alone provably cannot reach `epoch`:
+ * applied from scratch, its keyrings end in one with no slot for me before
+ * `epoch`'s base. `unknown` when that could not be checked (a failed query or
+ * owner-key lookup). A local `removed` flag is not enough, and swapping the
+ * anchor on a false one would lose the history before it on every device
+ * (§5.5).
  */
-async function anchorCutOff(ctx: DmContext, entry: GroupConversation, epoch: Epoch): Promise<boolean> {
+async function anchorCutOff(ctx: DmContext, entry: GroupConversation, epoch: Epoch): Promise<'yes' | 'no' | 'unknown'> {
   const probe = newGroupConv(entry)
-  if (!(await applyGroups(ctx, [probe]))) return false
-  return probe.removed && probe.keys.get(epoch) === null
+  if (!(await applyGroups(ctx, [probe]))) return 'unknown'
+  return probe.removed && probe.keys.get(epoch) === null ? 'yes' : 'no'
 }
 
 /**

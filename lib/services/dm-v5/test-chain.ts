@@ -245,5 +245,6 @@ export function makeContext(ledger: MemoryLedger, id: IdentityId, encPriv: Uint8
   }
   // The device clock follows the ledger's in tests, so advancing `ledger.time` ages everything.
   ctx.clock = () => ledger.time
+  ctx.wallClock = () => ledger.time
   return { ctx, chain }
 }

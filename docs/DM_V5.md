@@ -571,8 +571,10 @@ SWITCH(g, b, r):            # new epoch: every member stream restarts at the cur
   g.epoch = (b, r)
 
 SEND(c, text):
-  if c is a group and its documents were last polled over 10 s ago (device clock): APPLY(c, fresh query)   # never send on an old base
-    if that query fails: refuse the send (retryable; the text stays in the composer)
+  if c is a group not fully applied within the last 10 s (by the device's monotonic AND wall clock; never since load counts as stale):
+    APPLY(c, fresh query)                                                    # never send on an old base
+    if that query fails, or a keyring in it cannot be checked (the owner's key lookup failed):
+      refuse the send (retryable; the text stays in the composer)
   catch up on my own streams in c: the current epoch, and older epochs in the epoch log (as in POLL)
   j = next free j this week on my stream (0 if new week); on a unique-index rejection, j += 1 and retry
   broadcast dmMessage{tag[curWeek, j], body(prev = my newest message in c, 0x01, text)}
@@ -676,9 +678,8 @@ OWNER_WRITE(g, change):
 ```
 
 An uncertain write is never adopted on trust: a losing concurrent write
-would move the owner to an epoch that does not exist. The keyring on chain is
-the only `K[b,0]`: any device holding another key for base `b` (from a keyring
-that lost a race) replaces it when it reads the keyring. For the same reason a
+would move the owner to an epoch that does not exist, and a keyring's key is
+only ever held once that keyring is known to be on chain. For the same reason a
 reader re-opens a roster whose `$revision` matches the one it last saw
 unless its bytes match too.
 

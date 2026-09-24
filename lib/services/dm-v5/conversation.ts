@@ -104,8 +104,12 @@ export interface GroupConv extends ConvBase {
   ended: boolean
   /** The roster never opened with the keys held: "ask the owner to resend your keys". */
   unreadable: boolean
-  /** When the group documents were last applied, on `ctx.clock` (§6.3 SEND freshness). */
-  appliedAt: number
+  /**
+   * When the group documents were last fully applied, on `ctx.clock` (`local`)
+   * and `ctx.wallClock` (`wall`); -Infinity until the first full apply (§6.3
+   * SEND freshness).
+   */
+  appliedAt: { local: number; wall: number }
   /** Switches after the first apply are live and leave stale tags behind. */
   live: boolean
   /** The owner's group secret `S`, when I own the group. */
@@ -149,7 +153,7 @@ export function newGroupConv(entry: GroupConversation, secret: Uint8Array | null
     removed: false,
     ended: false,
     unreadable: false,
-    appliedAt: 0,
+    appliedAt: { local: -Infinity, wall: -Infinity },
     live: false,
     secret,
   }

@@ -28,7 +28,7 @@ import { logger } from '@/lib/logger'
 import { isMember, newGroupConv, type GroupConv } from './conversation'
 import { attachGroup, curWeek, groupConv, isMe, peerKey, type DmContext } from './context'
 import { ensureStarted, openDirect, startedDirect } from './directs'
-import { applyGroups, switchEpoch } from './group-apply'
+import { applyGroups, markApplied, switchEpoch } from './group-apply'
 import { sendContent } from './sender'
 import type { WriteFailure, WriteOutcome } from './types'
 import { withNonceRetry } from './write-failure'
@@ -261,7 +261,7 @@ export async function createGroup(ctx: DmContext, name: string, memberIds: Ident
       throw new GroupError(outcome.error)
     }
     conv.live = true
-    conv.appliedAt = ctx.clock()
+    markApplied(ctx, conv)
     ctx.store.addGroup(entry)
     conv.entry = ctx.store.resolve(entry)
     ctx.convs.set(conv.key, conv)
@@ -322,7 +322,7 @@ export async function removeMember(ctx: DmContext, conv: GroupConv, member: Iden
     if (!keyring.ok) return keyring
     conv.keyrings.set(b, built.blob)
     conv.keyringAt.set(b, ctx.chain.now())
-    conv.keys.replaceBase(b, built.baseKey)
+    conv.keys.set({ b, r: 0 }, built.baseKey)
     return writeRoster(ctx, conv, { ...roster, b, r: 0, members: remaining })
   })
 }

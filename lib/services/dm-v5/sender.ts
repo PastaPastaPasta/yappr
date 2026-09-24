@@ -18,10 +18,10 @@ import { encryptMessage, type EncryptedMessage } from '@/lib/dm/stream'
 import type { DmContent, MessagePointer } from '@/lib/dm/types'
 import { currentEpoch, newestOwn, stream, type Conv, type HeldMessage, type StreamState } from './conversation'
 import { curWeek, type DmContext } from './context'
-import { applyGroups } from './group-apply'
+import { applyGroups, isFresh } from './group-apply'
 import { fetchWants, historyWants, receive, streamWants } from './poller'
 import type { ChainMessage } from './types'
-import { GROUP_FRESHNESS_MS, MAX_LOOKBACK_WEEKS, hexId, pointerKey } from './util'
+import { MAX_LOOKBACK_WEEKS, hexId, pointerKey } from './util'
 import { withNonceRetry } from './write-failure'
 
 const MAX_J_ATTEMPTS = 20
@@ -61,7 +61,7 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
   if (conv.kind === 'group') {
     // Never send on an old epoch: a refresh that did not reach the chain leaves the group as it
     // was, and a member removed since could read the message. The text stays in the composer.
-    if (ctx.clock() - conv.appliedAt > GROUP_FRESHNESS_MS && !(await applyGroups(ctx, [conv]))) {
+    if (!isFresh(ctx, conv) && !(await applyGroups(ctx, [conv]))) {
       throw new SendError('Could not check the group for changes. Try again in a moment.')
     }
     if (conv.removed || conv.ended) throw new SendError('You are no longer a member of this group.')

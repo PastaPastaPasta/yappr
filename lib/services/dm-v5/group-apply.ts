@@ -16,7 +16,7 @@ import { logger } from '@/lib/logger'
 import { members, stream, type GroupConv } from './conversation'
 import { curWeek, peerKey, seedHeads, type DmContext } from './context'
 import type { ChainGroupDoc } from './types'
-import { STALE_WINDOW_MS, groupBy, hexId, sameEpoch } from './util'
+import { GROUP_FRESHNESS_MS, STALE_WINDOW_MS, groupBy, hexId, sameEpoch } from './util'
 
 /** How many keyrings past the current base one apply follows (each is a removal; this is generous). */
 const MAX_KEYRING_ROUNDS = 64
@@ -55,36 +55,40 @@ async function keyringBaseKey(ctx: DmContext, conv: GroupConv, b: number, blob: 
 }
 
 /**
- * Apply keyring `b` (= epoch.b + 1). Returns false when I have no slot in it
- * (I was removed, and the group stops here for me) or when the owner's key
- * could not be fetched (the next poll tries again; nothing is marked).
+ * Apply keyring `b` (= epoch.b + 1): `applied` (the next keyring may follow),
+ * `removed` (no slot for me: the group stops here for me), or `unknown` (the
+ * owner's key could not be fetched: nothing is concluded or marked, and the
+ * group does not count as applied, so a send is refused until a later poll).
  */
-async function applyKeyring(ctx: DmContext, conv: GroupConv, doc: ChainGroupDoc, b: number): Promise<boolean> {
+async function applyKeyring(ctx: DmContext, conv: GroupConv, doc: ChainGroupDoc, b: number): Promise<'applied' | 'removed' | 'unknown'> {
   conv.keyrings.set(b, doc.blob)
   conv.keyringAt.set(b, doc.createdAt)
   const baseKey = await keyringBaseKey(ctx, conv, b, doc.blob)
-  if (baseKey === 'unknown') return false
+  if (baseKey === 'unknown') return 'unknown'
   if (baseKey) {
-    // The keyring on chain decides K[b,0]: a key held from a keyring that lost a race is replaced,
-    // with every stream derived from it.
-    const held = conv.keys.get({ b, r: 0 })
-    if (held && !bytesEqual(held, baseKey)) {
-      conv.keys.replaceBase(b, baseKey)
-      for (const [id, st] of Array.from(conv.streams.entries())) if (st.epoch.b === b) conv.streams.delete(id)
-    } else {
-      conv.keys.set({ b, r: 0 }, baseKey)
-    }
+    conv.keys.set({ b, r: 0 }, baseKey)
     switchEpoch(ctx, conv, { b, r: 0 })
-    return true
+    return 'applied'
   }
   // No slot, but a grant already gave me a key on this base: I was re-added after it (§6.4).
   const granted = conv.keys.lowest(b)
   if (granted) {
     switchEpoch(ctx, conv, granted)
-    return true
+    return 'applied'
   }
   conv.removed = true
-  return false
+  return 'removed'
+}
+
+/** True when the group was fully applied within the freshness window by BOTH clocks (§6.3 SEND). */
+export function isFresh(ctx: DmContext, conv: GroupConv): boolean {
+  const elapsed = Math.max(ctx.clock() - conv.appliedAt.local, ctx.wallClock() - conv.appliedAt.wall)
+  return elapsed <= GROUP_FRESHNESS_MS
+}
+
+/** Record a full apply of `conv` now. */
+export function markApplied(ctx: DmContext, conv: GroupConv): void {
+  conv.appliedAt = { local: ctx.clock(), wall: ctx.wallClock() }
 }
 
 /**
@@ -120,10 +124,14 @@ async function applyRoster(ctx: DmContext, conv: GroupConv, doc: ChainGroupDoc):
   if (!conv.lastRoster) conv.unreadable = true
 }
 
-/** Apply every group of one owner (§6.3 APPLY). */
-async function applyOwner(ctx: DmContext, owner: IdentityId, groups: GroupConv[]): Promise<void> {
+/**
+ * Apply every group of one owner (§6.3 APPLY). Resolves false when some group
+ * could not be fully checked (a keyring whose slot could not be tested).
+ */
+async function applyOwner(ctx: DmContext, owner: IdentityId, groups: GroupConv[]): Promise<boolean> {
   const live = groups.filter((g) => !g.removed)
-  if (live.length === 0) return
+  if (live.length === 0) return true
+  const unchecked = new Set<GroupConv>()
   const rosterById = new Map(live.map((g) => [hexId(rosterHandle(g.gid)), g]))
   let pending = live.map((g) => ({ g, b: g.epoch.b + 1 }))
   const rosters: ChainGroupDoc[] = []
@@ -141,7 +149,10 @@ async function applyOwner(ctx: DmContext, owner: IdentityId, groups: GroupConv[]
         continue
       }
       const hit = keyringFor.get(handle)
-      if (hit && (await applyKeyring(ctx, hit.g, doc, hit.b))) next.push({ g: hit.g, b: hit.b + 1 })
+      if (!hit) continue
+      const result = await applyKeyring(ctx, hit.g, doc, hit.b)
+      if (result === 'applied') next.push({ g: hit.g, b: hit.b + 1 })
+      if (result === 'unknown') unchecked.add(hit.g)
     }
     pending = next
   }
@@ -150,20 +161,21 @@ async function applyOwner(ctx: DmContext, owner: IdentityId, groups: GroupConv[]
     const g = rosterById.get(hexId(doc.handle))
     if (g && !g.removed) await applyRoster(ctx, g, doc)
   }
-  const now = ctx.clock()
   for (const g of live) {
     if (g.lastRoster?.ended) g.ended = true
     const first = !g.live
-    g.appliedAt = now
+    if (!unchecked.has(g)) markApplied(ctx, g)
     g.live = true
     if (first) seedHeads(ctx, g)
   }
+  return unchecked.size === 0
 }
 
 /**
  * Apply every group, one query round per owner (§6.3 POLL, first line).
- * Resolves false when any owner's query failed: those groups keep their old
- * state, which a send must not trust (§6.3 SEND).
+ * Resolves false when any owner's query failed or a group could not be fully
+ * checked: those groups keep their old state, which a send must not trust
+ * (§6.3 SEND).
  */
 export async function applyGroups(ctx: DmContext, only?: GroupConv[]): Promise<boolean> {
   const groups = only ?? Array.from(ctx.convs.values()).filter((c): c is GroupConv => c.kind === 'group' && !c.ended)
@@ -171,7 +183,7 @@ export async function applyGroups(ctx: DmContext, only?: GroupConv[]): Promise<b
   const results = await Promise.all(
     Array.from(byOwner.values()).map((list) =>
       applyOwner(ctx, list[0].owner, list).then(
-        () => true,
+        (checked) => checked,
         (error) => {
           logger.warn('DM v5: applying group documents failed:', error)
           return false

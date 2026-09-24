@@ -11,12 +11,13 @@ import { currentEpoch, members, stream, timeline, type GroupConv } from './conve
 import { attachGroup, attachSaved, groupConv, type DmContext } from './context'
 import { startedDirect } from './directs'
 import { addMember, createGroup, endGroup, leaveGroup, recoverOwnedGroups, removeMember, renameGroup, resendKeys } from './groups'
-import { applyGroups } from './group-apply'
+import { applyGroups, markApplied } from './group-apply'
+import { processGrants } from './grants'
 import { pollOnce } from './loop'
 import { backfill, collectWants, pollStreams } from './poller'
 import { SendError, sendContent } from './sender'
 import { MemoryLedger, makeContext } from './test-chain'
-import { STALE_WINDOW_MS } from './util'
+import { STALE_WINDOW_MS, hexId } from './util'
 
 const DAVE_ID = Uint8Array.from({ length: 32 }, () => 0xdd)
 const DAVE_PRIV = Uint8Array.from({ length: 32 }, (_, i) => 0x20 + i)
@@ -178,7 +179,7 @@ describe('membership changes', () => {
     await removeMember(alice.ctx, conv, CAROL_ID)
     ledger.tick()
     // Neither Carol nor one of Alice's devices has seen the keyring yet; both write on base 0 after it.
-    carolGroup.appliedAt = carol.ctx.clock()
+    markApplied(carol.ctx, carolGroup)
     await say(carol.ctx, carolGroup, 'after removal')
     if (!base0) throw new Error('no stream')
     const { tag, body } = await encryptMessage({ streamKey: base0.key, senderId: ALICE_ID, w: weekOf(ledger.time), j: 0 }, { prev: null, content: { type: 'text', text: 'owner, old base' } })
@@ -414,6 +415,138 @@ describe('joining is saved at once (§5.5)', () => {
   })
 })
 
+describe('follow-up review regressions', () => {
+  it('adopts a lost keyring that lands late during the rebuild (40105), and writes the roster under it', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    // Both broadcasts of the first keyring time out with nothing visible. The first lands just as the
+    // owner loop rebuilds, so the rebuilt keyring's create is refused 40105.
+    let lost: Uint8Array | null = null
+    let calls = 0
+    alice.chain.hook = (method, args) => {
+      if (method !== 'createGroupDoc') return null
+      calls++
+      if (calls <= 2) {
+        lost = args[1] as Uint8Array
+        return { ok: true, id: 'uncertain', confirmed: false }
+      }
+      if (calls === 3 && lost) {
+        const time = ledger.tick()
+        ledger.groupDocs.push({ id: ledger.id(), ownerId: ALICE_ID, createdAt: time, updatedAt: time, handle: args[0] as Uint8Array, blob: lost, revision: 1 })
+        return { ok: false, failure: 'duplicate', error: 'duplicate unique properties code=40105' }
+      }
+      return null
+    }
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    alice.chain.hook = null
+    expect(calls).toBe(3)
+    const keyrings = ledger.groupDocs.filter((d) => bytesEqual(d.handle, keyringHandle(conv.gid, 1)))
+    expect(keyrings).toHaveLength(1)
+    expect(lost && bytesEqual(keyrings[0].blob, lost)).toBe(true)
+    // The roster went out under the late keyring's key: Bob reads the new base without Carol.
+    expect(currentEpoch(conv)).toEqual({ b: 1, r: 0 })
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    expect(currentEpoch(bobGroup)).toEqual({ b: 1, r: 0 })
+    expect(bobGroup.lastRoster && has(bobGroup.lastRoster.members, CAROL_ID)).toBe(false)
+  })
+
+  it('refuses a send right after load when the first group apply failed (follow-up #1)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await pollOnce(bob.ctx)
+    // Bob reloads the page: the monotonic clock starts near 0, and the first group query fails.
+    const reloaded = makeContext(ledger, BOB_ID, BOB_PRIV)
+    reloaded.ctx.clock = () => 5
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    reloaded.chain.groupDocs = async () => {
+      throw new Error('DAPI timeout')
+    }
+    const before = ledger.messages.length
+    await expect(say(reloaded.ctx, theGroup(reloaded.ctx, ALICE_ID, conv.gid), 'x')).rejects.toThrow('Could not check the group')
+    expect(ledger.messages).toHaveLength(before)
+  })
+
+  it('refuses a send when the monotonic clock paused (system sleep) but wall time moved on (follow-up #2)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    let local = 1_000
+    let wall = 1_790_000_000_000
+    bob.ctx.clock = () => local
+    bob.ctx.wallClock = () => wall
+    await pollOnce(bob.ctx)
+    bob.chain.groupDocs = async () => {
+      throw new Error('DAPI timeout')
+    }
+    wall += 60_000
+    const before = ledger.messages.length
+    await expect(say(bob.ctx, theGroup(bob.ctx, ALICE_ID, conv.gid), 'x')).rejects.toThrow('Could not check the group')
+    expect(ledger.messages).toHaveLength(before)
+    // And the other way round: wall time stuck (or set back), the monotonic clock moved on.
+    wall -= 3_600_000
+    local += 60_000
+    await expect(say(bob.ctx, theGroup(bob.ctx, ALICE_ID, conv.gid), 'x')).rejects.toThrow('Could not check the group')
+    expect(ledger.messages).toHaveLength(before)
+  })
+
+  it('refuses a send when a newer keyring cannot be checked because the owner key lookup failed (follow-up #3)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    // Keyring 1 lands but the roster replace fails: the roster still opens on base 0 and lists Carol.
+    alice.chain.hook = (method) => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'network' } : null)
+    await expect(removeMember(alice.ctx, conv, CAROL_ID)).rejects.toThrow('network')
+    alice.chain.hook = null
+    const reloaded = makeContext(ledger, BOB_ID, BOB_PRIV)
+    reloaded.chain.encryptionKey = async () => {
+      throw new Error('DAPI timeout')
+    }
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+    const before = ledger.messages.length
+    await expect(say(reloaded.ctx, g, 'secret')).rejects.toThrow('Could not check the group')
+    expect(ledger.messages).toHaveLength(before)
+    expect(g.removed).toBe(false)
+  })
+
+  it('keeps a re-add grant pending when the anchor check cannot tell, and applies it later (follow-up #4)', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await addMember(alice.ctx, conv, CAROL_ID)
+    const reloaded = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+    await applyGroups(reloaded.ctx, [g])
+    expect(g.removed).toBe(true)
+    await pollStreams(reloaded.ctx)
+    const readd = () => Array.from(reloaded.ctx.pendingGrants.values()).some((p) => p.b === 1)
+    expect(readd()).toBe(true)
+    // The owner key lookup fails while the grant is checked: nothing can be concluded yet.
+    const lookup = reloaded.chain.encryptionKey.bind(reloaded.chain)
+    reloaded.ctx.peerKeys.delete(hexId(ALICE_ID))
+    reloaded.chain.encryptionKey = async () => {
+      throw new Error('DAPI timeout')
+    }
+    await processGrants(reloaded.ctx)
+    expect(readd()).toBe(true)
+    expect(reloaded.ctx.store.groups()[0].earliestEpoch).toEqual({ b: 0, r: 0 })
+    // The lookup recovers: the re-add key replaces the cut-off anchor.
+    reloaded.chain.encryptionKey = lookup
+    await processGrants(reloaded.ctx)
+    expect(readd()).toBe(false)
+    expect(reloaded.ctx.store.groups()[0].earliestEpoch).toEqual({ b: 1, r: 1 })
+    expect(g.removed).toBe(false)
+  })
+})
+
 describe('review regressions', () => {
   it('reads back a rebroadcast refused as "other" and adopts the first broadcast that landed (validator nit)', async () => {
     const { ledger, alice } = world()
@@ -545,21 +678,6 @@ describe('review regressions', () => {
     const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
     expect(currentEpoch(bobGroup)).toEqual({ b: 1, r: 0 })
     expect(bobGroup.lastRoster && has(bobGroup.lastRoster.members, CAROL_ID)).toBe(false)
-  })
-
-  it('lets the on-chain keyring replace a losing local key for its base (validator #1)', async () => {
-    const { ledger, alice } = world()
-    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
-    const tablet = makeContext(ledger, ALICE_ID, ALICE_PRIV)
-    await tablet.ctx.store.load()
-    await attachSaved(tablet.ctx)
-    const tabletConv = theGroup(tablet.ctx, ALICE_ID, conv.gid)
-    await removeMember(tablet.ctx, tabletConv, CAROL_ID)
-    // The phone still holds the key of a keyring 1 that lost the race.
-    conv.keys.set({ b: 1, r: 0 }, new Uint8Array(32).fill(7))
-    await applyGroups(alice.ctx, [conv])
-    expect(conv.keys.get({ b: 1, r: 0 })).toEqual(tabletConv.keys.get({ b: 1, r: 0 }))
-    expect(conv.lastRoster && has(conv.lastRoster.members, CAROL_ID)).toBe(false)
   })
 
   it('measures group freshness on the local clock, not the chain block time (validator #3)', async () => {
