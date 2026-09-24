@@ -395,12 +395,15 @@ export function isActionFeeAgreementError(error: unknown): boolean {
  * **40139** `DocumentActionFeeModeratorsShareMismatchError` (4.2.0-beta.4,
  * platform#4971): on an ELECTED contract the moderators part of an action fee
  * is the seated charter's share of the declared amount, and the agreement named
- * something else — or a discount while no charter is seated. Like 40133, the
- * client priced the agreement from a stale picture of the contract.
+ * something else — or a discount while no charter is seated. Drive only
+ * checks the share when the agreement offers LESS than the declared amount;
+ * Yappr always agrees to the full declared moderators fee
+ * (`actionFeeAgreementOptions`), which is accepted with or without a seated
+ * charter, so this means a discount was attempted.
  * Message: "Document <action> of type <t> declares a moderators fee of <n>
  * credits; the transition agreed to <m>, which is not ...".
  */
-function isModeratorsShareMismatchError(error: unknown): boolean {
+export function isModeratorsShareMismatchError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
   return (
     /documentactionfeemoderatorssharemismatch/i.test(msg) ||
@@ -684,6 +687,11 @@ export function categorizeError(error: unknown): string {
   }
   if (isGasPayerError(error)) {
     return 'This action can\'t be paid for right now. Nothing was charged — try again later.'
+  }
+  if (isModeratorsShareMismatchError(error)) {
+    // Not a stale client, so not "reload": the discounted moderators share did
+    // not match what the seated charter takes. Paying the full fee always passes.
+    return 'The moderator fee share didn\'t match what the seated moderation charter takes. Nothing was posted — try again at the full fee.'
   }
   if (isFeeMultiplierNotToleratedError(error)) {
     return 'The network\'s fee level changed while this was being sent. Nothing was posted — try again.'

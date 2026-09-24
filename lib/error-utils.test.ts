@@ -12,6 +12,7 @@ import {
   isActionFeeAgreementError,
   isDocumentPropertyRuleError,
   isModerationNotYetSeatedError,
+  isModeratorsShareMismatchError,
   isPropertyMaxBytesError,
   isReferenceNotFoundError,
   isReferenceRequirementError,
@@ -248,7 +249,7 @@ describe('4.2.0-beta.4 rejections', () => {
     ['40138 ReferencedDocumentListInvalidError', isReferenceRequirementError,
       'invalid refersTo listElement into inList tags declared at tag: not a list', /report this/i],
     ['40139 DocumentActionFeeModeratorsShareMismatchError', isActionFeeAgreementError,
-      "Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 40000000, which is not the seated moderation charter's 60% share of it", /out of date/i],
+      "Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 40000000, which is not the seated moderation charter's 60% share of it", /moderator fee share didn't match .*seated moderation charter/i],
     ['40307 by labelled code', isPermanentProtocol14Error, 'rejected: code=40307', /report this/i],
     ['41200 ContractModeratedDocumentTypeNotYetUsableError', isModerationNotYetSeatedError,
       'Documents of type post on contract 8Xv3 can not be used until a moderation team is seated', /elects its moderation team/i],
@@ -259,6 +260,12 @@ describe('4.2.0-beta.4 rejections', () => {
     expect(matcher(error)).toBe(true)
     expect(isPermanentProtocol14Error(error)).toBe(true)
     expect(categorizeError(error)).toMatch(expected)
+  })
+
+  it('never tells a 40139 to reload: it is a share mismatch, not a stale client', () => {
+    const error = new Error('Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 0, which is not discounted: the contract has no seated moderation charter')
+    expect(isModeratorsShareMismatchError(error)).toBe(true)
+    expect(categorizeError(error)).not.toMatch(/reload/i)
   })
 
   it('does not read an unmet reference requirement as a dead target', () => {
