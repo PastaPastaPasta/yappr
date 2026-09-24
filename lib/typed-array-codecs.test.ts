@@ -87,3 +87,15 @@ describe('typed-array codecs', () => {
     expect(uniqueStrings([' a', 'b', 'a', '', 'b '])).toEqual(['a', 'b'])
   })
 })
+
+describe('list limits (beta.4 schema bounds)', () => {
+  it('accepts lists within bounds and names the first breach', async () => {
+    const { LIST_LIMITS, ListLimitError, assertListLimits, listLimitProblem } = await import('./typed-array-codecs')
+    expect(listLimitProblem(['a', 'b'], LIST_LIMITS.postLabels)).toBeNull()
+    expect(listLimitProblem(Array.from({ length: 17 }, (_, i) => `l${i}`), LIST_LIMITS.postLabels)).toMatch(/At most 16 post labels/)
+    expect(listLimitProblem(['x'.repeat(41)], LIST_LIMITS.blogLabels)).toMatch(/at most 40 characters/)
+    expect(listLimitProblem(['https://a.png', 'ipfs://bafy'], LIST_LIMITS.storeImageUrls)).toBeNull()
+    expect(listLimitProblem(['ftp://a.png'], LIST_LIMITS.storeImageUrls)).toMatch(/https:\/\//)
+    expect(() => assertListLimits(['x'.repeat(65)], LIST_LIMITS.storeTags)).toThrow(ListLimitError)
+  })
+})

@@ -76,6 +76,22 @@ describe('the replace merge re-encodes parsed fields (docs/SOCIAL_V9.md TODO 20)
   });
 });
 
+describe('storefront v4 list limits', () => {
+  it('refuses an image URL the v4 pattern rejects before anything is written', async () => {
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v4');
+    vi.resetModules();
+    try {
+      const { storeItemService: v4Service } = await import('./store-item-service');
+      await expect(v4Service.updateItem('item', 'owner', storeId, { imageUrls: ['ftp://example.com/a.png'] }))
+        .rejects.toThrow(/https:\/\//);
+      expect(updateDocument).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+});
+
 describe('complete store product list', () => {
   it('includes products beyond the first 100 in creation order', async () => {
     query.mockResolvedValueOnce(records.slice(0, 100)).mockResolvedValueOnce(records.slice(100));

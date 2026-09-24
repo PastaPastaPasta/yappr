@@ -112,6 +112,18 @@ describe('profile v2 typed arrays (docs/SOCIAL_V9.md)', () => {
     }
   });
 
+  it('refuses a social link over 256 characters INCLUDING its platform prefix, before writing', async () => {
+    vi.stubEnv('NEXT_PUBLIC_PROFILE_TOPOLOGY', 'v2');
+    try {
+      // 250-char handle + "mastodon:" prefix = 259 > 256.
+      await expect(unifiedProfileService.updateProfile(ownerId, { socialLinks: [{ platform: 'mastodon', handle: 'h'.repeat(250) }] }))
+        .rejects.toThrow(/at most 256 characters/);
+      expect(updateDocument).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('reads a v2 document stored as lists', async () => {
     get.mockResolvedValueOnce({ ...raw, paymentUris: ['dash:listed'], socialLinks: ['mastodon:@a@host.social'] });
     const user = await unifiedProfileService.get(documentId);

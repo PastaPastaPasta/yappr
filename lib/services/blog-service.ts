@@ -66,7 +66,7 @@ class BlogService extends BaseDocumentService<Blog> {
       fields.themeConfig = serializeThemeConfig(fields.themeConfig as BlogThemeConfig)
     }
     // The app models labels as CSV; store them as the configured cut does.
-    if ('labels' in fields) fields.labels = storedLabels(fields.labels)
+    if ('labels' in fields) fields.labels = storedLabels(fields.labels, 'blog')
     return fields
   }
 
@@ -95,7 +95,7 @@ class BlogService extends BaseDocumentService<Blog> {
       result.themeConfig = serializeThemeConfig(result.themeConfig as BlogThemeConfig)
     }
     // An explicit `undefined` clears labels during the replace merge; keep it.
-    if ('labels' in result && result.labels !== undefined) result.labels = storedLabels(result.labels)
+    if ('labels' in result && result.labels !== undefined) result.labels = storedLabels(result.labels, 'blog')
     return result
   }
 

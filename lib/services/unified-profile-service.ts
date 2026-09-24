@@ -3,7 +3,7 @@ import { BaseDocumentService } from './document-service';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
 import { YAPPR_PROFILE_CONTRACT_ID, profileArraysAreTyped } from '../constants';
-import { decodePaymentUriList, decodeSocialLinkList, encodePaymentUriList, encodeSocialLinkList } from '../typed-array-codecs';
+import { LIST_LIMITS, assertListLimits, decodePaymentUriList, decodeSocialLinkList, encodePaymentUriList, encodeSocialLinkList, uniqueStrings } from '../typed-array-codecs';
 import { User, ParsedPaymentUri, SocialLink } from '../../types';
 import { generateAvatarDataUri } from './avatar-generator';
 import { documentToPlainObject } from './sdk-helpers';
@@ -465,9 +465,16 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   }
 
 
-  /** Payment URIs as the configured profile cut stores them (a list on v2, JSON on v1). */
+  /**
+   * Payment URIs as the configured profile cut stores them (a list on v2, JSON
+   * on v1). Profile v2 bounds the list (16 URIs of at most 512 characters,
+   * scheme:address) and refuses one past that after signing, so it throws a
+   * {@link ListLimitError} with a user-facing message first.
+   */
   encodePaymentUris(uris: string[]): string | string[] {
-    return encodePaymentUriList(uris, profileArraysAreTyped());
+    const typed = profileArraysAreTyped();
+    if (typed) assertListLimits(uniqueStrings(uris), LIST_LIMITS.profilePaymentUris);
+    return encodePaymentUriList(uris, typed);
   }
 
   // ==================== Social Links Helpers ====================
@@ -481,9 +488,16 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     return decodeSocialLinkList(stored);
   }
 
-  /** Social links as the configured profile cut stores them. */
+  /**
+   * Social links as the configured profile cut stores them. On profile v2 each
+   * is ONE string "platform:handle" of at most 256 characters, the platform
+   * prefix included, and at most 16 of them; checked before signing.
+   */
   encodeSocialLinks(links: SocialLink[]): string | string[] {
-    return encodeSocialLinkList(links, profileArraysAreTyped());
+    const typed = profileArraysAreTyped();
+    const encoded = encodeSocialLinkList(links, typed);
+    if (typed) assertListLimits(encoded as string[], LIST_LIMITS.profileSocialLinks);
+    return encoded;
   }
 
   // ==================== Document Transformation ====================

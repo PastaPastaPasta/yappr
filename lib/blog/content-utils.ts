@@ -1,5 +1,5 @@
 import { blogLabelsAreTyped } from '@/lib/constants'
-import { decodeLabelList, encodeLabelList } from '@/lib/typed-array-codecs'
+import { LIST_LIMITS, assertListLimits, decodeLabelList, encodeLabelList } from '@/lib/typed-array-codecs'
 
 /** Zero-width space used to flag a summary as hidden from the post view. */
 export const SUMMARY_HIDDEN_PREFIX = '\u200B'
@@ -107,10 +107,22 @@ export function labelsCsv(stored: unknown): string | undefined {
   return labels.length > 0 ? labels.join(',') : undefined
 }
 
-/** Labels (CSV or a list) as the configured blog cut stores them; undefined when there are none. */
-export function storedLabels(labels: unknown): string | string[] | undefined {
-  return encodeLabelList(decodeLabelList(labels), blogLabelsAreTyped())
+/**
+ * Labels (CSV or a list) as the configured blog cut stores them; undefined
+ * when there are none. On blog v4 the contract caps the list (64 on a blog,
+ * 16 on a post, 40 characters each) and a longer one is refused after
+ * signing, so it throws a {@link ListLimitError} with a user-facing message
+ * first. v1–v3 keep their own byte cap and are not re-checked here.
+ */
+export function storedLabels(labels: unknown, of: 'blog' | 'post'): string | string[] | undefined {
+  const list = decodeLabelList(labels)
+  const typed = blogLabelsAreTyped()
+  if (typed) assertListLimits(list, of === 'blog' ? LIST_LIMITS.blogLabels : LIST_LIMITS.postLabels)
+  return encodeLabelList(list, typed)
 }
+
+/** The v4 caps a UI should hold labels to (it also holds them on older cuts, which is harmless). */
+export const LABEL_LIMITS = { blog: LIST_LIMITS.blogLabels.maxItems, post: LIST_LIMITS.postLabels.maxItems, length: LIST_LIMITS.postLabels.maxLength } as const
 
 export function labelsToCsv(items: string[]): string {
   return Array.from(new Set(items.map((item) => item.trim()).filter(Boolean))).join(',')

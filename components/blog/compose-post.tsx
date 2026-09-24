@@ -12,7 +12,8 @@ import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { blogPostService, blogService } from '@/lib/services'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { validateHttpUrl } from '@/lib/utils'
-import { labelsToCsv, parseLabels, decodeSummary, encodeSummary } from '@/lib/blog/content-utils'
+import { LABEL_LIMITS, labelsToCsv, parseLabels, decodeSummary, encodeSummary } from '@/lib/blog/content-utils'
+import { ListLimitError } from '@/lib/typed-array-codecs'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import { useFileDrop } from '@/hooks/use-file-drop'
 import type { Blog, BlogPost } from '@/lib/types'
@@ -201,6 +202,10 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       setLabels(labelsToCsv(selectedLabels.filter((item) => item !== label)))
       return
     }
+    if (selectedLabels.length >= LABEL_LIMITS.post) {
+      toast.error(`A post can have at most ${LABEL_LIMITS.post} labels.`)
+      return
+    }
     setLabels(labelsToCsv([...selectedLabels, label]))
   }
 
@@ -209,6 +214,10 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     if (!trimmed) return
     if (selectedLabels.includes(trimmed)) {
       setCustomLabel('')
+      return
+    }
+    if (selectedLabels.length >= LABEL_LIMITS.post) {
+      toast.error(`A post can have at most ${LABEL_LIMITS.post} labels.`)
       return
     }
     setLabels(labelsToCsv([...selectedLabels, trimmed]))
@@ -279,15 +288,23 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       if (postLabels.length > 0) {
         const existingBlogLabels = parseLabels(blog.labels)
         const newLabels = postLabels.filter((l) => !existingBlogLabels.includes(l))
-        if (newLabels.length > 0) {
-          const allLabels = labelsToCsv([...existingBlogLabels, ...newLabels])
+        // The blog's taxonomy is capped too (64 on blog v4): register what fits
+        // and say what did not, instead of sending a list the contract refuses.
+        const room = Math.max(0, LABEL_LIMITS.blog - existingBlogLabels.length)
+        const registered = newLabels.slice(0, room)
+        if (registered.length < newLabels.length) {
+          toast(`The blog already has ${existingBlogLabels.length} labels; ${newLabels.length - registered.length} new label(s) were not added to its list.`)
+        }
+        if (registered.length > 0) {
+          const allLabels = labelsToCsv([...existingBlogLabels, ...registered])
           blogService.updateBlog(blog.id, user.identityId, { labels: allLabels }).catch((err) => {
             logger.warn('Failed to register new labels to blog:', err)
+            toast.error(err instanceof ListLimitError ? err.message : 'The post was saved, but its labels could not be added to the blog\'s list.')
           })
         }
       }
-    } catch {
-      toast.error(isEditing ? 'Failed to update post' : 'Failed to publish post')
+    } catch (err) {
+      toast.error(err instanceof ListLimitError ? err.message : isEditing ? 'Failed to update post' : 'Failed to publish post')
     } finally {
       setIsPublishing(false)
     }

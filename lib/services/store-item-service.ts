@@ -7,7 +7,7 @@
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped } from '../constants';
-import { decodeStringList, encodeStringList } from '../typed-array-codecs';
+import { LIST_LIMITS, type ListLimits, assertListLimits, decodeStringList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes, type DocumentWhereClause } from './sdk-helpers';
 import { parseJsonObject } from '../utils/json-parsing';
 import type {
@@ -19,8 +19,20 @@ import type {
   VariantCombination
 } from '../../types';
 
-/** A string list as the configured storefront cut stores it: a list on v4, a JSON string before. */
-const storedList = (values: readonly string[]) => encodeStringList(values, storefrontArraysAreTyped());
+/**
+ * A string list as the configured storefront cut stores it: a list on v4, a
+ * JSON string before. On v4 the contract bounds each list (tags 32 × 64 chars;
+ * image URLs 8 × 512, http(s):// or ipfs://) and refuses one past that after
+ * signing, so it throws a {@link ListLimitError} with a user-facing message
+ * first. v1–v3 keep their own string caps and are not re-checked here.
+ */
+const storedList = (values: readonly string[], limits: ListLimits) => {
+  const typed = storefrontArraysAreTyped();
+  if (typed) assertListLimits(uniqueStrings(values), limits);
+  return encodeStringList(values, typed);
+};
+const TAG_LIMITS = LIST_LIMITS.storeTags;
+const IMAGE_LIMITS = LIST_LIMITS.storeImageUrls;
 /** A stored list (either shape) as the app models it; undefined when empty or absent. */
 const listOf = (stored: unknown): string[] | undefined => {
   const values = decodeStringList(stored);
@@ -42,9 +54,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
   protected extractContentFields(doc: StoreItem): Record<string, unknown> {
     const fields = super.extractContentFields(doc);
     if (typeof fields.storeId === 'string') fields.storeId = fields.storeId ? identifierStringToDocumentBytes(fields.storeId) : undefined;
-    for (const key of ['tags', 'imageUrls'] as const) {
-      if (Array.isArray(fields[key])) fields[key] = storedList(fields[key] as string[]);
-    }
+    if (Array.isArray(fields.tags)) fields.tags = storedList(fields.tags as string[], TAG_LIMITS);
+    if (Array.isArray(fields.imageUrls)) fields.imageUrls = storedList(fields.imageUrls as string[], IMAGE_LIMITS);
     if (fields.variants && typeof fields.variants === 'object') fields.variants = JSON.stringify(fields.variants);
     return fields;
   }
@@ -213,8 +224,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (data.section) documentData.section = data.section;
     if (data.category) documentData.category = data.category;
     if (data.subcategory) documentData.subcategory = data.subcategory;
-    if (data.tags) documentData.tags = storedList(data.tags);
-    if (data.imageUrls) documentData.imageUrls = storedList(data.imageUrls);
+    if (data.tags) documentData.tags = storedList(data.tags, TAG_LIMITS);
+    if (data.imageUrls) documentData.imageUrls = storedList(data.imageUrls, IMAGE_LIMITS);
     if (data.basePrice !== undefined) documentData.basePrice = data.basePrice;
     if (data.currency) documentData.currency = data.currency;
     if (data.weight !== undefined) documentData.weight = data.weight;
@@ -266,8 +277,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (data.category !== undefined) documentData.category = data.category;
     if (data.subcategory !== undefined) documentData.subcategory = data.subcategory;
     // An empty list clears the field (the encoder answers undefined for none).
-    if (data.tags !== undefined) documentData.tags = storedList(data.tags);
-    if (data.imageUrls !== undefined) documentData.imageUrls = storedList(data.imageUrls);
+    if (data.tags !== undefined) documentData.tags = storedList(data.tags, TAG_LIMITS);
+    if (data.imageUrls !== undefined) documentData.imageUrls = storedList(data.imageUrls, IMAGE_LIMITS);
     if (data.basePrice !== undefined) documentData.basePrice = data.basePrice;
     if (data.currency !== undefined) documentData.currency = data.currency;
     if (data.weight !== undefined) documentData.weight = data.weight;

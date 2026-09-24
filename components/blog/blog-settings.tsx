@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { blogService } from '@/lib/services'
-import { labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
+import { LABEL_LIMITS, labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
+import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
 import { logger } from '@/lib/logger'
@@ -47,8 +48,8 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
 
       toast.success('Blog updated')
       onUpdated?.(updated)
-    } catch {
-      toast.error('Failed to update blog')
+    } catch (err) {
+      toast.error(err instanceof ListLimitError ? err.message : 'Failed to update blog')
     } finally {
       setIsSaving(false)
     }
@@ -69,7 +70,7 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
     } catch (err) {
       setLabels(previous)
       logger.error('Failed to add label:', err)
-      toast.error('Failed to update labels')
+      toast.error(err instanceof ListLimitError ? err.message : 'Failed to update labels')
     } finally {
       setIsSavingLabels(false)
     }
@@ -80,6 +81,10 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
     if (!trimmed) return
     if (parsedLabels.includes(trimmed)) {
       setNewLabel('')
+      return
+    }
+    if (parsedLabels.length >= LABEL_LIMITS.blog) {
+      toast.error(`A blog can have at most ${LABEL_LIMITS.blog} labels. Remove one first.`)
       return
     }
 

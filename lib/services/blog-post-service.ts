@@ -59,7 +59,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       fields.blogId = fields.blogId ? requireDocumentIdentifierBytes(fields.blogId, 'blogId') : undefined
     }
     // The app models labels as CSV; store them as the configured cut does.
-    if ('labels' in fields) fields.labels = storedLabels(fields.labels)
+    if ('labels' in fields) fields.labels = storedLabels(fields.labels, 'post')
     // Re-compress and chunk content into data0–data3 (only set chunks that exist)
     if (doc.content && Array.isArray(doc.content) && doc.content.length > 0) {
       const compressed = compressContent(doc.content)
@@ -140,7 +140,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       if (data.subtitle !== undefined) payload.subtitle = data.subtitle
       if (data.coverImage !== undefined) payload.coverImage = data.coverImage
       // Empty labels are omitted (the old compose path wrote '', which v4 refuses as a non-list).
-      const labels = storedLabels(data.labels)
+      const labels = storedLabels(data.labels, 'post')
       if (labels !== undefined) payload.labels = labels
       if (data.commentsEnabled !== undefined) payload.commentsEnabled = data.commentsEnabled
       return payload
@@ -165,7 +165,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     if (data.subtitle !== undefined) payload.subtitle = data.subtitle
     if (data.coverImage !== undefined) payload.coverImage = data.coverImage
     // An empty set clears the field (undefined), exactly as an explicit clear does.
-    if (data.labels !== undefined) payload.labels = storedLabels(data.labels)
+    if (data.labels !== undefined) payload.labels = storedLabels(data.labels, 'post')
     if (data.commentsEnabled !== undefined) payload.commentsEnabled = data.commentsEnabled
     if (data.slug !== undefined) payload.slug = data.slug
     if (data.publishedAt !== undefined) payload.publishedAt = data.publishedAt

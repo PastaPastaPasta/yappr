@@ -102,3 +102,22 @@ describe('blog v4 typed labels (docs/SOCIAL_V9.md)', () => {
     }
   })
 })
+
+describe('blog v4 label limits', () => {
+  it('refuses more than 64 blog labels before anything is written', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v4')
+    try {
+      const labels = Array.from({ length: 65 }, (_, i) => `label${i}`).join(',')
+      await expect(blogService.updateBlog(blogId, ownerId, { labels })).rejects.toThrow(/At most 64 blog labels/)
+      expect(updateDocument).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('does not apply the v4 caps on blog v3 (its own byte cap stands)', async () => {
+    const labels = Array.from({ length: 65 }, (_, i) => `l${i}`).join(',')
+    await blogService.updateBlog(blogId, ownerId, { labels })
+    expect(updateDocument.mock.calls[0][4].labels).toBe(labels)
+  })
+})

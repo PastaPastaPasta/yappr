@@ -164,3 +164,56 @@ export function encodeStringList(values: readonly string[], typed: boolean): str
   if (clean.length === 0) return undefined
   return typed ? clean : JSON.stringify(clean)
 }
+
+// ---- schema limits of the beta.4 cuts --------------------------------------------
+//
+// The typed-array bounds the new cuts declare (docs/SOCIAL_V9.md). A write past
+// one is a JSON-schema refusal (10101) after signing; checking here turns it
+// into a message the user can act on BEFORE anything is broadcast.
+
+export interface ListLimits {
+  /** What the list is, for the message ("labels", "tags", …). */
+  noun: string
+  maxItems: number
+  maxLength: number
+  /** Every element must match (e.g. image URL schemes). */
+  pattern?: RegExp
+  /** What `pattern` requires, for the message. */
+  patternHint?: string
+}
+
+export const LIST_LIMITS = {
+  blogLabels: { noun: 'blog labels', maxItems: 64, maxLength: 40 },
+  postLabels: { noun: 'post labels', maxItems: 16, maxLength: 40 },
+  storeTags: { noun: 'tags', maxItems: 32, maxLength: 64 },
+  storeImageUrls: { noun: 'image URLs', maxItems: 8, maxLength: 512, pattern: /^(https?|ipfs):\/\/.+$/, patternHint: 'start with https://, http:// or ipfs://' },
+  profilePaymentUris: { noun: 'payment addresses', maxItems: 16, maxLength: 512, pattern: /^[A-Za-z][A-Za-z0-9+.-]*:.+$/, patternHint: 'look like scheme:address' },
+  profileSocialLinks: { noun: 'social links', maxItems: 16, maxLength: 256 },
+} as const satisfies Record<string, ListLimits>
+
+/** A list the target cut would refuse; `message` is written for the user. */
+export class ListLimitError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ListLimitError'
+  }
+}
+
+/** Why `values` breaks `limits`, or null when it fits. Lengths count characters, as the contract's maxLength does. */
+export function listLimitProblem(values: readonly string[], limits: ListLimits): string | null {
+  if (values.length > limits.maxItems) return `At most ${limits.maxItems} ${limits.noun} are allowed (you have ${values.length}).`
+  const tooLong = values.find((value) => [...value].length > limits.maxLength)
+  if (tooLong !== undefined) return `Each of the ${limits.noun} can be at most ${limits.maxLength} characters ("${tooLong.slice(0, 24)}…" is longer).`
+  const pattern = limits.pattern
+  if (pattern) {
+    const bad = values.find((value) => !pattern.test(value))
+    if (bad !== undefined) return `Each of the ${limits.noun} must ${limits.patternHint ?? 'have the right format'} ("${bad.slice(0, 40)}").`
+  }
+  return null
+}
+
+/** Throws a {@link ListLimitError} when `values` breaks `limits`. */
+export function assertListLimits(values: readonly string[], limits: ListLimits): void {
+  const problem = listLimitProblem(values, limits)
+  if (problem) throw new ListLimitError(problem)
+}
