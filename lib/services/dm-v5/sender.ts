@@ -56,7 +56,11 @@ async function slotAfter(ctx: DmContext, tag: Uint8Array, body: Uint8Array): Pro
 /** Write one message of `content` on my stream. Returns what was held for it. */
 export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent): Promise<HeldMessage> {
   if (conv.kind === 'group') {
-    if (ctx.chain.now() - conv.appliedAt > GROUP_FRESHNESS_MS) await applyGroups(ctx, [conv])
+    // Never send on an old epoch: a refresh that did not reach the chain leaves the group as it
+    // was, and a member removed since could read the message. The text stays in the composer.
+    if (ctx.chain.now() - conv.appliedAt > GROUP_FRESHNESS_MS && !(await applyGroups(ctx, [conv]))) {
+      throw new SendError('Could not check the group for changes. Try again in a moment.')
+    }
     if (conv.removed || conv.ended) throw new SendError('You are no longer a member of this group.')
     if (conv.unreadable) throw new SendError('Ask the group owner to resend your keys.')
   }

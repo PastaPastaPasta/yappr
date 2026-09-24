@@ -548,6 +548,7 @@ SWITCH(g, b, r):            # new epoch: every member stream restarts at the cur
 
 SEND(c, text):
   if c is a group and its documents were last polled over 10 s ago: APPLY(c, fresh query)   # never send on an old base
+    if that query fails: refuse the send (retryable; the text stays in the composer)
   j = next free j this week on my stream (0 if new week); on a unique-index rejection, j += 1 and retry
   broadcast dmMessage{tag[curWeek, j], body(prev = my newest message in c, 0x01, text)}
   if the broadcast result is uncertain (timeout): it landed only if the tag holds exactly this body

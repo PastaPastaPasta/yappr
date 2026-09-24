@@ -143,13 +143,24 @@ async function applyOwner(ctx: DmContext, owner: IdentityId, groups: GroupConv[]
   }
 }
 
-/** Apply every group, one query round per owner (§6.3 POLL, first line). */
-export async function applyGroups(ctx: DmContext, only?: GroupConv[]): Promise<void> {
+/**
+ * Apply every group, one query round per owner (§6.3 POLL, first line).
+ * Resolves false when any owner's query failed: those groups keep their old
+ * state, which a send must not trust (§6.3 SEND).
+ */
+export async function applyGroups(ctx: DmContext, only?: GroupConv[]): Promise<boolean> {
   const groups = only ?? Array.from(ctx.convs.values()).filter((c): c is GroupConv => c.kind === 'group' && !c.ended)
   const byOwner = groupBy(groups, (g) => hexId(g.owner))
-  await Promise.all(
+  const results = await Promise.all(
     Array.from(byOwner.values()).map((list) =>
-      applyOwner(ctx, list[0].owner, list).catch((error) => logger.warn('DM v5: applying group documents failed:', error))
+      applyOwner(ctx, list[0].owner, list).then(
+        () => true,
+        (error) => {
+          logger.warn('DM v5: applying group documents failed:', error)
+          return false
+        }
+      )
     )
   )
+  return results.every(Boolean)
 }

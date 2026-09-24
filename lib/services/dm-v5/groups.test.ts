@@ -12,7 +12,7 @@ import { startedDirect } from './directs'
 import { addMember, createGroup, endGroup, leaveGroup, recoverOwnedGroups, removeMember, renameGroup, resendKeys } from './groups'
 import { pollOnce } from './loop'
 import { backfill } from './poller'
-import { sendContent } from './sender'
+import { SendError, sendContent } from './sender'
 import { MemoryLedger, makeContext } from './test-chain'
 import { STALE_WINDOW_MS } from './util'
 
@@ -413,6 +413,28 @@ describe('joining is saved at once (§5.5)', () => {
 })
 
 describe('review regressions', () => {
+  it('refuses a group send when the required freshness query fails (review #2)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    // Alice removes Carol; Bob's last apply is older than the freshness window and his group query now fails.
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    ledger.time += 60_000
+    const groupDocs = bob.chain.groupDocs.bind(bob.chain)
+    bob.chain.groupDocs = async () => {
+      throw new Error('DAPI timeout')
+    }
+    const before = ledger.messages.length
+    await expect(say(bob.ctx, bobGroup, 'secret')).rejects.toBeInstanceOf(SendError)
+    expect(ledger.messages).toHaveLength(before)
+    expect(currentEpoch(bobGroup)).toEqual({ b: 0, r: 0 })
+    // Once the query works again the same send goes out, on the new base.
+    bob.chain.groupDocs = groupDocs
+    await say(bob.ctx, bobGroup, 'secret')
+    expect(currentEpoch(bobGroup)).toEqual({ b: 1, r: 0 })
+  })
+
   it('does not remove a re-added member because of the leave they sent before', async () => {
     const { alice, carol } = world()
     const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
