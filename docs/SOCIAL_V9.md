@@ -307,7 +307,7 @@ None of this is done here. File:line refers to `origin/staging` at `2cb7fdbe`, r
    instead. The owner stops being a moderator after seating (41101), and the
    moderator menu items must follow.
 5. `getStanding` (:172) and `listEntries` (:189) hard-code
-   `['banlist','suspensions']`. Use `moderationLists()` and add `'warnings'`.
+   `['banlist','suspensions']`. Use `moderationListsKept()` (already on staging via #570).
 6. Add `warnUser` and `clearUserWarnings` wrappers, a warnings panel (count
    per identity, reasons, cited documents), and a banner that shows the viewer
    their own warnings.

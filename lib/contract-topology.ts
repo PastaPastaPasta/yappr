@@ -432,7 +432,7 @@ const V8_DESCRIPTOR: ContractTopologyDescriptor = {
  * - **Elected moderation** ({@link electedModeration}): the owner moderates
  *   until masternodes seat a team, which then holds ban/suspend/warn/delete on
  *   post and reply and the owner is protected from it.
- * - **Warnings** ({@link warningsAreKept}): a third moderation list.
+ * - **Warnings** ({@link contractKeepsWarnings}): a third moderation list.
  * - **distinctFrom** ({@link ownerDistinctProperties}): self-follow,
  *   self-block, self-request and self-grant are refused by consensus (10419).
  * - **Private-feed gates** ({@link privateFeedWritesAreGated}): a grant or
@@ -949,6 +949,33 @@ export function clearableReferencesFor(docType: string): readonly string[] {
     .map(([name]) => name)
 }
 
+/** The moderation lists a contract can keep (`config.moderation`, protocol 14). */
+export type ModerationList = 'banlist' | 'suspensions' | 'warnings'
+
+
+/**
+ * The lists the configured contract keeps, as its `config.moderation`
+ * declares them: v8 keeps a banlist and a suspension list; a cut that sets
+ * `warnings: true` (Platform 4.2.0-beta.4, platform#4872) keeps a warning list
+ * too. Reading or writing a list the contract does not keep is refused, so
+ * every moderation read and write names only these. Empty off a moderated
+ * topology.
+ */
+export function moderationListsKept(): readonly ModerationList[] {
+  if (!contractIsModerated()) return []
+  const declared = (atLeast('v9') ? socialContractV9.config : socialContractV8.config) as {
+    moderation?: Partial<Record<ModerationList, boolean>>
+  }
+  const moderation = declared.moderation
+  if (!moderation) return []
+  return (['banlist', 'suspensions', 'warnings'] as const).filter((list) => moderation[list] === true)
+}
+
+/** True when the configured contract keeps a warning list (warn / clear warnings). */
+export function contractKeepsWarnings(): boolean {
+  return moderationListsKept().includes('warnings')
+}
+
 /** The document types the contract's moderators may delete (v8: post, reply). */
 export function moderatorDeletableTypes(): readonly string[] {
   if (!contractIsModerated()) return []
@@ -1010,9 +1037,6 @@ export function starterGrantAmount(): bigint | null {
 // grant byte for byte (build-v9-contract.py asserts it), so the v8 helpers
 // above stay correct on v9.
 
-/** A list a moderated contract keeps; the `lists` of a moderation status query. */
-export type ModerationList = 'banlist' | 'suspensions' | 'warnings'
-
 /** What an elected team may do on one document type. */
 export type ModerationAbility = 'deleteDocuments' | 'ban' | 'suspend' | 'warn'
 
@@ -1043,9 +1067,6 @@ interface V9DocumentSchema {
 
 const V9_SCHEMAS = socialContractV9.documentSchemas as unknown as Record<string, V9DocumentSchema>
 const V9_MODERATION = socialContractV9.config.moderation as {
-  banlist: boolean
-  suspensions: boolean
-  warnings: boolean
   moderators: {
     joinWindow: number
     voteWindow: number
@@ -1056,21 +1077,6 @@ const V9_MODERATION = socialContractV9.config.moderation as {
     interim: { $type: ElectedModerationDeclaration['interim'] }
     ownerProtected?: boolean
   }
-}
-
-/**
- * The lists the configured contract keeps, in the order a status query names
- * them: none before v8, banlist + suspensions on v8, all three from v9.
- */
-export function moderationLists(): readonly ModerationList[] {
-  if (!contractIsModerated()) return []
-  if (!atLeast('v9')) return ['banlist', 'suspensions']
-  return (['banlist', 'suspensions', 'warnings'] as const).filter((list) => V9_MODERATION[list])
-}
-
-/** True when the contract keeps a warning list (v9): warn / clearWarnings are answerable. */
-export function warningsAreKept(): boolean {
-  return moderationLists().includes('warnings')
 }
 
 /**

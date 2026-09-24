@@ -1,0 +1,416 @@
+import { describe, expect, it, vi } from 'vitest'
+import { bytesEqual } from '@/lib/bytes'
+import { createInvite } from '@/lib/dm/invite'
+import { weekOf } from '@/lib/dm/kdf'
+import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, BOB_PUB, CAROL_ID, CAROL_PRIV } from '@/lib/dm/test-fixtures'
+import type { IdentityId } from '@/lib/dm/types'
+import { encodeSelfState, selfStateFits, selfStateKey } from '@/lib/dm/self-state'
+import { sealPadded } from '@/lib/dm/seal'
+import { SELF_STATE_CLASSES, splitFields } from '@/lib/dm/padding'
+import { deriveSelfRoot, deriveStateKey } from '@/lib/dm/keys'
+import { directConv } from './context'
+import { scanInvites } from './invites'
+import { SelfStateStore } from './self-state-store'
+import { MemoryChain, MemoryLedger, makeContext } from './test-chain'
+
+/** A distinct 32-byte id per n (n < 65536). */
+const peer = (n: number): IdentityId => Uint8Array.from({ length: 32 }, (_, i) => (i === 0 ? 0x10 : i === 1 ? n >> 8 : i === 2 ? n & 0xff : i))
+const direct = (id: IdentityId, readAt = 0) => ({ peer: id, since: 1, readAt, hiddenAt: 0 })
+
+describe('self-state store', () => {
+  it('saves, then merges and retries when another device saved first (40106)', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const laptop = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    phone.ctx.store.addDirect(direct(BOB_ID, 10))
+    expect(await phone.ctx.store.flush()).toBe(true)
+
+    await laptop.ctx.store.load()
+    phone.ctx.store.addDirect(direct(CAROL_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+
+    // The laptop is still on revision 1: its save is refused as stale, it merges, and saves again.
+    let stale = 0
+    const replace = laptop.chain.replaceSelfState.bind(laptop.chain)
+    laptop.chain.replaceSelfState = async (ref, fields) => {
+      const outcome = await replace(ref, fields)
+      if (!outcome.ok && outcome.failure === 'stale') stale++
+      return outcome
+    }
+    const bob = laptop.ctx.store.findDirect(BOB_ID)
+    if (!bob) throw new Error('no entry')
+    laptop.ctx.store.touch(bob, { readAt: 99 })
+    expect(await laptop.ctx.store.flush()).toBe(true)
+    expect(stale).toBe(1)
+
+    const fresh = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await fresh.ctx.store.load()
+    expect(fresh.ctx.store.directs().map((d) => d.peer)).toEqual([BOB_ID, CAROL_ID])
+    expect(fresh.ctx.store.findDirect(BOB_ID)?.readAt).toBe(99)
+  })
+
+  it('re-reads after a replace whose result is uncertain, and saves again if it did not land (DAPI timeout)', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const laptop = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    phone.ctx.store.addDirect(direct(BOB_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    await laptop.ctx.store.load()
+
+    // Both devices save on revision 1 at once. The phone wins; the laptop's broadcast times out
+    // (its transition is refused 40106 on chain, but the client only sees the timeout).
+    phone.ctx.store.addDirect(direct(CAROL_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    laptop.ctx.store.setBlocked(BOB_ID, true, ledger.time)
+    let timedOut = false
+    laptop.chain.hook = (method) => {
+      if (method !== 'replaceSelfState' || timedOut) return null
+      timedOut = true
+      return { ok: true, id: 'uncertain', confirmed: false }
+    }
+    expect(await laptop.ctx.store.flush()).toBe(true)
+
+    const fresh = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await fresh.ctx.store.load()
+    expect(fresh.ctx.store.directs().map((d) => d.peer)).toEqual([BOB_ID, CAROL_ID])
+    expect(fresh.ctx.store.isBlocked(BOB_ID)).toBe(true)
+  })
+
+  it('re-arms the coalesced save after a save fails, so a join is not left for page close', async () => {
+    const ledger = new MemoryLedger()
+    const timers = new Map<number, () => void>()
+    let nextHandle = 0
+    const scheduler = {
+      setTimeout: (fn: () => void) => (timers.set(++nextHandle, fn), nextHandle),
+      clearTimeout: (handle: unknown) => void timers.delete(handle as number),
+    }
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const store = new SelfStateStore(phone.chain, deriveStateKey(deriveSelfRoot(ALICE_PRIV)), scheduler)
+    await store.load()
+    store.addDirect(direct(BOB_ID))
+    // The first save is refused outright (and the reads that follow it throw).
+    phone.chain.hook = (method) => (method === 'createSelfState' ? { ok: false, failure: 'other', error: 'node unavailable' } : null)
+    expect(await store.flush()).toBe(false)
+    expect(store.isDirty).toBe(true)
+    // flush() cancelled the edit's timer; the failure armed a new one, which saves once the chain recovers.
+    phone.chain.hook = null
+    expect(timers.size).toBe(1)
+    Array.from(timers.values())[0]()
+    await vi.waitFor(() => expect(ledger.selfStates).toHaveLength(1))
+    expect(store.isDirty).toBe(false)
+  })
+
+  it('keeps an uncertain replace that is not visible yet dirty and schedules another save', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    phone.ctx.store.addDirect(direct(BOB_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    // The broadcast times out and nothing is visible on chain yet.
+    phone.chain.hook = (method) => (method === 'replaceSelfState' ? { ok: true, id: 'uncertain', confirmed: false } : null)
+    phone.ctx.store.setBlocked(CAROL_ID, true, ledger.time)
+    expect(await phone.ctx.store.flush()).toBe(false)
+    expect(phone.ctx.store.isDirty).toBe(true)
+    // The next save goes through once the chain answers normally.
+    phone.chain.hook = null
+    expect(await phone.ctx.store.flush()).toBe(true)
+    const fresh = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await fresh.ctx.store.load()
+    expect(fresh.ctx.store.isBlocked(CAROL_ID)).toBe(true)
+  })
+
+  it('does not save twice when an uncertain replace did land', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    phone.ctx.store.addDirect(direct(BOB_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    phone.chain.unconfirmed = 1
+    phone.ctx.store.setBlocked(CAROL_ID, true, ledger.time)
+    expect(await phone.ctx.store.flush()).toBe(true)
+    expect(ledger.selfStates[0].revision).toBe(2)
+    // The next edit builds on the landed revision (no 40106, no merge round).
+    phone.ctx.store.setBlocked(CAROL_ID, false, ledger.time + 1)
+    expect(await phone.ctx.store.flush()).toBe(true)
+    expect(ledger.selfStates[0].revision).toBe(3)
+  })
+
+  it('reads back an uncertain initial create and merges when another device created first (review #4)', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const laptop = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await laptop.ctx.store.load()
+    phone.ctx.store.addDirect(direct(BOB_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    // The laptop's create loses to the phone's on chain (40105) but the client only sees a timeout.
+    laptop.ctx.store.addDirect(direct(CAROL_ID))
+    let timedOut = false
+    laptop.chain.hook = (method) => {
+      if (method !== 'createSelfState' || timedOut) return null
+      timedOut = true
+      return { ok: true, id: 'uncertain', confirmed: false }
+    }
+    expect(await laptop.ctx.store.flush()).toBe(true)
+    const fresh = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await fresh.ctx.store.load()
+    expect(fresh.ctx.store.directs().map((d) => d.peer)).toEqual([BOB_ID, CAROL_ID])
+  })
+
+  it('keeps an uncertain initial create dirty while nothing is visible, and adopts it once it lands', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    phone.ctx.store.addDirect(direct(BOB_ID))
+    phone.chain.hook = (method) => (method === 'createSelfState' ? { ok: true, id: 'uncertain', confirmed: false } : null)
+    expect(await phone.ctx.store.flush()).toBe(false)
+    expect(phone.ctx.store.isDirty).toBe(true)
+    phone.chain.hook = null
+    phone.chain.unconfirmed = 1
+    expect(await phone.ctx.store.flush()).toBe(true)
+    // The landed create was adopted with its real id: the next edit replaces it, no second document.
+    phone.ctx.store.addDirect(direct(CAROL_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    expect(ledger.selfStates).toHaveLength(1)
+    expect(ledger.selfStates[0].revision).toBe(2)
+  })
+
+  it('refresh merges a saved state with a different document id at the same revision (review #4)', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    phone.ctx.store.addDirect(direct(BOB_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    // The document is deleted and another device creates a new one (revision 1 again).
+    ledger.selfStates = []
+    const laptop = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    laptop.ctx.store.addDirect(direct(CAROL_ID))
+    expect(await laptop.ctx.store.flush()).toBe(true)
+    expect(await phone.ctx.store.refresh()).toBe(true)
+    expect(phone.ctx.store.findDirect(CAROL_ID)).not.toBeNull()
+  })
+
+  it('merges a create race (40105 on the unique [$ownerId] index)', async () => {
+    const ledger = new MemoryLedger()
+    const a = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const b = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    a.ctx.store.addDirect(direct(BOB_ID))
+    b.ctx.store.addDirect(direct(CAROL_ID))
+    expect(await a.ctx.store.flush()).toBe(true)
+    expect(await b.ctx.store.flush()).toBe(true)
+    const check = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await check.ctx.store.load()
+    expect(check.ctx.store.directs()).toHaveLength(2)
+  })
+
+  it('coalesces edits into one save and saves nothing without a signing key', async () => {
+    const ledger = new MemoryLedger()
+    const { ctx, chain } = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    ctx.store.addDirect(direct(BOB_ID))
+    ctx.store.setBlocked(CAROL_ID, true, 5)
+    ctx.store.setRetention('90d', 6)
+    expect(ctx.store.isDirty).toBe(true)
+    chain.writable = false
+    expect(await ctx.store.flush()).toBe(false)
+    expect(ledger.selfStates).toHaveLength(0)
+    chain.writable = true
+    expect(await ctx.store.flush()).toBe(true)
+    expect(ledger.selfStates).toHaveLength(1)
+    expect(ledger.selfStates[0].revision).toBe(1)
+  })
+
+  it('keeps an unblock through a merge (newer changedAt wins)', async () => {
+    const ledger = new MemoryLedger()
+    const a = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    a.ctx.store.setBlocked(BOB_ID, true, 100)
+    await a.ctx.store.flush()
+    const b = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await b.ctx.store.load()
+    b.ctx.store.setBlocked(BOB_ID, false, 200)
+    await b.ctx.store.flush()
+    a.ctx.store.addDirect(direct(CAROL_ID))
+    await a.ctx.store.flush()
+    expect(a.ctx.store.isBlocked(BOB_ID)).toBe(false)
+  })
+
+  it('rebuilds and replaces a self-state from before this format, never treating it as newer (validator #2)', async () => {
+    const ledger = new MemoryLedger()
+    const a = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    a.ctx.store.addDirect(direct(BOB_ID))
+    await a.ctx.store.flush()
+    const saved = ledger.selfStates[0]
+    const bytes = encodeSelfState(a.ctx.store.state)
+    bytes[0] = 1
+    const [blob] = splitFields(await sealPadded(selfStateKey(deriveStateKey(deriveSelfRoot(ALICE_PRIV))), bytes, SELF_STATE_CLASSES))
+    saved.fields = { blob, blob2: null, blob3: null }
+    const reloaded = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    expect(await reloaded.ctx.store.load()).toBe('unreadable')
+    reloaded.ctx.store.addDirect(direct(CAROL_ID))
+    expect(await reloaded.ctx.store.flush()).toBe(true)
+    expect(saved.revision).toBe(2)
+  })
+
+  it('never overwrites a self-state written by a newer client', async () => {
+    const ledger = new MemoryLedger()
+    const a = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    a.ctx.store.addDirect(direct(BOB_ID))
+    await a.ctx.store.flush()
+    const saved = ledger.selfStates[0]
+    const newer = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    // Re-seal the saved state with a version byte this client does not know.
+    const bytes = encodeSelfState(a.ctx.store.state)
+    bytes[0] = 3
+    const [blob] = splitFields(await sealPadded(selfStateKey(deriveStateKey(deriveSelfRoot(ALICE_PRIV))), bytes, SELF_STATE_CLASSES))
+    saved.fields = { blob, blob2: null, blob3: null }
+    expect(await newer.ctx.store.load()).toBe('newer')
+    newer.ctx.store.addDirect(direct(CAROL_ID))
+    expect(await newer.ctx.store.flush()).toBe(false)
+    expect(saved.revision).toBe(1)
+  })
+
+  it('keeps a block that does not fit on this device without breaking later saves', () => {
+    const ledger = new MemoryLedger()
+    const { ctx } = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    for (let n = 0; n < 1000 && ctx.store.addDirect(direct(peer(n))); n++);
+    ctx.store.setBlocked(BOB_ID, true, 1)
+    expect(ctx.store.isBlocked(BOB_ID)).toBe(true)
+    expect(selfStateFits(ctx.store.state)).toBe(true)
+  })
+
+  it('holds conversations past the cap in memory without saving them, and says so', () => {
+    const ledger = new MemoryLedger()
+    const { ctx } = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    let saved = 0
+    for (let n = 0; n < 400 && ctx.store.addDirect(direct(peer(n))); n++) saved++
+    expect(saved).toBeGreaterThan(250)
+    expect(saved).toBeLessThan(300)
+    expect(ctx.store.capReached).toBe(true)
+    // The one that did not fit is still listed (and polled), just not saved.
+    expect(ctx.store.directs()).toHaveLength(saved + 1)
+    const extra = ctx.store.directs()[saved]
+    expect(ctx.store.isSaved(extra)).toBe(false)
+  })
+})
+
+describe('invite scan', () => {
+  function inviteFrom(chain: MemoryChain, to: IdentityId, toPub: Uint8Array) {
+    return chain.createInvite(createInvite({ recipientPublicKey: toPub, recipientId: to, senderId: chain.me, bucketLevel: 0 }))
+  }
+
+  it('finds invites addressed to me, skips others, and does not re-read ids at the cursor', async () => {
+    const ledger = new MemoryLedger()
+    const bob = makeContext(ledger, BOB_ID, BOB_PRIV)
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const carol = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await inviteFrom(alice.chain, BOB_ID, BOB_PUB)
+    await inviteFrom(carol.chain, ALICE_ID, alice.ctx.me.encPub) // not Bob's
+
+    await scanInvites(bob.ctx)
+    expect(directConv(bob.ctx, ALICE_ID)).not.toBeNull()
+    expect(directConv(bob.ctx, CAROL_ID)).toBeNull()
+    const cursor = bob.ctx.scanCursor
+    expect(cursor).toBe(Math.max(...ledger.invites.map((i) => i.createdAt)))
+
+    // Another invite to Bob lands in the SAME block as the cursor: found, and the ones already read are skipped.
+    ledger.step = 0
+    await inviteFrom(carol.chain, BOB_ID, BOB_PUB)
+    let trials = 0
+    const scan = bob.chain.invitesSince.bind(bob.chain)
+    bob.chain.invitesSince = async (buckets, since) => {
+      const docs = await scan(buckets, since)
+      trials = docs.filter((d) => d.createdAt > since || !bob.ctx.seenAtCursor.has(d.id)).length
+      return docs
+    }
+    await scanInvites(bob.ctx)
+    expect(directConv(bob.ctx, CAROL_ID)).not.toBeNull()
+    expect(trials).toBe(1)
+    expect(bob.ctx.scanCursor).toBe(cursor)
+    expect(bob.ctx.seenAtCursor.size).toBe(2)
+  })
+
+  it('never moves the saved cursor past an invite whose conversation could not be saved', async () => {
+    const ledger = new MemoryLedger()
+    const bob = makeContext(ledger, BOB_ID, BOB_PRIV)
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    // Fill Bob's state to the cap.
+    for (let n = 0; n < 1000 && bob.ctx.store.addDirect(direct(peer(n))); n++);
+    const capped = bob.ctx.store.directs().length
+    await inviteFrom(alice.chain, BOB_ID, BOB_PUB)
+    const inviteAt = ledger.invites[0].createdAt
+    await scanInvites(bob.ctx)
+    expect(bob.ctx.store.directs()).toHaveLength(capped + 1)
+    expect(directConv(bob.ctx, ALICE_ID)).not.toBeNull()
+    expect(bob.ctx.store.state.inviteScanCursor).toBeLessThanOrEqual(inviteAt)
+  })
+
+  it('keeps the saved cursor before an invite whose conversation a merge pushed past the cap (review 5 #1)', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const carol = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    const probe = new SelfStateStore(new MemoryChain(ledger, BOB_ID), new Uint8Array(32))
+    let cap = 0
+    while (probe.addDirect(direct(peer(cap)))) cap++
+
+    // The phone saves one short of the cap.
+    const phone = makeContext(ledger, BOB_ID, BOB_PRIV)
+    for (let n = 0; n < cap - 1; n++) phone.ctx.store.addDirect(direct(peer(n)))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    // Alice invites Bob; a later invite to someone else moves every scanner's cursor past hers.
+    await inviteFrom(alice.chain, BOB_ID, BOB_PUB)
+    const aliceInviteAt = ledger.invites[0].createdAt
+    await inviteFrom(carol.chain, ALICE_ID, alice.ctx.me.encPub)
+    // The laptop fills the last slot with another conversation and a cursor past both invites.
+    const laptop = makeContext(ledger, BOB_ID, BOB_PRIV)
+    await laptop.ctx.store.load()
+    laptop.ctx.store.addDirect(direct(peer(cap + 100)))
+    laptop.ctx.store.setScanCursor(ledger.time)
+    expect(await laptop.ctx.store.flush()).toBe(true)
+
+    // The phone accepts Alice (it fits locally), then its save merges and Alice no longer fits.
+    await scanInvites(phone.ctx)
+    expect(phone.ctx.store.isSaved(phone.ctx.store.findDirect(ALICE_ID) ?? direct(ALICE_ID))).toBe(true)
+    expect(await phone.ctx.store.flush()).toBe(true)
+    expect(phone.ctx.store.capReached).toBe(true)
+    expect(phone.ctx.store.state.inviteScanCursor).toBeLessThanOrEqual(aliceInviteAt)
+
+    // After a reload the scan finds Alice again.
+    const reloaded = makeContext(ledger, BOB_ID, BOB_PRIV)
+    await reloaded.ctx.store.load()
+    reloaded.ctx.scanCursor = reloaded.ctx.store.state.inviteScanCursor
+    await scanInvites(reloaded.ctx)
+    expect(directConv(reloaded.ctx, ALICE_ID)).not.toBeNull()
+  })
+
+  it('takes the minimum cursor on merge, so no device skips an invite', async () => {
+    const ledger = new MemoryLedger()
+    const a = makeContext(ledger, BOB_ID, BOB_PRIV)
+    a.ctx.store.addDirect(direct(ALICE_ID))
+    a.ctx.store.setScanCursor(500)
+    await a.ctx.store.flush()
+    const b = makeContext(ledger, BOB_ID, BOB_PRIV)
+    b.ctx.store.addDirect(direct(CAROL_ID))
+    b.ctx.store.setScanCursor(900)
+    await b.ctx.store.flush()
+    expect(b.ctx.store.state.inviteScanCursor).toBe(500)
+  })
+
+  it('writes nothing when a scan finds no invite for me (the cursor alone never saves)', async () => {
+    const ledger = new MemoryLedger()
+    const bob = makeContext(ledger, BOB_ID, BOB_PRIV)
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const carol = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await inviteFrom(alice.chain, CAROL_ID, carol.ctx.me.encPub) // someone else's invite in bucket 1
+    await scanInvites(bob.ctx)
+    expect(bob.ctx.scanCursor).toBeGreaterThan(0)
+    expect(bob.ctx.store.isDirty).toBe(false)
+    expect(await bob.ctx.store.flush()).toBe(true)
+    expect(ledger.selfStates.filter((s) => bytesEqual(s.owner, BOB_ID))).toHaveLength(0)
+  })
+
+  it('adds an incoming 1:1 with since = the invite week, unread from the start', async () => {
+    const ledger = new MemoryLedger()
+    const bob = makeContext(ledger, BOB_ID, BOB_PRIV)
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await inviteFrom(alice.chain, BOB_ID, BOB_PUB)
+    await scanInvites(bob.ctx)
+    const entry = bob.ctx.store.findDirect(ALICE_ID)
+    expect(entry && bytesEqual(entry.peer, ALICE_ID)).toBe(true)
+    expect(entry?.since).toBe(weekOf(ledger.invites[0].createdAt))
+    expect(entry?.readAt).toBe(0)
+  })
+})

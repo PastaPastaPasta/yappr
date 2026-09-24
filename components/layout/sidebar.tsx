@@ -43,6 +43,8 @@ import { YappBalanceItem } from '@/components/token/yapp-balance-item'
 import { useAuth } from '@/contexts/auth-context'
 import { notificationService } from '@/lib/services'
 import { directMessageService } from '@/lib/services/direct-message-service'
+import { useDmV5Badge } from '@/components/messages/use-dm-engine'
+import { dmIsV5 } from '@/lib/constants'
 import { useLoginModal } from '@/hooks/use-login-modal'
 
 const getNavigation = (isLoggedIn: boolean, userId?: string) => {
@@ -80,6 +82,9 @@ export function Sidebar() {
   // Notification store - only subscribe to unread counts for badge display
   const unreadNotificationCount = useNotificationStore((s) => s.getUnreadCount())
   const unreadMessageCount = useNotificationStore((s) => s.dmUnreadCount)
+  // Under DM v5 the badge follows the v5 engine, which also runs the background poll (§6.3).
+  const dmV5 = dmIsV5()
+  useDmV5Badge(user?.identityId, dmV5)
 
   const [isHydrated, setIsHydrated] = useState(false)
   const [isRefreshingBalance, setIsRefreshingBalance] = useState(false)
@@ -165,7 +170,7 @@ export function Sidebar() {
           isInitial
             ? notificationService.getInitialNotifications(userId, readIds)
             : notificationService.pollNewNotifications(userId, store.lastFetchTimestamp, readIds),
-          directMessageService.getUnreadTotal(userId).then((total) => {
+          (dmV5 ? Promise.resolve(null) : directMessageService.getUnreadTotal(userId)).then((total) => {
             // `null` is "could not tell": hold the previous badge rather than
             // blinking it off for 30s and reading as "all caught up".
             if (!cancelled && total !== null) store.setDmUnreadCount(total)
@@ -201,7 +206,7 @@ export function Sidebar() {
       cancelled = true
       if (timeoutId) clearTimeout(timeoutId)
     }
-  }, [user?.identityId])
+  }, [user?.identityId, dmV5])
   
   // Get navigation based on auth status (use safe defaults during SSR)
   const navigation = getNavigation(isHydrated ? !!user : false, user?.identityId)

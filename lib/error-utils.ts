@@ -142,6 +142,11 @@ export function isFrozenBalanceError(error: unknown): boolean {
  * rs-dpp's `errors/consensus/state/document/referenced_*_error.rs`.
  */
 export function isReferenceNotFoundError(error: unknown): boolean {
+  // A reference whose target EXISTS but misses a declared requirement (40135,
+  // "referenced contract <c> for path <p> does not meet ...") shares the
+  // "referenced ... for path" phrasing below; it is not a dead target, and
+  // treating it as one would have tombstone repair drop a live reference.
+  if (isReferenceRequirementError(error)) return false
   const msg = extractErrorMessage(error).toLowerCase()
   return (
     msg.includes('referencedentitynotfound') ||
@@ -274,9 +279,10 @@ function hasConsensusCode(message: string, codes: readonly number[]): boolean {
  * platform#4859), where the id commits to the identity contract nonce of the
  * create transition.
  *
- * Yappr derives that id itself (`lib/document-id.ts`), so hitting this means
- * the derivation, the nonce or the entropy on the transition disagree with
- * what was signed — a code-level bug, never a user situation. Permanent: the
+ * wasm-dpp2 derives that id for Yappr (`lib/document-id.ts`, beta.4+), so
+ * hitting this means the nonce or the entropy on the transition disagree with
+ * what was signed, or the SDK and the network run different platform
+ * versions — a code-level bug, never a user situation. Permanent: the
  * same transition is refused every time, and a fresh attempt builds a fresh
  * one anyway. Drive's phrasing: "Invalid document transition id <id>, expected <id>".
  */
@@ -380,7 +386,29 @@ export function isActionFeeAgreementError(error: unknown): boolean {
     /documentactionfeeagreementnotset|documentactionfeeagreementmismatch/i.test(msg) ||
     /charges an action fee of .* and the transition carries no action fee agreement/i.test(msg) ||
     /charges an action fee of .* but the transition agreed to/i.test(msg) ||
+    isModeratorsShareMismatchError(error) ||
     hasConsensusCode(msg, [40132, 40133])
+  )
+}
+
+/**
+ * **40139** `DocumentActionFeeModeratorsShareMismatchError` (4.2.0-beta.4,
+ * platform#4971): on an ELECTED contract the moderators part of an action fee
+ * is the seated charter's share of the declared amount, and the agreement named
+ * something else — or a discount while no charter is seated. Drive only
+ * checks the share when the agreement offers LESS than the declared amount;
+ * Yappr always agrees to the full declared moderators fee
+ * (`actionFeeAgreementOptions`), which is accepted with or without a seated
+ * charter, so this means a discount was attempted.
+ * Message: "Document <action> of type <t> declares a moderators fee of <n>
+ * credits; the transition agreed to <m>, which is not ...".
+ */
+export function isModeratorsShareMismatchError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentactionfeemoderatorssharemismatch/i.test(msg) ||
+    /declares a moderators fee of .* the transition agreed to/i.test(msg) ||
+    hasConsensusCode(msg, [40139])
   )
 }
 
@@ -450,6 +478,171 @@ export function isOncePerIdentityAlreadyClaimedError(error: unknown): boolean {
 }
 
 /**
+ * **10421** `DocumentPropertyMaxBytesExceededError` (4.2.0-beta.4,
+ * platform#4957): a string property is within its `maxLength` in characters
+ * but over its `maxBytes` cap in UTF-8 — emoji and non-Latin scripts take up to
+ * four bytes a character. The user can fix it by shortening the text.
+ * Message: "Property <p> is <n> bytes in UTF-8, over its maxBytes of <m>".
+ */
+export function isPropertyMaxBytesError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentpropertymaxbytesexceeded/i.test(msg) ||
+    /bytes in utf-8, over its maxbytes of/i.test(msg) ||
+    hasConsensusCode(msg, [10421])
+  )
+}
+
+/**
+ * The document-level rules protocol 14 added in beta.4, other than `maxBytes`:
+ *
+ * - **10419** `DocumentPropertyNotDistinctError` (`distinctFrom`, #4917) — two
+ *   identifier properties the type declares distinct are equal (following
+ *   yourself, tipping yourself): "Document type "<t>" property "<p>" must
+ *   differ from "<q>", but the two values are equal";
+ * - **10422** `DocumentPropertyConstraintViolatedError` (`propertyConstraints`,
+ *   #4962) — an integer rule between two properties failed: "A document of
+ *   type "<t>" breaks its propertyConstraints rule "<rule>": <why>".
+ *
+ * Both are basic (unpaid) and permanent for the document as built.
+ */
+export function isDocumentPropertyRuleError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentpropertynotdistinct|documentpropertyconstraintviolated/i.test(msg) ||
+    /must differ from .*, but the two values are equal/i.test(msg) ||
+    /breaks its propertyconstraints rule/i.test(msg) ||
+    hasConsensusCode(msg, [10419, 10422])
+  )
+}
+
+/**
+ * A `refersTo` whose target exists but does not satisfy what the reference
+ * declares (4.2.0-beta.4) — contract-authoring or client-code mistakes, never a
+ * dead target:
+ *
+ * - **40135** `ReferencedContractRequirementNotMetError` — "referenced contract
+ *   <c> for path <p> does not meet the reference's requirement <f> <v>";
+ * - **40136** `ReferencedIdentityKeyRequirementNotMetError` — "referenced public
+ *   key <k> of identity <i> for <t>.<p> has <f> <v>, the reference requires <w>";
+ * - **40137** `ReferencedDocumentLookupInvalidError` — "invalid refersTo lookup
+ *   through index <i> declared at <p>: ...";
+ * - **40138** `ReferencedDocumentListInvalidError` — "invalid refersTo
+ *   listElement into inList <l> declared at <p>: ...".
+ */
+export function isReferenceRequirementError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /referencedcontractrequirementnotmet|referencedidentitykeyrequirementnotmet|referenceddocumentlookupinvalid|referenceddocumentlistinvalid/i.test(msg) ||
+    /referenced contract .* does not meet the reference's requirement/i.test(msg) ||
+    /referenced public key .* the reference requires/i.test(msg) ||
+    /invalid refersto (lookup through index|listelement into inlist)/i.test(msg) ||
+    hasConsensusCode(msg, [40135, 40136, 40137, 40138])
+  )
+}
+
+/**
+ * **40307** `VoteChoiceNotAllowedForVotePollError` (#4959): a masternode vote
+ * named a choice the poll does not offer. Yappr casts no masternode votes
+ * today; matched so a future election client never retries it.
+ * Message: "VotePoll <p> does not allow the vote choice <c>".
+ */
+function isVoteChoiceNotAllowedError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /votechoicenotallowedforvotepoll/i.test(msg) ||
+    /does not allow the vote choice/i.test(msg) ||
+    hasConsensusCode(msg, [40307])
+  )
+}
+
+/**
+ * **41200** `ContractModeratedDocumentTypeNotYetUsableError` (elected
+ * moderation, #4886/#4952): the contract declares elected moderation with a
+ * `notYetUsable` interim, and no team is seated yet, so every document
+ * transition on a moderated type is refused, paid. A user situation that lifts
+ * on its own once an election seats a team — not by retrying.
+ * Message: "Documents of type <t> on contract <c> can not be used until a
+ * moderation team is seated".
+ */
+export function isModerationNotYetSeatedError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /contractmoderateddocumenttypenotyetusable/i.test(msg) ||
+    /can not be used until a moderation team is seated/i.test(msg) ||
+    hasConsensusCode(msg, [41200])
+  )
+}
+
+/**
+ * What a refused MODERATION transition (ban, warn, delete, restore, fee claim,
+ * or a charter write of the election flow) means, for the moderator client.
+ * Null when the error is none of these. The codes are shared with ordinary
+ * writes in two places — 40105 (a unique value taken) and 40111 (a contest
+ * not joinable) — so only a caller that knows it sent a moderation or a
+ * charter should ask.
+ */
+export type ModerationErrorKind =
+  | 'NOT_MODERATOR'
+  | 'NOT_MODERATED'
+  | 'TARGET_PROTECTED'
+  | 'TYPE_NOT_DELETABLE'
+  | 'DELETE_WINDOW_ELAPSED'
+  | 'NOT_WARNED'
+  | 'WARNING_LIMIT'
+  | 'NO_REMOVAL_RECORD'
+  | 'RESTORE_WINDOW_ELAPSED'
+  | 'RESTORE_HASH_MISMATCH'
+  | 'ALREADY_RESTORED'
+  | 'UNIQUE_VALUE_TAKEN'
+  | 'NOT_YET_SEATED'
+  | 'ABILITY_NOT_GRANTED'
+  | 'ADDED_MODERATOR_LIMIT'
+  | 'REASON_NOT_LISTED'
+  | 'INVALID_REASON_DOCUMENTS'
+  | 'CHARTER_INVALID'
+  | 'CONTEST_NOT_JOINABLE'
+
+/** Each kind: its consensus codes and the prose Drive renders (rs-dpp `#[error]`, 4.2.0-beta.4). */
+const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly number[], RegExp]> = [
+  // 41101 IdentityNotContractModeratorError; 41113 ContractFeeClaimNotAllowedError.
+  // On an elected contract with a seated team the interim moderators, the owner
+  // among them, get 41101 too, and the interim team's pot claim gets 41113.
+  ['NOT_MODERATOR', [41101, 41113], /identitynotcontractmoderator|contractfeeclaimnotallowed|is not the owner or a moderator of contract|is not a recipient of the .* fee pot/i],
+  // 41100: the contract keeps no such list (or no moderation at all).
+  ['NOT_MODERATED', [41100], /contractmoderationnotenabled|contract .* does not keep a /i],
+  // 41102: the owner and the moderators can not be moderated, nor their documents deleted.
+  ['TARGET_PROTECTED', [41102], /contractmoderationtargetnotallowed|is the owner or a moderator of contract .* and can not be moderated/i],
+  ['TYPE_NOT_DELETABLE', [41115], /documenttypenotdeletablebymoderators|can not be deleted by moderators/i],
+  ['DELETE_WINDOW_ELAPSED', [41116], /documentmoderationwindowelapsed|could be deleted by moderators for .* seconds after that/i],
+  ['NOT_WARNED', [41117], /contractusernotwarned|carries no warning on contract/i],
+  ['WARNING_LIMIT', [41118], /contractuserwarninglimitreached|warnings on contract .* the most it may at a time/i],
+  ['NO_REMOVAL_RECORD', [41119], /contractdocumentremovalnotfound|keeps no record of a moderator's deletion/i],
+  ['RESTORE_WINDOW_ELAPSED', [41120], /documentrestorewindowelapsed|could be restored by moderators for .* milliseconds after that/i],
+  ['RESTORE_HASH_MISMATCH', [41121], /documentrestorehashmismatch|the document brought back for .* hashes to/i],
+  ['ALREADY_RESTORED', [41122], /contractdocumentalreadyrestored|was already restored by .*: it is live/i],
+  // A restore re-inserts the document; a unique value someone took meanwhile
+  // refuses it. The election flow meets it as a charter for a seated target.
+  ['UNIQUE_VALUE_TAKEN', [40105], /duplicateuniqueindex|has duplicate unique properties/i],
+  ['NOT_YET_SEATED', [41200], /contractmoderateddocumenttypenotyetusable|can not be used until a moderation team is seated/i],
+  ['ABILITY_NOT_GRANTED', [41201], /contractmoderationabilitynotgranted|does not give its seated team the .* ability/i],
+  ['ADDED_MODERATOR_LIMIT', [41202], /moderationcharteraddedmoderatorlimitreached|already has the .* added moderators contract/i],
+  ['REASON_NOT_LISTED', [41203], /moderationreasonnotlisted|which the proposal .* of its seated team does not list/i],
+  // 10904: over 16 documents, one named twice, or a malformed reasonDocumentId.
+  ['INVALID_REASON_DOCUMENTS', [10904], /invalidcontractmoderationreasondocuments|the documents a contract moderation reason cites are invalid/i],
+  ['CHARTER_INVALID', [11000, 11001], /moderationchartermalformedfield|moderationcharterrewardsplitnotonehundred|of the moderation charter is malformed|reward split of .* it must sum to 100%/i],
+  ['CONTEST_NOT_JOINABLE', [40111], /documentcontestnotjoinable|document contest for vote_poll .* is not joinable/i],
+]
+
+export function classifyModerationError(error: unknown): ModerationErrorKind | null {
+  const msg = extractErrorMessage(error)
+  for (const [kind, codes, prose] of MODERATION_ERRORS) {
+    if (prose.test(msg) || hasConsensusCode(msg, codes)) return kind
+  }
+  return null
+}
+
+/**
  * Every protocol-14 rejection above that is permanent for the transition as
  * built — the set `retryPostCreation` must never retry and `categorizeError`
  * must never present as transient. `isReferenceNotFoundError` and
@@ -463,7 +656,12 @@ export function isPermanentProtocol14Error(error: unknown): boolean {
     isGasPayerError(error) ||
     isActionFeeAgreementError(error) ||
     isReferencedTypeNotDeletableError(error) ||
-    isOncePerIdentityAlreadyClaimedError(error)
+    isOncePerIdentityAlreadyClaimedError(error) ||
+    isPropertyMaxBytesError(error) ||
+    isDocumentPropertyRuleError(error) ||
+    isReferenceRequirementError(error) ||
+    isVoteChoiceNotAllowedError(error) ||
+    isModerationNotYetSeatedError(error)
   )
 }
 
@@ -477,6 +675,17 @@ export function categorizeError(error: unknown): string {
   if (isModerationBarredError(error)) {
     return 'Your account has been banned or suspended here by a moderator, so this action isn\'t allowed right now.'
   }
+  if (isModerationNotYetSeatedError(error)) {
+    return 'This opens once the community elects its moderation team. Nothing was posted.'
+  }
+  if (isPropertyMaxBytesError(error)) {
+    // maxLength counts characters and the UI enforces it; maxBytes counts
+    // UTF-8, where an emoji or a non-Latin letter takes up to four.
+    return 'This is too long for the network once emoji and special characters are counted. Shorten it and try again.'
+  }
+  if (isDocumentPropertyRuleError(error)) {
+    return 'The network doesn\'t allow this combination (for example, doing it to yourself). Nothing was charged.'
+  }
   if (isOncePerIdentityAlreadyClaimedError(error)) {
     return 'You\'ve already claimed this — it can only be claimed once per account.'
   }
@@ -489,13 +698,23 @@ export function categorizeError(error: unknown): string {
   if (isGasPayerError(error)) {
     return 'This action can\'t be paid for right now. Nothing was charged — try again later.'
   }
+  if (isModeratorsShareMismatchError(error)) {
+    // Not a stale client, so not "reload": the discounted moderators share did
+    // not match what the seated charter takes. Paying the full fee always passes.
+    return 'The moderator fee share didn\'t match what the seated moderation charter takes. Nothing was posted — try again at the full fee.'
+  }
   if (isFeeMultiplierNotToleratedError(error)) {
     return 'The network\'s fee level changed while this was being sent. Nothing was posted — try again.'
   }
   if (isActionFeeAgreementError(error)) {
     return 'This app is out of date with the network\'s fee rules. Reload to get the latest version.'
   }
-  if (isInvalidDocumentIdError(error) || isReferencedTypeNotDeletableError(error)) {
+  if (
+    isInvalidDocumentIdError(error) ||
+    isReferencedTypeNotDeletableError(error) ||
+    isReferenceRequirementError(error) ||
+    isVoteChoiceNotAllowedError(error)
+  ) {
     // Both are code-level defects, not user situations; say so rather than
     // dressing them up as something the user can act on.
     return 'Something went wrong building this action, so the network refused it. Nothing was charged. Please report this.'

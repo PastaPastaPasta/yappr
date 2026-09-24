@@ -1,0 +1,1208 @@
+'use client'
+
+import { loadIdentityBatch } from '@/lib/services/identity-batch'
+
+import { logger } from '@/lib/logger';
+import { useState, useEffect, useRef, useId, type MouseEvent } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
+import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
+import { motion } from 'framer-motion'
+import {
+  MagnifyingGlassIcon,
+  PaperAirplaneIcon,
+  PlusIcon
+} from '@heroicons/react/24/outline'
+import { Sidebar } from '@/components/layout/sidebar'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Spinner } from '@/components/ui/spinner'
+import { useAuth } from '@/contexts/auth-context'
+import { UserAvatar } from '@/components/ui/avatar-image'
+import { formatDistanceToNow } from 'date-fns'
+import { directMessageService, dpnsService, followService, identityService, unifiedProfileService } from '@/lib/services'
+import { getPrimaryUsername } from '@/lib/utils/username'
+import { base58ToBytes } from '@/lib/services/sdk-helpers'
+import { useSettingsStore } from '@/lib/store'
+import { useNotificationStore } from '@/lib/stores/notification-store'
+import { DirectMessage, Conversation } from '@/lib/types'
+import toast from 'react-hot-toast'
+import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
+import { EmojiPicker } from '@/components/compose/emoji-picker'
+import { isEmojiOnly } from '@/lib/utils'
+
+// Upper bound on the follower suggestions shown before anything is typed; also
+// keeps the batched DPNS lookup within its single-query limit.
+const MAX_FOLLOWER_SUGGESTIONS = 50
+
+interface UserSearchResult {
+  id: string
+  username?: string
+  displayName: string
+  bio?: string
+}
+
+/** The v3/v4 messages page, used when `NEXT_PUBLIC_DM_TOPOLOGY` is not v5. */
+export function LegacyMessages() {
+  const { user } = useAuth()
+  const searchParams = useSearchParams()
+  const startConversationWith = searchParams.get('startConversation')
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
+  const [pendingStartConversation, setPendingStartConversation] = useState<string | null>(startConversationWith)
+  const [messages, setMessages] = useState<DirectMessage[]>([])
+  const [newMessage, setNewMessage] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSending, setIsSending] = useState(false)
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false)
+  const [showNewConversation, setShowNewConversation] = useState(false)
+  const recipientInputId = useId()
+  const newMessageOpener = useRef<HTMLElement | null>(null)
+  const messageInput = useRef<HTMLInputElement | null>(null)
+  const [newConversationInput, setNewConversationInput] = useState('')
+  const [isResolvingUser, setIsResolvingUser] = useState(false)
+  const [participantLastRead, setParticipantLastRead] = useState<number | null>(null)
+  const sendReadReceipts = useSettingsStore((s) => s.sendReadReceipts)
+  const [userSearchResults, setUserSearchResults] = useState<UserSearchResult[]>([])
+  const [isSearchingUsers, setIsSearchingUsers] = useState(false)
+  const [followerSuggestions, setFollowerSuggestions] = useState<UserSearchResult[]>([])
+  const [isLoadingFollowers, setIsLoadingFollowers] = useState(false)
+  const followersLoadedRef = useRef(false)
+  const searchIdRef = useRef(0)
+  const participantHydrationInFlightRef = useRef(new Set<string>())
+
+  // Refs for polling (to avoid stale closures and dependency issues)
+  const userRef = useRef(user)
+  userRef.current = user
+  const selectedConversationRef = useRef(selectedConversation)
+  selectedConversationRef.current = selectedConversation
+  // Only server-read messages can establish a polling cursor. Locally sent
+  // messages use the device clock and may be ahead of incoming chain timestamps.
+  const loadedMessageCursorRef = useRef<{ conversationId: string; cursor?: string } | null>(null)
+
+  // Load conversations on mount
+  useEffect(() => {
+    const loadConversations = async () => {
+      if (!user) return
+      setIsLoading(true)
+      try {
+        const convos = await directMessageService.getConversations(user.identityId, {
+          includeParticipantInfo: false
+        })
+        setConversations(convos)
+      } catch (error) {
+        logger.error('Failed to load conversations:', error)
+        toast.error('Failed to load conversations')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    loadConversations().catch(err => logger.error('Failed to load conversations:', err))
+  }, [user])
+
+  // Progressive hydration of DPNS + profile data (non-blocking)
+  useEffect(() => {
+    if (!user || conversations.length === 0) return
+
+    const pendingIds = new Set<string>()
+
+    for (const conv of conversations) {
+      const id = conv.participantId
+      if (!id || participantHydrationInFlightRef.current.has(id)) continue
+      if (!conv.participantUsername || !conv.participantDisplayName) pendingIds.add(id)
+    }
+
+    const idsToHydrate = Array.from(pendingIds)
+
+    if (idsToHydrate.length === 0) return
+
+    for (const id of idsToHydrate) { participantHydrationInFlightRef.current.add(id) }
+    let cancelled = false
+
+    const hydrate = async () => {
+      try {
+        const identities = await loadIdentityBatch(idsToHydrate).catch(() => null)
+
+        if (cancelled || !identities) return
+
+        const updates = new Map<string, { username?: string; displayName?: string }>()
+
+        identities.usernames.forEach((username, id) => {
+          if (!username) return
+          const existing = updates.get(id) || {}
+          updates.set(id, { ...existing, username })
+        })
+
+        const profileMap = new Map(
+          identities.profiles.map(profile => [profile.$ownerId, profile] as const)
+        )
+        for (const [id, profile] of Array.from(profileMap.entries())) {
+          if (!id || !profile?.displayName) continue
+          const existing = updates.get(id) || {}
+          updates.set(id, { ...existing, displayName: profile.displayName })
+        }
+
+        if (updates.size > 0) {
+          setConversations(prev => {
+            let changed = false
+            const next = prev.map(conv => {
+              const update = updates.get(conv.participantId)
+              if (!update) return conv
+              let updated = conv
+              if (update.username && !conv.participantUsername) {
+                updated = updated === conv ? { ...conv } : updated
+                updated.participantUsername = update.username
+                changed = true
+              }
+              if (update.displayName && !conv.participantDisplayName) {
+                updated = updated === conv ? { ...conv } : updated
+                updated.participantDisplayName = update.displayName
+                changed = true
+              }
+              return updated
+            })
+            return changed ? next : prev
+          })
+        }
+      } finally {
+        for (const id of idsToHydrate) { participantHydrationInFlightRef.current.delete(id) }
+      }
+    }
+
+    hydrate().catch(err => logger.error('Failed to hydrate conversation participants:', err))
+
+    return () => {
+      cancelled = true
+    }
+  }, [conversations, user])
+
+  // Keep selected conversation details in sync with list updates
+  useEffect(() => {
+    if (!selectedConversation) return
+    const updated = conversations.find(conv => conv.id === selectedConversation.id)
+    if (updated && updated !== selectedConversation) {
+      setSelectedConversation(updated)
+    }
+  }, [conversations, selectedConversation])
+
+  // Handle auto-starting a conversation from URL parameter
+  useEffect(() => {
+    const handleStartConversation = async () => {
+      if (!pendingStartConversation || !user || isLoading) return
+
+      // Clear the pending state so we don't run this again
+      setPendingStartConversation(null)
+
+      const participantId = pendingStartConversation
+
+      // The id comes from the URL, so validate it before it reaches Platform
+      // calls that require a 32-byte identifier.
+      const participantIdBytes = base58ToBytes(participantId)
+      if (!participantIdBytes || participantIdBytes.length !== 32) {
+        toast.error('Invalid user ID')
+        return
+      }
+
+      // Don't start conversation with yourself
+      if (participantId === user.identityId) {
+        toast.error("You can't message yourself")
+        return
+      }
+
+      // Check if conversation already exists
+      const existingConv = conversations.find(c => c.participantId === participantId)
+      if (existingConv) {
+        setSelectedConversation(existingConv)
+        return
+      }
+
+      // Need to create a new conversation entry (participant info hydrates in background)
+      try {
+        // Create new conversation entry
+        const { conversationId } = await directMessageService.getOrCreateConversation(
+          user.identityId,
+          participantId
+        )
+
+        const newConv: Conversation = {
+          id: conversationId,
+          participantId,
+          unreadCount: 0,
+          updatedAt: new Date()
+        }
+
+        setConversations(prev => [newConv, ...prev])
+        setSelectedConversation(newConv)
+        setMessages([])
+      } catch (error) {
+        logger.error('Failed to start conversation from URL:', error)
+        toast.error('Failed to start conversation')
+      } finally {
+        setIsResolvingUser(false)
+      }
+    }
+
+    handleStartConversation().catch(err => logger.error('Failed to handle start conversation:', err))
+  }, [pendingStartConversation, user, isLoading, conversations])
+
+  // Load messages when conversation is selected.
+  // Keyed on the conversation id, not the object: participant hydration swaps in
+  // new conversation objects with the same id, which must not refetch messages.
+  useEffect(() => {
+    const conversationId = selectedConversation?.id
+    let cancelled = false
+    loadedMessageCursorRef.current = null
+    const loadMessages = async () => {
+      const currentConversation = selectedConversationRef.current
+      if (!conversationId || !user) return
+      if (!currentConversation || currentConversation.id !== conversationId) return
+      setIsLoadingMessages(true)
+      setParticipantLastRead(null) // Reset while loading
+      try {
+        const msgs = await directMessageService.getConversationMessages(
+          currentConversation.id,
+          user.identityId,
+          currentConversation.participantId
+        )
+        if (cancelled) return
+        setMessages(msgs)
+        loadedMessageCursorRef.current = { conversationId, cursor: msgs.at(-1)?.id }
+
+        // Get when participant last read (for read receipts)
+        const lastRead = await directMessageService.getParticipantLastRead(
+          currentConversation.id,
+          currentConversation.participantId
+        )
+        if (cancelled) return
+        setParticipantLastRead(lastRead)
+
+        // Only mark as read if there are unread messages and read receipts are enabled
+        if (currentConversation.unreadCount > 0 && sendReadReceipts) {
+          await directMessageService.markAsRead(currentConversation.id, user.identityId)
+        }
+
+        // Keep the global Messages badge in step with the row the user just
+        // read, instead of lagging up to one notification poll behind. Done
+        // outside the state updater below, which React may invoke twice.
+        if (cancelled) return
+        if (currentConversation.unreadCount > 0) {
+          const notifications = useNotificationStore.getState()
+          notifications.setDmUnreadCount(
+            Math.max(0, notifications.dmUnreadCount - currentConversation.unreadCount)
+          )
+        }
+
+        // Update conversation unread count in UI. Only touch state when a count
+        // actually changes - replacing conversation objects here re-triggers the
+        // selected-conversation sync effect and would loop message loading forever.
+        setConversations(prev => {
+          const needsUpdate = prev.some(conv => conv.id === currentConversation.id && conv.unreadCount !== 0)
+          if (!needsUpdate) return prev
+          return prev.map(conv =>
+            conv.id === currentConversation.id
+              ? { ...conv, unreadCount: 0 }
+              : conv
+          )
+        })
+      } catch (error) {
+        logger.error('Failed to load messages:', error)
+        if (!cancelled) toast.error('Failed to load messages')
+      } finally {
+        if (!cancelled) setIsLoadingMessages(false)
+      }
+    }
+    loadMessages().catch(err => logger.error('Failed to load messages:', err))
+    return () => { cancelled = true }
+  }, [selectedConversation?.id, user, sendReadReceipts])
+
+  // Continue after the last server-read document, never a local send timestamp.
+  useEffect(() => {
+    const convId = selectedConversation?.id
+    if (!convId || !user?.identityId) return
+
+    let timeoutId: NodeJS.Timeout | null = null
+    let cancelled = false
+
+    const pollMessages = async () => {
+      if (cancelled) return
+
+      const currentConv = selectedConversationRef.current
+      const currentUser = userRef.current
+      if (!currentConv || !currentUser) return
+
+      try {
+        const loaded = loadedMessageCursorRef.current
+        if (!loaded || loaded.conversationId !== convId || currentConv.id !== convId) {
+          timeoutId = setTimeout(pollMessages, 3000)
+          return
+        }
+        const page = await directMessageService.pollNewMessages(
+          convId,
+          loaded.cursor,
+          currentUser.identityId,
+          currentConv.participantId
+        )
+
+        if (cancelled) return
+        if (loadedMessageCursorRef.current !== loaded) {
+          timeoutId = setTimeout(pollMessages, 3000)
+          return
+        }
+        loaded.cursor = page.cursor
+        const newMsgs = page.messages
+
+        if (newMsgs.length > 0) {
+          setMessages(prev => {
+            const result = [...prev]
+            const existingIds = new Set(prev.map(m => m.id))
+
+            for (const newMsg of newMsgs) {
+              // Skip if we already have this exact ID
+              if (existingIds.has(newMsg.id)) continue
+
+              // Check if this matches a pending/optimistic message (has temp ID)
+              // that was added by sendMessage before we got the real document ID
+              const duplicateIndex = result.findIndex(m =>
+                m.id.startsWith('temp-') &&
+                m.senderId === newMsg.senderId &&
+                m.content === newMsg.content &&
+                Math.abs(m.createdAt.getTime() - newMsg.createdAt.getTime()) < 60000
+              )
+
+              if (duplicateIndex !== -1) {
+                // Replace the temp message with the real one (has actual document ID)
+                result[duplicateIndex] = newMsg
+              } else {
+                // Truly new message from other party
+                result.push(newMsg)
+              }
+            }
+
+            return result
+          })
+        }
+      } catch (error) {
+        logger.debug('Message poll error:', error)
+      }
+
+      // Schedule next poll AFTER this one completes
+      if (!cancelled) {
+        timeoutId = setTimeout(pollMessages, 3000)
+      }
+    }
+
+    // Start first poll after 3s
+    timeoutId = setTimeout(pollMessages, 3000)
+
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+    }
+  }, [selectedConversation?.id, user?.identityId])
+
+  // Debounced user search for new conversation modal
+  useEffect(() => {
+    const query = newConversationInput.trim()
+
+    // Clear results if query is empty or looks like an identity ID
+    if (!query || query.length > 30) {
+      setUserSearchResults([])
+      setIsSearchingUsers(false)
+      return
+    }
+
+    // Only search if at least 3 characters (like DashPay)
+    if (query.length < 3) {
+      setUserSearchResults([])
+      return
+    }
+
+    const currentSearchId = ++searchIdRef.current
+    setIsSearchingUsers(true)
+
+    const debounceTimer = setTimeout(async () => {
+      try {
+        // Search DPNS usernames by prefix
+        const dpnsResults = await dpnsService.searchUsernamesWithDetails(query, 5)
+
+        // Ignore stale results
+        if (currentSearchId !== searchIdRef.current) return
+
+        if (dpnsResults.length === 0) {
+          setUserSearchResults([])
+          setIsSearchingUsers(false)
+          return
+        }
+
+        // Get unique owner IDs (excluding self)
+        const ownerIds = Array.from(
+          new Set(dpnsResults.map(r => r.ownerId).filter(id => id && id !== user?.identityId))
+        )
+
+        // Fetch profiles for display names
+        let profiles: { $ownerId?: string; ownerId?: string; displayName?: string; bio?: string }[] = []
+        if (ownerIds.length > 0) {
+          try {
+            profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
+          } catch (error) {
+            logger.error('Failed to fetch profiles for search:', error)
+          }
+        }
+
+        // Ignore stale results
+        if (currentSearchId !== searchIdRef.current) return
+
+        // Create profile map
+        const profileMap = new Map(profiles.map(p => [p.$ownerId || p.ownerId, p]))
+
+        // Group matched names by owner to handle multiple names per owner
+        const ownerToNames = new Map<string, string[]>()
+        for (const dpnsResult of dpnsResults) {
+          if (!dpnsResult.ownerId || dpnsResult.ownerId === user?.identityId) continue
+          const names = ownerToNames.get(dpnsResult.ownerId) || []
+          names.push(dpnsResult.username)
+          ownerToNames.set(dpnsResult.ownerId, names)
+        }
+
+        // Build results (one per unique owner, picking the best matched name)
+        const results: UserSearchResult[] = []
+        for (const [ownerId, names] of Array.from(ownerToNames.entries())) {
+          const profile = profileMap.get(ownerId)
+          const username = (getPrimaryUsername(names) ?? names[0]).replace(/\.dash$/, '')
+
+          results.push({
+            id: ownerId,
+            username,
+            displayName: profile?.displayName || username,
+            bio: profile?.bio
+          })
+        }
+
+        setUserSearchResults(results)
+      } catch (error) {
+        logger.error('User search failed:', error)
+        setUserSearchResults([])
+      } finally {
+        if (currentSearchId === searchIdRef.current) {
+          setIsSearchingUsers(false)
+        }
+      }
+    }, 300)
+
+    return () => clearTimeout(debounceTimer)
+  }, [newConversationInput, user?.identityId])
+
+  // Load the current user's followers once the new conversation modal opens so
+  // they can be offered as suggestions before anything is typed.
+  useEffect(() => {
+    if (!showNewConversation || !user || followersLoadedRef.current) return
+    followersLoadedRef.current = true
+
+    let cancelled = false
+    setIsLoadingFollowers(true)
+
+    const loadFollowerSuggestions = async () => {
+      try {
+        const follows = await followService.getFollowers(user.identityId)
+        // getFollowers returns oldest first; suggest the most recent followers
+        // and cap the list so the DPNS/profile lookups stay a single batch.
+        const followerIds = Array.from(
+          new Set(follows.map(f => f.$ownerId).filter(id => id && id !== user.identityId))
+        ).reverse().slice(0, MAX_FOLLOWER_SUGGESTIONS)
+
+        if (cancelled) return
+
+        if (followerIds.length === 0) {
+          setFollowerSuggestions([])
+          return
+        }
+
+        const { usernames, profiles } = await loadIdentityBatch(followerIds).catch(() => ({
+          usernames: new Map<string, string | null>(),
+          profiles: [],
+        }))
+
+        if (cancelled) return
+
+        const profileMap = new Map(
+          profiles.map(profile => [profile.$ownerId, profile] as const)
+        )
+
+        setFollowerSuggestions(followerIds.map(id => {
+          const username = usernames.get(id)?.replace(/\.dash$/, '') || undefined
+          const profile = profileMap.get(id)
+          return {
+            id,
+            username,
+            displayName: profile?.displayName || username || `User ${id.slice(-6)}`,
+            bio: profile?.bio
+          }
+        }))
+      } catch (error) {
+        logger.error('Failed to load followers for new conversation:', error)
+        // Allow a retry the next time the modal is opened
+        followersLoadedRef.current = false
+        if (!cancelled) setFollowerSuggestions([])
+      } finally {
+        if (!cancelled) setIsLoadingFollowers(false)
+      }
+    }
+
+    loadFollowerSuggestions().catch(err => logger.error('Failed to load followers:', err))
+
+    return () => { cancelled = true }
+  }, [showNewConversation, user])
+
+  const sendMessage = async () => {
+    if (!newMessage.trim() || !selectedConversation || !user || isSending) return
+
+    const messageContent = newMessage.trim()
+    setIsSending(true)
+
+    try {
+      const result = await directMessageService.sendMessage(
+        user.identityId,
+        selectedConversation.participantId,
+        messageContent
+      )
+
+      if (result.success && result.message) {
+        const sentMessage = result.message
+        // Clear input only on success
+        setNewMessage('')
+        // Add message to UI (with deduplication in case poll already added it)
+        setMessages(prev => {
+          // Check if poll already added this message (with real ID while we have temp)
+          const alreadyExists = prev.some(m =>
+            m.id === sentMessage.id ||
+            (m.senderId === sentMessage.senderId &&
+             m.content === sentMessage.content &&
+             Math.abs(m.createdAt.getTime() - sentMessage.createdAt.getTime()) < 60000)
+          )
+          return alreadyExists ? prev : [...prev, sentMessage]
+        })
+
+        // Update conversation's last message
+        setConversations(prev => prev.map(conv =>
+          conv.id === selectedConversation.id
+            ? { ...conv, lastMessage: sentMessage, updatedAt: new Date() }
+            : conv
+        ))
+      } else {
+        toast.error(result.error || 'Failed to send message')
+      }
+    } catch (error) {
+      logger.error('Failed to send message:', error)
+      toast.error('Failed to send message')
+    } finally {
+      setIsSending(false)
+    }
+  }
+
+  const filteredConversations = conversations.filter(conv =>
+    conv.participantId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    conv.participantDisplayName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    conv.participantUsername?.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  const startNewConversation = async () => {
+    if (!newConversationInput.trim() || !user || isResolvingUser) return
+
+    setIsResolvingUser(true)
+    const input = newConversationInput.trim()
+
+    try {
+      let participantId: string
+      let participantUsername: string | undefined
+
+      // Check if input looks like an identity ID (base58, ~44 chars) or a username
+      if (input.length > 30 && !input.includes('.')) {
+        // Likely an identity ID - verify it exists
+        participantId = input
+        try {
+          const identity = await identityService.getIdentity(participantId)
+          if (!identity) {
+            toast.error('Identity not found')
+            return
+          }
+        } catch (err) {
+          logger.error('Error verifying identity:', err)
+          toast.error('Could not verify identity. Please check the ID.')
+          return
+        }
+      } else {
+        // Treat as username - resolve to identity ID
+        const username = input.replace(/\.dash$/, '') // Remove .dash suffix if present
+        const resolvedId = await dpnsService.resolveIdentity(username)
+        if (!resolvedId) {
+          toast.error(`Username "${username}" not found`)
+          return
+        }
+        participantId = resolvedId
+        participantUsername = username
+      }
+
+      // Don't start conversation with yourself
+      if (participantId === user.identityId) {
+        toast.error("You can't message yourself")
+        return
+      }
+
+      // Check if conversation already exists
+      const existingConv = conversations.find(c => c.participantId === participantId)
+      if (existingConv) {
+        setSelectedConversation(existingConv)
+        setShowNewConversation(false)
+        setNewConversationInput('')
+        return
+      }
+
+      // Create new conversation entry
+      const { conversationId } = await directMessageService.getOrCreateConversation(
+        user.identityId,
+        participantId
+      )
+
+      const newConv: Conversation = {
+        id: conversationId,
+        participantId,
+        participantUsername,
+        unreadCount: 0,
+        updatedAt: new Date()
+      }
+
+      setConversations(prev => [newConv, ...prev])
+      setSelectedConversation(newConv)
+      setShowNewConversation(false)
+      setNewConversationInput('')
+      setMessages([]) // Clear messages for new conversation
+    } catch (error) {
+      logger.error('Failed to start conversation:', error)
+      toast.error('Failed to start conversation')
+    } finally {
+      setIsResolvingUser(false)
+    }
+  }
+
+  const selectUserFromSearch = async (selectedUser: UserSearchResult) => {
+    if (!user || isResolvingUser) return
+
+    setIsResolvingUser(true)
+
+    try {
+      // Check if conversation already exists
+      const existingConv = conversations.find(c => c.participantId === selectedUser.id)
+      if (existingConv) {
+        setSelectedConversation(existingConv)
+        setShowNewConversation(false)
+        setNewConversationInput('')
+        setUserSearchResults([])
+        return
+      }
+
+      // Create new conversation entry
+      const { conversationId } = await directMessageService.getOrCreateConversation(
+        user.identityId,
+        selectedUser.id
+      )
+
+      const newConv: Conversation = {
+        id: conversationId,
+        participantId: selectedUser.id,
+        participantUsername: selectedUser.username,
+        participantDisplayName: selectedUser.displayName,
+        unreadCount: 0,
+        updatedAt: new Date()
+      }
+
+      setConversations(prev => [newConv, ...prev])
+      setSelectedConversation(newConv)
+      setShowNewConversation(false)
+      setNewConversationInput('')
+      setUserSearchResults([])
+      setMessages([])
+    } catch (error) {
+      logger.error('Failed to start conversation:', error)
+      toast.error('Failed to start conversation')
+    } finally {
+      setIsResolvingUser(false)
+    }
+  }
+
+  const newConversationQuery = newConversationInput.trim()
+  // Below the 3-character search threshold we show the user's followers instead
+  // of hitting DPNS; a 1-2 character query just filters that list locally.
+  const showFollowerSuggestions = newConversationQuery.length < 3
+  const filteredFollowerSuggestions = newConversationQuery
+    ? followerSuggestions.filter(follower => {
+        const needle = newConversationQuery.toLowerCase()
+        return follower.username?.toLowerCase().includes(needle)
+          || follower.displayName.toLowerCase().includes(needle)
+      })
+    : followerSuggestions
+
+  const renderUserResult = (result: UserSearchResult) => (
+    <button
+      key={result.id}
+      type="button"
+      onClick={() => selectUserFromSearch(result)}
+      disabled={isResolvingUser}
+      className="w-full flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left border-b border-gray-100 dark:border-gray-800 last:border-b-0"
+    >
+      <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800 flex-shrink-0">
+        <UserAvatar userId={result.id} size="md" alt={result.displayName} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold truncate">{result.displayName}</p>
+        <p className="text-sm text-gray-500 truncate">
+          {result.username ? `@${result.username}` : `${result.id.slice(0, 8)}...${result.id.slice(-4)}`}
+        </p>
+        {result.bio && (
+          <p className="text-xs text-gray-400 truncate mt-0.5">{result.bio}</p>
+        )}
+      </div>
+    </button>
+  )
+
+  const openNewConversation = (event: MouseEvent<HTMLButtonElement>) => {
+    newMessageOpener.current = event.currentTarget
+    setShowNewConversation(true)
+  }
+
+  const closeNewConversation = () => {
+    setShowNewConversation(false)
+    setNewConversationInput('')
+    setUserSearchResults([])
+  }
+
+  return (
+    <div className="h-[calc(100dvh-32px-56px)] md:h-[calc(100dvh-40px)] flex overflow-hidden">
+      <Sidebar />
+
+      <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex overflow-hidden">
+        {/* Conversations List */}
+        <div className={`w-full md:w-[320px] lg:w-[380px] xl:w-[400px] border-r border-gray-200 dark:border-gray-800 flex flex-col flex-shrink-0 overflow-hidden ${selectedConversation ? 'hidden md:flex' : 'flex'}`}>
+          <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800">
+            <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3">
+              <h1 className="text-lg sm:text-xl font-bold">Messages</h1>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      aria-label="New conversation"
+                      onClick={openNewConversation}
+                      className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
+                    >
+                      <PlusIcon className="h-5 w-5" aria-hidden="true" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">New conversation</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+
+            <div className="px-3 sm:px-4 pb-2 sm:pb-3">
+              <div className="relative">
+                <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-gray-500" />
+                <Input
+                  type="text"
+                  placeholder="Search messages"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9 sm:pl-10 h-9 sm:h-10 text-base"
+                />
+              </div>
+            </div>
+          </header>
+
+          {isLoading ? (
+            <div className="p-8 text-center">
+              <Spinner size="md" className="mx-auto mb-4" />
+              <p className="text-gray-500">Loading conversations...</p>
+            </div>
+          ) : conversations.length === 0 ? (
+            /* When no conversations exist, show minimal state - main empty state is in right panel */
+            <div className="p-6 text-center text-gray-500 text-sm">
+              <p>Your conversations will appear here</p>
+            </div>
+          ) : filteredConversations.length === 0 ? (
+            <div className="p-8 text-center flex-1 flex flex-col items-center justify-center">
+              <MagnifyingGlassIcon className="h-12 w-12 text-gray-300 mb-4" />
+              <h2 className="text-xl font-semibold mb-2">No results</h2>
+              <p className="text-gray-500 text-sm">No conversations match your search</p>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto">
+              {filteredConversations.map((conversation) => (
+                <button
+                  key={conversation.id}
+                  onClick={() => setSelectedConversation(conversation)}
+                  className={`w-full p-3 sm:p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors flex gap-3 ${
+                    selectedConversation?.id === conversation.id ? 'bg-gray-50 dark:bg-gray-950' : ''
+                  }`}
+                >
+                  <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
+                    <UserAvatar userId={conversation.participantId} size="lg" alt="User avatar" />
+                  </div>
+
+                  <div className="flex-1 text-left min-w-0">
+                    <div className="flex items-center justify-between gap-2 mb-0.5">
+                      <span className="font-semibold truncate">
+                        {conversation.participantDisplayName || conversation.participantUsername || `${conversation.participantId.slice(0, 8)}...`}
+                      </span>
+                      {conversation.lastMessage && (
+                        <span className="text-xs text-gray-500 flex-shrink-0">
+                          {formatDistanceToNow(conversation.lastMessage.createdAt, { addSuffix: true })}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 truncate mb-1">
+                      {conversation.participantUsername || `${conversation.participantId.slice(0, 12)}...`}
+                    </p>
+                    {conversation.lastMessage && (
+                      <p className="text-sm text-gray-600 dark:text-gray-400 truncate">
+                        {conversation.lastMessage.senderId === user?.identityId && 'You: '}
+                        {conversation.lastMessage.content}
+                      </p>
+                    )}
+                  </div>
+
+                  {conversation.unreadCount > 0 && (
+                    <div className="flex items-center flex-shrink-0">
+                      <div className="bg-yappr-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                        {conversation.unreadCount}
+                      </div>
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Message Thread */}
+        {selectedConversation ? (
+          <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+            <header className="flex-shrink-0 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-gray-800 px-2 sm:px-4 py-2 sm:py-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                  {/* Back button - mobile only */}
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          aria-label="Back to conversations"
+                          onClick={() => setSelectedConversation(null)}
+                          className="md:hidden p-1.5 -ml-1 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full flex-shrink-0"
+                        >
+                          <ArrowLeftIcon className="h-5 w-5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">Back to conversations</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <Link
+                    href={`/user?id=${selectedConversation.participantId}`}
+                    className="flex items-center gap-2 sm:gap-3 hover:opacity-80 transition-opacity min-w-0 flex-1"
+                  >
+                    <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
+                      <UserAvatar userId={selectedConversation.participantId} size="md" alt="User avatar" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold truncate text-sm sm:text-base">
+                        {selectedConversation.participantDisplayName || selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 8)}...`}
+                      </p>
+                      <p className="text-xs text-gray-500 truncate hidden sm:block">
+                        {selectedConversation.participantUsername || `${selectedConversation.participantId.slice(0, 12)}...`}
+                      </p>
+                    </div>
+                  </Link>
+                </div>
+
+              </div>
+            </header>
+
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4">
+              {isLoadingMessages ? (
+                <div className="flex items-center justify-center h-full">
+                  <Spinner size="md" />
+                </div>
+              ) : messages.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-gray-500">
+                  <p>No messages yet. Start the conversation!</p>
+                </div>
+              ) : (
+                messages.map((message, index) => {
+                  const isOwn = message.senderId === user?.identityId
+                  // Check if this sent message was read by the other party
+                  const isRead = isOwn && participantLastRead && message.createdAt.getTime() <= participantLastRead
+                  // Only show "Read" on the last read message (not all of them)
+                  const isLastReadMessage = isRead && (
+                    index === messages.length - 1 ||
+                    !messages.slice(index + 1).some(m =>
+                      m.senderId === user?.identityId && m.createdAt.getTime() <= participantLastRead
+                    )
+                  )
+                  return (
+                    <motion.div
+                      key={message.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div className={`max-w-[85%] sm:max-w-[75%] md:max-w-[70%] ${isOwn ? 'order-2' : 'order-1'}`}>
+                        {(() => {
+                          const emojiOnly = isEmojiOnly(message.content)
+                          return emojiOnly ? (
+                            <p className={`text-4xl leading-tight ${isOwn ? 'text-right' : 'text-left'}`}>{message.content}</p>
+                          ) : (
+                            <div
+                              className={`px-4 py-2 rounded-2xl ${
+                                isOwn
+                                  ? 'bg-yappr-500 text-white'
+                                  : 'bg-gray-100 dark:bg-gray-900'
+                              }`}
+                            >
+                              <p className="text-sm">{message.content}</p>
+                            </div>
+                          )
+                        })()}
+                        <div className={`flex items-center gap-1 mt-1 px-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                          <p className="text-xs text-gray-500">
+                            {formatDistanceToNow(message.createdAt, { addSuffix: true })}
+                          </p>
+                          {isLastReadMessage && (
+                            <span className="text-xs text-yappr-500 font-medium">· Read</span>
+                          )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  )
+                })
+              )}
+            </div>
+
+            <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 p-2 sm:p-4 safe-area-inset-bottom">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  sendMessage().catch(err => logger.error('Failed to send message:', err))
+                }}
+                className="flex items-center gap-2"
+              >
+                <EmojiPicker
+                  onEmojiSelect={(emoji) => setNewMessage(prev => prev + emoji)}
+                  onSelectionClose={() => messageInput.current?.focus()}
+                  disabled={isSending}
+                />
+
+                <Input
+                  ref={messageInput}
+                  type="text"
+                  placeholder="Type a message..."
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  disabled={isSending}
+                  className="flex-1 min-w-0 h-9 sm:h-10 text-base"
+                />
+
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="submit"
+                        aria-label="Send message"
+                        size="sm"
+                        disabled={!newMessage.trim() || isSending}
+                        className="flex-shrink-0 h-9 w-9 sm:h-10 sm:w-10 p-0"
+                      >
+                        {isSending ? (
+                          <Spinner size="sm" className="border-white" />
+                        ) : (
+                          <PaperAirplaneIcon className="h-4 w-4" aria-hidden="true" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">Send message</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </form>
+            </div>
+          </div>
+        ) : conversations.length === 0 ? (
+          /* Primary empty state when user has no conversations */
+          <div className="flex flex-1 items-center justify-center p-8">
+            <div className="text-center max-w-sm">
+              <PaperAirplaneIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
+              <h2 className="text-2xl font-semibold mb-2">Welcome to Messages</h2>
+              <p className="text-gray-500 mb-2">
+                Have private 1-on-1 conversations with other users.
+              </p>
+              <p className="text-gray-400 text-sm mb-6">
+                Messages are stored encrypted on Dash Platform.
+              </p>
+              <Button
+                onClick={openNewConversation}
+                className="gap-2"
+              >
+                <PlusIcon className="h-5 w-5" />
+                New message
+              </Button>
+            </div>
+          </div>
+        ) : (
+          /* Secondary empty state when conversations exist but none selected */
+          <div className="hidden md:flex flex-1 items-center justify-center p-8">
+            <div className="text-center">
+              <PaperAirplaneIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
+              <h2 className="text-2xl font-semibold mb-2">Select a conversation</h2>
+              <p className="text-gray-500 mb-6">Choose from your existing conversations or start a new one</p>
+              <Button
+                onClick={openNewConversation}
+                className="gap-2"
+              >
+                <PlusIcon className="h-5 w-5" />
+                New message
+              </Button>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* New Conversation Modal */}
+      {showNewConversation && (
+        <Dialog.Root open={showNewConversation} onOpenChange={(open) => { if (!open) closeNewConversation() }}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+            <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center pt-16 sm:pt-0 pointer-events-none">
+              <Dialog.Content
+                onCloseAutoFocus={(event) => {
+                  event.preventDefault()
+                  const opener = newMessageOpener.current
+                  if (opener?.getClientRects().length) opener.focus()
+                  else messageInput.current?.focus()
+                }}
+                className="relative bg-white dark:bg-gray-900 rounded-2xl w-full max-w-md mx-3 sm:mx-4 p-4 sm:p-6 shadow-xl max-h-[80vh] overflow-y-auto pointer-events-auto"
+              >
+            <div className="flex items-center justify-between mb-4">
+              <Dialog.Title className="text-xl font-bold">New Message</Dialog.Title>
+              <Dialog.Description className="sr-only">Choose a person to start an encrypted conversation.</Dialog.Description>
+              <button
+                aria-label="Close new message"
+                onClick={closeNewConversation}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                startNewConversation().catch(err => logger.error('Failed to start conversation:', err))
+              }}
+            >
+              <div className="mb-4">
+                <label htmlFor={recipientInputId} className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                  Search for a user
+                </label>
+                <div className="relative">
+                  <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+                  <Input
+                    id={recipientInputId}
+                    aria-describedby={`${recipientInputId}-hint`}
+                    type="text"
+                    placeholder="Search by username..."
+                    value={newConversationInput}
+                    onChange={(e) => setNewConversationInput(e.target.value)}
+                    disabled={isResolvingUser}
+                    autoFocus
+                    className="pl-10"
+                  />
+                </div>
+                <p id={`${recipientInputId}-hint`} className="text-xs text-gray-500 mt-2">
+                  Type at least 3 characters to search, or paste a full identity ID
+                </p>
+              </div>
+
+              {/* Followers list (shown until the search threshold is reached) */}
+              {showFollowerSuggestions && (
+                <div className="mb-4 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+                  <div className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
+                    Your followers
+                  </div>
+                  {isLoadingFollowers ? (
+                    <div className="p-4 flex items-center justify-center gap-2 text-gray-500">
+                      <Spinner size="sm" className="border-gray-500" />
+                      <span className="text-sm">Loading followers...</span>
+                    </div>
+                  ) : filteredFollowerSuggestions.length > 0 ? (
+                    <div className="max-h-64 overflow-y-auto">
+                      {filteredFollowerSuggestions.map(renderUserResult)}
+                    </div>
+                  ) : (
+                    <p className="p-4 text-center text-sm text-gray-500">
+                      {followerSuggestions.length === 0
+                        ? 'No followers yet — search for a username above.'
+                        : `No followers matching "${newConversationQuery}"`}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Search Results */}
+              {!showFollowerSuggestions && (isSearchingUsers || userSearchResults.length > 0) && (
+                <div className="mb-4 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+                  {isSearchingUsers ? (
+                    <div className="p-4 flex items-center justify-center gap-2 text-gray-500">
+                      <Spinner size="sm" className="border-gray-500" />
+                      <span className="text-sm">Searching...</span>
+                    </div>
+                  ) : (
+                    <div className="max-h-64 overflow-y-auto">
+                      {userSearchResults.map(renderUserResult)}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Show no results message */}
+              {!isSearchingUsers && userSearchResults.length === 0 && newConversationInput.trim().length >= 3 && newConversationInput.trim().length <= 30 && (
+                <div className="mb-4 p-3 text-center text-sm text-gray-500 border border-gray-200 dark:border-gray-700 rounded-xl">
+                  No users found matching &quot;{newConversationInput.trim()}&quot;
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={closeNewConversation}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  className="flex-1"
+                  disabled={!newConversationInput.trim() || isResolvingUser}
+                >
+                  {isResolvingUser ? (
+                    <Spinner size="sm" className="border-white" />
+                  ) : (
+                    'Start Chat'
+                  )}
+                </Button>
+              </div>
+            </form>
+              </Dialog.Content>
+            </div>
+          </Dialog.Portal>
+        </Dialog.Root>
+      )}
+    </div>
+  )
+}
+

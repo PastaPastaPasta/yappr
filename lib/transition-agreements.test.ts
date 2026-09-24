@@ -20,6 +20,14 @@ describe('actionFeeAgreementOptions', () => {
     expect(actionFeeAgreementOptions({ owner: 5n, moderators: 0n, pricing: 'fixed' }, 1500n)).toEqual({ owner: 5n, moderators: 0n })
   })
 
+  it('always agrees to the FULL declared moderators fee, never a discount (a discount is what 40139 checks)', () => {
+    // On an elected contract Drive only compares a LOWER moderators amount with
+    // the seated charter's share; the declared amount passes seated or not.
+    for (const moderators of [80_000_000n, 16_000_000n, 1n]) {
+      expect(actionFeeAgreementOptions({ owner: 0n, moderators, pricing: 'feeMultiplier' }, 1000n).moderators).toBe(moderators)
+    }
+  })
+
   it('carries the multiplier it is given, not a constant', () => {
     const options = actionFeeAgreementOptions({ owner: 0n, moderators: 16_000_000n, pricing: 'feeMultiplier' }, 1250n)
     expect(options.feeMultiplier?.knownPermille).toBe(1250n)

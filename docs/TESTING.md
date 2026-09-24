@@ -61,6 +61,22 @@ Publish a new dedicated secret from its private file, without printing the seed:
 gh secret set E2E_DEVNET_SEED_PHRASE < /path/to/devnet-ci-mnemonic.txt
 ```
 
+The DM v5 specs (`e2e/write/dm-v5-*.spec.ts`) need slots 1-8 of that pool:
+up to five identities talk to each other, each device on its own browser
+context, and some also sign documents from Node (a squatted tag, a forged
+grant, bulk history). Every slot has the seed-derived ENCRYPTION key (key index 4) and a
+`yappr-dm-e2e-<n>` DPNS name the group pickers search for. Each file sets up
+what it needs (1:1 = 1-2, history = 5-6 with 1-2 as partners, groups = 1-5,
+recovery = 7-8), so a file can run alone. The CI devnet job runs the 1:1 and
+group files (non-blocking, like topology). The history file (a 120-message bulk
+write) and the recovery file (it deletes a bot's self-state) stay local-only:
+
+```bash
+npm run build:devnet
+E2E_BASE_PATH=/devnet E2E_ENV_FILE=.env.devnet NETWORK=devnet \
+  npx playwright test --project=write --trace=off dm-v5
+```
+
 The devnet CI command disables Playwright traces because authentication fixture
 arguments include a private key. Screenshots and the HTML report remain available.
 This job is nonblocking: inspect the test results rather than treating the job's

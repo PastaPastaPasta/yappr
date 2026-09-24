@@ -22,7 +22,10 @@ export const DEFAULT_FEE_MULTIPLIER_PERMILLE = 1000n
 
 /**
  * The `$actionFeeAgreement` for an action the contract prices. The amounts are
- * the declared ones, each pot on its own — anything else is 40133 — and
+ * the declared ones, each pot on its own — anything else is 40133 — and the
+ * moderators part is never discounted: on an elected contract a lower amount
+ * must equal the seated charter's share exactly (40139), while the full
+ * declared amount is accepted whether or not a charter is seated. And
  * `feeMultiplier` is named only for `feeMultiplier` pricing (naming it for a
  * `fixed` fee is the same mismatch).
  */

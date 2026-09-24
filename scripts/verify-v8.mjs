@@ -12,16 +12,13 @@
  * 1. **Document ids commit to the identity contract nonce** (#4859). The
  *    post/reply creates here are manual batches — they must carry an
  *    `$actionFeeAgreement` (40132 without), which `sdk.documents.create` has no
- *    option for — so they set the document's v1 id themselves:
- *    `dsha256("dash:document-id:v1" ‖ contract ‖ owner ‖ type ‖ entropy ‖ nonce
- *    u64 BE)`, and the id the proof result returns is compared against it
- *    (case a3): the live proof of the derivation the client needs.
+ *    option for — so they know the nonce up front and derive the v1 id with
+ *    wasm-dpp2's `Document.generateId(type, owner, contract, entropy, nonce)`
+ *    (beta.4, #4868), and the id the proof result returns is compared against
+ *    it (case a3): the live proof of the derivation the client needs.
  *
- *    Every OTHER create goes through verify-lib's `attemptCreate`, which on
- *    this branch still probes the pre-beta.3 `Document.generateId` id. Those
- *    cases (m1, m2, t2, a1 and the blog/storefront moderated cases) score
- *    correctly only once `beta3/sdk-and-ids` (PR A) has taught verify-lib to
- *    read the id off the create RESULT — run this battery after that merge.
+ *    Every OTHER create goes through verify-lib's `attemptCreate`, which reads
+ *    the id off the create RESULT.
  *
  * 2. **A moderator signs.** The contract owner (`--moderator maker`, the
  *    default) or an appointed moderator (`--moderator bot:2`) bans, suspends,
@@ -59,7 +56,7 @@
  * script's `--fund`) AND credits (posts on v8 also cost a credit action fee).
  */
 import bs58 from 'bs58';
-import { DocumentActionFeeAgreement } from '@dashevo/evo-sdk';
+import { DocumentActionFeeAgreement, ensureInitialized } from '@dashevo/evo-sdk';
 import {
   FEE_MULTIPLIER_NOT_TOLERATED,
   PREFER_CONTRACT_OWNER,
@@ -160,12 +157,10 @@ const replyData = ({ content = 'v8 battery reply', rootPostId, parentOwnerId }) 
 // ---- Nonce-committed ids and the manual batch ---------------------------------
 
 /**
- * `dsha256(tag ‖ contract ‖ owner ‖ type ‖ entropy ‖ nonce BE)` — the id
- * consensus recomputes (#4859). Deliberately the SHIPPED helper rather than a
- * copy: case a3 compares what this derives against the id the proof result
- * names, so a live run proves the derivation the seeders use and the twin of
- * the one the browser signs with (`lib/document-id.ts`), not a battery-local
- * transcription that could agree with neither.
+ * The v1 id consensus recomputes (#4859), from wasm-dpp2 (#4868) through the
+ * seeders' shared helper — the same `Document.generateId` the browser signs
+ * with (`lib/document-id.ts`). Case a3 compares it against the id the proof
+ * result names.
  */
 const documentIdV1 = deriveDocumentIdBytes;
 
@@ -594,6 +589,7 @@ const botIndexArg = (flag, fallback) => { const i = process.argv.indexOf(flag); 
 if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) {
   // The id derivation is pure; prove it is deterministic and nonce-sensitive
   // before any shape is built.
+  await ensureInitialized();
   const fixed = { contractId: bs58.encode(new Uint8Array(32).fill(1)), ownerId: bs58.encode(new Uint8Array(32).fill(2)), docType: 'note', entropy: new Uint8Array(32).fill(7) };
   const a = bs58.encode(documentIdV1({ ...fixed, nonce: 1n }));
   const b = bs58.encode(documentIdV1({ ...fixed, nonce: 1n }));

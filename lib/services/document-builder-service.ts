@@ -22,7 +22,7 @@
  */
 import { getEvoSdk } from './evo-sdk-service';
 import { documentToPlainObject, requireDocumentIdentifierBytes } from './sdk-helpers';
-import { deriveDocumentId } from '@/lib/document-id';
+import { documentIdForCreate } from '@/lib/document-id';
 import { Document, PlatformVersion } from '@dashevo/evo-sdk';
 import type { DocumentObject } from '@dashevo/evo-sdk';
 
@@ -72,11 +72,11 @@ class DocumentBuilderService {
    * Build a Document object for document creation.
    *
    * From protocol 14 a new document's id commits to the identity contract
-   * nonce of its create transition (`lib/document-id.ts`), so the id is
-   * derived HERE from the nonce the caller is about to sign with, never
-   * precomputed. The wasm `Document` constructor and `Document.generateId`
-   * still return the pre-14 entropy-only id, which consensus now refuses
-   * (InvalidDocumentTransitionIdError), so neither is used on this path.
+   * nonce of its create transition, so the document carries the id wasm-dpp2
+   * derives for the nonce the caller is about to sign with
+   * (`documentIdForCreate`, beta.4+). `new DocumentCreateTransition({ document,
+   * identityContractNonce })` re-derives the same id from the same entropy and
+   * nonce, so what is built here and what the transition carries agree.
    *
    * @param contractId - The data contract ID
    * @param documentTypeName - The document type name (e.g., 'post', 'profile')
@@ -99,7 +99,7 @@ class DocumentBuilderService {
     // Ensure WASM is initialized before creating objects
     await ensureWasmReady();
 
-    const id = deriveDocumentId({
+    const id = documentIdForCreate({
       contractId,
       ownerId,
       documentTypeName,

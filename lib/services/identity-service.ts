@@ -197,6 +197,25 @@ class IdentityService {
   }
 
   /**
+   * Record a credit balance a write's wait result carried (`ownerBalance`,
+   * platform#4887: from protocol 14 the proof of an owned, fee-paying
+   * transition includes the owner's balance after it), so the next
+   * `getBalance` skips a round-trip. The value is a snapshot at the proof's
+   * block and may already include later writes of the same identity; the
+   * cache's TTL bounds how long it is trusted.
+   */
+  recordBalance(identityId: string, credits: bigint): void {
+    if (credits > BigInt(Number.MAX_SAFE_INTEGER)) {
+      // A number would round it; leave the cache to the exact query path.
+      logger.warn(`Balance ${credits} credits exceeds Number.MAX_SAFE_INTEGER; not caching the proof's owner balance`);
+      this.balanceCache.delete(identityId);
+      return;
+    }
+    const confirmed = Number(credits);
+    this.balanceCache.set(identityId, { confirmed, total: confirmed });
+  }
+
+  /**
    * Clear cache for an identity
    */
   clearCache(identityId?: string): void {

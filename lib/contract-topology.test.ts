@@ -139,6 +139,8 @@ describe('contract topology', () => {
       expect(v7.contractIsModerated()).toBe(false)
       expect(v7.referencesMayDangle()).toBe(false)
       expect(v7.moderatorDeletableTypes()).toEqual([])
+      expect(v7.moderationListsKept()).toEqual([])
+      expect(v7.contractKeepsWarnings()).toBe(false)
       expect(v7.declaredActionFee('post', 'create')).toBeNull()
       expect(v7.starterGrantAmount()).toBeNull()
       // The YAPP price is the same number on every priced cut, but before v8
@@ -172,6 +174,11 @@ describe('contract topology', () => {
       expect(v8.contractIsModerated()).toBe(true)
       expect(v8.referencesMayDangle()).toBe(true)
       expect(v8.moderatorDeletableTypes()).toEqual(['post', 'reply'])
+      // The lists follow the JSON: a re-cut that adds `warnings: true` turns
+      // the warn action on without a code change.
+      const declared = socialContractV8.config.moderation as Record<string, unknown>
+      expect(v8.moderationListsKept()).toEqual(['banlist', 'suspensions', 'warnings'].filter((list) => declared[list] === true))
+      expect(v8.contractKeepsWarnings()).toBe(declared.warnings === true)
       expect(socialContractV8.config).toMatchObject({
         $formatVersion: '2',
         moderation: { banlist: true, suspensions: true, moderators: { $type: 'contractOwner' } },
@@ -239,13 +246,13 @@ describe('contract topology', () => {
   describe('v9 grammar', () => {
     it('reports none of the v9 grammar before v9', async () => {
       const v8 = await topologyModule('v8')
-      expect(v8.moderationLists()).toEqual(['banlist', 'suspensions'])
-      expect(v8.warningsAreKept()).toBe(false)
+      expect(v8.moderationListsKept()).toEqual(['banlist', 'suspensions'])
+      expect(v8.contractKeepsWarnings()).toBe(false)
       expect(v8.electedModeration()).toBeNull()
       expect(v8.ownerDistinctProperties('follow')).toEqual([])
       expect(v8.privateFeedWritesAreGated()).toBe(false)
       expect(v8.blockFollowsAreTyped()).toBe(false)
-      expect((await topologyModule('v7')).moderationLists()).toEqual([])
+      expect((await topologyModule('v7')).moderationListsKept()).toEqual([])
     })
 
     it('keeps every v8 capability, fee, cost and grant on v9', async () => {
@@ -275,8 +282,8 @@ describe('contract topology', () => {
     it('pins the elected moderation declaration against the v9 JSON', async () => {
       const v9 = await topologyModule('v9')
       expect(socialContractV9.config.$formatVersion).toBe('2')
-      expect(v9.moderationLists()).toEqual(['banlist', 'suspensions', 'warnings'])
-      expect(v9.warningsAreKept()).toBe(true)
+      expect(v9.moderationListsKept()).toEqual(['banlist', 'suspensions', 'warnings'])
+      expect(v9.contractKeepsWarnings()).toBe(true)
       const abilities = ['deleteDocuments', 'ban', 'suspend', 'warn']
       expect(v9.electedModeration()).toEqual({
         joinWindowSeconds: 86_400,

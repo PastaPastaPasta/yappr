@@ -135,7 +135,8 @@ replay cache, which makes a timed-out write idempotent by rebroadcasting the
    (`nextIdentityContractNonce`, the DIP-30 masking that was inline before);
 2. draw 32 bytes of entropy and derive the id in JS —
    `lib/document-id.ts` `deriveDocumentId`, `@noble/hashes` sha256, `TextEncoder`
-   for the type name, 8-byte big-endian nonce;
+   for the type name, 8-byte big-endian nonce (**retired in beta.4**: wasm-dpp2
+   now derives it, see [`PLATFORM_BETA4_UPGRADE.md`](./PLATFORM_BETA4_UPGRADE.md));
 3. build the `Document` with `Document.fromObject` carrying that id and entropy
    (`documentBuilderService.buildDocumentForCreate`, which now REQUIRES
    `{ entropy, identityContractNonce }` — there is no way left to build a
