@@ -321,7 +321,8 @@ poll), and the name and avatar. The epoch is not in plaintext. A reader tries
 replace, so at most `$revision − (last seen $revision)` steps are needed; the
 client caches the last seen `$revision` per group. Keyrings are applied first,
 so `r` restarts at 0 on a new base. When a group ends, the roster becomes a
-tombstone (`ended`).
+tombstone: the same content with `ended` set. It keeps the member list, so a
+device that loads the group later still knows whose streams hold its history.
 
 ### 5.5 `dmSelfState`: cross-device state
 
@@ -612,7 +613,9 @@ against about 33 for one feed load. No credits.
   gap; harmless.
 - **Leave:** the member sends `0x02`. The owner's client removes them on its
   next poll. Until then they can still read.
-- **Owner leaves:** the group ends (tombstone roster).
+- **Owner leaves:** the group ends (tombstone roster, members kept). Nobody
+  can send any more, and ended groups are not polled in the background, but
+  opening the thread still discovers and backfills its history.
 - **Resend keys (manual):** a member who cannot read a group sees "ask the
   owner to resend your keys". The owner's group page has a **Resend keys**
   action per member, which sends a fresh grant for the current epoch.

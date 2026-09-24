@@ -48,10 +48,15 @@ const byWeekThenIndex = (a: { w: number; j: number }, b: { w: number; j: number 
 // ---------------------------------------------------------------------------
 // What to poll
 
-/** A conversation's streams are polled only when their keys are held and the conversation is live. */
+/**
+ * A conversation's streams are polled only when their keys are held and the
+ * conversation is live. An ended group is still read while its thread is
+ * open, so its history stays visible (§6.4); it is never polled in the
+ * background.
+ */
 function pollable(conv: Conv): boolean {
   if (conv.kind === 'direct') return conv.convKey !== null
-  return !conv.removed && !conv.ended && !conv.unreadable
+  return !conv.removed && !conv.unreadable && (!conv.ended || conv.open)
 }
 
 /**

@@ -312,10 +312,13 @@ export async function renameGroup(ctx: DmContext, conv: GroupConv, name: string)
   await ownerWrite(ctx, conv, async (roster) => (roster.name === cleanName ? 'noop' : writeRoster(ctx, conv, { ...roster, name: cleanName })))
 }
 
-/** End the group (§6.4, owner leaves): the roster becomes a tombstone. */
+/**
+ * End the group (§6.4, owner leaves): the roster becomes a tombstone. It keeps
+ * the member list, so every device can still find the group's history.
+ */
 export async function endGroup(ctx: DmContext, conv: GroupConv): Promise<void> {
   requireOwner(ctx, conv)
-  await ownerWrite(ctx, conv, async (roster) => writeRoster(ctx, conv, { ...roster, members: [], avatarRef: '', ended: true }))
+  await ownerWrite(ctx, conv, async (roster) => writeRoster(ctx, conv, { ...roster, ended: true }))
 }
 
 /** "Resend keys" (§6.4): a fresh grant for the current epoch to one member. */

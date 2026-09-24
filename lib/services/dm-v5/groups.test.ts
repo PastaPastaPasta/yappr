@@ -11,7 +11,7 @@ import { attachGroup, attachSaved, groupConv, type DmContext } from './context'
 import { startedDirect } from './directs'
 import { addMember, createGroup, endGroup, leaveGroup, recoverOwnedGroups, removeMember, renameGroup, resendKeys } from './groups'
 import { pollOnce } from './loop'
-import { backfill } from './poller'
+import { backfill, collectWants, pollStreams } from './poller'
 import { SendError, sendContent } from './sender'
 import { MemoryLedger, makeContext } from './test-chain'
 import { STALE_WINDOW_MS } from './util'
@@ -413,6 +413,36 @@ describe('joining is saved at once (§5.5)', () => {
 })
 
 describe('review regressions', () => {
+  it('keeps an ended group history readable after a reload, with sending refused (review #6)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    await say(alice.ctx, conv, 'from alice')
+    await say(bob.ctx, bobGroup, 'from bob')
+    await endGroup(alice.ctx, conv)
+    // The tombstone keeps the member list: only `ended` changes.
+    expect(conv.lastRoster && has(conv.lastRoster.members, BOB_ID)).toBe(true)
+
+    for (const [id, priv] of [[BOB_ID, BOB_PRIV], [ALICE_ID, ALICE_PRIV]] as const) {
+      const reloaded = makeContext(ledger, id, priv)
+      await reloaded.ctx.store.load()
+      await attachSaved(reloaded.ctx)
+      await pollOnce(reloaded.ctx)
+      const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+      expect(g.ended).toBe(true)
+      // Opening the thread runs history discovery even though the group is no longer polled live.
+      g.open = true
+      g.deepProbe = true
+      await pollStreams(reloaded.ctx, g)
+      expect(groupTexts(g).sort()).toEqual(['from alice', 'from bob'])
+      await expect(say(reloaded.ctx, g, 'x')).rejects.toBeInstanceOf(SendError)
+      // Closed again: an ended group is not polled in the background.
+      g.open = false
+      expect(collectWants(reloaded.ctx, g).filter((w) => w.kind !== 'stale')).toEqual([])
+    }
+  })
+
   it('verifies an uncertain roster replace and re-applies the change when a competing write won (review #3)', async () => {
     const { ledger, alice, bob } = world()
     const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
