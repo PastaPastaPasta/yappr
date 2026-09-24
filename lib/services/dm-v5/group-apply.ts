@@ -92,6 +92,14 @@ export function markApplied(ctx: DmContext, conv: GroupConv): void {
 }
 
 /**
+ * Forget the last apply: the next send re-reads the group first. Any change to
+ * a group's keys, epoch or removed flag outside a full apply calls this.
+ */
+export function markStale(conv: GroupConv): void {
+  conv.appliedAt = { local: -Infinity, wall: -Infinity }
+}
+
+/**
  * Open the roster (§5.4) by ratcheting forward from the lowest key held on
  * each base, newest base first. Keys are one-way, so the lowest key reaches
  * every later step; the bound is how far the roster's `$revision` moved (each
@@ -119,8 +127,8 @@ async function applyRoster(ctx: DmContext, conv: GroupConv, doc: ChainGroupDoc):
     if (epochBefore(conv.epoch, content)) switchEpoch(ctx, conv, content)
     return
   }
-  conv.roster = { id: doc.id, revision: doc.revision, blob: doc.blob }
-  // A group I hold no readable roster for: "ask the owner to resend your keys" (§6.4).
+  // Not opened: `conv.roster` keeps the last roster that did, so the ratchet bound (§5.4) still
+  // counts from it. A group I hold no readable roster for: "ask the owner to resend your keys" (§6.4).
   if (!conv.lastRoster) conv.unreadable = true
 }
 
@@ -156,6 +164,8 @@ async function applyOwner(ctx: DmContext, owner: IdentityId, groups: GroupConv[]
     }
     pending = next
   }
+  // Keyrings left unwalked at the round cap: the group is not known to be current.
+  for (const { g } of pending) unchecked.add(g)
 
   for (const doc of rosters) {
     const g = rosterById.get(hexId(doc.handle))
@@ -163,8 +173,10 @@ async function applyOwner(ctx: DmContext, owner: IdentityId, groups: GroupConv[]
   }
   for (const g of live) {
     if (g.lastRoster?.ended) g.ended = true
+    // A group not fully checked is neither fresh nor live yet: the next poll applies it again.
+    if (unchecked.has(g)) continue
+    markApplied(ctx, g)
     const first = !g.live
-    if (!unchecked.has(g)) markApplied(ctx, g)
     g.live = true
     if (first) seedHeads(ctx, g)
   }

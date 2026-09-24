@@ -18,7 +18,7 @@ import type { Epoch, GroupConversation } from '@/lib/dm/types'
 import { logger } from '@/lib/logger'
 import { newGroupConv } from './conversation'
 import { groupConv, type DmContext, type PendingGrant } from './context'
-import { applyGroups } from './group-apply'
+import { applyGroups, markStale } from './group-apply'
 import { STALE_WINDOW_MS } from './util'
 
 /** Reasons a later poll can change: the roster replace has not landed yet. */
@@ -59,10 +59,16 @@ async function processGrant(ctx: DmContext, grant: PendingGrant): Promise<'done'
 
   if (existing) {
     // A resend, or a re-add after removal: take the key and start reading again.
-    const cutOff = existing.removed || existing.unreadable ? await anchorCutOff(ctx, existing.entry, epoch) : 'no'
-    // Cannot tell yet (the owner's key lookup failed): keep the grant and check again next poll.
-    if (cutOff === 'unknown') return 'retry'
+    let cutOff = existing.removed || existing.unreadable ? await anchorCutOff(ctx, existing.entry, epoch) : 'no'
+    // Cannot tell yet (the owner's key lookup failed): keep the grant and check again next poll,
+    // for the stale window; after that, keep the saved anchor (the safe side: it loses nothing).
+    if (cutOff === 'unknown') {
+      if (ctx.chain.now() - grant.firstSeen < STALE_WINDOW_MS) return 'retry'
+      cutOff = 'no'
+    }
     const wasCutOff = cutOff === 'yes'
+    // Keys and flags change outside a full apply: the next send re-reads the group first.
+    markStale(existing)
     existing.keys.set(epoch, grant.key)
     existing.removed = false
     existing.unreadable = false

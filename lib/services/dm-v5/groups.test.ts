@@ -416,6 +416,101 @@ describe('joining is saved at once (§5.5)', () => {
 })
 
 describe('follow-up review regressions', () => {
+  it('refuses a send after a re-add grant whose group re-apply failed (follow-up 2 #1)', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    const carolGroup = theGroup(carol.ctx, ALICE_ID, conv.gid)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    expect(carolGroup.removed).toBe(true)
+    await addMember(alice.ctx, conv, CAROL_ID)
+    // Carol's group queries fail once processGrant has cleared `removed` (its re-apply), and after.
+    const groupDocs = carol.chain.groupDocs.bind(carol.chain)
+    carol.chain.groupDocs = async (owner, handles) => {
+      if (!carolGroup.removed) throw new Error('DAPI timeout')
+      return groupDocs(owner, handles)
+    }
+    await pollOnce(carol.ctx)
+    expect(carolGroup.removed).toBe(false)
+    const before = ledger.messages.length
+    await expect(say(carol.ctx, carolGroup, 'x')).rejects.toThrow('Could not check the group')
+    expect(ledger.messages).toHaveLength(before)
+  })
+
+  it('does not count a group as applied, or seed it live, while a keyring could not be checked (follow-up 2 #2, #3)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    const fresh = makeContext(ledger, BOB_ID, BOB_PRIV)
+    await pollOnce(bob.ctx)
+    await fresh.ctx.store.load()
+    fresh.chain.encryptionKey = async () => {
+      throw new Error('DAPI timeout')
+    }
+    await attachSaved(fresh.ctx)
+    const g = theGroup(fresh.ctx, ALICE_ID, conv.gid)
+    expect(await applyGroups(fresh.ctx, [g])).toBe(false)
+    expect(g.live).toBe(false)
+    expect(g.appliedAt.local).toBe(-Infinity)
+  })
+
+  it('treats a group whose keyring walk hit the round cap as not fully applied (follow-up 2 #2)', async () => {
+    const { alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID, DAVE_ID])
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    // More keyrings than one apply follows: pretend every handle lookup returns a keyring for the next base.
+    const groupDocs = bob.chain.groupDocs.bind(bob.chain)
+    let fakeB = 1
+    bob.chain.groupDocs = async (owner, handles) => {
+      const docs = await groupDocs(owner, handles)
+      const k = buildKeyring({ ownerPrivateKey: ALICE_PRIV, ownerId: ALICE_ID, gid: conv.gid, b: fakeB, groupSecret: deriveGroupSecret(ALICE_PRIV, conv.gid), members: [{ id: BOB_ID, publicKey: getPublicKey(BOB_PRIV) }] })
+      const handle = keyringHandle(conv.gid, fakeB)
+      if (handles.some((h) => bytesEqual(h, handle))) {
+        fakeB++
+        docs.push({ id: `k${fakeB}`, ownerId: ALICE_ID, createdAt: 1, updatedAt: 1, handle, blob: k.blob, revision: 1 })
+      }
+      return docs
+    }
+    bobGroup.appliedAt = { local: -Infinity, wall: -Infinity }
+    expect(await applyGroups(bob.ctx, [bobGroup])).toBe(false)
+    expect(bobGroup.appliedAt.local).toBe(-Infinity)
+  })
+
+  it('stops retrying a grant whose anchor check cannot tell after the stale window (follow-up 2 #6)', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    await addMember(alice.ctx, conv, CAROL_ID)
+    carol.ctx.peerKeys.delete(hexId(ALICE_ID))
+    carol.chain.encryptionKey = async () => {
+      throw new Error('DAPI timeout')
+    }
+    await pollOnce(carol.ctx)
+    const readd = () => Array.from(carol.ctx.pendingGrants.values()).some((p) => p.b === 1)
+    expect(readd()).toBe(true)
+    ledger.time += STALE_WINDOW_MS + 1
+    await processGrants(carol.ctx)
+    expect(readd()).toBe(false)
+  })
+
+  it('does not record a roster it could not open (follow-up 2 #7)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    const seen = bobGroup.roster
+    const doc = ledger.groupDocs.find((d) => bytesEqual(d.handle, rosterHandle(conv.gid)))
+    if (!doc) throw new Error('no roster')
+    doc.blob = new Uint8Array(doc.blob.length).fill(9)
+    doc.revision += 1
+    await applyGroups(bob.ctx, [bobGroup])
+    expect(bobGroup.roster).toEqual(seen)
+  })
+
   it('adopts a lost keyring that lands late during the rebuild (40105), and writes the roster under it', async () => {
     const { ledger, alice, bob } = world()
     const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
@@ -459,7 +554,9 @@ describe('follow-up review regressions', () => {
     await pollOnce(bob.ctx)
     // Bob reloads the page: the monotonic clock starts near 0, and the first group query fails.
     const reloaded = makeContext(ledger, BOB_ID, BOB_PRIV)
+    // Both clocks near 0: a never-applied group must not read as applied at time 0.
     reloaded.ctx.clock = () => 5
+    reloaded.ctx.wallClock = () => 5
     await reloaded.ctx.store.load()
     await attachSaved(reloaded.ctx)
     reloaded.chain.groupDocs = async () => {
