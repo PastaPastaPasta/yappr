@@ -35,6 +35,15 @@ export function ModeratorRemoveModal() {
     setBusy(true)
     const result = await moderationService.removeDocument(user.identityId, targetKindOf(post), post.id, reason.trim())
     setBusy(false)
+    if (result.errorCode === 'MAYBE_APPLIED') {
+      // The DAPI gateway often times out on a delete that landed: say so, keep
+      // the dialog closed, and do not drop the card until it is checked.
+      toast(`This ${noun} may have been removed — the network did not confirm in time. Check again before retrying.`
+        + (result.snapshotSaved ? ' A copy is kept on this device in case it needs restoring.' : ''), { duration: 8000 })
+      setReason('')
+      close()
+      return
+    }
     if (!result.success) {
       toast.error(result.error || 'Removal failed')
       return

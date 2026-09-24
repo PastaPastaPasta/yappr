@@ -6,7 +6,7 @@ import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants';
 import { contractIsModerated, contractKeepsWarnings, moderationListsKept, moderatorDeletableTypes, type TargetKind } from '@/lib/contract-topology';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
-import { classifyModerationError, extractErrorMessage, type ModerationErrorKind } from '@/lib/error-utils';
+import { classifyModerationError, extractErrorMessage, isTimeoutError, type ModerationErrorKind } from '@/lib/error-utils';
 import { RESTORE_WINDOW_MS, dropSnapshot, loadSnapshot, removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots';
 import { getEvoSdk } from './evo-sdk-service';
 import { identifierToBase58 } from './sdk-helpers';
@@ -68,7 +68,12 @@ export interface ModerationResult {
   /** `removeDocument` only: whether a copy was kept on this device, so the removal can be restored from here. */
   snapshotSaved?: boolean;
   error?: string;
-  errorCode?: 'NOT_MODERATED' | 'NEEDS_CRITICAL_KEY' | 'INVALID_KEY' | 'ALREADY_CLAIMED' | 'NOTHING_TO_CLAIM' | 'NO_SNAPSHOT' | 'NETWORK_ERROR' | ModerationErrorKind;
+  /**
+   * `MAYBE_APPLIED`: the broadcast went out but its confirmation timed out (the
+   * DAPI gateway 504s even when a transition lands), so the action may well
+   * have happened — the caller says "check again", never "failed".
+   */
+  errorCode?: 'NEEDS_CRITICAL_KEY' | 'INVALID_KEY' | 'ALREADY_CLAIMED' | 'NOTHING_TO_CLAIM' | 'NO_SNAPSHOT' | 'MAYBE_APPLIED' | 'NETWORK_ERROR' | ModerationErrorKind;
 }
 
 /**
@@ -354,25 +359,36 @@ class ModerationService {
     const cached = this.standingCache.get(identityId);
     if (!fresh && cached && Date.now() - cached.at < ModerationService.STANDING_TTL_MS) return cached.standing;
     try {
-      const sdk = await getEvoSdk();
-      const status: ContractModerationStatus = await sdk.contracts.moderationStatus({
-        contractId: YAPPR_CONTRACT_ID,
-        identityId,
-        lists: [...moderationListsKept()],
-      });
-      const standing: ModerationStanding = {
-        banned: status.banned === true,
-        banReason: reasonText(status.banReason),
-        suspendedUntil: status.suspendedUntil === undefined ? null : Number(status.suspendedUntil),
-        suspensionReason: reasonText(status.suspensionReason),
-        warnings: (status.warnings ?? []).map(toWarning),
-      };
-      this.standingCache.set(identityId, { standing, at: Date.now() });
-      return standing;
+      return await this.readStanding(identityId);
     } catch (error) {
       logger.warn('moderationService: moderation status read failed', error);
       return NO_STANDING;
     }
+  }
+
+  /**
+   * An identity's standing, read fresh and proved, THROWING when the read
+   * fails. For a moderator's status check, where "in good standing" must mean
+   * the chain said so, not that the read broke. Feed cards use the lenient
+   * {@link getStanding}.
+   */
+  async readStanding(identityId: string): Promise<ModerationStanding> {
+    if (!contractIsModerated()) return NO_STANDING;
+    const sdk = await getEvoSdk();
+    const status: ContractModerationStatus = await sdk.contracts.moderationStatus({
+      contractId: YAPPR_CONTRACT_ID,
+      identityId,
+      lists: [...moderationListsKept()],
+    });
+    const standing: ModerationStanding = {
+      banned: status.banned === true,
+      banReason: reasonText(status.banReason),
+      suspendedUntil: status.suspendedUntil === undefined ? null : Number(status.suspendedUntil),
+      suspensionReason: reasonText(status.suspensionReason),
+      warnings: (status.warnings ?? []).map(toWarning),
+    };
+    this.standingCache.set(identityId, { standing, at: Date.now() });
+    return standing;
   }
 
   /** One page of a list the contract keeps, in identity id order; empty for a list it does not keep. */
@@ -512,8 +528,22 @@ class ModerationService {
         reason: reasonOf(reason),
       });
     });
-    if (!result.success && snapshotSaved) dropSnapshot(kind, documentId);
-    return { ...result, snapshotSaved: result.success && snapshotSaved };
+    // The copy is the only way back, so it goes only when the network
+    // DEFINITIVELY refused the delete (a classified consensus refusal, or a
+    // local refusal before signing). A timeout or an unrecognised failure may
+    // hide a delete that landed; the one-week expiry cleans those up.
+    if (!result.success && snapshotSaved && isDefinitiveRefusal(result)) {
+      dropSnapshot(kind, documentId);
+      snapshotSaved = false;
+    }
+    if (result.errorCode === 'MAYBE_APPLIED') {
+      return {
+        ...result,
+        error: `The network did not confirm in time: the ${kind} may have been removed. Check again before retrying.`,
+        snapshotSaved,
+      };
+    }
+    return { ...result, snapshotSaved };
   }
 
   /**
@@ -636,8 +666,8 @@ class ModerationService {
     if (kind) {
       return { success: false, error: MODERATION_ERROR_MESSAGES[kind], errorCode: kind };
     }
-    if (code(41100) || lower.includes('moderationnotenabled')) {
-      return { success: false, error: 'The contract declares no moderation', errorCode: 'NOT_MODERATED' };
+    if (isTimeoutError(error)) {
+      return { success: false, error: 'The network did not confirm in time: this may have been applied. Check again before retrying.', errorCode: 'MAYBE_APPLIED' };
     }
     if (code(41111) || /already.{0,30}claimed.{0,30}epoch|alreadyclaimedthisepoch/.test(lower)) {
       return { success: false, error: 'The moderators pot was already paid out this epoch', errorCode: 'ALREADY_CLAIMED' };
@@ -655,8 +685,21 @@ class ModerationService {
 const reasonOf = (reason: string | ModerationReasonInput): ContractModerationReason =>
   toModerationReason(typeof reason === 'string' ? { text: reason } : reason);
 
+/**
+ * True when the action certainly did not happen: refused before signing, or
+ * refused by consensus with a classified error. `MAYBE_APPLIED` and the
+ * catch-all `NETWORK_ERROR` are not.
+ */
+function isDefinitiveRefusal(result: ModerationResult): boolean {
+  return result.errorCode !== undefined && result.errorCode !== 'MAYBE_APPLIED' && result.errorCode !== 'NETWORK_ERROR';
+}
+
 const MODERATION_ERROR_MESSAGES: Record<ModerationErrorKind, string> = {
   NOT_MODERATOR: 'This identity is not one of the contract\'s moderators',
+  NOT_MODERATED: 'The contract declares no such moderation',
+  TARGET_PROTECTED: 'The contract owner and its moderators cannot be moderated',
+  TYPE_NOT_DELETABLE: 'Moderators cannot delete documents of this type',
+  DELETE_WINDOW_ELAPSED: 'The window in which moderators may delete this has passed',
   NOT_WARNED: 'That identity carries no warnings to clear',
   WARNING_LIMIT: 'That identity already carries the most warnings it can; clear them before warning again',
   NO_REMOVAL_RECORD: 'There is no moderator removal of that document to undo',

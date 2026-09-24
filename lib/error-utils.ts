@@ -584,6 +584,10 @@ export function isModerationNotYetSeatedError(error: unknown): boolean {
  */
 export type ModerationErrorKind =
   | 'NOT_MODERATOR'
+  | 'NOT_MODERATED'
+  | 'TARGET_PROTECTED'
+  | 'TYPE_NOT_DELETABLE'
+  | 'DELETE_WINDOW_ELAPSED'
   | 'NOT_WARNED'
   | 'WARNING_LIMIT'
   | 'NO_REMOVAL_RECORD'
@@ -605,6 +609,12 @@ const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly n
   // On an elected contract with a seated team the interim moderators, the owner
   // among them, get 41101 too, and the interim team's pot claim gets 41113.
   ['NOT_MODERATOR', [41101, 41113], /identitynotcontractmoderator|contractfeeclaimnotallowed|is not the owner or a moderator of contract|is not a recipient of the .* fee pot/i],
+  // 41100: the contract keeps no such list (or no moderation at all).
+  ['NOT_MODERATED', [41100], /contractmoderationnotenabled|contract .* does not keep a /i],
+  // 41102: the owner and the moderators can not be moderated, nor their documents deleted.
+  ['TARGET_PROTECTED', [41102], /contractmoderationtargetnotallowed|is the owner or a moderator of contract .* and can not be moderated/i],
+  ['TYPE_NOT_DELETABLE', [41115], /documenttypenotdeletablebymoderators|can not be deleted by moderators/i],
+  ['DELETE_WINDOW_ELAPSED', [41116], /documentmoderationwindowelapsed|could be deleted by moderators for .* seconds after that/i],
   ['NOT_WARNED', [41117], /contractusernotwarned|carries no warning on contract/i],
   ['WARNING_LIMIT', [41118], /contractuserwarninglimitreached|warnings on contract .* the most it may at a time/i],
   ['NO_REMOVAL_RECORD', [41119], /contractdocumentremovalnotfound|keeps no record of a moderator's deletion/i],

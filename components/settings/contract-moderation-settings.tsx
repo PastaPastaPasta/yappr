@@ -55,7 +55,8 @@ export function ContractModerationSettings() {
   const [restorable, setRestorable] = useState<ReadonlySet<string>>(new Set())
   const canWarn = moderationService.canWarn()
   const [pot, setPot] = useState<FeePotState | null>(null)
-  const [standing, setStanding] = useState<{ identityId: string; standing: ModerationStanding } | null>(null)
+  /** The last status check: the proved standing, or the read failure (never a clean record in its place). */
+  const [standing, setStanding] = useState<{ identityId: string; standing: ModerationStanding | null; error: string | null } | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -92,6 +93,11 @@ export function ContractModerationSettings() {
     setBusy({ action: 'restore', id: removalKey(removal) })
     const result = await moderationService.restoreDocument(user.identityId, removal.kind, removal.documentId)
     setBusy(null)
+    if (result.errorCode === 'MAYBE_APPLIED') {
+      toast(`This ${removal.kind} may have been restored — the network did not confirm in time. Check again before retrying.`, { duration: 8000 })
+      refresh().catch(() => { /* reported inside */ })
+      return
+    }
     if (!result.success) {
       toast.error(result.error || 'Restore failed')
       return
@@ -145,6 +151,12 @@ export function ContractModerationSettings() {
         break
     }
     setBusy(null)
+    if (result.errorCode === 'MAYBE_APPLIED') {
+      toast(result.error ?? 'This may have been applied. Check again before retrying.', { duration: 8000 })
+      refresh().catch(() => { /* reported inside */ })
+      if (id) lookUp(id).catch(() => { /* reported inside */ })
+      return
+    }
     if (!result.success) {
       toast.error(result.error || 'Action failed')
       return
@@ -158,7 +170,12 @@ export function ContractModerationSettings() {
   const lookUp = async (identityId: string) => {
     const id = identityId.trim()
     if (!id) return
-    setStanding({ identityId: id, standing: await moderationService.getStanding(id, { fresh: true }) })
+    try {
+      setStanding({ identityId: id, standing: await moderationService.readStanding(id), error: null })
+    } catch (error) {
+      logger.warn('ContractModerationSettings: status check failed', error)
+      setStanding({ identityId: id, standing: null, error: 'Could not read this identity\'s moderation status.' })
+    }
   }
 
   return (
@@ -200,7 +217,16 @@ export function ContractModerationSettings() {
               {SUSPENSION_DAYS.map((d) => <option key={d} value={d}>{dayLabel(d)}</option>)}
             </select>
           </div>
-          {standing && standing.identityId === targetId.trim() && <StandingSummary standing={standing.standing} />}
+          {standing && standing.identityId === targetId.trim() && (standing.standing
+            ? <StandingSummary standing={standing.standing} />
+            : (
+              <div role="alert" className="flex items-center justify-between gap-2 text-sm rounded-lg border border-red-300 dark:border-red-800 p-3 text-red-600 dark:text-red-400">
+                <span>{standing.error}</span>
+                <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => { lookUp(standing.identityId).catch(() => { /* reported inside */ }) }}>
+                  Retry
+                </Button>
+              </div>
+            ))}
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" disabled={busy !== null || !targetId.trim()} onClick={() => { lookUp(targetId).catch(() => { /* reported inside */ }) }}>
               Check status

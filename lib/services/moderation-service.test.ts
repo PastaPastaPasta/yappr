@@ -211,6 +211,23 @@ describe('warnings are gated on the contract keeping a warning list', () => {
   })
 })
 
+describe('reading a standing', () => {
+  it('readStanding surfaces a failed read instead of painting a clean record', async () => {
+    sdk.contracts.moderationStatus.mockRejectedValue(new Error('offline'))
+    await expect(moderationService.readStanding(TARGET)).rejects.toThrow('offline')
+  })
+
+  it('getStanding stays lenient for feed cards', async () => {
+    sdk.contracts.moderationStatus.mockRejectedValue(new Error('offline'))
+    expect(await moderationService.getStanding(TARGET, { fresh: true })).toMatchObject({ banned: false, warnings: [] })
+  })
+
+  it('readStanding returns the proved status', async () => {
+    sdk.contracts.moderationStatus.mockResolvedValue({ lists: ['banlist', 'suspensions'], banned: true, banReason: { text: 'spam' } })
+    expect(await moderationService.readStanding(TARGET)).toMatchObject({ banned: true, banReason: 'spam' })
+  })
+})
+
 describe('remove then restore', () => {
   const bytes = new Uint8Array([1, 2, 3, 4])
 
@@ -234,12 +251,35 @@ describe('remove then restore', () => {
     expect(moderationService.canRestore('post', removal)).toBe(false)
   })
 
-  it('forgets the snapshot when the removal itself was refused', async () => {
+  it('forgets the snapshot only when the network definitively refused the delete', async () => {
+    sdk.contracts.fetch.mockResolvedValue({})
+    sdk.documents.get.mockResolvedValue({ toBytes: () => bytes })
+    sdk.contracts.moderatorDeleteDocument.mockRejectedValue(new Error(
+      'Document D6 on contract C was last modified at 1 and could be deleted by moderators for 60 seconds after that, which block time 999 is past'))
+    expect(await moderationService.removeDocument(MODERATOR, 'post', 'D6', 'spam')).toMatchObject({ success: false, snapshotSaved: false })
+    expect(storage.size).toBe(0)
+  })
+
+  it.each([
+    'wait for state transition result timed out',
+    'HTTP 504 Gateway Timeout',
+    'deadline exceeded',
+  ])('keeps the snapshot and reports MAYBE_APPLIED when the delete outcome is unknown (%s)', async (message) => {
+    sdk.contracts.fetch.mockResolvedValue({})
+    sdk.documents.get.mockResolvedValue({ toBytes: () => bytes })
+    sdk.contracts.moderatorDeleteDocument.mockRejectedValue(new Error(message))
+    const result = await moderationService.removeDocument(MODERATOR, 'post', 'D7', 'spam')
+    expect(result).toMatchObject({ success: false, errorCode: 'MAYBE_APPLIED', snapshotSaved: true })
+    expect(result.error).toMatch(/may have been removed/i)
+    expect(storage.size).toBe(1)
+  })
+
+  it('keeps the snapshot on an unrecognised failure too: only a known refusal proves the delete did not land', async () => {
     sdk.contracts.fetch.mockResolvedValue({})
     sdk.documents.get.mockResolvedValue({ toBytes: () => bytes })
     sdk.contracts.moderatorDeleteDocument.mockRejectedValue(new Error('offline'))
-    expect(await moderationService.removeDocument(MODERATOR, 'post', 'D6', 'spam')).toMatchObject({ success: false, snapshotSaved: false })
-    expect(storage.size).toBe(0)
+    expect(await moderationService.removeDocument(MODERATOR, 'post', 'D8', 'spam')).toMatchObject({ success: false, snapshotSaved: true })
+    expect(storage.size).toBe(1)
   })
 
   it('offers no restore once restored, past the week, or when the kept bytes do not hash to the record', () => {
