@@ -127,14 +127,24 @@ re-cut that sets `warnings: true` turns the feature on with no code change.
 **UI** (`components/settings/contract-moderation-settings.tsx`, the existing
 moderator panel): Warn / Clear warnings (when kept), a warned-identities list,
 a "Check status" readout (ban, suspension, each warning with its reason and
-cited-document count), an optional "posts this is about" field for
-ban/suspend/warn, and Restore on a removal row. The removal modal says a copy
-is kept for a week.
+cited-document count), optional "posts / replies this is about" fields for
+ban/suspend/warn (each cited id carries its real doctype), and Restore on a
+removal row (the restorable set is computed once per refresh). The removal
+result reports `snapshotSaved`, and the modal and toast only promise a
+restorable copy when one was actually kept.
 
-**Elected moderation, briefly.** `getTeam` now understands an `elected`
-declaration: once `sdk.moderationCharters.team(contract)` returns a seated
-team, the leader and members are the moderators and the owner is not; before
-that, the interim declaration applies. The election flow — submitting
+**Elected moderation, briefly.** Social v9 will declare it (interim
+`contractOwner`, `ownerProtected: true`). `getTeam` mirrors Drive's
+`ContractModerators::may_moderate` / `InterimModerators::may_moderate`
+(rs-dpp `config/moderation/elected.rs`) through an `ownerModerates` flag: the
+owner moderates under an owner or appointed declaration and under a
+`contractOwner` / `appointedModerators` interim; under a `notYetUsable` /
+`noModeration` interim nobody does; once `sdk.moderationCharters.team(contract)`
+returns a seated team, its leader and members moderate alone and the owner no
+longer may (`ownerProtected` protects the owner from moderation, it does not
+let it moderate). The team is cached for 60 seconds and dropped after every
+moderation action, so a team seated mid-session takes over; the wasm
+`ModerationTeam` is copied out and freed. The election flow — submitting
 charters, join requests, voting — is another agent's work, and nothing here
 constrains it: the charter readers are used through the SDK facade only, and
 `classifyModerationError` already names the election-side refusals (41200–41203,
@@ -151,7 +161,7 @@ labelled code (`code=41118`, `"code":41118`), never bare digits.
 | 10419 / 10422 | `DocumentPropertyNotDistinct` / `DocumentPropertyConstraintViolated` | `isDocumentPropertyRuleError` | "doesn't allow this combination" |
 | 10421 | `DocumentPropertyMaxBytesExceeded` | `isPropertyMaxBytesError` | "too long once emoji are counted — shorten it" |
 | 40135–40138 | `ReferencedContractRequirementNotMet`, `ReferencedIdentityKeyRequirementNotMet`, `ReferencedDocumentLookupInvalid`, `ReferencedDocumentListInvalid` | `isReferenceRequirementError` | code-level defect. **Excluded from `isReferenceNotFoundError`**: 40135 also says "referenced … for path", and tombstone repair would otherwise drop a reference whose target is alive. |
-| 40139 | `DocumentActionFeeModeratorsShareMismatch` | part of `isActionFeeAgreementError` | "out of date with the fee rules" |
+| 40139 | `DocumentActionFeeModeratorsShareMismatch` | `isModeratorsShareMismatchError` (also in `isActionFeeAgreementError`) | "the moderator fee share didn't match the seated charter" — not "reload". Drive checks the share only when the agreement offers LESS than declared; Yappr always agrees to the full declared moderators fee, which passes seated or not (pinned in `transition-agreements.test.ts`). |
 | 40307 | `VoteChoiceNotAllowedForVotePoll` | in `isPermanentProtocol14Error` | code-level defect |
 | 41200 | `ContractModeratedDocumentTypeNotYetUsable` | `isModerationNotYetSeatedError` | "opens once the community elects its moderation team" |
 | 41101 / 41113, 41117–41122, 41201–41203, 10904, 11000 / 11001, 40105 / 40111 in a moderation context | moderator-side refusals | `classifyModerationError` → `ModerationErrorKind` | per-kind messages in `moderation-service` |
@@ -162,12 +172,14 @@ All the user-reachable ones join `isPermanentProtocol14Error`, so
 ## Owner balance
 
 `createDocument` reads `ownerBalance` off the `waitForResponse` /
-`waitForAffectedState` result (an untyped bigint set by wasm-sdk, absent before
+`waitForAffectedState` result — on the fresh path and on the cached-ST
+rebroadcast path — (an untyped bigint set by wasm-sdk, absent before
 protocol 14 or for unowned transitions) and hands it to
 `identityService.recordBalance`, so the next `getBalance` — the sidebar's
 periodic refresh, the tip and buy-YAPP modals — is answered from cache. The
 value is a snapshot at the proof's block; the cache TTL bounds how long it is
-trusted. Replace, delete and the moderation calls go through facade methods
+trusted, and a value above `Number.MAX_SAFE_INTEGER` is not cached (it would
+round). Replace, delete and the moderation calls go through facade methods
 that return no wait result, so they are unchanged.
 
 ## JS API compatibility
@@ -209,10 +221,12 @@ On `beta4/sdk`, with the beta.4 packages:
 
 - `npm ls @dashevo/wasm-sdk` — one copy, `4.2.0-beta.4`, deduped.
 - `npm run lint`, `npx tsc --noEmit`, `npm run lint:dead` (knip) — clean.
-- `npm run test` — 66 files, 622 tests passing, including the new
+- `npm run test` — 66 files, 633 tests passing, including the new
   `lib/document-id.test.ts` (wasm vector, write-back, nonce masking),
-  `lib/services/moderation-service.test.ts` (reason shapes, warning gating,
-  snapshot-then-delete ordering, restore, error kinds),
+  `lib/services/moderation-service.test.ts` (who moderates under each of the
+  four interims and a seated team, the team TTL and post-action invalidation,
+  reason shapes, warning gating, snapshot-then-delete ordering and
+  `snapshotSaved`, restore, error kinds),
   `lib/services/owner-balance.test.ts`, and the beta.4 cases in
   `lib/error-utils.test.ts`.
 - `npm run build` — the static export succeeds.
