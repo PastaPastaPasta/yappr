@@ -31,10 +31,12 @@ import { ensureStarted, openDirect, startedDirect } from './directs'
 import { applyGroups, markApplied, switchEpoch } from './group-apply'
 import { sendContent } from './sender'
 import type { WriteFailure, WriteOutcome } from './types'
-import { nonceBackoffMs, withNonceRetry } from './write-failure'
+import { nonceBackoffMs, realSleep, withNonceRetry } from './write-failure'
 import { TAGS_PER_QUERY, hexId, includesId, range, sameEpoch } from './util'
 
 const MAX_OWNER_ROUNDS = 6
+/** Transport failures one owner write retries (each re-reads the group first). */
+const MAX_TRANSPORT_RETRIES = 2
 /** Background owner work (removing a member who left, repairing a roster) retries on the poll cadence: 30 s, doubling, at most 5 min. */
 const OWNER_RETRY_BASE_MS = 30_000
 const OWNER_RETRY_MAX_MS = 5 * 60_000
@@ -149,14 +151,20 @@ async function writeRoster(ctx: DmContext, conv: GroupConv, rosterContent: Roste
   return outcome
 }
 
-/** The roster's members who still hold a slot in keyring `b` (the owner tests each pad). */
-async function survivorsOf(ctx: DmContext, conv: GroupConv, b: number, candidates: IdentityId[]): Promise<IdentityId[]> {
+/**
+ * The roster's members who still hold a slot in keyring `b` (the owner tests
+ * each pad). Null when a member's key could not be fetched (a failed lookup,
+ * not an identity without a key): whether they hold a slot is unknown, and a
+ * roster written now would drop a live member.
+ */
+async function survivorsOf(ctx: DmContext, conv: GroupConv, b: number, candidates: IdentityId[]): Promise<IdentityId[] | null> {
   const keyring = conv.keyrings.get(b)
   if (!keyring) return candidates
   const out: IdentityId[] = [conv.owner]
   for (const id of candidates) {
     if (bytesEqual(id, conv.owner)) continue
     const publicKey = await peerKey(ctx, id)
+    if (!publicKey && !ctx.peerKeys.has(hexId(id))) return null
     if (!publicKey) continue
     const slot = openKeyringSlot(keyring, { myPrivateKey: ctx.me.encPriv, otherPublicKey: publicKey, gid: conv.gid, ownerId: conv.owner, memberId: id, b })
     if (slot) out.push(id)
@@ -168,26 +176,33 @@ type Change = (current: RosterContent) => Promise<WriteOutcome | 'noop'>
 
 /**
  * OWNER_WRITE (§6.5). `change` sees a roster at the newest epoch and returns
- * its last write's outcome; a stale or duplicate refusal re-runs the loop, and
- * so does any other refusal (usually a transport failure), after a short
- * backoff, up to the round cap. Every round re-reads first, so a keyring that
- * landed before a refused roster write is repaired rather than written twice.
+ * its last write's outcome; a stale or duplicate refusal re-runs the loop (up
+ * to the round cap). A transport failure re-runs it too, after a short
+ * backoff, at most twice; any other refusal (too few credits, say) throws at
+ * once, since retrying only burns fees. Every round re-reads first, so a
+ * keyring that landed before a failed roster write is repaired rather than
+ * written twice. If the group cannot be re-read, the last roster held stays.
  * `endsGroup` marks the end itself: finding the roster already ended on a
  * re-run means an earlier uncertain tombstone landed, which is success.
  */
 async function ownerWrite(ctx: DmContext, conv: GroupConv, change: Change, endsGroup = false): Promise<void> {
-  let lastError: string | null = null
-  const refused = async (outcome: { ok: false; failure: WriteFailure; error: string }, round: number) => {
-    if (outcome.failure !== 'other') return
-    lastError = outcome.error
-    await (ctx.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))))(nonceBackoffMs(round))
+  let transportRetries = 0
+  // Stale and duplicate refusals re-run the loop; a transport failure may re-run it twice; the rest throw.
+  const refused = async (outcome: { ok: false; failure: WriteFailure; error: string }): Promise<void> => {
+    if (outcome.failure === 'stale' || outcome.failure === 'duplicate' || outcome.failure === 'nonce') return
+    if (outcome.failure !== 'transport' || transportRetries >= MAX_TRANSPORT_RETRIES) throw new GroupError(outcome.error)
+    await (ctx.sleep ?? realSleep)(nonceBackoffMs(transportRetries++))
   }
   for (let round = 0; round < MAX_OWNER_ROUNDS; round++) {
+    const held = { roster: conv.roster, lastRoster: conv.lastRoster }
     conv.lastRoster = null
     conv.roster = null
     await applyGroups(ctx, [conv])
     const roster = conv.lastRoster as RosterContent | null
-    if (!roster) throw new GroupError('The group roster could not be read.')
+    if (!roster) {
+      Object.assign(conv, held)
+      throw new GroupError('The group roster could not be read.')
+    }
     if (roster.ended) {
       if (endsGroup) return
       throw new GroupError('This group has ended.')
@@ -196,16 +211,17 @@ async function ownerWrite(ctx: DmContext, conv: GroupConv, change: Change, endsG
       // Every base the failed replaces skipped goes into the log too, so their history is found (§5.4).
       let epochLog = roster.epochLog
       for (let b = roster.b + 1; b < conv.epoch.b; b++) epochLog = logEpoch(epochLog, { b, r: 0 }, epochStartWeek(ctx, conv, { b, r: 0 }))
-      const repaired: RosterContent = { ...roster, b: conv.epoch.b, r: 0, members: await survivorsOf(ctx, conv, conv.epoch.b, roster.members), epochLog }
-      const outcome = await writeRoster(ctx, conv, repaired)
-      if (!outcome.ok) await refused(outcome, round)
+      const members = await survivorsOf(ctx, conv, conv.epoch.b, roster.members)
+      if (!members) throw new GroupError('A member\'s key could not be fetched; the group will be repaired on a later poll.')
+      const outcome = await writeRoster(ctx, conv, { ...roster, b: conv.epoch.b, r: 0, members, epochLog })
+      if (!outcome.ok) await refused(outcome)
       continue
     }
     const outcome = await change(roster)
     if (outcome === 'noop' || outcome.ok) return
-    await refused(outcome, round)
+    await refused(outcome)
   }
-  throw new GroupError(lastError ?? 'The group changed on another device while saving. Try again.')
+  throw new GroupError('The group changed on another device while saving. Try again.')
 }
 
 // ---------------------------------------------------------------------------
@@ -384,19 +400,30 @@ function backOff(ctx: DmContext, backoff: Backoff): void {
  * retried on the poll cadence (30 s, doubling to 5 min), so one transient
  * refusal does not leave the member reading for long.
  */
-export async function processLeaves(ctx: DmContext): Promise<void> {
+export async function processLeaves(ctx: DmContext, tried: Set<string> = new Set()): Promise<void> {
   if (!ctx.chain.canWrite()) return
   for (const [id, pending] of Array.from(ctx.pendingLeaves.entries())) {
-    if (pending.retryAt > ctx.chain.now()) continue
     const { conv, member } = pending
+    // One backoff per group, shared with the repair step: a failing group costs one attempt per window.
+    const backoff = ctx.ownerRepairs.get(conv.key)
+    if (tried.has(conv.key) || (backoff && backoff.retryAt > ctx.chain.now())) continue
+    tried.add(conv.key)
     try {
       if (!conv.ended && isMember(conv, member, ctx.me.id)) await removeMember(ctx, conv, member)
       ctx.pendingLeaves.delete(id)
+      ctx.ownerRepairs.delete(conv.key)
     } catch (error) {
-      backOff(ctx, pending)
+      failedOwnerWork(ctx, conv.key)
       logger.warn('DM v5: removing a member who left failed:', error)
     }
   }
+}
+
+/** Record a failed background owner write on a group: its shared backoff grows. */
+function failedOwnerWork(ctx: DmContext, key: string): void {
+  const backoff = ctx.ownerRepairs.get(key) ?? { retryAt: 0, failures: 0 }
+  backOff(ctx, backoff)
+  ctx.ownerRepairs.set(key, backoff)
 }
 
 /**
@@ -406,22 +433,18 @@ export async function processLeaves(ctx: DmContext): Promise<void> {
  * slots on the next poll, without waiting for another owner change. Until
  * then readers still list the removed member.
  */
-export async function repairOwnedGroups(ctx: DmContext): Promise<void> {
+export async function repairOwnedGroups(ctx: DmContext, tried: Set<string> = new Set()): Promise<void> {
   if (!ctx.chain.canWrite()) return
   for (const conv of Array.from(ctx.convs.values())) {
-    if (conv.kind !== 'group' || !conv.secret || conv.ended || !conv.lastRoster || conv.epoch.b <= conv.lastRoster.b) {
-      if (conv.kind === 'group') ctx.ownerRepairs.delete(conv.key)
-      continue
-    }
+    if (conv.kind !== 'group' || !conv.secret || conv.ended || !conv.lastRoster || conv.epoch.b <= conv.lastRoster.b) continue
     const backoff = ctx.ownerRepairs.get(conv.key)
-    if (backoff && backoff.retryAt > ctx.chain.now()) continue
+    if (tried.has(conv.key) || (backoff && backoff.retryAt > ctx.chain.now())) continue
+    tried.add(conv.key)
     try {
       await ownerWrite(ctx, conv, async () => 'noop')
       ctx.ownerRepairs.delete(conv.key)
     } catch (error) {
-      const next = backoff ?? { retryAt: 0, failures: 0 }
-      backOff(ctx, next)
-      ctx.ownerRepairs.set(conv.key, next)
+      failedOwnerWork(ctx, conv.key)
       logger.warn('DM v5: repairing a group roster failed:', error)
     }
   }

@@ -647,9 +647,11 @@ against about 33 for one feed load. No credits.
   gap; harmless.
 - **Leave:** the member sends `0x02`. The owner's client removes them on its
   next poll. Until then they can still read. A removal that fails is retried
-  on the poll cadence (after 30 s, doubling to at most 5 minutes), and one
-  whose keyring landed but whose roster replace did not is finished by the
-  repair below on the owner's next poll, on any of the owner's devices.
+  on the poll cadence (after 30 s, doubling to at most 5 minutes; one backoff
+  per group, shared with the repair step, and at most one attempt per group
+  per poll), and one whose keyring landed but whose roster replace did not is
+  finished by the repair below on the owner's next poll, on any of the
+  owner's devices.
 - **Owner leaves:** the group ends (tombstone roster, members kept). Nobody
   can send any more, and ended groups are not polled in the background, but
   opening the thread still discovers and backfills its history.
@@ -671,7 +673,11 @@ OWNER_WRITE(g, change):
       replace the roster under the new base; continue
     do the change (grant + roster replace, or keyring + roster replace, or rename)
     if Platform rejects a write as stale (40106) or duplicate (unique index): continue
-    if it rejects it for any other reason (usually transport): wait briefly, continue   # bounded rounds
+    if the write never reached a verdict (transport: dead connection, stale quorums): wait briefly,
+      continue; at most twice per owner write
+    any other refusal (too few credits, say): stop; retrying only burns fees
+    if a member's key cannot be fetched while rebuilding members from a keyring: stop and write
+      nothing (a live member would be dropped); the next poll tries again
     if a write's result is uncertain (timeout): read its handle back
       exactly these bytes → it landed
       another document there → a competing write won: treat it as stale and continue

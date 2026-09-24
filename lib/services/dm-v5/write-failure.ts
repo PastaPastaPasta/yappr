@@ -14,6 +14,8 @@ export function classifyWriteFailure(message: string): WriteFailure {
   // Two devices of one identity picked the same identity-contract nonce; nothing was written, and a
   // fresh nonce (re-read on the next attempt) goes through.
   if (/invalid identity nonce|nonce already present/i.test(message)) return 'nonce'
+  // Never reached a verdict: the connection, the node pool or the quorum cache failed.
+  if (/transport|no available addresses|quorum not found in cache|invalid quorum|connection|unavailable|fetch failed|network error|econnreset|socket hang up|\b50[234]\b/i.test(message)) return 'transport'
   return 'other'
 }
 
@@ -32,7 +34,7 @@ export function nonceBackoffMs(n: number, random: () => number = Math.random): n
 }
 
 export type Sleep = (ms: number) => Promise<void>
-const realSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+export const realSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
  * Run `write` and, while it is refused for a nonce clash (nothing was

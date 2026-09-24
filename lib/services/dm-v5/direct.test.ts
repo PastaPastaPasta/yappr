@@ -320,6 +320,11 @@ describe('sender', () => {
     expect(classifyWriteFailure('Document X has invalid revision Some(2). The desired revision is 2 | code=40106')).toBe('stale')
     expect(classifyWriteFailure('Protocol error: Identity Y is trying to set an invalid identity nonce. The current identity nonce is 764, we are setting 764, error is nonce already present at tip')).toBe('nonce')
     expect(classifyWriteFailure('insufficient balance')).toBe('other')
+    // Never reached a verdict: retryable, unlike a real refusal.
+    expect(classifyWriteFailure('context provider error: invalid quorum: Quorum not found in cache for hash: 00ab')).toBe('transport')
+    expect(classifyWriteFailure('No available addresses to retry')).toBe('transport')
+    expect(classifyWriteFailure('gRPC status UNAVAILABLE: transport is closing')).toBe('transport')
+    expect(classifyWriteFailure('Identity has insufficient balance to pay for the state transition')).toBe('other')
   })
 
   it('retries at j + 1 when another device took the tag (40105)', async () => {

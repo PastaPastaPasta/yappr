@@ -404,7 +404,7 @@ export class SelfStateStore {
         if (this.version === version) this.dirty = false
         return !this.dirty
       }
-      if (outcome.failure === 'other') {
+      if (outcome.failure === 'other' || outcome.failure === 'transport') {
         logger.warn('DM v5 self-state save refused:', outcome.error)
         return false
       }

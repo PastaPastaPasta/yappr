@@ -27,8 +27,10 @@ export async function pollOnce(ctx: DmContext): Promise<void> {
   known = ctx.convs.size
   await processGrants(ctx)
   if (ctx.convs.size !== known) await pollStreams(ctx)
-  await processLeaves(ctx)
-  await repairOwnedGroups(ctx)
+  // One background owner attempt per group per poll: a group the leave step tried is not repaired again.
+  const tried = new Set<string>()
+  await processLeaves(ctx, tried)
+  await repairOwnedGroups(ctx, tried)
   ctx.appJustOpened = false
   for (const conv of Array.from(ctx.convs.values())) conv.probeOwn = false
 }

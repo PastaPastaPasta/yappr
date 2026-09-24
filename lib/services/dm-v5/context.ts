@@ -45,8 +45,11 @@ export interface DmContext {
   peerKeys: Map<string, Uint8Array | null>
   pendingGrants: Map<string, PendingGrant>
   /** Members who sent a leave (0x02) on a group I own, waiting for my client to remove them (§6.4). */
-  pendingLeaves: Map<string, { conv: GroupConv; member: IdentityId } & Backoff>
-  /** Owned groups whose roster trails their newest keyring and whose repair failed, by conversation key (§6.5). */
+  pendingLeaves: Map<string, { conv: GroupConv; member: IdentityId }>
+  /**
+   * Background owner work (removing a member who left, repairing a roster,
+   * §6.5) that failed, by group conversation key: one shared backoff per group.
+   */
   ownerRepairs: Map<string, Backoff>
   /** In-memory invite scan position; equals the saved one except during lost-state recovery (§9). */
   scanCursor: number

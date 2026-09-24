@@ -255,7 +255,7 @@ function onContent(ctx: DmContext, conv: Conv, held: HeldMessage): void {
   // A leave counts only on the current base: one from before a removal (reached later through `prev`,
   // e.g. after the member was added back) must not remove them again.
   if (content.type === 'leave' && conv.kind === 'group' && isMe(ctx, conv.owner) && !isMe(ctx, held.sender) && held.pointer.b === conv.epoch.b) {
-    if (isMember(conv, held.sender, ctx.me.id)) ctx.pendingLeaves.set(`${conv.key}:${hexId(held.sender)}`, { conv, member: held.sender, retryAt: 0, failures: 0 })
+    if (isMember(conv, held.sender, ctx.me.id)) ctx.pendingLeaves.set(`${conv.key}:${hexId(held.sender)}`, { conv, member: held.sender })
   }
 }
 
