@@ -42,6 +42,8 @@ export interface StreamState {
    */
   probed: Set<number>
   stale: StaleTag[]
+  /** An old epoch's stream: the lowest week history discovery already probed it from (§6.3), or null. */
+  historyFrom: number | null
 }
 
 export interface HeldMessage {
@@ -190,6 +192,7 @@ export function stream(conv: Conv, sender: IdentityId, epoch: Epoch): StreamStat
     resume: null,
     probed: new Set(),
     stale: [],
+    historyFrom: null,
   }
   conv.streams.set(id, created)
   return created

@@ -51,12 +51,19 @@ export interface KeyringMember {
   publicKey: Uint8Array
 }
 
+/** One entry of the roster's epoch log (§5.4): an epoch and the week it started. */
+export interface EpochStart extends Epoch {
+  startWeek: number
+}
+
 /** Decrypted roster content (§5.4). `members` includes the owner. */
 export interface RosterContent extends Epoch {
   name: string
   avatarRef: string
   members: IdentityId[]
   ended: boolean
+  /** The last epochs, oldest first, ending with the current one: where older history lies (§6.3). */
+  epochLog: EpochStart[]
 }
 
 /** A roster opened by ratcheting forward from a known key (§5.4). */

@@ -8,11 +8,11 @@
 
 import { ecdhSharedX } from '@/lib/crypto/ecdh'
 import { bytesEqual } from '@/lib/bytes'
-import { ByteReader, IDENTITY_ID_LENGTH, assertIdentityId, assertLength, concat, decodeUtf8, dmHkdf, s16 } from './kdf'
+import { ByteReader, IDENTITY_ID_LENGTH, assertIdentityId, assertLength, concat, decodeUtf8, dmHkdf, s16, u32 } from './kdf'
 import { BASE_NONCE_LENGTH, GID_LENGTH, KEY_CHECK_LENGTH, deriveBaseKey, keyCheck, ratchetKey } from './keys'
 import { MESSAGE_CLASSES } from './padding'
 import { sealPadded, tryOpenPadded } from './seal'
-import type { Epoch, IdentityId, KeyringMember, OpenedRoster, RosterContent } from './types'
+import type { Epoch, EpochStart, IdentityId, KeyringMember, OpenedRoster, RosterContent } from './types'
 
 export const HANDLE_LENGTH = 10
 export const SLOT_LENGTH = 32
@@ -20,6 +20,8 @@ export const MIN_KEYRING_SLOTS = 8
 export const MAX_KEYRING_SLOTS = 128
 /** 100 members including the owner (§6.4). */
 export const MAX_GROUP_MEMBERS = 100
+/** Epochs the roster's log keeps (§5.4). */
+export const MAX_EPOCH_LOG = 16
 
 const MAX_RATCHET_STEP = 0xffff
 
@@ -196,9 +198,13 @@ export function openKeyringSlot(keyring: Uint8Array, ctx: SlotContext): Uint8Arr
 // ---------------------------------------------------------------------------
 // Roster (§5.4)
 
-/** `S16 b | S16 r | u8 ended | u16 len | name | u16 len | avatarRef | u8 count | 32-byte ids`. */
+/**
+ * `S16 b | S16 r | u8 ended | u16 len | name | u16 len | avatarRef | u8 count | 32-byte ids
+ *  | u8 count | (S16 b | S16 r | U32 startWeek) per epoch log entry`.
+ */
 export function encodeRoster(roster: RosterContent): Uint8Array {
   if (roster.members.length > MAX_GROUP_MEMBERS) throw new Error(`Too many members: ${roster.members.length}`)
+  if (roster.epochLog.length > MAX_EPOCH_LOG) throw new Error(`Epoch log too long: ${roster.epochLog.length}`)
   roster.members.forEach((id) => assertIdentityId(id, 'member id'))
   const name = new TextEncoder().encode(roster.name)
   const avatarRef = new TextEncoder().encode(roster.avatarRef)
@@ -211,7 +217,9 @@ export function encodeRoster(roster: RosterContent): Uint8Array {
     s16(avatarRef.length),
     avatarRef,
     new Uint8Array([roster.members.length]),
-    ...roster.members
+    ...roster.members,
+    new Uint8Array([roster.epochLog.length]),
+    ...roster.epochLog.map((e) => concat(s16(e.b), s16(e.r), u32(e.startWeek)))
   )
 }
 
@@ -226,8 +234,22 @@ export function decodeRoster(bytes: Uint8Array): RosterContent {
   const count = reader.u8()
   if (count > MAX_GROUP_MEMBERS) throw new Error('Too many members')
   const members = Array.from({ length: count }, () => reader.bytesOf(IDENTITY_ID_LENGTH))
+  // A roster written before the epoch log ends here: read it as an empty log.
+  const logCount = reader.remaining === 0 ? 0 : reader.u8()
+  if (logCount > MAX_EPOCH_LOG) throw new Error('Epoch log too long')
+  const epochLog = Array.from({ length: logCount }, (): EpochStart => ({ b: reader.u16(), r: reader.u16(), startWeek: reader.u32() }))
   reader.end()
-  return { b, r, name, avatarRef, members, ended: endedByte === 1 }
+  return { b, r, name, avatarRef, members, ended: endedByte === 1, epochLog }
+}
+
+/**
+ * The log after moving to `epoch` in `week`: unchanged if it already ends at
+ * `epoch`, else with `epoch` appended and only the last `MAX_EPOCH_LOG` kept.
+ */
+export function logEpoch(log: readonly EpochStart[], epoch: Epoch, week: number): EpochStart[] {
+  const last = log[log.length - 1]
+  if (last && last.b === epoch.b && last.r === epoch.r) return [...log]
+  return [...log, { b: epoch.b, r: epoch.r, startWeek: week }].slice(-MAX_EPOCH_LOG)
 }
 
 /** `HKDF(K[b,r], "roster\0")`. */

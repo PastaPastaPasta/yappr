@@ -5,7 +5,7 @@ import type { GroupGrant, OpenedRoster } from './types'
 
 const grant: GroupGrant = { gid: unhex('36bcf5d162c4be1412d2'), b: 0, r: 2, key: key32(1) }
 const roster = (b: number, r: number, members = [ALICE_ID, BOB_ID]): OpenedRoster => ({
-  content: { b, r, name: 'g', avatarRef: '', members, ended: false },
+  content: { b, r, name: 'g', avatarRef: '', members, ended: false, epochLog: [] },
   key: key32(2),
 })
 // Alice (the owner) grants Bob on her 1:1 stream; Bob checks it.

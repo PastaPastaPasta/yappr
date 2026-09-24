@@ -12,8 +12,9 @@
 
 import { bytesEqual, hexToBytes } from '@/lib/bytes'
 import { weekOf } from '@/lib/dm/kdf'
+import { epochBefore } from '@/lib/dm/keys'
 import { isStrictlyBefore, messageTag, tryDecryptMessage } from '@/lib/dm/stream'
-import type { IdentityId, MessagePointer } from '@/lib/dm/types'
+import type { Epoch, IdentityId, MessagePointer } from '@/lib/dm/types'
 import { logger } from '@/lib/logger'
 import {
   currentEpoch,
@@ -22,6 +23,7 @@ import {
   members,
   stream,
   type Conv,
+  type GroupConv,
   type HeldMessage,
   type StreamState,
 } from './conversation'
@@ -40,6 +42,8 @@ export interface Want {
   w: number
   j: number
   kind: WantKind
+  /** A history probe of an old epoch's stream from this week: recorded once the query succeeded. */
+  historyFloor?: number
 }
 
 /** Stream order within one stream: week, then index. */
@@ -62,13 +66,51 @@ function pollable(conv: Conv): boolean {
 /**
  * The lowest week a stream with nothing held is probed from:
  * `max(week(readAt), since, curWeek − 52)`, or from `since` once the thread
- * was opened (§6.3), and never before the epoch's switch week.
+ * was opened (§6.3).
  */
-function probeFloor(conv: Conv, cw: number): number {
+function historyFloor(conv: Conv, cw: number): number {
   const readWeek = conv.deepProbe ? 0 : weekOf(conv.entry.readAt)
-  let floor = Math.max(readWeek, conv.entry.since, cw - MAX_LOOKBACK_WEEKS)
-  if (conv.kind === 'group' && conv.epochSinceWeek !== null) floor = Math.max(floor, conv.epochSinceWeek)
-  return floor
+  return Math.max(readWeek, conv.entry.since, cw - MAX_LOOKBACK_WEEKS)
+}
+
+/** `historyFloor`, and never before the current epoch's switch week. */
+function probeFloor(conv: Conv, cw: number): number {
+  const floor = historyFloor(conv, cw)
+  return conv.kind === 'group' && conv.epochSinceWeek !== null ? Math.max(floor, conv.epochSinceWeek) : floor
+}
+
+/**
+ * The epochs before the current one that the roster's epoch log names (§5.4),
+ * each with the weeks it spans: from its start week to the next epoch's (a
+ * message can be signed on the old epoch in the week the new one starts), or
+ * to the current week for the last one.
+ */
+function pastEpochs(conv: GroupConv, cw: number): Array<{ epoch: Epoch; from: number; to: number }> {
+  const log = conv.lastRoster?.epochLog ?? []
+  return log.flatMap((entry, i) => (epochBefore(entry, conv.epoch) ? [{ epoch: entry, from: entry.startWeek, to: log[i + 1]?.startWeek ?? cw }] : []))
+}
+
+/**
+ * History discovery (§6.3): probe each older epoch's stream of `senders` over
+ * that epoch's weeks, cut to `floor`..`cw`, when this reader holds the epoch's
+ * key. A hit drains its week and walks back along `prev`, so the older weeks
+ * are reached from the newest message found. Each stream is probed once per
+ * floor: a deeper floor (the thread opened) probes again, further back.
+ */
+export function historyWants(conv: Conv, senders: IdentityId[], floor: number, cw: number): Want[] {
+  if (conv.kind !== 'group') return []
+  const wants: Want[] = []
+  for (const { epoch, from, to } of pastEpochs(conv, cw)) {
+    const lo = Math.max(from, floor)
+    const hi = Math.min(to, cw)
+    if (lo > hi) continue
+    for (const sender of senders) {
+      const st = stream(conv, sender, epoch)
+      if (!st || (st.historyFrom !== null && st.historyFrom <= lo)) continue
+      wants.push(...streamWants(conv, st, lo, hi).map((want) => ({ ...want, historyFloor: lo })))
+    }
+  }
+  return wants
 }
 
 /**
@@ -99,12 +141,13 @@ export function collectWants(ctx: DmContext, only?: Conv): Want[] {
     }
     if (!pollable(conv)) continue
     const epoch = currentEpoch(conv)
-    for (const sender of members(conv, ctx.me.id)) {
-      // Own streams catch this user's other devices: only when it matters (§6.3).
-      if (isMe(ctx, sender) && !(conv.open || conv.probeOwn || ctx.appJustOpened)) continue
+    // Own streams catch this user's other devices: only when it matters (§6.3).
+    const senders = members(conv, ctx.me.id).filter((sender) => !isMe(ctx, sender) || conv.open || conv.probeOwn || ctx.appJustOpened)
+    for (const sender of senders) {
       const st = stream(conv, sender, epoch)
       if (st) wants.push(...streamWants(conv, st, probeFloor(conv, cw), cw))
     }
+    wants.push(...historyWants(conv, senders, historyFloor(conv, cw), cw))
   }
   return wants
 }
@@ -304,6 +347,9 @@ export async function fetchWants(ctx: DmContext, wants: Want[]): Promise<void> {
   const byTag = new Map<string, Want>()
   for (const want of wants) byTag.set(hexId(messageTag(want.st.key, want.w, want.j)), want)
   const docs = await ctx.chain.messagesByTags(Array.from(byTag.keys()).map((hex) => hexToBytes(hex)))
+  for (const { st, historyFloor } of wants) {
+    if (historyFloor !== undefined && (st.historyFrom === null || historyFloor < st.historyFrom)) st.historyFrom = historyFloor
+  }
 
   // A document at a wanted tag from anyone but the stream's sender is a squat (§6.1): never a
   // message, but the slot is taken and the sender has moved on to j + 1, so it counts as a hit

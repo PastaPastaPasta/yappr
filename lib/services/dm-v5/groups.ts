@@ -19,13 +19,14 @@ import {
   encryptRoster,
   keyringHandle,
   keyringNonce,
+  logEpoch,
   openKeyringSlot,
   rosterHandle,
 } from '@/lib/dm/group'
 import type { Epoch, GroupConversation, IdentityId, KeyringMember, RosterContent } from '@/lib/dm/types'
 import { logger } from '@/lib/logger'
 import { isMember, newGroupConv, type GroupConv } from './conversation'
-import { attachGroup, groupConv, isMe, peerKey, type DmContext } from './context'
+import { attachGroup, curWeek, groupConv, isMe, peerKey, type DmContext } from './context'
 import { ensureStarted, openDirect, startedDirect } from './directs'
 import { applyGroups, switchEpoch } from './group-apply'
 import { sendContent } from './sender'
@@ -118,8 +119,18 @@ async function writeGroupDoc(ctx: DmContext, handle: Uint8Array, blob: Uint8Arra
   }
 }
 
-/** Write the roster (create or replace) at `content`'s epoch. */
-async function writeRoster(ctx: DmContext, conv: GroupConv, content: RosterContent): Promise<WriteOutcome> {
+/**
+ * The week `epoch` started: its keyring's for a new base (members switch on
+ * the keyring, before the roster lands), else now.
+ */
+function epochStartWeek(ctx: DmContext, conv: GroupConv, epoch: Epoch): number {
+  const keyringAt = epoch.r === 0 ? conv.keyringAt.get(epoch.b) : undefined
+  return keyringAt !== undefined ? weekOf(keyringAt) : curWeek(ctx)
+}
+
+/** Write the roster (create or replace) at `rosterContent`'s epoch, logging the epoch if it is new (§5.4). */
+async function writeRoster(ctx: DmContext, conv: GroupConv, rosterContent: RosterContent): Promise<WriteOutcome> {
+  const content = { ...rosterContent, epochLog: logEpoch(rosterContent.epochLog, rosterContent, epochStartWeek(ctx, conv, rosterContent)) }
   const blob = await encryptRoster(ownerKey(conv, content), conv.gid, content)
   const before = conv.roster
   const outcome = await writeGroupDoc(ctx, rosterHandle(conv.gid), blob, before)
@@ -231,7 +242,7 @@ export async function createGroup(ctx: DmContext, name: string, memberIds: Ident
     const now = ctx.chain.now()
     const entry = ownedGroupEntry(ctx, gid, weekOf(now), now)
     const conv = newGroupConv(entry, deriveGroupSecret(ctx.me.encPriv, gid))
-    const content: RosterContent = { b: 0, r: 0, name: cleanName, avatarRef: '', members: [ctx.me.id, ...others], ended: false }
+    const content: RosterContent = { b: 0, r: 0, name: cleanName, avatarRef: '', members: [ctx.me.id, ...others], ended: false, epochLog: [] }
     const outcome = await writeRoster(ctx, conv, content)
     ctx.store.claimGroupNumber(n)
     if (!outcome.ok) {

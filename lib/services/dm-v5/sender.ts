@@ -19,7 +19,7 @@ import type { DmContent, MessagePointer } from '@/lib/dm/types'
 import { currentEpoch, newestOwn, stream, type Conv, type HeldMessage, type StreamState } from './conversation'
 import { curWeek, type DmContext } from './context'
 import { applyGroups } from './group-apply'
-import { fetchWants, receive, streamWants } from './poller'
+import { fetchWants, historyWants, receive, streamWants } from './poller'
 import type { ChainMessage } from './types'
 import { GROUP_FRESHNESS_MS, MAX_LOOKBACK_WEEKS, hexId, pointerKey } from './util'
 import { withNonceRetry } from './write-failure'
@@ -36,8 +36,11 @@ export class SendError extends Error {}
 async function syncOwnStream(ctx: DmContext, conv: Conv, st: StreamState): Promise<void> {
   const cw = curWeek(ctx)
   // With nothing known, look back as far as a stream is ever probed, so `prev` links to my
-  // real newest message and the sweep's chain stays whole (§5.6, §6.1).
-  await fetchWants(ctx, streamWants(conv, st, Math.max(conv.entry.since, cw - MAX_LOOKBACK_WEEKS), cw))
+  // real newest message and the sweep's chain stays whole (§5.6, §6.1). On a group that
+  // includes my streams on the older epochs the roster's log names: my first send after an
+  // epoch change links back across it.
+  const floor = Math.max(conv.entry.since, cw - MAX_LOOKBACK_WEEKS)
+  await fetchWants(ctx, [...streamWants(conv, st, floor, cw), ...historyWants(conv, [ctx.me.id], floor, cw)])
 }
 
 /**

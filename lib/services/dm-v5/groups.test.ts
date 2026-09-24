@@ -10,6 +10,7 @@ import { currentEpoch, members, stream, timeline, type GroupConv } from './conve
 import { attachGroup, attachSaved, groupConv, type DmContext } from './context'
 import { startedDirect } from './directs'
 import { addMember, createGroup, endGroup, leaveGroup, recoverOwnedGroups, removeMember, renameGroup, resendKeys } from './groups'
+import { applyGroups } from './group-apply'
 import { pollOnce } from './loop'
 import { backfill, collectWants, pollStreams } from './poller'
 import { SendError, sendContent } from './sender'
@@ -93,7 +94,7 @@ describe('group create and grants', () => {
 
     // The roster replace lands: Carol accepts on her next poll.
     const replaced = await alice.chain.replaceGroupDoc(conv.roster ?? { id: '', revision: 0 }, rosterHandle(conv.gid),
-      await encryptRoster(next, conv.gid, { b: 0, r: 1, name: 'Team', avatarRef: '', members: [ALICE_ID, BOB_ID, CAROL_ID], ended: false }))
+      await encryptRoster(next, conv.gid, { b: 0, r: 1, name: 'Team', avatarRef: '', members: [ALICE_ID, BOB_ID, CAROL_ID], ended: false, epochLog: [] }))
     expect(replaced.ok).toBe(true)
     await pollOnce(carol.ctx)
     expect(groupConv(carol.ctx, ALICE_ID, conv.gid)).not.toBeNull()
@@ -413,6 +414,44 @@ describe('joining is saved at once (§5.5)', () => {
 })
 
 describe('review regressions', () => {
+  it('finds old-epoch history on a fresh device when nobody has written in the new epoch yet (review #5)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await pollOnce(bob.ctx)
+    await say(alice.ctx, conv, 'one')
+    await say(bob.ctx, theGroup(bob.ctx, ALICE_ID, conv.gid), 'two')
+    ledger.time += 2 * 604_800_000
+    await addMember(alice.ctx, conv, CAROL_ID)
+    expect(conv.lastRoster?.epochLog.map((e) => [e.b, e.r])).toEqual([[0, 0], [0, 1]])
+
+    // Bob's fresh device: the saved (0, 0) key, a roster at (0, 1), and nothing written on (0, 1).
+    const tablet = makeContext(ledger, BOB_ID, BOB_PRIV)
+    await tablet.ctx.store.load()
+    await attachSaved(tablet.ctx)
+    await pollOnce(tablet.ctx)
+    const g = theGroup(tablet.ctx, ALICE_ID, conv.gid)
+    expect(currentEpoch(g)).toEqual({ b: 0, r: 1 })
+    expect(groupTexts(g).sort()).toEqual(['one', 'two'])
+  })
+
+  it('links the first send after an epoch change back to my message on the old epoch (review #5)', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await say(alice.ctx, conv, 'before')
+    const w = weekOf(ledger.time)
+    ledger.time += 604_800_000
+    await addMember(alice.ctx, conv, CAROL_ID)
+    // A fresh owner device sends first on (0, 1): its prev must point at 'before' on (0, 0).
+    const tablet = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await tablet.ctx.store.load()
+    await attachSaved(tablet.ctx)
+    const g = theGroup(tablet.ctx, ALICE_ID, conv.gid)
+    await applyGroups(tablet.ctx, [g])
+    const held = await sendContent(tablet.ctx, g, { type: 'text', text: 'after' })
+    expect(held.pointer).toMatchObject({ b: 0, r: 1 })
+    expect(held.prev).toEqual({ w, b: 0, r: 0, j: 0 })
+  })
+
   it('keeps an ended group history readable after a reload, with sending refused (review #6)', async () => {
     const { ledger, alice, bob } = world()
     const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
@@ -450,7 +489,7 @@ describe('review regressions', () => {
     if (!k01) throw new Error('no key')
     // Alice's tablet adds Carol at (0, 1) in the same instant her phone adds Dave at (0, 1): the
     // tablet's replace wins, and the phone's broadcast is refused on chain but only times out here.
-    const tabletRoster = await encryptRoster(k01, conv.gid, { b: 0, r: 1, name: 'Team', avatarRef: '', members: [ALICE_ID, BOB_ID, CAROL_ID], ended: false })
+    const tabletRoster = await encryptRoster(k01, conv.gid, { b: 0, r: 1, name: 'Team', avatarRef: '', members: [ALICE_ID, BOB_ID, CAROL_ID], ended: false, epochLog: [] })
     let raced = false
     alice.chain.hook = (method) => {
       if (method !== 'replaceGroupDoc' || raced) return null
@@ -484,7 +523,7 @@ describe('review regressions', () => {
     // Another owner device's roster sits at the same id and revision as this device's cached one.
     const doc = ledger.groupDocs.find((d) => bytesEqual(d.handle, rosterHandle(conv.gid)))
     if (!doc) throw new Error('no roster')
-    doc.blob = await encryptRoster(k00, conv.gid, { b: 0, r: 0, name: 'Elsewhere', avatarRef: '', members: [ALICE_ID, BOB_ID], ended: false })
+    doc.blob = await encryptRoster(k00, conv.gid, { b: 0, r: 0, name: 'Elsewhere', avatarRef: '', members: [ALICE_ID, BOB_ID], ended: false, epochLog: [] })
     await pollOnce(alice.ctx)
     expect(conv.lastRoster?.name).toBe('Elsewhere')
   })

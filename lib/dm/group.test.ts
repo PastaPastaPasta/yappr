@@ -3,6 +3,7 @@ import { ecdhSharedX } from '@/lib/crypto/ecdh'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { concat, dmHkdf, s16 } from './kdf'
 import {
+  MAX_EPOCH_LOG,
   MAX_GROUP_MEMBERS,
   buildKeyring,
   decodeRoster,
@@ -11,6 +12,7 @@ import {
   keyringHandle,
   keyringNonce,
   keyringSlotCount,
+  logEpoch,
   openKeyringSlot,
   openRoster,
   ownerKeyringBaseKey,
@@ -21,13 +23,20 @@ import {
 import { deriveBaseKey, deriveEpochKey, deriveGroupId, deriveGroupSecret, deriveSelfRoot, keyCheck } from './keys'
 import { FIELD_MAX } from './padding'
 import { ALICE_ID, ALICE_PRIV, ALICE_PUB, BOB_ID, BOB_PRIV, BOB_PUB, CAROL_ID, CAROL_PRIV, CAROL_PUB, hex, unhex } from './test-fixtures'
-import type { KeyringMember, RosterContent } from './types'
+import type { EpochStart, KeyringMember, RosterContent } from './types'
 
 const GID = deriveGroupId(deriveSelfRoot(ALICE_PRIV), 0)
 const SECRET = deriveGroupSecret(ALICE_PRIV, GID)
 
 // Alice's roster for group 0 at epoch (0, 1) with members alice, bob, carol.
-const ROSTER: RosterContent = { b: 0, r: 1, name: 'g', avatarRef: '', members: [ALICE_ID, BOB_ID, CAROL_ID], ended: false }
+const ROSTER: RosterContent = { b: 0, r: 1, name: 'g', avatarRef: '', members: [ALICE_ID, BOB_ID, CAROL_ID], ended: false, epochLog: [] }
+// The same roster with a two-entry epoch log, sealed with a fixed IV by an independent Python
+// implementation (cryptography: HKDF-SHA256 + AES-256-GCM, aad = roster handle).
+const LOGGED: RosterContent = { ...ROSTER, epochLog: [{ b: 0, r: 0, startWeek: 2950 }, { b: 0, r: 1, startWeek: 2952 }] }
+const LOGGED_PLAIN = '0000000100000167000003aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc020000000000000b860000000100000b88'
+const LOGGED_BLOB =
+  '202122232425262728292a2b16f661a438611f656d2a3421d5f657bbb2fb0bc0a3ca87aa6aa893ef8598c1c15e8c602233ee043a77c0c4e5f5bd0e5751491a1ede70870d75936a3bd80911d7f95445e168aef1f22b9c8e3c532193186423fb9f4bfa1d6d42ca14aba28e3ff1dee1a440ee78f3aea0c884626dbba7bc0bdf2e68c6394feccd871d2731f88a95fdcb852f99ace40f7b0dd6564ac25052'
+// Written before rosters had an epoch log: it ends after the member ids.
 const FIXED_ROSTER_BLOB =
   '41ae68386b175e104b2aac5beac9c4e5dc69e5b3ed264e461319d0b5f444ebe8213b71640fa21cb347302df3a08685dc282316a59309779a26e0afa45edd1233f7feae76bf7ec330eec78ec2e26a878b3bed1cd535ac3c7efe791942ffbf75f4523ef9fbe107a8ae0849914f64bf7146d895af6f0724570b29bd2a3742dfdba2c8eb3f660f8bbb3643ddf5d0fbf9cff1abcbb66169db877433de1c1d'
 
@@ -210,15 +219,33 @@ describe('roster (§5.4)', () => {
 
   it('encodes a fixed layout', () => {
     expect(hex(encodeRoster(ROSTER))).toBe(
-      '0000000100000167000003' + 'aa'.repeat(32) + 'bb'.repeat(32) + 'cc'.repeat(32)
+      '0000000100000167000003' + 'aa'.repeat(32) + 'bb'.repeat(32) + 'cc'.repeat(32) + '00'
     )
+    expect(hex(encodeRoster(LOGGED))).toBe(LOGGED_PLAIN)
+  })
+
+  it('opens a fixed blob with an epoch log', async () => {
+    const opened = await openRoster({ blob: unhex(LOGGED_BLOB), gid: GID, known: { b: 0, r: 1, key: k01 }, maxSteps: 0 })
+    expect(opened?.content).toEqual(LOGGED)
+  })
+
+  it('keeps the last 16 epochs in the log, appending only a new epoch', () => {
+    let log: EpochStart[] = []
+    for (let r = 0; r < 20; r++) log = logEpoch(log, { b: 0, r }, 3000 + r)
+    expect(log).toHaveLength(MAX_EPOCH_LOG)
+    expect(log[0]).toEqual({ b: 0, r: 4, startWeek: 3004 })
+    expect(logEpoch(log, { b: 0, r: 19 }, 9999)).toEqual(log)
+    expect(() => encodeRoster({ ...ROSTER, epochLog: [...log, { b: 1, r: 0, startWeek: 1 }] })).toThrow('Epoch log')
   })
 
   it('round-trips the encoding and rejects malformed input', () => {
-    const full: RosterContent = { b: 2, r: 7, name: 'Füße 🎉', avatarRef: 'ipfs://x', members: [ALICE_ID], ended: true }
+    const full: RosterContent = { b: 2, r: 7, name: 'Füße 🎉', avatarRef: 'ipfs://x', members: [ALICE_ID], ended: true, epochLog: [{ b: 2, r: 7, startWeek: 0xfffffff0 }] }
     expect(decodeRoster(encodeRoster(full))).toEqual(full)
     const encoded = encodeRoster(ROSTER)
-    expect(() => decodeRoster(encoded.slice(0, -1))).toThrow()
+    // A roster from before the epoch log (no log count at all) reads as an empty log.
+    expect(decodeRoster(encoded.slice(0, -1))).toEqual(ROSTER)
+    expect(() => decodeRoster(encoded.slice(0, -2))).toThrow()
+    expect(() => decodeRoster(encodeRoster(LOGGED).slice(0, -1))).toThrow()
     expect(() => decodeRoster(new Uint8Array([...encoded, 0]))).toThrow('Trailing data')
     const badFlag = encoded.slice()
     badFlag[4] = 2
@@ -232,9 +259,10 @@ describe('roster (§5.4)', () => {
     expect(hex(rosterKey(deriveBaseKey(SECRET, 0)))).toBe('418734a41ca3f0ff68d32550a589a8947bf10efd49e7a488f7b18ad2e38ab382')
   })
 
-  it('fits a 100-member roster in the 4096 class', async () => {
+  it('fits a 100-member roster with a full epoch log in the 4096 class', async () => {
     const members = Array.from({ length: MAX_GROUP_MEMBERS }, (_, i) => memberId(i))
-    const blob = await encryptRoster(k01, GID, { ...ROSTER, name: 'n'.repeat(100), avatarRef: 'a'.repeat(100), members })
+    const epochLog = Array.from({ length: MAX_EPOCH_LOG }, (_, i) => ({ b: 0, r: i, startWeek: 3000 + i }))
+    const blob = await encryptRoster(k01, GID, { ...ROSTER, name: 'n'.repeat(100), avatarRef: 'a'.repeat(100), members, epochLog })
     expect(blob).toHaveLength(4096 + 28)
     expect(() => encodeRoster({ ...ROSTER, members: [...members, ALICE_ID] })).toThrow()
   })

@@ -311,12 +311,18 @@ refunded. Removals are rare, so this is accepted.
 ### 5.4 Roster: the group's current state
 
 ```
-blob = iv | AES-256-GCM(HKDF(K[b,r], "roster\0"), pad({b, r, name, avatarRef, members[], ended?}), aad = handle)
+blob = iv | AES-256-GCM(HKDF(K[b,r], "roster\0"), pad({b, r, name, avatarRef, members[], ended?, epochLog[]}), aad = handle)
+epochLog = up to 16 × (S16(b) | S16(r) | U32(startWeek))        // oldest first, ending with the current epoch
 ```
 
 The owner replaces the roster immediately after every grant, keyring, or
 rename. It holds the current epoch `(b, r)`, the member list (whose streams to
-poll), and the name and avatar. The epoch is not in plaintext. A reader tries
+poll), the name and avatar, and a short **epoch log**: the last 16 epochs and
+the week each started (a new base's week is its keyring's `$createdAt`). The
+owner appends to it whenever the epoch changes. It tells a reader where older
+history lies, so a device that holds an older epoch's key finds those messages
+even when nobody has written on the current epoch yet (§6.3). A 100-member
+roster with a full log stays in the 4096 class. The epoch is not in plaintext. A reader tries
 `K[b, r]`, `K[b, r+1]`, … until it decrypts. Each add is at least one roster
 replace, so at most `$revision − (last seen $revision)` steps are needed; the
 client caches the last seen `$revision` per group. Keyrings are applied first,
@@ -523,6 +529,8 @@ POLL():
     if st.cur == none:  want += [(w, 0) for w in max(week(c.readAt), c.since, curWeek − 52) .. curWeek]
     else:               want += [(st.cur.w, st.cur.j + 1)] + [(w, 0) for w in st.cur.w + 1 .. curWeek]
     want += st.stale                                                 # old week or epoch, kept 10 minutes
+    for each older epoch e in the roster's epoch log whose key I hold, once per stream and floor:
+      want += [(w, 0) for w in e's weeks ∩ max(week(c.readAt), c.since, curWeek − 52) .. curWeek]   # history
   for each hit in query dmMessage where tag in want (100 per query, orderBy tag), keeping docs whose $ownerId == sender:
     DRAIN(hit)
   for i in query dmInvite where bucket in myLevels, $createdAt >= scanCursor, orderBy [bucket, $createdAt]
@@ -560,6 +568,7 @@ SWITCH(g, b, r):            # new epoch: every member stream restarts at the cur
 SEND(c, text):
   if c is a group and its documents were last polled over 10 s ago: APPLY(c, fresh query)   # never send on an old base
     if that query fails: refuse the send (retryable; the text stays in the composer)
+  catch up on my own streams in c: the current epoch, and older epochs in the epoch log (as in POLL)
   j = next free j this week on my stream (0 if new week); on a unique-index rejection, j += 1 and retry
   broadcast dmMessage{tag[curWeek, j], body(prev = my newest message in c, 0x01, text)}
   if the broadcast result is uncertain (timeout): it landed only if the tag holds exactly this body
@@ -572,6 +581,15 @@ SEND(c, text):
 - **One gap rule.** A message whose `prev` points at something not held
   triggers a fetch. That covers week rollovers, epoch changes, a sender's
   device dying mid-send, and history.
+- **History on older epochs.** `prev` only helps once something newer is
+  found. So each poll also probes, once per stream, every older epoch in the
+  roster's epoch log whose key the reader holds (ratcheted from its anchor, or
+  unwrapped from its keyring slots), over that epoch's weeks cut to the
+  lookback window. A hit drains its week and backfills through `prev`. The
+  sender does the same for its own streams before a send, so the first message
+  after an epoch change links back across it. The cost is one probe per
+  member per week of lookback, once; a closed thread's window starts at
+  `readAt`.
 - **The 10-minute stale window** is the only timing constant. It catches a
   message signed just before a week rollover or an epoch change. Inclusion
   takes seconds. If a straggler is missed anyway, the sender's next message
