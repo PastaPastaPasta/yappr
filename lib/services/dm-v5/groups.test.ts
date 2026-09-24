@@ -414,6 +414,47 @@ describe('joining is saved at once (§5.5)', () => {
 })
 
 describe('review regressions', () => {
+  it('does not mark a member removed when the owner key lookup failed (validator #4)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    const reloaded = makeContext(ledger, BOB_ID, BOB_PRIV)
+    const lookup = reloaded.chain.encryptionKey.bind(reloaded.chain)
+    reloaded.chain.encryptionKey = async () => {
+      throw new Error('DAPI timeout')
+    }
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+    expect(g.removed).toBe(false)
+    reloaded.chain.encryptionKey = lookup
+    await pollOnce(reloaded.ctx)
+    expect(g.removed).toBe(false)
+    expect(currentEpoch(g)).toEqual({ b: 1, r: 0 })
+  })
+
+  it('keeps the old anchor when a resend arrives while the member only looked removed (validator #4)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    const reloaded = makeContext(ledger, BOB_ID, BOB_PRIV)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+    // A local flag says removed (however it got there: here, set directly), and applying the group
+    // cannot correct it (removed groups are skipped), but Bob's anchor still reaches base 1.
+    g.removed = true
+    const joinedAt = reloaded.ctx.store.groups()[0].anchorChangedAt
+    await resendKeys(alice.ctx, conv, BOB_ID)
+    await pollOnce(reloaded.ctx)
+    expect(reloaded.ctx.store.groups()[0].earliestEpoch).toEqual({ b: 0, r: 0 })
+    expect(reloaded.ctx.store.groups()[0].anchorChangedAt).toBe(joinedAt)
+    expect(g.removed).toBe(false)
+  })
+
   it('never adopts a keyring create that stays invisible after two uncertain broadcasts (validator #1)', async () => {
     const { ledger, alice, bob } = world()
     const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])

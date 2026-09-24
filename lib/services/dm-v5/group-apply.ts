@@ -41,22 +41,29 @@ export function switchEpoch(ctx: DmContext, conv: GroupConv, epoch: Epoch): void
   conv.epoch = { b: epoch.b, r: epoch.r }
 }
 
-/** Unwrap keyring `b` for this reader: the owner re-derives it, a member opens their slot. */
-async function keyringBaseKey(ctx: DmContext, conv: GroupConv, b: number, blob: Uint8Array): Promise<Uint8Array | null> {
+/**
+ * Unwrap keyring `b` for this reader: the owner re-derives it, a member opens
+ * their slot. `unknown` when the owner's key could not be fetched (a network
+ * failure, not "no slot"): nothing can be concluded until a later poll.
+ */
+async function keyringBaseKey(ctx: DmContext, conv: GroupConv, b: number, blob: Uint8Array): Promise<Uint8Array | null | 'unknown'> {
   if (conv.secret) return ownerKeyringBaseKey(conv.secret, b, blob)
   const ownerPub = await peerKey(ctx, conv.owner)
-  if (!ownerPub) return null
+  // peerKey caches an identity that has no key; a lookup that failed is not cached.
+  if (!ownerPub) return ctx.peerKeys.has(hexId(conv.owner)) ? null : 'unknown'
   return openKeyringSlot(blob, { myPrivateKey: ctx.me.encPriv, otherPublicKey: ownerPub, gid: conv.gid, ownerId: conv.owner, memberId: ctx.me.id, b })
 }
 
 /**
- * Apply keyring `b` (= epoch.b + 1). Returns false when I have no slot in it:
- * I was removed, and the group stops here for me.
+ * Apply keyring `b` (= epoch.b + 1). Returns false when I have no slot in it
+ * (I was removed, and the group stops here for me) or when the owner's key
+ * could not be fetched (the next poll tries again; nothing is marked).
  */
 async function applyKeyring(ctx: DmContext, conv: GroupConv, doc: ChainGroupDoc, b: number): Promise<boolean> {
   conv.keyrings.set(b, doc.blob)
   conv.keyringAt.set(b, doc.createdAt)
   const baseKey = await keyringBaseKey(ctx, conv, b, doc.blob)
+  if (baseKey === 'unknown') return false
   if (baseKey) {
     // The keyring on chain decides K[b,0]: a key held from a keyring that lost a race is replaced,
     // with every stream derived from it.

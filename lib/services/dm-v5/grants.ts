@@ -14,7 +14,7 @@
 import { checkGrant } from '@/lib/dm/grant'
 import { weekOf } from '@/lib/dm/kdf'
 import { epochBefore } from '@/lib/dm/keys'
-import type { GroupConversation } from '@/lib/dm/types'
+import type { Epoch, GroupConversation } from '@/lib/dm/types'
 import { logger } from '@/lib/logger'
 import { newGroupConv } from './conversation'
 import { groupConv, type DmContext, type PendingGrant } from './context'
@@ -59,7 +59,7 @@ async function processGrant(ctx: DmContext, grant: PendingGrant): Promise<'done'
 
   if (existing) {
     // A resend, or a re-add after removal: take the key and start reading again.
-    const wasCutOff = existing.removed || existing.unreadable
+    const wasCutOff = (existing.removed || existing.unreadable) && (await anchorCutOff(ctx, existing.entry, epoch))
     existing.keys.set(epoch, grant.key)
     existing.removed = false
     existing.unreadable = false
@@ -82,6 +82,19 @@ async function processGrant(ctx: DmContext, grant: PendingGrant): Promise<'done'
   ctx.convs.set(probe.key, probe)
   await saveJoin(ctx)
   return 'done'
+}
+
+/**
+ * True only when the saved anchor alone provably cannot reach `epoch`: applied
+ * from scratch, its keyrings end in one with no slot for me before `epoch`'s
+ * base. A local `removed` flag is not enough (it can come from a failed
+ * lookup), and swapping the anchor on a false one would lose the history
+ * before it on every device (§5.5).
+ */
+async function anchorCutOff(ctx: DmContext, entry: GroupConversation, epoch: Epoch): Promise<boolean> {
+  const probe = newGroupConv(entry)
+  if (!(await applyGroups(ctx, [probe]))) return false
+  return probe.removed && probe.keys.get(epoch) === null
 }
 
 /**

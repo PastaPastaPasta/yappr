@@ -344,7 +344,10 @@ blob = iv | AES-256-GCM(HKDF(stateKey, "state\0"), pad(state))     // spread ove
   user's group history. The exception is a member removed and later re-added:
   the keyring in the gap has no slot for them, so the old anchor can no longer
   reach the current base, and the re-add grant's key replaces it
-  (`anchorChangedAt` is set to that moment). Each conversation also has
+  (`anchorChangedAt` is set to that moment). The swap happens only when the
+  old anchor, applied on its own, provably ends at a keyring with no slot for
+  the member. A keyring the member could not check (the owner's key lookup
+  failed) marks nothing and is retried on the next poll. Each conversation also has
   `since` (the week it started) and `readAt` (a `$createdAt`: everything newer
   is unread).
 - Blocks as `identity → (blocked, changedAt)`, so an unblock survives a
