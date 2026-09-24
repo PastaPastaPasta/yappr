@@ -14,9 +14,17 @@ import { getPublicKey, getSharedSecret } from '@noble/secp256k1';
 import { decodeIntGroupKey, id32, normalizeId, reportSelfTest } from '../../battery-lib.mjs';
 import { YAPP_TOKEN_POSITION, addressFor, ledgerEntry } from '../seed-lib.mjs';
 import {
-  actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, fakeId, loadCheckpoint,
+  actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, envValue, fakeId, loadCheckpoint,
   loadLedger, network, personaKeys, phaseRunner, pick, printTable, rngFrom, utf8,
 } from '../feature-seed-lib.mjs';
+
+/**
+ * storeItem `tags`/`imageUrls` as the target storefront cut stores them:
+ * storefront v4 (4.2.0-beta.4) a typed list, v1-v3 a JSON string. Chosen by
+ * NEXT_PUBLIC_STOREFRONT_TOPOLOGY, like the app.
+ */
+const listsTyped = () => envValue('NEXT_PUBLIC_STOREFRONT_TOPOLOGY') === 'v4';
+const storedList = (values) => (listsTyped() ? [...new Set(values)] : JSON.stringify(values));
 
 const REVIEW_COST = { storeReview: 3n, itemReview: 1n };
 /** Headroom over the computed review spend so a partial re-run never stalls on YAPP. */
@@ -294,8 +302,8 @@ function itemData(store, item, storeIdBytes) {
   return {
     storeId: storeIdBytes, title: item.title, status: item.status ?? 'active', description: item.description,
     section: item.section, category: item.category, ...(item.subcategory ? { subcategory: item.subcategory } : {}),
-    tags: JSON.stringify(item.tags),
-    imageUrls: JSON.stringify(Array.from({ length: 2 + Math.floor(rng() * 3) }, (_, n) => photo(`${store.key}-${item.key}-${n}`, 800))),
+    tags: storedList(item.tags),
+    imageUrls: storedList(Array.from({ length: 2 + Math.floor(rng() * 3) }, (_, n) => photo(`${store.key}-${item.key}-${n}`, 800))),
     basePrice: item.price, currency: store.currency, weight: item.weight, stockQuantity: item.stock,
     sku: `${store.key.slice(0, 3).toUpperCase()}-${item.key.slice(0, 4).toUpperCase()}-${Math.floor(rng() * 9000 + 1000)}`,
   };
@@ -647,9 +655,23 @@ function dryRun(plan) {
 
 function selfTest() {
   const plan = buildPlan();
+  // tags/imageUrls follow NEXT_PUBLIC_STOREFRONT_TOPOLOGY: prove both shapes.
+  const itemShape = (topology) => {
+    const saved = process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY;
+    process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = topology;
+    try {
+      return itemData(STORES[0], STORES[0].items[0], new Uint8Array(32));
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY; else process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = saved;
+    }
+  };
+  const [v3Item, v4Item] = [itemShape('v3'), itemShape('v4')];
   const analog = plan.perStore.get('analog').ratings;
   const tiered = zoneRate(STORE_BY_KEY.get('ceramics').zones[1], { totalWeight: 1300, subtotal: 19500 });
   return reportSelfTest('the storefront plan', [
+    ['tags/imageUrls are JSON strings for storefront v1–v3', typeof v3Item.tags === 'string' && typeof v3Item.imageUrls === 'string'],
+    ['tags/imageUrls are typed lists for storefront v4, the same values',
+      Array.isArray(v4Item.tags) && Array.isArray(v4Item.imageUrls) && JSON.stringify(v4Item.tags) === v3Item.tags],
     [`6 stores / 48 items / 15 zones (${plan.stores}/${plan.items}/${plan.zones})`, plan.stores === 6 && plan.items === 48 && plan.zones === 15],
     [`25 orders / 81 status updates (${plan.orders}/${plan.statuses})`, plan.orders === 25 && plan.statuses === 81],
     [`18 store reviews / 30 item reviews (${plan.storeReviews}/${plan.itemReviews})`, plan.storeReviews === 18 && plan.itemReviews === 30],
