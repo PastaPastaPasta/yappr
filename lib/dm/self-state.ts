@@ -4,7 +4,7 @@
  * One document, one atomic replace, spread over up to three 5120-byte fields.
  * Binary layout (all integers big-endian):
  *
- *   u8  version (2; version 1 lacks anchorChangedAt and still decodes, as 0)
+ *   u8  version (2; version 1, from before anchorChangedAt, is not read)
  *   u16 count, then per 1:1:   peer (32) | U32 since | u64 readAt | u64 hiddenAt     = 52 B
  *   u16 count, then per group: gid (10) | owner (32) | S16 b | S16 r | key (32)
  *                              | U32 since | u64 readAt | u64 hiddenAt
@@ -23,8 +23,6 @@ import { openPadded, sealPadded } from './seal'
 import type { BlockEntry, DirectConversation, GroupConversation, IdentityId, RetentionSetting, SelfState } from './types'
 
 const VERSION = 2
-/** Version 1 group entries had no `anchorChangedAt`. */
-const VERSION_WITHOUT_ANCHOR_TIME = 1
 const RETENTIONS: readonly RetentionSetting[] = ['30d', '90d', '1y', 'never']
 
 export const DIRECT_ENTRY_LENGTH = ID_LENGTH + 4 + 8 + 8
@@ -95,7 +93,9 @@ export function encodeSelfState(state: SelfState): Uint8Array {
 export function decodeSelfState(bytes: Uint8Array): SelfState {
   const reader = new ByteReader(bytes)
   const version = reader.u8()
-  if (version !== VERSION && version !== VERSION_WITHOUT_ANCHOR_TIME) throw new Error(`Unsupported self-state version: ${version}`)
+  // An older version is from a build whose data is no longer supported (§10): the caller rebuilds it.
+  if (version < VERSION) throw new Error(`Obsolete self-state version: ${version}`)
+  if (version > VERSION) throw new Error(`Unsupported self-state version: ${version}`)
   const directs = Array.from({ length: reader.u16() }, (): DirectConversation => ({
     peer: reader.bytesOf(ID_LENGTH),
     since: reader.u32(),
@@ -107,9 +107,7 @@ export function decodeSelfState(bytes: Uint8Array): SelfState {
     const owner = reader.bytesOf(ID_LENGTH)
     const earliestEpoch = { b: reader.u16(), r: reader.u16() }
     const earliestKey = reader.bytesOf(KEY_LENGTH)
-    const times = { since: reader.u32(), readAt: reader.u64(), hiddenAt: reader.u64() }
-    const anchorChangedAt = version === VERSION_WITHOUT_ANCHOR_TIME ? 0 : reader.u64()
-    return { gid, owner, earliestEpoch, earliestKey, ...times, anchorChangedAt }
+    return { gid, owner, earliestEpoch, earliestKey, since: reader.u32(), readAt: reader.u64(), hiddenAt: reader.u64(), anchorChangedAt: reader.u64() }
   })
   const blocks = Array.from({ length: reader.u16() }, (): BlockEntry => {
     const id = reader.bytesOf(ID_LENGTH)

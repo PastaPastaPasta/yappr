@@ -228,6 +228,23 @@ describe('self-state store', () => {
     expect(a.ctx.store.isBlocked(BOB_ID)).toBe(false)
   })
 
+  it('rebuilds and replaces a self-state from before this format, never treating it as newer (validator #2)', async () => {
+    const ledger = new MemoryLedger()
+    const a = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    a.ctx.store.addDirect(direct(BOB_ID))
+    await a.ctx.store.flush()
+    const saved = ledger.selfStates[0]
+    const bytes = encodeSelfState(a.ctx.store.state)
+    bytes[0] = 1
+    const [blob] = splitFields(await sealPadded(selfStateKey(deriveStateKey(deriveSelfRoot(ALICE_PRIV))), bytes, SELF_STATE_CLASSES))
+    saved.fields = { blob, blob2: null, blob3: null }
+    const reloaded = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    expect(await reloaded.ctx.store.load()).toBe('unreadable')
+    reloaded.ctx.store.addDirect(direct(CAROL_ID))
+    expect(await reloaded.ctx.store.flush()).toBe(true)
+    expect(saved.revision).toBe(2)
+  })
+
   it('never overwrites a self-state written by a newer client', async () => {
     const ledger = new MemoryLedger()
     const a = makeContext(ledger, ALICE_ID, ALICE_PRIV)

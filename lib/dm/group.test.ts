@@ -36,8 +36,8 @@ const LOGGED: RosterContent = { ...ROSTER, epochLog: [{ b: 0, r: 0, startWeek: 2
 const LOGGED_PLAIN = '0000000100000167000003aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc020000000000000b860000000100000b88'
 const LOGGED_BLOB =
   '202122232425262728292a2b16f661a438611f656d2a3421d5f657bbb2fb0bc0a3ca87aa6aa893ef8598c1c15e8c602233ee043a77c0c4e5f5bd0e5751491a1ede70870d75936a3bd80911d7f95445e168aef1f22b9c8e3c532193186423fb9f4bfa1d6d42ca14aba28e3ff1dee1a440ee78f3aea0c884626dbba7bc0bdf2e68c6394feccd871d2731f88a95fdcb852f99ace40f7b0dd6564ac25052'
-// Written before rosters had an epoch log: it ends after the member ids.
-const FIXED_ROSTER_BLOB =
+// Written before rosters had an epoch log (it ends after the member ids): no longer read (§10).
+const PRE_LOG_ROSTER_BLOB =
   '41ae68386b175e104b2aac5beac9c4e5dc69e5b3ed264e461319d0b5f444ebe8213b71640fa21cb347302df3a08685dc282316a59309779a26e0afa45edd1233f7feae76bf7ec330eec78ec2e26a878b3bed1cd535ac3c7efe791942ffbf75f4523ef9fbe107a8ae0849914f64bf7146d895af6f0724570b29bd2a3742dfdba2c8eb3f660f8bbb3643ddf5d0fbf9cff1abcbb66169db877433de1c1d'
 
 const NONCE = Uint8Array.from({ length: 16 }, (_, i) => 0xf0 + i)
@@ -242,9 +242,8 @@ describe('roster (§5.4)', () => {
     const full: RosterContent = { b: 2, r: 7, name: 'Füße 🎉', avatarRef: 'ipfs://x', members: [ALICE_ID], ended: true, epochLog: [{ b: 2, r: 7, startWeek: 0xfffffff0 }] }
     expect(decodeRoster(encodeRoster(full))).toEqual(full)
     const encoded = encodeRoster(ROSTER)
-    // A roster from before the epoch log (no log count at all) reads as an empty log.
-    expect(decodeRoster(encoded.slice(0, -1))).toEqual(ROSTER)
-    expect(() => decodeRoster(encoded.slice(0, -2))).toThrow()
+    // A roster from before the epoch log (no log count at all) is not read (§10).
+    expect(() => decodeRoster(encoded.slice(0, -1))).toThrow()
     expect(() => decodeRoster(encodeRoster(LOGGED).slice(0, -1))).toThrow()
     expect(() => decodeRoster(new Uint8Array([...encoded, 0]))).toThrow('Trailing data')
     const badFlag = encoded.slice()
@@ -253,9 +252,8 @@ describe('roster (§5.4)', () => {
     expect(() => encodeRoster({ ...ROSTER, members: [new Uint8Array(31)] })).toThrow()
   })
 
-  it('opens a fixed blob', async () => {
-    const opened = await openRoster({ blob: unhex(FIXED_ROSTER_BLOB), gid: GID, known: { b: 0, r: 1, key: k01 }, maxSteps: 0 })
-    expect(opened?.content).toEqual(ROSTER)
+  it('does not open a roster from before the epoch log', async () => {
+    expect(await openRoster({ blob: unhex(PRE_LOG_ROSTER_BLOB), gid: GID, known: { b: 0, r: 1, key: k01 }, maxSteps: 0 })).toBeNull()
     expect(hex(rosterKey(deriveBaseKey(SECRET, 0)))).toBe('418734a41ca3f0ff68d32550a589a8947bf10efd49e7a488f7b18ad2e38ab382')
   })
 
@@ -280,7 +278,7 @@ describe('roster (§5.4)', () => {
   })
 
   it('fails with a different base, a different group handle, or tampering', async () => {
-    const blob = unhex(FIXED_ROSTER_BLOB)
+    const blob = unhex(LOGGED_BLOB)
     expect(await openRoster({ blob, gid: GID, known: { b: 1, r: 0, key: deriveBaseKey(SECRET, 1, NONCE) }, maxSteps: 5 })).toBeNull()
     const otherGid = deriveGroupId(deriveSelfRoot(ALICE_PRIV), 1)
     expect(await openRoster({ blob, gid: otherGid, known: { b: 0, r: 1, key: k01 }, maxSteps: 0 })).toBeNull()
@@ -296,7 +294,7 @@ describe('roster (§5.4)', () => {
   })
 
   it('stops the ratchet trial at r = 65535', async () => {
-    const blob = unhex(FIXED_ROSTER_BLOB)
+    const blob = unhex(LOGGED_BLOB)
     const known = { b: 0, r: 0xfffe, key: k01 }
     expect(await openRoster({ blob, gid: GID, known, maxSteps: 10 })).toBeNull()
   })

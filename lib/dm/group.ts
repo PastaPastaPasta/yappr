@@ -234,8 +234,7 @@ export function decodeRoster(bytes: Uint8Array): RosterContent {
   const count = reader.u8()
   if (count > MAX_GROUP_MEMBERS) throw new Error('Too many members')
   const members = Array.from({ length: count }, () => reader.bytesOf(IDENTITY_ID_LENGTH))
-  // A roster written before the epoch log ends here: read it as an empty log.
-  const logCount = reader.remaining === 0 ? 0 : reader.u8()
+  const logCount = reader.u8()
   if (logCount > MAX_EPOCH_LOG) throw new Error('Epoch log too long')
   const epochLog = Array.from({ length: logCount }, (): EpochStart => ({ b: reader.u16(), r: reader.u16(), startWeek: reader.u32() }))
   reader.end()

@@ -744,6 +744,15 @@ anyway. Read positions are lost too, so recovered conversations start as read.
   will stay that way; new ones are not.
 - Rollout uses `NEXT_PUBLIC_DM_TOPOLOGY=v5`, with contract ids and flag
   changed in one commit, as for earlier re-cuts.
+- **DM v5 data from before the 2026-09-24 review fixes is not supported.**
+  Those fixes changed three client-side encodings with no contract change:
+  keyring slot pads now include `nonce_b` (§4.5), rosters carry the epoch log
+  (§5.4), and the self-state is version 2 with `anchorChangedAt` (§5.5). Earlier
+  keyrings no longer unwrap, earlier rosters no longer open, and a version-1
+  self-state reads as unreadable and is rebuilt by lost-state recovery (§9).
+  This only affects the /devnet deployment, which held test data from our own
+  bots: recreate any test groups there. 1:1 conversations and messages are
+  unaffected.
 
 ## 11. Roadmap
 

@@ -32,8 +32,9 @@ const FIXED_PLAIN =
   '0000' +
   ('0001' + 'cc'.repeat(32) + '00' + '00000198628c05f4') +
   '00' + '0000000000000000' + '0000000000000000' + '00000001' + '00'
+// Sealed with a fixed IV by an independent Python implementation (cryptography: HKDF-SHA256 + AES-256-GCM).
 const FIXED_BLOB =
-  '1ed16983839229fd9d8e76c97eae79d7966d3fe7769412ff2bc127006162e0775090e5f181c77dbfa50cad6d84b4b4072ac66e42e6fe21f1cdac4fa76820626a6aedb5a2b56df23158d7eb0cf5e607777ae99d3d0804f365120e5cce1ffed45e592c5c39db214c6cea197ed9d01fb7b49b3b0a29aa153e04f59563301b69b92af8de9dc1b7e90191d5624783530c34b11a7eea4330abe209265b144c'
+  '303132333435363738393a3b5fc1fabc7b46709cd583fb8b9d25941f627a7e0a3511efffff60e64d4457ad61fe031099817b7b29f4a967e85053dbe332bd7934fa6091806fcb83223d03fe8af6f039c8c6b57212318ce3876aeda0ac1c9426b5a51e4652781653f119a4a720677afdd60c911f7b730ff25f44c15f3826275f2999c1ef1833d63fa91467ef3a8256d140e0b621003fa95dbd183f2913'
 
 // Version 2 with one group entry (anchorChangedAt included), sealed with a fixed IV by an independent
 // Python implementation (cryptography: HKDF-SHA256 + AES-256-GCM).
@@ -115,7 +116,7 @@ describe('self-state encryption', () => {
   const only = (blob: Uint8Array) => ({ blob, blob2: null, blob3: null })
   const lengths = (f: SelfStateFields) => [f.blob, f.blob2, f.blob3].map((b) => b?.length ?? null)
 
-  it('decrypts a fixed version-1 blob (no anchorChangedAt: read as 0)', async () => {
+  it('decrypts a fixed blob', async () => {
     expect(await decryptSelfState(STATE_KEY, only(unhex(FIXED_BLOB)))).toEqual(SIMPLE)
   })
 
@@ -124,9 +125,9 @@ describe('self-state encryption', () => {
     expect(await decryptSelfState(STATE_KEY, only(unhex(WITH_GROUP_BLOB)))).toEqual(WITH_GROUP)
   })
 
-  it('decodes a version-1 group entry with anchorChangedAt = 0', () => {
+  it('rejects version 1 (from before anchorChangedAt) as obsolete, not as newer', () => {
     const v1 = unhex(WITH_GROUP_PLAIN.replace(/^02/, '01').replace('00000198628c0784', ''))
-    expect(decodeSelfState(v1).groups[0]).toEqual({ ...WITH_GROUP.groups[0], anchorChangedAt: 0 })
+    expect(() => decodeSelfState(v1)).toThrow('Obsolete self-state version: 1')
   })
 
   it('round-trips in one field when small, clearing blob2 and blob3', async () => {
