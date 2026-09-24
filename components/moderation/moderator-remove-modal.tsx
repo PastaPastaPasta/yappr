@@ -23,19 +23,33 @@ export function ModeratorRemoveModal() {
   const { isOpen, post, onRemoved, close } = useModeratorRemoveModal()
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
-  /** A seated elected team must cite one of its charter's reasons on every deletion (41203). */
-  const seatedReasons = useSeatedReasons()
+  /**
+   * A seated elected team must cite one of its charter's reasons on every
+   * deletion (41203). Read only while the modal is open (only moderators can
+   * open it), and again on every open, so a team seated mid-session is seen.
+   */
+  const seatedReasons = useSeatedReasons(isOpen)
   const [reasonDocumentId, setReasonDocumentId] = useState('')
   const noun = post && targetKindOf(post) === 'reply' ? 'reply' : 'post'
 
+  const reset = () => {
+    setReason('')
+    setReasonDocumentId('')
+  }
+
   const handleClose = () => {
     if (busy) return
-    setReason('')
+    reset()
     close()
   }
 
   const handleRemove = async () => {
     if (!post || !user || busy) return
+    if (seatedReasons.loading) return
+    if (seatedReasons.failed) {
+      toast.error('Could not read the elected team\'s charter; try again')
+      return
+    }
     if (seatedReasons.required && !reasonDocumentId) {
       toast.error('Choose the charter reason this removal is taken on')
       return
@@ -51,7 +65,7 @@ export function ModeratorRemoveModal() {
       // the dialog closed, and do not drop the card until it is checked.
       toast(`This ${noun} may have been removed — the network did not confirm in time. Check again before retrying.`
         + (result.snapshotSaved ? ' A copy is kept on this device in case it needs restoring.' : ''), { duration: 8000 })
-      setReason('')
+      reset()
       close()
       return
     }
@@ -64,7 +78,7 @@ export function ModeratorRemoveModal() {
       ? `${removed}. A copy is kept on this device for a week, so it can be restored from the moderation settings.`
       : `${removed}. No copy could be kept on this device, so it cannot be restored.`)
     onRemoved?.()
-    setReason('')
+    reset()
     close()
   }
 
@@ -96,13 +110,13 @@ export function ModeratorRemoveModal() {
         placeholder="Why this is being removed"
         className="w-full mb-4 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
       />
-      {seatedReasons.required && (
+      {(seatedReasons.required || seatedReasons.failed) && (
         <div className="mb-4">
-          <CharterReasonPicker id="moderator-remove-charter-reason" reasons={seatedReasons.reasons} value={reasonDocumentId} onChange={setReasonDocumentId} />
+          <CharterReasonPicker id="moderator-remove-charter-reason" state={seatedReasons} value={reasonDocumentId} onChange={setReasonDocumentId} />
         </div>
       )}
       <div className="flex flex-col gap-3">
-        <Button onClick={handleRemove} disabled={busy} className="w-full bg-red-500 hover:bg-red-600 text-white">
+        <Button onClick={handleRemove} disabled={busy || seatedReasons.loading} className="w-full bg-red-500 hover:bg-red-600 text-white">
           {busy ? 'Removing…' : `Remove ${noun}`}
         </Button>
         <Button onClick={handleClose} variant="outline" disabled={busy} className="w-full">

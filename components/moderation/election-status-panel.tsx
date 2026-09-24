@@ -1,11 +1,12 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowPathIcon, ScaleIcon } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { logger } from '@/lib/logger'
 import { electedModeration } from '@/lib/contract-topology'
+import { createElectionStatusLoader } from '@/lib/election-status-loader'
 import { moderationElectionService, type ElectionStatus } from '@/lib/services/moderation-election-service'
 
 const short = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id)
@@ -20,7 +21,12 @@ const hours = (seconds: number) => `${Math.round(seconds / 3600)} h`
  * anyone can watch the election. Renders nothing off an elected contract.
  */
 export function ElectionStatusPanel() {
+  // A stable, frozen object (electedModeration memoises it); the effect below
+  // keys on the boolean anyway, so it runs once per mount, never per render.
   const declaration = electedModeration()
+  const elected = declaration !== null
+  // One loader per mounted panel: concurrent loads share a single read.
+  const loader = useMemo(() => createElectionStatusLoader(() => moderationElectionService.getStatus()), [])
   const [status, setStatus] = useState<ElectionStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -29,18 +35,18 @@ export function ElectionStatusPanel() {
     setLoading(true)
     setFailed(false)
     try {
-      setStatus(await moderationElectionService.getStatus())
+      setStatus(await loader.load())
     } catch (error) {
       logger.error('ElectionStatusPanel: status read failed', error)
       setFailed(true)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [loader])
 
   useEffect(() => {
-    if (declaration) refresh().catch(() => { /* reported inside */ })
-  }, [declaration, refresh])
+    if (elected) refresh().catch(() => { /* reported inside */ })
+  }, [elected, refresh])
 
   if (!declaration) return null
 
@@ -125,8 +131,12 @@ export function ElectionStatusPanel() {
             </ul>
           </section>
         )}
-        {status && !contest && !seated && status.proposals.length === 0 && (
-          <p className="text-gray-500">No team has applied yet.</p>
+        {status && !contest && !seated && (
+          <p data-testid="election-no-contest" className="text-gray-500">
+            {status.proposals.length === 0 ? 'No team has applied yet. ' : 'No charter has entered the contest yet. '}
+            The contest opens when a leader files an elected charter; the network admits contested documents
+            only from a later epoch, so an election may not be possible yet.
+          </p>
         )}
       </CardContent>
     </Card>

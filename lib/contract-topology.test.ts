@@ -279,6 +279,12 @@ describe('contract topology', () => {
       }
     })
 
+    it('hands out ONE frozen declaration object (effects depend on its identity)', async () => {
+      const v9 = await topologyModule('v9')
+      expect(v9.electedModeration()).toBe(v9.electedModeration())
+      expect(Object.isFrozen(v9.electedModeration())).toBe(true)
+    })
+
     it('pins the elected moderation declaration against the v9 JSON', async () => {
       const v9 = await topologyModule('v9')
       expect(socialContractV9.config.$formatVersion).toBe('2')

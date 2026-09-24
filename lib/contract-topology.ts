@@ -1088,6 +1088,15 @@ const V9_MODERATION = socialContractV9.config.moderation as {
  */
 export function electedModeration(): ElectedModerationDeclaration | null {
   if (!atLeast('v9')) return null
+  // One frozen object per resolved topology: React effects depend on it, and a
+  // fresh object per call would re-run them on every render.
+  if (!electedDeclaration) electedDeclaration = deepFreeze(buildElectedDeclaration())
+  return electedDeclaration
+}
+
+let electedDeclaration: ElectedModerationDeclaration | null = null
+
+function buildElectedDeclaration(): ElectedModerationDeclaration {
   const elected = V9_MODERATION.moderators
   return {
     joinWindowSeconds: elected.joinWindow,

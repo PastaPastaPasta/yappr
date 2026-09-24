@@ -60,7 +60,8 @@ export function ContractModerationSettings() {
   const [restorable, setRestorable] = useState<ReadonlySet<string>>(new Set())
   const canWarn = moderationService.canWarn()
   /** Seated elected team: every ban, suspension and warning must cite one of its charter's reasons. */
-  const seatedReasons = useSeatedReasons()
+  // The panel renders only for the moderation team; it reads on mount.
+  const seatedReasons = useSeatedReasons(true)
   const [reasonDocumentId, setReasonDocumentId] = useState('')
   const [pot, setPot] = useState<FeePotState | null>(null)
   /** The last status check: the proved standing, or the read failure (never a clean record in its place). */
@@ -126,6 +127,11 @@ export function ContractModerationSettings() {
     const cite = (ids: string, documentTypeName: 'post' | 'reply') =>
       ids.split(/[\s,]+/).filter(Boolean).map((documentId) => ({ documentTypeName, documentId }))
     const bound = action === 'ban' || action === 'suspend' || action === 'warn'
+    if (bound && (seatedReasons.loading || seatedReasons.failed)) {
+      setBusy(null)
+      toast.error(seatedReasons.failed ? 'Could not read the elected team\'s charter; reload and try again' : 'Still reading the elected team\'s charter')
+      return
+    }
     if (bound && seatedReasons.required && !reasonDocumentId) {
       setBusy(null)
       toast.error('Choose the charter reason this action is taken on')
@@ -180,6 +186,8 @@ export function ContractModerationSettings() {
       return
     }
     toast.success(succeeded)
+    // The cited reason belonged to that action; the next one picks its own.
+    setReasonDocumentId('')
     refresh().catch(() => { /* reported inside */ })
     if (id) lookUp(id).catch(() => { /* reported inside */ })
   }
@@ -220,8 +228,8 @@ export function ContractModerationSettings() {
             <input id="contract-moderation-reason" type="text" value={reason} maxLength={1024} onChange={(e) => setReason(e.target.value)}
               placeholder="Why" className={INPUT} />
           </div>
-          {seatedReasons.required && (
-            <CharterReasonPicker id="contract-moderation-charter-reason" reasons={seatedReasons.reasons} value={reasonDocumentId} onChange={setReasonDocumentId} />
+          {(seatedReasons.required || seatedReasons.failed) && (
+            <CharterReasonPicker id="contract-moderation-charter-reason" state={seatedReasons} value={reasonDocumentId} onChange={setReasonDocumentId} />
           )}
           <div>
             <label htmlFor="contract-moderation-cited" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Posts this is about (optional, public)</label>

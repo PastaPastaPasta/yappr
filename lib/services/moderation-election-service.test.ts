@@ -1,8 +1,9 @@
 import bs58 from 'bs58';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: vi.fn() }));
-import { MODERATION_CHARTERS_CONTRACT_ID, contestEndFromPolls, contestVotePoll, toProposal, toReason } from './moderation-election-service';
+const sdk = vi.hoisted(() => ({ voting: { contestedResourceVoteState: vi.fn(), votePollsByEndDate: vi.fn() } }));
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }));
+import { MODERATION_CHARTERS_CONTRACT_ID, contestEndFromPolls, contestVotePoll, moderationElectionService, toProposal, toReason } from './moderation-election-service';
 
 const target = bs58.encode(new Uint8Array(32).fill(9));
 const leader = bs58.encode(new Uint8Array(32).fill(1));
@@ -44,6 +45,38 @@ describe('moderation election mappers', () => {
       { timestampMs: 200n, votePolls: [poll(target, leader), poll(target)] },
     ];
     expect(contestEndFromPolls(entries, target)).toBe(200);
+    // Identifiers as bytes (a wasm toObject shape) normalise the same way.
+    expect(contestEndFromPolls([{ timestampMs: 300, votePolls: [poll(bs58.decode(target), bs58.decode(MODERATION_CHARTERS_CONTRACT_ID) as unknown as string)] }], target)).toBe(300);
     expect(contestEndFromPolls(entries, reasonA)).toBeNull();
+  });
+});
+
+describe('reading the contest', () => {
+  beforeEach(() => {
+    sdk.voting.contestedResourceVoteState.mockReset();
+    sdk.voting.votePollsByEndDate.mockReset();
+  });
+  const entry = (timestampMs: number, indexValue: string) => ({
+    timestampMs: BigInt(timestampMs), free: vi.fn(),
+    votePolls: [{ toJSON: () => ({ contractId: MODERATION_CHARTERS_CONTRACT_ID, documentTypeName: 'electedCharter', indexName: 'byTargetContract', indexValues: [indexValue] }) }],
+  });
+  const other = bs58.encode(new Uint8Array(32).fill(4));
+  const state = (contenders: unknown[]) => ({ contenders, abstainVoteTally: 0, lockVoteTally: 0, winner: undefined, free: vi.fn() });
+
+  it('answers "no contest yet" (null) when nobody has entered, without failing', async () => {
+    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([]));
+    sdk.voting.votePollsByEndDate.mockResolvedValueOnce([]);
+    await expect(moderationElectionService.getContest(target)).resolves.toBeNull();
+  });
+
+  it('pages past the first 100 vote polls to find the end time', async () => {
+    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([{ identityId: leader, voteTally: 3 }]));
+    sdk.voting.votePollsByEndDate
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => entry(1000 + i, other)))
+      .mockResolvedValueOnce([entry(5000, target)]);
+    const contest = await moderationElectionService.getContest(target);
+    expect(contest).toMatchObject({ contenders: [{ identityId: leader, votes: 3 }], endsAtMs: 5000 });
+    expect(sdk.voting.votePollsByEndDate).toHaveBeenCalledTimes(2);
+    expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).toMatchObject({ startTimeMs: 1099, startTimeIncluded: false });
   });
 });

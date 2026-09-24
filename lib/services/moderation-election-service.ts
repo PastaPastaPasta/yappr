@@ -29,6 +29,8 @@ import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
 /** The moderation charters system contract (SystemDataContract::ModerationCharters). */
 export const MODERATION_CHARTERS_CONTRACT_ID = 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88';
 const ELECTED_CHARTER = 'electedCharter';
+/** How many pages of 100 vote polls to walk looking for the contest's end. */
+const MAX_END_DATE_PAGES = 10;
 const CONTEST_INDEX = 'byTargetContract';
 
 /** A `reason` a seated team may cite: the proposal lists them by document id. */
@@ -148,9 +150,9 @@ export function contestEndFromPolls(
   for (const entry of entries) {
     for (const poll of entry.votePolls) {
       const p = poll as { contractId?: unknown; documentTypeName?: string; indexName?: string; indexValues?: unknown[] };
+      // Every identifier normalised the same way, whatever shape the poll carries it in.
       const contract = identifierToBase58(p.contractId);
-      const value = p.indexValues?.[0];
-      const indexed = typeof value === 'string' ? value : identifierToBase58(value);
+      const indexed = identifierToBase58(p.indexValues?.[0]);
       if (contract === MODERATION_CHARTERS_CONTRACT_ID && p.documentTypeName === ELECTED_CHARTER
         && p.indexName === CONTEST_INDEX && indexed === targetContractId) {
         return Number(entry.timestampMs);
@@ -224,30 +226,31 @@ class ModerationElectionService {
     return proposals;
   }
 
-  /** The `reason` documents a proposal lists, in the proposal's order (missing ones skipped). */
+  /**
+   * The `reason` documents a proposal lists, in the proposal's order. A reason
+   * that does not exist is skipped (it can never be cited); a READ failure
+   * throws, so a caller never mistakes "could not read" for "lists none".
+   */
   async getReasons(reasonIds: readonly string[]): Promise<CharterReason[]> {
     if (reasonIds.length === 0) return [];
     const sdk = await getEvoSdk();
-    const docs = await Promise.all(reasonIds.map((id) =>
-      sdk.documents.get(MODERATION_CHARTERS_CONTRACT_ID, 'reason', id).catch((error: unknown) => {
-        logger.warn('moderationElection: reason read failed', id, error);
-        return undefined;
-      })));
+    const docs = await Promise.all(reasonIds.map((id) => sdk.documents.get(MODERATION_CHARTERS_CONTRACT_ID, 'reason', id)));
     return docs.filter((doc) => !!doc).map((doc) => toReason(documentToPlainObject(doc)));
   }
 
   /**
-   * The reasons the SEATED team's proposal lists: what every ban, suspension,
-   * warning and deletion the team signs must cite (41203). Empty when no team
-   * is seated (the interim is not bound) or the proposal cannot be read.
+   * The seated team (one read) and the reasons its proposal lists: what every
+   * ban, suspension, warning and deletion the team signs must cite (41203).
+   * `seated` is null when no team is seated (the interim is not bound). Any
+   * read failure throws.
    */
-  async getSeatedReasons(targetContractId = YAPPR_CONTRACT_ID): Promise<CharterReason[]> {
+  async getSeatedTeamAndReasons(targetContractId = YAPPR_CONTRACT_ID): Promise<{ seated: SeatedTeam | null; reasons: CharterReason[] }> {
     const seated = await this.getSeatedTeam(targetContractId);
-    if (!seated) return [];
+    if (!seated) return { seated: null, reasons: [] };
     const sdk = await getEvoSdk();
     const proposal = await sdk.moderationCharters.submittedCharter(seated.submittedCharterId);
-    if (!proposal) return [];
-    return this.getReasons(toProposal(documentToPlainObject(proposal)).reasonIds);
+    if (!proposal) throw new Error(`the seated charter's proposal ${seated.submittedCharterId} could not be read`);
+    return { seated, reasons: await this.getReasons(toProposal(documentToPlainObject(proposal)).reasonIds) };
   }
 
   /** The contest for the seat now, or null when no charter has entered one yet. */
@@ -270,15 +273,35 @@ class ModerationElectionService {
     return contest.contenders.length === 0 && !contest.winner ? null : contest;
   }
 
-  /** The contest's end, from the vote-poll end-date index (the next 100 polls to end). */
+  /**
+   * The contest's end, from the vote-poll end-date index: pages forward in end
+   * time (100 entries a page, at most {@link MAX_END_DATE_PAGES}) from a day
+   * ago, so a busy network with more than 100 open polls still finds it.
+   */
   private async contestEnd(sdk: EvoSDK, targetContractId: string): Promise<number | null> {
     try {
-      const entries = await sdk.voting.votePollsByEndDate({ startTimeMs: Date.now() - 86_400_000, orderAscending: true, limit: 100 });
-      try {
-        return contestEndFromPolls(entries.map((entry) => ({ timestampMs: entry.timestampMs, votePolls: entry.votePolls.map((poll: { toJSON?: () => unknown }) => poll.toJSON?.() ?? poll) })), targetContractId);
-      } finally {
-        for (const entry of entries) entry.free();
+      let startTimeMs = Date.now() - 86_400_000;
+      let startTimeIncluded = true;
+      for (let page = 0; page < MAX_END_DATE_PAGES; page++) {
+        const entries = await sdk.voting.votePollsByEndDate({ startTimeMs, startTimeIncluded, orderAscending: true, limit: 100 });
+        let last: number | null = null;
+        let found: number | null = null;
+        try {
+          const plain = entries.map((entry) => ({
+            timestampMs: entry.timestampMs,
+            votePolls: entry.votePolls.map((poll: { toJSON?: () => unknown }) => poll.toJSON?.() ?? poll),
+          }));
+          found = contestEndFromPolls(plain, targetContractId);
+          if (plain.length > 0) last = Number(plain[plain.length - 1].timestampMs);
+        } finally {
+          for (const entry of entries) entry.free();
+        }
+        if (found !== null) return found;
+        if (entries.length < 100 || last === null) return null;
+        startTimeMs = last;
+        startTimeIncluded = false;
       }
+      return null;
     } catch (error) {
       logger.warn('moderationElection: vote poll end-date read failed', error);
       return null;
@@ -295,7 +318,10 @@ class ModerationElectionService {
       this.getSeatedTeam(targetContractId).catch((error: unknown) => { logger.warn('moderationElection: team read failed', error); return null; }),
     ]);
     const seatedProposal = seated ? proposals.find((p) => p.id === seated.submittedCharterId) : undefined;
-    const seatedReasons = seatedProposal ? await this.getReasons(seatedProposal.reasonIds) : seated ? await this.getSeatedReasons(targetContractId) : [];
+    const seatedReasons = !seated ? [] : await (seatedProposal
+      ? this.getReasons(seatedProposal.reasonIds)
+      : this.getSeatedTeamAndReasons(targetContractId).then((read) => read.reasons)
+    ).catch((error: unknown) => { logger.warn('moderationElection: seated reasons read failed', error); return []; });
     return { declaration, targetContractId, proposals, contest, seated, seatedReasons };
   }
 }
