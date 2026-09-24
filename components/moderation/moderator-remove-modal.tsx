@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
 import { targetKindOf } from '@/lib/contract-topology'
 import { moderationService } from '@/lib/services/moderation-service'
+import { CharterReasonPicker, useSeatedReasons } from './charter-reason-picker'
 
 /**
  * A moderator's takedown of a post or reply. Unlike the owner's tombstone,
@@ -22,6 +23,9 @@ export function ModeratorRemoveModal() {
   const { isOpen, post, onRemoved, close } = useModeratorRemoveModal()
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
+  /** A seated elected team must cite one of its charter's reasons on every deletion (41203). */
+  const seatedReasons = useSeatedReasons()
+  const [reasonDocumentId, setReasonDocumentId] = useState('')
   const noun = post && targetKindOf(post) === 'reply' ? 'reply' : 'post'
 
   const handleClose = () => {
@@ -32,8 +36,15 @@ export function ModeratorRemoveModal() {
 
   const handleRemove = async () => {
     if (!post || !user || busy) return
+    if (seatedReasons.required && !reasonDocumentId) {
+      toast.error('Choose the charter reason this removal is taken on')
+      return
+    }
     setBusy(true)
-    const result = await moderationService.removeDocument(user.identityId, targetKindOf(post), post.id, reason.trim())
+    const result = await moderationService.removeDocument(user.identityId, targetKindOf(post), post.id, {
+      text: reason.trim(),
+      ...(seatedReasons.required && reasonDocumentId ? { reasonDocumentId } : {}),
+    })
     setBusy(false)
     if (result.errorCode === 'MAYBE_APPLIED') {
       // The DAPI gateway often times out on a delete that landed: say so, keep
@@ -85,6 +96,11 @@ export function ModeratorRemoveModal() {
         placeholder="Why this is being removed"
         className="w-full mb-4 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
       />
+      {seatedReasons.required && (
+        <div className="mb-4">
+          <CharterReasonPicker id="moderator-remove-charter-reason" reasons={seatedReasons.reasons} value={reasonDocumentId} onChange={setReasonDocumentId} />
+        </div>
+      )}
       <div className="flex flex-col gap-3">
         <Button onClick={handleRemove} disabled={busy} className="w-full bg-red-500 hover:bg-red-600 text-white">
           {busy ? 'Removing…' : `Remove ${noun}`}

@@ -214,7 +214,9 @@ function OrdersPage() {
               {orders.map((order, index) => {
                 const status = orderStatuses.get(order.id)
                 const store = stores.get(order.storeId)
-                const canReview = !reviewedOrders.has(order.id)
+                // A seller who ordered from their own store cannot rate it
+                // (storefront v4 refuses it in consensus, sellerId distinctFrom $ownerId).
+                const canReview = !reviewedOrders.has(order.id) && order.sellerId !== user?.identityId
 
                 return (
                   <OrderCard

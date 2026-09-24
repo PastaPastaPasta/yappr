@@ -12,6 +12,7 @@ import socialContractV7 from '@/contracts/yappr-social-contract-v7.json'
 import socialContractV8 from '@/contracts/yappr-social-contract-v8.json'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import { getContractTopology } from '@/lib/constants'
+import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
 
 // The deployed social contract for this build's topology, reshaped for display.
 // v3 was never promoted beyond devnet and has no checked-in contract file, so
@@ -72,6 +73,10 @@ export default function ContractPage() {
       }
     >
       <div>
+            {/* Elected moderation (v9): anyone can watch the team's election. */}
+            <div className="mb-8">
+              <ElectionStatusPanel />
+            </div>
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold">Contract Definition</h2>
               <button

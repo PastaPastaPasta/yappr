@@ -43,6 +43,7 @@ import { StorachaSettings } from '@/components/settings/storacha-settings'
 import { PinataSettings } from '@/components/settings/pinata-settings'
 import { ModerationSettings } from '@/components/settings/moderation-settings'
 import { ContractModerationSettings } from '@/components/settings/contract-moderation-settings'
+import { OwnWarningsNotice } from '@/components/moderation/own-warnings-notice'
 import { useIsModerator } from '@/hooks/use-is-moderator'
 import { paymentIsChoosable } from '@/lib/payment-preference'
 import type { PayWith } from '@/lib/store'
@@ -832,6 +833,11 @@ function SettingsPage() {
           exit={{ opacity: 0, x: -20 }}
           transition={{ duration: 0.2 }}
         >
+          {activeSection === 'main' && (
+            <div className="px-4 pt-4">
+              <OwnWarningsNotice />
+            </div>
+          )}
           {renderSection()}
         </motion.div>
     </PageShell>
