@@ -16,7 +16,7 @@ import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
 import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
-import { deriveDocumentId, nextIdentityContractNonce } from '@/lib/document-id';
+import { documentIdForCreate, nextIdentityContractNonce } from '@/lib/document-id';
 import {
   DocumentActionFeeAgreement,
   DocumentCreateTransition,
@@ -407,8 +407,9 @@ class StateTransitionService {
    * signs, broadcasts, and waits — bumping the nonce each time), we:
    *
    * 1. Fetch the identity contract nonce from Platform and pick the next one
-   * 2. Derive the document id from that nonce (protocol 14, `lib/document-id.ts`)
-   *    and build the Document with it, wrapped in a DocumentCreateTransition
+   * 2. Derive the document id from that nonce (protocol 14; wasm-dpp2's
+   *    `Document.generateId` via `lib/document-id.ts`) and build the Document
+   *    with it, wrapped in a DocumentCreateTransition
    * 3. Bundle into a BatchTransition → StateTransition carrying the same nonce
    * 4. Sign the StateTransition
    * 5. Cache the signed ST bytes (localStorage), keyed by the id
@@ -497,7 +498,7 @@ class StateTransitionService {
       logger.debug(`Nonce: current=${currentNonce}, using=${newNonce}`);
 
       const entropy = crypto.getRandomValues(new Uint8Array(32));
-      const documentId = deriveDocumentId({ contractId, ownerId, documentTypeName: documentType, entropy, identityContractNonce: newNonce });
+      const documentId = documentIdForCreate({ contractId, ownerId, documentTypeName: documentType, entropy, identityContractNonce: newNonce });
       const resolvedData = typeof documentData === 'function' ? await documentData(documentId) : documentData;
       logger.debug(`Creating ${documentType} document ${documentId} with data:`, resolvedData);
 
@@ -583,8 +584,9 @@ class StateTransitionService {
       }
       const actionFeeAgreement = await this.resolveActionFeeAgreement(sdk, contractId, documentType, 'create');
 
-      // The transition copies `document.id` verbatim, so it carries the id
-      // derived above — consensus recomputes it from this same nonce and entropy.
+      // The transition re-derives the id from the document's entropy and this
+      // nonce (wasm-dpp2, beta.4) and writes it back onto `document` — the id
+      // derived above, and the one consensus recomputes.
       const createTransition = new DocumentCreateTransition({
         document,
         identityContractNonce: newNonce,

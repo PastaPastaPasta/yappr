@@ -274,9 +274,10 @@ function hasConsensusCode(message: string, codes: readonly number[]): boolean {
  * platform#4859), where the id commits to the identity contract nonce of the
  * create transition.
  *
- * Yappr derives that id itself (`lib/document-id.ts`), so hitting this means
- * the derivation, the nonce or the entropy on the transition disagree with
- * what was signed — a code-level bug, never a user situation. Permanent: the
+ * wasm-dpp2 derives that id for Yappr (`lib/document-id.ts`, beta.4+), so
+ * hitting this means the nonce or the entropy on the transition disagree with
+ * what was signed, or the SDK and the network run different platform
+ * versions — a code-level bug, never a user situation. Permanent: the
  * same transition is refused every time, and a fresh attempt builds a fresh
  * one anyway. Drive's phrasing: "Invalid document transition id <id>, expected <id>".
  */

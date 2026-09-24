@@ -630,36 +630,19 @@ export function appendProgress(record, file = PROGRESS_FILE) {
 
 export const randomEntropy = () => crypto.getRandomValues(new Uint8Array(32));
 
-const DOCUMENT_ID_V1_DOMAIN_TAG = new TextEncoder().encode('dash:document-id:v1');
 /** DIP-30: the low 40 bits of an identity contract nonce are the sequence; the rest is a revision bitset. */
 export const NONCE_SEQUENCE_MASK = (1n << 40n) - 1n;
 
 /**
- * Protocol 14 document id (platform#4859; mirror of `lib/document-id.ts`, pinned
- * to the same rs-dpp test vector by the self-test):
- *   dsha256("dash:document-id:v1" || contractId || ownerId || typeName || entropy || nonce as u64 BE)
- * The id commits to the identity contract nonce of the create transition, so it
- * exists only once that nonce is assigned. `Document.generateId` still returns
- * the pre-14 entropy-only id, which consensus now refuses.
+ * Protocol 14 document id (platform#4859): it commits to the identity contract
+ * nonce of the create transition, so it exists only once that nonce is
+ * assigned. From 4.2.0-beta.4 wasm-dpp2 derives it (platform#4868); this is a
+ * thin wrapper over `Document.generateId` at the latest platform version, the
+ * same derivation `lib/document-id.ts` uses in the browser and the one
+ * `new DocumentCreateTransition` re-derives. Needs the wasm module initialized.
  */
 export function deriveDocumentIdBytes({ contractId, ownerId, docType, entropy, nonce }) {
-  const idBytes = (v, label) => {
-    const bytes = typeof v === 'string' ? bs58.decode(v) : v;
-    if (bytes.length !== 32) throw new Error(`${label} must be 32 bytes`);
-    return bytes;
-  };
-  if (entropy.length !== 32) throw new Error('entropy must be 32 bytes');
-  const nonceBytes = new Uint8Array(8);
-  new DataView(nonceBytes.buffer).setBigUint64(0, BigInt(nonce));
-  const preimage = new Uint8Array([
-    ...DOCUMENT_ID_V1_DOMAIN_TAG,
-    ...idBytes(contractId, 'contractId'),
-    ...idBytes(ownerId, 'ownerId'),
-    ...new TextEncoder().encode(docType),
-    ...entropy,
-    ...nonceBytes,
-  ]);
-  return sha256(sha256(preimage));
+  return Document.generateId(docType, ownerId, contractId, entropy, BigInt(nonce));
 }
 
 /**
@@ -929,7 +912,7 @@ export async function feeAgreementFor(sdk, docType, topology) {
  * v8 contract goes through here or it is a paid 40132.
  *
  * Protocol 14 derives the id from the transition's identity contract nonce, so
- * the nonce is taken first and the id derived locally
+ * the nonce is taken first and the id derived up front by wasm-dpp2
  * (`deriveDocumentIdBytes`); the id is therefore known BEFORE the broadcast,
  * unlike the facade path. Returns `{ id }` — the same shape `createdId` reads
  * off a facade-created Document — so callers' acceptance logic is unchanged.

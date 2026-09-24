@@ -178,9 +178,10 @@ class AuthVaultService extends BaseDocumentService<AuthVaultDocument> {
     } else {
       // The ciphertext is bound to the vault id (AEAD associated data), and from
       // protocol 14 that id is derived from the create transition's nonce. The
-      // write path hands us the id it is about to broadcast under and uses that
-      // exact nonce for the broadcast, so the id we encrypt against is the id
-      // Platform stores — and the one `decryptVault` reads back as `$id`.
+      // write path derives it with wasm-dpp2's `Document.generateId` for the
+      // nonce it is about to broadcast with, hands it to us, and signs with that
+      // exact nonce, so the id we encrypt against is the id Platform stores —
+      // and the one `decryptVault` reads back as `$id`.
       vault = await this.createWithOptions(identityId, async (vaultId) =>
         vaultFields(await encryptBundle(activeBundle, dek, vaultId))
       )
