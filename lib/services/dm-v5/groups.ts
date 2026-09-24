@@ -28,7 +28,7 @@ import { logger } from '@/lib/logger'
 import { isMember, newGroupConv, type GroupConv } from './conversation'
 import { attachGroup, curWeek, groupConv, isMe, peerKey, type Backoff, type DmContext } from './context'
 import { ensureStarted, openDirect, startedDirect } from './directs'
-import { applyGroups, markApplied, switchEpoch } from './group-apply'
+import { applyGroups, markApplied, markStale, switchEpoch } from './group-apply'
 import { sendContent } from './sender'
 import type { WriteFailure, WriteOutcome } from './types'
 import { nonceBackoffMs, realSleep, withNonceRetry } from './write-failure'
@@ -186,6 +186,16 @@ type Change = (current: RosterContent) => Promise<WriteOutcome | 'noop'>
  * re-run means an earlier uncertain tombstone landed, which is success.
  */
 async function ownerWrite(ctx: DmContext, conv: GroupConv, change: Change, endsGroup = false): Promise<void> {
+  try {
+    await ownerWriteRounds(ctx, conv, change, endsGroup)
+  } catch (error) {
+    // Whatever landed before the failure (a keyring, say) is not reflected yet: re-read before any send.
+    markStale(conv)
+    throw error
+  }
+}
+
+async function ownerWriteRounds(ctx: DmContext, conv: GroupConv, change: Change, endsGroup: boolean): Promise<void> {
   let transportRetries = 0
   // Stale and duplicate refusals re-run the loop; a transport failure may re-run it twice; the rest throw.
   const refused = async (outcome: { ok: false; failure: WriteFailure; error: string }): Promise<void> => {
@@ -350,6 +360,9 @@ export async function removeMember(ctx: DmContext, conv: GroupConv, member: Iden
     conv.keyrings.set(b, built.blob)
     conv.keyringAt.set(b, ctx.chain.now())
     conv.keys.set({ b, r: 0 }, built.baseKey)
+    // The removed member has no key for base b: move to it now, before the roster replace, so a
+    // send in between never goes out on the old base, whether or not the replace lands.
+    switchEpoch(ctx, conv, { b, r: 0 })
     return writeRoster(ctx, conv, { ...roster, b, r: 0, members: remaining })
   })
 }
@@ -435,8 +448,12 @@ function failedOwnerWork(ctx: DmContext, key: string): void {
  */
 export async function repairOwnedGroups(ctx: DmContext, tried: Set<string> = new Set()): Promise<void> {
   if (!ctx.chain.canWrite()) return
+  // A group that needs no owner work any more starts its backoff afresh next time.
+  const pendingLeaveGroups = new Set(Array.from(ctx.pendingLeaves.values()).map((p) => p.conv.key))
   for (const conv of Array.from(ctx.convs.values())) {
-    if (conv.kind !== 'group' || !conv.secret || conv.ended || !conv.lastRoster || conv.epoch.b <= conv.lastRoster.b) continue
+    const needsRepair = conv.kind === 'group' && !!conv.secret && !conv.ended && !!conv.lastRoster && conv.epoch.b > conv.lastRoster.b
+    if (!needsRepair && !pendingLeaveGroups.has(conv.key)) ctx.ownerRepairs.delete(conv.key)
+    if (conv.kind !== 'group' || !needsRepair) continue
     const backoff = ctx.ownerRepairs.get(conv.key)
     if (tried.has(conv.key) || (backoff && backoff.retryAt > ctx.chain.now())) continue
     tried.add(conv.key)

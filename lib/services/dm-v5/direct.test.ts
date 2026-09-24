@@ -325,6 +325,19 @@ describe('sender', () => {
     expect(classifyWriteFailure('No available addresses to retry')).toBe('transport')
     expect(classifyWriteFailure('gRPC status UNAVAILABLE: transport is closing')).toBe('transport')
     expect(classifyWriteFailure('Identity has insufficient balance to pay for the state transition')).toBe('other')
+    // Browser and SDK network failures (review 3 #2), including one captured from a devnet run.
+    for (const message of [
+      'TypeError: Failed to fetch',
+      'TypeError: Load failed',
+      'NetworkError when attempting to fetch resource.',
+      'missing response message',
+      'Deadline exceeded',
+      'connect ECONNREFUSED 127.0.0.1:1443',
+      'connect ETIMEDOUT 10.0.0.1:1443',
+      'transport collapsed — reconnecting: context provider error: invalid quorum: Quorum not found in cache for hash: 0000026347a3d552515e317b7b37763311b157547a1cc9d0e27916a4a40fe4b0',
+    ]) {
+      expect(classifyWriteFailure(message), message).toBe('transport')
+    }
   })
 
   it('retries at j + 1 when another device took the tag (40105)', async () => {

@@ -687,7 +687,10 @@ OWNER_WRITE(g, change):
     break
 ```
 
-An uncertain write is never adopted on trust: a losing concurrent write
+A removal moves the owner's own client to the new base as soon as its keyring
+lands, before the roster replace, and any owner write that fails leaves the
+group marked stale, so the next send re-reads it first. An uncertain write is
+never adopted on trust: a losing concurrent write
 would move the owner to an epoch that does not exist, and a keyring's key is
 only ever held once that keyring is known to be on chain. For the same reason a
 reader re-opens a roster whose `$revision` matches the one it last saw

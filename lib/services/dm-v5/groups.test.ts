@@ -415,6 +415,30 @@ describe('joining is saved at once (§5.5)', () => {
   })
 })
 
+describe('owner state after a failed removal', () => {
+  it('never sends on the old base right after a removal whose roster write was refused (review 3 #1)', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    // The keyring lands; the roster replace is refused for good (no retry).
+    alice.chain.hook = (method) => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'insufficient balance' } : null)
+    await expect(removeMember(alice.ctx, conv, CAROL_ID)).rejects.toThrow('insufficient balance')
+    alice.chain.hook = null
+    expect(ledger.groupDocs.some((d) => bytesEqual(d.handle, keyringHandle(conv.gid, 1)))).toBe(true)
+    // Within the freshness window: the send must re-read first and go out on base 1, never base 0.
+    const held = await sendContent(alice.ctx, conv, { type: 'text', text: 'after removal' })
+    expect(held.pointer.b).toBe(1)
+  })
+
+  it('marks the group stale whenever an owner write fails (review 3 #1)', async () => {
+    const { alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await applyGroups(alice.ctx, [conv])
+    alice.chain.hook = (method) => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'refused' } : null)
+    await expect(renameGroup(alice.ctx, conv, 'Renamed')).rejects.toThrow('refused')
+    expect(conv.appliedAt.local).toBe(-Infinity)
+  })
+})
+
 describe('leave path after a refused roster write', () => {
   async function leftGroup() {
     const w = world()
@@ -555,6 +579,23 @@ describe('leave path after a refused roster write', () => {
     await expect(renameGroup(alice.ctx, conv, 'Renamed')).rejects.toThrow()
     expect(conv.lastRoster).toBe(roster)
     expect(conv.roster).toBe(doc)
+  })
+
+  it('resets a group backoff once it no longer needs owner work (review 3 #3)', async () => {
+    const { ledger, alice, conv } = await leftGroup()
+    refuseReplaces(alice.chain, () => true)
+    await pollOnce(alice.ctx)
+    expect(alice.ctx.ownerRepairs.has(conv.key)).toBe(true)
+    alice.chain.hook = null
+    ledger.time += 30_000
+    await pollOnce(alice.ctx)
+    expect(conv.lastRoster && has(conv.lastRoster.members, BOB_ID)).toBe(false)
+    expect(alice.ctx.pendingLeaves.size).toBe(0)
+    expect(alice.ctx.ownerRepairs.has(conv.key)).toBe(false)
+    // A stale entry for a group that became healthy some other way is dropped too.
+    alice.ctx.ownerRepairs.set(conv.key, { retryAt: ledger.time + 60_000, failures: 3 })
+    await pollOnce(alice.ctx)
+    expect(alice.ctx.ownerRepairs.has(conv.key)).toBe(false)
   })
 
   it('never runs the repair step for ended groups or groups it does not own (leave review)', async () => {
