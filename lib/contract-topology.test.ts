@@ -138,6 +138,8 @@ describe('contract topology', () => {
       expect(v7.contractIsModerated()).toBe(false)
       expect(v7.referencesMayDangle()).toBe(false)
       expect(v7.moderatorDeletableTypes()).toEqual([])
+      expect(v7.moderationListsKept()).toEqual([])
+      expect(v7.contractKeepsWarnings()).toBe(false)
       expect(v7.declaredActionFee('post', 'create')).toBeNull()
       expect(v7.starterGrantAmount()).toBeNull()
       // The YAPP price is the same number on every priced cut, but before v8
@@ -171,6 +173,11 @@ describe('contract topology', () => {
       expect(v8.contractIsModerated()).toBe(true)
       expect(v8.referencesMayDangle()).toBe(true)
       expect(v8.moderatorDeletableTypes()).toEqual(['post', 'reply'])
+      // The lists follow the JSON: a re-cut that adds `warnings: true` turns
+      // the warn action on without a code change.
+      const declared = socialContractV8.config.moderation as Record<string, unknown>
+      expect(v8.moderationListsKept()).toEqual(['banlist', 'suspensions', 'warnings'].filter((list) => declared[list] === true))
+      expect(v8.contractKeepsWarnings()).toBe(declared.warnings === true)
       expect(socialContractV8.config).toMatchObject({
         $formatVersion: '2',
         moderation: { banlist: true, suspensions: true, moderators: { $type: 'contractOwner' } },

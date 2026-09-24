@@ -53,7 +53,8 @@ export function ModeratorRemoveModal() {
       </ModalTitle>
       <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
         The {noun} is deleted from the contract for everyone. Its author is not refunded, the id can never be reused,
-        and a public removal record with your reason stays on-chain.
+        and a public removal record with your reason stays on-chain. A copy is kept on this device for a week, so a
+        moderator can restore it from the moderation settings.
       </Dialog.Description>
       {post && (
         <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
