@@ -27,13 +27,24 @@ const SIMPLE: SelfState = {
   nextGroupNumber: 1,
 }
 const FIXED_PLAIN =
-  '01' +
+  '02' +
   ('0001' + 'bb'.repeat(32) + '00000b54' + '00000198628c0400' + '0000000000000000') +
   '0000' +
   ('0001' + 'cc'.repeat(32) + '00' + '00000198628c05f4') +
   '00' + '0000000000000000' + '0000000000000000' + '00000001' + '00'
 const FIXED_BLOB =
   '1ed16983839229fd9d8e76c97eae79d7966d3fe7769412ff2bc127006162e0775090e5f181c77dbfa50cad6d84b4b4072ac66e42e6fe21f1cdac4fa76820626a6aedb5a2b56df23158d7eb0cf5e607777ae99d3d0804f365120e5cce1ffed45e592c5c39db214c6cea197ed9d01fb7b49b3b0a29aa153e04f59563301b69b92af8de9dc1b7e90191d5624783530c34b11a7eea4330abe209265b144c'
+
+// Version 2 with one group entry (anchorChangedAt included), sealed with a fixed IV by an independent
+// Python implementation (cryptography: HKDF-SHA256 + AES-256-GCM).
+const WITH_GROUP: SelfState = {
+  ...SIMPLE,
+  blocks: [],
+  groups: [{ gid: new Uint8Array(10).fill(0x11), owner: CAROL_ID, earliestEpoch: { b: 1, r: 1 }, earliestKey: key32(0x42), since: 2901, readAt: 1754000000000, hiddenAt: 0, anchorChangedAt: 1754000000900 }],
+}
+const WITH_GROUP_PLAIN = '020001bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb00000b5400000198628c04000000000000000000000111111111111111111111cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc00010001424242424242424242424242424242424242424242424242424242424242424200000b5500000198628c0400000000000000000000000198628c0784000000000000000000000000000000000000000000000100'
+const WITH_GROUP_BLOB =
+  '000102030405060708090a0b7913155025a5c3e1b238b1aa5e7bd06d772c2bb24790123b5c3e46c38566e9e27b35c87a51ece2c493384f5fbfe34dc1c40a6ac04bb6cebc0861bbf951f6001a1fa14aa303cda859cf2d1d769be1836e3851d1b50687fcddd039eb7dff7c49ddb9b2b93da480a3c953a0d2f061b5a42757f8c95952f07138cde28ceb2c49ace7925eddd5527410f93d5aa93fc0e84ea9064624378a90c06026ae3ccaf9ed5b978b1c3fb0d956c807baa2b3f5406b35b5821d9a0498a6f519061ef3669d7c974f5d3c2a22491e638f3c15c35f4ede3ed930ef7243dc9731850a9c5636be67bcead35aae41f8312719318fcba0c839bc8e86eb4c57b0e491e57356643b206e4f09f9c800ca5af3225866f1c6f362b366cc'
 
 const id = (i: number) => Uint8Array.from({ length: 32 }, (_, k) => (k < 2 ? (i >> (8 * k)) & 0xff : 0x5a))
 const direct = (i: number, readAt = 1000 + i, hiddenAt = 0): DirectConversation => ({ peer: id(i), since: 2900, readAt, hiddenAt })
@@ -46,6 +57,7 @@ const group = (i: number, b = 0, r = 0): GroupConversation => ({
   since: 2900,
   readAt: 5000,
   hiddenAt: 0,
+  anchorChangedAt: 0,
 })
 
 describe('self-state encoding (§5.5)', () => {
@@ -56,7 +68,7 @@ describe('self-state encoding (§5.5)', () => {
   it('round-trips every field', () => {
     const full: SelfState = {
       directs: [direct(1), direct(2, 50, 1754000000000)],
-      groups: [{ ...group(3, 1, 2), hiddenAt: 1754000000001 }],
+      groups: [{ ...group(3, 1, 2), hiddenAt: 1754000000001, anchorChangedAt: 1754000000777 }],
       blocks: [block(4, true, 9), block(5, false, 10)],
       settings: { retention: '1y', updatedAt: 1754000000123 },
       inviteScanCursor: 1754000000999,
@@ -67,9 +79,9 @@ describe('self-state encoding (§5.5)', () => {
     expect(decodeSelfState(encodeSelfState(emptySelfState()))).toEqual(emptySelfState())
   })
 
-  it('uses 52 bytes per 1:1, 98 per group and 41 per block entry', () => {
+  it('uses 52 bytes per 1:1, 106 per group and 41 per block entry', () => {
     expect(DIRECT_ENTRY_LENGTH).toBe(52)
-    expect(GROUP_ENTRY_LENGTH).toBe(98)
+    expect(GROUP_ENTRY_LENGTH).toBe(106)
     expect(BLOCK_ENTRY_LENGTH).toBe(41)
   })
 
@@ -82,7 +94,7 @@ describe('self-state encoding (§5.5)', () => {
 
   it('rejects an unknown version, truncation and trailing bytes', () => {
     const encoded = encodeSelfState(SIMPLE)
-    expect(() => decodeSelfState(new Uint8Array([2, ...encoded.slice(1)]))).toThrow('version')
+    expect(() => decodeSelfState(new Uint8Array([3, ...encoded.slice(1)]))).toThrow('version')
     expect(() => decodeSelfState(encoded.slice(0, -1))).toThrow()
     expect(() => decodeSelfState(new Uint8Array([...encoded, 0]))).toThrow('Trailing data')
     const badRetention = encodeSelfState(emptySelfState())
@@ -103,8 +115,18 @@ describe('self-state encryption', () => {
   const only = (blob: Uint8Array) => ({ blob, blob2: null, blob3: null })
   const lengths = (f: SelfStateFields) => [f.blob, f.blob2, f.blob3].map((b) => b?.length ?? null)
 
-  it('decrypts a fixed blob', async () => {
+  it('decrypts a fixed version-1 blob (no anchorChangedAt: read as 0)', async () => {
     expect(await decryptSelfState(STATE_KEY, only(unhex(FIXED_BLOB)))).toEqual(SIMPLE)
+  })
+
+  it('encodes and decrypts a fixed version-2 blob with a group entry', async () => {
+    expect(hex(encodeSelfState(WITH_GROUP))).toBe(WITH_GROUP_PLAIN)
+    expect(await decryptSelfState(STATE_KEY, only(unhex(WITH_GROUP_BLOB)))).toEqual(WITH_GROUP)
+  })
+
+  it('decodes a version-1 group entry with anchorChangedAt = 0', () => {
+    const v1 = unhex(WITH_GROUP_PLAIN.replace(/^02/, '01').replace('00000198628c0784', ''))
+    expect(decodeSelfState(v1).groups[0]).toEqual({ ...WITH_GROUP.groups[0], anchorChangedAt: 0 })
   })
 
   it('round-trips in one field when small, clearing blob2 and blob3', async () => {
@@ -130,14 +152,14 @@ describe('self-state encryption', () => {
 
   it('fills all three fields near the cap (about 285 conversations)', async () => {
     // Capacity is 3 × 5120 − 28 (IV + tag) − 2 (length) = 15,330 bytes. 270 1:1s,
-    // 10 groups and 5 blocks encode to 29 + 14,040 + 980 + 205 = 15,254.
+    // 9 groups and 5 blocks encode to 29 + 14,040 + 954 + 205 = 15,228.
     const atCap: SelfState = {
       ...SIMPLE,
       directs: Array.from({ length: 270 }, (_, i) => direct(i)),
-      groups: Array.from({ length: 10 }, (_, i) => group(1000 + i)),
+      groups: Array.from({ length: 9 }, (_, i) => group(1000 + i)),
       blocks: Array.from({ length: 5 }, (_, i) => block(2000 + i, true, i)),
     }
-    expect(encodeSelfState(atCap)).toHaveLength(15_254)
+    expect(encodeSelfState(atCap)).toHaveLength(15_228)
     expect(selfStateFits(atCap)).toBe(true)
     const fields = await encryptSelfState(STATE_KEY, atCap)
     expect(lengths(fields)).toEqual([FIELD_MAX, FIELD_MAX, FIELD_MAX])
@@ -192,7 +214,7 @@ describe('self-state merge (§5.5)', () => {
     expect(tie.blocks).toEqual([block(1, true, 5)])
   })
 
-  it('keeps the earliest group key and the maximum readAt and hiddenAt per group', () => {
+  it('keeps the lower step on one base, and the maximum readAt and hiddenAt per group', () => {
     const remote = { ...emptySelfState(), groups: [{ ...group(1, 0, 2), readAt: 10, hiddenAt: 40 }] }
     const local = { ...emptySelfState(), groups: [{ ...group(1, 0, 1), readAt: 20, hiddenAt: 30 }, group(9)] }
     const merged = mergeSelfStates(remote, local)
@@ -201,8 +223,25 @@ describe('self-state merge (§5.5)', () => {
     expect(merged.groups[0].earliestKey).toEqual(group(1, 0, 1).earliestKey)
     expect(merged.groups[0].readAt).toBe(20)
     expect(merged.groups[0].hiddenAt).toBe(40)
-    const baseWins = mergeSelfStates({ ...emptySelfState(), groups: [group(1, 1, 0)] }, { ...emptySelfState(), groups: [group(1, 0, 5)] })
-    expect(baseWins.groups[0].earliestEpoch).toEqual({ b: 0, r: 5 })
+    // Across bases the newer anchor change wins, whichever base it is on (an older epoch's grant that
+    // turned up later is a newer change too).
+    const newerLower = mergeSelfStates({ ...emptySelfState(), groups: [{ ...group(1, 1, 0), anchorChangedAt: 10 }] }, { ...emptySelfState(), groups: [{ ...group(1, 0, 5), anchorChangedAt: 20 }] })
+    expect(newerLower.groups[0].earliestEpoch).toEqual({ b: 0, r: 5 })
+  })
+
+  it('keeps a re-add anchor across a removal gap when merging an older device state (review #7)', () => {
+    // Saved long ago: the key from joining at (0, 0). Then the member was removed (base 1 has no slot
+    // for them) and re-added at (1, 1): this device replaced the anchor, since (0, 0) cannot reach base 1.
+    const older = { ...emptySelfState(), groups: [{ ...group(1, 0, 0), anchorChangedAt: 100 }] }
+    const readded = { ...emptySelfState(), groups: [{ ...group(1, 1, 1), anchorChangedAt: 900 }] }
+    for (const merged of [mergeSelfStates(older, readded), mergeSelfStates(readded, older)]) {
+      expect(merged.groups[0].earliestEpoch).toEqual({ b: 1, r: 1 })
+      expect(merged.groups[0].earliestKey).toEqual(group(1, 1, 1).earliestKey)
+      expect(merged.groups[0].anchorChangedAt).toBe(900)
+    }
+    // A tie keeps the saved copy.
+    const tie = mergeSelfStates({ ...emptySelfState(), groups: [{ ...group(1, 2, 0), anchorChangedAt: 5 }] }, { ...emptySelfState(), groups: [{ ...group(1, 1, 0), anchorChangedAt: 5 }] })
+    expect(tie.groups[0].earliestEpoch).toEqual({ b: 2, r: 0 })
   })
 
   it('takes the newer settings, the saved ones on a tie', () => {

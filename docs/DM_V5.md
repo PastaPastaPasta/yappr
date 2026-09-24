@@ -330,12 +330,16 @@ blob = iv | AES-256-GCM(HKDF(stateKey, "state\0"), pad(state))     // spread ove
 ```
 
 **What it holds:**
-- **Conversations:** for a 1:1, the peer; for a group, `gid`, owner, and the
-  earliest group key the user was granted, with its epoch. Later epochs of the
-  same base come from ratcheting forward, and later bases from the user's
-  keyring slots, so one key reads all of the user's group history. Each
-  conversation also has `since` (the week it started) and `readAt` (a
-  `$createdAt`: everything newer is unread).
+- **Conversations:** for a 1:1, the peer; for a group, `gid`, owner, and an
+  anchor key with its epoch and `anchorChangedAt`: the earliest group key the
+  user was granted. Later epochs of the same base come from ratcheting forward,
+  and later bases from the user's keyring slots, so one key reads all of the
+  user's group history. The exception is a member removed and later re-added:
+  the keyring in the gap has no slot for them, so the old anchor can no longer
+  reach the current base, and the re-add grant's key replaces it
+  (`anchorChangedAt` is set to that moment). Each conversation also has
+  `since` (the week it started) and `readAt` (a `$createdAt`: everything newer
+  is unread).
 - Blocks as `identity → (blocked, changedAt)`, so an unblock survives a
   merge. Each conversation's `hiddenAt` ("delete conversation"; a message newer
   than it un-hides the chat). Settings (including retention) with the time they
@@ -347,7 +351,7 @@ Where each stream is up to is **not** stored. Devices find it from the chain
 (§6.3).
 
 **One document, one atomic replace.** About 15 KB across three fields,
-roughly 290 conversations (about 52 bytes per 1:1, 98 per group). **That is
+roughly 290 conversations (52 bytes per 1:1, 106 per group). **That is
 the Phase 1 cap, and it is a lifetime cap:** entries are never dropped,
 because a dropped entry would stop both polling and sweeping, and a 1:1 you
 started has no invite addressed to you to rediscover it from. "Delete
@@ -359,9 +363,12 @@ cap.
 
 **Two devices saving at once:** Platform rejects a replace whose revision is
 not current + 1 (error 40106). The losing device re-reads, merges
-(conversations are a union; `readAt` and `hiddenAt` take the maximum; each
-block entry and the settings take the newer `changedAt`; the scan position
-takes the minimum, so no invite is skipped) and saves again. The loser often
+(conversations are a union; `readAt` and `hiddenAt` take the maximum; a
+group's anchor takes the lower step on the same base, and otherwise the newer
+`anchorChangedAt`, keeping the saved one on a tie, so an older device cannot
+bring back a key that a removal cut off; each block entry and the settings take
+the newer `changedAt`; the scan position takes the minimum, so no invite is
+skipped) and saves again. The loser often
 sees only a DAPI timeout, not the 40106, so a write whose result is uncertain
 is read back once: exactly its fields (at the next revision, for a replace)
 means it landed; another device's document (a newer revision, or a different

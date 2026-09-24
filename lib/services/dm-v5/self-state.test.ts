@@ -237,7 +237,7 @@ describe('self-state store', () => {
     const newer = makeContext(ledger, ALICE_ID, ALICE_PRIV)
     // Re-seal the saved state with a version byte this client does not know.
     const bytes = encodeSelfState(a.ctx.store.state)
-    bytes[0] = 2
+    bytes[0] = 3
     const [blob] = splitFields(await sealPadded(selfStateKey(deriveStateKey(deriveSelfRoot(ALICE_PRIV))), bytes, SELF_STATE_CLASSES))
     saved.fields = { blob, blob2: null, blob3: null }
     expect(await newer.ctx.store.load()).toBe('newer')

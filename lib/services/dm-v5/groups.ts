@@ -62,7 +62,7 @@ function requireOwner(ctx: DmContext, conv: GroupConv): Uint8Array {
 /** The saved entry of a group I own, from its first epoch. */
 function ownedGroupEntry(ctx: DmContext, gid: Uint8Array, since: number, readAt: number): GroupConversation {
   const secret = deriveGroupSecret(ctx.me.encPriv, gid)
-  return { gid, owner: ctx.me.id, earliestEpoch: { b: 0, r: 0 }, earliestKey: deriveBaseKey(secret, 0), since, readAt, hiddenAt: 0 }
+  return { gid, owner: ctx.me.id, earliestEpoch: { b: 0, r: 0 }, earliestKey: deriveBaseKey(secret, 0), since, readAt, hiddenAt: 0, anchorChangedAt: 0 }
 }
 
 function checkName(name: string): string {

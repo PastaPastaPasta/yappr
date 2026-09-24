@@ -79,12 +79,18 @@ export interface DirectConversation {
 export interface GroupConversation {
   gid: Uint8Array
   owner: IdentityId
-  /** The earliest group key the user was granted, and its epoch. */
+  /**
+   * The group key the user reads from (the anchor), and its epoch: the
+   * earliest one granted, or a re-add key that replaced an anchor a removal
+   * cut off (§5.5).
+   */
   earliestEpoch: Epoch
   earliestKey: Uint8Array
   since: number
   readAt: number
   hiddenAt: number
+  /** When the anchor last changed (ms); across bases the newer change wins a merge. */
+  anchorChangedAt: number
 }
 
 /** A block-list entry. Unblocking keeps the entry with `blocked: false`, so the unblock survives a merge. */

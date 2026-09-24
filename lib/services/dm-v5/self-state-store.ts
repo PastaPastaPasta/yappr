@@ -254,7 +254,7 @@ export class SelfStateStore {
     if (changed && this.isSaved(current)) this.markDirty()
   }
 
-  /** A group's earliest key moves earlier when a grant for an older epoch turns up (merge keeps the earliest). */
+  /** A group's anchor key changes: an older epoch's grant turned up, or a re-add across a removal gap (§5.5). */
   replaceGroupEntry(entry: GroupConversation, next: GroupConversation): void {
     const current = this.resolve(entry)
     Object.assign(current, next)

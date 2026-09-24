@@ -39,6 +39,7 @@ async function processGrant(ctx: DmContext, grant: PendingGrant): Promise<'done'
     // A group joined while recovering lost state starts as read (§9).
     readAt: ctx.recovering ? ctx.chain.now() : 0,
     hiddenAt: 0,
+    anchorChangedAt: ctx.chain.now(),
   }
   const probe = newGroupConv(entry)
   await applyGroups(ctx, [probe])
@@ -63,12 +64,13 @@ async function processGrant(ctx: DmContext, grant: PendingGrant): Promise<'done'
     existing.removed = false
     existing.unreadable = false
     if (epochBefore(epoch, existing.entry.earliestEpoch)) {
-      ctx.store.replaceGroupEntry(existing.entry, { ...existing.entry, earliestEpoch: epoch, earliestKey: grant.key, since: Math.min(existing.entry.since, entry.since) })
+      ctx.store.replaceGroupEntry(existing.entry, { ...existing.entry, earliestEpoch: epoch, earliestKey: grant.key, since: Math.min(existing.entry.since, entry.since), anchorChangedAt: entry.anchorChangedAt })
     } else if (wasCutOff) {
       // The saved key cannot reach this epoch (a keyring in between has no slot for me): keep the
       // re-add key instead, or a reload would find me removed again. History from before the gap
-      // stays readable in this session only.
-      ctx.store.replaceGroupEntry(existing.entry, { ...existing.entry, earliestEpoch: epoch, earliestKey: grant.key, since: entry.since })
+      // stays readable in this session only. The change time lets it win a merge with an older
+      // device's state, which still holds the cut-off key (§5.5).
+      ctx.store.replaceGroupEntry(existing.entry, { ...existing.entry, earliestEpoch: epoch, earliestKey: grant.key, since: entry.since, anchorChangedAt: entry.anchorChangedAt })
     }
     await applyGroups(ctx, [existing])
     await saveJoin(ctx)

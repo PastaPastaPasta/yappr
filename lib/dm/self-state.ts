@@ -4,10 +4,11 @@
  * One document, one atomic replace, spread over up to three 5120-byte fields.
  * Binary layout (all integers big-endian):
  *
- *   u8  version (1)
+ *   u8  version (2; version 1 lacks anchorChangedAt and still decodes, as 0)
  *   u16 count, then per 1:1:   peer (32) | U32 since | u64 readAt | u64 hiddenAt     = 52 B
  *   u16 count, then per group: gid (10) | owner (32) | S16 b | S16 r | key (32)
- *                              | U32 since | u64 readAt | u64 hiddenAt            = 98 B
+ *                              | U32 since | u64 readAt | u64 hiddenAt
+ *                              | u64 anchorChangedAt                             = 106 B
  *   u16 count, then per block: identity id (32) | u8 blocked | u64 changedAt     = 41 B
  *   u8  retention | u64 settings updatedAt
  *   u64 invite scan cursor | U32 next group number
@@ -21,11 +22,13 @@ import { SELF_STATE_CLASSES, joinFields, maxPlaintextLength, splitFields } from 
 import { openPadded, sealPadded } from './seal'
 import type { BlockEntry, DirectConversation, GroupConversation, IdentityId, RetentionSetting, SelfState } from './types'
 
-const VERSION = 1
+const VERSION = 2
+/** Version 1 group entries had no `anchorChangedAt`. */
+const VERSION_WITHOUT_ANCHOR_TIME = 1
 const RETENTIONS: readonly RetentionSetting[] = ['30d', '90d', '1y', 'never']
 
 export const DIRECT_ENTRY_LENGTH = ID_LENGTH + 4 + 8 + 8
-export const GROUP_ENTRY_LENGTH = GID_LENGTH + ID_LENGTH + 2 + 2 + KEY_LENGTH + 4 + 8 + 8
+export const GROUP_ENTRY_LENGTH = GID_LENGTH + ID_LENGTH + 2 + 2 + KEY_LENGTH + 4 + 8 + 8 + 8
 export const BLOCK_ENTRY_LENGTH = ID_LENGTH + 1 + 8
 /** The most encoded bytes a self-state can hold (three fields, sealed and padded). */
 export const SELF_STATE_MAX_BYTES = maxPlaintextLength(SELF_STATE_CLASSES)
@@ -62,7 +65,8 @@ export function encodeSelfState(state: SelfState): Uint8Array {
       g.earliestKey,
       u32(g.since),
       u64(g.readAt),
-      u64(g.hiddenAt)
+      u64(g.hiddenAt),
+      u64(g.anchorChangedAt)
     )
   })
   assertUniqueBlocks(state.blocks)
@@ -91,7 +95,7 @@ export function encodeSelfState(state: SelfState): Uint8Array {
 export function decodeSelfState(bytes: Uint8Array): SelfState {
   const reader = new ByteReader(bytes)
   const version = reader.u8()
-  if (version !== VERSION) throw new Error(`Unsupported self-state version: ${version}`)
+  if (version !== VERSION && version !== VERSION_WITHOUT_ANCHOR_TIME) throw new Error(`Unsupported self-state version: ${version}`)
   const directs = Array.from({ length: reader.u16() }, (): DirectConversation => ({
     peer: reader.bytesOf(ID_LENGTH),
     since: reader.u32(),
@@ -103,7 +107,9 @@ export function decodeSelfState(bytes: Uint8Array): SelfState {
     const owner = reader.bytesOf(ID_LENGTH)
     const earliestEpoch = { b: reader.u16(), r: reader.u16() }
     const earliestKey = reader.bytesOf(KEY_LENGTH)
-    return { gid, owner, earliestEpoch, earliestKey, since: reader.u32(), readAt: reader.u64(), hiddenAt: reader.u64() }
+    const times = { since: reader.u32(), readAt: reader.u64(), hiddenAt: reader.u64() }
+    const anchorChangedAt = version === VERSION_WITHOUT_ANCHOR_TIME ? 0 : reader.u64()
+    return { gid, owner, earliestEpoch, earliestKey, ...times, anchorChangedAt }
   })
   const blocks = Array.from({ length: reader.u16() }, (): BlockEntry => {
     const id = reader.bytesOf(ID_LENGTH)
@@ -192,12 +198,25 @@ function mergeDirect(a: DirectConversation, b: DirectConversation): DirectConver
   }
 }
 
+/**
+ * The anchor key to keep. On one base the lower step always wins: it derives
+ * the other, so nothing is lost. Across bases the newer change wins (the saved
+ * entry on a tie), like a block entry: a re-add across a removal gap replaces
+ * an anchor that can no longer reach the current base, and an older device's
+ * state must not bring the unreachable one back.
+ */
+function anchorOf(a: GroupConversation, b: GroupConversation): GroupConversation {
+  if (a.earliestEpoch.b === b.earliestEpoch.b) return epochBefore(b.earliestEpoch, a.earliestEpoch) ? b : a
+  return b.anchorChangedAt > a.anchorChangedAt ? b : a
+}
+
 function mergeGroup(a: GroupConversation, b: GroupConversation): GroupConversation {
-  const earliest = epochBefore(b.earliestEpoch, a.earliestEpoch) ? b : a
+  const anchor = anchorOf(a, b)
   return {
     ...a,
-    earliestEpoch: earliest.earliestEpoch,
-    earliestKey: earliest.earliestKey,
+    earliestEpoch: anchor.earliestEpoch,
+    earliestKey: anchor.earliestKey,
+    anchorChangedAt: anchor.anchorChangedAt,
     since: Math.min(a.since, b.since),
     readAt: Math.max(a.readAt, b.readAt),
     hiddenAt: Math.max(a.hiddenAt, b.hiddenAt),
@@ -214,7 +233,8 @@ const keepFirst = <T>(a: T) => a
 /**
  * Merge the saved state (`remote`) with this device's (`local`).
  * Conversations and past keys are unions; `readAt` and `hiddenAt` take the
- * maximum and `since` the minimum; a group keeps its earliest key. Each block
+ * maximum and `since` the minimum; a group's anchor key is the lower step on
+ * one base, else the newer change (the saved one on a tie). Each block
  * entry and the settings take the newer change (the saved state on a tie), so
  * an unblock survives. The next group number takes the
  * maximum, so `n` is never reused. The invite scan cursor takes the

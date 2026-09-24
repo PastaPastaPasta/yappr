@@ -514,6 +514,32 @@ describe('review regressions', () => {
     expect(has(members(g, ALICE_ID), CAROL_ID)).toBe(true)
   })
 
+  it('keeps the re-add key when an older device saves over it (review #7)', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    // Carol's laptop loads the state with the key from her first join.
+    const laptop = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await laptop.ctx.store.load()
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    await addMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    expect(theGroup(carol.ctx, ALICE_ID, conv.gid).removed).toBe(false)
+    // The laptop saves an edit: refused as stale, it merges with the phone's state and saves again.
+    ledger.tick()
+    const entry = laptop.ctx.store.groups()[0]
+    laptop.ctx.store.touch(entry, { readAt: ledger.time })
+    expect(await laptop.ctx.store.flush()).toBe(true)
+
+    ledger.messages = ledger.messages.filter((m) => !bytesEqual(m.ownerId, ALICE_ID))
+    const reloaded = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    expect(groupConv(reloaded.ctx, ALICE_ID, conv.gid)?.removed).toBe(false)
+  })
+
   it('keeps a re-added member in the group after a reload', async () => {
     const { ledger, alice, carol } = world()
     const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
