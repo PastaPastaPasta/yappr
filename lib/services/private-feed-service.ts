@@ -31,6 +31,8 @@ import {
 } from './private-feed-crypto-service';
 import { privateFeedKeyStore } from './private-feed-key-store';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
+import { privateFeedWritesAreGated } from '@/lib/contract-topology';
+import { isReferenceNotFoundError, referencedPathFromError } from '@/lib/error-utils';
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
 import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys';
 import { getPublicKey } from '@/lib/crypto/keys';
@@ -69,6 +71,25 @@ export interface PrivateFeedRekeyDocument {
  */
 function utf8Encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
+}
+
+/** Why an approval failed, where the caller should act on it (v9 private-feed gates). */
+export type ApproveErrorCode = 'REQUEST_WITHDRAWN' | 'FEED_NOT_ENABLED';
+
+export const REQUEST_WITHDRAWN_MESSAGE = 'This follower withdrew their request, so there is nothing to approve.';
+const FEED_NOT_ENABLED_MESSAGE = 'Enable your private feed before approving followers.';
+
+/**
+ * A grant refused by a v9 gate (40120), by the path Drive names:
+ * `recipientId` — the follower's request is gone (cancelled between the
+ * owner's read and the grant); `$ownerId` — the owner has no privateFeedState.
+ */
+function grantRefusal(error: unknown): { error: string; errorCode: ApproveErrorCode } | null {
+  if (!isReferenceNotFoundError(error)) return null;
+  const path = referencedPathFromError(error);
+  if (path === 'recipientId') return { error: REQUEST_WITHDRAWN_MESSAGE, errorCode: 'REQUEST_WITHDRAWN' };
+  if (path === '$ownerId') return { error: FEED_NOT_ENABLED_MESSAGE, errorCode: 'FEED_NOT_ENABLED' };
+  return null;
 }
 
 class PrivateFeedService {
@@ -317,6 +338,18 @@ class PrivateFeedService {
   // Follower Management (SPEC §8.4 - Approve Follow Request)
   // ============================================================
 
+  /** Whether `requesterId` has a live followRequest to `ownerId` (the v9 grant gate's lookup). */
+  private async followRequestExists(ownerId: string, requesterId: string): Promise<boolean> {
+    const sdk = await getEvoSdk();
+    const documents = await queryDocuments(sdk, {
+      dataContractId: this.contractId,
+      documentTypeName: DOCUMENT_TYPES.FOLLOW_REQUEST,
+      where: [['targetId', '==', ownerId], ['$ownerId', '==', requesterId]],
+      limit: 1,
+    });
+    return documents.length > 0;
+  }
+
   /**
    * Approve a follower and grant them access to the private feed
    *
@@ -331,8 +364,15 @@ class PrivateFeedService {
     requesterId: string,
     requesterPublicKey: Uint8Array,
     encryptionPrivateKey?: Uint8Array
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; error?: string; errorCode?: ApproveErrorCode }> {
     try {
+      // 0. v9 accepts a grant only while the recipient's followRequest to this
+      // owner exists (refersTo through targetAndRequester). A follower may have
+      // cancelled since the owner's list was read: check before any key work.
+      if (privateFeedWritesAreGated() && !(await this.followRequestExists(ownerId, requesterId))) {
+        return { success: false, error: REQUEST_WITHDRAWN_MESSAGE, errorCode: 'REQUEST_WITHDRAWN' };
+      }
+
       // 1. Get feed seed
       let feedSeed = privateFeedKeyStore.getFeedSeed();
       if (!feedSeed) {
@@ -486,7 +526,7 @@ class PrivateFeedService {
       );
 
       if (!result.success) {
-        return { success: false, error: result.error || 'Failed to create grant' };
+        return { success: false, ...(grantRefusal(result.error) ?? { error: result.error || 'Failed to create grant' }) };
       }
 
       // 12. Update local state - remove leaf from available and add to recipient map

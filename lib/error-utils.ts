@@ -182,7 +182,8 @@ export function isReferenceNotFoundError(error: unknown): boolean {
  * its own), so guessing is worse than not retrying.
  */
 export function referencedPathFromError(error: unknown): string | null {
-  const match = /\bfor path ([A-Za-z0-9_.]+)/.exec(extractErrorMessage(error))
+  // `$ownerId` for an ownerRefersTo gate, `members[2]` for a typed-array element (beta.4).
+  const match = /\bfor path (\$?[A-Za-z0-9_.]+(?:\[\d+\])?)/.exec(extractErrorMessage(error))
   return match ? match[1] : null
 }
 
