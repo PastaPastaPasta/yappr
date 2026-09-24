@@ -1120,15 +1120,16 @@ async function selfTest() {
     corpusYappCost(ops, { paysCredits: (idx) => creditsAuthors.has(idx) }).total === 0 &&
       corpusYappCost(ops).total === 39);
 
-  // Protocol 14 document id: the derivation is consensus, pinned to rs-dpp's
-  // `PINNED_V1_ID` (generate_document_id.rs) — contract [1;32], owner [2;32],
-  // type "note", entropy [7;32], nonce 1. `lib/document-id.test.ts` pins the
-  // browser copy to the same vector.
+  // Protocol 14 document id: the derivation is consensus (wasm-dpp2's
+  // `Document.generateId` from beta.4), pinned to rs-dpp's `PINNED_V1_ID`
+  // (generate_document_id.rs) — contract [1;32], owner [2;32], type "note",
+  // entropy [7;32], nonce 1. `lib/document-id.test.ts` pins the browser path to
+  // the same vector.
+  await ensureInitialized();
   const ones = new Uint8Array(32).fill(1), twos = new Uint8Array(32).fill(2), sevens = new Uint8Array(32).fill(7);
   const pinnedId = deriveDocumentIdBytes({ contractId: ones, ownerId: twos, docType: 'note', entropy: sevens, nonce: 1n });
   const pinnedHex = Buffer.from(pinnedId).toString('hex');
   check('document id: derivation matches the platform pinned v1 vector', pinnedHex === 'e574ae73396611a517691d1f89275b6e99642cb9c176ce8cf879b1665c50f15f', pinnedHex);
-  await ensureInitialized();
   const note = { contractId: bs58.encode(ones), docType: 'note', ownerId: bs58.encode(twos), data: {}, entropy: sevens };
   const withNonce = buildDocument({ ...note, nonce: 1n });
   check('document id: buildDocument with a nonce carries the derived id', withNonce.id === bs58.encode(pinnedId) && String(withNonce.document.id) === withNonce.id);

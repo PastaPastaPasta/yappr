@@ -8,7 +8,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   categorizeError,
+  classifyModerationError,
   isActionFeeAgreementError,
+  isDocumentPropertyRuleError,
+  isModerationNotYetSeatedError,
+  isModeratorsShareMismatchError,
+  isPropertyMaxBytesError,
+  isReferenceNotFoundError,
+  isReferenceRequirementError,
   isBarredFromContractError,
   isFeeMultiplierNotToleratedError,
   isGasPayerError,
@@ -221,5 +228,84 @@ describe('protocol-14 rejections', () => {
   it('keeps the frozen-account message for a frozen token account, not the moderation one', () => {
     expect(categorizeError(new Error('Identity 9t2e account is frozen for token AwyQ. Action attempted: Document create token payment')))
       .toMatch(/suspended \(frozen\)/i)
+  })
+})
+
+describe('4.2.0-beta.4 rejections', () => {
+  // Messages transcribed from the rs-dpp `#[error(...)]` formats at tag v4.2.0-beta.4.
+  const cases: Array<[string, (error: unknown) => boolean, string, RegExp]> = [
+    ['10419 DocumentPropertyNotDistinctError', isDocumentPropertyRuleError,
+      'Document type "follow" property "followingId" must differ from "$ownerId", but the two values are equal', /combination/i],
+    ['10421 DocumentPropertyMaxBytesExceededError', isPropertyMaxBytesError,
+      'Property content is 2140 bytes in UTF-8, over its maxBytes of 2000', /shorten it/i],
+    ['10422 DocumentPropertyConstraintViolatedError', isDocumentPropertyRuleError,
+      'A document of type "listing" breaks its propertyConstraints rule "minPrice <= maxPrice": 30 > 20', /combination/i],
+    ['40135 ReferencedContractRequirementNotMetError', isReferenceRequirementError,
+      "referenced contract 8Xv3 for path storeContractId does not meet the reference's requirement moderation elected", /report this/i],
+    ['40136 ReferencedIdentityKeyRequirementNotMetError', isReferenceRequirementError,
+      'referenced public key 3 of identity 9t2e for dm.recipientKeyId has purpose AUTHENTICATION, the reference requires ENCRYPTION', /report this/i],
+    ['40137 ReferencedDocumentLookupInvalidError', isReferenceRequirementError,
+      'invalid refersTo lookup through index byName declared at storeName: the index is not unique', /report this/i],
+    ['40138 ReferencedDocumentListInvalidError', isReferenceRequirementError,
+      'invalid refersTo listElement into inList tags declared at tag: not a list', /report this/i],
+    ['40139 DocumentActionFeeModeratorsShareMismatchError', isActionFeeAgreementError,
+      "Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 40000000, which is not the seated moderation charter's 60% share of it", /moderator fee share didn't match .*seated moderation charter/i],
+    ['40307 by labelled code', isPermanentProtocol14Error, 'rejected: code=40307', /report this/i],
+    ['41200 ContractModeratedDocumentTypeNotYetUsableError', isModerationNotYetSeatedError,
+      'Documents of type post on contract 8Xv3 can not be used until a moderation team is seated', /elects its moderation team/i],
+  ]
+
+  it.each(cases)('%s is recognised, permanent and given its own message', (_label, matcher, message, expected) => {
+    const error = new Error(message)
+    expect(matcher(error)).toBe(true)
+    expect(isPermanentProtocol14Error(error)).toBe(true)
+    expect(categorizeError(error)).toMatch(expected)
+  })
+
+  it('never tells a 40139 to reload: it is a share mismatch, not a stale client', () => {
+    const error = new Error('Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 0, which is not discounted: the contract has no seated moderation charter')
+    expect(isModeratorsShareMismatchError(error)).toBe(true)
+    expect(categorizeError(error)).not.toMatch(/reload/i)
+  })
+
+  it('does not read an unmet reference requirement as a dead target', () => {
+    // Both phrasings say "referenced ... for path"; only 40120 means the target is gone,
+    // and tombstone repair drops the reference it names.
+    const requirement = new Error("referenced contract 8Xv3 for path storeContractId does not meet the reference's requirement moderation elected")
+    expect(isReferenceNotFoundError(requirement)).toBe(false)
+    expect(isReferenceNotFoundError(new Error('referenced identity 9t2e not found for path followingId'))).toBe(true)
+  })
+
+  it.each([
+    ['NOT_MODERATOR', 'Identity 9t2e is not the owner or a moderator of contract 8Xv3'],
+    ['NOT_MODERATOR', 'Identity 9t2e is not a recipient of the moderators fee pot of contract 8Xv3 and can not claim it'],
+    ['NOT_WARNED', 'Identity 9t2e carries no warning on contract 8Xv3'],
+    ['WARNING_LIMIT', 'Identity 9t2e already carries 16 warnings on contract 8Xv3, the most it may at a time; clear them before warning it again'],
+    ['NO_REMOVAL_RECORD', "Contract 8Xv3 keeps no record of a moderator's deletion of post document D1: there is nothing to restore"],
+    ['RESTORE_WINDOW_ELAPSED', 'Document D1 on contract 8Xv3 was removed at 1 and could be restored by moderators for 604800000 milliseconds after that, which block time 999999999999 is past'],
+    ['RESTORE_HASH_MISMATCH', 'The document brought back for D1 on contract 8Xv3 hashes to abcd, not to the ef01 its removal record holds'],
+    ['ALREADY_RESTORED', 'Document D1 on contract 8Xv3 was already restored by 9t2e at 1790000000000: it is live'],
+    ['UNIQUE_VALUE_TAKEN', 'Document D1 has duplicate unique properties ["handle"] with other documents'],
+    ['NOT_YET_SEATED', 'Documents of type post on contract 8Xv3 can not be used until a moderation team is seated'],
+    ['ABILITY_NOT_GRANTED', 'The elected moderation declaration of contract 8Xv3 does not give its seated team the warn ability on document type post'],
+    ['ADDED_MODERATOR_LIMIT', 'Elected charter E1 already has the 3 added moderators contract 8Xv3 allows'],
+    ['REASON_NOT_LISTED', 'The moderation of contract 8Xv3 names no reason document, which the proposal S1 of its seated team does not list'],
+    ['INVALID_REASON_DOCUMENTS', 'The documents a contract moderation reason cites are invalid: more than 16'],
+    ['CHARTER_INVALID', 'The rules of the moderation charter is malformed: empty'],
+    ['CHARTER_INVALID', "The moderation charter's reward split of 50% to the leader, 30% equally and 30% by action count sums to 110%, it must sum to 100%"],
+    ['CONTEST_NOT_JOINABLE', 'Document Contest for vote_poll V1 is not joinable ContestInfo, it started 1 and it is now 2, and you can only join for 3'],
+    ['NOT_MODERATOR', '{"code":41101}'],
+    ['RESTORE_HASH_MISMATCH', 'consensus error code=41121'],
+  ])('classifies a moderation refusal as %s', (kind, message) => {
+    expect(classifyModerationError(new Error(message))).toBe(kind)
+  })
+
+  it.each([
+    'broadcast timed out at 1741120000000',
+    'insufficient balance: 41201000 credits required',
+    'no available addresses',
+  ])('classifies %s as no moderation refusal', (message) => {
+    expect(classifyModerationError(new Error(message))).toBeNull()
+    expect(isPermanentProtocol14Error(new Error(message))).toBe(false)
   })
 })

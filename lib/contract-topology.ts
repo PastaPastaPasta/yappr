@@ -922,6 +922,29 @@ export function clearableReferencesFor(docType: string): readonly string[] {
     .map(([name]) => name)
 }
 
+/** The moderation lists a contract can keep (`config.moderation`, protocol 14). */
+export type ModerationList = 'banlist' | 'suspensions' | 'warnings'
+
+const V8_MODERATION = (socialContractV8.config as { moderation?: Partial<Record<ModerationList, boolean>> }).moderation
+
+/**
+ * The lists the configured contract keeps, as its `config.moderation`
+ * declares them: v8 keeps a banlist and a suspension list; a cut that sets
+ * `warnings: true` (Platform 4.2.0-beta.4, platform#4872) keeps a warning list
+ * too. Reading or writing a list the contract does not keep is refused, so
+ * every moderation read and write names only these. Empty off a moderated
+ * topology.
+ */
+export function moderationListsKept(): readonly ModerationList[] {
+  if (!contractIsModerated() || !V8_MODERATION) return []
+  return (['banlist', 'suspensions', 'warnings'] as const).filter((list) => V8_MODERATION[list] === true)
+}
+
+/** True when the configured contract keeps a warning list (warn / clear warnings). */
+export function contractKeepsWarnings(): boolean {
+  return moderationListsKept().includes('warnings')
+}
+
 /** The document types the contract's moderators may delete (v8: post, reply). */
 export function moderatorDeletableTypes(): readonly string[] {
   if (!contractIsModerated()) return []
