@@ -50,12 +50,18 @@ export interface SlotContext {
   b: number
 }
 
-/** `pad = HKDF(ECDH_x(owner, member), "slot\0" || gid || ownerId || memberId || S16(b))`. Symmetric in who computes it. */
-export function slotPad(ctx: SlotContext): Uint8Array {
+/**
+ * `pad = HKDF(ECDH_x(owner, member), "slot\0" || gid || ownerId || memberId || S16(b) || nonce_b)`.
+ * Symmetric in who computes it. `nonce_b` makes every keyring's pads its own:
+ * two keyrings racing for one base wrap different keys, and a shared pad
+ * would leak their XOR to a member who holds one of them (§4.5).
+ */
+export function slotPad(ctx: SlotContext, nonce: Uint8Array): Uint8Array {
   assertIdentityId(ctx.ownerId, 'owner id')
   assertIdentityId(ctx.memberId, 'member id')
+  assertLength(nonce, BASE_NONCE_LENGTH, 'Base nonce')
   const sharedX = ecdhSharedX(ctx.myPrivateKey, ctx.otherPublicKey)
-  return dmHkdf(sharedX, 'slot', ctx.gid, ctx.ownerId, ctx.memberId, s16(ctx.b))
+  return dmHkdf(sharedX, 'slot', ctx.gid, ctx.ownerId, ctx.memberId, s16(ctx.b), nonce)
 }
 
 function xor(a: Uint8Array, b: Uint8Array): Uint8Array {
@@ -125,14 +131,17 @@ export function buildKeyring(params: BuildKeyringParams): BuiltKeyring {
   const real = params.members.map((member) =>
     xor(
       baseKey,
-      slotPad({
-        myPrivateKey: params.ownerPrivateKey,
-        otherPublicKey: member.publicKey,
-        gid: params.gid,
-        ownerId: params.ownerId,
-        memberId: member.id,
-        b: params.b,
-      })
+      slotPad(
+        {
+          myPrivateKey: params.ownerPrivateKey,
+          otherPublicKey: member.publicKey,
+          gid: params.gid,
+          ownerId: params.ownerId,
+          memberId: member.id,
+          b: params.b,
+        },
+        nonce
+      )
     )
   )
   const filler = Array.from({ length: keyringSlotCount(real.length) - real.length }, () =>
@@ -173,9 +182,10 @@ export function ownerKeyringBaseKey(groupSecret: Uint8Array, b: number, keyring:
  * owner runs the same check to learn who holds a slot (§6.5).
  */
 export function openKeyringSlot(keyring: Uint8Array, ctx: SlotContext): Uint8Array | null {
-  if (!isWellFormedKeyring(keyring)) return null
+  const nonce = keyringNonce(keyring)
+  if (!nonce) return null
   const expected = keyringCheck(keyring)
-  const pad = slotPad(ctx)
+  const pad = slotPad(ctx, nonce)
   for (let offset = KEYRING_HEADER_LENGTH; offset < keyring.length; offset += SLOT_LENGTH) {
     const candidate = xor(keyring.slice(offset, offset + SLOT_LENGTH), pad)
     if (bytesEqual(keyCheck(candidate), expected)) return candidate

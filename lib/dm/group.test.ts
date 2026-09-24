@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { ecdhSharedX } from '@/lib/crypto/ecdh'
 import { getPublicKey } from '@/lib/crypto/keys'
+import { concat, dmHkdf, s16 } from './kdf'
 import {
   MAX_GROUP_MEMBERS,
   buildKeyring,
@@ -61,20 +63,22 @@ describe('keyring slots (§4.5, §5.3)', () => {
   const ctx = { gid: GID, ownerId: ALICE_ID, memberId: BOB_ID, b: 1 }
 
   it('matches a fixed pad vector, and owner and member compute the same pad', () => {
-    const ownerSide = slotPad({ ...ctx, myPrivateKey: ALICE_PRIV, otherPublicKey: BOB_PUB })
-    expect(hex(ownerSide)).toBe('e82717d524f53f67e92880d4dc751d174956142d1a377a6597b05df20a96219c')
-    expect(slotPad({ ...ctx, myPrivateKey: BOB_PRIV, otherPublicKey: ALICE_PUB })).toEqual(ownerSide)
+    const ownerSide = slotPad({ ...ctx, myPrivateKey: ALICE_PRIV, otherPublicKey: BOB_PUB }, NONCE)
+    expect(hex(ownerSide)).toBe('7da4f033cc0239b526ee1f8d76185bb17bf231b590ba315d7d4c3b116da1b539')
+    expect(slotPad({ ...ctx, myPrivateKey: BOB_PRIV, otherPublicKey: ALICE_PUB }, NONCE)).toEqual(ownerSide)
   })
 
-  it('binds gid, both ids and the base into the pad', () => {
+  it('binds gid, both ids, the base and the keyring nonce into the pad', () => {
     const pads = [
       ctx,
       { ...ctx, b: 2 },
       { ...ctx, memberId: CAROL_ID },
       { ...ctx, ownerId: CAROL_ID },
       { ...ctx, gid: deriveGroupId(deriveSelfRoot(ALICE_PRIV), 1) },
-    ].map((c) => hex(slotPad({ ...c, myPrivateKey: ALICE_PRIV, otherPublicKey: BOB_PUB })))
+    ].map((c) => hex(slotPad({ ...c, myPrivateKey: ALICE_PRIV, otherPublicKey: BOB_PUB }, NONCE)))
+    pads.push(hex(slotPad({ ...ctx, myPrivateKey: ALICE_PRIV, otherPublicKey: BOB_PUB }, NONCE.map((b) => b ^ 1))))
     expect(new Set(pads).size).toBe(pads.length)
+    expect(() => slotPad({ ...ctx, myPrivateKey: ALICE_PRIV, otherPublicKey: BOB_PUB }, NONCE.slice(1))).toThrow('16 bytes')
   })
 
   it('pads the slot count to a power of two in 8..128', () => {
@@ -88,6 +92,8 @@ describe('keyring slots (§4.5, §5.3)', () => {
     expect(hex(built.baseKey)).toBe('8b709d3eb47470a89055afbc6bea97dabce4e4621c03fbe65ca6bff2ac5ef8b2')
     expect(hex(built.blob.slice(0, 24))).toBe('f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff' + 'e17886bd649503d6')
     expect(built.blob).toHaveLength(16 + 8 + 8 * 32)
+    // Bob's slot = K[1,0] XOR pad (cross-checked with an independent Python implementation).
+    expect(hex(built.blob)).toContain('f6d46d0d7876491db6bbb0311df2cc6bc716d5d78cb9cabb21ea84e3c1ff4d8b')
     expect(keyringNonce(built.blob)).toEqual(NONCE)
     expect(ownerKeyringBaseKey(SECRET, 1, built.blob)).toEqual(built.baseKey)
     expect(ownerKeyringBaseKey(SECRET, 2, built.blob)).toBeNull()
@@ -136,6 +142,42 @@ describe('keyring slots (§4.5, §5.3)', () => {
     expect(openKeyringSlot(allSlotsFlipped, asBob)).toBeNull()
     expect(openKeyringSlot(keyring.slice(0, 24), asBob)).toBeNull()
     expect(openKeyringSlot(keyring.slice(0, 40), asBob)).toBeNull()
+  })
+
+  it('binds nonce_b into the pad, so two competing keyrings at one base never share a pad (review #1)', () => {
+    // Two owner devices remove different members at base 1 at once. The winner keeps Bob and drops
+    // Carol; the rejected loser (still in block history) keeps Bob and Carol. Carol unwraps K2 from
+    // the loser. With one pad per (pair, group, base), Bob's two slots XOR to K1 ⊕ K2, so Carol
+    // recovers K1 by trying slot pairs against the winner's published kc.
+    const carolMember = { id: CAROL_ID, publicKey: CAROL_PUB }
+    const winner = buildKeyring({ ...keyringParams(1, BOB_ONLY), nonce: NONCE })
+    const loser = buildKeyring({ ...keyringParams(1, [BOB_ONLY[0], carolMember]), nonce: NONCE.map((b) => b ^ 0xff) })
+    const asCarol = { gid: GID, ownerId: ALICE_ID, memberId: CAROL_ID, b: 1, myPrivateKey: CAROL_PRIV, otherPublicKey: ALICE_PUB }
+    const k2 = openKeyringSlot(loser.blob, asCarol)
+    expect(k2).toEqual(loser.baseKey)
+    expect(openKeyringSlot(winner.blob, asCarol)).toBeNull()
+
+    const slots = (blob: Uint8Array) => Array.from({ length: (blob.length - 24) / 32 }, (_, i) => blob.slice(24 + 32 * i, 56 + 32 * i))
+    const recover = (win: Uint8Array, lose: Uint8Array, known: Uint8Array): Uint8Array | null => {
+      const kc = win.slice(16, 24)
+      for (const s1 of slots(win)) {
+        for (const s2 of slots(lose)) {
+          const candidate = s1.map((byte, i) => byte ^ s2[i] ^ known[i])
+          if (hex(keyCheck(candidate)) === hex(kc)) return candidate
+        }
+      }
+      return null
+    }
+    // The pads as they were without the nonce: the attack works.
+    const oldPad = (memberPub: Uint8Array, memberId: Uint8Array) =>
+      dmHkdf(ecdhSharedX(ALICE_PRIV, memberPub), 'slot', GID, ALICE_ID, memberId, s16(1))
+    const wrapOld = (key: Uint8Array, members: KeyringMember[], nonce: Uint8Array) =>
+      concat(nonce, keyCheck(key), ...members.map((m) => key.map((byte, i) => byte ^ oldPad(m.publicKey, m.id)[i])))
+    const oldWinner = wrapOld(winner.baseKey, BOB_ONLY, winner.nonce)
+    const oldLoser = wrapOld(loser.baseKey, [BOB_ONLY[0], carolMember], loser.nonce)
+    expect(recover(oldWinner, oldLoser, loser.baseKey)).toEqual(winner.baseKey)
+    // With nonce_b in the pad: it fails.
+    expect(recover(winner.blob, loser.blob, loser.baseKey)).toBeNull()
   })
 
   it('rejects more than 99 non-owner members, a short nonce and short ids', () => {

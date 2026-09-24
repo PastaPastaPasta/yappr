@@ -172,13 +172,17 @@ kc(K)   = HKDF(K, "kc\0")[0:8]                               // key check
 Keyring slots use static-static ECDH, with no ephemeral key:
 
 ```
-pad  = HKDF(ECDH_x(encPriv_owner, encPub_member), "slot\0" || gid || ownerId || memberId || S16(b))
+pad  = HKDF(ECDH_x(encPriv_owner, encPub_member), "slot\0" || gid || ownerId || memberId || S16(b) || nonce_b)
 wrap = K[b,0] XOR pad
 ```
 
-Each `(pair, group, base)` always wraps the same `K[b,0]`, so no pad masks two
-different values. Only the group owner can write the document (§5.2), and
-`kc` tells a member which slot is theirs.
+`nonce_b` is the keyring's own nonce (§5.3), and `K[b,0]` is derived from it,
+so each pad masks exactly one key. Without it, two keyrings racing for the same
+base (§4.4) would wrap two different keys under one pad for every member they
+share: the XOR of those two slots is `K1 XOR K2`, and a member left out of the
+winner but kept in the rejected loser knows `K2` and recovers `K1` by trying
+slot pairs against the winner's `kc`. Only the group owner can write the
+document (§5.2), and `kc` tells a member which slot is theirs.
 
 ## 5. Documents
 
@@ -294,7 +298,9 @@ keyring(g, b)  = HKDF(gid, "keyring\0" || S16(b))[0:10]
 ### 5.3 Keyring: removing someone
 
 `blob = nonce_b (16 B) | kc(K[b,0]) (8 B) | slot | slot | …`, with one 32-byte slot (§4.5) per
-remaining member except the owner, in random order. The slot count is padded
+remaining member except the owner, in random order. A reader takes `nonce_b`
+from the blob to compute its pad, so each keyring's slots use pads no other
+keyring uses. The slot count is padded
 with random slots to a power of two from 8 to 128, so an observer learns the
 group's size only to within 2×. At the 100-member limit a keyring is about
 4.1 KB.
