@@ -621,9 +621,18 @@ OWNER_WRITE(g, change):
       replace the roster under the new base; continue
     do the change (grant + roster replace, or keyring + roster replace, or rename)
     if Platform rejects a write as stale (40106) or duplicate (unique index): continue
+    if a write's result is uncertain (timeout): read its handle back
+      exactly these bytes → it landed
+      another document there → a competing write won: treat it as stale and continue
+      nothing new → broadcast the same bytes once more; still nothing → continue
     (a nonce clash with my other device is retried in place first; see §6.3)
     break
 ```
+
+An uncertain write is never adopted on trust: a losing concurrent write
+would move the owner to an epoch that does not exist. For the same reason a
+reader re-opens a roster whose `$revision` matches the one it last saw
+unless its bytes match too.
 
 Every multi-device race (two adds, two removals, an add during a removal, a
 failed roster replace) is this loop re-running. The owner **never** grants or

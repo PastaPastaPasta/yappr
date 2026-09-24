@@ -413,6 +413,62 @@ describe('joining is saved at once (§5.5)', () => {
 })
 
 describe('review regressions', () => {
+  it('verifies an uncertain roster replace and re-applies the change when a competing write won (review #3)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    const k01 = conv.keys.get({ b: 0, r: 1 })
+    if (!k01) throw new Error('no key')
+    // Alice's tablet adds Carol at (0, 1) in the same instant her phone adds Dave at (0, 1): the
+    // tablet's replace wins, and the phone's broadcast is refused on chain but only times out here.
+    const tabletRoster = await encryptRoster(k01, conv.gid, { b: 0, r: 1, name: 'Team', avatarRef: '', members: [ALICE_ID, BOB_ID, CAROL_ID], ended: false })
+    let raced = false
+    alice.chain.hook = (method) => {
+      if (method !== 'replaceGroupDoc' || raced) return null
+      raced = true
+      const doc = ledger.groupDocs.find((d) => bytesEqual(d.handle, rosterHandle(conv.gid)))
+      if (!doc) throw new Error('no roster')
+      doc.blob = tabletRoster
+      doc.revision += 1
+      return { ok: true, id: doc.id, confirmed: false }
+    }
+    await addMember(alice.ctx, conv, DAVE_ID)
+    alice.chain.hook = null
+    expect(raced).toBe(true)
+    // The phone re-ran the owner loop on the winning roster: Carol stays, Dave is added at (0, 2).
+    expect(currentEpoch(conv)).toEqual({ b: 0, r: 2 })
+    expect(conv.lastRoster && has(conv.lastRoster.members, CAROL_ID) && has(conv.lastRoster.members, DAVE_ID)).toBe(true)
+    await pollOnce(alice.ctx)
+    expect(conv.lastRoster && has(conv.lastRoster.members, CAROL_ID) && has(conv.lastRoster.members, DAVE_ID)).toBe(true)
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    expect(currentEpoch(bobGroup)).toEqual({ b: 0, r: 2 })
+    expect(has(members(bobGroup, BOB_ID), DAVE_ID) && has(members(bobGroup, BOB_ID), CAROL_ID)).toBe(true)
+  })
+
+  it('re-reads a roster whose id and revision match but whose content does not (review #3)', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    const k00 = conv.keys.get({ b: 0, r: 0 })
+    if (!k00) throw new Error('no key')
+    // Another owner device's roster sits at the same id and revision as this device's cached one.
+    const doc = ledger.groupDocs.find((d) => bytesEqual(d.handle, rosterHandle(conv.gid)))
+    if (!doc) throw new Error('no roster')
+    doc.blob = await encryptRoster(k00, conv.gid, { b: 0, r: 0, name: 'Elsewhere', avatarRef: '', members: [ALICE_ID, BOB_ID], ended: false })
+    await pollOnce(alice.ctx)
+    expect(conv.lastRoster?.name).toBe('Elsewhere')
+  })
+
+  it('adopts an uncertain roster replace that did land without writing it again', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    alice.chain.unconfirmed = 1
+    await renameGroup(alice.ctx, conv, 'Landed')
+    expect(ledger.groupDocs[0].revision).toBe(2)
+    expect(conv.roster?.revision).toBe(2)
+    expect(conv.lastRoster?.name).toBe('Landed')
+  })
+
   it('refuses a group send when the required freshness query fails (review #2)', async () => {
     const { ledger, alice, bob } = world()
     const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])

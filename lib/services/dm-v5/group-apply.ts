@@ -81,7 +81,9 @@ async function applyKeyring(ctx: DmContext, conv: GroupConv, doc: ChainGroupDoc,
  * and readers keep reading it until the owner's repair loop catches up.
  */
 async function applyRoster(ctx: DmContext, conv: GroupConv, doc: ChainGroupDoc): Promise<void> {
-  if (conv.roster && conv.roster.id === doc.id && conv.roster.revision === doc.revision && conv.lastRoster) return
+  // Skip only the very bytes already opened: an id and revision alone can match a write this device
+  // assumed landed while another device's competing write is what is really there.
+  if (conv.roster && conv.roster.id === doc.id && conv.roster.revision === doc.revision && bytesEqual(conv.roster.blob, doc.blob) && conv.lastRoster) return
   const seen = conv.roster?.id === doc.id ? conv.roster.revision : 0
   for (let b = conv.epoch.b; b >= 0; b--) {
     const low = conv.keys.lowest(b)
@@ -92,13 +94,13 @@ async function applyRoster(ctx: DmContext, conv: GroupConv, doc: ChainGroupDoc):
     if (!opened) continue
     const { content } = opened
     conv.keys.set(content, opened.key)
-    conv.roster = { id: doc.id, revision: doc.revision }
+    conv.roster = { id: doc.id, revision: doc.revision, blob: doc.blob }
     conv.lastRoster = content
     conv.unreadable = false
     if (epochBefore(conv.epoch, content)) switchEpoch(ctx, conv, content)
     return
   }
-  conv.roster = { id: doc.id, revision: doc.revision }
+  conv.roster = { id: doc.id, revision: doc.revision, blob: doc.blob }
   // A group I hold no readable roster for: "ask the owner to resend your keys" (§6.4).
   if (!conv.lastRoster) conv.unreadable = true
 }

@@ -91,7 +91,8 @@ export interface GroupConv extends ConvBase {
   epochSinceWeek: number | null
   /** The last roster that opened, and the epoch it was written at (can trail `epoch` until the owner repairs it). */
   lastRoster: RosterContent | null
-  roster: { id: string; revision: number } | null
+  /** The roster document last read or written, with its bytes: a poll skips it only when all three match. */
+  roster: { id: string; revision: number; blob: Uint8Array } | null
   keyringAt: Map<number, number>
   /** Keyring blobs by base: the owner reads nonces and tests slots from them (§6.5). */
   keyrings: Map<number, Uint8Array>

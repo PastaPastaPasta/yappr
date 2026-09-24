@@ -29,7 +29,7 @@ import { attachGroup, groupConv, isMe, peerKey, type DmContext } from './context
 import { ensureStarted, openDirect, startedDirect } from './directs'
 import { applyGroups, switchEpoch } from './group-apply'
 import { sendContent } from './sender'
-import type { WriteOutcome } from './types'
+import type { WriteFailure, WriteOutcome } from './types'
 import { withNonceRetry } from './write-failure'
 import { TAGS_PER_QUERY, hexId, includesId, range, sameEpoch } from './util'
 
@@ -85,17 +85,46 @@ async function publicKeysOf(ctx: DmContext, ids: IdentityId[]): Promise<KeyringM
 // ---------------------------------------------------------------------------
 // The repair loop (§6.5)
 
+/**
+ * Write one of my group documents (create, or replace `before`) and settle a
+ * result that is uncertain (the DAPI timeout) by reading its handle back.
+ * Only these exact bytes count as landed: every seal draws a fresh IV, so my
+ * other device's write never matches. A different document there means a
+ * competing write won, reported as `stale` (a replace) or `duplicate` (a
+ * create), so the owner loop re-runs on it (§6.5). Nothing new yet: the same
+ * bytes are broadcast once more, so a late landing of the first reads as
+ * landed. If that is uncertain too and still nothing is visible, a replace is
+ * reported `stale` (the loop re-reads rather than adopt an epoch it cannot
+ * see); a create is taken on trust, since nothing else can hold its handle
+ * without showing up in the read.
+ */
+async function writeGroupDoc(ctx: DmContext, handle: Uint8Array, blob: Uint8Array, before: { id: string; revision: number } | null): Promise<WriteOutcome> {
+  const write = () => withNonceRetry(() => (before ? ctx.chain.replaceGroupDoc(before, handle, blob) : ctx.chain.createGroupDoc(handle, blob)), ctx.sleep)
+  const lost: WriteFailure = before ? 'stale' : 'duplicate'
+  let outcome = await write()
+  for (let rebroadcast = false; ; rebroadcast = true) {
+    const uncertain = outcome.ok && !outcome.confirmed
+    // A refusal on the rebroadcast is usually the first broadcast having landed: check it the same way.
+    const refusedAfterUncertain = rebroadcast && !outcome.ok && outcome.failure === lost
+    if (!uncertain && !refusedAfterUncertain) return outcome
+    const [doc] = await ctx.chain.groupDocs(ctx.me.id, [handle])
+    if (doc && bytesEqual(doc.blob, blob)) return { ok: true, id: doc.id, confirmed: true }
+    if (refusedAfterUncertain) return outcome
+    if (doc && (!before || doc.id !== before.id || doc.revision > before.revision)) {
+      return { ok: false, failure: lost, error: 'Another device changed the group first.' }
+    }
+    if (rebroadcast) return before ? { ok: false, failure: 'stale', error: 'The group change is not visible yet.' } : outcome
+    outcome = await write()
+  }
+}
+
 /** Write the roster (create or replace) at `content`'s epoch. */
 async function writeRoster(ctx: DmContext, conv: GroupConv, content: RosterContent): Promise<WriteOutcome> {
   const blob = await encryptRoster(ownerKey(conv, content), conv.gid, content)
-  const handle = rosterHandle(conv.gid)
-  const roster = conv.roster
-  const outcome = await withNonceRetry(
-    () => (roster ? ctx.chain.replaceGroupDoc(roster, handle, blob) : ctx.chain.createGroupDoc(handle, blob)),
-    ctx.sleep
-  )
+  const before = conv.roster
+  const outcome = await writeGroupDoc(ctx, rosterHandle(conv.gid), blob, before)
   if (outcome.ok) {
-    conv.roster = { id: conv.roster?.id ?? outcome.id, revision: (conv.roster?.revision ?? 0) + 1 }
+    conv.roster = { id: before?.id ?? outcome.id, revision: (before?.revision ?? 0) + 1, blob }
     conv.lastRoster = content
     conv.keys.set(content, ownerKey(conv, content))
     switchEpoch(ctx, conv, content)
@@ -267,7 +296,7 @@ export async function removeMember(ctx: DmContext, conv: GroupConv, member: Iden
       groupSecret: secret,
       members: await publicKeysOf(ctx, remaining.filter((m) => !bytesEqual(m, conv.owner))),
     })
-    const keyring = await withNonceRetry(() => ctx.chain.createGroupDoc(keyringHandle(conv.gid, b), built.blob), ctx.sleep)
+    const keyring = await writeGroupDoc(ctx, keyringHandle(conv.gid, b), built.blob, null)
     if (!keyring.ok) return keyring
     conv.keyrings.set(b, built.blob)
     conv.keyringAt.set(b, ctx.chain.now())
