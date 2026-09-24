@@ -53,10 +53,18 @@
         "description": "DiceBear JSON {\"style\":\"bottts\",\"seed\":\"xyz\"} or image URI (https://, ipfs://)"
       },
       "paymentUris": {
-        "type": "string",
-        "maxLength": 2048,
+        "type": "array",
+        "maxItems": 16,
+        "uniqueItems": true,
         "position": 6,
-        "description": "JSON array of payment URIs: [\"dash:Xaddr...\", \"bitcoin:bc1...\"]"
+        "items": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 512,
+          "maxBytes": 512,
+          "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:.+$"
+        },
+        "description": "Payment URIs such as dash:X... or bitcoin:bc1... (the client keeps an approved-scheme list): at most 16, no duplicates"
       },
       "pronouns": {
         "type": "string",
@@ -69,10 +77,18 @@
         "description": "Author-declared flag indicating profile may contain adult content"
       },
       "socialLinks": {
-        "type": "string",
-        "maxLength": 1024,
+        "type": "array",
+        "maxItems": 16,
+        "uniqueItems": true,
         "position": 9,
-        "description": "JSON array: [{\"platform\":\"twitter\",\"handle\":\"@user\"}]"
+        "items": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 256,
+          "maxBytes": 256,
+          "pattern": "^[a-z]{1,16}:.+$"
+        },
+        "description": "Social links as \"<platform>:<handle>\" (twitter:@user, mastodon:@user@host): at most 16, no duplicates"
       }
     }
   }
