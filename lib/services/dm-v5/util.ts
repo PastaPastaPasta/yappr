@@ -120,6 +120,16 @@ export class EpochKeys {
     if (!known || epoch.r < known.r) this.bases.set(epoch.b, { r: epoch.r, key })
   }
 
+  /**
+   * Make `key` base `b`'s key at step 0, whatever was held for it: the
+   * keyring on chain is the only real `K[b,0]` (a losing keyring race can
+   * leave another one behind locally, §4.4).
+   */
+  replaceBase(b: number, key: Uint8Array): void {
+    this.bases.set(b, { r: 0, key })
+    for (const id of Array.from(this.memo.keys())) if (id.startsWith(`${b}.`)) this.memo.delete(id)
+  }
+
   /** The lowest known step of base `b` and its key. */
   lowest(b: number): (Epoch & { key: Uint8Array }) | null {
     const known = this.bases.get(b)

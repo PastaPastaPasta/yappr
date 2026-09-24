@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { bytesEqual } from '@/lib/bytes'
 import { deriveBaseKey, deriveGroupId, deriveGroupSecret } from '@/lib/dm/keys'
-import { encryptRoster, rosterHandle } from '@/lib/dm/group'
+import { encryptRoster, keyringHandle, rosterHandle } from '@/lib/dm/group'
 import { encryptMessage } from '@/lib/dm/stream'
 import { weekOf } from '@/lib/dm/kdf'
 import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, CAROL_ID, CAROL_PRIV } from '@/lib/dm/test-fixtures'
@@ -414,6 +414,45 @@ describe('joining is saved at once (§5.5)', () => {
 })
 
 describe('review regressions', () => {
+  it('never adopts a keyring create that stays invisible after two uncertain broadcasts (validator #1)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    // Both broadcasts of the first keyring time out and neither lands.
+    let lost = 0
+    alice.chain.hook = (method) => {
+      if (method !== 'createGroupDoc' || lost >= 2) return null
+      lost++
+      return { ok: true, id: 'uncertain', confirmed: false }
+    }
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    alice.chain.hook = null
+    expect(lost).toBe(2)
+    // The owner loop re-ran with a new keyring: the one on chain is the one the roster is written under.
+    const keyring = ledger.groupDocs.find((d) => bytesEqual(d.handle, keyringHandle(conv.gid, 1)))
+    expect(keyring && conv.keyrings.get(1) && bytesEqual(keyring.blob, conv.keyrings.get(1) as Uint8Array)).toBe(true)
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    expect(currentEpoch(bobGroup)).toEqual({ b: 1, r: 0 })
+    expect(bobGroup.lastRoster && has(bobGroup.lastRoster.members, CAROL_ID)).toBe(false)
+  })
+
+  it('lets the on-chain keyring replace a losing local key for its base (validator #1)', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    const tablet = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await tablet.ctx.store.load()
+    await attachSaved(tablet.ctx)
+    const tabletConv = theGroup(tablet.ctx, ALICE_ID, conv.gid)
+    await removeMember(tablet.ctx, tabletConv, CAROL_ID)
+    // The phone still holds the key of a keyring 1 that lost the race.
+    conv.keys.set({ b: 1, r: 0 }, new Uint8Array(32).fill(7))
+    await applyGroups(alice.ctx, [conv])
+    expect(conv.keys.get({ b: 1, r: 0 })).toEqual(tabletConv.keys.get({ b: 1, r: 0 }))
+    expect(conv.lastRoster && has(conv.lastRoster.members, CAROL_ID)).toBe(false)
+  })
+
   it('measures group freshness on the local clock, not the chain block time (validator #3)', async () => {
     const { alice, bob } = world()
     const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])

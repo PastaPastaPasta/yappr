@@ -58,7 +58,15 @@ async function applyKeyring(ctx: DmContext, conv: GroupConv, doc: ChainGroupDoc,
   conv.keyringAt.set(b, doc.createdAt)
   const baseKey = await keyringBaseKey(ctx, conv, b, doc.blob)
   if (baseKey) {
-    conv.keys.set({ b, r: 0 }, baseKey)
+    // The keyring on chain decides K[b,0]: a key held from a keyring that lost a race is replaced,
+    // with every stream derived from it.
+    const held = conv.keys.get({ b, r: 0 })
+    if (held && !bytesEqual(held, baseKey)) {
+      conv.keys.replaceBase(b, baseKey)
+      for (const [id, st] of Array.from(conv.streams.entries())) if (st.epoch.b === b) conv.streams.delete(id)
+    } else {
+      conv.keys.set({ b, r: 0 }, baseKey)
+    }
     switchEpoch(ctx, conv, { b, r: 0 })
     return true
   }

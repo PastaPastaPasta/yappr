@@ -94,10 +94,13 @@ async function publicKeysOf(ctx: DmContext, ids: IdentityId[]): Promise<KeyringM
  * competing write won, reported as `stale` (a replace) or `duplicate` (a
  * create), so the owner loop re-runs on it (§6.5). Nothing new yet: the same
  * bytes are broadcast once more, so a late landing of the first reads as
- * landed. If that is uncertain too and still nothing is visible, a replace is
- * reported `stale` (the loop re-reads rather than adopt an epoch it cannot
- * see); a create is taken on trust, since nothing else can hold its handle
- * without showing up in the read.
+ * landed, and any refusal of that rebroadcast is read back the same way (it is
+ * usually the first broadcast having landed). If the rebroadcast is uncertain
+ * too and still nothing is visible, the write is reported lost (`stale` or
+ * `duplicate`) and never taken on trust: the owner loop re-reads and, for a
+ * keyring, builds a fresh one with a new nonce. A late landing of the lost one
+ * then refuses the new create (40105), and the loop reads it back and adopts
+ * whatever is really on chain.
  */
 async function writeGroupDoc(ctx: DmContext, handle: Uint8Array, blob: Uint8Array, before: { id: string; revision: number } | null): Promise<WriteOutcome> {
   const write = () => withNonceRetry(() => (before ? ctx.chain.replaceGroupDoc(before, handle, blob) : ctx.chain.createGroupDoc(handle, blob)), ctx.sleep)
@@ -105,8 +108,8 @@ async function writeGroupDoc(ctx: DmContext, handle: Uint8Array, blob: Uint8Arra
   let outcome = await write()
   for (let rebroadcast = false; ; rebroadcast = true) {
     const uncertain = outcome.ok && !outcome.confirmed
-    // A refusal on the rebroadcast is usually the first broadcast having landed: check it the same way.
-    const refusedAfterUncertain = rebroadcast && !outcome.ok && outcome.failure === lost
+    // Any refusal of the rebroadcast may be the first broadcast having landed: check it the same way.
+    const refusedAfterUncertain = rebroadcast && !outcome.ok
     if (!uncertain && !refusedAfterUncertain) return outcome
     const [doc] = await ctx.chain.groupDocs(ctx.me.id, [handle])
     if (doc && bytesEqual(doc.blob, blob)) return { ok: true, id: doc.id, confirmed: true }
@@ -114,7 +117,7 @@ async function writeGroupDoc(ctx: DmContext, handle: Uint8Array, blob: Uint8Arra
     if (doc && (!before || doc.id !== before.id || doc.revision > before.revision)) {
       return { ok: false, failure: lost, error: 'Another device changed the group first.' }
     }
-    if (rebroadcast) return before ? { ok: false, failure: 'stale', error: 'The group change is not visible yet.' } : outcome
+    if (rebroadcast) return { ok: false, failure: lost, error: 'The group change is not visible yet.' }
     outcome = await write()
   }
 }
@@ -311,7 +314,7 @@ export async function removeMember(ctx: DmContext, conv: GroupConv, member: Iden
     if (!keyring.ok) return keyring
     conv.keyrings.set(b, built.blob)
     conv.keyringAt.set(b, ctx.chain.now())
-    conv.keys.set({ b, r: 0 }, built.baseKey)
+    conv.keys.replaceBase(b, built.baseKey)
     return writeRoster(ctx, conv, { ...roster, b, r: 0, members: remaining })
   })
 }
