@@ -205,6 +205,12 @@ class IdentityService {
    * cache's TTL bounds how long it is trusted.
    */
   recordBalance(identityId: string, credits: bigint): void {
+    if (credits > BigInt(Number.MAX_SAFE_INTEGER)) {
+      // A number would round it; leave the cache to the exact query path.
+      logger.warn(`Balance ${credits} credits exceeds Number.MAX_SAFE_INTEGER; not caching the proof's owner balance`);
+      this.balanceCache.delete(identityId);
+      return;
+    }
     const confirmed = Number(credits);
     this.balanceCache.set(identityId, { confirmed, total: confirmed });
   }

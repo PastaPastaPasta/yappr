@@ -79,6 +79,12 @@ export function ownerBalanceOf(result: unknown): bigint | null {
   return typeof value === 'bigint' ? value : null;
 }
 
+/** Cache the owner balance a wait result carried, when it carried one. */
+function recordOwnerBalance(ownerId: string, result: unknown): void {
+  const ownerBalance = ownerBalanceOf(result);
+  if (ownerBalance !== null) identityService.recordBalance(ownerId, ownerBalance);
+}
+
 async function currentFeeMultiplierPermille(sdk: ConnectedSdk): Promise<bigint> {
   if (knownFeeMultiplierPermille !== null) return knownFeeMultiplierPermille;
   try {
@@ -547,6 +553,7 @@ class StateTransitionService {
           await sdk.stateTransitions.broadcastStateTransition(cachedST);
           const result = await sdk.stateTransitions.waitForResponse(cachedST);
           logger.debug(`Rebroadcast succeeded for ${documentId}`, result);
+          recordOwnerBalance(ownerId, result);
           clearPendingSTBytes(documentId);
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return { success: true, transactionHash: documentId, document: resultDocument, confirmed: true };
@@ -665,8 +672,7 @@ class StateTransitionService {
           ? await sdk.stateTransitions.waitForAffectedState(stateTransition)
           : await sdk.stateTransitions.waitForResponse(stateTransition);
         logger.debug(`Document ${documentId} confirmed`);
-        const ownerBalance = ownerBalanceOf(waited);
-        if (ownerBalance !== null) identityService.recordBalance(ownerId, ownerBalance);
+        recordOwnerBalance(ownerId, waited);
         clearPendingSTBytes(documentId);
         // Refresh the SDK's internal nonce cache since we manually managed the nonce.
         // Without this, subsequent operations using the high-level API (e.g. delete)
