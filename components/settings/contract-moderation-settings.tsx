@@ -23,6 +23,9 @@ const DAY_MS = 86_400_000
 
 type Action = 'ban' | 'unban' | 'suspend' | 'unsuspend' | 'warn' | 'clearWarnings' | 'claim' | 'restore'
 
+type KindedRemoval = DocumentRemoval & { kind: 'post' | 'reply' }
+const removalKey = (removal: KindedRemoval) => `${removal.kind}:${removal.documentId}`
+
 const dayLabel = (days: number) => `${days} day${days === 1 ? '' : 's'}`
 
 /**
@@ -38,14 +41,18 @@ export function ContractModerationSettings() {
   const { user } = useAuth()
   const [targetId, setTargetId] = useState('')
   const [reason, setReason] = useState('')
-  /** Post ids the ban, suspension or warning is about (`reason.documents`, at most 16). */
+  /** Post and reply ids the ban, suspension or warning is about (`reason.documents`, at most 16 together). */
   const [citedPosts, setCitedPosts] = useState('')
+  const [citedReplies, setCitedReplies] = useState('')
   const [days, setDays] = useState<number>(7)
-  const [busy, setBusy] = useState<Action | null>(null)
+  /** The action in flight, and for a per-row action the row it is on. */
+  const [busy, setBusy] = useState<{ action: Action; id?: string } | null>(null)
   const [banned, setBanned] = useState<ModerationEntry[]>([])
   const [suspended, setSuspended] = useState<ModerationEntry[]>([])
   const [warned, setWarned] = useState<ModerationEntry[]>([])
-  const [removals, setRemovals] = useState<Array<DocumentRemoval & { kind: 'post' | 'reply' }>>([])
+  const [removals, setRemovals] = useState<KindedRemoval[]>([])
+  /** Removal ids this device can undo, worked out once per refresh rather than on every render. */
+  const [restorable, setRestorable] = useState<ReadonlySet<string>>(new Set())
   const canWarn = moderationService.canWarn()
   const [pot, setPot] = useState<FeePotState | null>(null)
   const [standing, setStanding] = useState<{ identityId: string; standing: ModerationStanding } | null>(null)
@@ -63,10 +70,12 @@ export function ContractModerationSettings() {
       setBanned(bans.entries)
       setSuspended(suspensions.entries)
       setWarned(warnings.entries)
-      setRemovals([
+      const all: KindedRemoval[] = [
         ...removedPosts.removals.map((removal) => ({ ...removal, kind: 'post' as const })),
         ...removedReplies.removals.map((removal) => ({ ...removal, kind: 'reply' as const })),
-      ].sort((a, b) => b.removedAt - a.removedAt))
+      ].sort((a, b) => b.removedAt - a.removedAt)
+      setRemovals(all)
+      setRestorable(new Set(all.filter((removal) => moderationService.canRestore(removal.kind, removal)).map(removalKey)))
       setPot(pots?.moderators ?? null)
     } catch (error) {
       logger.error('ContractModerationSettings: refresh failed', error)
@@ -78,9 +87,9 @@ export function ContractModerationSettings() {
     refresh().catch(() => { /* reported inside */ })
   }, [refresh])
 
-  const restore = async (removal: DocumentRemoval & { kind: 'post' | 'reply' }) => {
+  const restore = async (removal: KindedRemoval) => {
     if (!user || busy) return
-    setBusy('restore')
+    setBusy({ action: 'restore', id: removalKey(removal) })
     const result = await moderationService.restoreDocument(user.identityId, removal.kind, removal.documentId)
     setBusy(null)
     if (!result.success) {
@@ -98,10 +107,11 @@ export function ContractModerationSettings() {
       toast.error('Enter the identity ID to moderate')
       return
     }
-    setBusy(action)
+    setBusy({ action })
     const me = user.identityId
-    const documents = citedPosts.split(/[\s,]+/).filter(Boolean).map((documentId) => ({ documentTypeName: 'post', documentId }))
-    const why = { text: reason.trim(), documents }
+    const cite = (ids: string, documentTypeName: 'post' | 'reply') =>
+      ids.split(/[\s,]+/).filter(Boolean).map((documentId) => ({ documentTypeName, documentId }))
+    const why = { text: reason.trim(), documents: [...cite(citedPosts, 'post'), ...cite(citedReplies, 'reply')] }
     let result: ModerationResult
     let succeeded: string
     switch (action) {
@@ -177,7 +187,12 @@ export function ContractModerationSettings() {
           <div>
             <label htmlFor="contract-moderation-cited" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Posts this is about (optional, public)</label>
             <input id="contract-moderation-cited" type="text" value={citedPosts} onChange={(e) => setCitedPosts(e.target.value)}
-              placeholder="Post IDs, comma-separated (at most 16)" className={`${INPUT} font-mono`} />
+              placeholder="Post IDs, comma-separated" className={`${INPUT} font-mono`} />
+          </div>
+          <div>
+            <label htmlFor="contract-moderation-cited-replies" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Replies this is about (optional, public; at most 16 posts and replies together)</label>
+            <input id="contract-moderation-cited-replies" type="text" value={citedReplies} onChange={(e) => setCitedReplies(e.target.value)}
+              placeholder="Reply IDs, comma-separated" className={`${INPUT} font-mono`} />
           </div>
           <div>
             <label htmlFor="contract-moderation-days" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Suspension length</label>
@@ -191,24 +206,24 @@ export function ContractModerationSettings() {
               Check status
             </Button>
             <Button variant="destructive" disabled={busy !== null} onClick={() => run('ban')} className="gap-2">
-              <NoSymbolIcon className="h-4 w-4" /> {busy === 'ban' ? 'Banning…' : 'Ban'}
+              <NoSymbolIcon className="h-4 w-4" /> {busy?.action === 'ban' ? 'Banning…' : 'Ban'}
             </Button>
             <Button variant="outline" disabled={busy !== null} onClick={() => run('unban')} className="gap-2">
-              <ArrowUturnLeftIcon className="h-4 w-4" /> {busy === 'unban' ? 'Unbanning…' : 'Unban'}
+              <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'unban' ? 'Unbanning…' : 'Unban'}
             </Button>
             <Button variant="outline" disabled={busy !== null} onClick={() => run('suspend')} className="gap-2">
-              <ClockIcon className="h-4 w-4" /> {busy === 'suspend' ? 'Suspending…' : 'Suspend'}
+              <ClockIcon className="h-4 w-4" /> {busy?.action === 'suspend' ? 'Suspending…' : 'Suspend'}
             </Button>
             <Button variant="outline" disabled={busy !== null} onClick={() => run('unsuspend')} className="gap-2">
-              <ArrowUturnLeftIcon className="h-4 w-4" /> {busy === 'unsuspend' ? 'Lifting…' : 'Unsuspend'}
+              <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'unsuspend' ? 'Lifting…' : 'Unsuspend'}
             </Button>
             {canWarn && (
               <>
                 <Button variant="outline" disabled={busy !== null} onClick={() => run('warn')} className="gap-2">
-                  <ExclamationTriangleIcon className="h-4 w-4" /> {busy === 'warn' ? 'Warning…' : 'Warn'}
+                  <ExclamationTriangleIcon className="h-4 w-4" /> {busy?.action === 'warn' ? 'Warning…' : 'Warn'}
                 </Button>
                 <Button variant="outline" disabled={busy !== null} onClick={() => run('clearWarnings')} className="gap-2">
-                  <ArrowUturnLeftIcon className="h-4 w-4" /> {busy === 'clearWarnings' ? 'Clearing…' : 'Clear warnings'}
+                  <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'clearWarnings' ? 'Clearing…' : 'Clear warnings'}
                 </Button>
               </>
             )}
@@ -234,7 +249,7 @@ export function ContractModerationSettings() {
             </p>
           </div>
           <Button variant="outline" disabled={busy !== null || !pot || pot.credits === BigInt(0)} onClick={() => run('claim')} className="gap-2">
-            <BanknotesIcon className="h-4 w-4" /> {busy === 'claim' ? 'Claiming…' : 'Claim for the team'}
+            <BanknotesIcon className="h-4 w-4" /> {busy?.action === 'claim' ? 'Claiming…' : 'Claim for the team'}
           </Button>
         </CardContent>
       </Card>
@@ -253,9 +268,9 @@ export function ContractModerationSettings() {
       <EntryList title="Removed posts and replies" empty="Nothing has been removed." entries={removals}
         render={(removal) => <>{removal.documentId} by {removal.moderatorId.slice(0, 8)}… on {new Date(removal.removedAt).toLocaleDateString()}{removal.reason ? ` — ${removal.reason}` : ''}{removal.restoredAt !== null ? ' (restored)' : ''}</>}
         onPick={(removal) => setTargetId(removal.documentOwnerId)}
-        action={(removal) => moderationService.canRestore(removal.kind, removal) && (
+        action={(removal) => restorable.has(removalKey(removal)) && (
           <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => restore(removal)} className="shrink-0">
-            {busy === 'restore' ? 'Restoring…' : 'Restore'}
+            {busy?.action === 'restore' && busy.id === removalKey(removal) ? 'Restoring…' : 'Restore'}
           </Button>
         )} />
     </div>

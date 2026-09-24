@@ -39,7 +39,10 @@ export function ModeratorRemoveModal() {
       toast.error(result.error || 'Removal failed')
       return
     }
-    toast.success(`${noun === 'reply' ? 'Reply' : 'Post'} removed`)
+    const removed = `${noun === 'reply' ? 'Reply' : 'Post'} removed`
+    toast.success(result.snapshotSaved
+      ? `${removed}. A copy is kept on this device for a week, so it can be restored from the moderation settings.`
+      : `${removed}. No copy could be kept on this device, so it cannot be restored.`)
     onRemoved?.()
     setReason('')
     close()
@@ -53,8 +56,8 @@ export function ModeratorRemoveModal() {
       </ModalTitle>
       <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
         The {noun} is deleted from the contract for everyone. Its author is not refunded, the id can never be reused,
-        and a public removal record with your reason stays on-chain. A copy is kept on this device for a week, so a
-        moderator can restore it from the moderation settings.
+        and a public removal record with your reason stays on-chain. This device will try to keep a copy for a week,
+        so the removal can be undone from here.
       </Dialog.Description>
       {post && (
         <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">

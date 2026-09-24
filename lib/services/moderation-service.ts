@@ -55,14 +55,18 @@ import { signerService } from './signer-service';
  *
  * Elected moderation (a `moderators: { $type: "elected" }` declaration, with
  * its team seated through the moderation-charters system contract,
- * `sdk.moderationCharters`) is not declared by any Yappr cut yet. `getTeam`
- * reads a seated team when the contract declares one so a moderator of an
- * elected contract is recognised, but the election flow itself lives
- * elsewhere.
+ * `sdk.moderationCharters`) is declared by social v9 (interim
+ * `contractOwner`, `ownerProtected`). `getTeam` follows Drive's
+ * `may_moderate`: the interim moderates until a team is seated, then the team
+ * alone. It is cached briefly and dropped after every moderation action, so a
+ * team seated mid-session takes over within a minute. The election flow
+ * itself lives elsewhere.
  */
 
 export interface ModerationResult {
   success: boolean;
+  /** `removeDocument` only: whether a copy was kept on this device, so the removal can be restored from here. */
+  snapshotSaved?: boolean;
   error?: string;
   errorCode?: 'NOT_MODERATED' | 'NEEDS_CRITICAL_KEY' | 'INVALID_KEY' | 'ALREADY_CLAIMED' | 'NOTHING_TO_CLAIM' | 'NO_SNAPSHOT' | 'NETWORK_ERROR' | ModerationErrorKind;
 }
@@ -139,8 +143,54 @@ export interface ModerationTeam {
   ownerId: string;
   /** Appointed moderators, or a seated elected team's leader and members; empty when only the owner moderates. */
   appointed: string[];
-  /** True when the members are an elected team, which the owner is not part of. */
+  /** True when the members are a seated elected team. */
   elected: boolean;
+  /**
+   * Whether the contract OWNER may moderate right now, as Drive decides it
+   * (`ContractModerators::may_moderate`, `InterimModerators::may_moderate` in
+   * rs-dpp `config/moderation/elected.rs`): always on an owner or appointed
+   * declaration; on an elected one only under a `contractOwner` or
+   * `appointedModerators` interim, and never once a team is seated or under a
+   * `notYetUsable` / `noModeration` interim. `ownerProtected` protects the
+   * owner from moderation; it does not let the owner moderate.
+   */
+  ownerModerates: boolean;
+}
+
+type ContractModeratorsDeclaration = NonNullable<NonNullable<Awaited<ReturnType<EvoSDK['contracts']['fetch']>>>['config']['moderation']>['moderators'];
+
+/** The seated team's members, as `sdk.moderationCharters.team` reports them (null when none is seated). */
+export interface SeatedTeamIds {
+  leaderId: string;
+  members: string[];
+}
+
+/**
+ * Who moderates, from the contract's declaration and, for an elected one, the
+ * seated team (if any). Pure: mirrors Drive's `may_moderate`.
+ */
+export function resolveModerationTeam(
+  ownerId: string,
+  moderators: ContractModeratorsDeclaration | undefined,
+  seated: SeatedTeamIds | null
+): ModerationTeam {
+  const toIds = (ids: readonly unknown[]) => ids.map((id) => identifierToBase58(id) ?? String(id));
+  if (moderators?.$type === 'elected') {
+    // A seated team moderates alone: the owner and the interim no longer may (41101).
+    if (seated) return { ownerId, appointed: [seated.leaderId, ...seated.members], elected: true, ownerModerates: false };
+    const interim = moderators.interim;
+    switch (interim.$type) {
+      case 'contractOwner':
+        return { ownerId, appointed: [], elected: false, ownerModerates: true };
+      case 'appointedModerators':
+        return { ownerId, appointed: toIds(interim.identities), elected: false, ownerModerates: true };
+      default:
+        // notYetUsable / noModeration: nobody moderates until a team is seated.
+        return { ownerId, appointed: [], elected: false, ownerModerates: false };
+    }
+  }
+  const appointed = moderators?.$type === 'appointedModerators' ? toIds(moderators.identities) : [];
+  return { ownerId, appointed, elected: false, ownerModerates: true };
 }
 
 /** The moderating identity and a signer holding its CRITICAL key. */
@@ -201,8 +251,13 @@ export const toRemoval = (entry: RemovalEntry): DocumentRemoval => ({
 });
 
 class ModerationService {
-  /** The in-flight or resolved team fetch: a feed of cards asks once, not once per card. */
-  private teamPromise: Promise<ModerationTeam> | null = null;
+  /**
+   * The in-flight or recent team fetch: a feed of cards asks once, not once
+   * per card. Short-lived, because on an elected contract a team can be seated
+   * mid-session, which moves moderation from the interim to the team.
+   */
+  private team: { promise: Promise<ModerationTeam>; at: number } | null = null;
+  private static readonly TEAM_TTL_MS = 60_000;
   private standingCache = new Map<string, { standing: ModerationStanding; at: number }>();
   /** Standing rarely changes; a page of cards must not re-query it per card. */
   private static readonly STANDING_TTL_MS = 60_000;
@@ -210,36 +265,44 @@ class ModerationService {
   // ---- Who moderates ------------------------------------------------------
 
   /**
-   * The contract's moderation team, from the contract itself (cached for the
-   * session: the set only changes by a contract update). Null when the
-   * topology declares no moderation.
+   * The contract's moderation team, from the contract and, when it declares
+   * elected moderation, the seated charter. Cached for {@link TEAM_TTL_MS} and
+   * dropped after every moderation action. Null when the topology declares no
+   * moderation.
    */
   async getTeam(): Promise<ModerationTeam | null> {
     if (!contractIsModerated()) return null;
-    if (!this.teamPromise) {
-      this.teamPromise = (async () => {
+    if (!this.team || Date.now() - this.team.at >= ModerationService.TEAM_TTL_MS) {
+      const promise = (async () => {
         const sdk = await getEvoSdk();
         const contract = await sdk.contracts.fetch(YAPPR_CONTRACT_ID);
         if (!contract) throw new Error('Social contract not found');
         const moderators = contract.config.moderation?.moderators;
-        const ownerId = contract.ownerId.toBase58();
-        const toIds = (ids: readonly unknown[]) => ids.map((id) => identifierToBase58(id) ?? String(id));
-        if (moderators?.$type === 'elected') {
-          // A seated team moderates alone; until one is, the interim does.
-          const seated = await sdk.moderationCharters.team(YAPPR_CONTRACT_ID);
-          if (seated) {
-            return { ownerId, appointed: toIds([seated.leaderId, ...seated.members]), elected: true };
-          }
-          const interim = moderators.interim;
-          return { ownerId, appointed: interim.$type === 'appointedModerators' ? toIds(interim.identities) : [], elected: false };
-        }
-        const appointed = moderators?.$type === 'appointedModerators' ? toIds(moderators.identities) : [];
-        return { ownerId, appointed, elected: false };
+        const seated = moderators?.$type === 'elected' ? await this.seatedTeam(sdk) : null;
+        return resolveModerationTeam(contract.ownerId.toBase58(), moderators, seated);
       })();
-      // A failed fetch must not pin "not a moderator" for the session.
-      this.teamPromise.catch(() => { this.teamPromise = null; });
+      const entry = { promise, at: Date.now() };
+      this.team = entry;
+      // A failed fetch must not pin "not a moderator" until the TTL runs out.
+      promise.catch(() => { if (this.team === entry) this.team = null; });
     }
-    return this.teamPromise;
+    return this.team.promise;
+  }
+
+  /** Forget the cached team, so the next check reads it again (a team may have been seated). */
+  invalidateTeam(): void {
+    this.team = null;
+  }
+
+  /** The seated team's ids, copied out of the wasm object, which is freed before returning. */
+  private async seatedTeam(sdk: EvoSDK): Promise<SeatedTeamIds | null> {
+    const team = await sdk.moderationCharters.team(YAPPR_CONTRACT_ID);
+    if (!team) return null;
+    try {
+      return { leaderId: team.leaderId.toBase58(), members: team.members.map((id) => id.toBase58()) };
+    } finally {
+      team.free();
+    }
   }
 
   /** True when `identityId` is the contract owner or an appointed moderator. */
@@ -248,7 +311,7 @@ class ModerationService {
     try {
       const team = await this.getTeam();
       if (team === null) return false;
-      return team.appointed.includes(identityId) || (!team.elected && team.ownerId === identityId);
+      return team.appointed.includes(identityId) || (team.ownerModerates && team.ownerId === identityId);
     } catch (error) {
       logger.warn('moderationService: could not resolve the moderation team', error);
       return false;
@@ -438,8 +501,9 @@ class ModerationService {
     if (!this.canRemove(kind)) {
       return { success: false, error: `Moderators cannot remove a ${kind} on this contract`, errorCode: 'NOT_MODERATED' };
     }
-    return this.moderate(moderatorId, async (sdk, auth) => {
-      await this.snapshotForRestore(sdk, kind, documentId);
+    let snapshotSaved = false;
+    const result = await this.moderate(moderatorId, async (sdk, auth) => {
+      snapshotSaved = await this.snapshotForRestore(sdk, kind, documentId);
       await sdk.contracts.moderatorDeleteDocument({
         ...auth,
         contractId: YAPPR_CONTRACT_ID,
@@ -448,6 +512,8 @@ class ModerationService {
         reason: reasonOf(reason),
       });
     });
+    if (!result.success && snapshotSaved) dropSnapshot(kind, documentId);
+    return { ...result, snapshotSaved: result.success && snapshotSaved };
   }
 
   /**
@@ -485,16 +551,17 @@ class ModerationService {
    * state Drive reads, so the serialization here must be of the document as
    * fetched now, under the contract as it is now.
    */
-  private async snapshotForRestore(sdk: EvoSDK, kind: TargetKind, documentId: string): Promise<void> {
+  private async snapshotForRestore(sdk: EvoSDK, kind: TargetKind, documentId: string): Promise<boolean> {
     try {
       const [contract, document] = await Promise.all([
         sdk.contracts.fetch(YAPPR_CONTRACT_ID),
         sdk.documents.get(YAPPR_CONTRACT_ID, kind, documentId),
       ]);
-      if (!contract || !document) return;
-      saveSnapshot(kind, documentId, document.toBytes(contract, PlatformVersion.latest()));
+      if (!contract || !document) return false;
+      return saveSnapshot(kind, documentId, document.toBytes(contract, PlatformVersion.latest()));
     } catch (error) {
       logger.warn('moderationService: could not snapshot the document before removal; it will not be restorable', error);
+      return false;
     }
   }
 
@@ -524,6 +591,10 @@ class ModerationService {
       return { success: true };
     } catch (error) {
       return this.toResult(error);
+    } finally {
+      // Succeeded or refused, the team may have moved (a 41101 usually means a
+      // team was seated since it was read): the next check reads it again.
+      this.invalidateTeam();
     }
   }
 

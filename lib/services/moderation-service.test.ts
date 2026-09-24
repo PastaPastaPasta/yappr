@@ -25,6 +25,7 @@ const topology = vi.hoisted(() => ({ moderated: true, lists: ['banlist', 'suspen
 const fromBytes = vi.hoisted(() => vi.fn(() => ({ restored: true })))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
+vi.mock('./sdk-helpers', () => ({ identifierToBase58: (value: unknown) => String(value) }))
 vi.mock('./signer-service', () => ({ signerService: { createSigner: async () => ({ signer: true }) } }))
 vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif' }))
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: true }) }))
@@ -48,7 +49,7 @@ vi.stubGlobal('localStorage', {
   get length() { return storage.size },
 })
 
-import { moderationService, toModerationReason, toRemoval, toWarning } from './moderation-service'
+import { moderationService, resolveModerationTeam, toModerationReason, toRemoval, toWarning } from './moderation-service'
 import { removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots'
 
 const MODERATOR = 'Mod111111111111111111111111111111111111111'
@@ -62,6 +63,73 @@ beforeEach(() => {
     for (const fn of Object.values(group)) fn.mockReset()
   }
   sdk.identities.fetch.mockResolvedValue({ id: MODERATOR, publicKeys: [] })
+  moderationService.invalidateTeam()
+})
+
+const OWNER = 'Own111111111111111111111111111111111111111'
+const APPOINTED = 'App111111111111111111111111111111111111111'
+const LEADER = 'Ldr111111111111111111111111111111111111111'
+const MEMBER = 'Mem111111111111111111111111111111111111111'
+const elected = (interim: Record<string, unknown>) =>
+  ({ $type: 'elected', interim, moderatedDocumentTypes: {}, ownerProtected: true, seatContestable: false }) as unknown as Parameters<typeof resolveModerationTeam>[1]
+
+describe('who moderates (mirrors Drive ContractModerators::may_moderate)', () => {
+  it.each([
+    ['contractOwner interim', { $type: 'contractOwner' }, true, []],
+    ['appointedModerators interim', { $type: 'appointedModerators', identities: [APPOINTED] }, true, [APPOINTED]],
+    ['notYetUsable interim', { $type: 'notYetUsable' }, false, []],
+    ['noModeration interim', { $type: 'noModeration' }, false, []],
+  ] as const)('an elected contract with a %s', (_label, interim, ownerModerates, appointed) => {
+    const team = resolveModerationTeam(OWNER, elected(interim), null)
+    expect(team).toEqual({ ownerId: OWNER, appointed, elected: false, ownerModerates })
+  })
+
+  it('a seated team moderates alone: the owner no longer may, even when ownerProtected', () => {
+    const team = resolveModerationTeam(OWNER, elected({ $type: 'contractOwner' }), { leaderId: LEADER, members: [MEMBER] })
+    expect(team).toEqual({ ownerId: OWNER, appointed: [LEADER, MEMBER], elected: true, ownerModerates: false })
+  })
+
+  it('an owner or appointed declaration always lets the owner moderate', () => {
+    expect(resolveModerationTeam(OWNER, { $type: 'contractOwner' } as Parameters<typeof resolveModerationTeam>[1], null).ownerModerates).toBe(true)
+    expect(resolveModerationTeam(OWNER, { $type: 'appointedModerators', identities: [APPOINTED] } as Parameters<typeof resolveModerationTeam>[1], null))
+      .toEqual({ ownerId: OWNER, appointed: [APPOINTED], elected: false, ownerModerates: true })
+  })
+
+  it('sees a team seated mid-session once the cache expires or a moderation action ran, and frees the wasm team', async () => {
+    const contract = { ownerId: { toBase58: () => OWNER }, config: { moderation: { moderators: elected({ $type: 'contractOwner' }) } } }
+    sdk.contracts.fetch.mockResolvedValue(contract)
+    sdk.moderationCharters.team.mockResolvedValue(undefined)
+    expect(await moderationService.isModerator(OWNER)).toBe(true)
+
+    const free = vi.fn()
+    sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [{ toBase58: () => MEMBER }], free })
+    // Still cached: the owner reads as a moderator until the cache moves.
+    expect(await moderationService.isModerator(OWNER)).toBe(true)
+    // A moderation action (here refused, as Drive refuses the owner once seated) drops the cache.
+    sdk.contracts.banUser.mockRejectedValue(new Error('Identity Own1 is not the owner or a moderator of contract C'))
+    expect(await moderationService.ban(OWNER, TARGET, 'x')).toMatchObject({ errorCode: 'NOT_MODERATOR' })
+    expect(await moderationService.isModerator(OWNER)).toBe(false)
+    expect(await moderationService.isModerator(LEADER)).toBe(true)
+    expect(await moderationService.isModerator(MEMBER)).toBe(true)
+    expect(free).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-reads the team after its TTL', async () => {
+    vi.useFakeTimers()
+    try {
+      const contract = { ownerId: { toBase58: () => OWNER }, config: { moderation: { moderators: elected({ $type: 'contractOwner' }) } } }
+      sdk.contracts.fetch.mockResolvedValue(contract)
+      sdk.moderationCharters.team.mockResolvedValue(undefined)
+      await moderationService.getTeam()
+      await moderationService.getTeam()
+      expect(sdk.moderationCharters.team).toHaveBeenCalledTimes(1)
+      vi.advanceTimersByTime(61_000)
+      await moderationService.getTeam()
+      expect(sdk.moderationCharters.team).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('toModerationReason', () => {
@@ -152,7 +220,7 @@ describe('remove then restore', () => {
     sdk.documents.get.mockResolvedValue({ toBytes: (c: unknown) => { expect(c).toBe(contract); return bytes } })
     sdk.contracts.moderatorDeleteDocument.mockResolvedValue({})
     const result = await moderationService.removeDocument(MODERATOR, 'post', 'D1', 'spam')
-    expect(result.success).toBe(true)
+    expect(result).toMatchObject({ success: true, snapshotSaved: true })
     expect(sdk.documents.get.mock.invocationCallOrder[0]).toBeLessThan(sdk.contracts.moderatorDeleteDocument.mock.invocationCallOrder[0])
     const removal = { documentId: 'D1', documentOwnerId: 'O', moderatorId: MODERATOR, reason: 'spam', removedAt: Date.now(), documentHash: removalHashOf(bytes), restoredAt: null, restoredBy: null }
     expect(moderationService.canRestore('post', removal)).toBe(true)
@@ -161,9 +229,17 @@ describe('remove then restore', () => {
   it('still removes when the snapshot cannot be taken, and then offers no restore', async () => {
     sdk.contracts.fetch.mockRejectedValue(new Error('offline'))
     sdk.contracts.moderatorDeleteDocument.mockResolvedValue({})
-    expect((await moderationService.removeDocument(MODERATOR, 'post', 'D2', 'spam')).success).toBe(true)
+    expect(await moderationService.removeDocument(MODERATOR, 'post', 'D2', 'spam')).toMatchObject({ success: true, snapshotSaved: false })
     const removal = { documentId: 'D2', documentOwnerId: 'O', moderatorId: MODERATOR, reason: '', removedAt: Date.now(), documentHash: removalHashOf(bytes), restoredAt: null, restoredBy: null }
     expect(moderationService.canRestore('post', removal)).toBe(false)
+  })
+
+  it('forgets the snapshot when the removal itself was refused', async () => {
+    sdk.contracts.fetch.mockResolvedValue({})
+    sdk.documents.get.mockResolvedValue({ toBytes: () => bytes })
+    sdk.contracts.moderatorDeleteDocument.mockRejectedValue(new Error('offline'))
+    expect(await moderationService.removeDocument(MODERATOR, 'post', 'D6', 'spam')).toMatchObject({ success: false, snapshotSaved: false })
+    expect(storage.size).toBe(0)
   })
 
   it('offers no restore once restored, past the week, or when the kept bytes do not hash to the record', () => {

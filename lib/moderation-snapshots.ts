@@ -36,14 +36,19 @@ export function removalHashOf(bytes: Uint8Array): string {
   return bytesToHex(sha256(sha256(bytes)))
 }
 
-/** Keep the serialized document until the restore window closes, dropping expired entries on the way. */
-export function saveSnapshot(documentTypeName: string, documentId: string, bytes: Uint8Array, now = Date.now()): void {
+/**
+ * Keep the serialized document until the restore window closes, dropping
+ * expired entries on the way. False when storage refused it (full or blocked):
+ * the removal still happens, it just cannot be undone from here.
+ */
+export function saveSnapshot(documentTypeName: string, documentId: string, bytes: Uint8Array, now = Date.now()): boolean {
   try {
     pruneSnapshots(now)
     const entry: StoredSnapshot = { bytes: bytesToBase64(bytes), savedAt: now }
     localStorage.setItem(keyOf(documentTypeName, documentId), JSON.stringify(entry))
+    return true
   } catch {
-    // Storage full or blocked: the removal still happens, it just cannot be undone from here.
+    return false
   }
 }
 
