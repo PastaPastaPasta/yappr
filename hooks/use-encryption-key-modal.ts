@@ -7,6 +7,7 @@ export type EncryptionKeyAction =
   | 'decrypt_grant'
   | 'recover_follower_keys'
   | 'sync_state'
+  | 'read_messages'
   | 'generic'
 
 interface EncryptionKeyPayload {
@@ -39,6 +40,8 @@ export function getEncryptionKeyActionDescription(action: EncryptionKeyAction): 
       return 'recover access to private feeds on this device'
     case 'sync_state':
       return 'sync your private feed state'
+    case 'read_messages':
+      return 'read and send your messages'
     case 'generic':
     default:
       return 'use private feed features'

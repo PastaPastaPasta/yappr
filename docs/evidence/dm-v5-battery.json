@@ -1,0 +1,1394 @@
+{
+  "battery": "scripts/verify-dm-v5.mjs",
+  "runs": [
+    {
+      "network": "devnet moutai",
+      "protocolVersion": 14,
+      "startedAt": "2026-09-23T07:21:00.873Z",
+      "finishedAt": "2026-09-23T07:35:07.079Z",
+      "contract": {
+        "file": "contracts/yappr-dm-contract-v5.json",
+        "id": "5Uo3pfSYqoShVntf9sBZf4Si3WfUkTC3aRh9NLomzzdj"
+      },
+      "actors": {
+        "maker": "3JKc6iVG74LEMSrAtB4VSHPQW2mtgKAw8s3Ki6tTFcRQ",
+        "botA": "EjVyhRotn2vCcoCe2a5KCBLH5NsqQmnrHj3rfwgdtoD7",
+        "botB": "H8bQ2PC6suWR32AndM1rqZ7LJM5SHwa3T2Ezf7Z2rA5w",
+        "botV": "47da17QAtS9mnRSPNP7FMDSJQQWNj9xoixFX13EKQzNa"
+      },
+      "only": null,
+      "summary": {
+        "checks": 106,
+        "failed": 2
+      },
+      "results": [
+        {
+          "label": "i1a dmInvite create (bucket 1, epk 33 B, check 16 B)",
+          "pass": true,
+          "detail": "id=7McDdJ9ec9afhYcrz9dg2k81x6W2abhNTXzCyq2PyjTD cost 26,078,560 credits",
+          "credits": "26078560"
+        },
+        {
+          "label": "i1b stored invite is fixed-size (epk 33, check 16, bucket read back)",
+          "pass": true,
+          "detail": "epk=33 check=16 bucket=1 $createdAt=1790148061813"
+        },
+        {
+          "label": "i1c a byte-identical second invite by the same owner is accepted (no unique index)",
+          "pass": true,
+          "detail": "id=6kXkorR3zNpRodgEWBLZMCx1LMrMtkTdrLpW4C4hv7eF cost 26,249,700 credits",
+          "credits": "26249700"
+        },
+        {
+          "label": "i1d an epk of 32 bytes is rejected (fixed size)",
+          "pass": true,
+          "detail": "message=JsonSchemaError: [233,160,27,203,42,253,245,123,25,52,214,38,204,239,215,211,144,48,94,106,158,230,252,36,133,181,105,99,222,107,66,13] has less than 33 items, path: /epk | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5070296} [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=JsonSchemaError: [233,160,27,203,42,253,245,123,25,52,214,38,204,239,215,211,144,48,94,106,158,230,252,36,133,181,105,99,222,107,66,13] has less than 33 items, path: /epk | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5070296}"
+        },
+        {
+          "label": "i1e deleting an invite is rejected (canBeDeleted: false)",
+          "pass": true,
+          "detail": "message=Document transition action documents of type dmInvite can not be deleted is not supported | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":4996928} [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=Document transition action documents of type dmInvite can not be deleted is not supported | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":4996928}"
+        },
+        {
+          "label": "i1f replacing an invite is rejected (immutable)",
+          "pass": true,
+          "detail": "message=Document transition action dmInvite is not mutable and can not be replaced is not supported | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":4989016} [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=Document transition action dmInvite is not mutable and can not be replaced is not supported | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":4989016}"
+        },
+        {
+          "label": "m1 dmMessage create, class 128 (body 156 B)",
+          "pass": true,
+          "detail": "id=YqJ6Viqa4BVxFnUVFSUn4zyW2n6XRyZfw3AfqTFMpJp cost 27,755,560 credits",
+          "credits": "27755560"
+        },
+        {
+          "label": "m1 dmMessage create, class 256 (body 284 B)",
+          "pass": true,
+          "detail": "id=DtBJtxizkcH91LxHmCSBJKdsX2weaBpNNnvkx4uuBNAP cost 40,390,640 credits",
+          "credits": "40390640"
+        },
+        {
+          "label": "m1 dmMessage create, class 512 (body 540 B)",
+          "pass": true,
+          "detail": "id=JgdxubihJiKabg2GAytneXjxWwUGpE2z1GKKVm2SUph cost 37,148,360 credits",
+          "credits": "37148360"
+        },
+        {
+          "label": "m1 dmMessage create, class 1024 (body 1052 B)",
+          "pass": true,
+          "detail": "id=GadgpYAskM4ksLa1M7BewRnRPoXdvzcrWnLSqQw53QE6 cost 54,131,440 credits",
+          "credits": "54131440"
+        },
+        {
+          "label": "m1 dmMessage create, class 2048 (body 2076 B)",
+          "pass": true,
+          "detail": "id=2Lhvv5cWsEvsdGSapbFDoLgZGNQVY9mseKDxiYNzNyDV cost 79,210,360 credits",
+          "credits": "79210360"
+        },
+        {
+          "label": "m1 dmMessage create, class 4096 (body 4124 B)",
+          "pass": true,
+          "detail": "id=FQpeBKvfVojZrWU9dNYC52V6SsnTns8qEP6rUcJ1NZ8z cost 144,085,120 credits",
+          "credits": "144085120"
+        },
+        {
+          "label": "m2 dmMessage create, class 8192 (8220 B over 2 fields)",
+          "pass": true,
+          "detail": "id=58DZ5bEn1frJGQzpcWJdZ8cVjkedRGAEzA5gTbWey9RR cost 256,399,640 credits",
+          "credits": "256399640"
+        },
+        {
+          "label": "m2 dmMessage create, class 14336 (14364 B over 3 fields)",
+          "pass": true,
+          "detail": "id=8gUaozmAZYo9w8G6A9aEr79vRCgcPhucTDH5T2djS3EY cost 419,058,360 credits",
+          "credits": "419058360"
+        },
+        {
+          "label": "m3 a body of 155 bytes is rejected (minItems 156)",
+          "pass": true,
+          "detail": "message=JsonSchemaError: [62,118,94,70,193,163,130,19,185,27,158,247,248,112,38,253,53,73,67,117,140,86,225,91,220,150,207,176,0,239,6,204,154,123,133,141,27,193,255,8,216,58,218,53,29,132,82,149,144,84,0,175,70,33,175,186,97,248,1,191,7,138,126,170,72,81,88,2 [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=JsonSchemaError: [62,118,94,70,193,163,130,19,185,27,158,247,248,112,38,253,53,73,67,117,140,86,225,91,220,150,207,176,0,239,6,204,154,123,133,141,27,193,255,8,216,58,218,53,29,132,82,149,144,84,0,175,70,33,175,186,97,248,1,191,7,138,126,170,72,81,88,27,119,55,68,240,7,167,187,193,92,204,228,141,11,102,227,76,168,137,43,163,148,164,58,69,237,198,114,136,18,104,45,152,133,74,241,189,155,47,46,187,4,81,40,212,214,74,121,36,117,77,129,158,201,219,83,86,9,0,126,88,231,92,143,165,103,60,189,133,217,208,153,115,220,249,98,97,136,35,156,36,56,125,247,57,134,129,99] has less than 156 items, path: /body | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5010592}"
+        },
+        {
+          "label": "m4 a body of 5121 bytes is rejected (system field cap 5120 = contract maxItems)",
+          "pass": true,
+          "detail": "message=Document field body size 5121 is more than system maximum 5120 | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":4918760} [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=Document field body size 5121 is more than system maximum 5120 | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":4918760}"
+        },
+        {
+          "label": "m5 dmMessage at a fresh tag (fixture for the squat probes)",
+          "pass": true,
+          "detail": "id=F3zjoa7r3P3dhDBQ6Yyr2LDCFXx6hHj8NmgqChsgNK9s cost 36,838,880 credits",
+          "credits": "36838880"
+        },
+        {
+          "label": "m5a a second message by the SAME owner at that tag is rejected (unique [tag])",
+          "pass": true,
+          "detail": "message=state transition broadcast error: Document 8QiyEWcyDeqc7EEU3ZntXuWbU7A76pnwrXDDHpJ37qJs has duplicate unique properties [\"tag\"] with other documents | name=StateTransitionBroadcastError | code=40105 | toString=[object Object] | json={\"__wbg_ptr\":507276 [cost 958,920 credits]",
+          "credits": "958920",
+          "rejection": "message=state transition broadcast error: Document 8QiyEWcyDeqc7EEU3ZntXuWbU7A76pnwrXDDHpJ37qJs has duplicate unique properties [\"tag\"] with other documents | name=StateTransitionBroadcastError | code=40105 | toString=[object Object] | json={\"__wbg_ptr\":5072760}"
+        },
+        {
+          "label": "m5b a message by a DIFFERENT owner at that tag is rejected (a squat blocks the slot)",
+          "pass": true,
+          "detail": "message=state transition broadcast error: Document 9Pf2EavQYdotgxW3BnpCggmMTqEQ73SgkCd6KZTv36Dy has duplicate unique properties [\"tag\"] with other documents | name=StateTransitionBroadcastError | code=40105 | toString=[object Object] | json={\"__wbg_ptr\":505649 [cost 918,900 credits]",
+          "credits": "918900",
+          "rejection": "message=state transition broadcast error: Document 9Pf2EavQYdotgxW3BnpCggmMTqEQ73SgkCd6KZTv36Dy has duplicate unique properties [\"tag\"] with other documents | name=StateTransitionBroadcastError | code=40105 | toString=[object Object] | json={\"__wbg_ptr\":5056496}"
+        },
+        {
+          "label": "m5c the original document still holds the tag",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "label": "m5d replacing a message is rejected (immutable)",
+          "pass": true,
+          "detail": "message=Document transition action dmMessage is not mutable and can not be replaced is not supported | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5255288} [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=Document transition action dmMessage is not mutable and can not be replaced is not supported | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5255288}"
+        },
+        {
+          "label": "m5e a stranger deleting the message is rejected",
+          "pass": true,
+          "detail": "message=state transition broadcast error: Provided document F3zjoa7r3P3dhDBQ6Yyr2LDCFXx6hHj8NmgqChsgNK9s owner ID H8bQ2PC6suWR32AndM1rqZ7LJM5SHwa3T2Ezf7Z2rA5w mismatch with existing 3JKc6iVG74LEMSrAtB4VSHPQW2mtgKAw8s3Ki6tTFcRQ | name=StateTransitionBroadcastEr [cost 906,000 credits]",
+          "credits": "906000",
+          "rejection": "message=state transition broadcast error: Provided document F3zjoa7r3P3dhDBQ6Yyr2LDCFXx6hHj8NmgqChsgNK9s owner ID H8bQ2PC6suWR32AndM1rqZ7LJM5SHwa3T2Ezf7Z2rA5w mismatch with existing 3JKc6iVG74LEMSrAtB4VSHPQW2mtgKAw8s3Ki6tTFcRQ | name=StateTransitionBroadcastError | code=40102 | toString=[object Object] | json={\"__wbg_ptr\":5071904}"
+        },
+        {
+          "label": "m6 botA first write to the contract (not measured)",
+          "pass": true,
+          "detail": "id=4UxHPnApqkapM8cTk5DDk8woWJCMSMEtVGwQPpDnstq7 cost 38,863,040 credits",
+          "credits": "38863040"
+        },
+        {
+          "label": "m6 message to sweep, class 128",
+          "pass": true,
+          "detail": "id=9ma1PhFgoeacuFaMQyE3tw5cAcsvtEbRueHyX6VWhUdR cost 28,032,840 credits",
+          "credits": "28032840"
+        },
+        {
+          "label": "m6 owner deletes the class 128 message (sweep)",
+          "pass": true,
+          "detail": "cost -13,923,952 credits",
+          "credits": "-13923952"
+        },
+        {
+          "label": "m6 delete of class 128 returns credits (net refund > 0)",
+          "pass": true,
+          "detail": "create 28,032,840 \u2192 net refund 13,923,952 (49.67% of the create)"
+        },
+        {
+          "label": "m6 message to sweep, class 4096",
+          "pass": true,
+          "detail": "id=FvKgSkbyKwPBUG5vfPyieJBdkD7Wy8B8BbPPvLNMt69G cost 145,893,280 credits",
+          "credits": "145893280"
+        },
+        {
+          "label": "m6 owner deletes the class 4096 message (sweep)",
+          "pass": true,
+          "detail": "cost -110,295,272 credits",
+          "credits": "-110295272"
+        },
+        {
+          "label": "m6 delete of class 4096 returns credits (net refund > 0)",
+          "pass": true,
+          "detail": "create 145,893,280 \u2192 net refund 110,295,272 (75.59% of the create)"
+        },
+        {
+          "label": "g1 dmGroupDoc (roster) create by the group owner",
+          "pass": true,
+          "detail": "id=EqFDuKByzxMsiNwQkVEoWmUTnoj3yQpFDTKUh3JQv2A cost 29,545,880 credits",
+          "credits": "29545880"
+        },
+        {
+          "label": "g2 roster replace at revision 2 is accepted",
+          "pass": true,
+          "detail": "cost 7,702,620 credits",
+          "credits": "7702620"
+        },
+        {
+          "label": "g3 a second replace built from revision 1 (stale device) is rejected",
+          "pass": true,
+          "detail": "message=state transition broadcast error: Document EqFDuKByzxMsiNwQkVEoWmUTnoj3yQpFDTKUh3JQv2A has invalid revision Some(2). The desired revision is 2 | name=StateTransitionBroadcastError | code=40106 | toString=[object Object] | json={\"__wbg_ptr\":5034280} [cost 950,940 credits]",
+          "credits": "950940",
+          "rejection": "message=state transition broadcast error: Document EqFDuKByzxMsiNwQkVEoWmUTnoj3yQpFDTKUh3JQv2A has invalid revision Some(2). The desired revision is 2 | name=StateTransitionBroadcastError | code=40106 | toString=[object Object] | json={\"__wbg_ptr\":5034280}"
+        },
+        {
+          "label": "g4 a second dmGroupDoc by the owner at the same handle is rejected (unique [$ownerId, handle])",
+          "pass": true,
+          "detail": "message=state transition broadcast error: Document 79gtsTyVnzeiagGm9GsQnFXvnd1TyVP6kA69NLpAKYCj has duplicate unique properties [\"$ownerId\", \"handle\"] with other documents | name=StateTransitionBroadcastError | code=40105 | toString=[object Object] | json={\"__ [cost 958,700 credits]",
+          "credits": "958700",
+          "rejection": "message=state transition broadcast error: Document 79gtsTyVnzeiagGm9GsQnFXvnd1TyVP6kA69NLpAKYCj has duplicate unique properties [\"$ownerId\", \"handle\"] with other documents | name=StateTransitionBroadcastError | code=40105 | toString=[object Object] | json={\"__wbg_ptr\":4918760}"
+        },
+        {
+          "label": "g5 deleting a group document is rejected (canBeDeleted: false)",
+          "pass": true,
+          "detail": "message=Document transition action documents of type dmGroupDoc can not be deleted is not supported | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5190344} [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=Document transition action documents of type dmGroupDoc can not be deleted is not supported | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5190344}"
+        },
+        {
+          "label": "g6 a stranger's dmGroupDoc at the same handle under their own $ownerId is accepted (different slot)",
+          "pass": true,
+          "detail": "id=6RsizLRptcwRzKTPPkCVrsNzRhJAimQHk8eJxJgTFbMH cost 27,613,800 credits",
+          "credits": "27613800"
+        },
+        {
+          "label": "g6a the owner's slot ($ownerId == owner, handle) still returns only the owner's document",
+          "pass": true,
+          "detail": "1 doc(s); forged doc 6RsizLRptcwRzKTPPkCVrsNzRhJAimQHk8eJxJgTFbMH lives under H8bQ2PC6suWR32AndM1rqZ7LJM5SHwa3T2Ezf7Z2rA5w"
+        },
+        {
+          "label": "g7 a stranger replacing the owner's roster is rejected",
+          "pass": true,
+          "detail": "message=Provided document EqFDuKByzxMsiNwQkVEoWmUTnoj3yQpFDTKUh3JQv2A owner ID H8bQ2PC6suWR32AndM1rqZ7LJM5SHwa3T2Ezf7Z2rA5w mismatch with existing 3JKc6iVG74LEMSrAtB4VSHPQW2mtgKAw8s3Ki6tTFcRQ | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=Provided document EqFDuKByzxMsiNwQkVEoWmUTnoj3yQpFDTKUh3JQv2A owner ID H8bQ2PC6suWR32AndM1rqZ7LJM5SHwa3T2Ezf7Z2rA5w mismatch with existing 3JKc6iVG74LEMSrAtB4VSHPQW2mtgKAw8s3Ki6tTFcRQ | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5045080}"
+        },
+        {
+          "label": "g8 keyring create at the 128-slot size (4120 B)",
+          "pass": true,
+          "detail": "id=D5b7XKViWYrDTEN4VY66DVejWF413AvHJwLoFfQp1wmP cost 134,750,740 credits",
+          "credits": "134750740"
+        },
+        {
+          "label": "g9 keyring create at the 8-slot size (280 B)",
+          "pass": true,
+          "detail": "id=EYBdLmvpjJo82cEjfnvYmmqM9RAGmB7KNghfj9ib3xrB cost 31,334,160 credits",
+          "credits": "31334160"
+        },
+        {
+          "label": "g9a a group document blob of 155 B is rejected (minItems 156)",
+          "pass": true,
+          "detail": "message=JsonSchemaError: [52,10,228,118,25,95,118,198,44,162,229,200,196,126,22,70,207,234,232,36,66,124,224,188,6,49,154,199,123,16,227,84,112,167,47,201,244,248,119,206,48,59,130,175,73,2,192,18,205,7,89,16,81,146,111,194,43,94,232,31,88,65,107,219,104,254,1 [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=JsonSchemaError: [52,10,228,118,25,95,118,198,44,162,229,200,196,126,22,70,207,234,232,36,66,124,224,188,6,49,154,199,123,16,227,84,112,167,47,201,244,248,119,206,48,59,130,175,73,2,192,18,205,7,89,16,81,146,111,194,43,94,232,31,88,65,107,219,104,254,199,179,7,215,38,185,179,238,102,124,85,36,8,65,154,143,2,106,167,60,245,149,234,222,13,14,182,53,36,99,140,67,118,77,109,7,79,154,112,216,58,99,138,132,243,170,73,84,13,43,62,140,96,165,186,253,231,248,13,114,51,136,22,240,71,102,20,119,218,101,232,7,230,114,199,208,200,171,149,74,244,117,196,215,155,219,180,226,201] has less than 156 items, path: /blob | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5005504}"
+        },
+        {
+          "label": "s0 an earlier run's self-state is deleted by its owner",
+          "pass": true,
+          "detail": "cost -22,266,189 credits",
+          "credits": "-22266189"
+        },
+        {
+          "label": "s1 dmSelfState create (class 128)",
+          "pass": true,
+          "detail": "id=F8ekQgux9dn8zFTKJ8MVLSkiq1wzGSRjKv5RZqqbsYzz cost 25,777,400 credits",
+          "credits": "25777400"
+        },
+        {
+          "label": "s2 self-state replace at revision 2 (class 1024)",
+          "pass": true,
+          "detail": "cost 26,290,180 credits",
+          "credits": "26290180"
+        },
+        {
+          "label": "s3 a replace from a device still on revision 1 is rejected (the 40106 merge trigger)",
+          "pass": true,
+          "detail": "message=state transition broadcast error: Document F8ekQgux9dn8zFTKJ8MVLSkiq1wzGSRjKv5RZqqbsYzz has invalid revision Some(2). The desired revision is 2 | name=StateTransitionBroadcastError | code=40106 | toString=[object Object] | json={\"__wbg_ptr\":4915792} [cost 948,280 credits]",
+          "credits": "948280",
+          "rejection": "message=state transition broadcast error: Document F8ekQgux9dn8zFTKJ8MVLSkiq1wzGSRjKv5RZqqbsYzz has invalid revision Some(2). The desired revision is 2 | name=StateTransitionBroadcastError | code=40106 | toString=[object Object] | json={\"__wbg_ptr\":4915792}"
+        },
+        {
+          "label": "s4 a second dmSelfState for the same owner is rejected (unique [$ownerId])",
+          "pass": true,
+          "detail": "message=state transition broadcast error: Document 56KmowsEj6J4fPatdLmKSc5Q9TXHitGrL6Kx87YXpBDX has duplicate unique properties [\"$ownerId\"] with other documents | name=StateTransitionBroadcastError | code=40105 | toString=[object Object] | json={\"__wbg_ptr\":5 [cost 968,380 credits]",
+          "credits": "968380",
+          "rejection": "message=state transition broadcast error: Document 56KmowsEj6J4fPatdLmKSc5Q9TXHitGrL6Kx87YXpBDX has duplicate unique properties [\"$ownerId\"] with other documents | name=StateTransitionBroadcastError | code=40105 | toString=[object Object] | json={\"__wbg_ptr\":5008016}"
+        },
+        {
+          "label": "s5 replace at the 3-field maximum (3 \u00d7 5120 B = 15360 B) is accepted",
+          "pass": true,
+          "detail": "cost 394,425,260 credits",
+          "credits": "394425260"
+        },
+        {
+          "label": "s6 blob2 of 5121 bytes is rejected (system field cap 5120 = contract maxItems)",
+          "pass": true,
+          "detail": "message=Document field blob2 size 5121 is more than system maximum 5120 | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5005504} [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=Document field blob2 size 5121 is more than system maximum 5120 | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5005504}"
+        },
+        {
+          "label": "s7 shrinking back to one field (blob2/blob3 dropped) is accepted",
+          "pass": true,
+          "detail": "cost -401,485,363 credits",
+          "credits": "-401485363"
+        },
+        {
+          "label": "q1 invite in bucket 1 by maker(3JKc6i\u2026)",
+          "pass": true,
+          "detail": "id=ALwVpFDT4ihWHMwuYxiF5QundEDU1AAzCf5f6E3qNooA cost 26,211,140 credits",
+          "credits": "26211140"
+        },
+        {
+          "label": "q1 invite in bucket 3 by botA(EjVyhR\u2026)",
+          "pass": true,
+          "detail": "id=3KW9koR5fWVQKX9zXAqjPp3tCVftv7d6RaQugTgNXMRB cost 26,087,620 credits",
+          "credits": "26087620"
+        },
+        {
+          "label": "q1 invite in bucket 6 by botB(H8bQ2P\u2026)",
+          "pass": true,
+          "detail": "id=Dz4ER1ifEQVtnVEQtYCp7ZmFVxzVK522YS9SuHEMnQuk cost 26,220,740 credits",
+          "credits": "26220740"
+        },
+        {
+          "label": "q1 invite in bucket 1 by maker(3JKc6i\u2026)",
+          "pass": true,
+          "detail": "id=96ysybMNuSBJikmLxdetHdvcaGUgWR9VKN9f5ade425q cost 26,384,040 credits",
+          "credits": "26384040"
+        },
+        {
+          "label": "q1 invite in bucket 3 by botA(EjVyhR\u2026)",
+          "pass": true,
+          "detail": "id=eC2Hdzup6VEMc4cBXNRXE1vZ9YNkSH3hCgYRvw9kCbN cost 26,089,860 credits",
+          "credits": "26089860"
+        },
+        {
+          "label": "q1 invite in bucket 6 by botB(H8bQ2P\u2026)",
+          "pass": true,
+          "detail": "id=BQhgAmDGtzNmdbymhKWYJfCkXrdtJAxMJCw68RxRmkxb cost 26,352,840 credits",
+          "credits": "26352840"
+        },
+        {
+          "label": "q1 invite in bucket 2 by maker(3JKc6i\u2026)",
+          "pass": true,
+          "detail": "id=RZry3Dr4ZqT4m7znpDtDcTN61wxvqQfK4w9VpoKV6a9 cost 26,387,360 credits",
+          "credits": "26387360"
+        },
+        {
+          "label": "q1 invite in bucket 5 by botA(EjVyhR\u2026)",
+          "pass": true,
+          "detail": "id=4EZ3og5stXibpsSiTXMoK6SehhnxGu45ehLWaV4MYtoP cost 26,256,780 credits",
+          "credits": "26256780"
+        },
+        {
+          "label": "q1a bucket IN [1,3,6] + $createdAt >= T, orderBy [bucket asc, $createdAt asc]",
+          "pass": true,
+          "detail": "6 returned, 6 expected, 0 missing, 0 decoys"
+        },
+        {
+          "label": "q1a bucket IN [1,3,6] + $createdAt >= T, orderBy [$createdAt asc]",
+          "pass": true,
+          "note": true,
+          "detail": "REFUSED: message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5047752}"
+        },
+        {
+          "label": "q1a bucket IN [1,3,6] + $createdAt >= T, no orderBy",
+          "pass": true,
+          "note": true,
+          "detail": "REFUSED: message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5011864}"
+        },
+        {
+          "label": "q1b at least one single-query IN + range invite scan shape works",
+          "pass": true,
+          "detail": "orderBy [bucket asc, $createdAt asc]"
+        },
+        {
+          "label": "q1c IN + range paged with limit 2 + startAfter (orderBy [bucket asc, $createdAt asc])",
+          "pass": true,
+          "detail": "4 pages; 6 returned, 6 expected, 0 missing, 0 decoys"
+        },
+        {
+          "label": "q1d fallback: three parallel bucket == b + $createdAt >= T queries, paged",
+          "pass": true,
+          "detail": "6 returned, 6 expected, 0 missing, 0 decoys"
+        },
+        {
+          "label": "t0 hit message 1/4 by maker(3JKc6i\u2026)",
+          "pass": true,
+          "detail": "id=6rDj6UiB9MxgVzqdH4d4LmsjN5R5uw2eGfY1hbckt3ix cost 35,249,560 credits",
+          "credits": "35249560"
+        },
+        {
+          "label": "t0 hit message 2/4 by botA(EjVyhR\u2026)",
+          "pass": true,
+          "detail": "cost 35,205,880 credits",
+          "credits": "35205880"
+        },
+        {
+          "label": "t0 hit message 3/4 by maker(3JKc6i\u2026)",
+          "pass": true,
+          "detail": "id=EaeesxiVAqkcFwkaz6VViY7tHXjDXPAUjHSopFcpi9kV cost 37,033,920 credits",
+          "credits": "37033920"
+        },
+        {
+          "label": "t0 hit message 4/4 by botA(EjVyhR\u2026)",
+          "pass": true,
+          "detail": "id=69cdrd7mjZgSv6sznW4tVh2mVUdEjbbLivZ7K6n85oZF cost 35,617,960 credits",
+          "credits": "35617960"
+        },
+        {
+          "label": "t1 tag IN [100 tags], no orderBy, no limit",
+          "pass": true,
+          "note": true,
+          "detail": "REFUSED: message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5119384}"
+        },
+        {
+          "label": "t1 tag IN [100 tags], 12 hits, orderBy [tag asc]",
+          "pass": false,
+          "detail": "12 returned, 12 hits among 100 tags, 1 missing"
+        },
+        {
+          "label": "t1 tag IN [100 tags], limit 100",
+          "pass": true,
+          "note": true,
+          "detail": "REFUSED: message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5056496}"
+        },
+        {
+          "label": "t1z at least one 100-tag IN shape answers correctly",
+          "pass": false,
+          "detail": "none"
+        },
+        {
+          "label": "g10 $ownerId == owner, handle IN [100 handles], no orderBy, no limit",
+          "pass": true,
+          "note": true,
+          "detail": "REFUSED: message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5064672}"
+        },
+        {
+          "label": "g10 $ownerId == owner, handle IN [100 handles], orderBy [handle asc]",
+          "pass": true,
+          "detail": "3 returned, 3 expected, 0 from other owners (the forged doc must not appear)"
+        },
+        {
+          "label": "g10 $ownerId == owner, handle IN [100 handles], limit 100",
+          "pass": true,
+          "note": true,
+          "detail": "REFUSED: message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5182720}"
+        },
+        {
+          "label": "g10z at least one owner + 100-handle IN shape answers correctly",
+          "pass": true,
+          "detail": "orderBy [handle asc]"
+        },
+        {
+          "label": "l1 unique [tag]: first write (not in the median)",
+          "pass": true,
+          "detail": "id=DbMvfaNw4imSbDBcZoZDhTMSYUxvoyMyd89MtNXk2aX9 cost 25,442,040 credits",
+          "credits": "25442040"
+        },
+        {
+          "label": "l1 non-unique [tag]: first write (not in the median)",
+          "pass": true,
+          "detail": "id=5jL9fqxeCWJs8TQ4Fh4iu4JVEZxZVT8JqMTjGCd2fVTi cost 30,001,520 credits",
+          "credits": "30001520"
+        },
+        {
+          "label": "l1 unique [tag, $ownerId]: first write (not in the median)",
+          "pass": true,
+          "detail": "id=E6xffzyv5ubrYsutf8qdc4zdTTG7inDqkL12VqbzV6DE cost 33,470,520 credits",
+          "credits": "33470520"
+        },
+        {
+          "label": "l1 unique [tag] (the real contract, populated): first write (not in the median)",
+          "pass": true,
+          "detail": "id=6XFzh8KhUBWg2C2s8aMaDh5wA5ko8SZ4ByhXPtfRtKaW cost 35,396,820 credits",
+          "credits": "35396820"
+        },
+        {
+          "label": "l1 unique [tag]: body 156 B, round 1/7",
+          "pass": true,
+          "detail": "id=ECNhgdvxpUEWXJrVDcRDt1jNRQdaW65YFNxwNQRR9Qtx cost 25,583,320 credits",
+          "credits": "25583320"
+        },
+        {
+          "label": "l1 non-unique [tag]: body 156 B, round 1/7",
+          "pass": true,
+          "detail": "id=5PknUkth8R7zmJC2A3nUM3SRaHYSpzJxDbpg4soSE92A cost 30,046,160 credits",
+          "credits": "30046160"
+        },
+        {
+          "label": "l1 unique [tag, $ownerId]: body 156 B, round 1/7",
+          "pass": true,
+          "detail": "id=2tHPGrpyuqT6pGmNVcXEtxPWSLBvhZV4VQSycNs6bpzH cost 33,470,520 credits",
+          "credits": "33470520"
+        },
+        {
+          "label": "l1 unique [tag] (the real contract, populated): body 156 B, round 1/7",
+          "pass": true,
+          "detail": "id=ubXHPuK4zPzt33YVr7oBBNNF29ZdVjTbvDL5dUUr8rG cost 27,574,260 credits",
+          "credits": "27574260"
+        },
+        {
+          "label": "l1 unique [tag]: body 156 B, round 2/7",
+          "pass": true,
+          "detail": "id=HMMEHQwExT8CG1WSpCjBDd9U8nLcAer85T8JY3ueQEVP cost 25,585,720 credits",
+          "credits": "25585720"
+        },
+        {
+          "label": "l1 non-unique [tag]: body 156 B, round 2/7",
+          "pass": true,
+          "detail": "id=AoS9duYqJvzQcWiriMCu4eMRAHCRi5h2EBpTYYZ8No1Z cost 30,045,840 credits",
+          "credits": "30045840"
+        },
+        {
+          "label": "l1 unique [tag, $ownerId]: body 156 B, round 2/7",
+          "pass": true,
+          "detail": "id=9d799HJCPHtLZXvU69ZrFLVFhWqcAVArU9JtErLc5Ny5 cost 35,278,220 credits",
+          "credits": "35278220"
+        },
+        {
+          "label": "l1 unique [tag] (the real contract, populated): body 156 B, round 2/7",
+          "pass": true,
+          "detail": "id=8RhsYgyyxrxSChcvUZMdsc63BxaSeoa46hX43EzpqVyc cost 29,433,940 credits",
+          "credits": "29433940"
+        },
+        {
+          "label": "l1 unique [tag]: body 156 B, round 3/7",
+          "pass": true,
+          "detail": "id=Cpn7N8h5vb5PiWNiN1rgGuQm2FRrfzyQPNJH1PizRs4E cost 25,585,720 credits",
+          "credits": "25585720"
+        },
+        {
+          "label": "l1 non-unique [tag]: body 156 B, round 3/7",
+          "pass": true,
+          "detail": "id=9R99bPG3Eiq5D2F5F8d8AbBE1K9GcX7SBDXSFb3XnERv cost 30,229,360 credits",
+          "credits": "30229360"
+        },
+        {
+          "label": "l1 unique [tag, $ownerId]: body 156 B, round 3/7",
+          "pass": true,
+          "detail": "id=14kqzcs6T7WNyauybnKrkNp9ZUxpv62ajM9Hx24AX8B7 cost 33,428,460 credits",
+          "credits": "33428460"
+        },
+        {
+          "label": "l1 unique [tag] (the real contract, populated): body 156 B, round 3/7",
+          "pass": true,
+          "detail": "id=7cWz9DoWBhjr6tHpxu9gjLS5zqbFxy3QyNjPuPzDLgy7 cost 35,584,100 credits",
+          "credits": "35584100"
+        },
+        {
+          "label": "l1 unique [tag]: body 156 B, round 4/7",
+          "pass": true,
+          "detail": "id=788CMgyTttUWdZjF7mzgLudkP7S9Zjak6uV8CUw9HsTS cost 25,400,120 credits",
+          "credits": "25400120"
+        },
+        {
+          "label": "l1 non-unique [tag]: body 156 B, round 4/7",
+          "pass": true,
+          "detail": "id=B1brjkTDZAM8pcmd9VDhfRhouGSpSCEhvmoRJP9Rfvau cost 30,232,800 credits",
+          "credits": "30232800"
+        },
+        {
+          "label": "l1 unique [tag, $ownerId]: body 156 B, round 4/7",
+          "pass": true,
+          "detail": "id=HjgfHFc7NPqrLYibv861Hiok81mhbWY3wuYDFTpN4Cya cost 33,472,920 credits",
+          "credits": "33472920"
+        },
+        {
+          "label": "l1 unique [tag] (the real contract, populated): body 156 B, round 4/7",
+          "pass": true,
+          "detail": "id=7Q3MxMkaYy2WgXfBxEqfy4GjjvjVBSR6CWeHcWseYo1k cost 33,774,580 credits",
+          "credits": "33774580"
+        },
+        {
+          "label": "l1 unique [tag]: body 156 B, round 5/7",
+          "pass": true,
+          "detail": "id=3uid4UvyGPUboov3qSAy1n1foWpdmJd2dBxzpsL59Hbu cost 25,355,480 credits",
+          "credits": "25355480"
+        },
+        {
+          "label": "l1 non-unique [tag]: body 156 B, round 5/7",
+          "pass": true,
+          "detail": "id=GqN9k72c1V3u28QUceQN7n2yC1qnJ4zqTdE7GuwB16eL cost 30,274,720 credits",
+          "credits": "30274720"
+        },
+        {
+          "label": "l1 unique [tag, $ownerId]: body 156 B, round 5/7",
+          "pass": true,
+          "detail": "id=4HCjHbFWczQ1KHoFMjgPM9FYdWaCduStyvu7VMaan5NS cost 33,700,900 credits",
+          "credits": "33700900"
+        },
+        {
+          "label": "l1 unique [tag] (the real contract, populated): body 156 B, round 5/7",
+          "pass": true,
+          "detail": "id=3bmkBtUpgPBjDNxvAmKAWjw8GRSVtxnBKBU7yuGERX9S cost 27,803,140 credits",
+          "credits": "27803140"
+        },
+        {
+          "label": "l1 unique [tag]: body 156 B, round 6/7",
+          "pass": true,
+          "detail": "id=B8PmVuZo6Laqgmues3iSoxbWQmou3KDvVWiuofMYbWnG cost 27,249,880 credits",
+          "credits": "27249880"
+        },
+        {
+          "label": "l1 non-unique [tag]: body 156 B, round 6/7",
+          "pass": true,
+          "detail": "id=6uDRQs9h1y57Ff35PaW6Btf1pwbBAm8VjX9ai1UTMeBU cost 30,275,040 credits",
+          "credits": "30275040"
+        },
+        {
+          "label": "l1 unique [tag, $ownerId]: body 156 B, round 6/7",
+          "pass": true,
+          "detail": "id=C4outHJ5PhLAD77C8n11yiXuWrJK2vbrfjUCNCXq6GQv cost 33,612,700 credits",
+          "credits": "33612700"
+        },
+        {
+          "label": "l1 unique [tag] (the real contract, populated): body 156 B, round 6/7",
+          "pass": true,
+          "detail": "id=3PNXwn9c5Qriqj8tcBarpEVRqUwMLfEf9amQZAir7CJP cost 27,392,100 credits",
+          "credits": "27392100"
+        },
+        {
+          "label": "l1 unique [tag]: body 156 B, round 7/7",
+          "pass": true,
+          "detail": "id=4MnHGovqGnVE13X11k4Qgy1kNA6oHumzDu2xFfx3KiCX cost 25,584,360 credits",
+          "credits": "25584360"
+        },
+        {
+          "label": "l1 non-unique [tag]: body 156 B, round 7/7",
+          "pass": true,
+          "detail": "id=5vqqG4rEkEJZkay2f5C4LNw8y7gM4mmu4XdftdYtkSmM cost 30,415,280 credits",
+          "credits": "30415280"
+        },
+        {
+          "label": "l1 unique [tag, $ownerId]: body 156 B, round 7/7",
+          "pass": true,
+          "detail": "id=8R8eEh74vDy5tVqioSDV7iKwhgLgZBGy5inUDDYqGcEc cost 35,410,880 credits",
+          "credits": "35410880"
+        },
+        {
+          "label": "l1 unique [tag] (the real contract, populated): body 156 B, round 7/7",
+          "pass": true,
+          "detail": "id=DK4ySrbe6jGZvYfpo1CwZexGDxmPmeSX5HVhCX5UrY6d cost 37,130,940 credits",
+          "credits": "37130940"
+        },
+        {
+          "label": "l1 unique [tag]: body 4124 B",
+          "pass": true,
+          "detail": "id=CLeAdVmgCazf4NqzhTWDJePCL1zK4n3XLQmDXj5oZq1x cost 134,358,520 credits",
+          "credits": "134358520"
+        },
+        {
+          "label": "l1 non-unique [tag]: body 4124 B",
+          "pass": true,
+          "detail": "id=nEFzDBXdTfnbqethssZzNKhLYF9PdwpnpNXLJDUjqwM cost 140,844,240 credits",
+          "credits": "140844240"
+        },
+        {
+          "label": "l1 unique [tag, $ownerId]: body 4124 B",
+          "pass": true,
+          "detail": "id=9uj51eKs6w2D2w9gjMKLBbUXgp3ohc7E6UtPUQz8VBGd cost 142,430,280 credits",
+          "credits": "142430280"
+        },
+        {
+          "label": "l1 unique [tag] (the real contract, populated): body 4124 B",
+          "pass": true,
+          "detail": "id=GRpAQN14gpZvWvNqr7h6TtiT7G6F2oE575NFTAiysw4s cost 138,820,860 credits",
+          "credits": "138820860"
+        },
+        {
+          "label": "l2 unique [tag] costs no more than non-unique [tag] (body 156, equal tree population)",
+          "pass": true,
+          "detail": "medians: unique [tag] 25,584,360 | non-unique [tag] 30,232,800 | unique [tag,$ownerId] 33,612,700"
+        },
+        {
+          "label": "l3 unique [tag] costs no more than unique [tag, $ownerId] (body 156, equal tree population)",
+          "pass": true,
+          "detail": "medians: unique [tag] 25,584,360 | non-unique [tag] 30,232,800 | unique [tag,$ownerId] 33,612,700"
+        }
+      ],
+      "costs": [
+        {
+          "what": "dmInvite create",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 51,
+          "credits": "26078560"
+        },
+        {
+          "what": "dmMessage create, class 128",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 156,
+          "credits": "27755560"
+        },
+        {
+          "what": "dmMessage create, class 256",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 284,
+          "credits": "40390640"
+        },
+        {
+          "what": "dmMessage create, class 512",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 540,
+          "credits": "37148360"
+        },
+        {
+          "what": "dmMessage create, class 1024",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 1052,
+          "credits": "54131440"
+        },
+        {
+          "what": "dmMessage create, class 2048",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 2076,
+          "credits": "79210360"
+        },
+        {
+          "what": "dmMessage create, class 4096",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 4124,
+          "credits": "144085120"
+        },
+        {
+          "what": "dmMessage create, class 8192 (2 fields)",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 8220,
+          "credits": "256399640"
+        },
+        {
+          "what": "dmMessage create, class 14336 (3 fields)",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 14364,
+          "credits": "419058360"
+        },
+        {
+          "what": "dmMessage create, class 128 (botA)",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": 156,
+          "credits": "28032840"
+        },
+        {
+          "what": "dmMessage delete, class 128 (negative = refund)",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": 156,
+          "credits": "-13923952",
+          "refundShareOfCreate": 49.67
+        },
+        {
+          "what": "dmMessage create, class 4096 (botA)",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": 4124,
+          "credits": "145893280"
+        },
+        {
+          "what": "dmMessage delete, class 4096 (negative = refund)",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": 4124,
+          "credits": "-110295272",
+          "refundShareOfCreate": 75.59
+        },
+        {
+          "what": "dmGroupDoc create, class 128 (roster)",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 156,
+          "credits": "29545880"
+        },
+        {
+          "what": "dmGroupDoc replace, class 128 \u2192 256",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 284,
+          "credits": "7702620"
+        },
+        {
+          "what": "dmGroupDoc create, 128-slot keyring",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 4120,
+          "credits": "134750740"
+        },
+        {
+          "what": "dmGroupDoc create, 8-slot keyring",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 280,
+          "credits": "31334160"
+        },
+        {
+          "what": "dmSelfState delete (negative = refund)",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": null,
+          "credits": "-22266189"
+        },
+        {
+          "what": "dmSelfState create, class 128",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": 156,
+          "credits": "25777400"
+        },
+        {
+          "what": "dmSelfState replace, class 128 \u2192 1024",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": 1052,
+          "credits": "26290180"
+        },
+        {
+          "what": "dmSelfState replace, 1024 \u2192 3 \u00d7 5120 (max)",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": 15360,
+          "credits": "394425260"
+        },
+        {
+          "what": "dmSelfState replace, max \u2192 class 128",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": 156,
+          "credits": "-401485363"
+        },
+        {
+          "what": "layout unique [tag]: body 156, median of 7",
+          "actor": "botV(47da17\u2026)",
+          "bytes": 156,
+          "credits": "25584360"
+        },
+        {
+          "what": "layout unique [tag]: body 4124",
+          "actor": "botV(47da17\u2026)",
+          "bytes": 4124,
+          "credits": "134358520"
+        },
+        {
+          "what": "layout non-unique [tag]: body 156, median of 7",
+          "actor": "botV(47da17\u2026)",
+          "bytes": 156,
+          "credits": "30232800"
+        },
+        {
+          "what": "layout non-unique [tag]: body 4124",
+          "actor": "botV(47da17\u2026)",
+          "bytes": 4124,
+          "credits": "140844240"
+        },
+        {
+          "what": "layout unique [tag, $ownerId]: body 156, median of 7",
+          "actor": "botV(47da17\u2026)",
+          "bytes": 156,
+          "credits": "33612700"
+        },
+        {
+          "what": "layout unique [tag, $ownerId]: body 4124",
+          "actor": "botV(47da17\u2026)",
+          "bytes": 4124,
+          "credits": "142430280"
+        },
+        {
+          "what": "layout unique [tag] (the real contract, populated): body 156, median of 7",
+          "actor": "botV(47da17\u2026)",
+          "bytes": 156,
+          "credits": "29433940"
+        },
+        {
+          "what": "layout unique [tag] (the real contract, populated): body 4124",
+          "actor": "botV(47da17\u2026)",
+          "bytes": 4124,
+          "credits": "138820860"
+        }
+      ],
+      "queryShapes": [
+        {
+          "label": "invite scan, orderBy [bucket asc, $createdAt asc]",
+          "shape": {
+            "documentTypeName": "dmInvite",
+            "where": [
+              [
+                "bucket",
+                "in",
+                [
+                  1,
+                  3,
+                  6
+                ]
+              ],
+              [
+                "$createdAt",
+                ">=",
+                "<scanCursor>"
+              ]
+            ],
+            "orderBy": [
+              [
+                "bucket",
+                "asc"
+              ],
+              [
+                "$createdAt",
+                "asc"
+              ]
+            ]
+          },
+          "result": "6 returned, 6 expected, 0 missing, 0 decoys"
+        },
+        {
+          "label": "invite scan, orderBy [$createdAt asc]",
+          "refused": "message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5047752}"
+        },
+        {
+          "label": "invite scan, no orderBy",
+          "refused": "message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5011864}"
+        },
+        {
+          "label": "stream poll, no orderBy, no limit",
+          "refused": "message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5119384}"
+        },
+        {
+          "label": "stream poll, orderBy [tag asc]",
+          "shape": {
+            "documentTypeName": "dmMessage",
+            "where": [
+              [
+                "tag",
+                "in",
+                "<100 base64 tags>"
+              ]
+            ],
+            "orderBy": [
+              [
+                "tag",
+                "asc"
+              ]
+            ]
+          },
+          "result": "12 returned, 12 hits among 100 tags, 1 missing"
+        },
+        {
+          "label": "stream poll, limit 100",
+          "refused": "message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5056496}"
+        },
+        {
+          "label": "group fetch, no orderBy, no limit",
+          "refused": "message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5064672}"
+        },
+        {
+          "label": "group fetch, orderBy [handle asc]",
+          "shape": {
+            "documentTypeName": "dmGroupDoc",
+            "where": [
+              [
+                "$ownerId",
+                "==",
+                "<owner>"
+              ],
+              [
+                "handle",
+                "in",
+                "<base64 handles>"
+              ]
+            ],
+            "orderBy": [
+              [
+                "handle",
+                "asc"
+              ]
+            ]
+          },
+          "result": "3/3"
+        },
+        {
+          "label": "group fetch, limit 100",
+          "refused": "message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5182720}"
+        }
+      ],
+      "layoutComparison": {
+        "unique [tag]": {
+          "contract": "5bjMiTH5Wy5wHkLuzDEfqzg4aywoBepAU3zv7n3fbf3F",
+          "medianCreditsBody156": "25584360",
+          "deltaVsUniqueTagClone156": "0",
+          "creditsBody4124": "134358520",
+          "firstWriteCredits": "25442040",
+          "samplesBody156": [
+            "25583320",
+            "25585720",
+            "25585720",
+            "25400120",
+            "25355480",
+            "27249880",
+            "25584360"
+          ]
+        },
+        "non-unique [tag]": {
+          "contract": "BsxznPmxNpuriKYDiNiGepBS4JhtXPWQbJQCuaGKAqxE",
+          "medianCreditsBody156": "30232800",
+          "deltaVsUniqueTagClone156": "4648440",
+          "creditsBody4124": "140844240",
+          "firstWriteCredits": "30001520",
+          "samplesBody156": [
+            "30046160",
+            "30045840",
+            "30229360",
+            "30232800",
+            "30274720",
+            "30275040",
+            "30415280"
+          ]
+        },
+        "unique [tag, $ownerId]": {
+          "contract": "B2ZwebYkMUGPqtifnrj5gFBqcJzk2UckCWWsKE1w9MtG",
+          "medianCreditsBody156": "33612700",
+          "deltaVsUniqueTagClone156": "8028340",
+          "creditsBody4124": "142430280",
+          "firstWriteCredits": "33470520",
+          "samplesBody156": [
+            "33470520",
+            "35278220",
+            "33428460",
+            "33472920",
+            "33700900",
+            "33612700",
+            "35410880"
+          ]
+        },
+        "unique [tag] (the real contract, populated)": {
+          "contract": "5Uo3pfSYqoShVntf9sBZf4Si3WfUkTC3aRh9NLomzzdj",
+          "medianCreditsBody156": "29433940",
+          "deltaVsUniqueTagClone156": "3849580",
+          "creditsBody4124": "138820860",
+          "firstWriteCredits": "35396820",
+          "samplesBody156": [
+            "27574260",
+            "29433940",
+            "35584100",
+            "33774580",
+            "27803140",
+            "27392100",
+            "37130940"
+          ]
+        }
+      },
+      "variants": {
+        "uniqueTag": {
+          "id": "5bjMiTH5Wy5wHkLuzDEfqzg4aywoBepAU3zv7n3fbf3F"
+        },
+        "nonUniqueTag": {
+          "id": "BsxznPmxNpuriKYDiNiGepBS4JhtXPWQbJQCuaGKAqxE"
+        },
+        "uniqueTagOwner": {
+          "id": "B2ZwebYkMUGPqtifnrj5gFBqcJzk2UckCWWsKE1w9MtG"
+        }
+      },
+      "harnessNote": "t1/t1z FAILED here because of a battery defect, not Drive: one t0 hit create returned no id (the create threw after broadcast and was confirmed by value), so the expected-hit set held a null id and \"1 missing\" was the null. Fixed in the committed script (value readbacks now return the found id); runs[1] re-ran messages + tagquery with the fix: all pass."
+    },
+    {
+      "network": "devnet moutai",
+      "protocolVersion": 14,
+      "startedAt": "2026-09-23T07:36:16.876Z",
+      "finishedAt": "2026-09-23T07:40:10.818Z",
+      "contract": {
+        "file": "contracts/yappr-dm-contract-v5.json",
+        "id": "5Uo3pfSYqoShVntf9sBZf4Si3WfUkTC3aRh9NLomzzdj"
+      },
+      "actors": {
+        "maker": "3JKc6iVG74LEMSrAtB4VSHPQW2mtgKAw8s3Ki6tTFcRQ",
+        "botA": "EjVyhRotn2vCcoCe2a5KCBLH5NsqQmnrHj3rfwgdtoD7",
+        "botB": "H8bQ2PC6suWR32AndM1rqZ7LJM5SHwa3T2Ezf7Z2rA5w",
+        "botV": "47da17QAtS9mnRSPNP7FMDSJQQWNj9xoixFX13EKQzNa"
+      },
+      "only": [
+        "messages",
+        "tagquery"
+      ],
+      "summary": {
+        "checks": 30,
+        "failed": 0
+      },
+      "results": [
+        {
+          "label": "m1 dmMessage create, class 128 (body 156 B)",
+          "pass": true,
+          "detail": "id=C5AA6bG9LoC3sgjBeN144wooEa5FAL2zn3EoS4Y9Yd9J cost 38,604,040 credits",
+          "credits": "38604040"
+        },
+        {
+          "label": "m1 dmMessage create, class 256 (body 284 B)",
+          "pass": true,
+          "detail": "id=FjAdGnBwAor83L1U3GZAeee4X82wjoFUCzHWt4LHhQCE cost 40,348,720 credits",
+          "credits": "40348720"
+        },
+        {
+          "label": "m1 dmMessage create, class 512 (body 540 B)",
+          "pass": true,
+          "detail": "id=H19h8mvEYSBzBXAhGmpPBaqnmPZ5Wmy4UvhKuUSGQyEp cost 40,130,320 credits",
+          "credits": "40130320"
+        },
+        {
+          "label": "m1 dmMessage create, class 1024 (body 1052 B)",
+          "pass": true,
+          "detail": "id=DRxwvFsLXCVq7XRjHsrRLfKy4ASx7QVdJFhn79PYbBVU cost 62,008,960 credits",
+          "credits": "62008960"
+        },
+        {
+          "label": "m1 dmMessage create, class 2048 (body 2076 B)",
+          "pass": true,
+          "detail": "id=C16teyyXpZBJ8VkcEp1JDhFVFzHcbqBMwguM7YQKM8P4 cost 91,377,320 credits",
+          "credits": "91377320"
+        },
+        {
+          "label": "m1 dmMessage create, class 4096 (body 4124 B)",
+          "pass": true,
+          "detail": "id=AzuTBuTaSZqq2K1C6DSm3JBPeLjYBwyJjGAVzxbBp6zL cost 149,182,600 credits",
+          "credits": "149182600"
+        },
+        {
+          "label": "m2 dmMessage create, class 8192 (8220 B over 2 fields)",
+          "pass": true,
+          "detail": "id=3GhyTVGonLLAFUpBe51Eu2oeJ5uPtkq1ARFLDR5ik5Ka cost 248,766,440 credits",
+          "credits": "248766440"
+        },
+        {
+          "label": "m2 dmMessage create, class 14336 (14364 B over 3 fields)",
+          "pass": true,
+          "detail": "id=8gimr6M4th4sjrege9uy4iRhRczxH1mu6hjdgwamJ4Zn cost 425,255,560 credits",
+          "credits": "425255560"
+        },
+        {
+          "label": "m3 a body of 155 bytes is rejected (minItems 156)",
+          "pass": true,
+          "detail": "message=JsonSchemaError: [33,136,248,38,44,198,128,221,17,137,52,149,48,157,176,39,97,237,88,103,62,141,120,2,77,236,120,115,1,88,61,255,99,202,177,186,24,138,164,144,229,72,249,46,220,223,150,77,36,212,51,226,32,154,134,59,254,25,125,138,79,44,7,137,18,168,18 [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=JsonSchemaError: [33,136,248,38,44,198,128,221,17,137,52,149,48,157,176,39,97,237,88,103,62,141,120,2,77,236,120,115,1,88,61,255,99,202,177,186,24,138,164,144,229,72,249,46,220,223,150,77,36,212,51,226,32,154,134,59,254,25,125,138,79,44,7,137,18,168,188,123,75,101,35,241,114,184,122,26,193,36,168,214,71,219,160,9,119,194,189,164,138,115,238,33,11,120,68,142,76,22,122,73,26,41,64,112,37,202,159,44,169,203,210,5,7,167,206,155,251,70,136,92,29,239,85,243,223,232,69,134,67,71,196,159,69,120,10,151,237,143,7,26,248,240,34,39,90,162,0,49,81,54,224,92,130,160,1] has less than 156 items, path: /body | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5210448}"
+        },
+        {
+          "label": "m4 a body of 5121 bytes is rejected (system field cap 5120 = contract maxItems)",
+          "pass": true,
+          "detail": "message=Document field body size 5121 is more than system maximum 5120 | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5052776} [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=Document field body size 5121 is more than system maximum 5120 | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":5052776}"
+        },
+        {
+          "label": "m5 dmMessage at a fresh tag (fixture for the squat probes)",
+          "pass": true,
+          "detail": "id=4JsaVcUV89NwCgteKyYK2oBpS72223HXhrgThHUA6vRj cost 38,822,880 credits",
+          "credits": "38822880"
+        },
+        {
+          "label": "m5a a second message by the SAME owner at that tag is rejected (unique [tag])",
+          "pass": true,
+          "detail": "message=state transition broadcast error: Document 6uqsDooZ6HNPzH8j9dKhnw7z3R125jAeMv5Hp6U3ZR6j has duplicate unique properties [\"tag\"] with other documents | name=StateTransitionBroadcastError | code=40105 | toString=[object Object] | json={\"__wbg_ptr\":499876 [cost 958,920 credits]",
+          "credits": "958920",
+          "rejection": "message=state transition broadcast error: Document 6uqsDooZ6HNPzH8j9dKhnw7z3R125jAeMv5Hp6U3ZR6j has duplicate unique properties [\"tag\"] with other documents | name=StateTransitionBroadcastError | code=40105 | toString=[object Object] | json={\"__wbg_ptr\":4998760}"
+        },
+        {
+          "label": "m5b a message by a DIFFERENT owner at that tag is rejected (a squat blocks the slot)",
+          "pass": true,
+          "detail": "message=state transition broadcast error: Document 4FiA3LB76wWsfKLjA34HLdtwGFjKbRKHcYKgTzc5hdWh has duplicate unique properties [\"tag\"] with other documents | name=StateTransitionBroadcastError | code=40105 | toString=[object Object] | json={\"__wbg_ptr\":505133 [cost 918,900 credits]",
+          "credits": "918900",
+          "rejection": "message=state transition broadcast error: Document 4FiA3LB76wWsfKLjA34HLdtwGFjKbRKHcYKgTzc5hdWh has duplicate unique properties [\"tag\"] with other documents | name=StateTransitionBroadcastError | code=40105 | toString=[object Object] | json={\"__wbg_ptr\":5051336}"
+        },
+        {
+          "label": "m5c the original document still holds the tag",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "label": "m5d replacing a message is rejected (immutable)",
+          "pass": true,
+          "detail": "message=Document transition action dmMessage is not mutable and can not be replaced is not supported | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":4984552} [cost 0 credits]",
+          "credits": "0",
+          "rejection": "message=Document transition action dmMessage is not mutable and can not be replaced is not supported | name=Protocol | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":4984552}"
+        },
+        {
+          "label": "m5e a stranger deleting the message is rejected",
+          "pass": true,
+          "detail": "message=state transition broadcast error: Provided document 4JsaVcUV89NwCgteKyYK2oBpS72223HXhrgThHUA6vRj owner ID H8bQ2PC6suWR32AndM1rqZ7LJM5SHwa3T2Ezf7Z2rA5w mismatch with existing 3JKc6iVG74LEMSrAtB4VSHPQW2mtgKAw8s3Ki6tTFcRQ | name=StateTransitionBroadcastEr [cost 906,000 credits]",
+          "credits": "906000",
+          "rejection": "message=state transition broadcast error: Provided document 4JsaVcUV89NwCgteKyYK2oBpS72223HXhrgThHUA6vRj owner ID H8bQ2PC6suWR32AndM1rqZ7LJM5SHwa3T2Ezf7Z2rA5w mismatch with existing 3JKc6iVG74LEMSrAtB4VSHPQW2mtgKAw8s3Ki6tTFcRQ | name=StateTransitionBroadcastError | code=40102 | toString=[object Object] | json={\"__wbg_ptr\":5028240}"
+        },
+        {
+          "label": "m6 botA first write to the contract (not measured)",
+          "pass": true,
+          "detail": "id=7fHHn31ni6RVSqzY6qQVGgpERUBF3Aciy93WRq3G84hP cost 34,037,960 credits",
+          "credits": "34037960"
+        },
+        {
+          "label": "m6 message to sweep, class 128",
+          "pass": true,
+          "detail": "id=2saNEwmrFEJzjPBvDNprPL1Ft4kD9P6sngtuv5HVScoR cost 31,229,840 credits",
+          "credits": "31229840"
+        },
+        {
+          "label": "m6 owner deletes the class 128 message (sweep)",
+          "pass": true,
+          "detail": "cost -10,912,232 credits",
+          "credits": "-10912232"
+        },
+        {
+          "label": "m6 delete of class 128 returns credits (net refund > 0)",
+          "pass": true,
+          "detail": "create 31,229,840 \u2192 net refund 10,912,232 (34.94% of the create)"
+        },
+        {
+          "label": "m6 message to sweep, class 4096",
+          "pass": true,
+          "detail": "id=HXHGvh21UX2MPMc4oyDQxmMJoKQ9gyeGNBCWZPK4GduX cost 138,277,920 credits",
+          "credits": "138277920"
+        },
+        {
+          "label": "m6 owner deletes the class 4096 message (sweep)",
+          "pass": true,
+          "detail": "cost -117,630,392 credits",
+          "credits": "-117630392"
+        },
+        {
+          "label": "m6 delete of class 4096 returns credits (net refund > 0)",
+          "pass": true,
+          "detail": "create 138,277,920 \u2192 net refund 117,630,392 (85.06% of the create)"
+        },
+        {
+          "label": "t0 hit message 1/4 by maker(3JKc6i\u2026)",
+          "pass": true,
+          "detail": "id=4meNYdgv5nj1Ak4DBcDspP6AgBtqL9EuVnFiar9ztJLH cost 38,822,160 credits",
+          "credits": "38822160"
+        },
+        {
+          "label": "t0 hit message 2/4 by botA(EjVyhR\u2026)",
+          "pass": true,
+          "detail": "id=5WCUrcRx4Bwi62y6bJtJxkAYugULVgUKDh151jDtt8ti cost 38,823,840 credits",
+          "credits": "38823840"
+        },
+        {
+          "label": "t0 hit message 3/4 by maker(3JKc6i\u2026)",
+          "pass": true,
+          "detail": "id=7W8RtMRzUX8fjYfyisRcmxphcCEntY8T8pCteeq2f9Vo cost 33,813,240 credits",
+          "credits": "33813240"
+        },
+        {
+          "label": "t0 hit message 4/4 by botA(EjVyhR\u2026)",
+          "pass": true,
+          "detail": "id=GX5CgQapw2LEzLJ2KGBmcGkeCs1wBTfUx8ZiuDjcvLRV cost 31,591,280 credits",
+          "credits": "31591280"
+        },
+        {
+          "label": "t1 tag IN [100 tags], no orderBy, no limit",
+          "pass": true,
+          "note": true,
+          "detail": "REFUSED: message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":4971768}"
+        },
+        {
+          "label": "t1 tag IN [100 tags], 12 hits, orderBy [tag asc]",
+          "pass": true,
+          "detail": "12 returned, 12 hits among 100 tags, 0 missing"
+        },
+        {
+          "label": "t1 tag IN [100 tags], limit 100",
+          "pass": true,
+          "note": true,
+          "detail": "REFUSED: message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":4989376}"
+        },
+        {
+          "label": "t1z at least one 100-tag IN shape answers correctly",
+          "pass": true,
+          "detail": "orderBy [tag asc]"
+        },
+        {
+          "label": "t2 the same IN paged with limit 3 + startAfter (junk tags never fill a page)",
+          "pass": true,
+          "detail": "5 pages; 12 returned, 12 hits among 100 tags, 0 missing"
+        }
+      ],
+      "costs": [
+        {
+          "what": "dmMessage create, class 128",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 156,
+          "credits": "38604040"
+        },
+        {
+          "what": "dmMessage create, class 256",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 284,
+          "credits": "40348720"
+        },
+        {
+          "what": "dmMessage create, class 512",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 540,
+          "credits": "40130320"
+        },
+        {
+          "what": "dmMessage create, class 1024",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 1052,
+          "credits": "62008960"
+        },
+        {
+          "what": "dmMessage create, class 2048",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 2076,
+          "credits": "91377320"
+        },
+        {
+          "what": "dmMessage create, class 4096",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 4124,
+          "credits": "149182600"
+        },
+        {
+          "what": "dmMessage create, class 8192 (2 fields)",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 8220,
+          "credits": "248766440"
+        },
+        {
+          "what": "dmMessage create, class 14336 (3 fields)",
+          "actor": "maker(3JKc6i\u2026)",
+          "bytes": 14364,
+          "credits": "425255560"
+        },
+        {
+          "what": "dmMessage create, class 128 (botA)",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": 156,
+          "credits": "31229840"
+        },
+        {
+          "what": "dmMessage delete, class 128 (negative = refund)",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": 156,
+          "credits": "-10912232",
+          "refundShareOfCreate": 34.94
+        },
+        {
+          "what": "dmMessage create, class 4096 (botA)",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": 4124,
+          "credits": "138277920"
+        },
+        {
+          "what": "dmMessage delete, class 4096 (negative = refund)",
+          "actor": "botA(EjVyhR\u2026)",
+          "bytes": 4124,
+          "credits": "-117630392",
+          "refundShareOfCreate": 85.06
+        }
+      ],
+      "queryShapes": [
+        {
+          "label": "stream poll, no orderBy, no limit",
+          "refused": "message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":4971768}"
+        },
+        {
+          "label": "stream poll, orderBy [tag asc]",
+          "shape": {
+            "documentTypeName": "dmMessage",
+            "where": [
+              [
+                "tag",
+                "in",
+                "<100 base64 tags>"
+              ]
+            ],
+            "orderBy": [
+              [
+                "tag",
+                "asc"
+              ]
+            ]
+          },
+          "result": "12 returned, 12 hits among 100 tags, 0 missing"
+        },
+        {
+          "label": "stream poll, limit 100",
+          "refused": "message=transport error: grpc error: code: 'Client specified an invalid argument', message: \"missing order by for range error: query must have an orderBy field for each range element\" | name=DapiClientError | code=-1 | toString=[object Object] | json={\"__wbg_ptr\":4989376}"
+        }
+      ],
+      "layoutComparison": null,
+      "variants": null
+    }
+  ]
+}

@@ -1,0 +1,1382 @@
+import { describe, expect, it } from 'vitest'
+import { bytesEqual } from '@/lib/bytes'
+import { deriveBaseKey, deriveGroupId, deriveGroupSecret } from '@/lib/dm/keys'
+import { buildKeyring, encryptRoster, keyringHandle, rosterHandle } from '@/lib/dm/group'
+import { getPublicKey } from '@/lib/crypto/keys'
+import { encryptMessage } from '@/lib/dm/stream'
+import { weekOf } from '@/lib/dm/kdf'
+import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, CAROL_ID, CAROL_PRIV } from '@/lib/dm/test-fixtures'
+import type { IdentityId } from '@/lib/dm/types'
+import { currentEpoch, members, stream, timeline, type GroupConv } from './conversation'
+import { attachGroup, attachSaved, groupConv, type DmContext } from './context'
+import { startedDirect } from './directs'
+import { addMember, createGroup, endGroup, leaveGroup, recoverOwnedGroups, removeMember, renameGroup, repairOwnedGroups, resendKeys } from './groups'
+import { applyGroups, markApplied } from './group-apply'
+import { processGrants } from './grants'
+import { pollOnce } from './loop'
+import { backfill, collectWants, pollStreams } from './poller'
+import { SendError, sendContent } from './sender'
+import { MemoryLedger, makeContext } from './test-chain'
+import { STALE_WINDOW_MS, hexId } from './util'
+
+const DAVE_ID = Uint8Array.from({ length: 32 }, () => 0xdd)
+const DAVE_PRIV = Uint8Array.from({ length: 32 }, (_, i) => 0x20 + i)
+
+function world() {
+  const ledger = new MemoryLedger()
+  return {
+    ledger,
+    alice: makeContext(ledger, ALICE_ID, ALICE_PRIV),
+    bob: makeContext(ledger, BOB_ID, BOB_PRIV),
+    carol: makeContext(ledger, CAROL_ID, CAROL_PRIV),
+    dave: makeContext(ledger, DAVE_ID, DAVE_PRIV),
+  }
+}
+
+function theGroup(ctx: DmContext, owner: IdentityId, gid: Uint8Array): GroupConv {
+  const conv = groupConv(ctx, owner, gid)
+  if (!conv) throw new Error('group not found')
+  return conv
+}
+
+const groupTexts = (conv: GroupConv) => timeline(conv).flatMap((m) => (m.content.type === 'text' ? [m.content.text] : []))
+const has = (list: IdentityId[], id: IdentityId) => list.some((m) => bytesEqual(m, id))
+
+async function say(ctx: DmContext, conv: GroupConv, text: string) {
+  await sendContent(ctx, conv, { type: 'text', text })
+}
+
+describe('group create and grants', () => {
+  it('creates a roster, grants each member on the 1:1 stream, and members accept and read', async () => {
+    const { ledger, alice, bob, carol } = world()
+    const { conv, failed } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    expect(failed).toEqual([])
+    expect(ledger.groupDocs).toHaveLength(1) // one roster
+    expect(ledger.invites).toHaveLength(2) // one per member never messaged before
+
+    await say(alice.ctx, conv, 'welcome')
+    await pollOnce(bob.ctx)
+    await pollOnce(carol.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    expect(bobGroup.lastRoster?.name).toBe('Team')
+    await pollOnce(bob.ctx)
+    expect(groupTexts(bobGroup)).toEqual(['welcome'])
+
+    await say(bob.ctx, bobGroup, 'hi all')
+    await pollOnce(alice.ctx)
+    await pollOnce(carol.ctx)
+    await pollOnce(carol.ctx)
+    expect(groupTexts(theGroup(carol.ctx, ALICE_ID, conv.gid)).sort()).toEqual(['hi all', 'welcome'])
+    expect(groupTexts(conv).sort()).toEqual(['hi all', 'welcome'])
+  })
+
+  it('rejects a grant forwarded by a non-owner (the roster lives under the real owner)', async () => {
+    const { alice, bob, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await pollOnce(bob.ctx)
+    // Bob forwards the key to Carol on his own 1:1 stream: Carol looks for the roster under Bob and finds none.
+    const bobToCarol = await startedDirect(bob.ctx, CAROL_ID)
+    await sendContent(bob.ctx, bobToCarol, { type: 'grant', grant: { gid: conv.gid, b: 0, r: 0, key: conv.keys.get({ b: 0, r: 0 }) ?? new Uint8Array(32) } })
+    await pollOnce(carol.ctx)
+    expect(groupConv(carol.ctx, BOB_ID, conv.gid)).toBeNull()
+    expect(groupConv(carol.ctx, ALICE_ID, conv.gid)).toBeNull()
+  })
+
+  it('keeps a grant whose roster has not been replaced yet and accepts it once it has', async () => {
+    const { alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    // Alice grants Carol at (0, 1) but her roster replace has not landed yet.
+    const direct = await startedDirect(alice.ctx, CAROL_ID)
+    const next = conv.keys.get({ b: 0, r: 1 })
+    if (!next) throw new Error('no key')
+    await sendContent(alice.ctx, direct, { type: 'grant', grant: { gid: conv.gid, b: 0, r: 1, key: next } })
+    await pollOnce(carol.ctx)
+    expect(carol.ctx.pendingGrants.size).toBe(1)
+    expect(groupConv(carol.ctx, ALICE_ID, conv.gid)).toBeNull()
+
+    // The roster replace lands: Carol accepts on her next poll.
+    const replaced = await alice.chain.replaceGroupDoc(conv.roster ?? { id: '', revision: 0 }, rosterHandle(conv.gid),
+      await encryptRoster(next, conv.gid, { b: 0, r: 1, name: 'Team', avatarRef: '', members: [ALICE_ID, BOB_ID, CAROL_ID], ended: false, epochLog: [] }))
+    expect(replaced.ok).toBe(true)
+    await pollOnce(carol.ctx)
+    expect(groupConv(carol.ctx, ALICE_ID, conv.gid)).not.toBeNull()
+    expect(carol.ctx.pendingGrants.size).toBe(0)
+  })
+
+  it('drops a pending grant after the stale window', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    const direct = await startedDirect(alice.ctx, CAROL_ID)
+    const key = conv.keys.get({ b: 0, r: 5 })
+    if (!key) throw new Error('no key')
+    await sendContent(alice.ctx, direct, { type: 'grant', grant: { gid: conv.gid, b: 0, r: 5, key } })
+    await pollOnce(carol.ctx)
+    expect(carol.ctx.pendingGrants.size).toBe(1)
+    ledger.time += STALE_WINDOW_MS + 1
+    await pollOnce(carol.ctx)
+    expect(carol.ctx.pendingGrants.size).toBe(0)
+  })
+})
+
+describe('membership changes', () => {
+  it('adds a member by ratchet: existing members step forward, the newcomer cannot read the past', async () => {
+    const { alice, bob, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await say(alice.ctx, conv, 'before carol')
+    await pollOnce(bob.ctx)
+
+    await addMember(alice.ctx, conv, CAROL_ID)
+    expect(currentEpoch(conv)).toEqual({ b: 0, r: 1 })
+    await say(alice.ctx, conv, 'after carol')
+
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    expect(currentEpoch(bobGroup)).toEqual({ b: 0, r: 1 })
+    expect(groupTexts(bobGroup)).toEqual(['before carol', 'after carol'])
+
+    await pollOnce(carol.ctx)
+    await pollOnce(carol.ctx)
+    const carolGroup = theGroup(carol.ctx, ALICE_ID, conv.gid)
+    expect(groupTexts(carolGroup)).toEqual(['after carol'])
+    expect(carolGroup.keys.get({ b: 0, r: 0 })).toBeNull()
+  })
+
+  it('removes a member with a keyring: others switch base, the removed member stops', async () => {
+    const { ledger, alice, bob, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    await pollOnce(carol.ctx)
+
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    expect(currentEpoch(conv)).toEqual({ b: 1, r: 0 })
+    expect(ledger.groupDocs).toHaveLength(2) // roster + keyring 1
+    await say(alice.ctx, conv, 'carol is gone')
+
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    expect(currentEpoch(bobGroup)).toEqual({ b: 1, r: 0 })
+    expect(has(members(bobGroup, BOB_ID), CAROL_ID)).toBe(false)
+    expect(groupTexts(bobGroup)).toEqual(['carol is gone'])
+
+    await pollOnce(carol.ctx)
+    const carolGroup = theGroup(carol.ctx, ALICE_ID, conv.gid)
+    expect(carolGroup.removed).toBe(true)
+    expect(groupTexts(carolGroup)).toEqual([])
+  })
+
+  it('drops a removed member old-base message dated after the keyring, but keeps a member one', async () => {
+    const { ledger, alice, bob, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    await pollOnce(carol.ctx)
+    const carolGroup = theGroup(carol.ctx, ALICE_ID, conv.gid)
+    await say(carol.ctx, carolGroup, 'before removal')
+    await pollOnce(bob.ctx)
+
+    const base0 = stream(conv, ALICE_ID, { b: 0, r: 0 })
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    ledger.tick()
+    // Neither Carol nor one of Alice's devices has seen the keyring yet; both write on base 0 after it.
+    markApplied(carol.ctx, carolGroup)
+    await say(carol.ctx, carolGroup, 'after removal')
+    if (!base0) throw new Error('no stream')
+    const { tag, body } = await encryptMessage({ streamKey: base0.key, senderId: ALICE_ID, w: weekOf(ledger.time), j: 0 }, { prev: null, content: { type: 'text', text: 'owner, old base' } })
+    await alice.chain.createMessage(tag, body)
+
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    expect(groupTexts(bobGroup).sort()).toEqual(['before removal', 'owner, old base'])
+  })
+
+  it('repairs a roster that trails the newest keyring before any other change (§6.5)', async () => {
+    const { alice, bob, carol, dave } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    // The roster replace after the removal fails, leaving the roster on base 0.
+    alice.chain.hook = (method) => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'network' } : null)
+    await expect(removeMember(alice.ctx, conv, CAROL_ID)).rejects.toThrow('network')
+    alice.chain.hook = null
+
+    // Next owner write: rebuild members from the keyring slots (Carol has none), then add Dave.
+    await addMember(alice.ctx, conv, DAVE_ID)
+    expect(currentEpoch(conv)).toEqual({ b: 1, r: 1 })
+    const roster = conv.lastRoster
+    expect(roster && has(roster.members, CAROL_ID)).toBe(false)
+    expect(roster && has(roster.members, BOB_ID) && has(roster.members, DAVE_ID)).toBe(true)
+
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    expect(currentEpoch(theGroup(bob.ctx, ALICE_ID, conv.gid))).toEqual({ b: 1, r: 1 })
+    await pollOnce(dave.ctx)
+    await pollOnce(dave.ctx)
+    expect(theGroup(dave.ctx, ALICE_ID, conv.gid).lastRoster?.name).toBe('Team')
+    await pollOnce(carol.ctx)
+    expect(theGroup(carol.ctx, ALICE_ID, conv.gid).removed).toBe(true)
+  })
+
+  it('never lets someone removed before they first polled join', async () => {
+    const { alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    await pollOnce(carol.ctx)
+    expect(groupConv(carol.ctx, ALICE_ID, conv.gid)).toBeNull()
+  })
+
+  it('builds every owner change on the current roster, even after another owner device changed it', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    const tablet = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await renameGroup(tablet.ctx, attachGroup(tablet.ctx, { ...conv.entry }), 'Renamed')
+    await addMember(alice.ctx, conv, CAROL_ID)
+    expect(conv.lastRoster?.name).toBe('Renamed')
+    expect(conv.lastRoster && has(conv.lastRoster.members, CAROL_ID)).toBe(true)
+  })
+
+  it('re-runs the owner loop when the roster replace is refused as stale (40106)', async () => {
+    const { alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    let refusals = 0
+    alice.chain.hook = (method) => {
+      if (method !== 'replaceGroupDoc' || refusals > 0) return null
+      refusals++
+      return { ok: false, failure: 'stale', error: 'has invalid revision code=40106' }
+    }
+    await renameGroup(alice.ctx, conv, 'Again')
+    expect(refusals).toBe(1)
+    expect(conv.lastRoster?.name).toBe('Again')
+  })
+
+  it('leave: the member sends 0x02 and the owner removes them on its next poll', async () => {
+    const { alice, bob, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    await pollOnce(carol.ctx)
+    await leaveGroup(carol.ctx, theGroup(carol.ctx, ALICE_ID, conv.gid))
+    await pollOnce(alice.ctx)
+    expect(alice.ctx.pendingLeaves.size).toBe(0)
+    expect(currentEpoch(conv)).toEqual({ b: 1, r: 0 })
+    expect(conv.lastRoster && has(conv.lastRoster.members, CAROL_ID)).toBe(false)
+    expect(conv.lastRoster && has(conv.lastRoster.members, BOB_ID)).toBe(true)
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    expect(currentEpoch(theGroup(bob.ctx, ALICE_ID, conv.gid))).toEqual({ b: 1, r: 0 })
+  })
+
+  it('rename and end: members see the new name, then the tombstone', async () => {
+    const { alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await pollOnce(bob.ctx)
+    await renameGroup(alice.ctx, conv, 'New name')
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    expect(bobGroup.lastRoster?.name).toBe('New name')
+    await endGroup(alice.ctx, conv)
+    await pollOnce(bob.ctx)
+    expect(bobGroup.ended).toBe(true)
+    await expect(say(bob.ctx, bobGroup, 'x')).rejects.toThrow(/no longer a member/)
+  })
+
+  it('resend keys: a member who lost the key recovers it from a fresh grant', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await addMember(alice.ctx, conv, CAROL_ID)
+    // Bob's grant was never seen (retention swept it); his device knows nothing.
+    const fresh = makeContext(ledger, BOB_ID, BOB_PRIV)
+    fresh.ctx.appJustOpened = true
+    await resendKeys(alice.ctx, conv, BOB_ID)
+    await pollOnce(fresh.ctx)
+    await pollOnce(fresh.ctx)
+    const group = theGroup(fresh.ctx, ALICE_ID, conv.gid)
+    expect(currentEpoch(group)).toEqual({ b: 0, r: 1 })
+  })
+})
+
+describe('owner group recovery', () => {
+  it('finds owned groups by probing gid_n until an empty batch, and never reuses n', async () => {
+    const { ledger, alice } = world()
+    await createGroup(alice.ctx, 'One', [BOB_ID])
+    await createGroup(alice.ctx, 'Two', [BOB_ID])
+    const fresh = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    fresh.ctx.store.state.nextGroupNumber = 0
+    expect(await recoverOwnedGroups(fresh.ctx)).toBe(2)
+    expect(fresh.ctx.store.state.nextGroupNumber).toBe(2)
+    const gid0 = deriveGroupId(fresh.ctx.me.selfRoot, 0)
+    const g0 = groupConv(fresh.ctx, ALICE_ID, gid0)
+    expect(g0?.entry.earliestKey).toEqual(deriveBaseKey(deriveGroupSecret(ALICE_PRIV, gid0), 0))
+
+    // A new group from a device that forgot n: the taken handles are skipped.
+    const other = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const { conv } = await createGroup(other.ctx, 'Three', [BOB_ID])
+    expect(conv.gid).toEqual(deriveGroupId(other.ctx.me.selfRoot, 2))
+  })
+
+  it('probes streams with the owner group key after recovery', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'One', [BOB_ID])
+    await say(alice.ctx, conv, 'hello')
+    const fresh = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await recoverOwnedGroups(fresh.ctx)
+    await pollOnce(fresh.ctx)
+    await pollOnce(fresh.ctx)
+    const g = theGroup(fresh.ctx, ALICE_ID, conv.gid)
+    expect(groupTexts(g)).toEqual(['hello'])
+    expect(stream(g, ALICE_ID, { b: 0, r: 0 })?.cur?.j).toBe(0)
+  })
+})
+
+describe('nonce clashes on owner writes', () => {
+  it('creates a group through nonce clashes on the roster and on a member\'s invite', async () => {
+    const { ledger, alice, bob, carol } = world()
+    let rosterClashes = 0
+    let inviteClashes = 0
+    alice.chain.hook = (method) => {
+      const clash = { ok: false as const, failure: 'nonce' as const, error: 'nonce already present at tip' }
+      if (method === 'createGroupDoc' && rosterClashes < 1) return (rosterClashes++, clash)
+      if (method === 'createInvite' && inviteClashes < 1) return (inviteClashes++, clash)
+      return null
+    }
+    const { conv, failed } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    expect(failed).toEqual([])
+    expect(ledger.groupDocs).toHaveLength(1)
+    expect(ledger.invites).toHaveLength(2)
+    await pollOnce(bob.ctx)
+    await pollOnce(carol.ctx)
+    expect(theGroup(bob.ctx, ALICE_ID, conv.gid).lastRoster?.name).toBe('Team')
+    expect(theGroup(carol.ctx, ALICE_ID, conv.gid).lastRoster?.name).toBe('Team')
+  })
+
+  it('removes a member through a nonce clash on the keyring and on the roster replace', async () => {
+    const { alice, bob, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    await pollOnce(carol.ctx)
+    const seen = new Set<string>()
+    alice.chain.hook = (method) => {
+      if ((method === 'createGroupDoc' || method === 'replaceGroupDoc') && !seen.has(method)) {
+        seen.add(method)
+        return { ok: false, failure: 'nonce', error: 'nonce already present at tip' }
+      }
+      return null
+    }
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    expect(seen).toEqual(new Set(['createGroupDoc', 'replaceGroupDoc']))
+    // Each clash was retried after a backoff (the owner loop alone would re-run at once, re-reading everything).
+    expect(alice.chain.sleeps).toHaveLength(2)
+    expect(currentEpoch(conv)).toEqual({ b: 1, r: 0 })
+    await pollOnce(carol.ctx)
+    expect(theGroup(carol.ctx, ALICE_ID, conv.gid).removed).toBe(true)
+  })
+})
+
+describe('joining is saved at once (§5.5)', () => {
+  it('saves the self-state when a grant is accepted, so a reload after removal still shows the group as removed', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    const before = ledger.selfStates.find((s) => bytesEqual(s.owner, CAROL_ID))?.revision ?? 0
+    await pollOnce(carol.ctx)
+    // No coalescing timer ran (manual scheduler): the join itself wrote the self-state.
+    const saved = ledger.selfStates.find((s) => bytesEqual(s.owner, CAROL_ID))
+    expect(saved?.revision ?? 0).toBeGreaterThan(before)
+
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    // Carol reloads (a fresh device state, same chain): the group comes back from the self-state, marked removed.
+    const reloaded = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    const group = groupConv(reloaded.ctx, ALICE_ID, conv.gid)
+    expect(group).not.toBeNull()
+    expect(group?.removed).toBe(true)
+  })
+
+  it('saves a re-add key at once, so a reload does not find the member removed again', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    await addMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    await pollOnce(carol.ctx)
+    expect(theGroup(carol.ctx, ALICE_ID, conv.gid).removed).toBe(false)
+
+    // Alice's sweep deletes her 1:1 messages (the grants among them): after a reload Carol has only
+    // her saved self-state to go on, so the re-add key must already be in it.
+    ledger.messages = ledger.messages.filter((m) => !bytesEqual(m.ownerId, ALICE_ID))
+    const reloaded = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    expect(groupConv(reloaded.ctx, ALICE_ID, conv.gid)?.removed).toBe(false)
+  })
+})
+
+describe('owner state after a failed removal', () => {
+  it('never sends on the old base right after a removal whose roster write was refused (review 3 #1)', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    // The keyring lands; the roster replace is refused for good (no retry).
+    alice.chain.hook = (method) => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'insufficient balance' } : null)
+    await expect(removeMember(alice.ctx, conv, CAROL_ID)).rejects.toThrow('insufficient balance')
+    alice.chain.hook = null
+    expect(ledger.groupDocs.some((d) => bytesEqual(d.handle, keyringHandle(conv.gid, 1)))).toBe(true)
+    // Within the freshness window: the send must re-read first and go out on base 1, never base 0.
+    const held = await sendContent(alice.ctx, conv, { type: 'text', text: 'after removal' })
+    expect(held.pointer.b).toBe(1)
+  })
+
+  it('marks the group stale whenever an owner write fails (review 3 #1)', async () => {
+    const { alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await applyGroups(alice.ctx, [conv])
+    alice.chain.hook = (method) => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'refused' } : null)
+    await expect(renameGroup(alice.ctx, conv, 'Renamed')).rejects.toThrow('refused')
+    expect(conv.appliedAt.local).toBe(-Infinity)
+  })
+})
+
+describe('leave path after a refused roster write', () => {
+  async function leftGroup() {
+    const w = world()
+    const { conv } = await createGroup(w.alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(w.bob.ctx)
+    await pollOnce(w.carol.ctx)
+    const bobGroup = theGroup(w.bob.ctx, ALICE_ID, conv.gid)
+    await leaveGroup(w.bob.ctx, bobGroup)
+    return { ...w, conv, bobGroup }
+  }
+  const refuseReplaces = (chain: { hook: unknown }, on: () => boolean) => {
+    chain.hook = (method: string) => (method === 'replaceGroupDoc' && on() ? { ok: false, failure: 'transport', error: 'transport collapsed' } : null)
+  }
+
+  it('completes the removal on the next poll after the post-keyring roster write was refused, and the leaver cannot read on (leave #1)', async () => {
+    const { ledger, alice, bob, carol, conv, bobGroup } = await leftGroup()
+    // Every roster replace fails during the owner's first poll (a transport outage): the keyring lands, the roster does not.
+    let outage = true
+    refuseReplaces(alice.chain, () => outage)
+    await pollOnce(alice.ctx)
+    expect(ledger.groupDocs.some((d) => bytesEqual(d.handle, keyringHandle(conv.gid, 1)))).toBe(true)
+    outage = false
+    // The next poll, on the normal cadence, finishes it.
+    ledger.time += 30_000
+    await pollOnce(alice.ctx)
+    expect(conv.lastRoster && has(conv.lastRoster.members, BOB_ID)).toBe(false)
+    expect(currentEpoch(conv)).toEqual({ b: 1, r: 0 })
+    await say(alice.ctx, conv, 'after bob left')
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    expect(bobGroup.removed).toBe(true)
+    expect(groupTexts(bobGroup)).not.toContain('after bob left')
+    await pollOnce(carol.ctx)
+    await pollOnce(carol.ctx)
+    expect(groupTexts(theGroup(carol.ctx, ALICE_ID, conv.gid))).toContain('after bob left')
+  })
+
+  it('repairs a partial removal (keyring landed, roster not) on the next poll of a reloaded owner device (leave #2)', async () => {
+    const { ledger, alice, conv } = await leftGroup()
+    refuseReplaces(alice.chain, () => true)
+    await pollOnce(alice.ctx)
+    alice.chain.hook = null
+    // The owner reloads: the queued leave is gone, and B's leave is on the old base.
+    const reloaded = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+    expect(g.lastRoster?.b).toBe(1)
+    expect(g.lastRoster && has(g.lastRoster.members, BOB_ID)).toBe(false)
+  })
+
+  it('backs off failing owner work on the poll cadence, doubling from 30 s to at most 5 min (leave #3)', async () => {
+    const { ledger, alice } = await leftGroup()
+    refuseReplaces(alice.chain, () => true)
+    const waits: number[] = []
+    for (let i = 0; i < 6; i++) {
+      await pollOnce(alice.ctx)
+      const backoff = Array.from(alice.ctx.ownerRepairs.values())[0]
+      if (!backoff) break
+      waits.push(backoff.retryAt - ledger.time)
+      ledger.time = backoff.retryAt
+    }
+    expect(waits).toEqual([30_000, 60_000, 120_000, 240_000, 300_000, 300_000])
+  })
+
+  it('bounds the writes a permanent refusal costs per poll, and waits out the shared backoff (leave review #1)', async () => {
+    const { ledger, alice } = await leftGroup()
+    let writes = 0
+    const counted = (method: string) => method === 'createGroupDoc' || method === 'replaceGroupDoc'
+    alice.chain.hook = (method: string) => {
+      if (!counted(method)) return null
+      writes++
+      return method === 'replaceGroupDoc' ? { ok: false, failure: 'transport', error: 'transport collapsed' } : null
+    }
+    await pollOnce(alice.ctx)
+    // The keyring, then the roster write and at most two retries; the repair step does not run again this poll.
+    expect(writes).toBeLessThanOrEqual(4)
+    writes = 0
+    await pollOnce(alice.ctx)
+    expect(writes).toBe(0)
+    ledger.time += 30_000
+    await pollOnce(alice.ctx)
+    expect(writes).toBeGreaterThan(0)
+    expect(writes).toBeLessThanOrEqual(3)
+  })
+
+  it('does not retry a refusal that is not a transport failure (leave review #1)', async () => {
+    const { alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    let writes = 0
+    alice.chain.hook = (method: string) => {
+      if (method !== 'replaceGroupDoc') return null
+      writes++
+      return { ok: false, failure: 'other', error: 'Identity has insufficient balance to pay for the state transition' }
+    }
+    await expect(renameGroup(alice.ctx, conv, 'Renamed')).rejects.toThrow('insufficient balance')
+    expect(writes).toBe(1)
+    expect(alice.chain.sleeps).toEqual([])
+  })
+
+  it('writes no repaired roster while a member key lookup is failing, and keeps the member (leave review #3)', async () => {
+    const { ledger, alice, conv } = await leftGroup()
+    refuseReplaces(alice.chain, () => true)
+    await pollOnce(alice.ctx)
+    alice.chain.hook = null
+    // A reloaded owner device whose lookup of Carol's key fails: repairing now would drop her.
+    const reloaded = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const lookup = reloaded.chain.encryptionKey.bind(reloaded.chain)
+    reloaded.chain.encryptionKey = async (id) => {
+      if (bytesEqual(id, CAROL_ID)) throw new Error('DAPI timeout')
+      return lookup(id)
+    }
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    const revision = () => ledger.groupDocs.find((d) => bytesEqual(d.handle, rosterHandle(conv.gid)))?.revision
+    const before = revision()
+    await pollOnce(reloaded.ctx)
+    expect(revision()).toBe(before)
+    reloaded.chain.encryptionKey = lookup
+    ledger.time += 5 * 60_000
+    await pollOnce(reloaded.ctx)
+    const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+    expect(g.lastRoster?.b).toBe(1)
+    expect(g.lastRoster && has(g.lastRoster.members, CAROL_ID)).toBe(true)
+    expect(g.lastRoster && has(g.lastRoster.members, BOB_ID)).toBe(false)
+  })
+
+  it('keeps the last roster in memory when the owner loop cannot re-read the group (leave review #4)', async () => {
+    const { alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    const roster = conv.lastRoster
+    const doc = conv.roster
+    alice.chain.groupDocs = async () => {
+      throw new Error('DAPI timeout')
+    }
+    await expect(renameGroup(alice.ctx, conv, 'Renamed')).rejects.toThrow()
+    expect(conv.lastRoster).toBe(roster)
+    expect(conv.roster).toBe(doc)
+  })
+
+  it('resets a group backoff once it no longer needs owner work (review 3 #3)', async () => {
+    const { ledger, alice, conv } = await leftGroup()
+    refuseReplaces(alice.chain, () => true)
+    await pollOnce(alice.ctx)
+    expect(alice.ctx.ownerRepairs.has(conv.key)).toBe(true)
+    alice.chain.hook = null
+    ledger.time += 30_000
+    await pollOnce(alice.ctx)
+    expect(conv.lastRoster && has(conv.lastRoster.members, BOB_ID)).toBe(false)
+    expect(alice.ctx.pendingLeaves.size).toBe(0)
+    expect(alice.ctx.ownerRepairs.has(conv.key)).toBe(false)
+    // A stale entry for a group that became healthy some other way is dropped too.
+    alice.ctx.ownerRepairs.set(conv.key, { retryAt: ledger.time + 60_000, failures: 3 })
+    await pollOnce(alice.ctx)
+    expect(alice.ctx.ownerRepairs.has(conv.key)).toBe(false)
+  })
+
+  it('never runs the repair step for ended groups or groups it does not own (leave review)', async () => {
+    const { ledger, alice, bob, conv } = await leftGroup()
+    refuseReplaces(alice.chain, () => true)
+    await pollOnce(alice.ctx)
+    alice.chain.hook = null
+    // Bob sees keyring 1 ahead of the roster too, but he is not the owner.
+    await pollOnce(bob.ctx)
+    let bobWrites = 0
+    bob.chain.hook = (method: string) => {
+      if (method === 'createGroupDoc' || method === 'replaceGroupDoc') bobWrites++
+      return null
+    }
+    ledger.time += 5 * 60_000
+    await pollOnce(bob.ctx)
+    expect(bobWrites).toBe(0)
+    // An ended owned group in the same partial state is left alone.
+    const ownerView = theGroup(alice.ctx, ALICE_ID, conv.gid)
+    ownerView.ended = true
+    let aliceWrites = 0
+    alice.chain.hook = (method: string) => {
+      if (method === 'createGroupDoc' || method === 'replaceGroupDoc') aliceWrites++
+      return null
+    }
+    await repairOwnedGroups(alice.ctx)
+    expect(aliceWrites).toBe(0)
+  })
+
+  it('retries a single transport failure inside the owner loop instead of failing the change (leave #4)', async () => {
+    const { alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    let refusals = 0
+    refuseReplaces(alice.chain, () => refusals++ < 1)
+    await renameGroup(alice.ctx, conv, 'Renamed')
+    expect(conv.lastRoster?.name).toBe('Renamed')
+  })
+})
+
+describe('follow-up review regressions', () => {
+  it('refuses a send after a re-add grant whose group re-apply failed (follow-up 2 #1)', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    const carolGroup = theGroup(carol.ctx, ALICE_ID, conv.gid)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    expect(carolGroup.removed).toBe(true)
+    await addMember(alice.ctx, conv, CAROL_ID)
+    // Carol's group queries fail once processGrant has cleared `removed` (its re-apply), and after.
+    const groupDocs = carol.chain.groupDocs.bind(carol.chain)
+    carol.chain.groupDocs = async (owner, handles) => {
+      if (!carolGroup.removed) throw new Error('DAPI timeout')
+      return groupDocs(owner, handles)
+    }
+    await pollOnce(carol.ctx)
+    expect(carolGroup.removed).toBe(false)
+    const before = ledger.messages.length
+    await expect(say(carol.ctx, carolGroup, 'x')).rejects.toThrow('Could not check the group')
+    expect(ledger.messages).toHaveLength(before)
+  })
+
+  it('does not count a group as applied, or seed it live, while a keyring could not be checked (follow-up 2 #2, #3)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    const fresh = makeContext(ledger, BOB_ID, BOB_PRIV)
+    await pollOnce(bob.ctx)
+    await fresh.ctx.store.load()
+    fresh.chain.encryptionKey = async () => {
+      throw new Error('DAPI timeout')
+    }
+    await attachSaved(fresh.ctx)
+    const g = theGroup(fresh.ctx, ALICE_ID, conv.gid)
+    expect(await applyGroups(fresh.ctx, [g])).toBe(false)
+    expect(g.live).toBe(false)
+    expect(g.appliedAt.local).toBe(-Infinity)
+  })
+
+  it('treats a group whose keyring walk hit the round cap as not fully applied (follow-up 2 #2)', async () => {
+    const { alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID, DAVE_ID])
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    // More keyrings than one apply follows: pretend every handle lookup returns a keyring for the next base.
+    const groupDocs = bob.chain.groupDocs.bind(bob.chain)
+    let fakeB = 1
+    bob.chain.groupDocs = async (owner, handles) => {
+      const docs = await groupDocs(owner, handles)
+      const k = buildKeyring({ ownerPrivateKey: ALICE_PRIV, ownerId: ALICE_ID, gid: conv.gid, b: fakeB, groupSecret: deriveGroupSecret(ALICE_PRIV, conv.gid), members: [{ id: BOB_ID, publicKey: getPublicKey(BOB_PRIV) }] })
+      const handle = keyringHandle(conv.gid, fakeB)
+      if (handles.some((h) => bytesEqual(h, handle))) {
+        fakeB++
+        docs.push({ id: `k${fakeB}`, ownerId: ALICE_ID, createdAt: 1, updatedAt: 1, handle, blob: k.blob, revision: 1 })
+      }
+      return docs
+    }
+    bobGroup.appliedAt = { local: -Infinity, wall: -Infinity }
+    expect(await applyGroups(bob.ctx, [bobGroup])).toBe(false)
+    expect(bobGroup.appliedAt.local).toBe(-Infinity)
+  })
+
+  it('stops retrying a grant whose anchor check cannot tell after the stale window (follow-up 2 #6)', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    await addMember(alice.ctx, conv, CAROL_ID)
+    carol.ctx.peerKeys.delete(hexId(ALICE_ID))
+    carol.chain.encryptionKey = async () => {
+      throw new Error('DAPI timeout')
+    }
+    await pollOnce(carol.ctx)
+    const readd = () => Array.from(carol.ctx.pendingGrants.values()).some((p) => p.b === 1)
+    expect(readd()).toBe(true)
+    ledger.time += STALE_WINDOW_MS + 1
+    await processGrants(carol.ctx)
+    expect(readd()).toBe(false)
+  })
+
+  it('does not record a roster it could not open (follow-up 2 #7)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    const seen = bobGroup.roster
+    const doc = ledger.groupDocs.find((d) => bytesEqual(d.handle, rosterHandle(conv.gid)))
+    if (!doc) throw new Error('no roster')
+    doc.blob = new Uint8Array(doc.blob.length).fill(9)
+    doc.revision += 1
+    await applyGroups(bob.ctx, [bobGroup])
+    expect(bobGroup.roster).toEqual(seen)
+  })
+
+  it('adopts a lost keyring that lands late during the rebuild (40105), and writes the roster under it', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    // Both broadcasts of the first keyring time out with nothing visible. The first lands just as the
+    // owner loop rebuilds, so the rebuilt keyring's create is refused 40105.
+    let lost: Uint8Array | null = null
+    let calls = 0
+    alice.chain.hook = (method, args) => {
+      if (method !== 'createGroupDoc') return null
+      calls++
+      if (calls <= 2) {
+        lost = args[1] as Uint8Array
+        return { ok: true, id: 'uncertain', confirmed: false }
+      }
+      if (calls === 3 && lost) {
+        const time = ledger.tick()
+        ledger.groupDocs.push({ id: ledger.id(), ownerId: ALICE_ID, createdAt: time, updatedAt: time, handle: args[0] as Uint8Array, blob: lost, revision: 1 })
+        return { ok: false, failure: 'duplicate', error: 'duplicate unique properties code=40105' }
+      }
+      return null
+    }
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    alice.chain.hook = null
+    expect(calls).toBe(3)
+    const keyrings = ledger.groupDocs.filter((d) => bytesEqual(d.handle, keyringHandle(conv.gid, 1)))
+    expect(keyrings).toHaveLength(1)
+    expect(lost && bytesEqual(keyrings[0].blob, lost)).toBe(true)
+    // The roster went out under the late keyring's key: Bob reads the new base without Carol.
+    expect(currentEpoch(conv)).toEqual({ b: 1, r: 0 })
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    expect(currentEpoch(bobGroup)).toEqual({ b: 1, r: 0 })
+    expect(bobGroup.lastRoster && has(bobGroup.lastRoster.members, CAROL_ID)).toBe(false)
+  })
+
+  it('refuses a send right after load when the first group apply failed (follow-up #1)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await pollOnce(bob.ctx)
+    // Bob reloads the page: the monotonic clock starts near 0, and the first group query fails.
+    const reloaded = makeContext(ledger, BOB_ID, BOB_PRIV)
+    // Both clocks near 0: a never-applied group must not read as applied at time 0.
+    reloaded.ctx.clock = () => 5
+    reloaded.ctx.wallClock = () => 5
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    reloaded.chain.groupDocs = async () => {
+      throw new Error('DAPI timeout')
+    }
+    const before = ledger.messages.length
+    await expect(say(reloaded.ctx, theGroup(reloaded.ctx, ALICE_ID, conv.gid), 'x')).rejects.toThrow('Could not check the group')
+    expect(ledger.messages).toHaveLength(before)
+  })
+
+  it('refuses a send when the monotonic clock paused (system sleep) but wall time moved on (follow-up #2)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    let local = 1_000
+    let wall = 1_790_000_000_000
+    bob.ctx.clock = () => local
+    bob.ctx.wallClock = () => wall
+    await pollOnce(bob.ctx)
+    bob.chain.groupDocs = async () => {
+      throw new Error('DAPI timeout')
+    }
+    wall += 60_000
+    const before = ledger.messages.length
+    await expect(say(bob.ctx, theGroup(bob.ctx, ALICE_ID, conv.gid), 'x')).rejects.toThrow('Could not check the group')
+    expect(ledger.messages).toHaveLength(before)
+    // And the other way round: wall time stuck (or set back), the monotonic clock moved on.
+    wall -= 3_600_000
+    local += 60_000
+    await expect(say(bob.ctx, theGroup(bob.ctx, ALICE_ID, conv.gid), 'x')).rejects.toThrow('Could not check the group')
+    expect(ledger.messages).toHaveLength(before)
+  })
+
+  it('refuses a send when a newer keyring cannot be checked because the owner key lookup failed (follow-up #3)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    // Keyring 1 lands but the roster replace fails: the roster still opens on base 0 and lists Carol.
+    alice.chain.hook = (method) => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'network' } : null)
+    await expect(removeMember(alice.ctx, conv, CAROL_ID)).rejects.toThrow('network')
+    alice.chain.hook = null
+    const reloaded = makeContext(ledger, BOB_ID, BOB_PRIV)
+    reloaded.chain.encryptionKey = async () => {
+      throw new Error('DAPI timeout')
+    }
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+    const before = ledger.messages.length
+    await expect(say(reloaded.ctx, g, 'secret')).rejects.toThrow('Could not check the group')
+    expect(ledger.messages).toHaveLength(before)
+    expect(g.removed).toBe(false)
+  })
+
+  it('keeps a re-add grant pending when the anchor check cannot tell, and applies it later (follow-up #4)', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await addMember(alice.ctx, conv, CAROL_ID)
+    const reloaded = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+    await applyGroups(reloaded.ctx, [g])
+    expect(g.removed).toBe(true)
+    await pollStreams(reloaded.ctx)
+    const readd = () => Array.from(reloaded.ctx.pendingGrants.values()).some((p) => p.b === 1)
+    expect(readd()).toBe(true)
+    // The owner key lookup fails while the grant is checked: nothing can be concluded yet.
+    const lookup = reloaded.chain.encryptionKey.bind(reloaded.chain)
+    reloaded.ctx.peerKeys.delete(hexId(ALICE_ID))
+    reloaded.chain.encryptionKey = async () => {
+      throw new Error('DAPI timeout')
+    }
+    await processGrants(reloaded.ctx)
+    expect(readd()).toBe(true)
+    expect(reloaded.ctx.store.groups()[0].earliestEpoch).toEqual({ b: 0, r: 0 })
+    // The lookup recovers: the re-add key replaces the cut-off anchor.
+    reloaded.chain.encryptionKey = lookup
+    await processGrants(reloaded.ctx)
+    expect(readd()).toBe(false)
+    expect(reloaded.ctx.store.groups()[0].earliestEpoch).toEqual({ b: 1, r: 1 })
+    expect(g.removed).toBe(false)
+  })
+})
+
+describe('review regressions', () => {
+  it('reads back a rebroadcast refused as "other" and adopts the first broadcast that landed (validator nit)', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    let calls = 0
+    alice.chain.hook = (method, args) => {
+      if (method !== 'replaceGroupDoc') return null
+      calls++
+      if (calls === 1) return { ok: true, id: 'uncertain', confirmed: false }
+      // The first broadcast lands now; the rebroadcast is refused with an unclassified error.
+      const doc = ledger.groupDocs.find((d) => bytesEqual(d.handle, rosterHandle(conv.gid)))
+      if (doc) {
+        doc.blob = args[2] as Uint8Array
+        doc.revision += 1
+      }
+      return { ok: false, failure: 'other', error: 'state transition already in chain' }
+    }
+    await renameGroup(alice.ctx, conv, 'Landed')
+    expect(calls).toBe(2)
+    expect(conv.lastRoster?.name).toBe('Landed')
+  })
+
+  it('reports success when an uncertain end lands late (validator nit)', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    // Both broadcasts of the tombstone time out with nothing visible; the first lands just after.
+    let pending: Uint8Array | null = null
+    let uncertain = 0
+    alice.chain.hook = (method, args) => {
+      if (method !== 'replaceGroupDoc') return null
+      if (uncertain < 2) {
+        uncertain++
+        pending = args[2] as Uint8Array
+        return { ok: true, id: 'uncertain', confirmed: false }
+      }
+      return null
+    }
+    const groupDocs = alice.chain.groupDocs.bind(alice.chain)
+    let reads = 0
+    alice.chain.groupDocs = async (owner, handles) => {
+      // The second read back still sees nothing; the late landing shows up at the owner loop's re-read.
+      if (uncertain === 2 && pending && ++reads >= 2) {
+        const doc = ledger.groupDocs.find((d) => bytesEqual(d.handle, rosterHandle(conv.gid)))
+        if (doc && !bytesEqual(doc.blob, pending)) {
+          doc.blob = pending
+          doc.revision += 1
+        }
+      }
+      return groupDocs(owner, handles)
+    }
+    await endGroup(alice.ctx, conv)
+    expect(conv.ended).toBe(true)
+  })
+
+  it('logs every base a roster repair skips over (validator nit)', async () => {
+    const { alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID, DAVE_ID])
+    // Two removals whose roster replaces both fail: keyrings 1 and 2 exist, the roster is on base 0.
+    alice.chain.hook = (method) => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'network' } : null)
+    await expect(removeMember(alice.ctx, conv, CAROL_ID)).rejects.toThrow('network')
+    alice.chain.hook = null
+    // Another owner device, also without a roster replace, removes Dave at base 2.
+    const k2 = buildKeyring({ ownerPrivateKey: ALICE_PRIV, ownerId: ALICE_ID, gid: conv.gid, b: 2, groupSecret: deriveGroupSecret(ALICE_PRIV, conv.gid), members: [{ id: BOB_ID, publicKey: getPublicKey(BOB_PRIV) }] })
+    expect((await alice.chain.createGroupDoc(keyringHandle(conv.gid, 2), k2.blob)).ok).toBe(true)
+    await renameGroup(alice.ctx, conv, 'Repaired')
+    expect(conv.lastRoster?.epochLog.map((e) => [e.b, e.r])).toEqual([[0, 0], [1, 0], [2, 0]])
+  })
+
+  it('does not mark a member removed when the owner key lookup failed (validator #4)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    const reloaded = makeContext(ledger, BOB_ID, BOB_PRIV)
+    const lookup = reloaded.chain.encryptionKey.bind(reloaded.chain)
+    reloaded.chain.encryptionKey = async () => {
+      throw new Error('DAPI timeout')
+    }
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+    expect(g.removed).toBe(false)
+    reloaded.chain.encryptionKey = lookup
+    await pollOnce(reloaded.ctx)
+    expect(g.removed).toBe(false)
+    expect(currentEpoch(g)).toEqual({ b: 1, r: 0 })
+  })
+
+  it('keeps the old anchor when a resend arrives while the member only looked removed (validator #4)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    const reloaded = makeContext(ledger, BOB_ID, BOB_PRIV)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+    // A local flag says removed (however it got there: here, set directly), and applying the group
+    // cannot correct it (removed groups are skipped), but Bob's anchor still reaches base 1.
+    g.removed = true
+    const joinedAt = reloaded.ctx.store.groups()[0].anchorChangedAt
+    await resendKeys(alice.ctx, conv, BOB_ID)
+    await pollOnce(reloaded.ctx)
+    expect(reloaded.ctx.store.groups()[0].earliestEpoch).toEqual({ b: 0, r: 0 })
+    expect(reloaded.ctx.store.groups()[0].anchorChangedAt).toBe(joinedAt)
+    expect(g.removed).toBe(false)
+  })
+
+  it('never adopts a keyring create that stays invisible after two uncertain broadcasts (validator #1)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    // Both broadcasts of the first keyring time out and neither lands.
+    let lost = 0
+    alice.chain.hook = (method) => {
+      if (method !== 'createGroupDoc' || lost >= 2) return null
+      lost++
+      return { ok: true, id: 'uncertain', confirmed: false }
+    }
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    alice.chain.hook = null
+    expect(lost).toBe(2)
+    // The owner loop re-ran with a new keyring: the one on chain is the one the roster is written under.
+    const keyring = ledger.groupDocs.find((d) => bytesEqual(d.handle, keyringHandle(conv.gid, 1)))
+    expect(keyring && conv.keyrings.get(1) && bytesEqual(keyring.blob, conv.keyrings.get(1) as Uint8Array)).toBe(true)
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    expect(currentEpoch(bobGroup)).toEqual({ b: 1, r: 0 })
+    expect(bobGroup.lastRoster && has(bobGroup.lastRoster.members, CAROL_ID)).toBe(false)
+  })
+
+  it('measures group freshness on the local clock, not the chain block time (validator #3)', async () => {
+    const { alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    let local = 0
+    bob.ctx.clock = () => local
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    const frozen = bob.chain.now()
+    // Alice removes Carol. The chain's block time does not move (Bob read nothing newer), but a
+    // minute passes on Bob's device: the send must re-read the group first.
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    bob.chain.now = () => frozen
+    local += 60_000
+    await say(bob.ctx, bobGroup, 'after removal')
+    expect(currentEpoch(bobGroup)).toEqual({ b: 1, r: 0 })
+  })
+
+  it('finds old-epoch history on a fresh device when nobody has written in the new epoch yet (review #5)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await pollOnce(bob.ctx)
+    await say(alice.ctx, conv, 'one')
+    await say(bob.ctx, theGroup(bob.ctx, ALICE_ID, conv.gid), 'two')
+    ledger.time += 2 * 604_800_000
+    await addMember(alice.ctx, conv, CAROL_ID)
+    expect(conv.lastRoster?.epochLog.map((e) => [e.b, e.r])).toEqual([[0, 0], [0, 1]])
+
+    // Bob's fresh device: the saved (0, 0) key, a roster at (0, 1), and nothing written on (0, 1).
+    const tablet = makeContext(ledger, BOB_ID, BOB_PRIV)
+    await tablet.ctx.store.load()
+    await attachSaved(tablet.ctx)
+    await pollOnce(tablet.ctx)
+    const g = theGroup(tablet.ctx, ALICE_ID, conv.gid)
+    expect(currentEpoch(g)).toEqual({ b: 0, r: 1 })
+    expect(groupTexts(g).sort()).toEqual(['one', 'two'])
+  })
+
+  it('links the first send after an epoch change back to my message on the old epoch (review #5)', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await say(alice.ctx, conv, 'before')
+    const w = weekOf(ledger.time)
+    ledger.time += 604_800_000
+    await addMember(alice.ctx, conv, CAROL_ID)
+    // A fresh owner device sends first on (0, 1): its prev must point at 'before' on (0, 0).
+    const tablet = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await tablet.ctx.store.load()
+    await attachSaved(tablet.ctx)
+    const g = theGroup(tablet.ctx, ALICE_ID, conv.gid)
+    await applyGroups(tablet.ctx, [g])
+    const held = await sendContent(tablet.ctx, g, { type: 'text', text: 'after' })
+    expect(held.pointer).toMatchObject({ b: 0, r: 1 })
+    expect(held.prev).toEqual({ w, b: 0, r: 0, j: 0 })
+  })
+
+  it('keeps an ended group history readable after a reload, with sending refused (review #6)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    await say(alice.ctx, conv, 'from alice')
+    await say(bob.ctx, bobGroup, 'from bob')
+    await endGroup(alice.ctx, conv)
+    // The tombstone keeps the member list: only `ended` changes.
+    expect(conv.lastRoster && has(conv.lastRoster.members, BOB_ID)).toBe(true)
+
+    for (const [id, priv] of [[BOB_ID, BOB_PRIV], [ALICE_ID, ALICE_PRIV]] as const) {
+      const reloaded = makeContext(ledger, id, priv)
+      await reloaded.ctx.store.load()
+      await attachSaved(reloaded.ctx)
+      await pollOnce(reloaded.ctx)
+      const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+      expect(g.ended).toBe(true)
+      // Opening the thread runs history discovery even though the group is no longer polled live.
+      g.open = true
+      g.deepProbe = true
+      await pollStreams(reloaded.ctx, g)
+      expect(groupTexts(g).sort()).toEqual(['from alice', 'from bob'])
+      await expect(say(reloaded.ctx, g, 'x')).rejects.toBeInstanceOf(SendError)
+      // Closed again: an ended group is not polled in the background.
+      g.open = false
+      expect(collectWants(reloaded.ctx, g).filter((w) => w.kind !== 'stale')).toEqual([])
+    }
+  })
+
+  it('verifies an uncertain roster replace and re-applies the change when a competing write won (review #3)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    const k01 = conv.keys.get({ b: 0, r: 1 })
+    if (!k01) throw new Error('no key')
+    // Alice's tablet adds Carol at (0, 1) in the same instant her phone adds Dave at (0, 1): the
+    // tablet's replace wins, and the phone's broadcast is refused on chain but only times out here.
+    const tabletRoster = await encryptRoster(k01, conv.gid, { b: 0, r: 1, name: 'Team', avatarRef: '', members: [ALICE_ID, BOB_ID, CAROL_ID], ended: false, epochLog: [] })
+    let raced = false
+    alice.chain.hook = (method) => {
+      if (method !== 'replaceGroupDoc' || raced) return null
+      raced = true
+      const doc = ledger.groupDocs.find((d) => bytesEqual(d.handle, rosterHandle(conv.gid)))
+      if (!doc) throw new Error('no roster')
+      doc.blob = tabletRoster
+      doc.revision += 1
+      return { ok: true, id: doc.id, confirmed: false }
+    }
+    await addMember(alice.ctx, conv, DAVE_ID)
+    alice.chain.hook = null
+    expect(raced).toBe(true)
+    // The phone re-ran the owner loop on the winning roster: Carol stays, Dave is added at (0, 2).
+    expect(currentEpoch(conv)).toEqual({ b: 0, r: 2 })
+    expect(conv.lastRoster && has(conv.lastRoster.members, CAROL_ID) && has(conv.lastRoster.members, DAVE_ID)).toBe(true)
+    await pollOnce(alice.ctx)
+    expect(conv.lastRoster && has(conv.lastRoster.members, CAROL_ID) && has(conv.lastRoster.members, DAVE_ID)).toBe(true)
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    expect(currentEpoch(bobGroup)).toEqual({ b: 0, r: 2 })
+    expect(has(members(bobGroup, BOB_ID), DAVE_ID) && has(members(bobGroup, BOB_ID), CAROL_ID)).toBe(true)
+  })
+
+  it('re-reads a roster whose id and revision match but whose content does not (review #3)', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    const k00 = conv.keys.get({ b: 0, r: 0 })
+    if (!k00) throw new Error('no key')
+    // Another owner device's roster sits at the same id and revision as this device's cached one.
+    const doc = ledger.groupDocs.find((d) => bytesEqual(d.handle, rosterHandle(conv.gid)))
+    if (!doc) throw new Error('no roster')
+    doc.blob = await encryptRoster(k00, conv.gid, { b: 0, r: 0, name: 'Elsewhere', avatarRef: '', members: [ALICE_ID, BOB_ID], ended: false, epochLog: [] })
+    await pollOnce(alice.ctx)
+    expect(conv.lastRoster?.name).toBe('Elsewhere')
+  })
+
+  it('adopts an uncertain roster replace that did land without writing it again', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    alice.chain.unconfirmed = 1
+    await renameGroup(alice.ctx, conv, 'Landed')
+    expect(ledger.groupDocs[0].revision).toBe(2)
+    expect(conv.roster?.revision).toBe(2)
+    expect(conv.lastRoster?.name).toBe('Landed')
+  })
+
+  it('refuses a group send when the required freshness query fails (review #2)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    // Alice removes Carol; Bob's last apply is older than the freshness window and his group query now fails.
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    ledger.time += 60_000
+    const groupDocs = bob.chain.groupDocs.bind(bob.chain)
+    bob.chain.groupDocs = async () => {
+      throw new Error('DAPI timeout')
+    }
+    const before = ledger.messages.length
+    await expect(say(bob.ctx, bobGroup, 'secret')).rejects.toBeInstanceOf(SendError)
+    expect(ledger.messages).toHaveLength(before)
+    expect(currentEpoch(bobGroup)).toEqual({ b: 0, r: 0 })
+    // Once the query works again the same send goes out, on the new base.
+    bob.chain.groupDocs = groupDocs
+    await say(bob.ctx, bobGroup, 'secret')
+    expect(currentEpoch(bobGroup)).toEqual({ b: 1, r: 0 })
+  })
+
+  it('does not remove a re-added member because of the leave they sent before', async () => {
+    const { alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    await leaveGroup(carol.ctx, theGroup(carol.ctx, ALICE_ID, conv.gid))
+    await pollOnce(alice.ctx) // removes Carol: base 1
+    await addMember(alice.ctx, conv, CAROL_ID) // Carol is back on base 1
+    // A fresh owner device reaches Carol's old leave (base 0) through history.
+    const tablet = makeContext(alice.chain.ledger, ALICE_ID, ALICE_PRIV)
+    await tablet.ctx.store.load()
+    await attachSaved(tablet.ctx)
+    const g = theGroup(tablet.ctx, ALICE_ID, conv.gid)
+    g.open = true
+    g.deepProbe = true
+    await pollOnce(tablet.ctx)
+    // Carol's old leave is held (history), but it is on base 0, so it queues nothing.
+    await backfill(tablet.ctx, g, CAROL_ID, { w: weekOf(alice.chain.ledger.time), b: 0, r: 0, j: 0 })
+    expect(timeline(g).some((m) => m.content.type === 'leave')).toBe(true)
+    await pollOnce(tablet.ctx)
+    expect(tablet.ctx.pendingLeaves.size).toBe(0)
+    expect(has(members(g, ALICE_ID), CAROL_ID)).toBe(true)
+  })
+
+  it('keeps the re-add key when an older device saves over it (review #7)', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    // Carol's laptop loads the state with the key from her first join.
+    const laptop = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await laptop.ctx.store.load()
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    await addMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    expect(theGroup(carol.ctx, ALICE_ID, conv.gid).removed).toBe(false)
+    // The laptop saves an edit: refused as stale, it merges with the phone's state and saves again.
+    ledger.tick()
+    const entry = laptop.ctx.store.groups()[0]
+    laptop.ctx.store.touch(entry, { readAt: ledger.time })
+    expect(await laptop.ctx.store.flush()).toBe(true)
+
+    ledger.messages = ledger.messages.filter((m) => !bytesEqual(m.ownerId, ALICE_ID))
+    const reloaded = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    expect(groupConv(reloaded.ctx, ALICE_ID, conv.gid)?.removed).toBe(false)
+  })
+
+  it('keeps a re-added member in the group after a reload', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    expect(theGroup(carol.ctx, ALICE_ID, conv.gid).removed).toBe(true)
+    await addMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    expect(theGroup(carol.ctx, ALICE_ID, conv.gid).removed).toBe(false)
+    await carol.ctx.store.flush()
+
+    // Carol reloads: the saved entry must reach the new base without the (possibly swept) grant.
+    const reloaded = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await reloaded.ctx.store.load()
+    for (const entry of reloaded.ctx.store.groups()) attachGroup(reloaded.ctx, entry)
+    ledger.messages = ledger.messages.filter((m) => !bytesEqual(m.ownerId, ALICE_ID))
+    await pollOnce(reloaded.ctx)
+    const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+    expect(g.removed).toBe(false)
+    expect(currentEpoch(g)).toEqual({ b: 1, r: 1 })
+  })
+
+  it('writes one self-state save when creating a group with several new contacts', async () => {
+    const { ledger, alice } = world()
+    let saves = 0
+    const create = alice.chain.createSelfState.bind(alice.chain)
+    const replace = alice.chain.replaceSelfState.bind(alice.chain)
+    alice.chain.createSelfState = async (fields) => { saves++; return create(fields) }
+    alice.chain.replaceSelfState = async (ref, fields) => { saves++; return replace(ref, fields) }
+    await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID, DAVE_ID])
+    expect(ledger.invites).toHaveLength(3)
+    expect(saves).toBe(1)
+  })
+})
+
+describe('review 4 regressions (728bd4e5)', () => {
+  /** Every group key `ctx` was handed in a grant, on any 1:1. */
+  const grantKeysHeld = (ctx: DmContext) =>
+    Array.from(ctx.convs.values()).flatMap((c) => timeline(c).flatMap((m) => (m.content.type === 'grant' ? [m.content.grant.key] : [])))
+
+  it('discloses no key for an addition whose roster write was refused, so a later add cannot leak to them (review 4 #1)', async () => {
+    const { alice, bob, carol, dave } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await pollOnce(bob.ctx)
+    // Adding Carol: the roster replace is refused for good.
+    alice.chain.hook = (method) => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'insufficient balance' } : null)
+    await expect(addMember(alice.ctx, conv, CAROL_ID)).rejects.toThrow('insufficient balance')
+    alice.chain.hook = null
+    await pollOnce(carol.ctx)
+    expect(grantKeysHeld(carol.ctx)).toEqual([])
+
+    // Adding Dave succeeds at the epoch Carol's abandoned addition would have used.
+    await addMember(alice.ctx, conv, DAVE_ID)
+    await say(alice.ctx, conv, 'for members only')
+    await pollOnce(carol.ctx)
+    await pollOnce(carol.ctx)
+    const live = conv.keys.get(currentEpoch(conv))
+    expect(grantKeysHeld(carol.ctx).some((key) => !!live && bytesEqual(key, live))).toBe(false)
+    expect(groupConv(carol.ctx, ALICE_ID, conv.gid)).toBeNull()
+    await pollOnce(dave.ctx)
+    await pollOnce(dave.ctx)
+    expect(groupTexts(theGroup(dave.ctx, ALICE_ID, conv.gid))).toEqual(['for members only'])
+  })
+
+  it('commits the member before sending the key, and a failed grant is recovered by Resend keys (review 4 #1)', async () => {
+    const { alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await startedDirect(alice.ctx, CAROL_ID)
+    alice.chain.hook = (method) => (method === 'createMessage' ? { ok: false, failure: 'other', error: 'insufficient balance' } : null)
+    await expect(addMember(alice.ctx, conv, CAROL_ID)).rejects.toThrow(/Resend keys/)
+    alice.chain.hook = null
+    expect(conv.lastRoster && has(conv.lastRoster.members, CAROL_ID)).toBe(true)
+    await resendKeys(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    expect(currentEpoch(theGroup(carol.ctx, ALICE_ID, conv.gid))).toEqual({ b: 0, r: 1 })
+  })
+
+  it('sends the key when an add is tried again after its grant failed (review 4 #1)', async () => {
+    const { alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await startedDirect(alice.ctx, CAROL_ID)
+    alice.chain.hook = (method) => (method === 'createMessage' ? { ok: false, failure: 'other', error: 'insufficient balance' } : null)
+    await expect(addMember(alice.ctx, conv, CAROL_ID)).rejects.toThrow(/Resend keys/)
+    alice.chain.hook = null
+    await addMember(alice.ctx, conv, CAROL_ID)
+    expect(currentEpoch(conv)).toEqual({ b: 0, r: 1 }) // no second roster write
+    await pollOnce(carol.ctx)
+    expect(currentEpoch(theGroup(carol.ctx, ALICE_ID, conv.gid))).toEqual({ b: 0, r: 1 })
+  })
+
+  it('moves the live epoch to a rejoin grant across several removals (review 4 #2)', async () => {
+    const { alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(bob.ctx)
+    await removeMember(alice.ctx, conv, BOB_ID) // base 1
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    expect(bobGroup.removed).toBe(true)
+    await removeMember(alice.ctx, conv, CAROL_ID) // base 2
+    await addMember(alice.ctx, conv, BOB_ID) // Bob is back at (2, 1)
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    expect(bobGroup.removed).toBe(false)
+    expect(currentEpoch(bobGroup)).toEqual({ b: 2, r: 1 })
+    expect(bobGroup.entry.earliestEpoch).toEqual({ b: 2, r: 1 })
+    await say(alice.ctx, conv, 'welcome back')
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    expect(bobGroup.removed).toBe(false)
+    expect(groupTexts(bobGroup)).toContain('welcome back')
+  })
+
+  it('loads a rejoin anchor merged from another device into an attached group (review 4 #3)', async () => {
+    const { ledger, alice, carol } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(carol.ctx)
+    // Carol's laptop has the group attached from the saved state.
+    const laptop = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    await laptop.ctx.store.load()
+    await attachSaved(laptop.ctx)
+    await pollOnce(laptop.ctx)
+    const laptopGroup = theGroup(laptop.ctx, ALICE_ID, conv.gid)
+
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(laptop.ctx)
+    expect(laptopGroup.removed).toBe(true)
+    // The phone sees the re-add and saves the new anchor; the grants are swept before the laptop looks.
+    await pollOnce(carol.ctx)
+    await addMember(alice.ctx, conv, CAROL_ID)
+    await pollOnce(carol.ctx)
+    expect(theGroup(carol.ctx, ALICE_ID, conv.gid).removed).toBe(false)
+    ledger.messages = ledger.messages.filter((m) => !bytesEqual(m.ownerId, ALICE_ID))
+
+    // The laptop picks up the phone's save (the engine resyncs with attachSaved after a merge).
+    expect(await laptop.ctx.store.refresh()).toBe(true)
+    await attachSaved(laptop.ctx)
+    expect(theGroup(laptop.ctx, ALICE_ID, conv.gid)).toBe(laptopGroup)
+    await pollOnce(laptop.ctx)
+    expect(laptopGroup.removed).toBe(false)
+    expect(currentEpoch(laptopGroup)).toEqual({ b: 1, r: 1 })
+  })
+
+  it('retries a history drain that failed instead of marking the old epoch probed (review 4 #4)', async () => {
+    const { ledger, alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    await pollOnce(bob.ctx)
+    await say(alice.ctx, conv, 'one')
+    await say(alice.ctx, conv, 'two')
+    await addMember(alice.ctx, conv, CAROL_ID) // nothing is written on (0, 1)
+
+    const tablet = makeContext(ledger, BOB_ID, BOB_PRIV)
+    await tablet.ctx.store.load()
+    await attachSaved(tablet.ctx)
+    const g = theGroup(tablet.ctx, ALICE_ID, conv.gid)
+    await applyGroups(tablet.ctx, [g])
+    // The probe finds 'one'; the drain's next page fails once.
+    const read = tablet.chain.messagesByTags.bind(tablet.chain)
+    let calls = 0
+    tablet.chain.messagesByTags = async (tags) => {
+      if (++calls === 2) throw new Error('DAPI timeout')
+      return read(tags)
+    }
+    await pollStreams(tablet.ctx, g)
+    expect(currentEpoch(g)).toEqual({ b: 0, r: 1 })
+    expect(groupTexts(g)).toEqual(['one'])
+    await pollStreams(tablet.ctx, g)
+    await pollStreams(tablet.ctx, g)
+    expect(groupTexts(g)).toEqual(['one', 'two'])
+  })
+})
