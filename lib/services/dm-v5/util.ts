@@ -126,6 +126,12 @@ export class EpochKeys {
     return known ? { b, r: known.r, key: known.key } : null
   }
 
+  /** The lowest known step of the lowest base at or after `b`. */
+  lowestFrom(b: number): (Epoch & { key: Uint8Array }) | null {
+    const bases = Array.from(this.bases.keys()).filter((base) => base >= b)
+    return bases.length > 0 ? this.lowest(Math.min(...bases)) : null
+  }
+
   get(epoch: Epoch): Uint8Array | null {
     const known = this.bases.get(epoch.b)
     if (!known || epoch.r < known.r) return null

@@ -33,9 +33,10 @@ export type GrantVerdict =
  * `$ownerId == streamSender` and opens it with `openRoster` from the granted
  * key (after applying any newer keyrings it unwraps); this checks the rest.
  *
- * `roster-unreadable` is often transient: the owner writes the grant first and
- * replaces the roster right after (§6.4), so a member polling in between sees
- * the old roster. Keep such a grant and re-check it on later polls.
+ * `roster-unreadable` can be transient: the owner replaces the roster before
+ * sending the grant (§6.4), but the node a member reads from can lag behind
+ * and still serve the old roster. Keep such a grant and re-check it on later
+ * polls.
  */
 export function checkGrant(check: GrantCheck): GrantVerdict {
   if (bytesEqual(check.streamSender, check.memberId)) return { accepted: false, reason: 'own-stream' }

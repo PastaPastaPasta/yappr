@@ -347,9 +347,6 @@ export async function fetchWants(ctx: DmContext, wants: Want[]): Promise<void> {
   const byTag = new Map<string, Want>()
   for (const want of wants) byTag.set(hexId(messageTag(want.st.key, want.w, want.j)), want)
   const docs = await ctx.chain.messagesByTags(Array.from(byTag.keys()).map((hex) => hexToBytes(hex)))
-  for (const { st, historyFloor } of wants) {
-    if (historyFloor !== undefined && (st.historyFrom === null || historyFloor < st.historyFrom)) st.historyFrom = historyFloor
-  }
 
   // A document at a wanted tag from anyone but the stream's sender is a squat (§6.1): never a
   // message, but the slot is taken and the sender has moved on to j + 1, so it counts as a hit
@@ -361,6 +358,7 @@ export async function fetchWants(ctx: DmContext, wants: Want[]): Promise<void> {
   }
   const hitWants = new Set(hitList.map((hit) => hit.want))
   const hits = groupBy(hitList, (hit) => hit.want.st)
+  const failed = new Set<StreamState>()
 
   for (const [st, list] of Array.from(hits.entries())) {
     list.sort((a, b) => byWeekThenIndex(a.want, b.want))
@@ -369,9 +367,16 @@ export async function fetchWants(ctx: DmContext, wants: Want[]): Promise<void> {
         const last = await drain(ctx, want.conv, st, want.w, want.j, doc)
         advance(ctx, st, want, last)
       } catch (error) {
+        failed.add(st)
         logger.warn('DM v5: draining a stream failed:', error)
       }
     }
+  }
+
+  // A history probe counts as done only once its hits drained: a stream whose drain failed is probed again.
+  for (const { st, historyFloor } of wants) {
+    if (historyFloor === undefined || failed.has(st)) continue
+    if (st.historyFrom === null || historyFloor < st.historyFrom) st.historyFrom = historyFloor
   }
 
   // A resume probe that missed (the message was swept, or the cache is stale): fall back to the week scan.

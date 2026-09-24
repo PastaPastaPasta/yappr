@@ -159,6 +159,14 @@ export function newGroupConv(entry: GroupConversation, secret: Uint8Array | null
   }
 }
 
+/**
+ * Forget the last apply: the next send re-reads the group first. Any change to
+ * a group's keys, epoch or removed flag outside a full apply calls this.
+ */
+export function markStale(conv: GroupConv): void {
+  conv.appliedAt = { local: -Infinity, wall: -Infinity }
+}
+
 export function currentEpoch(conv: Conv): Epoch {
   return conv.kind === 'direct' ? DIRECT_EPOCH : conv.epoch
 }

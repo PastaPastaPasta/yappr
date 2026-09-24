@@ -25,14 +25,14 @@ import {
 } from '@/lib/dm/group'
 import type { Epoch, GroupConversation, IdentityId, KeyringMember, RosterContent } from '@/lib/dm/types'
 import { logger } from '@/lib/logger'
-import { isMember, newGroupConv, type GroupConv } from './conversation'
+import { isMember, markStale, newGroupConv, type GroupConv } from './conversation'
 import { attachGroup, curWeek, groupConv, isMe, peerKey, type Backoff, type DmContext } from './context'
 import { ensureStarted, openDirect, startedDirect } from './directs'
-import { applyGroups, markApplied, markStale, switchEpoch } from './group-apply'
+import { applyGroups, markApplied, switchEpoch } from './group-apply'
 import { sendContent } from './sender'
 import type { WriteFailure, WriteOutcome } from './types'
 import { nonceBackoffMs, realSleep, withNonceRetry } from './write-failure'
-import { TAGS_PER_QUERY, hexId, includesId, range, sameEpoch } from './util'
+import { TAGS_PER_QUERY, hexId, includesId, range } from './util'
 
 const MAX_OWNER_ROUNDS = 6
 /** Transport failures one owner write retries (each re-reads the group first). */
@@ -321,22 +321,33 @@ export async function createGroup(ctx: DmContext, name: string, memberIds: Ident
   throw new GroupError('Could not reserve a group number. Try again.')
 }
 
-/** Add a member (§6.4): a grant at (b, r+1), then an immediate roster replace. */
+/**
+ * Add a member (§6.4): a roster replace at (b, r+1) that lists them, then the
+ * grant. The key goes out only once the membership is on chain: keys are
+ * deterministic per (gid, b, r), so a grant sent before a roster write that
+ * never landed would hand a non-member the key the next add reuses, and every
+ * key ratcheted from it.
+ */
 export async function addMember(ctx: DmContext, conv: GroupConv, member: IdentityId): Promise<void> {
   requireOwner(ctx, conv)
   await publicKeysOf(ctx, [member])
-  let granted: Epoch | null = null
+  // The 1:1 (and its invite, if new) first, so the grant right after the roster write rarely fails.
+  await startedDirect(ctx, member)
   await ownerWrite(ctx, conv, async (roster) => {
     if (includesId(roster.members, member)) return 'noop'
     if (roster.members.length + 1 > MAX_GROUP_MEMBERS) throw new GroupError(`A group can have at most ${MAX_GROUP_MEMBERS} members.`)
-    const next = { b: roster.b, r: roster.r + 1 }
-    // Keys are deterministic per (gid, b, r), so a re-run after a refused roster write re-grants only on a new epoch.
-    if (!granted || !sameEpoch(granted, next)) {
-      await grant(ctx, conv, member, next)
-      granted = next
-    }
-    return writeRoster(ctx, conv, { ...roster, ...next, members: [...roster.members, member] })
+    return writeRoster(ctx, conv, { ...roster, r: roster.r + 1, members: [...roster.members, member] })
   })
+  // Granted whenever the roster just read lists them: a re-run that found an uncertain write landed,
+  // or an add tried again after its grant failed (or the page closed before it), still sends the key.
+  const roster = conv.lastRoster
+  if (!roster || !includesId(roster.members, member)) return
+  try {
+    await grant(ctx, conv, member, roster)
+  } catch (error) {
+    logger.warn(`DM v5: grant to ${hexId(member)} failed:`, error)
+    throw new GroupError('They were added, but their key could not be sent. Use Resend keys.')
+  }
 }
 
 /** Remove a member (§6.4): a keyring at b+1 for everyone else, then an immediate roster replace. */

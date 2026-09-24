@@ -9,9 +9,9 @@ import { bytesEqual, hexToBytes } from '@/lib/bytes'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { logger } from '@/lib/logger'
 import { weekOf } from '@/lib/dm/kdf'
-import { deriveGroupSecret, deriveSelfRoot, deriveStateKey } from '@/lib/dm/keys'
+import { deriveGroupSecret, deriveSelfRoot, deriveStateKey, epochBefore } from '@/lib/dm/keys'
 import type { DirectConversation, GroupConversation, IdentityId } from '@/lib/dm/types'
-import { newDirectConv, newGroupConv, setPeerKey, stream, type Conv, type DirectConv, type GroupConv } from './conversation'
+import { markStale, newDirectConv, newGroupConv, setPeerKey, stream, type Conv, type DirectConv, type GroupConv } from './conversation'
 import type { LocalCache } from './local-cache'
 import { SelfStateStore, type Scheduler } from './self-state-store'
 import type { DmChain, DmIdentity } from './types'
@@ -184,9 +184,30 @@ export async function attachDirect(ctx: DmContext, entry: DirectConversation, dr
   return conv
 }
 
+/**
+ * Take a saved anchor into an attached group's keys. Another device's save can
+ * bring one this device lacks (a re-add key, §5.5); its grant may already be
+ * swept, so this is the only way it arrives. A group marked removed or
+ * unreadable is re-judged by the next apply, which walks the keyrings again
+ * with the new key (a removed group is otherwise never applied again). An
+ * anchor older than the live epoch cannot change that verdict and only adds
+ * history.
+ */
+function adoptAnchor(conv: GroupConv, entry: GroupConversation): void {
+  if (conv.keys.get(entry.earliestEpoch)) return
+  conv.keys.set(entry.earliestEpoch, entry.earliestKey)
+  if (epochBefore(entry.earliestEpoch, conv.epoch)) return
+  conv.removed = false
+  conv.unreadable = false
+  markStale(conv)
+}
+
 export function attachGroup(ctx: DmContext, entry: GroupConversation): GroupConv {
   const existing = groupConv(ctx, entry.owner, entry.gid)
-  if (existing) return existing
+  if (existing) {
+    adoptAnchor(existing, entry)
+    return existing
+  }
   const secret = isMe(ctx, entry.owner) ? deriveGroupSecret(ctx.me.encPriv, entry.gid) : null
   const conv = newGroupConv(entry, secret)
   ctx.convs.set(conv.key, conv)

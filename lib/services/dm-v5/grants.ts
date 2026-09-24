@@ -6,9 +6,9 @@
  * lists me. So only the real owner can add me, and a forwarded key adds me to
  * nothing.
  *
- * The owner writes the grant first and replaces the roster right after, so a
- * grant whose roster does not open yet is kept and re-checked for the stale
- * window before it is dropped.
+ * The owner writes the roster before the grant (§6.4), but a DAPI node can
+ * lag behind the one that served the grant, so a grant whose roster does not
+ * open yet is kept and re-checked for the stale window before it is dropped.
  */
 
 import { checkGrant } from '@/lib/dm/grant'
@@ -16,9 +16,9 @@ import { weekOf } from '@/lib/dm/kdf'
 import { epochBefore } from '@/lib/dm/keys'
 import type { Epoch, GroupConversation } from '@/lib/dm/types'
 import { logger } from '@/lib/logger'
-import { newGroupConv } from './conversation'
+import { markStale, newGroupConv } from './conversation'
 import { groupConv, type DmContext, type PendingGrant } from './context'
-import { applyGroups, markStale } from './group-apply'
+import { applyGroups } from './group-apply'
 import { STALE_WINDOW_MS } from './util'
 
 /** Reasons a later poll can change: the roster replace has not landed yet. */
@@ -72,6 +72,9 @@ async function processGrant(ctx: DmContext, grant: PendingGrant): Promise<'done'
     existing.keys.set(epoch, grant.key)
     existing.removed = false
     existing.unreadable = false
+    // The apply below walks the keyrings from the current epoch: one with no slot for me before the
+    // grant's base falls through to the granted key (`applyKeyring`), so a rejoin across several
+    // removals reaches it.
     if (epochBefore(epoch, existing.entry.earliestEpoch)) {
       ctx.store.replaceGroupEntry(existing.entry, { ...existing.entry, earliestEpoch: epoch, earliestKey: grant.key, since: Math.min(existing.entry.since, entry.since), anchorChangedAt: entry.anchorChangedAt })
     } else if (wasCutOff) {

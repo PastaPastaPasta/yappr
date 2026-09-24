@@ -74,7 +74,7 @@ them from block history. Migration must say this plainly (§10).
 - Per group owner: that they own some group documents, how often each changes
   (`$revision`), and size classes.
 - That an owner created a group or added someone, and how many people were
-  granted. The roster write right after the grants marks them as grants, and
+  granted. The roster write next to the grants marks them as grants, and
   their count is the group's size at creation. Who they went to stays hidden.
 - **Timing correlation** (§8). There is no send batching and no random delay
   anywhere.
@@ -157,6 +157,11 @@ kc(K)   = HKDF(K, "kc\0")[0:8]                               // key check
   rejects the second roster create and that device takes `n + 1`.
 - **Adds cost existing members nothing.** Anyone holding `K[b,r]` can step to
   `K[b,r+1]`. The new member receives `K[b,r+1]` and cannot step back.
+- **An add's key is sent only after its roster lands** (§6.4). `K[b,r+1]` is
+  the same for every add at that step, so a grant sent ahead of a roster write
+  that then failed would give a non-member the key the next add reuses, and
+  every later key of the base. Nothing short of a removal (a new base) could
+  take it back, and a removal does nothing for someone not in the roster.
 - **Removals need a new base.** Only the owner has `S`, so the removed member
   cannot compute `K[b+1,0]`. It reaches the others in one keyring (§5.3).
 - **Adds are deterministic per `(gid, b, r)`,** so two owner devices doing the
@@ -315,8 +320,8 @@ blob = iv | AES-256-GCM(HKDF(K[b,r], "roster\0"), pad({b, r, name, avatarRef, me
 epochLog = up to 16 × (S16(b) | S16(r) | U32(startWeek))        // oldest first, ending with the current epoch
 ```
 
-The owner replaces the roster immediately after every grant, keyring, or
-rename. It holds the current epoch `(b, r)`, the member list (whose streams to
+The owner replaces the roster immediately before every add's grant, and
+immediately after every keyring or rename. It holds the current epoch `(b, r)`, the member list (whose streams to
 poll), the name and avatar, and a short **epoch log**: the last 16 epochs and
 the week each started (a new base's week is its keyring's `$createdAt`). The
 owner appends to it whenever the epoch changes. It tells a reader where older
@@ -349,7 +354,12 @@ blob = iv | AES-256-GCM(HKDF(stateKey, "state\0"), pad(state))     // spread ove
   (`anchorChangedAt` is set to that moment). The swap happens only when the
   old anchor, applied on its own, provably ends at a keyring with no slot for
   the member. A keyring the member could not check (the owner's key lookup
-  failed) marks nothing and is retried on the next poll. Each conversation also has
+  failed) marks nothing and is retried on the next poll. Reading on, a
+  keyring with no slot for the member is passed when they hold a key on that
+  base or a later one (the re-add key), so a re-add after several removals
+  reaches its base. An anchor that arrives by merging another device's save
+  is taken into a group already open on this device, which clears its removed
+  flag and re-applies the group before the next send. Each conversation also has
   `since` (the week it started) and `readAt` (a `$createdAt`: everything newer
   is unread).
 - Blocks as `identity → (blocked, changedAt)`, so an unblock survives a
@@ -561,7 +571,9 @@ BACKFILL(w, j, epoch):      # walk back along prev; 100 tags per query
 
 APPLY(g, docs):
   while a keyring for g.b + 1 is present:
-    unwrap my slot (kc tells which); none → I was removed: mark left, stop
+    unwrap my slot (kc tells which)
+    none, but I hold a key on base g.b + 1 or later (a re-add) → SWITCH to the lowest such key; continue
+    none → I was removed: mark left, stop
     keyringAt[g.b+1] = its $createdAt; SWITCH(g, g.b + 1, 0); fetch the next keyring handle
   if the roster is present: decrypt it by ratcheting forward (bounded by $revision, §5.4)
     ended → mark ended; newer (b, r) → SWITCH(g, b, r); take its member list
@@ -597,7 +609,9 @@ SEND(c, text):
   after an epoch change links back across it. The cost is up to one extra
   probe per member per week of each older epoch inside the lookback window,
   once per session (the probe position is kept in memory only, so a reload
-  probes again); a closed thread's window starts at `readAt`.
+  probes again); a closed thread's window starts at `readAt`. A probe counts
+  as done only once every hit it found has drained; if a drain fails, that
+  stream is probed again on the next poll.
 - **Limitation: only current members' history is found.** The streams probed
   are those of the members in the current roster. On a device that did not
   hold them already, messages from someone who has since left or been removed
@@ -633,9 +647,12 @@ against about 33 for one feed load. No credits.
 - **Create:** one roster create, then a `0x05` grant to each member on the
   owner's 1:1 stream. For someone the owner has never messaged, that stream
   starts with an invite (§5.1).
-- **Add:** a grant at `(b, r+1)`, then an immediate roster replace. Messages a
-  member sends on `r` in the seconds before they see the new roster are
-  unreadable to the newcomer.
+- **Add:** a roster replace at `(b, r+1)` listing the newcomer, then their
+  grant. The key is never sent before the membership is on chain (§4.4). If
+  the roster write fails, nothing was disclosed. If the grant fails after the
+  roster landed, the newcomer is a member without a key, and the owner's
+  **Resend keys** gives it to them. Messages a member sends on `r` in the
+  seconds before they see the new roster are unreadable to the newcomer.
 - **Remove:** a keyring at `b+1` (§5.3), then an immediate roster replace. The
   removed member cannot compute any tag on the new base. Messages other members
   send in the seconds before their clients see the keyring are still on the
@@ -671,7 +688,7 @@ OWNER_WRITE(g, change):
     if the newest keyring's base > roster.b:            # an earlier roster replace failed
       members = old roster members who have a slot in it (test each pad)
       replace the roster under the new base; continue
-    do the change (grant + roster replace, or keyring + roster replace, or rename)
+    do the change (roster replace, then the grant once it lands; or keyring + roster replace; or rename)
     if Platform rejects a write as stale (40106) or duplicate (unique index): continue
     if the write never reached a verdict (transport: dead connection, stale quorums): wait briefly,
       continue; at most twice per owner write
@@ -712,7 +729,7 @@ from two devices are harmless, because keys are deterministic.
 | Start a 1:1 | 2 invites | 1 invite + 1 message | About 52–60M credits measured |
 | Send | 1 message | 1 message | Padded (§5.7) |
 | Create a group of N | n/a | 1 roster + N−1 grants | + 1 invite per member the owner has never messaged |
-| Add a member | n/a | 1 grant + 1 roster replace | Existing members need nothing |
+| Add a member | n/a | 1 roster replace + 1 grant | Existing members need nothing |
 | Remove a member | n/a | 1 keyring + 1 roster replace | The keyring is never refunded |
 | Leave | n/a | 1 message; owner removes on next open | |
 | Rename / end a group | n/a | 1 roster replace | |
@@ -741,7 +758,7 @@ The design removes every structural link. What remains:
   today's volume and needs buckets later. A Platform query returning thousands
   of documents per page would close that gap. Worth raising upstream.
 - **Group metadata:** the owner's group documents and their revisions, size
-  classes, the grant-then-roster timing link, and the group's size at
+  classes, the timing link between a roster write and its grants, and the group's size at
   creation. Never the members.
 - **Removed members** know the group's handles, so they can see *when* the
   roster changes. Not who changed.

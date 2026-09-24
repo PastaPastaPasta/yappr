@@ -70,8 +70,9 @@ async function applyKeyring(ctx: DmContext, conv: GroupConv, doc: ChainGroupDoc,
     switchEpoch(ctx, conv, { b, r: 0 })
     return 'applied'
   }
-  // No slot, but a grant already gave me a key on this base: I was re-added after it (§6.4).
-  const granted = conv.keys.lowest(b)
+  // No slot, but a grant (or a re-add anchor another device saved) gave me a key on this base or a
+  // later one: I was re-added after it (§6.4), and the keyrings up to that base have no slot for me.
+  const granted = conv.keys.lowestFrom(b)
   if (granted) {
     switchEpoch(ctx, conv, granted)
     return 'applied'
@@ -89,14 +90,6 @@ export function isFresh(ctx: DmContext, conv: GroupConv): boolean {
 /** Record a full apply of `conv` now. */
 export function markApplied(ctx: DmContext, conv: GroupConv): void {
   conv.appliedAt = { local: ctx.clock(), wall: ctx.wallClock() }
-}
-
-/**
- * Forget the last apply: the next send re-reads the group first. Any change to
- * a group's keys, epoch or removed flag outside a full apply calls this.
- */
-export function markStale(conv: GroupConv): void {
-  conv.appliedAt = { local: -Infinity, wall: -Infinity }
 }
 
 /**
