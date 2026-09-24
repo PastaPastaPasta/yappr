@@ -566,7 +566,7 @@ SWITCH(g, b, r):            # new epoch: every member stream restarts at the cur
   g.epoch = (b, r)
 
 SEND(c, text):
-  if c is a group and its documents were last polled over 10 s ago: APPLY(c, fresh query)   # never send on an old base
+  if c is a group and its documents were last polled over 10 s ago (device clock): APPLY(c, fresh query)   # never send on an old base
     if that query fails: refuse the send (retryable; the text stays in the composer)
   catch up on my own streams in c: the current epoch, and older epochs in the epoch log (as in POLL)
   j = next free j this week on my stream (0 if new week); on a unique-index rejection, j += 1 and retry

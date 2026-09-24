@@ -104,7 +104,7 @@ export interface GroupConv extends ConvBase {
   ended: boolean
   /** The roster never opened with the keys held: "ask the owner to resend your keys". */
   unreadable: boolean
-  /** Chain time the group documents were last applied (§6.3 SEND freshness). */
+  /** When the group documents were last applied, on `ctx.clock` (§6.3 SEND freshness). */
   appliedAt: number
   /** Switches after the first apply are live and leave stale tags behind. */
   live: boolean

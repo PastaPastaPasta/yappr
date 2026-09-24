@@ -177,7 +177,7 @@ describe('membership changes', () => {
     await removeMember(alice.ctx, conv, CAROL_ID)
     ledger.tick()
     // Neither Carol nor one of Alice's devices has seen the keyring yet; both write on base 0 after it.
-    carolGroup.appliedAt = ledger.time
+    carolGroup.appliedAt = carol.ctx.clock()
     await say(carol.ctx, carolGroup, 'after removal')
     if (!base0) throw new Error('no stream')
     const { tag, body } = await encryptMessage({ streamKey: base0.key, senderId: ALICE_ID, w: weekOf(ledger.time), j: 0 }, { prev: null, content: { type: 'text', text: 'owner, old base' } })
@@ -414,6 +414,23 @@ describe('joining is saved at once (§5.5)', () => {
 })
 
 describe('review regressions', () => {
+  it('measures group freshness on the local clock, not the chain block time (validator #3)', async () => {
+    const { alice, bob } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    let local = 0
+    bob.ctx.clock = () => local
+    await pollOnce(bob.ctx)
+    const bobGroup = theGroup(bob.ctx, ALICE_ID, conv.gid)
+    const frozen = bob.chain.now()
+    // Alice removes Carol. The chain's block time does not move (Bob read nothing newer), but a
+    // minute passes on Bob's device: the send must re-read the group first.
+    await removeMember(alice.ctx, conv, CAROL_ID)
+    bob.chain.now = () => frozen
+    local += 60_000
+    await say(bob.ctx, bobGroup, 'after removal')
+    expect(currentEpoch(bobGroup)).toEqual({ b: 1, r: 0 })
+  })
+
   it('finds old-epoch history on a fresh device when nobody has written in the new epoch yet (review #5)', async () => {
     const { ledger, alice, bob } = world()
     const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])

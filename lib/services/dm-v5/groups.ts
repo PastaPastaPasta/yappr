@@ -250,7 +250,7 @@ export async function createGroup(ctx: DmContext, name: string, memberIds: Ident
       throw new GroupError(outcome.error)
     }
     conv.live = true
-    conv.appliedAt = ctx.chain.now()
+    conv.appliedAt = ctx.clock()
     ctx.store.addGroup(entry)
     conv.entry = ctx.store.resolve(entry)
     ctx.convs.set(conv.key, conv)

@@ -61,7 +61,7 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
   if (conv.kind === 'group') {
     // Never send on an old epoch: a refresh that did not reach the chain leaves the group as it
     // was, and a member removed since could read the message. The text stays in the composer.
-    if (ctx.chain.now() - conv.appliedAt > GROUP_FRESHNESS_MS && !(await applyGroups(ctx, [conv]))) {
+    if (ctx.clock() - conv.appliedAt > GROUP_FRESHNESS_MS && !(await applyGroups(ctx, [conv]))) {
       throw new SendError('Could not check the group for changes. Try again in a moment.')
     }
     if (conv.removed || conv.ended) throw new SendError('You are no longer a member of this group.')

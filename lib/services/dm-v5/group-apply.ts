@@ -135,7 +135,7 @@ async function applyOwner(ctx: DmContext, owner: IdentityId, groups: GroupConv[]
     const g = rosterById.get(hexId(doc.handle))
     if (g && !g.removed) await applyRoster(ctx, g, doc)
   }
-  const now = ctx.chain.now()
+  const now = ctx.clock()
   for (const g of live) {
     if (g.lastRoster?.ended) g.ended = true
     const first = !g.live

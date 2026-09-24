@@ -52,6 +52,12 @@ export interface DmContext {
   changed(): void
   /** Waits between write retries (a nonce clash); tests pass one that does not really wait. */
   sleep?: (ms: number) => Promise<void>
+  /**
+   * A local monotonic clock (ms) for how long ago something happened on this
+   * device. The chain's block time only moves when a read returns a newer
+   * block, so it cannot measure elapsed time (§6.3 SEND freshness).
+   */
+  clock: () => number
 }
 
 /** A fresh context for `identityId`, with its self-state store and nothing attached yet. */
@@ -79,6 +85,7 @@ export function createContext(options: {
     appJustOpened: true,
     recovering: false,
     changed: options.changed ?? (() => undefined),
+    clock: () => performance.now(),
   }
 }
 

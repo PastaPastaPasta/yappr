@@ -243,5 +243,7 @@ export function makeContext(ledger: MemoryLedger, id: IdentityId, encPriv: Uint8
   ctx.sleep = async (ms) => {
     chain.sleeps.push(ms)
   }
+  // The device clock follows the ledger's in tests, so advancing `ledger.time` ages everything.
+  ctx.clock = () => ledger.time
   return { ctx, chain }
 }
