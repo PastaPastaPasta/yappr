@@ -24,6 +24,12 @@ export function renderModeration(moderation) {
 export function withModerators(config, moderators = []) {
   if (moderators.length === 0) return config;
   if (!config?.moderation) throw new Error('--moderators was passed, but the contract file declares no `config.moderation`');
+  // Replacing an elected declaration with an appointed set would publish a
+  // different moderation model than the cut was reviewed as, and it can never
+  // be changed back (40002 on every update of an elected declaration).
+  if (config.moderation.moderators?.$type === 'elected') {
+    throw new Error('--moderators was passed, but this cut declares ELECTED moderation (interim: the contract owner); appoint nobody, or edit the cut\'s interim in its build script');
+  }
   if (moderators.length > 16) throw new Error(`at most 16 moderators may be appointed (got ${moderators.length})`);
   return {
     ...config,
