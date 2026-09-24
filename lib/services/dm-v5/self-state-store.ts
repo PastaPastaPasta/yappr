@@ -18,7 +18,7 @@
  *   not decrypt at all is rebuilt by lost-state recovery (§9) and replaced.
  */
 
-import { bytesEqual } from '@/lib/bytes'
+import { bytesEqual, bytesToHex } from '@/lib/bytes'
 import { logger } from '@/lib/logger'
 import {
   decryptSelfState,
@@ -78,6 +78,12 @@ export class SelfStateStore {
   status: SelfStateStatus = 'idle'
   private doc: { id: string; revision: number } | null = null
   private overflow: OverflowEntry[] = []
+  /**
+   * Invite `$createdAt` of each 1:1 this device found from an invite, by peer:
+   * kept after it is saved, so one a merge later pushes into `overflow` still
+   * holds the scan cursor back.
+   */
+  private inviteTimes = new Map<string, number>()
   /** Blocks that did not fit: applied on this device, not saved. */
   private unsavedBlocks: BlockEntry[] = []
   private dirty = false
@@ -169,14 +175,23 @@ export class SelfStateStore {
       }
       const localDirect = merged.directs.findIndex((d) => !saved.directs.some((s) => sameDirect(s, d)))
       if (localDirect >= 0) {
-        this.overflow.push({ entry: merged.directs.splice(localDirect, 1)[0], inviteAt: null })
+        const entry = merged.directs.splice(localDirect, 1)[0]
+        this.overflow.push({ entry, inviteAt: this.inviteTimes.get(bytesToHex(entry.peer)) ?? null })
         continue
       }
       const localBlock = merged.blocks.findIndex((b) => !saved.blocks.some((s) => bytesEqual(s.id, b.id)))
       if (localBlock < 0) break
       this.unsavedBlocks.push(merged.blocks.splice(localBlock, 1)[0])
     }
+    // The merged cursor may already be past an invite whose conversation just left the saved state.
+    merged.inviteScanCursor = this.cursorBeforeUnsaved(merged.inviteScanCursor)
     return merged
+  }
+
+  /** `cursor`, but never past an invite whose conversation is only in `overflow` (§5.5). */
+  private cursorBeforeUnsaved(cursor: number): number {
+    const unsaved = this.overflow.map((o) => o.inviteAt).filter((at): at is number => at !== null)
+    return unsaved.length > 0 ? Math.min(cursor, ...unsaved) : cursor
   }
 
   // ---------------------------------------------------------------------------
@@ -218,6 +233,7 @@ export class SelfStateStore {
    */
   addDirect(entry: DirectConversation, inviteAt: number | null = null): boolean {
     if (this.findDirect(entry.peer)) return true
+    if (inviteAt !== null) this.inviteTimes.set(bytesToHex(entry.peer), inviteAt)
     return this.add(entry, inviteAt, () => this.state.directs.push(entry), () => this.state.directs.pop())
   }
 
@@ -306,9 +322,8 @@ export class SelfStateStore {
    * conversations found up to it, because both live in this one state.
    */
   setScanCursor(cursor: number): void {
-    const unsaved = this.overflow.map((o) => o.inviteAt).filter((at): at is number => at !== null)
     // Never dirty on its own: a scan that found nothing for me must not cost a write (§5.5).
-    this.state.inviteScanCursor = unsaved.length > 0 ? Math.min(cursor, ...unsaved) : cursor
+    this.state.inviteScanCursor = this.cursorBeforeUnsaved(cursor)
   }
 
   /** Claim group number `n` (it is never reused, §4.4). */

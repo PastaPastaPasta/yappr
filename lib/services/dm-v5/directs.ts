@@ -11,21 +11,15 @@
 import { weekOf } from '@/lib/dm/kdf'
 import type { IdentityId } from '@/lib/dm/types'
 import type { DirectConv } from './conversation'
-import { attachDirect, directConv, isMe, peerKey, type DmContext } from './context'
+import { attachDirect, directConv, isMe, requirePeerKey, type DmContext } from './context'
 import { sendInvite } from './invites'
-
-export class NoEncryptionKeyError extends Error {
-  constructor() {
-    super('This account has no encryption key yet, so it cannot receive encrypted messages.')
-  }
-}
 
 /** Open (or find) the 1:1 with `peer` without writing anything. */
 export async function openDirect(ctx: DmContext, peer: IdentityId): Promise<DirectConv> {
   if (isMe(ctx, peer)) throw new Error("You can't message yourself")
   const existing = directConv(ctx, peer)
   if (existing) return existing
-  if (!(await peerKey(ctx, peer))) throw new NoEncryptionKeyError()
+  await requirePeerKey(ctx, peer)
   const now = ctx.chain.now()
   const saved = ctx.store.findDirect(peer)
   return attachDirect(ctx, saved ?? { peer, since: weekOf(now), readAt: now, hiddenAt: 0 }, !saved)

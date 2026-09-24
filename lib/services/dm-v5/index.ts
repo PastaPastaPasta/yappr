@@ -14,7 +14,7 @@ import { SdkDmChain } from './sdk-chain'
 export type { ConversationView, DmEngine, EngineSnapshot, MessageView } from './engine'
 export type { RecoveryProgress } from './recovery'
 export { MAX_GROUP_MEMBERS } from '@/lib/dm/group'
-export { NoEncryptionKeyError } from './directs'
+export { NoEncryptionKeyError } from './context'
 
 let current: { identityId: string; key: string; engine: DmEngine; detach: () => void } | null = null
 const registryListeners = new Set<() => void>()

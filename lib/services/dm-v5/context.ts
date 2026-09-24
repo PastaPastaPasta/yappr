@@ -128,6 +128,28 @@ export async function peerKey(ctx: DmContext, id: IdentityId): Promise<Uint8Arra
   return key
 }
 
+/** The identity was fetched and has no encryption key: messaging it cannot work until it adds one. */
+export class NoEncryptionKeyError extends Error {
+  constructor() {
+    super('This account has no encryption key yet, so it cannot receive encrypted messages.')
+  }
+}
+
+/** The identity could not be fetched (network, DAPI): nothing is known yet, so trying again can work. */
+export class PeerKeyLookupError extends Error {
+  constructor() {
+    super("Couldn't look up this account right now. Check your connection and try again.")
+  }
+}
+
+/** `peerKey`, throwing `NoEncryptionKeyError` or the retryable `PeerKeyLookupError` instead of returning null. */
+export async function requirePeerKey(ctx: DmContext, id: IdentityId): Promise<Uint8Array> {
+  const key = await peerKey(ctx, id)
+  if (key) return key
+  // peerKey caches an identity that has no key; a lookup that failed is not cached.
+  throw ctx.peerKeys.has(hexId(id)) ? new NoEncryptionKeyError() : new PeerKeyLookupError()
+}
+
 /** Retry the peer keys of 1:1s whose key lookup failed earlier. */
 export async function retryPeerKeys(ctx: DmContext): Promise<void> {
   for (const conv of Array.from(ctx.convs.values())) {

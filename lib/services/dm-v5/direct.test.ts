@@ -3,8 +3,9 @@ import { bytesEqual } from '@/lib/bytes'
 import { weekOf, weekStart } from '@/lib/dm/kdf'
 import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, CAROL_ID, CAROL_PRIV } from '@/lib/dm/test-fixtures'
 import { encryptMessage } from '@/lib/dm/stream'
-import { attachSaved, directConv, type DmContext } from './context'
+import { NoEncryptionKeyError, PeerKeyLookupError, attachSaved, directConv, type DmContext } from './context'
 import { openDirect, ensureStarted } from './directs'
+import { sendInvite } from './invites'
 import { pollOnce } from './loop'
 import { sendContent } from './sender'
 import { stream, timeline } from './conversation'
@@ -57,6 +58,25 @@ describe('1:1 first contact and messaging', () => {
     const ledger = new MemoryLedger()
     const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
     await expect(openDirect(alice.ctx, CAROL_ID)).rejects.toThrow(/encryption key/)
+  })
+
+  it('reports a failed key lookup as retryable, not as a missing encryption key (review 5 #2)', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    makeContext(ledger, BOB_ID, BOB_PRIV)
+    let down = true
+    const lookup = alice.chain.encryptionKey.bind(alice.chain)
+    alice.chain.encryptionKey = async (id) => {
+      if (down) throw new Error('DAPI timeout')
+      return lookup(id)
+    }
+    await expect(openDirect(alice.ctx, BOB_ID)).rejects.toThrow(PeerKeyLookupError)
+    await expect(openDirect(alice.ctx, BOB_ID)).rejects.not.toThrow(/no encryption key/)
+    await expect(sendInvite(alice.ctx, BOB_ID)).rejects.toThrow(PeerKeyLookupError)
+    down = false
+    await expect(openDirect(alice.ctx, BOB_ID)).resolves.toBeTruthy()
+    await expect(openDirect(alice.ctx, CAROL_ID)).rejects.toThrow(NoEncryptionKeyError)
+    await expect(sendInvite(alice.ctx, CAROL_ID)).rejects.toThrow(NoEncryptionKeyError)
   })
 
   it('drops invites and messages from blocked senders', async () => {

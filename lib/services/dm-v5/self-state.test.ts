@@ -338,6 +338,44 @@ describe('invite scan', () => {
     expect(bob.ctx.store.state.inviteScanCursor).toBeLessThanOrEqual(inviteAt)
   })
 
+  it('keeps the saved cursor before an invite whose conversation a merge pushed past the cap (review 5 #1)', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const carol = makeContext(ledger, CAROL_ID, CAROL_PRIV)
+    const probe = new SelfStateStore(new MemoryChain(ledger, BOB_ID), new Uint8Array(32))
+    let cap = 0
+    while (probe.addDirect(direct(peer(cap)))) cap++
+
+    // The phone saves one short of the cap.
+    const phone = makeContext(ledger, BOB_ID, BOB_PRIV)
+    for (let n = 0; n < cap - 1; n++) phone.ctx.store.addDirect(direct(peer(n)))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    // Alice invites Bob; a later invite to someone else moves every scanner's cursor past hers.
+    await inviteFrom(alice.chain, BOB_ID, BOB_PUB)
+    const aliceInviteAt = ledger.invites[0].createdAt
+    await inviteFrom(carol.chain, ALICE_ID, alice.ctx.me.encPub)
+    // The laptop fills the last slot with another conversation and a cursor past both invites.
+    const laptop = makeContext(ledger, BOB_ID, BOB_PRIV)
+    await laptop.ctx.store.load()
+    laptop.ctx.store.addDirect(direct(peer(cap + 100)))
+    laptop.ctx.store.setScanCursor(ledger.time)
+    expect(await laptop.ctx.store.flush()).toBe(true)
+
+    // The phone accepts Alice (it fits locally), then its save merges and Alice no longer fits.
+    await scanInvites(phone.ctx)
+    expect(phone.ctx.store.isSaved(phone.ctx.store.findDirect(ALICE_ID) ?? direct(ALICE_ID))).toBe(true)
+    expect(await phone.ctx.store.flush()).toBe(true)
+    expect(phone.ctx.store.capReached).toBe(true)
+    expect(phone.ctx.store.state.inviteScanCursor).toBeLessThanOrEqual(aliceInviteAt)
+
+    // After a reload the scan finds Alice again.
+    const reloaded = makeContext(ledger, BOB_ID, BOB_PRIV)
+    await reloaded.ctx.store.load()
+    reloaded.ctx.scanCursor = reloaded.ctx.store.state.inviteScanCursor
+    await scanInvites(reloaded.ctx)
+    expect(directConv(reloaded.ctx, ALICE_ID)).not.toBeNull()
+  })
+
   it('takes the minimum cursor on merge, so no device skips an invite', async () => {
     const ledger = new MemoryLedger()
     const a = makeContext(ledger, BOB_ID, BOB_PRIV)
