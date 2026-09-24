@@ -167,17 +167,25 @@ type Change = (current: RosterContent) => Promise<WriteOutcome | 'noop'>
 /**
  * OWNER_WRITE (§6.5). `change` sees a roster at the newest epoch and returns
  * its last write's outcome; a stale or duplicate refusal re-runs the loop.
+ * `endsGroup` marks the end itself: finding the roster already ended on a
+ * re-run means an earlier uncertain tombstone landed, which is success.
  */
-async function ownerWrite(ctx: DmContext, conv: GroupConv, change: Change): Promise<void> {
+async function ownerWrite(ctx: DmContext, conv: GroupConv, change: Change, endsGroup = false): Promise<void> {
   for (let round = 0; round < MAX_OWNER_ROUNDS; round++) {
     conv.lastRoster = null
     conv.roster = null
     await applyGroups(ctx, [conv])
     const roster = conv.lastRoster as RosterContent | null
     if (!roster) throw new GroupError('The group roster could not be read.')
-    if (roster.ended) throw new GroupError('This group has ended.')
+    if (roster.ended) {
+      if (endsGroup) return
+      throw new GroupError('This group has ended.')
+    }
     if (conv.epoch.b > roster.b) {
-      const repaired: RosterContent = { ...roster, b: conv.epoch.b, r: 0, members: await survivorsOf(ctx, conv, conv.epoch.b, roster.members) }
+      // Every base the failed replaces skipped goes into the log too, so their history is found (§5.4).
+      let epochLog = roster.epochLog
+      for (let b = roster.b + 1; b < conv.epoch.b; b++) epochLog = logEpoch(epochLog, { b, r: 0 }, epochStartWeek(ctx, conv, { b, r: 0 }))
+      const repaired: RosterContent = { ...roster, b: conv.epoch.b, r: 0, members: await survivorsOf(ctx, conv, conv.epoch.b, roster.members), epochLog }
       const outcome = await writeRoster(ctx, conv, repaired)
       if (!outcome.ok && outcome.failure === 'other') throw new GroupError(outcome.error)
       continue
@@ -332,7 +340,7 @@ export async function renameGroup(ctx: DmContext, conv: GroupConv, name: string)
  */
 export async function endGroup(ctx: DmContext, conv: GroupConv): Promise<void> {
   requireOwner(ctx, conv)
-  await ownerWrite(ctx, conv, async (roster) => writeRoster(ctx, conv, { ...roster, ended: true }))
+  await ownerWrite(ctx, conv, async (roster) => writeRoster(ctx, conv, { ...roster, ended: true }), true)
 }
 
 /** "Resend keys" (§6.4): a fresh grant for the current epoch to one member. */

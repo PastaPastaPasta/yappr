@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { bytesEqual } from '@/lib/bytes'
 import { deriveBaseKey, deriveGroupId, deriveGroupSecret } from '@/lib/dm/keys'
-import { encryptRoster, keyringHandle, rosterHandle } from '@/lib/dm/group'
+import { buildKeyring, encryptRoster, keyringHandle, rosterHandle } from '@/lib/dm/group'
+import { getPublicKey } from '@/lib/crypto/keys'
 import { encryptMessage } from '@/lib/dm/stream'
 import { weekOf } from '@/lib/dm/kdf'
 import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, CAROL_ID, CAROL_PRIV } from '@/lib/dm/test-fixtures'
@@ -414,6 +415,52 @@ describe('joining is saved at once (§5.5)', () => {
 })
 
 describe('review regressions', () => {
+  it('reports success when an uncertain end lands late (validator nit)', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    // Both broadcasts of the tombstone time out with nothing visible; the first lands just after.
+    let pending: Uint8Array | null = null
+    let uncertain = 0
+    alice.chain.hook = (method, args) => {
+      if (method !== 'replaceGroupDoc') return null
+      if (uncertain < 2) {
+        uncertain++
+        pending = args[2] as Uint8Array
+        return { ok: true, id: 'uncertain', confirmed: false }
+      }
+      return null
+    }
+    const groupDocs = alice.chain.groupDocs.bind(alice.chain)
+    let reads = 0
+    alice.chain.groupDocs = async (owner, handles) => {
+      // The second read back still sees nothing; the late landing shows up at the owner loop's re-read.
+      if (uncertain === 2 && pending && ++reads >= 2) {
+        const doc = ledger.groupDocs.find((d) => bytesEqual(d.handle, rosterHandle(conv.gid)))
+        if (doc && !bytesEqual(doc.blob, pending)) {
+          doc.blob = pending
+          doc.revision += 1
+        }
+      }
+      return groupDocs(owner, handles)
+    }
+    await endGroup(alice.ctx, conv)
+    expect(conv.ended).toBe(true)
+  })
+
+  it('logs every base a roster repair skips over (validator nit)', async () => {
+    const { alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID, DAVE_ID])
+    // Two removals whose roster replaces both fail: keyrings 1 and 2 exist, the roster is on base 0.
+    alice.chain.hook = (method) => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'network' } : null)
+    await expect(removeMember(alice.ctx, conv, CAROL_ID)).rejects.toThrow('network')
+    alice.chain.hook = null
+    // Another owner device, also without a roster replace, removes Dave at base 2.
+    const k2 = buildKeyring({ ownerPrivateKey: ALICE_PRIV, ownerId: ALICE_ID, gid: conv.gid, b: 2, groupSecret: deriveGroupSecret(ALICE_PRIV, conv.gid), members: [{ id: BOB_ID, publicKey: getPublicKey(BOB_PRIV) }] })
+    expect((await alice.chain.createGroupDoc(keyringHandle(conv.gid, 2), k2.blob)).ok).toBe(true)
+    await renameGroup(alice.ctx, conv, 'Repaired')
+    expect(conv.lastRoster?.epochLog.map((e) => [e.b, e.r])).toEqual([[0, 0], [1, 0], [2, 0]])
+  })
+
   it('does not mark a member removed when the owner key lookup failed (validator #4)', async () => {
     const { ledger, alice, bob } = world()
     const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])

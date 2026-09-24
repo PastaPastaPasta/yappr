@@ -329,6 +329,8 @@ client caches the last seen `$revision` per group. Keyrings are applied first,
 so `r` restarts at 0 on a new base. When a group ends, the roster becomes a
 tombstone: the same content with `ended` set. It keeps the member list, so a
 device that loads the group later still knows whose streams hold its history.
+The roster lists current members only, never past ones, so a fresh device
+does not find the history of members who left or were removed (§6.3).
 
 ### 5.5 `dmSelfState`: cross-device state
 
@@ -590,9 +592,17 @@ SEND(c, text):
   unwrapped from its keyring slots), over that epoch's weeks cut to the
   lookback window. A hit drains its week and backfills through `prev`. The
   sender does the same for its own streams before a send, so the first message
-  after an epoch change links back across it. The cost is one probe per
-  member per week of lookback, once; a closed thread's window starts at
-  `readAt`.
+  after an epoch change links back across it. The cost is up to one extra
+  probe per member per week of each older epoch inside the lookback window,
+  once per session (the probe position is kept in memory only, so a reload
+  probes again); a closed thread's window starts at `readAt`.
+- **Limitation: only current members' history is found.** The streams probed
+  are those of the members in the current roster. On a device that did not
+  hold them already, messages from someone who has since left or been removed
+  are not discovered: `prev` links only a sender's own messages, and the
+  roster keeps no list of past members (it stays within its 4096-byte class
+  instead). A device that already held those messages keeps showing them
+  from its cache for the session. Accepted for Phase 1.
 - **The 10-minute stale window** is the only timing constant. It catches a
   message signed just before a week rollover or an epoch change. Inclusion
   takes seconds. If a straggler is missed anyway, the sender's next message
@@ -608,8 +618,9 @@ SEND(c, text):
   nothing since `readAt` is probed further back when the conversation opens,
   back to `max(since, curWeek − 52)`. Only retention "never" can hit the
   52-week limit: a contact silent for over a year shows no history until
-  someone writes. The worst first poll on a fresh device is about 30 queries,
-  once.
+  someone writes. The worst first poll on a fresh device is about 30 queries
+  for the current epoch; each older epoch inside the window adds up to as
+  many again, once per session.
 
 **Poll cost, for a user with 28 1:1 chats and 2 groups of 15:** 56 tags (1
 query), 2 group-owner queries, 1 invite query. That is 4 queries per 30 s,
