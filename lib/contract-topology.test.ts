@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import socialContractV7 from '@/contracts/yappr-social-contract-v7.json'
 import socialContractV8 from '@/contracts/yappr-social-contract-v8.json'
+import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import { CONTRACT_TOPOLOGIES } from './constants'
 
 /** The doctype schema as the committed JSON declares it. */
@@ -233,6 +234,89 @@ describe('contract topology', () => {
         const priced = Object.keys(schema.actionFees ?? {}).filter((key) => key !== 'pricing')
         expect(priced, `${name} prices an action the client cannot agree to`).toEqual(schema.actionFees ? ['create'] : [])
       }
+    })
+  })
+  describe('v9 grammar', () => {
+    it('reports none of the v9 grammar before v9', async () => {
+      const v8 = await topologyModule('v8')
+      expect(v8.moderationLists()).toEqual(['banlist', 'suspensions'])
+      expect(v8.warningsAreKept()).toBe(false)
+      expect(v8.electedModeration()).toBeNull()
+      expect(v8.ownerDistinctProperties('follow')).toEqual([])
+      expect(v8.privateFeedWritesAreGated()).toBe(false)
+      expect(v8.blockFollowsAreTyped()).toBe(false)
+      expect((await topologyModule('v7')).moderationLists()).toEqual([])
+    })
+
+    it('keeps every v8 capability, fee, cost and grant on v9', async () => {
+      const v8 = await topologyModule('v8')
+      const v9 = await topologyModule('v9')
+      for (const docType of ['post', 'reply', 'like', 'likeReply', 'repost', 'follow']) {
+        expect(v9.tokenCostFor(docType)).toEqual(v8.tokenCostFor(docType))
+        expect(v9.declaredActionFee(docType, 'create')).toEqual(v8.declaredActionFee(docType, 'create'))
+      }
+      expect(v9.starterGrantAmount()).toBe(100n)
+      expect(v9.contractIsModerated()).toBe(true)
+      expect(v9.referencesMayDangle()).toBe(true)
+      expect(v9.likeCountsArePreallocated()).toBe(false)
+      expect(v9.moderatorDeletableTypes()).toEqual(['post', 'reply'])
+      // The v8 helpers read the v8 JSON; they are only right on v9 because v9
+      // carries v8's token and fee declarations unchanged.
+      expect(socialContractV9.tokens).toEqual(socialContractV8.tokens)
+      for (const [name, schema] of Object.entries(socialContractV9.documentSchemas)) {
+        const v8Schema = (socialContractV8.documentSchemas as Record<string, unknown>)[name] as Record<string, unknown>
+        const v9Schema = schema as Record<string, unknown>
+        for (const key of ['tokenCost', 'actionFees', 'canBeDeletedByModerators', 'indices', 'immutable', 'immutableAllowSetting']) {
+          expect(v9Schema[key], `${name}.${key}`).toEqual(v8Schema[key])
+        }
+      }
+    })
+
+    it('pins the elected moderation declaration against the v9 JSON', async () => {
+      const v9 = await topologyModule('v9')
+      expect(socialContractV9.config.$formatVersion).toBe('2')
+      expect(v9.moderationLists()).toEqual(['banlist', 'suspensions', 'warnings'])
+      expect(v9.warningsAreKept()).toBe(true)
+      const abilities = ['deleteDocuments', 'ban', 'suspend', 'warn']
+      expect(v9.electedModeration()).toEqual({
+        joinWindowSeconds: 86_400,
+        voteWindowSeconds: 86_400,
+        seatContestable: false,
+        electionDelaySeconds: null,
+        maxAddedModerators: 10,
+        moderatedDocumentTypes: { post: abilities, reply: abilities },
+        interim: 'contractOwner',
+        ownerProtected: true,
+      })
+    })
+
+    it('pins distinctFrom and the private-feed gates against the v9 JSON', async () => {
+      const v9 = await topologyModule('v9')
+      expect(v9.ownerDistinctProperties('follow')).toEqual(['followingId'])
+      expect(v9.ownerDistinctProperties('block')).toEqual(['blockedId'])
+      expect(v9.ownerDistinctProperties('followRequest')).toEqual(['targetId'])
+      expect(v9.ownerDistinctProperties('privateFeedGrant')).toEqual(['recipientId'])
+      expect(v9.ownerDistinctProperties('blockFollow')).toEqual(['followedBlockers'])
+      // Self-likes and self-reposts stay allowed.
+      expect(v9.ownerDistinctProperties('like')).toEqual([])
+      expect(v9.ownerDistinctProperties('repost')).toEqual([])
+      expect(v9.privateFeedWritesAreGated()).toBe(true)
+      expect(v9.blockFollowsAreTyped()).toBe(true)
+      const schemas = socialContractV9.documentSchemas as unknown as Record<string, {
+        ownerRefersTo?: unknown
+        properties: Record<string, { refersTo?: unknown; items?: { refersTo?: unknown }; maxItems?: number }>
+      }>
+      const feedStateGate = { type: 'permanentDocument', documentType: 'privateFeedState', lookup: { index: 'owner', keys: { $ownerId: '.' } } }
+      expect(schemas.privateFeedGrant.ownerRefersTo).toEqual(feedStateGate)
+      expect(schemas.privateFeedRekey.ownerRefersTo).toEqual(feedStateGate)
+      expect(schemas.privateFeedGrant.properties.recipientId.refersTo).toEqual({
+        type: 'deletableDocument',
+        documentType: 'followRequest',
+        lookup: { index: 'targetAndRequester', keys: { targetId: '$ownerId', $ownerId: '.' } },
+      })
+      // The client's MAX_BLOCK_FOLLOWS is the contract's cap.
+      expect(schemas.blockFollow.properties.followedBlockers.maxItems).toBe(100)
+      expect(schemas.blockFollow.properties.followedBlockers.items?.refersTo).toEqual({ type: 'identity' })
     })
   })
 })
