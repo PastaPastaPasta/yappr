@@ -30,8 +30,11 @@ const describeValue = (value) => JSON.stringify(value, (_k, v) => (typeof v === 
  *   moderatorDeletable: whether the type carries `canBeDeletedByModerators`
  *   keepsHistory:       whether it carries `documentsKeepHistory` (a
  *                       moderator-deletable type cannot)
+ *   typedArrays:        { <property>: { items, maxItems, maxLength? } } —
+ *                       typed scalar arrays (beta.4) the cases write
+ *   distinctFromOwner:  identifier properties declaring distinctFrom $ownerId
  * and, contract-wide, `contract.moderation` = the lists `config.moderation`
- * must keep. Every reference at a moderator-deletable type must be a
+ * must keep (banlist, suspensions, warnings). Every reference at a moderator-deletable type must be a
  * `deletableDocument` reference (40122 at registration otherwise).
  */
 export function selfTestModerated(file, expect, contract = {}) {
@@ -40,7 +43,7 @@ export function selfTestModerated(file, expect, contract = {}) {
   const problems = [];
   const base = {};
   for (const [docType, rules] of Object.entries(expect)) {
-    const { moderatorDeletable, keepsHistory, ...rest } = rules;
+    const { moderatorDeletable, keepsHistory, typedArrays, distinctFromOwner, ...rest } = rules;
     base[docType] = rest;
     const schema = schemas[docType];
     if (!schema) continue; // battery-lib reports the missing type
@@ -49,6 +52,16 @@ export function selfTestModerated(file, expect, contract = {}) {
     }
     if (keepsHistory !== undefined && (schema.documentsKeepHistory === true) !== keepsHistory) {
       problems.push(`${docType} documentsKeepHistory is ${schema.documentsKeepHistory ?? false}, expected ${keepsHistory}`);
+    }
+    for (const [property, bounds] of Object.entries(typedArrays ?? {})) {
+      const definition = schema.properties?.[property];
+      if (definition?.type !== 'array' || !definition.items || definition.byteArray) { problems.push(`${docType}.${property} is not a typed array`); continue; }
+      if (definition.items.type !== bounds.items) problems.push(`${docType}.${property} items are ${definition.items.type}, expected ${bounds.items}`);
+      if (definition.maxItems !== bounds.maxItems) problems.push(`${docType}.${property} maxItems is ${definition.maxItems}, expected ${bounds.maxItems}`);
+      if (bounds.maxLength !== undefined && definition.items.maxLength !== bounds.maxLength) problems.push(`${docType}.${property} item maxLength is ${definition.items.maxLength}, expected ${bounds.maxLength}`);
+    }
+    for (const property of distinctFromOwner ?? []) {
+      if (schema.properties?.[property]?.distinctFrom !== '$ownerId') problems.push(`${docType}.${property} is not distinctFrom $ownerId`);
     }
   }
   const deletable = new Set(Object.entries(schemas).filter(([, s]) => s.canBeDeletedByModerators).map(([n]) => n));
@@ -135,4 +148,66 @@ export async function caseModeratorDelete(ctx, { prefix, docType, documentId, ow
   const record = page.removals.find((entry) => entry.documentId === documentId);
   battery.check(`${prefix}c documentRemovals carries the record with the reason`, record?.reason?.text === `${prefix} battery takedown` && record?.documentOwnerId === ownerId, describeValue(record ?? page));
   if (afterwards) await afterwards(ctx);
+}
+
+/** distinctFrom (DocumentPropertyNotDistinctError, 10419). */
+export const NOT_DISTINCT = /\bcode"?\s*[=:]\s*10419\b|must differ from "?\$ownerId"?, but the two values are equal/i;
+export const NOT_WARNED = /\bcode"?\s*[=:]\s*41117\b|carries no warning|contractusernotwarned/i;
+/**
+ * A typed-array element over its declared bounds: a JSON-schema refusal
+ * (JsonSchemaError, 10101: maxItems / uniqueItems / maxLength / pattern) or a
+ * byte cap (DocumentPropertyMaxBytesExceededError, 10421). Anchored on the
+ * labelled code, or on the error's own prefix, never on a bare keyword that a
+ * different refusal's text could contain.
+ */
+export const ARRAY_OUT_OF_BOUNDS = /\bcode"?\s*[=:]\s*(10101|10421)\b|jsonschemaerror:|documentpropertymaxbytesexceeded/i;
+/**
+ * The pre-v4 STRING encoding sent to a typed array: refused when the SDK
+ * serializes the document ("a typed array value must be a list", before
+ * broadcast) or by the node's schema check (10101).
+ */
+export const NOT_A_LIST = /\bcode"?\s*[=:]\s*10101\b|typed array value must be a list|jsonschemaerror:/i;
+
+/**
+ * The warning list (4.2.0-beta.4, #4872): warns `target` twice, proves the
+ * entry accumulates oldest first with its reason, proves the warned identity
+ * still writes (`writeWhileWarned`, which must land: a warning bars nothing),
+ * clears it, and proves a second clearing is 41117.
+ */
+export async function caseWarn(ctx, { prefix, target, writeWhileWarned }) {
+  const { battery, contractId, moderator } = ctx;
+  const { sdk } = battery;
+  console.log(`\n--- ${prefix}. warn ${target.label}: a record, not a bar; accumulate; clear ---`);
+  const auth = { identity: moderator.identity, contractId, identityId: target.ownerId, signer: moderator.signer };
+  const status = () => battery.readback(() => sdk.contracts.moderationStatus({ contractId, identityId: target.ownerId, lists: ['warnings'] }));
+  // A warning left by an aborted earlier run would shift every count below.
+  try { await sdk.contracts.clearUserWarnings(auth); } catch { /* nothing to clear */ }
+  for (const [index, text] of [[1, `${prefix} battery warning 1`], [2, `${prefix} battery warning 2`]]) {
+    try {
+      await sdk.contracts.warnUser({ ...auth, reason: { text } });
+      battery.check(`${prefix}a${index} moderator warns ${target.label}`, true);
+    } catch (e) {
+      battery.check(`${prefix}a${index} moderator warns ${target.label}`, false, describeErr(e).slice(0, 220));
+      return;
+    }
+  }
+  await sleep(3000);
+  const warned = await status();
+  battery.check(`${prefix}b the status proves two warnings, oldest first, with their reasons`,
+    warned.warnings?.length === 2 && warned.warnings[0].reason?.text === `${prefix} battery warning 1` && warned.warnings[1].reason?.text === `${prefix} battery warning 2`,
+    describeValue(warned));
+  if (writeWhileWarned) battery.expectAccepted(`${prefix}c ${target.label} still writes while warned (a warning bars nothing)`, await writeWhileWarned());
+  try {
+    await sdk.contracts.clearUserWarnings(auth);
+    battery.check(`${prefix}d moderator clears the warnings`, true);
+  } catch (e) {
+    battery.check(`${prefix}d moderator clears the warnings`, false, describeErr(e).slice(0, 220));
+    return;
+  }
+  await sleep(3000);
+  const cleared = await status();
+  battery.check(`${prefix}e the status proves no warnings`, Array.isArray(cleared.warnings) && cleared.warnings.length === 0, describeValue(cleared));
+  let again = null;
+  try { await sdk.contracts.clearUserWarnings(auth); } catch (e) { again = describeErr(e); }
+  battery.expectRejected(`${prefix}f clearing again is refused (41117)`, { ok: again === null, error: again }, NOT_WARNED);
 }

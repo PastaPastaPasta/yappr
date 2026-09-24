@@ -9,7 +9,9 @@
  *
  * `--moderator` is the persona the contract was published under (its owner) or
  * one appointed at publish time; v3 (beta.3) is a moderated cut, so s14/s15
- * ban the stranger and take reviews down.
+ * ban the stranger and take reviews down. v4 (beta.4) keeps a warning list
+ * (s17), stores `tags`/`imageUrls` as typed string arrays (s18) and refuses a
+ * seller reviewing an order on their own store (s19, distinctFrom).
  *   node scripts/verify-storefront.mjs --self-test   # offline: contract declares what the cases assert
  */
 import bs58 from 'bs58';
@@ -18,7 +20,7 @@ import {
   TOKEN_AGREEMENT_MISSING, decodeIntGroupKey, id32, runBattery, settle,
 } from './battery-lib.mjs';
 import { describeErr, randomEntropy } from './seed/seed-lib.mjs';
-import { caseBan, caseModeratorDelete, selfTestModerated } from './battery-moderation.mjs';
+import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, NOT_DISTINCT, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
 
 const REVIEW_COST = { storeReview: 3n, itemReview: 1n };
 const DEFAULT_YAPP = 60n;
@@ -30,7 +32,7 @@ const WRITER_GATE = PROPERTY_MISMATCH;
 // ---- Document shapes --------------------------------------------------------
 
 const storeData = ({ name, status = 'active' }) => ({ name, status, description: 'storefront battery' });
-const itemData = ({ storeId, title, status = 'active' }) => ({ storeId, title, status, basePrice: 1000, currency: 'USD' });
+const itemData = ({ storeId, title, status = 'active', tags, imageUrls }) => ({ storeId, title, status, basePrice: 1000, currency: 'USD', ...(tags ? { tags } : {}), ...(imageUrls ? { imageUrls } : {}) });
 const zoneData = ({ storeId, name }) => ({ storeId, name, rateType: 'flat', flatRate: 500, currency: 'USD', priority: 1 });
 // No buyerId anywhere: the buyer is the order's $ownerId, and the documents that
 // need to name it bind to that through propertyAgreement.
@@ -327,11 +329,46 @@ async function caseS15ModeratorDelete(ctx) {
   await caseModeratorDelete(ctx, { prefix: 's16', docType: 'itemReview', documentId: itemReview ? battery.b58(itemReview.$id) : null, ownerId: buyer.ownerId });
 }
 
+async function caseS17Warn(ctx) {
+  const { battery, stranger, run } = ctx;
+  const zone = () => battery.attemptCreate(stranger, 'shippingZone', zoneData({ storeId: id32(ctx.strangerStoreId), name: `warned-${run}-${Date.now()}` }));
+  await caseWarn(ctx, { prefix: 's17', target: stranger, writeWhileWarned: zone });
+}
+
+async function caseS18TypedArrays(ctx) {
+  const { battery, seller, run } = ctx;
+  console.log('\n--- s18. storeItem tags and imageUrls are typed string arrays (beta.4 v4) ---');
+  const tags = ['catan', 'wood', 'handmade'];
+  const imageUrls = ['https://example.com/a.png', 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'];
+  const item = await battery.probeCreate('s18a an item with tags and imageUrls as LISTS lands', null, seller, 'storeItem', itemData({ storeId: id32(ctx.storeId), title: `Typed ${run}`, tags, imageUrls }));
+  if (item.ok) {
+    const back = (await battery.fetchDocument('storeItem', item.id))?.toJSON?.();
+    battery.check('s18b both read back as the same lists', JSON.stringify(back?.tags) === JSON.stringify(tags) && JSON.stringify(back?.imageUrls) === JSON.stringify(imageUrls), JSON.stringify({ tags: back?.tags, imageUrls: back?.imageUrls }));
+  }
+  const create = (label, data) => battery.probeCreate(label, ARRAY_OUT_OF_BOUNDS, seller, 'storeItem', itemData({ storeId: id32(ctx.storeId), title: `Bad ${run} ${label.slice(0, 4)}`, ...data }));
+  await create('s18c an image URL that is not http(s):// or ipfs:// is refused (pattern)', { imageUrls: ['ftp://example.com/a.png'] });
+  await create('s18d a ninth image is refused (maxItems 8)', { imageUrls: Array.from({ length: 9 }, (_, i) => `https://example.com/${i}.png`) });
+  await create('s18e a duplicate tag is refused (uniqueItems)', { tags: ['wood', 'wood'] });
+  await battery.probeCreate('s18f the v3 JSON-string encoding is refused on v4', NOT_A_LIST, seller, 'storeItem', itemData({ storeId: id32(ctx.storeId), title: `Legacy ${run}`, tags: JSON.stringify(tags) }));
+}
+
+async function caseS19SelfReview(ctx) {
+  const { battery, seller } = ctx;
+  console.log('\n--- s19. a seller cannot review an order on their own store (distinctFrom) ---');
+  // The seller orders from their own store, then reviews it: the order is real
+  // and the writer gate passes (the seller IS the buyer), so only distinctFrom
+  // on sellerId stands between a seller and a self-rating.
+  const order = await battery.probeCreate('s19a the seller orders from their own store', null, seller, 'storeOrder', orderData({ storeId: id32(ctx.storeId), sellerId: id32(seller.ownerId) }));
+  if (!order.ok) return;
+  await battery.probeCreate('s19b a review of it by the seller is refused (10419 sellerId = $ownerId)', NOT_DISTINCT, seller, 'storeReview', storeReviewData({ storeId: id32(ctx.storeId), orderId: id32(order.id), sellerId: id32(seller.ownerId), rating: 5 }), { tokenCost: REVIEW_COST.storeReview });
+}
+
 const CASES = new Map([
   ['s1', caseS1Fixtures], ['s2', caseS2ItemRefs], ['s3', caseS3Orders], ['s4', caseS4Status],
   ['s5', caseS5StoreReviews], ['s6', caseS6ItemReviews], ['s7', caseS7Averages], ['s8', caseS8Rankings],
   ['s9', caseS9OrderCounts], ['s10', caseS10Composite], ['s11', caseS11Permanence], ['s12', caseS12Tokens],
   ['s13', caseS13Immutable], ['s14', caseS14Ban], ['s15', caseS15ModeratorDelete],
+  ['s17', caseS17Warn], ['s18', caseS18TypedArrays], ['s19', caseS19SelfReview],
 ]);
 
 await runBattery({
@@ -345,7 +382,8 @@ await runBattery({
     // s2d/s2e + s13: only the store owner may list under a store, and never move it.
     const ownedByStoreOwner = { agreements: { storeId: { $ownerId: '$ownerId' } }, immutable: ['storeId'] };
     return selfTestModerated('yappr-storefront-contract.json', {
-      storeItem: ownedByStoreOwner,
+      // s18: tags and imageUrls are typed string arrays (beta.4 v4).
+      storeItem: { ...ownedByStoreOwner, typedArrays: { tags: { items: 'string', maxItems: 32, maxLength: 64 }, imageUrls: { items: 'string', maxItems: 8, maxLength: 512 } } },
       shippingZone: ownedByStoreOwner,
       // s3d: sellerId is the store's real owner, not a buyer's claim.
       storeOrder: { agreements: { storeId: { sellerId: '$ownerId' } } },
@@ -353,10 +391,11 @@ await runBattery({
       orderStatusUpdate: { agreements: { orderId: { buyerId: '$ownerId', $ownerId: 'sellerId' } } },
       // s5c/s6: only the identity that placed the order may review it.
       // s15/s16: reviews are the moderator-deletable types; nothing references them.
-      storeReview: { agreements: { orderId: { storeId: 'storeId', sellerId: 'sellerId', $ownerId: '$ownerId' } }, moderatorDeletable: true },
+      // s19: the seller of the order under review is never its reviewer.
+      storeReview: { agreements: { orderId: { storeId: 'storeId', sellerId: 'sellerId', $ownerId: '$ownerId' } }, moderatorDeletable: true, distinctFromOwner: ['sellerId'] },
       itemReview: { agreements: { itemId: { storeId: 'storeId' }, orderId: { storeId: 'storeId', $ownerId: '$ownerId' } }, moderatorDeletable: true },
       store: { moderatorDeletable: false },
-    }, { moderation: { banlist: true, suspensions: true } });
+    }, { moderation: { banlist: true, suspensions: true, warnings: true } });
   },
   setup: async ({ battery, tokenId, buyer, moderator }) => ({ reviews: [], itemRatings: {}, zoneId: null, buyerYappBefore: await battery.yappBalance(tokenId, buyer.ownerId), moderator: { ...moderator, identity: await battery.readback(() => battery.sdk.identities.fetch(moderator.ownerId)) } }),
   summary: (ctx) => `store=${ctx.storeId} items=${ctx.item1},${ctx.item2} orders=${ctx.orderId},${ctx.orderId2}`,
