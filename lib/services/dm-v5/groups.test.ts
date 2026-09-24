@@ -415,6 +415,27 @@ describe('joining is saved at once (§5.5)', () => {
 })
 
 describe('review regressions', () => {
+  it('reads back a rebroadcast refused as "other" and adopts the first broadcast that landed (validator nit)', async () => {
+    const { ledger, alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    let calls = 0
+    alice.chain.hook = (method, args) => {
+      if (method !== 'replaceGroupDoc') return null
+      calls++
+      if (calls === 1) return { ok: true, id: 'uncertain', confirmed: false }
+      // The first broadcast lands now; the rebroadcast is refused with an unclassified error.
+      const doc = ledger.groupDocs.find((d) => bytesEqual(d.handle, rosterHandle(conv.gid)))
+      if (doc) {
+        doc.blob = args[2] as Uint8Array
+        doc.revision += 1
+      }
+      return { ok: false, failure: 'other', error: 'state transition already in chain' }
+    }
+    await renameGroup(alice.ctx, conv, 'Landed')
+    expect(calls).toBe(2)
+    expect(conv.lastRoster?.name).toBe('Landed')
+  })
+
   it('reports success when an uncertain end lands late (validator nit)', async () => {
     const { ledger, alice } = world()
     const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
