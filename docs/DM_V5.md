@@ -646,7 +646,10 @@ against about 33 for one feed load. No credits.
   A member removed and later re-added shows their own old-base writes from the
   gap; harmless.
 - **Leave:** the member sends `0x02`. The owner's client removes them on its
-  next poll. Until then they can still read.
+  next poll. Until then they can still read. A removal that fails is retried
+  on the poll cadence (after 30 s, doubling to at most 5 minutes), and one
+  whose keyring landed but whose roster replace did not is finished by the
+  repair below on the owner's next poll, on any of the owner's devices.
 - **Owner leaves:** the group ends (tombstone roster, members kept). Nobody
   can send any more, and ended groups are not polled in the background, but
   opening the thread still discovers and backfills its history.
@@ -668,6 +671,7 @@ OWNER_WRITE(g, change):
       replace the roster under the new base; continue
     do the change (grant + roster replace, or keyring + roster replace, or rename)
     if Platform rejects a write as stale (40106) or duplicate (unique index): continue
+    if it rejects it for any other reason (usually transport): wait briefly, continue   # bounded rounds
     if a write's result is uncertain (timeout): read its handle back
       exactly these bytes → it landed
       another document there → a competing write won: treat it as stale and continue
@@ -684,7 +688,10 @@ reader re-opens a roster whose `$revision` matches the one it last saw
 unless its bytes match too.
 
 Every multi-device race (two adds, two removals, an add during a removal, a
-failed roster replace) is this loop re-running. The owner **never** grants or
+failed roster replace) is this loop re-running. The owner's client also runs
+the repair step on its own each poll for any group whose newest keyring is
+ahead of its roster, so a removal cut short by a failed roster replace is
+finished without waiting for the next membership change. The owner **never** grants or
 writes a keyring from a roster behind the newest keyring. Otherwise a stale
 device could hand the new key back to someone just removed. Duplicate grants
 from two devices are harmless, because keys are deterministic.

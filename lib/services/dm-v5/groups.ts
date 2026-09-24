@@ -26,16 +26,18 @@ import {
 import type { Epoch, GroupConversation, IdentityId, KeyringMember, RosterContent } from '@/lib/dm/types'
 import { logger } from '@/lib/logger'
 import { isMember, newGroupConv, type GroupConv } from './conversation'
-import { attachGroup, curWeek, groupConv, isMe, peerKey, type DmContext } from './context'
+import { attachGroup, curWeek, groupConv, isMe, peerKey, type Backoff, type DmContext } from './context'
 import { ensureStarted, openDirect, startedDirect } from './directs'
 import { applyGroups, markApplied, switchEpoch } from './group-apply'
 import { sendContent } from './sender'
 import type { WriteFailure, WriteOutcome } from './types'
-import { withNonceRetry } from './write-failure'
+import { nonceBackoffMs, withNonceRetry } from './write-failure'
 import { TAGS_PER_QUERY, hexId, includesId, range, sameEpoch } from './util'
 
 const MAX_OWNER_ROUNDS = 6
-const LEAVE_RETRY_MS = 30 * 60_000
+/** Background owner work (removing a member who left, repairing a roster) retries on the poll cadence: 30 s, doubling, at most 5 min. */
+const OWNER_RETRY_BASE_MS = 30_000
+const OWNER_RETRY_MAX_MS = 5 * 60_000
 const MAX_NAME_BYTES = 200
 
 export class GroupError extends Error {}
@@ -166,11 +168,20 @@ type Change = (current: RosterContent) => Promise<WriteOutcome | 'noop'>
 
 /**
  * OWNER_WRITE (§6.5). `change` sees a roster at the newest epoch and returns
- * its last write's outcome; a stale or duplicate refusal re-runs the loop.
+ * its last write's outcome; a stale or duplicate refusal re-runs the loop, and
+ * so does any other refusal (usually a transport failure), after a short
+ * backoff, up to the round cap. Every round re-reads first, so a keyring that
+ * landed before a refused roster write is repaired rather than written twice.
  * `endsGroup` marks the end itself: finding the roster already ended on a
  * re-run means an earlier uncertain tombstone landed, which is success.
  */
 async function ownerWrite(ctx: DmContext, conv: GroupConv, change: Change, endsGroup = false): Promise<void> {
+  let lastError: string | null = null
+  const refused = async (outcome: { ok: false; failure: WriteFailure; error: string }, round: number) => {
+    if (outcome.failure !== 'other') return
+    lastError = outcome.error
+    await (ctx.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))))(nonceBackoffMs(round))
+  }
   for (let round = 0; round < MAX_OWNER_ROUNDS; round++) {
     conv.lastRoster = null
     conv.roster = null
@@ -187,14 +198,14 @@ async function ownerWrite(ctx: DmContext, conv: GroupConv, change: Change, endsG
       for (let b = roster.b + 1; b < conv.epoch.b; b++) epochLog = logEpoch(epochLog, { b, r: 0 }, epochStartWeek(ctx, conv, { b, r: 0 }))
       const repaired: RosterContent = { ...roster, b: conv.epoch.b, r: 0, members: await survivorsOf(ctx, conv, conv.epoch.b, roster.members), epochLog }
       const outcome = await writeRoster(ctx, conv, repaired)
-      if (!outcome.ok && outcome.failure === 'other') throw new GroupError(outcome.error)
+      if (!outcome.ok) await refused(outcome, round)
       continue
     }
     const outcome = await change(roster)
     if (outcome === 'noop' || outcome.ok) return
-    if (outcome.failure === 'other') throw new GroupError(outcome.error)
+    await refused(outcome, round)
   }
-  throw new GroupError('The group changed on another device while saving. Try again.')
+  throw new GroupError(lastError ?? 'The group changed on another device while saving. Try again.')
 }
 
 // ---------------------------------------------------------------------------
@@ -362,20 +373,56 @@ export async function leaveGroup(ctx: DmContext, conv: GroupConv): Promise<void>
   await sendContent(ctx, conv, { type: 'leave' })
 }
 
-/** The owner's client removes members who sent a leave (§6.4). */
+/** Schedule the next attempt after a failure: 30 s, doubling, at most 5 min (chain time). */
+function backOff(ctx: DmContext, backoff: Backoff): void {
+  backoff.retryAt = ctx.chain.now() + Math.min(OWNER_RETRY_BASE_MS * 2 ** backoff.failures, OWNER_RETRY_MAX_MS)
+  backoff.failures++
+}
+
+/**
+ * The owner's client removes members who sent a leave (§6.4). A failure is
+ * retried on the poll cadence (30 s, doubling to 5 min), so one transient
+ * refusal does not leave the member reading for long.
+ */
 export async function processLeaves(ctx: DmContext): Promise<void> {
   if (!ctx.chain.canWrite()) return
-  const now = ctx.chain.now()
   for (const [id, pending] of Array.from(ctx.pendingLeaves.entries())) {
-    if (pending.retryAt > now) continue
+    if (pending.retryAt > ctx.chain.now()) continue
     const { conv, member } = pending
     try {
       if (!conv.ended && isMember(conv, member, ctx.me.id)) await removeMember(ctx, conv, member)
       ctx.pendingLeaves.delete(id)
     } catch (error) {
-      // A refused transition still costs a fee: back off instead of retrying every poll.
-      pending.retryAt = now + LEAVE_RETRY_MS
+      backOff(ctx, pending)
       logger.warn('DM v5: removing a member who left failed:', error)
+    }
+  }
+}
+
+/**
+ * Finish a partial removal (§6.5): a group I own whose newest keyring is
+ * ahead of its roster (the roster replace after it failed, perhaps on a
+ * device or page that is gone) gets the roster rebuilt from the keyring's
+ * slots on the next poll, without waiting for another owner change. Until
+ * then readers still list the removed member.
+ */
+export async function repairOwnedGroups(ctx: DmContext): Promise<void> {
+  if (!ctx.chain.canWrite()) return
+  for (const conv of Array.from(ctx.convs.values())) {
+    if (conv.kind !== 'group' || !conv.secret || conv.ended || !conv.lastRoster || conv.epoch.b <= conv.lastRoster.b) {
+      if (conv.kind === 'group') ctx.ownerRepairs.delete(conv.key)
+      continue
+    }
+    const backoff = ctx.ownerRepairs.get(conv.key)
+    if (backoff && backoff.retryAt > ctx.chain.now()) continue
+    try {
+      await ownerWrite(ctx, conv, async () => 'noop')
+      ctx.ownerRepairs.delete(conv.key)
+    } catch (error) {
+      const next = backoff ?? { retryAt: 0, failures: 0 }
+      backOff(ctx, next)
+      ctx.ownerRepairs.set(conv.key, next)
+      logger.warn('DM v5: repairing a group roster failed:', error)
     }
   }
 }

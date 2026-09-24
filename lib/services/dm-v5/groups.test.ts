@@ -415,6 +415,83 @@ describe('joining is saved at once (§5.5)', () => {
   })
 })
 
+describe('leave path after a refused roster write', () => {
+  async function leftGroup() {
+    const w = world()
+    const { conv } = await createGroup(w.alice.ctx, 'Team', [BOB_ID, CAROL_ID])
+    await pollOnce(w.bob.ctx)
+    await pollOnce(w.carol.ctx)
+    const bobGroup = theGroup(w.bob.ctx, ALICE_ID, conv.gid)
+    await leaveGroup(w.bob.ctx, bobGroup)
+    return { ...w, conv, bobGroup }
+  }
+  const refuseReplaces = (chain: { hook: unknown }, on: () => boolean) => {
+    chain.hook = (method: string) => (method === 'replaceGroupDoc' && on() ? { ok: false, failure: 'other', error: 'transport collapsed' } : null)
+  }
+
+  it('completes the removal on the next poll after the post-keyring roster write was refused, and the leaver cannot read on (leave #1)', async () => {
+    const { ledger, alice, bob, carol, conv, bobGroup } = await leftGroup()
+    // Every roster replace fails during the owner's first poll (a transport outage): the keyring lands, the roster does not.
+    let outage = true
+    refuseReplaces(alice.chain, () => outage)
+    await pollOnce(alice.ctx)
+    expect(ledger.groupDocs.some((d) => bytesEqual(d.handle, keyringHandle(conv.gid, 1)))).toBe(true)
+    outage = false
+    // The next poll, on the normal cadence, finishes it.
+    ledger.time += 30_000
+    await pollOnce(alice.ctx)
+    expect(conv.lastRoster && has(conv.lastRoster.members, BOB_ID)).toBe(false)
+    expect(currentEpoch(conv)).toEqual({ b: 1, r: 0 })
+    await say(alice.ctx, conv, 'after bob left')
+    await pollOnce(bob.ctx)
+    await pollOnce(bob.ctx)
+    expect(bobGroup.removed).toBe(true)
+    expect(groupTexts(bobGroup)).not.toContain('after bob left')
+    await pollOnce(carol.ctx)
+    await pollOnce(carol.ctx)
+    expect(groupTexts(theGroup(carol.ctx, ALICE_ID, conv.gid))).toContain('after bob left')
+  })
+
+  it('repairs a partial removal (keyring landed, roster not) on the next poll of a reloaded owner device (leave #2)', async () => {
+    const { ledger, alice, conv } = await leftGroup()
+    refuseReplaces(alice.chain, () => true)
+    await pollOnce(alice.ctx)
+    alice.chain.hook = null
+    // The owner reloads: the queued leave is gone, and B's leave is on the old base.
+    const reloaded = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await reloaded.ctx.store.load()
+    await attachSaved(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    await pollOnce(reloaded.ctx)
+    const g = theGroup(reloaded.ctx, ALICE_ID, conv.gid)
+    expect(g.lastRoster?.b).toBe(1)
+    expect(g.lastRoster && has(g.lastRoster.members, BOB_ID)).toBe(false)
+  })
+
+  it('backs off a failing leave removal on the poll cadence, doubling from 30 s to at most 5 min (leave #3)', async () => {
+    const { ledger, alice } = await leftGroup()
+    refuseReplaces(alice.chain, () => true)
+    const waits: number[] = []
+    for (let i = 0; i < 6; i++) {
+      await pollOnce(alice.ctx)
+      const pending = Array.from(alice.ctx.pendingLeaves.values())[0]
+      if (!pending) break
+      waits.push(pending.retryAt - ledger.time)
+      ledger.time = pending.retryAt
+    }
+    expect(waits).toEqual([30_000, 60_000, 120_000, 240_000, 300_000, 300_000])
+  })
+
+  it('retries a single "other" refusal inside the owner loop instead of failing the change (leave #4)', async () => {
+    const { alice } = world()
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    let refusals = 0
+    refuseReplaces(alice.chain, () => refusals++ < 1)
+    await renameGroup(alice.ctx, conv, 'Renamed')
+    expect(conv.lastRoster?.name).toBe('Renamed')
+  })
+})
+
 describe('follow-up review regressions', () => {
   it('refuses a send after a re-add grant whose group re-apply failed (follow-up 2 #1)', async () => {
     const { ledger, alice, carol } = world()

@@ -29,6 +29,12 @@ export interface PendingGrant {
   firstSeen: number
 }
 
+/** A retry schedule for background owner work: the next attempt's chain time and how many failed so far. */
+export interface Backoff {
+  retryAt: number
+  failures: number
+}
+
 export interface DmContext {
   chain: DmChain
   me: DmIdentity
@@ -39,7 +45,9 @@ export interface DmContext {
   peerKeys: Map<string, Uint8Array | null>
   pendingGrants: Map<string, PendingGrant>
   /** Members who sent a leave (0x02) on a group I own, waiting for my client to remove them (§6.4). */
-  pendingLeaves: Map<string, { conv: GroupConv; member: IdentityId; retryAt: number }>
+  pendingLeaves: Map<string, { conv: GroupConv; member: IdentityId } & Backoff>
+  /** Owned groups whose roster trails their newest keyring and whose repair failed, by conversation key (§6.5). */
+  ownerRepairs: Map<string, Backoff>
   /** In-memory invite scan position; equals the saved one except during lost-state recovery (§9). */
   scanCursor: number
   /** Invite ids already read at `scanCursor` (§6.3: skip ids already seen at the cursor). */
@@ -82,6 +90,7 @@ export function createContext(options: {
     peerKeys: new Map(),
     pendingGrants: new Map(),
     pendingLeaves: new Map(),
+    ownerRepairs: new Map(),
     scanCursor: 0,
     seenAtCursor: new Set(),
     appJustOpened: true,

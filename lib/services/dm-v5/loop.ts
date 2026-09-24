@@ -3,7 +3,7 @@
 import { retryPeerKeys, type DmContext } from './context'
 import { processGrants } from './grants'
 import { applyGroups } from './group-apply'
-import { processLeaves } from './groups'
+import { processLeaves, repairOwnedGroups } from './groups'
 import { scanInvites } from './invites'
 import { pollStreams } from './poller'
 import { logger } from '@/lib/logger'
@@ -12,7 +12,8 @@ import { logger } from '@/lib/logger'
  * Group documents first (so streams are polled on the current epoch), then
  * every stream, then the invite scan. Conversations found by the scan, and
  * groups joined through grants those streams carried, get their first poll in
- * the same pass. Leaves are handled last. The first pass after the app opens
+ * the same pass. Leaves, then roster repairs of groups I own, are handled
+ * last. The first pass after the app opens
  * also polls own streams.
  */
 export async function pollOnce(ctx: DmContext): Promise<void> {
@@ -27,6 +28,7 @@ export async function pollOnce(ctx: DmContext): Promise<void> {
   await processGrants(ctx)
   if (ctx.convs.size !== known) await pollStreams(ctx)
   await processLeaves(ctx)
+  await repairOwnedGroups(ctx)
   ctx.appJustOpened = false
   for (const conv of Array.from(ctx.convs.values())) conv.probeOwn = false
 }
