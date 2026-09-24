@@ -126,12 +126,13 @@ export class SelfStateStore {
   }
 
   /**
-   * Pick up another device's saves: re-read, and merge when the revision moved.
+   * Pick up another device's saves: re-read, and merge when the revision moved
+   * or the document is a different one (deleted and created again elsewhere).
    * Returns true when something was merged.
    */
   async refresh(): Promise<boolean> {
     const remote = await this.chain.selfState()
-    if (!remote || (this.doc && remote.revision <= this.doc.revision)) return false
+    if (!remote || (this.doc && remote.id === this.doc.id && remote.revision <= this.doc.revision)) return false
     return this.mergeRemote(remote)
   }
 
@@ -375,17 +376,19 @@ export class SelfStateStore {
       const fields = await encryptSelfState(this.stateKey, this.state)
       const doc = this.doc
       const outcome = doc ? await this.chain.replaceSelfState(doc, fields) : await this.chain.createSelfState(fields)
-      // A replace whose result is uncertain (the DAPI timeout) may have been refused on chain because
-      // another device saved first (40106). Treating it as saved would drop this device's edits for
-      // good, so read it back: only our own fields at the next revision count as landed.
-      if (outcome.ok && !outcome.confirmed && doc) {
-        // One read decides: our own fields at the next revision (landed), a newer state from another
-        // device (merge and save again), or nothing new yet (stay dirty; flush re-arms the timer, and
-        // the next save, a 40106 if this one did land after all, merges).
+      // A write whose result is uncertain (the DAPI timeout) may have been refused on chain because
+      // another device saved first (40106), or created the document first (40105). Treating it as
+      // saved would drop this device's edits for good, so read it back: only our own fields (at the
+      // next revision, for a replace) count as landed.
+      let saved: { id: string; revision: number } | null = null
+      if (outcome.ok && !outcome.confirmed) {
+        // One read decides: our own fields (landed), another device's state (merge and save again),
+        // or nothing new yet (stay dirty; flush re-arms the timer, and the next save, a 40106 or
+        // 40105 if this one did land after all, merges).
         const remote = await this.chain.selfState()
-        const landed = remote?.id === doc.id && remote.revision === doc.revision + 1 && sameFields(remote.fields, fields)
+        const landed = remote !== null && sameFields(remote.fields, fields) && (!doc || (remote.id === doc.id && remote.revision === doc.revision + 1))
         if (!landed) {
-          if (!remote || remote.revision <= doc.revision) return false
+          if (!remote || (doc && remote.id === doc.id && remote.revision <= doc.revision)) return false
           if (!(await this.mergeRemote(remote))) {
             if (this.status === 'newer') return false
             // It does not decrypt at all: replace it with what this device holds (§9).
@@ -393,9 +396,10 @@ export class SelfStateStore {
           }
           continue
         }
+        saved = { id: remote.id, revision: remote.revision }
       }
       if (outcome.ok) {
-        this.doc = doc ? { id: doc.id, revision: doc.revision + 1 } : { id: outcome.id, revision: 1 }
+        this.doc = saved ?? (doc ? { id: doc.id, revision: doc.revision + 1 } : { id: outcome.id, revision: 1 })
         this.status = 'loaded'
         if (this.version === version) this.dirty = false
         return !this.dirty

@@ -362,10 +362,13 @@ not current + 1 (error 40106). The losing device re-reads, merges
 (conversations are a union; `readAt` and `hiddenAt` take the maximum; each
 block entry and the settings take the newer `changedAt`; the scan position
 takes the minimum, so no invite is skipped) and saves again. The loser often
-sees only a DAPI timeout, not the 40106, so a replace whose result is
-uncertain is read back once: exactly its fields at the next revision means it
-landed; a newer revision is merged and saved again; no change yet leaves the
-edits unsaved, and the save is retried later. A failed save is always retried
+sees only a DAPI timeout, not the 40106, so a write whose result is uncertain
+is read back once: exactly its fields (at the next revision, for a replace)
+means it landed; another device's document (a newer revision, or a different
+document id, as when two devices race to create the first one) is merged and
+saved again; nothing new yet leaves the edits unsaved, and the save is retried
+later. Picking up other devices' saves compares the document id as well as the
+revision. A failed save is always retried
 on the coalescing timer, never left for the page to close.
 
 **When it is written:** changes are coalesced to save fees, and flushed when

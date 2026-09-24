@@ -133,6 +133,58 @@ describe('self-state store', () => {
     expect(ledger.selfStates[0].revision).toBe(3)
   })
 
+  it('reads back an uncertain initial create and merges when another device created first (review #4)', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const laptop = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await laptop.ctx.store.load()
+    phone.ctx.store.addDirect(direct(BOB_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    // The laptop's create loses to the phone's on chain (40105) but the client only sees a timeout.
+    laptop.ctx.store.addDirect(direct(CAROL_ID))
+    let timedOut = false
+    laptop.chain.hook = (method) => {
+      if (method !== 'createSelfState' || timedOut) return null
+      timedOut = true
+      return { ok: true, id: 'uncertain', confirmed: false }
+    }
+    expect(await laptop.ctx.store.flush()).toBe(true)
+    const fresh = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    await fresh.ctx.store.load()
+    expect(fresh.ctx.store.directs().map((d) => d.peer)).toEqual([BOB_ID, CAROL_ID])
+  })
+
+  it('keeps an uncertain initial create dirty while nothing is visible, and adopts it once it lands', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    phone.ctx.store.addDirect(direct(BOB_ID))
+    phone.chain.hook = (method) => (method === 'createSelfState' ? { ok: true, id: 'uncertain', confirmed: false } : null)
+    expect(await phone.ctx.store.flush()).toBe(false)
+    expect(phone.ctx.store.isDirty).toBe(true)
+    phone.chain.hook = null
+    phone.chain.unconfirmed = 1
+    expect(await phone.ctx.store.flush()).toBe(true)
+    // The landed create was adopted with its real id: the next edit replaces it, no second document.
+    phone.ctx.store.addDirect(direct(CAROL_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    expect(ledger.selfStates).toHaveLength(1)
+    expect(ledger.selfStates[0].revision).toBe(2)
+  })
+
+  it('refresh merges a saved state with a different document id at the same revision (review #4)', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    phone.ctx.store.addDirect(direct(BOB_ID))
+    expect(await phone.ctx.store.flush()).toBe(true)
+    // The document is deleted and another device creates a new one (revision 1 again).
+    ledger.selfStates = []
+    const laptop = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    laptop.ctx.store.addDirect(direct(CAROL_ID))
+    expect(await laptop.ctx.store.flush()).toBe(true)
+    expect(await phone.ctx.store.refresh()).toBe(true)
+    expect(phone.ctx.store.findDirect(CAROL_ID)).not.toBeNull()
+  })
+
   it('merges a create race (40105 on the unique [$ownerId] index)', async () => {
     const ledger = new MemoryLedger()
     const a = makeContext(ledger, ALICE_ID, ALICE_PRIV)
