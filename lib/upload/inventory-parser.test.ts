@@ -34,3 +34,16 @@ describe('inventory CSV currency units', () => {
     expect(result.errors[0].column).toBe('price')
   })
 })
+
+describe('merged tags fit storefront v4 (docs/SOCIAL_V9.md)', () => {
+  it('keeps at most 32 tags of at most 64 characters and warns about the rest', () => {
+    const many = Array.from({ length: 40 }, (_, i) => `tag${i}`).join(',')
+    const long = 'x'.repeat(65)
+    const result = parseInventoryCSV(`Item Name,Price,Tags\nParcel,1.00,"${many},${long}"`)
+    const [item] = result.items
+    expect(item.tags).toHaveLength(32)
+    expect(item.tags).not.toContain(long)
+    expect(result.warnings.map((w) => w.message).join(' ')).toMatch(/longer than 64 characters.*kept the first 32 of 40 tags/)
+    expect(toStoreItemData(item).tags).toHaveLength(32)
+  })
+})

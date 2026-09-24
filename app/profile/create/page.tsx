@@ -19,6 +19,7 @@ import type { SocialLink } from '@/lib/types'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
 import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
+import { ListLimitError } from '@/lib/typed-array-codecs'
 import {
   unifiedProfileService,
   DICEBEAR_STYLES,
@@ -165,6 +166,10 @@ function CreateProfilePage() {
       router.push('/feed')
     } catch (error: unknown) {
       logger.error('Failed to create profile:', error)
+      if (error instanceof ListLimitError) {
+        toast.error(error.message)
+        return
+      }
 
       const errorMessage = extractErrorMessage(error)
 

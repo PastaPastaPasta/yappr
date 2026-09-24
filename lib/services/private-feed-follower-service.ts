@@ -93,6 +93,10 @@ class PrivateFeedFollowerService {
     myId: string,
     publicKey?: Uint8Array
   ): Promise<{ success: boolean; error?: string }> {
+    // v9 refuses a self-request in consensus (distinctFrom $ownerId, 10419).
+    if (ownerId === myId) {
+      return { success: false, error: 'You cannot request access to your own private feed' };
+    }
     try {
       // 1. Check if the owner has a private feed
       const hasPrivateFeed = await privateFeedService.hasPrivateFeed(ownerId);

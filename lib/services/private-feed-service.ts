@@ -31,6 +31,8 @@ import {
 } from './private-feed-crypto-service';
 import { privateFeedKeyStore } from './private-feed-key-store';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
+import { privateFeedWritesAreGated } from '@/lib/contract-topology';
+import { isReferenceNotFoundError, referencedPathFromError } from '@/lib/error-utils';
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
 import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys';
 import { getPublicKey } from '@/lib/crypto/keys';
@@ -69,6 +71,25 @@ export interface PrivateFeedRekeyDocument {
  */
 function utf8Encode(str: string): Uint8Array {
   return new TextEncoder().encode(str);
+}
+
+/** Why an approval failed, where the caller should act on it (v9 private-feed gates). */
+export type ApproveErrorCode = 'REQUEST_WITHDRAWN' | 'FEED_NOT_ENABLED';
+
+export const REQUEST_WITHDRAWN_MESSAGE = 'This follower withdrew their request, so there is nothing to approve.';
+const FEED_NOT_ENABLED_MESSAGE = 'Enable your private feed before approving followers.';
+
+/**
+ * A grant refused by a v9 gate (40120), by the path Drive names:
+ * `recipientId` — the follower's request is gone (cancelled between the
+ * owner's read and the grant); `$ownerId` — the owner has no privateFeedState.
+ */
+function grantRefusal(error: unknown): { error: string; errorCode: ApproveErrorCode } | null {
+  if (!isReferenceNotFoundError(error)) return null;
+  const path = referencedPathFromError(error);
+  if (path === 'recipientId') return { error: REQUEST_WITHDRAWN_MESSAGE, errorCode: 'REQUEST_WITHDRAWN' };
+  if (path === '$ownerId') return { error: FEED_NOT_ENABLED_MESSAGE, errorCode: 'FEED_NOT_ENABLED' };
+  return null;
 }
 
 class PrivateFeedService {
@@ -317,6 +338,18 @@ class PrivateFeedService {
   // Follower Management (SPEC §8.4 - Approve Follow Request)
   // ============================================================
 
+  /** Whether `requesterId` has a live followRequest to `ownerId` (the v9 grant gate's lookup). */
+  private async followRequestExists(ownerId: string, requesterId: string): Promise<boolean> {
+    const sdk = await getEvoSdk();
+    const documents = await queryDocuments(sdk, {
+      dataContractId: this.contractId,
+      documentTypeName: DOCUMENT_TYPES.FOLLOW_REQUEST,
+      where: [['targetId', '==', ownerId], ['$ownerId', '==', requesterId]],
+      limit: 1,
+    });
+    return documents.length > 0;
+  }
+
   /**
    * Approve a follower and grant them access to the private feed
    *
@@ -331,8 +364,15 @@ class PrivateFeedService {
     requesterId: string,
     requesterPublicKey: Uint8Array,
     encryptionPrivateKey?: Uint8Array
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; error?: string; errorCode?: ApproveErrorCode }> {
     try {
+      // 0. v9 accepts a grant only while the recipient's followRequest to this
+      // owner exists (refersTo through targetAndRequester). A follower may have
+      // cancelled since the owner's list was read: check before any key work.
+      if (privateFeedWritesAreGated() && !(await this.followRequestExists(ownerId, requesterId))) {
+        return { success: false, error: REQUEST_WITHDRAWN_MESSAGE, errorCode: 'REQUEST_WITHDRAWN' };
+      }
+
       // 1. Get feed seed
       let feedSeed = privateFeedKeyStore.getFeedSeed();
       if (!feedSeed) {
@@ -486,7 +526,7 @@ class PrivateFeedService {
       );
 
       if (!result.success) {
-        return { success: false, error: result.error || 'Failed to create grant' };
+        return { success: false, ...(grantRefusal(result.error) ?? { error: result.error || 'Failed to create grant' }) };
       }
 
       // 12. Update local state - remove leaf from available and add to recipient map
@@ -895,201 +935,17 @@ class PrivateFeedService {
   // ============================================================
 
   /**
-   * Reset private feed - creates new seed, invalidating all existing followers
-   *
-   * This operation:
-   * - Generates a new feed seed and encrypts it to the owner's encryption key
-   * - Updates the existing PrivateFeedState document with the new encrypted seed
-   * - Clears all local state (epoch, revoked leaves, recipient map)
-   * - Orphans all existing PrivateFeedGrant and PrivateFeedRekey documents
-   *
-   * Consequences (per PRD §9.2):
-   * - All existing followers lose access (their grants are encrypted to old keys)
-   * - All existing private posts become unreadable (encrypted with old CEKs)
-   * - Followers must re-request access and be re-approved
-   *
-   * @param ownerId - The identity ID of the feed owner
-   * @param encryptionPrivateKey - The owner's encryption private key (32 bytes)
-   * @returns Promise<{success: boolean, error?: string}>
+   * Reset is unavailable for the deployed private-feed contracts: the owner state
+   * is immutable, undeletable and unique per owner. Refuse before touching grants,
+   * rekeys or local keys. A future reset needs a supported atomic protocol.
+   * Kept as a method (rather than deleted) so any caller gets the refusal
+   * instead of a partial reset; it takes no arguments because it acts on none.
    */
-  async resetPrivateFeed(
-    ownerId: string,
-    encryptionPrivateKey: Uint8Array
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      // 1. Get existing PrivateFeedState document
-      const existingState = await this.getPrivateFeedState(ownerId);
-      if (!existingState) {
-        return { success: false, error: 'Private feed not enabled' };
-      }
-
-      // 2. Verify user has the encryption key by deriving public key
-      const encryptionPubKey = getPublicKey(encryptionPrivateKey);
-
-      // 3. Delete all existing PrivateFeedGrant documents
-      // These are now useless since they're encrypted to old seed's epoch keys
-      logger.debug('Deleting existing grants...');
-      const sdk = await getEvoSdk();
-      const { documents: grantDocs } = await paginateFetchAll<{ $id: string }>(
-        sdk,
-        (startAfter) => ({
-          dataContractId: this.contractId,
-          documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
-          where: [['$ownerId', '==', ownerId]],
-          orderBy: [['leafIndex', 'asc']],
-          limit: 100,
-          ...(startAfter && { startAfter }),
-        }),
-        (doc) => ({ $id: doc.$id as string }),
-        { maxResults: 1024 }
-      );
-
-      logger.debug(`Found ${grantDocs.length} grants to delete`);
-
-      // Delete grants one by one (unfortunately no batch delete in SDK)
-      let deletedCount = 0;
-      for (const grant of grantDocs) {
-        try {
-          const deleteResult = await stateTransitionService.deleteDocument(
-            this.contractId,
-            DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
-            grant.$id,
-            ownerId
-          );
-          if (deleteResult.success) {
-            deletedCount++;
-          } else {
-            logger.warn(`Failed to delete grant ${grant.$id}:`, deleteResult.error);
-          }
-        } catch (deleteError) {
-          logger.warn(`Error deleting grant ${grant.$id}:`, deleteError);
-          // Continue with other grants even if one fails
-        }
-      }
-      logger.debug(`Deleted ${deletedCount}/${grantDocs.length} grants`);
-
-      // 4. Delete all existing PrivateFeedRekey documents
-      // These reference the old epoch chain and would cause conflicts/confusion
-      logger.debug('Deleting existing rekey documents...');
-      const { documents: rekeyDocs } = await paginateFetchAll<{ $id: string }>(
-        sdk,
-        (startAfter) => ({
-          dataContractId: this.contractId,
-          documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_REKEY,
-          where: [['$ownerId', '==', ownerId]],
-          orderBy: [['epoch', 'asc']],
-          limit: 100,
-          ...(startAfter && { startAfter }),
-        }),
-        (doc) => ({ $id: doc.$id as string }),
-        { maxResults: 2000 } // maxEpoch is typically 2000
-      );
-
-      logger.debug(`Found ${rekeyDocs.length} rekey documents to delete`);
-
-      let deletedRekeyCount = 0;
-      for (const rekey of rekeyDocs) {
-        try {
-          const deleteResult = await stateTransitionService.deleteDocument(
-            this.contractId,
-            DOCUMENT_TYPES.PRIVATE_FEED_REKEY,
-            rekey.$id,
-            ownerId
-          );
-          if (deleteResult.success) {
-            deletedRekeyCount++;
-          } else {
-            logger.warn(`Failed to delete rekey ${rekey.$id}:`, deleteResult.error);
-          }
-        } catch (deleteError) {
-          logger.warn(`Error deleting rekey ${rekey.$id}:`, deleteError);
-          // Continue with other rekeys even if one fails
-        }
-      }
-      logger.debug(`Deleted ${deletedRekeyCount}/${rekeyDocs.length} rekey documents`);
-
-      // 5. Generate new feed seed (SPEC §8.1 step 1)
-      const newFeedSeed = privateFeedCryptoService.generateFeedSeed();
-
-      // 6. Pre-compute epoch chain and get CEK[1] for immediate use
-      const epochChain = privateFeedCryptoService.generateEpochChain(newFeedSeed, MAX_EPOCH);
-      const cek1 = epochChain[1];
-
-      // 7. Encrypt new feedSeed to owner's public key using ECIES
-      // versionedPayload = 0x01 || feedSeed
-      const versionedPayload = new Uint8Array(1 + newFeedSeed.length);
-      versionedPayload[0] = PROTOCOL_VERSION;
-      versionedPayload.set(newFeedSeed, 1);
-
-      // AAD = "yappr/feed-state/v1" || ownerId
-      const ownerIdBytes = identifierToBytes(ownerId);
-      const aad = privateFeedCryptoService.buildFeedStateAAD(ownerIdBytes);
-
-      const newEncryptedSeed = await privateFeedCryptoService.eciesEncrypt(
-        encryptionPubKey,
-        versionedPayload,
-        aad
-      );
-
-      // 8. Fetch the existing PrivateFeedState document to get its revision number
-      const stateDocs = await queryDocuments(sdk, {
-        dataContractId: this.contractId,
-        documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_STATE,
-        where: [['$ownerId', '==', ownerId]],
-        limit: 1,
-      });
-
-      if (stateDocs.length === 0) {
-        return { success: false, error: 'PrivateFeedState document not found' };
-      }
-
-      const existingDoc = stateDocs[0];
-      const documentId = existingDoc.$id as string;
-      const revision = (existingDoc.$revision as number) || (existingDoc.revision as number) || 1;
-
-      // 9. Update the PrivateFeedState document with new encrypted seed
-      // The treeCapacity and maxEpoch remain the same
-      const updateData = {
-        treeCapacity: TREE_CAPACITY,
-        maxEpoch: MAX_EPOCH,
-        encryptedSeed: newEncryptedSeed,
-      };
-
-      logger.debug('Resetting PrivateFeedState document:', {
-        documentId,
-        revision,
-        encryptedSeedLength: newEncryptedSeed.length,
-      });
-
-      const result = await stateTransitionService.updateDocument(
-        this.contractId,
-        DOCUMENT_TYPES.PRIVATE_FEED_STATE,
-        documentId,
-        ownerId,
-        updateData,
-        revision
-      );
-
-      if (!result.success) {
-        return { success: false, error: result.error || 'Failed to update PrivateFeedState' };
-      }
-
-      // 10. Clear all local owner state and reinitialize
-      privateFeedKeyStore.clearOwnerKeys();
-      privateFeedKeyStore.initializeOwnerState(newFeedSeed, TREE_CAPACITY);
-
-      // Store CEK[1] for immediate use
-      privateFeedKeyStore.storeCachedCEK(ownerId, 1, cek1);
-
-      logger.debug('Private feed reset successfully');
-      return { success: true };
-    } catch (error) {
-      logger.error('Error resetting private feed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
-    }
+  async resetPrivateFeed(): Promise<{ success: boolean; error?: string }> {
+    return {
+      success: false,
+      error: 'Private feed reset is unavailable. Your existing feed and followers have not been changed. Use your original encryption key to recover access.',
+    };
   }
 
   /**

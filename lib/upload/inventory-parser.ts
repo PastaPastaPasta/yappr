@@ -9,6 +9,7 @@
 
 import type { ItemVariants, VariantAxis, VariantCombination } from '../types'
 import { toSmallestUnit } from '../utils/format'
+import { LIST_LIMITS } from '../typed-array-codecs'
 
 // CSV column mapping to internal field names
 export interface InventoryCSVColumns {
@@ -686,6 +687,22 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
   // Set currency on all items
   for (const item of items) {
     item.currency = currency
+  }
+
+  // The merged tag list must fit what storefront v4 stores (32 tags of at most
+  // 64 characters). Trim to fit and say so, rather than build a save the
+  // contract refuses. (Images are already http(s)-only and capped at 4 above.)
+  const tagLimits = LIST_LIMITS.storeTags
+  for (const item of items) {
+    const tooLong = item.tags.filter((tag) => [...tag].length > tagLimits.maxLength)
+    if (tooLong.length > 0) {
+      item.tags = item.tags.filter((tag) => [...tag].length <= tagLimits.maxLength)
+      warnings.push({ row: 0, column: 'tags', message: `"${item.title}": dropped ${tooLong.length} tag(s) longer than ${tagLimits.maxLength} characters` })
+    }
+    if (item.tags.length > tagLimits.maxItems) {
+      warnings.push({ row: 0, column: 'tags', message: `"${item.title}": kept the first ${tagLimits.maxItems} of ${item.tags.length} tags` })
+      item.tags = item.tags.slice(0, tagLimits.maxItems)
+    }
   }
 
   // Evaluate quantity formulas

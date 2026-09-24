@@ -7,7 +7,7 @@ import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-st
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { LockClosedIcon, CheckCircleIcon, UserGroupIcon, ExclamationTriangleIcon, KeyIcon, ArrowPathIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { LockClosedIcon, CheckCircleIcon, UserGroupIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { TREE_CAPACITY, MAX_EPOCH } from '@/lib/services'
@@ -334,29 +334,25 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
               </ul>
             </div>
 
-            {/* Reset Private Feed Section */}
+            {/* Private Feed Recovery */}
             <div className="pt-4 border-t">
-              <h4 className="font-medium mb-2 text-sm flex items-center gap-2 text-red-600 dark:text-red-400">
-                <ExclamationTriangleIcon className="h-4 w-4" />
-                Danger Zone
+              <h4 className="font-medium mb-2 text-sm flex items-center gap-2">
+                <KeyIcon className="h-4 w-4" />
+                Recovery
               </h4>
-              <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 p-4 rounded-lg">
+              <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-4 rounded-lg">
                 <div className="space-y-2">
-                  <p className="text-sm font-medium text-red-900 dark:text-red-100">
-                    Reset Private Feed
-                  </p>
-                  <p className="text-sm text-red-700 dark:text-red-300">
-                    If you have lost your encryption key or want to start fresh, you can reset your private feed.
-                    This will remove all current followers and make existing private posts unreadable.
+                  <p className="text-sm font-medium">Reset unavailable</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Your existing private feed cannot be reset. Keep your original encryption key to recover access.
                   </p>
                   <Button
                     data-testid="reset-private-feed-btn"
                     variant="outline"
-                    className="mt-2 border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900"
+                    className="mt-2"
                     onClick={() => setShowResetDialog(true)}
                   >
-                    <ArrowPathIcon className="h-4 w-4 mr-2" />
-                    Reset Private Feed
+                    View recovery information
                   </Button>
                 </div>
               </div>
@@ -366,7 +362,6 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
             <ResetPrivateFeedDialog
               open={showResetDialog}
               onOpenChange={setShowResetDialog}
-              onSuccess={checkPrivateFeedStatus}
             />
           </>
         ) : (

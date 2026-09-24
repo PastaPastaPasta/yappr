@@ -196,12 +196,9 @@ strength.**
 - `ownerRefersTo permanentDocument` requires the state to stay permanent.
   Making it mutable would still satisfy the lookup rules, because `$ownerId`
   never moves.
-- Two options, for the user to choose:
-  - **(a)** Make `privateFeedState` `documentsMutable: true` with `immutable:
-    ["treeCapacity", "maxEpoch"]`, so a reset can rotate `encryptedSeed`.
-  - **(b)** Keep the state immutable and have the client refuse or hide
-    "reset" (for example, "create a new identity for a fresh feed").
-- I left the v8 declaration unchanged and flag it here rather than choosing.
+- **Decided: keep `privateFeedState` immutable** (no contract change). The
+  client refuses a reset before any mutation (`resetPrivateFeed`, carrying
+  #509's approach) and points the owner at recovery with the original key.
 
 ## Blog v4, storefront v4, profile v2 (in place)
 
@@ -286,7 +283,30 @@ switch on the topology predicate.
 
 ## Client TODO
 
-None of this is done here. File:line refers to `origin/staging` at `2cb7fdbe`, re-checked on this branch.
+File:line refers to `origin/staging` at `2cb7fdbe`. **Status on `beta4/client-v9`** (built on
+`beta4/sdk`, #570, which already carried items 4–7 and 9):
+
+| # | Status | Where |
+| --- | --- | --- |
+| 1 | Done: blog/storefront `v4`, profile `v1`/`v2` topologies and predicates | `lib/constants.ts` |
+| 2 | Done | `scripts/seed/seed-lib.mjs` `TOPOLOGIES` |
+| 3 | Left to the deploy PR | — |
+| 4 | Done in #570 (`resolveModerationTeam`, `ownerModerates`); seated-team view added | `moderation-service.ts`, `components/moderation/election-status-panel.tsx` |
+| 5–7, 9 | Done in #570 (lists off the cut, warn/clear, restore from a local snapshot, the 41xxx classifiers) | `moderation-service.ts`, `error-utils.ts` |
+| 6 (viewer banner) | Done | `components/moderation/own-warnings-notice.tsx` on the settings home |
+| 8 | Done: a charter-reason picker whenever a team is seated | `components/moderation/charter-reason-picker.tsx`, settings panel and remove modal |
+| 10 | Done: `useIsModerator` follows `ownerModerates`, so a seated contract drops the owner's panel and claim | `hooks/use-is-moderator.ts` via #570 |
+| 11 | Done (`followUser`, `requestAccess`) | `follow-service.ts`, `private-feed-follower-service.ts` |
+| 12 | Done | `app/orders/page.tsx` |
+| 13 | Done: re-check before key work; 40120 → "request withdrawn" / "enable your feed" | `private-feed-service.ts`, `private-feed-follow-requests.tsx` |
+| 14 | Already true of the UI; a 40120 on `$ownerId` now says so | `private-feed-service.ts` |
+| 15 | Decided (refuse the reset) and done | `private-feed-service.ts`, #509's UI |
+| 16–19 | Done through `lib/typed-array-codecs.ts` (both shapes read, the cut's shape written) | the services listed |
+| 20 | Done: `extractContentFields` overrides re-encode the merged item/zone | `store-item-service.ts`, `shipping-zone-service.ts` |
+| 21 | Done for blog/storefront; profiles are seeded without the array fields | `scripts/seed/non-social/{blog,storefront}.mjs` |
+
+Also added: the election status view (proposals, contest, tallies, end time, seated team),
+public on `/contract`.
 
 **Topology plumbing**
 

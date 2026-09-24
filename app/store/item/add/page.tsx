@@ -24,6 +24,9 @@ import { storeService } from '@/lib/services/store-service'
 import { getCurrencyStep, toSmallestUnit, fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
 import type { VariantAxis, VariantCombination, ItemVariants } from '@/lib/types'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
+import { LIST_LIMITS, ListLimitError } from '@/lib/typed-array-codecs'
+
+const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
 
 function AddItemPage() {
   const formId = useId()
@@ -167,10 +170,16 @@ function AddItemPage() {
   }, [variantAxes])
 
   const handleAddImage = () => {
-    if (newImageUrl && imageUrls.length < 4) {
-      setImageUrls([...imageUrls, newImageUrl])
-      setNewImageUrl('')
+    const url = newImageUrl.trim()
+    if (!url || imageUrls.length >= 4) return
+    // storefront v4 stores only http(s):// and ipfs:// image URLs (the contract's pattern).
+    if (!IMAGE_URL_PATTERN.test(url)) {
+      setError('Image URLs must start with https://, http:// or ipfs://')
+      return
     }
+    setError(null)
+    setImageUrls([...imageUrls, url])
+    setNewImageUrl('')
   }
 
   const handleRemoveImage = (index: number) => {
@@ -218,9 +227,15 @@ function AddItemPage() {
         variants = { axes: variantAxes, combinations: variantCombinations }
       }
 
-      // Include any pending image URL that wasn't explicitly added
-      const allImageUrls = newImageUrl.trim()
-        ? [...imageUrls, newImageUrl.trim()].slice(0, 4)
+      // Include any pending image URL that wasn't explicitly added, if it is one
+      // the contract accepts; a bad pending URL stops the save rather than vanishing.
+      const pendingUrl = newImageUrl.trim()
+      if (pendingUrl && !IMAGE_URL_PATTERN.test(pendingUrl)) {
+        setError('Image URLs must start with https://, http:// or ipfs://')
+        return
+      }
+      const allImageUrls = pendingUrl
+        ? [...imageUrls, pendingUrl].slice(0, 4)
         : imageUrls
 
       const itemData = {
@@ -253,7 +268,7 @@ function AddItemPage() {
       router.push('/store/manage')
     } catch (err) {
       logger.error(`Failed to ${isEditMode ? 'update' : 'create'} item:`, err)
-      setError(`Failed to ${isEditMode ? 'update' : 'create'} product. Please try again.`)
+      setError(err instanceof ListLimitError ? err.message : `Failed to ${isEditMode ? 'update' : 'create'} product. Please try again.`)
     } finally {
       setIsSubmitting(false)
     }

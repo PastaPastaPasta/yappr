@@ -31,6 +31,12 @@ class FollowService extends BaseDocumentService<FollowDocument> {
    * Follow a user
    */
   async followUser(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
+    // v9 refuses a self-follow in consensus (distinctFrom $ownerId, 10419);
+    // earlier cuts accept one, which no UI means to write. Refuse on every cut
+    // before a broadcast.
+    if (followerUserId === targetUserId) {
+      return { success: false, error: 'You cannot follow yourself' };
+    }
     try {
       const existing = await this.getFollow(targetUserId, followerUserId);
       if (existing) {

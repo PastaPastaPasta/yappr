@@ -5,6 +5,7 @@ import type { BlogPost } from '@/lib/types'
 import { identifierToBase58, normalizeBytes, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { compressContent, decompressContent, joinChunks, splitIntoChunks } from '@/lib/utils/compression'
 import { generateSlug } from '@/lib/utils/slug'
+import { labelsCsv, storedLabels } from '@/lib/blog/content-utils'
 
 export interface BlogPostQueryOptions {
   limit?: number
@@ -57,6 +58,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     if (typeof fields.blogId === 'string') {
       fields.blogId = fields.blogId ? requireDocumentIdentifierBytes(fields.blogId, 'blogId') : undefined
     }
+    // The app models labels as CSV; store them as the configured cut does.
+    if ('labels' in fields) fields.labels = storedLabels(fields.labels, 'post')
     // Re-compress and chunk content into data0–data3 (only set chunks that exist)
     if (doc.content && Array.isArray(doc.content) && doc.content.length > 0) {
       const compressed = compressContent(doc.content)
@@ -102,7 +105,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       subtitle: (data.subtitle ?? doc.subtitle) as string | undefined,
       content,
       coverImage: (data.coverImage ?? doc.coverImage) as string | undefined,
-      labels: (data.labels ?? doc.labels) as string | undefined,
+      labels: labelsCsv(data.labels ?? doc.labels),
       commentsEnabled: (data.commentsEnabled ?? doc.commentsEnabled) as boolean | undefined,
       slug: (data.slug || doc.slug || '') as string,
       publishedAt: (data.publishedAt ?? doc.publishedAt) as number | undefined,
@@ -136,7 +139,9 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       }
       if (data.subtitle !== undefined) payload.subtitle = data.subtitle
       if (data.coverImage !== undefined) payload.coverImage = data.coverImage
-      if (data.labels !== undefined) payload.labels = data.labels
+      // Empty labels are omitted (the old compose path wrote '', which v4 refuses as a non-list).
+      const labels = storedLabels(data.labels, 'post')
+      if (labels !== undefined) payload.labels = labels
       if (data.commentsEnabled !== undefined) payload.commentsEnabled = data.commentsEnabled
       return payload
     }
@@ -159,7 +164,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     if (data.title !== undefined) payload.title = data.title
     if (data.subtitle !== undefined) payload.subtitle = data.subtitle
     if (data.coverImage !== undefined) payload.coverImage = data.coverImage
-    if (data.labels !== undefined) payload.labels = data.labels
+    // An empty set clears the field (undefined), exactly as an explicit clear does.
+    if (data.labels !== undefined) payload.labels = storedLabels(data.labels, 'post')
     if (data.commentsEnabled !== undefined) payload.commentsEnabled = data.commentsEnabled
     if (data.slug !== undefined) payload.slug = data.slug
     if (data.publishedAt !== undefined) payload.publishedAt = data.publishedAt

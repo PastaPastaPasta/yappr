@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { PlusIcon, TrashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { SocialLink } from '@/lib/types'
 import { validateSocialHandle } from '@/lib/social-link-validation'
+import { LIST_LIMITS, socialLinkToString } from '@/lib/typed-array-codecs'
 
 interface SocialLinksInputProps {
   links: SocialLink[]
@@ -96,6 +97,14 @@ export function SocialLinksInput({
     const validationError = validateSocialHandle(selectedPlatform, handle)
     if (validationError) {
       setError(validationError)
+      return
+    }
+
+    // Profile v2 stores each link as one "platform:handle" string of at most
+    // 256 characters, the platform prefix included.
+    const stored = socialLinkToString({ platform: selectedPlatform, handle: handle.trim() })
+    if ([...stored].length > LIST_LIMITS.profileSocialLinks.maxLength) {
+      setError(`That handle is too long (at most ${LIST_LIMITS.profileSocialLinks.maxLength - selectedPlatform.length - 1} characters for ${getPlatformLabel(selectedPlatform)})`)
       return
     }
 

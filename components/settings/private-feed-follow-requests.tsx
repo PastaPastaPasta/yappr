@@ -131,6 +131,19 @@ export function PrivateFeedFollowRequests() {
         encryptionPrivateKey
       )
 
+      if (!result.success && result.errorCode === 'REQUEST_WITHDRAWN') {
+        // v9: the follower cancelled since this list was read. Nothing to retry.
+        setRequests(prev => prev.filter(r => r.id !== request.id))
+        toast(result.error ?? 'This follower withdrew their request')
+        return
+      }
+
+      if (!result.success && result.errorCode === 'FEED_NOT_ENABLED') {
+        // v9: consensus found no privateFeedState for this owner. Say so, not "failed".
+        toast.error(result.error ?? 'Enable your private feed before approving followers.')
+        return
+      }
+
       if (result.success) {
         // Remove from local state
         setRequests(prev => prev.filter(r => r.id !== request.id))

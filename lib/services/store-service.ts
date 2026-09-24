@@ -63,6 +63,20 @@ class StoreService extends BaseDocumentService<Store> {
     super(STOREFRONT_DOCUMENT_TYPES.STORE, YAPPR_STOREFRONT_CONTRACT_ID);
   }
 
+  /**
+   * `update()` rebuilds the full replace from the TRANSFORMED store, where
+   * `paymentUris` and `contactMethods` are arrays. Both are JSON strings on
+   * every storefront cut, so re-encode them, or an update that does not name
+   * them re-sends values no cut accepts.
+   */
+  protected extractContentFields(doc: Store): Record<string, unknown> {
+    const fields = super.extractContentFields(doc);
+    for (const key of ['paymentUris', 'contactMethods'] as const) {
+      if (fields[key] && typeof fields[key] === 'object') fields[key] = JSON.stringify(fields[key]);
+    }
+    return fields;
+  }
+
   protected transformDocument(doc: Record<string, unknown>): Store {
     const data = (doc.data || doc) as StoreDocument;
 

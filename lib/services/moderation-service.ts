@@ -695,7 +695,7 @@ function isDefinitiveRefusal(result: ModerationResult): boolean {
 }
 
 const MODERATION_ERROR_MESSAGES: Record<ModerationErrorKind, string> = {
-  NOT_MODERATOR: 'This identity is not one of the contract\'s moderators',
+  NOT_MODERATOR: 'This identity is not one of the contract\'s moderators (on an elected contract, once a team is seated only that team moderates)',
   NOT_MODERATED: 'The contract declares no such moderation',
   TARGET_PROTECTED: 'The contract owner and its moderators cannot be moderated',
   TYPE_NOT_DELETABLE: 'Moderators cannot delete documents of this type',

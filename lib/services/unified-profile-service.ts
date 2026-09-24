@@ -2,7 +2,8 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
-import { YAPPR_PROFILE_CONTRACT_ID } from '../constants';
+import { YAPPR_PROFILE_CONTRACT_ID, profileArraysAreTyped } from '../constants';
+import { LIST_LIMITS, assertListLimits, decodePaymentUriList, decodeSocialLinkList, encodePaymentUriList, encodeSocialLinkList, uniqueStrings } from '../typed-array-codecs';
 import { User, ParsedPaymentUri, SocialLink } from '../../types';
 import { generateAvatarDataUri } from './avatar-generator';
 import { documentToPlainObject } from './sdk-helpers';
@@ -93,10 +94,12 @@ export interface UnifiedProfileDocument {
   website?: string;
   bannerUri?: string;
   avatar?: string;       // JSON string or URI
-  paymentUris?: string;  // JSON array string
+  /** profile v1: a JSON string of a list; profile v2: a typed list (docs/SOCIAL_V9.md). */
+  paymentUris?: string | string[];
   pronouns?: string;
   nsfw?: boolean;
-  socialLinks?: string;  // JSON array string
+  /** profile v1: a JSON string of `{platform, handle}`; profile v2: a list of "platform:handle". */
+  socialLinks?: string | string[];
 }
 
 // Data for creating a profile
@@ -441,11 +444,11 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   // ==================== Payment URI Helpers ====================
 
   /**
-   * Parse payment URIs from JSON string and filter to approved schemes
+   * Parse stored payment URIs (a list on profile v2, a JSON string on v1) and
+   * filter to approved schemes.
    */
-  parsePaymentUris(paymentUrisJson: string | undefined): ParsedPaymentUri[] {
-    const uris = this.parseJsonSafe<string[]>(paymentUrisJson, []);
-    return uris
+  parsePaymentUris(stored: unknown): ParsedPaymentUri[] {
+    return decodePaymentUriList(stored)
       .filter(uri => this.isApprovedPaymentScheme(uri))
       .map(uri => ({
         scheme: paymentUriScheme(uri),
@@ -463,26 +466,38 @@ class UnifiedProfileService extends BaseDocumentService<User> {
 
 
   /**
-   * Encode payment URIs to JSON string for storage
+   * Payment URIs as the configured profile cut stores them (a list on v2, JSON
+   * on v1). Profile v2 bounds the list (16 URIs of at most 512 characters,
+   * scheme:address) and refuses one past that after signing, so it throws a
+   * {@link ListLimitError} with a user-facing message first.
    */
-  encodePaymentUris(uris: string[]): string {
-    return JSON.stringify(uris);
+  encodePaymentUris(uris: string[]): string | string[] {
+    const typed = profileArraysAreTyped();
+    if (typed) assertListLimits(uniqueStrings(uris), LIST_LIMITS.profilePaymentUris);
+    return encodePaymentUriList(uris, typed);
   }
 
   // ==================== Social Links Helpers ====================
 
   /**
-   * Parse social links from JSON string
+   * Parse stored social links: "platform:handle" strings on profile v2 (split
+   * on the FIRST colon, since a handle may be a URL), a JSON string of
+   * `{platform, handle}` on v1.
    */
-  parseSocialLinks(socialLinksJson: string | undefined): SocialLink[] {
-    return this.parseJsonSafe<SocialLink[]>(socialLinksJson, []);
+  parseSocialLinks(stored: unknown): SocialLink[] {
+    return decodeSocialLinkList(stored);
   }
 
   /**
-   * Encode social links to JSON string for storage
+   * Social links as the configured profile cut stores them. On profile v2 each
+   * is ONE string "platform:handle" of at most 256 characters, the platform
+   * prefix included, and at most 16 of them; checked before signing.
    */
-  encodeSocialLinks(links: SocialLink[]): string {
-    return JSON.stringify(links);
+  encodeSocialLinks(links: SocialLink[]): string | string[] {
+    const typed = profileArraysAreTyped();
+    const encoded = encodeSocialLinkList(links, typed);
+    if (typed) assertListLimits(encoded as string[], LIST_LIMITS.profileSocialLinks);
+    return encoded;
   }
 
   // ==================== Document Transformation ====================
@@ -506,10 +521,10 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       website: content.website as string | undefined,
       bannerUri: content.bannerUri as string | undefined,
       avatar: content.avatar as string | undefined,
-      paymentUris: content.paymentUris as string | undefined,
+      paymentUris: content.paymentUris as string | string[] | undefined,
       pronouns: content.pronouns as string | undefined,
       nsfw: content.nsfw as boolean | undefined,
-      socialLinks: content.socialLinks as string | undefined,
+      socialLinks: content.socialLinks as string | string[] | undefined,
     };
   }
 
@@ -534,18 +549,6 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         .map(documentToPlainObject);
     }
     return [];
-  }
-
-  /**
-   * Parse JSON string with fallback to default value
-   */
-  private parseJsonSafe<T>(json: string | undefined, defaultValue: T): T {
-    if (!json) return defaultValue;
-    try {
-      return JSON.parse(json);
-    } catch {
-      return defaultValue;
-    }
   }
 
   /**

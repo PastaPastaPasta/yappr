@@ -4,6 +4,8 @@ import { stateTransitionService } from './state-transition-service'
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, normalizeBytes, RequestDeduplicator } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
 import { DOCUMENT_TYPES } from '../constants'
+import { blockFollowsAreTyped } from '../contract-topology'
+import { decodeBlockFollowIds, encodeBlockFollowIds } from '../typed-array-codecs'
 import { BloomFilter, BLOOM_FILTER_VERSION } from '../bloom-filter'
 import { BlockDocument, BlockFollowData } from '../types'
 import {
@@ -21,7 +23,6 @@ import {
   setBlockFollows,
   invalidateBlockCache
 } from '../caches/block-cache'
-import bs58 from 'bs58'
 
 // Max users whose blocks can be followed (100 * 32 bytes = 3200 bytes)
 const MAX_BLOCK_FOLLOWS = 100
@@ -464,29 +465,15 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   }
 
   /**
-   * Decode a byte array into an array of base58 user IDs.
-   * Each user ID is 32 bytes.
+   * The followed blockers as stored: v9 keeps a typed list of identifiers,
+   * v2–v8 one byte array of 32-byte ids laid end to end. Reads accept both.
    */
   private decodeUserIdArray(data: unknown): string[] {
-    const bytes = normalizeBytes(data)
-    if (!bytes) return []
-
-    const userIds: string[] = []
-    for (let i = 0; i + 32 <= bytes.length; i += 32) {
-      userIds.push(bs58.encode(bytes.slice(i, i + 32)))
-    }
-    return userIds
+    return decodeBlockFollowIds(data)
   }
 
-  /**
-   * Encode an array of base58 user IDs into a byte array.
-   */
-  private encodeUserIdArray(userIds: string[]): Uint8Array {
-    const result = new Uint8Array(userIds.length * 32)
-    for (let index = 0; index < userIds.length; index++) {
-      result.set(identifierStringToDocumentBytes(userIds[index]), index * 32)
-    }
-    return result
+  private encodeUserIdArray(userIds: string[]): Uint8Array | Uint8Array[] {
+    return encodeBlockFollowIds(userIds, blockFollowsAreTyped())
   }
 
   /**

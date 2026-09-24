@@ -33,6 +33,7 @@ import { ProfileHeader, type ProfileData } from '@/components/profile/profile-he
 import { ProfileTabs, type ProfileBlog } from '@/components/profile/profile-tabs'
 import { ImageCustomizationModal } from '@/components/profile/image-customization-modal'
 import { EMPTY_DRAFT, type ProfileDraft } from '@/components/profile/profile-edit-form'
+import { ListLimitError } from '@/lib/typed-array-codecs'
 
 const PAGE_SIZE = 50
 
@@ -424,7 +425,7 @@ function UserProfileContent() {
       toast.success('Profile updated!')
     } catch (error) {
       logger.error('Failed to update profile:', error)
-      toast.error('Failed to update profile')
+      toast.error(error instanceof ListLimitError ? error.message : 'Failed to update profile')
     } finally {
       setIsSaving(false)
     }

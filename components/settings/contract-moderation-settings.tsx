@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
+import { CharterReasonPicker, useSeatedReasons } from '@/components/moderation/charter-reason-picker'
+import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
 import {
   moderationService,
@@ -30,7 +32,10 @@ const dayLabel = (days: number) => `${days} day${days === 1 ? '' : 's'}`
 
 /**
  * Contract moderation for the social contract's moderation team (its owner
- * and appointed moderators): ban/unban, suspend/unsuspend with a recorded
+ * and appointed moderators, or on an elected contract the interim until a team
+ * is seated and the seated team after; `useIsModerator` follows that switch,
+ * so an owner whose contract seats a team loses this panel, and with it the
+ * interim's pot claim that would be refused 41113): ban/unban, suspend/unsuspend with a recorded
  * reason, the lists, the removal records, and the moderators fee pot with
  * its once-per-epoch claim. Where the contract keeps a warning list, warn and
  * clear warnings too; a removal this device snapshotted can be restored within
@@ -54,6 +59,10 @@ export function ContractModerationSettings() {
   /** Removal ids this device can undo, worked out once per refresh rather than on every render. */
   const [restorable, setRestorable] = useState<ReadonlySet<string>>(new Set())
   const canWarn = moderationService.canWarn()
+  /** Seated elected team: every ban, suspension and warning must cite one of its charter's reasons. */
+  // The panel renders only for the moderation team; it reads on mount.
+  const seatedReasons = useSeatedReasons(true)
+  const [reasonDocumentId, setReasonDocumentId] = useState('')
   const [pot, setPot] = useState<FeePotState | null>(null)
   /** The last status check: the proved standing, or the read failure (never a clean record in its place). */
   const [standing, setStanding] = useState<{ identityId: string; standing: ModerationStanding | null; error: string | null } | null>(null)
@@ -117,7 +126,22 @@ export function ContractModerationSettings() {
     const me = user.identityId
     const cite = (ids: string, documentTypeName: 'post' | 'reply') =>
       ids.split(/[\s,]+/).filter(Boolean).map((documentId) => ({ documentTypeName, documentId }))
-    const why = { text: reason.trim(), documents: [...cite(citedPosts, 'post'), ...cite(citedReplies, 'reply')] }
+    const bound = action === 'ban' || action === 'suspend' || action === 'warn'
+    if (bound && (seatedReasons.loading || seatedReasons.failed)) {
+      setBusy(null)
+      toast.error(seatedReasons.failed ? 'Could not read the elected team\'s charter; reload and try again' : 'Still reading the elected team\'s charter')
+      return
+    }
+    if (bound && seatedReasons.required && !reasonDocumentId) {
+      setBusy(null)
+      toast.error('Choose the charter reason this action is taken on')
+      return
+    }
+    const why = {
+      text: reason.trim(),
+      documents: [...cite(citedPosts, 'post'), ...cite(citedReplies, 'reply')],
+      ...(seatedReasons.required && reasonDocumentId ? { reasonDocumentId } : {}),
+    }
     let result: ModerationResult
     let succeeded: string
     switch (action) {
@@ -162,6 +186,8 @@ export function ContractModerationSettings() {
       return
     }
     toast.success(succeeded)
+    // The cited reason belonged to that action; the next one picks its own.
+    setReasonDocumentId('')
     refresh().catch(() => { /* reported inside */ })
     if (id) lookUp(id).catch(() => { /* reported inside */ })
   }
@@ -180,6 +206,7 @@ export function ContractModerationSettings() {
 
   return (
     <div className="space-y-4">
+      <ElectionStatusPanel />
       <Card>
         <CardHeader>
           <CardTitle>Contract Moderation</CardTitle>
@@ -201,6 +228,9 @@ export function ContractModerationSettings() {
             <input id="contract-moderation-reason" type="text" value={reason} maxLength={1024} onChange={(e) => setReason(e.target.value)}
               placeholder="Why" className={INPUT} />
           </div>
+          {(seatedReasons.required || seatedReasons.failed) && (
+            <CharterReasonPicker id="contract-moderation-charter-reason" state={seatedReasons} value={reasonDocumentId} onChange={setReasonDocumentId} />
+          )}
           <div>
             <label htmlFor="contract-moderation-cited" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Posts this is about (optional, public)</label>
             <input id="contract-moderation-cited" type="text" value={citedPosts} onChange={(e) => setCitedPosts(e.target.value)}
@@ -262,7 +292,9 @@ export function ContractModerationSettings() {
           <CardTitle>Moderators Pot</CardTitle>
           <CardDescription>
             Every post and reply pays a small credit fee into this pot. Any moderator may pay it out, once per epoch;
-            it is split equally across the whole moderation team.
+            {seatedReasons.required
+              ? ' it is split by the seated charter\'s reward split (leader, equal and per-action shares).'
+              : ' it is split equally across the whole moderation team.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center justify-between gap-3">

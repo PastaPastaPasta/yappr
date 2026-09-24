@@ -114,8 +114,12 @@ export function profileContractId() {
 //
 // ORDER IS SIGNIFICANT: `atLeastTopology` compares positions in this array, so
 // new cuts append. Mirrors CONTRACT_TOPOLOGIES in lib/constants.ts.
-export const TOPOLOGIES = ['v4', 'v5', 'v6', 'v7', 'v8'];
-export const HASHTAG_MAX = { v4: 63, v5: 61, v6: 61, v7: 61, v8: 61 };
+//   v9 — the 4.2.0-beta.4 cut (contracts/yappr-social-contract-v9.json): v8's
+//        document shapes, fees, costs and grant byte for byte; the seeder's
+//        writes are v8's. (blockFollow's typed list and the private-feed gates
+//        are not seeded.)
+export const TOPOLOGIES = ['v4', 'v5', 'v6', 'v7', 'v8', 'v9'];
+export const HASHTAG_MAX = { v4: 63, v5: 61, v6: 61, v7: 61, v8: 61, v9: 61 };
 
 /** True when `topology` is `floor` or any later cut. */
 export function atLeastTopology(topology, floor) {

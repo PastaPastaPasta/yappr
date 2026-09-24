@@ -12,9 +12,19 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { COLD_BUCKET, id32, normalizeId, reportSelfTest } from '../../battery-lib.mjs';
 import { YAPP_TOKEN_POSITION, describeErr } from '../seed-lib.mjs';
 import {
-  actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, groupTasks, loadCheckpoint,
+  actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, envValue, groupTasks, loadCheckpoint,
   network, phaseRunner, pick, printTable, rngFrom, runByActor, shuffled, utf8,
 } from '../feature-seed-lib.mjs';
+
+/**
+ * Labels as the target blog cut stores them: blog v4 (4.2.0-beta.4) a typed
+ * list of at most 64 (blog) / 16 (post) labels of 1-40 characters; v1-v3 the
+ * comma-separated string. Chosen by NEXT_PUBLIC_BLOG_TOPOLOGY, like the app.
+ */
+const labelsTyped = () => envValue('NEXT_PUBLIC_BLOG_TOPOLOGY') === 'v4';
+const labelList = (csv) => [...new Set(csv.split(',').map((label) => label.trim()).filter(Boolean))];
+const storedLabels = (csv) => (labelsTyped() ? labelList(csv) : csv);
+const TYPED_LABEL_LIMITS = { blog: 64, post: 16, length: 40 };
 
 /** YAPP a single blogComment create costs (contract tokenCost.create.amount). */
 const COMMENT_COST = 1n;
@@ -385,6 +395,8 @@ function buildPlan({ seed, only, publishAnchor }) {
     check(blog.name.length <= LIMITS.blogName, `${blog.key}: name exceeds ${LIMITS.blogName}`);
     check(blog.description.length <= LIMITS.blogDescription, `${blog.key}: description exceeds ${LIMITS.blogDescription}`);
     check(blog.labels.length <= LIMITS.blogLabels, `${blog.key}: labels exceed ${LIMITS.blogLabels}`);
+    check(labelList(blog.labels).length <= TYPED_LABEL_LIMITS.blog && labelList(blog.labels).every((label) => label.length <= TYPED_LABEL_LIMITS.length),
+      `${blog.key}: labels exceed the v4 typed-list bounds`);
     const theme = THEMES[blog.theme];
     check(Boolean(theme), `${blog.key}: unknown theme "${blog.theme}"`);
     const themeConfig = compress(theme ?? {});
@@ -392,7 +404,7 @@ function buildPlan({ seed, only, publishAnchor }) {
     blogs.push({
       key: blog.key, owner: blog.owner, name: blog.name,
       data: {
-        name: blog.name, description: blog.description, labels: blog.labels,
+        name: blog.name, description: blog.description, labels: storedLabels(blog.labels),
         headerImage: `https://picsum.photos/seed/${blog.key}-header/1600/500`,
         avatar: `https://picsum.photos/seed/${blog.key}-avatar/200/200`,
         themeConfig, commentsEnabledDefault: true,
@@ -412,6 +424,7 @@ function buildPlan({ seed, only, publishAnchor }) {
       check((post.subtitle ?? '').length <= LIMITS.postSubtitle, `${key}: subtitle exceeds ${LIMITS.postSubtitle}`);
       check(post.slug.length <= LIMITS.postSlug, `${key}: slug exceeds ${LIMITS.postSlug} (${post.slug.length})`);
       check((post.labels ?? '').length <= LIMITS.postLabels, `${key}: labels exceed ${LIMITS.postLabels}`);
+      check(labelList(post.labels ?? '').length <= TYPED_LABEL_LIMITS.post, `${key}: labels exceed the v4 typed-list bound`);
       check(coverUrl(post.cover).length <= LIMITS.image, `${key}: coverImage exceeds ${LIMITS.image}`);
       check(compressed.byteLength <= POST_SIZE_LIMIT, `${key}: compressed content is ${compressed.byteLength} bytes (max ${POST_SIZE_LIMIT})`);
       check(chunks >= 1 && chunks <= MAX_CHUNKS, `${key}: needs ${chunks} chunks (max ${MAX_CHUNKS})`);
@@ -421,7 +434,7 @@ function buildPlan({ seed, only, publishAnchor }) {
       // Every blogPost field except the chunked payload; create and edit differ
       // only in their data0–dataN, so both spread this.
       const meta = {
-        title: post.title, ...(post.subtitle ? { subtitle: post.subtitle } : {}), ...(post.labels ? { labels: post.labels } : {}),
+        title: post.title, ...(post.subtitle ? { subtitle: post.subtitle } : {}), ...(post.labels ? { labels: storedLabels(post.labels) } : {}),
         coverImage: coverUrl(post.cover), commentsEnabled, slug: post.slug,
         ...(published ? { publishedAt: publishAnchor - daysBack * 86_400_000 } : {}),
       };
@@ -664,7 +677,22 @@ function selfTest(args) {
   // Uneven on purpose: "Most followed" is only worth looking at with a clear leader.
   const followerCounts = Object.values(FOLLOWERS).map((list) => list.length).sort((a, b) => b - a);
   const again = buildPlan({ seed: args.seed, only: null, publishAnchor: 1_800_000_000_000 });
+  // The label encoding follows NEXT_PUBLIC_BLOG_TOPOLOGY: prove both shapes.
+  const labelShapes = (topology) => {
+    const saved = process.env.NEXT_PUBLIC_BLOG_TOPOLOGY;
+    process.env.NEXT_PUBLIC_BLOG_TOPOLOGY = topology;
+    try {
+      const shaped = buildPlan({ seed: args.seed, only: null, publishAnchor: 1_800_000_000_000 });
+      return [shaped.blogs[0].data.labels, shaped.posts.find((post) => post.data.labels)?.data.labels];
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_BLOG_TOPOLOGY; else process.env.NEXT_PUBLIC_BLOG_TOPOLOGY = saved;
+    }
+  };
+  const [v3Blog, v3Post] = labelShapes('v3');
+  const [v4Blog, v4Post] = labelShapes('v4');
   return reportSelfTest('the blog plan', [
+    ['labels are comma-separated strings for blog v1–v3', typeof v3Blog === 'string' && typeof v3Post === 'string'],
+    ['labels are typed lists for blog v4', Array.isArray(v4Blog) && Array.isArray(v4Post) && v4Blog.join(',') === v3Blog],
     [`8 blogs / 42 posts (${plan.blogs.length}/${plan.posts.length})`, plan.blogs.length === 8 && plan.posts.length === 42],
     [`40 follows / 4 edits (${plan.follows.length}/${plan.edits.length})`, plan.follows.length === 40 && plan.edits.length === 4],
     [`73 comments (${plan.comments.length})`, plan.comments.length === 73],
