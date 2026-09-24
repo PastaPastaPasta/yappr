@@ -291,13 +291,22 @@ export function keyNetwork(): KeyNetwork {
 // fees on post/reply creation paid into the moderators pot (every such create
 // must carry an action fee agreement).
 //
+// `v9` is the 4.2.0-beta.4 cut (docs/SOCIAL_V9.md,
+// contracts/yappr-social-contract-v9.json): v8's indexes, fees, costs and
+// grant exactly, plus elected moderation (an interim owner, then a team the
+// masternodes elect), a warning list, `distinctFrom: $ownerId` on the
+// relationship identifiers, private-feed writer gates, and
+// `blockFollow.followedBlockers` as a typed identifier array. Declared here for
+// the grammar helpers only; the client paths that must change are listed in
+// docs/SOCIAL_V9.md and no deployment selects it yet.
+//
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
 //
 // ORDER IS SIGNIFICANT: `lib/contract-topology.ts` compares positions in this
 // array to decide when a capability first appeared, so new cuts append.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 

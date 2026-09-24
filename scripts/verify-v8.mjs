@@ -56,25 +56,16 @@
  * script's `--fund`) AND credits (posts on v8 also cost a credit action fee).
  */
 import bs58 from 'bs58';
-import {
-  BatchTransition,
-  BatchedTransition,
-  DocumentActionFeeAgreement,
-  DocumentCreateTransition,
-  PrivateKey,
-  ensureInitialized,
-} from '@dashevo/evo-sdk';
+import { DocumentActionFeeAgreement, ensureInitialized } from '@dashevo/evo-sdk';
 import {
   FEE_MULTIPLIER_NOT_TOLERATED,
-  NONCE_SEQUENCE_MASK,
   PREFER_CONTRACT_OWNER,
   actionFeeAgreementOptions,
   actionFeeFor,
   deriveDocumentIdBytes,
-  feeMultiplierPermille,
   paymentInfo,
 } from './seed/seed-lib.mjs';
-import { criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
+import { loadIdentityIds } from './derive-identities.mjs';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import {
   TOKEN_COST,
@@ -94,6 +85,17 @@ import {
   readback,
   runBattery,
 } from './verify-lib.mjs';
+import {
+  describeValue,
+  errorOf,
+  feeAgreement,
+  idOf,
+  manualCreate,
+  resolveModerator as resolveModeratorSpec,
+  settle,
+  takeFlag,
+  wifForBot,
+} from './social-battery-lib.mjs';
 
 // ---- v8 numbers ------------------------------------------------------------
 //
@@ -109,22 +111,6 @@ const STARTER_GRANT = 100n;
 const YAPP_POSITION = 0;
 /** Long enough for the refused write to run, short enough to wait out. */
 const SUSPENSION_MS = 25_000;
-const SETTLE_MS = 3000;
-const settle = (ms = SETTLE_MS) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/**
- * Runs `action` and answers the described error, or null when it landed — the
- * half of a battery outcome the cases that bypass verify-lib's `attemptCreate`
- * have to assemble themselves.
- */
-async function errorOf(action) {
-  try {
-    await action();
-    return null;
-  } catch (e) {
-    return describeErr(e);
-  }
-}
 
 // ---- Expected rejections (code-anchored, see verify-lib) ---------------------
 
@@ -147,27 +133,12 @@ const AGREEMENT_MISMATCH = /\bcode"?\s*[=:]\s*40133\b|fee agreement.{0,40}mismat
 const ALREADY_CLAIMED_EPOCH = /\bcode"?\s*[=:]\s*41111\b|already.{0,30}claimed.{0,30}epoch|alreadyclaimedthisepoch/i;
 const GRANT_ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|onceperidentity.{0,60}already|already claimed/i;
 
-/**
- * `JSON.stringify` that survives BigInt. `moderationStatus.suspendedUntil` is a
- * u64 and reaches JS as a BigInt, so stringifying the status straight threw
- * "Do not know how to serialize a BigInt" and aborted m2 before its refusal
- * probes — taking m3/t1/t2/l1 down with it, since they share the fixtures.
- */
-const describeValue = (value) => JSON.stringify(value, (_k, v) => (typeof v === 'bigint' ? String(v) : v));
-
 // ---- Battery-only flags, stripped before verify-lib parses argv --------------
 //
 // runBattery refuses flags it does not know, so the two this battery adds are
 // taken out of process.argv here. `--poor` is a bot index holding NO YAPP (t2);
 // `--moderator` names who signs the moderation transitions.
 
-function takeFlag(name, fallback) {
-  const index = process.argv.indexOf(name);
-  if (index === -1) return fallback;
-  const [, value] = process.argv.splice(index, 2);
-  if (value === undefined) throw new Error(`${name} takes a value`);
-  return value;
-}
 const POOR_BOT_INDEX = Number(takeFlag('--poor', '2'));
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
 
@@ -192,75 +163,6 @@ const replyData = ({ content = 'v8 battery reply', rootPostId, parentOwnerId }) 
  * result names.
  */
 const documentIdV1 = deriveDocumentIdBytes;
-
-/** An id as base58, whichever of the three shapes the SDK handed back. */
-function idOf(value) {
-  if (typeof value === 'string') return value;
-  if (typeof value?.toBase58 === 'function') return value.toBase58();
-  return bs58.encode(Uint8Array.from(value));
-}
-
-/**
- * A create built by hand so it can carry `$actionFeeAgreement` (and, when the
- * caller pays in YAPP, `$tokenPaymentInfo` with a gas offer). Returns the id
- * the PROOF RESULT names, plus the id derived locally so a3 can compare them.
- * Acceptance is decided by reading the result id back; when the broadcast
- * threw before a result existed (a gateway 504 on the wait), the derived id is
- * probed instead and the outcome says so.
- */
-async function manualCreate(ctx, who, { docType, data, agreement, payment }) {
-  const { sdk, contractId } = ctx;
-  // Mask before incrementing, exactly as seed-lib's `createWithAgreement` does.
-  // A raw identity contract nonce carries missing-nonce marker bits above bit
-  // 40 once the identity has a gap (an aborted run that signed a nonce it never
-  // landed), and `raw + 1` then names a nonce far in the future: "is trying to
-  // set an invalid identity nonce. The current identity nonce is
-  // 2199023255558" (= 2^41 + 6), which wedged every later case on moutai.
-  const rawNonce = (await readback(() => sdk.identities.contractNonce(who.ownerId, contractId))) ?? 0n;
-  const nonce = (BigInt(rawNonce) & NONCE_SEQUENCE_MASK) + 1n;
-  const entropy = randomIdBytes();
-  const derivedId = documentIdV1({ contractId, ownerId: who.ownerId, docType, entropy, nonce });
-  const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, entropy, id: derivedId });
-  const transition = new DocumentCreateTransition({
-    document,
-    identityContractNonce: nonce,
-    ...(payment ? { tokenPaymentInfo: payment } : {}),
-    ...(agreement ? { actionFeeAgreement: agreement } : {}),
-  });
-  const batch = BatchTransition.fromBatchedTransitions([new BatchedTransition(transition.toDocumentTransition())], who.ownerId, 0);
-  const stateTransition = batch.toStateTransition();
-  stateTransition.setIdentityContractNonce(nonce);
-  stateTransition.sign(PrivateKey.fromWIF(who.wif), who.identityKey);
-
-  let error = null;
-  let resultId = null;
-  try {
-    const result = await sdk.stateTransitions.broadcastAndWait(stateTransition);
-    const documents = result?.documents;
-    if (documents instanceof Map) for (const key of documents.keys()) resultId = idOf(key);
-  } catch (e) {
-    error = describeErr(e);
-  }
-  const probeId = resultId ?? bs58.encode(derivedId);
-  for (let poll = 0; poll < 3; poll++) {
-    await settle();
-    if ((await fetchDocument(sdk, contractId, docType, probeId)) !== null) {
-      return { ok: true, error: null, id: probeId, derivedId: bs58.encode(derivedId), resultId, fromResult: resultId !== null };
-    }
-  }
-  return { ok: false, error: error ?? 'the SDK reported no error, but the write is not on chain', id: probeId, derivedId: bs58.encode(derivedId), resultId };
-}
-
-/**
- * The agreement a post/reply create must carry: the declared fee at the
- * multiplier the signer read. Built by the same `actionFeeAgreementOptions`
- * the client and the seeders use, so what this battery proves live is the
- * shape the app sends.
- */
-async function feeAgreement(ctx, fee) {
-  const knownPermille = await readback(() => feeMultiplierPermille(ctx.sdk));
-  return { agreement: new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, knownPermille)), knownPermille };
-}
 
 /** YAPP payment with the contract owner asked to pay the gas when able. */
 const yappPayment = (maximumTokenCost) => paymentInfo(maximumTokenCost, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }).tokenPaymentInfo;
@@ -642,7 +544,7 @@ async function prepare(ctx) {
   const contract = await readback(() => ctx.sdk.contracts.fetch(ctx.contractId));
   ctx.ownerId = contract.ownerId.toBase58();
   ctx.tokenId = await readback(() => ctx.sdk.tokens.calculateId(ctx.contractId, YAPP_POSITION));
-  ctx.moderator = await resolveModerator(ctx.sdk);
+  ctx.moderator = await resolveModeratorSpec(ctx.sdk, MODERATOR_SPEC);
   ctx.poor = await resolvePoorBot(ctx.sdk);
   console.log(`contract owner: ${ctx.ownerId}; moderator: ${ctx.moderator.label}; poor bot: ${ctx.poor?.label ?? 'none'}`);
   const moderation = contract.config.moderation;
@@ -667,21 +569,6 @@ const CASES = new Map([
   ['g1', prepared(caseG1StarterGrant)],
   ['l1', prepared(caseL1FirstLikeCounts)],
 ]);
-
-/** The WIF a bot signs manual batches with: the same CRITICAL key verify-lib's signer holds. */
-function wifForBot(index) {
-  return criticalAuthKey(deriveIdentityKeys(index)).wif;
-}
-
-/** The moderating identity, its signer and (fetched) Identity, from `--moderator`. */
-async function resolveModerator(sdk) {
-  const owner = MODERATOR_SPEC === 'maker'
-    ? resolveOwner({ maker: true })
-    : resolveOwner({ botIndex: Number(MODERATOR_SPEC.replace(/^bot:/, '')) });
-  const { identityKey, signer } = await signerFor(sdk, owner);
-  const identity = await sdk.identities.fetch(owner.ownerId);
-  return { ownerId: owner.ownerId, identity, identityKey, signer, label: owner.label };
-}
 
 async function resolvePoorBot(sdk) {
   const ownerId = loadIdentityIds()[POOR_BOT_INDEX];

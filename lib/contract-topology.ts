@@ -23,6 +23,7 @@
 
 import { CONTRACT_TOPOLOGIES, getContractTopology, type ContractTopology } from './constants'
 import socialContractV8 from '@/contracts/yappr-social-contract-v8.json'
+import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 
 /**
  * Whether a Post-shaped object is backed by a `post` document or a `reply`
@@ -420,6 +421,31 @@ const V8_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v8',
 }
 
+/**
+ * v9 — `contracts/yappr-social-contract-v9.json` (the 4.2.0-beta.4 cut,
+ * docs/SOCIAL_V9.md).
+ *
+ * v8's indexes, fields, preserve sets, token costs, action fees and grant
+ * exactly; the descriptor is v8's with the name changed. What v9 adds is
+ * grammar, exposed through the helpers below and read off the contract JSON:
+ *
+ * - **Elected moderation** ({@link electedModeration}): the owner moderates
+ *   until masternodes seat a team, which then holds ban/suspend/warn/delete on
+ *   post and reply and the owner is protected from it.
+ * - **Warnings** ({@link contractKeepsWarnings}): a third moderation list.
+ * - **distinctFrom** ({@link ownerDistinctProperties}): self-follow,
+ *   self-block, self-request and self-grant are refused by consensus (10419).
+ * - **Private-feed gates** ({@link privateFeedWritesAreGated}): a grant or
+ *   rekey needs the writer's own `privateFeedState`, and a grant needs a
+ *   `followRequest` from its recipient.
+ * - **Typed block follows** ({@link blockFollowsAreTyped}):
+ *   `blockFollow.followedBlockers` is a list of identifiers, not packed bytes.
+ */
+const V9_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V8_DESCRIPTOR,
+  topology: 'v9',
+}
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -437,6 +463,7 @@ const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>
   v6: V6_DESCRIPTOR,
   v7: V7_DESCRIPTOR,
   v8: V8_DESCRIPTOR,
+  v9: V9_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -925,7 +952,6 @@ export function clearableReferencesFor(docType: string): readonly string[] {
 /** The moderation lists a contract can keep (`config.moderation`, protocol 14). */
 export type ModerationList = 'banlist' | 'suspensions' | 'warnings'
 
-const V8_MODERATION = (socialContractV8.config as { moderation?: Partial<Record<ModerationList, boolean>> }).moderation
 
 /**
  * The lists the configured contract keeps, as its `config.moderation`
@@ -936,8 +962,13 @@ const V8_MODERATION = (socialContractV8.config as { moderation?: Partial<Record<
  * topology.
  */
 export function moderationListsKept(): readonly ModerationList[] {
-  if (!contractIsModerated() || !V8_MODERATION) return []
-  return (['banlist', 'suspensions', 'warnings'] as const).filter((list) => V8_MODERATION[list] === true)
+  if (!contractIsModerated()) return []
+  const declared = (atLeast('v9') ? socialContractV9.config : socialContractV8.config) as {
+    moderation?: Partial<Record<ModerationList, boolean>>
+  }
+  const moderation = declared.moderation
+  if (!moderation) return []
+  return (['banlist', 'suspensions', 'warnings'] as const).filter((list) => moderation[list] === true)
 }
 
 /** True when the configured contract keeps a warning list (warn / clear warnings). */
@@ -998,4 +1029,105 @@ export function declaredActionFee(docType: string, action: DocumentAction): Acti
 export function starterGrantAmount(): bigint | null {
   if (!atLeast('v8') || !V8_GRANT) return null
   return BigInt(V8_GRANT.amount)
+}
+
+// ---------------------------------------------------------------------------
+// v9 grammar (4.2.0-beta.4), read off the committed contract JSON and pinned by
+// `lib/contract-topology.test.ts`. v9 keeps v8's token costs, action fees and
+// grant byte for byte (build-v9-contract.py asserts it), so the v8 helpers
+// above stay correct on v9.
+
+/** What an elected team may do on one document type. */
+export type ModerationAbility = 'deleteDocuments' | 'ban' | 'suspend' | 'warn'
+
+/** The contract's elected moderation declaration, fixed at its creation. */
+export interface ElectedModerationDeclaration {
+  /** Seconds applicants may join once the first charter is filed. */
+  readonly joinWindowSeconds: number
+  /** Seconds masternodes vote once the join window closed. */
+  readonly voteWindowSeconds: number
+  /** Whether a seated team can ever be challenged (v9: no). */
+  readonly seatContestable: boolean
+  /** Seconds after the contract's creation before the first charter; null = at once. */
+  readonly electionDelaySeconds: number | null
+  /** Members a seated leader may add from the proposal's join requests. */
+  readonly maxAddedModerators: number
+  /** The abilities the seated team holds, per moderated document type. */
+  readonly moderatedDocumentTypes: Readonly<Record<string, readonly ModerationAbility[]>>
+  /** Who moderates until a team is seated (v9: the contract owner). */
+  readonly interim: 'contractOwner' | 'appointedModerators' | 'notYetUsable' | 'noModeration'
+  /** Whether the owner is protected from the seated team. */
+  readonly ownerProtected: boolean
+}
+
+interface V9DocumentSchema {
+  ownerRefersTo?: unknown
+  properties: Record<string, { distinctFrom?: string; items?: { distinctFrom?: string } }>
+}
+
+const V9_SCHEMAS = socialContractV9.documentSchemas as unknown as Record<string, V9DocumentSchema>
+const V9_MODERATION = socialContractV9.config.moderation as {
+  moderators: {
+    joinWindow: number
+    voteWindow: number
+    seatContestable: boolean
+    electionDelay?: number
+    maxAddedModerators?: number
+    moderatedDocumentTypes: Record<string, ModerationAbility[]>
+    interim: { $type: ElectedModerationDeclaration['interim'] }
+    ownerProtected?: boolean
+  }
+}
+
+/**
+ * The elected moderation declaration (v9), or null when the contract's
+ * moderators are the owner or an appointed set. Until a charter is seated the
+ * interim moderates exactly as v8's owner does; once one is, only the seated
+ * team may moderate (41101 for the owner) and every ban, suspension, warning or
+ * deletion must name a `reason` document its proposal lists (41203).
+ */
+export function electedModeration(): ElectedModerationDeclaration | null {
+  if (!atLeast('v9')) return null
+  const elected = V9_MODERATION.moderators
+  return {
+    joinWindowSeconds: elected.joinWindow,
+    voteWindowSeconds: elected.voteWindow,
+    seatContestable: elected.seatContestable,
+    electionDelaySeconds: elected.electionDelay ?? null,
+    maxAddedModerators: elected.maxAddedModerators ?? 0,
+    moderatedDocumentTypes: elected.moderatedDocumentTypes,
+    interim: elected.interim.$type,
+    ownerProtected: elected.ownerProtected === true,
+  }
+}
+
+/**
+ * The identifier properties of `docType` that consensus refuses to equal the
+ * writer (`distinctFrom: $ownerId`, 10419): v9's follow/block/followRequest/
+ * privateFeedGrant targets and every element of `blockFollow.followedBlockers`.
+ * Empty before v9, where only the client stops a self-follow.
+ */
+export function ownerDistinctProperties(docType: string): readonly string[] {
+  if (!atLeast('v9')) return []
+  return Object.entries(V9_SCHEMAS[docType]?.properties ?? {})
+    .filter(([, property]) => (property.distinctFrom ?? property.items?.distinctFrom) === '$ownerId')
+    .map(([name]) => name)
+}
+
+/**
+ * True when private-feed writes are gated by consensus (v9): a grant or rekey
+ * needs the writer's own `privateFeedState` (40120 on `$ownerId` otherwise),
+ * and a grant needs a `followRequest` from its recipient to the writer that
+ * exists when the grant is written (40120 on `recipientId`).
+ */
+export function privateFeedWritesAreGated(): boolean {
+  return atLeast('v9') && V9_SCHEMAS.privateFeedGrant?.ownerRefersTo !== undefined
+}
+
+/**
+ * True when `blockFollow.followedBlockers` is a typed array of identifiers
+ * (v9) rather than one byte array of 32-byte ids packed end to end.
+ */
+export function blockFollowsAreTyped(): boolean {
+  return atLeast('v9')
 }

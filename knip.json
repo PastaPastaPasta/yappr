@@ -16,7 +16,8 @@
     "scripts/**"
   ],
   "ignoreDependencies": [
-    "platform-auth"
+    "platform-auth",
+    "ajv"
   ],
   "ignoreExportsUsedInFile": true,
   "ignoreMembers": [

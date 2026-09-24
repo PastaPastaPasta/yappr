@@ -13,6 +13,7 @@
     "moderation": {
       "banlist": true,
       "suspensions": true,
+      "warnings": true,
       "moderators": {
         "$type": "contractOwner"
       }
@@ -80,10 +81,17 @@
           "description": "Default comments setting for new posts"
         },
         "labels": {
-          "type": "string",
-          "maxLength": 1024,
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
           "position": 6,
-          "description": "Comma-separated label taxonomy"
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "maxBytes": 160
+          },
+          "description": "The blog's label taxonomy: at most 64 distinct labels of up to 40 characters"
         }
       },
       "additionalProperties": false,
@@ -200,10 +208,17 @@
           "description": "ipfs:// URI for cover image"
         },
         "labels": {
-          "type": "string",
-          "maxLength": 256,
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
           "position": 8,
-          "description": "Comma-separated labels from blog taxonomy"
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "maxBytes": 160
+          },
+          "description": "Labels from the blog taxonomy: at most 16 distinct labels of up to 40 characters"
         },
         "commentsEnabled": {
           "type": "boolean",

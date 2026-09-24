@@ -11,7 +11,9 @@
  *
  * `--moderator` is the persona the contract was published under (its owner) or
  * one appointed at publish time; v3 (beta.3) is a moderated cut, so b13/b14
- * ban the stranger and take a comment and a post down.
+ * ban the stranger and take a comment and a post down. v4 (beta.4) keeps a
+ * warning list (b17 warns and clears) and stores `labels` as a typed string
+ * array (b18: a list reads back as a list; an over-long label is refused).
  *   node scripts/verify-blog.mjs --self-test   # offline: contract declares what the cases assert
  */
 import bs58 from 'bs58';
@@ -20,14 +22,14 @@ import {
   id32, runBattery,
 } from './battery-lib.mjs';
 import { randomEntropy } from './seed/seed-lib.mjs';
-import { REFERENCE_NOT_FOUND_DELETABLE, caseBan, caseModeratorDelete, selfTestModerated } from './battery-moderation.mjs';
+import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, REFERENCE_NOT_FOUND_DELETABLE, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
 
 const COMMENT_COST = 1n;
 const DEFAULT_YAPP = 20n;
 /** The daily grid `followersByDay` buckets on (contract timeRange range/step). */
 const TODAY = [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 86400 } }];
 
-const blogData = (run) => ({ name: `Battery ${run}`, description: 'blog battery' });
+const blogData = (run, labels) => ({ name: `Battery ${run}`, description: 'blog battery', ...(labels ? { labels } : {}) });
 // `publishedAt` is `immutable` + `immutableAllowSetting`: a replace must resend the
 // stored value byte-identically, so it is a parameter, not a fresh `Date.now()`.
 // Passing `null` omits it, which is how a DRAFT is written.
@@ -242,11 +244,33 @@ async function caseB14ModeratorDelete(ctx) {
   });
 }
 
+async function caseB17Warn(ctx) {
+  const { battery, stranger, author, run } = ctx;
+  const comment = () => battery.attemptCreate(stranger, 'blogComment', commentData({ blogPostId: id32(ctx.post1), blogPostOwnerId: id32(author.ownerId), content: `warned ${run} ${Date.now()}` }), { tokenCost: COMMENT_COST });
+  await caseWarn(ctx, { prefix: 'b17', target: stranger, writeWhileWarned: comment });
+}
+
+async function caseB18TypedLabels(ctx) {
+  const { battery, author, run } = ctx;
+  console.log('\n--- b18. labels are a typed string array (beta.4 v4) ---');
+  const labels = ['postmortems', 'oncall', 'databases'];
+  const blog = await battery.probeCreate('b18a a blog with labels as a LIST lands', null, author, 'blog', blogData(`${run}-labels`, labels));
+  if (!blog.ok) return;
+  const stored = await battery.fetchDocument('blog', blog.id);
+  const back = stored?.toJSON?.().labels;
+  battery.check('b18b the labels read back as the same list, in order', JSON.stringify(back) === JSON.stringify(labels), JSON.stringify(back));
+  const post = await battery.probeCreate('b18c a post labelled with a subset of the taxonomy lands', null, author, 'blogPost', { ...postData({ blogId: id32(blog.id), title: `Labelled ${run}`, slug: `labelled-${run}`, publishedAt: Date.now() }), labels: ['oncall'] });
+  if (post.ok) battery.check('b18d …and reads back as a list', JSON.stringify((await battery.fetchDocument('blogPost', post.id))?.toJSON?.().labels) === '["oncall"]');
+  await battery.probeCreate('b18e a label over 40 characters is refused', ARRAY_OUT_OF_BOUNDS, author, 'blog', blogData(`${run}-long`, ['x'.repeat(41)]));
+  await battery.probeCreate('b18f a duplicate label is refused (uniqueItems)', ARRAY_OUT_OF_BOUNDS, author, 'blog', blogData(`${run}-dup`, ['oncall', 'oncall']));
+  await battery.probeCreate('b18g the v3 comma-separated STRING is refused on v4', NOT_A_LIST, author, 'blog', blogData(`${run}-csv`, 'oncall,databases'));
+}
+
 const CASES = new Map([
   ['b1', caseB1Fixtures], ['b2', caseB2BlogRefs], ['b3', caseB3Comments], ['b4', caseB4Counts],
   ['b5', caseB5Rankings], ['b6', caseB6Windowed], ['b7', caseB7Edit], ['b8', caseB8Permanence],
   ['b9', caseB9Tokens], ['b10', caseB10CommentDelete], ['b11', caseB11FollowDelete], ['b12', caseB12Immutable],
-  ['b13', caseB13Ban], ['b14', caseB14ModeratorDelete],
+  ['b13', caseB13Ban], ['b14', caseB14ModeratorDelete], ['b17', caseB17Warn], ['b18', caseB18TypedLabels],
 ]);
 
 await runBattery({
@@ -260,9 +284,10 @@ await runBattery({
     // b3a: the notification key binds to the post's REAL owner.
     blogComment: { agreements: { blogPostId: { blogPostOwnerId: '$ownerId' } }, moderatorDeletable: true },
     // b12: blogId frozen, publishedAt write-once. b15: moderators may remove a post.
-    blogPost: { immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'], moderatorDeletable: true, keepsHistory: false },
-    blog: { moderatorDeletable: true, keepsHistory: false },
-  }, { moderation: { banlist: true, suspensions: true } }),
+    // b18: labels are typed string arrays (beta.4 v4).
+    blogPost: { immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'], moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } } },
+    blog: { moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 64, maxLength: 40 } } },
+  }, { moderation: { banlist: true, suspensions: true, warnings: true } }),
   setup: async ({ battery, tokenId, reader, moderator }) => ({ startedAt: Date.now() - 60_000, readerComments: 0, strangerCommentId: null, draftId: null, publishedAt: null, readerYappBefore: await battery.yappBalance(tokenId, reader.ownerId), moderator: { ...moderator, identity: await battery.readback(() => battery.sdk.identities.fetch(moderator.ownerId)) } }),
   summary: (ctx) => `blog=${ctx.blogId} posts=${ctx.post1},${ctx.post2}`,
 });
