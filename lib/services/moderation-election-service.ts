@@ -79,6 +79,9 @@ export interface SeatedTeam {
   members: string[];
 }
 
+/** A part of the election status that could not be read. */
+export type ElectionReadFailure = 'proposals' | 'contest' | 'contestEnd' | 'seatedTeam' | 'seatedReasons';
+
 export interface ElectionStatus {
   declaration: ElectedModerationDeclaration;
   targetContractId: string;
@@ -87,6 +90,12 @@ export interface ElectionStatus {
   seated: SeatedTeam | null;
   /** The reasons the seated team may cite (empty while no team is seated). */
   seatedReasons: CharterReason[];
+  /**
+   * The reads that FAILED. The fields above hold whatever was read; an empty
+   * one next to its failure here means "unknown", never "none" — a timed-out
+   * team read must not render as "no team has applied yet".
+   */
+  failures: ElectionReadFailure[];
 }
 
 // ---- pure mappers (unit-tested) ------------------------------------------------
@@ -253,24 +262,29 @@ class ModerationElectionService {
     return { seated, reasons: await this.getReasons(toProposal(documentToPlainObject(proposal)).reasonIds) };
   }
 
-  /** The contest for the seat now, or null when no charter has entered one yet. */
-  async getContest(targetContractId = YAPPR_CONTRACT_ID): Promise<ElectionContest | null> {
+  /**
+   * The contest for the seat now, or null when no charter has entered one yet
+   * (the node answers a poll nobody opened with an empty state, not an error).
+   * A failed vote-state read THROWS; a failed end-time read leaves `endsAtMs`
+   * null and is reported in `endTimeFailed`.
+   */
+  async getContest(targetContractId = YAPPR_CONTRACT_ID): Promise<{ contest: ElectionContest | null; endTimeFailed: boolean }> {
     const sdk = await getEvoSdk();
-    let state: VoteState;
-    try {
-      state = await sdk.voting.contestedResourceVoteState({
-        ...contestVotePoll(targetContractId),
-        resultType: 'documentsAndVoteTally',
-        includeLockedAndAbstaining: true,
-        limit: 100,
-      });
-    } catch (error) {
-      logger.warn('moderationElection: vote state read failed (no contest yet?)', error);
+    const state = await sdk.voting.contestedResourceVoteState({
+      ...contestVotePoll(targetContractId),
+      resultType: 'documentsAndVoteTally',
+      includeLockedAndAbstaining: true,
+      limit: 100,
+    });
+    let endTimeFailed = false;
+    const endsAtMs = await this.contestEnd(sdk, targetContractId).catch((error: unknown) => {
+      logger.warn('moderationElection: vote poll end-date read failed', error);
+      endTimeFailed = true;
       return null;
-    }
-    const endsAtMs = await this.contestEnd(sdk, targetContractId);
+    });
     const contest = toContest(state, endsAtMs);
-    return contest.contenders.length === 0 && !contest.winner ? null : contest;
+    if (contest.contenders.length === 0 && !contest.winner) return { contest: null, endTimeFailed: false };
+    return { contest, endTimeFailed };
   }
 
   /**
@@ -279,7 +293,7 @@ class ModerationElectionService {
    * ago, so a busy network with more than 100 open polls still finds it.
    */
   private async contestEnd(sdk: EvoSDK, targetContractId: string): Promise<number | null> {
-    try {
+    {
       let startTimeMs = Date.now() - 86_400_000;
       let startTimeIncluded = true;
       for (let page = 0; page < MAX_END_DATE_PAGES; page++) {
@@ -302,9 +316,6 @@ class ModerationElectionService {
         startTimeIncluded = false;
       }
       return null;
-    } catch (error) {
-      logger.warn('moderationElection: vote poll end-date read failed', error);
-      return null;
     }
   }
 
@@ -312,18 +323,59 @@ class ModerationElectionService {
   async getStatus(targetContractId = YAPPR_CONTRACT_ID): Promise<ElectionStatus | null> {
     const declaration = electedModeration();
     if (!declaration) return null;
-    const [proposals, contest, seated] = await Promise.all([
-      this.getProposals(targetContractId).catch((error: unknown) => { logger.warn('moderationElection: proposals read failed', error); return []; }),
-      this.getContest(targetContractId),
-      this.getSeatedTeam(targetContractId).catch((error: unknown) => { logger.warn('moderationElection: team read failed', error); return null; }),
+    const failures: ElectionReadFailure[] = [];
+    /** A read whose failure is recorded (and logged) and whose fallback stands in as "unknown". */
+    const attempt = <T>(what: ElectionReadFailure, read: Promise<T>, fallback: T): Promise<T> =>
+      read.catch((error: unknown) => {
+        logger.warn(`moderationElection: ${what} read failed`, error);
+        failures.push(what);
+        return fallback;
+      });
+    const [proposals, contestRead, seated] = await Promise.all([
+      attempt('proposals', this.getProposals(targetContractId), [] as CharterProposal[]),
+      attempt('contest', this.getContest(targetContractId), { contest: null, endTimeFailed: false }),
+      attempt('seatedTeam', this.getSeatedTeam(targetContractId), null as SeatedTeam | null),
     ]);
+    if (contestRead.endTimeFailed) failures.push('contestEnd');
     const seatedProposal = seated ? proposals.find((p) => p.id === seated.submittedCharterId) : undefined;
-    const seatedReasons = !seated ? [] : await (seatedProposal
+    const seatedReasons = !seated ? [] : await attempt('seatedReasons', seatedProposal
       ? this.getReasons(seatedProposal.reasonIds)
-      : this.getSeatedTeamAndReasons(targetContractId).then((read) => read.reasons)
-    ).catch((error: unknown) => { logger.warn('moderationElection: seated reasons read failed', error); return []; });
-    return { declaration, targetContractId, proposals, contest, seated, seatedReasons };
+      : this.getSeatedTeamAndReasons(targetContractId).then((read) => read.reasons), [] as CharterReason[]);
+    return { declaration, targetContractId, proposals, contest: contestRead.contest, seated, seatedReasons, failures };
   }
 }
 
 export const moderationElectionService = new ModerationElectionService();
+
+const FAILURE_LABELS: Record<ElectionReadFailure, string> = {
+  proposals: 'the filed proposals',
+  contest: 'the contest for the seat',
+  contestEnd: 'when voting ends',
+  seatedTeam: 'the seated team',
+  seatedReasons: 'the seated team\'s reasons',
+};
+
+/**
+ * What the election view may claim, given what was read. Pure (unit-tested):
+ * a phase is only stated when every read it rests on succeeded, so a
+ * timed-out team read on a seated contract reads "Unknown", never "No
+ * election yet"; `error` lists what could not be read, for a retry prompt.
+ */
+export function electionView(status: ElectionStatus | null, readFailed: boolean): { phase: string; error: string | null; emptyStateKnown: boolean } {
+  if (!status) return { phase: readFailed ? 'Unknown' : 'Loading', error: readFailed ? 'Could not read the election state.' : null, emptyStateKnown: false };
+  const failed = new Set(status.failures);
+  const error = status.failures.length === 0
+    ? null
+    : `Could not read ${status.failures.map((failure) => FAILURE_LABELS[failure]).join(', ')}. What is shown may be incomplete.`;
+  let phase: string;
+  if (status.seated) phase = 'Seated';
+  else if (failed.has('seatedTeam')) phase = 'Unknown';
+  else if (status.contest) phase = status.contest.winner ? 'Decided' : 'Voting';
+  else if (failed.has('contest')) phase = 'Unknown';
+  else if (status.proposals.length > 0) phase = 'Proposals filed';
+  else if (failed.has('proposals')) phase = 'Unknown';
+  else phase = 'No election yet';
+  // "No team has applied / no contest yet" is only true when all three reads succeeded.
+  const emptyStateKnown = !failed.has('seatedTeam') && !failed.has('contest') && !failed.has('proposals');
+  return { phase, error, emptyStateKnown };
+}

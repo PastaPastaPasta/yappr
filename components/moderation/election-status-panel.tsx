@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { logger } from '@/lib/logger'
 import { electedModeration } from '@/lib/contract-topology'
 import { createElectionStatusLoader } from '@/lib/election-status-loader'
-import { moderationElectionService, type ElectionStatus } from '@/lib/services/moderation-election-service'
+import { electionView, moderationElectionService, type ElectionStatus } from '@/lib/services/moderation-election-service'
 
 const short = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id)
 const when = (ms: number | null) => (ms === null ? 'unknown' : new Date(ms).toLocaleString())
@@ -52,7 +52,8 @@ export function ElectionStatusPanel() {
 
   const contest = status?.contest ?? null
   const seated = status?.seated ?? null
-  const phase = seated ? 'Seated' : contest ? (contest.winner ? 'Decided' : 'Voting') : (status?.proposals.length ? 'Proposals filed' : 'No election yet')
+  // Never claims "none" for a part that failed to read: an unknown phase says so.
+  const { phase, error, emptyStateKnown } = electionView(status, failed)
 
   return (
     <Card data-testid="election-status">
@@ -76,7 +77,12 @@ export function ElectionStatusPanel() {
             <ArrowPathIcon className="h-4 w-4" /> {loading ? 'Loading…' : 'Refresh'}
           </Button>
         </div>
-        {failed && <p className="text-red-500">Could not read the election state.</p>}
+        {error && (
+          <div role="alert" data-testid="election-read-error" className="flex items-center justify-between gap-2 rounded border border-red-300 dark:border-red-800 p-2 text-red-600 dark:text-red-400">
+            <span>{error}</span>
+            <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>Retry</Button>
+          </div>
+        )}
 
         {seated && (
           <section data-testid="election-seated-team">
@@ -131,7 +137,7 @@ export function ElectionStatusPanel() {
             </ul>
           </section>
         )}
-        {status && !contest && !seated && (
+        {status && emptyStateKnown && !contest && !seated && (
           <p data-testid="election-no-contest" className="text-gray-500">
             {status.proposals.length === 0 ? 'No team has applied yet. ' : 'No charter has entered the contest yet. '}
             The contest opens when a leader files an elected charter; the network admits contested documents
