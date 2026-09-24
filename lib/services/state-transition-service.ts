@@ -14,6 +14,7 @@ import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, tokenPaymen
 import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError } from '../error-utils';
 import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
+import { identityService } from './identity-service';
 import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
 import { documentIdForCreate, nextIdentityContractNonce } from '@/lib/document-id';
@@ -65,6 +66,18 @@ interface CachedSTEntry {
 let knownFeeMultiplierPermille: bigint | null = null;
 
 type ConnectedSdk = Awaited<ReturnType<typeof getEvoSdk>>;
+
+/**
+ * The owner's credit balance a wait result carries, or null. wasm-sdk
+ * 4.2.0-beta.4 sets it as an untyped `ownerBalance` bigint on the verified
+ * result (platform#4887) — present for owned, fee-paying transitions proved
+ * at protocol 14, absent otherwise — so it is read defensively.
+ */
+export function ownerBalanceOf(result: unknown): bigint | null {
+  if (typeof result !== 'object' || result === null) return null;
+  const value = (result as { ownerBalance?: unknown }).ownerBalance;
+  return typeof value === 'bigint' ? value : null;
+}
 
 async function currentFeeMultiplierPermille(sdk: ConnectedSdk): Promise<bigint> {
   if (knownFeeMultiplierPermille !== null) return knownFeeMultiplierPermille;
@@ -648,12 +661,12 @@ class StateTransitionService {
       // affected-state snapshot — so affectedState mode waits with the method
       // that accepts that outcome instead of failing a write that landed.
       try {
-        if (affectedStateMode) {
-          await sdk.stateTransitions.waitForAffectedState(stateTransition);
-        } else {
-          await sdk.stateTransitions.waitForResponse(stateTransition);
-        }
+        const waited = affectedStateMode
+          ? await sdk.stateTransitions.waitForAffectedState(stateTransition)
+          : await sdk.stateTransitions.waitForResponse(stateTransition);
         logger.debug(`Document ${documentId} confirmed`);
+        const ownerBalance = ownerBalanceOf(waited);
+        if (ownerBalance !== null) identityService.recordBalance(ownerId, ownerBalance);
         clearPendingSTBytes(documentId);
         // Refresh the SDK's internal nonce cache since we manually managed the nonce.
         // Without this, subsequent operations using the high-level API (e.g. delete)
