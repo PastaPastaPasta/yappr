@@ -138,6 +138,12 @@ export function PrivateFeedFollowRequests() {
         return
       }
 
+      if (!result.success && result.errorCode === 'FEED_NOT_ENABLED') {
+        // v9: consensus found no privateFeedState for this owner. Say so, not "failed".
+        toast.error(result.error ?? 'Enable your private feed before approving followers.')
+        return
+      }
+
       if (result.success) {
         // Remove from local state
         setRequests(prev => prev.filter(r => r.id !== request.id))
