@@ -6,9 +6,10 @@
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped } from '../constants';
+import { decodeStringList, encodeStringList } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes, type DocumentWhereClause } from './sdk-helpers';
-import { parseJsonArray, parseJsonObject } from '../utils/json-parsing';
+import { parseJsonObject } from '../utils/json-parsing';
 import type {
   StoreItem,
   StoreItemDocument,
@@ -18,9 +19,34 @@ import type {
   VariantCombination
 } from '../../types';
 
+/** A string list as the configured storefront cut stores it: a list on v4, a JSON string before. */
+const storedList = (values: readonly string[]) => encodeStringList(values, storefrontArraysAreTyped());
+/** A stored list (either shape) as the app models it; undefined when empty or absent. */
+const listOf = (stored: unknown): string[] | undefined => {
+  const values = decodeStringList(stored);
+  return values.length > 0 ? values : undefined;
+};
+
 class StoreItemService extends BaseDocumentService<StoreItem> {
   constructor() {
     super(STOREFRONT_DOCUMENT_TYPES.STORE_ITEM, YAPPR_STOREFRONT_CONTRACT_ID);
+  }
+
+  /**
+   * `update()` rebuilds the full replace from the TRANSFORMED item, where
+   * `tags`/`imageUrls` are arrays, `variants` an object and `storeId` base58.
+   * Re-encode each the way the contract stores it, or a stock edit that names
+   * none of them re-sends parsed values that no cut accepts (lists on
+   * storefront v1–v3, an object for `variants` on every cut).
+   */
+  protected extractContentFields(doc: StoreItem): Record<string, unknown> {
+    const fields = super.extractContentFields(doc);
+    if (typeof fields.storeId === 'string') fields.storeId = fields.storeId ? identifierStringToDocumentBytes(fields.storeId) : undefined;
+    for (const key of ['tags', 'imageUrls'] as const) {
+      if (Array.isArray(fields[key])) fields[key] = storedList(fields[key] as string[]);
+    }
+    if (fields.variants && typeof fields.variants === 'object') fields.variants = JSON.stringify(fields.variants);
+    return fields;
   }
 
   protected transformDocument(doc: Record<string, unknown>): StoreItem {
@@ -37,8 +63,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       section: data.section,
       category: data.category,
       subcategory: data.subcategory,
-      tags: parseJsonArray<string>(data.tags, 'tags'),
-      imageUrls: parseJsonArray<string>(data.imageUrls, 'imageUrls'),
+      tags: listOf(data.tags),
+      imageUrls: listOf(data.imageUrls),
       basePrice: data.basePrice,
       currency: data.currency,
       status: data.status,
@@ -187,8 +213,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (data.section) documentData.section = data.section;
     if (data.category) documentData.category = data.category;
     if (data.subcategory) documentData.subcategory = data.subcategory;
-    if (data.tags) documentData.tags = JSON.stringify(data.tags);
-    if (data.imageUrls) documentData.imageUrls = JSON.stringify(data.imageUrls);
+    if (data.tags) documentData.tags = storedList(data.tags);
+    if (data.imageUrls) documentData.imageUrls = storedList(data.imageUrls);
     if (data.basePrice !== undefined) documentData.basePrice = data.basePrice;
     if (data.currency) documentData.currency = data.currency;
     if (data.weight !== undefined) documentData.weight = data.weight;
@@ -239,8 +265,9 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (data.section !== undefined) documentData.section = data.section;
     if (data.category !== undefined) documentData.category = data.category;
     if (data.subcategory !== undefined) documentData.subcategory = data.subcategory;
-    if (data.tags !== undefined) documentData.tags = JSON.stringify(data.tags);
-    if (data.imageUrls !== undefined) documentData.imageUrls = JSON.stringify(data.imageUrls);
+    // An empty list clears the field (the encoder answers undefined for none).
+    if (data.tags !== undefined) documentData.tags = storedList(data.tags);
+    if (data.imageUrls !== undefined) documentData.imageUrls = storedList(data.imageUrls);
     if (data.basePrice !== undefined) documentData.basePrice = data.basePrice;
     if (data.currency !== undefined) documentData.currency = data.currency;
     if (data.weight !== undefined) documentData.weight = data.weight;

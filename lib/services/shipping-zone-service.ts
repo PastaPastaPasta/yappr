@@ -25,6 +25,21 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
     super(STOREFRONT_DOCUMENT_TYPES.SHIPPING_ZONE, YAPPR_STOREFRONT_CONTRACT_ID);
   }
 
+  /**
+   * `update()` rebuilds the full replace from the TRANSFORMED zone, where
+   * `postalPatterns` is an array, `tiers` an object and `storeId` base58. Both
+   * JSON fields are strings on every storefront cut, so re-encode them, or a
+   * zone edit that does not name them re-sends values no cut accepts.
+   */
+  protected extractContentFields(doc: ShippingZone): Record<string, unknown> {
+    const fields = super.extractContentFields(doc);
+    if (typeof fields.storeId === 'string') fields.storeId = fields.storeId ? identifierStringToDocumentBytes(fields.storeId) : undefined;
+    for (const key of ['postalPatterns', 'tiers'] as const) {
+      if (fields[key] && typeof fields[key] === 'object') fields[key] = JSON.stringify(fields[key]);
+    }
+    return fields;
+  }
+
   protected transformDocument(doc: Record<string, unknown>): ShippingZone {
     const data = (doc.data || doc) as ShippingZoneDocument;
 

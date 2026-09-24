@@ -74,3 +74,31 @@ describe('blog optional-field updates', () => {
     )
   })
 })
+
+describe('blog v4 typed labels (docs/SOCIAL_V9.md)', () => {
+  it('writes labels as a list on blog v4 and reads a stored list back as the app\'s CSV', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v4')
+    try {
+      get.mockResolvedValueOnce({ ...raw, labels: ['oncall', 'databases'] })
+      const result = await blogService.updateBlog(blogId, ownerId, { labels: 'oncall,databases,essays' })
+      expect(updateDocument).toHaveBeenCalledExactlyOnceWith(
+        YAPPR_BLOG_CONTRACT_ID, 'blog', blogId, ownerId,
+        { ...content, labels: ['oncall', 'databases', 'essays'] }, 7
+      )
+      expect(result.labels).toBe('oncall,databases,essays')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('re-encodes an untouched stored list on v4 instead of sending the CSV model', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v4')
+    try {
+      get.mockResolvedValueOnce({ ...raw, labels: ['oncall'] })
+      await blogService.updateBlog(blogId, ownerId, { commentsEnabledDefault: false })
+      expect(updateDocument.mock.calls[0][4]).toMatchObject({ labels: ['oncall'], commentsEnabledDefault: false })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+})

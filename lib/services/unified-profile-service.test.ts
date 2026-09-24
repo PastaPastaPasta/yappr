@@ -97,6 +97,29 @@ describe('profile replacements', () => {
   });
 });
 
+describe('profile v2 typed arrays (docs/SOCIAL_V9.md)', () => {
+  it('writes lists on profile v2, "platform:handle" split on the first colon only', async () => {
+    vi.stubEnv('NEXT_PUBLIC_PROFILE_TOPOLOGY', 'v2');
+    try {
+      const socialLinks = [{ platform: 'other', handle: 'https://example.com/a:b' }];
+      await unifiedProfileService.updateProfile(ownerId, { paymentUris: ['dash:new-address'], socialLinks });
+      expect(updateDocument).toHaveBeenCalledExactlyOnceWith(
+        YAPPR_PROFILE_CONTRACT_ID, 'profile', documentId, ownerId,
+        { ...content, paymentUris: ['dash:new-address'], socialLinks: ['other:https://example.com/a:b'] }, 7
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('reads a v2 document stored as lists', async () => {
+    get.mockResolvedValueOnce({ ...raw, paymentUris: ['dash:listed'], socialLinks: ['mastodon:@a@host.social'] });
+    const user = await unifiedProfileService.get(documentId);
+    expect(user?.paymentUris).toEqual([{ scheme: 'dash:', uri: 'dash:listed' }]);
+    expect(user?.socialLinks).toEqual([{ platform: 'mastodon', handle: '@a@host.social' }]);
+  });
+});
+
 describe('stored avatar settings', () => {
   it('preserves the generator recipe alongside the separately rendered profile avatar', async () => {
     const profile = await unifiedProfileService.getProfile(ownerId);

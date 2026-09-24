@@ -102,12 +102,18 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // `itemReview` are moderator-deletable (docs/SOCIAL_V8.md). Nothing references
 // a review, so no read or write changes: the value records which cut is
 // deployed (the moderation UI for feature contracts is a follow-up).
-export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3'] as const
+// `v4` (4.2.0-beta.4, docs/SOCIAL_V9.md) is v3 plus a warning list,
+// `storeItem.tags`/`imageUrls` as typed string ARRAYS (v1–v3 store JSON
+// strings; each cut refuses the other's encoding) and `storeReview.sellerId`
+// distinct from the reviewer.
+export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4'] as const
 export type StorefrontTopology = (typeof STOREFRONT_TOPOLOGIES)[number]
 export const STOREFRONT_TOPOLOGY: StorefrontTopology =
   STOREFRONT_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY) ?? 'v1'
 /** True on v2 and every later cut (the v2 write surface). */
 export const storefrontIsV2 = () => STOREFRONT_TOPOLOGY !== 'v1'
+/** True on v4 and later: `storeItem.tags`/`imageUrls` are written as lists, not JSON strings. */
+export const storefrontArraysAreTyped = () => STOREFRONT_TOPOLOGY === 'v4'
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID ?? '7UaqHGBJBbRLJ4fUWS45cnud8PPUugJWoGTt1SKwHJ2P' // Key exchange protocol contract
@@ -134,12 +140,30 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // them is a `deletableDocument` reference (a followed blog or a commented post
 // may resolve to nothing after a takedown), and `documentsKeepHistory` is
 // GONE from blog/blogPost — the edit-history viewer with it. See docs/SOCIAL_V8.md.
-export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3'] as const
+//
+// `v4` (4.2.0-beta.4, docs/SOCIAL_V9.md) is v3 plus a warning list and
+// `blog.labels`/`blogPost.labels` as typed string ARRAYS (v1–v3: a
+// comma-separated string; each cut refuses the other's encoding).
+export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4'] as const
 export type BlogTopology = (typeof BLOG_TOPOLOGIES)[number]
 export const blogTopology = (): BlogTopology =>
   BLOG_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_BLOG_TOPOLOGY) ?? 'v1'
 /** True on v2 and every later cut (the v2 write surface). */
 export const blogIsV2 = () => blogTopology() !== 'v1'
+/** True on v4 and later: blog and post labels are written as lists, not comma-separated strings. */
+export const blogLabelsAreTyped = () => blogTopology() === 'v4'
+// ---- profile topology ----
+// `v1` is the unified profile contract live on testnet/production:
+// `paymentUris` and `socialLinks` are JSON strings. `v2` (4.2.0-beta.4,
+// contracts/yappr-profile-contract.json, docs/SOCIAL_V9.md) stores both as
+// typed string ARRAYS (`socialLinks` as "platform:handle"); each cut refuses
+// the other's encoding. Read at call time so tests can stub it.
+export const PROFILE_TOPOLOGIES = ['v1', 'v2'] as const
+export type ProfileTopology = (typeof PROFILE_TOPOLOGIES)[number]
+export const profileTopology = (): ProfileTopology =>
+  PROFILE_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_PROFILE_TOPOLOGY) ?? 'v1'
+/** True on v2: profile `paymentUris`/`socialLinks` are written as lists. */
+export const profileArraysAreTyped = () => profileTopology() === 'v2'
 // Blog comments are priced in YAPP, charged from the SOCIAL contract's token
 // through `tokenCost.create.contractId` (a cross-contract token cost), so their
 // payment agreement must name that contract — see resolveTokenPayment.

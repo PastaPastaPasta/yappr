@@ -1,3 +1,6 @@
+import { blogLabelsAreTyped } from '@/lib/constants'
+import { decodeLabelList, encodeLabelList } from '@/lib/typed-array-codecs'
+
 /** Zero-width space used to flag a summary as hidden from the post view. */
 export const SUMMARY_HIDDEN_PREFIX = '\u200B'
 
@@ -92,6 +95,21 @@ export function getBlogPostUrl(blogId: string, slug: string): string {
 export function parseLabels(value?: string): string[] {
   if (!value) return []
   return Array.from(new Set(value.split(',').map((item) => item.trim()).filter(Boolean)))
+}
+
+/**
+ * The app models labels as one comma-separated string. Blog v1–v3 store that
+ * string; blog v4 stores a typed list (docs/SOCIAL_V9.md). These two convert
+ * at the service boundary, so everything above it keeps the CSV model.
+ */
+export function labelsCsv(stored: unknown): string | undefined {
+  const labels = decodeLabelList(stored)
+  return labels.length > 0 ? labels.join(',') : undefined
+}
+
+/** Labels (CSV or a list) as the configured blog cut stores them; undefined when there are none. */
+export function storedLabels(labels: unknown): string | string[] | undefined {
+  return encodeLabelList(decodeLabelList(labels), blogLabelsAreTyped())
 }
 
 export function labelsToCsv(items: string[]): string {

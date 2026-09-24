@@ -47,6 +47,35 @@ describe('product stock replacements', () => {
   });
 });
 
+describe('the replace merge re-encodes parsed fields (docs/SOCIAL_V9.md TODO 20)', () => {
+  const variants = { axes: [{ name: 'Size', options: ['S'] }], combinations: [{ key: 'S', price: 1 }] };
+  const stored = { ...raw, tags: '["wood","catan"]', imageUrls: '["https://example.com/a.png"]', variants: JSON.stringify(variants) };
+
+  it('a stock edit re-sends tags, images and variants as the v1–v3 JSON strings, storeId as bytes', async () => {
+    get.mockResolvedValue(stored);
+    await storeItemService.updateItem('item', 'owner', storeId, { stockQuantity: 3 });
+    const replacement = updateDocument.mock.calls[0][4];
+    expect(replacement).toMatchObject({ tags: '["wood","catan"]', imageUrls: '["https://example.com/a.png"]', variants: JSON.stringify(variants), stockQuantity: 3 });
+    expect(replacement.storeId).toBeInstanceOf(Uint8Array);
+  });
+
+  it('on storefront v4 writes tags and images as lists and reads a stored list back', async () => {
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v4');
+    vi.resetModules();
+    try {
+      const { storeItemService: v4Service } = await import('./store-item-service');
+      get.mockResolvedValue({ ...stored, tags: ['wood', 'catan'], imageUrls: ['https://example.com/a.png'] });
+      await v4Service.updateItem('item', 'owner', storeId, { stockQuantity: 3 });
+      expect(updateDocument.mock.calls[0][4]).toMatchObject({ tags: ['wood', 'catan'], imageUrls: ['https://example.com/a.png'], variants: JSON.stringify(variants) });
+      await v4Service.updateItem('item', 'owner', storeId, { tags: ['new'] });
+      expect(updateDocument.mock.calls[1][4]).toMatchObject({ tags: ['new'] });
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+});
+
 describe('complete store product list', () => {
   it('includes products beyond the first 100 in creation order', async () => {
     query.mockResolvedValueOnce(records.slice(0, 100)).mockResolvedValueOnce(records.slice(100));
