@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, type RefObject } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import Picker from '@emoji-mart/react'
 import data from '@emoji-mart/data'
 import { useTheme } from 'next-themes'
+import { useSettingsStore } from '@/lib/store'
 
 interface EmojiData {
   native: string
@@ -18,10 +19,57 @@ interface EmojiPickerProps {
   disabled?: boolean
 }
 
+// emoji-mart renders into its own shadow root and blurs the sticky category
+// headers and the skin-tone menu there, so page CSS cannot switch the blur
+// off. In potato mode we put an override style inside that shadow root.
+const POTATO_STYLE = `.sticky, .menu {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}`
+
+function usePotatoModeShadowStyle(containerRef: RefObject<HTMLDivElement>) {
+  const potatoMode = useSettingsStore((s) => s.potatoMode)
+
+  // The Picker child creates <em-emoji-picker> (and its shadow root) in its own
+  // mount effect, which runs before this one, so the element exists here.
+  useEffect(() => {
+    if (!potatoMode) return
+    const shadowRoot = containerRef.current?.querySelector('em-emoji-picker')?.shadowRoot
+    if (!shadowRoot) return
+    const style = document.createElement('style')
+    style.textContent = POTATO_STYLE
+    shadowRoot.appendChild(style)
+    return () => style.remove()
+  }, [containerRef, potatoMode])
+}
+
+function EmojiMartPicker({ onEmojiSelect }: { onEmojiSelect: (emoji: EmojiData) => void }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const { resolvedTheme } = useTheme()
+  usePotatoModeShadowStyle(containerRef)
+
+  return (
+    <div
+      ref={containerRef}
+      onWheel={(e) => e.stopPropagation()}
+      onTouchMove={(e) => e.stopPropagation()}
+    >
+      <Picker
+        data={data}
+        onEmojiSelect={onEmojiSelect}
+        theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
+        previewPosition="none"
+        skinTonePosition="search"
+        maxFrequentRows={2}
+        perLine={8}
+      />
+    </div>
+  )
+}
+
 export function EmojiPicker({ onEmojiSelect, onSelectionClose, disabled = false }: EmojiPickerProps) {
   const [open, setOpen] = useState(false)
   const selectedEmoji = useRef(false)
-  const { resolvedTheme } = useTheme()
 
   const handleEmojiSelect = useCallback(
     (emoji: EmojiData) => {
@@ -63,20 +111,7 @@ export function EmojiPicker({ onEmojiSelect, onSelectionClose, disabled = false 
             selectedEmoji.current = false
           }}
         >
-          <div
-            onWheel={(e) => e.stopPropagation()}
-            onTouchMove={(e) => e.stopPropagation()}
-          >
-            <Picker
-              data={data}
-              onEmojiSelect={handleEmojiSelect}
-              theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
-              previewPosition="none"
-              skinTonePosition="search"
-              maxFrequentRows={2}
-              perLine={8}
-            />
-          </div>
+          <EmojiMartPicker onEmojiSelect={handleEmojiSelect} />
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
