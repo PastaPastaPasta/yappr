@@ -1,5 +1,5 @@
 // Test-only boundaries: no identity lookup, state transition, or vault write is real.
-import { getEncryptionKey } from '@/lib/secure-storage'
+import { getEncryptionKey, getEncryptionKeyType } from '@/lib/secure-storage'
 import { scopedKey } from '@/lib/storage-scope'
 
 export const DUMMY_IDENTITY = 'component-test-identity'
@@ -8,6 +8,7 @@ const EXPECTED_WIF = 'cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87JcbXMTcA'
 // WIF for public scalar 2, standing in for a key left behind by an earlier session.
 const STALE_WIF = 'cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87K7XCyj5v'
 const storageKey = scopedKey(`yappr_secure_ek_${DUMMY_IDENTITY}`)
+const typeStorageKey = scopedKey(`yappr_secure_ek_type_${DUMMY_IDENTITY}`)
 const scenario = new URLSearchParams(window.location.search).get('scenario')
 const user = { identityId: DUMMY_IDENTITY }
 const state = {
@@ -22,6 +23,8 @@ const state = {
 
 // The stale-key scenario seeds a different key for this identity first, so the swallowed
 // write failure leaves a non-null readback that does not match the accepted key.
+// Every scenario starts with a leftover 'derived' type label from an earlier session.
+localStorage.setItem(typeStorageKey, JSON.stringify('derived'))
 if (scenario === 'stale-key') {
   localStorage.setItem(storageKey, JSON.stringify(STALE_WIF))
 }
@@ -45,6 +48,7 @@ export function snapshot() {
     hasCanonicalLocalKey: stored === EXPECTED_WIF,
     hasStaleLocalKey: stored === STALE_WIF,
     hasPersistedCanonicalKey: localStorage.getItem(storageKey) === JSON.stringify(EXPECTED_WIF),
+    keyType: getEncryptionKeyType(DUMMY_IDENTITY),
   }
 }
 

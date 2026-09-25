@@ -44,6 +44,7 @@ for (const scenario of ['success', 'storage-failure', 'vault-failure'] as const)
       expect(result.keyAbsent).toBe(true)
       expect(result.hasPersistedCanonicalKey).toBe(false)
       expect(result.vaultCalls).toBe(0)
+      expect(result.keyType).toBeNull()
       await expect(page.getByText(storageWarning, { exact: true })).toBeVisible()
       await expect(page.getByText(backupWarning, { exact: true })).toHaveCount(0)
       await expect(page.getByText('Key not entered for this session', { exact: true })).toBeVisible()
@@ -54,6 +55,7 @@ for (const scenario of ['success', 'storage-failure', 'vault-failure'] as const)
       expect(result.vaultCalls).toBe(1)
       expect(result.vaultHadLocalKey).toBe(true)
       expect(result.vaultReceivedCanonicalKey).toBe(true)
+      expect(result.keyType).toBe('external')
       await expect(page.getByText('Key stored for this session', { exact: true })).toBeVisible()
       await expect(page.getByText(storageWarning, { exact: true })).toHaveCount(0)
       if (scenario === 'vault-failure') {
@@ -67,7 +69,8 @@ for (const scenario of ['success', 'storage-failure', 'vault-failure'] as const)
 }
 
 // A stale key for the same identity plus a swallowed write failure makes the readback
-// non-null while holding the wrong secret. Nothing may be backed up in that state.
+// non-null while holding the wrong secret. Nothing may be backed up in that state, and
+// the stale key must be dropped so later operations cannot use it.
 test('successful chain enable: stale key readback is not backed up', async ({ page, baseURL }) => {
   const externalRequests: string[] = []
   await blockExternalRequests(page, baseURL, externalRequests)
@@ -83,13 +86,16 @@ test('successful chain enable: stale key readback is not backed up', async ({ pa
   await expect(page.getByText(storageWarning, { exact: true })).toBeVisible()
   await expect(page.getByText(backupWarning, { exact: true })).toHaveCount(0)
   await expect(page.getByText('Failed to enable private feed', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Key not entered for this session', { exact: true })).toBeVisible()
 
   await expect.poll(() => page.evaluate(() => window.privateFeedTestSnapshot().statusReads)).toBe(2)
   const result = await page.evaluate(() => window.privateFeedTestSnapshot())
   expect(result.enableCalls).toBe(1)
   expect(result.storageWriteFailures).toBe(1)
-  expect(result.hasStaleLocalKey).toBe(true)
+  expect(result.keyAbsent).toBe(true)
+  expect(result.hasStaleLocalKey).toBe(false)
   expect(result.hasCanonicalLocalKey).toBe(false)
+  expect(result.keyType).toBeNull()
   expect(result.vaultCalls).toBe(0)
   expect(externalRequests).toEqual([])
 })

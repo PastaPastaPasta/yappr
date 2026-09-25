@@ -178,7 +178,14 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
         // Keep the accepted key available just as the manual key-entry flow does.
         // Storage/backup failures cannot undo the feed that was already enabled.
         try {
-          const { storeEncryptionKey, getEncryptionKey, getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+          const {
+            storeEncryptionKey,
+            getEncryptionKey,
+            getEncryptionKeyBytes,
+            clearEncryptionKey,
+            storeEncryptionKeyType,
+            clearEncryptionKeyType,
+          } = await import('@/lib/secure-storage')
           const { bytesEqual } = await import('@/lib/bytes')
           storeEncryptionKey(user.identityId, trimmedKey)
           const normalizedEncryptionKey = getEncryptionKey(user.identityId)
@@ -187,8 +194,14 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
           // that was actually accepted before backing anything up.
           const storedKeyBytes = getEncryptionKeyBytes(user.identityId)
           if (!normalizedEncryptionKey || !storedKeyBytes || !bytesEqual(storedKeyBytes, validation.privateKey)) {
+            // Drop any stale key so later private-feed operations cannot pick up a secret
+            // that no longer matches the one the chain just accepted.
+            clearEncryptionKey(user.identityId)
+            clearEncryptionKeyType(user.identityId)
             throw new Error('Encryption key was not saved')
           }
+          // A pasted key is recorded as external, matching the add-encryption-key flow.
+          storeEncryptionKeyType(user.identityId, 'external')
 
           try {
             await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: normalizedEncryptionKey })
