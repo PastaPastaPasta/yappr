@@ -44,8 +44,8 @@
  *
  * G-cases — v6 carry-over smoke, on the surfaces v7's agreements touch:
  *   g1  the like lifecycle still works end to end under the `$ownerId`
- *       agreement: create, the preallocated `byAuthorPost` count, the tagged
- *       `beat` companion, and delete-by-values unlike
+ *       agreement: create, the preallocated `byPost` and `byAuthorPost`
+ *       counts, the tagged `beat` companion, and delete-by-values unlike
  *
  * Known platform behaviors this battery leans on (unchanged from v4/v5):
  *   - js documents.create() may THROW post-broadcast for indexOnly types even
@@ -396,13 +396,16 @@ async function caseE3LikeReplyOwnerAgreement(ctx) {
     check('e3 likeReply agreement', false, 'no anchor reply available');
     return;
   }
-  const likeReplyOn = (replyAuthor) =>
+  const likeReplyCount = () => countBy(ctx.sdk, ctx.contractId, 'likeReply', 'replyId', replyId);
+  const likeReplyOn = (replyAuthor, accepted) =>
     attemptCreateIndexOnly(ctx.sdk, ctx.botA, {
       contractId: ctx.contractId,
       docType: 'likeReply',
       data: likeReplyData({ replyId: bs58.decode(replyId), replyAuthor }),
       tokenCost: TOKEN_COST.likeReply,
-      accepted: () => entryExists(ctx.sdk, ctx.contractId, 'likeReply', 'replyId', replyId, ctx.botA.ownerId),
+      accepted:
+        accepted ??
+        (() => entryExists(ctx.sdk, ctx.contractId, 'likeReply', 'replyId', replyId, ctx.botA.ownerId)),
     });
 
   expectRejected(
@@ -414,9 +417,17 @@ async function caseE3LikeReplyOwnerAgreement(ctx) {
     'e3b a reply like naming the reply owner\'s $ownerId is accepted',
     await likeReplyOn(bs58.decode(ctx.botB.ownerId))
   );
+  // `likeReply` is unique on ($ownerId, replyId), so a duplicate can never ADD
+  // an entry — and e3b's entry makes the existence probe true no matter what
+  // consensus decides. Score this one by the entry COUNT instead: only a count
+  // above the pre-attempt baseline means a second write actually landed.
+  const beforeDuplicate = await likeReplyCount();
   expectRejected(
     'e3c re-liking the same reply is still the structural duplicate (40105)',
-    await likeReplyOn(bs58.decode(ctx.botB.ownerId)),
+    await likeReplyOn(
+      bs58.decode(ctx.botB.ownerId),
+      async () => (await likeReplyCount()) > beforeDuplicate
+    ),
     DUPLICATE_UNIQUE
   );
 }

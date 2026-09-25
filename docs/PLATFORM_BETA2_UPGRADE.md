@@ -372,21 +372,205 @@ contract-group mechanics are unchanged from the beta.1 document.
 
 ## Deployment evidence
 
-> **Stub — to be filled by the deployment.** Nothing below has been observed yet.
-> Record here, with the same standard as the beta.1 document: the live
-> Drive/DAPI version and protocol; the registered v7 contract id, its owner and
-> its contract-group membership; proof that the previous social contract is
-> absent or superseded; the `verify-v7.mjs` result (case by case, with the
-> verbatim 40127/40128 rejection texts it captures); a live readback of
-> `documentTypeImmutableProperties` on the registered contract; the seeded
-> corpus totals; and the browser topology-suite result. A contract id printed by
-> a publish call is not evidence that the contract is on chain — reconcile it
-> with a proved fetch.
->
-> One claim neither the offline parse nor any self-test can prove, and which
-> therefore belongs here: that beta.2 really does **infer** `countable` from
-> `rangeCountable`. Offline validation passes either way, and a wrong inference
-> would silently kill the count trees behind `post.byOwner`,
-> `follow.followerCount` and the five `like`/`beat` ranked axes that lost their
-> explicit `countable`. Read one count back live off a stripped index before
-> declaring the cut good.
+> **Historical record.** Moutai has since been wiped for a later 4.2.0 beta, so
+> none of the contracts, documents or counts below exist on the network any more.
+> This section records what the beta.2 deployment showed.
+
+Observed on 2026-09-18 against moutai. Live Drive and DAPI both report
+`4.2.0-beta.2`, Tenderdash 1.8.0, protocol 14. The Platform state was wiped for
+the upgrade and the Core chain persisted, so every identity was restored from
+its retained Core asset lock and kept its original id.
+
+### Identities restored (phase 1)
+
+An identity id is the hash of its asset-lock outpoint, so replaying a retained
+lock reproduces the id. A preflight proved all 151 locks chain-locked and
+hashing to their original ids BEFORE any broadcast; a separate read-only pass
+then re-fetched each identity and compared its on-chain public keys with the
+retained key material.
+
+| group | restored | top-ups replayed |
+| --- | ---: | ---: |
+| maker `3JKc6iVG74LEMSrAtB4VSHPQW2mtgKAw8s3Ki6tTFcRQ` | 1 / 1 | 1 / 1 |
+| CI `EShbqnfLdmctGWaUCnU3FNKMenYmxiQEiawY3q2pLQm2` | 1 / 1 | 1 / 1 |
+| corpus personas (idx 0-99) | 100 / 100 | 237 / 237 |
+| non-social personas (idx 200-315) | 48 / 48 | — |
+| personal `cLWB9tvMku6XLRwH7zwftos4BTTTgjtCP62MmRL4VfT` | 1 / 1 | — |
+
+151 / 151 present, 151 / 151 key sets matched, 0 problems. Only ChainLock
+proofs were used — moutai refuses InstantSend asset-lock proofs.
+
+### Ten contracts, one group, all ids new
+
+The previous social contract `HWZdaqfPuqfVJf7ARomsVdpFPa6P2Bp1Eh9qYZSMEFEQ` and
+the beta.1 group `DYDGmjxwQwZhRm7zxp12pd52vB9pCunxEPerF9TfvQZe` were proved
+ABSENT on the fresh Platform chain before publication.
+
+A contract id is `generateId(owner, nonce)` and a group id is
+`contractGroupId(owner, nonce)` — pure functions of owner and nonce. A maker
+restored at nonce 0 therefore reproduces beta.1's ten ids and group id EXACTLY
+while the schemas behind them change. A dry run confirmed that byte for byte.
+That is the trap the repo has banned since the 08-28 wipe: the browser SDK's
+contract cache and `lib/contracts/bundled` are keyed by id and every contract
+version is 1, so a cached v6 body passes the staleness check and the client
+silently runs v6 semantics against v7. Maker identity nonces 1-10 were therefore
+burned first, with ten minimal credit transfers (`IdentityCreditTransfer` carries
+the identity nonce; document batches and token transitions carry a separate
+`identityContractNonce` and do not move it). The publisher refuses to broadcast
+any id that appears in the history of `.env.devnet` or `lib/contracts/bundled`,
+in any ref's tree, or already on chain.
+
+Group `2k2bsaqY7Yg8zoUDCqqGypwJYGSiitLYcn38r3mhkNHM`, registered on the social
+create at nonce 11. Every contract joins it through
+`setContractGroupMemberships` on its own create transition.
+
+| nonce | contract | id |
+| ---: | --- | --- |
+| 11 | social v7 | `7R7vo8DE2pka17wAgXMnUMWpSox2z8eaLLdZNYJcWraG` |
+| 12 | profile | `33nT1FrNnfngaqawEFkGKBsgd3vDK7DrQgGabqXfCk5g` |
+| 13 | key backup | `9dxned7wkkiQ5GY4eirxjnYksM2g5KYSdGet4J6bK1eF` |
+| 14 | key exchange v2 | `B8yM8Q8kTRGG348xyotqx1xLfSQr6dK7k6PsAWzdCQrG` |
+| 15 | vault | `G8tcJgkWtWS3C4iHGokJrW6kXeM1RX64kvNc3epRH1o2` |
+| 16 | auth vault | `9WHwJuiYxwFZawe2jLkr51vN9BDAkZ2SV7yM89qaSXcV` |
+| 17 | storefront v2 | `6D1UPEqaYDwrnzy7c7STbMM6HBmksbp3zzMgSqr68Bi1` |
+| 18 | blog v2 | `G2SebukaFvvgBWS1Q61Me8sWc3TMzAhXt2QvAktuYvvf` |
+| 19 | DM v4 | `HBwg5hptWu1Ppgi9NadLad8cAYHHoQjHpUUb1t5w4cjF` |
+| 20 | pollr v4 | `7qVgjaNoZexX5xioVgVF8aZh1RsZv7hqtuXGhLtGT9n2` |
+
+A proof-backed readback confirmed all ten: present, maker-owned, version 1, each
+enrolled in the group by `forContract`, and the group enumerates exactly ten
+members. Publication was two-staged and checkpointed; each stage refuses to run
+unless the maker's identity nonce is exactly what it expects, and each contract's
+signed transition is persisted before broadcast so a rerun never allocates a
+second nonce. The tenth create exhausted the maker's restored balance
+(`required 25000100000`, held 14532399010); a top-up is safe mid-publication
+because `IdentityTopUpTransition` carries no nonce, so the already-signed
+nonce-20 transition stayed valid and stage B resumed onto it.
+
+YAPP `7svkgw5wJrgoGd1ctz1QATsPQb9P9DeCt5khMatK4WdM`: base supply 1,000,000 minted
+to the maker, direct-purchase price 1,000,000 credits per token with a 100-token
+minimum tier, both `currentPrice` and `basePrice` read back as `1000000`.
+
+### verify-v7.mjs — 30 / 30 live
+
+All e/f/g cases pass against the registered contract, with the verbatim
+consensus texts:
+
+- **e1** a post and a reply carrying the removed `author` column are refused by
+  structure validation; the same documents without it are accepted.
+- **e2** `like.postId` agrees `postAuthor` with the post's `$ownerId` —
+  *"the document's postAuthor does not agree with the referenced document's
+  $ownerId (propertyAgreement on postId)"* (40127); the hashtag pair holds in
+  both directions, absence included.
+- **e3** `likeReply.replyId` agrees `replyAuthor` — *"the document's replyAuthor
+  does not agree with the referenced document's $ownerId"* (40127); re-liking is
+  still the structural duplicate — *"has duplicate unique properties
+  ["$ownerId", "replyId"] with other documents"*.
+- **e4** `repost.postId` agrees `postOwnerId` — *"the document's postOwnerId does
+  not agree with the referenced document's $ownerId"* (40127), for a third party
+  and for the reposter alike.
+- **f1/f2** immutability — *"property 'language' of document … (type 'post') is
+  immutable and cannot be changed by a replace"* (40128), likewise for
+  `quotedPostId`, `hashtag` (changed or dropped) and `deleted` (flipped back or
+  dropped); re-stating an unchanged value is accepted.
+- **f3** the deliberately mutable fields still are; **g1** the like lifecycle,
+  the preallocated `byPost` and `byAuthorPost` counts and the tagged `beat`
+  companion still work end to end.
+
+e3c initially reported a false failure. It is scored by
+`attemptCreateIndexOnly`'s acceptance probe, which was entry EXISTENCE — already
+true from e3b, so a genuine rejection read as accepted. `likeReply`'s index and
+uniqueness structure (`byReply` on `replyId` with `$ownerId` as its terminal,
+which consensus enforces as unique on `($ownerId, replyId)`) is unchanged from
+v6 — only its `propertyAgreement` target moved from `author` to `$ownerId`,
+which is what e3a/e3b exercise — and the duplicate is in fact rejected with the
+entry count staying at 1. The case now scores by entry count instead.
+
+### Count trees after the `countable` strip — the open question, answered
+
+v7 dropped the explicit `countable` keyword from nine indexes that keep
+`rangeCountable`: `follow.followerCount`, `like.byPost`, `like.byHashtagPost`,
+`like.byAuthorPost`, `like.byDayPost`, `like.byDayAuthorPost`, `post.byOwner`,
+`beat.byDayHashtagPost`, `beat.byRollingHashtagPost`. Offline validation passes
+either way, so this was read back LIVE. beta.2 does infer `countable` from
+`rangeCountable`. The live reads below cover 8 of the 9 stripped indexes: seven
+off the seeded corpus, plus `like.byPost` through the verify-v7 battery.
+`beat.byRollingHashtagPost` was not read before moutai was later wiped. It
+relies on the same [#4809](https://github.com/dashpay/platform/pull/4809) sugar
+rule (`rangeCountable: true` implies `countable: "countable"`) as the eight that
+were read, so it is covered by that rule rather than by a live observation.
+
+| index | live read |
+| --- | --- |
+| `post.byOwner` | `count(post where $ownerId == persona 0)` = **135** |
+| `like.byPost` | verify-v7 `g1b` (also read in `e2`): `count(like where postId == tagged post)` **≥ 1**, the battery's pass threshold; the exact value was not recorded |
+| `follow.followerCount` | `count(follow where followingId == persona 0)` = **54** |
+| `like.byAuthorPost` | ranked count, top groups **91, 41, 29, 26, 20** |
+| `like.byHashtagPost` | ranked count, top groups **41, 32, 16, 11, 10** |
+| `like.byDayPost` | ranked count, top groups **91, 41, 41, 41, 41** |
+| `like.byDayAuthorPost` | ranked count, top groups **91, 41, 29, 26, 20** |
+| `beat.byDayHashtagPost` | ranked count, top groups **41, 32, 16, 11, 10** |
+
+The windowed axes were read the way the app reads them — `documents.ranked` with
+an aggregate count and the day grid, as in `lib/services/ranked-likes.ts`.
+
+### Feature contracts — 198 live checks
+
+Script names are as of 2026-09-18; they have since been consolidated into
+`scripts/verify-{storefront,blog,dm,pollr}.mjs` (DM also has `verify-dm-v5.mjs`).
+
+| battery | checks | result |
+| --- | ---: | --- |
+| `verify-storefront-v2.mjs` | 63 | ALL CHECKS PASSED |
+| `verify-blog-v2.mjs` | 37 | ALL CHECKS PASSED |
+| `verify-dm-v4.mjs` | 31 | ALL CHECKS PASSED |
+| `verify-pollr-v4.mjs` | 39 | ALL CHECKS PASSED |
+| `verify-tips.mjs` | 28 | ALL CHECKS PASSED |
+
+Seeded alongside: storefront (all checks passed), blog 167 writes / 0 failed,
+DM 12 conversations and 246 messages with 12/12 newest decrypting under the
+recipient's key, pollr 14 polls + 14 embedded posts + 141 ballots, tips 120/120.
+
+### Corpus
+
+The same 18,000-operation corpus as beta.1 (sha256
+`a6b5a23886f4d4eeca8e1d55434ac10e4d6cd1198b8ca7f8882564a67c7a68de`), replayed
+under `--topology v7` by the 100 restored personas, each holding a profile, its
+DPNS name and 4,000 YAPP.
+
+| operation | count |
+| --- | ---: |
+| posts | 5,700 |
+| quote posts | 268 |
+| replies | 2,144 |
+| post likes | 8,557 |
+| reply likes | 585 |
+| follows | 495 |
+| reposts | 234 |
+| bookmarks | 17 |
+| **total** | **18,000** |
+| tagged-like `beat` companions | 2,905 |
+
+The folded journal holds exactly 18,000 `done` with no unresolved failures.
+Eight late dependency waits timed out before submission on the first pass and
+succeeded on a resume once their targets existed — the same class beta.1 saw.
+
+A fresh read-only audit after the writer stopped re-proved all 18,000 operations
+and all 2,905 beat companions: stored content, owners and references, every
+interaction pair, and an exact seeded-owner census of 5,968 posts (posts plus
+quotes) and 2,144 replies. The network also held 12 other-owner replies, from
+the batteries, reported separately. The audit asserts that `author` is ABSENT on
+every stored post and reply — on v7 ownership is proved by `$ownerId` alone, and
+the column's absence is itself an invariant.
+
+### Known-good operational notes
+
+- `sdk.tokens.transfer` takes `senderId`, not an `identity` object; passing the
+  object fails with `'senderId' is required` and the balance silently stays 0.
+- The seeder's pipelined executor at concurrency 20 sustained ~200 ops/min and
+  recovered from 11 transport collapses (quorum rotation and DAPI rate limits)
+  without losing an operation; every one was decided by readback.
+- Long synchronous work (a repo-wide `git log -p` scan) starves the SDK's event
+  loop and surfaces as an unhandled `WasmSdkError` from an in-flight timer. Do
+  such work before connecting.
+
