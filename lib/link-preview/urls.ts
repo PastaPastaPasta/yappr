@@ -120,3 +120,34 @@ export function extractFirstUrl(content: string): string | null {
   if (url.toLowerCase().startsWith('www.')) url = `https://${url}`
   return stripTrailingPunctuation(url)
 }
+
+/**
+ * Remove the first URL token from `content` (keeping any trailing sentence
+ * punctuation) when it is the URL `extractFirstUrl` returned, then trim.
+ * Only that exact occurrence is removed; other text is left untouched.
+ */
+export function stripFirstUrlAndTrim(content: string, firstUrl: string | null): string {
+  if (!firstUrl) return content
+
+  const urlPattern = /(https?:\/\/[^\s<>"']+|ipfs:\/\/[^\s<>"']+|www\.[^\s<>"']+)/i
+  const match = content.match(urlPattern)
+  if (!match || typeof match.index !== 'number') return content
+
+  const rawUrl = match[0]
+  const hasPrependedScheme = rawUrl.toLowerCase().startsWith('www.')
+  const normalizedRawUrl = hasPrependedScheme ? `https://${rawUrl}` : rawUrl
+  const cleanRawUrl = stripTrailingPunctuation(normalizedRawUrl)
+
+  if (cleanRawUrl !== firstUrl) return content
+
+  const trailingNormalized = normalizedRawUrl.slice(cleanRawUrl.length)
+  const trailingLength = Math.min(trailingNormalized.length, rawUrl.length)
+  const trailingPunctuation = trailingLength > 0
+    ? rawUrl.slice(rawUrl.length - trailingLength)
+    : ''
+  const displayWithoutTrailingPunctuation = rawUrl.slice(0, rawUrl.length - trailingPunctuation.length)
+  const before = content.slice(0, match.index)
+  const after = content.slice(match.index + displayWithoutTrailingPunctuation.length + trailingPunctuation.length)
+
+  return `${before}${trailingPunctuation}${after}`.trim()
+}
