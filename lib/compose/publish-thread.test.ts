@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { planPosts, publishThread, type PublishInput } from './publish-thread'
+import { planPosts, publishThread, retryAnchorId, type PublishInput } from './publish-thread'
 
 const services = vi.hoisted(() => ({ createPost: vi.fn(), createReply: vi.fn(), isUnconfirmed: vi.fn(), settleUnconfirmed: vi.fn() }))
 vi.mock('@/lib/services', () => ({ postService: { createPost: services.createPost } }))
@@ -28,6 +28,26 @@ describe('planPosts', () => {
   })
 })
 
+describe('retryAnchorId', () => {
+  const posts = (...ids: (string | undefined)[]) => ids.map((postedPostId, i) => ({ id: `p${i}`, content: `part ${i}`, postedPostId }))
+
+  it('is null when nothing has been posted', () => {
+    expect(retryAnchorId(posts(undefined, undefined))).toBeNull()
+  })
+
+  it('is the last posted part of a confirmed prefix', () => {
+    expect(retryAnchorId(posts('a', 'b', undefined))).toBe('b')
+  })
+
+  it('chains a timed-out middle part to its own predecessor, not a later posted part', () => {
+    expect(retryAnchorId(posts('a', undefined, 'c'))).toBe('a')
+  })
+
+  it('skips blank unposted parts when finding the first part to create', () => {
+    const thread = [{ id: 'x', content: 'x', postedPostId: 'a' }, { id: 'y', content: '  ' }, { id: 'z', content: 'z', postedPostId: 'c' }, { id: 'w', content: 'w' }]
+    expect(retryAnchorId(thread)).toBe('c')
+  })
+})
 
 describe('publishThread retry linkage', () => {
   const input = (lastPostedId: string | null): PublishInput => ({
@@ -63,8 +83,14 @@ describe('publishThread retry linkage', () => {
       rootPostId: 'original-root',
       replyToReplyId: lastPostedId === 'original-root' ? undefined : lastPostedId,
       parentOwnerId: 'author',
-    }, { encryption: undefined, mediaUrl: undefined })
+    }, { encryption: undefined, sensitive: undefined, mediaUrl: undefined })
     expect(result.successful).toEqual([{ index: 0, postId: 'new-reply', content: 'remaining part', threadPostId: 'draft-remaining' }])
+  })
+
+  it('keeps the sensitive flag on a resumed reply', async () => {
+    await publishThread({ ...input('previous-reply'), markSensitive: true })
+    expect(services.createReply).toHaveBeenCalledOnce()
+    expect(services.createReply.mock.calls[0][3]).toMatchObject({ sensitive: true })
   })
 
   it('waits for an unconfirmed previous part before submitting a resumed reply', async () => {

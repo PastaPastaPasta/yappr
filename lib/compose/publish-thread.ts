@@ -34,6 +34,17 @@ export function planPosts(threadPosts: ThreadPost[], imageUrl: string | undefine
     }))
 }
 
+/**
+ * The post a retry chains to: the last posted item before the first part still
+ * to create. A timed-out middle part can leave later parts posted, and the gap
+ * belongs under its own predecessor, not under whatever was posted last.
+ */
+export function retryAnchorId(threadPosts: ThreadPost[]): string | null {
+  const firstRemaining = threadPosts.findIndex((p) => p.content.trim().length > 0 && !p.postedPostId)
+  const before = firstRemaining === -1 ? threadPosts : threadPosts.slice(0, firstRemaining)
+  return before.findLast((p) => !!p.postedPostId)?.postedPostId ?? null
+}
+
 export interface PublishInput {
   authorId: string
   posts: PostToCreate[]
@@ -135,7 +146,11 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
       try {
         if (isReply && linkage && parentOwnerId) {
           const { replyService } = await import('@/lib/services/reply-service')
-          const reply = await replyService.createReply(authorId, content, { ...linkage, parentOwnerId }, { encryption, mediaUrl: i === 0 ? mediaUrlField : undefined })
+          const reply = await replyService.createReply(authorId, content, { ...linkage, parentOwnerId }, {
+            encryption,
+            sensitive: markSensitive || undefined,
+            mediaUrl: i === 0 ? mediaUrlField : undefined,
+          })
           return { postId: reply.id, document: reply, isReply: true, confirmed: wasConfirmed(reply) }
         }
         const { postService } = await import('@/lib/services')

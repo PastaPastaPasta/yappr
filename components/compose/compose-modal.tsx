@@ -19,7 +19,7 @@ import { extractErrorMessage, categorizeError } from '@/lib/error-utils'
 import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
 import { PaymentHint } from './payment-hint'
 import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
-import { planPosts, publishThread } from '@/lib/compose/publish-thread'
+import { planPosts, publishThread, retryAnchorId } from '@/lib/compose/publish-thread'
 import { CHARACTER_LIMIT } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { isPrivatePost } from '@/components/post/private-post-content'
@@ -167,7 +167,6 @@ export function ComposeModal() {
     isInheritedEncryptionReady &&
     (!poll.draft || isPollDraftValid(poll.draft))
   const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted && !poll.draft
-  const lastPostedId = postedPosts.length > 0 ? postedPosts[postedPosts.length - 1].postedPostId ?? null : null
 
   const handleClose = () => {
     image.remove()
@@ -266,7 +265,7 @@ export function ComposeModal() {
         posts,
         replyingTo,
         quotingPost,
-        lastPostedId,
+        lastPostedId: retryAnchorId(threadPosts),
         knownThreadRootId: threadPosts[0]?.postedPostId ?? null,
         isPrivate,
         inheritedEncryption: inherited.source,
