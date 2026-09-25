@@ -93,7 +93,7 @@ import { describeErr } from './owner-keys.mjs';
 
 const CONTRACT_FILE = 'contracts/yappr-social-contract-v9.json';
 const V9 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
-const POST_ACTION_FEE = actionFeeFor('post', 'v8'); // v9 carries v8's fees unchanged (build-v9 asserts it)
+const POST_ACTION_FEE = actionFeeFor('post');
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
 // v9's interim is `contractOwner`, which appoints nobody: before a charter is
 // seated the contract owner is the ONLY identity that may moderate, so a
