@@ -4,7 +4,7 @@ import { useRef, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { TrashIcon, PhotoIcon, ChartBarIcon } from '@heroicons/react/24/outline'
 import type { ThreadPost } from '@/lib/store'
-import { MarkdownContent } from '@/components/ui/markdown-content'
+import { PostContent } from '@/components/post/post-content'
 import { FormatButton, CharacterCounter } from './compose-sub-components'
 import { MentionAutocomplete } from './mention-autocomplete'
 import { EmojiPicker } from './emoji-picker'
@@ -302,13 +302,18 @@ export function ThreadPostEditor({
 
           {/* Content area */}
           {showPreview || isPosted || locked ? (
-            <div className={`min-h-[60px] whitespace-pre-wrap break-words ${
+            <div className={`min-h-[60px] ${
               isPosted
                 ? 'text-gray-600 dark:text-gray-400'
                 : 'text-gray-900 dark:text-gray-100'
             }`}>
               {post.content ? (
-                <MarkdownContent content={post.content} />
+                // Same renderer as the published post: shows the link/image
+                // preview (subject to the link-preview setting) and hides the
+                // previewed URL the same way the feed does. The link-preview
+                // info icon is hidden because its settings modal would open
+                // behind this dialog.
+                <PostContent content={post.content} disableInternalPostEmbed hideLinkPreviewInfo />
               ) : (
                 <span className="text-gray-400 dark:text-gray-600 italic">
                   Nothing to preview

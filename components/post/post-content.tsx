@@ -8,7 +8,7 @@ import { LinkPreview, LinkPreviewSkeleton, LinkPreviewInfoIcon } from './link-pr
 import { GatedMediaPlaceholder } from './gated-media'
 import type { MediaGate } from '@/hooks/use-media-gate'
 import { useLinkPreview } from '@/hooks/use-link-preview'
-import { extractFirstUrl, stripTrailingPunctuation } from '@/lib/link-preview/urls'
+import { extractFirstUrl, stripFirstUrlAndTrim, stripTrailingPunctuation } from '@/lib/link-preview/urls'
 import { useYapprPostReference } from '@/hooks/use-yappr-post-reference'
 import { useSettingsStore } from '@/lib/store'
 import { cashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
@@ -32,6 +32,8 @@ interface PostContentProps {
   disableLinkPreview?: boolean
   /** Optional: disable internal Yappr post embedding for this content block */
   disableInternalPostEmbed?: boolean
+  /** Optional: hide the "enable link previews" info icon next to URLs (e.g. inside the compose dialog, where its settings modal cannot open on top) */
+  hideLinkPreviewInfo?: boolean
   /** Optional: follow-gate for external media/previews; omitted = ungated (own/trusted content) */
   mediaGate?: MediaGate
 }
@@ -43,32 +45,6 @@ interface ContentPart {
   value: string
   // For bold/italic, children contains parsed inner content (hashtags, mentions, etc.)
   children?: ContentPart[]
-}
-
-function stripFirstUrlAndTrim(content: string, firstUrl: string | null): string {
-  if (!firstUrl) return content
-
-  const urlPattern = /(https?:\/\/[^\s<>\"\']+|ipfs:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/i
-  const match = content.match(urlPattern)
-  if (!match || typeof match.index !== 'number') return content
-
-  const rawUrl = match[0]
-  const hasPrependedScheme = rawUrl.toLowerCase().startsWith('www.')
-  const normalizedRawUrl = hasPrependedScheme ? `https://${rawUrl}` : rawUrl
-  const cleanRawUrl = stripTrailingPunctuation(normalizedRawUrl)
-
-  if (cleanRawUrl !== firstUrl) return content
-
-  const trailingNormalized = normalizedRawUrl.slice(cleanRawUrl.length)
-  const trailingLength = Math.min(trailingNormalized.length, rawUrl.length)
-  const trailingPunctuation = trailingLength > 0
-    ? rawUrl.slice(rawUrl.length - trailingLength)
-    : ''
-  const displayWithoutTrailingPunctuation = rawUrl.slice(0, rawUrl.length - trailingPunctuation.length)
-  const before = content.slice(0, match.index)
-  const after = content.slice(match.index + displayWithoutTrailingPunctuation.length + trailingPunctuation.length)
-
-  return `${before}${trailingPunctuation}${after}`.trim()
 }
 
 /**
@@ -84,6 +60,7 @@ export function PostContent({
   onFailedMentionClick,
   disableLinkPreview = false,
   disableInternalPostEmbed = false,
+  hideLinkPreviewInfo = false,
   mediaGate
 }: PostContentProps) {
   const linkPreviewsEnabled = useSettingsStore((s) => s.linkPreviewsEnabled)
@@ -322,7 +299,7 @@ export function PostContent({
           >
             {truncatedDisplay}
           </a>
-          {shouldTruncate && <LinkPreviewInfoIcon />}
+          {shouldTruncate && !hideLinkPreviewInfo && <LinkPreviewInfoIcon />}
           {trailingPunctuation}
         </Fragment>
       )

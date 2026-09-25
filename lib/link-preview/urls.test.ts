@@ -5,6 +5,7 @@ import {
   extractYouTubeVideoId,
   isDirectImageUrl,
   shouldSkipPreview,
+  stripFirstUrlAndTrim,
   stripTrailingPunctuation,
 } from './urls'
 
@@ -81,5 +82,32 @@ describe('extractFirstUrl', () => {
     expect(extractFirstUrl('pinned at ipfs://bafy/img.png!')).toBe('ipfs://bafy/img.png')
     expect(extractFirstUrl('go to www.example.com.')).toBe('https://www.example.com')
     expect(extractFirstUrl('no links here')).toBeNull()
+  })
+})
+
+describe('stripFirstUrlAndTrim', () => {
+  const strip = (content: string) => stripFirstUrlAndTrim(content, extractFirstUrl(content))
+
+  it('removes only the first URL token and keeps trailing punctuation', () => {
+    expect(strip('look https://cdn.example.com/a.jpg!')).toBe('look !')
+    expect(strip('https://cdn.example.com/a.jpg nice')).toBe('nice')
+  })
+
+  it('removes www. and http:// forms as written', () => {
+    expect(strip('see www.example.com/a.png here')).toBe('see  here')
+    expect(strip('see http://example.com/a.png here')).toBe('see  here')
+    expect(strip('see https://example.com:8443/a.png')).toBe('see')
+  })
+
+  it('leaves look-alike URLs elsewhere in the text untouched', () => {
+    expect(strip('https://cdn.example.com/a.jpg vs https://evilcdn.example.com/a.jpg'))
+      .toBe('vs https://evilcdn.example.com/a.jpg')
+    expect(strip('https://cdn.example.com/a.jpg then https://cdn.example.com/a.jpg2'))
+      .toBe('then https://cdn.example.com/a.jpg2')
+  })
+
+  it('is a no-op without a matching first URL', () => {
+    expect(stripFirstUrlAndTrim('no links here', null)).toBe('no links here')
+    expect(stripFirstUrlAndTrim('https://a.test/x.png', 'https://b.test/y.png')).toBe('https://a.test/x.png')
   })
 })
