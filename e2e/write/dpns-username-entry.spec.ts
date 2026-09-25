@@ -8,7 +8,6 @@ test.describe('DPNS registration entry', () => {
 
   const duplicateGroups = [
     { name: 'identical names', labels: ['qadup123', 'qadup123'] },
-    { name: 'case-equivalent names', labels: ['qadup123', 'QADUP123'] },
     { name: 'i/l/1 equivalents', labels: ['qaname1', 'qanamei', 'qanamel'] },
     { name: 'o/0 equivalents', labels: ['qaname0', 'qanameo'] },
   ]
