@@ -5,9 +5,10 @@ import { scopedKey } from '@/lib/storage-scope'
 import { base64ToBytes } from '@/lib/bytes'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { PlatformAuthController, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
+import { createProfileGate, hasYapprProfile } from '@/lib/auth/profile-gate'
 import { extractErrorMessage, isAlreadyExistsError } from '@/lib/error-utils'
 import { useUsernameModal } from '@/hooks/use-username-modal'
 
@@ -49,6 +50,8 @@ interface AuthContextType {
     source?: 'wallet-derived' | 'direct-key' | 'password-migrated' | 'mixed'
   }) => Promise<void>
   logout: () => Promise<void>
+  /** Tell the profile gate that this identity now has a profile, before it is query-visible. */
+  markProfileCreated: (identityId: string) => void
   updateDPNSUsername: (username: string) => void
   refreshDpnsUsernames: () => Promise<void>
   refreshBalance: () => Promise<void>
@@ -103,7 +106,9 @@ function toFriendlyVaultWriteError(error: unknown, methodLabel: 'passkey' | 'pas
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
+  const pathname = usePathname()
   const controller = useMemo(() => new PlatformAuthController(createYapprPlatformAuthDependencies()), [])
+  const profileGate = useMemo(() => createProfileGate(hasYapprProfile), [])
   const [controllerState, setControllerState] = useState(() => controller.getState())
 
   useEffect(() => controller.subscribe(setControllerState), [controller])
@@ -118,6 +123,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [controller])
 
+  // The controller applies its profile gate only on interactive login. Apply it
+  // on session restore and on every navigation as well, so a profile-less user
+  // cannot reach the rest of the app by reloading or by leaving an exempt route.
+  const gateIdentityId = controllerState.user?.identityId
+  const gateUsername = controllerState.user?.username
+  useEffect(() => {
+    if (controllerState.isAuthRestoring || !gateIdentityId) return
+    let cancelled = false
+
+    profileGate.shouldRedirect({
+      identityId: gateIdentityId,
+      username: gateUsername,
+      skippedUsername: sessionStorage.getItem(scopedKey('yappr_skip_dpns')) === 'true',
+      pathname,
+    }).then((redirect) => {
+      if (redirect && !cancelled) router.push('/profile/create')
+    }).catch((error) => {
+      // Fail open: a lookup that cannot reach Platform must never strand a user
+      // who has a profile on /profile/create.
+      logger.error('Auth: profile gate lookup failed; not redirecting:', error)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [controllerState.isAuthRestoring, gateIdentityId, gateUsername, pathname, profileGate, router])
+
   const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
     switch (intent.kind) {
       case 'username-required':
@@ -127,13 +159,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         router.push('/profile/create')
         return
       case 'ready':
+        // The controller only reports ready after finding a profile.
+        profileGate.rememberProfile(intent.identityId)
         router.push('/feed')
         return
       case 'logged-out':
         router.push('/login')
         return
     }
-  }, [router])
+  }, [profileGate, router])
 
   const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
     const result = await controller.loginWithAuthKey(identityId, privateKey, options)
@@ -208,6 +242,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await applyIntent(result.intent)
   }, [applyIntent, controller])
 
+  const markProfileCreated = useCallback((identityId: string) => {
+    profileGate.rememberProfile(identityId)
+  }, [profileGate])
+
   const updateDPNSUsername = useCallback((username: string) => {
     controller.setUsername(username).catch((error) => {
       logger.error('Failed to update DPNS username:', error)
@@ -238,6 +276,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     addPasswordWrapper,
     mergeSecretsIntoAuthVault,
     logout,
+    markProfileCreated,
     updateDPNSUsername,
     refreshDpnsUsernames,
     refreshBalance,
@@ -256,6 +295,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loginWithPasskey,
     loginWithPassword,
     logout,
+    markProfileCreated,
     mergeSecretsIntoAuthVault,
     refreshBalance,
     refreshDpnsUsernames,
