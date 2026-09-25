@@ -14,11 +14,13 @@ key-entry modal hook, and unrelated dialogs. External requests are blocked and
 asserted absent. Every test gets a fresh browser context and uses public scalar 1,
 which must never be used with an actual identity or funds.
 
-The four successful-chain cases cover normal persistence before vault merge,
+The first four successful-chain cases cover normal persistence before vault merge,
 a swallowed localStorage key-write failure with null readback, a swallowed
 write failure over a stale key for the same identity (non-null readback holding
 the wrong secret, which must not reach the vault), and a rejected
-vault merge while the local key remains available. Each verifies refreshed
+vault merge while the local key remains available. A fifth case submits the
+prefilled, already-stored derived key unchanged and checks that its 'derived'
+type label is kept rather than relabelled as external. Each verifies refreshed
 enabled UI, the correct success/warning toasts, and absence of a misleading
 "Failed to enable private feed" toast. The storage failure affects only the
 synthetic encryption-key entry; storage availability checks still succeed.

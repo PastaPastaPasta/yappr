@@ -28,6 +28,11 @@ localStorage.setItem(typeStorageKey, JSON.stringify('derived'))
 if (scenario === 'stale-key') {
   localStorage.setItem(storageKey, JSON.stringify(STALE_WIF))
 }
+// The prefilled-derived scenario already holds the accepted key under its 'derived' label,
+// as it would for a wallet or login-key user whose key was derived at sign-in.
+if (scenario === 'prefilled-derived') {
+  localStorage.setItem(storageKey, JSON.stringify(EXPECTED_WIF))
+}
 
 if (scenario === 'storage-failure' || scenario === 'stale-key') {
   const originalSetItem = Storage.prototype.setItem

@@ -187,6 +187,9 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
             clearEncryptionKeyType,
           } = await import('@/lib/secure-storage')
           const { bytesEqual } = await import('@/lib/bytes')
+          // The input is prefilled with the stored key, which may be a derived key.
+          // Remember it so resubmitting that same key does not relabel it.
+          const priorKeyBytes = getEncryptionKeyBytes(user.identityId)
           storeEncryptionKey(user.identityId, trimmedKey)
           const normalizedEncryptionKey = getEncryptionKey(user.identityId)
           // The store swallows write failures, so a non-null readback can still be a stale
@@ -200,8 +203,11 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
             clearEncryptionKeyType(user.identityId)
             throw new Error('Encryption key was not saved')
           }
-          // A pasted key is recorded as external, matching the add-encryption-key flow.
-          storeEncryptionKeyType(user.identityId, 'external')
+          // A newly pasted key is recorded as external, matching the add-encryption-key flow.
+          // Resubmitting the key that was already stored keeps its existing type label.
+          if (!priorKeyBytes || !bytesEqual(priorKeyBytes, validation.privateKey)) {
+            storeEncryptionKeyType(user.identityId, 'external')
+          }
 
           try {
             await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: normalizedEncryptionKey })

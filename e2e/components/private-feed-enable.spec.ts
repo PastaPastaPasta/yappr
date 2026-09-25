@@ -99,3 +99,30 @@ test('successful chain enable: stale key readback is not backed up', async ({ pa
   expect(result.vaultCalls).toBe(0)
   expect(externalRequests).toEqual([])
 })
+
+// Enable prefills the stored key. Submitting that same derived key unchanged must keep
+// its 'derived' label instead of relabelling it as an external (pasted) key.
+test('successful chain enable: prefilled derived key keeps its type label', async ({ page, baseURL }) => {
+  const externalRequests: string[] = []
+  await blockExternalRequests(page, baseURL, externalRequests)
+  await page.goto('/?scenario=prefilled-derived')
+  await page.getByTestId('enable-private-feed-btn').click()
+  const initial = await page.evaluate(() => window.privateFeedTestSnapshot())
+  expect(initial.hasCanonicalLocalKey).toBe(true)
+  expect(initial.keyType).toBe('derived')
+  await expect(page.getByPlaceholder('WIF (cXyz...) or hex (64 chars)')).not.toHaveValue('')
+  await page.getByRole('button', { name: 'Enable', exact: true }).click()
+
+  await expect(page.getByTestId('private-feed-enabled')).toBeVisible()
+  await expect(page.getByText(successMessage, { exact: true })).toBeVisible()
+  await expect(page.getByText(storageWarning, { exact: true })).toHaveCount(0)
+  await expect(page.getByText(backupWarning, { exact: true })).toHaveCount(0)
+  await expect.poll(() => page.evaluate(() => window.privateFeedTestSnapshot().statusReads)).toBe(2)
+  const result = await page.evaluate(() => window.privateFeedTestSnapshot())
+  expect(result.enableCalls).toBe(1)
+  expect(result.hasPersistedCanonicalKey).toBe(true)
+  expect(result.keyType).toBe('derived')
+  expect(result.vaultCalls).toBe(1)
+  expect(result.vaultReceivedCanonicalKey).toBe(true)
+  expect(externalRequests).toEqual([])
+})
