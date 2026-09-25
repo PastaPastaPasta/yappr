@@ -110,8 +110,9 @@ export default function StoreBrowsePage() {
         if (!cancelled) setBlockCheck({ key, blocked })
       })
       .catch((error) => {
+        // checkBlockedForAuthors already fails open; this only guards against
+        // the list staying on its spinner if that ever changes.
         logger.error('Failed to check blocked store owners:', error)
-        // Fail open rather than leaving the list loading forever
         if (!cancelled) setBlockCheck({ key, blocked: new Map() })
       })
     return () => { cancelled = true }
@@ -132,6 +133,10 @@ export default function StoreBrowsePage() {
         store.description?.toLowerCase().includes(query))
     )
   }, [stores, blockCheck, blockCheckKey, searchQuery])
+
+  // Every loaded store is hidden because its owner is blocked, so "No stores
+  // yet" would be wrong.
+  const allStoresHidden = !searchQuery && stores.length > 0 && filteredStores.length === 0
 
   const handleStoreClick = (storeId: string) => {
     router.push(`/store/view?id=${storeId}`)
@@ -222,10 +227,14 @@ export default function StoreBrowsePage() {
               <div className="p-8 text-center">
                 <BuildingStorefrontIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
                 <p className="text-gray-500 font-medium">
-                  {searchQuery ? 'No stores match your search' : 'No stores yet'}
+                  {searchQuery ? 'No stores match your search' : allStoresHidden ? 'No stores to show' : 'No stores yet'}
                 </p>
                 <p className="text-sm text-gray-400 mt-1">
-                  {searchQuery ? 'Try a different search term' : 'Be the first to create a store!'}
+                  {searchQuery
+                    ? 'Try a different search term'
+                    : allStoresHidden
+                      ? 'Stores from accounts you block are hidden'
+                      : 'Be the first to create a store!'}
                 </p>
                 {!searchQuery && user && !hasStore && (
                   <Button

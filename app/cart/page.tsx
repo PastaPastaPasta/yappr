@@ -78,11 +78,11 @@ export default function CartPage() {
 
   // One batched block check for every store owner in the cart
   useEffect(() => {
+    // Drop the previous viewer's or store set's warnings before re-checking,
+    // so a failed check cannot leave stale ones on screen.
+    setOwnerBlocks(new Map())
     const ownerIds = Array.from(stores.values(), store => store.ownerId)
-    if (!viewerId || ownerIds.length === 0) {
-      setOwnerBlocks(new Map())
-      return
-    }
+    if (!viewerId || ownerIds.length === 0) return
     let cancelled = false
     const checkOwners = async () => {
       const { blockService } = await import('@/lib/services/block-service')

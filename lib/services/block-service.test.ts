@@ -192,6 +192,25 @@ describe('block provenance', () => {
     expect(query).not.toHaveBeenCalled()
   })
 
+  it('does not cache "not blocked" when a followed list could not be read', async () => {
+    setBlockFollows(viewer, [followed])
+    let followedReadFails = true
+    query.mockImplementation(async q => {
+      if (q.documentTypeName !== 'block' || q.where[0][2] !== followed) return []
+      if (followedReadFails) throw new Error('StaleNode')
+      return [block(authors[0], 0, followed)]
+    })
+    expect(await blockService.getBlockProvenance(authors[0], viewer))
+      .toEqual({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
+    expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).get(authors[0])).toBe(false)
+
+    // Once the followed list reads again, the block shows up instead of a cached miss.
+    followedReadFails = false
+    expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).get(authors[0])).toBe(true)
+    expect(await blockService.getBlockProvenance(authors[0], viewer))
+      .toEqual({ isBlocked: true, isOwnBlock: false, inheritedFrom: followed })
+  })
+
   it('labels a batch of targets by block source with one query per source', async () => {
     setBlockFollows(viewer, [followed])
     query.mockImplementation(async q => q.documentTypeName !== 'block' ? []
