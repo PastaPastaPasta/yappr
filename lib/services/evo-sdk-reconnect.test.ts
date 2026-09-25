@@ -14,6 +14,7 @@ vi.mock('@dashevo/evo-sdk', () => ({
     stateTransitions = { broadcastStateTransition: mocks.broadcast };
     documents = {}; dpns = {}; tokens = {}; epoch = {}; protocol = {};
     system = {}; voting = {}; group = {}; addresses = {}; shielded = {};
+    contractGroups = {}; moderationCharters = {}; encryptedFor = {};
     constructor(public options: unknown) { mocks.instances.push(this); }
   },
   DataContract: {},
@@ -27,7 +28,7 @@ vi.mock('@/lib/contracts/bundled-contracts', () => ({
 vi.mock('@/lib/query-inspector/capture', () => ({ instrumentSdk: vi.fn() }));
 vi.mock('@/lib/logger', () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock('../constants', () => ({
-  YAPPR_DM_CONTRACT_ID: '', YAPPR_PROFILE_CONTRACT_ID: '', KEY_EXCHANGE_CONTRACT_ID: '',
+  YAPPR_DM_CONTRACT_ID: '', YAPPR_DM_V5_CONTRACT_ID: '', dmIsV5: () => false, YAPPR_PROFILE_CONTRACT_ID: '', KEY_EXCHANGE_CONTRACT_ID: '',
   YAPPR_BLOG_CONTRACT_ID: '', YAPPR_STOREFRONT_CONTRACT_ID: '', YAPPR_VAULT_CONTRACT_ID: '',
   YAPPR_AUTH_VAULT_CONTRACT_ID: '', POLLR_CONTRACT_ID: '', TOKEN_HISTORY_CONTRACT_ID: '',
   DAPI_ADDRESSES: [], DEVNET_NAME: 'default-devnet', DEVNET_QUORUM_URL: '',
@@ -153,6 +154,20 @@ describe('connection recovery', () => {
     await settle();
     expect(mocks.instances).toHaveLength(2);
     expect(await sdkService.getSdk()).toBe(healthySdk);
+  });
+
+  it('classifies the connection failures the wasm SDK reports', async () => {
+    const sdkService = await service();
+    // Message prefixes as they appear in @dashevo/wasm-sdk 4.2.0-beta.4.
+    for (const message of [
+      'no available addresses to use',
+      'no available addresses to retry, last error: timeout',
+      'Quorum not found in cache for hash: 00ff',
+      'invalid quorum: stale public key',
+    ]) {
+      expect(sdkService.isConnectionError(new Error(message)), message).toBe(true);
+    }
+    expect(sdkService.isConnectionError(new Error('Invalid document schema'))).toBe(false);
   });
 });
 

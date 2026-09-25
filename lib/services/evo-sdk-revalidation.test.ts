@@ -23,6 +23,7 @@ vi.mock('@dashevo/evo-sdk', () => ({
     stateTransitions = {};
     documents = {}; dpns = {}; tokens = {}; epoch = {}; protocol = {};
     system = {}; voting = {}; group = {}; addresses = {}; shielded = {};
+    contractGroups = {}; moderationCharters = {}; encryptedFor = {};
     constructor(public options: unknown) { mocks.instances.push(this); }
   },
   DataContract: { fromBase64: (bytes: string) => ({ bytes }) },
@@ -41,7 +42,7 @@ vi.mock('@/lib/contracts/bundled-contracts', () => ({
 vi.mock('@/lib/query-inspector/capture', () => ({ instrumentSdk: vi.fn() }));
 vi.mock('@/lib/logger', () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock('../constants', () => ({
-  YAPPR_DM_CONTRACT_ID: '', YAPPR_PROFILE_CONTRACT_ID: 'profile', KEY_EXCHANGE_CONTRACT_ID: '',
+  YAPPR_DM_CONTRACT_ID: '', YAPPR_DM_V5_CONTRACT_ID: '', dmIsV5: () => false, YAPPR_PROFILE_CONTRACT_ID: 'profile', KEY_EXCHANGE_CONTRACT_ID: '',
   YAPPR_BLOG_CONTRACT_ID: '', YAPPR_STOREFRONT_CONTRACT_ID: '', YAPPR_VAULT_CONTRACT_ID: '',
   YAPPR_AUTH_VAULT_CONTRACT_ID: '', POLLR_CONTRACT_ID: '', TOKEN_HISTORY_CONTRACT_ID: '',
   DAPI_ADDRESSES: [], DEVNET_NAME: 'default-devnet', DEVNET_QUORUM_URL: '',
