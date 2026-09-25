@@ -32,6 +32,8 @@ interface PostContentProps {
   disableLinkPreview?: boolean
   /** Optional: disable internal Yappr post embedding for this content block */
   disableInternalPostEmbed?: boolean
+  /** Optional: hide the "enable link previews" info icon next to URLs (e.g. inside the compose dialog, where its settings modal cannot open on top) */
+  hideLinkPreviewInfo?: boolean
   /** Optional: follow-gate for external media/previews; omitted = ungated (own/trusted content) */
   mediaGate?: MediaGate
 }
@@ -58,6 +60,7 @@ export function PostContent({
   onFailedMentionClick,
   disableLinkPreview = false,
   disableInternalPostEmbed = false,
+  hideLinkPreviewInfo = false,
   mediaGate
 }: PostContentProps) {
   const linkPreviewsEnabled = useSettingsStore((s) => s.linkPreviewsEnabled)
@@ -296,7 +299,7 @@ export function PostContent({
           >
             {truncatedDisplay}
           </a>
-          {shouldTruncate && <LinkPreviewInfoIcon />}
+          {shouldTruncate && !hideLinkPreviewInfo && <LinkPreviewInfoIcon />}
           {trailingPunctuation}
         </Fragment>
       )

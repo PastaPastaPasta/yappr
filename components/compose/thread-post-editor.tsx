@@ -310,8 +310,10 @@ export function ThreadPostEditor({
               {post.content ? (
                 // Same renderer as the published post: shows the link/image
                 // preview (subject to the link-preview setting) and hides the
-                // previewed URL the same way the feed does.
-                <PostContent content={post.content} disableInternalPostEmbed />
+                // previewed URL the same way the feed does. The link-preview
+                // info icon is hidden because its settings modal would open
+                // behind this dialog.
+                <PostContent content={post.content} disableInternalPostEmbed hideLinkPreviewInfo />
               ) : (
                 <span className="text-gray-400 dark:text-gray-600 italic">
                   Nothing to preview
