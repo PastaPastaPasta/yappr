@@ -8,12 +8,14 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { identityService } from '@/lib/services/identity-service'
+import { findDuplicateLabels } from '@/lib/utils/duplicate-labels'
 import { getPrivateKey } from '@/lib/secure-storage'
 import { matchIdentityKey } from '@/lib/crypto/keys'
 import { KeyPurpose, SecurityLevel, getSecurityLevelName } from '@/lib/crypto/identity-keys'
 import toast from 'react-hot-toast'
 
 import { UsernameEntryStep } from './steps/username-entry-step'
+import { canonicalDpnsLabel } from './canonical-label'
 import { CheckingStep } from './steps/checking-step'
 import { ReviewStep } from './steps/review-step'
 import { RegisteringStep } from './steps/registering-step'
@@ -55,6 +57,17 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
     if (validUsernames.length === 0) {
       toast.error('Please enter at least one valid username.')
+      return
+    }
+
+    // The entry step already blocks this; guard here too so the availability
+    // check and registration never see two labels DPNS treats as the same name.
+    const duplicates = findDuplicateLabels(
+      validUsernames.map((u) => u.label),
+      (label) => canonicalDpnsLabel(label, isSdkReady)
+    )
+    if (duplicates.size > 0) {
+      toast.error('Each username must be different.')
       return
     }
 

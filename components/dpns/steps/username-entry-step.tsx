@@ -1,12 +1,14 @@
 'use client'
 
 import { useEffect, useCallback } from 'react'
-import { WasmSdk } from '@dashevo/evo-sdk'
 import { Button } from '@/components/ui/button'
 import { UsernameInputRow } from '../username-input-row'
+import { canonicalDpnsLabel } from '../canonical-label'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { useSdk } from '@/contexts/sdk-context'
 import { dpnsService } from '@/lib/services/dpns-service'
+import { findDuplicateLabels } from '@/lib/utils/duplicate-labels'
+import type { UsernameEntry } from '@/lib/types'
 import { Plus } from 'lucide-react'
 
 interface UsernameEntryStepProps {
@@ -78,26 +80,15 @@ export function UsernameEntryStep({ onCheckAvailability }: UsernameEntryStepProp
     updateUsernameLabel(id, label)
   }
 
-  // Use the WASM export from the same SDK initialized before isReady is set.
-  // DPNS also treats o/0 and i/l/1 as the same label. The export can throw, so
-  // fall back to a case-insensitive comparison rather than crash the step.
-  const canonicalLabel = (label: string) => {
-    const trimmed = label.trim()
-    if (!isSdkReady) return trimmed.toLowerCase()
-    try {
-      return WasmSdk.dpnsConvertToHomographSafe(trimmed)
-    } catch {
-      return trimmed.toLowerCase()
-    }
-  }
-  const seenLabels = new Set<string>()
-  const duplicateLabels = new Set<string>()
-  for (const entry of usernames) {
-    const label = canonicalLabel(entry.label)
-    if (!label) continue
-    if (seenLabels.has(label)) duplicateLabels.add(label)
-    seenLabels.add(label)
-  }
+  // Rows that already fail the format check keep that error and are skipped by
+  // Check Availability, so only the remaining rows can form a duplicate group.
+  const canonical = (label: string) => canonicalDpnsLabel(label, isSdkReady)
+  const duplicateLabels = findDuplicateLabels(
+    usernames.filter((u) => u.status !== 'invalid').map((u) => u.label),
+    canonical
+  )
+  const isDuplicate = (entry: UsernameEntry) =>
+    entry.status !== 'invalid' && duplicateLabels.has(canonical(entry.label))
 
   const hasValidUsernames = usernames.some(
     (u) => u.label.trim() && u.status !== 'invalid'
@@ -109,7 +100,7 @@ export function UsernameEntryStep({ onCheckAvailability }: UsernameEntryStepProp
         {usernames.map((entry) => (
           <UsernameInputRow
             key={entry.id}
-            entry={duplicateLabels.has(canonicalLabel(entry.label))
+            entry={isDuplicate(entry)
               ? { ...entry, status: 'invalid', validationError: 'This username matches another entry' }
               : entry}
             onChange={(label) => handleLabelChange(entry.id, label)}
