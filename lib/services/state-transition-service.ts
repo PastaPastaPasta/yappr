@@ -512,7 +512,7 @@ class StateTransitionService {
       // --- The nonce comes first: the document id is derived from it ---
       // DIP-30: nonce is u64 where lower 40 bits = sequence number,
       // upper 24 bits = missing revision bitset. Only increment the sequence part.
-      const currentNonce = await wasm.getIdentityContractNonce(ownerId, contractId);
+      const currentNonce = await sdk.identities.contractNonce(ownerId, contractId);
       const newNonce = nextIdentityContractNonce(currentNonce);
       logger.debug(`Nonce: current=${currentNonce}, using=${newNonce}`);
 

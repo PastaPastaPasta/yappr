@@ -62,17 +62,23 @@ const WRITE_METHODS = new Set([
 
 // Pure local wasm computations — no DAPI round-trip, not worth recording.
 // (isContestedUsername checks the label against static contest rules; observed 0ms.)
+// encryptedFor runs entirely locally, and recording it would copy plaintext and
+// decrypted bytes into the ring buffer. (moderationCharters.build*Request stay
+// recorded: they fetch the proposal or charter and its leader.)
 const SKIP_METHODS = new Set([
   'dpns.convertToHomographSafe',
   'dpns.isValidUsername',
   'dpns.isContestedUsername',
   'tokens.calculateId',
+  'encryptedFor.encrypt',
+  'encryptedFor.decrypt',
+  'encryptedFor.envelope',
 ])
 
 // Known coverage gaps: calls made on the raw wasm handle bypass the facades and
-// this net entirely — state-transition-service's refreshIdentityNonce /
-// getIdentityContractNonce reads (`sdk.wasm.*`) and tip-service's standalone
-// `wallet` namespace import. Route new code through the facades to stay visible.
+// this net entirely — refreshIdentityNonce (`sdk.wasm.*`, which only marks the
+// SDK's nonce cache stale) and tip-service's standalone `wallet` namespace
+// import. Route new code through the facades to stay visible.
 
 interface WasmProofInfo {
   grovedbProof: Uint8Array
