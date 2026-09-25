@@ -368,7 +368,7 @@ There is no DM v5 content seeder. DM v5 is covered by its battery.
 
 | battery | checks | result |
 | --- | ---: | --- |
-| `verify-v9.mjs --moderator maker` (e0, d1, p1, b1, w1, m1, m2) | 45 over two runs | **all pass** |
+| `verify-v9.mjs --moderator maker` (e0, d1, p1, b1, w1, m1, m2) | run 1: 43 pass / 2 fail (harness defects, fixed here); rerun: 40/0 | **all pass after fixes** |
 | `verify-blog.mjs` (blog v4, moderated) | 67 | **ALL CHECKS PASSED** |
 | `verify-storefront.mjs` (storefront v4, moderated) | 91 | **ALL CHECKS PASSED** |
 | `verify-dm.mjs` (DM v4) | 31 | **ALL CHECKS PASSED** |
