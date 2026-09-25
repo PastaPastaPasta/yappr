@@ -12,7 +12,7 @@ const makePost = (id: string, targetKind: 'post' | 'reply'): Post => ({
 beforeEach(() => {
   vi.resetModules();
   load.mockReset();
-  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v8');
+  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9');
   load.mockImplementation(async options => ({ preloaded: {
     stats: new Map(options.documentIds.map((id: string) => [id, { likes: 2, replies: 0, reposts: 0, quotes: 0, views: 0 }])),
   } }));

@@ -81,8 +81,8 @@ describe('approving a follower on the v9 gated contract', () => {
     expect(result).toMatchObject({ success: false, errorCode: 'FEED_NOT_ENABLED' });
   });
 
-  it('reads no request on a pre-v9 contract and still writes the grant', async () => {
-    const { privateFeedService: service } = await load('v8');
+  it('reads no request on the ungated v2 contract and still writes the grant', async () => {
+    const { privateFeedService: service } = await load('v2');
     requestOnChain(false);
     mocks.createDocument.mockResolvedValue({ success: true });
     const result = await service.approveFollower(ownerId, requesterId, requesterKey);

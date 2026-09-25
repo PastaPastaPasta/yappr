@@ -131,7 +131,7 @@ export class PostFieldValidator {
 export const hashtagValidation = new PostFieldValidator({
   kind: 'hashtag',
   extract: extractAllTags,
-  // v4+: the post's single hashtag is written atomically with the post, so
+  // v9: the post's single hashtag is written atomically with the post, so
   // there is no "registration failed" state and nothing to recover.
   isInline: hashtagsAreInline,
   fetchRegistered: async (postId) => {

@@ -15,7 +15,7 @@ export interface PostMentionDocument {
 }
 
 /**
- * On the v3 contract `postMention.mentionedUserId` declares `refersTo: identity`.
+ * On the v9 contract `postMention.mentionedUserId` declares `refersTo: identity`.
  * Mentions are written fire-and-forget after a post lands, so there is no UI to
  * fail — but the reason must be legible in the log, because it means DPNS
  * resolved a name to an identity that is not (or is no longer) on chain, not

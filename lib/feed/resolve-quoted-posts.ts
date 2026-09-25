@@ -5,7 +5,7 @@
  * There used to be seven copies of this loop (both feed loaders, the homepage
  * hook, the profile page's initial and paged loads, and the post-detail hook's
  * chain and main-post paths), each collecting `quotedPostId`s and calling
- * `fetchPostsOrReplies`. The v3 topology splits the single quote field in three —
+ * `fetchPostsOrReplies`. The v9 topology splits the single quote field in three —
  * `quotedPostId` for posts, `quotedReplyId` for replies, and the embed triple for
  * anything on another contract — so all seven would have had to learn the same
  * dispatch. They call this instead.
@@ -35,7 +35,7 @@ export interface QuoteReference {
  * Decide which reference field a new quote post should carry.
  *
  * On v2 everything goes in the single polymorphic `quotedPostId` — including blog
- * posts, which live on a different contract entirely. On v3 that field is
+ * posts, which live on a different contract entirely. On v9 that field is
  * `refersTo`-checked against `post`, so a reply id moves to `quotedReplyId` and a
  * blog post to the embed triple (the only reference kind allowed to point off the
  * social contract).
@@ -72,10 +72,9 @@ export function resolveQuoteReference(quotingPost: Post | null | undefined): Quo
  * The quote target a post references, or null when it references nothing.
  * Exactly one of the three fields is ever set on a document.
  *
- * A TOMBSTONE references nothing, whatever it still stores. Up to contract v6
- * the tombstone replace dropped the quote and embed fields, so this fell out
- * for free; v7 freezes them as `immutable`, so a tombstone carries its
- * reference forever. `PostCard` short-circuits on `deleted` and never renders a
+ * A TOMBSTONE references nothing, whatever it still stores. The contract
+ * freezes the quote and embed fields as `immutable`, so a tombstone carries
+ * its reference forever. `PostCard` short-circuits on `deleted` and never renders a
  * quote, so resolving one would be a batch-pass entry plus a per-card fetch
  * whose result is discarded — pure wasted DAPI traffic on every feed holding a
  * deleted quote post.
@@ -251,7 +250,7 @@ async function resolveByProbe(pending: Post[]): Promise<Post[]> {
   return postService.fetchPostsOrReplies(Array.from(ids));
 }
 
-/** v3: each field names exactly one doctype, so nothing is probed. */
+/** v9: each field names exactly one doctype, so nothing is probed. */
 async function resolveByField(pending: Post[]): Promise<Post[]> {
   const postIds = new Set<string>();
   const replyIds = new Set<string>();

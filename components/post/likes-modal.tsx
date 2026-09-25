@@ -27,7 +27,7 @@ interface LikeWithUser extends LikeDocument {
 }
 
 /**
- * A like's timestamp, or null when the topology cannot supply one: v4
+ * A like's timestamp, or null when the topology cannot supply one: v9
  * indexOnly likes are listed off the `byPost` projection, which carries no
  * `$createdAt` (only the notification index does).
  */

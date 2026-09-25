@@ -20,7 +20,7 @@ export interface TrendingHashtag {
 }
 
 class HashtagService extends BaseDocumentService<PostHashtagDocument> {
-  /** v6: the all-time and today rankings are different indexes, cached separately. */
+  /** v9: the all-time and today rankings are different indexes, cached separately. */
   private trendingCacheByWindow = new TtlMap<'all' | 'today', TrendingHashtag[]>(5 * 60 * 1000);
 
   constructor() {
@@ -56,7 +56,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
    * Create a single hashtag document for a post
    */
   async createPostHashtag(postId: string, ownerId: string, hashtag: string): Promise<boolean> {
-    // v4: the postHashtag doctype does not exist — a post's single hashtag is
+    // v9: the postHashtag doctype does not exist — a post's single hashtag is
     // written inline at post creation and cannot be added afterwards.
     if (hashtagsAreInline()) {
       logger.warn('createPostHashtag called on an inline-hashtag topology — nothing to write');
@@ -183,7 +183,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       const normalizedTag = this.normalizeHashtag(hashtag);
       if (!normalizedTag) return 0;
 
-      // v4: no postHashtag count tree — count posts on post.tagAndTime instead.
+      // v9: no postHashtag count tree — count posts on post.tagAndTime instead.
       if (hashtagsAreInline()) {
         const { postService } = await import('./post-service');
         return postService.countPostsByHashtag(normalizedTag);
@@ -209,7 +209,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
    */
   async getPostIdsByHashtag(hashtag: string): Promise<PostHashtagDocument[]> {
     try {
-      // v4: no postHashtag documents to list — tag pages query post.tagAndTime
+      // v9: no postHashtag documents to list — tag pages query post.tagAndTime
       // directly (see postService.getPostsByHashtag / app/hashtag).
       if (hashtagsAreInline()) return [];
 
@@ -275,7 +275,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     timeWindowHours?: number;
     minPosts?: number;
     limit?: number;
-    /** v6: `'today'` reads the daily-windowed ranking (`beat.byDayHashtagPost`); default all-time. */
+    /** v9: `'today'` reads the daily-windowed ranking (`beat.byDayHashtagPost`); default all-time. */
     window?: 'all' | 'today';
   } = {}): Promise<TrendingHashtag[]> {
     const {
@@ -289,15 +289,13 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     const cached = this.trendingCacheByWindow.get(window);
     if (cached) return cached.slice(0, limit);
 
-    // v5: trending is a PROVED prefix ranked page — groupBy at `hashtag` on
+    // v9: trending is a PROVED prefix ranked page — groupBy at `hashtag` on
     // `like.byHashtagPost {at: hashtag}` (skipIfAbsent, so only tagged likes
-    // exist in the index). NOTE the metric change: under v5 the count is
-    // LIKES ON TAGGED POSTS per tag, not post-count — a ranking of tag
-    // engagement rather than tag usage. It rides the TrendingHashtag shape
-    // unchanged; consumers that print a unit label gate on
-    // `prefixRankingsAvailable()`. Fail-soft: on any error (e.g. a pre-dev.7
-    // node that cannot serve the prefix form yet) trending degrades to empty
-    // rather than falling back to the unproven v4 derivation.
+    // exist in the index). NOTE the metric: the count is LIKES ON TAGGED
+    // POSTS per tag, not post-count — a ranking of tag engagement rather than
+    // tag usage. It rides the TrendingHashtag shape unchanged; consumers that
+    // print a unit label gate on `prefixRankingsAvailable()`. Fail-soft: on
+    // any error trending degrades to empty.
     if (prefixRankingsAvailable()) {
       try {
         const { topHashtagsByLikes } = await import('./ranked-likes');
@@ -309,22 +307,6 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
         return trending.slice(0, limit);
       } catch (error) {
         logger.error('Error fetching proved trending hashtags:', error);
-        return [];
-      }
-    }
-
-    // v4: trending rode the postHashtag doctype, which no longer exists, and a
-    // PROVED tag ranking is not servable (it would need prefix-level groupBy on
-    // `like.byHashtagPost` — which only the v5 contract's at-form declares).
-    // Trending is derived client-side from recent post activity: an unproven
-    // sample, labeled as such in the UI.
-    if (hashtagsAreInline()) {
-      try {
-        const trending = await this.deriveTrendingFromRecentPosts(minPosts);
-        this.trendingCacheByWindow.set('all', trending);
-        return trending.slice(0, limit);
-      } catch (error) {
-        logger.error('Error deriving trending hashtags from recent posts:', error);
         return [];
       }
     }
@@ -351,7 +333,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       // Sort by post count descending
       trending.sort((a, b) => b.postCount - a.postCount);
 
-      // Cache the full result (pre-v5 derivations are all-time by construction)
+      // Cache the full result (the v2 postHashtag count is all-time by construction)
       this.trendingCacheByWindow.set('all', trending);
 
       return trending.slice(0, limit);
@@ -359,71 +341,6 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       logger.error('Error calculating trending hashtags:', error);
       return [];
     }
-  }
-
-  /**
-   * v4 trending, client-derived (D-R1a): sample the most recent ~200 posts off
-   * the `languageTimeline` index and count their inline `hashtag` values.
-   *
-   * NOT a proved ranking — it is a recency-weighted activity signal, which is
-   * why consumers label it "based on recent activity". Counting the indexed
-   * `hashtag` property (rather than re-parsing content for inline tags) keeps
-   * the numbers consistent with what a tag page can actually list: on v4 a post
-   * is discoverable under exactly one tag via `post.tagAndTime`.
-   *
-   * Posts are scanned newest-first and JS sorts are stable, so among tags with
-   * equal counts the most recently used one ranks first — a fresh tag surfaces
-   * immediately instead of being buried under older ties.
-   */
-  private async deriveTrendingFromRecentPosts(minPosts: number): Promise<TrendingHashtag[]> {
-    const { queryRawDocuments } = await import('./document-service');
-
-    const SAMPLE_TARGET = 200;
-    const PAGE_SIZE = 100;
-    const counts = new Map<string, number>();
-    let sampled = 0;
-    let startAfter: string | undefined;
-
-    while (sampled < SAMPLE_TARGET) {
-      const documents = await queryRawDocuments({
-        dataContractId: this.contractId,
-        documentTypeName: 'post',
-        where: [
-          ['language', '==', 'en'],
-          ['$createdAt', '>', 0],
-        ],
-        orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
-        limit: PAGE_SIZE,
-        startAfter,
-      });
-
-      for (const doc of documents) {
-        const data = (doc.data || doc) as Record<string, unknown>;
-        const tag = data.hashtag ?? doc.hashtag;
-        // '' is the untagged stand-in, not a tag.
-        if (typeof tag === 'string' && tag !== '') {
-          counts.set(tag, (counts.get(tag) || 0) + 1);
-        }
-      }
-
-      sampled += documents.length;
-      if (documents.length < PAGE_SIZE) break;
-
-      const lastId = documents[documents.length - 1].$id;
-      if (typeof lastId !== 'string' || lastId === '') break;
-      startAfter = lastId;
-    }
-
-    const trending: TrendingHashtag[] = [];
-    counts.forEach((postCount, hashtag) => {
-      if (postCount >= minPosts) {
-        trending.push({ hashtag, postCount });
-      }
-    });
-
-    // Stable sort: ties keep newest-first encounter order.
-    trending.sort((a, b) => b.postCount - a.postCount);
-    return trending;
   }
 
   /**

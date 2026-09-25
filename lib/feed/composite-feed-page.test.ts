@@ -40,7 +40,7 @@ function result(dpns = names, page = docs) {
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
-  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v8');
+  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9');
   mocks.getEvoSdk.mockResolvedValue({ documents: { composite: mocks.composite } });
   mocks.composite.mockResolvedValue(result());
 });

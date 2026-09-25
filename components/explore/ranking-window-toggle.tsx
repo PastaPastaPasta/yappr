@@ -4,7 +4,7 @@ import { windowedRankingsAvailable } from '@/lib/contract-topology'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
 
 /**
- * Today | All time — the v6 ranked-surface window switch. Renders nothing on
+ * Today | All time — the v9 ranked-surface window switch. Renders nothing on
  * topologies without daily-windowed twins, so every surface can mount it
  * unconditionally and default to `'all'`. `'today'` reads the proved ranking
  * of the current UTC day (`newest` bucket, resolved from block time by the

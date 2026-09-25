@@ -32,7 +32,7 @@ interface UsePostDetailResult {
   /** Chain of parent posts/replies leading up to the main post (for nested replies) */
   replyChain: Post[]
   /**
-   * Thread root ids the chain could not load (v8: the contract's moderators
+   * Thread root ids the chain could not load (v9: the contract's moderators
    * removed the root while this reply stayed). Rendered as removed stubs
    * above the chain.
    */
@@ -126,7 +126,7 @@ function buildNestedThreads(
  *
  * @param authorThreadChain - Pre-fetched complete author thread chain (all levels)
  * @param otherDirectReplies - All other direct replies that are NOT part of author thread
- * @param childrenOf - Map of replyId -> child replies (full thread on v3, one level on v2)
+ * @param childrenOf - Map of replyId -> child replies (full thread on v9, one level on v2)
  */
 function buildReplyTree(
   authorThreadChain: Reply[],
@@ -186,7 +186,7 @@ function nestUnderReply(
 }
 
 /**
- * Assemble a thread from the flat reply list a v3 `rootAndTime` query returns.
+ * Assemble a thread from the flat reply list a v9 `rootAndTime` query returns.
  *
  * Every reply in a thread names the same `rootPostId`, so one query has all of
  * them and the shape is reconstructed here rather than discovered by walking the
@@ -345,7 +345,7 @@ export function usePostDetail({
   /**
    * The posts shown above the main item.
    *
-   * On v3 a reply names its thread root, so the ancestry is exactly one document
+   * On v9 a reply names its thread root, so the ancestry is exactly one document
    * — no walk, and no ambiguity about which of several nesting levels is "the"
    * context. On v2 the only link is the polymorphic direct parent, so the chain
    * has to be walked one lookup at a time.
@@ -358,7 +358,7 @@ export function usePostDetail({
       const rootId = threadRootIdOf(mainPost)
       const rootPost = await postService.getPostById(rootId, { skipEnrichment: true })
       if (rootPost) chain.push(rootPost)
-      // The reply's `rootPostId` is a deletableDocument reference from v8: a
+      // The reply's `rootPostId` is a deletableDocument reference on v9: a
       // missing root is a moderator takedown, not a transport fault, and the
       // page says so instead of showing an orphaned reply.
       else if (referencesMayDangle()) removed.push(rootId)
@@ -557,7 +557,7 @@ export function usePostDetail({
   }, [postId, enabled, enrich, fetchReplyChain])
 
   /**
-   * Fetch the next page of the thread (v3 only — v2's `getReplies` covers one
+   * Fetch the next page of the thread (v9 only — v2's `getReplies` covers one
    * level, which the old code already fetched whole).
    */
   const loadMoreReplies = useCallback(async () => {
@@ -693,7 +693,7 @@ export function usePostDetail({
       const newReply = event.detail?.reply
       if (!newReply) return
 
-      // A v3 reply names the thread it belongs to, so membership is exact — a
+      // A v9 reply names the thread it belongs to, so membership is exact — a
       // reply to a reply three levels down still refreshes this page. On v2 the
       // only signal is the direct parent, so the check stays as it was.
       const belongsHere = newReply.rootPostId

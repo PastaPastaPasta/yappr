@@ -7,7 +7,7 @@ import type { BlogPost } from '@/lib/types';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
-import { authorFieldIsRequired, likesAreIndexOnly, groupByInteractionSurface, hashtagIsOptional, hashtagMaxLength, hashtagsAreInline, quoteFieldFor, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { HASHTAG_MAX_LENGTH, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, quoteFieldFor, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { firstIndexedTag } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
@@ -196,7 +196,7 @@ class PostService extends BaseDocumentService<Post> {
     const rawQuotedPostOwnerId = data.quotedPostOwnerId || doc.quotedPostOwnerId;
     const quotedPostOwnerId = rawQuotedPostOwnerId ? identifierToBase58(rawQuotedPostOwnerId) || undefined : undefined;
 
-    // v3 only: a quote of a REPLY lands in its own field so the reference can be
+    // v9 only: a quote of a REPLY lands in its own field so the reference can be
     // refersTo-checked. Absent on v2 documents.
     const rawQuotedReplyId = data.quotedReplyId || doc.quotedReplyId;
     const quotedReplyId = rawQuotedReplyId ? identifierToBase58(rawQuotedReplyId) || undefined : undefined;
@@ -241,15 +241,15 @@ class PostService extends BaseDocumentService<Post> {
       quotedReplyId,
       deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
       sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
-      // v4/v5 only: the single indexed hashtag ('' = untagged in memory).
-      // Absent on v2/v3 documents; the like path reads it for the
-      // consensus-checked agreement. On v5 the chain spells "untagged" as an
-      // ABSENT property — normalized back to the client's '' sentinel here, so
-      // downstream consumers (like path, caches) keep one convention:
-      // '' = known untagged, undefined = unknown/not-a-v4+ document.
+      // v9 only: the single indexed hashtag ('' = untagged in memory). The
+      // like path reads it for the consensus-checked agreement. The chain
+      // spells "untagged" as an ABSENT property — normalized back to the
+      // client's '' sentinel here, so downstream consumers (like path, caches)
+      // keep one convention: '' = known untagged, undefined = unknown (a v2
+      // document, which has no inline hashtag).
       hashtag: typeof (data.hashtag ?? doc.hashtag) === 'string'
         ? (data.hashtag ?? doc.hashtag) as string
-        : hashtagIsOptional() ? '' : undefined,
+        : hashtagsAreInline() ? '' : undefined,
       ...embed,
       // Private feed fields
       encryptedContent,
@@ -318,23 +318,21 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Blank a post in place, leaving a tombstone.
    *
-   * The v3+ `post` doctype is `canBeDeleted: false`, so this is what "delete"
+   * The v9 `post` doctype is `canBeDeleted: false`, so this is what "delete"
    * means there. The body, media and every encrypted field are dropped; what
    * survives is {@link tombstonePreservationFor}('post'), carried over VERBATIM.
    *
-   * That set grew for a consensus reason each time. `hashtag` joined on v4
-   * because existing likes repeat it under a checked agreement: blanking it
-   * would leave the post claiming "untagged" while its likes still carry the
-   * original tag (and any later like sourced from the stale post would be
-   * rejected with 40127), so a tombstone stays in its tag's `tagAndTime`
-   * listing, rendered as a deleted card — the same treatment `language`
-   * timelines already give it. On v7 the contract freezes that whole set with
-   * `immutable`, which pulls the quote graph and the embed triple in too:
-   * dropping a frozen property is the same 40128 rejection as changing it.
-   * A tombstoned quote or poll post therefore keeps its reference; `PostCard`
-   * short-circuits on `deleted`, so nothing of it renders.
+   * That set is the doctype's `immutable` list. `hashtag` is in it because
+   * existing likes repeat it under a checked agreement: blanking it would
+   * leave the post claiming "untagged" while its likes still carry the
+   * original tag, so a tombstone stays in its tag's `tagAndTime` listing,
+   * rendered as a deleted card — the same treatment `language` timelines give
+   * it. The quote graph and the embed triple are frozen too: dropping a frozen
+   * property is the same 40128 rejection as changing it. A tombstoned quote or
+   * poll post therefore keeps its reference; `PostCard` short-circuits on
+   * `deleted`, so nothing of it renders.
    *
-   * An UNTAGGED post has no `hashtag` property at all from v5 on;
+   * An UNTAGGED post has no `hashtag` property at all;
    * `tombstoneDocument` skips absent fields, so the tombstone reproduces the
    * absence verbatim (writing `''` instead would both fail the pattern and
    * break the likes' absence agreement).
@@ -370,7 +368,7 @@ class PostService extends BaseDocumentService<Post> {
       mediaUrl?: string;
       quotedPostId?: string;
       quotedPostOwnerId?: string;
-      /** v3 only: quoting a reply instead of a post (mutually exclusive with quotedPostId). */
+      /** v9 only: quoting a reply instead of a post (mutually exclusive with quotedPostId). */
       quotedReplyId?: string;
       language?: string;
       sensitive?: boolean;
@@ -426,25 +424,16 @@ class PostService extends BaseDocumentService<Post> {
     // Language is required - default to 'en' if not provided
     data.language = options.language || 'en';
 
-    // v4-v6: the poster-attested author, which must equal $ownerId because a
-    // propertyAgreement could not yet name a system field. v7 binds the likes
-    // straight to `post.$ownerId`, so the column is gone from the schema and
-    // nothing is written here ({@link authorFieldIsRequired}).
-    if (authorFieldIsRequired()) {
-      data.author = identifierStringToDocumentBytes(ownerId);
-    }
-
     // The single indexed tag — first hashtag, or first cashtag when no hashtag
     // exists, from the PUBLIC content only (`data.content` is already the
     // teaser/placeholder for private posts, so encrypted text never leaks into
     // the index); '' when untagged.
     if (hashtagsAreInline()) {
-      const tag = firstIndexedTag(data.content as string, hashtagMaxLength());
-      // v5: an untagged post OMITS the optional property — likes mirror the
+      const tag = firstIndexedTag(data.content as string, HASHTAG_MAX_LENGTH);
+      // An untagged post OMITS the optional property — likes mirror the
       // absence under the absence-aware propertyAgreement, and `skipIfAbsent`
-      // keeps untagged likes out of byHashtagPost entirely. v4 has no optional
-      // hashtag and writes the '' sentinel.
-      if (tag !== '' || !hashtagIsOptional()) {
+      // keeps untagged likes out of byHashtagPost entirely.
+      if (tag !== '') {
         data.hashtag = tag;
       }
     }
@@ -727,7 +716,7 @@ class PostService extends BaseDocumentService<Post> {
    * Get posts that quote a specific post or reply, newest first.
    *
    * The listing index depends on the kind: `quotedPostAndOwner` on v2, and the
-   * chronological `quotesOfPost`/`quotesOfReply` indexes on v3 (where the old
+   * chronological `quotesOfPost`/`quotesOfReply` indexes on v9 (where the old
    * unique index is gone, because re-quoting a target is legitimate).
    */
   async getQuotePosts(quotedPostId: string, kind: TargetKind = 'post', options: { limit?: number } = {}): Promise<Post[]> {
@@ -744,7 +733,7 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * Count quotes of a post or reply — O(1) count tree on the quote field for
-   * that kind (`quoteCount` on v2, plus `quoteReplyCount` on v3).
+   * that kind (`quoteCount` on v2, plus `quoteReplyCount` on v9).
    */
   async countQuotes(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
     const quoteField = quoteFieldFor(kind);
@@ -808,11 +797,11 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Resolve quote targets when each quote field names exactly ONE doctype (v3).
+   * Resolve quote targets when each quote field names exactly ONE doctype (v9).
    *
    * `fetchPostsOrReplies`'s cascade exists because v2's single `quotedPostId`
    * could hold a post id, a reply id or a blog-post id, so every miss had to be
-   * retried against the next doctype. v3 splits those into `quotedPostId`,
+   * retried against the next doctype. v9 splits those into `quotedPostId`,
    * `quotedReplyId` and the cross-contract embed triple, so the caller already
    * knows where each id lives and nothing is probed.
    */
@@ -831,9 +820,9 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * v4 tag page listing: posts carrying `hashtag`, newest first, via the
+   * v9 tag page listing: posts carrying `hashtag`, newest first, via the
    * `tagAndTime [hashtag, $createdAt]` index. Replaces the postHashtag-document
-   * indirection (doctype absent on v4) — the documents ARE the posts, written
+   * indirection (doctype absent on v9) — the documents ARE the posts, written
    * by their owners, so no ownership cross-check is needed.
    */
   async getPostsByHashtag(hashtag: string, options: { limit?: number } = {}): Promise<Post[]> {
@@ -854,7 +843,7 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * v4: how many posts carry `hashtag`. `tagAndTime` is not countable, so this
+   * v9: how many posts carry `hashtag`. `tagAndTime` is not countable, so this
    * pages through the index and counts — bounded (maxResults 1000), which is
    * plenty for the search-suggestion count it serves.
    */

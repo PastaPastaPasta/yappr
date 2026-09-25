@@ -102,7 +102,7 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark
               sideOffset={5}
               onClick={stopPropagation}
             >
-              {/* Reposting a reply has no doctype on v3, so the item is absent rather than failing. */}
+              {/* Reposting a reply has no doctype on v9, so the item is absent rather than failing. */}
               {repost.allowed && (
                 <DropdownMenu.Item onClick={(e) => stopAndRun(e, repost.onClick)} className={MENU_ITEM}>
                   <ArrowPathIcon className={cn('h-5 w-5', repost.active && 'text-green-500')} />

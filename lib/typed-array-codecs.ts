@@ -59,7 +59,7 @@ function identifierOf(element: unknown): string | null {
 
 /**
  * The identities a user inherits blocks from. v9: a list of identifiers.
- * v2–v8: one byte array of 32-byte ids laid end to end (a trailing partial
+ * v2: one byte array of 32-byte ids laid end to end (a trailing partial
  * chunk is dropped).
  */
 export function decodeBlockFollowIds(value: unknown): string[] {

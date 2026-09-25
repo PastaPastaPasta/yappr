@@ -68,7 +68,7 @@ function PostDetailContent() {
   // The thread ROOT's author. Encryption is inherited from the root, so that is
   // whose feed keys decrypt anything in this thread and who grants access to it —
   // which is not the same identity when the item being viewed is a reply by
-  // someone else. replyChain[0] is the root (v3) or the oldest known ancestor (v2).
+  // someone else. replyChain[0] is the root (v9) or the oldest known ancestor (v2).
   const rootPostOwnerId = (replyChain[0] ?? post)?.author.id ?? ''
   const { canReply: canReplyToPrivate, isLoading: isCheckingAccess, reason: cantReplyReason } = useCanReplyToPrivate(post, rootPostOwnerId)
 
@@ -143,7 +143,7 @@ function PostDetailContent() {
           </div>
         ) : post ? (
           <>
-            {/* A thread root the contract's moderators removed (v8): the
+            {/* A thread root the contract's moderators removed (v9): the
                 reply still exists, its parent does not. */}
             {removedChainIds.map((id) => (
               <RemovedPostStub key={id} documentId={id} kind="post" variant="card" />

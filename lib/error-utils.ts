@@ -236,7 +236,7 @@ export function isWriteGateError(error: unknown): boolean {
  * the document type freezes — `DocumentImmutablePropertyChangedError`, state
  * code **40128**, new in protocol v14 / Platform 4.2.0-beta.2.
  *
- * Contract v7 declares `immutable` lists on `post` and `reply` (language, the
+ * Contract v9 declares `immutable` lists on `post` and `reply` (language, the
  * tag, the quote graph, the embed triple, a reply's parent linkage, and
  * `deleted` as immutable-but-settable). "Touched" covers a changed value, a
  * newly added property AND one the replacement dropped, so the only way to
@@ -375,7 +375,7 @@ export function isGasPayerError(error: unknown): boolean {
  * - **40134** `DocumentActionFeeMultiplierNotToleratedError` — the network fee
  *   multiplier moved past the tolerance the agreement allowed.
  *
- * Social v8 charges post and reply creates a fee to the moderators pot, so
+ * Social v9 charges post and reply creates a fee to the moderators pot, so
  * 40132/40133 mean the client and the deployed contract disagree about the
  * amounts — either the contract was re-cut under the client, or the agreement
  * was not attached. Permanent for the transition as built.
@@ -750,7 +750,7 @@ export function categorizeError(error: unknown): string {
   }
 
   if (isInsufficientTokenError(error)) {
-    // Where the contract prices actions OPTIONALLY (v8), YAPP is not the only
+    // Where the contract prices actions OPTIONALLY (v9), YAPP is not the only
     // way to act, and a balance that went stale between planning and signing
     // lands here: offering only to sell more would hide the free option. The
     // way out is read through the topology, so the advice never names one the

@@ -82,7 +82,7 @@ function NestedReply({ thread, rootPostOwnerId, getPostEnrichment }: ReplyThread
   const postLike = replyToPost(thread.content)
   const enrichment = getPostEnrichment?.(postLike)
 
-  // Replies past the depth cap: v3 counts them while assembling the (fully
+  // Replies past the depth cap: v9 counts them while assembling the (fully
   // loaded) thread, and that count stays valid even if children are later
   // nested optimistically. On v2 they were never fetched, so the enrichment
   // reply count is the only signal they exist — but it counts direct children,

@@ -284,8 +284,8 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<Map<str
  *
  * `quoteField` names the property the topology stores the reference in, and the
  * orderBy tail follows the index that field belongs to: v2's unique
- * `quotedPostAndOwner [quotedPostId, $ownerId]`, or v3's chronological
- * `quotesOfPost`/`quotesOfReply [<field>, $createdAt]` (v3 dropped the
+ * `quotedPostAndOwner [quotedPostId, $ownerId]`, or v9's chronological
+ * `quotesOfPost`/`quotesOfReply [<field>, $createdAt]` (v9 dropped the
  * uniqueness — quotes are content, so the same author may quote a target twice).
  */
 export async function fetchQuotePosts(

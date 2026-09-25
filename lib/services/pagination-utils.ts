@@ -300,7 +300,7 @@ export async function rangeDistinctCount(
  * So a target-first index is queried once per target, with bounded concurrency.
  *
  * `field` names the identifier property holding the target id. It defaults to
- * `postId`, which is what every v2 doctype uses; the v3 topology's `likeReply`
+ * `postId`, which is what every v2 doctype uses; the v9 topology's `likeReply`
  * names it `replyId` instead.
  *
  * Returns the set of matching target ids; on error logs `errorLabel` and returns

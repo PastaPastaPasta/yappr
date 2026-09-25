@@ -112,7 +112,7 @@ describe('propertyAgreement rejections (40127)', () => {
 })
 
 // Protocol 14 (Platform 4.2.0-beta.3) rejections the app can hit against the
-// live v7 contract. Each message is quoted from its `#[error(...)]` format in
+// live social contract. Each message is quoted from its `#[error(...)]` format in
 // rs-dpp so the matchers pin what Drive renders, and each is asserted permanent
 // (never retried, never categorised as a network or YAPP problem).
 describe('protocol-14 rejections', () => {
@@ -212,17 +212,17 @@ describe('protocol-14 rejections', () => {
 
   it('offers the credits way out of an insufficient balance only where the contract has one', async () => {
     const shortOfYapp = new Error('Identity 9t2e does not have enough token balance, code=40700')
-    // v8 prices post/reply/like optionally, so credits are a real alternative.
+    // v9 prices post/reply/like optionally, so credits are a real alternative.
     vi.resetModules()
-    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v8')
-    const v8 = await import('./error-utils')
-    expect(v8.categorizeError(shortOfYapp)).toMatch(/credits/i)
-    // v7's costs are required: naming credits there would be advice that cannot work.
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9')
+    const v9 = await import('./error-utils')
+    expect(v9.categorizeError(shortOfYapp)).toMatch(/credits/i)
+    // v2's costs are required: naming credits there would be advice that cannot work.
     vi.resetModules()
-    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v7')
-    const v7 = await import('./error-utils')
-    expect(v7.categorizeError(shortOfYapp)).not.toMatch(/credits/i)
-    expect(v7.categorizeError(shortOfYapp)).toMatch(/enough YAPP/i)
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v2')
+    const v2 = await import('./error-utils')
+    expect(v2.categorizeError(shortOfYapp)).not.toMatch(/credits/i)
+    expect(v2.categorizeError(shortOfYapp)).toMatch(/enough YAPP/i)
   })
 
   it('keeps the frozen-account message for a frozen token account, not the moderation one', () => {

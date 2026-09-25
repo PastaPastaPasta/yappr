@@ -51,7 +51,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
         { followingId: identifierStringToDocumentBytes(targetUserId) }
       );
 
-      // On the v3 contract `follow.followingId` declares `refersTo: identity`,
+      // On the v9 contract `follow.followingId` declares `refersTo: identity`,
       // so consensus refuses a follow of an identity that is not on chain.
       // createDocument reports that as a failed result rather than throwing, so
       // promote it into the throw path the UI already treats as toast-worthy.

@@ -7,7 +7,7 @@ vi.mock('@/lib/feed/composite-feed-page', () => ({ loadCompositeFeedPage: mocks.
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
-  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v8');
+  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9');
   mocks.viewer = 'viewerA';
   mocks.hydrate.mockResolvedValue({ rawPosts: [{ $id: 'post1234' }], posts: [], preloaded: {} });
 });

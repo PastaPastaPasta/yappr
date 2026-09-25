@@ -202,7 +202,7 @@ interface SettingsState {
   setSensitiveContentMode: (mode: SensitiveContentMode) => void
   /**
    * How YAPP-priced writes are paid on a contract whose token cost is
-   * OPTIONAL (v8): in YAPP (the contract owner then sponsors the gas when
+   * OPTIONAL (v9): in YAPP (the contract owner then sponsors the gas when
    * able) or in credits (no token, no sponsorship). `yapp` is the default and
    * falls back to credits when the balance does not cover the cost — see
    * lib/payment-preference.ts.

@@ -110,11 +110,11 @@ export function PostCard({
   const isOwnPost = isOwnPostProp ?? viewerId === post.author.id
 
   // Which document type this card shows. Every engagement dispatches on it: the
-  // v3 topology gives posts and replies different interaction doctypes, and
+  // v9 topology gives posts and replies different interaction doctypes, and
   // forbids reposting or bookmarking a reply at all.
   const targetKind = targetKindOf(post)
   const isReply = targetKind === 'reply'
-  // On v3 posts are permanent: "delete" blanks the document and flags it.
+  // On v9 posts are permanent: "delete" blanks the document and flags it.
   const tombstones = deletesAreTombstones()
   const [locallyTombstoned, setLocallyTombstoned] = useState(false)
   // A moderator removed it from this card: the document is GONE (not a
@@ -183,7 +183,7 @@ export function PostCard({
   const { open: openDeleteModal } = useDeleteConfirmationModal()
   const { open: openModeratorRemoveModal } = useModeratorRemoveModal()
   // The contract's moderation team may delete someone else's post outright
-  // (v8). Their own posts they tombstone like everyone else.
+  // (v9). Their own posts they tombstone like everyone else.
   const canModerate = useIsModerator() && !isOwnPost && moderatorDeletableTypes().includes(targetKind)
   // Whether each hashtag/mention index document actually landed on Platform.
   const { validations: hashtagValidations } = usePostFieldValidation('hashtag', post)

@@ -1,7 +1,7 @@
 /**
  * Tombstone-by-edit: the "delete" path for permanent documents.
  *
- * The v3 topology declares `post` and `reply` as `canBeDeleted: false` (so that
+ * The v9 topology declares `post` and `reply` as `canBeDeleted: false` (so that
  * every `refersTo` reference to them stays resolvable forever) and
  * `documentsMutable: true`. Consensus therefore rejects a delete outright, and
  * removing a post means *replacing* it with an empty one flagged `deleted: true`.
@@ -38,8 +38,8 @@ export interface TombstoneParams {
    * an absent one stays absent (an untagged post has no `hashtag`, a direct
    * reply no `replyToReplyId`).
    *
-   * From contract v7 this set is the doctype's consensus-`immutable` list, so
-   * omitting an entry is no longer a silent field loss: a replace that DROPS a
+   * On v9 this set is the doctype's consensus-`immutable` list, so omitting
+   * an entry is not a silent field loss: a replace that DROPS a
    * frozen property is rejected with 40128 exactly like one that changes it.
    */
   preserve: TombstonePreservation;
@@ -50,7 +50,7 @@ export interface TombstoneParams {
  * nothing else beyond the named required fields. Returns false (without
  * throwing) when the document cannot be read or the replace is rejected.
  *
- * From v8 the references a post carries are `deletableDocument` references,
+ * On v9 the references a post carries are `deletableDocument` references,
  * and a replace re-validates every one of them: a quote of a post a moderator
  * has since removed cannot be tombstoned with its `quotedPostId` intact
  * (40120, ReferencedEntityNotFound). Clearing that dead reference is the one
@@ -89,8 +89,7 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
       const base58 = identifierToBase58(stored);
       if (base58) replacement[field] = identifierStringToDocumentBytes(base58);
       else if (stored !== undefined && stored !== null) {
-        // Present but undecodable. Dropping it silently used to lose a field;
-        // on v7 it becomes a 40128, which the handler below would otherwise
+        // Present but undecodable. Dropping it would be a 40128, which the handler below would otherwise
         // blame on the descriptor. Name the real cause here instead.
         logger.error(
           `Tombstone of ${documentType} ${documentId}: stored ${field} could not be decoded as an ` +

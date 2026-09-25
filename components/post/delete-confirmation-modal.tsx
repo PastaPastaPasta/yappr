@@ -11,7 +11,7 @@ import { deletesAreTombstones, targetKindOf } from '@/lib/contract-topology'
 export function DeleteConfirmationModal() {
   const { isOpen, post, isDeleting, onConfirm, close, setDeleting } = useDeleteConfirmationModal()
 
-  // On the v3 topology `post` and `reply` are `canBeDeleted: false`, so this
+  // On the v9 topology `post` and `reply` are `canBeDeleted: false`, so this
   // action blanks the document rather than removing it. Promising the user a
   // permanent removal there would be a lie, and the difference is exactly the
   // thing they might care about.

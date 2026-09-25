@@ -16,7 +16,7 @@ export interface PostInteractionState {
 
 /**
  * Stats and interactions are cached and deduplicated per (surface, id): a `post`
- * id and a `reply` id are drawn from the same keyspace but, on the v3 topology,
+ * id and a `reply` id are drawn from the same keyspace but, on the v9 topology,
  * are answered by different doctypes.
  */
 function statsCacheKey(target: KindedTarget): string {
@@ -44,7 +44,7 @@ export async function fetchPostStats(
       likeService.countLikes(postId, kind),
       // A kind the topology forbids reposting has no repost doctype to count.
       repostIndexFor(kind) ? repostService.countReposts(postId) : Promise.resolve(0),
-      // Polymorphic on v2 (one `parentId` count tree serves both kinds); on v3 a
+      // Polymorphic on v2 (one `parentId` count tree serves both kinds); on v9 a
       // post counts its whole thread and a reply its direct children.
       replyService.countReplies(postId, kind),
       postService.countQuotes(postId, kind),

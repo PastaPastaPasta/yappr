@@ -323,12 +323,12 @@ class ModerationService {
     }
   }
 
-  /** The document types a moderator may remove (`post`, `reply` on v8). */
+  /** The document types a moderator may remove (`post`, `reply` on v9). */
   canRemove(kind: TargetKind): boolean {
     return moderatorDeletableTypes().includes(kind);
   }
 
-  /** True when the contract keeps a warning list (a v8 re-cut with `warnings: true`). */
+  /** True when the contract keeps a warning list (`warnings: true`, as v9 declares). */
   canWarn(): boolean {
     return contractKeepsWarnings();
   }

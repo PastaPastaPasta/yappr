@@ -11,7 +11,6 @@ import { documentCount, groupedDocumentCount } from './pagination-utils';
 import { profileDataByOwnerId } from './post-enrichment-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import {
-  authorFieldIsRequired,
   hasFlatThreads,
   replyCountFieldFor,
   replyLinkage,
@@ -22,7 +21,7 @@ import {
 
 /**
  * Replies per page in a thread view. v2 keeps its historical 20 (one level of a
- * tree); on v3 one query covers the whole thread, so the page is larger.
+ * tree); on v9 one query covers the whole thread, so the page is larger.
  */
 function replyPageSize(): number {
   return hasFlatThreads() ? 50 : 20;
@@ -32,7 +31,7 @@ function replyPageSize(): number {
 export interface ReplyTarget {
   /** The post at the root of the thread. On v2 this is the direct parent. */
   rootPostId: string;
-  /** Set when replying to a reply rather than to the root post (v3 only). */
+  /** Set when replying to a reply rather than to the root post (v9 only). */
   replyToReplyId?: string;
   /** Owner of the DIRECT target — what notification queries key on. */
   parentOwnerId: string;
@@ -71,7 +70,7 @@ class ReplyService extends BaseDocumentService<Reply> {
     const content = (data.content || doc.content || '') as string;
     const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
-    // Parent linkage, in whichever fields this topology declares. On v3 the
+    // Parent linkage, in whichever fields this topology declares. On v9 the
     // thread root and the presentational parent are separate properties, and
     // `parentId` is derived as "the thing this reply is a direct answer to" so
     // every pre-topology consumer of it keeps working.
@@ -158,17 +157,14 @@ class ReplyService extends BaseDocumentService<Reply> {
   /**
    * Blank a reply in place, leaving a tombstone.
    *
-   * The v3 `reply` doctype is `canBeDeleted: false`, so this is what "delete"
+   * The v9 `reply` doctype is `canBeDeleted: false`, so this is what "delete"
    * means there. Content, media and every encrypted field are dropped; the parent
    * linkage survives, INCLUDING the optional `replyToReplyId` — a tombstone is
    * still rendered in the thread, so losing its nesting would move it (and every
    * live reply under it) to the top of the thread.
    */
   async tombstoneReply(replyId: string, ownerId: string): Promise<boolean> {
-    // On v4-v6 the required poster-attested `author` is part of the preserved
-    // set (it must keep equalling $ownerId, and existing likeReply rows repeat
-    // it under the consensus-checked agreement); on v7 the column is gone and
-    // the preserved set is exactly the doctype's `immutable` list.
+    // The preserved set is exactly the doctype's `immutable` list.
     const ok = await tombstoneDocument({
       contractId: this.contractId,
       documentType: this.documentType,
@@ -212,12 +208,6 @@ class ReplyService extends BaseDocumentService<Reply> {
     };
     if (replyToReplyField && target.replyToReplyId) {
       data[replyToReplyField] = identifierStringToDocumentBytes(target.replyToReplyId);
-    }
-    // v4-v6: poster-attested author (== $ownerId), the propertyAgreement
-    // source for likeReply.replyAuthor. v7 binds it to `reply.$ownerId`
-    // directly, so nothing is written here.
-    if (authorFieldIsRequired()) {
-      data.author = identifierStringToDocumentBytes(ownerId);
     }
 
     // Handle encryption if provided
@@ -268,7 +258,7 @@ class ReplyService extends BaseDocumentService<Reply> {
    * Get a thread's replies.
    *
    * On v2 this is one level of the tree: the direct replies to `rootPostId`, via
-   * `parentAndTime [parentId, $createdAt]`. On v3 it is the WHOLE thread in one
+   * `parentAndTime [parentId, $createdAt]`. On v9 it is the WHOLE thread in one
    * query, via `rootAndTime [rootPostId, $createdAt]` — nesting is reconstructed
    * client-side from `replyToReplyId`.
    *
@@ -277,7 +267,7 @@ class ReplyService extends BaseDocumentService<Reply> {
    * `usePostDetail`'s Load More) instead of silently truncating a busy thread the
    * way the old hardcoded `limit: 20` did.
    *
-   * @param rootPostId - The thread root (v3) or the direct parent (v2)
+   * @param rootPostId - The thread root (v9) or the direct parent (v2)
    * @param options - Query options
    */
   async getReplies(rootPostId: string, options: QueryOptions & PostQueryOptions = {}): Promise<DocumentResult<Reply>> {
@@ -382,7 +372,7 @@ class ReplyService extends BaseDocumentService<Reply> {
    * Returns a Map of parentId -> replies array.
    * Used for building 2-level threaded reply trees.
    *
-   * Only the v2 path needs this: on v3 `getReplies` already returns the whole
+   * Only the v2 path needs this: on v9 `getReplies` already returns the whole
    * thread in one query and nesting is a client-side grouping.
    */
   async getNestedReplies(
@@ -451,7 +441,7 @@ class ReplyService extends BaseDocumentService<Reply> {
   /**
    * Count replies to a post/reply.
    *
-   * The count tree used depends on the target kind, because on v3 "replies to a
+   * The count tree used depends on the target kind, because on v9 "replies to a
    * post" means the whole thread (`byRoot`) while "replies to a reply" means its
    * direct children (`byReplyToReply`). On v2 both resolve to `byParent`, so this
    * stays the single polymorphic query it has always been.
@@ -557,7 +547,7 @@ class ReplyService extends BaseDocumentService<Reply> {
  *
  * A thread's encryption belongs to the ROOT post's author: anyone who can read
  * the root can read every reply under it. Where a reply names its root directly
- * (v3) that is one lookup. On v2 the only link is the polymorphic direct parent,
+ * (v9) that is one lookup. On v2 the only link is the polymorphic direct parent,
  * so the chain has to be walked — which is what `walkEncryptionSource` below does.
  */
 export async function getEncryptionSource(

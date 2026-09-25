@@ -1,15 +1,16 @@
 /**
- * Everything that differs between the v2 and v3 contract interaction
- * topologies, in one frozen descriptor.
+ * Everything that differs between the two social contract interaction
+ * topologies that exist on chain, in one frozen descriptor.
  *
- * The v3 contract (PLAN_CONTRACT_V3_TOPOLOGY.md) replaces every polymorphic
- * identifier field with a mono-typed, `refersTo`-checked one. That splits what
- * used to be a single query surface in two: a like of a post lands in `like`, a
- * like of a reply in `likeReply`; a reply names its thread root and its
- * presentational parent separately; reposts and bookmarks stop accepting reply
- * ids at all. Which surface a lookup uses therefore depends on whether the thing
- * being looked at is a `post` document or a `reply` document — its
- * {@link TargetKind}.
+ * `v2` is the testnet contract (staging, production, /testing). `v9` is the
+ * moutai devnet contract (`contracts/yappr-social-contract-v9.json`,
+ * docs/SOCIAL_V9.md), which replaces every polymorphic identifier field with a
+ * mono-typed, `refersTo`-checked one. That splits what used to be a single
+ * query surface in two: a like of a post lands in `like`, a like of a reply in
+ * `likeReply`; a reply names its thread root and its presentational parent
+ * separately; reposts and bookmarks stop accepting reply ids at all. Which
+ * surface a lookup uses therefore depends on whether the thing being looked at
+ * is a `post` document or a `reply` document — its {@link TargetKind}.
  *
  * On **v2 both kinds resolve to identical surfaces**, which is what lets the
  * kind-aware plumbing issue byte-identical queries to the pre-topology code:
@@ -21,8 +22,7 @@
  * app believes it is talking to part-way through a session.
  */
 
-import { CONTRACT_TOPOLOGIES, getContractTopology, type ContractTopology } from './constants'
-import socialContractV8 from '@/contracts/yappr-social-contract-v8.json'
+import { getContractTopology, type ContractTopology } from './constants'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 
 /**
@@ -68,16 +68,14 @@ export interface OwnedTargetIndex {
  * the target document rather than computing anything.
  */
 export interface IndexOnlyLikeShape {
-  /** Property naming the target's author — agreement-bound to `<target>.author`. */
+  /** Property naming the target's author — agreement-bound to `<target>.$ownerId`. */
   authorField: string
   /**
    * Property carrying the post's hashtag (agreement-bound to `post.hashtag`),
-   * or null on a doctype without one (`likeReply`). How "untagged" is spelled
-   * depends on the topology: v4 writes the `''` sentinel, while on v5 the
-   * property is optional and an untagged like OMITS it — absence-aware
-   * propertyAgreement treats both-absent as agreement, and sending `''`
-   * against an absent `post.hashtag` would be a 40127 mismatch. See
-   * {@link hashtagIsOptional}.
+   * or null on a doctype without one (`likeReply`). The property is optional
+   * and an untagged like OMITS it — absence-aware propertyAgreement treats
+   * both-absent as agreement, and sending `''` against an absent
+   * `post.hashtag` would be a 40127 mismatch.
    */
   hashtagField: string | null
 }
@@ -87,11 +85,11 @@ export interface InteractionSurface {
   /** Likes of this kind. */
   like: OwnedTargetIndex
   /**
-   * Set when this kind's like doctype is `indexOnly` (v4): creates must carry
+   * Set when this kind's like doctype is `indexOnly` (v9): creates must carry
    * the agreement-bound denormalizations, unlike is a delete-by-values needing
    * the full tuple (including the consensus `$createdAt`), and nothing may key
    * state off a like document's `$id` (create-time and query-synthesized ids
-   * differ). Null on v2/v3, where likes are ordinary stored documents.
+   * differ). Null on v2, where likes are ordinary stored documents.
    */
   indexOnlyLike: IndexOnlyLikeShape | null
   /** Reposts of this kind, or null when the topology forbids reposting it. */
@@ -107,7 +105,7 @@ export interface InteractionSurface {
   /**
    * The `reply` property whose count tree answers "how many replies does this
    * have?" for this kind. On v2 both kinds group on the polymorphic `parentId`.
-   * On v3 a post's reply count is its whole thread (`rootPostId`) while a
+   * On v9 a post's reply count is its whole thread (`rootPostId`) while a
    * reply's is its direct children (`replyToReplyId`).
    */
   replyCountField: string
@@ -118,7 +116,7 @@ export interface ReplyLinkage {
   /**
    * The field a whole-thread fetch and the thread-size count tree key on. On v2
    * this is the polymorphic `parentId` (the *direct* parent, so a thread must be
-   * walked); on v3 it is `rootPostId`, which every reply in a thread shares.
+   * walked); on v9 it is `rootPostId`, which every reply in a thread shares.
    */
   root: string
   /**
@@ -132,12 +130,10 @@ export interface ReplyLinkage {
  * The properties a tombstone REPLACE has to carry over from the stored
  * document, split by how `tombstoneDocument` has to re-encode them.
  *
- * On v3–v6 this is "whatever the contract lists as `required`, plus the fields
- * blanking would break" — a convention maintained by hand. On v7 it is exactly
- * the doctype's `immutable` list minus `deleted` (which the tombstone sets
- * itself, under `immutableAllowSetting`): consensus rejects a replace that
- * changes, adds OR DROPS a frozen property with 40128, so an incomplete
- * preserve set is no longer a silent data loss but a hard rejection.
+ * On v9 it is exactly the doctype's `immutable` list minus `deleted` (which
+ * the tombstone sets itself, under `immutableAllowSetting`): consensus rejects
+ * a replace that changes, adds OR DROPS a frozen property with 40128, so an
+ * incomplete preserve set is a hard rejection rather than a silent data loss.
  * `lib/contract-topology.test.ts` pins these lists against the contract JSON.
  */
 export interface TombstonePreservation {
@@ -161,7 +157,7 @@ export interface ContractTopologyDescriptor {
 const NOTHING_PRESERVED: TombstonePreservation = { identifiers: [], scalars: [] }
 
 /**
- * A reply's parent linkage, preserved on every topology that tombstones.
+ * A reply's parent linkage, preserved by every reply tombstone.
  * `replyToReplyId` is optional and `tombstoneDocument` skips absent fields, so
  * a direct reply reproduces its absence; losing it would move the tombstone —
  * and every live reply nested under it — to the top of the thread.
@@ -172,18 +168,14 @@ const REPLY_LINKAGE_PRESERVED: TombstonePreservation = {
 }
 
 /**
- * The engagement surface of a `post`, encoded exactly as the chain declares it.
+ * v2's engagement surface, encoded exactly as the chain declares it.
  *
  * The index orders matter and are NOT uniform: `like.postAndOwner` is
  * `[postId, $ownerId]` while `repost.ownerAndPost` and `bookmark.ownerAndPost`
- * are `[$ownerId, postId]`.
- *
- * Both topologies keep this surface unchanged, and on v2 a *reply* resolves to
- * it too — every v2 identifier field is polymorphic over post|reply — so it is
- * shared by all three slots below and the descriptors differ only where the
- * topologies genuinely differ.
+ * are `[$ownerId, postId]`. Every v2 identifier field is polymorphic over
+ * post|reply, so a reply resolves to this surface too.
  */
-const POST_INTERACTIONS: InteractionSurface = {
+const V2_INTERACTIONS: InteractionSurface = {
   like: { docType: 'like', field: 'postId', ownerFirst: false, ownerField: 'postOwnerId' },
   indexOnlyLike: null,
   repost: { docType: 'repost', field: 'postId', ownerFirst: true, ownerField: 'postOwnerId' },
@@ -192,190 +184,47 @@ const POST_INTERACTIONS: InteractionSurface = {
   replyCountField: 'parentId',
 }
 
-/**
- * v3's post surface: same engagement doctypes, thread-wide reply count — and an
- * OWNER-FIRST like index. The v3 contract declares `like.ownerAndPost` as
- * `[$ownerId, postId]` (v2's `postAndOwner` was `[postId, $ownerId]`), which is
- * what lets `queryOwnedPostIds` batch the whole "did I like these?" page into
- * one `in` query instead of a per-target fan-out. Uniqueness is order-
- * independent; likers listings ride `byPost`; see PLAN_CONTRACT_V3_TOPOLOGY.md.
- */
-const V3_POST_INTERACTIONS: InteractionSurface = {
-  ...POST_INTERACTIONS,
-  like: { ...POST_INTERACTIONS.like, ownerFirst: true },
-  replyCountField: 'rootPostId',
-}
-
-/** v2 — today's deployed contract. Both kinds share every surface. */
+/** v2 — testnet (staging, production, /testing). Both kinds share every surface. */
 const V2_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v2',
   replyLinkage: { root: 'parentId', replyToReply: null },
-  interactions: { post: POST_INTERACTIONS, reply: POST_INTERACTIONS },
+  interactions: { post: V2_INTERACTIONS, reply: V2_INTERACTIONS },
   // v2 posts and replies are ordinary deletable documents, so a delete is a
   // delete and no tombstone is ever built ({@link deletesAreTombstones}).
   tombstonePreserves: { post: NOTHING_PRESERVED, reply: NOTHING_PRESERVED },
 }
 
 /**
- * v3 — the flat-thread interaction topology. Never promoted beyond devnet and
- * superseded on-chain by v4; its contract JSON was dropped from the repo (see
- * git history for `contracts/yappr-social-contract-v3-topology.json`).
+ * v9 — `contracts/yappr-social-contract-v9.json`, the moutai devnet
+ * (docs/SOCIAL_V9.md).
  *
- * Reply likes move to `likeReply.replyId`; repost and bookmark keep only their
- * post surfaces (consensus rejects a reply id outright now, so the nulls here
- * mirror a chain-level rule rather than a client convention); quotes of replies
- * use the second `post.quotedReplyId` field.
- */
-const V3_DESCRIPTOR: ContractTopologyDescriptor = {
-  topology: 'v3',
-  replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId' },
-  tombstonePreserves: {
-    // `language` is the only required content property on v3's post.
-    post: { identifiers: [], scalars: ['language'] },
-    reply: REPLY_LINKAGE_PRESERVED,
-  },
-  interactions: {
-    post: V3_POST_INTERACTIONS,
-    reply: {
-      like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyOwnerId' },
-      indexOnlyLike: null,
-      repost: null,
-      bookmark: null,
-      quoteField: 'quotedReplyId',
-      replyCountField: 'replyToReplyId',
-    },
-  },
-}
-
-/**
- * v4 — `contracts/yappr-social-contract-v4.json` (the like overhaul).
- *
- * Same document graph as v3 except for likes and hashtags:
- *
- * - `like`/`likeReply` are **indexOnly**: no stored body, structural
+ * - **Flat threads.** A reply names its thread root (`rootPostId`) and the
+ *   reply it nests under (`replyToReplyId`) separately; a post's reply count
+ *   is its whole thread, a reply's its direct children.
+ * - **Mono-typed references.** Reply likes live in `likeReply.replyId`;
+ *   repost and bookmark keep only their post surfaces (consensus rejects a
+ *   reply id outright, so the nulls mirror a chain rule); quotes of replies
+ *   use the second `post.quotedReplyId` field.
+ * - **indexOnly likes.** `like`/`likeReply` have no stored body: structural
  *   one-like-per-(target, owner) uniqueness, delete-by-values with refund. The
- *   liked-state queries keep v3's owner-first shapes — `[$ownerId ==, target ==]`
- *   and the batched `[$ownerId ==, target in [...]]` — which lower onto the
- *   `byLiker [$ownerId] → target` projection. `postOwnerId`/`replyOwnerId` are
- *   replaced by the agreement-bound `postAuthor`/`replyAuthor`, and the
- *   notification index becomes `byAuthorTimePost [postAuthor, $createdAt,
- *   postId]` / `byAuthorTimeReply` — the same `[ownerField, $createdAt]` query
- *   shape the v2/v3 notification reads use.
- * - `like` additionally repeats the post's `hashtag` (agreement-bound), feeding
- *   the per-tag ranked axis.
- * - The `postHashtag` doctype is GONE: a post carries one inline `hashtag`
- *   property (`''` = untagged) and tag listings ride `post.tagAndTime`.
- * - `post`/`reply` gain a required poster-attested `author` identifier that the
- *   like agreements bind to; the client writes it equal to `$ownerId`.
+ *   liked-state reads are owner-first — `[$ownerId ==, target ==]` and the
+ *   batched `[$ownerId ==, target in [...]]` — lowering onto `byLiker`.
+ *   `postAuthor`/`replyAuthor` are bound to the target's `$ownerId` by a
+ *   system-field `propertyAgreement`, and `like.hashtag` to `post.hashtag`.
+ * - **Tombstones.** `post` and `reply` are permanent and declare `immutable`
+ *   lists; the preserve sets below are exactly those lists minus `deleted`,
+ *   which the tombstone sets itself under `immutableAllowSetting`.
  */
-const V4_DESCRIPTOR: ContractTopologyDescriptor = {
-  topology: 'v4',
+const V9_POST_INTERACTIONS: InteractionSurface = {
+  ...V2_INTERACTIONS,
+  like: { docType: 'like', field: 'postId', ownerFirst: true, ownerField: 'postAuthor' },
+  indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag' },
+  replyCountField: 'rootPostId',
+}
+
+const V9_DESCRIPTOR: ContractTopologyDescriptor = {
+  topology: 'v9',
   replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId' },
-  tombstonePreserves: {
-    // `author` must keep equalling `$ownerId`, and `hashtag` cannot be blanked
-    // because existing likes repeat it under a consensus-checked agreement.
-    post: { identifiers: ['author'], scalars: ['language', 'hashtag'] },
-    reply: { identifiers: [...REPLY_LINKAGE_PRESERVED.identifiers, 'author'], scalars: [] },
-  },
-  interactions: {
-    post: {
-      ...V3_POST_INTERACTIONS,
-      like: { docType: 'like', field: 'postId', ownerFirst: true, ownerField: 'postAuthor' },
-      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag' },
-    },
-    reply: {
-      like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyAuthor' },
-      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null },
-      repost: null,
-      bookmark: null,
-      quoteField: 'quotedReplyId',
-      replyCountField: 'replyToReplyId',
-    },
-  },
-}
-
-/**
- * v5 — `contracts/yappr-social-contract-v5.json` (the dev.6 re-cut,
- * PLAN_DEV6_V5.md).
- *
- * The document graph and every doctype/field name are v4's — the descriptor
- * shape is identical — and what changes is expressed through the capability
- * helpers below rather than new fields:
- *
- * - `hashtag` (post AND like) is **optional**: an untagged post omits the
- *   property instead of writing v4's `''` sentinel, and a like mirrors the
- *   post's absence exactly ({@link hashtagIsOptional}). `like.byHashtagPost`
- *   is `skipIfAbsent`, so untagged likes write no per-tag index entries and
- *   the index is a tagged-only sparse projection. maxLength shrinks 63 → 61
- *   (the ranked key-size ceiling; {@link hashtagMaxLength}).
- * - the at-form `rankedCountable` chains (`byHashtagPost {at: hashtag}`,
- *   `byAuthorPost {at: [postAuthor, postId]}`) serve proved PREFIX rankings —
- *   trending hashtags and the creator leaderboard
- *   ({@link prefixRankingsAvailable}) — on top of the terminal rankings v4
- *   already had.
- * - `follow.followerCount [followingId]` gains the full ranked chain, so
- *   most-followed is a proved ranking too ({@link followRankingsAvailable}).
- */
-const V5_DESCRIPTOR: ContractTopologyDescriptor = {
-  ...V4_DESCRIPTOR,
-  topology: 'v5',
-}
-
-/**
- * v6 — `contracts/yappr-social-contract-v6.json` (the dev.8 cut,
- * docs/V6_WINDOWED_RANKINGS.md).
- *
- * v5's graph and fields, plus TIME-BOUNDED rankings — the same three ranked
- * axes v5 already serves, each twinned under a daily `timeRange` bucket so the
- * node returns the top-K of TODAY, ordered and proved, in one query:
- *
- * - `like.byDayPost` / `like.byDayAuthorPost` — today's most-liked posts,
- *   today's top creators, today's top posts per author
- *   ({@link windowedRankingsAvailable}).
- * - a tagged-only indexOnly `beat` doctype carrying `byDayHashtagPost` —
- *   today's trending hashtags and today's top posts per tag. `like.hashtag`
- *   is optional (v5), and an optional property may only lead a
- *   `skipIfAbsent` index, so the windowed hashtag axis cannot live on `like`;
- *   the client writes one `beat` beside every like of a TAGGED post, in the
- *   second transition once the like has landed (a document batch is capped
- *   at ONE transition on this network, so the pair is sequential, not
- *   atomic), and deletes it beside the unlike
- *   ({@link beatCompanionFor}).
- */
-const V6_DESCRIPTOR: ContractTopologyDescriptor = {
-  ...V4_DESCRIPTOR,
-  topology: 'v6',
-}
-
-/**
- * v7 — `contracts/yappr-social-contract-v7.json` (the 4.2.0-beta.2 cut,
- * docs/PLATFORM_BETA2_UPGRADE.md).
- *
- * Every index, terminal, ranked axis and `timeRange` window is v6's, so every
- * read this module describes is unchanged and the descriptor differs only in
- * what the CLIENT no longer has to do:
- *
- * - **No attested `author`.** beta.2 lets a `propertyAgreement` name the
- *   referenced document's `$ownerId`, so `like.postAuthor` binds to
- *   `post.$ownerId` and `likeReply.replyAuthor` to `reply.$ownerId` directly.
- *   The duplicated column is gone from both doctypes
- *   ({@link authorFieldIsRequired} is false): posts and replies stop writing
- *   it, tombstones stop preserving it, and `Post.author.id` keeps coming from
- *   `$ownerId` as it always did. The value tuples a like writes are
- *   shape-identical — `postAuthor` is still the target's owner id, which is
- *   exactly what the client already passed.
- * - **Consensus-enforced immutability.** `post` and `reply` declare
- *   `immutable` lists, so the structural fields a tombstone had to copy by
- *   convention are frozen by the chain, and a replace that drops one is
- *   refused with 40128 ({@link isImmutablePropertyChangedError}). The preserve
- *   sets below are exactly those lists minus `deleted`, which the tombstone
- *   sets itself under `immutableAllowSetting`.
- * - `repost.postId` binds `{ postOwnerId: '$ownerId' }`, which needs no client
- *   change: the one caller already passes the reposted post's owner.
- */
-const V7_DESCRIPTOR: ContractTopologyDescriptor = {
-  ...V4_DESCRIPTOR,
-  topology: 'v7',
   tombstonePreserves: {
     post: {
       // post.immutable minus `deleted`: the quote graph and the embed triple
@@ -388,62 +237,17 @@ const V7_DESCRIPTOR: ContractTopologyDescriptor = {
     },
     reply: REPLY_LINKAGE_PRESERVED,
   },
-}
-
-/**
- * v8 — `contracts/yappr-social-contract-v8.json` (the 4.2.0-beta.3 cut,
- * docs/SOCIAL_V8.md).
- *
- * v7's indexes, fields and preserve sets exactly; the descriptor is v7's with
- * the name changed, and everything v8 adds is expressed through the grammar
- * helpers below, read off the contract JSON itself:
- *
- * - **Contract moderation.** The contract keeps a banlist and a suspension
- *   list, and `post`/`reply` are `canBeDeletedByModerators`. A moderator-
- *   removed post is ABSENT: a fetch returns nothing, a composite by-id join
- *   lists its id in `missingIds`, and every reference at it
- *   (`like.postId`, `reply.rootPostId`, `post.quotedPostId`, ...) is a
- *   `deletableDocument` reference that may resolve to nothing
- *   ({@link referencesMayDangle}). `preallocated` is gone from the like
- *   indexes with it ({@link likeCountsArePreallocated}).
- * - **Free usage.** The five YAPP costs are `optional` with
- *   `gasFeesPaidBy: PreferContractOwner`: a create MAY carry token payment
- *   (YAPP charged, owner pays gas when able) or leave it out (credits, no
- *   sponsorship) — {@link tokenCostFor}.
- * - **Starter grant.** 100 YAPP claimable once per identity
- *   ({@link starterGrantAmount}).
- * - **Action fees.** `post.create` / `reply.create` charge credits into the
- *   moderators pot, and the transition must agree to the exact declared
- *   amounts ({@link declaredActionFee}).
- */
-const V8_DESCRIPTOR: ContractTopologyDescriptor = {
-  ...V7_DESCRIPTOR,
-  topology: 'v8',
-}
-
-/**
- * v9 — `contracts/yappr-social-contract-v9.json` (the 4.2.0-beta.4 cut,
- * docs/SOCIAL_V9.md).
- *
- * v8's indexes, fields, preserve sets, token costs, action fees and grant
- * exactly; the descriptor is v8's with the name changed. What v9 adds is
- * grammar, exposed through the helpers below and read off the contract JSON:
- *
- * - **Elected moderation** ({@link electedModeration}): the owner moderates
- *   until masternodes seat a team, which then holds ban/suspend/warn/delete on
- *   post and reply and the owner is protected from it.
- * - **Warnings** ({@link contractKeepsWarnings}): a third moderation list.
- * - **distinctFrom** ({@link ownerDistinctProperties}): self-follow,
- *   self-block, self-request and self-grant are refused by consensus (10419).
- * - **Private-feed gates** ({@link privateFeedWritesAreGated}): a grant or
- *   rekey needs the writer's own `privateFeedState`, and a grant needs a
- *   `followRequest` from its recipient.
- * - **Typed block follows** ({@link blockFollowsAreTyped}):
- *   `blockFollow.followedBlockers` is a list of identifiers, not packed bytes.
- */
-const V9_DESCRIPTOR: ContractTopologyDescriptor = {
-  ...V8_DESCRIPTOR,
-  topology: 'v9',
+  interactions: {
+    post: V9_POST_INTERACTIONS,
+    reply: {
+      like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyAuthor' },
+      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null },
+      repost: null,
+      bookmark: null,
+      quoteField: 'quotedReplyId',
+      replyCountField: 'replyToReplyId',
+    },
+  },
 }
 
 /** Recursively freezes a plain-object descriptor. */
@@ -457,12 +261,6 @@ function deepFreeze<T>(value: T): T {
 
 const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>> = {
   v2: V2_DESCRIPTOR,
-  v3: V3_DESCRIPTOR,
-  v4: V4_DESCRIPTOR,
-  v5: V5_DESCRIPTOR,
-  v6: V6_DESCRIPTOR,
-  v7: V7_DESCRIPTOR,
-  v8: V8_DESCRIPTOR,
   v9: V9_DESCRIPTOR,
 }
 
@@ -475,15 +273,12 @@ export function topologyDescriptor(): ContractTopologyDescriptor {
 }
 
 /**
- * True when the configured topology is `floor` or any later cut.
- *
- * Every capability below appeared in one cut and stayed, so "which topologies
- * have X" is a suffix of {@link CONTRACT_TOPOLOGIES} rather than a list to
- * extend on every re-cut. `authorFieldIsRequired` is the one capability that
- * was later REMOVED, and it says so as a half-open range.
+ * True on the devnet contract. Every capability below exists on v9 and not on
+ * v2; the helpers keep their own names because each call site is asking about
+ * one capability, not about which network it runs on.
  */
-function atLeast(floor: ContractTopology): boolean {
-  return CONTRACT_TOPOLOGIES.indexOf(topologyDescriptor().topology) >= CONTRACT_TOPOLOGIES.indexOf(floor)
+function isV9(): boolean {
+  return topologyDescriptor().topology === 'v9'
 }
 
 /** How reply documents name their parents on this topology. */
@@ -520,12 +315,12 @@ export function quoteFieldFor(kind: TargetKind): string | null {
  * The second property of the index a quote LISTING query must order by.
  *
  * v2's only quote index is the unique `quotedPostAndOwner [quotedPostId,
- * $ownerId]`. v3 replaces it with chronological `quotesOfPost`/`quotesOfReply
- * [<field>, $createdAt]` indexes, because uniqueness was dropped (quotes are
- * content, not toggles) and a newest-first listing is what the UI wants.
+ * $ownerId]`. v9 has chronological `quotesOfPost`/`quotesOfReply
+ * [<field>, $createdAt]` indexes instead, because uniqueness was dropped (quotes
+ * are content, not toggles) and a newest-first listing is what the UI wants.
  */
 export function quoteListingOrderProperty(): '$ownerId' | '$createdAt' {
-  return atLeast('v3') ? '$createdAt' : '$ownerId'
+  return isV9() ? '$createdAt' : '$ownerId'
 }
 
 /** The `reply` property whose count tree holds this kind's reply count. */
@@ -534,7 +329,7 @@ export function replyCountFieldFor(kind: TargetKind): string {
 }
 
 /**
- * True when replies name their thread root directly (v3's `rootPostId`) rather
+ * True when replies name their thread root directly (v9's `rootPostId`) rather
  * than chaining through a polymorphic direct parent — i.e. when a whole thread
  * is one query and nesting is a client-side grouping.
  */
@@ -570,7 +365,7 @@ export function likeSurfacesAreSplit(): boolean {
  * wait for an unconfirmed parent instead of racing it.
  */
 export function referencesAreEnforced(): boolean {
-  return atLeast('v3')
+  return isV9()
 }
 
 /**
@@ -579,13 +374,13 @@ export function referencesAreEnforced(): boolean {
  * rather than a document removal.
  */
 export function deletesAreTombstones(): boolean {
-  return atLeast('v3')
+  return isV9()
 }
 
 /**
  * The properties a tombstone of this kind must reproduce verbatim.
  *
- * From v7 these are exactly the doctype's consensus-`immutable` properties
+ * On v9 these are exactly the doctype's consensus-`immutable` properties
  * minus `deleted` (which the tombstone sets itself). Under-listing one is a
  * hard 40128 rejection rather than a silent field loss, so the list is pinned
  * against the contract JSON in `lib/contract-topology.test.ts`.
@@ -596,7 +391,7 @@ export function tombstonePreservationFor(kind: TargetKind): TombstonePreservatio
 
 /**
  * The indexOnly shape of this kind's like doctype, or null when likes are
- * ordinary stored documents (v2/v3). Non-null means: creates must carry the
+ * ordinary stored documents (v2). Non-null means: creates must carry the
  * agreement-bound fields, unlikes are deletes-by-values, confirmation resolves
  * as AffectedState rather than ExecutionProved, and like `$id`s must never be
  * used as keys or compared across sources.
@@ -605,91 +400,62 @@ export function indexOnlyLikeShapeFor(kind: TargetKind): IndexOnlyLikeShape | nu
   return interactionsFor(kind).indexOnlyLike
 }
 
-/** True when the configured topology's like doctypes are indexOnly (v4). */
+/** True when the configured topology's like doctypes are indexOnly (v9). */
 export function likesAreIndexOnly(): boolean {
   return indexOnlyLikeShapeFor('post') !== null
 }
 
 /**
  * True when a post carries its (single) hashtag inline in `post.hashtag` and
- * the `postHashtag` doctype does not exist (v4/v5). Tag listings then query
+ * the `postHashtag` doctype does not exist (v9). Tag listings then query
  * `post.tagAndTime` directly, the compose flow writes no secondary hashtag
  * documents, and there is nothing to "recover" when one is missing.
+ *
+ * The inline `hashtag` is OPTIONAL: an untagged post omits it, and a like
+ * must mirror the post's absence — absence-aware propertyAgreement treats
+ * both-absent as agreement, while writing `''` against an absent
+ * `post.hashtag` is a 40127 mismatch. `like.byHashtagPost` is `skipIfAbsent`,
+ * so untagged likes write no per-tag index entries at all.
+ *
+ * In memory `Post.hashtag === ''` still means "known untagged" (and
+ * `undefined` means "unknown — fetch the post"), so caches, `LikeTargetInfo`
+ * and the tuple plumbing round-trip absence without a third state. The
+ * `''` ↔ absent translation happens exactly once, at the chain boundary (post
+ * create, like create, unlike delete-by-values, post transform).
  */
 export function hashtagsAreInline(): boolean {
-  return atLeast('v4')
+  return isV9()
 }
 
 /**
- * True when `post`/`reply` documents must carry the poster-attested `author`
- * identifier (v4–v6) — the propertyAgreement source for likes. The client
- * always writes it equal to the signing `$ownerId`.
- *
- * FALSE again from v7: beta.2 lets the referenced side of a `propertyAgreement`
- * name the referenced document's `$ownerId`, so the like binds to the post's
- * real owner and the attested column — which consensus could only ever check
- * against ITSELF — is gone from the schema. Nothing downstream changes:
- * `Post.author.id` has always been transformed from `$ownerId`, and a like's
- * `postAuthor` value is the same identity it always was.
+ * The longest hashtag the v9 `post.hashtag`/`like.hashtag` pattern accepts:
+ * an at-level ranked string key must fit the 247-byte encoded ceiling, which
+ * 63 (v2's `postHashtag` limit) does not.
  */
-export function authorFieldIsRequired(): boolean {
-  return atLeast('v4') && !atLeast('v7')
-}
-
-/**
- * True when `hashtag` is an OPTIONAL property (v5): an untagged post omits it
- * entirely instead of writing v4's `''` sentinel, and a like must mirror the
- * post's absence — absence-aware propertyAgreement treats both-absent as
- * agreement, while writing `''` against an absent `post.hashtag` is a 40127
- * mismatch. `like.byHashtagPost` is `skipIfAbsent` there, so untagged likes
- * write no per-tag index entries at all and reads of that index only ever see
- * tagged likes.
- *
- * The CLIENT-side convention is unchanged across v4/v5: `Post.hashtag === ''`
- * still means "known untagged" everywhere in memory (and `undefined` means
- * "unknown — fetch the post"), so caches, `LikeTargetInfo` and the tuple
- * plumbing round-trip absence without a third state. The `''` ↔ absent
- * translation happens exactly once, at the chain boundary (post create, like
- * create, unlike delete-by-values, post transform).
- */
-export function hashtagIsOptional(): boolean {
-  return atLeast('v5')
-}
-
-/**
- * The longest hashtag the contract's `post.hashtag`/`like.hashtag` pattern
- * accepts. v5 shrinks it 63 → 61: an at-level ranked string key must fit the
- * 247-byte encoded ceiling, and 63 was rejected at contract validation
- * (PLAN_DEV6_V5.md D-V5-1).
- */
-export function hashtagMaxLength(): number {
-  return hashtagIsOptional() ? 61 : 63
-}
+export const HASHTAG_MAX_LENGTH = 61
 
 /**
  * True when the like doctype's at-form `rankedCountable` chains can answer
- * proved PREFIX-level ranked groupBy queries (v5): trending hashtags off
+ * proved PREFIX-level ranked groupBy queries (v9): trending hashtags off
  * `byHashtagPost {at: hashtag}` and the creator leaderboard off
- * `byAuthorPost {at: [postAuthor, postId]}`. On v4 the boolean ranked chains
- * only rank at the terminal (per-post) level and a prefix groupBy is refused
- * by the node.
+ * `byAuthorPost {at: [postAuthor, postId]}`.
  */
 export function prefixRankingsAvailable(): boolean {
-  return atLeast('v5')
+  return isV9()
 }
 
 /**
  * True when `follow.followerCount [followingId]` carries the full ranked
- * chain (v5), making "most followed" a proved ranked groupBy on `followingId`.
- * The O(1) follower COUNT (countable chain) exists on every topology and is
+ * chain (v9), making "most followed" a proved ranked groupBy on `followingId`.
+ * The O(1) follower COUNT (countable chain) exists on both topologies and is
  * not gated here.
  */
 export function followRankingsAvailable(): boolean {
-  return atLeast('v5')
+  return isV9()
 }
 
 /**
- * True when the like axes have DAILY-WINDOWED ranked twins (v6):
+ * True when the like axes have DAILY-WINDOWED ranked twins (v9):
  * `like.byDayPost` (today's top posts), `like.byDayAuthorPost` (today's top
  * creators / per-author top) and `beat.byDayHashtagPost` (today's trending
  * tags / per-tag top). A `timeRange: [{ field: '$createdAt', selector }]`
@@ -697,16 +463,16 @@ export function followRankingsAvailable(): boolean {
  * `range == step == 86400`).
  */
 export function windowedRankingsAvailable(): boolean {
-  return atLeast('v6')
+  return isV9()
 }
 
-/** The daily grid every v6 windowed index shares (seconds, as the contract declares them). */
+/** The daily grid every windowed index shares (seconds, as the contract declares them). */
 export const WINDOWED_DAY_GRID = { range: 86400, step: 86400 } as const
 
 /**
- * The `beat` companion a like must carry on v6: the tagged-only indexOnly
+ * The `beat` companion a like must carry on v9: the tagged-only indexOnly
  * doctype whose `byDayHashtagPost` serves the windowed hashtag rankings.
- * `null` when no companion is written — pre-v6 topologies, reply likes (no
+ * `null` when no companion is written — v2, reply likes (no
  * hashtag axis), and likes of UNTAGGED posts (`beat.hashtag` is required, so
  * an untagged like writes no beat, which is the skipIfAbsent economy by other
  * means). Consensus checks `beat.hashtag` against the post through the same
@@ -736,14 +502,14 @@ interface KindBearing {
 /** A Post/Reply-shaped object reduced to what thread-root resolution needs. */
 export interface ThreadBearing extends KindBearing {
   id: string
-  /** Set on v3 reply shapes: the post every reply in the thread hangs off. */
+  /** Set on v9 reply shapes: the post every reply in the thread hangs off. */
   rootPostId?: string
 }
 
 /**
  * The id of the post at the root of this object's thread.
  *
- * A top-level post is its own root. A reply names its root directly on v3; on v2
+ * A top-level post is its own root. A reply names its root directly on v9; on v2
  * the best available answer is its direct parent, which is what the pre-topology
  * code used everywhere a "root" was wanted, so v2 behaviour is unchanged.
  */
@@ -778,7 +544,7 @@ export function replyLinkageTo(target: ThreadBearing): { rootPostId: string; rep
  * when present. Untagged objects fall back to the pre-topology probe — a
  * `parentId` is only ever set on a reply — so a Post shape built somewhere this
  * refactor did not reach still resolves correctly instead of silently being
- * treated as a top-level post (which on v3 would send its like to `like` instead
+ * treated as a top-level post (which on v9 would send its like to `like` instead
  * of `likeReply`, and its delete to the post doctype). Literals that can only
  * describe a real `post` document (optimistic composes, mock data, blog-quote
  * adapters) have neither field and resolve to `post`.
@@ -820,7 +586,7 @@ export interface SurfaceGroup {
  *
  * When the topology makes both kinds identical (v2) this returns a SINGLE group
  * holding every id, so the caller issues exactly the queries it issued before
- * kinds existed. On v3 it returns up to one group per kind, preserving input
+ * kinds existed. On v9 it returns up to one group per kind, preserving input
  * order within each.
  */
 export function groupByInteractionSurface(targets: readonly KindedTarget[]): SurfaceGroup[] {
@@ -840,9 +606,9 @@ export function groupByInteractionSurface(targets: readonly KindedTarget[]): Sur
 }
 
 // ---------------------------------------------------------------------------
-// v8 grammar (4.2.0-beta.3), read off the committed contract JSON so that the
-// numbers the client shows and agrees to are the numbers consensus enforces.
-// `lib/contract-topology.test.ts` pins them.
+// Moderation, token costs, action fees and the starter grant, read off the
+// committed v9 contract JSON so that the numbers the client shows and agrees to
+// are the numbers consensus enforces. `lib/contract-topology.test.ts` pins them.
 
 /** The six document actions a contract may price. */
 export type DocumentAction = 'create' | 'replace' | 'delete' | 'transfer' | 'update_price' | 'purchase'
@@ -884,7 +650,7 @@ export interface ActionFeeDeclaration {
   readonly pricing: 'feeMultiplier' | 'fixed'
 }
 
-interface V8DocumentSchema {
+interface SocialDocumentSchema {
   canBeDeletedByModerators?: boolean
   required?: string[]
   properties?: Record<string, { refersTo?: { type?: string } }>
@@ -892,56 +658,44 @@ interface V8DocumentSchema {
   actionFees?: { pricing?: string } & Partial<Record<DocumentAction, { owner?: number; moderators?: number }>>
 }
 
-const V8_SCHEMAS = socialContractV8.documentSchemas as unknown as Record<string, V8DocumentSchema>
-const V8_GRANT = (socialContractV8.tokens['0'].distributionRules as { oncePerIdentityDistribution?: { amount: number } })
+const V9_SCHEMAS = socialContractV9.documentSchemas as unknown as Record<string, SocialDocumentSchema>
+const V9_GRANT = (socialContractV9.tokens['0'].distributionRules as { oncePerIdentityDistribution?: { amount: number } })
   .oncePerIdentityDistribution
 
 /**
- * True when the configured contract declares `moderation` (v8): identities can
+ * True when the configured contract declares `moderation` (v9): identities can
  * be banned or suspended from it, posts and replies can be removed by its
  * moderators, and `moderationStatus`/`documentRemovals` are answerable.
  */
 export function contractIsModerated(): boolean {
-  return atLeast('v8')
+  return isV9()
 }
 
 /**
- * True when a referenced post or reply may no longer exist (v8): every
+ * True when a referenced post or reply may no longer exist (v9): every
  * reference at `post`/`reply` is a `deletableDocument` reference, so a
  * quoted post, a thread root or a liked post can be ABSENT after a moderator
  * takedown. Readers match joins by id, never by position, and render the hole
  * as a removed-post stub instead of failing the page.
  */
 export function referencesMayDangle(): boolean {
-  return atLeast('v8')
-}
-
-/**
- * True when the like count trees are `preallocated` (v4–v7): a ranked page
- * then carries zero-count groups for posts nobody has liked, which callers
- * over-ask and trim. v8 loses preallocation (it needs `permanentDocument`
- * references, and a moderator-deletable post is not permanent), so the first
- * like on a post creates its count entry and ranked pages hold liked posts
- * only.
- */
-export function likeCountsArePreallocated(): boolean {
-  return likesAreIndexOnly() && !atLeast('v8')
+  return isV9()
 }
 
 /**
  * The identifier properties of `docType` a tombstone may DROP when their
- * target has been removed by a moderator (v8: `post.quotedPostId`,
+ * target has been removed by a moderator (v9: `post.quotedPostId`,
  * `post.quotedReplyId`, `reply.replyToReplyId`): the optional
  * `deletableDocument` references. A replace re-validates every such
  * reference, so keeping a dead one is 40120, and clearing it is the one change
  * to an `immutable` property consensus lets through. A REQUIRED deletable
  * reference (`reply.rootPostId`) is not listed: it cannot be cleared, so a
- * reply under a removed root cannot be tombstoned at all. Empty before v8,
- * where nothing a post points at can disappear.
+ * reply under a removed root cannot be tombstoned at all. Empty on v2, where
+ * nothing a post points at can disappear.
  */
 export function clearableReferencesFor(docType: string): readonly string[] {
   if (!referencesMayDangle()) return []
-  const schema = V8_SCHEMAS[docType]
+  const schema = V9_SCHEMAS[docType]
   if (!schema?.properties) return []
   const required = new Set(schema.required ?? [])
   return Object.entries(schema.properties)
@@ -952,20 +706,15 @@ export function clearableReferencesFor(docType: string): readonly string[] {
 /** The moderation lists a contract can keep (`config.moderation`, protocol 14). */
 export type ModerationList = 'banlist' | 'suspensions' | 'warnings'
 
-
 /**
  * The lists the configured contract keeps, as its `config.moderation`
- * declares them: v8 keeps a banlist and a suspension list; a cut that sets
- * `warnings: true` (Platform 4.2.0-beta.4, platform#4872) keeps a warning list
- * too. Reading or writing a list the contract does not keep is refused, so
- * every moderation read and write names only these. Empty off a moderated
- * topology.
+ * declares them (v9: banlist, suspensions and warnings). Reading or writing a
+ * list the contract does not keep is refused, so every moderation read and
+ * write names only these. Empty off a moderated topology.
  */
 export function moderationListsKept(): readonly ModerationList[] {
   if (!contractIsModerated()) return []
-  const declared = (atLeast('v9') ? socialContractV9.config : socialContractV8.config) as {
-    moderation?: Partial<Record<ModerationList, boolean>>
-  }
+  const declared = socialContractV9.config as { moderation?: Partial<Record<ModerationList, boolean>> }
   const moderation = declared.moderation
   if (!moderation) return []
   return (['banlist', 'suspensions', 'warnings'] as const).filter((list) => moderation[list] === true)
@@ -976,24 +725,25 @@ export function contractKeepsWarnings(): boolean {
   return moderationListsKept().includes('warnings')
 }
 
-/** The document types the contract's moderators may delete (v8: post, reply). */
+/** The document types the contract's moderators may delete (v9: post, reply). */
 export function moderatorDeletableTypes(): readonly string[] {
   if (!contractIsModerated()) return []
-  return Object.entries(V8_SCHEMAS)
+  return Object.entries(V9_SCHEMAS)
     .filter(([, schema]) => schema.canBeDeletedByModerators === true)
     .map(([name]) => name)
 }
 
 /**
  * The YAPP cost a create of `docType` declares on the configured contract, or
- * null when the type is unpriced. Before v8 the cost is required and the
- * document owner pays the gas, which is what `optional: false` and
- * `gasFeesPaidBy: 0` say.
+ * null when the type is unpriced. On v2 the cost is required and the document
+ * owner pays the gas, which is what `optional: false` and `gasFeesPaidBy: 0`
+ * say; the amounts are the same on both contracts (pinned by
+ * `lib/contract-topology.test.ts`).
  */
 export function tokenCostFor(docType: string): TokenCostDeclaration | null {
-  const create = V8_SCHEMAS[docType]?.tokenCost?.create
+  const create = V9_SCHEMAS[docType]?.tokenCost?.create
   if (!create) return null
-  if (!atLeast('v8')) return { amount: create.amount, optional: false, gasFeesPaidBy: 0 }
+  if (!isV9()) return { amount: create.amount, optional: false, gasFeesPaidBy: 0 }
   return {
     amount: create.amount,
     optional: create.optional === true,
@@ -1003,14 +753,14 @@ export function tokenCostFor(docType: string): TokenCostDeclaration | null {
 
 /**
  * The action fee a transition on `docType`/`action` must agree to, or null
- * when the action charges nothing (every action before v8). The write path
+ * when the action charges nothing (every action on v2). The write path
  * builds `$actionFeeAgreement` from exactly these numbers: a different owner
  * or moderators amount, or the other pricing, is a 40133 rejection, and no
  * agreement at all is 40132.
  */
 export function declaredActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
-  if (!atLeast('v8')) return null
-  const fees = V8_SCHEMAS[docType]?.actionFees
+  if (!isV9()) return null
+  const fees = V9_SCHEMAS[docType]?.actionFees
   if (!fees) return null
   const fee = fees[action]
   if (!fee) return null
@@ -1023,19 +773,18 @@ export function declaredActionFee(docType: string, action: DocumentAction): Acti
 
 /**
  * The YAPP every identity may claim exactly once from the configured contract
- * (v8: 100), or null when the token declares no once-per-identity grant. A
+ * (v9: 100), or null when the token declares no once-per-identity grant. A
  * second claim is refused with 40722.
  */
 export function starterGrantAmount(): bigint | null {
-  if (!atLeast('v8') || !V8_GRANT) return null
-  return BigInt(V8_GRANT.amount)
+  if (!isV9() || !V9_GRANT) return null
+  return BigInt(V9_GRANT.amount)
 }
 
 // ---------------------------------------------------------------------------
-// v9 grammar (4.2.0-beta.4), read off the committed contract JSON and pinned by
-// `lib/contract-topology.test.ts`. v9 keeps v8's token costs, action fees and
-// grant byte for byte (build-v9-contract.py asserts it), so the v8 helpers
-// above stay correct on v9.
+// Elected moderation, distinctFrom, private-feed gates and typed block
+// follows (4.2.0-beta.4), read off the committed contract JSON and pinned by
+// `lib/contract-topology.test.ts`.
 
 /** What an elected team may do on one document type. */
 export type ModerationAbility = 'deleteDocuments' | 'ban' | 'suspend' | 'warn'
@@ -1060,12 +809,12 @@ export interface ElectedModerationDeclaration {
   readonly ownerProtected: boolean
 }
 
-interface V9DocumentSchema {
+interface GrammarDocumentSchema {
   ownerRefersTo?: unknown
   properties: Record<string, { distinctFrom?: string; items?: { distinctFrom?: string } }>
 }
 
-const V9_SCHEMAS = socialContractV9.documentSchemas as unknown as Record<string, V9DocumentSchema>
+const V9_GRAMMAR_SCHEMAS = socialContractV9.documentSchemas as unknown as Record<string, GrammarDocumentSchema>
 const V9_MODERATION = socialContractV9.config.moderation as {
   moderators: {
     joinWindow: number
@@ -1082,12 +831,12 @@ const V9_MODERATION = socialContractV9.config.moderation as {
 /**
  * The elected moderation declaration (v9), or null when the contract's
  * moderators are the owner or an appointed set. Until a charter is seated the
- * interim moderates exactly as v8's owner does; once one is, only the seated
+ * contract owner moderates; once one is, only the seated
  * team may moderate (41101 for the owner) and every ban, suspension, warning or
  * deletion must name a `reason` document its proposal lists (41203).
  */
 export function electedModeration(): ElectedModerationDeclaration | null {
-  if (!atLeast('v9')) return null
+  if (!isV9()) return null
   // One frozen object per resolved topology: React effects depend on it, and a
   // fresh object per call would re-run them on every render.
   if (!electedDeclaration) electedDeclaration = deepFreeze(buildElectedDeclaration())
@@ -1114,11 +863,11 @@ function buildElectedDeclaration(): ElectedModerationDeclaration {
  * The identifier properties of `docType` that consensus refuses to equal the
  * writer (`distinctFrom: $ownerId`, 10419): v9's follow/block/followRequest/
  * privateFeedGrant targets and every element of `blockFollow.followedBlockers`.
- * Empty before v9, where only the client stops a self-follow.
+ * Empty on v2, where only the client stops a self-follow.
  */
 export function ownerDistinctProperties(docType: string): readonly string[] {
-  if (!atLeast('v9')) return []
-  return Object.entries(V9_SCHEMAS[docType]?.properties ?? {})
+  if (!isV9()) return []
+  return Object.entries(V9_GRAMMAR_SCHEMAS[docType]?.properties ?? {})
     .filter(([, property]) => (property.distinctFrom ?? property.items?.distinctFrom) === '$ownerId')
     .map(([name]) => name)
 }
@@ -1130,7 +879,7 @@ export function ownerDistinctProperties(docType: string): readonly string[] {
  * exists when the grant is written (40120 on `recipientId`).
  */
 export function privateFeedWritesAreGated(): boolean {
-  return atLeast('v9') && V9_SCHEMAS.privateFeedGrant?.ownerRefersTo !== undefined
+  return isV9() && V9_GRAMMAR_SCHEMAS.privateFeedGrant?.ownerRefersTo !== undefined
 }
 
 /**
@@ -1138,5 +887,5 @@ export function privateFeedWritesAreGated(): boolean {
  * (v9) rather than one byte array of 32-byte ids packed end to end.
  */
 export function blockFollowsAreTyped(): boolean {
-  return atLeast('v9')
+  return isV9()
 }

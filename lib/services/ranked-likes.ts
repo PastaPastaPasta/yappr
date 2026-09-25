@@ -1,7 +1,7 @@
 /**
- * Proved top-K like rankings — the v4 `documents.ranked()` surface.
+ * Proved top-K like rankings — the v9 `documents.ranked()` surface.
  *
- * The v4 contract's indexOnly `like` doctype declares the full ranked chain
+ * The v9 contract's indexOnly `like` doctype declares the full ranked chain
  * (`countable` → `rangeCountable` → `rankedCountable`) on three axes, each
  * grouped by `postId`:
  *
@@ -12,15 +12,15 @@
  * Server-side `SELECT count(*) GROUP BY postId ORDER BY count DESC LIMIT n`,
  * O(log n + k) with a proof — no scan, no client-side sorting.
  *
- * Gotcha carried from the Phase 1/2 batteries: ranked pages on PREALLOCATED
- * indexes include zero-count groups (the post insert creates the like trees, so
- * every post exists in the ranking at count 0) — callers get them filtered here.
- * `groupValue` arrives base58 for identifier group keys and `value` is a bigint.
+ * Zero-count groups are filtered here as a guard: a ranked page on a
+ * PREALLOCATED index would carry one for every post (the v9 like indexes are
+ * not preallocated, so none are expected). `groupValue` arrives base58 for
+ * identifier group keys and `value` is a bigint.
  *
- * v4-only: on v2/v3 the like doctypes declare no ranked axes and the node
- * refuses the query. Callers gate on `likesAreIndexOnly()`.
+ * v9 only: on v2 the like doctype declares no ranked axes and the node refuses
+ * the query. Callers gate on `likesAreIndexOnly()`.
  *
- * v5 adds PREFIX-level rankings on the same surface (`rankedCountable: {at:…}`
+ * The same surface serves PREFIX-level rankings (`rankedCountable: {at:…}`
  * at-form): see {@link rankedGroupCounts} and its wrappers below.
  */
 
@@ -32,9 +32,8 @@ import { getEvoSdk } from './evo-sdk-service';
 import { WINDOWED_DAY_GRID, referencesMayDangle, windowedRankingsAvailable } from '../contract-topology';
 
 /**
- * Which slice of time a ranking covers. `'all'` is the all-time axis every
- * topology from v4 up serves; `'today'` pins the current UTC-day bucket of the
- * v6 windowed twin ({@link windowedRankingsAvailable}) — the node resolves the
+ * Which slice of time a ranking covers. `'all'` is the all-time axis;
+ * `'today'` pins the current UTC-day bucket of the windowed twin ({@link windowedRankingsAvailable}) — the node resolves the
  * bucket from block time and the proof verifier re-derives it, so nothing
  * client-side chooses the window.
  */
@@ -42,7 +41,7 @@ export type RankingWindow = 'all' | 'today';
 
 /**
  * The `timeRange` member for a windowed ranked query, or nothing for
- * all-time. Every v6 windowed index buckets `$createdAt` on the same daily
+ * all-time. Every v9 windowed index buckets `$createdAt` on the same daily
  * grid; naming it explicitly keeps the query unambiguous on doctypes that
  * carry more than one grid (`beat` also declares the k=4 rolling grid).
  */
@@ -77,7 +76,7 @@ export interface TopLikedPostsOptions {
   postAuthor?: string;
   /** 1..100, default 10. */
   limit?: number;
-  /** `'today'` reads the v6 daily-windowed twin of the pinned axis; default `'all'`. */
+  /** `'today'` reads the v9 daily-windowed twin of the pinned axis; default `'all'`. */
   window?: RankingWindow;
   /** Reject failed reads so callers can retain an existing page and retry. */
   throwOnError?: boolean;
@@ -136,7 +135,7 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
   }
 }
 
-/** One group of a proved PREFIX-level ranking (v5 at-form axes). */
+/** One group of a proved PREFIX-level ranking (v9 at-form axes). */
 export interface RankedGroupCount {
   /** The group key: a hashtag (storage form) or a base58 identity id. */
   key: string;
@@ -146,14 +145,12 @@ export interface RankedGroupCount {
 
 /**
  * A proved prefix-level ranked page: `documents.ranked()` with the groupBy at
- * a NON-terminal index level and no pins — the v5 at-form
+ * a NON-terminal index level and no pins — the v9 at-form
  * (`rankedCountable: {at: …}`) surface, same request grammar as the terminal
  * rankings above minus the pin.
  *
- * v5-only, and additionally requires a dev.7+ node (and a dev.7 wasm for
- * proof verification of these shapes) — the calls are written to the known
- * grammar and guarded fail-soft, so on anything older the surfaces simply
- * come back empty. Callers gate on `prefixRankingsAvailable()` /
+ * v9 only. The calls are guarded fail-soft, so a node that cannot serve a
+ * shape leaves the surface empty rather than failing the page. Callers gate on `prefixRankingsAvailable()` /
  * `followRankingsAvailable()`.
  *
  * Zero-count groups are filtered (preallocated group trees and fully drained
@@ -194,7 +191,7 @@ async function rankedGroupCounts(
 }
 
 /**
- * The top hashtags by LIKE count — the proved v5 trending axis: prefix groupBy
+ * The top hashtags by LIKE count — the proved v9 trending axis: prefix groupBy
  * at `hashtag` on `like.byHashtagPost {at: hashtag}`. The index is
  * `skipIfAbsent`, so untagged likes are structurally invisible here and no
  * "untagged bucket" group can appear.
@@ -205,7 +202,7 @@ export async function topHashtagsByLikes(limit: number = 12, window: RankingWind
 }
 
 /**
- * The top authors by likes RECEIVED — the v5 creator leaderboard: prefix
+ * The top authors by likes RECEIVED — the v9 creator leaderboard: prefix
  * groupBy at `postAuthor` on `like.byAuthorPost {at: [postAuthor, postId]}`
  * (the same index whose terminal level serves the profile Top tab). Keys are
  * base58 identity ids.
@@ -215,7 +212,7 @@ export async function topCreatorsByLikes(limit: number = 10, window: RankingWind
 }
 
 /**
- * The most-followed identities — the v5 ranked chain on
+ * The most-followed identities — the v9 ranked chain on
  * `follow.followerCount [followingId]`. Keys are base58 identity ids.
  */
 export async function mostFollowedUsers(limit: number = 10): Promise<RankedGroupCount[]> {
@@ -228,7 +225,7 @@ export interface HydratedTopPostsOptions {
   hashtag?: string;
   /** 1..100, default 20. */
   limit?: number;
-  /** `'today'` reads the v6 daily-windowed twin; default `'all'`. */
+  /** `'today'` reads the v9 daily-windowed twin; default `'all'`. */
   window?: RankingWindow;
   /** Skip the 60-second hydrated cache (an explicit user refresh). */
   force?: boolean;
@@ -254,7 +251,7 @@ const hydratedCache = new TtlMap<string, Post[]>(60_000);
  * ranked axes keep counting a blanked post), but a deleted card has no place in
  * a "top posts" surface.
  *
- * v4-only, same as the underlying ranked query — callers gate on
+ * v9 only, same as the underlying ranked query — callers gate on
  * `likesAreIndexOnly()`. Returns `[]` on failure unless `throwOnError` is requested.
  */
 export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {}): Promise<Post[]> {
@@ -371,10 +368,9 @@ async function hydrateRankedPosts(ranked: RankedLikedPost[], currentUserId?: str
   });
 
   // A by-ids page proves the set exactly, so an id missing from it is
-  // authoritatively absent. Up to v7 posts are tombstoned by edit, never
-  // removed, so a missing ranked id is an anomaly worth noting; from v8 the
-  // contract's moderators may remove a post while its like entries stay, so
-  // a hole in a ranked page is expected and just drops out of the list.
+  // authoritatively absent. The contract's moderators may remove a post
+  // while its like entries stay, so a hole in a ranked page is expected and
+  // just drops out of the list.
   const provenIds = new Set(page.rawPosts.map((doc) => doc.$id));
   const missing = ranked.filter((entry) => !provenIds.has(entry.postId));
   if (missing.length > 0 && !referencesMayDangle()) {
