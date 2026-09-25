@@ -276,7 +276,11 @@ export function LegacyMessages() {
           currentConversation.participantId
         )
         if (cancelled) return
-        setParticipantLastRead(lastRead)
+        // A poll may already have stored a newer receipt while this read was in
+        // flight; merge instead of overwriting so the indicator never regresses.
+        if (lastRead !== null) {
+          setParticipantLastRead(previous => Math.max(previous ?? 0, lastRead))
+        }
 
         // Only mark as read if there are unread messages and read receipts are enabled
         if (currentConversation.unreadCount > 0 && sendReadReceipts) {
@@ -347,14 +351,9 @@ export function LegacyMessages() {
             currentUser.identityId,
             currentConv.participantId
           ),
-          // A receipt read that fails must never discard the polled message page,
-          // so it resolves to null ("keep the previous value") instead of rejecting.
-          directMessageService
-            .getParticipantLastRead(convId, currentConv.participantId)
-            .catch((error: unknown) => {
-              logger.warn('Failed to refresh participant read receipt:', error)
-              return null
-            })
+          // Never rejects: the service resolves query failures to null, which
+          // is treated below as "keep the previously observed receipt".
+          directMessageService.getParticipantLastRead(convId, currentConv.participantId)
         ])
 
         if (cancelled) return
