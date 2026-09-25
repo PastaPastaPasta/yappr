@@ -5,12 +5,16 @@ import type { Post } from '@/lib/types';
 
 type Update = Post[] | null | ((current: Post[] | null) => Post[] | null);
 const mocks = vi.hoisted(() => ({
-  effects: [] as EffectCallback[], state: [] as unknown[], slot: 0,
+  effects: [] as EffectCallback[], state: [] as unknown[], slot: 0, refs: [] as { current: unknown }[], refSlot: 0,
   cached: vi.fn(), cacheSet: vi.fn(), enrich: vi.fn(), load: vi.fn(), setData: vi.fn(), setLoading: vi.fn(),
 }));
 // Exercise the real hook's callbacks with deterministic deferred service results.
 // React state rendering is separate; capture effects, observe the data setter and
-// keep plain useState slots across renders so later callbacks see earlier updates.
+// keep plain useState and useRef slots across renders (keyed by call order, like
+// React's own hook slots) so callbacks from a later render() see earlier updates,
+// including loadGenerationRef bumps made by an earlier render's callbacks.
+// This targets hooks/use-feed-data.ts but lives beside the lib/feed modules it
+// orchestrates so vitest's lib/**/*.test.ts include picks it up.
 vi.mock('react', async (original) => ({
   ...await original<typeof import('react')>(),
   useEffect: (effect: EffectCallback) => { mocks.effects.push(effect); },
@@ -21,6 +25,11 @@ vi.mock('react', async (original) => ({
       mocks.state[slot] = typeof update === 'function' ? update(mocks.state[slot]) : update;
     };
     return [mocks.state[slot], set];
+  },
+  useRef: (initial: unknown) => {
+    const slot = mocks.refSlot++;
+    mocks.refs[slot] ??= { current: initial };
+    return mocks.refs[slot];
   },
 }));
 vi.mock('@/contexts/auth-context', () => ({ useAuth: () => ({ user: { identityId: 'viewer' } }) }));
@@ -55,6 +64,7 @@ function render(enabled = true) {
   let feed!: ReturnType<typeof useFeedData>;
   function Probe() { feed = useFeedData({ activeTab: 'forYou', enabled }); return null; }
   mocks.slot = 0;
+  mocks.refSlot = 0;
   renderToString(createElement(Probe));
   return feed;
 }
@@ -75,6 +85,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.effects.length = 0;
   mocks.state.length = 0;
+  mocks.refs.length = 0;
   current = null;
   cleanups = [];
   vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
@@ -158,11 +169,12 @@ describe('feed page load lifetime', () => {
   it('does not append a loadMore page that lands after a refresh', async () => {
     mocks.cached.mockReturnValueOnce({ posts: [cachedPost], cursor: cachedPost.id, hasMore: true });
     mount();
-    const feed = render();
     const resolvePage = deferredPage();
-    const loadingMore = feed.loadMore();
+    const loadingMore = render().loadMore();
     expect(mocks.load).toHaveBeenLastCalledWith(expect.objectContaining({ startAfter: cachedPost.id }));
-    await feed.refresh();
+    // refresh from a later render: only a shared loadGenerationRef lets it
+    // invalidate the loadMore captured by the previous render.
+    await render().refresh();
     resolvePage(stalePage);
     await loadingMore;
     expect(current).toEqual([freshPost]);
