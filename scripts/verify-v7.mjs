@@ -44,8 +44,8 @@
  *
  * G-cases — v6 carry-over smoke, on the surfaces v7's agreements touch:
  *   g1  the like lifecycle still works end to end under the `$ownerId`
- *       agreement: create, the preallocated `byAuthorPost` count, the tagged
- *       `beat` companion, and delete-by-values unlike
+ *       agreement: create, the preallocated `byPost` and `byAuthorPost`
+ *       counts, the tagged `beat` companion, and delete-by-values unlike
  *
  * Known platform behaviors this battery leans on (unchanged from v4/v5):
  *   - js documents.create() may THROW post-broadcast for indexOnly types even

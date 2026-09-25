@@ -474,8 +474,8 @@ consensus texts:
   `quotedPostId`, `hashtag` (changed or dropped) and `deleted` (flipped back or
   dropped); re-stating an unchanged value is accepted.
 - **f3** the deliberately mutable fields still are; **g1** the like lifecycle,
-  the preallocated `byAuthorPost` count and the tagged `beat` companion still
-  work end to end.
+  the preallocated `byPost` and `byAuthorPost` counts and the tagged `beat`
+  companion still work end to end.
 
 e3c initially reported a false failure. It is scored by
 `attemptCreateIndexOnly`'s acceptance probe, which was entry EXISTENCE — already
@@ -489,17 +489,18 @@ v7 dropped the explicit `countable` keyword from nine indexes that keep
 `rangeCountable`: `follow.followerCount`, `like.byPost`, `like.byHashtagPost`,
 `like.byAuthorPost`, `like.byDayPost`, `like.byDayAuthorPost`, `post.byOwner`,
 `beat.byDayHashtagPost`, `beat.byRollingHashtagPost`. Offline validation passes
-either way, so this was read back LIVE off the seeded corpus. beta.2 does infer
-`countable` from `rangeCountable`. The live reads below cover 7 of the 9
-stripped indexes; `like.byPost` and `beat.byRollingHashtagPost` were not read
-before moutai was later wiped. Those two rely on the same
-[#4809](https://github.com/dashpay/platform/pull/4809) sugar rule
-(`rangeCountable: true` implies `countable: "countable"`) as the seven that were
-read, so they are covered by that rule rather than by a live observation.
+either way, so this was read back LIVE. beta.2 does infer `countable` from
+`rangeCountable`. The live reads below cover 8 of the 9 stripped indexes: seven
+off the seeded corpus, plus `like.byPost` through the verify-v7 battery.
+`beat.byRollingHashtagPost` was not read before moutai was later wiped. It
+relies on the same [#4809](https://github.com/dashpay/platform/pull/4809) sugar
+rule (`rangeCountable: true` implies `countable: "countable"`) as the eight that
+were read, so it is covered by that rule rather than by a live observation.
 
 | index | live read |
 | --- | --- |
 | `post.byOwner` | `count(post where $ownerId == persona 0)` = **135** |
+| `like.byPost` | verify-v7 `g1b` (also read in `e2`): `count(like where postId == tagged post)` **≥ 1**, the battery's pass threshold; the exact value was not recorded |
 | `follow.followerCount` | `count(follow where followingId == persona 0)` = **54** |
 | `like.byAuthorPost` | ranked count, top groups **91, 41, 29, 26, 20** |
 | `like.byHashtagPost` | ranked count, top groups **41, 32, 16, 11, 10** |
