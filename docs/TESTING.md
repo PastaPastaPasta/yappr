@@ -227,6 +227,12 @@ Rare, manual, never from CI. Everything below runs from the repo root.
    which is why they are recorded in `.env.testing`. The script prints the ID to
    append to `E2E_IDENTITY_IDS`.
 
+   Then **create the identity's profile**: seed the session per §3 and complete
+   `/profile/create`. The app sends a signed-in identity without a profile to
+   `/profile/create` from almost every page (see §7), so the write suite cannot
+   get past its first navigation on a profile-less slot. The same applies after
+   a chain rollback that wipes documents but keeps identities.
+
 3. **Register the test contracts** (owner defaults to identity index 0):
 
    ```bash
@@ -332,13 +338,30 @@ Register test copies first (`scripts/register-test-contracts.mjs` is the
 pattern — extend it), fill in the corresponding `NEXT_PUBLIC_*_CONTRACT_ID` in
 `.env.testing`, and only then write the specs.
 
-### Session restore does not run the profile gate
+### Every signed-in page runs the profile gate
 
-The `profile-required` intent is only applied by the interactive login path
-(`applyIntent` in `contexts/auth-context.tsx`). `restoreSession()` does not go
-through it, so a seeded profile-less identity is *not* bounced to
-`/profile/create` — except on the own-profile page (`app/user/page.tsx`), which
-redirects on its own. Do not rely on the redirect to prove a profile exists.
+`AuthProvider` (`contexts/auth-context.tsx`, logic in `lib/auth/profile-gate.ts`)
+checks for a profile document whenever the signed-in identity or the route
+changes, including right after a session is restored from storage. An identity
+without one is sent to `/profile/create`. What this means for tests:
+
+- **Every seeded identity needs a profile.** The testnet pool has them; the DM
+  specs create one per devnet slot from Node before opening a device
+  (`ensureProfile` in `e2e/fixtures/dm.ts`). `post-lifecycle.spec.ts` is not
+  self-bootstrapping: its profile-creating test is third, and the two ahead of
+  it visit `/about/` and `/feed/`, which redirect on a profile-less slot. The
+  first test cannot move after it, because it is what proves the bundle targets
+  the test contracts before anything is written. Create the profile during
+  provisioning (§4).
+- The gate is skipped on `/profile/create`, `/dpns/register`, `/login`,
+  `/welcome` and `/embed`, and it yields to the DPNS gate while the session has
+  no username and `yappr_skip_dpns` is unset.
+- It fails **open**: the lookup queries the unified and legacy profile
+  contracts directly and rejects on a query failure, so a DAPI outage means no
+  redirect rather than a spurious one.
+- The redirect lands after one or two network round trips, so a page may render
+  first. Assert on a stable URL, not on the first paint. Staying on a page does
+  not prove the gate ran; it may still be in flight.
 
 ### The DPNS gate respects `optional`
 

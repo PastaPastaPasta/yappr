@@ -32,7 +32,7 @@ type AvatarSource = 'generated' | 'custom'
 
 function CreateProfilePage() {
   const router = useRouter()
-  const { user, logout } = useAuth()
+  const { user, logout, markProfileCreated } = useAuth()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPrivateKeyInput, setShowPrivateKeyInput] = useState(false)
   const [privateKey, setPrivateKey] = useState('')
@@ -72,6 +72,7 @@ function CreateProfilePage() {
         const existingProfile = await unifiedProfileService.getProfile(user.identityId)
 
         if (existingProfile) {
+          markProfileCreated(user.identityId)
           toast.success('You already have a profile!')
           router.push('/feed')
           return
@@ -87,7 +88,7 @@ function CreateProfilePage() {
     }
 
     checkExistingProfile().catch(err => logger.error('Failed to check profile:', err))
-  }, [user, router])
+  }, [user, router, markProfileCreated])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -161,6 +162,7 @@ function CreateProfilePage() {
       })
 
       toast.success('Profile created successfully!')
+      markProfileCreated(user.identityId)
 
       // Redirect to feed
       router.push('/feed')
@@ -177,6 +179,7 @@ function CreateProfilePage() {
       if (errorMessage.includes('duplicate unique properties') ||
           errorMessage.includes('already exists')) {
         toast.error('You already have a profile! Redirecting...')
+        if (user) markProfileCreated(user.identityId)
         setTimeout(() => {
           router.push('/feed')
         }, 2000)
@@ -203,6 +206,7 @@ function CreateProfilePage() {
             // Profile was actually created despite the timeout
             toast.dismiss()
             toast.success('Profile created successfully!')
+            markProfileCreated(user.identityId)
             router.push('/feed')
             return
           }
