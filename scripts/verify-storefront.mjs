@@ -124,8 +124,21 @@ async function caseS4Status(ctx) {
   await update('s4f seller ships the order', null, seller, { status: 'shipped' });
   await settle();
   const rows = await battery.queryDocs('orderStatusUpdate', { where: [['buyerId', '==', buyer.ownerId]], orderBy: [['$createdAt', 'desc']], limit: 10 });
-  const foreign = rows.filter((row) => battery.b58(row.$ownerId) !== seller.ownerId);
-  battery.check("s4g buyerStatusUpdates serves the buyer's feed, and EVERY row on it was written by the seller", rows.length >= 2 && foreign.length === 0, `rows=${rows.length} foreign=${foreign.length}`);
+  // The buyer persona may hold orders with other sellers too (the storefront
+  // seeder buys from four), so the invariant is per ORDER: every row was
+  // written by the seller that order names — never "by this run's seller".
+  const sellerOf = new Map();
+  const foreign = [];
+  for (const row of rows) {
+    const orderId = battery.b58(row.orderId);
+    if (!sellerOf.has(orderId)) {
+      const order = await battery.fetchDocument('storeOrder', orderId);
+      sellerOf.set(orderId, order ? battery.b58(order.toObject().sellerId) : null);
+    }
+    if (battery.b58(row.$ownerId) !== sellerOf.get(orderId)) foreign.push(row);
+  }
+  const mine = rows.filter((row) => battery.b58(row.orderId) === ctx.orderId);
+  battery.check("s4g buyerStatusUpdates serves the buyer's feed, and EVERY row on it was written by its order's seller", mine.length >= 2 && foreign.length === 0, `rows=${rows.length} thisOrder=${mine.length} foreign=${foreign.length}`);
   battery.workingShapes.push({ label: 'buyer status feed', shape: { documentTypeName: 'orderStatusUpdate', where: [['buyerId', '==', '<buyerId>']], orderBy: [['$createdAt', 'desc']] } });
 }
 

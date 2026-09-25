@@ -10,6 +10,7 @@ import {
   BatchedTransition,
   DocumentActionFeeAgreement,
   DocumentCreateTransition,
+  Identifier,
   PrivateKey,
 } from '@dashevo/evo-sdk';
 import {
@@ -18,8 +19,10 @@ import {
   deriveDocumentIdBytes,
   feeMultiplierPermille,
 } from './seed/seed-lib.mjs';
-import { criticalAuthKey, deriveIdentityKeys } from './derive-identities.mjs';
+import { join } from 'node:path';
+import { REPO_ROOT, criticalAuthKey, deriveIdentityKeys, readEnvFile } from './derive-identities.mjs';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
+import { network } from './sdk-env.mjs';
 import { buildDocument, fetchDocument, randomIdBytes, readback } from './verify-lib.mjs';
 
 const SETTLE_MS = 3000;
@@ -70,10 +73,27 @@ export function wifForBot(index) {
   return criticalAuthKey(deriveIdentityKeys(index)).wif;
 }
 
+/** The devnet contract maker is seed index 9 of the deployment seed (.env.devnet DEVNET_MAKER_IDENTITY_ID). */
+const DEVNET_MAKER_SEED_INDEX = 9;
+
+/**
+ * `maker` names the identity that published the contract. On testnet that is
+ * the contract-maker key file; on devnet it is DEVNET_MAKER_IDENTITY_ID at seed
+ * index 9. The key file is a different identity that does not exist on the
+ * devnet, and verify-v9 accepts only `maker`, so it could not run there at all.
+ */
+function resolveMakerOwner() {
+  if (network() !== 'devnet') return resolveOwner({ maker: true });
+  const ownerId = process.env.DEVNET_MAKER_IDENTITY_ID
+    || readEnvFile(join(REPO_ROOT, '.env.devnet')).DEVNET_MAKER_IDENTITY_ID;
+  if (!ownerId) throw new Error('--moderator maker on devnet needs DEVNET_MAKER_IDENTITY_ID (.env.devnet)');
+  return resolveOwner({ botIndex: DEVNET_MAKER_SEED_INDEX, ownerId });
+}
+
 /** The moderating identity, its signer and (fetched) Identity, from a `maker` | `bot:<n>` spec. */
 export async function resolveModerator(sdk, spec) {
   const owner = spec === 'maker'
-    ? resolveOwner({ maker: true })
+    ? resolveMakerOwner()
     : resolveOwner({ botIndex: Number(spec.replace(/^bot:/, '')) });
   const { identityKey, signer } = await signerFor(sdk, owner);
   const identity = await sdk.identities.fetch(owner.ownerId);
@@ -120,6 +140,16 @@ export async function manualCreate(ctx, who, { docType, data, agreement, payment
     if (documents instanceof Map) for (const key of documents.keys()) resultId = idOf(key);
   } catch (e) {
     error = describeErr(e);
+  }
+  // The nonce was set by hand, so the facade's cached one is now behind: the
+  // next `documents.create` by this identity would reuse it ("nonce already
+  // present at tip"), as w1c's bookmark after a manual post did. Same refresh
+  // as seed-lib's `createWithAgreement`; the binding wants an Identifier and
+  // throws synchronously, hence try/catch.
+  try {
+    await sdk.wasm.refreshIdentityNonce(new Identifier(who.ownerId));
+  } catch (e) {
+    console.log(`     (nonce cache refresh failed after ${docType} create: ${describeErr(e).slice(0, 120)})`);
   }
   const probeId = resultId ?? bs58.encode(derivedId);
   for (let poll = 0; poll < 3; poll++) {

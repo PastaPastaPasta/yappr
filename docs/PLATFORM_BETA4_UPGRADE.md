@@ -239,4 +239,220 @@ by the manual path is accepted by a beta.4 node; that the wait result actually
 carries `ownerBalance`; that a snapshot taken with `document.toBytes` hashes to
 the record Drive writes (both serialize the document under its type at the
 latest version, so they should, but only a live remove-then-restore proves
-it); and that the new error texts render as the matchers expect.
+it); and that the new error texts render as the matchers expect. The first,
+third and fourth are now proved live; see "Deployment evidence" below.
+
+## Deployment evidence
+
+Observed on moutai on 2026-09-24 and 2026-09-25, running drive/dapi `4.2.0-beta.4`,
+Tenderdash 1.8.1 and protocol 14.
+
+The Platform state was wiped for beta.4, because beta.4 cannot decode a moderation
+config stored by beta.3. The Core chain persisted. `/devnet` has served these
+contracts since staging `d5b77c92`.
+
+### Identities and the eleven ids
+
+All 162 identities were rebuilt from their retained Core asset locks, using ChainLock
+proofs, because moutai refuses InstantSend proofs. Every identity kept its original id:
+
+- the maker, CI and the personal account;
+- 100 corpus personas;
+- 48 non-social personas;
+- 3 battery bots;
+- 8 DM v5 e2e bots.
+
+An independent read-back re-fetched all 162 and matched every on-chain key set against
+the retained key material. It reported 0 problems.
+
+Maker nonces were used up before publishing, so that no new contract could collide with
+an old id:
+
+- Nonces 1–30 reproduce the beta.1–beta.3 ids.
+- Nonce 31 reproduces the beta.3 DM v5 contract, which was registered outside the group.
+- All 31 were burned with credit transfers, so publication started at nonce **32**.
+
+Eleven contracts went out from nonces 32–42 into ONE group,
+`64vmrDD7UU9PHBWDHLojsNtv6gM5TY8CD6sq6jJXZ2oV`, which was registered on the social
+create:
+
+| nonce | contract | id |
+| ---: | --- | --- |
+| 32 | social v9 (elected moderation, interim contractOwner) | `BGxVk266LDvQGTCFaDGXwpHHkU5MQYDTYNttxgiuAwDP` |
+| 33 | profile v2 | `FMEanABncxaRvHZ4M9HySmaKLtEM9FtopmFNKopnfu7J` |
+| 34 | key backup | `9J3dd2xrdqmYivDBUbTfUtsKK45XxVa7riovL5qfC8pf` |
+| 35 | key exchange | `Fq6mMbXMfpFMbRbfG5qB7wzct9Em29HDdkmRoHy43p4J` |
+| 36 | vault | `GnW6HRLSzpdj63YiYNkhcv7WYZt6xN8VvormKT1RMGJa` |
+| 37 | auth vault | `AyZe5U4TZ7r5MwCyJesXF5Nbsfg4yLH3cchBfMiqmrDe` |
+| 38 | storefront v4 (appointed: personal + maker) | `FE6sjAHVyfzQrz9pcEBgbj5wHgEPLLfLuWWnYufuTGFr` |
+| 39 | blog v4 (appointed: personal + maker) | `Hd7pUTWbRcFvfaUBpmAkm3Py5hfev3K6mS6vA8Ad7hp8` |
+| 40 | DM v4 (legacy threads, empty) | `5cavVXkM8NGnoXyq2eYxeEE7F34tYMr9PYVqpsWF9HXY` |
+| 41 | pollr v4 | `EL869Ra7ebqkmFQx9V6DLB8m6ySS3drKT9qktigvucDH` |
+| 42 | DM v5 | `DHyyzqKP88PxFMeJzHPeLMsPU5E9GiWGuxHNXZUjJfxv` |
+
+A proof-backed read-back scored **266 checks, 0 failures**. It covered presence, maker
+ownership, group membership, the moderation config read back off the published
+contracts, and the fee and token rules.
+
+YAPP `LQr6vtHKwh7NGgTHJY6D8sNp2HzZkxWRGytRHd7VzY1` is priced at 1,000,000 credits per
+token, with a 100-token minimum. All 148 seed-ledger personas, CI and personal hold the
+once-per-identity grant.
+
+**Gate 1 passed on the manual path.** `verify-v8.mjs --only a3`, run against v9, showed:
+
+- a post carrying `$actionFeeAgreement` landed;
+- Platform stored exactly the id derived locally (`8NAdmqQn…`);
+- the moderators pot grew by exactly 80,000,000 for the post and 16,000,000 for the
+  reply, at 1000‰.
+
+### Corpus
+
+18,000 operations were replayed with `--topology v9`, pipeline window 8, concurrency 20
+and `SEED_RECONCILE_MS=5000`. The folded journal holds **exactly 18,000 `done`, with no
+unresolved failures**.
+
+The first pass completed 17,691 operations plus a 300-op probe in 5,743 s. Nine late
+dependency waits timed out (7 likes, 2 reply likes), and all nine landed on the resume.
+They are the **same nine corpus lines** that timed out on beta.3's first pass. The
+timeouts therefore come from the corpus's shape (late likes behind a deep author queue),
+not from the network.
+
+After the writer stopped, a fresh read-only audit re-proved every operation with
+`queryWithProof` and `countWithProof`. The audit is resumable through a proved-line
+cache, and it covered the whole corpus in three evidence files; the final one is
+`corpus-verification-full-2026-09-25T00-36-50.163Z.json`, `passed: true`. It checked
+**18,000 / 18,000 operations** and **2,905 / 2,905 beat companions** against the recorded
+corpus hash, and ran two exact censuses:
+
+- **Posts:** the per-owner counts equal the journal, 5,968 posts in total.
+- **Replies:** a primary-index walk found exactly the 2,144 journaled replies for the
+  seeded owners. The network holds 2,147 replies in all; the other 3 are the batteries'.
+
+`ops/verify-count-trees.mjs` ran 8 probes with 0 failures:
+
+- `post.byOwner` = 135 and `follow.followerCount` = 54 for corpus persona 0, the same as
+  on beta.2 and beta.3;
+- the like and beat ranked axes and windowed axes all answered.
+
+**The contract still decides who pays.** v9 keeps v8's `gasFeesPaidBy: 2` on the five
+priced doctypes. The maker therefore paid:
+
+- the gas on the ~75% of operations whose actor pays YAPP;
+- the moderators fee on those posts and replies.
+
+Over the whole phase the maker went from 3,971,565,726,350 to 2,304,089,065,338 credits,
+a spend of **1,667.5e9**. For comparison, beta.3 spent 1,639.0e9. The personas spent
+710.3e9 between them.
+
+The moderators pot then stood at **513,792,000,000**:
+
+- 511,744,000,000 of it is the corpus (5,968 posts × 80e6 + 2,144 replies × 16e6);
+- the rest is the batteries' and pollr's posts.
+
+The pot was **not** claimed. Claiming it as the interim moderator is a pre-seat case that
+the election plan exercises (41113 once a team is seated).
+
+### Non-social seeders
+
+| seeder | result |
+| --- | --- |
+| storefront v4 (typed `tags`/`imageUrls`) | 223 created, 0 failed; seeder checks all pass |
+| blog v4 (typed `labels`) | 167 created, 0 failed |
+| DM (legacy v4 contract) | 12 conversations, 246 messages; newest decrypted 12/12 |
+| pollr v4 | 181 created, 153 ballots; every poll embedded and tallying |
+| tips (unchanged from staging) | 120/120 tips confirmed on chain |
+
+There is no DM v5 content seeder. DM v5 is covered by its battery.
+
+### Batteries
+
+| battery | checks | result |
+| --- | ---: | --- |
+| `verify-v9.mjs --moderator maker` (e0, d1, p1, b1, w1, m1, m2) | run 1: 43 pass / 2 fail (harness defects, fixed here); rerun: 40/0 | **all pass after fixes** |
+| `verify-blog.mjs` (blog v4, moderated) | 67 | **ALL CHECKS PASSED** |
+| `verify-storefront.mjs` (storefront v4, moderated) | 91 | **ALL CHECKS PASSED** |
+| `verify-dm.mjs` (DM v4) | 31 | **ALL CHECKS PASSED** |
+| `verify-dm-v5.mjs` | 106 | **ALL CHECKS PASSED** |
+| `verify-pollr.mjs` | 39 | **ALL CHECKS PASSED** |
+| `verify-tips.mjs` | 28 | **ALL CHECKS PASSED** |
+
+The first v9 run scored 43/2, and both failures were harness defects (see below). The
+rerun scored 40/0. p1a–p1c skip on a rerun, because bot A already owns a feed state from
+the first run, where all three passed.
+
+**`m1` is the live remove-then-restore.** In order:
+
+1. The owner deleted B's post. The removal record names B, and the post stopped fetching.
+2. The owner restored it from the document fetched before the delete, and Drive accepted
+   that snapshot.
+3. The record reads `restoredBy` the maker, and the post fetches again.
+4. A second restore was refused with 41122.
+
+**Election cases were not run.** The protocol blocks them; they were not skipped by choice.
+
+- Any create carrying a `prefundedVotingBalance` is refused until epoch 4: *"Contested
+  documents are not allowed until epoch 4. Current epoch is 0"* (drive-abci
+  `batch/is_allowed/v0`, `TARGET_EPOCH_INDEX = 4`).
+- Every `electedCharter` prefunds its contest, so none can be filed yet.
+- moutai's `epoch_time` is 788,400 s, so epoch 4 begins no earlier than
+  2026-10-31T02:35Z.
+
+Until then, case e0 reads `seated charter: false`, and every moderator case runs as the
+interim contract owner. The seated-team cases stay open until that date: 41101, 41203,
+41102, 41202 and the interim pot claim 41113.
+
+These are the verbatim beta.4 texts, which the prose-first matchers in
+`lib/error-utils.ts` rely on:
+
+- **10419**, distinctFrom: *"Document type "follow" property "followingId" must differ
+  from "$ownerId", but the two values are equal"*. The text is identical for
+  `block.blockedId`, `followRequest.targetId`, `privateFeedGrant.recipientId` and
+  `blockFollow.followedBlockers`.
+- **40120**, the private-feed gates. There are two texts:
+  - *"referenced permanent document (own contract, document type privateFeedState, found
+    through unique index owner) EjVy… not found for path $ownerId"*;
+  - *"referenced deletable document (own contract, document type followRequest, found
+    through unique index targetAndRequester) H8bQ… not found for path recipientId"*.
+- **uniqueItems** on a typed identifier list: *"JsonSchemaError: [[…],[…]] has non-unique
+  elements, path: /followedBlockers"*. The value is echoed first, so the rule's words sit
+  about 300 characters in.
+- **41117**: *"Identity H8bQ… carries no warning on contract BGxV…"*.
+- **41122**: *"Document CNdU… on contract BGxV… was already restored by 3JKc… at 1790294008769:
+  it is live"*.
+- **41107**: *"Identity H8bQ… is banned on contract BGxV… and can not act on its documents"*.
+
+As on beta.3, every one of these except 40120 arrives with `code = -1`.
+
+### Fixes this deployment forced
+
+1. **`--moderator maker` could not run on devnet.**
+   - Cause: it read the testnet contract maker's key file, which is a different identity.
+     `verify-v9` accepts only `maker`, because the interim `contractOwner` appoints nobody,
+     so v9 had no devnet path at all.
+   - Fix: on devnet, `maker` now resolves `DEVNET_MAKER_IDENTITY_ID` at seed index 9, and
+     `signerFor` still proves that the on-chain key matches.
+2. **`manualCreate` left the facade's nonce cache stale.**
+   - Cause: after a hand-signed batch, the next `documents.create` by the same identity
+     reused the nonce. w1c failed with *"is trying to set an invalid identity nonce. The
+     current identity nonce is 4, we are setting 4, error is nonce already present at
+     tip"*.
+   - Fix: it now refreshes the cache, the same way seed-lib's `createWithAgreement` does.
+3. **The b1c `uniqueItems` matcher looked only 200 characters past `JsonSchemaError`.**
+   - Cause: the echoed value pushes the rule's words past that point.
+   - Fix: the window is now 2,000 characters.
+4. **Storefront s4g reported the seeded data as a defect.**
+   - Cause: it required every row of the buyer's status feed to come from this run's
+     seller, but the storefront seeder gives the same buyer orders with four other sellers.
+     A read-only audit of all 24 rows found each one written by its own order's seller.
+   - Fix: the check now runs per order.
+
+### Operational notes
+
+- `.env.devnet`'s `E2E_IDENTITY_IDS` now lists CI plus the eight DM v5 bots. A social
+  battery run without an override therefore takes a DM bot with 0 YAPP as bot B. To use
+  the battery bots, pass `E2E_IDENTITY_IDS=EjVyhRot…,H8bQ2PC6…,47da17QA…`.
+- The DAPI proxy truncates large proved responses: *"missing grpc-status trailer …
+  possible truncation by a proxy"*. A 100-reply `$id in` proof failed every time, so the
+  read-only audit has to use much smaller batches.
+- The feature batteries resolve the appointed moderator by persona index. The personal
+  account is persona **900** in the private seed ledger.

@@ -115,8 +115,10 @@ const NOT_FOUND_ON_RECIPIENT = /recipientId/;
 // uniqueItems is a JSON-schema rule: JsonSchemaError (10101), whose message is
 // "JsonSchemaError: <summary>, path: <path>". Anchored on the code or on that
 // prefix plus the rule's own words, never on a bare "unique" (40105 duplicate
-// unique INDEX errors say that too).
-const DUPLICATE_ITEMS = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror.{0,200}(uniqueitems|duplicate items|has non-unique elements|must not have duplicate)/i;
+// unique INDEX errors say that too). The summary echoes the offending value, so
+// for a list of 32-byte ids the rule's words sit ~300 characters in; beta.4
+// words it "<value> has non-unique elements, path: /followedBlockers".
+const DUPLICATE_ITEMS = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror.{0,2000}?(uniqueitems|duplicate items|has non-unique elements|must not have duplicate)/i;
 const NOT_WARNED = /\bcode"?\s*[=:]\s*41117\b|carries no warning|contractusernotwarned/i;
 const ALREADY_RESTORED = /\bcode"?\s*[=:]\s*41122\b|already restored|contractdocumentalreadyrestored/i;
 const BANNED = /\bcode"?\s*[=:]\s*41107\b|contractuserbanned|is banned/i;
