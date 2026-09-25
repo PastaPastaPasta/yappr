@@ -4,15 +4,18 @@ import { useState, useEffect, useCallback, useId, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { X, KeyRound, ChevronDown } from 'lucide-react'
+import { X, KeyRound, ChevronDown, Bluetooth } from 'lucide-react'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { BLUETOOTH_LOGIN_ENABLED } from '@/lib/constants'
+import { isBluetoothLoginSupported } from '@/lib/auth/bluetooth-login'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { identityBridgeUrl } from '@/lib/identity-bridge'
 import { getConfiguredNetwork } from '@/lib/constants'
 import { WalletLoginPanel } from './wallet-login-panel'
+import { BluetoothLoginPanel } from './bluetooth-login-panel'
 import { KeyLoginForm } from './key-login-form'
 
 /** Where "New to Dash?" sends people: the wallet on mainnet, the identity bridge elsewhere. */
@@ -28,9 +31,11 @@ function newUserLink(): { href: string; label: string } {
  * Global sign-in dialog.
  *
  * Wallet sign-in is the primary path: opening the dialog immediately shows a
- * dash-key: QR code for the user's Dash wallet. A passkey button sits under
- * it for returning users on an enrolled device. Password and private-key
- * entry live behind a collapsed "more ways to sign in" disclosure.
+ * dash-key: QR code for the user's Dash wallet. In browsers with Web
+ * Bluetooth a "sign in with your phone" button swaps the QR panel for the
+ * Bluetooth one. A passkey button sits under it for returning users on an
+ * enrolled device. Password and private-key entry live behind a collapsed
+ * "more ways to sign in" disclosure.
  */
 export function LoginModal() {
   const router = useRouter()
@@ -45,6 +50,13 @@ export function LoginModal() {
   const newUser = newUserLink()
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [walletKey, setWalletKey] = useState(0)
+  const [method, setMethod] = useState<'wallet' | 'bluetooth'>('wallet')
+  // Web Bluetooth is only known client-side; the static export renders the
+  // QR-only layout until hydration.
+  const [bluetoothAvailable, setBluetoothAvailable] = useState(false)
+  useEffect(() => {
+    setBluetoothAvailable(BLUETOOTH_LOGIN_ENABLED && isBluetoothLoginSupported())
+  }, [])
   const [passkeyBusy, setPasskeyBusy] = useState(false)
   const [passkeyError, setPasskeyError] = useState<string | null>(null)
 
@@ -52,6 +64,7 @@ export function LoginModal() {
   useEffect(() => {
     if (!isOpen) {
       setShowAdvanced(false)
+      setMethod('wallet')
       setPasskeyBusy(false)
       setPasskeyError(null)
     }
@@ -132,13 +145,33 @@ export function LoginModal() {
                 </Dialog.Title>
                 <Dialog.Description asChild>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                  Scan the code with your Dash wallet to sign in.
+                  {method === 'bluetooth'
+                    ? 'Your phone sends this browser a key that expires and has a spend limit.'
+                    : 'Scan the code with your Dash wallet to sign in.'}
                 </p>
                 </Dialog.Description>
               </div>
 
-              {/* Primary: wallet */}
-              <WalletLoginPanel key={walletKey} onComplete={close} onCancel={restartWallet} />
+              {/* Primary: wallet, over QR or Bluetooth */}
+              {method === 'bluetooth' ? (
+                <BluetoothLoginPanel onComplete={close} onBack={() => setMethod('wallet')} />
+              ) : (
+                <>
+                  <WalletLoginPanel key={walletKey} onComplete={close} onCancel={restartWallet} />
+                  {bluetoothAvailable && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="lg"
+                      className="w-full mt-4"
+                      onClick={() => setMethod('bluetooth')}
+                    >
+                      <Bluetooth className="w-4 h-4 mr-2" />
+                      Sign in with your phone
+                    </Button>
+                  )}
+                </>
+              )}
 
               {/* Secondary: passkey */}
               <div className="mt-6">
