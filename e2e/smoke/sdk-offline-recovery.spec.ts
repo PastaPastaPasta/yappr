@@ -17,6 +17,19 @@ const feed = (page: Page) => page.getByTestId('feed-post-list').locator('article
 const refresh = (page: Page) => page.getByRole('button', { name: 'Refresh feed', exact: true })
 const failed = (page: Page) => page.getByRole('button', { name: 'Try Again', exact: true })
 
+/**
+ * Endpoint pools differ between networks, so by default a pool that survives
+ * ten failed reads skips the spec. Set E2E_REQUIRE_SDK_EXHAUSTION=1 on a
+ * configuration known to exhaust (the moutai devnet build) to make that a
+ * failure instead, so a green run proves recovery was actually exercised.
+ */
+const REQUIRE_EXHAUSTION = Boolean(process.env.E2E_REQUIRE_SDK_EXHAUSTION?.trim())
+
+function requireExhausted(exhausted: boolean, reason: string) {
+  if (REQUIRE_EXHAUSTION) expect(exhausted, reason).toBe(true)
+  test.skip(!exhausted, reason)
+}
+
 async function openFeed(page: Page) {
   await page.goto(appUrl('/feed/'))
   await expect(page.getByRole('button', { name: 'For You', exact: true })).toBeVisible()
@@ -74,7 +87,7 @@ test('feed reads recover after offline requests exhaust the SDK endpoint pool', 
   } finally {
     await context.setOffline(false)
   }
-  test.skip(!exhausted, 'Configured SDK pool did not exhaust within ten offline reads')
+  requireExhausted(exhausted, 'Configured SDK pool did not exhaust within ten offline reads')
 
   // The online event has already started replacing the instance; a read
   // issued now waits for the replacement instead of failing on the old one.
@@ -93,7 +106,7 @@ test('feed reads recover from exhausted addresses while the browser stays online
   } finally {
     await context.unroute(dapi)
   }
-  test.skip(!exhausted, 'Configured SDK pool did not exhaust within ten failed reads')
+  requireExhausted(exhausted, 'Configured SDK pool did not exhaust within ten failed reads')
   expect(await page.evaluate(() => navigator.onLine)).toBe(true)
 
   // The read that observed the exhaustion failed at once and started the

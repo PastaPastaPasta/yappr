@@ -269,6 +269,18 @@ jobs:
           NETWORK: devnet
         run: npx playwright test --project=write --trace=off topology
 
+      # SDK connection recovery (read-only, needs no seed). The moutai pool is
+      # small enough to exhaust within ten failed reads, so exhaustion is
+      # required here: a pool that never exhausts fails instead of skipping.
+      - name: Run the devnet SDK recovery specs
+        continue-on-error: true
+        env:
+          E2E_BASE_PATH: /devnet
+          E2E_ENV_FILE: .env.devnet
+          NETWORK: devnet
+          E2E_REQUIRE_SDK_EXHAUSTION: '1'
+        run: npx playwright test --project=smoke --trace=off sdk-offline-recovery
+
       # DM v5 against the real chain with several identities (pool slots 1-5 of the
       # same seed, listed in .env.devnet). Only the 1:1 and group files run here
       # (about 15 min together); the history (120-message bulk write) and
