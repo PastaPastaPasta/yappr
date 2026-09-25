@@ -530,8 +530,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
       const createdPost = normalizeCreatedPost(detail.post, detail.postId, detail.confirmed !== false);
 
       if (!createdPost) {
-        resetEnrichment();
-        loadPosts(true).catch((error) => logger.error('Failed to load posts:', error));
+        refresh().catch((error) => logger.error('Failed to load posts:', error));
         return;
       }
 
@@ -560,7 +559,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     return () => {
       window.removeEventListener('post-created', handlePostCreated as EventListener);
     };
-  }, [enabled, applyRepostAndQuoteEnrichment, enrichProgressively, loadPosts, normalizeCreatedPost, reconcileCreatedPost, resetEnrichment, setData]);
+  }, [enabled, applyRepostAndQuoteEnrichment, enrichProgressively, normalizeCreatedPost, reconcileCreatedPost, refresh, setData]);
 
   useEffect(() => {
     resetEnrichment();
@@ -572,9 +571,14 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     setPendingNewPosts([]);
     setNewestPostTimestamp(null);
 
-    if (enabled) loadPosts().catch((error) => logger.error('Failed to load posts:', error));
+    if (enabled) {
+      loadPosts().catch((error) => logger.error('Failed to load posts:', error));
+    } else {
+      // A load superseded by disabling the feed leaves its loading flag to us.
+      setLoading(false);
+    }
     return invalidateFeedLoads;
-  }, [enabled, activeTab, invalidateFeedLoads, loadPosts, resetEnrichment, setData]);
+  }, [enabled, activeTab, invalidateFeedLoads, loadPosts, resetEnrichment, setData, setLoading]);
 
   const handlePostDelete = useCallback(
     (postId: string) => {
