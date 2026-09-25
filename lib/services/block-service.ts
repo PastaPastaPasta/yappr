@@ -27,6 +27,18 @@ import {
 // Max users whose blocks can be followed (100 * 32 bytes = 3200 bytes)
 const MAX_BLOCK_FOLLOWS = 100
 
+/** Whether a blocked target is blocked by the viewer's own block or only by a followed list. */
+export type BlockSource = 'own' | 'inherited'
+
+/** Why a target is blocked for a viewer; own and inherited can both hold. */
+export interface BlockProvenance {
+  isBlocked: boolean
+  /** The viewer's own block document exists. */
+  isOwnBlock: boolean
+  /** A followed blocker whose list blocks the target, if any. */
+  inheritedFrom: string | null
+}
+
 /**
  * Block Service - Manages enhanced blocking with bloom filters and block following.
  *
@@ -643,6 +655,67 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
     const blocked = await this.checkBlockedBatch(viewerId, [targetUserId])
     return blocked.get(targetUserId) ?? false
+  }
+
+  /**
+   * Why the viewer sees `targetUserId` as blocked: their own block document,
+   * a followed block list, or both. Unlike isBlocked(), this always checks
+   * both sources, so callers can offer the right remedy (delete the own block
+   * vs. manage followed block lists). A failed own-list read rejects.
+   */
+  async getBlockProvenance(targetUserId: string, viewerId: string): Promise<BlockProvenance> {
+    if (!viewerId || !targetUserId || viewerId === targetUserId) {
+      return { isBlocked: false, isOwnBlock: false, inheritedFrom: null }
+    }
+
+    // A block this session just wrote may not be queryable yet; the
+    // confirmed-block cache records it, so it must not be overwritten below.
+    const cached = getConfirmedBlock(viewerId, targetUserId)
+    const cachedOwnBlock = cached?.isBlocked === true && cached.blockedBy === viewerId
+    const [ownBlockedIds, followedBlockers] = await Promise.all([
+      this.getOwnBlockedIds(viewerId),
+      this.getBlockFollows(viewerId),
+    ])
+    const isOwnBlock = cachedOwnBlock || ownBlockedIds.includes(targetUserId)
+    // The merged filter covers followed lists too; a miss rules out an inherited block.
+    const mergedFilter = getMergedBloomFilter(viewerId)
+    const inherited = mergedFilter && !mergedFilter.mightContain(targetUserId)
+      ? undefined
+      : (await this.queryInheritedBlocksBatch([targetUserId], followedBlockers)).get(targetUserId)
+
+    // Own block takes precedence in the cache, matching checkBlockedBatch().
+    addConfirmedBlocksBatch(viewerId, new Map([[targetUserId, {
+      isBlocked: isOwnBlock || inherited !== undefined,
+      blockedBy: isOwnBlock ? viewerId : inherited?.blockedBy ?? '',
+      message: isOwnBlock ? cached?.message : inherited?.message,
+    }]]))
+
+    return {
+      isBlocked: isOwnBlock || inherited !== undefined,
+      isOwnBlock,
+      inheritedFrom: inherited?.blockedBy ?? null,
+    }
+  }
+
+  /**
+   * Batch variant for surfaces that only label blocked targets: which of
+   * `targetIds` are blocked, and whether by the viewer's own block ('own',
+   * which wins when both apply) or only by a followed block list.
+   */
+  async getBlockSourcesBatch(viewerId: string, targetIds: string[]): Promise<Map<string, BlockSource>> {
+    const sources = new Map<string, BlockSource>()
+    const blocked = await this.checkBlockedBatch(viewerId, targetIds)
+    if (![...blocked.values()].some(Boolean)) return sources
+
+    // checkBlockedBatch just loaded this list, so this is a cache hit.
+    const ownBlockedIds = new Set(await this.getOwnBlockedIds(viewerId))
+    blocked.forEach((isBlocked, targetId) => {
+      if (!isBlocked) return
+      const confirmed = getConfirmedBlock(viewerId, targetId)
+      const isOwn = ownBlockedIds.has(targetId) || confirmed?.blockedBy === viewerId
+      sources.set(targetId, isOwn ? 'own' : 'inherited')
+    })
+    return sources
   }
 
   /**

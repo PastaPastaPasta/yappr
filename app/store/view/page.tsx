@@ -17,7 +17,7 @@ import {
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay } from '@/components/store'
+import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay, BlockedOwnerBanner } from '@/components/store'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useAuth } from '@/contexts/auth-context'
@@ -484,6 +484,8 @@ function StoreDetailContent() {
               )}
             </div>
           </div>
+
+          <BlockedOwnerBanner ownerId={store.ownerId} className="mx-4 mb-4" />
 
           {/* Encryption key warning */}
           {sellerHasEncryptionKey === false && (

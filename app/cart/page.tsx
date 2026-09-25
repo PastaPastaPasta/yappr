@@ -16,15 +16,18 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { cartService, type CartItemAvailability } from '@/lib/services/cart-service'
 import { storeService } from '@/lib/services/store-service'
+import type { BlockSource } from '@/lib/services/block-service'
 import type { Cart, Store } from '@/lib/types'
 
 export default function CartPage() {
   const router = useRouter()
-  useAuth() // For route protection
+  const { user } = useAuth()
+  const viewerId = user?.identityId
   const { isReady: sdkReady } = useSdk()
 
   const [cart, setCart] = useState<Cart>({ items: [], updatedAt: new Date() })
   const [stores, setStores] = useState<Map<string, Store>>(new Map())
+  const [ownerBlocks, setOwnerBlocks] = useState<Map<string, BlockSource>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
   const [availability, setAvailability] = useState<CartItemAvailability[]>([])
   const [validatedCart, setValidatedCart] = useState<{ items: Cart['items']; refreshCount: number } | null>(null)
@@ -72,6 +75,23 @@ export default function CartPage() {
     loadStores().catch((error) => logger.error(error))
     return () => { cancelled = true }
   }, [sdkReady, cart.items, refreshCount])
+
+  // One batched block check for every store owner in the cart
+  useEffect(() => {
+    const ownerIds = Array.from(stores.values(), store => store.ownerId)
+    if (!viewerId || ownerIds.length === 0) {
+      setOwnerBlocks(new Map())
+      return
+    }
+    let cancelled = false
+    const checkOwners = async () => {
+      const { blockService } = await import('@/lib/services/block-service')
+      const sources = await blockService.getBlockSourcesBatch(viewerId, ownerIds)
+      if (!cancelled) setOwnerBlocks(sources)
+    }
+    checkOwners().catch((error) => logger.error('Failed to check blocked store owners:', error))
+    return () => { cancelled = true }
+  }, [viewerId, stores])
 
   // Group items by store
   const itemsByStore = new Map<string, typeof cart.items>()
@@ -121,6 +141,7 @@ export default function CartPage() {
                     key={storeId}
                     storeId={storeId}
                     store={stores.get(storeId)}
+                    ownerBlock={ownerBlocks.get(stores.get(storeId)?.ownerId ?? '')}
                     items={storeItems}
                     availability={availability.filter(result => result.item.storeId === storeId)}
                     isCheckingAvailability={isCheckingAvailability}

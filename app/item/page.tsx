@@ -13,7 +13,7 @@ import { CheckIcon } from '@heroicons/react/24/solid'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { ImageGallery, QuantityControl, MobileCartFab, RatingStars, ItemReviewList } from '@/components/store'
+import { ImageGallery, QuantityControl, MobileCartFab, RatingStars, ItemReviewList, BlockedOwnerBanner } from '@/components/store'
 import { formatPrice } from '@/lib/utils/format'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
@@ -295,6 +295,8 @@ function ItemDetailContent() {
 
           {/* Image Gallery */}
           <ImageGallery images={images} alt={item.title} />
+
+          <BlockedOwnerBanner ownerId={store?.ownerId} className="mx-4 mt-4" />
 
           {/* Item Info */}
           <div className="p-4 space-y-4">
