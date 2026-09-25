@@ -61,7 +61,6 @@ interface NotificationState {
   clearNotifications: () => void;
 
   // Computed helpers
-  getUnreadCount: () => number;
   getUnreadCountByFilter: (filter: NotificationFilter) => number;
   getFilteredNotifications: () => Notification[];
   getReadIdsSet: () => Set<string>;
@@ -150,11 +149,6 @@ export const useNotificationStore = create<NotificationState>()(
       }),
 
       // Computed helpers
-      getUnreadCount: () => {
-        const state = get();
-        return state.notifications.filter(n => !n.read).length;
-      },
-
       getUnreadCountByFilter: (filter: NotificationFilter) => {
         const state = get();
         const unread = state.notifications.filter(n => !n.read);
