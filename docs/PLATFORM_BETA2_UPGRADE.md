@@ -479,8 +479,11 @@ consensus texts:
 
 e3c initially reported a false failure. It is scored by
 `attemptCreateIndexOnly`'s acceptance probe, which was entry EXISTENCE — already
-true from e3b, so a genuine rejection read as accepted. `likeReply`'s schema is
-byte-identical between v6 and v7, and the duplicate is in fact rejected with the
+true from e3b, so a genuine rejection read as accepted. `likeReply`'s index and
+uniqueness structure (`byReply` on `replyId` with `$ownerId` as its terminal,
+which consensus enforces as unique on `($ownerId, replyId)`) is unchanged from
+v6 — only its `propertyAgreement` target moved from `author` to `$ownerId`,
+which is what e3a/e3b exercise — and the duplicate is in fact rejected with the
 entry count staying at 1. The case now scores by entry count instead.
 
 ### Count trees after the `countable` strip — the open question, answered
@@ -512,6 +515,9 @@ The windowed axes were read the way the app reads them — `documents.ranked` wi
 an aggregate count and the day grid, as in `lib/services/ranked-likes.ts`.
 
 ### Feature contracts — 198 live checks
+
+Script names are as of 2026-09-18; they have since been consolidated into
+`scripts/verify-{storefront,blog,dm,pollr}.mjs` (DM also has `verify-dm-v5.mjs`).
 
 | battery | checks | result |
 | --- | ---: | --- |
