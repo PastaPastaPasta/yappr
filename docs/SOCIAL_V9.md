@@ -26,8 +26,8 @@ checkout:
 
 | Feature | Platform PR | Keyword | Offline check | Battery case |
 | --- | --- | --- | --- | --- |
-| Elected moderation | #4886 #4969 #4914 | `config.moderation.moderators {$type: "elected", …}` | build-v9 self-test; probes (windows, abilities, seat) | v9 e0, m1, m2, w1 (interim); election script (later) |
-| Warning list | #4872 | `config.moderation.warnings: true` | build-v9; battery self-tests | v9 w1; blog b17; storefront s17 |
+| Elected moderation | #4886 #4969 #4914 | `config.moderation.moderators {$type: "elected", …}` | topology unit test; probes (windows, abilities, seat) | v9 e0, m1, m2, w1 (interim); election script (later) |
+| Warning list | #4872 | `config.moderation.warnings: true` | topology unit test; battery self-tests | v9 w1; blog b17; storefront s17 |
 | distinctFrom | #4917 | `distinctFrom: "$ownerId"` on an identifier, or on typed-array `items` | wasm parse; probes | v9 d1, p1i, b1b; storefront s19 |
 | Writer lookup gate | #4941 | `ownerRefersTo {permanentDocument, lookup}` | wasm parse (`documentTypeReferences` shows `$ownerId`) | v9 p1a, p1b, p1j |
 | Deletable lookup | #4930 | `refersTo {deletableDocument, lookup}` | wasm parse; immutability probes | v9 p1d–p1h |
@@ -49,9 +49,10 @@ Consensus codes the client and batteries match on:
 
 ## Social v9 (`contracts/yappr-social-contract-v9.json`)
 
-The file is built from v8 by `scripts/build-v9-contract.py`. Its
-`--self-test` asserts that the committed JSON matches a fresh build and pins
-every decision below. The read surface is unchanged from v8: every index,
+The file was built from v8 by a deterministic generator (`build-v9-contract.py`,
+now in git history with v8 itself); the committed JSON is the source of record,
+and `lib/contract-topology.test.ts` plus `validate-contract-offline.mjs` pin
+the decisions below. The read surface is unchanged from v8: every index,
 terminal, ranked axis, `timeRange` window, token cost, action fee and the
 starter grant. So the client read path, the v8 write path (fee agreements and
 the choice of YAPP or credits) and `verify-v8.mjs` all carry over as they are.
@@ -313,9 +314,9 @@ public on `/contract`.
 1. `lib/constants.ts`: add `BLOG_TOPOLOGIES` `'v4'` (:125) and
    `STOREFRONT_TOPOLOGIES` `'v4'` (:93), plus predicates (`blogLabelsAreTyped`,
    `storefrontArraysAreTyped`), and a first `NEXT_PUBLIC_PROFILE_TOPOLOGY`
-   gate. `CONTRACT_TOPOLOGIES` already ends in `'v9'`.
-2. `scripts/seed/seed-lib.mjs:117`: append `'v9'` to `TOPOLOGIES` and
-   `HASHTAG_MAX` (v9 = 61), so the seeders accept `--topology v9`.
+   gate. `CONTRACT_TOPOLOGIES` is now `['v2', 'v9']`.
+2. `scripts/seed/seed-lib.mjs`: the seeders write v9 shapes only
+   (`HASHTAG_MAX` = 61) and refuse any other topology.
 3. `.env.devnet`: change the ids and topology in the deploy PR, never here.
 
 **Moderation** (`lib/services/moderation-service.ts`, `components/settings/contract-moderation-settings.tsx`)
@@ -403,8 +404,7 @@ and readers accept both shapes:
 ## Validation
 
 ```
-python3 scripts/build-v9-contract.py --self-test
-node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v9.json
+node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v9.json --strict-size
 node scripts/validate-contract-offline.mjs contracts/yappr-blog-contract.json
 node scripts/validate-contract-offline.mjs contracts/yappr-storefront-contract.json
 node scripts/validate-contract-offline.mjs contracts/yappr-profile-contract.json
@@ -421,8 +421,8 @@ create transition of every file (`DataContractCreateTransition.toBytes()` plus
 100 B for the signature):
 
 - A file over the 20,480-byte cap FAILS.
-- A file over the 20,000-byte headroom budget warns. With `--strict-size`,
-  which `build-v9-contract.py --self-test` passes for v9, it fails.
+- A file over the 20,000-byte headroom budget warns. With `--strict-size`
+  (use it for every social cut), it fails.
 - It validates every doctype with ajv against rs-dpp's document meta-schema
   v3, vendored at `scripts/meta-schema/document-meta-v3.json` and pinned by
   sha256. When ajv is not installed (it is only a transitive dependency),

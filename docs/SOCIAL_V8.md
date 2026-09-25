@@ -1,5 +1,11 @@
 # Social v8, blog v3, storefront v3 — the 4.2.0-beta.3 cuts
 
+> **Historical record.** Superseded social cuts, their generators
+> (`build-vN-contract.py`) and their batteries (`verify-v4/v5/v7.mjs`) were
+> removed from the tree; the files this page names are in git history. The
+> live social contracts are v2 (testnet) and v9 (moutai), see
+> [`contracts/README.md`](../contracts/README.md).
+
 Platform 4.2.0-beta.3 (protocol version 14, 33 commits over beta.2) ships a
 contract grammar none of Yappr's live contracts can gain by `dataContractUpdate`:
 contract moderation, moderator deletion, deletable references, action fees, optional

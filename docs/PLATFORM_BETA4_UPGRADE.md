@@ -1,5 +1,11 @@
 # Platform 4.2.0-beta.4: wasm-derived ids, moderation restore, owner balances
 
+> **Historical record.** Superseded social cuts, their generators
+> (`build-vN-contract.py`) and their batteries (`verify-v4/v5/v7.mjs`) were
+> removed from the tree; the files this page names are in git history. The
+> live social contracts are v2 (testnet) and v9 (moutai), see
+> [`contracts/README.md`](../contracts/README.md).
+
 Investigation date: 2026-09-24. This document covers the beta.3 → beta.4 range
 only; everything earlier is in [`PLATFORM_BETA3_UPGRADE.md`](./PLATFORM_BETA3_UPGRADE.md).
 It is the record of **PR A** (`beta4/sdk`): the SDK pin, the id derivation moving

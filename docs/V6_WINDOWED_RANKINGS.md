@@ -1,5 +1,11 @@
 # Contract v6 — windowed rankings and retention
 
+> **Historical record.** Superseded social cuts, their generators
+> (`build-vN-contract.py`) and their batteries (`verify-v4/v5/v7.mjs`) were
+> removed from the tree; the files this page names are in git history. The
+> live social contracts are v2 (testnet) and v9 (moutai), see
+> [`contracts/README.md`](../contracts/README.md).
+
 > **Superseded by v7, but still current for the windowed rankings.**
 > `contracts/yappr-social-contract-v7.json` (the 4.2.0-beta.2 cut) keeps every
 > index, terminal, ranked axis and `timeRange` window on this page **verbatim**,
