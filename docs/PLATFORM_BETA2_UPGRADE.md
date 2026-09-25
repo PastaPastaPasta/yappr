@@ -372,6 +372,10 @@ contract-group mechanics are unchanged from the beta.1 document.
 
 ## Deployment evidence
 
+> **Historical record.** Moutai has since been wiped for a later 4.2.0 beta, so
+> none of the contracts, documents or counts below exist on the network any more.
+> This section records what the beta.2 deployment showed.
+
 Observed on 2026-09-18 against moutai. Live Drive and DAPI both report
 `4.2.0-beta.2`, Tenderdash 1.8.0, protocol 14. The Platform state was wiped for
 the upgrade and the Core chain persisted, so every identity was restored from
@@ -486,7 +490,12 @@ v7 dropped the explicit `countable` keyword from nine indexes that keep
 `like.byAuthorPost`, `like.byDayPost`, `like.byDayAuthorPost`, `post.byOwner`,
 `beat.byDayHashtagPost`, `beat.byRollingHashtagPost`. Offline validation passes
 either way, so this was read back LIVE off the seeded corpus. beta.2 does infer
-`countable` from `rangeCountable`:
+`countable` from `rangeCountable`. The live reads below cover 7 of the 9
+stripped indexes; `like.byPost` and `beat.byRollingHashtagPost` were not read
+before moutai was later wiped. Those two rely on the same
+[#4809](https://github.com/dashpay/platform/pull/4809) sugar rule
+(`rangeCountable: true` implies `countable: "countable"`) as the seven that were
+read, so they are covered by that rule rather than by a live observation.
 
 | index | live read |
 | --- | --- |
