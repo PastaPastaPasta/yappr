@@ -79,10 +79,17 @@ export function UsernameEntryStep({ onCheckAvailability }: UsernameEntryStepProp
   }
 
   // Use the WASM export from the same SDK initialized before isReady is set.
-  // DPNS also treats o/0 and i/l/1 as the same label.
-  const canonicalLabel = (label: string) => isSdkReady
-    ? WasmSdk.dpnsConvertToHomographSafe(label.trim())
-    : label.trim().toLowerCase()
+  // DPNS also treats o/0 and i/l/1 as the same label. The export can throw, so
+  // fall back to a case-insensitive comparison rather than crash the step.
+  const canonicalLabel = (label: string) => {
+    const trimmed = label.trim()
+    if (!isSdkReady) return trimmed.toLowerCase()
+    try {
+      return WasmSdk.dpnsConvertToHomographSafe(trimmed)
+    } catch {
+      return trimmed.toLowerCase()
+    }
+  }
   const seenLabels = new Set<string>()
   const duplicateLabels = new Set<string>()
   for (const entry of usernames) {
