@@ -6,7 +6,7 @@ vi.mock('@/lib/services/evo-sdk-service', () => ({
 }))
 
 import { YAPPR_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID } from '@/lib/constants'
-import { createProfileGate, hasYapprProfile, isProfileOptionalRoute, usernameGateAction } from './profile-gate'
+import { createProfileGate, hasYapprProfile, isGateVisitCleared, isProfileOptionalRoute, nextGateVisit, usernameGateAction, type GateVisit } from './profile-gate'
 
 const identityId = '11111111111111111111111111111111'
 const profileDoc = { $id: 'p', $ownerId: identityId, displayName: 'Ava' }
@@ -88,6 +88,51 @@ describe('createProfileGate', () => {
     for (const pathname of ['/profile/create/', '/dpns/register/', '/terms/', '/about/private-feeds/']) {
       await expect(gate.shouldRedirect({ ...gated, pathname })).resolves.toBe(false)
     }
+  })
+})
+
+describe('gate visits', () => {
+  const start: GateVisit = { identityId, pathname: '/settings/', seq: 0 }
+
+  it('keeps the same visit while neither the identity nor the route changes', () => {
+    expect(nextGateVisit(start, identityId, '/settings/')).toBe(start)
+  })
+
+  it('starts a new visit on a route change or an identity change', () => {
+    expect(nextGateVisit(start, identityId, '/feed/').seq).toBe(1)
+    expect(nextGateVisit(start, 'other', '/settings/').seq).toBe(1)
+    expect(nextGateVisit(start, undefined, '/settings/').seq).toBe(1)
+  })
+
+  it('never clears a signed-out visit', () => {
+    const signedOut: GateVisit = { identityId: undefined, pathname: '/feed/', seq: 3 }
+    expect(isGateVisitCleared(signedOut, signedOut)).toBe(false)
+  })
+
+  it('does not reuse a failed-open clearance after a trip through an exempt route and back', async () => {
+    // The provider's sequence: the lookup fails open on /settings, withAuth sends
+    // the user to /dpns/register (exempt, so nothing is cleared there), and the
+    // user returns to /settings, where the lookup now succeeds and finds nothing.
+    const lookup = vi.fn()
+      .mockRejectedValueOnce(new Error('DAPI unavailable'))
+      .mockResolvedValueOnce(false)
+    const gate = createProfileGate(lookup)
+    const noUsername = { usernameOptional: false, username: undefined, skippedUsername: false }
+
+    const settings = start
+    await expect(gate.shouldRedirect({ identityId, pathname: settings.pathname })).rejects.toThrow()
+    const cleared = settings // fail open: this visit is cleared
+    expect(usernameGateAction({ ...noUsername, profileCleared: isGateVisitCleared(cleared, settings) })).toBe('redirect')
+
+    const dpns = nextGateVisit(settings, identityId, '/dpns/register/')
+    await expect(gate.shouldRedirect({ identityId, pathname: dpns.pathname })).resolves.toBe(false)
+
+    const back = nextGateVisit(dpns, identityId, '/settings/')
+    // First render back on /settings, while the new lookup is still pending.
+    expect(isGateVisitCleared(cleared, back)).toBe(false)
+    expect(usernameGateAction({ ...noUsername, profileCleared: isGateVisitCleared(cleared, back) })).toBe('wait')
+    // The lookup then finds no profile: the profile gate, not DPNS, wins.
+    await expect(gate.shouldRedirect({ identityId, pathname: back.pathname })).resolves.toBe(true)
   })
 })
 

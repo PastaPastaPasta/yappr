@@ -103,6 +103,28 @@ export function createProfileGate(lookup: (identityId: string) => Promise<boolea
   }
 }
 
+/**
+ * One visit to a route by one identity. A new visit starts whenever either
+ * changes, including a pass through an exempt route and back, so the gate's
+ * answer for an earlier visit is never reused for a later one.
+ */
+export interface GateVisit {
+  identityId: string | undefined
+  pathname: string
+  seq: number
+}
+
+/** `previous` when neither the identity nor the route changed, else the next visit. */
+export function nextGateVisit(previous: GateVisit, identityId: string | undefined, pathname: string): GateVisit {
+  if (previous.identityId === identityId && previous.pathname === pathname) return previous
+  return { identityId, pathname, seq: previous.seq + 1 }
+}
+
+/** Whether `cleared` (the visit the gate last let through) is the current visit. */
+export function isGateVisitCleared(cleared: GateVisit | undefined, current: GateVisit): boolean {
+  return current.identityId !== undefined && cleared?.seq === current.seq && cleared.identityId === current.identityId
+}
+
 export interface UsernameGateInput {
   /** The page accepts a signed-in user without a username (`optional` or `allowWithoutDPNS`). */
   usernameOptional: boolean
@@ -110,8 +132,8 @@ export interface UsernameGateInput {
   /** The user chose to continue without a username (`yappr_skip_dpns`). */
   skippedUsername: boolean
   /**
-   * The profile gate has let this identity through on the current route: it
-   * has a profile, the route is exempt, or the lookup failed and it failed open.
+   * The profile gate has let this identity through on the current visit to
+   * this route: it has a profile, or the lookup failed and it failed open.
    */
   profileCleared: boolean
 }

@@ -8,7 +8,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { usePathname, useRouter } from 'next/navigation'
 import { PlatformAuthController, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
-import { createProfileGate, hasYapprProfile, isProfileOptionalRoute, usernameGateAction } from '@/lib/auth/profile-gate'
+import { createProfileGate, hasYapprProfile, isGateVisitCleared, isProfileOptionalRoute, nextGateVisit, usernameGateAction, type GateVisit } from '@/lib/auth/profile-gate'
 import { currentRoute, dpnsRegisterHref, profileCreateHref } from '@/lib/auth/return-to'
 import { extractErrorMessage, isAlreadyExistsError } from '@/lib/error-utils'
 import { useUsernameModal } from '@/hooks/use-username-modal'
@@ -137,32 +137,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // cleared the identity (`profileGateCleared`). The redirect carries the
   // requested route as `next`, so profile creation can return the user there.
   const gateIdentityId = controllerState.user?.identityId
-  const [cleared, setCleared] = useState<{ identityId: string; pathname: string } | undefined>()
+  // Clearance belongs to one visit, not to a pathname: a fail-open on /settings
+  // must not still count after a trip to /dpns/register and back. The visit
+  // advances during render (not in an effect) so that no child, `withAuth`
+  // included, ever renders the new route with the previous visit's clearance.
+  const [storedVisit, setStoredVisit] = useState<GateVisit>(() => ({ identityId: gateIdentityId, pathname, seq: 0 }))
+  const visit = nextGateVisit(storedVisit, gateIdentityId, pathname)
+  if (visit !== storedVisit) setStoredVisit(visit)
+  const [cleared, setCleared] = useState<GateVisit | undefined>()
   useEffect(() => {
-    if (controllerState.isAuthRestoring || !gateIdentityId) return
+    const { identityId } = visit
+    if (controllerState.isAuthRestoring || !identityId) return
     let cancelled = false
-    const exempt = isProfileOptionalRoute(pathname)
+    const exempt = isProfileOptionalRoute(visit.pathname)
 
-    profileGate.shouldRedirect({ identityId: gateIdentityId, pathname }).then((redirect) => {
+    profileGate.shouldRedirect({ identityId, pathname: visit.pathname }).then((redirect) => {
       if (cancelled) return
-      if (redirect) router.push(profileCreateHref(currentRoute(pathname)))
-      else if (!exempt) setCleared({ identityId: gateIdentityId, pathname })
+      if (redirect) router.push(profileCreateHref(currentRoute(visit.pathname)))
+      else if (!exempt) setCleared(visit)
     }).catch((error) => {
       // Fail open: a lookup that cannot reach Platform must never strand a user
       // who has a profile on /profile/create.
       logger.error('Auth: profile gate lookup failed; not redirecting:', error)
-      if (!cancelled) setCleared({ identityId: gateIdentityId, pathname })
+      if (!cancelled) setCleared(visit)
     })
 
     return () => {
       cancelled = true
     }
-  }, [controllerState.isAuthRestoring, gateIdentityId, pathname, profileGate, router])
-  // Scoped to the route as well, so a fail-open on one page never lets the DPNS
-  // redirect race ahead of the gate's answer on the next.
-  const profileGateCleared = gateIdentityId !== undefined
-    && cleared?.identityId === gateIdentityId
-    && cleared.pathname === pathname
+  }, [controllerState.isAuthRestoring, visit, profileGate, router])
+  const profileGateCleared = isGateVisitCleared(cleared, visit)
 
   const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
     switch (intent.kind) {
