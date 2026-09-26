@@ -3,16 +3,19 @@
 import { forwardRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useRouter } from 'next/navigation'
-import { BuildingStorefrontIcon } from '@heroicons/react/24/outline'
+import { BuildingStorefrontIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { CartItemRow } from './cart-item-row'
 import { Button } from '@/components/ui/button'
 import { formatPrice } from '@/lib/utils/format'
 import { cartService, type CartItemAvailability } from '@/lib/services/cart-service'
+import type { BlockSource } from '@/lib/services/block-service'
 import type { CartItem, Store } from '@/lib/types'
 
 interface CartStoreSectionProps {
   storeId: string
   store?: Store
+  /** Set when the viewer blocks the store owner, and by whom. */
+  ownerBlock?: BlockSource
   items: CartItem[]
   availability: CartItemAvailability[]
   isCheckingAvailability: boolean
@@ -21,7 +24,7 @@ interface CartStoreSectionProps {
 }
 
 export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps>(
-  function CartStoreSection({ storeId, store, items, availability, isCheckingAvailability, onRefreshAvailability, onRemoveAll }, ref) {
+  function CartStoreSection({ storeId, store, ownerBlock, items, availability, isCheckingAvailability, onRefreshAvailability, onRemoveAll }, ref) {
     const router = useRouter()
 
     const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
@@ -74,6 +77,19 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
           Remove all
         </button>
       </div>
+
+      {ownerBlock && (
+        <div role="alert" className="mx-4 mt-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+          <div className="flex items-center gap-2">
+            <ExclamationTriangleIcon className="h-5 w-5 text-amber-500 flex-shrink-0" aria-hidden="true" />
+            <p className="text-sm text-amber-700 dark:text-amber-400">
+              {ownerBlock === 'own'
+                ? 'You have blocked this store owner. Consider removing these items.'
+                : 'This store owner is blocked by a block list you follow. Consider removing these items.'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Items */}
       <div className="divide-y divide-gray-100 dark:divide-gray-900">

@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
@@ -20,6 +20,7 @@ import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
 import { storeStatsService } from '@/lib/services/store-stats-service'
 import { storefrontIsV2 } from '@/lib/constants'
+import { checkBlockedForAuthors } from '@/hooks/use-block'
 import type { Store, StoreRatingSummary } from '@/lib/types'
 
 type StoreSort = 'newest' | 'topRated' | 'mostOrdered'
@@ -31,6 +32,8 @@ export default function StoreBrowsePage() {
   const { isReady: sdkReady } = useSdk()
   const [stores, setStores] = useState<Store[]>([])
   const [storeRatings, setStoreRatings] = useState<Map<string, StoreRatingSummary>>(new Map())
+  // Blocked store owners, tagged with the (viewer, store set) they were resolved for
+  const [blockCheck, setBlockCheck] = useState<{ key: string; blocked: Map<string, boolean> } | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [hasStore, setHasStore] = useState(false)
@@ -88,13 +91,52 @@ export default function StoreBrowsePage() {
     return () => { active = false }
   }, [sdkReady, sort])
 
-  // Filter stores by search query
-  const filteredStores = searchQuery
-    ? stores.filter(store =>
-        store.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        store.description?.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : stores
+  const viewerId = user?.identityId
+  const blockCheckKey = viewerId && stores.length > 0
+    ? `${viewerId}:${stores.map(store => store.id).join(',')}`
+    : ''
+
+  // Resolve which store owners the viewer blocks (own or via followed lists)
+  useEffect(() => {
+    // Drop any earlier result first, so a result for the same key from before
+    // a logout/login cannot vouch for this check while it is in flight.
+    setBlockCheck(null)
+    if (!viewerId || !blockCheckKey) return
+
+    let cancelled = false
+    const key = blockCheckKey
+    checkBlockedForAuthors(viewerId, stores.map(store => store.ownerId))
+      .then((blocked) => {
+        if (!cancelled) setBlockCheck({ key, blocked })
+      })
+      .catch((error) => {
+        // checkBlockedForAuthors already fails open; this only guards against
+        // the list staying on its spinner if that ever changes.
+        logger.error('Failed to check blocked store owners:', error)
+        if (!cancelled) setBlockCheck({ key, blocked: new Map() })
+      })
+    return () => { cancelled = true }
+  }, [viewerId, stores, blockCheckKey])
+
+  // Keep the list loading until block status is known for this viewer and
+  // store set, so blocked stores never flash as clickable. Guests skip this.
+  const isBlockCheckPending = blockCheckKey !== '' && blockCheck?.key !== blockCheckKey
+
+  // Hide stores whose owner is blocked, then filter by search query
+  const filteredStores = useMemo(() => {
+    const blocked = blockCheck?.key === blockCheckKey ? blockCheck.blocked : null
+    const query = searchQuery.toLowerCase()
+    return stores.filter(store =>
+      !blocked?.get(store.ownerId) &&
+      (!query ||
+        store.name.toLowerCase().includes(query) ||
+        store.description?.toLowerCase().includes(query))
+    )
+  }, [stores, blockCheck, blockCheckKey, searchQuery])
+
+  // Every loaded store is hidden because its owner is blocked, so "No stores
+  // yet" would be wrong.
+  const allStoresHidden = !searchQuery && stores.length > 0 && filteredStores.length === 0
 
   const handleStoreClick = (storeId: string) => {
     router.push(`/store/view?id=${storeId}`)
@@ -176,7 +218,7 @@ export default function StoreBrowsePage() {
 
           {/* Store List */}
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
-            {isLoading ? (
+            {isLoading || isBlockCheckPending ? (
               <div className="p-8 text-center">
                 <Spinner className="mx-auto mb-4" />
                 <p className="text-gray-500">Loading stores...</p>
@@ -185,10 +227,14 @@ export default function StoreBrowsePage() {
               <div className="p-8 text-center">
                 <BuildingStorefrontIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
                 <p className="text-gray-500 font-medium">
-                  {searchQuery ? 'No stores match your search' : 'No stores yet'}
+                  {searchQuery ? 'No stores match your search' : allStoresHidden ? 'No stores to show' : 'No stores yet'}
                 </p>
                 <p className="text-sm text-gray-400 mt-1">
-                  {searchQuery ? 'Try a different search term' : 'Be the first to create a store!'}
+                  {searchQuery
+                    ? 'Try a different search term'
+                    : allStoresHidden
+                      ? 'Stores from accounts you block are hidden'
+                      : 'Be the first to create a store!'}
                 </p>
                 {!searchQuery && user && !hasStore && (
                   <Button

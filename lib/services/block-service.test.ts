@@ -154,3 +154,80 @@ describe('feed block query budget', () => {
     expect(query).not.toHaveBeenCalled()
   })
 })
+
+describe('block provenance', () => {
+  const followed = identity(248)
+  const inheritedFrom = (targets: string[]) => async (q: { documentTypeName: string; where: unknown[][] }) =>
+    q.documentTypeName === 'block' && q.where[0][2] === followed
+      ? targets.map((id, i) => block(id, i, followed)) : []
+
+  it('reports an inherited-only block as not directly unblockable', async () => {
+    setBlockFollows(viewer, [followed])
+    query.mockImplementation(inheritedFrom([authors[0]]))
+    expect(await blockService.getBlockProvenance(authors[0], viewer))
+      .toEqual({ isBlocked: true, isOwnBlock: false, inheritedFrom: followed })
+  })
+
+  it('reports both sources when the target is blocked directly and by a followed list', async () => {
+    setBlockFollows(viewer, [followed])
+    query.mockImplementation(async q => q.documentTypeName !== 'block' ? []
+      : q.where[0][2] === followed ? [block(authors[0], 0, followed)] : [block(authors[0])])
+    expect(await blockService.getBlockProvenance(authors[0], viewer))
+      .toEqual({ isBlocked: true, isOwnBlock: true, inheritedFrom: followed })
+  })
+
+  it('keeps a confirmed own block that is not queryable yet', async () => {
+    setBlockFollows(viewer, [])
+    // A block this session just broadcast; the owner query does not return it yet.
+    addOwnBlock(viewer, authors[0])
+    expect(await blockService.getBlockProvenance(authors[0], viewer))
+      .toEqual({ isBlocked: true, isOwnBlock: true, inheritedFrom: null })
+    expect(blockQueries()).toHaveLength(1)
+    expect(await blockService.isBlocked(authors[0], viewer)).toBe(true)
+  })
+
+  it('never reports the viewer as blocking themself', async () => {
+    expect(await blockService.getBlockProvenance(viewer, viewer))
+      .toEqual({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
+    expect(query).not.toHaveBeenCalled()
+  })
+
+  it('never reports the viewer as blocked in a batch, even when a followed list blocks them', async () => {
+    setBlockFollows(viewer, [followed])
+    query.mockImplementation(inheritedFrom([viewer, authors[0]]))
+    const statuses = await blockService.checkBlockedBatch(viewer, [viewer, authors[0]])
+    expect(Object.fromEntries(statuses)).toEqual({ [viewer]: false, [authors[0]]: true })
+    expect(Object.fromEntries(await blockService.getBlockSourcesBatch(viewer, [viewer, authors[0]])))
+      .toEqual({ [authors[0]]: 'inherited' })
+    expect(await blockService.isBlocked(viewer, viewer)).toBe(false)
+  })
+
+  it('does not cache "not blocked" when a followed list could not be read', async () => {
+    setBlockFollows(viewer, [followed])
+    let followedReadFails = true
+    query.mockImplementation(async q => {
+      if (q.documentTypeName !== 'block' || q.where[0][2] !== followed) return []
+      if (followedReadFails) throw new Error('StaleNode')
+      return [block(authors[0], 0, followed)]
+    })
+    expect(await blockService.getBlockProvenance(authors[0], viewer))
+      .toEqual({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
+    expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).get(authors[0])).toBe(false)
+
+    // Once the followed list reads again, the block shows up instead of a cached miss.
+    followedReadFails = false
+    expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).get(authors[0])).toBe(true)
+    expect(await blockService.getBlockProvenance(authors[0], viewer))
+      .toEqual({ isBlocked: true, isOwnBlock: false, inheritedFrom: followed })
+  })
+
+  it('labels a batch of targets by block source with one query per source', async () => {
+    setBlockFollows(viewer, [followed])
+    query.mockImplementation(async q => q.documentTypeName !== 'block' ? []
+      : q.where[0][2] === followed ? [block(authors[1], 1, followed), block(authors[2], 2, followed)] : [block(authors[2], 2)])
+    const sources = await blockService.getBlockSourcesBatch(viewer, authors.slice(0, 4))
+    expect(Object.fromEntries(sources)).toEqual({ [authors[1]]: 'inherited', [authors[2]]: 'own' })
+    // The own list plus one inherited check for the followed blocker.
+    expect(blockQueries()).toHaveLength(2)
+  })
+})
