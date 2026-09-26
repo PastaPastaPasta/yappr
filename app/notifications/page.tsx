@@ -211,7 +211,7 @@ function NotificationsPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={markAllAsRead}
+                  onClick={() => markAllAsRead(notificationSettings)}
                   className="col-start-1 row-start-2 justify-self-start text-yappr-500 hover:text-yappr-600 text-sm"
                 >
                   Mark all as read

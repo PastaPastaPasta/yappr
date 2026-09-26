@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { Notification } from '../types';
 import { scopedKey } from '@/lib/storage-scope';
+import { isNotificationEnabled } from '@/lib/notification-preferences';
+import type { NotificationSettings } from '@/lib/store';
 
 // Maximum number of read IDs to store in localStorage
 // At ~44 chars per base58 ID, 1000 IDs ≈ 44KB, well under localStorage limits
@@ -53,7 +55,11 @@ interface NotificationState {
   addNotifications: (notifications: Notification[]) => void;
   setFilter: (filter: NotificationFilter) => void;
   markAsRead: (id: string) => void;
-  markAllAsRead: () => void;
+  /**
+   * Mark every notification the user can currently see as read. Types turned
+   * off in `settings` are skipped, so they are still unread if re-enabled.
+   */
+  markAllAsRead: (settings: NotificationSettings) => void;
   setLoading: (loading: boolean) => void;
   setLastFetchTimestamp: (timestamp: number) => void;
   setHasFetchedOnce: (fetched: boolean) => void;
@@ -124,13 +130,19 @@ export const useNotificationStore = create<NotificationState>()(
         });
       },
 
-      markAllAsRead: () => {
+      markAllAsRead: (settings) => {
         const state = get();
-        const allIds = state.notifications.map(n => n.id);
+        // Read state is per id, so leaving hidden ids out of readIds keeps them unread.
+        const visibleIds = new Set(
+          state.notifications.filter(n => isNotificationEnabled(n, settings)).map(n => n.id)
+        );
+        if (visibleIds.size === 0) return;
 
         set({
-          readIds: addToReadIds(state.readIds, allIds),
-          notifications: state.notifications.map(n => ({ ...n, read: true }))
+          readIds: addToReadIds(state.readIds, Array.from(visibleIds)),
+          notifications: state.notifications.map(n =>
+            visibleIds.has(n.id) ? { ...n, read: true } : n
+          )
         });
       },
 
