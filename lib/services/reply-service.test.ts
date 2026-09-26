@@ -6,6 +6,8 @@ vi.mock('./state-transition-service', () => ({ stateTransitionService: {} }))
 vi.mock('./dpns-service', () => ({ dpnsService: {} }))
 vi.mock('./unified-profile-service', () => ({ unifiedProfileService: {} }))
 import { replyService } from './reply-service'
+import { replyToPost } from './post-service'
+import { shouldGateSensitive } from '@/lib/sensitive-content'
 
 beforeEach(() => query.mockReset())
 
@@ -34,5 +36,20 @@ describe('profile reply pagination', () => {
     await expect(replyService.getUserReplies('111111111', {
       limit: 50, startAfter: 'reply-49', skipEnrichment: true,
     })).rejects.toThrow('offline')
+  })
+})
+
+describe('reply sensitive flag', () => {
+  it('keeps a flagged thread continuation gated through replyToPost', async () => {
+    query.mockResolvedValueOnce([
+      { $id: 'flagged', $ownerId: '111111111', $createdAt: 2000, content: 'part 2', parentId: '222222222', parentOwnerId: '111111111', sensitive: true },
+      { $id: 'plain', $ownerId: '111111111', $createdAt: 1999, content: 'reply', parentId: '222222222', parentOwnerId: '111111111' },
+    ])
+    const { documents } = await replyService.getUserReplies('111111111', { limit: 50, skipEnrichment: true })
+    const [flagged, plain] = documents.map(replyToPost)
+    expect(flagged.sensitive).toBe(true)
+    expect(shouldGateSensitive(flagged, 'blur')).toBe(true)
+    expect(plain.sensitive).toBeUndefined()
+    expect(shouldGateSensitive(plain, 'blur')).toBe(false)
   })
 })

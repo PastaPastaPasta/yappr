@@ -75,9 +75,9 @@ export interface Post {
    */
   deleted?: boolean
   /**
-   * Author-declared sensitive/NSFW flag. Only `post` documents carry it — the
-   * app never flags individual replies — so a Post backed by a reply leaves it
-   * unset.
+   * Author-declared sensitive/NSFW flag. A flagged thread carries it on the
+   * root post and on every continuation reply; a reply to someone else's post
+   * is never flagged.
    */
   sensitive?: boolean
   /**
@@ -124,6 +124,7 @@ export interface Reply {
   rootPostId?: string     // v9: the post the whole thread hangs off (required on chain)
   replyToReplyId?: string // v9: the reply this one is nested under, if any
   deleted?: boolean       // v9 tombstone marker (see Post.deleted)
+  sensitive?: boolean     // author-declared NSFW flag (see Post.sensitive)
   parentContent?: Post | Reply  // Lazy-loaded parent
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
   // Private feed fields (present when reply is encrypted)

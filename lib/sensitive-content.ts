@@ -3,8 +3,8 @@ import type { SensitiveContentMode } from '@/lib/store'
 
 /**
  * Whether a post should be treated as author-flagged sensitive content.
- * Only `post` documents ever carry the flag (replies are never individually
- * flagged), and a tombstone has no content left to warn about.
+ * A flagged thread carries it on the root and every continuation reply; a
+ * tombstone has no content left to warn about.
  */
 export function isSensitivePost(post: Post): boolean {
   return post.sensitive === true && post.deleted !== true
