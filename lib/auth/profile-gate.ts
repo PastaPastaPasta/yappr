@@ -13,15 +13,27 @@ import { queryDocuments } from '@/lib/services/sdk-helpers'
  */
 
 /**
- * Routes that intentionally host a signed-in user with no profile yet, plus the
- * embed route, which renders inside other sites' iframes and must never
- * navigate. `usePathname()` excludes the `basePath`, so these match exactly.
+ * Routes a signed-in user with no profile may stay on. `usePathname()` excludes
+ * the `basePath`, so these match exactly.
+ *
+ * - The flows that host such a user: /profile/create, /dpns/register, /login
+ *   and /welcome.
+ * - /embed, which renders inside other sites' iframes and must never navigate.
+ * - The legal and informational pages (the `InfoPage` layout), which must stay
+ *   readable before a profile exists: /terms, /privacy, /cookies, /contract and
+ *   /about with everything under it.
  */
-const PROFILE_OPTIONAL_ROUTES = ['/profile/create', '/dpns/register', '/login', '/welcome', '/embed']
+const PROFILE_OPTIONAL_ROUTES = [
+  '/profile/create', '/dpns/register', '/login', '/welcome', '/embed',
+  '/terms', '/privacy', '/cookies', '/contract', '/about',
+]
+/** Exempt together with every route beneath them. */
+const PROFILE_OPTIONAL_PREFIXES = ['/about/']
 
 export function isProfileOptionalRoute(pathname: string): boolean {
   const normalized = pathname.replace(/\/+$/, '') || '/'
   return PROFILE_OPTIONAL_ROUTES.includes(normalized)
+    || PROFILE_OPTIONAL_PREFIXES.some((prefix) => normalized.startsWith(prefix))
 }
 
 async function ownsProfileDocument(dataContractId: string, identityId: string): Promise<boolean> {

@@ -20,8 +20,17 @@ describe('isProfileOptionalRoute', () => {
     }
   })
 
+  it('exempts the legal and informational pages, and everything under /about', () => {
+    for (const route of ['/terms/', '/privacy', '/cookies/', '/contract/', '/about', '/about/', '/about/private-feeds/']) {
+      expect(isProfileOptionalRoute(route)).toBe(true)
+    }
+  })
+
   it('gates everything else, including routes that merely share a suffix or prefix', () => {
-    for (const route of ['/', '/feed/', '/user/', '/about/', '/settings/', '/store/create/', '/profile/create/extra']) {
+    for (const route of [
+      '/', '/feed/', '/user/', '/post/', '/settings/', '/store/create/', '/profile/create/extra',
+      '/aboutx/', '/terms/extra', '/contracts/', '/privacy-policy/',
+    ]) {
       expect(isProfileOptionalRoute(route)).toBe(false)
     }
   })
@@ -71,12 +80,12 @@ describe('createProfileGate', () => {
     expect(lookup).not.toHaveBeenCalled()
   })
 
-  it('redirects a profile-less user from optional and required pages alike, never from its own flows', async () => {
+  it('redirects a profile-less user from optional and required pages alike, never from its own flows or the info pages', async () => {
     const gate = createProfileGate(async () => false)
     for (const pathname of ['/feed/', '/post/', '/messages/', '/settings/']) {
       await expect(gate.shouldRedirect({ ...gated, pathname })).resolves.toBe(true)
     }
-    for (const pathname of ['/profile/create/', '/dpns/register/']) {
+    for (const pathname of ['/profile/create/', '/dpns/register/', '/terms/', '/about/private-feeds/']) {
       await expect(gate.shouldRedirect({ ...gated, pathname })).resolves.toBe(false)
     }
   })
