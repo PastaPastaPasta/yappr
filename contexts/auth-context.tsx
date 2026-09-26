@@ -174,7 +174,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         useUsernameModal.getState().open(intent.identityId)
         return
       case 'profile-required':
-        router.push('/profile/create')
+        // Carry the current route as `next`, like the gate effect does: both can
+        // redirect after an interactive login, and whichever push lands last
+        // decides the URL.
+        router.push(profileCreateHref(currentRoute(pathname)))
         return
       case 'ready':
         // The controller only reports ready after finding a profile.
@@ -185,7 +188,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         router.push('/login')
         return
     }
-  }, [profileGate, router])
+  }, [pathname, profileGate, router])
 
   const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
     const result = await controller.loginWithAuthKey(identityId, privateKey, options)
