@@ -6,7 +6,7 @@ import { UsernameModal } from '@/components/dpns/username-modal'
 import { useAuth } from '@/contexts/auth-context'
 import Link from 'next/link'
 import { useLoginModal } from '@/hooks/use-login-modal'
-import { currentReturnToParam, profileCreateHref, returnToOrDefault } from '@/lib/auth/return-to'
+import { currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
 
 export default function DPNSRegisterPage() {
   const router = useRouter()
@@ -23,8 +23,11 @@ export default function DPNSRegisterPage() {
 
   const handleClose = () => {
     setIsModalOpen(false)
-    // Navigate to profile creation without username, keeping the route to return to
-    router.push(profileCreateHref(currentReturnToParam()))
+    // Dismissed without registering or skipping. Deliberately drop `next`: it is
+    // usually a page that needs a username, so returning there would reopen
+    // this modal. /profile/create then falls back to /feed. Skipping and
+    // completing registration keep `next` (the wizard and modal pass it on).
+    router.push('/profile/create')
   }
 
   // If not authenticated, show login prompt

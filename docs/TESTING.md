@@ -365,7 +365,9 @@ without one is sent to `/profile/create`. What this means for tests:
 - The redirect carries the requested route (pathname plus query, without the
   base path) as `?next=`, e.g. `/profile/create?next=%2Fpost%2F%3Fid%3D…`. The
   `withAuth` redirect to `/dpns/register` carries it too, and the DPNS flow
-  passes it on to `/profile/create`. After the profile is created (or found),
+  passes it on to `/profile/create` when the user registers or skips (merely
+  dismissing the modal drops it, since `next` is then usually a page that needs
+  a username and would reopen the modal). After the profile is created (or found),
   the user returns to `next`, or to `/feed` when it is missing or rejected.
   `lib/auth/return-to.ts` accepts only an app-relative path starting with a
   single `/` (no `//`, scheme, backslash, whitespace or control characters),
