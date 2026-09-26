@@ -50,6 +50,10 @@ describe('planPosts predecessor', () => {
     const thread = [{ id: 'x', content: 'x', postedPostId: 'a' }, { id: 'y', content: '  ' }, { id: 'z', content: 'z', postedPostId: 'c' }, { id: 'w', content: 'w' }]
     expect(predecessors(thread)).toEqual([['w', 'c']])
   })
+
+  it('is unset when the root did not land, since later posted parts are stray top-level posts', () => {
+    expect(predecessors(posts(undefined, 'b-post', undefined))).toEqual([['p0', undefined], ['p2', undefined]])
+  })
 })
 
 describe('publishThread retry linkage', () => {
@@ -138,6 +142,17 @@ describe('publishThread retry linkage', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('recreates a timed-out root and chains later parts under it, never under a stray top-level post', async () => {
+    // First attempt: A timed out, so B landed as a top-level post, and C failed.
+    const thread = [{ id: 'A', content: 'a' }, { id: 'B', content: 'b', postedPostId: 'b-post' }, { id: 'C', content: 'c' }]
+    services.createPost.mockResolvedValueOnce({ id: 'a-new' })
+    services.createReply.mockResolvedValueOnce({ id: 'reply-c' })
+    const result = await publishThread({ ...input(null), posts: planPosts(thread, undefined, false), knownThreadRootId: null })
+    expect(services.createPost).toHaveBeenCalledOnce()
+    expect(services.createReply).toHaveBeenCalledExactlyOnceWith('author', 'c', { rootPostId: 'a-new', replyToReplyId: undefined, parentOwnerId: 'author' }, expect.anything())
+    expect(result.successful.map((p) => p.threadPostId)).toEqual(['A', 'C'])
   })
 
   it('still creates a root when there is no confirmed prefix', async () => {

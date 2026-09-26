@@ -30,10 +30,14 @@ export interface PostToCreate {
 /** The thread posts that still need creating, with the image URL folded in where it must be. */
 export function planPosts(threadPosts: ThreadPost[], imageUrl: string | undefined, mediaInEncryptedContent: boolean): PostToCreate[] {
   const plan: PostToCreate[] = []
+  // A posted part is only in the thread once the root landed. Without it the
+  // root is recreated, and parts that landed after a timed-out root are stray
+  // top-level posts that a reply's thread linkage cannot name.
+  const rootLanded = !!threadPosts[0]?.postedPostId
   let predecessorPostedId: string | undefined
   for (const p of threadPosts) {
     if (p.postedPostId) {
-      predecessorPostedId = p.postedPostId
+      if (rootLanded) predecessorPostedId = p.postedPostId
       continue
     }
     if (p.content.trim().length === 0) continue
