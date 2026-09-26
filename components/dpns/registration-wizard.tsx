@@ -21,7 +21,7 @@ import { ReviewStep } from './steps/review-step'
 import { RegisteringStep } from './steps/registering-step'
 import { CompleteStep } from './steps/complete-step'
 import { keyNetwork } from '@/lib/constants'
-import { currentReturnToParam, profileCreateHref } from '@/lib/auth/return-to'
+import { currentReturnToParam, profileCreateAfterRegistrationHref } from '@/lib/auth/return-to'
 
 interface DpnsRegistrationWizardProps {
   onComplete?: () => void
@@ -212,9 +212,10 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
   }, [reset])
 
   const handleContinue = useCallback(() => {
+    const hasUsername = Boolean(user?.dpnsUsername) || usernames.some((u) => u.registered === true)
     onComplete?.()
-    router.push(profileCreateHref(currentReturnToParam()))
-  }, [onComplete, router])
+    router.push(profileCreateAfterRegistrationHref(hasUsername, currentReturnToParam()))
+  }, [onComplete, router, user?.dpnsUsername, usernames])
 
   return (
     <div className="space-y-6">

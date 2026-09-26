@@ -3,6 +3,7 @@ import {
   DEFAULT_RETURN_TO,
   RETURN_TO_PARAM,
   dpnsRegisterHref,
+  profileCreateAfterRegistrationHref,
   profileCreateHref,
   returnToOrDefault,
   sanitizeReturnTo,
@@ -126,5 +127,22 @@ describe('profileCreateHref and dpnsRegisterHref', () => {
     vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/testing')
     expect(profileCreateHref('/testing/post/?id=1')).toBe('/profile/create?next=%2Fpost%2F%3Fid%3D1')
     expect(returnToOrDefault('/testing/feed/')).toBe('/feed/')
+  })
+})
+
+describe('profileCreateAfterRegistrationHref', () => {
+  it('carries next once a username was registered', () => {
+    expect(profileCreateAfterRegistrationHref(true, '/settings')).toBe('/profile/create?next=%2Fsettings')
+  })
+
+  it('drops next when every registration failed, so a username-gated page is not revisited', () => {
+    const href = profileCreateAfterRegistrationHref(false, '/settings')
+    expect(href).toBe('/profile/create')
+    const next = new URL(href, 'https://app.example').searchParams.get(RETURN_TO_PARAM)
+    expect(returnToOrDefault(next, '')).toBe(DEFAULT_RETURN_TO)
+  })
+
+  it('still refuses an unsafe next after a success', () => {
+    expect(profileCreateAfterRegistrationHref(true, '//evil.example')).toBe('/profile/create')
   })
 })

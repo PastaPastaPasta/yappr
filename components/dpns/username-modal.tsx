@@ -14,12 +14,18 @@ import { DpnsRegistrationWizard } from './registration-wizard'
 
 interface UsernameModalProps {
   isOpen: boolean
+  /** Called whenever the modal closes: dismissed, skipped, or completed. */
   onClose: () => void
+  /**
+   * Called instead of `onClose` when the user dismisses the modal (close button
+   * or backdrop). Skip and Continue navigate on their own, so they never run it.
+   */
+  onDismiss?: () => void
   customIdentityId?: string
   hasExistingUsernames?: boolean
 }
 
-export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUsernames }: UsernameModalProps) {
+export function UsernameModal({ isOpen, onClose, onDismiss, customIdentityId, hasExistingUsernames }: UsernameModalProps) {
   const router = useRouter()
   const { user } = useAuth()
   const { reset } = useDpnsRegistration()
@@ -44,6 +50,8 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
     onClose()
   }
 
+  const handleDismiss = onDismiss ?? onClose
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -53,7 +61,7 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={onClose}
+            onClick={handleDismiss}
             className={`fixed inset-0 bg-black/50 z-50 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
           />
 
@@ -69,7 +77,7 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
             <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8 max-w-md w-full relative max-h-[90vh] overflow-y-auto">
               {/* Close button */}
               <button
-                onClick={onClose}
+                onClick={handleDismiss}
                 className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
               >
                 <X className="w-5 h-5" />

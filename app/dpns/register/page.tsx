@@ -21,12 +21,17 @@ export default function DPNSRegisterPage() {
     }
   }, [user])
 
+  // Skip and Continue close the modal and navigate on their own (Skip keeps
+  // `next`; Continue keeps it only once a username exists).
   const handleClose = () => {
+    setIsModalOpen(false)
+  }
+
+  const handleDismiss = () => {
     setIsModalOpen(false)
     // Dismissed without registering or skipping. Deliberately drop `next`: it is
     // usually a page that needs a username, so returning there would reopen
-    // this modal. /profile/create then falls back to /feed. Skipping and
-    // completing registration keep `next` (the wizard and modal pass it on).
+    // this modal. /profile/create then falls back to /feed.
     router.push('/profile/create')
   }
 
@@ -99,7 +104,7 @@ export default function DPNSRegisterPage() {
       </div>
       
       {/* Username modal */}
-      <UsernameModal isOpen={isModalOpen} onClose={handleClose} />
+      <UsernameModal isOpen={isModalOpen} onClose={handleClose} onDismiss={handleDismiss} />
     </>
   )
 }

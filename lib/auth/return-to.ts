@@ -84,6 +84,17 @@ export function profileCreateHref(next?: string | null): string {
   return withReturnTo(PROFILE_CREATE_ROUTE, next)
 }
 
+/**
+ * Where the DPNS wizard's Continue goes: /profile/create, carrying `next` only
+ * when the user now has a username. After a failed registration they still have
+ * none, and `next` is usually a username-gated page, so returning there would
+ * send them straight back to /dpns/register. Without `next` the profile step
+ * falls back to /feed.
+ */
+export function profileCreateAfterRegistrationHref(hasUsername: boolean, next?: string | null): string {
+  return profileCreateHref(hasUsername ? next : null)
+}
+
 /** /dpns/register, carrying `next` when it is a route worth returning to. */
 export function dpnsRegisterHref(next?: string | null): string {
   return withReturnTo(DPNS_REGISTER_ROUTE, next)
