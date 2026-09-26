@@ -36,18 +36,34 @@ async function openFeed(page: Page) {
   await expect(feed(page)).toBeVisible()
 }
 
-/** Refresh until a failure names the exhausted address pool. */
+/**
+ * Refresh until some SDK call reports the exhausted address pool. That need not
+ * be the feed read: the posts' background enrichment shares the instance and
+ * can exhaust it first. The rebuild that failure starts cannot connect while
+ * offline, so later feed reads fail on the rebuild instead and never name the
+ * pool themselves. Every failed refresh must keep its posts and show the
+ * error banner with its Try Again button.
+ */
 async function exhaustAddressPool(page: Page): Promise<boolean> {
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const failure = page.waitForEvent('console', {
-      predicate: message => message.text().includes(FEED_FAILURE),
-    })
-    await refresh(page).click()
-    const text = (await failure).text().toLowerCase()
-    await expect(failed(page)).toBeVisible()
-    if (text.includes('no available addresses')) return true
+  let exhausted = false
+  const onConsole = (message: { text(): string }) => {
+    if (message.text().toLowerCase().includes('no available addresses')) exhausted = true
   }
-  return false
+  page.on('console', onConsole)
+  try {
+    for (let attempt = 0; attempt < 10 && !exhausted; attempt++) {
+      const failure = page.waitForEvent('console', {
+        predicate: message => message.text().includes(FEED_FAILURE),
+      })
+      await refresh(page).click()
+      await failure
+      await expect(failed(page)).toBeVisible()
+      await expect(feed(page)).toBeVisible()
+    }
+  } finally {
+    page.off('console', onConsole)
+  }
+  return exhausted
 }
 
 /**
