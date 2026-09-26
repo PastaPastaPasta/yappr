@@ -603,7 +603,8 @@ class NotificationService {
             reposted: false,
             bookmarked: false,
             parentId, // Include parentId so UI can navigate to the parent post
-            rootPostId
+            rootPostId,
+            sensitive: (docData.sensitive ?? nestedData?.sensitive) === true ? true : undefined
           };
           result.set(id, post);
         }
