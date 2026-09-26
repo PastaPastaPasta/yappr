@@ -192,6 +192,16 @@ describe('block provenance', () => {
     expect(query).not.toHaveBeenCalled()
   })
 
+  it('never reports the viewer as blocked in a batch, even when a followed list blocks them', async () => {
+    setBlockFollows(viewer, [followed])
+    query.mockImplementation(inheritedFrom([viewer, authors[0]]))
+    const statuses = await blockService.checkBlockedBatch(viewer, [viewer, authors[0]])
+    expect(Object.fromEntries(statuses)).toEqual({ [viewer]: false, [authors[0]]: true })
+    expect(Object.fromEntries(await blockService.getBlockSourcesBatch(viewer, [viewer, authors[0]])))
+      .toEqual({ [authors[0]]: 'inherited' })
+    expect(await blockService.isBlocked(viewer, viewer)).toBe(false)
+  })
+
   it('does not cache "not blocked" when a followed list could not be read', async () => {
     setBlockFollows(viewer, [followed])
     let followedReadFails = true

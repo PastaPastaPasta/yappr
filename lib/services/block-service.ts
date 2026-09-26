@@ -750,6 +750,12 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
     // Phase 1: Check sessionStorage caches
     for (const targetId of uniqueTargetIds) {
+      // Never blocked from their own view, even if a followed list blocks
+      // them; matches getBlockProvenance().
+      if (targetId === viewerId) {
+        result.set(targetId, false)
+        continue
+      }
       if (ownBlockedSet.has(targetId)) {
         result.set(targetId, true)
         continue

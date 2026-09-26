@@ -76,12 +76,16 @@ export default function CartPage() {
     return () => { cancelled = true }
   }, [sdkReady, cart.items, refreshCount])
 
+  // loadStores builds a new Map on every cart edit; keying the block check on
+  // the owner set instead keeps quantity changes from re-running it.
+  const ownerIdsKey = Array.from(new Set(Array.from(stores.values(), store => store.ownerId))).sort().join(',')
+
   // One batched block check for every store owner in the cart
   useEffect(() => {
-    // Drop the previous viewer's or store set's warnings before re-checking,
+    // Drop the previous viewer's or owner set's warnings before re-checking,
     // so a failed check cannot leave stale ones on screen.
     setOwnerBlocks(new Map())
-    const ownerIds = Array.from(stores.values(), store => store.ownerId)
+    const ownerIds = ownerIdsKey ? ownerIdsKey.split(',') : []
     if (!viewerId || ownerIds.length === 0) return
     let cancelled = false
     const checkOwners = async () => {
@@ -91,7 +95,7 @@ export default function CartPage() {
     }
     checkOwners().catch((error) => logger.error('Failed to check blocked store owners:', error))
     return () => { cancelled = true }
-  }, [viewerId, stores])
+  }, [viewerId, ownerIdsKey])
 
   // Group items by store
   const itemsByStore = new Map<string, typeof cart.items>()
