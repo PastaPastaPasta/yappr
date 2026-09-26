@@ -122,6 +122,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       rootPostId,
       replyToReplyId,
       deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
+      sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
       // Private feed fields
       encryptedContent,
       epoch,

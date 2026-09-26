@@ -79,6 +79,7 @@ export function replyToPost(reply: Reply): Post {
     rootPostId: reply.rootPostId,
     replyToReplyId: reply.replyToReplyId,
     deleted: reply.deleted,
+    sensitive: reply.sensitive,
     _enrichment: reply._enrichment,
   };
 }
