@@ -20,7 +20,8 @@ export function isNotificationEnabled(
   settings: NotificationSettings
 ): boolean {
   const setting = NOTIFICATION_TYPE_TO_SETTING[notification.type]
-  return setting === null || settings[setting]
+  // A key missing from older persisted settings counts as its default (enabled).
+  return setting === null || settings[setting] !== false
 }
 
 export function getVisibleUnreadNotificationCount(

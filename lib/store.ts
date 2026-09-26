@@ -258,6 +258,20 @@ export const useSettingsStore = create<SettingsState>()(
         }
         return state as SettingsState
       },
+      // The default persist merge is shallow, so a persisted
+      // notificationSettings object would drop preference keys added after it
+      // was saved (e.g. blogPosts). Backfill them from the defaults.
+      merge: (persistedState, currentState) => {
+        const persisted = (persistedState ?? {}) as Partial<SettingsState>
+        return {
+          ...currentState,
+          ...persisted,
+          notificationSettings: {
+            ...currentState.notificationSettings,
+            ...persisted.notificationSettings,
+          },
+        }
+      },
     }
   )
 )

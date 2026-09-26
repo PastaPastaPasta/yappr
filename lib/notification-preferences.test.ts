@@ -32,6 +32,14 @@ describe('notification visibility and unread counts', () => {
     expect(getVisibleUnreadNotificationCount(notifications, disabled)).toBe(3)
   })
 
+  it('treats a preference key missing from older persisted settings as enabled', () => {
+    const legacy: Partial<NotificationSettings> = { ...enabled }
+    delete legacy.blogPosts
+    const legacySettings = legacy as NotificationSettings
+    expect(isNotificationEnabled({ type: 'blogPost' }, legacySettings)).toBe(true)
+    expect(getVisibleUnreadNotificationCount([{ type: 'blogComment', read: false }], legacySettings)).toBe(1)
+  })
+
   it('counts only unread enabled events in a mixed list without altering read state', () => {
     const notifications = [
       { type: 'like' as const, read: false },
