@@ -34,7 +34,7 @@ const NONCE_SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1)
 
 /**
  * The nonce the next transition against a contract must carry, from the value
- * `getIdentityContractNonce` returned (`undefined` when the identity has never
+ * `identities.contractNonce` returned (`undefined` when the identity has never
  * written to the contract).
  */
 export function nextIdentityContractNonce(current: bigint | undefined | null): bigint {

@@ -131,6 +131,7 @@ npx playwright test --project=smoke          # read-only subset
 npm run test:e2e:ui                          # Playwright UI mode
 E2E_IDENTITY_INDEX=1 npm run test:e2e        # pick a pool slot (wraps mod pool size)
 E2E_PORT=4000 npm run test:e2e               # different local port
+E2E_REQUIRE_SDK_EXHAUSTION=1 npx playwright test sdk-offline-recovery  # fail, not skip, if the SDK pool never exhausts
 ```
 
 Retarget an already-deployed site instead of the local server (the `webServer`

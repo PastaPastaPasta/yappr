@@ -39,7 +39,7 @@ export async function buildUnsignedTokenBatch(
   const sdk = await getEvoSdk();
   const tokenId = await tokenService.getTokenId();
 
-  const rawNonce = (await sdk.wasm.getIdentityContractNonce(ownerId, YAPPR_CONTRACT_ID)) ?? BigInt(0);
+  const rawNonce = (await sdk.identities.contractNonce(ownerId, YAPPR_CONTRACT_ID)) ?? BigInt(0);
   const nonce = (rawNonce & SEQUENCE_MASK) + BigInt(1);
   logger.debug(`${label}: nonce raw=${rawNonce} using=${nonce}`);
 

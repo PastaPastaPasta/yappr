@@ -297,6 +297,22 @@ jobs:
           NETWORK: devnet
         run: npx playwright test --project=write --trace=off topology dpns-username-entry
 
+      # SDK connection recovery (read-only, needs no seed). The moutai pool is
+      # small enough to exhaust within ten failed reads, so exhaustion is
+      # required here: a pool that never exhausts fails instead of skipping.
+      # No step-level continue-on-error and no retries, so a failure turns this
+      # step red (the job-level continue-on-error still keeps it non-blocking)
+      # instead of passing on a retry. It writes its own report and results,
+      # which later steps would otherwise overwrite before the upload.
+      - name: Run the devnet SDK recovery specs
+        env:
+          E2E_BASE_PATH: /devnet
+          E2E_ENV_FILE: .env.devnet
+          NETWORK: devnet
+          E2E_REQUIRE_SDK_EXHAUSTION: '1'
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report-sdk-recovery
+        run: npx playwright test --project=smoke --retries=0 --output=test-results-sdk-recovery sdk-offline-recovery
+
       # DM v5 against the real chain with several identities (pool slots 1-5 of the
       # same seed, listed in .env.devnet). Only the 1:1 and group files run here
       # (about 15 min together); the history (120-message bulk write) and
@@ -320,5 +336,7 @@ jobs:
           path: |
             playwright-report/
             test-results/
+            playwright-report-sdk-recovery/
+            test-results-sdk-recovery/
           retention-days: 7
           if-no-files-found: ignore

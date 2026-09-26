@@ -4,6 +4,8 @@ import { bundleKey, bundledContractsFor, staleContractIds } from '@/lib/contract
 import { instrumentSdk } from '@/lib/query-inspector/capture';
 import { YAPPR_DM_CONTRACT_ID, YAPPR_DM_V5_CONTRACT_ID, dmIsV5, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, TOKEN_HISTORY_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
 import type { AppNetwork } from '../constants';
+import { SDK_FACADES } from './sdk-facades';
+import { observeSdkFailures } from './sdk-failure-observer';
 
 export interface EvoSdkConfig {
   network: AppNetwork;
@@ -27,12 +29,40 @@ function sameConfig(a: EvoSdkConfig, b: EvoSdkConfig): boolean {
     (a.addresses ?? []).join(',') === (b.addresses ?? []).join(',');
 }
 
+/**
+ * Minimum spacing between SDK rebuilds. A dead network fails every call the
+ * app makes, and each failure asks for a rebuild; without a floor the rebuilds
+ * would run back to back, each one re-prefetching quorums and reconnecting.
+ */
+const MIN_REBUILD_INTERVAL_MS = 5_000;
+
+/** Substrings of the failures isConnectionError() reports; see its doc comment. */
+const CONNECTION_ERROR_MARKERS = [
+  'no available addresses',
+  'noavailableaddressesforretry',
+  'quorum not found in cache',
+  'invalid quorum',
+];
+
+/** The message of a rejection, whether or not it is an Error. */
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') {
+    return error.message;
+  }
+  return String(error);
+}
+
 class EvoSdkService {
   private sdk: EvoSDK | null = null;
   private initPromise: Promise<void> | null = null;
+  private reconnectPromise: Promise<void> | null = null;
   private config: EvoSdkConfig | null = null;
   private _isInitialized = false;
   private _isInitializing = false;
+  /** Set when a call failed at the connection level; cleared when an instance initializes. */
+  private connectionLost = false;
+  private lastRebuildAt = 0;
 
   /**
    * Initialize the SDK with configuration
@@ -137,6 +167,10 @@ class EvoSdkService {
       // batched request, so this costs a single round trip.
       await this._preloadContracts();
 
+      // Installed after the preload so a preload failure cannot ask for a
+      // rebuild that is itself waiting on this initialization.
+      this._observeFailures(this.sdk);
+      this.connectionLost = false;
       this._isInitialized = true;
       logger.debug('EvoSdkService: SDK initialized successfully');
     } catch (error) {
@@ -145,7 +179,6 @@ class EvoSdkService {
         message: error instanceof Error ? error.message : 'Unknown error',
         stack: error instanceof Error ? error.stack : undefined
       });
-      this.initPromise = null;
       this._isInitialized = false;
       throw error;
     }
@@ -288,16 +321,24 @@ class EvoSdkService {
    * Versions only, so the check gets cheaper as the versions proof does. A
    * stale seed is also caught without it: the SDK drops a cached contract on
    * the first document stamped with a newer `$contractVersion`.
+   *
+   * Must be called before the failure observer is installed on `sdk`.
    */
   private _revalidateBundledContracts(sdk: EvoSDK, ids: readonly string[]): void {
     if (ids.length === 0) return;
+    // Bound now, ahead of the failure observer, so a failure here cannot start
+    // a rebuild: every rebuild schedules another revalidation, and the two
+    // would loop with no user activity behind them. Application reads and
+    // writes stay observed and still drive recovery.
+    const getLatestVersions = sdk.contracts.getLatestVersions.bind(sdk.contracts);
+    const getMany = sdk.contracts.getMany.bind(sdk.contracts);
     void (async () => {
       try {
         const bundle = await this._bundle();
         if (!bundle) return;
         // Versions only: from protocol version 14 the proof covers the
         // contracts' version items, a few hundred bytes per contract.
-        const latest = await sdk.contracts.getLatestVersions({ contractIds: [...ids] });
+        const latest = await getLatestVersions({ contractIds: [...ids] });
         const stale = staleContractIds(bundle.contracts, latest, ids);
         if (stale.length === 0) {
           logger.debug(`EvoSdkService: ${ids.length} bundled contract(s) are current`);
@@ -305,12 +346,11 @@ class EvoSdkService {
         }
         logger.info(`EvoSdkService: ${stale.length} bundled contract(s) are stale, refetching:`, stale);
         // The fetch replaces the seeded entries in the SDK's cache.
-        await sdk.contracts.getMany(stale);
+        await getMany(stale);
       } catch (error) {
         // Nodes below the query's protocol version answer UNIMPLEMENTED; the
         // seeded contracts stay in use and the SDK's own staleness guard applies.
-        const message = error instanceof Error ? error.message : String(error);
-        if (/not implemented|not supported/i.test(message)) {
+        if (/not implemented|not supported/i.test(errorMessage(error))) {
           logger.debug('EvoSdkService: node does not serve the contract versions query; skipping revalidation');
         } else {
           logger.warn('EvoSdkService: bundled contract revalidation failed:', error);
@@ -323,6 +363,9 @@ class EvoSdkService {
    * Get the SDK instance, initializing if necessary
    */
   async getSdk(): Promise<EvoSDK> {
+    // A rebuild that fails reports through its own caller; this caller gets a
+    // fresh attempt below rather than the rebuild's error.
+    if (this.reconnectPromise) await this.reconnectPromise.catch(() => undefined);
     if (!this._isInitialized || !this.sdk) {
       if (!this.config) {
         throw new Error('SDK not configured. Call initialize() first.');
@@ -333,6 +376,84 @@ class EvoSdkService {
       throw new Error('SDK initialization failed');
     }
     return this.sdk;
+  }
+
+  /**
+   * Replace the SDK instance. Failed requests ban endpoints inside the
+   * instance, and connect() is idempotent, so an exhausted address pool or a
+   * stale quorum cache can only be cleared by building a new one. One rebuild
+   * is shared by everyone who asks while it runs, and getSdk() waits for it.
+   * Nothing is replayed: a call that failed stays failed.
+   */
+  async reconnect(): Promise<void> {
+    if (this.reconnectPromise) return this.reconnectPromise;
+    this.reconnectPromise = this._rebuild().finally(() => { this.reconnectPromise = null; });
+    return this.reconnectPromise;
+  }
+
+  /** The one rebuild `reconnect()` shares between its callers. */
+  private async _rebuild(): Promise<void> {
+    await this._settleInFlightInitialization();
+    const config = this.config;
+    if (!config) throw new Error('SDK not configured. Call initialize() first.');
+
+    const wait = this.lastRebuildAt + MIN_REBUILD_INTERVAL_MS - Date.now();
+    if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+    this.lastRebuildAt = Date.now();
+
+    // Retain the configuration throughout recovery; callers must never see
+    // the temporary unconfigured state produced by a full cleanup().
+    logger.debug('EvoSdkService: replacing the SDK instance (address pool exhausted, stale quorum cache, or connectivity restored)');
+    // A config change during the wait wins; do not resurrect the old one.
+    if (this.config !== config) return;
+    this.sdk = null;
+    this._isInitialized = false;
+    await this.initialize(config);
+  }
+
+  /**
+   * Wait out an initialization that is already running, whatever its outcome.
+   * One started while offline is probably failing; recovery keeps its config
+   * and builds a fresh instance once the attempt has finished.
+   */
+  private async _settleInFlightInitialization(): Promise<void> {
+    if (this._isInitializing && this.initPromise) {
+      await this.initPromise.catch(() => undefined);
+    }
+  }
+
+  /**
+   * Turn every connection-level rejection from `sdk`'s facades into a request
+   * to rebuild. A late rejection from an instance that has already been
+   * replaced is ignored, so it cannot discard a healthy one.
+   */
+  private _observeFailures(sdk: EvoSDK): void {
+    observeSdkFailures(SDK_FACADES.map(name => sdk[name]), error => {
+      if (this.sdk === sdk && this.isConnectionError(error)) this.recoverConnection();
+    });
+  }
+
+  /**
+   * Start a rebuild in the background. The call that observed the failure
+   * rejects right away with its own error; later callers wait in getSdk().
+   */
+  private recoverConnection(): void {
+    this.connectionLost = true;
+    this.reconnect().catch(error => logger.error('EvoSdkService: SDK rebuild failed:', error));
+  }
+
+  /**
+   * React to connectivity returning. Finishes a bootstrap that failed while
+   * offline and replaces an instance that lost its connection; a healthy
+   * instance is left alone, since browsers also fire `online` on VPN toggles
+   * and wifi hand-offs.
+   */
+  async restoreConnection(): Promise<void> {
+    if (this.connectionLost) return this.reconnect();
+    await this._settleInFlightInitialization();
+    if (this.isReady()) return;
+    if (!this.config) throw new Error('SDK not configured. Call initialize() first.');
+    await this.initialize(this.config);
   }
 
   /**
@@ -351,56 +472,22 @@ class EvoSdkService {
     this._isInitializing = false;
     this.initPromise = null;
     this.config = null;
+    this.connectionLost = false;
   }
 
   /**
-   * Check if error is a "no available addresses" error that requires reconnection
+   * Whether an error means the instance itself is unusable, rather than the
+   * request being wrong. Two cases, both fixed only by a rebuild:
+   *
+   * - every endpoint in the address pool is banned after failed requests;
+   * - the trusted context is stale: devnet DKG rotations outlive the static
+   *   quorum prefetch, after which every proof fails with "invalid quorum:
+   *   Quorum not found in cache for hash: …" and addresses get banned. There
+   *   is no refresh API; a rebuild re-prefetches the current quorums.
    */
-  isNoAvailableAddressesError(error: unknown): boolean {
-    const message = (error instanceof Error ? error.message : null) ||
-      ((error as { message?: string })?.message) ||
-      String(error);
-    return message.toLowerCase().includes('no available addresses') ||
-           message.toLowerCase().includes('noavailableaddressesforretry');
-  }
-
-  /**
-   * Check if error is a stale trusted-context error: devnet DKG rotations
-   * outlive the static quorum prefetch, after which every proof fails with
-   * "invalid quorum: Quorum not found in cache for hash: …" and addresses get
-   * banned. There is no refresh API — the only recovery is a rebuild, which
-   * re-prefetches the current quorums.
-   */
-  isStaleQuorumError(error: unknown): boolean {
-    const message = ((error instanceof Error ? error.message : null) ||
-      ((error as { message?: string })?.message) ||
-      String(error)).toLowerCase();
-    return message.includes('quorum not found in cache') ||
-           message.includes('invalid quorum');
-  }
-
-  /**
-   * Handle connection errors by reinitializing the SDK
-   * Returns true if recovery was attempted
-   */
-  async handleConnectionError(error: unknown): Promise<boolean> {
-    if (this.isNoAvailableAddressesError(error) || this.isStaleQuorumError(error)) {
-      logger.debug('EvoSdkService: Detected connection-level error (address pool exhausted or stale quorum cache), attempting to reconnect...');
-      try {
-        const savedConfig = this.config;
-        await this.cleanup();
-        if (savedConfig) {
-          // Wait a bit before reconnecting to avoid immediate rate limiting
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          await this.initialize(savedConfig);
-          logger.debug('EvoSdkService: Reconnected successfully');
-          return true;
-        }
-      } catch (reconnectError) {
-        logger.error('EvoSdkService: Failed to reconnect:', reconnectError);
-      }
-    }
-    return false;
+  isConnectionError(error: unknown): boolean {
+    const message = errorMessage(error).toLowerCase();
+    return CONNECTION_ERROR_MARKERS.some(marker => message.includes(marker));
   }
 
   /**
