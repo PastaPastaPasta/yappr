@@ -14,6 +14,7 @@ import { byNewestActivity, resolveUserReposts } from '@/lib/feed/resolve-user-re
 import { paymentUriScheme } from '@/lib/services/unified-profile-service'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
+import { profileCreateHref } from '@/lib/auth/return-to'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useBlock } from '@/hooks/use-block'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
@@ -283,7 +284,7 @@ function UserProfileContent() {
           await logout()
           return
         }
-        router.push('/profile/create')
+        router.push(profileCreateHref(`/user/?id=${encodeURIComponent(viewerId)}`))
       } catch (error) {
         logger.error('Failed to verify identity for profile check:', error)
       }

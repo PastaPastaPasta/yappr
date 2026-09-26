@@ -1,0 +1,157 @@
+import { YAPPR_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, getConfiguredNetwork } from '@/lib/constants'
+import { evoSdkService } from '@/lib/services/evo-sdk-service'
+import { queryDocuments } from '@/lib/services/sdk-helpers'
+
+/**
+ * The profile gate: a signed-in user without a profile document is sent to
+ * /profile/create from every route that is not built to host them.
+ *
+ * The platform-auth controller applies this only on the interactive login path
+ * (its `profile-required` intent). `restoreSession()` never consults it and
+ * nothing re-runs it on client-side navigation, so `AuthProvider` evaluates the
+ * gate whenever the signed-in user or the route changes.
+ */
+
+/**
+ * Routes a signed-in user with no profile may stay on. `usePathname()` excludes
+ * the `basePath`, so these match exactly.
+ *
+ * - The flows that host such a user: /profile/create, /dpns/register, /login
+ *   and /welcome.
+ * - /embed, which renders inside other sites' iframes and must never navigate.
+ * - The legal and informational pages (the `InfoPage` layout), which must stay
+ *   readable before a profile exists: /terms, /privacy, /cookies, /contract and
+ *   /about with everything under it.
+ */
+const PROFILE_OPTIONAL_ROUTES = [
+  '/profile/create', '/dpns/register', '/login', '/welcome', '/embed',
+  '/terms', '/privacy', '/cookies', '/contract', '/about',
+]
+/** Exempt together with every route beneath them. */
+const PROFILE_OPTIONAL_PREFIXES = ['/about/']
+
+export function isProfileOptionalRoute(pathname: string): boolean {
+  const normalized = pathname.replace(/\/+$/, '') || '/'
+  return PROFILE_OPTIONAL_ROUTES.includes(normalized)
+    || PROFILE_OPTIONAL_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+}
+
+async function ownsProfileDocument(dataContractId: string, identityId: string): Promise<boolean> {
+  // The gate can run before SdkProvider has configured the SDK.
+  await evoSdkService.initialize({ network: getConfiguredNetwork(), contractId: YAPPR_CONTRACT_ID })
+  const sdk = await evoSdkService.getSdk()
+  const documents = await queryDocuments(sdk, {
+    dataContractId,
+    documentTypeName: 'profile',
+    where: [['$ownerId', '==', identityId]],
+    limit: 1,
+  })
+  return documents.length > 0
+}
+
+/**
+ * Whether `identityId` owns a unified profile or a legacy one. Unlike the
+ * profile services, which turn a failed query into `null`, this rejects when a
+ * query fails, so `false` always means both queries succeeded and found nothing.
+ */
+export async function hasYapprProfile(identityId: string): Promise<boolean> {
+  if (await ownsProfileDocument(YAPPR_PROFILE_CONTRACT_ID, identityId)) return true
+  return ownsProfileDocument(YAPPR_CONTRACT_ID, identityId)
+}
+
+export interface ProfileGateInput {
+  identityId: string
+  pathname: string
+}
+
+export interface ProfileGate {
+  /** Record a profile the app just created or found, before it is query-visible. */
+  rememberProfile(identityId: string): void
+  /**
+   * Resolves `true` when the user must be sent to /profile/create. Rejects when
+   * the lookup fails: the caller must then leave the user where they are.
+   *
+   * A missing DPNS username changes nothing: a user with neither a username nor
+   * a profile goes straight to /profile/create, never through /dpns/register.
+   */
+  shouldRedirect(input: ProfileGateInput): Promise<boolean>
+}
+
+/**
+ * `lookup` must reject when it cannot tell, rather than report absence, so an
+ * outage never redirects a user who has a profile.
+ *
+ * A profile, once seen, is remembered per identity for the gate's lifetime.
+ * Absence is not: every later check asks the network again, which is what lets
+ * a user through as soon as their new profile is visible.
+ */
+export function createProfileGate(lookup: (identityId: string) => Promise<boolean>): ProfileGate {
+  const knownProfiles = new Set<string>()
+
+  return {
+    rememberProfile(identityId) {
+      knownProfiles.add(identityId)
+    },
+    async shouldRedirect({ identityId, pathname }) {
+      if (isProfileOptionalRoute(pathname)) return false
+      if (knownProfiles.has(identityId)) return false
+
+      if (!(await lookup(identityId))) return true
+      knownProfiles.add(identityId)
+      return false
+    },
+  }
+}
+
+/**
+ * One visit to a route by one identity. A new visit starts whenever either
+ * changes, including a pass through an exempt route and back, so the gate's
+ * answer for an earlier visit is never reused for a later one.
+ */
+export interface GateVisit {
+  identityId: string | undefined
+  pathname: string
+  seq: number
+}
+
+/** `previous` when neither the identity nor the route changed, else the next visit. */
+export function nextGateVisit(previous: GateVisit, identityId: string | undefined, pathname: string): GateVisit {
+  if (previous.identityId === identityId && previous.pathname === pathname) return previous
+  return { identityId, pathname, seq: previous.seq + 1 }
+}
+
+/** Whether `cleared` (the visit the gate last let through) is the current visit. */
+export function isGateVisitCleared(cleared: GateVisit | undefined, current: GateVisit): boolean {
+  return current.identityId !== undefined && cleared?.seq === current.seq && cleared.identityId === current.identityId
+}
+
+export interface UsernameGateInput {
+  /** The page accepts a signed-in user without a username (`optional` or `allowWithoutDPNS`). */
+  usernameOptional: boolean
+  username?: string
+  /** The user chose to continue without a username (`yappr_skip_dpns`). */
+  skippedUsername: boolean
+  /**
+   * The profile gate has let this identity through on the current visit to
+   * this route: it has a profile, or the lookup failed and it failed open.
+   */
+  profileCleared: boolean
+}
+
+/**
+ * What `withAuth` does about a signed-in user without a DPNS username.
+ *
+ * - `none`: render the page.
+ * - `wait`: show the spinner and redirect nowhere yet. Until the profile gate
+ *   clears the identity it may still send it to /profile/create, and a
+ *   profile-less user must land there without a detour through /dpns/register.
+ * - `redirect`: send the user to /dpns/register.
+ *
+ * No loop is possible: the profile gate never sends anyone to /dpns/register
+ * and never fires on it or on /profile/create, and /profile/create accepts a
+ * user without a username.
+ */
+export function usernameGateAction({ usernameOptional, username, skippedUsername, profileCleared }: UsernameGateInput): 'none' | 'wait' | 'redirect' {
+  if (usernameOptional || username || skippedUsername) return 'none'
+  return profileCleared ? 'redirect' : 'wait'
+}

@@ -5,9 +5,11 @@ import { scopedKey } from '@/lib/storage-scope'
 import { base64ToBytes } from '@/lib/bytes'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { PlatformAuthController, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
+import { createProfileGate, hasYapprProfile, isGateVisitCleared, isProfileOptionalRoute, nextGateVisit, usernameGateAction, type GateVisit } from '@/lib/auth/profile-gate'
+import { currentRoute, dpnsRegisterHref, profileCreateHref } from '@/lib/auth/return-to'
 import { extractErrorMessage, isAlreadyExistsError } from '@/lib/error-utils'
 import { useUsernameModal } from '@/hooks/use-username-modal'
 
@@ -49,6 +51,13 @@ interface AuthContextType {
     source?: 'wallet-derived' | 'direct-key' | 'password-migrated' | 'mixed'
   }) => Promise<void>
   logout: () => Promise<void>
+  /**
+   * The profile gate has let the signed-in identity through on the current
+   * route: it has a profile, or the lookup failed and the gate failed open.
+   */
+  profileGateCleared: boolean
+  /** Tell the profile gate that this identity now has a profile, before it is query-visible. */
+  markProfileCreated: (identityId: string) => void
   updateDPNSUsername: (username: string) => void
   refreshDpnsUsernames: () => Promise<void>
   refreshBalance: () => Promise<void>
@@ -103,7 +112,9 @@ function toFriendlyVaultWriteError(error: unknown, methodLabel: 'passkey' | 'pas
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
+  const pathname = usePathname()
   const controller = useMemo(() => new PlatformAuthController(createYapprPlatformAuthDependencies()), [])
+  const profileGate = useMemo(() => createProfileGate(hasYapprProfile), [])
   const [controllerState, setControllerState] = useState(() => controller.getState())
 
   useEffect(() => controller.subscribe(setControllerState), [controller])
@@ -118,22 +129,66 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [controller])
 
+  // The controller applies its profile gate only on interactive login. Apply it
+  // on session restore and on every navigation as well, so a profile-less user
+  // cannot reach the rest of the app by reloading or by leaving an exempt route.
+  // A user with neither a profile nor a username goes straight to
+  // /profile/create; `withAuth` holds its DPNS redirect until this gate has
+  // cleared the identity (`profileGateCleared`). The redirect carries the
+  // requested route as `next`, so profile creation can return the user there.
+  const gateIdentityId = controllerState.user?.identityId
+  // Clearance belongs to one visit, not to a pathname: a fail-open on /settings
+  // must not still count after a trip to /dpns/register and back. The visit
+  // advances during render (not in an effect) so that no child, `withAuth`
+  // included, ever renders the new route with the previous visit's clearance.
+  const [storedVisit, setStoredVisit] = useState<GateVisit>(() => ({ identityId: gateIdentityId, pathname, seq: 0 }))
+  const visit = nextGateVisit(storedVisit, gateIdentityId, pathname)
+  if (visit !== storedVisit) setStoredVisit(visit)
+  const [cleared, setCleared] = useState<GateVisit | undefined>()
+  useEffect(() => {
+    const { identityId } = visit
+    if (controllerState.isAuthRestoring || !identityId) return
+    let cancelled = false
+    const exempt = isProfileOptionalRoute(visit.pathname)
+
+    profileGate.shouldRedirect({ identityId, pathname: visit.pathname }).then((redirect) => {
+      if (cancelled) return
+      if (redirect) router.push(profileCreateHref(currentRoute(visit.pathname)))
+      else if (!exempt) setCleared(visit)
+    }).catch((error) => {
+      // Fail open: a lookup that cannot reach Platform must never strand a user
+      // who has a profile on /profile/create.
+      logger.error('Auth: profile gate lookup failed; not redirecting:', error)
+      if (!cancelled) setCleared(visit)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [controllerState.isAuthRestoring, visit, profileGate, router])
+  const profileGateCleared = isGateVisitCleared(cleared, visit)
+
   const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
     switch (intent.kind) {
       case 'username-required':
         useUsernameModal.getState().open(intent.identityId)
         return
       case 'profile-required':
-        router.push('/profile/create')
+        // Carry the current route as `next`, like the gate effect does: both can
+        // redirect after an interactive login, and whichever push lands last
+        // decides the URL.
+        router.push(profileCreateHref(currentRoute(pathname)))
         return
       case 'ready':
+        // The controller only reports ready after finding a profile.
+        profileGate.rememberProfile(intent.identityId)
         router.push('/feed')
         return
       case 'logged-out':
         router.push('/login')
         return
     }
-  }, [router])
+  }, [pathname, profileGate, router])
 
   const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
     const result = await controller.loginWithAuthKey(identityId, privateKey, options)
@@ -208,6 +263,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await applyIntent(result.intent)
   }, [applyIntent, controller])
 
+  const markProfileCreated = useCallback((identityId: string) => {
+    profileGate.rememberProfile(identityId)
+  }, [profileGate])
+
   const updateDPNSUsername = useCallback((username: string) => {
     controller.setUsername(username).catch((error) => {
       logger.error('Failed to update DPNS username:', error)
@@ -238,6 +297,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     addPasswordWrapper,
     mergeSecretsIntoAuthVault,
     logout,
+    profileGateCleared,
+    markProfileCreated,
     updateDPNSUsername,
     refreshDpnsUsernames,
     refreshBalance,
@@ -256,7 +317,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loginWithPasskey,
     loginWithPassword,
     logout,
+    markProfileCreated,
     mergeSecretsIntoAuthVault,
+    profileGateCleared,
     refreshBalance,
     refreshDpnsUsernames,
     updateDPNSUsername,
@@ -286,12 +349,20 @@ export function withAuth<P extends object>(
   }
 ): React.ComponentType<P> {
   function AuthenticatedComponent(props: P): JSX.Element {
-    const { user, isAuthRestoring } = useAuth()
+    const { user, isAuthRestoring, profileGateCleared } = useAuth()
     const router = useRouter()
+    const pathname = usePathname()
 
     const skipDPNS = typeof window !== 'undefined'
       && sessionStorage.getItem(scopedKey('yappr_skip_dpns')) === 'true'
-    const needsDPNS = !options?.optional && !options?.allowWithoutDPNS && user && !user.dpnsUsername && !skipDPNS
+    const usernameAction = user
+      ? usernameGateAction({
+          usernameOptional: Boolean(options?.optional || options?.allowWithoutDPNS),
+          username: user.dpnsUsername,
+          skippedUsername: skipDPNS,
+          profileCleared: profileGateCleared,
+        })
+      : 'none'
 
     useEffect(() => {
       if (isAuthRestoring) return
@@ -304,10 +375,10 @@ export function withAuth<P extends object>(
         return
       }
 
-      if (needsDPNS) {
-        router.push('/dpns/register')
+      if (usernameAction === 'redirect') {
+        router.push(dpnsRegisterHref(currentRoute(pathname)))
       }
-    }, [user, isAuthRestoring, router, needsDPNS])
+    }, [user, isAuthRestoring, router, usernameAction, pathname])
 
     if (isAuthRestoring) {
       return <AuthLoadingSpinner />
@@ -317,7 +388,7 @@ export function withAuth<P extends object>(
       return <Component {...props} />
     }
 
-    if (!user || needsDPNS) {
+    if (!user || usernameAction !== 'none') {
       return <AuthLoadingSpinner />
     }
 
