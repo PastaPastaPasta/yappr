@@ -30,6 +30,7 @@ import Link from 'next/link'
 import { useNotificationStore } from '@/lib/stores/notification-store'
 import { getBlogPostUrl } from '@/lib/blog/content-utils'
 import { Notification } from '@/lib/types'
+import { isNotificationEnabled } from '@/lib/notification-preferences'
 
 /**
  * Get the URL to navigate to when clicking a notification.
@@ -91,21 +92,6 @@ function notificationMessage(notification: Notification): string {
     if (notification.type === 'reply') return 'replied to your reply'
   }
   return NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'
-}
-
-// Map notification types to settings keys
-const NOTIFICATION_TYPE_TO_SETTING: Record<Notification['type'], string | null> = {
-  like: 'likes',
-  repost: 'reposts',
-  reply: 'replies',
-  follow: 'follows',
-  mention: 'mentions',
-  blogPost: 'blogPosts',
-  blogComment: 'blogPosts',
-  // Private feed notifications always show (no setting)
-  privateFeedRequest: null,
-  privateFeedApproved: null,
-  privateFeedRevoked: null,
 }
 
 type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'privateFeed'
@@ -190,38 +176,13 @@ function NotificationsPage() {
     return notifs.filter(n => n.type === tabFilter)
   }
 
-  // Get unread count for a specific filter, respecting user settings
-  const getUnreadCountForTab = (tabFilter: NotificationFilter) => {
-    const unread = notifications.filter(n => {
-      if (n.read) return false
-      // Respect notification settings (private feed notifications always count)
-      const settingKey = NOTIFICATION_TYPE_TO_SETTING[n.type]
-      if (settingKey !== null && !notificationSettings[settingKey as keyof typeof notificationSettings]) {
-        return false
-      }
-      return true
-    })
-    return getFilteredByTab(unread, tabFilter).length
-  }
-
-  // Filter by tab first, then by user settings
-  const tabFilteredNotifications = getFilteredByTab(notifications, filter)
-  const filteredNotifications = tabFilteredNotifications.filter((notification) => {
-    const settingKey = NOTIFICATION_TYPE_TO_SETTING[notification.type]
-    // If no setting key (e.g., private feed notifications), always show
-    if (settingKey === null) return true
-    // Check if this notification type is enabled in settings
-    return notificationSettings[settingKey as keyof typeof notificationSettings]
-  })
-  // Overall unread count respecting user settings
-  const unreadCount = notifications.filter(n => {
-    if (n.read) return false
-    const settingKey = NOTIFICATION_TYPE_TO_SETTING[n.type]
-    if (settingKey !== null && !notificationSettings[settingKey as keyof typeof notificationSettings]) {
-      return false
-    }
-    return true
-  }).length
+  // The list, tab counts, and sidebar share the same visibility rule.
+  const enabledNotifications = notifications.filter(notification => isNotificationEnabled(notification, notificationSettings))
+  const countUnread = (notifs: Notification[]) => notifs.filter(n => !n.read).length
+  const getUnreadCountForTab = (tabFilter: NotificationFilter) =>
+    countUnread(getFilteredByTab(enabledNotifications, tabFilter))
+  const filteredNotifications = getFilteredByTab(enabledNotifications, filter)
+  const unreadCount = countUnread(enabledNotifications)
 
   return (
     <PageShell>
@@ -251,7 +212,7 @@ function NotificationsPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={markAllAsRead}
+                  onClick={() => markAllAsRead(notificationSettings)}
                   className="col-start-1 row-start-2 justify-self-start text-yappr-500 hover:text-yappr-600 text-sm"
                 >
                   Mark all as read
