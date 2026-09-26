@@ -36,6 +36,7 @@ import {
 import { cn, truncateId } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/lib/store'
+import { useVisibleUnreadNotificationCount } from '@/hooks/use-visible-unread-notification-count'
 import { useNotificationStore } from '@/lib/stores/notification-store'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { UserAvatar } from '@/components/ui/avatar-image'
@@ -79,8 +80,7 @@ export function Sidebar() {
   const { user, logout, refreshBalance } = useAuth()
   const openLoginModal = useLoginModal((s) => s.open)
 
-  // Notification store - only subscribe to unread counts for badge display
-  const unreadNotificationCount = useNotificationStore((s) => s.getUnreadCount())
+  const unreadNotificationCount = useVisibleUnreadNotificationCount()
   const unreadMessageCount = useNotificationStore((s) => s.dmUnreadCount)
   // Under DM v5 the badge follows the v5 engine, which also runs the background poll (§6.3).
   const dmV5 = dmIsV5()

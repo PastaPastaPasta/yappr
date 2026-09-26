@@ -160,7 +160,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 }))
 
 // Settings store with localStorage persistence
-interface NotificationSettings {
+export interface NotificationSettings {
   likes: boolean
   reposts: boolean
   replies: boolean
@@ -257,6 +257,20 @@ export const useSettingsStore = create<SettingsState>()(
           delete state.linkPreviewsChoice
         }
         return state as SettingsState
+      },
+      // The default persist merge is shallow, so a persisted
+      // notificationSettings object would drop preference keys added after it
+      // was saved (e.g. blogPosts). Backfill them from the defaults.
+      merge: (persistedState, currentState) => {
+        const persisted = (persistedState ?? {}) as Partial<SettingsState>
+        return {
+          ...currentState,
+          ...persisted,
+          notificationSettings: {
+            ...currentState.notificationSettings,
+            ...persisted.notificationSettings,
+          },
+        }
       },
     }
   )

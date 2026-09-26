@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation'
 import { useAuth } from '@/contexts/auth-context'
 import { useAppStore } from '@/lib/store'
 import { useNotificationStore } from '@/lib/stores/notification-store'
+import { useVisibleUnreadNotificationCount } from '@/hooks/use-visible-unread-notification-count'
 import {
   HomeIcon,
   MagnifyingGlassIcon,
@@ -42,7 +43,7 @@ export function MobileBottomNav() {
   const [isHydrated, setIsHydrated] = useState(false)
   const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
   const closeMenuButtonRef = useRef<HTMLButtonElement>(null)
-  const unreadNotificationCount = useNotificationStore((s) => s.getUnreadCount())
+  const unreadNotificationCount = useVisibleUnreadNotificationCount()
   // Refreshed by the Sidebar's poll: it is hidden with CSS on mobile, not
   // unmounted, so its effect is the single source of both badge counts.
   const unreadMessageCount = useNotificationStore((s) => s.dmUnreadCount)
