@@ -74,7 +74,7 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
   const tabs: { key: ProfileTab; label: string; testId?: string }[] = [
     { key: 'posts', label: 'Posts' },
     { key: 'replies', label: 'Replies' },
-    // Server-ranked top posts need the v4 ranked like axes.
+    // Server-ranked top posts need the v9 ranked like axes.
     ...(likesAreIndexOnly() ? [{ key: 'top' as const, label: 'Top', testId: 'profile-top-filter' }] : []),
     { key: 'mentions', label: 'Mentions' },
     ...(blogs.blogs.length > 0 ? [{ key: 'blog' as const, label: 'Blog' }] : []),

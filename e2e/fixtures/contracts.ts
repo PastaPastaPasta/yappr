@@ -33,8 +33,8 @@ export async function expectedSocialContractId(): Promise<string> {
  * The interaction topology the build is supposed to have been compiled with.
  *
  * A contract id alone does not prove the client will talk to it correctly: the v2
- * and v3 topologies name different doctypes and fields, so a v2 bundle pointed at
- * the v3 contract queries things that do not exist — and fails in ways that look
+ * and v9 topologies name different doctypes and fields, so a v2 bundle pointed at
+ * the v9 contract queries things that do not exist — and fails in ways that look
  * like flaky reads rather than a misconfigured build. `/about` prints the
  * compiled-in value, which is what the specs assert.
  *

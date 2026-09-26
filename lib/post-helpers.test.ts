@@ -19,14 +19,13 @@ describe('hashtags', () => {
   })
 
   it('returns the first tag in storage form', () => {
-    expect(firstHashtag('hello #Second #first')).toBe('second')
-    expect(firstHashtag('no tags here')).toBe('')
+    expect(firstHashtag('hello #Second #first', 61)).toBe('second')
+    expect(firstHashtag('no tags here', 61)).toBe('')
   })
 
   it('truncates the first tag to the contract ceiling', () => {
     const long = 'a'.repeat(70)
     expect(firstHashtag(`#${long}`, 61)).toBe('a'.repeat(61))
-    expect(firstHashtag(`#${long}`)).toBe('a'.repeat(63))
   })
 })
 

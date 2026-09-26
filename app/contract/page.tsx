@@ -5,26 +5,13 @@ import { DocumentDuplicateIcon, CheckIcon, CodeBracketIcon } from '@heroicons/re
 import { InfoPage } from '@/components/layout/info-page'
 import toast from 'react-hot-toast'
 import socialContractV2 from '@/contracts/yappr-social-contract-v2.json'
-import socialContractV4 from '@/contracts/yappr-social-contract-v4.json'
-import socialContractV5 from '@/contracts/yappr-social-contract-v5.json'
-import socialContractV6 from '@/contracts/yappr-social-contract-v6.json'
-import socialContractV7 from '@/contracts/yappr-social-contract-v7.json'
-import socialContractV8 from '@/contracts/yappr-social-contract-v8.json'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import { getContractTopology } from '@/lib/constants'
 import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
 
 // The deployed social contract for this build's topology, reshaped for display.
-// v3 was never promoted beyond devnet and has no checked-in contract file, so
-// it falls through to the v2 contract.
 const CONTRACTS_BY_TOPOLOGY = {
   v2: socialContractV2,
-  v3: socialContractV2,
-  v4: socialContractV4,
-  v5: socialContractV5,
-  v6: socialContractV6,
-  v7: socialContractV7,
-  v8: socialContractV8,
   v9: socialContractV9,
 }
 const socialContract = CONTRACTS_BY_TOPOLOGY[getContractTopology()]

@@ -29,7 +29,7 @@ function markSettled(identityId: string): void {
 }
 
 /**
- * On a contract whose token declares a once-per-identity grant (v8: 100
+ * On a contract whose token declares a once-per-identity grant (v9: 100
  * YAPP), a signed-in identity with NO YAPP is offered its grant once. A
  * successful claim, or a 40722 "already claimed", settles the identity so the
  * prompt never returns; declining only postpones it to the next session.

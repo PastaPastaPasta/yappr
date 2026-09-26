@@ -33,7 +33,7 @@ function FeedPage() {
   const [activeTab, setActiveTab] = useState<FeedTab>(readSavedTab);
   const [sortMode, setSortMode] = useState<FeedSortMode>(readSavedSortMode);
   const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all');
-  // Top rides the v4+ ranked like axes; older topologies only have Recent.
+  // Top rides the v9 ranked like axes; v2 only has Recent.
   const topAvailable = likesAreIndexOnly();
   const showTop = topAvailable && sortMode === 'top';
 

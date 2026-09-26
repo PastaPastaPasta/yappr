@@ -9,7 +9,7 @@
  */
 import bs58 from 'bs58';
 import { decodeIntGroupKey, reportSelfTest } from '../../battery-lib.mjs';
-import { PREFER_CONTRACT_OWNER, TOKEN_COST, actionFeeFor, defaultTopology, feeAgreementFor, paymentInfo, readback } from '../seed-lib.mjs';
+import { PREFER_CONTRACT_OWNER, TOKEN_COST, feeAgreementFor, paymentInfo, readback, requireSeededTopology } from '../seed-lib.mjs';
 import {
   actorsFor, bar, counts, createDocWriter, createRecorder, ensureTokens, entropySource, envValue, loadCheckpoint,
   network, phaseRunner, printTable, randInt, rngFrom, shuffled, socialPost, sum,
@@ -170,17 +170,16 @@ const fieldsOf = (document) => (typeof document?.toObject === 'function' ? docum
 
 async function run({ args, handle, battery, socialId, contractId }) {
   const plan = buildPlan({ seed: args.seed, nowMs: args.nowMs });
-  // The caption post lives on the SOCIAL contract, so on v8 it owes that
-  // contract's action fee (40132 without) and may ask it to pay the gas. A poll
-  // and its ballots are pollr's own doctypes: unpriced, unagreed, unchanged.
-  const socialTopology = defaultTopology();
-  const socialPays = actionFeeFor('post', socialTopology) ? PREFER_CONTRACT_OWNER : 0;
+  // The caption post lives on the SOCIAL contract, so it owes that contract's
+  // action fee (40132 without) and may ask it to pay the gas. A poll and its
+  // ballots are pollr's own doctypes: unpriced, unagreed, unchanged.
+  requireSeededTopology();
   const writer = createDocWriter({
     handle,
     contractId,
     entropyFor: entropySource(`yappr/pollr-seed/${args.seed}/${contractId}`),
-    paymentInfo: (tokenCost) => paymentInfo(tokenCost, { gasFeesPaidBy: socialPays }),
-    agreementFor: (docType, contract) => (contract === socialId ? feeAgreementFor(handle.sdk, docType, socialTopology) : undefined),
+    paymentInfo: (tokenCost) => paymentInfo(tokenCost, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }),
+    agreementFor: (docType, contract) => (contract === socialId ? feeAgreementFor(handle.sdk, docType) : undefined),
   });
   const actors = await actorsFor(battery, PERSONAS);
   console.log(`actors: ${[...actors.values()].map((a) => a.label).join(', ')}`);

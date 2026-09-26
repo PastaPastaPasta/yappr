@@ -1,23 +1,15 @@
 /**
  * Shared infrastructure for the registration-day contract batteries.
  *
- * `scripts/verify-v7.mjs` is a thin file of v7 CASES on top of this module:
- * the devnet SDK with its quorum-rotation reconnect, the readback-decided
- * write helpers, the strict wrong-reason-fails rejection matchers, the
- * PASS/FAIL ledger and the CLI/dry-run/report shell all live here.
- *
- * Extracted from `scripts/verify-v5.mjs` — verbatim apart from the parts v7
- * has no analogue for, which were dropped rather than left as unreachable
- * residue (delete-by-id, the reference/foreign-delete matchers, the
- * bookmark/postMention shapes). `verify-v5.mjs` is deliberately NOT
- * refactored onto this module: it is the frozen record of the v5 cut, its
- * `--dry-run` only exercises shape building, and a rewrite of its live paths
- * could not be validated without re-running the whole battery against a v5
- * contract that no longer exists on chain.
+ * `scripts/verify-v8.mjs` and `scripts/verify-v9.mjs` are thin files of CASES
+ * on top of this module (the moderated write path they share is
+ * `social-battery-lib.mjs`): the devnet SDK with its quorum-rotation
+ * reconnect, the readback-decided write helpers, the strict wrong-reason-fails
+ * rejection matchers, the PASS/FAIL ledger and the CLI/dry-run/report shell
+ * all live here.
  *
  * Nothing here is topology-specific. The `post`/`reply` data builders are NOT
- * here on purpose: their required properties changed between cuts (v7 removed
- * the attested `author`), so each battery declares its own.
+ * here on purpose: each battery declares its own.
  */
 import {
   Document,

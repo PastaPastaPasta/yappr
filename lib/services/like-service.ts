@@ -4,7 +4,7 @@ import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
 import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
-import { hashtagIsOptional, indexOnlyLikeShapeFor, likeIndexFor, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor } from '../contract-topology';
+import { indexOnlyLikeShapeFor, likeIndexFor, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor } from '../contract-topology';
 
 export interface LikeDocument {
   $id: string;
@@ -13,7 +13,7 @@ export interface LikeDocument {
   postId: string;
   postOwnerId?: string;
   /**
-   * Which doctype this like came out of — `post` for `like`, `reply` for v3's
+   * Which doctype this like came out of — `post` for `like`, `reply` for v9's
    * `likeReply`. Callers that render or navigate off a like (notifications) need
    * it, because `postId` alone no longer says what it points at.
    */
@@ -21,13 +21,13 @@ export interface LikeDocument {
 }
 
 /**
- * What the UI knows about a like's target, forwarded so the v4/v5 (indexOnly)
+ * What the UI knows about a like's target, forwarded so the v9 (indexOnly)
  * write paths can fill the agreement-bound fields without a fetch. Both values
  * are consensus-checked against the target document (40127), so they must be
- * the TARGET's own values: `author` its `author` property (== its `$ownerId`)
- * and `hashtag` its `post.hashtag` (`''` when untagged — the CLIENT convention
- * on v4 and v5 alike; on v5 the chain stores untagged as an absent property
- * and `indexOnlyLikeData` translates at the boundary. Irrelevant for replies).
+ * the TARGET's own values: `author` its `$ownerId` and `hashtag` its
+ * `post.hashtag` (`''` when untagged — the CLIENT convention; the chain stores
+ * untagged as an absent property and `indexOnlyLikeData` translates at the
+ * boundary. Irrelevant for replies).
  * `undefined` means "unknown" and is fetched from the target document instead
  * — it must NEVER be used to mean "untagged", or a like of a tagged post
  * sourced from a hashtag-less UI object would fail the agreement.
@@ -48,14 +48,14 @@ const LIKE_RECOVERY_MAX_PAGES = 5;
 
 /**
  * Likes of posts and likes of replies share this service, but not necessarily a
- * document type: the v3 topology routes reply likes to `likeReply` with
+ * document type: the v9 topology routes reply likes to `likeReply` with
  * `replyId`/`replyOwnerId` in place of `postId`/`postOwnerId`. Every method that
  * touches the chain therefore takes the target's kind and resolves the doctype
  * and field names through the topology descriptor. `kind` defaults to `post`,
  * which on v2 is the same surface a reply resolves to — so v2 queries are
  * unchanged whichever kind is passed.
  *
- * On the v4 topology likes are **indexOnly** — see `likeIndexOnly`/
+ * On the v9 topology likes are **indexOnly** — see `likeIndexOnly`/
  * `unlikeIndexOnly`. The read surfaces are shape-compatible (owner-first liked
  * state lowers onto `byLiker`, counts onto the countable `byPost`/`byReply`),
  * so every query method below serves all three topologies unchanged.
@@ -123,9 +123,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * Like a post or a reply
    * @param postId - ID of the post/reply being liked
    * @param ownerId - Identity ID of the user liking it
-   * @param postOwnerId - Identity ID of the target's author (for efficient notification queries; on v4 the agreement-bound author field)
+   * @param postOwnerId - Identity ID of the target's author (for efficient notification queries; on v9 the agreement-bound author field)
    * @param kind - Whether the target is a post or a reply
-   * @param target - v4 only: agreement-bound values off the target the UI holds (fetched when absent)
+   * @param target - v9 only: agreement-bound values off the target the UI holds (fetched when absent)
    */
   async likePost(postId: string, ownerId: string, postOwnerId?: string, kind: TargetKind = 'post', target?: LikeTargetInfo): Promise<boolean> {
     try {
@@ -179,7 +179,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
 
   /**
    * Unlike a post or reply
-   * @param target - v4 only: agreement-bound values off the target (fetched when absent)
+   * @param target - v9 only: agreement-bound values off the target (fetched when absent)
    */
   async unlikePost(postId: string, ownerId: string, kind: TargetKind = 'post', target?: LikeTargetInfo): Promise<boolean> {
     try {
@@ -249,12 +249,12 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * how a value (or its absence) is spelled.
    *
    * The hashtag translation happens here, once: the client-side '' sentinel
-   * ("known untagged") becomes an OMITTED property on v5, where `hashtag` is
+   * ("known untagged") becomes an OMITTED property, because `hashtag` is
    * optional and the propertyAgreement is absence-aware (both absent = agree;
    * writing '' against an absent `post.hashtag` is a 40127 mismatch, and ''
-   * fails the v5 pattern anyway). v4 keeps writing '' verbatim. Because the
-   * unlike path rebuilds its tuple through this same method, the delete
-   * reproduces the create's absence exactly.
+   * fails the pattern anyway). Because the unlike path rebuilds its tuple
+   * through this same method, the delete reproduces the create's absence
+   * exactly.
    */
   private indexOnlyLikeData(
     targetId: string,
@@ -264,16 +264,15 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   ): Record<string, unknown> {
     const { field } = likeIndexFor(kind);
     const tag = info.hashtag ?? '';
-    const writesHashtag = shape.hashtagField !== null && !(hashtagIsOptional() && tag === '');
     return {
       [field]: identifierStringToDocumentBytes(targetId),
       [shape.authorField]: identifierStringToDocumentBytes(info.author),
-      ...(writesHashtag && shape.hashtagField !== null ? { [shape.hashtagField]: tag } : {}),
+      ...(shape.hashtagField !== null && tag !== '' ? { [shape.hashtagField]: tag } : {}),
     };
   }
 
   /**
-   * v6 `beat` tuple for a like of a tagged post: `{ postId, hashtag }`. The
+   * The `beat` tuple for a like of a tagged post: `{ postId, hashtag }`. The
    * same tuple serves the create AND the delete-by-values, and its `postId`
    * refersTo the post with propertyAgreement on `hashtag`, so consensus
    * rejects a beat whose tag disagrees with the post.
@@ -286,7 +285,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * v4 like: create an indexOnly document.
+   * indexOnly like: create the document.
    *
    * The create carries the target's agreement-bound values and confirms via
    * affected-state (indexOnly never yields ExecutionProved). KNOWN SDK QUIRK:
@@ -325,7 +324,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       logger.warn('Like create reported failure but the like is on-chain — treating as success');
     }
 
-    // v6: a like of a TAGGED post is followed by its `beat` companion (today's
+    // v9: a like of a TAGGED post is followed by its `beat` companion (today's
     // trending rides beat.byDayHashtagPost). Consensus caps a document batch
     // at ONE transition on this network, so the pair cannot be atomic: the
     // beat is a second transition, written only once the like is known to
@@ -398,7 +397,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * v4 unlike: delete-by-values.
+   * v9 unlike: delete-by-values.
    *
    * The delete transition must carry the like's FULL tuple — every content
    * property plus the consensus `$createdAt`, which only Platform knows.
@@ -448,7 +447,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       }
     );
 
-    // v6: remove the beat companion too, so today's trending stops counting
+    // v9: remove the beat companion too, so today's trending stops counting
     // the withdrawn like. Its tuple is recovered from `beat.byPost` (postId →
     // $ownerId terminal). Best effort after a successful unlike: a stale beat
     // only over-counts one tag for the rest of the UTC day.
@@ -500,7 +499,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * recent like is on the first page; bounded rather than exhaustive.
    */
   /**
-   * v6: delete the `beat` written after a like of a tagged post.
+   * v9: delete the `beat` written after a like of a tagged post.
    *
    * The delete-by-values tuple needs the beat's `$id` AND its own
    * `$createdAt` (the beat lands in a later block than the like, so the
@@ -729,9 +728,10 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   /**
    * Get likes on content owned by a specific user (for notification queries).
    *
-   * Uses the doctype's target-owner index — `like.postOwnerLikes [postOwnerId,
-   * $createdAt]` for posts, and on v3 `likeReply.replyOwnerLikes [replyOwnerId,
-   * $createdAt]` for replies. The two are separate doctypes there, so a caller
+   * Uses the doctype's target-owner index — v2's `like.postOwnerLikes
+   * [postOwnerId, $createdAt]`, and on v9 `like.byAuthorTimePost [postAuthor,
+   * $createdAt, postId]` / `likeReply.byAuthorTimeReply [replyAuthor,
+   * $createdAt, replyId]`. The two are separate doctypes there, so a caller
    * wanting both has to ask twice (see `notification-service`); on v2 they are
    * the same query and asking twice would double-count.
    *

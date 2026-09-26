@@ -3,19 +3,18 @@
  * CORPUS_FORMAT.md) against the devnet social contract as the seed
  * identities provisioned by provision-seed-identities.mjs.
  *
- * `--topology v4|v5|v6|v7|v8` selects the document shape of the target contract
- * (default: NEXT_PUBLIC_CONTRACT_TOPOLOGY from the env, else v4): the corpus
- * `''` convention still means "untagged", but v4 writes the `''` sentinel
- * while v5 OMITS the hashtag property on post/quote/like docs entirely
- * (writing `''` under v5 is propertyAgreement consensus error 40127).
+ * The target is the v9 social contract (`.env.devnet`; the run refuses any
+ * other NEXT_PUBLIC_CONTRACT_TOPOLOGY). The corpus `''` convention means
+ * "untagged", and an untagged post/quote/like OMITS the hashtag property
+ * (writing `''` is propertyAgreement consensus error 40127).
  *
- * On v8 two things change, both about what a create CARRIES rather than what it
- * says: `post` and `reply` must agree to the action fee their type declares
- * (`$actionFeeAgreement`, 40132 without), which `sdk.documents.create` cannot
- * express — so those creates are hand-built batches — and their token costs are
- * `optional`, so `--credits-fraction` of the actors omit `$tokenPaymentInfo`
- * and pay credits while the rest pay YAPP with the contract owner offered the
- * gas. An actor's currency is fixed by its persona index, so a resume keeps it.
+ * Two things shape what a create CARRIES: `post` and `reply` must agree to the
+ * action fee their type declares (`$actionFeeAgreement`, 40132 without), which
+ * `sdk.documents.create` cannot express — so those creates are hand-built
+ * batches — and their token costs are `optional`, so `--credits-fraction` of
+ * the actors omit `$tokenPaymentInfo` and pay credits while the rest pay YAPP
+ * with the contract owner offered the gas. An actor's currency is fixed by its
+ * persona index, so a resume keeps it.
  *
  * Execution model:
  *  - per-author ops run STRICTLY SEQUENTIALLY in corpus line order (one
@@ -35,7 +34,7 @@
  * documents are built with per-attempt-stable entropy, so even a retry of a
  * broadcast that DID land reads back as the same document.
  *
- * Devnet quirks handled (from scripts/verify-v4.mjs):
+ * Devnet quirks handled:
  *  - DAPI 504 on the confirmation wait ≠ rejection — readback decides;
  *  - indexOnly like/likeReply creates can THROW post-broadcast even when the
  *    write landed (no confirmed Document comes back) — acceptance is decided
@@ -46,7 +45,7 @@
  *
  * Run:
  *   NETWORK=devnet node scripts/seed/run-seeder.mjs --personas <file> --corpus <file> \
- *     [--concurrency 10] [--max-ops N] [--topology v4|v5|v6|v7|v8] [--pipeline [--window 8]]
+ *     [--concurrency 10] [--max-ops N] [--pipeline [--window 8]]
  *     [--credits-fraction 0.25]
  *   node scripts/seed/run-seeder.mjs --self-test
  *
@@ -70,7 +69,6 @@ import {
   REPORT_FILE,
   RETRYABLE,
   TOKEN_COST,
-  TOPOLOGIES,
   PREFER_CONTRACT_OWNER,
   tokenCostFor,
   TRANSPORT_COLLAPSE,
@@ -85,14 +83,11 @@ import {
   forgetFeeMultiplier,
   createSdkHandle,
   createdId,
-  defaultTopology,
   deriveDocumentIdBytes,
   describeErr,
   expandedContentLength,
   findRecentByValues,
   hashtagProps,
-  atLeastTopology,
-  authorProps,
   ledgerEntry,
   likeValueTuple,
   beatValueTuple,
@@ -107,6 +102,7 @@ import {
   feeAgreementFor,
   randomEntropy,
   readback,
+  requireSeededTopology,
   sleep,
   socialContractId,
   stateRank,
@@ -116,7 +112,7 @@ import {
 
 const SDK_TIMEOUT_MS = 30_000;
 /**
- * Share of a v8 run's actors that pay their token-priced writes in CREDITS
+ * Share of a run's actors that pay their token-priced writes in CREDITS
  * (no `$tokenPaymentInfo`) rather than YAPP, so a seeded devnet exercises both
  * halves of the optional-token-cost path. `--credits-fraction` overrides it.
  */
@@ -133,23 +129,19 @@ const ACTOR_FETCH_CONCURRENCY = 16;
 // ---- CLI ------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { personas: null, corpus: null, concurrency: 10, maxOps: Infinity, topology: null, selfTest: false, pipeline: false, window: 8, creditsFraction: null };
+  const args = { personas: null, corpus: null, concurrency: 10, maxOps: Infinity, selfTest: false, pipeline: false, window: 8, creditsFraction: null };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--personas': args.personas = argv[++i]; break;
       case '--corpus': args.corpus = argv[++i]; break;
       case '--concurrency': args.concurrency = Number(argv[++i]); break;
       case '--max-ops': args.maxOps = Number(argv[++i]); break;
-      case '--topology': args.topology = argv[++i]; break;
       case '--pipeline': args.pipeline = true; break;
       case '--window': args.window = Number(argv[++i]); break;
       case '--credits-fraction': args.creditsFraction = Number(argv[++i]); break;
       case '--self-test': args.selfTest = true; break;
       default: throw new Error(`Unknown flag: ${argv[i]}`);
     }
-  }
-  if (args.topology !== null && !TOPOLOGIES.includes(args.topology)) {
-    throw new Error(`--topology must be one of ${TOPOLOGIES.join('|')}`);
   }
   if (args.creditsFraction !== null && !(args.creditsFraction >= 0 && args.creditsFraction <= 1)) {
     throw new Error('--credits-fraction must be between 0 and 1');
@@ -158,11 +150,7 @@ function parseArgs(argv) {
     if (!args.personas || !args.corpus) throw new Error('--personas and --corpus are required');
     if (!Number.isInteger(args.concurrency) || args.concurrency < 1) throw new Error('--concurrency must be a positive integer');
     if (args.maxOps !== Infinity && (!Number.isInteger(args.maxOps) || args.maxOps < 1)) throw new Error('--max-ops must be a positive integer');
-    args.topology ??= defaultTopology();
-    // Only v8 can pay in credits: before it, a token cost is required and a
-    // create without payment info is 40115.
-    const v8 = atLeastTopology(args.topology, 'v8');
-    args.creditsFraction = v8 ? (args.creditsFraction ?? DEFAULT_CREDITS_FRACTION) : 0;
+    args.creditsFraction ??= DEFAULT_CREDITS_FRACTION;
   }
   return args;
 }
@@ -341,16 +329,13 @@ const DUPLICATE_IS_SUCCESS = new Set(['like', 'likeReply', 'follow', 'bookmark',
  * Maps one corpus op to {docType, data, tokenCost, indexOnly, refRecord,
  * existenceKey}. Pure (exported for the self-test): the acceptance query for
  * indexOnly types is described by `existenceKey` and bound to the network in
- * buildExecutor. `topology` drives the hashtag shape — from v5 on an untagged
- * post/quote/like OMITS the property (the corpus '' convention and an absent
- * checkpoint hashtag are equivalent); under v4 the '' sentinel is written. It
- * also drives the attested `author` column, which v7 removed.
+ * buildExecutor. An untagged post/quote/like OMITS the hashtag property (the
+ * corpus '' convention and an absent checkpoint hashtag are equivalent).
  */
-export function planOp(op, { actors, resolveRef, topology }) {
+export function planOp(op, { actors, resolveRef }) {
   const bytes = (base58) => bs58.decode(base58);
   const actor = actors.get(op.author);
   if (!actor) throw new Error(`author ${op.author} has no provisioned identity`);
-  const ownerBytes = bytes(actor.ownerId);
   const finalContent = typeof op.content === 'string'
     ? substituteLinks(op.content, (ref) => resolveRef(ref).id)
     : undefined;
@@ -368,8 +353,7 @@ export function planOp(op, { actors, resolveRef, topology }) {
         data: {
           content: finalContent ?? '',
           language: 'en',
-          ...authorProps(ownerBytes, topology),
-          ...hashtagProps(op.hashtag, topology),
+          ...hashtagProps(op.hashtag),
           ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
           ...(op.sensitive !== undefined ? { sensitive: op.sensitive } : {}),
           ...(quoted ? { quotedPostId: bytes(quoted.id), quotedPostOwnerId: bytes(quoted.ownerId) } : {}),
@@ -387,7 +371,6 @@ export function planOp(op, { actors, resolveRef, topology }) {
           content: finalContent ?? '',
           rootPostId: bytes(root.id),
           parentOwnerId: bytes(parent.ownerId),
-          ...authorProps(ownerBytes, topology),
           ...(parent.kind === 'reply' ? { replyToReplyId: bytes(parent.id) } : {}),
           ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
         },
@@ -396,21 +379,18 @@ export function planOp(op, { actors, resolveRef, topology }) {
     }
     case 'like': {
       const target = resolveRef(op.targetRef);
-      const beat = beatValueTuple(target, topology);
+      const beat = beatValueTuple(target);
       return {
         docType: 'like',
         tokenCost: TOKEN_COST.like,
         indexOnly: true,
         // propertyAgreement: hashtag and postAuthor MUST mirror the post —
-        // including hashtag ABSENCE from v5 on (both-absent = agreement; '' on
-        // a like of an untagged v5 post is consensus error 40127). The same
-        // tuple is what a delete-by-values would have to carry. The tuple is
-        // unchanged on v7: `postAuthor` is still the post owner's id, only the
-        // referenced side of the agreement moved from `post.author` to
-        // `post.$ownerId`.
-        data: likeValueTuple(target, topology),
+        // including hashtag ABSENCE (both-absent = agreement; '' on a like of
+        // an untagged post is consensus error 40127). `postAuthor` binds to
+        // `post.$ownerId`. The same tuple is what a delete-by-values carries.
+        data: likeValueTuple(target),
         existenceKey: { keyField: 'postId', keyValue: target.id },
-        // v6+: a like of a tagged post carries a `beat` companion (today's
+        // A like of a tagged post carries a `beat` companion (today's
         // trending rides beat.byDayHashtagPost). Written as a second
         // indexOnly create after the like lands; its own existence read is
         // the acceptance probe, and a duplicate (resume) is success.
@@ -450,10 +430,10 @@ export function planOp(op, { actors, resolveRef, topology }) {
 }
 
 /**
- * How one create is sent on `topology`, shared by the confirm-per-op executor
- * and the pipelined one.
+ * How one create is sent, shared by the confirm-per-op executor and the
+ * pipelined one.
  *
- * On v8 a `post` or `reply` create must carry an `$actionFeeAgreement` (40132
+ * A `post` or `reply` create must carry an `$actionFeeAgreement` (40132
  * without one), and `sdk.documents.create` has no option for it — its
  * `DocumentCreateOptions` are document / identityKey / signer /
  * tokenPaymentInfo / settings — so those creates are hand-built batches
@@ -462,32 +442,31 @@ export function planOp(op, { actors, resolveRef, topology }) {
  * path exactly as before.
  *
  * What a create PAYS is per actor: `actor.paysCredits` omits the token payment
- * entirely (v8's `optional: true` costs, the signer paying credits), while the
+ * entirely (the `optional: true` costs, the signer paying credits), while the
  * rest pay YAPP and ask the contract owner to cover the gas
- * (PreferContractOwner). Before v8 the cost is required and the bag is the
- * historical one.
+ * (PreferContractOwner).
  */
-function writeShapeFor({ handle, topology }) {
+function writeShapeFor({ handle }) {
   const paymentFor = (actor, docType, tokenCost) => {
     if (!tokenCost || actor.paysCredits) return {};
     // The gas offer comes from the DOCTYPE's own tokenCost, not from whether
     // anything charges an action fee: the two are independent in the grammar,
     // and asking for a payer the type does not offer is 40129.
-    return paymentInfo(tokenCost, { gasFeesPaidBy: tokenCostFor(docType, topology)?.gasFeesPaidBy ?? 0 });
+    return paymentInfo(tokenCost, { gasFeesPaidBy: tokenCostFor(docType)?.gasFeesPaidBy ?? 0 });
   };
   return {
     paymentFor,
     /** Resolves to something `createdId` can read an id off, or `{ id }` from the manual path. */
     async create({ contractId, actor, document, entropy, docType, data, tokenCost }) {
       const payment = paymentFor(actor, docType, tokenCost);
-      const agreement = await feeAgreementFor(handle.sdk, docType, topology);
+      const agreement = await feeAgreementFor(handle.sdk, docType);
       return createDocument(handle.sdk, { contractId, actor, docType, document, data, entropy, agreement, payment });
     },
   };
 }
 
-function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
-  const writeShape = writeShapeFor({ handle, topology });
+function buildExecutor({ handle, contractId, actors, progressRefs }) {
+  const writeShape = writeShapeFor({ handle });
   const resolveRef = (ref) => {
     const record = progressRefs.get(ref);
     if (!record) throw new Error(`ref "${ref}" not materialized (checkpoint out of sync)`);
@@ -504,7 +483,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
    */
   return async function executeOp(op) {
     const actor = actors.get(op.author);
-    const plan = planOp(op, { actors, resolveRef, topology });
+    const plan = planOp(op, { actors, resolveRef });
     // One draw per op, reused by every attempt. Under protocol 14 that does NOT
     // make the id stable across a retry — the id commits to the nonce too — so
     // what recognises a broadcast that landed is the by-value `accepted` probe
@@ -531,7 +510,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
         return id != null;
       };
 
-    // v6: a like of a tagged post carries a `beat` companion. It is written
+    // A like of a tagged post carries a `beat` companion. It is written
     // AFTER the like is confirmed on chain (a beat without its like would be a
     // phantom trending vote), through the same indexOnly acceptance loop: the
     // chain decides, a duplicate on resume is success, transport collapse
@@ -553,7 +532,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs, topology }) {
       let companionError = null;
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
-          // A beat is unpriced and unagreed on every topology: the plain facade create.
+          // A beat is unpriced and unagreed: the plain facade create.
           await handle.sdk.documents.create({ document: companionDoc, identityKey: actor.identityKey, signer: actor.signer });
           if (await companionAccepted()) return;
           companionError = new Error(`${companion.docType} create returned but the entry is not on chain`);
@@ -726,7 +705,6 @@ function buildReport({ args, ops, stats, results, before, after, actors, wallClo
   return {
     network: network(),
     contractId: socialContractId(),
-    topology: args.topology,
     corpus: args.corpus,
     startedAt: new Date(Date.now() - wallClockMs).toISOString(),
     finishedAt: new Date().toISOString(),
@@ -917,93 +895,54 @@ async function selfTest() {
   });
   check('max-ops: executes exactly the cap', results4.done === 3 && journal4.length === 3, `done=${results4.done}`);
 
-  // ---- Topology: v5 hashtag ABSENCE vs the v4 '' sentinel --------------------
+  // ---- Document shapes: hashtag ABSENCE, no attested author, beat companions ----
   const owner = bs58.encode(new Uint8Array(32).fill(1));
   const targetId = bs58.encode(new Uint8Array(32).fill(2));
-  const planCtx = (topology, refHashtag) => ({
+  const planCtx = (refHashtag) => ({
     actors: new Map([[0, { ownerId: owner }], [1, { ownerId: owner }]]),
     resolveRef: () => ({ kind: 'post', id: targetId, ownerId: owner, hashtag: refHashtag }),
-    topology,
   });
   const postOp = { type: 'post', ref: 'p1', author: 0, content: 'x', hashtag: '', line: 1 };
   const quoteOp = { type: 'quote', ref: 'p2', author: 0, content: 'q', quotedRef: 'p1', hashtag: '', line: 2 };
   const likeOp = { type: 'like', author: 1, targetRef: 'p1', line: 3 };
-
-  // v7 drops the attested `author` column; everything else is v6's shapes.
   const replyOp = { type: 'reply', author: 1, rootRef: 'p1', parentRef: 'p1', content: 'r', line: 4 };
-  for (const topology of ['v4', 'v5', 'v6']) {
-    check(`${topology}: post and reply carry the attested author column`,
-      planOp(postOp, planCtx(topology, '')).data.author instanceof Uint8Array &&
-        planOp(replyOp, planCtx(topology, '')).data.author instanceof Uint8Array);
-  }
-  const v7Post = planOp(postOp, planCtx('v7', '')).data;
-  const v7Reply = planOp(replyOp, planCtx('v7', '')).data;
-  check('v7: post OMITS the attested author column (additionalProperties would reject it)',
-    !('author' in v7Post) && v7Post.language === 'en');
-  check('v7: reply OMITS the attested author column, keeping its parent linkage',
-    !('author' in v7Reply) && v7Reply.rootPostId instanceof Uint8Array && v7Reply.parentOwnerId instanceof Uint8Array);
-  check('v7: the like value tuple is byte-identical to v6 (only the agreement moved)',
-    JSON.stringify(likeValueTuple({ id: targetId, ownerId: owner, hashtag: 'dash' }, 'v7')) ===
-      JSON.stringify(likeValueTuple({ id: targetId, ownerId: owner, hashtag: 'dash' }, 'v6')));
-  check('v7: tagged like still plans a beat companion', (() => {
-    const plan = planOp(likeOp, planCtx('v7', 'dash'));
-    return plan.companion?.docType === 'beat' && plan.companion.data.hashtag === 'dash';
-  })());
-  check('v7: untagged post still OMITS hashtag and plans no companion',
-    !('hashtag' in planOp(postOp, planCtx('v7', '')).data) &&
-      planOp(likeOp, planCtx('v7', '')).companion === undefined);
-  check('parse: 61-char tag accepted under v7, 62 rejected', (() => {
-    const longV7 = (n) => `{"type":"post","ref":"pL","author":0,"content":"x","hashtag":"${'a'.repeat(n)}"}`;
-    if (parseCorpus(longV7(61), personas, { topology: 'v7' }).ops.length !== 1) return false;
-    try { parseCorpus(longV7(62), personas, { topology: 'v7' }); return false; }
-    catch (e) { return e.message.includes('maxLength 61'); }
-  })());
 
-  check('v6: tagged like plans a beat companion { postId, hashtag }', (() => {
-    const plan = planOp(likeOp, planCtx('v6', 'dash'));
+  const plannedPost = planOp(postOp, planCtx('')).data;
+  const plannedReply = planOp(replyOp, planCtx('')).data;
+  check('post OMITS the attested author column (additionalProperties would reject it)',
+    !('author' in plannedPost) && plannedPost.language === 'en');
+  check('reply OMITS the attested author column, keeping its parent linkage',
+    !('author' in plannedReply) && plannedReply.rootPostId instanceof Uint8Array && plannedReply.parentOwnerId instanceof Uint8Array);
+  check('tagged like plans a beat companion { postId, hashtag }', (() => {
+    const plan = planOp(likeOp, planCtx('dash'));
     return plan.companion?.docType === 'beat' && plan.companion.data.hashtag === 'dash' && plan.companion.data.postId instanceof Uint8Array && plan.companion.existenceKey.keyField === 'postId';
   })());
-  check('v6: untagged like plans NO companion', planOp(likeOp, planCtx('v6', '')).companion === undefined);
-  check('v5: tagged like plans NO companion (beat is v6-only)', planOp(likeOp, planCtx('v5', 'dash')).companion === undefined);
-  check('v6: untagged post OMITS hashtag (v5 rule carries over)', !('hashtag' in planOp(postOp, planCtx('v6', '')).data));
-  check('v5: untagged post OMITS hashtag', !('hashtag' in planOp(postOp, planCtx('v5', '')).data));
-  check('v5: tagged post keeps its hashtag', planOp({ ...postOp, hashtag: 'dash' }, planCtx('v5', '')).data.hashtag === 'dash');
-  const v5Quote = planOp(quoteOp, planCtx('v5', '')).data;
-  check('v5: untagged quote OMITS hashtag (quote fields intact)', !('hashtag' in v5Quote) && v5Quote.quotedPostId instanceof Uint8Array);
-  const v5Like = planOp(likeOp, planCtx('v5', ''));
+  check('untagged like plans NO companion', planOp(likeOp, planCtx('')).companion === undefined);
+  check('untagged post OMITS hashtag', !('hashtag' in plannedPost));
+  check('tagged post keeps its hashtag', planOp({ ...postOp, hashtag: 'dash' }, planCtx('')).data.hashtag === 'dash');
+  const plannedQuote = planOp(quoteOp, planCtx('')).data;
+  check('untagged quote OMITS hashtag (quote fields intact)', !('hashtag' in plannedQuote) && plannedQuote.quotedPostId instanceof Uint8Array);
+  const plannedLike = planOp(likeOp, planCtx(''));
   check(
-    'v5: like of an untagged post OMITS like.hashtag',
-    !('hashtag' in v5Like.data) && v5Like.data.postAuthor instanceof Uint8Array && v5Like.existenceKey.keyValue === targetId
+    'like of an untagged post OMITS like.hashtag',
+    !('hashtag' in plannedLike.data) && plannedLike.data.postAuthor instanceof Uint8Array && plannedLike.existenceKey.keyValue === targetId
   );
-  check('v5: like of a tagged post copies the hashtag', planOp(likeOp, planCtx('v5', 'dash')).data.hashtag === 'dash');
+  check('like of a tagged post copies the hashtag', planOp(likeOp, planCtx('dash')).data.hashtag === 'dash');
   // The delete-by-values tuple is the same value tuple — it must reproduce the absence.
-  const deleteTupleAbsent = likeValueTuple({ id: targetId, ownerId: owner }, 'v5'); // ref with no hashtag key at all
-  const deleteTupleEmpty = likeValueTuple({ id: targetId, ownerId: owner, hashtag: '' }, 'v5');
+  const deleteTupleAbsent = likeValueTuple({ id: targetId, ownerId: owner }); // ref with no hashtag key at all
+  const deleteTupleEmpty = likeValueTuple({ id: targetId, ownerId: owner, hashtag: '' });
   check(
-    'v5: like delete tuple OMITS hashtag, for \'\' and absent refs alike',
+    'like delete tuple OMITS hashtag, for \'\' and absent refs alike',
     !('hashtag' in deleteTupleAbsent) && JSON.stringify(Object.keys(deleteTupleAbsent)) === JSON.stringify(Object.keys(deleteTupleEmpty))
   );
-  check("v4: untagged post writes the '' sentinel (unchanged)", planOp(postOp, planCtx('v4', '')).data.hashtag === '');
-  check("v4: like of an untagged post writes hashtag '' (unchanged)", planOp(likeOp, planCtx('v4', '')).data.hashtag === '');
-  check(
-    'v4: tagged shapes unchanged',
-    planOp({ ...postOp, hashtag: 'dash' }, planCtx('v4', '')).data.hashtag === 'dash' &&
-      planOp(likeOp, planCtx('v4', 'dash')).data.hashtag === 'dash'
-  );
 
-  // Parse-time tag length: v5 tightens the hashtag maxLength to 61
+  // Parse-time tag length: the contract's maxLength is 61
   const longTag = (n) => `{"type":"post","ref":"pL","author":0,"content":"x","hashtag":"${'a'.repeat(n)}"}`;
-  const rejectsV5 = (line, why) => {
-    try {
-      parseCorpus(line, personas, { topology: 'v5' });
-      return false;
-    } catch (e) {
-      return e.message.includes(why);
-    }
-  };
-  check('parse: 61-char tag accepted under v5', parseCorpus(longTag(61), personas, { topology: 'v5' }).ops.length === 1);
-  check('parse: 62-char tag rejected under v5', rejectsV5(longTag(62), 'maxLength 61'));
-  check('parse: 62-char tag still accepted under v4', parseCorpus(longTag(62), personas).ops.length === 1);
+  check('parse: 61-char tag accepted', parseCorpus(longTag(61), personas).ops.length === 1);
+  check('parse: 62-char tag rejected', (() => {
+    try { parseCorpus(longTag(62), personas); return false; }
+    catch (e) { return e.message.includes('maxLength 61'); }
+  })());
 
   // Journal round-trip: a ref recorded with hashtag '' and one recorded with
   // NO hashtag key must fold and replay to identical documents.
@@ -1011,49 +950,32 @@ async function selfTest() {
   appendProgress({ line: 1, status: 'done', type: 'post', ref: 'pA', kind: 'post', id: targetId, ownerId: owner }, tmpJournal);
   appendProgress({ line: 2, status: 'done', type: 'post', ref: 'pB', kind: 'post', id: targetId, ownerId: owner, hashtag: '' }, tmpJournal);
   const folded = loadProgress(tmpJournal);
-  const likeFromRef = (ref, topology) => likeValueTuple(folded.refs.get(ref), topology);
+  const likeFromRef = (ref) => likeValueTuple(folded.refs.get(ref));
   check(
-    "journal: absent-hashtag ref replays identically to a '' ref (v5 omits, v4 writes '')",
+    "journal: absent-hashtag ref replays identically to a '' ref (both omit the property)",
     folded.refs.size === 2 &&
-      JSON.stringify(Object.keys(likeFromRef('pA', 'v5'))) === JSON.stringify(Object.keys(likeFromRef('pB', 'v5'))) &&
-      !('hashtag' in likeFromRef('pA', 'v5')) &&
-      likeFromRef('pA', 'v4').hashtag === '' && likeFromRef('pB', 'v4').hashtag === ''
+      JSON.stringify(Object.keys(likeFromRef('pA'))) === JSON.stringify(Object.keys(likeFromRef('pB'))) &&
+      !('hashtag' in likeFromRef('pA'))
   );
 
-  // ---- v8: what a create CARRIES (shapes are v7's) --------------------------
-  //
-  // v8 changes nothing about the documents themselves, so the shape checks
-  // above carry over; what it adds is the action fee agreement and the choice
-  // between YAPP and credits. Both are pure and pinned here.
-  const v8Post = planOp(postOp, planCtx('v8', '')).data;
-  const v8Reply = planOp(replyOp, planCtx('v8', '')).data;
-  check('v8: post and reply shapes are byte-identical to v7 (only the carried options differ)',
-    JSON.stringify(Object.keys(v8Post)) === JSON.stringify(Object.keys(planOp(postOp, planCtx('v7', '')).data)) &&
-      JSON.stringify(Object.keys(v8Reply)) === JSON.stringify(Object.keys(planOp(replyOp, planCtx('v7', '')).data)));
-  check('v8: tagged like still plans a beat companion', (() => {
-    const plan = planOp(likeOp, planCtx('v8', 'dash'));
-    return plan.companion?.docType === 'beat' && plan.companion.data.hashtag === 'dash';
-  })());
-
-  const postFee = actionFeeFor('post', 'v8');
-  const replyFee = actionFeeFor('reply', 'v8');
-  check('v8: the action fees come off the committed contract JSON (80M post / 16M reply, moderators only)',
+  // ---- What a create CARRIES: the action fee agreement and YAPP vs credits ----
+  const postFee = actionFeeFor('post');
+  const replyFee = actionFeeFor('reply');
+  check('the action fees come off the committed contract JSON (80M post / 16M reply, moderators only)',
     postFee?.moderators === 80_000_000n && postFee.owner === 0n && postFee.pricing === 'feeMultiplier' &&
       replyFee?.moderators === 16_000_000n && replyFee.owner === 0n,
     `post=${postFee?.moderators} reply=${replyFee?.moderators}`);
-  check('v8: nothing but post and reply charges an action fee',
-    ['like', 'likeReply', 'repost', 'follow', 'bookmark', 'beat'].every((docType) => actionFeeFor(docType, 'v8') === null));
-  check('v7 and earlier charge no action fee at all',
-    ['v4', 'v5', 'v6', 'v7'].every((t) => actionFeeFor('post', t) === null && actionFeeFor('reply', t) === null));
+  check('nothing but post and reply charges an action fee',
+    ['like', 'likeReply', 'repost', 'follow', 'bookmark', 'beat'].every((docType) => actionFeeFor(docType) === null));
 
   const agreed = actionFeeAgreementOptions(postFee, 1000n);
-  check('v8: the agreement names the exact declared amounts, each pot on its own, plus the known multiplier',
+  check('the agreement names the exact declared amounts, each pot on its own, plus the known multiplier',
     agreed.owner === 0n && agreed.moderators === 80_000_000n &&
       agreed.feeMultiplier.knownPermille === 1000n && agreed.feeMultiplier.increaseTolerancePercent === 20,
     JSON.stringify(agreed, (_k, v) => (typeof v === 'bigint' ? String(v) : v)));
-  check('v8: a fixed-priced fee names NO multiplier (naming one is the same 40133)',
+  check('a fixed-priced fee names NO multiplier (naming one is the same 40133)',
     actionFeeAgreementOptions({ owner: 1n, moderators: 2n, pricing: 'fixed' }).feeMultiplier === undefined);
-  check('v8: the agreement carries the multiplier it is given, not a constant',
+  check('the agreement carries the multiplier it is given, not a constant',
     actionFeeAgreementOptions(postFee, 1250n).feeMultiplier.knownPermille === 1250n);
 
   // The payment bags are wasm objects, unlike everything above them.
@@ -1063,19 +985,19 @@ async function selfTest() {
   // started rejecting) would leave every assertion above passing while every
   // live post create is refused 40132.
   const builtAgreement = new DocumentActionFeeAgreement(actionFeeAgreementOptions(postFee, 1000n));
-  check('v8: the constructed DocumentActionFeeAgreement carries the amounts, pricing and tolerance it was given',
+  check('the constructed DocumentActionFeeAgreement carries the amounts, pricing and tolerance it was given',
     builtAgreement.moderators === 80_000_000n && builtAgreement.owner === 0n &&
       builtAgreement.pricing === 'feeMultiplier' && builtAgreement.knownFeeMultiplierPermille === 1000n &&
       builtAgreement.feeMultiplierIncreaseTolerancePercent === 20,
     `${builtAgreement.pricing} ${builtAgreement.moderators} @${builtAgreement.knownFeeMultiplierPermille}permille`);
-  check('v8: a fixed-priced agreement round-trips with NO multiplier',
+  check('a fixed-priced agreement round-trips with NO multiplier',
     new DocumentActionFeeAgreement(actionFeeAgreementOptions({ owner: 0n, moderators: 5n, pricing: 'fixed' })).knownFeeMultiplierPermille === undefined);
 
   const yappBag = paymentInfo(TOKEN_COST.post, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }).tokenPaymentInfo.toJSON();
-  check('v8: a YAPP payment asks the contract owner to pay the gas (PreferContractOwner), never insists',
+  check('a YAPP payment asks the contract owner to pay the gas (PreferContractOwner), never insists',
     yappBag.gasFeesPaidBy === 'PreferContractOwner' && Number(yappBag.maximumTokenCost) === TOKEN_COST.post,
     JSON.stringify(yappBag));
-  check('pre-v8: the payment bag is unchanged — position and cap, the signer paying the gas',
+  check('a payment with no gas offer leaves the signer paying the gas',
     paymentInfo(TOKEN_COST.post).tokenPaymentInfo.toJSON().gasFeesPaidBy === 'DocumentOwner');
   check('a credits write carries NO token payment info at all (that is what makes it pay credits)',
     JSON.stringify(paymentInfo(undefined)) === '{}');
@@ -1083,12 +1005,12 @@ async function selfTest() {
   // A 40134 is the one consensus refusal a retry can fix — but only after the
   // cached multiplier is dropped, so the matcher must not swallow its
   // neighbours (40132/40133 mean the client is wrong and retrying is waste).
-  check('v8: the stale-multiplier matcher recognises 40134 by code and by name', (() => {
+  check('the stale-multiplier matcher recognises 40134 by code and by name', (() => {
     const byCode = FEE_MULTIPLIER_NOT_TOLERATED.test('rejected: code=40134');
     const byName = FEE_MULTIPLIER_NOT_TOLERATED.test('DocumentActionFeeMultiplierNotToleratedError: ... but the fee multiplier is 1500 permille');
     return byCode && byName;
   })());
-  check('v8: it does not claim the agreement codes a retry cannot fix, or digits inside an amount',
+  check('it does not claim the agreement codes a retry cannot fix, or digits inside an amount',
     !FEE_MULTIPLIER_NOT_TOLERATED.test('code=40132') && !FEE_MULTIPLIER_NOT_TOLERATED.test('code=40133') &&
       !FEE_MULTIPLIER_NOT_TOLERATED.test('insufficient balance: 4013400 credits required'));
   // A stub epoch source: the multiplier is cached per process, so the only way
@@ -1099,11 +1021,11 @@ async function selfTest() {
   forgetFeeMultiplier();
   const first = await feeMultiplierPermille(epochSaying(1000n));
   const cached = await feeMultiplierPermille(epochSaying(1500n));
-  check('v8: the epoch multiplier is read once per process, not per create',
+  check('the epoch multiplier is read once per process, not per create',
     first === 1000n && cached === 1000n && epochReads === 1, `reads=${epochReads} first=${first} cached=${cached}`);
   forgetFeeMultiplier();
   const afterForget = await feeMultiplierPermille(epochSaying(1500n));
-  check('v8: forgetting it (after a 40134) makes the next agreement re-read the epoch',
+  check('forgetting it (after a 40134) makes the next agreement re-read the epoch',
     afterForget === 1500n && epochReads === 2, `reads=${epochReads} after=${afterForget}`);
   forgetFeeMultiplier();
 
@@ -1149,7 +1071,7 @@ try {
 } catch (e) {
   console.error(e.message);
   console.error('Usage: NETWORK=devnet node scripts/seed/run-seeder.mjs --personas <file> --corpus <file>');
-  console.error(`         [--concurrency 10] [--max-ops N] [--topology ${TOPOLOGIES.join('|')}] [--credits-fraction 0.25]`);
+  console.error('         [--concurrency 10] [--max-ops N] [--credits-fraction 0.25]');
   console.error('       node scripts/seed/run-seeder.mjs --self-test');
   process.exit(1);
 }
@@ -1164,18 +1086,17 @@ if (network() !== 'devnet') {
 }
 
 try {
+  requireSeededTopology();
   await ensureInitialized();
   const personas = loadPersonas(args.personas);
-  const { ops, stats } = parseCorpus(readFileSync(args.corpus, 'utf8'), personas, { topology: args.topology });
+  const { ops, stats } = parseCorpus(readFileSync(args.corpus, 'utf8'), personas);
   const { total: yappNeeded, perAuthor } = corpusYappCost(ops, { paysCredits: (idx) => paysInCredits(idx, args.creditsFraction) });
-  console.log(`topology: ${args.topology} (untagged posts/likes ${atLeastTopology(args.topology, 'v5') ? 'OMIT the hashtag property' : "write the '' sentinel"}; ` +
-    `post/reply ${atLeastTopology(args.topology, 'v7') ? 'omit the attested author column' : 'carry the attested author column'})`);
   console.log(`corpus: ${ops.length} ops (${Object.entries(stats).filter(([, n]) => n > 0).map(([t, n]) => `${n} ${t}`).join(', ')})`);
   if (args.creditsFraction > 0) {
     console.log(`payment: ${Math.round(args.creditsFraction * 100)}% of actors pay CREDITS (no $tokenPaymentInfo), the rest pay YAPP with the contract owner offered the gas`);
   }
-  if (actionFeeFor('post', args.topology)) {
-    const [post, reply] = [actionFeeFor('post', args.topology), actionFeeFor('reply', args.topology)];
+  {
+    const [post, reply] = [actionFeeFor('post'), actionFeeFor('reply')];
     console.log(`action fees: post ${post.moderators} + reply ${reply.moderators} credits to the moderators pot, ${post.pricing} pricing — every post/reply create is a hand-built batch carrying the agreement`);
   }
   console.log(`YAPP required if run from scratch: ${yappNeeded} total, max ${Math.max(0, ...perAuthor.values())} for one author`);
@@ -1198,11 +1119,11 @@ try {
 
   const executor = args.pipeline
     ? (await import('./pipeline.mjs')).buildPipelinedExecutor({
-        handle, contractId, actors, ledger, progressRefs: progress.refs, topology: args.topology,
-        planOp, entryExists, paymentFor: writeShapeFor({ handle, topology: args.topology }).paymentFor,
+        handle, contractId, actors, ledger, progressRefs: progress.refs,
+        planOp, entryExists, paymentFor: writeShapeFor({ handle }).paymentFor,
         window: args.window, log: (m) => console.log(`  ${m}`),
       })
-    : buildExecutor({ handle, contractId, actors, progressRefs: progress.refs, topology: args.topology });
+    : buildExecutor({ handle, contractId, actors, progressRefs: progress.refs });
   if (args.pipeline) console.log(`executor: PIPELINED (window ${args.window} in flight per identity, concurrency ${args.concurrency})`);
   // The engine publishes refs through deferreds; the executor reads settled
   // records from progress.refs, so keep the two in sync as records land.

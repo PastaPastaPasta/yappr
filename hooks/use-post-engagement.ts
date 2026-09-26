@@ -27,12 +27,12 @@ function reportSpendError(error: unknown, viewerId: string | undefined, buyReaso
 
 /**
  * A card's like, repost and bookmark state with optimistic flips that roll
- * back on failure. Each write names the post, and on v3 that reference is
+ * back on failure. Each write names the post, and on v9 that reference is
  * consensus-checked, so a post this session created but never saw confirmed
  * is settled first; the check is a no-op off the DAPI-timeout path.
  */
 export function usePostEngagement(post: Post, viewerId: string | undefined, initial: EngagementSnapshot, targetKind: TargetKind) {
-  // The v3 topology forbids reposting or bookmarking a reply at all.
+  // The v9 topology forbids reposting or bookmarking a reply at all.
   const repostable = canRepost(targetKind)
   const bookmarkable = canBookmark(targetKind)
   const [liked, setLiked] = useState(initial.liked)
@@ -69,7 +69,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     try {
       await settle()
       const { likeService } = await import('@/lib/services/like-service')
-      // On v4 the like repeats the target's author and hashtag under a
+      // On v9 the like repeats the target's author and hashtag under a
       // consensus-checked agreement; passing them saves the service a fetch.
       const targetInfo = { author: post.author.id, hashtag: post.hashtag }
       const ok = wasLiked
@@ -87,7 +87,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   }, [viewerId, likeLoading, liked, likes, settle, post.id, post.author.id, post.hashtag, targetKind])
 
   const toggleRepost = useCallback(async () => {
-    // The topology may forbid reposting this kind (v3 replies); this guard, not
+    // The topology may forbid reposting this kind (v9 replies); this guard, not
     // the action row, enforces it.
     if (!viewerId || !repostable || repostLoading) return
     const wasReposted = reposted

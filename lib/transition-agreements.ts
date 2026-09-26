@@ -41,12 +41,12 @@ export function actionFeeAgreementOptions(fee: ActionFeeDeclaration, knownPermil
 
 /**
  * The `$tokenPaymentInfo` a plan calls for, or undefined when the write spends
- * credits: on an `optional` token cost (v8) leaving the payment info out is
+ * credits: on an `optional` token cost (v9) leaving the payment info out is
  * what makes the signer pay credits, and payment info present with too little
  * YAPP is a 40700 refusal rather than a fallback.
  *
  * The gas offer is only named when the contract offers one (2 =
- * PreferContractOwner on v8). Before v8 the bag is exactly what it always was:
+ * PreferContractOwner on v9). On v2 the bag is exactly what it always was:
  * position and cap, the signer paying the gas. `1` (ContractOwner, insisting)
  * is never asked for: the type offers `2`, and insisting is 40129.
  */

@@ -42,10 +42,10 @@ function HashtagPageContent() {
   const pendingPageGeneration = useRef<number | null>(null)
   const postCount = posts.length
 
-  // Latest|Top sort (v4 only — Top is a proved ranked page on the tag-pinned
+  // Latest|Top sort (v9 only — Top is a proved ranked page on the tag-pinned
   // `like.byHashtagPost` axis). Latest stays the existing tagAndTime path.
   const [sortMode, setSortMode] = useState<'latest' | 'top'>('latest')
-  /** v6: Top can show today's ranking (beat.byDayHashtagPost) or all-time. */
+  /** v9: Top can show today's ranking (beat.byDayHashtagPost) or all-time. */
   const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
   const [topPosts, setTopPosts] = useState<Post[]>([])
   const [topLoading, setTopLoading] = useState(false)
@@ -79,7 +79,7 @@ function HashtagPageContent() {
         let fetchedPosts: Post[]
         let preloaded: import('@/hooks/use-progressive-enrichment').PreloadedEnrichment | undefined
         if (hashtagsAreInline()) {
-          // v4: posts carry their single hashtag inline — one `tagAndTime`
+          // v9: posts carry their single hashtag inline — one `tagAndTime`
           // query IS the tag page (newest first), with no postHashtag
           // indirection and no ownership cross-check (the tag is a property of
           // the post itself).
@@ -285,7 +285,7 @@ function HashtagPageContent() {
             </div>
           </PageHeader>
 
-          {/* Latest|Top sort toggle — Top rides the v4 ranked like axes. */}
+          {/* Latest|Top sort toggle — Top rides the v9 ranked like axes. */}
           {likesAreIndexOnly() && (
             <div className="flex gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-800">
               <button

@@ -9,7 +9,7 @@ import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
 
 /**
  * What the compose is about to spend, on a contract where the user can
- * choose (v8): "10 YAPP, network fee covered" or "credits". Nothing on
+ * choose (v9): "10 YAPP, network fee covered" or "credits". Nothing on
  * contracts where the token cost is required — there is no choice to show.
  */
 export function PaymentHint({ docType }: { docType: 'post' | 'reply' }) {

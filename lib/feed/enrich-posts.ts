@@ -6,7 +6,7 @@ import { repostService } from '@/lib/services/repost-service';
 import { attachQuotedPosts } from './resolve-quoted-posts';
 
 export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Promise<Post[]> {
-  // Tombstones (v3 "deleted" posts) still exist on chain and still come back from
+  // Tombstones (v9 "deleted" posts) still exist on chain and still come back from
   // timeline queries — the document is permanent, only its content is gone. They
   // are dropped from feeds here, cheaply, while remaining visible at their
   // permalink so anything linking to one still resolves. `deleted` is never set

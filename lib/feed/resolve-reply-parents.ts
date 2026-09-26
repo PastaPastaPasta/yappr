@@ -4,7 +4,7 @@
  * A profile's Replies tab shows replies stripped of their thread, so a card on
  * its own reads as a non-sequitur — the reader needs the post (or reply) it was
  * written under. This resolves that parent in one batch for a whole page of
- * replies, mirroring `attachQuotedPosts`: v3 knows which doctype each parent
+ * replies, mirroring `attachQuotedPosts`: v9 knows which doctype each parent
  * lives in and asks for it directly, v2 has one polymorphic link and has to
  * probe.
  */
@@ -17,7 +17,7 @@ import { hasFlatThreads } from '@/lib/contract-topology';
 type ParentTarget = { id: string; where: 'post' | 'reply' | 'unknown' };
 
 /**
- * The document a reply is a direct answer to. On v3 that is the reply it nests
+ * The document a reply is a direct answer to. On v9 that is the reply it nests
  * under, or the thread root when it nests under nothing; on v2 it is the single
  * `parentId`, which may name either doctype.
  */

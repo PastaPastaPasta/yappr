@@ -217,7 +217,7 @@ function wasConfirmed(doc: unknown): boolean {
 
 /** Fire-and-forget hashtag and mention index documents for a public post. */
 function registerIndexes(postId: string, authorId: string, content: string, index: number): void {
-  // The inline-hashtag topology (v4) carries the tag on the post itself.
+  // The inline-hashtag topology (v9) carries the tag on the post itself.
   const hashtags = hashtagsAreInline() ? [] : extractAllTags(content)
   if (hashtags.length > 0) {
     hashtagService

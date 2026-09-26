@@ -4,7 +4,7 @@
  *
  *   node scripts/seed/generate-corpus.mjs --users 1000 --posts 100000 --ops 1000000 \
  *        --seed 42 --out .seed-corpus.local/mass [--banks .seed-corpus.local/banks] \
- *        [--topology v7] [--mix likes=0.55,replies=0.2,...] [--quiet]
+ *        [--mix likes=0.55,replies=0.2,...] [--quiet]
  *   node scripts/seed/generate-corpus.mjs --self-test
  *
  * Writes <out>.personas.json, <out>.corpus.jsonl, <out>.summary.json, then
@@ -471,11 +471,11 @@ function makeDecks(rng) {
 // ---------------------------------------------------------------------------
 export function generate(opts) {
   const {
-    users, posts: postTarget, ops: opsTarget, seed, topology = 'v7', mix = DEFAULT_MIX, banksDir, loadedBanks = null, log = () => {},
+    users, posts: postTarget, ops: opsTarget, seed, mix = DEFAULT_MIX, banksDir, loadedBanks = null, log = () => {},
   } = opts;
   const rng = makeRng(seed);
   const deal = makeDecks(rng);
-  const hashtagMax = HASHTAG_MAX[topology];
+  const hashtagMax = HASHTAG_MAX;
 
   // --- banks ---------------------------------------------------------------
   const { banks: authored, missing, files } = loadedBanks ?? (existsSync(banksDir) ? loadBanks(banksDir) : { banks: {}, missing: [...ARCHETYPE_KEYS, 'generic', 'hero', 'dashlore', 'trends'], files: [] });
@@ -1252,7 +1252,7 @@ export function generate(opts) {
 
   const summary = {
     generatedAt: new Date().toISOString(),
-    seed, topology, users, targets: { posts: postTarget, ops: opsTarget, mix },
+    seed, users, targets: { posts: postTarget, ops: opsTarget, mix },
     counts: { ...counts, total: total() },
     yapp: { total: perAuthorYapp.reduce((a, b) => a + b, 0), maxPerAuthor: maxYapp, maxAuthor: perAuthorYapp.indexOf(maxYapp), perType: { post: 10, quote: 10, reply: 3, like: 1, likeReply: 1, repost: 1 } },
     credits: { ...credits, total: creditsTotal, totalDash: Number((creditsTotal / 1e11).toFixed(2)), assumptions: 'post 188M, reply 175M, like 90M untagged / 130M tagged, likeReply 54M, repost 66M, follow 46M, bookmark 18M credits' },
@@ -1309,10 +1309,10 @@ export function writeOutputs(out, { personas, ops, summary }) {
   return { personasFile, corpusFile, summaryFile };
 }
 
-export function validateOutputs({ personasFile, corpusFile }, topology, summary) {
+export function validateOutputs({ personasFile, corpusFile }, summary) {
   const personas = loadPersonas(personasFile);
   const text = readFileSync(corpusFile, 'utf8');
-  const { ops, stats } = parseCorpus(text, personas, { topology });
+  const { ops, stats } = parseCorpus(text, personas);
   const checks = [];
   const check = (name, ok, detail = '') => checks.push({ name, ok: Boolean(ok), detail });
 
@@ -1380,7 +1380,6 @@ async function main() {
   const selfTest = flag('self-test', false) === true;
   const quiet = flag('quiet', false) === true;
   const log = quiet ? () => {} : (...a) => console.log(...a);
-  const topology = String(flag('topology', 'v7'));
   const banksDir = resolve(String(flag('banks', '.seed-corpus.local/banks')));
   if (selfTest) {
     const outDir = join(tmpdir(), `yappr-corpus-selftest-${process.pid}`);
@@ -1389,11 +1388,11 @@ async function main() {
     const t0 = Date.now();
     // Load banks once so a bank file appearing mid-test cannot break the determinism check.
     const loadedBanks = existsSync(banksDir) ? loadBanks(banksDir) : null;
-    const result = generate({ users: 80, posts: 1500, ops: 12000, seed: 7, topology, mix: DEFAULT_MIX, banksDir, loadedBanks, log });
+    const result = generate({ users: 80, posts: 1500, ops: 12000, seed: 7, mix: DEFAULT_MIX, banksDir, loadedBanks, log });
     const files = writeOutputs(out, result);
-    const { checks } = validateOutputs(files, topology, result.summary);
+    const { checks } = validateOutputs(files, result.summary);
     // determinism: regenerate and compare
-    const again = generate({ users: 80, posts: 1500, ops: 12000, seed: 7, topology, mix: DEFAULT_MIX, banksDir, loadedBanks, log });
+    const again = generate({ users: 80, posts: 1500, ops: 12000, seed: 7, mix: DEFAULT_MIX, banksDir, loadedBanks, log });
     checks.push({ name: 'deterministic for a fixed seed', ok: JSON.stringify(again.ops) === JSON.stringify(result.ops) && JSON.stringify(again.personas) === JSON.stringify(result.personas), detail: '' });
     let failed = 0;
     for (const c of checks) {
@@ -1411,14 +1410,14 @@ async function main() {
   const out = String(flag('out', '.seed-corpus.local/mass'));
   const mix = parseMix(flag('mix', null));
   if (!(users >= 4) || !(posts >= 4) || !(opsN >= posts)) throw new Error('need --users ≥ 4, --posts ≥ 4, --ops ≥ --posts');
-  log(`generating: users=${users} posts=${posts} ops=${opsN} seed=${seed} topology=${topology}\nbanks: ${banksDir}`);
+  log(`generating: users=${users} posts=${posts} ops=${opsN} seed=${seed}\nbanks: ${banksDir}`);
   const t0 = Date.now();
-  const result = generate({ users, posts, ops: opsN, seed, topology, mix, banksDir, log });
+  const result = generate({ users, posts, ops: opsN, seed, mix, banksDir, log });
   log(`generated ${result.ops.length} ops in ${((Date.now() - t0) / 1000).toFixed(1)}s (banks: ${result.summary.content.bankSource}${result.summary.content.missingBanks.length ? `, missing: ${result.summary.content.missingBanks.join(',')}` : ''})`);
   const files = writeOutputs(out, result);
   log(`wrote ${files.personasFile}\n      ${files.corpusFile}\n      ${files.summaryFile}`);
   const t1 = Date.now();
-  const { checks } = validateOutputs(files, topology, result.summary);
+  const { checks } = validateOutputs(files, result.summary);
   const failed = checks.filter((c) => !c.ok);
   for (const c of checks) log(`${c.ok ? 'PASS' : 'FAIL'} ${c.name}${c.detail ? ` — ${c.detail}` : ''}`);
   log(`validation ${failed.length ? 'FAILED' : 'passed'} in ${((Date.now() - t1) / 1000).toFixed(1)}s`);

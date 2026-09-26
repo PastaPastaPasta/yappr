@@ -87,7 +87,7 @@ function RankedUserList({
 }
 
 /**
- * The v5 creator leaderboard: top authors by likes received, from the proved
+ * The v9 creator leaderboard: top authors by likes received, from the proved
  * prefix ranked page on `like.byAuthorPost {at: [postAuthor, postId]}`, plus —
  * when the follow ranked chain exists — most-followed users off
  * `follow.followerCount`. Both fail soft: a ranking that errors comes back

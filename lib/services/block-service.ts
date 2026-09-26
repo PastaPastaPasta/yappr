@@ -484,7 +484,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
   /**
    * The followed blockers as stored: v9 keeps a typed list of identifiers,
-   * v2–v8 one byte array of 32-byte ids laid end to end. Reads accept both.
+   * v2 one byte array of 32-byte ids laid end to end. Reads accept both.
    */
   private decodeUserIdArray(data: unknown): string[] {
     return decodeBlockFollowIds(data)

@@ -7,8 +7,8 @@
  * asset-lock-lib.mjs, so the `--self-test` harnesses can exercise this module
  * without touching the devnet.
  *
- * Hard-won gotchas honored here (see scripts/verify-v4.mjs and
- * scripts/provision-test-identity.mjs for their origin stories):
+ * Hard-won gotchas honored here (see scripts/verify-lib.mjs and
+ * scripts/provision-test-identity.mjs):
  *  - `Document.fromObject` with raw-byte identifiers is the only document
  *    construction that survives wasm-sdk 4.1+ (the `Document` constructor
  *    corrupts Uint8Array properties).
@@ -54,7 +54,7 @@ export const REPORT_FILE = join(REPO_ROOT, '.seed-report.local.json');
 // ---- Network / contract constants --------------------------------------------
 
 export const YAPP_TOKEN_POSITION = 0;
-/** YAPP create costs per doctype (contracts/yappr-social-contract-v4.json tokenCost). */
+/** YAPP create costs per doctype (contracts/yappr-social-contract-v9.json tokenCost). */
 export const TOKEN_COST = { post: 10, reply: 3, like: 1, likeReply: 1, repost: 1 };
 /** Base URL posts are linked as in seeded content ({{link:REF}} substitution). */
 export const POST_LINK_BASE = 'https://yap.pr/devnet/post/?id=';
@@ -80,56 +80,35 @@ export function profileContractId() {
   return id;
 }
 
-// ---- Contract topology (hashtag semantics) -------------------------------------
+// ---- Document shapes (social v9) ----------------------------------------------
 //
-// The corpus format is topology-agnostic: `"hashtag": ""` always means
-// "untagged". What that maps to on chain differs:
-//   v4 — `hashtag` is REQUIRED on post/like; untagged writes the `''` sentinel.
-//   v5 — `hashtag` is OPTIONAL (pattern ^[a-z0-9_]{1,61}$, maxLength 61,
-//        contracts/yappr-social-contract-v5.json); an untagged post OMITS the
-//        property entirely, and a like of an untagged post OMITS like.hashtag
-//        too: propertyAgreement treats both-absent as agreement, while sending
-//        `''` is consensus mismatch 40127. The like's delete-by-values tuple
-//        must reproduce the same absence (it is the same value tuple). The v5
-//        like `byHashtagPost` index is skipIfAbsent — absence simply writes no
-//        entry, which needs no seeder action beyond the correct doc shape.
+// The seeder writes to the devnet social contract, which is v9
+// (contracts/yappr-social-contract-v9.json); nothing else exists to seed. The
+// corpus format keeps `"hashtag": ""` for "untagged", and on chain that is an
+// ABSENT property: an untagged post OMITS `hashtag`, and a like of it OMITS
+// `like.hashtag` too — propertyAgreement treats both-absent as agreement,
+// while sending `''` is consensus mismatch 40127. The like's delete-by-values
+// tuple must reproduce the same absence (it is the same value tuple). A like
+// of a TAGGED post also writes a `beat` companion, which carries today's
+// trending-hashtag axis. post and reply creates agree to an action fee, and
+// their token costs are `optional` with the contract owner offering the gas —
+// see `actionFeeFor` / `paymentInfo` below.
 
-//   v6 — v5 plus the windowed rankings: a like of a TAGGED post also writes a
-//        `beat` companion (contracts/yappr-social-contract-v6.json), which is
-//        what carries today's trending-hashtag axis.
-//   v8 — v7's document SHAPES exactly (every field, index and agreement is
-//        v7's), on the 4.2.0-beta.3 grammar
-//        (contracts/yappr-social-contract-v8.json). What changes is what a
-//        create must CARRY: post and reply declare an `actionFees` fee that
-//        the transition has to agree to, and their token costs are `optional`
-//        with the contract owner offering to pay the gas — so a create may
-//        pay YAPP (with the gas offer) or omit the payment info entirely and
-//        pay credits. See `actionFeeFor` / `paymentInfo` below.
-//   v7 — v6's shapes on the 4.2.0-beta.2 grammar
-//        (contracts/yappr-social-contract-v7.json): post/reply no longer carry
-//        the attested `author` column, because a like's `postAuthor` now binds
-//        to the post's `$ownerId` through a system-field propertyAgreement.
-//        Every value tuple this module builds is otherwise identical — a
-//        like's postAuthor is the same identity it always was.
-//
-// ORDER IS SIGNIFICANT: `atLeastTopology` compares positions in this array, so
-// new cuts append. Mirrors CONTRACT_TOPOLOGIES in lib/constants.ts.
-//   v9 — the 4.2.0-beta.4 cut (contracts/yappr-social-contract-v9.json): v8's
-//        document shapes, fees, costs and grant byte for byte; the seeder's
-//        writes are v8's. (blockFollow's typed list and the private-feed gates
-//        are not seeded.)
-export const TOPOLOGIES = ['v4', 'v5', 'v6', 'v7', 'v8', 'v9'];
-export const HASHTAG_MAX = { v4: 63, v5: 61, v6: 61, v7: 61, v8: 61, v9: 61 };
+/** The topology the seeded contract must have (`.env.devnet`). */
+export const SEEDED_TOPOLOGY = 'v9';
+/** v9's `post.hashtag` / `like.hashtag` maxLength (the ranked key-size ceiling). */
+export const HASHTAG_MAX = 61;
 
-/** True when `topology` is `floor` or any later cut. */
-export function atLeastTopology(topology, floor) {
-  return TOPOLOGIES.indexOf(topology) >= TOPOLOGIES.indexOf(floor);
-}
-
-/** Topology the run targets: NEXT_PUBLIC_CONTRACT_TOPOLOGY (env or the env file), else v4. */
-export function defaultTopology() {
+/**
+ * Refuses to seed a contract of another shape: every write below is a v9
+ * document, and a stale `NEXT_PUBLIC_CONTRACT_TOPOLOGY` would otherwise spend
+ * credits on writes consensus rejects.
+ */
+export function requireSeededTopology() {
   const configured = envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY');
-  return TOPOLOGIES.includes(configured) ? configured : 'v4';
+  if (configured !== SEEDED_TOPOLOGY) {
+    throw new Error(`NEXT_PUBLIC_CONTRACT_TOPOLOGY is ${configured ?? 'unset'}; the seeder only writes ${SEEDED_TOPOLOGY} documents`);
+  }
 }
 
 /**
@@ -137,31 +116,19 @@ export function defaultTopology() {
  * `''` and absent inputs are equivalent ("untagged") so a checkpoint ref
  * recorded either way replays to an identical document.
  */
-export function hashtagProps(hashtag, topology) {
+export function hashtagProps(hashtag) {
   const tag = hashtag ?? '';
-  if (atLeastTopology(topology, 'v5')) return tag === '' ? {} : { hashtag: tag };
-  return { hashtag: tag };
+  return tag === '' ? {} : { hashtag: tag };
 }
 
 /**
- * The poster-attested `author` property a post/reply document carries, or `{}`
- * from v7 where the column was removed: consensus binds a like's `postAuthor`
- * to the post's `$ownerId` directly, so writing the duplicate is no longer
- * possible (`additionalProperties: false` would reject it).
+ * The `beat` companion a like of a TAGGED post writes beside itself — the
+ * tagged-only indexOnly doctype whose byDayHashtagPost serves today's
+ * trending hashtags / per-tag top. `null` for an untagged target
+ * (beat.hashtag is required). Its postId refersTo the post with
+ * propertyAgreement on hashtag, so consensus checks the tag.
  */
-export function authorProps(ownerBytes, topology) {
-  return atLeastTopology(topology, 'v7') ? {} : { author: ownerBytes };
-}
-
-/**
- * v6+: the `beat` companion a like of a TAGGED post writes beside itself —
- * the tagged-only indexOnly doctype whose byDayHashtagPost serves today's
- * trending hashtags / per-tag top. `null` when no beat is written (pre-v6,
- * or an untagged target: beat.hashtag is required). Its postId refersTo the
- * post with propertyAgreement on hashtag, so consensus checks the tag.
- */
-export function beatValueTuple(target, topology) {
-  if (!atLeastTopology(topology, 'v6')) return null;
+export function beatValueTuple(target) {
   const tag = target.hashtag ?? '';
   if (tag === '') return null;
   return { postId: bs58.decode(target.id), hashtag: tag };
@@ -171,12 +138,12 @@ export function beatValueTuple(target, topology) {
  * The like doc's data value tuple for a target post ref record. Used for the
  * create AND for delete-by-values (indexOnly deletes carry the whole value
  * tuple) — both must mirror the post's propertyAgreement values exactly,
- * including hashtag ABSENCE from v5 on.
+ * including hashtag ABSENCE. `postAuthor` binds to the post's `$ownerId`.
  */
-export function likeValueTuple(target, topology) {
+export function likeValueTuple(target) {
   return {
     postId: bs58.decode(target.id),
-    ...hashtagProps(target.hashtag, topology),
+    ...hashtagProps(target.hashtag),
     postAuthor: bs58.decode(target.ownerId),
   };
 }
@@ -407,15 +374,13 @@ export function substituteLinks(content, resolve) {
  *    liking/reposting/bookmarking/following the same target twice) are
  *    rejected up front as generator bugs.
  *
- * The `topology` option tightens the hashtag length to the target contract's
- * maxLength (63 under v4, 61 from v5 on) — an over-long tag is a generator bug
- * and is rejected, never rewritten.
+ * Hashtags are held to the contract's maxLength ({@link HASHTAG_MAX}) — an
+ * over-long tag is a generator bug and is rejected, never rewritten.
  *
  * Returns `{ ops, stats }`; each op carries its 1-based `line`.
  */
-export function parseCorpus(text, personas, { topology = 'v4' } = {}) {
-  if (!TOPOLOGIES.includes(topology)) throw new Error(`unknown topology "${topology}" (expected ${TOPOLOGIES.join('/')})`);
-  const hashtagMax = HASHTAG_MAX[topology];
+export function parseCorpus(text, personas) {
+  const hashtagMax = HASHTAG_MAX;
   const hashtagPattern = new RegExp(`^$|^[a-z0-9_]{1,${hashtagMax}}$`);
   const personaIdxSet = new Set(personas.map((p) => p.idx));
   const refs = new Map(); // ref -> 'post' | 'reply'
@@ -490,7 +455,7 @@ export function parseCorpus(text, personas, { topology = 'v4' } = {}) {
         checkContent(op.content);
         checkMediaUrl(op.mediaUrl);
         if (typeof op.hashtag !== 'string' || !hashtagPattern.test(op.hashtag)) {
-          fail(line, `hashtag "${op.hashtag}" must match ^$|^[a-z0-9_]{1,${hashtagMax}}$ ('' = untagged; ${topology} maxLength ${hashtagMax})`);
+          fail(line, `hashtag "${op.hashtag}" must match ^$|^[a-z0-9_]{1,${hashtagMax}}$ ('' = untagged; maxLength ${hashtagMax})`);
         }
         if (op.sensitive !== undefined && typeof op.sensitive !== 'boolean') fail(line, 'sensitive must be a boolean');
         break;
@@ -548,7 +513,7 @@ export function parseCorpus(text, personas, { topology = 'v4' } = {}) {
 /**
  * YAPP a corpus costs in total and per persona idx (create tokenCosts).
  *
- * `paysCredits(authorIdx)` excludes the authors a v8 run has paying in credits
+ * `paysCredits(authorIdx)` excludes the authors a run has paying in credits
  * instead: their writes cost no YAPP at all, so counting them would over-fund
  * the run and hide an actually underfunded author.
  */
@@ -567,7 +532,7 @@ export function corpusYappCost(ops, { paysCredits = () => false } = {}) {
 
 /**
  * Whether persona `idx` pays its token-priced writes in CREDITS rather than
- * YAPP, for a run asking for `fraction` of its actors to do so (v8's optional
+ * YAPP, for a run asking for `fraction` of its actors to do so (the contract's optional
  * token costs — the "free usage" path where the write carries no
  * `$tokenPaymentInfo` and the signer pays credits as for an unpriced action).
  *
@@ -594,9 +559,8 @@ export function paysInCredits(idx, fraction) {
 //
 // A ref's `hashtag` may be recorded as '' OR be absent from the record — both
 // mean "untagged" and MUST replay identically: the fold normalizes to '' here,
-// and the doc builders (`hashtagProps`) map '' to the topology's shape (''
-// sentinel under v4, property absence from v5 on). Never treat the journal's
-// hashtag as always-a-meaningful-string.
+// and the doc builders (`hashtagProps`) map '' to property absence. Never
+// treat the journal's hashtag as always-a-meaningful-string.
 
 export function loadProgress(file = PROGRESS_FILE) {
   const completed = new Map(); // line -> record
@@ -652,7 +616,7 @@ export function deriveDocumentIdBytes({ contractId, ownerId, docType, entropy, n
 /**
  * `Document.fromObject` with raw-byte identifiers — the only construction that
  * survives wasm-sdk 4.1+ (the `Document` constructor corrupts Uint8Array
- * properties). Mirrors scripts/verify-v4.mjs `buildDocument`.
+ * properties). Mirrors scripts/verify-lib.mjs `buildDocument`.
  *
  * The id a create carries depends on its identity contract nonce (protocol 14):
  *  - pass `nonce` when the transition is built by hand with a known nonce
@@ -789,11 +753,11 @@ export async function findRecentByValues(sdk, { contractId, docType, ownerId, da
 /**
  * Token payment for a token-priced doctype (post/reply/like/likeReply/repost).
  *
- * `gasFeesPaidBy: 2` (PreferContractOwner) is the offer v8's types make: the
+ * `gasFeesPaidBy: 2` (PreferContractOwner) is the offer the social types make: the
  * contract owner pays the gas of a token-paid create when it can, else the
  * signer does. Never ask for `1` (ContractOwner, insisting) — the type does not
  * offer it and insisting is 40129. Omitting the bag ENTIRELY is the credits
- * path on v8's `optional: true` costs; there is no fallback the other way
+ * path on the `optional: true` costs; there is no fallback the other way
  * (payment info with too little YAPP is a 40700 refusal), so callers choose
  * before signing.
  */
@@ -809,41 +773,37 @@ export function paymentInfo(tokenCost, { gasFeesPaidBy = 0 } = {}) {
     : {};
 }
 
-/** The gas offer v8's token-paid creates may ask for. */
+/** The gas offer the social contract's token-paid creates may ask for. */
 export const PREFER_CONTRACT_OWNER = 2;
 /** How far above the multiplier the signer knew the executing epoch's may be (percent). */
 export const FEE_MULTIPLIER_TOLERANCE_PERCENT = 20;
 /** Agreed when the epoch read fails: 40132 is certain without an agreement, 40134 unlikely at 1.0x. */
 export const DEFAULT_FEE_MULTIPLIER_PERMILLE = 1000n;
 
-const V8_DOCUMENT_SCHEMAS = JSON.parse(
-  readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v8.json'), 'utf8')
+const SOCIAL_DOCUMENT_SCHEMAS = JSON.parse(
+  readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v9.json'), 'utf8')
 ).documentSchemas;
 
 /**
- * What `docType`'s create costs in YAPP on `topology`, and how that payment may
- * be made: `{ amount, optional, gasFeesPaidBy }`, read off the committed
- * contract. Before v8 a declared cost is REQUIRED and the signer pays the gas,
- * which is what `optional: false, gasFeesPaidBy: 0` says. The gas offer is a
- * property of the doctype, independent of whether it charges an action fee —
- * inferring one from the other would send a payer the type never offered (40129).
+ * What `docType`'s create costs in YAPP, and how that payment may be made:
+ * `{ amount, optional, gasFeesPaidBy }`, read off the committed contract. The
+ * gas offer is a property of the doctype, independent of whether it charges
+ * an action fee — inferring one from the other would send a payer the type
+ * never offered (40129).
  */
-export function tokenCostFor(docType, topology) {
-  const create = V8_DOCUMENT_SCHEMAS[docType]?.tokenCost?.create;
+export function tokenCostFor(docType) {
+  const create = SOCIAL_DOCUMENT_SCHEMAS[docType]?.tokenCost?.create;
   if (!create) return null;
-  if (!atLeastTopology(topology, 'v8')) return { amount: create.amount, optional: false, gasFeesPaidBy: 0 };
   return { amount: create.amount, optional: create.optional === true, gasFeesPaidBy: create.gasFeesPaidBy ?? 0 };
 }
 
 /**
- * The action fee `docType`'s create charges on `topology`, or null when it
- * charges none (every doctype and every topology before v8; on v8, everything
- * but `post` and `reply`). Read off the committed contract JSON so no amount is
- * ever transcribed: a mismatch is a paid 40133.
+ * The action fee `docType`'s create charges, or null when it charges none
+ * (everything but `post` and `reply`). Read off the committed contract JSON so
+ * no amount is ever transcribed: a mismatch is a paid 40133.
  */
-export function actionFeeFor(docType, topology) {
-  if (!atLeastTopology(topology, 'v8')) return null;
-  const fees = V8_DOCUMENT_SCHEMAS[docType]?.actionFees;
+export function actionFeeFor(docType) {
+  const fees = SOCIAL_DOCUMENT_SCHEMAS[docType]?.actionFees;
   const create = fees?.create;
   if (!create) return null;
   return {
@@ -899,11 +859,11 @@ export function forgetFeeMultiplier() {
 }
 
 /**
- * The agreement a create of `docType` must carry on `topology`, or undefined
- * when the action is unpriced. Reads the epoch multiplier on first use.
+ * The agreement a create of `docType` must carry, or undefined when the action
+ * is unpriced. Reads the epoch multiplier on first use.
  */
-export async function feeAgreementFor(sdk, docType, topology) {
-  const fee = actionFeeFor(docType, topology);
+export async function feeAgreementFor(sdk, docType) {
+  const fee = actionFeeFor(docType);
   if (!fee) return undefined;
   return new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, await feeMultiplierPermille(sdk)));
 }
@@ -913,7 +873,7 @@ export async function feeAgreementFor(sdk, docType, topology) {
  * `$actionFeeAgreement`: `sdk.documents.create` (`DocumentCreateOptions`)
  * offers `document`, `identityKey`, `signer`, `tokenPaymentInfo` and
  * `settings` — and nothing for the agreement — so every post/reply create on a
- * v8 contract goes through here or it is a paid 40132.
+ * social contract goes through here or it is a paid 40132.
  *
  * Protocol 14 derives the id from the transition's identity contract nonce, so
  * the nonce is taken first and the id derived up front by wasm-dpp2
@@ -970,7 +930,7 @@ export function createDocument(sdk, { contractId, actor, docType, document, data
 
 // ---- Resilient SDK handle ------------------------------------------------------
 //
-// Lifted from verify-v4.mjs: quorum rotations invalidate the trusted context's
+// Quorum rotations invalidate the trusted context's
 // prefetched keys mid-run and there is no refresh API — the cure is a FULL
 // reconnect (fresh EvoSDK + protocol-version ratchet + contract re-cache). The
 // returned `sdk` is a proxy that always forwards to the live instance, so a

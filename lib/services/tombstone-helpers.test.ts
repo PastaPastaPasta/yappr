@@ -1,11 +1,10 @@
 /**
  * The tombstone is the delete path for `canBeDeleted: false` doctypes, and on
- * v8 every reference it carries is a `deletableDocument` one that a replace
- * re-validates. The two branches that matter are pinned here: a post whose
- * quote target a moderator removed must be tombstoned with the reference
- * CLEARED (keeping it is 40120, and clearing it is the one change the
- * `immutable` check lets through), while on v7 — where nothing a post points
- * at can disappear — the preserve set is sent verbatim and never retried.
+ * v9 every reference it carries is a `deletableDocument` one that a replace
+ * re-validates. A post whose quote target a moderator removed must be
+ * tombstoned with the reference CLEARED (keeping it is 40120, and clearing it
+ * is the one change the `immutable` check lets through); every other rejection
+ * is final and never retried.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -74,12 +73,12 @@ beforeEach(() => {
 })
 
 describe('tombstoning a quote of a removed post', () => {
-  it('retries once with the dead reference cleared on v8', async () => {
+  it('retries once with the dead reference cleared on v9', async () => {
     updateDocument
       .mockResolvedValueOnce({ success: false, error: REFERENCE_NOT_FOUND })
       .mockResolvedValueOnce({ success: true })
 
-    await expect(tombstone('v8')).resolves.toBe(true)
+    await expect(tombstone('v9')).resolves.toBe(true)
     expect(updateDocument).toHaveBeenCalledTimes(2)
 
     // The first attempt preserves the quote graph, as every tombstone does.
@@ -94,16 +93,9 @@ describe('tombstoning a quote of a removed post', () => {
     expect(updateDocument.mock.calls[1][5]).toBe(updateDocument.mock.calls[0][5])
   })
 
-  it('does not retry on v7, where a reference cannot go dead', async () => {
-    updateDocument.mockResolvedValue({ success: false, error: REFERENCE_NOT_FOUND })
-    await expect(tombstone('v7')).resolves.toBe(false)
-    expect(updateDocument).toHaveBeenCalledTimes(1)
-    expect(attempt(0).quotedPostId).toBeInstanceOf(Uint8Array)
-  })
-
   it('does not retry a rejection that is not a dead reference', async () => {
     updateDocument.mockResolvedValue({ success: false, error: 'property content is immutable on replace, code=40128' })
-    await expect(tombstone('v8')).resolves.toBe(false)
+    await expect(tombstone('v9')).resolves.toBe(false)
     expect(updateDocument).toHaveBeenCalledTimes(1)
   })
 
@@ -112,7 +104,7 @@ describe('tombstoning a quote of a removed post', () => {
       toObject: () => ({ $id: postId, $ownerId: ownerId, $revision: 1, content: 'plain post', language: 'en' }),
     })
     updateDocument.mockResolvedValue({ success: false, error: REFERENCE_NOT_FOUND })
-    await expect(tombstone('v8')).resolves.toBe(false)
+    await expect(tombstone('v9')).resolves.toBe(false)
     expect(updateDocument).toHaveBeenCalledTimes(1)
   })
 
@@ -120,7 +112,7 @@ describe('tombstoning a quote of a removed post', () => {
     updateDocument
       .mockResolvedValueOnce({ success: false, error: REFERENCE_NOT_FOUND })
       .mockResolvedValueOnce({ success: false, error: REFERENCE_NOT_FOUND })
-    await expect(tombstone('v8')).resolves.toBe(false)
+    await expect(tombstone('v9')).resolves.toBe(false)
     expect(updateDocument).toHaveBeenCalledTimes(2)
   })
 
@@ -133,7 +125,7 @@ describe('tombstoning a quote of a removed post', () => {
       .mockResolvedValueOnce({ success: false, error: referenceNotFound('quotedPostId') })
       .mockResolvedValueOnce({ success: true })
 
-    await expect(tombstone('v8')).resolves.toBe(true)
+    await expect(tombstone('v9')).resolves.toBe(true)
     expect(updateDocument).toHaveBeenCalledTimes(2)
     expect(attempt(1)).not.toHaveProperty('quotedPostId')
     expect(attempt(1).quotedReplyId).toBeInstanceOf(Uint8Array)
@@ -146,7 +138,7 @@ describe('tombstoning a quote of a removed post', () => {
       .mockResolvedValueOnce({ success: false, error: referenceNotFound('quotedReplyId') })
       .mockResolvedValueOnce({ success: true })
 
-    await expect(tombstone('v8')).resolves.toBe(true)
+    await expect(tombstone('v9')).resolves.toBe(true)
     expect(updateDocument).toHaveBeenCalledTimes(3)
     expect(attempt(2)).not.toHaveProperty('quotedPostId')
     expect(attempt(2)).not.toHaveProperty('quotedReplyId')
@@ -166,20 +158,20 @@ describe('tombstoning a quote of a removed post', () => {
     })
     updateDocument.mockResolvedValue({ success: false, error: referenceNotFound('rootPostId') })
 
-    await expect(tombstone('v8', 'reply')).resolves.toBe(false)
+    await expect(tombstone('v9', 'reply')).resolves.toBe(false)
     expect(updateDocument).toHaveBeenCalledTimes(1)
   })
 
   it('does not guess when the rejection names no readable path', async () => {
     get.mockResolvedValue(storedDoubleQuotePost())
     updateDocument.mockResolvedValue({ success: false, error: 'referencedentitynotfound, code=40120' })
-    await expect(tombstone('v8')).resolves.toBe(false)
+    await expect(tombstone('v9')).resolves.toBe(false)
     expect(updateDocument).toHaveBeenCalledTimes(1)
   })
 
   it('sends one replace and preserves the quote when nothing is dead', async () => {
     updateDocument.mockResolvedValue({ success: true })
-    await expect(tombstone('v8')).resolves.toBe(true)
+    await expect(tombstone('v9')).resolves.toBe(true)
     expect(updateDocument).toHaveBeenCalledTimes(1)
     expect(attempt(0).quotedPostId).toBeInstanceOf(Uint8Array)
   })

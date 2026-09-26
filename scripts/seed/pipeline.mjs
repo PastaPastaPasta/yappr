@@ -75,7 +75,7 @@ class NonceTrack {
 /**
  * A signed, ready-to-broadcast create transition for one document.
  *
- * This path already builds transitions by hand, so carrying v8's
+ * This path already builds transitions by hand, so carrying the social contract's
  * `$actionFeeAgreement` is just one more option on the create — no separate
  * shape, unlike the facade path the confirm-per-op executor uses.
  * `payment` is the caller's bag: empty for an actor paying credits.
@@ -96,7 +96,7 @@ function buildSignedCreate({ contractId, actor, docType, data, nonce, payment, a
   return { st, id };
 }
 
-export function buildPipelinedExecutor({ handle, contractId, actors, ledger, progressRefs, topology, planOp, entryExists, paymentFor, window = DEFAULT_WINDOW, log = () => {} }) {
+export function buildPipelinedExecutor({ handle, contractId, actors, ledger, progressRefs, planOp, entryExists, paymentFor, window = DEFAULT_WINDOW, log = () => {} }) {
   const resolveRef = (ref) => {
     const record = progressRefs.get(ref);
     if (!record) throw new Error(`ref "${ref}" not materialized (checkpoint out of sync)`);
@@ -129,7 +129,7 @@ export function buildPipelinedExecutor({ handle, contractId, actors, ledger, pro
     for (let attempt = 1; attempt <= BROADCAST_ATTEMPTS; attempt++) {
       // Per attempt, not once: the multiplier is cached, so this is free until
       // a 40134 drops the cache and the rebuild is the whole point.
-      const agreement = await feeAgreementFor(handle.sdk, docType, topology);
+      const agreement = await feeAgreementFor(handle.sdk, docType);
       const nonce = await track.take();
       const { st, id } = buildSignedCreate({ contractId, actor, docType, data, nonce, payment, agreement, privateKey: keyFor(actor) });
       const accepted = acceptedProbe(existenceKeyPlan, actor, id);
@@ -160,12 +160,12 @@ export function buildPipelinedExecutor({ handle, contractId, actors, ledger, pro
 
   return async function executeOp(op) {
     const actor = actors.get(op.author);
-    const plan = planOp(op, { actors, resolveRef, topology });
+    const plan = planOp(op, { actors, resolveRef });
     await waitWindow(actor.personaIdx);
     try {
       const { id } = await submit({ actor, docType: plan.docType, data: plan.data, tokenCost: plan.tokenCost, existenceKeyPlan: plan, duplicateIsSuccess: ['like', 'likeReply', 'follow', 'bookmark', 'repost'].includes(op.type) });
       if (plan.companion) {
-        // v6 beat: a second transition after the like is on chain (batch cap is 1).
+        // The beat: a second transition after the like is on chain (batch cap is 1).
         try {
           await submit({ actor, docType: plan.companion.docType, data: plan.companion.data, tokenCost: undefined, existenceKeyPlan: plan.companion, duplicateIsSuccess: true });
         } catch (e) {

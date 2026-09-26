@@ -1,9 +1,10 @@
 /**
- * Registration-day battery for **contract v8**
- * (`contracts/yappr-social-contract-v8.json`, docs/SOCIAL_V8.md): the
- * 4.2.0-beta.3 grammar Yappr adopted, exercised against a freshly registered
- * contract on a beta.3 devnet. The machinery is {@link file://./verify-lib.mjs};
- * this file is the v8 cases only, because v8's query surface is v7's.
+ * Registration-day battery for the **contract moderation, optional YAPP cost,
+ * action fee and starter grant** grammar (4.2.0-beta.3, docs/SOCIAL_V8.md).
+ * That grammar was introduced by the v8 cut and the live v9 contract
+ * (`contracts/yappr-social-contract-v9.json`) carries it unchanged, so this
+ * battery runs against v9; `verify-v9.mjs` covers what v9 added. The
+ * machinery is {@link file://./verify-lib.mjs}.
  *
  * There is NO default contract id. Pass `--contract` or set `V8_CONTRACT_ID`.
  *
@@ -97,14 +98,14 @@ import {
   wifForBot,
 } from './social-battery-lib.mjs';
 
-// ---- v8 numbers ------------------------------------------------------------
+// ---- Contract numbers --------------------------------------------------------
 //
 // The fees are READ OFF the committed contract (`actionFeeFor`), the same
 // helper the seeders use and the twin of the client's `declaredActionFee`, so
 // this battery cannot pass against numbers the app would never send.
 
-const POST_ACTION_FEE = actionFeeFor('post', 'v8');
-const REPLY_ACTION_FEE = actionFeeFor('reply', 'v8');
+const POST_ACTION_FEE = actionFeeFor('post');
+const REPLY_ACTION_FEE = actionFeeFor('reply');
 const POST_FEE = POST_ACTION_FEE.moderators;
 const REPLY_FEE = REPLY_ACTION_FEE.moderators;
 const STARTER_GRANT = 100n;
@@ -601,7 +602,7 @@ if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) 
   const feesFromContract = POST_FEE === 80_000_000n && REPLY_FEE === 16_000_000n
     && POST_ACTION_FEE.owner === 0n && POST_ACTION_FEE.pricing === 'feeMultiplier';
   console.log(`action fees off the contract: post=${POST_FEE} reply=${REPLY_FEE} pricing=${POST_ACTION_FEE.pricing} owner=${POST_ACTION_FEE.owner}`);
-  if (!feesFromContract) { console.error('FAIL  action fees do not match contracts/yappr-social-contract-v8.json'); process.exit(1); }
+  if (!feesFromContract) { console.error('FAIL  action fees do not match contracts/yappr-social-contract-v9.json'); process.exit(1); }
 }
 
 await runBattery({

@@ -7,7 +7,7 @@
  * and on that path the app optimistically reports success (the broadcast almost
  * always did land) without any proof.
  *
- * On the v3 topology that gap has teeth: every reference between documents is
+ * On the v9 topology that gap has teeth: every reference between documents is
  * `refersTo`-checked by consensus, so a like, reply or quote naming a parent that
  * has not landed is rejected outright — and its token cost is spent on the
  * rejection. So the ids from that path are recorded here, and the few writes that

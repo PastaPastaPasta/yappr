@@ -35,8 +35,8 @@ describe('actionFeeAgreementOptions', () => {
 })
 
 describe('tokenPaymentOptions', () => {
-  it('on v8 pays YAPP with the PreferContractOwner gas offer when the plan says yapp', async () => {
-    const { planPayment } = await plannerFor('v8')
+  it('on v9 pays YAPP with the PreferContractOwner gas offer when the plan says yapp', async () => {
+    const { planPayment } = await plannerFor('v9')
     expect(tokenPaymentOptions(planPayment('post', 'create', 100n, 'yapp'), 0)).toEqual({
       tokenContractPosition: 0,
       maximumTokenCost: 10n,
@@ -44,8 +44,8 @@ describe('tokenPaymentOptions', () => {
     })
   })
 
-  it('on v8 omits the payment info entirely when the plan says credits', async () => {
-    const { planPayment } = await plannerFor('v8')
+  it('on v9 omits the payment info entirely when the plan says credits', async () => {
+    const { planPayment } = await plannerFor('v9')
     expect(tokenPaymentOptions(planPayment('post', 'create', 100n, 'credits'), 0)).toBeUndefined()
     // Too little YAPP plans credits too: payment info present would be 40700.
     expect(tokenPaymentOptions(planPayment('post', 'create', 9n, 'yapp'), 0)).toBeUndefined()
@@ -54,8 +54,8 @@ describe('tokenPaymentOptions', () => {
     expect(tokenPaymentOptions(planPayment('follow', 'create', 100n, 'yapp'), 0)).toBeUndefined()
   })
 
-  it('before v8 is exactly the historical bag: position and cap, no gas offer, whatever the setting or balance', async () => {
-    const { planPayment } = await plannerFor('v7')
+  it('on v2 is exactly the historical bag: position and cap, no gas offer, whatever the setting or balance', async () => {
+    const { planPayment } = await plannerFor('v2')
     const expected = { tokenContractPosition: 0, maximumTokenCost: 10n }
     expect(tokenPaymentOptions(planPayment('post', 'create', 0n, 'credits'), 0)).toEqual(expected)
     expect(tokenPaymentOptions(planPayment('post', 'create', null, 'yapp'), 0)).toEqual(expected)
@@ -63,7 +63,7 @@ describe('tokenPaymentOptions', () => {
   })
 
   it('never asks for gasFeesPaidBy 1 (insisting on the owner is 40129)', async () => {
-    const { planPayment } = await plannerFor('v8')
+    const { planPayment } = await plannerFor('v9')
     for (const docType of ['post', 'reply', 'like', 'likeReply', 'repost']) {
       expect(tokenPaymentOptions(planPayment(docType, 'create', 1000n, 'yapp'), 0)?.gasFeesPaidBy).toBe(2)
     }

@@ -21,8 +21,8 @@ const TRENDING_FETCH_LIMIT = 12
 
 /**
  * The right-sidebar trending box: the same ranking the Explore Trending tab
- * shows (a proved per-tag like ranking on v5+, a client-derived sample of
- * recent posts before that), all-time window, trimmed to a short list. Reads
+ * shows (a proved per-tag like ranking on v9, a postHashtag document count on
+ * v2), all-time window, trimmed to a short list. Reads
  * are served from the hashtag service's 5-minute cache, so mounting this on
  * every page costs one ranked query per cache window.
  */
@@ -74,7 +74,7 @@ function TrendingBody({ trending }: { trending: TrendingHashtag[] | null }) {
     return <p className="px-4 pb-4 text-sm text-gray-500">No trending tags yet</p>
   }
 
-  // v5's proved ranking counts LIKES on tagged posts; earlier topologies count posts.
+  // v9's proved ranking counts LIKES on tagged posts; v2's postHashtag count counts posts.
   const unit = prefixRankingsAvailable() ? 'like' : 'post'
 
   return (

@@ -1,5 +1,11 @@
 # Platform 4.2.0-beta.3: nonce-committed document ids
 
+> **Historical record.** Superseded social cuts, their generators
+> (`build-vN-contract.py`) and their batteries (`verify-v4/v5/v7.mjs`) were
+> removed from the tree; the files this page names are in git history. The
+> live social contracts are v2 (testnet) and v9 (moutai), see
+> [`contracts/README.md`](../contracts/README.md).
+
 Investigation date: 2026-09-20. This document covers the beta.2 → beta.3 range
 only; everything earlier is in [`PLATFORM_BETA2_UPGRADE.md`](./PLATFORM_BETA2_UPGRADE.md).
 It is the record of **PR A** (`beta3/sdk-and-ids`): the SDK pin, the change every

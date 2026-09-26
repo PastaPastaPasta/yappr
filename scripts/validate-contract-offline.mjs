@@ -59,7 +59,7 @@ function parseArgs(argv) {
   const immutable = flagIndex === -1 ? [] : (argv[flagIndex + 1] ?? '').split(',').filter(Boolean);
   const probes = argv.includes('--probes');
   // --strict-size: over the 20,000-byte headroom budget is a FAILURE, not a
-  // warning (build-v9-contract.py --self-test runs this on its own cut).
+  // warning. Run it on every social cut before registering it.
   const strictSize = argv.includes('--strict-size');
   // Skip the flag AND its value, so `--immutable post,reply <file>` does not
   // resolve the positional to "post,reply".

@@ -12,7 +12,7 @@ export interface Notification {
   blogPostSlug?: string
   /**
    * What the notification is ABOUT: a post or a reply. Only meaningful where the
-   * two are distinguishable — the v3 topology separates `like` from `likeReply`
+   * two are distinguishable — the v9 topology separates `like` from `likeReply`
    * and gives replies an explicit thread root — and it only changes wording
    * ("liked your reply") and the link target.
    */

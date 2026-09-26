@@ -12,7 +12,7 @@ import { extractFirstUrl, stripFirstUrlAndTrim, stripTrailingPunctuation } from 
 import { useYapprPostReference } from '@/hooks/use-yappr-post-reference'
 import { useSettingsStore } from '@/lib/store'
 import { cashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
-import { hashtagMaxLength, hashtagsAreInline } from '@/lib/contract-topology'
+import { HASHTAG_MAX_LENGTH, hashtagsAreInline } from '@/lib/contract-topology'
 import { MentionLink } from './mention-link'
 import { cn, isEmojiOnly } from '@/lib/utils'
 import { EmbeddedPostCard, EmbeddedPostSkeleton } from './embedded-post-card'
@@ -337,7 +337,7 @@ export function PostContent({
     }
 
     if (part.type === 'cashtag') {
-      const storageTag = cashtagDisplayToStorage(part.value, hashtagsAreInline() ? hashtagMaxLength() : undefined)
+      const storageTag = cashtagDisplayToStorage(part.value, hashtagsAreInline() ? HASHTAG_MAX_LENGTH : undefined)
       const validationStatus = hashtagValidations?.get(storageTag)
       const isFailed = validationStatus === 'invalid'
       const displayValue = '$' + part.value.slice(1).toUpperCase()

@@ -77,7 +77,7 @@ function EngagementsPageContent() {
   const { requireAuth } = useRequireAuth()
   const postId = searchParams.get('id')
   // Which doctype the id belongs to. Every query on this page reads a different
-  // doctype for a reply than for a post on the v3 topology, and an id alone does
+  // doctype for a reply than for a post on the v9 topology, and an id alone does
   // not say which — so PostCard puts the kind in the link.
   const targetKind: TargetKind = searchParams.get('kind') === 'reply' ? 'reply' : 'post'
   const repostable = canRepost(targetKind)

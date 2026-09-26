@@ -156,7 +156,7 @@ export default function AboutPage() {
             <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 capitalize">{process.env.NEXT_PUBLIC_NETWORK || 'testnet'}</p>
           </Detail>
           {/* The contract id does not say which SHAPE of contract it is, and a v2
-              client pointed at a v3 contract queries fields that do not exist.
+              client pointed at the v9 contract queries fields that do not exist.
               Printing the compiled-in topology makes that verifiable from the
               served artifact; the e2e suite gates on it. */}
           <Detail label="Interaction Topology">

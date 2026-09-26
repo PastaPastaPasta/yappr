@@ -47,7 +47,7 @@ interface RawNotification {
    */
   targetKind?: TargetKind;
   parentId?: string; // For reply notifications: the ID of the post/reply being replied to
-  rootPostId?: string; // v3 reply notifications: the thread root, which is where the link goes
+  rootPostId?: string; // v9 reply notifications: the thread root, which is where the link goes
   replyContent?: string; // For reply notifications: pre-fetched content to avoid re-querying
   blogId?: string;
   blogPostTitle?: string;
@@ -158,7 +158,7 @@ class NotificationService {
    * Get likes on the user's content since timestamp (for notification queries).
    *
    * On v2 one `like` doctype holds likes of posts AND of replies, so one query is
-   * the complete answer. The v3 topology splits reply likes off into `likeReply`,
+   * the complete answer. The v9 topology splits reply likes off into `likeReply`,
    * which is a second owner-index to read and merge — and the merge must NOT run
    * on v2, where it would return the same documents twice.
    */
@@ -238,7 +238,7 @@ class NotificationService {
           postId: reply.id, // The reply itself
           targetKind: repliedToKind(reply),
           parentId: reply.parentId, // The post/reply that was replied to (for navigation)
-          // v3: the reply names its thread root, so the link can go straight to
+          // v9: the reply names its thread root, so the link can go straight to
           // the thread instead of to whatever intermediate reply it answers.
           rootPostId: reply.rootPostId,
           replyContent: reply.content, // Pre-fetched content to avoid re-querying

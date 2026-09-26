@@ -328,9 +328,9 @@ class StateTransitionService {
    * agreements name that contract explicitly and stay required (neither
    * contract declares `optional`).
    *
-   * On the social contract the bag follows the viewer's payment plan: before v8
+   * On the social contract the bag follows the viewer's payment plan: on v2
    * the cost is required and this is the historical position-and-cap bag; on
-   * v8 the `payWith` setting and the YAPP balance decide, a `yapp` plan adds
+   * v9 the `payWith` setting and the YAPP balance decide, a `yapp` plan adds
    * the contract's gas offer (PreferContractOwner) and a `credits` plan sends
    * nothing at all.
    *
@@ -382,7 +382,7 @@ class StateTransitionService {
   /**
    * The `$actionFeeAgreement` a transition on `documentType`/`action` must
    * carry, or undefined when the contract charges nothing for it (every action
-   * before v8; every action but `post`/`reply` create on v8). Built from the
+   * on v2; every action but `post`/`reply` create on v9). Built from the
    * contract's declared amounts and the multiplier this session knows: a
    * different amount is 40133, no agreement is 40132.
    */
@@ -477,7 +477,7 @@ class StateTransitionService {
        * path: `waitForResponse` plus get-by-id existence probes and ST-byte
        * caching for idempotent rebroadcast.
        *
-       * `'affectedState'` is for **indexOnly** document types (v4 likes): those
+       * `'affectedState'` is for **indexOnly** document types (v9 likes): those
        * have no id-addressable stored row, so `documents.get` can never confirm
        * one (which also makes the ST-byte replay cache useless — its probe
        * would never resolve), and their proofs resolve as an affected-state
@@ -880,13 +880,13 @@ class StateTransitionService {
   /**
    * Delete an **indexOnly** document by its full value tuple.
    *
-   * indexOnly doctypes (v4 `like`/`likeReply`) store nothing under the document
+   * indexOnly doctypes (v9 `like`/`likeReply`) store nothing under the document
    * id — the index entries ARE the rows — so the identifier-only delete path is
    * useless there. Drive instead needs every property value plus the consensus
    * `$createdAt` to recompute and remove each index entry, which means the
    * delete must be handed a fully-populated Document (the from_document /
-   * index-only-delete route in the SDK) — the exact call shape the v4 verify
-   * battery (scripts/verify-v4.mjs, b8/b10/b11) proved live on moutai.
+   * index-only-delete route in the SDK), the call shape the social batteries
+   * prove live on moutai.
    *
    * indexOnly transitions never resolve as `ExecutionProved`, so the facade's
    * internal wait can fail after a broadcast that landed; the transient wait

@@ -17,7 +17,7 @@ const MAX_RANKED_LIMIT = 100;
 interface UseTopFeedOptions {
   /** Which feed the ranking scopes to: global for `forYou`, followed authors for `following`. */
   activeTab: FeedTab;
-  /** `'today'` reads the v6 daily-windowed twin; `'all'` is all-time. */
+  /** `'today'` reads the v9 daily-windowed twin; `'all'` is all-time. */
   window: RankingWindow;
   /** Only load while the Top view is showing. */
   enabled: boolean;
@@ -45,7 +45,7 @@ interface LoadOptions {
  * The Top view of the home feed: the proved most-liked ranking, global for
  * For You and merged across followed authors for Following (see
  * `topLikedPostsByAuthorsHydrated`). Blocked authors are filtered the way the
- * Explore Top tab does. v4+ only — on older topologies nothing loads and the
+ * Explore Top tab does. v9 only — on v2 nothing loads and the
  * page never offers the toggle (`likesAreIndexOnly()`).
  *
  * A ranking is a bounded top-K rather than a cursor-paged timeline, so "more"

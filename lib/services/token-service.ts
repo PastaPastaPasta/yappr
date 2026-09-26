@@ -186,7 +186,7 @@ class TokenService {
   }
 
   /**
-   * Claims the once-per-identity STARTER GRANT the v8 contract's token
+   * Claims the once-per-identity STARTER GRANT the v9 contract's token
    * declares (`distributionRules.oncePerIdentityDistribution`, 100 YAPP): a
    * fixed amount every identity may claim exactly once. A second claim is
    * refused, paid, with TokenOncePerIdentityDistributionAlreadyClaimedError

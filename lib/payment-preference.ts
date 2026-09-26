@@ -16,7 +16,7 @@ export interface PaymentPlan {
   yapp: bigint
   /**
    * The gas offer to ask for in `$tokenPaymentInfo.gasFeesPaidBy` when paying
-   * in YAPP: the contract's offer (2 = PreferContractOwner on v8). Ignored when
+   * in YAPP: the contract's offer (2 = PreferContractOwner on v9). Ignored when
    * paying in credits, where the signer always pays.
    */
   gasFeesPaidBy: GasFeesPaidBy
@@ -32,7 +32,7 @@ export interface PaymentPlan {
  * The payment plan for a create of `docType`.
  *
  * - An unpriced type spends credits, whatever the setting.
- * - A REQUIRED token cost (every priced type before v8) spends YAPP; the
+ * - A REQUIRED token cost (every priced type on v2) spends YAPP; the
  *   setting cannot override consensus.
  * - An OPTIONAL token cost follows the setting, except that `yapp` with a
  *   balance below the cost falls back to credits: with `$tokenPaymentInfo`

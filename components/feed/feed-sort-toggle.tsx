@@ -14,9 +14,9 @@ interface FeedSortToggleProps {
 
 /**
  * Recent | Top for the home feed, mirroring the hashtag page's Latest | Top
- * pills. Top rides the v4+ ranked like axes, so callers only mount this when
+ * pills. Top rides the v9 ranked like axes, so callers only mount this when
  * `likesAreIndexOnly()`. The Today | All time window switch appears under Top
- * on v6 topologies (`RankingWindowToggle` renders nothing elsewhere).
+ * on v9 topologies (`RankingWindowToggle` renders nothing elsewhere).
  */
 export function FeedSortToggle({ sortMode, onSortModeChange, rankingWindow, onRankingWindowChange }: FeedSortToggleProps) {
   const option = (mode: FeedSortMode, label: string) => (

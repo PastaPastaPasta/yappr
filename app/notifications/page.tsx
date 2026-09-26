@@ -57,7 +57,7 @@ function getNotificationUrl(notification: Notification): string | null {
       : null
   }
 
-  // A v3 reply links to ITSELF: usePostDetail renders a reply as the main card
+  // A v9 reply links to ITSELF: usePostDetail renders a reply as the main card
   // with the thread root as context, which is always reliable — whereas the root
   // page fetches replies oldest-first in pages and renders limited nesting, so a
   // deep or recent reply may not be present there at all. v2's link targets
@@ -82,7 +82,7 @@ function getNotificationUrl(notification: Notification): string | null {
 
 /**
  * What the notification says happened. `targetKind` only differs from the
- * default where the topology can tell a reply from a post — the v3 `likeReply`
+ * default where the topology can tell a reply from a post — the v9 `likeReply`
  * doctype, and replies that carry a thread root.
  */
 function notificationMessage(notification: Notification): string {

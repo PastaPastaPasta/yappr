@@ -222,7 +222,7 @@ jobs:
             test-results/
           retention-days: 7
 
-  # The v3 interaction topology only exists on the moutai devnet contract, so the
+  # The v9 interaction topology only exists on the moutai devnet contract, so the
   # specs that assert it can only run there. Every step is continue-on-error for
   # the same reason deploy.yml's devnet build is: the devnet is disposable and
   # resets without notice, its nodes are a hand-maintained three-machine pool, and

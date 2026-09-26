@@ -150,7 +150,7 @@ export function normalizeMediaUrl(url: string): string {
 
 /**
  * Form of an IPFS media URL suitable for the active contract's mediaUrl field.
- * The v3+ contracts accept ipfs:// natively (`^(https?|ipfs)://`); only the
+ * The v9 contract accepts ipfs:// natively (`^(https?|ipfs)://`); only the
  * immutable v2 contract requires ^https?://, so IPFS content is stored as a
  * primary-gateway URL there (normalizeMediaUrl restores the ipfs:// form on
  * read). Storing ipfs:// keeps documents gateway-agnostic instead of freezing

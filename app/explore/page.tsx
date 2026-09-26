@@ -16,7 +16,7 @@ import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
-import { hashtagsAreInline, likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
+import { likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
 import { TopCreators } from '@/components/explore/top-creators'
@@ -41,12 +41,12 @@ export default function ExplorePage() {
   const [isLoadingBlogs, setIsLoadingBlogs] = useState(true)
   const [topPosts, setTopPosts] = useState<Post[]>([])
   const [isLoadingTop, setIsLoadingTop] = useState(false)
-  /** v6: which slice the ranked surfaces show (Top posts, trending, creators). */
+  /** v9: which slice the ranked surfaces show (Top posts, trending, creators). */
   const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
   const blogsLoadedRef = useRef(false)
   const blogCacheRef = useRef<{ blogIds: string[]; blogMap: Map<string, Blog> } | null>(null)
 
-  // Load the global most-liked posts when the Top tab is activated (v4 only —
+  // Load the global most-liked posts when the Top tab is activated (v9 only —
   // the ranking is one proved `documents.ranked()` page on `like.byPost`).
   // Re-activations are cheap: hydration is session-cached for a minute.
   useEffect(() => {
@@ -269,7 +269,7 @@ export default function ExplorePage() {
                     />
                   )}
                 </button>
-                {/* Server-ranked global Top posts need the v4+ ranked like axes. */}
+                {/* Server-ranked global Top posts need the v9 ranked like axes. */}
                 {likesAreIndexOnly() && (
                   <button
                     onClick={() => setActiveTab('top')}
@@ -292,7 +292,7 @@ export default function ExplorePage() {
                     )}
                   </button>
                 )}
-                {/* The creator leaderboard needs the v5 prefix ranked axes
+                {/* The creator leaderboard needs the v9 prefix ranked axes
                     (byAuthorPost at-form) — no earlier contract can serve it. */}
                 {prefixRankingsAvailable() && (
                   <button
@@ -413,18 +413,6 @@ export default function ExplorePage() {
                     >
                       {/* Trending Hashtags */}
                       <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-trending" />
-                      {/* v4 trending is derived from recent post activity, not a
-                          proved count — label it so nobody reads it as one. On
-                          v5 the ranking IS a proved prefix ranked page, so the
-                          disclaimer must not show. */}
-                      {hashtagsAreInline() && !prefixRankingsAvailable() && !isLoadingTrends && trendingHashtags.length > 0 && (
-                        <div
-                          className="px-4 py-2 text-xs text-gray-400 border-b border-gray-200 dark:border-gray-800"
-                          data-testid="trending-activity-note"
-                        >
-                          Based on recent activity
-                        </div>
-                      )}
                       <div className="divide-y divide-gray-200 dark:divide-gray-800">
                         {isLoadingTrends ? (
                           <div className="p-8 text-center">
@@ -457,7 +445,7 @@ export default function ExplorePage() {
                                   <div className="flex-1">
                                     <p className="font-bold text-yappr-500 hover:underline">{tagSymbol}{displayTag}</p>
                                     <p className="text-sm text-gray-500">
-                                      {/* v5's proved ranking counts LIKES on tagged
+                                      {/* v9's proved ranking counts LIKES on tagged
                                           posts; earlier topologies count posts. */}
                                       {prefixRankingsAvailable()
                                         ? `${formatNumber(trend.postCount)} ${trend.postCount === 1 ? 'like' : 'likes'}`
@@ -508,7 +496,7 @@ export default function ExplorePage() {
                       exit={{ opacity: 0 }}
                       transition={{ duration: 0.15 }}
                     >
-                      {/* v5 creator leaderboard (proved prefix rankings). */}
+                      {/* v9 creator leaderboard (proved prefix rankings). */}
                       <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-creators" />
                       <TopCreators window={rankingWindow} />
                     </motion.div>

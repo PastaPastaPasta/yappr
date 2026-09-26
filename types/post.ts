@@ -22,7 +22,7 @@ export interface Post {
   id: string
   /**
    * Which document type this object is really backed by. PostCard renders posts
-   * and replies through the same shape, and on the v3 topology the two address
+   * and replies through the same shape, and on the v9 topology the two address
    * different interaction doctypes — so anything that reads or writes
    * engagements has to know which it is holding. Unset means `post`; see
    * `targetKindOf()`.
@@ -43,7 +43,7 @@ export interface Post {
   quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
   quotedPostOwnerId?: string // ID of quoted post owner (for notification queries)
   /**
-   * ID of a quoted REPLY. The v3 topology splits quoting in two so each field can
+   * ID of a quoted REPLY. The v9 topology splits quoting in two so each field can
    * be `refersTo`-checked against exactly one document type; only one of
    * `quotedPostId`/`quotedReplyId` is ever written.
    */
@@ -51,7 +51,7 @@ export interface Post {
   quotedPost?: Post
   /**
    * True when the quoted post/reply is PROVEN ABSENT: a composite by-id join
-   * listed its id in `missingIds`, which on a v8 contract means the contract's
+   * listed its id in `missingIds`, which on a v9 contract means the contract's
    * moderators removed it (every reference at post/reply is a deletableDocument
    * reference). The card renders the removed stub and fetches nothing.
    */
@@ -66,10 +66,10 @@ export interface Post {
   // Reply fields (present when this Post object represents a Reply for display)
   parentId?: string        // ID of post or reply being replied to (only on replies)
   parentOwnerId?: string   // Owner of parent (only on replies)
-  rootPostId?: string      // v3 replies: the post the whole thread hangs off
-  replyToReplyId?: string  // v3 replies: the reply this one is nested under
+  rootPostId?: string      // v9 replies: the post the whole thread hangs off
+  replyToReplyId?: string  // v9 replies: the reply this one is nested under
   /**
-   * True on a tombstone — a v3 post/reply whose author "deleted" it. The document
+   * True on a tombstone — a v9 post/reply whose author "deleted" it. The document
    * is permanent (`canBeDeleted: false`), so deleting blanks the content and sets
    * this flag instead of removing anything.
    */
@@ -81,13 +81,12 @@ export interface Post {
    */
   sensitive?: boolean
   /**
-   * v4/v5 only: the post's single indexed hashtag (lowercase, no '#'; `''` =
+   * v9 only: the post's single indexed hashtag (lowercase, no '#'; `''` =
    * known untagged, `undefined` = unknown). Likes must repeat it — consensus
    * checks the agreement — so the like path reads it off this field rather
-   * than re-parsing content. The `''` convention holds on v5 too, even though
-   * the chain stores "untagged" as an absent property there: the post
-   * transform and the write paths translate at the boundary
-   * (see `hashtagIsOptional()` in lib/contract-topology).
+   * than re-parsing content. The chain stores "untagged" as an absent
+   * property: the post transform and the write paths translate at the
+   * boundary (see `hashtagsAreInline()` in lib/contract-topology).
    */
   hashtag?: string
   // Blog quote fields (present when this Post represents a quoted blog post)
@@ -120,11 +119,11 @@ export interface Reply {
   reposted?: boolean
   bookmarked?: boolean
   media?: Media[]
-  parentId: string        // ID of post or reply being replied to (v3: the direct one, derived)
+  parentId: string        // ID of post or reply being replied to (v9: the direct one, derived)
   parentOwnerId: string   // Owner of parent (for notifications)
-  rootPostId?: string     // v3: the post the whole thread hangs off (required on chain)
-  replyToReplyId?: string // v3: the reply this one is nested under, if any
-  deleted?: boolean       // v3 tombstone marker (see Post.deleted)
+  rootPostId?: string     // v9: the post the whole thread hangs off (required on chain)
+  replyToReplyId?: string // v9: the reply this one is nested under, if any
+  deleted?: boolean       // v9 tombstone marker (see Post.deleted)
   parentContent?: Post | Reply  // Lazy-loaded parent
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
   // Private feed fields (present when reply is encrypted)

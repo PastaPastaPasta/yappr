@@ -252,7 +252,7 @@ function documentsAt(result: CompositeDocumentsResult, index: number): Record<st
 
 /**
  * The derived ids a by-id join PROVED absent. Always empty off a
- * `deletableDocument` join property; on v8 these are the quoted posts the
+ * `deletableDocument` join property; on v9 these are the quoted posts the
  * contract's moderators removed since the quoting posts were written.
  */
 function missingIdsAt(result: CompositeDocumentsResult, index: number): Set<string> {
