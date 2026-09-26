@@ -67,8 +67,6 @@ interface NotificationState {
   clearNotifications: () => void;
 
   // Computed helpers
-  getUnreadCountByFilter: (filter: NotificationFilter) => number;
-  getFilteredNotifications: () => Notification[];
   getReadIdsSet: () => Set<string>;
 }
 
@@ -161,42 +159,6 @@ export const useNotificationStore = create<NotificationState>()(
       }),
 
       // Computed helpers
-      getUnreadCountByFilter: (filter: NotificationFilter) => {
-        const state = get();
-        const unread = state.notifications.filter(n => !n.read);
-        if (filter === 'all') {
-          return unread.length;
-        }
-        if (filter === 'privateFeed') {
-          return unread.filter(n =>
-            n.type === 'privateFeedRequest' ||
-            n.type === 'privateFeedApproved' ||
-            n.type === 'privateFeedRevoked'
-          ).length;
-        }
-        return unread.filter(n => n.type === filter).length;
-      },
-
-      getFilteredNotifications: () => {
-        const state = get();
-        if (state.filter === 'all') {
-          return state.notifications;
-        }
-        // Handle private feed filter - matches all private feed notification types
-        if (state.filter === 'privateFeed') {
-          return state.notifications.filter(n =>
-            n.type === 'privateFeedRequest' ||
-            n.type === 'privateFeedApproved' ||
-            n.type === 'privateFeedRevoked'
-          );
-        }
-        // Handle engagement filters (like, repost, reply)
-        if (state.filter === 'like' || state.filter === 'repost' || state.filter === 'reply') {
-          return state.notifications.filter(n => n.type === state.filter);
-        }
-        return state.notifications.filter(n => n.type === state.filter);
-      },
-
       getReadIdsSet: () => new Set(get().readIds)
     }),
     {

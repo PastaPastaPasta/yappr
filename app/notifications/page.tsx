@@ -30,7 +30,7 @@ import Link from 'next/link'
 import { useNotificationStore } from '@/lib/stores/notification-store'
 import { getBlogPostUrl } from '@/lib/blog/content-utils'
 import { Notification } from '@/lib/types'
-import { getVisibleUnreadNotificationCount, isNotificationEnabled } from '@/lib/notification-preferences'
+import { isNotificationEnabled } from '@/lib/notification-preferences'
 
 /**
  * Get the URL to navigate to when clicking a notification.
@@ -178,10 +178,11 @@ function NotificationsPage() {
 
   // The list, tab counts, and sidebar share the same visibility rule.
   const enabledNotifications = notifications.filter(notification => isNotificationEnabled(notification, notificationSettings))
+  const countUnread = (notifs: Notification[]) => notifs.filter(n => !n.read).length
   const getUnreadCountForTab = (tabFilter: NotificationFilter) =>
-    getVisibleUnreadNotificationCount(getFilteredByTab(enabledNotifications, tabFilter), notificationSettings)
+    countUnread(getFilteredByTab(enabledNotifications, tabFilter))
   const filteredNotifications = getFilteredByTab(enabledNotifications, filter)
-  const unreadCount = getVisibleUnreadNotificationCount(enabledNotifications, notificationSettings)
+  const unreadCount = countUnread(enabledNotifications)
 
   return (
     <PageShell>
