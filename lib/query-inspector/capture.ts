@@ -64,7 +64,8 @@ const WRITE_METHODS = new Set([
 // (isContestedUsername checks the label against static contest rules; observed 0ms.)
 // encryptedFor runs entirely locally, and recording it would copy plaintext and
 // decrypted bytes into the ring buffer. (moderationCharters.build*Request stay
-// recorded: they fetch the proposal or charter and its leader.)
+// recorded, since they fetch the proposal or charter and its leader, but their
+// secret options are redacted; see REDACTED_OPTIONS.)
 const SKIP_METHODS = new Set([
   'dpns.convertToHomographSafe',
   'dpns.isValidUsername',
@@ -74,6 +75,25 @@ const SKIP_METHODS = new Set([
   'encryptedFor.decrypt',
   'encryptedFor.envelope',
 ])
+
+// Option fields replaced before a call's params are recorded: the plaintext a
+// builder encrypts to the team, and the key it signs the envelope with.
+const REDACTED_OPTIONS: Record<string, readonly string[]> = {
+  'moderationCharters.buildJoinRequest': ['message', 'writerEncryptionKey'],
+  'moderationCharters.buildResignationRequest': ['message', 'writerEncryptionKey'],
+}
+
+/** The params to record for `method`, with its secret option fields replaced. */
+export function recordedParams(method: string, args: readonly unknown[]): unknown {
+  const params = toPlain(args.length === 1 ? args[0] : args)
+  const redacted = REDACTED_OPTIONS[method]
+  if (!redacted || typeof params !== 'object' || params === null || Array.isArray(params)) return params
+  const out: Record<string, unknown> = { ...params }
+  for (const key of redacted) {
+    if (key in out) out[key] = '[redacted]'
+  }
+  return out
+}
 
 // Known coverage gaps: calls made on the raw wasm handle bypass the facades and
 // this net entirely — refreshIdentityNonce (`sdk.wasm.*`, which only marks the
@@ -169,7 +189,7 @@ function makeWrapper(
       facade: facadeName,
       method,
       kind,
-      params: toPlain(args.length === 1 ? args[0] : args),
+      params: recordedParams(method, args),
     }
 
     if (withProof && kind === 'read') {
