@@ -5,7 +5,7 @@ test('Top pagination preserves the loaded cards and reading position', async ({ 
   await page.goto(appUrl('/feed/'))
   const top = page.getByRole('button', { name: 'Top', exact: true })
   await expect(page.getByRole('button', { name: 'For You', exact: true })).toBeVisible()
-  test.skip(await top.count() === 0, 'Top ranking requires a v4+ deployment')
+  test.skip(await top.count() === 0, 'Top ranking requires the v9 (devnet) deployment')
   await top.click()
 
   const list = page.getByTestId('feed-top-list')
@@ -44,7 +44,7 @@ test('Top pagination retains the page and offers a retry on connection failures'
   await page.goto(appUrl('/feed/'))
   const top = page.getByRole('button', { name: 'Top', exact: true })
   await expect(page.getByRole('button', { name: 'For You', exact: true })).toBeVisible()
-  test.skip(await top.count() === 0, 'Top ranking requires a v4+ deployment')
+  test.skip(await top.count() === 0, 'Top ranking requires the v9 (devnet) deployment')
   await top.click()
   const list = page.getByTestId('feed-top-list')
   await expect(list.or(page.getByTestId('feed-top-empty'))).toBeVisible()

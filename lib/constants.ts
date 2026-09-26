@@ -18,7 +18,7 @@ export const YAPP_TOKEN_AUTHORITY_ID = process.env.NEXT_PUBLIC_YAPP_TOKEN_AUTHOR
 // A doctype MISSING from this table gets no token-payment agreement attached, and
 // consensus then rejects its create outright — so every doctype that declares a
 // tokenCost on any deployed contract must appear here, keyed by document type
-// name. `likeReply` only exists on the v3 topology; on v2 nothing looks it up.
+// name. `likeReply` only exists on the v9 topology; on v2 nothing looks it up.
 export const YAPP_TOKEN_COSTS = {
   post: 10,
   reply: 3,

@@ -66,11 +66,12 @@ export function extractHashtags(content: string): string[] {
  * text" is the rule the client applies.
  *
  * `maxLength` is the contract's pattern ceiling (`HASHTAG_MAX_LENGTH` in
- * lib/contract-topology, 61: the ranked key-size limit). A longer tag is
+ * lib/contract-topology, 61: the ranked key-size limit). It is required so no
+ * caller can build a tag longer than consensus accepts. A longer tag is
  * truncated to the ceiling. How `''` is spelled on-chain is the CALLER's
  * concern: the write paths omit the property.
  */
-export function firstHashtag(content: string, maxLength: number = 63): string {
+export function firstHashtag(content: string, maxLength: number): string {
   const match = content.match(new RegExp(`#([a-zA-Z0-9_]{1,${maxLength}})`))
   return match ? match[1].toLowerCase() : ''
 }
@@ -79,7 +80,7 @@ export function firstHashtag(content: string, maxLength: number = 63): string {
  * The single inline tag: preserve the first hashtag's precedence, then fall
  * back to the first cashtag when there is no hashtag in the public content.
  */
-export function firstIndexedTag(content: string, maxLength: number = 63): string {
+export function firstIndexedTag(content: string, maxLength: number): string {
   const hashtag = firstHashtag(content, maxLength)
   if (hashtag) return hashtag
   const cashtag = content.match(/\$([a-zA-Z][a-zA-Z0-9_]{0,62})/)
