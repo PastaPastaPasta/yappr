@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Post } from '@/lib/types'
-import { planPosts, publishThread, retryAnchorId, type PublishInput } from './publish-thread'
+import { planPosts, publishThread, type PublishInput } from './publish-thread'
 
 const services = vi.hoisted(() => ({ createPost: vi.fn(), createReply: vi.fn(), isUnconfirmed: vi.fn(), settleUnconfirmed: vi.fn() }))
 vi.mock('@/lib/services', () => ({ postService: { createPost: services.createPost } }))
@@ -29,34 +29,35 @@ describe('planPosts', () => {
   })
 })
 
-describe('retryAnchorId', () => {
+describe('planPosts predecessor', () => {
   const posts = (...ids: (string | undefined)[]) => ids.map((postedPostId, i) => ({ id: `p${i}`, content: `part ${i}`, postedPostId }))
+  const predecessors = (thread: { id: string; content: string; postedPostId?: string }[]) =>
+    planPosts(thread, undefined, false).map((p) => [p.threadPostId, p.predecessorPostedId])
 
-  it('is null when nothing has been posted', () => {
-    expect(retryAnchorId(posts(undefined, undefined))).toBeNull()
+  it('is unset when nothing has been posted', () => {
+    expect(predecessors(posts(undefined, undefined))).toEqual([['p0', undefined], ['p1', undefined]])
   })
 
-  it('is the last posted part of a confirmed prefix', () => {
-    expect(retryAnchorId(posts('a', 'b', undefined))).toBe('b')
+  it('is the last part of a confirmed prefix', () => {
+    expect(predecessors(posts('a', 'b', undefined))).toEqual([['p2', 'b']])
   })
 
-  it('chains a timed-out middle part to its own predecessor, not a later posted part', () => {
-    expect(retryAnchorId(posts('a', undefined, 'c'))).toBe('a')
+  it('chains each gap to its own posted predecessor, not a later posted part', () => {
+    expect(predecessors(posts('a', undefined, 'c', undefined))).toEqual([['p1', 'a'], ['p3', 'c']])
   })
 
-  it('skips blank unposted parts when finding the first part to create', () => {
+  it('skips blank unposted parts when finding a predecessor', () => {
     const thread = [{ id: 'x', content: 'x', postedPostId: 'a' }, { id: 'y', content: '  ' }, { id: 'z', content: 'z', postedPostId: 'c' }, { id: 'w', content: 'w' }]
-    expect(retryAnchorId(thread)).toBe('c')
+    expect(predecessors(thread)).toEqual([['w', 'c']])
   })
 })
 
 describe('publishThread retry linkage', () => {
   const input = (lastPostedId: string | null): PublishInput => ({
     authorId: 'author',
-    posts: [{ threadPostId: 'draft-remaining', content: 'remaining part' }],
+    posts: [{ threadPostId: 'draft-remaining', content: 'remaining part', predecessorPostedId: lastPostedId ?? undefined }],
     replyingTo: null,
     quotingPost: null,
-    lastPostedId,
     knownThreadRootId: lastPostedId ? 'original-root' : null,
     isPrivate: false,
     inheritedEncryption: null,
@@ -103,6 +104,42 @@ describe('publishThread retry linkage', () => {
     expect(result.failedAtIndex).toBe(0)
   })
 
+  it('chains each retried gap to its own predecessor when posted and pending parts alternate', async () => {
+    // First attempt: A confirmed, B timed out, C confirmed under A, D failed.
+    const thread = [
+      { id: 'A', content: 'a', postedPostId: 'root-a' },
+      { id: 'B', content: 'b' },
+      { id: 'C', content: 'c', postedPostId: 'reply-c' },
+      { id: 'D', content: 'd' },
+    ]
+    services.createReply.mockResolvedValueOnce({ id: 'reply-b' }).mockResolvedValueOnce({ id: 'reply-d' })
+    const result = await publishThread({ ...input(null), posts: planPosts(thread, undefined, false), knownThreadRootId: 'root-a' })
+    expect(services.createPost).not.toHaveBeenCalled()
+    expect(services.createReply.mock.calls.map((call) => [call[1], call[2]])).toEqual([
+      ['b', { rootPostId: 'root-a', replyToReplyId: undefined, parentOwnerId: 'author' }],
+      ['d', { rootPostId: 'root-a', replyToReplyId: 'reply-c', parentOwnerId: 'author' }],
+    ])
+    expect(result.successful.map((p) => p.threadPostId)).toEqual(['B', 'D'])
+  })
+
+  it('chains a part after a timed-out one to the timed-out part\'s target', async () => {
+    const thread = [{ id: 'A', content: 'a', postedPostId: 'root-a' }, { id: 'B', content: 'b' }, { id: 'C', content: 'c' }]
+    services.createReply.mockImplementation(async (_author, content: string) => {
+      if (content === 'b') throw new Error('timeout')
+      return { id: 'reply-c' }
+    })
+    vi.useFakeTimers()
+    try {
+      const pending = publishThread({ ...input(null), posts: planPosts(thread, undefined, false), knownThreadRootId: 'root-a' })
+      await vi.runAllTimersAsync()
+      const result = await pending
+      expect(result.timedOut).toEqual([{ index: 0, threadPostId: 'B' }])
+      expect(services.createReply.mock.calls.at(-1)?.slice(1, 3)).toEqual(['c', { rootPostId: 'root-a', replyToReplyId: undefined, parentOwnerId: 'author' }])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('still creates a root when there is no confirmed prefix', async () => {
     const result = await publishThread(input(null))
     expect(services.createPost).toHaveBeenCalledOnce()
@@ -122,7 +159,6 @@ describe('publishThread sensitive flag', () => {
     posts: [{ threadPostId: 'draft-1', content: 'root part' }, { threadPostId: 'draft-2', content: 'second part' }],
     replyingTo: null,
     quotingPost: null,
-    lastPostedId: null,
     knownThreadRootId: null,
     isPrivate: false,
     inheritedEncryption: null,

@@ -19,30 +19,35 @@ export interface PostToCreate {
   content: string
   teaser?: string
   visibility?: PostVisibility
+  /**
+   * The part this one follows, when that part landed in an earlier attempt. A
+   * timed-out middle part can leave later parts posted, so each gap belongs
+   * under its own predecessor, not under whatever was created last.
+   */
+  predecessorPostedId?: string
 }
 
 /** The thread posts that still need creating, with the image URL folded in where it must be. */
 export function planPosts(threadPosts: ThreadPost[], imageUrl: string | undefined, mediaInEncryptedContent: boolean): PostToCreate[] {
-  return threadPosts
-    .filter((p) => p.content.trim().length > 0 && !p.postedPostId)
-    .map((p, index) => ({
+  const plan: PostToCreate[] = []
+  let predecessorPostedId: string | undefined
+  for (const p of threadPosts) {
+    if (p.postedPostId) {
+      predecessorPostedId = p.postedPostId
+      continue
+    }
+    if (p.content.trim().length === 0) continue
+    plan.push({
       threadPostId: p.id,
       // Only encrypted posts carry the image URL in their text.
-      content: index === 0 && imageUrl && mediaInEncryptedContent ? `${p.content.trim()}\n\n${imageUrl}` : p.content.trim(),
+      content: plan.length === 0 && imageUrl && mediaInEncryptedContent ? `${p.content.trim()}\n\n${imageUrl}` : p.content.trim(),
       teaser: p.teaser?.trim(),
       visibility: p.visibility,
-    }))
-}
-
-/**
- * The post a retry chains to: the last posted item before the first part still
- * to create. A timed-out middle part can leave later parts posted, and the gap
- * belongs under its own predecessor, not under whatever was posted last.
- */
-export function retryAnchorId(threadPosts: ThreadPost[]): string | null {
-  const firstRemaining = threadPosts.findIndex((p) => p.content.trim().length > 0 && !p.postedPostId)
-  const before = firstRemaining === -1 ? threadPosts : threadPosts.slice(0, firstRemaining)
-  return before.findLast((p) => !!p.postedPostId)?.postedPostId ?? null
+      predecessorPostedId,
+    })
+    predecessorPostedId = undefined
+  }
+  return plan
 }
 
 export interface PublishInput {
@@ -50,8 +55,6 @@ export interface PublishInput {
   posts: PostToCreate[]
   replyingTo: Post | null
   quotingPost: Post | null
-  /** The last post already created in an earlier attempt, for retry chaining. */
-  lastPostedId: string | null
   /** Post #0 of a standalone thread from an earlier attempt. */
   knownThreadRootId: string | null
   isPrivate: boolean
@@ -96,7 +99,7 @@ interface CreatedDocument {
  * is deliberately not chained to, so what follows stays public and top-level.
  */
 export async function publishThread(input: PublishInput): Promise<PublishOutcome> {
-  const { authorId, posts, replyingTo, quotingPost, lastPostedId, knownThreadRootId, isPrivate, inheritedEncryption, pollEmbed, mediaUrlField, markSensitive, onProgress } = input
+  const { authorId, posts, replyingTo, quotingPost, knownThreadRootId, isPrivate, inheritedEncryption, pollEmbed, mediaUrlField, markSensitive, onProgress } = input
   const { retryPostCreation } = await import('@/lib/retry-utils')
   const outcome: PublishOutcome = { successful: [], timedOut: [], failedAtIndex: null, failureError: null, syncRequired: false }
   const { fields: quoteFields, embed: quoteEmbed } = resolveQuoteReference(quotingPost)
@@ -104,11 +107,11 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
   // thread's flag; a reply to another post is not flagged from the profile.
   const sensitive = !replyingTo && markSensitive ? true : undefined
 
-  let previousPostId: string | null = lastPostedId || replyingTo?.id || null
+  let previousPostId: string | null = null
   let threadRootId: string | null = replyingTo ? threadRootIdOf(replyingTo) : knownThreadRootId
 
   for (let i = 0; i < posts.length; i++) {
-    const { threadPostId, content, teaser, visibility } = posts[i]
+    const { threadPostId, content, teaser, visibility, predecessorPostedId } = posts[i]
     const isThisPostPrivate = i === 0 && isPrivate
     const isThisReplyInherited = i === 0 && inheritedEncryption !== null && !isPrivate
     const progress = (status: string) => onProgress({ current: i + 1, total: posts.length, status })
@@ -129,12 +132,14 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
       }
     }
 
-    // The direct target is what was clicked (i === 0) or the previous item in
-    // this thread; its owner is what notification queries key on.
-    const directTargetId = i === 0 && replyingTo ? replyingTo.id : previousPostId
-    // The first remaining item in a retry still follows the confirmed prefix.
+    // The direct target is what was clicked (i === 0), the part this one
+    // follows when that landed in an earlier attempt, or else the item created
+    // last in this run. Its owner is what notification queries key on.
+    const directTargetId: string | null = i === 0 && replyingTo ? replyingTo.id : predecessorPostedId ?? previousPostId
+    // If this part times out, the next one still hangs off the same target.
+    previousPostId = directTargetId
     const isReply = !!directTargetId
-    const parentOwnerId = i === 0 && replyingTo ? replyingTo.author.id : previousPostId ? authorId : undefined
+    const parentOwnerId = i === 0 && replyingTo ? replyingTo.author.id : directTargetId ? authorId : undefined
     const linkage = threadRootId && directTargetId ? replyLinkageTo({ id: directTargetId, targetKind: 'reply', rootPostId: threadRootId }) : null
 
     // Naming a document this session created but never saw confirmed would be
