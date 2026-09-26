@@ -201,7 +201,7 @@ nothing Yappr uses was removed or renamed. The semantic changes that matter:
 - `Document.generateId` without a nonce **throws** at protocol 14. The frozen
   historical batteries `verify-v4.mjs` / `verify-v5.mjs` still call the
   four-argument form; they record protocols that no longer exist and are left
-  untouched, as in beta.3.
+  untouched, as in beta.3. (Both since removed; see git history.)
 - No Yappr code holds a wasm borrow on a caller's `Document` across an await:
   the restore path decodes a fresh `Document` for the call.
 
@@ -237,7 +237,7 @@ On `beta4/sdk`, with the beta.4 packages:
   `lib/error-utils.test.ts`.
 - `npm run build` — the static export succeeds.
 - `node scripts/seed/run-seeder.mjs --self-test`, `node scripts/verify-v8.mjs --self-test`,
-  `node scripts/verify-v7.mjs --self-test`, `node scripts/verify-refersto.mjs --dry-run`,
+  `node scripts/verify-v7.mjs --self-test` (since removed; see git history), `node scripts/verify-refersto.mjs --dry-run`,
   `node scripts/verify-{blog,dm,storefront,tips,pollr}.mjs --self-test` — pass.
 
 **Not verified — needs the re-cut contracts on moutai:** that a create signed

@@ -465,6 +465,12 @@ NETWORK=devnet node scripts/verify-blog.mjs --contract <id> --moderator <ownerPe
 NETWORK=devnet node scripts/verify-storefront.mjs --contract <id> --moderator <ownerPersona>
 ```
 
+`verify-v9` also carries the rejection cases of the retired v7 battery, which
+v9 still declares: the `$ownerId` property agreements on `like`, `likeReply`
+and `repost` (o1–o3, 40127) and the post tombstone immutables with the
+settable-once `deleted` (f1–f3, 40128). Their fixtures pay the post and reply
+action fees, so they run on v9 where the v7 file could not.
+
 The election itself is a separate script (`ELECTION_HOOKS` in
 `verify-v9.mjs`). It spans at least one day of join window plus a day of
 voting, and every interim case in `verify-v9` skips once a charter is seated.
