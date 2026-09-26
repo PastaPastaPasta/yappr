@@ -69,6 +69,25 @@ test('login page shows the login affordance', async ({ page }) => {
   const openWallet = dialog.getByRole('link', { name: 'Open in wallet app' })
   await expect(openWallet).toHaveAttribute('href', /^dash-key:/)
   await expect(dialog.getByRole('button', { name: 'Copy link' })).toBeVisible()
+  await expect(dialog.getByText(/Nothing opened\?/)).toHaveCount(0)
+
+  // No wallet is registered for dash-key: in the test browser. Keep the page
+  // from navigating to the custom scheme while the app still sees the click,
+  // then check the desktop fallback hint appears.
+  await page.evaluate(() => {
+    window.addEventListener(
+      'click',
+      (event) => {
+        const target = event.target
+        if (target instanceof Element && target.closest('a[href^="dash-key:"]')) {
+          event.preventDefault()
+        }
+      },
+      { capture: true },
+    )
+  })
+  await openWallet.click()
+  await expect(dialog.getByText(/Nothing opened\? No wallet on this computer/)).toBeVisible()
 
   await dialog.getByRole('button', { name: 'Sign in with a password or private key' }).click()
   await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
