@@ -6,12 +6,12 @@ vi.mock('@/lib/services/evo-sdk-service', () => ({
 }))
 
 import { YAPPR_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID } from '@/lib/constants'
-import { createProfileGate, hasYapprProfile, isProfileOptionalRoute } from './profile-gate'
+import { createProfileGate, hasYapprProfile, isProfileOptionalRoute, usernameGateAction } from './profile-gate'
 
 const identityId = '11111111111111111111111111111111'
 const profileDoc = { $id: 'p', $ownerId: identityId, displayName: 'Ava' }
 
-const gated = { identityId, username: 'ava.dash', skippedUsername: false, pathname: '/feed/' }
+const gated = { identityId, pathname: '/feed/' }
 
 describe('isProfileOptionalRoute', () => {
   it('exempts the profile-less flows and the embed, with or without the trailing slash', () => {
@@ -71,10 +71,31 @@ describe('createProfileGate', () => {
     expect(lookup).not.toHaveBeenCalled()
   })
 
-  it('yields to the username gate unless the user skipped it', async () => {
+  it('redirects a profile-less user from optional and required pages alike, never from its own flows', async () => {
     const gate = createProfileGate(async () => false)
-    await expect(gate.shouldRedirect({ ...gated, username: undefined })).resolves.toBe(false)
-    await expect(gate.shouldRedirect({ ...gated, username: undefined, skippedUsername: true })).resolves.toBe(true)
+    for (const pathname of ['/feed/', '/post/', '/messages/', '/settings/']) {
+      await expect(gate.shouldRedirect({ ...gated, pathname })).resolves.toBe(true)
+    }
+    for (const pathname of ['/profile/create/', '/dpns/register/']) {
+      await expect(gate.shouldRedirect({ ...gated, pathname })).resolves.toBe(false)
+    }
+  })
+})
+
+describe('usernameGateAction', () => {
+  const noUsername = { usernameOptional: false, username: undefined, skippedUsername: false }
+
+  it('holds a user without a username until the profile gate clears them, so /profile/create comes first', () => {
+    expect(usernameGateAction({ ...noUsername, profileCleared: false })).toBe('wait')
+    expect(usernameGateAction({ ...noUsername, profileCleared: true })).toBe('redirect')
+  })
+
+  it('lets through a username, a skip, or a page that does not need one', () => {
+    for (const profileCleared of [false, true]) {
+      expect(usernameGateAction({ ...noUsername, profileCleared, username: 'ava.dash' })).toBe('none')
+      expect(usernameGateAction({ ...noUsername, profileCleared, skippedUsername: true })).toBe('none')
+      expect(usernameGateAction({ ...noUsername, profileCleared, usernameOptional: true })).toBe('none')
+    }
   })
 })
 

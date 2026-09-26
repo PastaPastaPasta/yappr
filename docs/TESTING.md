@@ -354,8 +354,10 @@ without one is sent to `/profile/create`. What this means for tests:
   the test contracts before anything is written. Create the profile during
   provisioning (§4).
 - The gate is skipped on `/profile/create`, `/dpns/register`, `/login`,
-  `/welcome` and `/embed`, and it yields to the DPNS gate while the session has
-  no username and `yappr_skip_dpns` is unset.
+  `/welcome` and `/embed`. It ignores the DPNS username: an identity with
+  neither a username nor a profile goes straight to `/profile/create`, and the
+  `withAuth` DPNS redirect waits until this gate has cleared the identity on
+  the current route, so it never gets there first.
 - It fails **open**: the lookup queries the unified and legacy profile
   contracts directly and rejects on a query failure, so a DAPI outage means no
   redirect rather than a spurious one.
@@ -371,9 +373,11 @@ was set, so a user object without a DPNS username got pushed to
 `/followers`, `/following`). That is fixed: the gate no longer fires when
 `options.optional` is true.
 
-Non-optional pages still redirect, so keep seeding
+Non-optional pages still redirect once the profile gate has cleared the
+identity (it has a profile, or the lookup failed open), so keep seeding
 `testing:yappr_skip_dpns = "true"` for identities without a DPNS name whenever a
-test touches one of those pages.
+test touches one of those pages. Until the profile gate answers, those pages
+show the auth spinner.
 
 ### Playwright `baseURL` drops the base path
 
