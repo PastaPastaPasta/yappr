@@ -54,6 +54,7 @@ export const IS_DEVNET_RUN = ENV_FILE.includes('devnet')
 export const NOT_DEVNET_REASON = 'E2E_ENV_FILE does not select the devnet deployment — DM v5 is only deployed there'
 export const DM_V5_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID')
 export const LEGACY_DM_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID')
+const PROFILE_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID')
 export const DM_V5_BUILD = envValue('NEXT_PUBLIC_DM_TOPOLOGY') === 'v5' && DM_V5_CONTRACT_ID !== ''
 export const NOT_V5_REASON = 'the env file does not set NEXT_PUBLIC_DM_TOPOLOGY=v5 with a DM v5 contract id'
 
@@ -145,6 +146,7 @@ export interface Device {
  * two devices of one identity share nothing but the chain.
  */
 export async function openDevice(browser: Browser, bot: DmBot, label: string): Promise<Device> {
+  await ensureProfile(bot)
   const context = await browser.newContext()
   await seedContext(context, { index: bot.index, identityId: bot.identityId, wif: bot.authWif })
   await context.addInitScript(
@@ -273,7 +275,7 @@ function sdkHandle(): Promise<SdkHandle> {
       const { ensureInitialized } = await import('@dashevo/evo-sdk')
       await ensureInitialized()
       const seedLib = (await import('../../scripts/seed/seed-lib.mjs')) as unknown as { createSdkHandle: (o: { contractIds: string[] }) => SdkHandle }
-      const created = seedLib.createSdkHandle({ contractIds: [DM_V5_CONTRACT_ID, LEGACY_DM_CONTRACT_ID].filter(Boolean) })
+      const created = seedLib.createSdkHandle({ contractIds: [DM_V5_CONTRACT_ID, LEGACY_DM_CONTRACT_ID, PROFILE_CONTRACT_ID].filter(Boolean) })
       await created.connect()
       return created
     })()
@@ -378,6 +380,28 @@ export async function createDoc(bot: DmBot, contractId: string, docType: string,
     }
   }
   throw new Error(`${docType} create by slot ${bot.index} never landed: ${lastError || 'no error reported'}`)
+}
+
+const profiles = new Map<number, Promise<void>>()
+
+/**
+ * The app sends a signed-in identity without a profile to /profile/create from
+ * every page but a few, so every DM actor needs one. Created once per pool slot,
+ * from Node, named like the DPNS label so the UI shows the same name either way.
+ */
+function ensureProfile(bot: DmBot): Promise<void> {
+  let found = profiles.get(bot.index)
+  if (!found) {
+    const exists = async () =>
+      (await queryDocs(PROFILE_CONTRACT_ID, 'profile', { where: [['$ownerId', '==', bot.identityId]], limit: 1 })).length > 0
+    found = (async () => {
+      if (await exists()) return
+      await createDoc(bot, PROFILE_CONTRACT_ID, 'profile', { displayName: `yappr-dm-e2e-${bot.index}` }, exists)
+    })()
+    found.catch(() => profiles.delete(bot.index))
+    profiles.set(bot.index, found)
+  }
+  return found
 }
 
 export async function deleteDoc(bot: DmBot, contractId: string, docType: string, id: string, gone: () => Promise<boolean>): Promise<void> {
