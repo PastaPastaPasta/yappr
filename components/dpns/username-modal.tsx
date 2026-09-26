@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { scopedKey } from '@/lib/storage-scope'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { useSettingsStore } from '@/lib/store'
+import { currentReturnToParam, profileCreateHref } from '@/lib/auth/return-to'
 
 import { DpnsRegistrationWizard } from './registration-wizard'
 
@@ -36,7 +37,7 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
   const handleSkip = () => {
     sessionStorage.setItem(scopedKey('yappr_skip_dpns'), 'true')
     onClose()
-    router.push('/profile/create')
+    router.push(profileCreateHref(currentReturnToParam()))
   }
 
   const handleComplete = () => {

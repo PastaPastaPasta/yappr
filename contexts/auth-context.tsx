@@ -9,6 +9,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { PlatformAuthController, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
 import { createProfileGate, hasYapprProfile, isProfileOptionalRoute, usernameGateAction } from '@/lib/auth/profile-gate'
+import { currentRoute, dpnsRegisterHref, profileCreateHref } from '@/lib/auth/return-to'
 import { extractErrorMessage, isAlreadyExistsError } from '@/lib/error-utils'
 import { useUsernameModal } from '@/hooks/use-username-modal'
 
@@ -133,7 +134,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // cannot reach the rest of the app by reloading or by leaving an exempt route.
   // A user with neither a profile nor a username goes straight to
   // /profile/create; `withAuth` holds its DPNS redirect until this gate has
-  // cleared the identity (`profileGateCleared`).
+  // cleared the identity (`profileGateCleared`). The redirect carries the
+  // requested route as `next`, so profile creation can return the user there.
   const gateIdentityId = controllerState.user?.identityId
   const [cleared, setCleared] = useState<{ identityId: string; pathname: string } | undefined>()
   useEffect(() => {
@@ -143,7 +145,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     profileGate.shouldRedirect({ identityId: gateIdentityId, pathname }).then((redirect) => {
       if (cancelled) return
-      if (redirect) router.push('/profile/create')
+      if (redirect) router.push(profileCreateHref(currentRoute(pathname)))
       else if (!exempt) setCleared({ identityId: gateIdentityId, pathname })
     }).catch((error) => {
       // Fail open: a lookup that cannot reach Platform must never strand a user
@@ -342,6 +344,7 @@ export function withAuth<P extends object>(
   function AuthenticatedComponent(props: P): JSX.Element {
     const { user, isAuthRestoring, profileGateCleared } = useAuth()
     const router = useRouter()
+    const pathname = usePathname()
 
     const skipDPNS = typeof window !== 'undefined'
       && sessionStorage.getItem(scopedKey('yappr_skip_dpns')) === 'true'
@@ -366,9 +369,9 @@ export function withAuth<P extends object>(
       }
 
       if (usernameAction === 'redirect') {
-        router.push('/dpns/register')
+        router.push(dpnsRegisterHref(currentRoute(pathname)))
       }
-    }, [user, isAuthRestoring, router, usernameAction])
+    }, [user, isAuthRestoring, router, usernameAction, pathname])
 
     if (isAuthRestoring) {
       return <AuthLoadingSpinner />

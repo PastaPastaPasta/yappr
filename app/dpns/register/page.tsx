@@ -6,6 +6,7 @@ import { UsernameModal } from '@/components/dpns/username-modal'
 import { useAuth } from '@/contexts/auth-context'
 import Link from 'next/link'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { currentReturnToParam, profileCreateHref, returnToOrDefault } from '@/lib/auth/return-to'
 
 export default function DPNSRegisterPage() {
   const router = useRouter()
@@ -22,8 +23,8 @@ export default function DPNSRegisterPage() {
 
   const handleClose = () => {
     setIsModalOpen(false)
-    // Navigate to profile creation without username
-    router.push('/profile/create')
+    // Navigate to profile creation without username, keeping the route to return to
+    router.push(profileCreateHref(currentReturnToParam()))
   }
 
   // If not authenticated, show login prompt
@@ -58,7 +59,7 @@ export default function DPNSRegisterPage() {
 
   // If user already has a DPNS username, redirect
   if (user.dpnsUsername) {
-    router.push('/feed')
+    router.push(returnToOrDefault(currentReturnToParam()))
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">
         <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md w-full">

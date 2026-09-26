@@ -348,16 +348,31 @@ without one is sent to `/profile/create`. What this means for tests:
 - **Every seeded identity needs a profile.** The testnet pool has them; the DM
   specs create one per devnet slot from Node before opening a device
   (`ensureProfile` in `e2e/fixtures/dm.ts`). `post-lifecycle.spec.ts` is not
-  self-bootstrapping: its profile-creating test is third, and the two ahead of
-  it visit `/about/` and `/feed/`, which redirect on a profile-less slot. The
-  first test cannot move after it, because it is what proves the bundle targets
-  the test contracts before anything is written. Create the profile during
-  provisioning (§4).
+  self-bootstrapping: its profile-creating test is third, and the second visits
+  `/feed/`, which redirects on a profile-less slot. (The first reads `/about/`,
+  which is exempt, and must stay first: it proves the bundle targets the test
+  contracts before anything is written.) Create the profile during provisioning
+  (§4).
 - The gate is skipped on `/profile/create`, `/dpns/register`, `/login`,
-  `/welcome` and `/embed`. It ignores the DPNS username: an identity with
-  neither a username nor a profile goes straight to `/profile/create`, and the
-  `withAuth` DPNS redirect waits until this gate has cleared the identity on
-  the current route, so it never gets there first.
+  `/welcome` and `/embed`, and on the legal and informational pages (the
+  `InfoPage` layout): `/terms`, `/privacy`, `/cookies`, `/contract`, `/about`
+  and everything under `/about/` (e.g. `/about/private-feeds`). A profile-less
+  slot can therefore load `/about/` to read the topology; `/user`, `/post` and
+  every other route still redirect. It ignores the DPNS username: an identity
+  with neither a username nor a profile goes straight to `/profile/create`, and
+  the `withAuth` DPNS redirect waits until this gate has cleared the identity
+  on the current route, so it never gets there first.
+- The redirect carries the requested route (pathname plus query, without the
+  base path) as `?next=`, e.g. `/profile/create?next=%2Fpost%2F%3Fid%3D…`. The
+  `withAuth` redirect to `/dpns/register` carries it too, and the DPNS flow
+  passes it on to `/profile/create`. After the profile is created (or found),
+  the user returns to `next`, or to `/feed` when it is missing or rejected.
+  `lib/auth/return-to.ts` accepts only an app-relative path starting with a
+  single `/` (no `//`, scheme, backslash, whitespace or control characters),
+  strips a leading base path (`/testing`, `/devnet`), and never returns to
+  `/profile/create`, `/dpns/register` or `/login`. A test that creates a
+  profile after being redirected should expect to land back on the page it
+  asked for, not on `/feed`.
 - It fails **open**: the lookup queries the unified and legacy profile
   contracts directly and rejects on a query failure, so a DAPI outage means no
   redirect rather than a spurious one.

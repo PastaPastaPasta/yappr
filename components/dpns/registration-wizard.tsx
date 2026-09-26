@@ -21,6 +21,7 @@ import { ReviewStep } from './steps/review-step'
 import { RegisteringStep } from './steps/registering-step'
 import { CompleteStep } from './steps/complete-step'
 import { keyNetwork } from '@/lib/constants'
+import { currentReturnToParam, profileCreateHref } from '@/lib/auth/return-to'
 
 interface DpnsRegistrationWizardProps {
   onComplete?: () => void
@@ -212,7 +213,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
   const handleContinue = useCallback(() => {
     onComplete?.()
-    router.push('/profile/create')
+    router.push(profileCreateHref(currentReturnToParam()))
   }, [onComplete, router])
 
   return (

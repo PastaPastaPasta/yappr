@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { isIpfsProtocol, ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { withAuth, useAuth } from '@/contexts/auth-context'
+import { currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
 import { getPrivateKey, storePrivateKey } from '@/lib/secure-storage'
 import toast from 'react-hot-toast'
 import { SparklesIcon, PhotoIcon } from '@heroicons/react/24/outline'
@@ -74,7 +75,7 @@ function CreateProfilePage() {
         if (existingProfile) {
           markProfileCreated(user.identityId)
           toast.success('You already have a profile!')
-          router.push('/feed')
+          router.push(returnToOrDefault(currentReturnToParam()))
           return
         }
 
@@ -164,8 +165,8 @@ function CreateProfilePage() {
       toast.success('Profile created successfully!')
       markProfileCreated(user.identityId)
 
-      // Redirect to feed
-      router.push('/feed')
+      // Return to the route the profile gate detoured from, or the feed
+      router.push(returnToOrDefault(currentReturnToParam()))
     } catch (error: unknown) {
       logger.error('Failed to create profile:', error)
       if (error instanceof ListLimitError) {
@@ -181,7 +182,7 @@ function CreateProfilePage() {
         toast.error('You already have a profile! Redirecting...')
         if (user) markProfileCreated(user.identityId)
         setTimeout(() => {
-          router.push('/feed')
+          router.push(returnToOrDefault(currentReturnToParam()))
         }, 2000)
         return
       }
@@ -207,7 +208,7 @@ function CreateProfilePage() {
             toast.dismiss()
             toast.success('Profile created successfully!')
             markProfileCreated(user.identityId)
-            router.push('/feed')
+            router.push(returnToOrDefault(currentReturnToParam()))
             return
           }
         } catch (checkError) {
