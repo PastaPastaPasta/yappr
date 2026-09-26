@@ -87,9 +87,9 @@ export function ComposeModal() {
   const [isPosting, setIsPosting] = useState(false)
   const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
   const [showPreview, setShowPreview] = useState(false)
-  // One toggle covers the composer: replies are never individually flagged and
-  // only the first item of a thread is a post. Once clicked, the profile seed
-  // below must not overwrite the choice.
+  // One toggle covers the author's own thread: the root and every continuation
+  // part carry it. A reply to someone else's post has no toggle and is never
+  // flagged. Once clicked, the profile seed below must not overwrite the choice.
   const [markSensitive, setMarkSensitive] = useState(false)
   const sensitiveTouchedRef = useRef(false)
   const firstTextareaRef = useRef<HTMLTextAreaElement>(null)
@@ -167,7 +167,6 @@ export function ComposeModal() {
     isInheritedEncryptionReady &&
     (!poll.draft || isPollDraftValid(poll.draft))
   const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted && !poll.draft
-  const lastPostedId = postedPosts.length > 0 ? postedPosts[postedPosts.length - 1].postedPostId ?? null : null
 
   const handleClose = () => {
     image.remove()
@@ -266,7 +265,6 @@ export function ComposeModal() {
         posts,
         replyingTo,
         quotingPost,
-        lastPostedId,
         knownThreadRootId: threadPosts[0]?.postedPostId ?? null,
         isPrivate,
         inheritedEncryption: inherited.source,
