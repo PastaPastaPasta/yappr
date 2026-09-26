@@ -49,9 +49,6 @@ export async function hasYapprProfile(identityId: string): Promise<boolean> {
 
 export interface ProfileGateInput {
   identityId: string
-  username?: string
-  /** The user chose to continue without a username (`yappr_skip_dpns`). */
-  skippedUsername: boolean
   pathname: string
 }
 
@@ -61,6 +58,9 @@ export interface ProfileGate {
   /**
    * Resolves `true` when the user must be sent to /profile/create. Rejects when
    * the lookup fails: the caller must then leave the user where they are.
+   *
+   * A missing DPNS username changes nothing: a user with neither a username nor
+   * a profile goes straight to /profile/create, never through /dpns/register.
    */
   shouldRedirect(input: ProfileGateInput): Promise<boolean>
 }
@@ -80,10 +80,7 @@ export function createProfileGate(lookup: (identityId: string) => Promise<boolea
     rememberProfile(identityId) {
       knownProfiles.add(identityId)
     },
-    async shouldRedirect({ identityId, username, skippedUsername, pathname }) {
-      // The username gate comes first, as in the controller. `withAuth` sends a
-      // user with neither a username nor a skip to /dpns/register: yield to it.
-      if (!username && !skippedUsername) return false
+    async shouldRedirect({ identityId, pathname }) {
       if (isProfileOptionalRoute(pathname)) return false
       if (knownProfiles.has(identityId)) return false
 
@@ -92,4 +89,35 @@ export function createProfileGate(lookup: (identityId: string) => Promise<boolea
       return false
     },
   }
+}
+
+export interface UsernameGateInput {
+  /** The page accepts a signed-in user without a username (`optional` or `allowWithoutDPNS`). */
+  usernameOptional: boolean
+  username?: string
+  /** The user chose to continue without a username (`yappr_skip_dpns`). */
+  skippedUsername: boolean
+  /**
+   * The profile gate has let this identity through on the current route: it
+   * has a profile, the route is exempt, or the lookup failed and it failed open.
+   */
+  profileCleared: boolean
+}
+
+/**
+ * What `withAuth` does about a signed-in user without a DPNS username.
+ *
+ * - `none`: render the page.
+ * - `wait`: show the spinner and redirect nowhere yet. Until the profile gate
+ *   clears the identity it may still send it to /profile/create, and a
+ *   profile-less user must land there without a detour through /dpns/register.
+ * - `redirect`: send the user to /dpns/register.
+ *
+ * No loop is possible: the profile gate never sends anyone to /dpns/register
+ * and never fires on it or on /profile/create, and /profile/create accepts a
+ * user without a username.
+ */
+export function usernameGateAction({ usernameOptional, username, skippedUsername, profileCleared }: UsernameGateInput): 'none' | 'wait' | 'redirect' {
+  if (usernameOptional || username || skippedUsername) return 'none'
+  return profileCleared ? 'redirect' : 'wait'
 }
