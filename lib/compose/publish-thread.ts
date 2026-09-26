@@ -58,6 +58,10 @@ export interface PublishInput {
   inheritedEncryption: EncryptionSource | null
   pollEmbed: PostEmbed | undefined
   mediaUrlField: string | undefined
+  /**
+   * The NSFW choice for the author's own thread. It follows the thread, so it
+   * never applies when the composer is replying to someone else's post.
+   */
   markSensitive: boolean
   onProgress: (progress: PostingProgress) => void
 }
@@ -96,6 +100,9 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
   const { retryPostCreation } = await import('@/lib/retry-utils')
   const outcome: PublishOutcome = { successful: [], timedOut: [], failedAtIndex: null, failureError: null, syncRequired: false }
   const { fields: quoteFields, embed: quoteEmbed } = resolveQuoteReference(quotingPost)
+  // Every part of the author's own thread, retried parts included, carries the
+  // thread's flag; a reply to another post is not flagged from the profile.
+  const sensitive = !replyingTo && markSensitive ? true : undefined
 
   let previousPostId: string | null = lastPostedId || replyingTo?.id || null
   let threadRootId: string | null = replyingTo ? threadRootIdOf(replyingTo) : knownThreadRootId
@@ -148,7 +155,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
           const { replyService } = await import('@/lib/services/reply-service')
           const reply = await replyService.createReply(authorId, content, { ...linkage, parentOwnerId }, {
             encryption,
-            sensitive: markSensitive || undefined,
+            sensitive,
             mediaUrl: i === 0 ? mediaUrlField : undefined,
           })
           return { postId: reply.id, document: reply, isReply: true, confirmed: wasConfirmed(reply) }
@@ -158,7 +165,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
           ...(i === 0 ? quoteFields : {}),
           embed: i === 0 ? quoteEmbed ?? pollEmbed : undefined,
           encryption,
-          sensitive: markSensitive || undefined,
+          sensitive,
           mediaUrl: i === 0 ? mediaUrlField : undefined,
         })
         return { postId: post.id, document: post, isReply: false, confirmed: wasConfirmed(post) }
