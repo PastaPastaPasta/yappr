@@ -18,11 +18,9 @@ import { identityService } from './identity-service';
 import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
 import { documentIdForCreate, nextIdentityContractNonce } from '@/lib/document-id';
+import { buildSignedCreateTransition } from '@/lib/manual-batch';
 import {
   DocumentActionFeeAgreement,
-  DocumentCreateTransition,
-  BatchedTransition,
-  BatchTransition,
   StateTransition,
   PrivateKey,
   Identifier,
@@ -430,7 +428,8 @@ class StateTransitionService {
    *    `Document.generateId` via `lib/document-id.ts`) and build the Document
    *    with it, wrapped in a DocumentCreateTransition
    * 3. Bundle into a BatchTransition → StateTransition carrying the same nonce
-   * 4. Sign the StateTransition
+   * 4. Sign the StateTransition (3 and 4 are `buildSignedCreateTransition`,
+   *    `lib/manual-batch.ts`)
    * 5. Cache the signed ST bytes (localStorage), keyed by the id
    * 6. Broadcast via sdk.stateTransitions.broadcastStateTransition()
    * 7. Wait via sdk.stateTransitions.waitForResponse()
@@ -607,31 +606,15 @@ class StateTransitionService {
       // The transition re-derives the id from the document's entropy and this
       // nonce (wasm-dpp2, beta.4) and writes it back onto `document` — the id
       // derived above, and the one consensus recomputes.
-      const createTransition = new DocumentCreateTransition({
+      const stateTransition = buildSignedCreateTransition({
         document,
-        identityContractNonce: newNonce,
-        ...(tokenPaymentInfo ? { tokenPaymentInfo } : {}),
-        ...(actionFeeAgreement ? { actionFeeAgreement } : {}),
-      });
-
-      // Wrap in a BatchTransition
-      const docTransition = createTransition.toDocumentTransition();
-      const batched = new BatchedTransition(docTransition);
-      const batchTransition = BatchTransition.fromBatchedTransitions(
-        [batched],
         ownerId,
-        0  // userFeeIncrease
-      );
-
-      // Convert to StateTransition for signing and broadcasting
-      const stateTransition = batchTransition.toStateTransition();
-
-      // Set the identity contract nonce on the ST
-      stateTransition.setIdentityContractNonce(newNonce);
-
-      // Sign the state transition
-      const privateKey = PrivateKey.fromWIF(privateKeyWif);
-      stateTransition.sign(privateKey, identityKey);
+        identityContractNonce: newNonce,
+        tokenPaymentInfo,
+        actionFeeAgreement,
+        privateKey: PrivateKey.fromWIF(privateKeyWif),
+        identityKey,
+      });
       logger.debug('StateTransition built and signed');
 
       // Cache the signed ST bytes BEFORE broadcasting (strict mode only — the
