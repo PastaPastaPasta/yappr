@@ -3,7 +3,7 @@
  * and the negative probes that record which refusals are local and which only
  * a node makes. Used by `validate-contract-offline.mjs`.
  *
- * Measured on @dashevo/wasm-sdk 4.2.0-beta.4 (re-run on 4.2.0-beta.5) with `DataContract.fromJSON(json,
+ * Measured on @dashevo/wasm-sdk 4.2.0-beta.5 (first on beta.4) with `DataContract.fromJSON(json,
  * true, latest)`: the structural parser runs (lookups, distinctFrom targets,
  * contested + moderator delete, immutable deletable lookups, serde shape of
  * the moderation declaration), but the rules behind rs-dpp's `validation`
@@ -28,7 +28,7 @@
  * (`documents_can_disappear`), which is registration-time.
  *
  * `auditNodeRules` re-implements the ones Yappr's cuts rely on, from the rs-dpp
- * source at v4.2.0-beta.4 (config/moderation/{mod,elected}.rs,
+ * source at v4.2.0-beta.5 (config/moderation/{mod,elected}.rs,
  * try_from_schema/v3/mod.rs, create_document_types_from_document_schemas/v1).
  */
 
@@ -137,18 +137,28 @@ function ownerCanChange(schema) {
   return (schema.transferable ?? 0) !== 0 || (schema.tradeMode ?? 0) !== 0;
 }
 
-/** Every reference declaration of a doctype: [path, refersTo] (leaves of anyOf/allOf included). */
+/**
+ * Every reference declaration of a doctype: [path, refersTo, inExpression]
+ * (leaves of anyOf/allOf included; `inExpression` marks such a leaf). Paths are
+ * dotted through object properties (`meta.storeId`), as rs-dpp's
+ * `flattened_properties` walks them; a typed array's items end in `[]`.
+ */
 function referenceDeclarations(schema) {
   const out = [];
-  const leaves = (path, ref) => {
-    for (const key of ['anyOf', 'allOf']) if (Array.isArray(ref[key])) { for (const leaf of ref[key]) leaves(path, leaf); return; }
-    out.push([path, ref]);
+  const leaves = (path, ref, inExpression = false) => {
+    for (const key of ['anyOf', 'allOf']) if (Array.isArray(ref[key])) { for (const leaf of ref[key]) leaves(path, leaf, true); return; }
+    out.push([path, ref, inExpression]);
+  };
+  const walk = (properties, prefix) => {
+    for (const [name, definition] of Object.entries(properties ?? {})) {
+      const path = prefix ? `${prefix}.${name}` : name;
+      if (definition.refersTo) leaves(path, definition.refersTo);
+      if (definition.items?.refersTo) leaves(`${path}[]`, definition.items.refersTo);
+      if (definition.type === 'object' && definition.properties) walk(definition.properties, path);
+    }
   };
   if (schema.ownerRefersTo) leaves('$ownerId', schema.ownerRefersTo);
-  for (const [name, definition] of Object.entries(schema.properties ?? {})) {
-    if (definition.refersTo) leaves(name, definition.refersTo);
-    if (definition.items?.refersTo) leaves(`${name}[]`, definition.items.refersTo);
-  }
+  walk(schema.properties, '');
   return out;
 }
 
@@ -245,18 +255,24 @@ export function auditNodeRules(source) {
         problems.push(`${name}.${path}: immutableAllowSetting on a deletableDocument reference (#4983)`);
       }
     }
-    for (const [path, ref] of referenceDeclarations(schema)) {
-      // validate_no_immutable_deletable_element_references: a deletable lookup (or
-      // a typed array of deletable refs) under `immutable` could never be
-      // re-validated once its target is gone, so the type could never be replaced.
-      const topLevel = path.replace(/\[\]$/, '');
+    for (const [path, ref, inExpression] of referenceDeclarations(schema)) {
+      // validate_no_immutable_deletable_element_references: a deletable lookup, a
+      // typed array of deletable refs, or a by-id deletable ref inside an object,
+      // held under an `immutable` top-level property, could never be re-validated
+      // once its target is gone, so the type could never be replaced.
+      const topLevel = path.split('.')[0].replace(/\[\]$/, '');
       const heldImmutably = (schema.immutable ?? []).includes(topLevel);
-      if (heldImmutably && ref.type === 'deletableDocument' && (ref.lookup || path.endsWith('[]'))) {
-        problems.push(`${name}.${path}: a deletableDocument ${ref.lookup ? 'lookup' : 'typed array'} under \`immutable\``);
+      const isList = path.endsWith('[]');
+      const nested = path.replace(/\[\]$/, '') !== topLevel;
+      if (heldImmutably && ref.type === 'deletableDocument' && (ref.lookup || isList || (nested && !inExpression))) {
+        const heldAs = ref.lookup ? 'lookup' : isList ? 'typed array' : 'reference inside an object';
+        problems.push(`${name}.${path}: a deletableDocument ${heldAs} under \`immutable\``);
       }
       // #4982 (beta.5): an immutable contract reference with an owner requirement on a
       // type whose documents can change owner could never be replaced by the new owner.
-      if (heldImmutably && ref.type === 'contract' && ref.contractRequirements?.owner !== undefined && ownerCanChange(schema)) {
+      // rs-dpp reads `owner` as present only when it names a relation (a JSON null is none).
+      const ownerRequirement = ref.contractRequirements?.owner;
+      if (heldImmutably && ref.type === 'contract' && ownerRequirement !== undefined && ownerRequirement !== null && ownerCanChange(schema)) {
         problems.push(`${name}.${path}: immutable contract reference with an owner requirement on a transferable type (#4982)`);
       }
       if (ref.contractId || !ref.documentType || !['permanentDocument', 'deletableDocument'].includes(ref.type)) continue;
@@ -352,8 +368,18 @@ const PROBES = [
     t.transferable = 1; t.documentsMutable = true; t.immutable = ['appContractId'];
     t.properties.appContractId = { type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position: 99, refersTo: { type: 'contract', contractRequirements: { owner: 'self' } } };
   } },
+  { label: 'immutable object holding a by-id deletableDocument reference (nested path)', file: STOREFRONT, expect: 'audit', node: 'registration', mutate: (s) => {
+    const t = s.documentSchemas.savedAddress;
+    t.documentsMutable = true; t.immutable = ['link'];
+    t.properties.link = { type: 'object', position: 98, additionalProperties: false, properties: { storeId: { type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position: 0, refersTo: { type: 'deletableDocument', documentType: 'shippingZone' } } } };
+  } },
+  { label: 'immutable object holding a contract reference with an owner requirement on a transferable type (#4982, nested path)', file: STOREFRONT, expect: 'audit', node: 'registration', mutate: (s) => {
+    const t = s.documentSchemas.savedAddress;
+    t.transferable = 1; t.documentsMutable = true; t.immutable = ['app'];
+    t.properties.app = { type: 'object', position: 97, additionalProperties: false, properties: { contractId: { type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position: 0, refersTo: { type: 'contract', contractRequirements: { owner: 'other' } } } } };
+  } },
   // propertyConstraints grammar (#5036-#5042).
-  { label: 'propertyConstraints enum const + present (control)', file: STOREFRONT, expect: 'accepted', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { soldOutHasNoStock: { anyOf: [{ notEqual: ['status', { const: 'sold_out' }] }, { absent: 'stockQuantity' }, { equal: ['stockQuantity', 0] }] } }; } },
+  { label: 'propertyConstraints enum const + absent (control)', file: STOREFRONT, expect: 'accepted', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { soldOutHasNoStock: { anyOf: [{ notEqual: ['status', { const: 'sold_out' }] }, { absent: 'stockQuantity' }, { equal: ['stockQuantity', 0] }] } }; } },
   { label: 'propertyConstraints const outside the enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { r: { equal: ['status', { const: 'gone' }] } }; } },
   { label: 'propertyConstraints anyOf directly inside anyOf', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { r: { anyOf: [{ anyOf: [{ equal: ['weight', 0] }, { equal: ['weight', 1] }] }, { equal: ['weight', 2] }] } }; } },
 ];
