@@ -297,7 +297,26 @@
       "canBeDeleted": false,
       "immutable": [
         "storeId"
-      ]
+      ],
+      "propertyConstraints": {
+        "pricedHasCurrency": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "absent": "basePrice"
+                },
+                {
+                  "absent": "variants"
+                }
+              ]
+            },
+            {
+              "present": "currency"
+            }
+          ]
+        }
+      }
     },
     "shippingZone": {
       "type": "object",
@@ -408,7 +427,34 @@
       "additionalProperties": false,
       "immutable": [
         "storeId"
-      ]
+      ],
+      "propertyConstraints": {
+        "flatRateHasCurrency": {
+          "anyOf": [
+            {
+              "absent": "flatRate"
+            },
+            {
+              "present": "currency"
+            }
+          ]
+        },
+        "tieredHasTiers": {
+          "anyOf": [
+            {
+              "equal": [
+                "rateType",
+                {
+                  "const": "flat"
+                }
+              ]
+            },
+            {
+              "present": "tiers"
+            }
+          ]
+        }
+      }
     },
     "storeOrder": {
       "type": "object",

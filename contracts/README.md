@@ -12,6 +12,13 @@ overrides).
 | `yappr-social-contract-v2.json` | **Deployed** on testnet (`9oDC6xdg…`, staging/prod). 16 document types + the YAPP token. Topology `v2`: replies chain through a polymorphic `parentId`; like/repost/bookmark/quote share one `postId` keyspace. The on-chain copy has since gained the optional `post.embedContractId`/`embedDocType`/`embedId` fields via `scripts/update-social-contract.mjs`, and its YAPP token carries `keepsHistory` (transfer/freeze/mint/burn/pricing/purchase, all true — verified on chain 2026-09-18) which this file predates; `lib/contracts/bundled/testnet.json` is the faithful snapshot. |
 | `yappr-social-contract-v9.json` | **Deployed** on the moutai devnet (`.env.devnet`, topology `v9`). The 4.2.0-beta.4 cut: flat threads with `likeReply`, posts-only repost/bookmark and dual quote fields, all `refersTo`-checked; indexOnly `like`/`likeReply`/`beat` with ranked, count and daily-windowed axes; an optional inline `post.hashtag`; permanent post/reply with consensus `immutable` lists (tombstone deletes); contract moderation with an elected team (the owner moderates until one is seated) and a warning list; optional YAPP costs with contract-owner gas sponsorship, a 100 YAPP once-per-identity starter grant and credit action fees on post/reply; `distinctFrom: $ownerId` on relationship identifiers; private-feed writer gates; and `blockFollow.followedBlockers` as a typed identifier array. Needs protocol v14 on **4.2.0-beta.4**. See [docs/SOCIAL_V9.md](../docs/SOCIAL_V9.md). |
 
+**The 4.2.0-beta.5 re-cut** (moutai was wiped) edits v9, storefront, blog and
+pollr in place with `propertyConstraints` co-occurrence rules and keeps every
+other file byte-identical; no topology label moves and no contract takes a
+document `ttl`. See [docs/CONTRACTS_BETA5.md](../docs/CONTRACTS_BETA5.md) for
+the rules, the rejected candidates (key-exchange TTL among them) and the
+sha256 of every file.
+
 These are the only two social contracts that exist on any chain, and the only
 two topologies the client knows. The differences are wired into the app
 through `lib/contract-topology.ts` and selected per deployment with

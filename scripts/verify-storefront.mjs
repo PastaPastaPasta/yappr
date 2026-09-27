@@ -11,7 +11,9 @@
  * one appointed at publish time; v3 (beta.3) is a moderated cut, so s14/s15
  * ban the stranger and take reviews down. v4 (beta.4) keeps a warning list
  * (s17), stores `tags`/`imageUrls` as typed string arrays (s18) and refuses a
- * seller reviewing an order on their own store (s19, distinctFrom).
+ * seller reviewing an order on their own store (s19, distinctFrom). The beta.5
+ * re-cut adds `propertyConstraints` (s20: a price or a flat rate names its
+ * currency; a tiered zone carries its tiers; each breach is refused 10422).
  *   node scripts/verify-storefront.mjs --self-test   # offline: contract declares what the cases assert
  */
 import bs58 from 'bs58';
@@ -21,7 +23,9 @@ import {
 } from './battery-lib.mjs';
 import { describeErr, randomEntropy } from './seed/seed-lib.mjs';
 import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, NOT_DISTINCT, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
+import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 
+const CONTRACT_FILE = 'yappr-storefront-contract.json';
 const REVIEW_COST = { storeReview: 3n, itemReview: 1n };
 const DEFAULT_YAPP = 60n;
 const RATINGS = [1, 2, 3, 4, 5];
@@ -376,12 +380,24 @@ async function caseS19SelfReview(ctx) {
   await battery.probeCreate('s19b a review of it by the seller is refused (10419 sellerId = $ownerId)', NOT_DISTINCT, seller, 'storeReview', storeReviewData({ storeId: id32(ctx.storeId), orderId: id32(order.id), sellerId: id32(seller.ownerId), rating: 5 }), { tokenCost: REVIEW_COST.storeReview });
 }
 
+async function caseS20PropertyConstraints(ctx) {
+  const { battery, seller } = ctx;
+  console.log('\n--- s20. propertyConstraints: currency and tier co-occurrence (10422) ---');
+  // Under the seller's real store, so the writer gate passes and only the rule can refuse.
+  for (const docType of ['storeItem', 'shippingZone']) {
+    for (const [label, data, rule] of refusedCreates(CONTRACT_FILE, docType)) {
+      await battery.probeCreate(`s20 ${label} is refused (10422 ${rule})`, constraintViolation(rule), seller, docType, { ...data, storeId: id32(ctx.storeId) });
+    }
+  }
+  // The accepted side: s1c/s1d (priced items) and s2c (a flat zone with rate and currency).
+}
+
 const CASES = new Map([
   ['s1', caseS1Fixtures], ['s2', caseS2ItemRefs], ['s3', caseS3Orders], ['s4', caseS4Status],
   ['s5', caseS5StoreReviews], ['s6', caseS6ItemReviews], ['s7', caseS7Averages], ['s8', caseS8Rankings],
   ['s9', caseS9OrderCounts], ['s10', caseS10Composite], ['s11', caseS11Permanence], ['s12', caseS12Tokens],
   ['s13', caseS13Immutable], ['s14', caseS14Ban], ['s15', caseS15ModeratorDelete],
-  ['s17', caseS17Warn], ['s18', caseS18TypedArrays], ['s19', caseS19SelfReview],
+  ['s17', caseS17Warn], ['s18', caseS18TypedArrays], ['s19', caseS19SelfReview], ['s20', caseS20PropertyConstraints],
 ]);
 
 await runBattery({
@@ -394,10 +410,11 @@ await runBattery({
   selfTest: () => {
     // s2d/s2e + s13: only the store owner may list under a store, and never move it.
     const ownedByStoreOwner = { agreements: { storeId: { $ownerId: '$ownerId' } }, immutable: ['storeId'] };
-    return selfTestModerated('yappr-storefront-contract.json', {
-      // s18: tags and imageUrls are typed string arrays (beta.4 v4).
-      storeItem: { ...ownedByStoreOwner, typedArrays: { tags: { items: 'string', maxItems: 32, maxLength: 64 }, imageUrls: { items: 'string', maxItems: 8, maxLength: 512 } } },
-      shippingZone: ownedByStoreOwner,
+    const constraints = DECLARED_RULES[CONTRACT_FILE];
+    return selfTestModerated(CONTRACT_FILE, {
+      // s18: tags and imageUrls are typed string arrays (beta.4 v4). s20: propertyConstraints (beta.5).
+      storeItem: { ...ownedByStoreOwner, typedArrays: { tags: { items: 'string', maxItems: 32, maxLength: 64 }, imageUrls: { items: 'string', maxItems: 8, maxLength: 512 } }, constraints: constraints.storeItem },
+      shippingZone: { ...ownedByStoreOwner, constraints: constraints.shippingZone },
       // s3d: sellerId is the store's real owner, not a buyer's claim.
       storeOrder: { agreements: { storeId: { sellerId: '$ownerId' } } },
       // s4d/s4e: only the seller posts status updates.

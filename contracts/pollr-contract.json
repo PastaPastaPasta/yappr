@@ -124,7 +124,83 @@
       },
       "description": "A poll: question plus 2-10 choices as enumerated option fields. Permanent (canBeDeleted:false) so ballots can reference it, and immutable, so the multiChoice flag that selects the ballot doctype cannot be flipped after ballots land. Every ballot's pollOwnerId is bound by consensus to this poll's $ownerId, so the creator needs no attested copy. Creating one preallocates the vote trees its ballots need",
       "additionalProperties": false,
-      "canBeDeleted": false
+      "canBeDeleted": false,
+      "propertyConstraints": {
+        "optionsContiguous": {
+          "allOf": [
+            {
+              "anyOf": [
+                {
+                  "absent": "option3"
+                },
+                {
+                  "present": "option2"
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "absent": "option4"
+                },
+                {
+                  "present": "option3"
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "absent": "option5"
+                },
+                {
+                  "present": "option4"
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "absent": "option6"
+                },
+                {
+                  "present": "option5"
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "absent": "option7"
+                },
+                {
+                  "present": "option6"
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "absent": "option8"
+                },
+                {
+                  "present": "option7"
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "absent": "option9"
+                },
+                {
+                  "present": "option8"
+                }
+              ]
+            }
+          ]
+        }
+      }
     },
     "vote": {
       "type": "object",

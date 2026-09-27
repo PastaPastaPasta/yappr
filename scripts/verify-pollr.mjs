@@ -11,12 +11,18 @@
  *   NETWORK=devnet node scripts/verify-pollr.mjs --contract <id> \
  *     [--creator 230] [--voter 231] [--voter2 232] [--v3 <v3 contract id>] [--only p3,p6]
  *   node scripts/verify-pollr.mjs --self-test   # offline: contract declares what the cases assert
+ *
+ * p12 (the beta.5 re-cut): a poll whose options skip a slot is refused 10422
+ * `optionsContiguous`; the p1 fixtures (options 0-2) are the accepted side.
  */
 import {
   DELETE_FORBIDDEN, DUPLICATE_UNIQUE, FOREIGN_SIGNATURE, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND,
   decodeIntGroupKey, ghostIdentity, id32, runBattery, selfTest,
 } from './battery-lib.mjs';
 import { buildDocument, describeErr, randomEntropy } from './seed/seed-lib.mjs';
+import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
+
+const CONTRACT_FILE = 'pollr-contract.json';
 
 /** Option labels the fixture polls carry, in order; the indices are the choices. */
 const OPTIONS = ['alpha', 'bravo', 'charlie'];
@@ -243,10 +249,18 @@ async function caseP11Permanence(ctx) {
   await ctx.battery.probeDelete('p11a deleting a poll is rejected (canBeDeleted:false)', DELETE_FORBIDDEN, ctx.creator, 'poll', ctx.pollZ);
 }
 
+async function caseP12PropertyConstraints(ctx) {
+  const { battery, creator, run } = ctx;
+  console.log('\n--- p12. propertyConstraints: poll options are contiguous (10422) ---');
+  for (const [label, data, rule] of refusedCreates(CONTRACT_FILE, 'poll')) {
+    await battery.probeCreate(`p12 ${label} is refused (10422 ${rule})`, constraintViolation(rule), creator, 'poll', { ...data, question: `${data.question} ${run}` });
+  }
+}
+
 const CASES = new Map([
   ['p1', caseP1Fixtures], ['p2', caseP2References], ['p3', caseP3SingleChoice], ['p4', caseP4MultiChoice],
   ['p5', caseP5Tallies], ['p6', caseP6RankedWinner], ['p7', caseP7Preallocation], ['p8', caseP8Unvote],
-  ['p9', caseP9ForeignDelete], ['p10', caseP10ReadSurfaces], ['p11', caseP11Permanence],
+  ['p9', caseP9ForeignDelete], ['p10', caseP10ReadSurfaces], ['p11', caseP11Permanence], ['p12', caseP12PropertyConstraints],
 ]);
 
 await runBattery({
@@ -258,7 +272,8 @@ await runBattery({
   extraContracts: (args) => [args.v3],
   banner: ({ args }) => (args.v3 ? `; v3 baseline ${args.v3}` : ''),
   // p2c/p2d: a ballot can only ever name the poll's real creator.
-  selfTest: () => selfTest('pollr-contract.json', { vote: { agreements: { pollId: { pollOwnerId: '$ownerId' } } }, multiVote: { agreements: { pollId: { pollOwnerId: '$ownerId' } } } }),
+  // p12: the options rule (beta.5).
+  selfTest: () => selfTest(CONTRACT_FILE, { vote: { agreements: { pollId: { pollOwnerId: '$ownerId' } } }, multiVote: { agreements: { pollId: { pollOwnerId: '$ownerId' } } }, poll: { constraints: DECLARED_RULES[CONTRACT_FILE].poll } }),
   setup: () => ({ expectedSingle: new Map(), expectedMulti: new Map() }),
   summary: (ctx) => `pollS=${ctx.pollS} pollM=${ctx.pollM} pollZ=${ctx.pollZ}`,
 });
