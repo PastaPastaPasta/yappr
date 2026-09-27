@@ -28,6 +28,13 @@ import {
   isPropertyAgreementError,
   isReferencedTypeNotDeletableError,
   isWriteGateError,
+  contestFundNeededFromError,
+  isContestFullError,
+  isContestFundError,
+  isContestedDocumentsNotYetAllowedError,
+  isDocumentExpiredError,
+  isTimeoutError,
+  isTrailingBytesError,
 } from './error-utils'
 
 describe('isImmutablePropertyChangedError', () => {
@@ -307,5 +314,63 @@ describe('4.2.0-beta.4 rejections', () => {
   ])('classifies %s as no moderation refusal', (message) => {
     expect(classifyModerationError(new Error(message))).toBeNull()
     expect(isPermanentProtocol14Error(new Error(message))).toBe(false)
+  })
+})
+
+describe('4.2.0-beta.5 rejections', () => {
+  // Messages transcribed from the rs-dpp `#[error(...)]` formats at tag v4.2.0-beta.5
+  // (5c79d12d). Most reach JS as prose with code = -1, so each is matched by its words.
+  const EXPIRED = 'Document 8NAdmqQnFw2zcMUe1oWbGnUbA8Q6rj3n3EWtQ5B4Qz1F of type "savedAddress" on contract FE6sjAHVyfzQrz9pcEBgbj5wHgEPLLfLuWWnYufuTGFr expired at 1790294008769, its $createdAt plus the type\'s time to live, which block time 1790294010000 is not before'
+  const NOT_PAID = 'Contest for document 8NAdmqQnFw2zcMUe1oWbGnUbA8Q6rj3n3EWtQ5B4Qz1F was not paid for, needs payment of 20000000000 Credits'
+  const FULL = 'The vote poll ContestedDocumentResourceVotePoll { contract_id: GWRS, document_type_name: domain, index_name: parentNameAndLabel } already has 1000 contenders, the most a contest accepts'
+  const TRAILING = 'Parsing of serialized object failed due to: platform deserialization error: unable to deserialize dpp::state_transition::StateTransition: 1 bytes left over after the value'
+  const NOT_BEFORE_EPOCH = 'Contested documents are not allowed until epoch 4. Current epoch is 0'
+
+  const cases: Array<[string, (error: unknown) => boolean, string, RegExp]> = [
+    ['40140 DocumentExpiredError', isDocumentExpiredError, EXPIRED, /expired and can no longer be changed/i],
+    ['40140 by labelled code', isDocumentExpiredError, 'consensus error code=40140', /expired/i],
+    ['40114 DocumentContestNotPaidForError', isContestFundError, NOT_PAID, /costs more than was offered/i],
+    ['40114 by labelled code', isContestFundError, '{"code":40114}', /costs more/i],
+    ['40141 DocumentContestMaximumContendersReachedError', isContestFullError, FULL, /closed to new entries/i],
+    ['10002 SerializedObjectParsingError for trailing bytes', isTrailingBytesError, TRAILING, /report this/i],
+    ['10418 from a node that predates beta.5', isContestedDocumentsNotYetAllowedError, NOT_BEFORE_EPOCH, /contested names yet/i],
+  ]
+
+  it.each(cases)('%s is recognised, permanent and given its own message', (_label, matcher, message, expected) => {
+    const error = new Error(message)
+    expect(matcher(error)).toBe(true)
+    expect(isPermanentProtocol14Error(error)).toBe(true)
+    expect(categorizeError(error)).toMatch(expected)
+  })
+
+  it('never reads an expired document or key as a gateway timeout that may have landed', () => {
+    expect(isTimeoutError(new Error(EXPIRED))).toBe(false)
+    expect(isTimeoutError(new Error('Identity public key 2 expired at 1790000000000 ms and can no longer sign (block time 1790000000001 ms)'))).toBe(false)
+    expect(isTimeoutError(new Error('Identity public key 2 is expired at the block time: it expires at 1 ms and the block time is 2 ms'))).toBe(false)
+    // The gateway phrasings still count.
+    expect(isTimeoutError(new Error('deadline expired before operation could complete'))).toBe(true)
+    expect(isTimeoutError(new Error('wait_for_state_transition_result timed out'))).toBe(true)
+  })
+
+  it('tells a full contest from an underpaid one, and reads the fund a 40114 names', () => {
+    expect(isContestFullError(new Error(NOT_PAID))).toBe(false)
+    expect(isContestFundError(new Error(FULL))).toBe(true)
+    expect(contestFundNeededFromError(new Error(NOT_PAID))).toBe(BigInt(20_000_000_000))
+    expect(contestFundNeededFromError(new Error(FULL))).toBeNull()
+  })
+
+  it.each([
+    // An ordinary document that merely says "expired" in a timestamp-free way is not 40140.
+    'broadcast deadline expired',
+    // Five-digit codes inside amounts and timestamps are never a match on their own.
+    'insufficient balance: 40140000 credits required',
+    'block time 1790294010002 reached',
+    'Parsing of serialized object failed due to: invalid enum variant',
+  ])('does not claim %s', (message) => {
+    const error = new Error(message)
+    expect(isDocumentExpiredError(error)).toBe(false)
+    expect(isContestFundError(error)).toBe(false)
+    expect(isTrailingBytesError(error)).toBe(false)
+    expect(isContestedDocumentsNotYetAllowedError(error)).toBe(false)
   })
 })
