@@ -235,6 +235,16 @@ export function auditNodeRules(source) {
     }
     const budget = referenceBudget(schema);
     if (budget > LIMITS.maxReferencesPerDocument) problems.push(`${name}: up to ${budget} references per document, above ${LIMITS.maxReferencesPerDocument}`);
+    // #4983 (beta.5): a single deletableDocument reference by id, declared as the
+    // whole refersTo (not inside anyOf/allOf, not a lookup), may be cleared once its
+    // target is gone, so it may not also be settable while absent. rs-dpp matches the
+    // whole target, not its leaves (validate_no_immutable_deletable_element_references).
+    for (const path of schema.immutableAllowSetting ?? []) {
+      const ref = schema.properties?.[path]?.refersTo;
+      if (ref?.type === 'deletableDocument' && !ref.lookup) {
+        problems.push(`${name}.${path}: immutableAllowSetting on a deletableDocument reference (#4983)`);
+      }
+    }
     for (const [path, ref] of referenceDeclarations(schema)) {
       // validate_no_immutable_deletable_element_references: a deletable lookup (or
       // a typed array of deletable refs) under `immutable` could never be
@@ -243,11 +253,6 @@ export function auditNodeRules(source) {
       const heldImmutably = (schema.immutable ?? []).includes(topLevel);
       if (heldImmutably && ref.type === 'deletableDocument' && (ref.lookup || path.endsWith('[]'))) {
         problems.push(`${name}.${path}: a deletableDocument ${ref.lookup ? 'lookup' : 'typed array'} under \`immutable\``);
-      }
-      // #4983 (beta.5): a single deletableDocument reference by id may be cleared once
-      // its target is gone, so it may not also be settable while absent.
-      if (ref.type === 'deletableDocument' && !ref.lookup && !path.endsWith('[]') && (schema.immutableAllowSetting ?? []).includes(path)) {
-        problems.push(`${name}.${path}: immutableAllowSetting on a deletableDocument reference (#4983)`);
       }
       // #4982 (beta.5): an immutable contract reference with an owner requirement on a
       // type whose documents can change owner could never be replaced by the new owner.
@@ -326,6 +331,13 @@ const PROBES = [
 
   // 4.2.0-beta.5 registration refusals (docs/PLATFORM_BETA5_UPGRADE.md).
   { label: 'immutableAllowSetting on a deletableDocument reference (#4983)', file: SOCIAL_V9, expect: 'audit', node: 'registration', mutate: (s) => { s.documentSchemas.post.immutableAllowSetting.push('quotedPostId'); } },
+  // A by-id deletableDocument cannot be an expression leaf at all (the parse refuses
+  // it), so #4983 only ever concerns a whole-target reference, which is what the audit reads.
+  { label: 'a by-id deletableDocument inside anyOf (refused by the parse, not #4983)', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => {
+    const p = s.documentSchemas.post;
+    p.properties.quotedPostId.refersTo = { anyOf: [{ type: 'deletableDocument', documentType: 'post' }, { type: 'identity' }] };
+    p.immutableAllowSetting.push('quotedPostId');
+  } },
   // Document TTL (#5007): the parse refuses the structural pairings and the
   // one-hour floor; the deletability a ttl gives its type (40122) is judged at registration.
   { label: 'ttl of one day on savedAddress (control)', file: STOREFRONT, expect: 'accepted', mutate: (s) => { s.documentSchemas.savedAddress.ttl = 86_400; } },

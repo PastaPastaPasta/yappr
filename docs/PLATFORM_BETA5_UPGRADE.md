@@ -48,7 +48,7 @@ broadcasts nothing and was validated offline only (see "Local validation").
 | Group | Commits | Effect on Yappr |
 | --- | --- | --- |
 | **Contested documents before epoch 4** | [#4995](https://github.com/dashpay/platform/pull/4995) `2498727049` | The `TARGET_EPOCH_INDEX = 4` gate in `batch/is_allowed` is deleted, for every protocol version. Beta.4 refused any contested create on a fresh network with 10418 ("Contested documents are not allowed until epoch 4. Current epoch is 0"). That blocked contested DPNS names on moutai and **every moderation election** (`electedCharter` prefunds its contest). After the wipe both work from block one. **Unblocks the election test** that the beta.4 deployment could not run before 2026-10-31. 10418 is kept in rs-dpp for decoding, but is **no longer produced**. |
-| **Contest pricing** | [#5039](https://github.com/dashpay/platform/pull/5039) `eeed935bd1`, [#5034](https://github.com/dashpay/platform/pull/5034) `5febda158f`, [#5029](https://github.com/dashpay/platform/pull/5029) `f4426b26b3`, [#5002](https://github.com/dashpay/platform/pull/5002), [#4996](https://github.com/dashpay/platform/pull/4996) | A contender states the **most** it pays and is **charged the join price**. The price is 0.1 DASH for DPNS and 0.5 DASH for a moderation election, doubling once a contest holds 250 contenders and again every 50 after that. A contest is capped at 1,000 contenders (40141). A create that states less is refused, paid, with 40114, which names the price. The SDKs read the contender count and state the price unless the caller passes `contestFund`. **Client: error surfacing only** (below). |
+| **Contest pricing** | [#5039](https://github.com/dashpay/platform/pull/5039) `eeed935bd1`, [#5034](https://github.com/dashpay/platform/pull/5034) `5febda158f`, [#5029](https://github.com/dashpay/platform/pull/5029) `f4426b26b3`, [#5002](https://github.com/dashpay/platform/pull/5002), [#4996](https://github.com/dashpay/platform/pull/4996) | A contender states the **most** it pays and is **charged the join price**. At protocol 14 the price is 0.1 DASH for DPNS and 0.5 DASH for a moderation election (protocol 12/13, testnet today, charges a flat 0.2 DASH), doubling once a contest holds 250 contenders and again every 50 after that. A contest is capped at 1,000 contenders (40141). A create that states less is refused, paid, with 40114, which names the price. The SDKs read the contender count and state the price unless the caller passes `contestFund`. **Client: error surfacing only** (below). |
 | **Document time to live** | [#5007](https://github.com/dashpay/platform/pull/5007) `39e7850570`, [#5033](https://github.com/dashpay/platform/pull/5033) `7a5751872e`, [#5013](https://github.com/dashpay/platform/pull/5013) | A document type may declare `ttl` (seconds, 1 hour to 1 year). The platform deletes its documents after `$createdAt + ttl`: at most 128 per block, after the block's transitions. Their storage is priced for the lifetime, not in perpetuity, and deleting them refunds nothing. After expiry, replace, transfer, purchase, repricing and moderator restore are refused, paid, with **40140**. Nothing in Yappr declares it yet. **Client: 40140 classified**, and kept out of `isTimeoutError` (below). **Contract re-cut:** candidates below. |
 | **propertyConstraints grammar** | [#5036](https://github.com/dashpay/platform/pull/5036) `8936d447aa` anyOf/allOf/not, [#5037](https://github.com/dashpay/platform/pull/5037) present/absent, [#5038](https://github.com/dashpay/platform/pull/5038) `in`, [#5040](https://github.com/dashpay/platform/pull/5040) boolean operands, [#5042](https://github.com/dashpay/platform/pull/5042) string `const` against an `enum` | Rules can now be conditions, not only integer comparisons. Violations are still 10422, which `isDocumentPropertyRuleError` already matches (the prose `breaks its propertyConstraints rule` did not change). **Contract re-cut:** candidates below. |
 | **Stricter decoding** | [#5011](https://github.com/dashpay/platform/pull/5011) `d23f444a20` | At protocol 14, `decode_raw_state_transitions` v1 decodes with `deserialize_from_bytes_untrusted_exact_in_version`. Bytes left over after a transition make it an invalid encoding, 10002 `SerializedObjectParsingError`, unpaid. **Client: proved that the hand-built create is exact** (below); 10002-with-leftover classified as a code defect. |
@@ -136,8 +136,10 @@ letters, hyphens and the digits 0 and 1):
 Decision: **keep leaving `contestFund` out.** The SDK reads the price just
 before signing and before it reserves a nonce, so a failed read spends nothing.
 Stating more than that would only matter if 250 or more others were joining
-the same name at the same moment. Stating a fixed 0.1 DASH would be wrong once
-a contest passes 250 contenders. A comment at the `registerName` call records
+the same name at the same moment. Stating a fixed figure would be wrong once
+a contest passes 250 contenders, and wrong across networks: the base fund is
+0.2 DASH under protocol 12/13 (fee version 2, testnet) and 0.1 DASH at protocol
+14 (fee version 3). For the same reason the client never hard-codes a price. A comment at the `registerName` call records
 this.
 
 What changed:
@@ -149,10 +151,11 @@ What changed:
     again";
   - 40141: "closed to new registrations";
   - 10418: "not accepted yet; pick a non-contested name";
-  - `Insufficient identity … balance`: names the 0.1 DASH fund.
+  - `Insufficient identity … balance`: says a contested name also pays a
+    contest fund, with no figure.
 - The review step's contested warning and tooltip now say that entering the
-  vote costs at least 0.1 DASH from the identity's credits. Previously the
-  wizard never mentioned a cost.
+  vote pays a contest fund from the identity's credits, priced by the network
+  just before signing. Previously the wizard never mentioned a cost.
 
 The moderation election path is not built in the client yet. When it is, its
 charter create goes through the same `contestFund` rule (0.5 DASH base), and the
@@ -202,12 +205,12 @@ If a contracts agent ever registers one of these three from the file, it must
 first rename `mutable` to `documentsMutable`. This PR does not touch contract
 JSON.
 
-`node scripts/validate-contract-offline.mjs --probes` runs 40 probes, all
-passing. 12 are new for beta.5 and record where each new rule is enforced:
+`node scripts/validate-contract-offline.mjs --probes` runs 41 probes, all
+passing. 13 are new for beta.5 and record where each new rule is enforced:
 
 | Probe | Refused by |
 | --- | --- |
-| `immutableAllowSetting` on a deletableDocument reference (#4983) | **node only**: the wasm parse accepts it, and `auditNodeRules` now flags it |
+| `immutableAllowSetting` on a deletableDocument reference (#4983) | **node only**: the wasm parse accepts it, and `auditNodeRules` now flags it. Only a whole-target by-id reference counts, as in rs-dpp; a by-id deletableDocument inside `anyOf` is refused by the parse anyway (probe) |
 | immutable contract reference with an `owner` requirement on a transferable type (#4982) | **node only**: `auditNodeRules` now flags it |
 | `ttl` on the target of a `permanentDocument` gate (privateFeedState) | **node only** (40122): a `ttl` makes its type deletable, and `auditNodeRules`' deletability check now counts it |
 | `ttl` without `$createdAt` required, on an indexOnly type, of 0, of 60 s, with `documentsKeepHistory` | wasm parse |
@@ -301,7 +304,7 @@ On `beta5/sdk`, with the beta.5 tarballs installed `--no-save`:
   and `describeDpnsRegistrationError` in `lib/services/dpns-service.test.ts`.
 - `npm run build`: the static export succeeds.
 - Every contract through `validate-contract-offline.mjs`, and `--probes`
-  (40/40); the results are in the table above.
+  (41/41); the results are in the table above.
 - These pass: `run-seeder.mjs --self-test`,
   `verify-{v8,v9,blog,dm,dm-v5,storefront,tips,pollr}.mjs --self-test`, and
   `verify-refersto.mjs --dry-run`.
@@ -311,5 +314,5 @@ On `beta5/sdk`, with the beta.5 tarballs installed `--no-save`:
 - that a beta.5 node accepts a create signed by the manual path. The bytes are
   proven exact, but no node has seen them;
 - that 40140, 40114 and 40141 render with the texts the matchers expect;
-- that a contested DPNS registration without `contestFund` is charged 0.1 DASH
-  on a fresh devnet.
+- that a contested DPNS registration without `contestFund` is charged the
+  protocol-14 base fund (0.1 DASH) on a fresh devnet.
