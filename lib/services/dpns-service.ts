@@ -11,6 +11,45 @@ import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { likesAreIndexOnly } from '@/lib/contract-topology';
 import { getPrimaryUsername, sortUsernames } from '@/lib/utils/username';
+import {
+  contestFundNeededFromError,
+  extractErrorMessage,
+  isContestFullError,
+  isContestFundError,
+  isContestedDocumentsNotYetAllowedError,
+} from '@/lib/error-utils';
+
+const CREDITS_PER_DASH = 100_000_000_000;
+
+/**
+ * What a failed DPNS registration tells the user. A contested name (fewer than
+ * 20 characters, only letters, hyphens and the digits 0 and 1) joins a
+ * masternode vote and pays into its fund: from 4.2.0-beta.5 the registration
+ * states the most it pays (`contestFund`) and is charged the fund to join,
+ * 0.1 DASH until the contest holds 250 contenders and doubling every 50 after
+ * that (platform#5034, #5039). Yappr leaves `contestFund` out, so the SDK reads
+ * the price just before it signs; the refusals below are what remains.
+ */
+export function describeDpnsRegistrationError(error: unknown): string {
+  const message = extractErrorMessage(error);
+  if (isContestFullError(error)) {
+    return 'This name already has the most contenders a vote accepts, so it is closed to new registrations. Try a different name.';
+  }
+  if (isContestFundError(error)) {
+    const needed = contestFundNeededFromError(error);
+    const price = needed === null ? '' : ` (${Number(needed) / CREDITS_PER_DASH} DASH now)`;
+    return `Others joined the vote for this name while you were registering, so it now costs more to enter${price}. Try again to pay the current price.`;
+  }
+  if (isContestedDocumentsNotYetAllowedError(error)) {
+    return 'This network does not accept contested names yet. Pick a name of 20 or more characters, or one with a digit from 2 to 9.';
+  }
+  // Drive: "Insufficient identity <id> balance <b> required <r>". A contested
+  // name needs its contest fund on top of the fees.
+  if (/insufficient identity .* balance/i.test(message)) {
+    return 'Your identity does not have enough credits for this registration. A contested name also pays at least 0.1 DASH into its vote. Top up and try again.';
+  }
+  return message || 'Registration failed';
+}
 
 /**
  * Extract documents array from SDK response (handles Map, Array, and object formats)
@@ -434,7 +473,9 @@ class DpnsService {
         identityKey
       );
 
-      // Register the name
+      // Register the name. `contestFund` is left out on purpose: for a contested
+      // name the SDK reads the fund to join just before it signs (beta.5), which
+      // is the least that is accepted and what is charged.
       logger.debug(`Registering DPNS name: ${label}`);
       await sdk.dpns.registerName({
         label,
@@ -585,7 +626,7 @@ class DpnsService {
           label: reg.label,
           success: false,
           isContested: false,
-          error: error instanceof Error ? error.message : 'Registration failed',
+          error: describeDpnsRegistrationError(error),
         });
       }
     }

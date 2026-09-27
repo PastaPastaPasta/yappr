@@ -107,7 +107,7 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
                       </span>
                       {entry.status === 'contested' && (
                         <span
-                          title="Contested usernames require masternode voting. Your username won't appear on Yappr until voting completes."
+                          title="Contested usernames require masternode voting and pay at least 0.1 DASH into the vote. Your username won't appear on Yappr until voting completes."
                           className="cursor-help"
                         >
                           <Info className="w-4 h-4 text-orange-400" />
@@ -132,7 +132,8 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
               </h3>
               <p className="text-sm text-orange-700 dark:text-orange-300 mt-2">
                 All of your usernames are <strong>contested</strong>, which means they require
-                masternode voting before they can be granted to you.
+                masternode voting before they can be granted to you. Entering a vote costs at
+                least 0.1 DASH from your identity&apos;s credits, more once many others have joined.
               </p>
               <p className="text-sm text-orange-700 dark:text-orange-300 mt-2">
                 <strong>Until voting completes, your username will not appear on Yappr</strong> and
