@@ -18,7 +18,8 @@ devnet deployment are separate work (see the end).
 Both `@dashevo/evo-sdk` and `@dashevo/wasm-sdk` are pinned to exactly
 `4.2.0-beta.5`. `npm ls @dashevo/wasm-sdk` shows one copy, deduped under
 evo-sdk. The JS and wasm SDK surface barely moved: the diff under
-`packages/wasm-sdk`, `packages/js-evo-sdk` and `packages/wasm-dpp2` is 69 lines.
+`packages/wasm-sdk`, `packages/js-evo-sdk` and `packages/wasm-dpp2` is 69
+insertions and 11 deletions.
 It adds `contestFund` to `DocumentCreateOptions` and `DpnsRegisterNameOptions`,
 rewrites a doc comment, and extends the propertyConstraints section of the
 README. Beyond the version string, the shapes Yappr uses did not change.
@@ -48,12 +49,12 @@ broadcasts nothing and was validated offline only (see "Local validation").
 | Group | Commits | Effect on Yappr |
 | --- | --- | --- |
 | **Contested documents before epoch 4** | [#4995](https://github.com/dashpay/platform/pull/4995) `2498727049` | The `TARGET_EPOCH_INDEX = 4` gate in `batch/is_allowed` is deleted, for every protocol version. Beta.4 refused any contested create on a fresh network with 10418 ("Contested documents are not allowed until epoch 4. Current epoch is 0"). That blocked contested DPNS names on moutai and **every moderation election** (`electedCharter` prefunds its contest). After the wipe both work from block one. **Unblocks the election test** that the beta.4 deployment could not run before 2026-10-31. 10418 is kept in rs-dpp for decoding, but is **no longer produced**. |
-| **Contest pricing** | [#5039](https://github.com/dashpay/platform/pull/5039) `eeed935bd1`, [#5034](https://github.com/dashpay/platform/pull/5034) `5febda158f`, [#5029](https://github.com/dashpay/platform/pull/5029) `f4426b26b3`, [#5002](https://github.com/dashpay/platform/pull/5002), [#4996](https://github.com/dashpay/platform/pull/4996) | A contender states the **most** it pays and is **charged the join price**. At protocol 14 the price is 0.1 DASH for DPNS and 0.5 DASH for a moderation election (protocol 12/13, testnet today, charges a flat 0.2 DASH), doubling once a contest holds 250 contenders and again every 50 after that. A contest is capped at 1,000 contenders (40141). A create that states less is refused, paid, with 40114, which names the price. The SDKs read the contender count and state the price unless the caller passes `contestFund`. **Client: error surfacing only** (below). |
-| **Document time to live** | [#5007](https://github.com/dashpay/platform/pull/5007) `39e7850570`, [#5033](https://github.com/dashpay/platform/pull/5033) `7a5751872e`, [#5013](https://github.com/dashpay/platform/pull/5013) | A document type may declare `ttl` (seconds, 1 hour to 1 year). The platform deletes its documents after `$createdAt + ttl`: at most 128 per block, after the block's transitions. Their storage is priced for the lifetime, not in perpetuity, and deleting them refunds nothing. After expiry, replace, transfer, purchase, repricing and moderator restore are refused, paid, with **40140**. Nothing in Yappr declares it yet. **Client: 40140 classified**, and kept out of `isTimeoutError` (below). **Contract re-cut:** candidates below. |
+| **Contest pricing** | [#5039](https://github.com/dashpay/platform/pull/5039) `eeed935bd1`, [#5034](https://github.com/dashpay/platform/pull/5034) `5febda158f`, [#5029](https://github.com/dashpay/platform/pull/5029) `f4426b26b3`; related: [#5002](https://github.com/dashpay/platform/pull/5002), [#4996](https://github.com/dashpay/platform/pull/4996) | A contender states the **most** it pays and is **charged the join price**. At protocol 14 the price is 0.1 DASH for DPNS and 0.5 DASH for a moderation election (protocol 12/13, testnet today, charges a flat 0.2 DASH), doubling once a contest holds 250 contenders and again every 50 after that. A contest is capped at 1,000 contenders (40141). A create that states less is refused, paid, with 40114, which names the price. The SDKs read the contender count and state the price unless the caller passes `contestFund`. Not pricing but in the same area: #5002 refuses a masternode vote for an identity that is not a contender (40307), and #4996 deletes an ended poll's end-date entry only once none of its polls remain. **Client: error surfacing only** (below). |
+| **Document time to live** | [#5007](https://github.com/dashpay/platform/pull/5007) `39e7850570`, [#5033](https://github.com/dashpay/platform/pull/5033) `7a5751872e` | A document type may declare `ttl` (seconds, 1 hour to 1 year). The platform deletes its documents after `$createdAt + ttl`: at most 128 per block, after the block's transitions. Their storage is priced for the lifetime, not in perpetuity, and deleting them refunds nothing. After expiry, replace, transfer, purchase, repricing and moderator restore are refused, paid, with **40140**. Nothing in Yappr declares it yet. **Client: 40140 classified**, and kept out of `isTimeoutError` (below). **Contract re-cut:** candidates below. |
 | **propertyConstraints grammar** | [#5036](https://github.com/dashpay/platform/pull/5036) `8936d447aa` anyOf/allOf/not, [#5037](https://github.com/dashpay/platform/pull/5037) present/absent, [#5038](https://github.com/dashpay/platform/pull/5038) `in`, [#5040](https://github.com/dashpay/platform/pull/5040) boolean operands, [#5042](https://github.com/dashpay/platform/pull/5042) string `const` against an `enum` | Rules can now be conditions, not only integer comparisons. Violations are still 10422, which `isDocumentPropertyRuleError` already matches (the prose `breaks its propertyConstraints rule` did not change). **Contract re-cut:** candidates below. |
 | **Stricter decoding** | [#5011](https://github.com/dashpay/platform/pull/5011) `d23f444a20` | At protocol 14, `decode_raw_state_transitions` v1 decodes with `deserialize_from_bytes_untrusted_exact_in_version`. Bytes left over after a transition make it an invalid encoding, 10002 `SerializedObjectParsingError`, unpaid. **Client: proved that the hand-built create is exact** (below); 10002-with-leftover classified as a code defect. |
-| **Registration refusals** | [#4983](https://github.com/dashpay/platform/pull/4983) `3d7554a195`, [#4982](https://github.com/dashpay/platform/pull/4982) `25e6473d50`, [#4984](https://github.com/dashpay/platform/pull/4984) `9eb59ec75c` | #4983: `immutableAllowSetting` may not name a `deletableDocument` reference by id. #4982: an `immutable` contract reference with an `owner` requirement is refused on a transferable or tradable type, and every replace of such a type re-checks the requirement. #4984: a `$creatorId` key reference is refused on a document without a creator id. **No committed contract trips any of them** (see "Offline contract validation"). #4983 and #4982 are behind rs-dpp's `validation` feature, which the wasm parse does not run, so `scripts/contract-probes.mjs` now audits them. |
-| **Balance and fee accounting** | [#4987](https://github.com/dashpay/platform/pull/4987) `ffd4fb4665`, [#4985](https://github.com/dashpay/platform/pull/4985), [#5015](https://github.com/dashpay/platform/pull/5015), [#5000](https://github.com/dashpay/platform/pull/5000) | #4987: when one balance was written twice in a batch, the second write clobbered the first. An action fee could therefore lose a purchase price, a contested fund or a sponsored sale. Drive now merges the writes; the v9 post fee plus YAPP payment went through this path. Also: repaid debt is credited to the fee pool; an evonode's token claim covers only the epochs it read; a mint or direct purchase past `i64::MAX` is refused. **No client change.** |
+| **Reference rule refusals** | [#4983](https://github.com/dashpay/platform/pull/4983) `3d7554a195`, [#4982](https://github.com/dashpay/platform/pull/4982) `25e6473d50`, [#4984](https://github.com/dashpay/platform/pull/4984) `9eb59ec75c` | #4983: `immutableAllowSetting` may not name a `deletableDocument` reference by id. #4982: an `immutable` contract reference with an `owner` requirement is refused on a transferable or tradable type, and every replace of such a type re-checks the requirement. #4984: a `$creatorId` key reference is refused **at document write**, not registration, when the document carries no creator id (40125 `ReferencedKeyIdPropertyInvalidError`). #4983 and #4982 are registration refusals. **No committed contract trips any of them** (see "Offline contract validation"). #4983 and #4982 are behind rs-dpp's `validation` feature, which the wasm parse does not run, so `scripts/contract-probes.mjs` now audits them. |
+| **Balance and fee accounting** | [#4987](https://github.com/dashpay/platform/pull/4987) `ffd4fb4665`, [#4985](https://github.com/dashpay/platform/pull/4985), [#5013](https://github.com/dashpay/platform/pull/5013), [#5015](https://github.com/dashpay/platform/pull/5015), [#5000](https://github.com/dashpay/platform/pull/5000) | #4987: when one balance was written twice in a batch, the second write clobbered the first. An action fee could therefore lose a purchase price, a contested fund or a sponsored sale. Drive now merges the writes; the v9 post fee plus YAPP payment went through this path. Also: repaid debt is credited to the fee pool; a storage refund is clawed back from the epochs it was priced for (#5013, general storage accounting, not TTL-specific); an evonode's token claim covers only the epochs it read; a mint or direct purchase past `i64::MAX` is refused. **No client change.** |
 | **Consensus and infra fixes** | #5010 #5028 vote extensions, #5005 address input limit, #5006 group actions, #5004 #5030 perf, #5001 rs-dapi shielded rate limit, #4964 empty address list | No effect on Yappr. |
 | **CI / tooling** | #4562 self-hosted release runners, #4974, PR Hygiene re-pins, #5031 #5032 #5003 #5008 #5009 | No change. #4562 is the release pipeline whose publish step failed. |
 
@@ -108,6 +109,11 @@ tested without an SDK connection. Two proofs that it is exact:
    padded by 1 byte refused: platform deserialization error: unable to deserialize
      dpp::state_transition::StateTransition: 1 bytes left over after the value
    ```
+   That last line is the `ProtocolError`'s own display. A node wraps only the
+   inner message, so a client sees "Parsing of serialized object failed due to:
+   unable to deserialize dpp::state_transition::StateTransition: 1 bytes left
+   over after the value" (`decode_raw_state_transitions/v1`), which is what
+   `isTrailingBytesError` matches.
    The harness is not in the tree; the command lives in the PR description.
 2. **In CI** (`lib/manual-batch.test.ts`). The wasm exposes only the loose
    decoder (`StateTransition.fromBytes` is `deserialize_from_bytes_untrusted`),
@@ -150,6 +156,8 @@ What changed:
   - 40114: "others joined the vote … now costs more (0.2 DASH now) … try
     again";
   - 40141: "closed to new registrations";
+  - 40111 `DocumentContestNotJoinableError` (the contest opened longer ago than
+    its join window): "running too long to join", via `isContestNotJoinableError`;
   - 10418: "not accepted yet; pick a non-contested name";
   - `Insufficient identity … balance`: says a contested name also pays a
     contest fund, with no figure.
@@ -205,8 +213,8 @@ If a contracts agent ever registers one of these three from the file, it must
 first rename `mutable` to `documentsMutable`. This PR does not touch contract
 JSON.
 
-`node scripts/validate-contract-offline.mjs --probes` runs 41 probes, all
-passing. 13 are new for beta.5 and record where each new rule is enforced:
+`node scripts/validate-contract-offline.mjs --probes` runs 43 probes, all
+passing. 15 are new for beta.5 and record where each new rule is enforced:
 
 | Probe | Refused by |
 | --- | --- |
@@ -214,6 +222,7 @@ passing. 13 are new for beta.5 and record where each new rule is enforced:
 | immutable contract reference with an `owner` requirement on a transferable type (#4982) | **node only**: `auditNodeRules` now flags it |
 | `ttl` on the target of a `permanentDocument` gate (privateFeedState) | **node only** (40122): a `ttl` makes its type deletable, and `auditNodeRules`' deletability check now counts it |
 | `ttl` without `$createdAt` required, on an indexOnly type, of 0, of 60 s, with `documentsKeepHistory` | wasm parse |
+| a by-id deletableDocument, or a contract reference with an `owner` requirement on a transferable type, inside an `immutable` object (nested paths) | **node only**: `auditNodeRules` now walks object properties, as rs-dpp's `flattened_properties` does |
 | propertyConstraints `const` outside the `enum`; `anyOf` directly inside `anyOf` | wasm parse |
 | `ttl` of one day on `savedAddress`; `anyOf` of `notEqual const` / `absent` / `equal` on `storeItem` | accepted (controls) |
 
@@ -269,6 +278,13 @@ v9 re-registration:
 - the interim pot claim, 41113.
 
 The charter must state a `contestFund` of at least 0.5 DASH, or leave it out.
+Leaving it out only works for creates the **SDK** builds: rs-sdk's
+`contest_fund.rs` reads the contender count and fills the prefunded voting
+balance in. The hand-built `buildSignedCreateTransition` (`lib/manual-batch.ts`)
+has no fund field and sets no prefunded voting balance, so it would be refused
+(40114, stated 0). A charter or any other contested create must therefore go
+through `sdk.documents.create` (or `sdk.dpns.registerName`), or the manual
+path must gain a fund field first.
 With `voteWindow`/`joinWindow` of one day each (v9), a run takes at least a day.
 A single applicant wins when its join window closes, without a vote (book,
 `data-model/contested-documents.md`, "Moderation elections").
@@ -304,7 +320,7 @@ On `beta5/sdk`, with the beta.5 tarballs installed `--no-save`:
   and `describeDpnsRegistrationError` in `lib/services/dpns-service.test.ts`.
 - `npm run build`: the static export succeeds.
 - Every contract through `validate-contract-offline.mjs`, and `--probes`
-  (41/41); the results are in the table above.
+  (43/43); the results are in the table above.
 - These pass: `run-seeder.mjs --self-test`,
   `verify-{v8,v9,blog,dm,dm-v5,storefront,tips,pollr}.mjs --self-test`, and
   `verify-refersto.mjs --dry-run`.
