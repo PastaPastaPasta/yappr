@@ -382,6 +382,19 @@ const PROBES = [
   { label: 'propertyConstraints enum const + absent (control)', file: STOREFRONT, expect: 'accepted', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { soldOutHasNoStock: { anyOf: [{ notEqual: ['status', { const: 'sold_out' }] }, { absent: 'stockQuantity' }, { equal: ['stockQuantity', 0] }] } }; } },
   { label: 'propertyConstraints const outside the enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { r: { equal: ['status', { const: 'gone' }] } }; } },
   { label: 'propertyConstraints anyOf directly inside anyOf', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { r: { anyOf: [{ anyOf: [{ equal: ['weight', 0] }, { equal: ['weight', 1] }] }, { equal: ['weight', 2] }] } }; } },
+  // The rules the beta.5 cuts declare (property-constraint-cases.mjs): each
+  // leans on a parse rule a slip would trip, and on the node-only limits.
+  { label: 'tombstoneIsBlank reading a property post does not have', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.post.propertyConstraints.tombstoneIsBlank.anyOf[1].allOf[1] = { absent: 'mediaUrls' }; } },
+  { label: 'tieredHasTiers comparing rateType with a value outside its enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.shippingZone.propertyConstraints.tieredHasTiers.anyOf[0] = { equal: ['rateType', { const: 'flat_rate' }] }; } },
+  { label: 'privateAllOrNone reading a string property as an integer operand', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.post.propertyConstraints.privateAllOrNone = { greaterThan: ['language', 0] }; } },
+  { label: 'a 17th propertyConstraints rule on post (16 max)', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => {
+    for (let n = 0; n < 11; n++) s.documentSchemas.post.propertyConstraints[`extra${n}`] = { absent: `content` };
+  } },
+  // rs-dpp node_count: allOf 1 + each `anyOf [absent, present]` 3; 22 as cut, so 4 more make 34.
+  { label: 'a 34-node optionsContiguous rule (32 max)', file: 'contracts/pollr-contract.json', expect: 'wasm', mutate: (s) => {
+    const rule = s.documentSchemas.poll.propertyConstraints.optionsContiguous.allOf;
+    for (const property of ['question', 'option0', 'option1', 'multiChoice']) rule.push({ anyOf: [{ absent: 'endsAt' }, { present: property }] });
+  } },
 ];
 
 /** Runs every probe; returns the number whose outcome differs from the recorded one. */

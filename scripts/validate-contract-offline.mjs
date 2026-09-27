@@ -35,12 +35,14 @@
  *   node scripts/validate-contract-offline.mjs <file> --immutable post,reply
  *   node scripts/validate-contract-offline.mjs <file> --strict-size   # size over 20,000 B fails
  *   node scripts/validate-contract-offline.mjs --probes
+ *   node scripts/validate-contract-offline.mjs --constraints   # propertyConstraints accept/refuse cases (needs @dashevo/wasm-dpp)
  */
 import { readFileSync } from 'node:fs';
 import { DataContract, DataContractCreateTransition, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import { renderModeration } from './register-lib.mjs';
 import { CREATE_TRANSITION_BUDGET, auditNodeRules, createTransitionSize, metaSchemaProblems, runContractProbes } from './contract-probes.mjs';
+import { runConstraintCases } from './property-constraint-cases.mjs';
 
 /** Any valid 32-byte identifier; schema validation never looks at it. */
 const PLACEHOLDER_ID = '11111111111111111111111111111111';
@@ -58,14 +60,15 @@ function parseArgs(argv) {
   const flagIndex = argv.indexOf('--immutable');
   const immutable = flagIndex === -1 ? [] : (argv[flagIndex + 1] ?? '').split(',').filter(Boolean);
   const probes = argv.includes('--probes');
+  const constraints = argv.includes('--constraints');
   // --strict-size: over the 20,000-byte headroom budget is a FAILURE, not a
   // warning. Run it on every social cut before registering it.
   const strictSize = argv.includes('--strict-size');
   // Skip the flag AND its value, so `--immutable post,reply <file>` does not
   // resolve the positional to "post,reply".
   const file = argv.find((arg, index) => !arg.startsWith('--') && (flagIndex === -1 || index !== flagIndex + 1));
-  if (!file && !probes) throw new Error('usage: node scripts/validate-contract-offline.mjs <contract.json> [--immutable a,b] | --probes');
-  return { file, immutable, probes, strictSize };
+  if (!file && !probes && !constraints) throw new Error('usage: node scripts/validate-contract-offline.mjs <contract.json> [--immutable a,b] | --probes | --constraints');
+  return { file, immutable, probes, constraints, strictSize };
 }
 
 /** A contract file in the shape registration assembles it: schemas, config (file or default), tokens. */
@@ -153,13 +156,17 @@ function validateFile(file, immutable, strictSize) {
 async function main() {
   // The wasm module backs every class below; nothing works before it loads.
   await ensureInitialized();
-  const { file, immutable, probes, strictSize } = parseArgs(process.argv.slice(2));
+  const { file, immutable, probes, constraints, strictSize } = parseArgs(process.argv.slice(2));
   if (file) validateFile(file, immutable, strictSize);
   if (probes) {
     const platformVersion = PlatformVersion.latest();
     const sizeOf = (contract) => createTransitionSize(contract, { DataContractCreateTransition, platformVersion });
     const failed = runContractProbes({ loadContractSource, parseContract, sizeOf });
     if (failed > 0) throw new Error(`${failed} probe(s) did not behave as recorded`);
+  }
+  if (constraints) {
+    const failed = await runConstraintCases({ loadContractSource, parseContract, platformVersion: PlatformVersion.latest() });
+    if (failed > 0) throw new Error(`${failed} propertyConstraints case(s) did not behave as recorded`);
   }
 }
 
