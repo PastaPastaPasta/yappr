@@ -323,7 +323,7 @@ describe('4.2.0-beta.5 rejections', () => {
   const EXPIRED = 'Document 8NAdmqQnFw2zcMUe1oWbGnUbA8Q6rj3n3EWtQ5B4Qz1F of type "savedAddress" on contract FE6sjAHVyfzQrz9pcEBgbj5wHgEPLLfLuWWnYufuTGFr expired at 1790294008769, its $createdAt plus the type\'s time to live, which block time 1790294010000 is not before'
   const NOT_PAID = 'Contest for document 8NAdmqQnFw2zcMUe1oWbGnUbA8Q6rj3n3EWtQ5B4Qz1F was not paid for, needs payment of 20000000000 Credits'
   const FULL = 'The vote poll ContestedDocumentResourceVotePoll { contract_id: GWRS, document_type_name: domain, index_name: parentNameAndLabel } already has 1000 contenders, the most a contest accepts'
-  const TRAILING = 'Parsing of serialized object failed due to: platform deserialization error: unable to deserialize dpp::state_transition::StateTransition: 1 bytes left over after the value'
+  const TRAILING = 'Parsing of serialized object failed due to: unable to deserialize dpp::state_transition::StateTransition: 1 bytes left over after the value'
   const NOT_BEFORE_EPOCH = 'Contested documents are not allowed until epoch 4. Current epoch is 0'
 
   const cases: Array<[string, (error: unknown) => boolean, string, RegExp]> = [

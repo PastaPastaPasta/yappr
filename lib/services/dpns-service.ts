@@ -17,6 +17,7 @@ import {
   isContestFullError,
   isContestFundError,
   isContestedDocumentsNotYetAllowedError,
+  isContestNotJoinableError,
 } from '@/lib/error-utils';
 
 
@@ -39,6 +40,11 @@ export function describeDpnsRegistrationError(error: unknown): string {
     const needed = contestFundNeededFromError(error);
     const price = needed === null ? '' : ` (${Number(needed) / CREDITS_PER_DASH} DASH now)`;
     return `Others joined the vote for this name while you were registering, so it now costs more to enter${price}. Try again to pay the current price.`;
+  }
+  // 40111: the contest for this name opened more than its join window ago (a
+  // week on mainnet), so no new contender may enter until it ends.
+  if (isContestNotJoinableError(error)) {
+    return 'The vote for this name has been running too long to join. Wait for it to end, or pick a different name.';
   }
   if (isContestedDocumentsNotYetAllowedError(error)) {
     return 'This network does not accept contested names yet. Pick a name of 20 or more characters, or one with a digit from 2 to 9.';

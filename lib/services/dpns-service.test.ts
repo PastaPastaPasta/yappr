@@ -119,6 +119,12 @@ describe('describeDpnsRegistrationError (contested names, 4.2.0-beta.5)', () => 
       .toMatch(/closed to new registrations/i);
   });
 
+  it('says a contest past its join window cannot be joined (40111)', () => {
+    expect(describeDpnsRegistrationError(new Error('Document Contest for vote_poll V1 is not joinable ContestInfo, it started 1 and it is now 2, and you can only join for 3')))
+      .toMatch(/too long to join/i);
+    expect(describeDpnsRegistrationError(new Error('consensus error code=40111'))).toMatch(/too long to join/i);
+  });
+
   it('points a node that still refuses contested names before epoch 4 at a non-contested name (10418)', () => {
     expect(describeDpnsRegistrationError(new Error('Contested documents are not allowed until epoch 4. Current epoch is 0')))
       .toMatch(/20 or more characters/i);

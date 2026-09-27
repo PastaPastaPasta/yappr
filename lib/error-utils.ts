@@ -643,6 +643,22 @@ export function isContestFundError(error: unknown): boolean {
   )
 }
 
+/**
+ * **40111** `DocumentContestNotJoinableError`: the contest opened longer ago than
+ * its join window (a week on mainnet for DPNS; the target's `joinWindow` for a
+ * moderation election), so no new contender may enter until it ends. Message:
+ * "Document Contest for vote_poll <p> is not joinable <info>, it started <t> and
+ * it is now <t>, and you can only join for <d>".
+ */
+export function isContestNotJoinableError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentcontestnotjoinable/i.test(msg) ||
+    /document contest for vote_poll .* is not joinable/i.test(msg) ||
+    hasConsensusCode(msg, [40111])
+  )
+}
+
 /** The 40141 member of {@link isContestFundError}: the contest is full, and paying more does not help. */
 export function isContestFullError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
@@ -668,8 +684,10 @@ export function contestFundNeededFromError(error: unknown): bigint | null {
  * A transition built by the SDK or by `lib/manual-batch.ts` is exactly its
  * bytes (pinned in `manual-batch.test.ts`), so this is a code-level defect: a
  * cached transition whose bytes were padded or concatenated.
- * Message: "Parsing of serialized object failed due to: platform deserialization
- * error: unable to deserialize <type>: <n> bytes left over after the value".
+ * Message (drive-abci `decode_raw_state_transitions` v1 wraps the inner
+ * message, without the ProtocolError prefix): "Parsing of serialized object
+ * failed due to: unable to deserialize dpp::state_transition::StateTransition:
+ * <n> bytes left over after the value".
  */
 export function isTrailingBytesError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
