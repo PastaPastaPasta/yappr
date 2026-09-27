@@ -124,9 +124,10 @@ describe('describeDpnsRegistrationError (contested names, 4.2.0-beta.5)', () => 
       .toMatch(/20 or more characters/i);
   });
 
-  it('mentions the contest fund when the identity is short of credits', () => {
-    expect(describeDpnsRegistrationError(new Error('Insufficient identity 9t2e balance 5000000000 required 10020000000')))
-      .toMatch(/0\.1 DASH/);
+  it('mentions the contest fund, without a hard-coded price, when the identity is short of credits', () => {
+    const message = describeDpnsRegistrationError(new Error('Insufficient identity 9t2e balance 5000000000 required 10020000000'));
+    expect(message).toMatch(/contest fund/i);
+    expect(message).not.toMatch(/\d\s*DASH/);
   });
 
   it('passes any other error through unchanged', () => {

@@ -5,7 +5,7 @@ import { signerService } from './signer-service';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
-import { keyNetwork, MIN_YAPP_TIP } from '@/lib/constants'
+import { CREDITS_PER_DASH, keyNetwork, MIN_YAPP_TIP } from '@/lib/constants'
 import { encodeTipNote, type TipTargetKind } from '@/lib/tip-note'
 import { isAlreadyExistsError, isNonFatalWaitError, isTimeoutError } from '@/lib/error-utils'
 import { tokenService } from './token-service'
@@ -40,7 +40,7 @@ const SENT_TIP_SKEW_MARGIN_MS = 60_000;
 
 // Conversion: 1 DASH = 100,000,000,000 credits on Dash Platform
 // (Platform credits are different from core duffs)
-export const CREDITS_PER_DASH = 100_000_000_000;
+export { CREDITS_PER_DASH };
 export const MIN_TIP_CREDITS = 100_000_000; // 0.001 DASH minimum
 
 class TipService {

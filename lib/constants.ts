@@ -45,6 +45,9 @@ export const STOREFRONT_YAPP_TOKEN_COSTS = {
 export const TOKEN_HISTORY_CONTRACT_ID =
   process.env.NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID ?? '43gujrzZgXqcKBiScLa4T8XTDnRhenR9BLx8GWVHjPxF'
 /** Minimum YAPP per tip. Whole tokens (YAPP has decimals=0). */
+/** Platform credits in one DASH. */
+export const CREDITS_PER_DASH = 100_000_000_000
+
 export const MIN_YAPP_TIP = BigInt(1)
 // ---- end tips block ----
 
