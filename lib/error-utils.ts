@@ -629,7 +629,9 @@ function isKeyExpiredError(error: unknown): boolean {
  *   contest already holds 1,000 contenders. Message: "The vote poll <p> already
  *   has 1000 contenders, the most a contest accepts".
  *
- * Both are paid refusals of the transition as built.
+ * Both are paid refusals of the transition as built. Permanent for automatic
+ * retry (the signed transition's stated fund cannot change); a manual retry
+ * builds a new transition, which the SDK prices at the current join fund.
  */
 export function isContestFundError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
@@ -678,8 +680,9 @@ export function isTrailingBytesError(error: unknown): boolean {
  * 10418 `ContestedDocumentsTemporarilyNotAllowedError` ("Contested documents are
  * not allowed until epoch 4. Current epoch is 0") is NO LONGER PRODUCED from
  * 4.2.0-beta.5 (platform#4995 removed the gate); rs-dpp keeps the variant so
- * older nodes still decode. Matched so a pre-beta.5 node's refusal reads as a
- * wait, not as a failure.
+ * older nodes still decode. Matched so a pre-beta.5 node's refusal gets its own
+ * message ("not accepted yet") instead of raw prose. Permanent for automatic
+ * retry: the gate lifts with the epoch or an upgrade, not by resending.
  */
 export function isContestedDocumentsNotYetAllowedError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
