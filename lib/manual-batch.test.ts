@@ -107,6 +107,7 @@ describe('buildSignedCreateTransition (hand-built v9 create)', () => {
 
   it('writes the derived id back onto the document', () => {
     const document = post()
+    const placeholder = document.id.toBase58()
     const signed = buildSignedCreateTransition({
       document,
       ownerId: bs58.encode(OWNER),
@@ -123,6 +124,9 @@ describe('buildSignedCreateTransition (hand-built v9 create)', () => {
     const [batched] = BatchTransition.fromStateTransition(signed).transitions
     const create = DocumentCreateTransition.fromDocumentTransition(batched.toTransition() as never)
     expect(create.base.id.toBase58()).toBe(document.id.toBase58())
+    // The placeholder `$id` ([9;32]) was replaced, not merely echoed.
+    expect(document.id.toBase58()).not.toBe(placeholder)
+    expect(placeholder).toBe(bs58.encode(new Uint8Array(32).fill(9)))
   })
 
   it('shows why the round trip is the check: the wasm decoder ignores a suffix a beta.5 node refuses', () => {
