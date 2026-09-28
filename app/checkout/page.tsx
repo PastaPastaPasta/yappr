@@ -18,7 +18,7 @@ import {
 } from '@/components/checkout'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
-import { cartService } from '@/lib/services/cart-service'
+import { cartService, getCartCurrency } from '@/lib/services/cart-service'
 import { storeService } from '@/lib/services/store-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
@@ -48,6 +48,7 @@ function normalizeKeyData(data: unknown): Uint8Array | null {
 }
 
 type CheckoutReadinessBlocker =
+  | 'store-unavailable'
   | 'no-payment-methods'
   | 'missing-buyer-key'
   | 'missing-seller-key'
@@ -66,6 +67,7 @@ function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null): 
   if (!blocker) return null
 
   const messages: Record<CheckoutReadinessBlocker, string> = {
+    'store-unavailable': 'This store is not accepting orders right now.',
     'no-payment-methods': 'This store has not configured any payment methods.',
     'missing-buyer-key': 'Add your encryption key to continue to payment.',
     'missing-seller-key': 'This store has not published an active encryption key.',
@@ -183,6 +185,13 @@ function CheckoutPage() {
       }
     }
 
+    // Consensus cannot stop an order to a paused or closed store; the client must.
+    if (storeToValidate && storeToValidate.status !== 'active') {
+      const state = blocked('store-unavailable')
+      setCheckoutReadiness(state)
+      return state
+    }
+
     if (!storeToValidate?.paymentUris?.length) {
       const state = blocked('no-payment-methods')
       setCheckoutReadiness(state)
@@ -252,7 +261,8 @@ function CheckoutPage() {
           cartService.getItemsForStore(storeId)
         ])
 
-        if (!storeData || items.length === 0) {
+        // No single amount exists for lines in different currencies; the cart explains why.
+        if (!storeData || items.length === 0 || !getCartCurrency(items)) {
           router.push('/cart')
           return
         }
@@ -267,7 +277,8 @@ function CheckoutPage() {
           setSelectedPaymentUri(storeData.paymentUris[0])
         }
 
-        await validateCheckoutReadiness(storeData)
+        const readiness = await validateCheckoutReadiness(storeData)
+        if (readiness.blocker === 'store-unavailable') setError(readiness.blockerMessage)
       } catch (error) {
         logger.error('Failed to load checkout data:', error)
         router.push('/cart')
@@ -399,9 +410,13 @@ function CheckoutPage() {
     return subtotal + shippingCost
   }, [subtotal, shippingCost])
 
-  const currency = cartItems[0]?.currency || 'USD'
+  const currency = getCartCurrency(cartItems) ?? 'USD'
 
   const handleDetailsSubmit = () => {
+    if (checkoutReadiness.blocker === 'store-unavailable') {
+      setError(checkoutReadiness.blockerMessage)
+      return
+    }
     if (!includeShipping) {
       setStep('policies')
       return

@@ -12,7 +12,7 @@ vi.mock('./store-item-service', () => ({
   }
 }))
 import { storeItemService } from './store-item-service'
-import { cartService } from './cart-service'
+import { cartService, getCartCurrency } from './cart-service'
 
 const product = (overrides: Partial<StoreItem> = {}): StoreItem => ({
   id: 'item', storeId: 'store', ownerId: 'seller', createdAt: new Date(),
@@ -106,5 +106,25 @@ describe('cart inventory', () => {
     expect(vi.mocked(storeItemService.query).mock.calls.map(([options]) => options?.where)).toEqual([
       [['$id', '==', 'item']], [['$id', '==', 'item']]
     ])
+  })
+})
+
+describe('cart currencies (QA D-02)', () => {
+  it('names the single currency of a store cart, and none for a mix', () => {
+    expect(getCartCurrency([cartItem(), cartItem({ itemId: 'b' })])).toBe('DASH')
+    expect(getCartCurrency([cartItem({ currency: 'USD' }), cartItem({ itemId: 'b', currency: 'DASH' })])).toBeNull()
+    expect(getCartCurrency([])).toBe('USD')
+  })
+
+  it('refuses an item priced in another currency than the store lines already in the cart', () => {
+    cartService.addStoreItem(product({ id: 'usd', currency: 'USD', basePrice: 725 }))
+    expect(() => cartService.addStoreItem(product({ id: 'dash', currency: 'DASH', basePrice: 1500000 }))).toThrow('priced in USD')
+    expect(cartService.getItems().map(item => item.itemId)).toEqual(['usd'])
+  })
+
+  it('keeps each store to its own currency', () => {
+    cartService.addStoreItem(product({ id: 'usd', currency: 'USD' }))
+    cartService.addStoreItem(product({ id: 'dash', storeId: 'other', currency: 'DASH' }))
+    expect(cartService.getItems()).toHaveLength(2)
   })
 })

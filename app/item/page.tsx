@@ -264,6 +264,14 @@ function ItemDetailContent() {
   }
 
   const isOutOfStock = hasInventoryTracking && currentStock === 0
+  // A paused, sold-out or deleted listing, or one in a store that is not open, cannot be bought.
+  const unavailableReason = item.status === 'sold_out'
+    ? 'This item is sold out'
+    : item.status !== 'active'
+      ? 'This item is no longer available'
+      : store && store.status !== 'active'
+        ? `This store is ${store.status === 'closed' ? 'closed' : 'paused'} and is not accepting orders`
+        : null
 
   return (
     <>
@@ -377,8 +385,10 @@ function ItemDetailContent() {
               </div>
             )}
 
+            {unavailableReason && <p role="status" className="text-sm text-red-600">{unavailableReason}</p>}
+
             {/* Quantity */}
-            {!isOutOfStock && (
+            {!isOutOfStock && !unavailableReason && (
               <div className="flex items-center gap-4">
                 <span className="text-sm font-medium">Quantity</span>
                 <QuantityControl
@@ -396,10 +406,12 @@ function ItemDetailContent() {
             <Button
               className="w-full"
               size="lg"
-              disabled={isOutOfStock || remainingStock === 0}
+              disabled={Boolean(unavailableReason) || isOutOfStock || remainingStock === 0}
               onClick={handleAddToCart}
             >
-              {addedToCart ? (
+              {unavailableReason ? (
+                'Unavailable'
+              ) : addedToCart ? (
                 <motion.span
                   initial={{ opacity: 0, scale: 0.5 }}
                   animate={{ opacity: 1, scale: 1 }}

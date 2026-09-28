@@ -12,6 +12,17 @@ import { scopedKey } from '@/lib/storage-scope';
 
 const CART_STORAGE_KEY = scopedKey('yappr_cart');
 
+/**
+ * The one currency a set of cart lines is priced in, or null when they mix
+ * currencies. Prices are integers in each currency's smallest unit, so lines in
+ * different currencies can never be summed into one subtotal.
+ */
+export function getCartCurrency(items: readonly CartItem[]): string | null {
+  const currencies = new Set(items.map(item => item.currency || 'USD'));
+  if (currencies.size > 1) return null;
+  return currencies.values().next().value ?? 'USD';
+}
+
 export interface CartItemAvailability {
   item: CartItem;
   maxQuantity: number;
@@ -169,6 +180,14 @@ class CartService {
       throw new Error(stock === 0 ? 'Out of stock' : `Only ${stock} available, including items already in your cart`);
     }
 
+    // One checkout pays one amount in one currency, so a store's cart lines must share it.
+    const currency = storeItem.currency || 'USD';
+    const storeItems = this.getItemsForStore(storeItem.storeId);
+    const storeCurrency = getCartCurrency(storeItems);
+    if (storeItems.length > 0 && storeCurrency !== currency) {
+      throw new Error(`Your cart has items from this store priced in ${storeCurrency ?? 'other currencies'}. Check out or remove them before adding one priced in ${currency}.`);
+    }
+
     const price = storeItemService.getPrice(storeItem, variantKey);
     const imageUrl = storeItem.imageUrls?.[0];
 
@@ -189,7 +208,7 @@ class CartService {
       quantity,
       unitPrice: price,
       imageUrl: variantImageUrl,
-      currency: storeItem.currency || 'USD'
+      currency
     });
   }
 
