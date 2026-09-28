@@ -220,9 +220,9 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
           logger.error('Failed to store encryption key after enabling private feed:', error)
           toast.error('Private feed enabled, but your key could not be saved. Enter it again to manage your feed.')
         }
-        // Refresh all status to ensure consistent UI state, then the sibling
-        // requests, followers and dashboard cards, which still read "disabled"
-        await checkPrivateFeedStatus()
+        // Refresh this card's status and the sibling requests, followers and
+        // dashboard cards, which still read "disabled". This card re-reads its
+        // status from the refresh key, so it is not checked again here.
         triggerRefresh()
       } else {
         setKeyError(result.error || 'Failed to enable private feed')
