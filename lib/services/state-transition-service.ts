@@ -11,7 +11,7 @@ import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT
 import { declaredActionFee, tokenCostFor, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
 import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, tokenPaymentOptions } from '../transition-agreements';
-import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isAffectedStateSnapshotError } from '../error-utils';
+import { extractErrorMessage, messageWithConsensusCode, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isAffectedStateSnapshotError } from '../error-utils';
 import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
 import { identityService } from './identity-service';
@@ -726,7 +726,7 @@ class StateTransitionService {
       logger.error('Error creating document:', error);
       return {
         success: false,
-        error: extractErrorMessage(error)
+        error: messageWithConsensusCode(error)
       };
     }
   }
@@ -797,7 +797,7 @@ class StateTransitionService {
       logger.error('Error updating document:', error);
       return {
         success: false,
-        error: extractErrorMessage(error)
+        error: messageWithConsensusCode(error)
       };
     }
   }
@@ -855,7 +855,7 @@ class StateTransitionService {
       logger.error('Error deleting document:', error);
       return {
         success: false,
-        error: extractErrorMessage(error)
+        error: messageWithConsensusCode(error)
       };
     }
   }
@@ -934,7 +934,7 @@ class StateTransitionService {
           logger.warn(`Delete-by-values of ${documentId} unproven (affected-state snapshot) — caller must read back`);
           // The next write (an unlike's beat delete) follows at once.
           try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-          return { success: false, transactionHash: documentId, confirmed: false, error: extractErrorMessage(waitErr) };
+          return { success: false, transactionHash: documentId, confirmed: false, error: messageWithConsensusCode(waitErr) };
         }
         if (!isTimeoutError(waitErr) && !isNonFatalWaitError(waitErr) && !isAlreadyExistsError(waitErr)) {
           throw waitErr;
@@ -948,7 +948,7 @@ class StateTransitionService {
       logger.error('Error deleting document by values:', error);
       return {
         success: false,
-        error: extractErrorMessage(error)
+        error: messageWithConsensusCode(error)
       };
     }
   }

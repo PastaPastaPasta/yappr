@@ -13,6 +13,7 @@ const sdk = vi.hoisted(() => ({
     clearUserWarnings: vi.fn(),
     banUser: vi.fn(),
     moderatorDeleteDocument: vi.fn(),
+    claimFees: vi.fn(),
     moderatorRestoreDocument: vi.fn(),
     moderationStatus: vi.fn(),
     moderationEntries: vi.fn(),
@@ -339,5 +340,20 @@ describe('remove then restore', () => {
     expect(await moderationService.restoreDocument(MODERATOR, 'post', 'D1')).toMatchObject({ errorCode: 'NOT_MODERATED' })
     expect(await moderationService.removeDocument(MODERATOR, 'post', 'D1', 'x')).toMatchObject({ errorCode: 'NOT_MODERATED' })
     expect(sdk.contracts.moderatorDeleteDocument).not.toHaveBeenCalled()
+  })
+})
+
+describe('claiming the moderators pot (41111 / 41112)', () => {
+  const EMPTY = 'Failed to claim fees: Protocol error: The moderators fee pot of contract 8Xv3 holds nothing that can be paid out'
+
+  it.each([
+    ['41112 by its beta.6 prose', { code: -1, message: EMPTY }, 'NOTHING_TO_CLAIM'],
+    ['41112 by its numeric code', { code: 41112, message: 'Failed to claim fees: refused' }, 'NOTHING_TO_CLAIM'],
+    ['41111 by its numeric code', { code: 41111, message: 'Failed to claim fees: refused' }, 'ALREADY_CLAIMED'],
+    ['41111 by a labelled code', { code: -1, message: 'refused, code=41111' }, 'ALREADY_CLAIMED'],
+  ])('recognises %s', async (_label, error, errorCode) => {
+    sdk.contracts.claimFees.mockRejectedValue(error)
+    const result = await moderationService.claimModeratorsPot(MODERATOR)
+    expect(result).toMatchObject({ success: false, errorCode })
   })
 })

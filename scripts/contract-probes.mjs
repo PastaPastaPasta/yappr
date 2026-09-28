@@ -3,7 +3,7 @@
  * and the negative probes that record which refusals are local and which only
  * a node makes. Used by `validate-contract-offline.mjs`.
  *
- * Measured on @dashevo/wasm-sdk 4.2.0-beta.5 (first on beta.4) with `DataContract.fromJSON(json,
+ * Measured on @dashevo/wasm-sdk 4.2.0-beta.6 (first on beta.4) with `DataContract.fromJSON(json,
  * true, latest)`: the structural parser runs (lookups, distinctFrom targets,
  * contested + moderator delete, immutable deletable lookups, serde shape of
  * the moderation declaration), but the rules behind rs-dpp's `validation`
@@ -41,6 +41,8 @@ import { fileURLToPath } from 'node:url';
 // SystemLimits (rs-platform-version system_limits/v4.rs, protocol 14).
 const LIMITS = {
   maxStateTransitionSize: 20_480,
+  // The one-day floor is mainnet's; from 4.2.0-beta.6 (#5108) any other network
+  // takes 0. Audited at the mainnet floor, so a cut that passes here passes everywhere.
   electionWindow: [86_400, 2_419_200],
   challengeCoolDown: [1_209_600, 94_608_000],
   maxAddedModerators: 15,
@@ -62,14 +64,17 @@ export const SIGNATURE_ALLOWANCE = 100;
 // ---- JSON meta-schema --------------------------------------------------------
 
 /**
- * rs-dpp's document meta-schema v3 at v4.2.0-beta.5 (beta.5 added `ttl` and
- * the anyOf/allOf/not/in/present/absent/const propertyConstraints grammar), vendored byte for byte
+ * rs-dpp's document meta-schema v3 at v4.2.0-beta.6 (beta.5 added `ttl` and
+ * the anyOf/allOf/not/in/present/absent/const propertyConstraints grammar;
+ * beta.6 added `generatedFrom`, ifThen/ifThenElse/notIn/min/max/abs,
+ * contains/startsWith/endsWith, length/byteLength/count, system times,
+ * identifier and string comparisons, and countOf/sumOf), vendored byte for byte
  * (`packages/rs-dpp/schema/meta_schemas/document/v3/document-meta.json`) and
  * pinned by hash. The wasm parse does not run it, so a keyword typo or a
  * keyword in the wrong place parses locally and is refused by the node.
  */
 const META_SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'meta-schema', 'document-meta-v3.json');
-const META_SCHEMA_SHA256 = 'a19c151a9e417a4853b9a4a978a708f6fc1f2441c6d34d670a9411f1cb15264a';
+const META_SCHEMA_SHA256 = '88083a21d9c428c87d05cbf29f6814e674df9e596b63bc960057892c7664589f';
 
 let metaValidator;
 /**
@@ -82,7 +87,7 @@ function metaSchemaValidator() {
   if (metaValidator !== undefined) return metaValidator;
   const text = readFileSync(META_SCHEMA_PATH);
   const digest = createHash('sha256').update(text).digest('hex');
-  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v4.2.0-beta.5 meta-schema (sha256 ${digest})`);
+  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v4.2.0-beta.6 meta-schema (sha256 ${digest})`);
   try {
     const require = createRequire(import.meta.url);
     const Ajv2020 = require('ajv/dist/2020').default;

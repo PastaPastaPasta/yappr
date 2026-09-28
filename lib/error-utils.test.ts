@@ -10,7 +10,12 @@ import {
   categorizeError,
   isAffectedStateSnapshotError,
   classifyModerationError,
+  consensusCodeOf,
+  messageWithConsensusCode,
   isActionFeeAgreementError,
+  isAlreadyExistsError,
+  isContestNotJoinableError,
+  isNonFatalWaitError,
   isDocumentPropertyRuleError,
   isModerationNotYetSeatedError,
   isModeratorsShareMismatchError,
@@ -32,6 +37,8 @@ import {
   contestFundNeededFromError,
   isContestFullError,
   isContestFundError,
+  isFrozenBalanceError,
+  isInsufficientTokenError,
   isContestedDocumentsNotYetAllowedError,
   isDocumentExpiredError,
   isTimeoutError,
@@ -418,5 +425,206 @@ describe('isAffectedStateSnapshotError', () => {
     expect(isTimeoutError(new Error(SNAPSHOT))).toBe(false)
     expect(isAffectedStateSnapshotError(new Error('deadline expired before operation could complete'))).toBe(false)
     expect(isAffectedStateSnapshotError(new Error('Document not found'))).toBe(false)
+  })
+})
+
+describe('4.2.0-beta.6: consensus errors reach JS with their numeric code (platform#5112)', () => {
+  /**
+   * The shape wasm-sdk 4.2.0-beta.6 throws: a `WasmSdkError` (not an `Error`
+   * subclass) whose `code` getter holds the consensus code, or -1. Its message
+   * is the Drive prose, possibly behind an operation prefix
+   * ("Failed to broadcast: Protocol error: ...", `WasmSdkError::with_context`).
+   */
+  function sdkError(code: number, message: string): { kind: number; code: number; message: string; name: string; isRetriable: boolean } {
+    return { kind: 0, code, message, name: 'Protocol', isRetriable: false }
+  }
+
+  it('reads the code from the error, a wrapped error or a cause, and nothing else', () => {
+    expect(consensusCodeOf(sdkError(10422, 'x'))).toBe(10422)
+    expect(consensusCodeOf({ error: sdkError(40132, 'x') })).toBe(40132)
+    expect(consensusCodeOf(new Error('write failed', { cause: sdkError(41107, 'x') }))).toBe(41107)
+    // -1 is "not a consensus error"; gRPC statuses and DOMException codes are small.
+    expect(consensusCodeOf(sdkError(-1, 'x'))).toBeNull()
+    expect(consensusCodeOf({ code: 14, message: 'unavailable' })).toBeNull()
+    // Node system errors carry a string code.
+    expect(consensusCodeOf({ code: 'ECONNRESET' })).toBeNull()
+    expect(consensusCodeOf(new Error('code=40128'))).toBeNull()
+    expect(consensusCodeOf('code=40128')).toBeNull()
+    expect(consensusCodeOf(null)).toBeNull()
+  })
+
+  it('survives a freed wasm error whose getter throws', () => {
+    const freed = Object.defineProperty({ message: 'x' }, 'code', { get: () => { throw new Error('null pointer passed to rust') } })
+    expect(consensusCodeOf(freed)).toBeNull()
+  })
+
+  // Each matcher, reached by the numeric code alone behind prose it does not
+  // recognise: what a future Drive rewording, or an operation prefix, looks like.
+  const OPAQUE = 'Failed to broadcast: Protocol error: consensus refusal'
+  const byCode: Array<[number, (error: unknown) => boolean]> = [
+    [10405, isInvalidDocumentIdError],
+    [41107, isBarredFromContractError],
+    [41114, isModerationBarredError],
+    [40129, isGasPayerError],
+    [40222, isGasSponsorShortError],
+    [40132, isActionFeeAgreementError],
+    [40134, isFeeMultiplierNotToleratedError],
+    [40139, isModeratorsShareMismatchError],
+    [40131, isReferencedTypeNotDeletableError],
+    [40722, isOncePerIdentityAlreadyClaimedError],
+    [10421, isPropertyMaxBytesError],
+    [10422, isDocumentPropertyRuleError],
+    [40135, isReferenceRequirementError],
+    [41200, isModerationNotYetSeatedError],
+    [40140, isDocumentExpiredError],
+    [40114, isContestFundError],
+    [40141, isContestFullError],
+    [10418, isContestedDocumentsNotYetAllowedError],
+    [40120, isReferenceNotFoundError],
+    [40127, isPropertyAgreementError],
+    [40128, isImmutablePropertyChangedError],
+    [40700, isInsufficientTokenError],
+    [40702, isFrozenBalanceError],
+  ]
+
+  it.each(byCode)('%i is recognised by its numeric code', (code, matcher) => {
+    expect(matcher(sdkError(code, OPAQUE))).toBe(true)
+    // The same prose without the code is not claimed: the number did the work.
+    expect(matcher(sdkError(-1, OPAQUE))).toBe(false)
+  })
+
+  it('classifies a moderation refusal by its numeric code', () => {
+    expect(classifyModerationError(sdkError(41116, OPAQUE))).toBe('DELETE_WINDOW_ELAPSED')
+    expect(classifyModerationError(sdkError(-1, OPAQUE))).toBeNull()
+  })
+
+  it('gives a numeric-code refusal the same message as its prose, and keeps it out of isTimeoutError', () => {
+    const expired = sdkError(40140, 'Failed to broadcast: Protocol error: document expired')
+    expect(isTimeoutError(expired)).toBe(false)
+    expect(isPermanentProtocol14Error(expired)).toBe(true)
+    expect(categorizeError(expired)).toMatch(/expired and can no longer be changed/i)
+    expect(categorizeError(sdkError(10422, OPAQUE))).toMatch(/combination of values/i)
+    expect(categorizeError(sdkError(41107, OPAQUE))).toMatch(/banned or suspended/i)
+  })
+
+  it('still matches the prose an older node renders with code -1 (testnet runs pre-beta.6 nodes)', () => {
+    const prose = 'A document of type "listing" breaks its propertyConstraints rule "minPrice <= maxPrice": 30 > 20'
+    expect(isDocumentPropertyRuleError(sdkError(-1, prose))).toBe(true)
+    expect(isDocumentPropertyRuleError(new Error(prose))).toBe(true)
+    expect(categorizeError(sdkError(-1, prose))).toMatch(/combination of values/i)
+  })
+
+  it('reads a write gate from the prose, whichever way the 40127 arrived', () => {
+    expect(isWriteGateError(sdkError(40127, WRITER_GATE))).toBe(true)
+    expect(isWriteGateError(sdkError(-1, WRITER_GATE))).toBe(true)
+    expect(isWriteGateError(sdkError(40127, VALUE_MISMATCH))).toBe(false)
+  })
+
+  it('never reads a broadcast error\'s generic 1 or 20000 as one of the consensus codes it matches', () => {
+    // 1 is ConsensusError::DefaultError and 20000 IdentityNotFoundError: neither is
+    // in any matcher's set, and 1 is below the five-digit consensus range.
+    expect(consensusCodeOf(sdkError(1, OPAQUE))).toBeNull()
+    for (const code of [1, 20000]) {
+      const error = sdkError(code, OPAQUE)
+      for (const [, matcher] of byCode) expect(matcher(error)).toBe(false)
+      expect(isPermanentProtocol14Error(error)).toBe(false)
+      expect(classifyModerationError(error)).toBeNull()
+      expect(categorizeError(error)).toBe(`Failed to create post: ${OPAQUE}`)
+    }
+  })
+
+  it('does not let one numeric code claim a neighbour', () => {
+    const banned = sdkError(41107, OPAQUE)
+    expect(isGasPayerError(banned)).toBe(false)
+    expect(isDocumentExpiredError(banned)).toBe(false)
+    expect(isImmutablePropertyChangedError(sdkError(40127, OPAQUE))).toBe(false)
+    expect(isPropertyAgreementError(sdkError(40128, OPAQUE))).toBe(false)
+  })
+})
+
+describe('every consensus code against every matcher', () => {
+  const sdkError = (code: number) => ({ code, message: 'Failed to broadcast: Protocol error: consensus refusal', name: 'Protocol', isRetriable: false })
+
+  const matchers: Record<string, (error: unknown) => boolean> = {
+    isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isAffectedStateSnapshotError,
+    isInsufficientTokenError, isFrozenBalanceError, isReferenceNotFoundError, isPropertyAgreementError,
+    isWriteGateError, isImmutablePropertyChangedError, isInvalidDocumentIdError, isModerationBarredError,
+    isBarredFromContractError, isGasPayerError, isActionFeeAgreementError, isModeratorsShareMismatchError,
+    isFeeMultiplierNotToleratedError, isGasSponsorShortError, isReferencedTypeNotDeletableError,
+    isOncePerIdentityAlreadyClaimedError, isPropertyMaxBytesError, isDocumentPropertyRuleError,
+    isReferenceRequirementError, isModerationNotYetSeatedError, isDocumentExpiredError, isContestFundError,
+    isContestNotJoinableError, isContestFullError, isTrailingBytesError, isContestedDocumentsNotYetAllowedError,
+  }
+
+  // The matchers each code may claim. The only overlaps are supersets by design:
+  // isModerationBarredError ⊃ 41107/41108, isGasPayerError ⊃ 40222,
+  // isActionFeeAgreementError ⊃ 40134/40139, isContestFundError ⊃ 40141.
+  const intended: Record<number, string[]> = {
+    10405: ['isInvalidDocumentIdError'],
+    41107: ['isBarredFromContractError', 'isModerationBarredError'],
+    41108: ['isBarredFromContractError', 'isModerationBarredError'],
+    41114: ['isModerationBarredError'],
+    40129: ['isGasPayerError'],
+    40130: ['isGasPayerError'],
+    40222: ['isGasSponsorShortError', 'isGasPayerError'],
+    40132: ['isActionFeeAgreementError'],
+    40133: ['isActionFeeAgreementError'],
+    40134: ['isFeeMultiplierNotToleratedError', 'isActionFeeAgreementError'],
+    40139: ['isModeratorsShareMismatchError', 'isActionFeeAgreementError'],
+    40131: ['isReferencedTypeNotDeletableError'],
+    40722: ['isOncePerIdentityAlreadyClaimedError'],
+    10421: ['isPropertyMaxBytesError'],
+    10419: ['isDocumentPropertyRuleError'],
+    10422: ['isDocumentPropertyRuleError'],
+    40135: ['isReferenceRequirementError'],
+    40136: ['isReferenceRequirementError'],
+    40137: ['isReferenceRequirementError'],
+    40138: ['isReferenceRequirementError'],
+    41200: ['isModerationNotYetSeatedError'],
+    40140: ['isDocumentExpiredError'],
+    40114: ['isContestFundError'],
+    40141: ['isContestFullError', 'isContestFundError'],
+    40111: ['isContestNotJoinableError'],
+    10418: ['isContestedDocumentsNotYetAllowedError'],
+    40120: ['isReferenceNotFoundError'],
+    40121: ['isReferenceNotFoundError'],
+    40122: ['isReferenceNotFoundError'],
+    40123: ['isReferenceNotFoundError'],
+    40124: ['isReferenceNotFoundError'],
+    40125: ['isReferenceNotFoundError'],
+    40127: ['isPropertyAgreementError'],
+    40128: ['isImmutablePropertyChangedError'],
+    40700: ['isInsufficientTokenError'],
+    40702: ['isFrozenBalanceError'],
+    // Matched only by private helpers or by classifyModerationError, or by nothing:
+    // key expiry, vote choice, moderation-only codes, already-present, nonce,
+    // generatedFrom, and the generic broadcast codes.
+    20016: [], 40219: [], 40307: [], 41101: [], 41111: [], 41112: [],
+    40100: [], 40204: [], 10424: [], 10002: [], 20000: [], 1: [],
+  }
+
+  it.each(Object.entries(intended))('code %s claims exactly its matchers', (code, expected) => {
+    const error = sdkError(Number(code))
+    const claimed = Object.entries(matchers).filter(([, matcher]) => matcher(error)).map(([name]) => name)
+    expect(claimed.sort()).toEqual([...expected].sort())
+  })
+
+  it('claims the same through the flattened string a write result carries', () => {
+    for (const [code, expected] of Object.entries(intended)) {
+      const flattened = new Error(messageWithConsensusCode(sdkError(Number(code))))
+      const claimed = Object.entries(matchers).filter(([, matcher]) => matcher(flattened)).map(([name]) => name)
+      // A code below the consensus range (1) is never labelled; everything else round-trips.
+      expect(claimed.sort(), `code ${code}`).toEqual([...expected].sort())
+    }
+  })
+})
+
+describe('messageWithConsensusCode', () => {
+  it('labels a numeric consensus code once, and leaves everything else as it was', () => {
+    expect(messageWithConsensusCode({ code: 40132, message: 'refused' })).toBe('refused (code=40132)')
+    expect(messageWithConsensusCode({ code: 40132, message: 'refused, code=40132' })).toBe('refused, code=40132')
+    expect(messageWithConsensusCode({ code: -1, message: 'refused' })).toBe('refused')
+    expect(messageWithConsensusCode({ code: 1, message: 'rejected' })).toBe('rejected')
+    expect(messageWithConsensusCode(new Error('plain'))).toBe('plain')
   })
 })

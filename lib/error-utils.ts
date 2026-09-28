@@ -38,10 +38,52 @@ export function extractErrorMessage(error: unknown, depth: number = 0): string {
 }
 
 /**
+ * The consensus error code an SDK error carries as a number, or null.
+ *
+ * From 4.2.0-beta.6 (platform#5112) `WasmSdkError.code` holds the consensus
+ * code (`10422`, `40132`, ...) whenever the error is a consensus error, whether
+ * Platform refused the transition or the SDK caught it before broadcast; it is
+ * `-1` otherwise. Earlier SDKs, and a message rethrown as a plain `Error`,
+ * carry only the prose, so every matcher below reads the prose first and takes
+ * this as a second route. Consensus codes are five digits; smaller numbers
+ * (gRPC statuses, DOMException codes) are never read as one.
+ */
+export function consensusCodeOf(error: unknown, depth: number = 0): number | null {
+  if (typeof error !== 'object' || error === null || depth >= MAX_ERROR_DEPTH) return null
+  const err = error as Record<string, unknown>
+  let code: unknown
+  try {
+    code = err.code
+  } catch {
+    // A wasm error whose Rust side was already freed throws from its getters.
+    code = undefined
+  }
+  if (typeof code === 'number' && Number.isInteger(code) && code >= 10000 && code < 100000) return code
+  return consensusCodeOf(err.error, depth + 1) ?? consensusCodeOf(err.cause, depth + 1)
+}
+
+/**
+ * The error's message, with its numeric consensus code appended as
+ * ` (code=<n>)` when it has one and the message does not already label it.
+ * For write paths that keep only a string (`StateTransitionResult.error`,
+ * rethrown as `new Error(result.error)`): the labelled form is what
+ * {@link hasConsensusCode} reads back, so the code survives the flattening.
+ */
+export function messageWithConsensusCode(error: unknown): string {
+  const message = extractErrorMessage(error)
+  const code = consensusCodeOf(error)
+  if (code === null || new RegExp(`\\bcode"?\\s*[=:]\\s*${code}\\b`, 'i').test(message)) return message
+  return `${message} (code=${code})`
+}
+
+/**
  * Checks if an error is a timeout error that might indicate success.
  * DAPI gateway often times out even when transactions succeed.
  */
 export function isTimeoutError(error: unknown): boolean {
+  // A consensus refusal carries its code (4.2.0-beta.6+) and is final, whatever
+  // its prose says: never "the gateway timed out, the write may have landed".
+  if (consensusCodeOf(error) !== null) return false
   // "expired" below is meant for a gateway deadline. A consensus refusal that
   // also says "expired" — a document past its time to live (40140), or an
   // identity key past its expiry — is final, and reading it as "may have
@@ -62,6 +104,11 @@ export function isTimeoutError(error: unknown): boolean {
  * the broadcast likely succeeded even though we didn't get confirmation.
  */
 export function isAlreadyExistsError(error: unknown): boolean {
+  // A numeric consensus code means Platform judged THIS transition and refused
+  // it (40100 "Document ... is already present", 40204 "nonce already present
+  // at tip"): final, not a sign that an earlier broadcast of it landed. The
+  // mempool/chain duplicates this is for come from DAPI and carry no code.
+  if (consensusCodeOf(error) !== null) return false
   const msg = extractErrorMessage(error).toLowerCase()
   return (
     msg.includes('already in mempool') ||
@@ -113,7 +160,8 @@ export function isInsufficientTokenError(error: unknown): boolean {
     // Drive phrasing: "Identity X does not have enough balance for token Y:
     // required 10, actual 0, action: Document create token payment"
     msg.includes('enough balance for token') ||
-    msg.includes('insufficient token')
+    msg.includes('insufficient token') ||
+    hasConsensusCode(error, [40700])
   )
 }
 
@@ -132,7 +180,8 @@ export function isFrozenBalanceError(error: unknown): boolean {
   return (
     msg.includes('is frozen for token') ||
     msg.includes('identitytokenaccountfrozen') ||
-    msg.includes('account frozen')
+    msg.includes('account frozen') ||
+    hasConsensusCode(error, [40702])
   )
 }
 
@@ -185,7 +234,8 @@ export function isReferenceNotFoundError(error: unknown): boolean {
     // ReferencedDocumentTypeDeletableError phrases it differently: "... a
     // permanentDocument reference at path <p> requires a document type with
     // canBeDeleted: false".
-    msg.includes('requires a document type with canbedeleted')
+    msg.includes('requires a document type with canbedeleted') ||
+    hasConsensusCode(error, [40120, 40121, 40122, 40123, 40124, 40125])
   )
 }
 
@@ -227,8 +277,11 @@ export function referencedPathFromError(error: unknown): string | null {
  * credit amount that happens to contain those five digits.
  */
 export function isPropertyAgreementError(error: unknown): boolean {
-  return /referenceddocumentpropertymismatch|does not agree with the referenced document|\b40127\b/i
-    .test(extractErrorMessage(error))
+  return (
+    /referenceddocumentpropertymismatch|does not agree with the referenced document|\b40127\b/i
+      .test(extractErrorMessage(error)) ||
+    hasConsensusCode(error, [40127])
+  )
 }
 
 /**
@@ -243,11 +296,9 @@ export function isPropertyAgreementError(error: unknown): boolean {
  * posts order status updates" and "only the buyer reviews their own order".
  */
 export function isWriteGateError(error: unknown): boolean {
-  // Extracted once and handed back to the broader predicate: a gate is a 40127
-  // that ALSO names `$ownerId` as the referring side, and `extractErrorMessage`
-  // returns a string it is given unchanged.
-  const message = extractErrorMessage(error)
-  return isPropertyAgreementError(message) && /the document's \$ownerid does not agree/i.test(message)
+  // A gate is a 40127 that ALSO names `$ownerId` as the referring side. The
+  // error itself goes to the broader predicate so its numeric code counts.
+  return isPropertyAgreementError(error) && /the document's \$ownerid does not agree/i.test(extractErrorMessage(error))
 }
 
 /**
@@ -279,17 +330,22 @@ export function isImmutablePropertyChangedError(error: unknown): boolean {
   const msg = extractErrorMessage(error).toLowerCase()
   return (
     msg.includes('documentimmutablepropertychanged') ||
-    /\bcode"?\s*[=:]\s*40128\b/.test(msg) ||
+    hasConsensusCode(error, [40128]) ||
     (msg.includes('is immutable') && msg.includes('replace'))
   )
 }
 
 /**
- * Matches a labelled consensus code (`code=41107`, `"code":41107`), never the
- * bare digits: five-digit codes occur inside timestamps and credit amounts.
+ * Whether the error carries one of `codes`: as the numeric `code` a beta.6+
+ * SDK error has ({@link consensusCodeOf}), or as a labelled code in its message
+ * (`code=41107`, `"code":41107`) — never the bare digits, since five-digit codes
+ * occur inside timestamps and credit amounts.
  */
-function hasConsensusCode(message: string, codes: readonly number[]): boolean {
-  return codes.some((code) => new RegExp(`\\bcode"?\\s*[=:]\\s*${code}\\b`).test(message))
+function hasConsensusCode(error: unknown, codes: readonly number[]): boolean {
+  const numeric = consensusCodeOf(error)
+  if (numeric !== null && codes.includes(numeric)) return true
+  const message = extractErrorMessage(error)
+  return codes.some((code) => new RegExp(`\\bcode"?\\s*[=:]\\s*${code}\\b`, 'i').test(message))
 }
 
 /**
@@ -311,7 +367,7 @@ export function isInvalidDocumentIdError(error: unknown): boolean {
   return (
     /invaliddocumenttransitionid/i.test(msg) ||
     /invalid document transition id .* expected/i.test(msg) ||
-    hasConsensusCode(msg, [10405])
+    hasConsensusCode(error, [10405])
   )
 }
 
@@ -337,7 +393,7 @@ export function isModerationBarredError(error: unknown): boolean {
     isBarredFromContractError(error) ||
     /contractmoderationcounterpartybarred/i.test(msg) ||
     /is banned or suspended on contract .* and can not be the/i.test(msg) ||
-    hasConsensusCode(msg, [41114])
+    hasConsensusCode(error, [41114])
   )
 }
 
@@ -353,7 +409,7 @@ export function isBarredFromContractError(error: unknown): boolean {
     /contractuser(banned|suspended)/i.test(msg) ||
     /is (banned|suspended) (from|on) (this|the )?contract/i.test(msg) ||
     /is (banned|suspended) on contract .* and can not act on its documents/i.test(msg) ||
-    hasConsensusCode(msg, [41107, 41108])
+    hasConsensusCode(error, [41107, 41108])
   )
 }
 
@@ -378,7 +434,7 @@ export function isGasPayerError(error: unknown): boolean {
     /asks for gas fees paid by .* but the document type only offers/i.test(msg) ||
     /the gas of a batch is paid by one identity/i.test(msg) ||
     /sponsoring the gas has balance .* is required/i.test(msg) ||
-    hasConsensusCode(msg, [40129, 40130, 40222])
+    hasConsensusCode(error, [40129, 40130, 40222])
   )
 }
 
@@ -407,7 +463,7 @@ export function isActionFeeAgreementError(error: unknown): boolean {
     /charges an action fee of .* and the transition carries no action fee agreement/i.test(msg) ||
     /charges an action fee of .* but the transition agreed to/i.test(msg) ||
     isModeratorsShareMismatchError(error) ||
-    hasConsensusCode(msg, [40132, 40133])
+    hasConsensusCode(error, [40132, 40133])
   )
 }
 
@@ -428,7 +484,7 @@ export function isModeratorsShareMismatchError(error: unknown): boolean {
   return (
     /documentactionfeemoderatorssharemismatch/i.test(msg) ||
     /declares a moderators fee of .* the transition agreed to/i.test(msg) ||
-    hasConsensusCode(msg, [40139])
+    hasConsensusCode(error, [40139])
   )
 }
 
@@ -443,7 +499,7 @@ export function isFeeMultiplierNotToleratedError(error: unknown): boolean {
   return (
     /documentactionfeemultipliernottolerated/i.test(msg) ||
     /agreed to an action fee priced with a fee multiplier/i.test(msg) ||
-    hasConsensusCode(msg, [40134])
+    hasConsensusCode(error, [40134])
   )
 }
 
@@ -459,7 +515,7 @@ export function isGasSponsorShortError(error: unknown): boolean {
   return (
     /gassponsorinsufficientbalance/i.test(msg) ||
     /sponsoring the gas has balance .* is required/i.test(msg) ||
-    hasConsensusCode(msg, [40222])
+    hasConsensusCode(error, [40222])
   )
 }
 
@@ -476,7 +532,7 @@ export function isReferencedTypeNotDeletableError(error: unknown): boolean {
   return (
     /referenceddocumenttypenotdeletable/i.test(msg) ||
     /a deletabledocument reference at path .* requires a document type whose documents can be deleted/i.test(msg) ||
-    hasConsensusCode(msg, [40131])
+    hasConsensusCode(error, [40131])
   )
 }
 
@@ -493,7 +549,7 @@ export function isOncePerIdentityAlreadyClaimedError(error: unknown): boolean {
   return (
     /tokenonceperidentitydistributionalreadyclaimed/i.test(msg) ||
     /already claimed the once-per-identity distribution/i.test(msg) ||
-    hasConsensusCode(msg, [40722])
+    hasConsensusCode(error, [40722])
   )
 }
 
@@ -509,7 +565,7 @@ export function isPropertyMaxBytesError(error: unknown): boolean {
   return (
     /documentpropertymaxbytesexceeded/i.test(msg) ||
     /bytes in utf-8, over its maxbytes of/i.test(msg) ||
-    hasConsensusCode(msg, [10421])
+    hasConsensusCode(error, [10421])
   )
 }
 
@@ -533,7 +589,7 @@ export function isDocumentPropertyRuleError(error: unknown): boolean {
     /documentpropertynotdistinct|documentpropertyconstraintviolated/i.test(msg) ||
     /must differ from .*, but the two values are equal/i.test(msg) ||
     /breaks its propertyconstraints rule/i.test(msg) ||
-    hasConsensusCode(msg, [10419, 10422])
+    hasConsensusCode(error, [10419, 10422])
   )
 }
 
@@ -543,7 +599,7 @@ function isPropertyNotDistinctError(error: unknown): boolean {
   return (
     /documentpropertynotdistinct/i.test(msg) ||
     /must differ from .*, but the two values are equal/i.test(msg) ||
-    hasConsensusCode(msg, [10419])
+    hasConsensusCode(error, [10419])
   )
 }
 
@@ -568,7 +624,7 @@ export function isReferenceRequirementError(error: unknown): boolean {
     /referenced contract .* does not meet the reference's requirement/i.test(msg) ||
     /referenced public key .* the reference requires/i.test(msg) ||
     /invalid refersto (lookup through index|listelement into inlist)/i.test(msg) ||
-    hasConsensusCode(msg, [40135, 40136, 40137, 40138])
+    hasConsensusCode(error, [40135, 40136, 40137, 40138])
   )
 }
 
@@ -583,7 +639,7 @@ function isVoteChoiceNotAllowedError(error: unknown): boolean {
   return (
     /votechoicenotallowedforvotepoll/i.test(msg) ||
     /does not allow the vote choice/i.test(msg) ||
-    hasConsensusCode(msg, [40307])
+    hasConsensusCode(error, [40307])
   )
 }
 
@@ -601,7 +657,7 @@ export function isModerationNotYetSeatedError(error: unknown): boolean {
   return (
     /contractmoderateddocumenttypenotyetusable/i.test(msg) ||
     /can not be used until a moderation team is seated/i.test(msg) ||
-    hasConsensusCode(msg, [41200])
+    hasConsensusCode(error, [41200])
   )
 }
 
@@ -619,7 +675,7 @@ export function isDocumentExpiredError(error: unknown): boolean {
   return (
     /documentexpirederror/i.test(msg) ||
     /expired at \d+, its \$createdat plus the type's time to live/i.test(msg) ||
-    hasConsensusCode(msg, [40140])
+    hasConsensusCode(error, [40140])
   )
 }
 
@@ -634,7 +690,7 @@ function isKeyExpiredError(error: unknown): boolean {
   return (
     /publickeyexpired|identitypublickeyalreadyexpired/i.test(msg) ||
     /identity public key \d+ (is )?expired at/i.test(msg) ||
-    hasConsensusCode(msg, [20016, 40219])
+    hasConsensusCode(error, [20016, 40219])
   )
 }
 
@@ -664,7 +720,7 @@ export function isContestFundError(error: unknown): boolean {
     isContestFullError(error) ||
     /documentcontestnotpaidfor/i.test(msg) ||
     /contest for document .* was not paid for, needs payment of/i.test(msg) ||
-    hasConsensusCode(msg, [40114])
+    hasConsensusCode(error, [40114])
   )
 }
 
@@ -680,7 +736,7 @@ export function isContestNotJoinableError(error: unknown): boolean {
   return (
     /documentcontestnotjoinable/i.test(msg) ||
     /document contest for vote_poll .* is not joinable/i.test(msg) ||
-    hasConsensusCode(msg, [40111])
+    hasConsensusCode(error, [40111])
   )
 }
 
@@ -690,7 +746,7 @@ export function isContestFullError(error: unknown): boolean {
   return (
     /documentcontestmaximumcontendersreached/i.test(msg) ||
     /already has \d+ contenders, the most a contest accepts/i.test(msg) ||
-    hasConsensusCode(msg, [40141])
+    hasConsensusCode(error, [40141])
   )
 }
 
@@ -732,7 +788,7 @@ export function isContestedDocumentsNotYetAllowedError(error: unknown): boolean 
   return (
     /contesteddocumentstemporarilynotallowed/i.test(msg) ||
     /contested documents are not allowed until epoch/i.test(msg) ||
-    hasConsensusCode(msg, [10418])
+    hasConsensusCode(error, [10418])
   )
 }
 
@@ -799,7 +855,7 @@ const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly n
 export function classifyModerationError(error: unknown): ModerationErrorKind | null {
   const msg = extractErrorMessage(error)
   for (const [kind, codes, prose] of MODERATION_ERRORS) {
-    if (prose.test(msg) || hasConsensusCode(msg, codes)) return kind
+    if (prose.test(msg) || hasConsensusCode(error, codes)) return kind
   }
   return null
 }
