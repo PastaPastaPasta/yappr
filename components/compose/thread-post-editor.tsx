@@ -9,7 +9,7 @@ import { FormatButton, CharacterCounter } from './compose-sub-components'
 import { MentionAutocomplete } from './mention-autocomplete'
 import { EmojiPicker } from './emoji-picker'
 
-import { CHARACTER_LIMIT } from '@/lib/compose/limits'
+import { CHARACTER_LIMIT, characterCount } from '@/lib/compose/limits'
 
 interface ThreadPostEditorProps {
   post: ThreadPost
@@ -178,7 +178,7 @@ export function ThreadPostEditor({
   }
 
   const isPosted = !!post.postedPostId
-  const effectiveLength = post.content.length + extraCharacters
+  const effectiveLength = characterCount(post.content) + extraCharacters
 
   return (
     <motion.div
