@@ -66,7 +66,8 @@ function parseArgs(argv) {
   // warning. Run it on every social cut before registering it.
   const strictSize = argv.includes('--strict-size');
   const networkIndex = argv.indexOf('--network');
-  const network = networkIndex === -1 ? 'devnet' : argv[networkIndex + 1];
+  const networkEquals = argv.find((arg) => arg.startsWith('--network='));
+  const network = networkEquals ? networkEquals.slice('--network='.length) : networkIndex === -1 ? 'devnet' : argv[networkIndex + 1];
   if (!['devnet', 'testnet', 'mainnet'].includes(network)) throw new Error(`--network must be devnet, testnet or mainnet (got "${network}")`);
   // Skip each flag's value, so `--immutable post,reply <file>` does not
   // resolve the positional to "post,reply".

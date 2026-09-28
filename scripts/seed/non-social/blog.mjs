@@ -21,14 +21,21 @@ import {
  * list of at most 64 (blog) / 16 (post) labels of 1-40 characters; v1-v3 the
  * comma-separated string. Chosen by NEXT_PUBLIC_BLOG_TOPOLOGY, like the app.
  */
-const labelsTyped = () => ['v4', 'v5'].includes(envValue('NEXT_PUBLIC_BLOG_TOPOLOGY'));
+const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5'];
+/** The target cut is \`topology\` or later (lib/constants.ts blogTopologyAtLeast; unset is v1). */
+const blogAtLeast = (topology) => BLOG_TOPOLOGIES.indexOf(envValue('NEXT_PUBLIC_BLOG_TOPOLOGY') ?? 'v1') >= BLOG_TOPOLOGIES.indexOf(topology);
+const labelsTyped = () => blogAtLeast('v4');
 /**
  * Blog v5 (4.2.0-beta.6) makes a comment copy its post's `commentsEnabled`
  * (`postCommentsEnabled`, bound by the `blogPostId` agreement, 40127 on a
  * mismatch). Every seeded post stores the flag, and only posts with it true get
  * comments, so a v5 comment always carries `true`.
  */
-const commentsCopyPostFlag = () => envValue('NEXT_PUBLIC_BLOG_TOPOLOGY') === 'v5';
+const commentsCopyPostFlag = () => blogAtLeast('v5');
+/** A seeded comment's fields; \`postCommentsEnabled\` only on v5+, and only ever \`true\` (see above). */
+const commentFields = ({ blogPostId, blogPostOwnerId, content }) => ({
+  blogPostId, blogPostOwnerId, content, ...(commentsCopyPostFlag() ? { postCommentsEnabled: true } : {}),
+});
 const labelList = (csv) => [...new Set(csv.split(',').map((label) => label.trim()).filter(Boolean))];
 const storedLabels = (csv) => (labelsTyped() ? labelList(csv) : csv);
 const TYPED_LABEL_LIMITS = { blog: 64, post: 16, length: 40 };
@@ -562,13 +569,12 @@ async function run({ args, handle, battery, socialId, contractId }) {
     // moves the ranked commentCount axis, so a resumed run must recognise its own
     // by (post, author, content) rather than write a second.
     groupTasks(plan.comments.filter((comment) => postIds.has(comment.postKey)), (comment) => comment.author, (comment) =>
-      createDoc(actors.get(comment.author), 'blogComment', `comment:${comment.key}`, {
+      createDoc(actors.get(comment.author), 'blogComment', `comment:${comment.key}`, commentFields({
         blogPostId: id32(postIds.get(comment.postKey)),
         // Must equal the post's $ownerId or consensus rejects (40127).
         blogPostOwnerId: id32(actors.get(ownerOf(comment.postKey).owner).ownerId),
         content: comment.content,
-        ...(commentsCopyPostFlag() ? { postCommentsEnabled: true } : {}),
-      }, {
+      }), {
         tokenCost: COMMENT_COST,
         adopt: resumed ? async () => {
           const written = await battery.queryDocs('blogComment', {
@@ -685,22 +691,27 @@ function selfTest(args) {
   // Uneven on purpose: "Most followed" is only worth looking at with a clear leader.
   const followerCounts = Object.values(FOLLOWERS).map((list) => list.length).sort((a, b) => b - a);
   const again = buildPlan({ seed: args.seed, only: null, publishAnchor: 1_800_000_000_000 });
-  // The label encoding follows NEXT_PUBLIC_BLOG_TOPOLOGY: prove both shapes.
+  // The label and comment encodings follow NEXT_PUBLIC_BLOG_TOPOLOGY: prove every shape.
   const labelShapes = (topology) => {
     const saved = process.env.NEXT_PUBLIC_BLOG_TOPOLOGY;
     process.env.NEXT_PUBLIC_BLOG_TOPOLOGY = topology;
     try {
       const shaped = buildPlan({ seed: args.seed, only: null, publishAnchor: 1_800_000_000_000 });
-      return [shaped.blogs[0].data.labels, shaped.posts.find((post) => post.data.labels)?.data.labels];
+      const comment = commentFields({ blogPostId: 'p', blogPostOwnerId: 'o', content: 'c' });
+      return [shaped.blogs[0].data.labels, shaped.posts.find((post) => post.data.labels)?.data.labels, comment];
     } finally {
       if (saved === undefined) delete process.env.NEXT_PUBLIC_BLOG_TOPOLOGY; else process.env.NEXT_PUBLIC_BLOG_TOPOLOGY = saved;
     }
   };
   const [v3Blog, v3Post] = labelShapes('v3');
-  const [v4Blog, v4Post] = labelShapes('v4');
+  const [v4Blog, v4Post, v4Comment] = labelShapes('v4');
+  const [v5Blog, v5Post, v5Comment] = labelShapes('v5');
   return reportSelfTest('the blog plan', [
     ['labels are comma-separated strings for blog v1–v3', typeof v3Blog === 'string' && typeof v3Post === 'string'],
     ['labels are typed lists for blog v4', Array.isArray(v4Blog) && Array.isArray(v4Post) && v4Blog.join(',') === v3Blog],
+    ['labels stay typed lists for blog v5', Array.isArray(v5Blog) && Array.isArray(v5Post) && v5Blog.join(',') === v3Blog],
+    ['a v4 comment carries no postCommentsEnabled; a v5 comment copies true', !('postCommentsEnabled' in v4Comment) && v5Comment.postCommentsEnabled === true],
+    ['every commented post stores commentsEnabled true (what a v5 comment copies)', plan.comments.every((comment) => plan.posts.find((post) => post.key === comment.postKey)?.data.commentsEnabled === true)],
     [`8 blogs / 42 posts (${plan.blogs.length}/${plan.posts.length})`, plan.blogs.length === 8 && plan.posts.length === 42],
     [`40 follows / 4 edits (${plan.follows.length}/${plan.edits.length})`, plan.follows.length === 40 && plan.edits.length === 4],
     [`73 comments (${plan.comments.length})`, plan.comments.length === 73],

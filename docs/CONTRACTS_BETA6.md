@@ -61,11 +61,11 @@ exchange, vault and auth vault are published from the testnet snapshot
 | 1 | The `report` doctype and `moderatedDocumentTypes.report = ["deleteDocuments"]` (#579) | Readers report a post or reply, and the moderators dismiss reports by deleting them. The design is in [the report type](#the-report-type) below | +1,507 |
 | 2 | `joinWindow` and `voteWindow` go from 86,400 to **3,600** | #5108 keeps the one-day floor on mainnet only, and every other network takes 0. With one hour each, a contested election re-test runs in about two hours. A window of 0 would resolve in a block or two, leaving no time to file a second applicant or cast votes. `seatContestable: false` needs no cool-down | −4 |
 | 3 | `tombstoneIsBlank` (post, reply) becomes `ifThen[deleted = 1, allOf[length(content) = 0, absent mediaUrl, absent encryptedContent]]` | The meaning is unchanged: `length` reads an absent `content` as 0, which replaces beta.5's `absent ∨ ""` pair. It saves bytes for 1 and 5 | −62 |
-| 4 | `post.quotedPostId` and `post.quotedReplyId` agree `quotedPostOwnerId ← $ownerId`. `reply.replyToReplyId` agrees `parentOwnerId ← $ownerId` | Before this, the "quotes of my posts" and "replies to me" notification keys could name anyone. Every writer already sends the target's author (below) | +146 |
+| 4 | `post.quotedPostId` and `post.quotedReplyId` agree `quotedPostOwnerId ← $ownerId`. `reply.replyToReplyId` agrees `parentOwnerId ← $ownerId` | Before this, the "quotes of my posts" and "replies to me" notification keys could name anyone. Every writer already sends the target's author (below). A **direct** reply (no `replyToReplyId`) is **not** bound: `rootPostId` has no agreement, and adding `parentOwnerId ← $ownerId` to it would refuse every nested reply, whose `parentOwnerId` is the parent reply's author rather than the root's. The client closes that gap on read: `getRepliesToMyContent` keeps a direct reply only when the root post really is the user's | +146 |
 | 5 | Countable `post.quoteDeletedCount [quotedPostId, deleted]` and `reply.rootDeletedCount [rootPostId, deleted]` | **QA D-44**: quote and reply counts include tombstones. A count with `deleted == true` gives the tombstoned bucket, so live = total − tombstoned, in one extra grouped count. The write shape does not change; the client read change is a follow-up | +179 |
-| — | Post and reply descriptions shortened to one line | Room for the above | −67 |
+| — | Post and reply descriptions shortened to one line | Room for the above | −172 |
 
-Post and reply now carry 10 of the 10 indexes a type may have.
+Post now carries 10 of the 10 indexes a type may have, and reply carries 7.
 
 ### Blog (topology `v5`)
 
@@ -186,7 +186,7 @@ countable: the queue counts the reports it has read.
 | D-25: `storeOrder.storeStatus` copy, and `storeIsOpen` | **Deferred** with D-14, for the same reason (the checkout must copy `store.status`). Storefront stays byte-identical |
 | `storeOrder.sellerId distinctFrom $ownerId` (no self-orders) | Rejected: verify-storefront s19a deliberately self-orders to prove the review `distinctFrom` |
 | `countOf` caps (one store per owner, ballots per poll, posts per owner) | One store per owner is already the unique `store.owner` index, and `countOf` refuses a unique index anyway. Ballots are indexOnly, which `countOf` cannot count. `post.byOwner` is ranked, which `countOf` refuses. No product limit calls for a new countable index |
-| Tombstone counts for `quotedReplyId` and `replyToReplyId` | They do not fit: post and reply are at 10/10 indexes |
+| Tombstone counts for `quotedReplyId` and `replyToReplyId` | `quotedReplyId` does not fit, because post is at 10/10 indexes. `replyToReplyId` would fit on reply (7 indexes, +93 B), and is prepared as a candidate for the next JSON bundle |
 | DM `bodyContiguous` | Keep DM unchanged (decided): no TTL and no re-cut |
 
 ### Other beta.6 changes, checked

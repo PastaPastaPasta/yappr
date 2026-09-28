@@ -310,8 +310,10 @@ async function caseB20CommentsOff(ctx) {
     await comment('b20b a comment leaving the flag out of a post that stores true is refused (40127)', PROPERTY_MISMATCH, on.id, undefined);
   }
   if (off.ok) {
-    // The honest copy of `false` passes the agreement and breaks the rule; lying
-    // about it (true, or leaving it out) breaks the agreement first.
+    // The document's own rules (10422) run before the reference checks (40127).
+    // The honest copy of `false` breaks \`commentsOpen\`; lying about it (true, or
+    // leaving it out, which the rule reads as on) passes the rule and then
+    // breaks the agreement.
     await comment('b20c a comment on a comments-off post is refused (10422 commentsOpen)', constraintViolation('commentsOpen'), off.id, false);
     await comment('b20d claiming comments are on for a comments-off post is refused (40127)', PROPERTY_MISMATCH, off.id, true);
     await comment('b20e leaving the flag out on a comments-off post is refused (40127)', PROPERTY_MISMATCH, off.id, undefined);

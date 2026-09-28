@@ -1,8 +1,9 @@
 /**
  * Registration-day battery for **contract v9**
- * (`contracts/yappr-social-contract-v9.json`, docs/SOCIAL_V9.md): the
- * 4.2.0-beta.4 grammar Yappr adopted, exercised against a freshly registered
- * contract on a beta.4 devnet. The machinery is verify-lib; the v8 write path
+ * (`contracts/yappr-social-contract-v9.json`, docs/SOCIAL_V9.md and
+ * docs/CONTRACTS_BETA6.md): the protocol-14 grammar Yappr adopted, as re-cut
+ * for 4.2.0-beta.6, exercised against a freshly registered contract on a
+ * beta.6 devnet. The machinery is verify-lib; the v8 write path
  * (manual batches carrying `$actionFeeAgreement`) is social-battery-lib. v9
  * keeps v8's fees, costs and grant byte for byte, so `verify-v8.mjs` runs
  * against a v9 contract unchanged for those; this file is the v9 deltas only.
