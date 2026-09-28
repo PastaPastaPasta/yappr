@@ -195,17 +195,23 @@ export function mergeComments<T extends { id: string; createdAt: Date }>(loaded:
  * post-submit refresh starts), so only the latest read may apply: an older one
  * would retire a created comment and then drop it with its pre-write list.
  * A created comment is retired once a current read returns it; from then on
- * the network owns it (a moderator's removal then shows).
+ * the network owns it (a moderator's removal then shows). A comment deleted
+ * here stays hidden: a read begun before the delete, or answered by a node
+ * that has not applied it, would otherwise bring it back.
  */
 export function createCommentReads<T extends { id: string; createdAt: Date; blogPostId: string }>() {
   let generation = 0
   let created: T[] = []
+  const deleted = new Set<string>()
   return {
     /** Starts a read, superseding any still in flight; returns its token. */
     begin: () => ++generation,
     isCurrent: (token: number) => token === generation,
     added: (comment: T) => { created = [...created, comment] },
-    removed: (id: string) => { created = created.filter((comment) => comment.id !== id) },
+    removed: (id: string) => {
+      created = created.filter((comment) => comment.id !== id)
+      deleted.add(id)
+    },
     /**
      * The list to show once a read returns (`returned` is everything it read,
      * `shown` what survives filtering), or null when a newer read superseded it.
@@ -214,7 +220,10 @@ export function createCommentReads<T extends { id: string; createdAt: Date; blog
       if (token !== generation) return null
       const ids = new Set(returned.map((comment) => comment.id))
       created = created.filter((comment) => !ids.has(comment.id))
-      return mergeComments(shown, created.filter((comment) => comment.blogPostId === postId))
+      return mergeComments(
+        shown.filter((comment) => !deleted.has(comment.id)),
+        created.filter((comment) => comment.blogPostId === postId)
+      )
     },
   }
 }

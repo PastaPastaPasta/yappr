@@ -136,6 +136,17 @@ describe('just-created comments survive a lagging reload (QA D-28)', () => {
     expect(ids(reads.settle(removed, 'post', [], []))).toEqual([])
   })
 
+  it('does not let a read begun before a delete restore the deleted comment', () => {
+    const reads = createCommentReads<ReturnType<typeof onPost>>()
+    reads.added(onPost(mine))
+    const refresh = reads.begin()
+    reads.removed('mine')
+    const beforeDelete = [onPost(older), onPost(mine)]
+    expect(ids(reads.settle(refresh, 'post', beforeDelete, beforeDelete))).toEqual(['a'])
+    const lagging = reads.begin()
+    expect(ids(reads.settle(lagging, 'post', beforeDelete, beforeDelete))).toEqual(['a'])
+  })
+
   it('does not show a comment created on another post', () => {
     const reads = createCommentReads<ReturnType<typeof onPost>>()
     reads.added({ ...onPost(mine), blogPostId: 'other' })
