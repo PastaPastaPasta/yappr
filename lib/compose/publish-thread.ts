@@ -127,7 +127,13 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
 
     let encryption: EncryptionOptions | undefined
     if (isThisReplyInherited && inheritedEncryption) {
-      encryption = { type: 'inherited', source: { ownerId: inheritedEncryption.ownerId, epoch: inheritedEncryption.epoch } }
+      // The feed owner replying in their own thread may need to sync first.
+      const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+      encryption = {
+        type: 'inherited',
+        source: { ownerId: inheritedEncryption.ownerId, epoch: inheritedEncryption.epoch },
+        encryptionPrivateKey: authorId === inheritedEncryption.ownerId ? getEncryptionKeyBytes(authorId) ?? undefined : undefined,
+      }
     } else if (isThisPostPrivate) {
       const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
       encryption = {

@@ -1298,17 +1298,30 @@ export async function prepareOwnerEncryption(
  * Prepare inherited encryption for a reply to a private post (PRD §5.5)
  *
  * When replying to a private post, the reply inherits encryption from the
- * root private post in the thread. This ensures anyone who can read the
- * parent can also read the reply.
+ * root private post in the thread: it is encrypted to the same FEED, so the
+ * feed's followers can read it. It is encrypted at the feed's CURRENT epoch,
+ * not the root's (SPEC §16.3): a follower revoked after the root was posted
+ * holds the root's epoch key, and must not be able to read replies written
+ * after the revocation. Readers derive each reply's own epoch key.
  *
  * @param content - The plaintext content to encrypt
- * @param source - The encryption source (feed owner ID and epoch)
+ * @param source - The encryption source (feed owner ID and the root post's epoch)
+ * @param authorId - The identity writing the reply
+ * @param encryptionPrivateKey - Optional: the feed owner's key for automatic sync
  * @returns PrepareEncryptionResult with encrypted data or error
  */
 export async function prepareInheritedEncryption(
   content: string,
-  source: { ownerId: string; epoch: number }
+  source: { ownerId: string; epoch: number },
+  authorId: string,
+  encryptionPrivateKey?: Uint8Array
 ): Promise<PrepareEncryptionResult> {
+  // The feed owner replying in their own thread encrypts exactly like a new
+  // private post, including the multi-device sync check (SPEC §8.2).
+  if (authorId === source.ownerId) {
+    return prepareOwnerEncryption(source.ownerId, content, undefined, encryptionPrivateKey);
+  }
+
   try {
     // 1. Validate plaintext size
     const plaintextBytes = utf8Encode(content);
@@ -1319,40 +1332,46 @@ export async function prepareInheritedEncryption(
       };
     }
 
-    // 2. Get the CEK from the cached follower keys for this feed owner
-    const cached = privateFeedKeyStore.getCachedCEK(source.ownerId);
-    if (!cached) {
+    // 2. A follower must hold keys for this feed at all
+    if (!privateFeedKeyStore.getCachedCEK(source.ownerId)) {
       return {
         success: false,
         error: 'Cannot encrypt reply: no access to private feed encryption keys',
       };
     }
 
-    // 3. Derive CEK for the specified epoch
-    let cek: Uint8Array;
-    if (cached.epoch === source.epoch) {
-      cek = cached.cek;
-    } else if (cached.epoch > source.epoch) {
-      cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, source.epoch);
-    } else {
+    // 3. Apply any rekeys since the last sync, so the reply uses the feed's
+    // current epoch. A revoked follower cannot apply them and cannot reply.
+    const { privateFeedFollowerService } = await import('./private-feed-follower-service');
+    const catchUp = await privateFeedFollowerService.catchUp(source.ownerId, authorId);
+    if (!catchUp.success) {
+      return {
+        success: false,
+        error: `Cannot encrypt reply: ${catchUp.error || 'could not sync private feed keys'}`,
+      };
+    }
+
+    const cached = privateFeedKeyStore.getCachedCEK(source.ownerId);
+    if (!cached || cached.epoch < source.epoch) {
       return {
         success: false,
         error: 'Cannot encrypt reply: encryption key state is out of date',
       };
     }
 
-    // 4. Encrypt content using the feed owner's ID as AAD
+    // 4. Encrypt content at the current epoch, using the feed owner's ID as AAD
     const ownerIdBytes = identifierToBytes(source.ownerId);
     const encrypted = privateFeedCryptoService.encryptPostContent(
-      cek,
+      cached.cek,
       content,
       ownerIdBytes,
-      source.epoch
+      cached.epoch
     );
 
     logger.debug('Prepared inherited encryption:', {
       feedOwnerId: source.ownerId,
-      epoch: source.epoch,
+      rootEpoch: source.epoch,
+      epoch: cached.epoch,
       encryptedContentLength: encrypted.ciphertext.length,
     });
 
@@ -1360,7 +1379,7 @@ export async function prepareInheritedEncryption(
       success: true,
       data: {
         encryptedContent: encrypted.ciphertext,
-        epoch: source.epoch,
+        epoch: cached.epoch,
         nonce: encrypted.nonce,
       },
     };

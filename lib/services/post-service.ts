@@ -23,7 +23,7 @@ export interface EncryptionOptions {
   type: 'owner' | 'inherited';
   /** Optional public teaser content (only for 'owner' type) */
   teaser?: string;
-  /** Owner's encryption private key for automatic sync/recovery (only for 'owner' type) */
+  /** Feed owner's encryption private key for automatic sync/recovery (own posts, and the owner's replies in their own threads) */
   encryptionPrivateKey?: Uint8Array;
   /** Encryption source for inherited encryption (only for 'inherited' type) */
   source?: { ownerId: string; epoch: number };
@@ -400,7 +400,9 @@ class PostService extends BaseDocumentService<Post> {
       } else if (options.encryption.type === 'inherited' && options.encryption.source) {
         encryptionResult = await prepareInheritedEncryption(
           content,
-          options.encryption.source
+          options.encryption.source,
+          ownerId,
+          options.encryption.encryptionPrivateKey
         );
       } else {
         throw new Error('Invalid encryption options: inherited type requires source');
