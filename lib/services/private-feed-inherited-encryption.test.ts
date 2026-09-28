@@ -8,8 +8,9 @@ vi.mock('./identity-service', () => ({ identityService: {} }));
 vi.mock('./private-feed-follower-service', () => ({ privateFeedFollowerService: follower }));
 vi.mock('@/lib/secure-storage', () => secrets);
 import { prepareInheritedEncryption, privateFeedService } from './private-feed-service';
+import { getEvoSdk } from './evo-sdk-service';
 import { privateFeedKeyStore } from './private-feed-key-store';
-import { privateFeedCryptoService } from './private-feed-crypto-service';
+import { privateFeedCryptoService, PROTOCOL_VERSION } from './private-feed-crypto-service';
 import { identifierToBytes } from './sdk-helpers';
 
 const ownerId = '9NFhqxW8upkFMVTE5h5VmYWLdSEJ26B2iMKdhCFgsWkd';
@@ -122,5 +123,44 @@ describe('inherited reply encryption epoch (QA D-04)', () => {
     expect(follower.catchUp).not.toHaveBeenCalled();
     expect(readAs(3, chain[3], result.data)).toBe('owner reply');
     expect(() => readAs(2, chain[2], result.data)).toThrow();
+  });
+});
+
+describe('owner reply epoch checks fail closed (QA D-04)', () => {
+  const feedSeed = new Uint8Array(32).fill(9);
+  const ownerKey = new Uint8Array(32).fill(7);
+
+  beforeEach(() => {
+    // This device last synced at epoch 1; another device has since revoked a follower.
+    privateFeedKeyStore.storeFeedSeed(feedSeed);
+    privateFeedKeyStore.storeCurrentEpoch(1);
+    privateFeedKeyStore.storeCachedCEK(ownerId, 1, chain[1]);
+    vi.mocked(getEvoSdk).mockRejectedValue(new Error('DAPI unreachable'));
+  });
+
+  it('refuses the reply when the latest epoch cannot be read', async () => {
+    const result = await prepareInheritedEncryption('owner reply', { ownerId, epoch: 1 }, ownerId, ownerKey);
+    expect(result.success).toBe(false);
+    expect(result.success === false && result.error).toMatch(/current encryption epoch/);
+  });
+
+  it('refuses the reply when recovery cannot read the rekeys that moved the epoch', async () => {
+    vi.spyOn(privateFeedService, 'getLatestEpoch').mockResolvedValue(2);
+    vi.spyOn(privateFeedService, 'getPrivateFeedState').mockResolvedValue({
+      $id: 'state', $ownerId: ownerId, $createdAt: 1, treeCapacity: 1024, maxEpoch: 2000, encryptedSeed: new Uint8Array(),
+    });
+    vi.spyOn(privateFeedCryptoService, 'eciesDecrypt').mockResolvedValue(new Uint8Array([PROTOCOL_VERSION, ...feedSeed]));
+
+    const result = await prepareInheritedEncryption('owner reply', { ownerId, epoch: 1 }, ownerId, ownerKey);
+    expect(result.success).toBe(false);
+    expect(privateFeedKeyStore.getCurrentEpoch()).toBe(1);
+  });
+
+  it('refuses the reply when recovery reports success short of the chain epoch', async () => {
+    vi.spyOn(privateFeedService, 'getLatestEpoch').mockResolvedValue(2);
+    vi.spyOn(privateFeedService, 'recoverOwnerState').mockResolvedValue({ success: true });
+
+    const result = await prepareInheritedEncryption('owner reply', { ownerId, epoch: 1 }, ownerId, ownerKey);
+    expect(result.success === false && result.error).toMatch(/current encryption epoch/);
   });
 });

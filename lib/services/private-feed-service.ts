@@ -153,9 +153,11 @@ class PrivateFeedService {
 
   /**
    * Get the latest epoch for an owner by checking rekey documents
-   * Returns 1 if no rekey documents exist
+   * Returns 1 if no rekey documents exist, and also on a failed read unless
+   * `throwOnError` is set: anything that encrypts must not mistake a failed
+   * read for "no revocations yet".
    */
-  async getLatestEpoch(ownerId: string): Promise<number> {
+  async getLatestEpoch(ownerId: string, options: { throwOnError?: boolean } = {}): Promise<number> {
     try {
       const sdk = await getEvoSdk();
 
@@ -175,6 +177,7 @@ class PrivateFeedService {
       return documents[0].epoch as number;
     } catch (error) {
       logger.error('Error fetching latest epoch:', error);
+      if (options.throwOnError) throw error;
       return 1;
     }
   }
@@ -182,7 +185,10 @@ class PrivateFeedService {
   /**
    * Get all rekey documents for an owner, ordered by epoch
    */
-  async getRekeyDocuments(ownerId: string): Promise<PrivateFeedRekeyDocument[]> {
+  async getRekeyDocuments(
+    ownerId: string,
+    options: { throwOnError?: boolean } = {}
+  ): Promise<PrivateFeedRekeyDocument[]> {
     try {
       const sdk = await getEvoSdk();
 
@@ -211,6 +217,7 @@ class PrivateFeedService {
       return documents;
     } catch (error) {
       logger.error('Error fetching rekey documents:', error);
+      if (options.throwOnError) throw error;
       return [];
     }
   }
@@ -1018,8 +1025,9 @@ class PrivateFeedService {
         return { success: false, error: `Invalid feed seed length: ${feedSeed.length}` };
       }
 
-      // 4. Fetch ALL PrivateFeedRekey documents (ordered by epoch)
-      const rekeyDocs = await this.getRekeyDocuments(ownerId);
+      // 4. Fetch ALL PrivateFeedRekey documents (ordered by epoch). A failed
+      // read must fail recovery: an empty list would roll the epoch back to 1.
+      const rekeyDocs = await this.getRekeyDocuments(ownerId, { throwOnError: true });
       logger.debug(`Found ${rekeyDocs.length} rekey documents`);
 
       // 5. Build revokedLeaves list from rekey docs (in epoch order)
@@ -1169,6 +1177,9 @@ export type PrepareEncryptionResult =
 // Max plaintext size per SPEC §7.5.1 (999 bytes to leave room for version prefix)
 const EXPORTED_MAX_PLAINTEXT_SIZE = 999;
 
+const EPOCH_UNVERIFIED_ERROR =
+  'Could not confirm your private feed\'s current encryption epoch, so nothing was posted. Check your connection and try again.';
+
 /**
  * Prepare owner encryption for a private post (SPEC §8.2)
  *
@@ -1208,8 +1219,15 @@ export async function prepareOwnerEncryption(
       }
     }
 
-    // 1. SYNC CHECK (SPEC §8.2 step 1)
-    const chainEpoch = await privateFeedService.getLatestEpoch(ownerId);
+    // 1. SYNC CHECK (SPEC §8.2 step 1). Fail closed: if the chain epoch cannot
+    // be read, a revocation made on another device may be missing locally, and
+    // encrypting at the stale epoch would let the revoked follower read this.
+    let chainEpoch: number;
+    try {
+      chainEpoch = await privateFeedService.getLatestEpoch(ownerId, { throwOnError: true });
+    } catch {
+      return { success: false, error: EPOCH_UNVERIFIED_ERROR };
+    }
     const localEpoch = privateFeedKeyStore.getCurrentEpoch();
 
     if (chainEpoch > localEpoch) {
@@ -1219,6 +1237,9 @@ export async function prepareOwnerEncryption(
         const recoveryResult = await privateFeedService.recoverOwnerState(ownerId, encryptionPrivateKey);
         if (!recoveryResult.success) {
           return { success: false, error: `Sync failed: ${recoveryResult.error}` };
+        }
+        if (privateFeedKeyStore.getCurrentEpoch() < chainEpoch) {
+          return { success: false, error: EPOCH_UNVERIFIED_ERROR };
         }
         logger.debug('Automatic recovery completed, continuing with encryption');
       } else {
