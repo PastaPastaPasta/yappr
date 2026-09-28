@@ -249,10 +249,13 @@ class DirectMessageService {
       where: [['conversationId', '==', bytesToBase64QueryOperand(bs58.decode(conversationId))], ['$createdAt', '>', 0]] as DocumentWhereClause[],
       orderBy: [['$createdAt', 'desc']] as Array<['$createdAt', 'desc']>, limit: messageLimit,
     }))
+    // Receipts are keyed by conversation, so their order is free: walk them in
+    // the message pages' (descending) direction, which a composite sibling
+    // must share with its page or the node refuses the whole bundle.
     const receiptQueries = chunk(conversationIds, 100).map(ids => ({
       dataContractId: this.contractId, documentTypeName: 'readReceipt',
       where: [['$ownerId', '==', userId], ['conversationId', 'in', ids.map(id => bytesToBase64QueryOperand(bs58.decode(id)))]] as DocumentWhereClause[],
-      orderBy: [['conversationId', 'asc']] as Array<['conversationId', 'asc']>, limit: ids.length,
+      orderBy: [['conversationId', 'desc']] as Array<['conversationId', 'desc']>, limit: ids.length,
     }))
     const pages = await queryDocumentBundle([...messageQueries, ...receiptQueries], tolerateFailures)
     return {

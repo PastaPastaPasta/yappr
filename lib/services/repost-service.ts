@@ -267,7 +267,7 @@ class RepostService {
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
         where: [['postOwnerId', '==', userId], ['$createdAt', '>', sinceTimestamp]],
-        orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'asc']],
+        orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'desc']],
         limit: 100,
       });
       const out: RepostDocument[] = [];

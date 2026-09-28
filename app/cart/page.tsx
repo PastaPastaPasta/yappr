@@ -111,6 +111,7 @@ export default function CartPage() {
           <PageHeader>
             <div className="flex items-center gap-4 p-4">
               <button
+                aria-label="Back"
                 onClick={() => router.back()}
                 className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
               >

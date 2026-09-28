@@ -375,6 +375,7 @@ function StoreDetailContent() {
             <div className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div className="flex min-w-0 basis-full items-center gap-4 sm:basis-auto sm:flex-1">
                 <button
+                  aria-label="Back"
                   onClick={() => router.back()}
                   className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
                 >

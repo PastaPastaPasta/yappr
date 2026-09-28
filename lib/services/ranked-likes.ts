@@ -161,7 +161,8 @@ async function rankedGroupCounts(
   documentTypeName: string,
   groupBy: string,
   limit: number,
-  window: RankingWindow = 'all'
+  window: RankingWindow = 'all',
+  throwOnError = false
 ): Promise<RankedGroupCount[]> {
   if (window === 'today' && !windowedRankingsAvailable()) return [];
   try {
@@ -185,6 +186,7 @@ async function rankedGroupCounts(
       .filter((entry) => entry.key !== '');
   } catch (error) {
     if (window === 'today' && isColdBucketError(error)) return [];
+    if (throwOnError) throw error;
     logger.error(`rankedGroupCounts(${documentTypeName}.${groupBy}): ranked query failed:`, error);
     return [];
   }
@@ -198,7 +200,8 @@ async function rankedGroupCounts(
  */
 export async function topHashtagsByLikes(limit: number = 12, window: RankingWindow = 'all'): Promise<RankedGroupCount[]> {
   // Today's trending rides the tagged-only `beat` doctype (see topLikedPosts).
-  return rankedGroupCounts(window === 'today' ? 'beat' : 'like', 'hashtag', limit, window);
+  // A failed read rejects, so the trending cache never holds it as "no tags".
+  return rankedGroupCounts(window === 'today' ? 'beat' : 'like', 'hashtag', limit, window, true);
 }
 
 /**

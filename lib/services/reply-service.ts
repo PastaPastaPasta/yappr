@@ -356,7 +356,7 @@ class ReplyService extends BaseDocumentService<Reply> {
           ['parentOwnerId', '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
-        orderBy: [['parentOwnerId', 'asc'], ['$createdAt', 'asc']],
+        orderBy: [['parentOwnerId', 'asc'], ['$createdAt', 'desc']],
         limit: 100
       });
 

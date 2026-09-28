@@ -390,6 +390,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
                 <div className="flex items-center gap-3">
                   {!isOwnProfile && (
                     <button
+                      aria-label="Back"
                       onClick={() => router.back()}
                       className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
                     >

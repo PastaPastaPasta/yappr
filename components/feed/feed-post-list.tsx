@@ -62,6 +62,9 @@ export function FeedPostList({
     resetKey: activeTab,
   });
   const hasVisiblePosts = Boolean(visiblePosts && visiblePosts.length > 0);
+  // A first load that failed leaves `posts` null: that is an error to show
+  // with its retry, not a load still in progress.
+  const awaitingFirstPage = posts === null && !error;
 
   return (
     <ErrorBoundary level="component">
@@ -75,7 +78,7 @@ export function FeedPostList({
       )}
 
       <LoadingState
-        loading={(isLoading || posts === null) && !hasVisiblePosts}
+        loading={(isLoading || awaitingFirstPage) && !hasVisiblePosts}
         error={hasVisiblePosts ? null : error}
         isEmpty={!isLoading && visiblePosts !== null && visiblePosts.length === 0}
         onRetry={onRetry}

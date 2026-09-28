@@ -348,6 +348,7 @@ function EngagementsPageContent() {
             <div className="px-4 py-3">
               <div className="flex items-center gap-3">
                 <button
+                  aria-label="Back"
                   onClick={() => router.back()}
                   className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
                 >

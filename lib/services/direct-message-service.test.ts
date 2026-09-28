@@ -62,6 +62,9 @@ describe('conversation query bundles', () => {
       ['$ownerId', '==', viewer],
       ['conversationId', 'in', conversationBytes.map(bytes => Buffer.from(bytes).toString('base64'))],
     ]);
+    // A composite sibling must walk in its page's direction, or the node
+    // refuses the bundle and every page is re-read one query at a time.
+    expect(pages.map(page => page.orderBy[0][1])).toEqual(['desc', 'desc', 'desc']);
     expect(mocks.identity).not.toHaveBeenCalled();
   });
 

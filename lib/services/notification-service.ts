@@ -97,7 +97,7 @@ class NotificationService {
           ['followingId', '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
-        orderBy: [['followingId', 'asc'], ['$createdAt', 'asc']],
+        orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']],
         limit: NOTIFICATION_QUERY_LIMIT
       });
 
@@ -138,7 +138,7 @@ class NotificationService {
           ['targetId', '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
-        orderBy: [['targetId', 'asc'], ['$createdAt', 'asc']],
+        orderBy: [['targetId', 'asc'], ['$createdAt', 'desc']],
         limit: NOTIFICATION_QUERY_LIMIT
       });
 
@@ -265,7 +265,7 @@ class NotificationService {
           ['mentionedUserId', '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
-        orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']],
+        orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']],
         limit: NOTIFICATION_QUERY_LIMIT
       });
 
@@ -662,11 +662,15 @@ class NotificationService {
       ...kinds.map(kind => { const index = likeIndexFor(kind); if (!index.ownerField) throw new Error('Notification index has no author field'); return [index.docType, index.ownerField]; }),
       ['repost', 'postOwnerId'], ['reply', 'parentOwnerId'],
     ];
+    // Newest first: a source with more than a page of events since the
+    // watermark keeps its most recent ones. Oldest first returned the stale
+    // end of the window, and the watermark (the newest event of ANY source)
+    // then skipped everything the truncated source had not reached.
     const [documents, blogPosts, blogComments] = await Promise.all([
       queryDocumentBundle(sources.map(([documentTypeName, ownerField]) => ({
         dataContractId: YAPPR_CONTRACT_ID, documentTypeName,
         where: [[ownerField, '==', userId], ['$createdAt', '>', sinceTimestamp]],
-        orderBy: [[ownerField, 'asc'], ['$createdAt', 'asc']], limit: NOTIFICATION_QUERY_LIMIT,
+        orderBy: [[ownerField, 'asc'], ['$createdAt', 'desc']], limit: NOTIFICATION_QUERY_LIMIT,
       })), true),
       this.getBlogPostNotifications(userId, sinceTimestamp),
       this.getBlogCommentNotifications(userId, sinceTimestamp),

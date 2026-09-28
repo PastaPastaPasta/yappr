@@ -753,6 +753,7 @@ function CheckoutPage() {
           <PageHeader>
             <div className="flex items-center gap-4 p-4">
               <button
+                aria-label="Back"
                 onClick={() => {
                   switch (step) {
                     case 'details':
