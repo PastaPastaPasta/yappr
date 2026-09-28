@@ -86,6 +86,20 @@ export function isNonFatalWaitError(error: unknown): boolean {
 }
 
 /**
+ * Checks if an error is the SDK refusing an affected-state proof on a strict
+ * wait: "received a verified VerifiedDocuments snapshot for this transition
+ * family; use the *_affected_state wait APIs…" (evo-sdk 4.2.0-beta.5). It is
+ * thrown AFTER the node answered with a verified snapshot, and the indexOnly
+ * deletes that raise it (`documents.delete` has no affected-state variant)
+ * usually landed — but a snapshot is not proof that this transition executed,
+ * so it means "outcome unproven": the caller must read the state back.
+ */
+export function isAffectedStateSnapshotError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  return msg.includes('affected_state wait api') || /verified \w+ snapshot/.test(msg)
+}
+
+/**
  * Checks if an error indicates the signer lacks enough YAPP tokens to pay a
  * document's tokenCost (post/reply/like/repost). When true, the UI should
  * prompt the user to buy YAPP rather than show a generic failure.

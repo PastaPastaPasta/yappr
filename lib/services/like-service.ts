@@ -380,7 +380,11 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     return false;
   }
 
-  /** Poll for liked-state ABSENCE — the delete-side twin of waitForLikeVisible. */
+  /**
+   * Poll for liked-state ABSENCE — the delete-side twin of waitForLikeVisible.
+   * Only a successful empty read counts: a failed read proves nothing, and a
+   * "gone" answer authorises deleting the beat companion.
+   */
   private async waitForLikeGone(
     targetId: string,
     ownerId: string,
@@ -388,7 +392,11 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     { attempts = 3, intervalMs = 2_500 }: { attempts?: number; intervalMs?: number } = {}
   ): Promise<boolean> {
     for (let attempt = 0; attempt < attempts; attempt++) {
-      if (!(await this.getLike(targetId, ownerId, kind))) return true;
+      try {
+        if (!(await this.queryLike(targetId, ownerId, kind))) return true;
+      } catch (error) {
+        logger.warn('like readback failed:', error);
+      }
       if (attempt < attempts - 1) {
         await new Promise((resolve) => setTimeout(resolve, intervalMs));
       }
@@ -436,59 +444,54 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       return false;
     }
 
-    const result = await stateTransitionService.deleteDocumentByValues(
+    const deleteLike = (t: LikeTuple) => stateTransitionService.deleteDocumentByValues(
       this.contractId,
       likeIndexFor(kind).docType,
       ownerId,
       {
-        documentId: tuple.documentId,
-        createdAtMs: tuple.createdAt,
+        documentId: t.documentId,
+        createdAtMs: t.createdAt,
         data: this.indexOnlyLikeData(targetId, shape, kind, info),
       }
     );
 
-    // v9: remove the beat companion too, so today's trending stops counting
-    // the withdrawn like. Its tuple is recovered from `beat.byPost` (postId →
-    // $ownerId terminal). Best effort after a successful unlike: a stale beat
-    // only over-counts one tag for the rest of the UTC day.
-    if (result.success && beatCompanionFor(kind, info.hashtag)) {
-      this.removeBeatCompanion(targetId, ownerId, info.hashtag ?? '').catch((error) => {
-        logger.warn('Unlike landed but the beat companion could not be removed:', error);
-      });
-    }
-
-    if (result.success) {
-      this.likeTupleCache.delete(cacheKey);
-      return true;
-    }
-    // The chain, not the SDK's throw, decides: indexOnly waits can fail after a
-    // broadcast that landed (same quirk as creates). If the like is gone now,
-    // the delete succeeded.
-    if (await this.waitForLikeGone(targetId, ownerId, kind)) {
-      this.likeTupleCache.delete(cacheKey);
-      logger.warn('Unlike reported failure but the like is gone from the chain — treating as success');
-      return true;
-    }
+    // The chain, not the SDK's throw, decides: an indexOnly delete is answered
+    // with an affected-state snapshot the SDK's strict wait refuses, usually
+    // after it landed (same quirk as creates). If the like is gone now, the
+    // delete succeeded.
+    let result = await deleteLike(tuple);
+    let gone = result.success || await this.waitForLikeGone(targetId, ownerId, kind);
     // A stale cached tuple (e.g. re-like from another device changed $createdAt)
     // fails the delete; retry once with a fresh recovery.
-    if (this.likeTupleCache.has(cacheKey)) {
+    if (!gone && this.likeTupleCache.has(cacheKey)) {
       this.likeTupleCache.delete(cacheKey);
       const fresh = await this.recoverLikeTuple(targetId, ownerId, info.author, kind, shape);
       if (fresh && (fresh.createdAt !== tuple.createdAt || fresh.documentId !== tuple.documentId)) {
-        const retry = await stateTransitionService.deleteDocumentByValues(
-          this.contractId,
-          likeIndexFor(kind).docType,
-          ownerId,
-          {
-            documentId: fresh.documentId,
-            createdAtMs: fresh.createdAt,
-            data: this.indexOnlyLikeData(targetId, shape, kind, info),
-          }
-        );
-        return retry.success;
+        result = await deleteLike(fresh);
+        gone = result.success || await this.waitForLikeGone(targetId, ownerId, kind);
       }
     }
-    return false;
+    if (!gone) return false;
+    this.likeTupleCache.delete(cacheKey);
+    if (!result.success) {
+      logger.warn('Unlike reported failure but the like is gone from the chain — treating as success');
+    }
+
+    // v9: remove the beat companion too, so today's trending stops counting
+    // the withdrawn like. Runs on EVERY path that established the like is
+    // gone, and is awaited like the create's beat. A beat that stays is
+    // logged, never surfaced — the unlike itself landed; a stale beat only
+    // over-counts one tag for the rest of the UTC day.
+    if (beatCompanionFor(kind, info.hashtag)) {
+      const removed = await this.removeBeatCompanion(targetId, ownerId, info.hashtag ?? '').catch((error) => {
+        logger.warn('Unlike landed but removing its beat companion failed:', error);
+        return false;
+      });
+      if (!removed) {
+        logger.warn('Unlike landed but its beat companion is still on chain; today\'s trending over-counts this tag');
+      }
+    }
+    return true;
   }
 
   /**
@@ -507,9 +510,10 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * `byPostTime` projection: `[postId, $createdAt] → $ownerId`, the plain
    * twin of `like.byAuthorTimePost`, which keys the timestamp. A beat that
    * cannot be addressed is left standing — it only over-counts one tag for
-   * the rest of the UTC day.
+   * the rest of the UTC day. Resolves true once none of the viewer's beats on
+   * the post is left on chain.
    */
-  private async removeBeatCompanion(targetId: string, ownerId: string, hashtag: string): Promise<void> {
+  private async removeBeatCompanion(targetId: string, ownerId: string, hashtag: string): Promise<boolean> {
     const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
     const response = await sdk.documents.query({
       dataContractId: this.contractId,
@@ -518,19 +522,64 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       orderBy: [['postId', 'asc'], ['$createdAt', 'desc']],
       limit: LIKE_RECOVERY_PAGE_SIZE,
     });
-    const doc = normalizeSDKResponse(response).find((row) => row.$ownerId === ownerId);
-    if (!doc) return; // nothing to remove (untagged at like time, or already gone)
-    const documentId = typeof doc.$id === 'string' ? doc.$id : null;
-    const createdAtMs = doc.$createdAt !== undefined && doc.$createdAt !== null ? Number(doc.$createdAt) : NaN;
-    if (!documentId || !Number.isFinite(createdAtMs) || createdAtMs <= 0) {
-      logger.warn('beat companion found but its delete tuple is incomplete', { targetId, documentId, createdAtMs });
-      return;
+    // No unique (post, owner) index, so a viewer can hold several — a like's
+    // own beat plus any an earlier unlike failed to remove. Clear them all:
+    // an unliked post carries none of the viewer's beats.
+    const mine = normalizeSDKResponse(response).filter((row) => row.$ownerId === ownerId);
+    let allGone = true;
+    for (const doc of mine) {
+      const documentId = typeof doc.$id === 'string' ? doc.$id : null;
+      const createdAtMs = doc.$createdAt !== undefined && doc.$createdAt !== null ? Number(doc.$createdAt) : NaN;
+      if (!documentId || !Number.isFinite(createdAtMs) || createdAtMs <= 0) {
+        logger.warn('beat companion found but its delete tuple is incomplete', { targetId, documentId, createdAtMs });
+        allGone = false;
+        continue;
+      }
+      const result = await stateTransitionService.deleteDocumentByValues(this.contractId, 'beat', ownerId, {
+        documentId,
+        createdAtMs,
+        data: this.beatData(targetId, hashtag),
+      });
+      // Unconfirmed (optimistic timeout) or unproven (the affected-state
+      // snapshot throw): only the chain can say whether the beat is gone.
+      if (!(result.success && result.confirmed) && !(await this.waitForBeatGone(targetId, ownerId, documentId, createdAtMs))) {
+        allGone = false;
+      }
     }
-    await stateTransitionService.deleteDocumentByValues(this.contractId, 'beat', ownerId, {
-      documentId,
-      createdAtMs,
-      data: this.beatData(targetId, hashtag),
-    });
+    return allGone; // vacuously true when there was none (untagged at like time, or already gone)
+  }
+
+  /**
+   * Poll for a beat's ABSENCE, pinned on its exact `byPostTime` key
+   * (`postId`, `$createdAt`) so the answer never depends on how many other
+   * beats the post has. A failed read counts as "still there".
+   */
+  private async waitForBeatGone(
+    targetId: string,
+    ownerId: string,
+    documentId: string,
+    createdAtMs: number,
+    { attempts = 3, intervalMs = 2_500 }: { attempts?: number; intervalMs?: number } = {}
+  ): Promise<boolean> {
+    const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        const response = await sdk.documents.query({
+          dataContractId: this.contractId,
+          documentTypeName: 'beat',
+          where: [['postId', '==', targetId], ['$createdAt', '==', createdAtMs]],
+          limit: LIKE_RECOVERY_PAGE_SIZE,
+        });
+        const standing = normalizeSDKResponse(response).some((row) => row.$ownerId === ownerId && row.$id === documentId);
+        if (!standing) return true;
+      } catch (error) {
+        logger.warn('beat readback failed:', error);
+      }
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+    }
+    return false;
   }
 
   private async recoverLikeTuple(
@@ -588,33 +637,38 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    */
   async getLike(postId: string, ownerId: string, kind: TargetKind = 'post'): Promise<LikeDocument | null> {
     try {
-      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-      const { docType, field, ownerFirst } = likeIndexFor(kind);
-
-      // Equality on both index properties. `in` is a RANGE to Drive, and a query
-      // may only range over the last property it constrains — so on a
-      // target-first index like `like.postAndOwner` / `likeReply.replyAndOwner`,
-      // `[field in [...], $ownerId ==]` comes back EMPTY rather than erroring
-      // (see queryOwnedPostIds). Both where and orderBy list the index's
-      // properties in the order the contract declares them, so orderBy is derived
-      // from where and the two cannot drift apart.
-      const targetClause: DocumentWhereClause = [field, '==', postId];
-      const ownerClause: DocumentWhereClause = ['$ownerId', '==', ownerId];
-      const where = ownerFirst ? [ownerClause, targetClause] : [targetClause, ownerClause];
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: docType,
-        where,
-        orderBy: where.map(([property]) => [property, 'asc'] as DocumentOrderByClause),
-        limit: 1
-      });
-
-      const documents = normalizeSDKResponse(response);
-      return documents.length > 0 ? this.transformDocumentFor(documents[0], kind) : null;
+      return await this.queryLike(postId, ownerId, kind);
     } catch (error) {
       logger.error('Error getting like:', error);
       return null;
     }
+  }
+
+  /** getLike without the error swallowing: a failed read throws. */
+  private async queryLike(postId: string, ownerId: string, kind: TargetKind): Promise<LikeDocument | null> {
+    const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+    const { docType, field, ownerFirst } = likeIndexFor(kind);
+
+    // Equality on both index properties. `in` is a RANGE to Drive, and a query
+    // may only range over the last property it constrains — so on a
+    // target-first index like `like.postAndOwner` / `likeReply.replyAndOwner`,
+    // `[field in [...], $ownerId ==]` comes back EMPTY rather than erroring
+    // (see queryOwnedPostIds). Both where and orderBy list the index's
+    // properties in the order the contract declares them, so orderBy is derived
+    // from where and the two cannot drift apart.
+    const targetClause: DocumentWhereClause = [field, '==', postId];
+    const ownerClause: DocumentWhereClause = ['$ownerId', '==', ownerId];
+    const where = ownerFirst ? [ownerClause, targetClause] : [targetClause, ownerClause];
+    const response = await sdk.documents.query({
+      dataContractId: this.contractId,
+      documentTypeName: docType,
+      where,
+      orderBy: where.map(([property]) => [property, 'asc'] as DocumentOrderByClause),
+      limit: 1
+    });
+
+    const documents = normalizeSDKResponse(response);
+    return documents.length > 0 ? this.transformDocumentFor(documents[0], kind) : null;
   }
 
   /**

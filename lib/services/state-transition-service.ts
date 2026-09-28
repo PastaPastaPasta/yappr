@@ -11,7 +11,7 @@ import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT
 import { declaredActionFee, tokenCostFor, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
 import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, tokenPaymentOptions } from '../transition-agreements';
-import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError } from '../error-utils';
+import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isAffectedStateSnapshotError } from '../error-utils';
 import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
 import { identityService } from './identity-service';
@@ -925,6 +925,17 @@ class StateTransitionService {
         await sdk.documents.delete({ document, identityKey: signingKey, signer });
         logger.debug(`indexOnly delete ${documentId} confirmed`);
       } catch (waitErr) {
+        // Not a rejection, but not proof either: `documents.delete` waits
+        // strictly and refuses the affected-state snapshot an indexOnly delete
+        // is answered with (evo-sdk 4.2.0-beta.5), usually after it landed.
+        // Reported as unconfirmed failure so the caller's chain readback — and
+        // nothing else — decides whether the delete happened.
+        if (isAffectedStateSnapshotError(waitErr)) {
+          logger.warn(`Delete-by-values of ${documentId} unproven (affected-state snapshot) — caller must read back`);
+          // The next write (an unlike's beat delete) follows at once.
+          try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
+          return { success: false, transactionHash: documentId, confirmed: false, error: extractErrorMessage(waitErr) };
+        }
         if (!isTimeoutError(waitErr) && !isNonFatalWaitError(waitErr) && !isAlreadyExistsError(waitErr)) {
           throw waitErr;
         }
