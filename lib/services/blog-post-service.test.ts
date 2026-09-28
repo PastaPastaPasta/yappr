@@ -147,17 +147,14 @@ describe('public discovery reads past drafts (QA D-27)', () => {
     expect(recent.map((item) => item.id)).toEqual(['newer']);
   });
 
-  it('reads past a backdated import holding the slot to find a newer publication', async () => {
+  it('stops reading once the slots are filled, even by a backdated import (documented limit)', async () => {
     const minute = 60_000;
     const imported = post('imported', blogId, 300 * minute, 10 * minute);
-    const newer = post('newer', blogId, 200 * minute, 200 * minute);
     vi.spyOn(blogPostService, 'getPostsByBlogs').mockResolvedValue(new Map([[blogId, [imported]]]));
-    const refill = vi.spyOn(blogPostService, 'getPostsByBlog').mockResolvedValue([newer]);
+    const refill = vi.spyOn(blogPostService, 'getPostsByBlog');
 
-    const recent = await blogPostService.getRecentPosts([blogId, otherBlogId], 1);
-
-    expect(recent.map((item) => item.id)).toEqual(['newer']);
-    expect(refill).toHaveBeenCalledWith(blogId, { limit: 20, startAfter: 'imported' });
+    expect((await blogPostService.getRecentPosts([blogId, otherBlogId], 1)).map((item) => item.id)).toEqual(['imported']);
+    expect(refill).not.toHaveBeenCalled();
   });
 
   it('does not read on for a live publish, whose date trails its creation by moments', async () => {
@@ -183,6 +180,6 @@ describe('public discovery reads past drafts (QA D-27)', () => {
     const refill = vi.spyOn(blogPostService, 'getPostsByBlog').mockImplementation(async () => drafts('next'));
 
     expect(await blogPostService.searchPosts([blogId], 'x')).toEqual([]);
-    expect(refill).toHaveBeenCalledTimes(5);
+    expect(refill).toHaveBeenCalledTimes(3);
   });
 });

@@ -8,7 +8,7 @@ import { compressContent, decompressContent, joinChunks, splitIntoChunks } from 
 import { generateSlug } from '@/lib/utils/slug'
 import { retryAsync } from '@/lib/retry-utils'
 import { extractErrorMessage, isRateLimitedError } from '@/lib/error-utils'
-import { blogPostDate, isPublishedBlogPost, labelsFromStored, publishedPostsNewestFirst, storedLabels } from '@/lib/blog/content-utils'
+import { isPublishedBlogPost, labelsFromStored, publishedPostsNewestFirst, storedLabels } from '@/lib/blog/content-utils'
 import { logger } from '@/lib/logger'
 
 export interface BlogPostQueryOptions {
@@ -47,14 +47,10 @@ export interface UpdateBlogPostData {
  */
 export class PrePublishRateLimitError extends Error {}
 
-// Reading on to fill a blog's public slots: page size, and a cap so a blog of
-// nothing but drafts (or imports) cannot hold discovery up indefinitely.
+// Reading on to fill a blog's public slots past drafts: page size, and a cap so
+// a blog of nothing but drafts cannot hold discovery up indefinitely.
 const PUBLISHED_REFILL_PAGE = 20
-const PUBLISHED_REFILL_MAX_PAGES = 5
-// A live publish stamps publishedAt on the client just before broadcast, so it
-// trails $createdAt by moments; only a wider gap (a backdated import) is worth
-// reading on for.
-const BACKDATE_SLACK_MS = 10 * 60_000
+const PUBLISHED_REFILL_MAX_PAGES = 3
 
 function appendTimestampSuffix(slug: string): string {
   return `${slug}-${Date.now().toString(36)}`.slice(0, 63).replace(/-+$/, '')
@@ -254,9 +250,11 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   /**
    * Up to `perBlog` published posts per blog, newest publication first. Pages
    * come in creation order, so a blog is read on (by cursor) while drafts leave
-   * its slots unfilled, or while an older-created post could still outrank a
-   * backdated import holding a slot; otherwise a newer draft or import would
-   * hide the blog's latest articles.
+   * its slots unfilled, up to PUBLISHED_REFILL_MAX_PAGES further pages; what was
+   * read is then ranked by publication date. Reading stops once the slots are
+   * filled, so a backdated import (published long before it was created) holds
+   * its slot over an older-created, newer-published article until newer posts
+   * push it out; ranking a blog's whole history would cost reads on every load.
    */
   private async getPublishedPostsByBlogs(blogIds: string[], perBlog: number): Promise<BlogPost[][]> {
     const firstPages = await this.getPostsByBlogs(blogIds, perBlog)
@@ -264,13 +262,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       const published = firstPage.filter(isPublishedBlogPost)
       let page = firstPage
       let pageLimit = perBlog
-      const unreadCouldRank = () => {
-        if (published.length < perBlog) return true
-        const cutoff = blogPostDate(publishedPostsNewestFirst(published)[perBlog - 1]).getTime()
-        // Unread posts were created before the last one read, and a post's date never passes its creation.
-        return page[page.length - 1].createdAt.getTime() - cutoff > BACKDATE_SLACK_MS
-      }
-      for (let refills = 0; refills < PUBLISHED_REFILL_MAX_PAGES && page.length >= pageLimit && unreadCouldRank(); refills++) {
+      for (let refills = 0; refills < PUBLISHED_REFILL_MAX_PAGES && page.length >= pageLimit && published.length < perBlog; refills++) {
         pageLimit = PUBLISHED_REFILL_PAGE
         try {
           page = await this.getPostsByBlog(blogId, { limit: pageLimit, startAfter: page[page.length - 1].id })
