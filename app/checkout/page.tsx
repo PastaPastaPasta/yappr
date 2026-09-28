@@ -49,6 +49,7 @@ function normalizeKeyData(data: unknown): Uint8Array | null {
 
 type CheckoutReadinessBlocker =
   | 'store-unavailable'
+  | 'store-check-failed'
   | 'no-payment-methods'
   | 'missing-buyer-key'
   | 'missing-seller-key'
@@ -68,6 +69,7 @@ function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null): 
 
   const messages: Record<CheckoutReadinessBlocker, string> = {
     'store-unavailable': 'This store is not accepting orders right now.',
+    'store-check-failed': 'Could not confirm this store is open. Please try again.',
     'no-payment-methods': 'This store has not configured any payment methods.',
     'missing-buyer-key': 'Add your encryption key to continue to payment.',
     'missing-seller-key': 'This store has not published an active encryption key.',
@@ -186,10 +188,22 @@ function CheckoutPage() {
     }
 
     // Consensus cannot stop an order to a paused or closed store; the client must.
-    if (storeToValidate && storeToValidate.status !== 'active') {
-      const state = blocked('store-unavailable')
-      setCheckoutReadiness(state)
-      return state
+    // Re-read past the document cache so a store closed mid-checkout is caught.
+    if (storeToValidate) {
+      let current: Store | null
+      try {
+        current = await storeService.getCurrent(storeToValidate.id)
+      } catch (err) {
+        logger.error('Failed to read current store status', err)
+        const state = blocked('store-check-failed')
+        setCheckoutReadiness(state)
+        return state
+      }
+      if (current?.status !== 'active') {
+        const state = blocked('store-unavailable')
+        setCheckoutReadiness(state)
+        return state
+      }
     }
 
     if (!storeToValidate?.paymentUris?.length) {

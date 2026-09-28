@@ -119,6 +119,18 @@ class StoreService extends BaseDocumentService<Store> {
   }
 
   /**
+   * Read the store from the network, bypassing the cache. Unlike get(), a failed
+   * read throws, so checkout can refuse to proceed when status is unknown.
+   */
+  async getCurrent(storeId: string): Promise<Store | null> {
+    const { documents } = await this.query({
+      where: [['$id', '==', storeId]],
+      limit: 1
+    });
+    return documents[0] || null;
+  }
+
+  /**
    * Create a new store
    */
   async createStore(
