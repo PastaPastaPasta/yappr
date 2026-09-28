@@ -1,6 +1,6 @@
 import bs58 from 'bs58'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { bytesEqual } from '@/lib/bytes'
+import { bytesEqual, bytesToHex } from '@/lib/bytes'
 import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, CAROL_ID, CAROL_PRIV } from '@/lib/dm/test-fixtures'
 import { DmEngine } from './engine'
 import type { KeyValueStore } from './types'
@@ -179,5 +179,27 @@ describe('DmEngine self-state edits across a reload (§5.5)', () => {
 
     const reloaded = await started(engine(ledger, BOB_ID, BOB_PRIV, kv))
     expect(reloaded.getSnapshot().unreadTotal).toBe(0)
+  })
+
+  it('keeps the read position a reply moved, when that was never saved', async () => {
+    const ledger = new MemoryLedger()
+    const { bob, kv, key, refuse } = await bobWithChat(ledger)
+    expect(bob.getSnapshot().unreadTotal).toBe(1)
+    refuse()
+    await bob.send(key, 'reply')
+    expect(bob.getSnapshot().unreadTotal).toBe(0)
+    expect(await bob.flush()).toBe(false)
+
+    const reloaded = await started(engine(ledger, BOB_ID, BOB_PRIV, kv))
+    expect(reloaded.getSnapshot().unreadTotal).toBe(0)
+  })
+
+  it('skips a malformed cached block and still restores the rest', async () => {
+    const ledger = new MemoryLedger()
+    const kv = new MapKv()
+    const alice = { blocked: true, changedAt: 1_000 }
+    kv.set('dm', JSON.stringify({ blocks: { zz: alice, '': alice, [bytesToHex(ALICE_ID)]: alice } }))
+    const bob = await started(engine(ledger, BOB_ID, BOB_PRIV, kv))
+    expect(bob.getSnapshot().blocked).toEqual([alice58])
   })
 })

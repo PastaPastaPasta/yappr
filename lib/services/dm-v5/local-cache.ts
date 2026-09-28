@@ -53,6 +53,9 @@ interface CacheData {
 
 const empty = (): CacheData => ({ convs: {}, inviteDays: {}, lastSweep: 0, migrationNoticeSeen: false, blocks: {} })
 
+/** A 32-byte identity id in hex, as `hexId` writes it. */
+const IDENTITY_HEX = /^[0-9a-f]{64}$/
+
 const isTime = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0
 
 function isPointer(value: unknown): value is MessagePointer {
@@ -79,7 +82,7 @@ function parse(raw: string | null): CacheData {
       }
     }
     for (const [id, block] of Object.entries(value.blocks ?? {})) {
-      if (typeof block?.blocked === 'boolean' && isTime(block.changedAt)) data.blocks[id] = { blocked: block.blocked, changedAt: block.changedAt }
+      if (IDENTITY_HEX.test(id) && typeof block?.blocked === 'boolean' && isTime(block.changedAt)) data.blocks[id] = { blocked: block.blocked, changedAt: block.changedAt }
     }
     for (const [day, counts] of Object.entries(value.inviteDays ?? {})) {
       if (Array.isArray(counts) && counts.length === 3 && counts.every((n) => Number.isFinite(n))) {
