@@ -317,7 +317,9 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
       />
       {selectedView?.kind === 'group' && (
         <GroupSettingsDialog
-          key={selectedView.key}
+          // Not the bare conversation key: that is the ThreadView sibling's key, and a duplicate key
+          // left the old group's thread pane in the DOM after switching away.
+          key={`settings:${selectedView.key}`}
           open={dialog === 'group-settings'}
           onOpenChange={(open) => setDialog(open ? 'group-settings' : null)}
           group={selectedView}
