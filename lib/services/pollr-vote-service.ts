@@ -697,9 +697,14 @@ class PollrVoteService {
   /**
    * v3, closed poll: count the ballots created by `closedAt`, off
    * `pollVotesByTime`. One bounded read, so the counts can't mix chain states
-   * the way a count-tree read minus a separate late-ballot read could. Null
-   * when they can't all be read; the caller then falls back to the count tree,
-   * late ballots included, rather than show a partial count as final.
+   * the way a count-tree read minus a separate late-ballot read could.
+   *
+   * Null when there are more than one read can page through; the caller then
+   * falls back to the count tree, late ballots included, rather than show a
+   * partial count as final. The on-time set never changes once the poll has
+   * closed, so that fallback is the same answer on every load. A failed read
+   * throws {@link PollTallyUnavailableError} instead: falling back there would
+   * let a transient error flip "Final results" to a count with late ballots in.
    */
   private async countOnTimeBallots(
     sdk: Sdk,
@@ -734,11 +739,11 @@ class PollrVoteService {
       }
       return counts;
     } catch (error) {
-      logger.warn('PollrVoteService: could not read on-time ballots; final tally includes late ones', {
+      logger.warn('PollrVoteService: could not read on-time ballots for a closed poll', {
         pollId,
         error: extractErrorMessage(error),
       });
-      return null;
+      throw new PollTallyUnavailableError(pollId);
     }
   }
 

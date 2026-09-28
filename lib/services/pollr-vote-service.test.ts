@@ -272,12 +272,16 @@ describe('final results on a closed poll', () => {
     expect(onTimeQuery.orderBy).toEqual([['pollId', 'asc'], ['$createdAt', 'asc']]);
   });
 
-  it('v3 falls back to the count-tree tally when the on-time ballots cannot be read', async () => {
+  it('v3 reports the tally unavailable, not the unbounded count, when the on-time read fails', async () => {
+    const { PollTallyUnavailableError } = await import('./pollr-vote-service');
     const service = await loadService('v3');
+    // The count tree includes a late ballot; showing it as final would let a
+    // transient error change "Final results".
     mocks.count.mockResolvedValue(new Map([['80', 2n], ['81', 1n]]));
     mocks.query.mockRejectedValue(new Error('down'));
 
-    expect(await service.getTally(closed())).toEqual({ counts: [2, 1, 0], total: 3 });
+    await expect(service.getTally(closed())).rejects.toBeInstanceOf(PollTallyUnavailableError);
+    expect(mocks.count).not.toHaveBeenCalled();
   });
 
   it('does not bound by close time while the poll is open, or on v4', async () => {
