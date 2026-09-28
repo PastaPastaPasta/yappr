@@ -3,8 +3,12 @@ import { transformRawPost } from './transform-raw-post';
 import type { CompositeFeedPage } from './composite-feed-page';
 import type { Post } from '@/lib/types';
 
-const mocks = vi.hoisted(() => ({ composite: vi.fn(), timeline: vi.fn() }));
+const mocks = vi.hoisted(() => ({ composite: vi.fn(), timeline: vi.fn(), indexOnly: vi.fn() }));
 vi.mock('./composite-feed-page', () => ({ loadCompositeFeedPage: mocks.composite }));
+vi.mock('@/lib/contract-topology', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/contract-topology')>(),
+  likesAreIndexOnly: mocks.indexOnly,
+}));
 vi.mock('@/lib/services/post-service', () => ({ postService: { getTimeline: mocks.timeline } }));
 import { loadForYouFeed } from './load-for-you-feed';
 
@@ -21,9 +25,26 @@ function timelineFromPosts() {
     return { documents: posts.slice(start, start + limit) };
   });
 }
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.indexOnly.mockReturnValue(true);
+});
 
 describe('For You pagination', () => {
+  it('reads the plain timeline on a topology without composite pages (v2 testnet)', async () => {
+    mocks.indexOnly.mockReturnValue(false);
+    timelineFromPosts();
+    mocks.timeline.mockResolvedValueOnce({ documents: posts.slice(0, 20) });
+    const first = await loadForYouFeed({});
+    const second = await loadForYouFeed({ startAfter: first.cursor ?? undefined });
+    expect(mocks.composite).not.toHaveBeenCalled();
+    expect(first.posts.map(post => post.id)).toEqual(posts.slice(0, 20).map(post => post.id));
+    expect(first.posts[0].author.hasDpns).toBeUndefined();
+    expect(first.cursor).toBe(posts[19].id);
+    expect(first.hasMore).toBe(true);
+    expect(second.posts.map(post => post.id)).toEqual(posts.slice(20, 40).map(post => post.id));
+  });
+
   it('should return every timestamp tie over three pages using document cursors', async () => {
     mocks.composite.mockResolvedValueOnce(compositePage(0, 20))
       .mockResolvedValueOnce(compositePage(20, 40)).mockResolvedValueOnce(compositePage(40, 41));

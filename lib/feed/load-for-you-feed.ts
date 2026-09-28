@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { likesAreIndexOnly } from '@/lib/contract-topology';
 import { postService } from '@/lib/services/post-service';
 import { Post } from '@/lib/types';
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
@@ -41,8 +42,11 @@ async function fetchFeedPage(options: {
   // The first page uses the ordered composite query directly. Composite has
   // no document cursor, so later pages use the timeline's cursor to select
   // exact ids (including timestamp ties), then composite-enrich that bounded
-  // set while preserving the raw cursor.
-  if (!options.startAfter) {
+  // set while preserving the raw cursor. Older deployments (the v2 testnet
+  // contract) cannot serve composite pages, so they read the plain timeline
+  // and leave enrichment to the progressive and quote passes.
+  const composite = likesAreIndexOnly();
+  if (composite && !options.startAfter) {
     const page = await loadCompositeFeedPage(compositeOptions);
     const last = page.rawPosts[page.rawPosts.length - 1];
     const cursor = last ? String(last.$id) : null;
@@ -56,7 +60,7 @@ async function fetchFeedPage(options: {
   })).documents;
   const cursor = raw.length ? raw[raw.length - 1].id : null;
   const hasMore = raw.length === PAGE_SIZE;
-  if (raw.length) {
+  if (composite && raw.length) {
     const page = await loadCompositeFeedPage({
       ...compositeOptions,
       documentIds: raw.map(post => post.id),
