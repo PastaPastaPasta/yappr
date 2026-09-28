@@ -43,6 +43,7 @@ export function PrivateFeedFollowers() {
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
   const refreshKey = usePrivateFeedRefreshStore((s) => s.refreshKey)
+  const triggerRefresh = usePrivateFeedRefreshStore((s) => s.triggerRefresh)
 
   const loadFollowers = useCallback(async () => {
     if (!user?.identityId) {
@@ -147,6 +148,8 @@ export function PrivateFeedFollowers() {
         toast.success(
           `Revoked access for ${follower.username ? `@${follower.username}` : follower.displayName}`
         )
+        // The revocation advanced the epoch; refresh the stats and dashboard
+        triggerRefresh()
       } else {
         // Check if this is a sync required error
         if (result.error?.startsWith('SYNC_REQUIRED:')) {
@@ -332,8 +335,9 @@ export function PrivateFeedFollowers() {
         {followers.length > 0 && (
           <div className="pt-4 border-t text-xs text-gray-500">
             <p>
-              Revoking access will prevent the user from seeing your future private posts. They
-              will still be able to see posts from when they had access.
+              Revoking access will prevent the user from seeing your future private posts and
+              replies. Posts from when they had access stay readable only on devices where they
+              already unlocked them.
             </p>
           </div>
         )}

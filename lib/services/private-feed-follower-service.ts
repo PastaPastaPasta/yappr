@@ -521,10 +521,16 @@ class PrivateFeedFollowerService {
           if (result.error?.includes('Failed to derive new root key') && myId) {
             const grant = await this.getGrant(ownerId, myId);
             if (!grant) {
-              // Grant is gone - definitively revoked
-              // Clear local keys since they're no longer valid
-              privateFeedKeyStore.clearFeedKeys(ownerId);
+              // Grant is gone - definitively revoked. The local keys stay: posts
+              // from before the revocation remain readable on this device
+              // (SPEC §3.4), and they are what tells getAccessStatus that this
+              // device was revoked rather than never approved.
               return { success: false, error: 'Access has been revoked' };
+            }
+            if (grant.epoch > cachedEpoch) {
+              // Re-approved after a revocation: these keys belong to the
+              // earlier grant and must be recovered from the current one.
+              return { success: false, error: 'RECOVERY_NEEDED:Local keys predate the current grant' };
             }
           }
           return result;
@@ -817,9 +823,12 @@ class PrivateFeedFollowerService {
 
       if (grant) {
         // We have a grant - check if we can still decrypt
-        // If we have keys and can decrypt current epoch, we're approved
+        // If we have keys and can decrypt current epoch, we're approved.
+        // Keys cached below the grant's epoch are left from an earlier
+        // approval that was revoked, so they need recovering from this grant.
         const canDecrypt = await this.canDecrypt(ownerId);
-        if (canDecrypt) {
+        const cachedEpoch = privateFeedKeyStore.getCachedEpoch(ownerId);
+        if (canDecrypt && cachedEpoch !== null && cachedEpoch >= grant.epoch) {
           // Auto-cleanup: Delete stale FollowRequest if it exists (PRD §4.5)
           if (autoCleanup) {
             this.cleanupStaleFollowRequest(ownerId, myId).catch(err => {
@@ -845,6 +854,12 @@ class PrivateFeedFollowerService {
         // Without a grant, the requester-owned document remains pending on the
         // owner's side and must remain cancellable by its owner.
         return 'pending';
+      }
+
+      // No grant and no request, but this device holds keys for the feed: it
+      // was approved here, and the owner has since revoked that access.
+      if (await this.canDecrypt(ownerId)) {
+        return 'revoked';
       }
 
       return 'none';
