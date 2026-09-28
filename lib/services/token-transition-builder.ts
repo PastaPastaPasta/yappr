@@ -44,7 +44,7 @@ export async function buildUnsignedTokenBatch(
     const rawNonce = await sdk.identities.contractNonce(ownerId, YAPPR_CONTRACT_ID);
     const next = allocateNonce(rawNonce, loadReservation(ownerId, YAPPR_CONTRACT_ID));
     if (next === null) throw new Error(PENDING_WRITE_ERROR);
-    reserveNonce(ownerId, YAPPR_CONTRACT_ID, { from: next, to: next }, rawNonce);
+    reserveNonce(ownerId, YAPPR_CONTRACT_ID, next, rawNonce);
     logger.debug(`${label}: nonce raw=${rawNonce} using=${next}`);
     return next;
   });

@@ -1,20 +1,22 @@
 /**
  * Identity contract nonces for writes this browser makes (QA D-01).
  *
- * Two writes by one identity to one contract that sign the same nonce while
- * neither has executed are both accepted at broadcast; Platform executes one
- * and drops the other without a result. So every write runs under
- * `withIdentityWriteLock`, and every transition this browser signs is
- * recorded here, because Platform's nonce only moves once a transition
- * executes and a node may answer a block behind:
- *  - `mark`, the highest nonce this browser may have signed, and `seen`, the
- *    highest it knows consumed (a node may answer from behind it); the nonces
- *    it picks itself are allocated past both, so none is handed out twice;
- *  - `pending`, each signed transition that may still execute, with the
- *    nonces it may carry, until it is confirmed or refused, or Platform shows
- *    one of those nonces consumed.
+ * Two transitions by one identity to one contract that carry the same nonce
+ * and are both still able to execute are both accepted at broadcast; Platform
+ * executes one and drops the other without a result. So every write runs
+ * under `withIdentityWriteLock`, and every transition this browser signs is
+ * recorded here as pending until it is confirmed or refused, Platform shows
+ * its nonce consumed, or it is too old to execute:
+ *  - a transition this browser built itself carries a nonce it chose, past
+ *    `mark` (the highest it chose), so it never shares one with another it
+ *    built, whether that one executed or not;
+ *  - a transition the SDK signed carries a nonce the SDK neither takes nor
+ *    reports, so nothing is known about it: while one may still execute, no
+ *    other write starts. An SDK-signed write likewise starts only once
+ *    nothing this browser signed may still execute.
+ * No nonce is ever guessed.
  *
- * `stateTransitionService.createDocument` and the wallet token builder pick
+ * `stateTransitionService.createDocument` and the wallet token builder choose
  * their nonce with {@link allocateNonce}. Writes the SDK signs itself
  * (document replace and delete, token and moderation transitions) go through
  * {@link withSdkSignedWrite}.
@@ -22,32 +24,30 @@
 import { Identifier } from '@dashevo/evo-sdk';
 import { logger } from '@/lib/logger';
 import { scopedKey } from '@/lib/storage-scope';
-import { PENDING_WRITE_ERROR, isConsensusRefusal } from '@/lib/error-utils';
-import { allocateIdentityContractNonce, identityContractNonceConsumed, nextIdentityContractNonce } from '@/lib/document-id';
+import { PENDING_WRITE_ERROR, isAffectedStateSnapshotError, isConsensusRefusal } from '@/lib/error-utils';
+import { allocateIdentityContractNonce, identityContractNonceConsumed } from '@/lib/document-id';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { getEvoSdk } from './evo-sdk-service';
 
-/** The nonces a signed transition may carry: one when this browser picked it, a range when the SDK did. */
-export interface SignedNonces {
-  from: bigint;
-  to: bigint;
+/** A signed transition that may still execute. `nonce` is null when the SDK chose it. */
+export interface PendingTransition {
+  id: string;
+  nonce: bigint | null;
+  expiresAt: number;
 }
 
 export interface NonceReservation {
+  /** The highest nonce this browser chose for the identity on the contract. */
   mark: bigint;
-  seen: bigint;
-  /** `expiresAt` (ms) is when the transition is no longer waited on. */
-  pending: (SignedNonces & { expiresAt: number })[];
+  pending: PendingTransition[];
 }
 
 /**
- * How long a signed transition that was neither confirmed nor refused holds
- * up SDK-signed writes. Tenderdash re-checks its mempool after every block and
- * a valid transition executes in the next one, so one that has not executed
- * within minutes was dropped; a wallet can sign one handed to it until its QR
- * gives way (5 minutes). Past this, an SDK-signed write may be refused or time
- * out, but it is never reported as done without its proof, and the nonces
- * this browser picks itself stay past the mark regardless.
+ * How long a signed transition that was neither confirmed nor refused is
+ * treated as able to execute. Tenderdash re-checks its mempool after every
+ * block and a valid transition executes in the next one, so one that has not
+ * executed within minutes of its broadcast was dropped; a wallet can sign one
+ * handed to it until its QR gives way (5 minutes).
  */
 const PENDING_LIFETIME_MS = 15 * 60 * 1000;
 
@@ -58,138 +58,120 @@ const PENDING_POLL_MS = 2_000;
 /** Kept in localStorage so every tab sees it; read and written only under the write lock. */
 const RESERVATION_PREFIX = scopedKey('yappr:nonce-reservation:');
 
-/** This tab's copy, for when localStorage is blocked. */
+/** This tab's copy of every reservation it saved. */
 const reservations = new Map<string, NonceReservation>();
+
+/** Keys whose last save did not reach localStorage: this tab's copy is newer than the stored one. */
+const unsaved = new Set<string>();
+
+let pendingIds = 0;
 
 function reservationKey(ownerId: string, contractId: string): string {
   return `${RESERVATION_PREFIX}${ownerId}:${contractId}`;
 }
 
+function merge(a: NonceReservation | null, b: NonceReservation | null): NonceReservation | null {
+  if (!a || !b) return a ?? b;
+  const ids = new Set(a.pending.map((p) => p.id));
+  return { mark: a.mark > b.mark ? a.mark : b.mark, pending: [...a.pending, ...b.pending.filter((p) => !ids.has(p.id))] };
+}
+
 export function loadReservation(ownerId: string, contractId: string): NonceReservation | null {
   const key = reservationKey(ownerId, contractId);
+  const local = reservations.get(key) ?? null;
+  let stored: NonceReservation | null;
   try {
     const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { mark: string; seen: string; pending: { from: string; to: string; expiresAt: number }[] };
-    return {
+    const parsed = raw ? (JSON.parse(raw) as { mark: string; pending: { id: string; nonce: string | null; expiresAt: number }[] }) : null;
+    stored = parsed && {
       mark: BigInt(parsed.mark),
-      seen: BigInt(parsed.seen),
-      pending: parsed.pending.map((p) => ({ from: BigInt(p.from), to: BigInt(p.to), expiresAt: p.expiresAt })),
+      pending: parsed.pending.map((p) => ({ id: p.id, nonce: p.nonce === null ? null : BigInt(p.nonce), expiresAt: p.expiresAt })),
     };
   } catch {
-    // Storage blocked or the value unreadable: fall back to this tab's record.
-    return reservations.get(key) ?? null;
+    // Storage blocked or the value unreadable: this tab's copy is all there is.
+    return local;
   }
+  // Storage works for reads but refused this tab's last write (full): keep both.
+  return unsaved.has(key) ? merge(stored, local) : stored;
 }
 
 function saveReservation(ownerId: string, contractId: string, reservation: NonceReservation): void {
   const key = reservationKey(ownerId, contractId);
   reservations.set(key, reservation);
   try {
-    const pending = reservation.pending.map((p) => ({ from: p.from.toString(), to: p.to.toString(), expiresAt: p.expiresAt }));
-    localStorage.setItem(key, JSON.stringify({ mark: reservation.mark.toString(), seen: reservation.seen.toString(), pending }));
+    const pending = reservation.pending.map((p) => ({ id: p.id, nonce: p.nonce === null ? null : p.nonce.toString(), expiresAt: p.expiresAt }));
+    localStorage.setItem(key, JSON.stringify({ mark: reservation.mark.toString(), pending }));
+    unsaved.delete(key);
   } catch {
-    // Storage blocked: only this tab knows, and the write lock still covers it.
+    // Storage blocked or full: only this tab knows, and loadReservation reads its copy.
+    unsaved.add(key);
   }
-}
-
-function max(a: bigint, b: bigint): bigint {
-  return a > b ? a : b;
-}
-
-/** The highest nonce known taken: the tip `current` reports, or higher if a node is behind. */
-function takenUpTo(current: bigint | undefined | null, reservation: NonceReservation | null): bigint {
-  const tip = nextIdentityContractNonce(current) - BigInt(1);
-  return reservation ? max(reservation.seen, tip) : tip;
 }
 
 /**
  * The pending transitions that may still execute, given the raw value
- * `identities.contractNonce` returned: not expired, and no nonce they may
- * carry consumed yet. Consumption is final, so a node that is behind only
- * keeps one pending longer. None is written off for being far ahead of the
- * tip: the node that answered may be behind.
+ * `identities.contractNonce` returned: not expired, and not one whose own
+ * nonce is consumed. Consumption is final, so a node that is behind only
+ * keeps one pending longer. Nothing about an SDK-signed one is known, so it
+ * stays pending until its outcome is known or it expires.
  */
-export function stillPending(current: bigint | undefined | null, reservation: NonceReservation | null, now = Date.now()): NonceReservation['pending'] {
-  return (reservation?.pending ?? []).filter((p) => {
-    if (p.expiresAt <= now) return false;
-    for (let nonce = p.from; nonce <= p.to; nonce++) {
-      if (identityContractNonceConsumed(current, nonce)) return false;
-    }
-    return true;
-  });
+export function stillPending(current: bigint | undefined | null, reservation: NonceReservation | null, now = Date.now()): PendingTransition[] {
+  return (reservation?.pending ?? []).filter((p) => p.expiresAt > now && (p.nonce === null || !identityContractNonceConsumed(current, p.nonce)));
 }
 
 /**
  * The nonce a transition this browser builds itself should carry, or null
- * when none is safe: one past every nonce this browser signed or saw taken.
- * When that is too far ahead of the tip for Drive to accept, the one after
- * the tip, but only if nothing signed may still execute.
+ * when none is safe: one past the mark, so it never takes a nonce this browser
+ * chose before. None while an SDK-signed transition may still execute (its
+ * nonce is unknown), nor when one past the mark is too far ahead of the tip
+ * for Drive to accept and a transition may still execute at the one after it.
  */
 export function allocateNonce(current: bigint | undefined | null, reservation: NonceReservation | null, now = Date.now()): bigint | null {
-  const past = reservation ? max(reservation.mark, reservation.seen) : null;
-  const nonce = allocateIdentityContractNonce(current, past);
-  if (past !== null && nonce <= past && stillPending(current, reservation, now).length > 0) return null;
+  const live = stillPending(current, reservation, now);
+  if (live.some((p) => p.nonce === null)) return null;
+  const nonce = allocateIdentityContractNonce(current, reservation?.mark ?? null);
+  if (reservation && nonce <= reservation.mark && live.length > 0) return null;
   return nonce;
 }
 
 /**
- * Record a signed transition before its broadcast (one that errors may still
- * have gone out), with what `current` shows: the tip, and which pending
- * transitions have settled. `mark` and `seen` only rise.
+ * Record a signed transition as pending before its broadcast (one that errors
+ * may still have gone out), dropping what `current` shows settled. `nonce` is
+ * null for one the SDK signs. The mark never goes down.
  */
-export function reserveNonce(ownerId: string, contractId: string, signed: SignedNonces, current: bigint | undefined | null): void {
+export function reserveNonce(ownerId: string, contractId: string, nonce: bigint | null, current: bigint | undefined | null): PendingTransition {
   const previous = loadReservation(ownerId, contractId);
+  const entry = { id: `${Date.now()}-${++pendingIds}`, nonce, expiresAt: Date.now() + PENDING_LIFETIME_MS };
+  const mark = previous?.mark ?? BigInt(0);
   saveReservation(ownerId, contractId, {
-    mark: max(previous?.mark ?? BigInt(0), signed.to),
-    seen: takenUpTo(current, previous),
-    pending: [...stillPending(current, previous), { ...signed, expiresAt: Date.now() + PENDING_LIFETIME_MS }],
+    mark: nonce !== null && nonce > mark ? nonce : mark,
+    pending: [...stillPending(current, previous), entry],
   });
+  return entry;
 }
 
-/**
- * The transition was refused, or it executed (`executed`): either way it will
- * not execute later. One this browser built executed at its own nonce, now
- * taken; which nonce an SDK-signed one took is unknown. The mark stays, so
- * none of its nonces is handed out again.
- */
-export function releaseNonce(ownerId: string, contractId: string, signed: SignedNonces, executed: boolean): void {
+/** The transition was confirmed or refused: it will not execute later. The mark stays. */
+export function releaseNonce(ownerId: string, contractId: string, entry: PendingTransition): void {
   const reservation = loadReservation(ownerId, contractId);
-  if (!reservation) return;
-  saveReservation(ownerId, contractId, {
-    mark: reservation.mark,
-    seen: executed && signed.from === signed.to ? max(reservation.seen, signed.from) : reservation.seen,
-    pending: reservation.pending.filter((p) => p.from !== signed.from || p.to !== signed.to),
-  });
+  if (!reservation?.pending.some((p) => p.id === entry.id)) return;
+  saveReservation(ownerId, contractId, { mark: reservation.mark, pending: reservation.pending.filter((p) => p.id !== entry.id) });
 }
 
 /**
- * The nonces an SDK-signed write may carry and still execute, once nothing
- * this browser signed may. The SDK signs one past the higher of its own cache
- * and the tip a node of its choosing reports. Every nonce this identity used
- * was signed here and is at most the mark (another device's are beyond any
- * client's knowledge), so neither can put its pick past one beyond the mark
- * or the highest nonce known taken. A pick at or below that is taken, or
- * fills a gap left by a transition that will never execute.
- */
-export function sdkSignedRange(current: bigint | undefined | null, reservation: NonceReservation | null): SignedNonces {
-  const taken = takenUpTo(current, reservation);
-  return { from: taken + BigInt(1), to: max(reservation?.mark ?? BigInt(0), taken) + BigInt(1) };
-}
-
-/**
- * Run a write the SDK signs itself under the identity's write lock, in step
- * with the nonces this browser hands out.
+ * Run a write the SDK signs itself under the identity's write lock.
  *
- * The SDK can be neither told which nonce to sign nor asked which it signed,
- * so this does not predict it. It holds the write until nothing this browser
- * signed may still execute, so the SDK cannot take one of those nonces, and
- * records every nonce the SDK can pick ({@link sdkSignedRange}): the nonces
- * this browser picks next go past them, and until the write is confirmed or
- * refused, one of them seen consumed means it executed. A consensus refusal is
- * a verdict (a nonce refusal included: the nonce was taken when the broadcast,
- * or the SDK's retry of it, arrived); a timeout, a transport failure or an
- * unproven snapshot is not, and leaves the write pending.
+ * The SDK signs one past the higher of its own cache and the tip a node of its
+ * choosing reports, and does not say which, so nothing here predicts it. The
+ * write starts only once nothing this browser signed may still execute, so
+ * whatever it signs cannot meet one of those. It is recorded as pending with
+ * no nonce: if its outcome stays unknown (a timeout, a transport failure) no
+ * later write starts until it expires. A consensus refusal is a verdict (a
+ * nonce refusal included: the nonce was taken when the broadcast, or the
+ * SDK's retry of it, arrived). So, for its nonce, is the affected-state
+ * snapshot a strict wait refuses: DAPI answers with a proof only for a
+ * transition that executed (rs-dapi `wait_for_state_transition_result`); what
+ * the snapshot leaves unproven is only the write's effect, which the caller
+ * reads back.
  *
  * While a pending transition may still execute this waits briefly, then fails
  * without sending anything.
@@ -201,22 +183,21 @@ export async function withSdkSignedWrite<T>(ownerId: string, contractId: string,
     let current = await sdk.identities.contractNonce(ownerId, contractId);
     for (let attempt = 0; stillPending(current, reservation).length > 0; attempt++) {
       if (attempt === PENDING_POLLS) {
-        logger.warn(`A transition up to nonce ${reservation?.mark} may still execute (Platform at ${current}); not sending an SDK-signed write`);
+        logger.warn(`An earlier transition may still execute (Platform at ${current}); not sending an SDK-signed write`);
         throw new Error(PENDING_WRITE_ERROR);
       }
-      logger.debug(`Waiting on nonces up to ${reservation?.mark} before an SDK-signed write (Platform at ${current})`);
+      logger.debug(`Waiting on an earlier transition before an SDK-signed write (Platform at ${current})`);
       await new Promise((resolve) => setTimeout(resolve, PENDING_POLL_MS));
       current = await sdk.identities.contractNonce(ownerId, contractId);
     }
-    const signed = sdkSignedRange(current, reservation);
     try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-    reserveNonce(ownerId, contractId, signed, current);
+    const entry = reserveNonce(ownerId, contractId, null, current);
     try {
       const result = await write();
-      releaseNonce(ownerId, contractId, signed, true);
+      releaseNonce(ownerId, contractId, entry);
       return result;
     } catch (error) {
-      if (isConsensusRefusal(error)) releaseNonce(ownerId, contractId, signed, false);
+      if (isConsensusRefusal(error) || isAffectedStateSnapshotError(error)) releaseNonce(ownerId, contractId, entry);
       throw error;
     }
   });

@@ -116,6 +116,37 @@ describe('createDocument with an inconclusive outcome', () => {
     expect(classifyWriteFailure(result.error ?? '')).not.toBe('nonce')
   })
 
+  it('settles a 40204 the wait reports with its numeric code instead of returning a failure DM v5 would rebuild', async () => {
+    sdk.stateTransitions.broadcastStateTransition.mockResolvedValue(undefined)
+    sdk.stateTransitions.waitForResponse.mockRejectedValue({ code: 40204, message: NONCE_AT_TIP, name: 'Protocol' })
+    sdk.identities.contractNonceWithProof.mockRejectedValue(new Error('transport error: unavailable'))
+
+    const result = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'hi' })
+
+    expect(sdk.identities.contractNonceWithProof).toHaveBeenCalled()
+    expect(result).toMatchObject({ success: true, confirmed: false })
+  })
+
+  it('reports a broadcast that failed without a verdict as unconfirmed, so no caller rebuilds it', async () => {
+    sdk.stateTransitions.broadcastStateTransition.mockRejectedValue(new Error('transport error: connection reset'))
+    sdk.identities.contractNonceWithProof.mockRejectedValue(new Error('transport error: unavailable'))
+
+    const result = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'hi' })
+
+    expect(sdk.stateTransitions.broadcastStateTransition).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({ success: true, confirmed: false })
+  })
+
+  it('waits on bytes already in the mempool rather than failing, even when the duplicate probe cannot answer', async () => {
+    sdk.stateTransitions.broadcastStateTransition.mockRejectedValue(new Error('state transition already in mempool'))
+    sdk.documents.get.mockRejectedValue(new Error('transport error: unavailable'))
+    sdk.stateTransitions.waitForResponse.mockResolvedValue({})
+
+    const result = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'hi' })
+
+    expect(result).toMatchObject({ success: true, confirmed: true })
+  })
+
   it('takes the next create past a create whose outcome is unknown, so the two can never share a nonce', async () => {
     sdk.stateTransitions.broadcastStateTransition.mockResolvedValue(undefined)
     sdk.stateTransitions.waitForResponse.mockRejectedValueOnce(new Error('waitForResponse timed out')).mockResolvedValue({})
