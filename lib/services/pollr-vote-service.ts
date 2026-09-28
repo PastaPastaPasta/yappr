@@ -29,6 +29,11 @@ export interface CastVoteResult {
   created: number[];
   /** Choices the voter had already cast (unique-index rejection). */
   alreadyVoted: number[];
+  /**
+   * A single-choice ballot was refused as a duplicate, but which choice it
+   * collided with couldn't be read. The voter has voted; their choice is unknown.
+   */
+  unresolvedDuplicate: boolean;
   /** Choices that hit a real error and are still uncast — safe to retry. */
   failed: number[];
   /** Message from the first hard failure, if any. */
@@ -40,6 +45,16 @@ export interface PollTally {
   counts: number[];
   /** Total vote documents for the poll (a multi-choice ballot contributes one per selection). */
   total: number;
+  /**
+   * A closed v3 poll with too many ballots to bound by its close time: the
+   * counts may include late ballots, so they must not be presented as final.
+   */
+  lateIncluded?: boolean;
+  /**
+   * A closed v3 poll tallied from only its ballots created by the close time:
+   * a ballot missing from these counts is late, not lagging.
+   */
+  cutoffVerified?: boolean;
 }
 
 /** The leading option of a poll, from the v4 ranked index. */
@@ -72,7 +87,7 @@ function normalizeChoices(choices: number[]): number[] {
 
 /** A ballot refused before anything was written. */
 function refused(error: string, failed: number[] = []): CastVoteResult {
-  return { success: false, created: [], alreadyVoted: [], failed, error };
+  return { success: false, created: [], alreadyVoted: [], unresolvedDuplicate: false, failed, error };
 }
 
 /** Read the `choice` field off a raw vote document (nested `data` or flat). */
@@ -172,6 +187,7 @@ class PollrVoteService {
     const docType = pollrVoteDocType(poll.multiChoice);
     const created: number[] = [];
     const alreadyVoted: number[] = [];
+    let unresolvedDuplicate = false;
     const failed: number[] = [];
     let firstError: string | undefined;
 
@@ -183,7 +199,9 @@ class PollrVoteService {
         // Checked BEFORE the landed probe: on a duplicate the entry is already
         // there from an earlier ballot, so the probe would happily report this
         // rejected write as created.
-        alreadyVoted.push(...(await this.resolveDuplicate(poll, choice, ownerId)));
+        const collided = await this.resolveDuplicate(poll, choice, ownerId);
+        if (collided) alreadyVoted.push(...collided);
+        else unresolvedDuplicate = true;
       } else if (await this.ballotLanded(poll, choice, ownerId, { whenUnknown: false })) {
         created.push(choice);
       } else {
@@ -244,6 +262,7 @@ class PollrVoteService {
       success: failed.length === 0,
       created,
       alreadyVoted: normalizeChoices(alreadyVoted),
+      unresolvedDuplicate,
       failed,
       error: firstError,
     };
@@ -323,10 +342,10 @@ class PollrVoteService {
    * the choice just attempted. On `vote` it does not: the voter had already
    * cast a ballot, but not necessarily this one, and reporting the attempted
    * choice would tick "your vote" against an option they never picked. Re-read
-   * the ballot to find out which it really is, and fall back to the attempted
-   * choice only if that read fails too.
+   * the ballot to find out which it really is; null when that read fails or
+   * finds nothing, since the attempted choice is then only a guess.
    */
-  private async resolveDuplicate(poll: Poll, choice: number, ownerId: string): Promise<number[]> {
+  private async resolveDuplicate(poll: Poll, choice: number, ownerId: string): Promise<number[] | null> {
     if (poll.multiChoice) return [choice];
 
     try {
@@ -338,7 +357,7 @@ class PollrVoteService {
         error: extractErrorMessage(error),
       });
     }
-    return [choice];
+    return null;
   }
 
   /**
@@ -362,6 +381,42 @@ class PollrVoteService {
     const tally: PollTally = { counts, total: baseline.total + added };
     this.tallyCache.set(pollId, tally);
     return tally;
+  }
+
+  /**
+   * Re-read the tally after a ballot collided with one already on chain.
+   *
+   * A duplicate means this tab's tally predates a vote the voter cast
+   * elsewhere, so folding in only the new writes leaves that earlier vote
+   * uncounted. The fresh read supplies it; merging keeps the votes `created`
+   * in this same call, which the count tree may not show yet. Only choices
+   * this call established (written or refused as duplicates) floor the
+   * counts: an older remembered choice may since have been deleted. Falls
+   * back to `optimistic` when the read fails, which is no worse than before
+   * the collision.
+   */
+  async refreshTally(
+    poll: Poll,
+    optimistic: PollTally | null,
+    { created, alreadyVoted }: Pick<CastVoteResult, 'created' | 'alreadyVoted'>
+  ): Promise<PollTally | null> {
+    this.invalidateTally(poll.id);
+    try {
+      const tally = reconcileTally(await this.getTally(poll), optimistic, created, [...created, ...alreadyVoted]);
+      this.tallyCache.set(poll.id, tally);
+      return tally;
+    } catch (error) {
+      logger.warn('PollrVoteService: could not refresh the tally after a duplicate ballot', {
+        pollId: poll.id,
+        error: extractErrorMessage(error),
+      });
+      // On a closed v3 poll the optimistic counts were never bounded by the
+      // close time (a selection can land after it), so they aren't final.
+      if (optimistic && !optimistic.cutoffVerified && closedCutoff(poll) !== null) {
+        return { ...optimistic, lateIncluded: true };
+      }
+      return optimistic;
+    }
   }
 
   /**
@@ -474,14 +529,28 @@ class PollrVoteService {
   async getTally(poll: Poll): Promise<PollTally> {
     const size = Math.min(Math.max(poll.options.length, 1), POLL_MAX_OPTIONS);
 
+    // The close time is advisory, so ballots can land after it and the count
+    // tree has no time axis to leave them out. v3 ballots carry `$createdAt`
+    // under `pollVotesByTime`, so a closed poll is tallied from its on-time
+    // ballots in one read, keeping "Final results" final. v4 ballots are
+    // indexOnly with no time index, so there is nothing to bound them by there.
+    const closedAt = closedCutoff(poll);
+
+    // A closed v3 poll reuses only a cached tally the closed path classified;
+    // one cached while it was open (or optimistic) was never bounded by the
+    // close time.
     const cached = this.tallyCache.get(poll.id);
-    if (cached) return { total: cached.total, counts: resize(cached.counts, size) };
+    if (cached && (closedAt === null || cached.cutoffVerified || cached.lateIncluded)) {
+      return { ...cached, counts: resize(cached.counts, size) };
+    }
 
     const sdk = await getEvoSdk();
     const docType = pollrVoteDocType(poll.multiChoice);
+    const onTime = closedAt === null ? null : await this.countOnTimeBallots(sdk, poll.id, docType, closedAt);
 
     // Each step falls through to the next only when it couldn't produce counts.
     const counts =
+      onTime ??
       (await this.countByChoiceGrouped(sdk, poll.id, docType, size)) ??
       (await this.countByChoiceIndividually(sdk, poll.id, docType, size)) ??
       (pollrIsV4()
@@ -504,9 +573,11 @@ class PollrVoteService {
     const total = counts.slice(0, size).reduce((sum, count) => sum + count, 0);
 
     const tally: PollTally = { counts, total };
+    if (closedAt !== null && !onTime) tally.lateIncluded = true;
+    if (onTime) tally.cutoffVerified = true;
     this.tallyCache.set(poll.id, tally);
 
-    return { total: tally.total, counts: resize(tally.counts, size) };
+    return { ...tally, counts: resize(tally.counts, size) };
   }
 
   /** Drop the cached tally so the next read reflects a just-cast vote. */
@@ -653,6 +724,58 @@ class PollrVoteService {
     }
   }
 
+  /**
+   * v3, closed poll: count the ballots created by `closedAt`, off
+   * `pollVotesByTime`. One bounded read, so the counts can't mix chain states
+   * the way a count-tree read minus a separate late-ballot read could.
+   *
+   * Null when there are more than one read can page through; the caller then
+   * falls back to the count tree and marks the tally `lateIncluded`, so it is
+   * shown but not as final. A failed read throws
+   * {@link PollTallyUnavailableError} instead: falling back there would let a
+   * transient error flip "Final results" to a count with late ballots in.
+   */
+  private async countOnTimeBallots(
+    sdk: Sdk,
+    pollId: string,
+    docType: string,
+    closedAt: number
+  ): Promise<number[] | null> {
+    try {
+      const { documents: choices, reachedLimit } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: POLLR_CONTRACT_ID,
+          documentTypeName: docType,
+          where: [
+            ['pollId', '==', pollId],
+            ['$createdAt', '<=', closedAt],
+          ],
+          orderBy: [
+            ['pollId', 'asc'],
+            ['$createdAt', 'asc'],
+          ],
+        }),
+        readChoice
+      );
+      if (reachedLimit) {
+        logger.warn('PollrVoteService: too many ballots to bound by close time; tally includes late ones', { pollId });
+        return null;
+      }
+      const counts = zeroCounts();
+      for (const choice of choices) {
+        if (isValidChoice(choice)) counts[choice] += 1;
+      }
+      return counts;
+    } catch (error) {
+      logger.warn('PollrVoteService: could not read on-time ballots for a closed poll', {
+        pollId,
+        error: extractErrorMessage(error),
+      });
+      throw new PollTallyUnavailableError(pollId);
+    }
+  }
+
   /** Fallback 2 (v3): page `pollVotesByTime` and tally client-side. */
   private async countByChoiceScan(sdk: Sdk, pollId: string, docType: string): Promise<number[] | null> {
     try {
@@ -689,6 +812,47 @@ class PollrVoteService {
       return null;
     }
   }
+}
+
+/**
+ * Merge a freshly read tally with the caller's optimistic one.
+ *
+ * The fresh counts are trusted: ballots can be deleted, so a stale count is no
+ * lower bound. Only the options `created` in this call keep their optimistic
+ * count, since the count tree may not show those writes yet, and every choice
+ * the voter has recorded counts at least once. The total is re-summed so the
+ * percentages still add up. A cutoff-verified tally is returned as read: a
+ * ballot it leaves out landed after the close, so adding it back would put a
+ * late vote into the final results. The fresh tally's flags are kept either way.
+ */
+export function reconcileTally(
+  fresh: PollTally,
+  optimistic: PollTally | null,
+  created: number[],
+  myChoices: number[]
+): PollTally {
+  if (fresh.cutoffVerified) return fresh;
+  const counts = fresh.counts.map((count, index) => {
+    const pending = created.includes(index) ? optimistic?.counts[index] ?? 0 : 0;
+    const floor = myChoices.includes(index) ? 1 : 0;
+    return Math.max(count, pending, floor);
+  });
+  return { ...fresh, counts, total: counts.reduce((sum, count) => sum + count, 0) };
+}
+
+/**
+ * Whether a closed poll's tally may be shown as final results. On v3 that
+ * takes a tally read by the close time: an optimistic or open-poll one can
+ * hold a ballot written after it. v4 has no time axis to bound by, so only a
+ * tally known to include late ballots is excluded there.
+ */
+export function tallyIsFinal(tally: PollTally): boolean {
+  return pollrIsV4() ? !tally.lateIncluded : Boolean(tally.cutoffVerified);
+}
+
+/** A closed v3 poll's close time, the cutoff its ballots are tallied by; else null. */
+function closedCutoff(poll: Poll): number | null {
+  return !pollrIsV4() && typeof poll.endsAt === 'number' && poll.endsAt < Date.now() ? poll.endsAt : null;
 }
 
 /** Trim or pad a counts array to the poll's actual option count. */

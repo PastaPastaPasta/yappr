@@ -172,7 +172,7 @@ export function ProfileHeader({
             ) : (
               <div className="contents">
                 <TooltipButton
-                  label="Tip with credits"
+                  label="Send a tip"
                   aria-label={`Tip ${subject}`}
                   onClick={onTip}
                   className="hover:bg-amber-50 dark:hover:bg-amber-950 hover:border-amber-300 dark:hover:border-amber-700 group"

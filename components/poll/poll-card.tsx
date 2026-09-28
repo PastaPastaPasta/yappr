@@ -12,6 +12,7 @@ import { cn, formatNumber } from '@/lib/utils'
 import { categorizeError } from '@/lib/error-utils'
 import { pollrPollUrl } from '@/lib/poll-embed'
 import type { Poll, PollTally } from '@/lib/services'
+import { tallyIsFinal } from '@/lib/services/pollr-vote-service'
 
 interface PollCardProps {
   pollId: string
@@ -178,12 +179,17 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       if (recordedList.length > 0) {
         setMyVotes((current) => Array.from(new Set([...current, ...recordedList])).sort((a, b) => a - b))
       }
+      // The voter has a ballot on chain but it couldn't be read which: close the
+      // ballot as when own votes fail to load, rather than tick a guessed choice.
+      if (result.unresolvedDuplicate) {
+        setVotesUnavailable(true)
+      }
       // Anything that didn't make it stays selected so the user can retry it —
       // except on a single-choice poll, where the ballot is settled the moment
       // anything is recorded. A duplicate there reports the choice already on
       // Platform, not the one just attempted, so filtering by index alone would
       // leave the rejected pick selected and the ballot stuck open.
-      const settled = !poll.multiChoice && recordedList.length > 0
+      const settled = !poll.multiChoice && (recordedList.length > 0 || result.unresolvedDuplicate)
       setSelected((current) => (settled ? [] : current.filter((choice) => !recorded.has(choice))))
       if (result.failed.length === 0) {
         setAddingChoices(false)
@@ -193,17 +199,26 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       // few seconds behind the write, and that stale answer would be cached.
       // Only when a real tally is in hand — incrementing an invented zero
       // baseline would turn "results unavailable" into a confident wrong number.
-      if (result.created.length > 0 && tally) {
-        setTally(pollrVoteService.applyOptimisticVotes(poll.id, tally, result.created))
-      }
+      const optimistic =
+        result.created.length > 0 && tally
+          ? pollrVoteService.applyOptimisticVotes(poll.id, tally, result.created)
+          : tally
+      setTally(optimistic)
 
       if (result.created.length > 0) {
         toast.success('Vote counted')
-      } else if (result.alreadyVoted.length > 0 && result.failed.length === 0) {
+      } else if ((result.alreadyVoted.length > 0 || result.unresolvedDuplicate) && result.failed.length === 0) {
         toast('You had already voted', { icon: 'ℹ️' })
       }
       if (result.failed.length > 0) {
         toast.error(categorizeError(result.error))
+      }
+
+      // A duplicate means the voter already cast a ballot this card's tally
+      // predates (another tab or device), so the numbers on screen are short by
+      // that vote. Re-read them rather than leave "✓ your vote" on a 0.
+      if (result.alreadyVoted.length > 0 || result.unresolvedDuplicate) {
+        setTally(await pollrVoteService.refreshTally(poll, optimistic, result))
       }
     } catch (error) {
       logger.error('PollCard: failed to cast vote', error)
@@ -385,8 +400,9 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
           {/* "Final results" would vouch for numbers we don't have. */}
           {tallyUnavailable ? 'Vote count unavailable' : `${formatNumber(total)} vote${total === 1 ? '' : 's'}`}
           {poll.multiChoice && ' · multiple choice'}
-          {isClosed && !tallyUnavailable && ' · Final results'}
-          {isClosed && tallyUnavailable && ' · Closed'}
+          {/* Nor when the count wasn't bounded by the close time. */}
+          {isClosed && tally && tallyIsFinal(tally) && ' · Final results'}
+          {isClosed && !(tally && tallyIsFinal(tally)) && ' · Closed'}
         </span>
         {!user && !isClosed && (
           <button
