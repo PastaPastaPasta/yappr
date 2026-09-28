@@ -1401,6 +1401,18 @@
           "countable": true
         },
         {
+          "name": "replyDeletedCount",
+          "properties": [
+            {
+              "replyToReplyId": "asc"
+            },
+            {
+              "deleted": "asc"
+            }
+          ],
+          "countable": true
+        },
+        {
           "name": "parentOwnerAndTime",
           "properties": [
             {
@@ -1951,7 +1963,8 @@
         }
       },
       "description": "A post or reply reported to the moderators, who dismiss it by deleting it",
-      "additionalProperties": false
+      "additionalProperties": false,
+      "ttl": 7776000
     }
   },
   "tokens": {
