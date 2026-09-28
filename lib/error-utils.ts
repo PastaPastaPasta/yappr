@@ -128,6 +128,24 @@ export function isAlreadyExistsError(error: unknown): boolean {
 }
 
 /**
+ * Checks if Platform refused a transition for its identity contract nonce —
+ * `InvalidIdentityNonceError`, state code **40204**: "Identity <id> is trying
+ * to set an invalid identity nonce. … error is nonce already present at tip"
+ * (or "in past", "too far in future", "too far in past"). Nothing executed and
+ * nothing was charged; the same write under a fresh nonce goes through. The
+ * usual cause is another write by the same identity, from another device,
+ * that took the nonce first.
+ */
+export function isIdentityNonceConflictError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /invalididentitynonce|invalid identity nonce/i.test(msg) ||
+    /nonce (already present|too far) /i.test(msg) ||
+    hasConsensusCode(msg, [40204])
+  )
+}
+
+/**
  * Checks if an error from waitForResponse is a non-fatal verification
  * issue that should not fail an operation whose broadcast succeeded.
  * These are typically transient network/propagation issues (e.g. a newly

@@ -26,6 +26,7 @@ import {
   isFeeMultiplierNotToleratedError,
   isGasPayerError,
   isGasSponsorShortError,
+  isIdentityNonceConflictError,
   isImmutablePropertyChangedError,
   isInvalidDocumentIdError,
   isModerationBarredError,
@@ -640,5 +641,24 @@ describe('isRateLimitedError (QA D-54)', () => {
   it('does not claim other failures', () => {
     expect(isRateLimitedError(new Error('fetch failed'))).toBe(false)
     expect(isRateLimitedError(new Error('Insufficient token balance'))).toBe(false)
+  })
+})
+
+describe('isIdentityNonceConflictError (40204)', () => {
+  // rs-dpp `InvalidIdentityNonceError` Display at v4.2.0-beta.5.
+  const AT_TIP = 'Identity E2m5VDqxnJ2hyPp8u9MwMjaaCqFLE2Mfq7ScoGpEe5eN is trying to set an invalid identity nonce. The current identity nonce is 133, we are setting 133, error is nonce already present at tip'
+  const IN_PAST = 'Identity E2m5VDqxnJ2hyPp8u9MwMjaaCqFLE2Mfq7ScoGpEe5eN is trying to set an invalid identity nonce. The current identity nonce is 137, we are setting 136, error is nonce already present in past'
+
+  it('matches the refusal in every phrasing Drive and the SDK give it', () => {
+    expect(isIdentityNonceConflictError(new Error(AT_TIP))).toBe(true)
+    expect(isIdentityNonceConflictError(new Error(IN_PAST))).toBe(true)
+    expect(isIdentityNonceConflictError(new Error('InvalidIdentityNonceError: nonce too far in future'))).toBe(true)
+    expect(isIdentityNonceConflictError({ message: 'state transition broadcast error: {"code":40204}' })).toBe(true)
+  })
+
+  it('does not claim a timeout, a duplicate document or bare digits', () => {
+    expect(isIdentityNonceConflictError(new Error('waitForResponse timed out'))).toBe(false)
+    expect(isIdentityNonceConflictError(new Error('Document Duplicate unique properties'))).toBe(false)
+    expect(isIdentityNonceConflictError(new Error('balance 1790294020400 too low'))).toBe(false)
   })
 })

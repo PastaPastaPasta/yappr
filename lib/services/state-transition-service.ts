@@ -11,14 +11,15 @@ import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT
 import { declaredActionFee, tokenCostFor, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
 import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, tokenPaymentOptions } from '../transition-agreements';
-import { extractErrorMessage, messageWithConsensusCode, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isAffectedStateSnapshotError } from '../error-utils';
+import { extractErrorMessage, messageWithConsensusCode, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isAffectedStateSnapshotError, isIdentityNonceConflictError } from '../error-utils';
 import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
 import { identityService } from './identity-service';
 import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
-import { documentIdForCreate, nextIdentityContractNonce } from '@/lib/document-id';
+import { allocateIdentityContractNonce, documentIdForCreate, identityContractNonceConsumed } from '@/lib/document-id';
 import { buildSignedCreateTransition } from '@/lib/manual-batch';
+import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import {
   DocumentActionFeeAgreement,
   StateTransition,
@@ -52,6 +53,46 @@ interface CachedSTEntry {
   data: string;
   /** Timestamp when cached (ms since epoch) */
   cachedAt: number;
+}
+
+/**
+ * The last identity contract nonce this browser broadcast a create with, per
+ * identity and contract. Platform's nonce only moves once a transition
+ * executes (and a node may answer a block behind), so a create allocates past
+ * this as well — see `allocateIdentityContractNonce`. Kept in localStorage so
+ * every tab sees it; read and written only under `withIdentityWriteLock`.
+ */
+const NONCE_RESERVATION_PREFIX = scopedKey('yappr:nonce-reserved:');
+
+/** This tab's copy, for when localStorage is blocked. */
+const reservedNonces = new Map<string, bigint>();
+
+/**
+ * Creates that lose their nonce to another write are rebuilt under a fresh
+ * one this many times before the failure is surfaced.
+ */
+const MAX_NONCE_COLLISION_RETRIES = 2;
+
+/** A create whose nonce another write consumed: it can never execute, and nothing was written. */
+const LOST_TO_NONCE_COLLISION = 'lost-to-nonce-collision';
+
+function loadReservedNonce(key: string): bigint | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) return BigInt(raw);
+  } catch {
+    // Storage blocked or the value unreadable: fall back to this tab's record.
+  }
+  return reservedNonces.get(key) ?? null;
+}
+
+function reserveNonce(key: string, nonce: bigint): void {
+  reservedNonces.set(key, nonce);
+  try {
+    localStorage.setItem(key, nonce.toString());
+  } catch {
+    // Storage blocked: only this tab knows, and the write lock still covers it.
+  }
 }
 
 /**
@@ -411,19 +452,98 @@ class StateTransitionService {
   }
 
   /**
+   * Run a write the SDK facade signs (replace, delete) under the identity's
+   * write lock, in step with the nonces `createDocument` hands out itself.
+   *
+   * The facade takes the next nonce from the SDK's cache, which knows only
+   * Platform and the facade's own writes, never a nonce `createDocument`
+   * broadcast. So when this browser broadcast a nonce Platform has not yet
+   * consumed, this waits (briefly) for Platform to catch up before signing.
+   * A facade write that fails may still have gone out, so its nonce is then
+   * recorded as reserved and the next create skips it; one that succeeds
+   * has already executed.
+   */
+  private async withFacadeNonce<T>(ownerId: string, contractId: string, write: () => Promise<T>): Promise<T> {
+    return withIdentityWriteLock(ownerId, contractId, async () => {
+      const sdk = await getEvoSdk();
+      const reservationKey = `${NONCE_RESERVATION_PREFIX}${ownerId}:${contractId}`;
+      const reserved = loadReservedNonce(reservationKey);
+      let current = await sdk.identities.contractNonce(ownerId, contractId);
+      for (let attempt = 0; attempt < 5 && reserved !== null && !identityContractNonceConsumed(current, reserved); attempt++) {
+        logger.debug(`Waiting for nonce ${reserved} to execute before a facade write (Platform at ${current})`);
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        current = await sdk.identities.contractNonce(ownerId, contractId);
+      }
+      try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
+      try {
+        return await write();
+      } catch (error) {
+        reserveNonce(reservationKey, allocateIdentityContractNonce(current, reserved));
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Whether an unconfirmed create can still land. Its document is not on
+   * Platform (the caller just probed); if its nonce has been consumed anyway,
+   * another write by this identity took that nonce and this transition can
+   * never execute. Answers the confirmed result when the document turns out
+   * to have landed, LOST_TO_NONCE_COLLISION when it cannot, and null when
+   * that is not known (the nonce is still free, or a read failed). Either
+   * answer settles the cached bytes.
+   */
+  private async settleUnconfirmedCreate(
+    sdk: ConnectedSdk,
+    contractId: string,
+    documentType: string,
+    ownerId: string,
+    documentId: string,
+    nonce: bigint
+  ): Promise<StateTransitionResult | typeof LOST_TO_NONCE_COLLISION | null> {
+    try {
+      const current = await sdk.identities.contractNonce(ownerId, contractId);
+      if (!identityContractNonceConsumed(current, nonce)) return null;
+      // The node that answered the nonce may be a block ahead of the one
+      // answering the document, so look a few times before calling it lost.
+      for (let attempt = 0; attempt < 4; attempt++) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 3_000));
+        const doc = await this.checkDocumentExists(contractId, documentType, documentId);
+        if (doc) {
+          clearPendingSTBytes(documentId);
+          return { success: true, transactionHash: documentId, document: doc, confirmed: true };
+        }
+      }
+      logger.warn(`Nonce ${nonce} was consumed but ${documentType} ${documentId} is not on Platform: another write took its nonce`);
+      clearPendingSTBytes(documentId);
+      return LOST_TO_NONCE_COLLISION;
+    } catch (error) {
+      logger.warn(`Could not settle unconfirmed ${documentType} ${documentId}:`, extractErrorMessage(error));
+      return null;
+    }
+  }
+
+  /**
    * Create a document with idempotent retry via ST byte caching.
    *
    * This is the typed write path: `documentData` should already use `Uint8Array` for binary
    * fields before it is wrapped in a `Document`. It may be a function of the document's id
    * for data that must commit to the id before the document exists (the auth vault binds
-   * its ciphertext to the vault id as AEAD associated data): the function is called once,
-   * with the id the create transition WILL carry, and the same nonce is then used for the
-   * broadcast, so the id the data was built against is the id Platform stores.
+   * its ciphertext to the vault id as AEAD associated data): the function is called once
+   * per attempt, with the id the create transition WILL carry, and the same nonce is then
+   * used for the broadcast, so the id the data was built against is the id Platform stores.
+   *
+   * Writes by one identity to one contract run one at a time, across tabs
+   * (`withIdentityWriteLock`), so two never read the same nonce (QA D-01).
+   * Another device can still take a nonce first; a create that loses its
+   * nonce that way is rebuilt under a fresh one, and failed if that keeps
+   * happening, rather than reported as sent.
    *
    * Instead of using sdk.documents.create() (which atomically builds,
    * signs, broadcasts, and waits — bumping the nonce each time), we:
    *
    * 1. Fetch the identity contract nonce from Platform and pick the next one
+   *    this browser has not already broadcast
    * 2. Derive the document id from that nonce (protocol 14; wasm-dpp2's
    *    `Document.generateId` via `lib/document-id.ts`) and build the Document
    *    with it, wrapped in a DocumentCreateTransition
@@ -488,6 +608,26 @@ class StateTransitionService {
       confirmation?: 'strict' | 'affectedState';
     }
   ): Promise<StateTransitionResult> {
+    return withIdentityWriteLock(ownerId, contractId, async () => {
+      for (let attempt = 0; attempt <= MAX_NONCE_COLLISION_RETRIES; attempt++) {
+        const result = await this.createDocumentOnce(contractId, documentType, ownerId, documentData, options);
+        if (result !== LOST_TO_NONCE_COLLISION) return result;
+        logger.warn(`${documentType} create lost its nonce to another write by this identity (attempt ${attempt + 1})`);
+      }
+      return {
+        success: false,
+        error: 'Another write from this account took the same slot, so this one was not saved and nothing was charged. Please try again.',
+      };
+    });
+  }
+
+  private async createDocumentOnce(
+    contractId: string,
+    documentType: string,
+    ownerId: string,
+    documentData: Parameters<StateTransitionService['createDocument']>[3],
+    options: Parameters<StateTransitionService['createDocument']>[4]
+  ): Promise<StateTransitionResult | typeof LOST_TO_NONCE_COLLISION> {
     const affectedStateMode = options?.confirmation === 'affectedState';
     try {
       const sdk = await getEvoSdk();
@@ -510,10 +650,13 @@ class StateTransitionService {
 
       // --- The nonce comes first: the document id is derived from it ---
       // DIP-30: nonce is u64 where lower 40 bits = sequence number,
-      // upper 24 bits = missing revision bitset. Only increment the sequence part.
+      // upper 24 bits = missing revision bitset. Only increment the sequence part,
+      // and skip past any nonce this browser broadcast that has not executed yet.
+      const reservationKey = `${NONCE_RESERVATION_PREFIX}${ownerId}:${contractId}`;
       const currentNonce = await sdk.identities.contractNonce(ownerId, contractId);
-      const newNonce = nextIdentityContractNonce(currentNonce);
-      logger.debug(`Nonce: current=${currentNonce}, using=${newNonce}`);
+      const reservedNonce = loadReservedNonce(reservationKey);
+      const newNonce = allocateIdentityContractNonce(currentNonce, reservedNonce);
+      logger.debug(`Nonce: current=${currentNonce}, reserved=${reservedNonce ?? 'none'}, using=${newNonce}`);
 
       const entropy = crypto.getRandomValues(new Uint8Array(32));
       const documentId = documentIdForCreate({ contractId, ownerId, documentTypeName: documentType, entropy, identityContractNonce: newNonce });
@@ -631,6 +774,9 @@ class StateTransitionService {
         logger.debug(`Cached ${stBytes.byteLength ?? stBytes.length} ST bytes for ${documentId}`);
       }
 
+      // Reserved before the broadcast: a broadcast that errors may still have
+      // gone out, and skipping a nonce that did not only leaves a gap Drive fills.
+      reserveNonce(reservationKey, newNonce);
       try {
         await sdk.stateTransitions.broadcastStateTransition(stateTransition);
         logger.debug('Broadcast succeeded, waiting for confirmation...');
@@ -642,6 +788,11 @@ class StateTransitionService {
             clearPendingSTBytes(documentId);
             return { success: true, transactionHash: documentId, document: doc, confirmed: true };
           }
+        }
+        if (isIdentityNonceConflictError(broadcastErr)) {
+          // Refused before execution, so nothing was written or charged.
+          clearPendingSTBytes(documentId);
+          return LOST_TO_NONCE_COLLISION;
         }
         throw broadcastErr;
       }
@@ -677,6 +828,10 @@ class StateTransitionService {
             clearPendingSTBytes(documentId);
             return { success: true, transactionHash: documentId, document: doc, confirmed: true };
           }
+          // A duplicate nonce is accepted at broadcast and then dropped with no
+          // result, which also reads as a timeout (QA S1-02).
+          const settled = affectedStateMode ? null : await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
+          if (settled) return settled;
           // Leave ST bytes cached for next retry — don't throw yet, return optimistic success
           // since broadcast succeeded and the ST is valid
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
@@ -688,6 +843,8 @@ class StateTransitionService {
             logger.warn(`checkDocumentExists failed for ${documentId}:`, extractErrorMessage(checkErr));
           }
           clearPendingSTBytes(documentId);
+          // "nonce already present" is another write's nonce, not this document.
+          if (!doc && isIdentityNonceConflictError(waitErr)) return LOST_TO_NONCE_COLLISION;
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return {
             success: true,
@@ -708,8 +865,16 @@ class StateTransitionService {
             clearPendingSTBytes(documentId);
             return { success: true, transactionHash: documentId, document: doc, confirmed: true };
           }
+          const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
+          if (settled) return settled;
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
+        }
+        // The wait on a dropped duplicate can also end in a transport failure
+        // ("rate limited", QA S1-02) that carries no verdict on the transition.
+        if (!affectedStateMode && /transport error|rate limited/i.test(extractErrorMessage(waitErr))) {
+          const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
+          if (settled) return settled;
         }
         throw waitErr;
       }
@@ -779,7 +944,7 @@ class StateTransitionService {
         identityKey
       );
 
-      await sdk.documents.replace({ document, identityKey: signingKey, signer });
+      await this.withFacadeNonce(ownerId, contractId, () => sdk.documents.replace({ document, identityKey: signingKey, signer }));
       logger.debug('Document update submitted successfully');
 
       return {
@@ -844,7 +1009,7 @@ class StateTransitionService {
         identityKey
       );
 
-      await sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer });
+      await this.withFacadeNonce(ownerId, contractId, () => sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer }));
       logger.debug('Document deletion submitted successfully');
 
       return {
@@ -922,7 +1087,7 @@ class StateTransitionService {
       );
 
       try {
-        await sdk.documents.delete({ document, identityKey: signingKey, signer });
+        await this.withFacadeNonce(ownerId, contractId, () => sdk.documents.delete({ document, identityKey: signingKey, signer }));
         logger.debug(`indexOnly delete ${documentId} confirmed`);
       } catch (waitErr) {
         // Not a rejection, but not proof either: `documents.delete` waits

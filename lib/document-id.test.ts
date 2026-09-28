@@ -11,7 +11,7 @@ import bs58 from 'bs58'
 import { Document, DocumentCreateTransition, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk'
 import type { DocumentObject } from '@dashevo/evo-sdk'
 import { bytesToHex } from './bytes'
-import { documentIdForCreate, nextIdentityContractNonce } from './document-id'
+import { allocateIdentityContractNonce, documentIdForCreate, identityContractNonceConsumed, nextIdentityContractNonce } from './document-id'
 
 const CONTRACT = new Uint8Array(32).fill(1)
 const OWNER = new Uint8Array(32).fill(2)
@@ -81,5 +81,53 @@ describe('nextIdentityContractNonce', () => {
     expect(nextIdentityContractNonce(BigInt(41))).toBe(BigInt(42))
     const withBitset = (BigInt(0xabcdef) << BigInt(40)) | BigInt(41)
     expect(nextIdentityContractNonce(withBitset)).toBe(BigInt(42))
+  })
+})
+
+describe('allocateIdentityContractNonce', () => {
+  it("is Platform's next nonce when nothing is reserved or the reservation has executed", () => {
+    expect(allocateIdentityContractNonce(BigInt(132), null)).toBe(BigInt(133))
+    expect(allocateIdentityContractNonce(undefined, null)).toBe(BigInt(1))
+    expect(allocateIdentityContractNonce(BigInt(140), BigInt(136))).toBe(BigInt(141))
+  })
+
+  it('skips a nonce broadcast but not yet executed (QA D-01: both writes took 133, then both took 136)', () => {
+    expect(allocateIdentityContractNonce(BigInt(132), BigInt(133))).toBe(BigInt(134))
+    expect(allocateIdentityContractNonce(BigInt(135), BigInt(136))).toBe(BigInt(137))
+  })
+
+  it('reads the sequence past the missing-revision bits', () => {
+    const withBitset = (BigInt(1) << BigInt(40)) | BigInt(135)
+    expect(allocateIdentityContractNonce(withBitset, BigInt(136))).toBe(BigInt(137))
+  })
+
+  it('ignores a reservation Drive would refuse as too far in the future', () => {
+    expect(allocateIdentityContractNonce(BigInt(100), BigInt(123))).toBe(BigInt(124))
+    expect(allocateIdentityContractNonce(BigInt(100), BigInt(124))).toBe(BigInt(101))
+  })
+})
+
+describe('identityContractNonceConsumed', () => {
+  const missing = (...behind: number[]) => behind.reduce((bits, b) => bits | (BigInt(1) << BigInt(40 + b - 1)), BigInt(0))
+
+  it('is false for a nonce ahead of the tip, or when the identity never wrote', () => {
+    expect(identityContractNonceConsumed(BigInt(132), BigInt(133))).toBe(false)
+    expect(identityContractNonceConsumed(undefined, BigInt(1))).toBe(false)
+  })
+
+  it('is true for the tip itself: the two-tab race of QA D-01, both tabs signing 133', () => {
+    expect(identityContractNonceConsumed(BigInt(133), BigInt(133))).toBe(true)
+  })
+
+  it('is true behind the tip unless that nonce is still flagged missing', () => {
+    expect(identityContractNonceConsumed(BigInt(137), BigInt(136))).toBe(true)
+    expect(identityContractNonceConsumed(missing(1) | BigInt(137), BigInt(136))).toBe(false)
+    expect(identityContractNonceConsumed(missing(1) | BigInt(137), BigInt(135))).toBe(true)
+    expect(identityContractNonceConsumed(missing(3) | BigInt(137), BigInt(134))).toBe(false)
+  })
+
+  it('is true once the nonce has fallen out of the window behind the tip', () => {
+    expect(identityContractNonceConsumed(missing(24) | BigInt(124), BigInt(100))).toBe(false)
+    expect(identityContractNonceConsumed(BigInt(125), BigInt(100))).toBe(true)
   })
 })
