@@ -140,5 +140,6 @@ function hold(ctx: DmContext, conv: Conv, st: StreamState, pointer: MessagePoint
   if (content.type === 'text') ctx.cache.noteText(conv.key)
   // Sending is reading: my own message moves the read position past everything before it.
   ctx.store.touch(conv.entry, { readAt: held.createdAt })
+  ctx.cache.notePositions(conv.key, conv.entry.readAt, conv.entry.hiddenAt)
   return held
 }

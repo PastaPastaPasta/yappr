@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { logger } from '@/lib/logger'
 import { dpnsService, followService, identityService, unifiedProfileService } from '@/lib/services'
 import { loadIdentityBatch } from '@/lib/services/identity-batch'
+import { base58ToBytes } from '@/lib/services/sdk-helpers'
 import { getPrimaryUsername } from '@/lib/utils/username'
 
 // Upper bound on the follower suggestions shown before anything is typed; also
@@ -17,7 +18,25 @@ export interface UserSearchResult {
   bio?: string
 }
 
-/** Debounced DPNS username search (3 to 30 characters), excluding the viewer. */
+/** True when `text` is a base58 identity ID (32 bytes), as pasted into a picker. */
+export const isIdentityIdText = (text: string): boolean => text.length > 30 && base58ToBytes(text)?.length === 32
+
+/** The existing identity with this ID as a picker entry, or null when there is none. */
+async function lookupIdentityId(id: string): Promise<UserSearchResult | null> {
+  if (!(await identityService.getIdentity(id))) return null
+  const { usernames, profiles } = await loadIdentityBatch([id]).catch(() => ({
+    usernames: new Map<string, string | null>(),
+    profiles: [],
+  }))
+  const username = usernames.get(id)?.replace(/\.dash$/, '') || undefined
+  const profile = profiles.find(p => p.$ownerId === id)
+  return { id, username, displayName: profile?.displayName || username || `User ${id.slice(-6)}`, bio: profile?.bio }
+}
+
+/**
+ * Debounced user search, excluding the viewer: a DPNS username search (3 to
+ * 30 characters), or a lookup of a pasted identity ID.
+ */
 export function useUserSearch(input: string, viewerId: string | undefined) {
   const [results, setResults] = useState<UserSearchResult[]>([])
   const [isSearching, setIsSearching] = useState(false)
@@ -25,7 +44,26 @@ export function useUserSearch(input: string, viewerId: string | undefined) {
 
   useEffect(() => {
     const query = input.trim()
-    // Clear results if query is empty or looks like an identity ID
+    // Every input change retires the lookup in flight, including one that starts no search of its own.
+    const currentSearchId = ++searchIdRef.current
+    if (isIdentityIdText(query)) {
+      setIsSearching(true)
+      const debounceTimer = setTimeout(() => {
+        lookupIdentityId(query)
+          .then(user => {
+            if (currentSearchId === searchIdRef.current) setResults(user && user.id !== viewerId ? [user] : [])
+          })
+          .catch(error => {
+            logger.error('Identity lookup failed:', error)
+            if (currentSearchId === searchIdRef.current) setResults([])
+          })
+          .finally(() => {
+            if (currentSearchId === searchIdRef.current) setIsSearching(false)
+          })
+      }, 300)
+      return () => clearTimeout(debounceTimer)
+    }
+    // Clear results if query is empty, or too long to be a username
     if (!query || query.length > 30) {
       setResults([])
       setIsSearching(false)
@@ -34,10 +72,10 @@ export function useUserSearch(input: string, viewerId: string | undefined) {
     // Only search if at least 3 characters (like DashPay)
     if (query.length < 3) {
       setResults([])
+      setIsSearching(false)
       return
     }
 
-    const currentSearchId = ++searchIdRef.current
     setIsSearching(true)
 
     const debounceTimer = setTimeout(async () => {

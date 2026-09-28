@@ -1,15 +1,16 @@
 import bs58 from 'bs58'
-import { afterEach, describe, expect, it } from 'vitest'
-import { bytesEqual } from '@/lib/bytes'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { bytesEqual, bytesToHex } from '@/lib/bytes'
 import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, CAROL_ID, CAROL_PRIV } from '@/lib/dm/test-fixtures'
 import { DmEngine } from './engine'
-import { MapKv, MemoryChain, MemoryLedger, manualScheduler } from './test-chain'
+import type { KeyValueStore } from './types'
+import { MapKv, MemoryChain, MemoryLedger, makeContext, manualScheduler } from './test-chain'
 
 const engines: DmEngine[] = []
 
-function engine(ledger: MemoryLedger, id: Uint8Array, priv: Uint8Array): DmEngine {
+function engine(ledger: MemoryLedger, id: Uint8Array, priv: Uint8Array, kv: KeyValueStore = new MapKv(), chain = new MemoryChain(ledger, id)): DmEngine {
   ledger.register(id, priv)
-  const e = new DmEngine({ chain: new MemoryChain(ledger, id), identityId: id, encPriv: priv, kv: new MapKv(), cacheKey: 'dm', scheduler: manualScheduler })
+  const e = new DmEngine({ chain, identityId: id, encPriv: priv, kv, cacheKey: 'dm', scheduler: manualScheduler })
   engines.push(e)
   return e
 }
@@ -118,5 +119,87 @@ describe('DmEngine views', () => {
     expect(fresh.getSnapshot().recovery).toBeNull()
     expect(fresh.getSnapshot().conversations.map((c) => c.peerId)).toEqual([carol58])
     expect(fresh.messages(fresh.getSnapshot().conversations[0].key).map((m) => m.text)).toEqual(['hello'])
+  })
+})
+
+describe('DmEngine self-state edits across a reload (§5.5)', () => {
+  /** What a fresh device reads from the chain. */
+  async function savedState(ledger: MemoryLedger, id: Uint8Array, priv: Uint8Array) {
+    const { ctx } = makeContext(ledger, id, priv)
+    await ctx.store.load()
+    return ctx.store
+  }
+
+  /** A Bob whose self-state writes can be refused, as when the page closes before the save finishes. */
+  async function bobWithChat(ledger: MemoryLedger) {
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
+    const kv = new MapKv()
+    const chain = new MemoryChain(ledger, BOB_ID)
+    const bob = await started(engine(ledger, BOB_ID, BOB_PRIV, kv, chain))
+    await alice.send(await alice.startDirect(bob58), 'hi')
+    await bob.tick()
+    expect(await bob.flush()).toBe(true)
+    const refuse = () => {
+      chain.hook = (method) => (method.endsWith('SelfState') ? { ok: false, failure: 'transport', error: 'page closed' } : null)
+    }
+    return { alice, bob, kv, key: bob.getSnapshot().conversations[0].key, refuse }
+  }
+
+  it('saves a block at once, not on the coalescing timer', async () => {
+    const ledger = new MemoryLedger()
+    const { bob } = await bobWithChat(ledger)
+    bob.setBlocked(alice58, true)
+    await vi.waitFor(async () => expect((await savedState(ledger, BOB_ID, BOB_PRIV)).isBlocked(ALICE_ID)).toBe(true))
+  })
+
+  it('keeps an unblock and a deleted conversation that were never saved, and saves them on the next load', async () => {
+    const ledger = new MemoryLedger()
+    const { bob, kv, key, refuse } = await bobWithChat(ledger)
+    bob.setBlocked(alice58, true)
+    await vi.waitFor(async () => expect((await savedState(ledger, BOB_ID, BOB_PRIV)).isBlocked(ALICE_ID)).toBe(true))
+    refuse()
+    bob.setBlocked(alice58, false)
+    bob.hide(key)
+    expect(await bob.flush()).toBe(false)
+
+    const reloaded = await started(engine(ledger, BOB_ID, BOB_PRIV, kv))
+    expect(reloaded.getSnapshot().blocked).toEqual([])
+    expect(reloaded.getSnapshot().conversations.map((c) => c.hidden)).toEqual([true])
+    await vi.waitFor(async () => expect((await savedState(ledger, BOB_ID, BOB_PRIV)).isBlocked(ALICE_ID)).toBe(false))
+    expect((await savedState(ledger, BOB_ID, BOB_PRIV)).directs()[0].hiddenAt).toBeGreaterThan(0)
+  })
+
+  it('keeps a read position that was never saved', async () => {
+    const ledger = new MemoryLedger()
+    const { bob, kv, key, refuse } = await bobWithChat(ledger)
+    expect(bob.getSnapshot().unreadTotal).toBe(1)
+    refuse()
+    bob.markRead(key)
+    expect(await bob.flush()).toBe(false)
+
+    const reloaded = await started(engine(ledger, BOB_ID, BOB_PRIV, kv))
+    expect(reloaded.getSnapshot().unreadTotal).toBe(0)
+  })
+
+  it('keeps the read position a reply moved, when that was never saved', async () => {
+    const ledger = new MemoryLedger()
+    const { bob, kv, key, refuse } = await bobWithChat(ledger)
+    expect(bob.getSnapshot().unreadTotal).toBe(1)
+    refuse()
+    await bob.send(key, 'reply')
+    expect(bob.getSnapshot().unreadTotal).toBe(0)
+    expect(await bob.flush()).toBe(false)
+
+    const reloaded = await started(engine(ledger, BOB_ID, BOB_PRIV, kv))
+    expect(reloaded.getSnapshot().unreadTotal).toBe(0)
+  })
+
+  it('skips a malformed cached block and still restores the rest', async () => {
+    const ledger = new MemoryLedger()
+    const kv = new MapKv()
+    const alice = { blocked: true, changedAt: 1_000 }
+    kv.set('dm', JSON.stringify({ blocks: { zz: alice, '': alice, [bytesToHex(ALICE_ID)]: alice } }))
+    const bob = await started(engine(ledger, BOB_ID, BOB_PRIV, kv))
+    expect(bob.getSnapshot().blocked).toEqual([alice58])
   })
 })

@@ -48,24 +48,36 @@ export const sameEpoch = (a: Epoch, b: Epoch): boolean => a.b === b.b && a.r ===
 
 export const includesId = (ids: readonly IdentityId[], id: IdentityId): boolean => ids.some((m) => bytesEqual(m, id))
 
+/** The user-perceived characters of `text`: an emoji ZWJ sequence or a letter with its accents is one. */
+function graphemes(text: string): Iterable<string> {
+  if (typeof Intl.Segmenter !== 'function') return text
+  return Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text), (s) => s.segment)
+}
+
 /**
- * Split text into pieces of at most `maxBytes` UTF-8 bytes on code point
- * boundaries (§5.7: longer text is split across messages).
+ * Split text into pieces of at most `maxBytes` UTF-8 bytes (§5.7: longer text
+ * is split across messages), between user-perceived characters so an emoji
+ * sequence is never cut in two. Only a single character larger than a whole
+ * message is split inside, on code points.
  */
 export function splitText(text: string, maxBytes = MAX_TEXT_BYTES): string[] {
   const encoder = new TextEncoder()
   const pieces: string[] = []
   let current = ''
   let size = 0
-  for (const char of text) {
-    const length = encoder.encode(char).length
+  const add = (unit: string, length: number) => {
     if (size + length > maxBytes && current) {
       pieces.push(current)
       current = ''
       size = 0
     }
-    current += char
+    current += unit
     size += length
+  }
+  for (const grapheme of graphemes(text)) {
+    const length = encoder.encode(grapheme).length
+    if (length <= maxBytes) add(grapheme, length)
+    else for (const char of grapheme) add(char, encoder.encode(char).length)
   }
   if (current) pieces.push(current)
   return pieces

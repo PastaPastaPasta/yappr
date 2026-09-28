@@ -4,7 +4,7 @@ import { CheckIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { UserAvatar } from '@/components/ui/avatar-image'
-import { useFollowerSuggestions, useUserSearch, type UserSearchResult } from './use-user-search'
+import { isIdentityIdText, useFollowerSuggestions, useUserSearch, type UserSearchResult } from './use-user-search'
 
 interface UserPickerProps {
   inputId: string
@@ -22,7 +22,8 @@ interface UserPickerProps {
 
 /**
  * The people picker used by the new-message and group dialogs: followers
- * until three characters are typed, then a DPNS username search.
+ * until three characters are typed, then a DPNS username search, or the
+ * identity itself when a full identity ID is pasted.
  */
 export function UserPicker({ inputId, query, onQueryChange, onPick, viewerId, disabled, selectedIds, excludeIds, hint }: UserPickerProps) {
   const trimmed = query.trim()
@@ -31,6 +32,8 @@ export function UserPicker({ inputId, query, onQueryChange, onPick, viewerId, di
   // Below the 3-character search threshold we show the user's followers instead
   // of hitting DPNS; a 1-2 character query just filters that list locally.
   const showFollowers = trimmed.length < 3
+  // A pasted identity ID is looked up rather than searched; the viewer's own is never a result.
+  const isId = isIdentityIdText(trimmed) && trimmed !== viewerId
   const needle = trimmed.toLowerCase()
   const visible = (list: UserSearchResult[]) => list.filter(user => !excludeIds?.has(user.id))
   const filteredFollowers = visible(needle
@@ -121,9 +124,9 @@ export function UserPicker({ inputId, query, onQueryChange, onPick, viewerId, di
         </div>
       )}
 
-      {!isSearching && results.length === 0 && trimmed.length >= 3 && trimmed.length <= 30 && (
+      {!isSearching && results.length === 0 && ((trimmed.length >= 3 && trimmed.length <= 30) || isId) && (
         <div className="mb-4 p-3 text-center text-sm text-gray-500 border border-gray-200 dark:border-gray-700 rounded-xl">
-          No users found matching &quot;{trimmed}&quot;
+          {isId ? 'No user found with this identity ID' : <>No users found matching &quot;{trimmed}&quot;</>}
         </div>
       )}
     </>

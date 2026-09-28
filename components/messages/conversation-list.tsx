@@ -9,7 +9,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { UserDetails } from '@/lib/utils/resolve-user-details'
-import { MenuContent, MenuItem } from './dm-ui'
+import { MenuContent, MenuItem, memberCount } from './dm-ui'
 import { displayNameOf } from './use-dm-engine'
 
 /** One row of the merged inbox: a v5 conversation, a legacy v3/v4 one, or both for the same person. */
@@ -38,7 +38,7 @@ interface ConversationListProps {
   showHidden: boolean
   onToggleHidden: () => void
   onSelect: (key: string) => void
-  onNewMessage: (event: React.MouseEvent<HTMLElement>) => void
+  onNewMessage: () => void
   onNewGroup: () => void
   onOpenSettings: () => void
   className?: string
@@ -149,7 +149,7 @@ export function ConversationList({
                 </div>
                 <p className="text-xs text-gray-500 truncate mb-1">
                   {row.kind === 'group'
-                    ? `${row.memberIds.length} members`
+                    ? memberCount(row.memberIds.length)
                     : details.get(row.peerId)?.username ?? `${row.peerId.slice(0, 12)}...`}
                 </p>
                 {row.notice ? (

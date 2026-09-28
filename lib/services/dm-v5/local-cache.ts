@@ -11,6 +11,10 @@
  * - `hasText`: a grant-only 1:1 stays hidden until its first text (§6.2).
  * - `inviteDays`: invites seen per day and bucket level, for the sender's `k`
  *   estimate (§5.1.2).
+ * - `readAt`/`hiddenAt` per conversation and `blocks`: this device's latest
+ *   self-state edits. The self-state save is coalesced and cannot finish once
+ *   the page is closing (§5.5), so they are kept here and re-applied on load:
+ *   a reload never loses a read position, a deleted conversation or a block.
  */
 
 import { senderBucketLevel } from '@/lib/dm/invite'
@@ -26,6 +30,15 @@ interface ConvCache {
   hasText?: boolean
   /** I sent a leave on this group: stop showing it while the owner removes me (§6.4). */
   left?: boolean
+  readAt?: number
+  hiddenAt?: number
+}
+
+export interface CachedBlock {
+  /** Hex identity id. */
+  id: string
+  blocked: boolean
+  changedAt: number
 }
 
 interface CacheData {
@@ -34,9 +47,16 @@ interface CacheData {
   inviteDays: Record<string, [number, number, number]>
   lastSweep: number
   migrationNoticeSeen: boolean
+  /** hex identity id → the newest block or unblock made on this device. */
+  blocks: Record<string, { blocked: boolean; changedAt: number }>
 }
 
-const empty = (): CacheData => ({ convs: {}, inviteDays: {}, lastSweep: 0, migrationNoticeSeen: false })
+const empty = (): CacheData => ({ convs: {}, inviteDays: {}, lastSweep: 0, migrationNoticeSeen: false, blocks: {} })
+
+/** A 32-byte identity id in hex, as `hexId` writes it. */
+const IDENTITY_HEX = /^[0-9a-f]{64}$/
+
+const isTime = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0
 
 function isPointer(value: unknown): value is MessagePointer {
   if (!value || typeof value !== 'object') return false
@@ -57,7 +77,12 @@ function parse(raw: string | null): CacheData {
         ...(isPointer(conv?.oldestOwn) ? { oldestOwn: conv.oldestOwn } : {}),
         ...(conv?.hasText === true ? { hasText: true } : {}),
         ...(conv?.left === true ? { left: true } : {}),
+        ...(isTime(conv?.readAt) ? { readAt: conv.readAt } : {}),
+        ...(isTime(conv?.hiddenAt) ? { hiddenAt: conv.hiddenAt } : {}),
       }
+    }
+    for (const [id, block] of Object.entries(value.blocks ?? {})) {
+      if (IDENTITY_HEX.test(id) && typeof block?.blocked === 'boolean' && isTime(block.changedAt)) data.blocks[id] = { blocked: block.blocked, changedAt: block.changedAt }
     }
     for (const [day, counts] of Object.entries(value.inviteDays ?? {})) {
       if (Array.isArray(counts) && counts.length === 3 && counts.every((n) => Number.isFinite(n))) {
@@ -126,6 +151,37 @@ export class LocalCache {
 
   noteLeft(convKey: string): void {
     this.conv(convKey).left = true
+    this.dirty = true
+  }
+
+  /** The read and hidden positions last set on this device, if any. */
+  positions(convKey: string): { readAt?: number; hiddenAt?: number } | null {
+    const conv = this.data.convs[convKey]
+    if (!conv || (conv.readAt === undefined && conv.hiddenAt === undefined)) return null
+    return { readAt: conv.readAt, hiddenAt: conv.hiddenAt }
+  }
+
+  /** Remember a conversation's positions; like the self-state merge, each only moves forward. */
+  notePositions(convKey: string, readAt: number, hiddenAt: number): void {
+    const known = this.data.convs[convKey]
+    const read = readAt > (known?.readAt ?? 0)
+    const hidden = hiddenAt > (known?.hiddenAt ?? 0)
+    if (!read && !hidden) return
+    const conv = this.conv(convKey)
+    if (read) conv.readAt = readAt
+    if (hidden) conv.hiddenAt = hiddenAt
+    this.dirty = true
+  }
+
+  blocks(): CachedBlock[] {
+    return Object.entries(this.data.blocks).map(([id, block]) => ({ id, ...block }))
+  }
+
+  /** Remember a block entry; the newer change wins, as in the self-state merge. */
+  noteBlock(block: CachedBlock): void {
+    const known = this.data.blocks[block.id]
+    if (known && known.changedAt >= block.changedAt) return
+    this.data.blocks[block.id] = { blocked: block.blocked, changedAt: block.changedAt }
     this.dirty = true
   }
 

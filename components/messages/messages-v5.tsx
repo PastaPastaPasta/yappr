@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { LockClosedIcon, PaperAirplaneIcon, PlusIcon } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
@@ -157,10 +157,8 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
     startDirect(pendingStart).catch((error) => toast.error(errorText(error, 'Failed to start conversation')))
   }, [pendingStart, engine, snapshot?.ready, identityId, startDirect])
 
-  const openNewMessage = (event?: MouseEvent<HTMLElement>) => {
-    event?.preventDefault()
-    setDialog('message')
-  }
+  // Not preventDefault: on the "+" menu item that keeps the menu open (and the page inert) over the new thread.
+  const openNewMessage = () => setDialog('message')
 
   if (!engine) {
     return (
@@ -309,6 +307,7 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
       <DmSettingsDialog
         open={dialog === 'settings'}
         onOpenChange={(open) => setDialog(open ? 'settings' : null)}
+        ready={snapshot?.ready ?? false}
         retention={snapshot?.retention ?? '30d'}
         onRetention={(retention) => engine.setRetention(retention)}
         blocked={snapshot?.blocked ?? []}
@@ -317,7 +316,9 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
       />
       {selectedView?.kind === 'group' && (
         <GroupSettingsDialog
-          key={selectedView.key}
+          // Not the bare conversation key: that is the ThreadView sibling's key, and a duplicate key
+          // left the old group's thread pane in the DOM after switching away.
+          key={`settings:${selectedView.key}`}
           open={dialog === 'group-settings'}
           onOpenChange={(open) => setDialog(open ? 'group-settings' : null)}
           group={selectedView}
