@@ -326,6 +326,30 @@ describe('final results on a closed poll', () => {
     expect(await service.getTally(closed())).toMatchObject({ lateIncluded: true });
   });
 
+  it('a failed refresh on a closed v3 poll marks the optimistic tally as not final', async () => {
+    const service = await loadService('v3');
+    mocks.query.mockRejectedValue(new Error('down'));
+    // The optimistic tally holds a selection written after the close.
+    const optimistic = { counts: [1, 1, 1], total: 3 };
+
+    expect(await withoutWaiting(service.refreshTally(closed(), optimistic, [2], [0, 2]))).toEqual({
+      ...optimistic,
+      lateIncluded: true,
+    });
+  });
+
+  it('a tally cached while the poll was open is re-read by close time once it closes', async () => {
+    const service = await loadService('v3');
+    const endsAt = Date.now() + 10_000;
+    mocks.count.mockResolvedValue(new Map([['80', 1n]]));
+    expect(await service.getTally(poll({ endsAt }))).toEqual({ counts: [1, 0, 0], total: 1 });
+
+    // A second on-time ballot lands; the poll closes inside the cache TTL.
+    vi.advanceTimersByTime(11_000);
+    mocks.query.mockResolvedValue(new Map([['a', { choice: 0 }], ['b', { choice: 1 }]]));
+    expect(await service.getTally(poll({ endsAt }))).toEqual({ counts: [1, 1, 0], total: 2, cutoffVerified: true });
+  });
+
   it('does not bound by close time while the poll is open, or on v4', async () => {
     const v3 = await loadService('v3');
     mocks.count.mockResolvedValue(new Map([['80', 2n]]));

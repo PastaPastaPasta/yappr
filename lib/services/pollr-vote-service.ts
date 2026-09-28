@@ -400,6 +400,11 @@ class PollrVoteService {
         pollId: poll.id,
         error: extractErrorMessage(error),
       });
+      // On a closed v3 poll the optimistic counts were never bounded by the
+      // close time (a selection can land after it), so they aren't final.
+      if (optimistic && !optimistic.cutoffVerified && closedCutoff(poll) !== null) {
+        return { ...optimistic, lateIncluded: true };
+      }
       return optimistic;
     }
   }
@@ -514,19 +519,23 @@ class PollrVoteService {
   async getTally(poll: Poll): Promise<PollTally> {
     const size = Math.min(Math.max(poll.options.length, 1), POLL_MAX_OPTIONS);
 
-    const cached = this.tallyCache.get(poll.id);
-    if (cached) return { ...cached, counts: resize(cached.counts, size) };
-
-    const sdk = await getEvoSdk();
-    const docType = pollrVoteDocType(poll.multiChoice);
-
     // The close time is advisory, so ballots can land after it and the count
     // tree has no time axis to leave them out. v3 ballots carry `$createdAt`
     // under `pollVotesByTime`, so a closed poll is tallied from its on-time
     // ballots in one read, keeping "Final results" final. v4 ballots are
     // indexOnly with no time index, so there is nothing to bound them by there.
-    const closedAt =
-      !pollrIsV4() && typeof poll.endsAt === 'number' && poll.endsAt < Date.now() ? poll.endsAt : null;
+    const closedAt = closedCutoff(poll);
+
+    // A closed v3 poll reuses only a cached tally the closed path classified;
+    // one cached while it was open (or optimistic) was never bounded by the
+    // close time.
+    const cached = this.tallyCache.get(poll.id);
+    if (cached && (closedAt === null || cached.cutoffVerified || cached.lateIncluded)) {
+      return { ...cached, counts: resize(cached.counts, size) };
+    }
+
+    const sdk = await getEvoSdk();
+    const docType = pollrVoteDocType(poll.multiChoice);
     const onTime = closedAt === null ? null : await this.countOnTimeBallots(sdk, poll.id, docType, closedAt);
 
     // Each step falls through to the next only when it couldn't produce counts.
@@ -819,6 +828,11 @@ export function reconcileTally(
     return Math.max(count, pending, floor);
   });
   return { ...fresh, counts, total: counts.reduce((sum, count) => sum + count, 0) };
+}
+
+/** A closed v3 poll's close time, the cutoff its ballots are tallied by; else null. */
+function closedCutoff(poll: Poll): number | null {
+  return !pollrIsV4() && typeof poll.endsAt === 'number' && poll.endsAt < Date.now() ? poll.endsAt : null;
 }
 
 /** Trim or pad a counts array to the poll's actual option count. */
