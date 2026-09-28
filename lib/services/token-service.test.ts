@@ -11,6 +11,8 @@ const claim = vi.hoisted(() => vi.fn())
 vi.mock('./evo-sdk-service', () => ({
   getEvoSdk: async () => ({ tokens: { claim }, identities: { fetch: async () => ({ publicKeys: [] }) } }),
 }))
+// The nonce lock reads Platform's nonce; these tests are about the claim, so it just runs the write.
+vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (...args: [string, string, () => Promise<unknown>]) => args[2]() }))
 vi.mock('./signer-service', () => ({ signerService: { createSignerFromWasmKey: () => ({ signer: true, identityKey: true }) } }))
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: true, key: {} }) }))
 vi.mock('../contract-topology', () => ({ starterGrantAmount: () => BigInt(100) }))

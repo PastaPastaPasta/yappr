@@ -7,7 +7,8 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import {
-  NONCE_TAKEN_ERROR,
+  CREATE_NOT_RECORDED_ERROR,
+  isConsensusRefusal,
   categorizeError,
   isAffectedStateSnapshotError,
   classifyModerationError,
@@ -657,15 +658,34 @@ describe('isIdentityNonceConflictError (40204)', () => {
     expect(isIdentityNonceConflictError({ message: 'state transition broadcast error: {"code":40204}' })).toBe(true)
   })
 
-  it("claims createDocument's own give-up message, and tells the user to retry rather than buy YAPP", () => {
-    expect(isIdentityNonceConflictError(new Error(NONCE_TAKEN_ERROR))).toBe(true)
-    expect(categorizeError(new Error(NONCE_TAKEN_ERROR))).toMatch(/not saved\. try again/i)
+  it('tells the user to retry rather than buy YAPP', () => {
     expect(categorizeError(new Error(AT_TIP))).toMatch(/not saved\. try again/i)
+  })
+
+  it("does not claim createDocument's consumed-but-absent result: what took the nonce is unknown, so it is no clash to retry", () => {
+    expect(isIdentityNonceConflictError(new Error(CREATE_NOT_RECORDED_ERROR))).toBe(false)
+    expect(isTimeoutError(new Error(CREATE_NOT_RECORDED_ERROR))).toBe(false)
+    expect(categorizeError(new Error(CREATE_NOT_RECORDED_ERROR))).toBe(CREATE_NOT_RECORDED_ERROR)
   })
 
   it('does not claim a timeout, a duplicate document or bare digits', () => {
     expect(isIdentityNonceConflictError(new Error('waitForResponse timed out'))).toBe(false)
     expect(isIdentityNonceConflictError(new Error('Document Duplicate unique properties'))).toBe(false)
     expect(isIdentityNonceConflictError(new Error('balance 1790294020400 too low'))).toBe(false)
+  })
+})
+
+describe('isConsensusRefusal', () => {
+  it('is a verdict: a broadcast refusal, a labelled consensus code or a nonce refusal', () => {
+    expect(isConsensusRefusal(new Error('state transition broadcast error: Document X has duplicate unique properties ["tag"] with other documents'))).toBe(true)
+    expect(isConsensusRefusal(new Error('Document X has invalid revision Some(2). The desired revision is 2 | code=40106'))).toBe(true)
+    expect(isConsensusRefusal(new Error('Identity Y is trying to set an invalid identity nonce. The current identity nonce is 764, we are setting 764, error is nonce already present at tip'))).toBe(true)
+  })
+
+  it('is not an unknown outcome: a timeout, a transport failure, an unproven snapshot or bare digits', () => {
+    expect(isConsensusRefusal(new Error('waitForResponse timed out after 10s'))).toBe(false)
+    expect(isConsensusRefusal(new Error('transport error: rate limited'))).toBe(false)
+    expect(isConsensusRefusal(new Error('received a verified VerifiedDocuments snapshot for this transition family'))).toBe(false)
+    expect(isConsensusRefusal(new Error('balance 1790294020400 too low'))).toBe(false)
   })
 })

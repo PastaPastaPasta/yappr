@@ -139,22 +139,43 @@ export function isAlreadyExistsError(error: unknown): boolean {
 export function isIdentityNonceConflictError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
   return (
-    msg === NONCE_TAKEN_ERROR ||
     /invalididentitynonce|invalid identity nonce/i.test(msg) ||
     /nonce (already present|too far) /i.test(msg) ||
-    hasConsensusCode(msg, [40204])
+    hasConsensusCode(error, [40204])
   )
 }
 
 /**
- * What `stateTransitionService.createDocument` reports for a create that lost
- * its identity contract nonce to another write by the same identity (QA D-01):
- * its nonce was consumed and its document never appeared, or Platform kept
- * refusing it for its nonce. Nothing was written. Matched by
- * {@link isIdentityNonceConflictError}, so callers that retry a nonce clash
- * (DM v5's `classifyWriteFailure`) retry this too.
+ * Whether Platform gave a verdict on a transition: refused it (a consensus
+ * error, at broadcast or as a paid error at execution) rather than leaving its
+ * outcome unknown. A refused transition does not execute later.
  */
-export const NONCE_TAKEN_ERROR = 'This was not saved: another write from your account went out at the same moment and took its place (invalid identity nonce). Please try again.'
+export function isConsensusRefusal(error: unknown): boolean {
+  if (consensusCodeOf(error) !== null) return true
+  const msg = extractErrorMessage(error)
+  return (
+    /state transition broadcast error/i.test(msg) ||
+    /\bcode"?\s*[=:]\s*[1-4]\d{4}\b/.test(msg) ||
+    isIdentityNonceConflictError(error)
+  )
+}
+
+/**
+ * What `stateTransitionService.createDocument` reports for a create whose
+ * identity contract nonce Platform shows consumed while its document is proved
+ * absent at the same height or later (QA D-01). It can never execute, so
+ * nothing was written; but what consumed the nonce is unknown (another write by
+ * the same identity, or this create refused as a paid error whose answer was
+ * lost), so it is not a nonce clash to retry blindly.
+ */
+export const CREATE_NOT_RECORDED_ERROR = 'This was not saved: the network used its place without recording it. Check, then try again.'
+
+/**
+ * Why a write was not sent at all: a transition this browser signed earlier
+ * has not been confirmed or refused, and could still take the nonce this one
+ * would carry (QA D-01, `lib/services/identity-nonce.ts`).
+ */
+export const PENDING_WRITE_ERROR = 'An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again.'
 
 /**
  * Checks if an error from waitForResponse is a non-fatal verification
@@ -985,6 +1006,9 @@ export function categorizeError(error: unknown): string {
   }
   if (isIdentityNonceConflictError(error)) {
     return 'Another write from your account went out at the same moment, so this one was not saved. Try again.'
+  }
+  if (extractErrorMessage(error) === CREATE_NOT_RECORDED_ERROR || extractErrorMessage(error) === PENDING_WRITE_ERROR) {
+    return extractErrorMessage(error)
   }
   if (isActionFeeAgreementError(error)) {
     return 'This app is out of date with the network\'s fee rules. Reload to get the latest version.'
