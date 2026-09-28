@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,7 @@ import { normalizeDpnsUsername } from '@/lib/post-helpers'
 import { logger } from '@/lib/logger'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { BLOG_YAPP_TOKEN_COSTS, blogIsV2 } from '@/lib/constants'
-import { blogAuthorHandle, mergeComments } from '@/lib/blog/content-utils'
+import { blogAuthorHandle, createCommentReads, mergeComments } from '@/lib/blog/content-utils'
 import type { BlogComment } from '@/lib/types'
 import { blogCommentService } from '@/lib/services'
 
@@ -47,19 +47,20 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
   // Comments posted from here that no read has returned yet. The read after a
   // write can reach a node that has not applied it; merging these in keeps a
   // paid comment on screen instead of silently dropping it (and inviting a
-  // second, paid, attempt). Once a read returns one, the network owns it again
-  // (a moderator's removal then shows).
-  const createdRef = useRef<BlogComment[]>([])
+  // second, paid, attempt).
+  const [reads] = useState(() => createCommentReads<BlogComment>())
 
   useEffect(() => {
     onCommentCountChange?.(comments.length)
   }, [comments.length, onCommentCountChange])
 
   const loadComments = useCallback(async () => {
+    const read = reads.begin()
     if (!commentsEnabled) {
       setComments([])
       setUsernames(new Map())
       setAvatars(new Map())
+      setIsLoading(false)
       return
     }
 
@@ -77,26 +78,23 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
         ? await checkBlockedForAuthors(user.identityId, authorIds)
         : new Map<string, boolean>()
 
-      const returned = new Set(allComments.map((comment) => comment.id))
-      createdRef.current = createdRef.current.filter((comment) => !returned.has(comment.id))
-      const filtered = mergeComments(
-        allComments.filter((comment) => !blockedMap.get(comment.ownerId)),
-        createdRef.current.filter((comment) => comment.blogPostId === blogPostId)
-      )
+      const filtered = reads.settle(read, blogPostId, allComments, allComments.filter((comment) => !blockedMap.get(comment.ownerId)))
+      if (!filtered) return
       setComments(filtered)
 
       const filteredAuthorIds = Array.from(new Set(filtered.map((comment) => comment.ownerId).filter(Boolean)))
       const { loadIdentityBatch } = await import('@/lib/services/identity-batch')
       const { usernames: resolvedUsernames, avatars: resolvedAvatars } = await loadIdentityBatch(filteredAuthorIds)
+      if (!reads.isCurrent(read)) return
 
       setUsernames(resolvedUsernames)
       setAvatars(resolvedAvatars)
     } catch {
-      setError('Failed to load comments')
+      if (reads.isCurrent(read)) setError('Failed to load comments')
     } finally {
-      setIsLoading(false)
+      if (reads.isCurrent(read)) setIsLoading(false)
     }
-  }, [blogPostId, commentsEnabled, user?.identityId])
+  }, [blogPostId, commentsEnabled, reads, user?.identityId])
 
   useEffect(() => {
     loadComments().catch(() => {
@@ -115,7 +113,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
     try {
       setIsSubmitting(true)
       const created = await blogCommentService.createComment(authedUser.identityId, blogPostId, blogPostOwnerId, trimmedContent)
-      createdRef.current = [...createdRef.current, created]
+      reads.added(created)
       setContent('')
       setComments((prev) => mergeComments(prev, [created]))
       await loadComments()
@@ -139,7 +137,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
         throw new Error('Comment deletion was not confirmed')
       }
 
-      createdRef.current = createdRef.current.filter((comment) => comment.id !== commentId)
+      reads.removed(commentId)
       setComments((prev) => prev.filter((comment) => comment.id !== commentId))
     } catch (error) {
       logger.error('Failed to delete blog comment:', error)

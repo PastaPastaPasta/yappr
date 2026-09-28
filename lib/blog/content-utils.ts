@@ -189,6 +189,36 @@ export function mergeComments<T extends { id: string; createdAt: Date }>(loaded:
   return [...loaded, ...missing].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
 }
 
+/**
+ * A post's comment reads, reconciled with the comments this client created.
+ * Reads can complete out of order (the first load is still pending when a
+ * post-submit refresh starts), so only the latest read may apply: an older one
+ * would retire a created comment and then drop it with its pre-write list.
+ * A created comment is retired once a current read returns it; from then on
+ * the network owns it (a moderator's removal then shows).
+ */
+export function createCommentReads<T extends { id: string; createdAt: Date; blogPostId: string }>() {
+  let generation = 0
+  let created: T[] = []
+  return {
+    /** Starts a read, superseding any still in flight; returns its token. */
+    begin: () => ++generation,
+    isCurrent: (token: number) => token === generation,
+    added: (comment: T) => { created = [...created, comment] },
+    removed: (id: string) => { created = created.filter((comment) => comment.id !== id) },
+    /**
+     * The list to show once a read returns (`returned` is everything it read,
+     * `shown` what survives filtering), or null when a newer read superseded it.
+     */
+    settle(token: number, postId: string, returned: readonly T[], shown: readonly T[]): T[] | null {
+      if (token !== generation) return null
+      const ids = new Set(returned.map((comment) => comment.id))
+      created = created.filter((comment) => !ids.has(comment.id))
+      return mergeComments(shown, created.filter((comment) => comment.blogPostId === postId))
+    },
+  }
+}
+
 export function estimateReadingTime(content: unknown): number {
   const text = extractText(content)
   const words = text.split(/\s+/).filter(Boolean).length

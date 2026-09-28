@@ -3,6 +3,7 @@ import {
   blogAuthorHandle,
   blogCommentsDefault,
   blogPostDate,
+  createCommentReads,
   isPublishedBlogPost,
   labelProblem,
   labelsFromStored,
@@ -107,6 +108,39 @@ describe('just-created comments survive a lagging reload (QA D-28)', () => {
 
   it('does not duplicate a created comment the read already returned', () => {
     expect(mergeComments([older, mine], [mine]).map((comment) => comment.id)).toEqual(['a', 'mine'])
+  })
+
+  const onPost = <T extends { id: string; createdAt: Date }>(comment: T) => ({ ...comment, blogPostId: 'post' })
+  const ids = (list: { id: string }[] | null) => list?.map((comment) => comment.id) ?? null
+
+  it('ignores an initial read that completes after the post-submit refresh', () => {
+    const reads = createCommentReads<ReturnType<typeof onPost>>()
+    const initial = reads.begin()
+    reads.added(onPost(mine))
+    const refresh = reads.begin()
+    const afterWrite = [onPost(older), onPost(mine)]
+    expect(ids(reads.settle(refresh, 'post', afterWrite, afterWrite))).toEqual(['a', 'mine'])
+    // The older read returns its pre-write list last; it must not replace the newer one.
+    expect(reads.settle(initial, 'post', [onPost(older)], [onPost(older)])).toBeNull()
+    expect(reads.isCurrent(initial)).toBe(false)
+  })
+
+  it('keeps a created comment until a current read returns it, and lets a later read drop it', () => {
+    const reads = createCommentReads<ReturnType<typeof onPost>>()
+    reads.added(onPost(mine))
+    const lagging = reads.begin()
+    expect(ids(reads.settle(lagging, 'post', [onPost(older)], [onPost(older)]))).toEqual(['a', 'mine'])
+    const caughtUp = reads.begin()
+    expect(ids(reads.settle(caughtUp, 'post', [onPost(mine)], [onPost(mine)]))).toEqual(['mine'])
+    const removed = reads.begin()
+    expect(ids(reads.settle(removed, 'post', [], []))).toEqual([])
+  })
+
+  it('does not show a comment created on another post', () => {
+    const reads = createCommentReads<ReturnType<typeof onPost>>()
+    reads.added({ ...onPost(mine), blogPostId: 'other' })
+    const read = reads.begin()
+    expect(ids(reads.settle(read, 'post', [], []))).toEqual([])
   })
 })
 
