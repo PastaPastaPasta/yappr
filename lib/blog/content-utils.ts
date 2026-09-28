@@ -107,8 +107,14 @@ export function storedLabels(labels: readonly string[] | undefined, of: 'blog' |
   const list = uniqueStrings(labels ?? [])
   const typed = blogLabelsAreTyped()
   if (typed) assertListLimits(list, of === 'blog' ? LIST_LIMITS.blogLabels : LIST_LIMITS.postLabels)
-  else if (list.some((label) => label.includes(','))) throw new ListLimitError('Labels can\'t contain a comma on this network.')
+  const problem = list.map(labelProblem).find((message) => message !== null)
+  if (problem) throw new ListLimitError(problem)
   return encodeLabelList(list, typed)
+}
+
+/** Why one label cannot be stored on the configured cut, or null. v1–v3 separate labels with commas. */
+export function labelProblem(label: string): string | null {
+  return !blogLabelsAreTyped() && label.includes(',') ? 'Labels can\'t contain a comma on this network.' : null
 }
 
 /** Stored labels (a v4 list or a v1–v3 comma-separated string) as the app's list; undefined when there are none. */
@@ -134,9 +140,15 @@ export function isPublishedBlogPost(post: { publishedAt?: number }): boolean {
   return post.publishedAt !== undefined
 }
 
-/** The date a reader should see: when the post was published, else when it was created. */
+/**
+ * The date a reader should see: when the post was published, else when it was
+ * created. `publishedAt` is author-supplied and uncapped, so it may backdate a
+ * post (an import) but not date it after the network recorded it; a future
+ * value would otherwise pin the post to the top of every listing.
+ */
 export function blogPostDate(post: { publishedAt?: number; createdAt: Date }): Date {
-  return post.publishedAt !== undefined ? new Date(post.publishedAt) : post.createdAt
+  if (post.publishedAt === undefined) return post.createdAt
+  return new Date(Math.min(post.publishedAt, post.createdAt.getTime()))
 }
 
 /** A blog's public listing: drafts dropped, newest publication first. */

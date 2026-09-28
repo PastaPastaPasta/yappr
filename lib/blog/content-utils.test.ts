@@ -4,6 +4,7 @@ import {
   blogCommentsDefault,
   blogPostDate,
   isPublishedBlogPost,
+  labelProblem,
   labelsFromStored,
   mergeComments,
   publishedPostsNewestFirst,
@@ -40,6 +41,11 @@ describe('the date a reader sees (QA D-51)', () => {
   it('is publishedAt, not the document creation time', () => {
     const post = { publishedAt: day(2), createdAt: new Date(day(27)) }
     expect(blogPostDate(post).getTime()).toBe(day(2))
+  })
+
+  it('does not let an author date a post after the network recorded it', () => {
+    const createdAt = new Date(day(27))
+    expect(blogPostDate({ publishedAt: Date.UTC(2099, 0, 1), createdAt }).getTime()).toBe(day(27))
   })
 
   it('falls back to the creation time for a post without one', () => {
@@ -98,6 +104,11 @@ describe('labels are a list (QA D-55)', () => {
     vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v3')
     expect(() => storedLabels(['alpha,beta'], 'blog')).toThrow(ListLimitError)
     expect(storedLabels(['alpha', 'beta'], 'blog')).toBe('alpha,beta')
+    // The editor asks the same question as the label is typed, not at publish.
+    expect(labelProblem('alpha,beta')).toMatch(/comma/)
+    expect(labelProblem('alpha')).toBeNull()
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v4')
+    expect(labelProblem('alpha,beta')).toBeNull()
   })
 
   it('reads a v1-v3 CSV string as a list and omits an empty one', () => {

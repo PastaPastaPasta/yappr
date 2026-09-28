@@ -4,6 +4,7 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
 import { Post, PostQueryOptions, Reply } from '../../types';
 import type { BlogPost } from '@/lib/types';
+import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
@@ -100,7 +101,8 @@ async function fetchBlogPostsAsQuotes(blogPostIds: string[]): Promise<Post[]> {
   const blogPosts = settled
     .filter((r): r is PromiseFulfilledResult<BlogPost | null> => r.status === 'fulfilled')
     .map((r) => r.value)
-    .filter((post): post is BlogPost => post !== null);
+    // A draft is not public, quoted or not.
+    .filter((post): post is BlogPost => post !== null && isPublishedBlogPost(post));
 
   return Promise.all(
     blogPosts.map(async (blogPost) => {

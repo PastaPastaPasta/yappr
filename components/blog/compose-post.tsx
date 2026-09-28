@@ -12,7 +12,7 @@ import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { blogPostService, blogService } from '@/lib/services'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { validateHttpUrl } from '@/lib/utils'
-import { LABEL_LIMITS, blogCommentsDefault, decodeSummary, encodeSummary } from '@/lib/blog/content-utils'
+import { LABEL_LIMITS, blogCommentsDefault, decodeSummary, encodeSummary, labelProblem } from '@/lib/blog/content-utils'
 import { ListLimitError, decodeLabelList } from '@/lib/typed-array-codecs'
 import { isRateLimitedError } from '@/lib/error-utils'
 import { useImageUpload } from '@/hooks/use-image-upload'
@@ -220,6 +220,11 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     }
     if (selectedLabels.length >= LABEL_LIMITS.post) {
       toast.error(`A post can have at most ${LABEL_LIMITS.post} labels.`)
+      return
+    }
+    const problem = labelProblem(trimmed)
+    if (problem) {
+      toast.error(problem)
       return
     }
     setLabels([...selectedLabels, trimmed])

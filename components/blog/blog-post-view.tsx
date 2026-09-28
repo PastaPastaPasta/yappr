@@ -18,7 +18,7 @@ import { BlogViewer } from './blog-viewer'
 import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
 import { EmbedPreview } from './embed-preview'
-import { blogAuthorHandle, blogPostDate, commentsAreEnabled, decodeSummary, estimateReadingTime, formatLabels, getBlogPostUrl } from '@/lib/blog/content-utils'
+import { blogAuthorHandle, blogPostDate, commentsAreEnabled, decodeSummary, estimateReadingTime, formatLabels, getBlogPostUrl, isPublishedBlogPost } from '@/lib/blog/content-utils'
 import { getReaderOverrideStyle, getReaderFontSize, getAppThemeForReadingMode } from '@/lib/blog/reader-preferences'
 import { normalizeBlogThemeConfig } from '@/lib/blog/theme-types'
 import { ReadingPreferencesPopover } from './reading-preferences'
@@ -80,6 +80,8 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const relativeTime = useRelativeTime(blogPostDate(post))
   const authorHandle = blogAuthorHandle(username, blog.ownerId)
   const commentsEnabled = commentsAreEnabled(post)
+  // Only the owner can open a draft; quotes and embeds of one would not render for anyone else.
+  const isDraft = !isPublishedBlogPost(post)
 
   // Capture the original app theme once before we override it (during render, not in an effect)
   if (savedThemeRef.current === undefined && theme !== undefined) {
@@ -265,10 +267,14 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
                     sideOffset={5}
                     align="end"
                   >
-                    <DropdownMenu.Item onClick={handleQuote} className={DROPDOWN_ITEM_CLASS}>
-                      Quote
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Separator className="my-1 h-px bg-gray-200 dark:bg-gray-800" />
+                    {!isDraft && (
+                      <>
+                        <DropdownMenu.Item onClick={handleQuote} className={DROPDOWN_ITEM_CLASS}>
+                          Quote
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Separator className="my-1 h-px bg-gray-200 dark:bg-gray-800" />
+                      </>
+                    )}
                     <DropdownMenu.Item onClick={handleCopyLink} className={DROPDOWN_ITEM_CLASS}>
                       <LinkIcon className="h-4 w-4" />
                       Copy link
@@ -285,8 +291,12 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm6.066 13.06c.183.399.166.845-.044 1.225-.21.38-.578.648-1.003.733-.138.027-.276.04-.413.04-.745 0-1.424-.39-1.895-1.016A8.4 8.4 0 0 1 12 14.625a8.4 8.4 0 0 1-2.711-.583c-.471.626-1.15 1.016-1.895 1.016a1.7 1.7 0 0 1-.413-.04 1.5 1.5 0 0 1-1.003-.733 1.49 1.49 0 0 1-.044-1.225c.1-.216.241-.41.41-.574A3.4 3.4 0 0 1 6.06 11c0-2.93 2.664-5.313 5.94-5.313s5.94 2.383 5.94 5.313c0 .514-.104 1.008-.284 1.486.168.164.31.358.41.574zM9.5 12.75a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5zm5 0a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5zm-5.096 2.24c.628.628 1.638.882 2.596.882s1.968-.254 2.596-.882a.44.44 0 0 0-.62-.622c-.44.44-1.218.654-1.976.654s-1.536-.214-1.976-.654a.44.44 0 0 0-.62.622zM20.12 7.86c-.91 0-1.65.74-1.65 1.65 0 .21.04.41.11.6-.84-.55-1.79-.94-2.82-1.14l1.98-3.3.01-.02 2.82.68a1.32 1.32 0 0 0 1.3 1.1c.72 0 1.31-.59 1.31-1.31s-.59-1.31-1.31-1.31c-.52 0-.97.31-1.18.75l-2.58-.62a.44.44 0 0 0-.49.21L15.37 9c-1.08.17-2.1.56-2.97 1.14a1.64 1.64 0 0 0-1.65-1.59c-.91 0-1.65.74-1.65 1.65 0 .6.32 1.12.8 1.41a4.2 4.2 0 0 0-.21 1.39c0 3.23 3.29 5.86 7.31 5.86s7.31-2.63 7.31-5.86c0-.47-.07-.93-.21-1.36.47-.29.8-.82.8-1.41.02-.94-.72-1.68-1.63-1.68z" /></svg>
                       Share on Reddit
                     </DropdownMenu.Item>
-                    <DropdownMenu.Separator className="my-1 h-px bg-gray-200 dark:bg-gray-800" />
-                    <EmbedPreview post={post} username={username || authorHandle} />
+                    {!isDraft && (
+                      <>
+                        <DropdownMenu.Separator className="my-1 h-px bg-gray-200 dark:bg-gray-800" />
+                        <EmbedPreview post={post} username={username || authorHandle} />
+                      </>
+                    )}
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>

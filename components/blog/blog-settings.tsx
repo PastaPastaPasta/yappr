@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { blogService } from '@/lib/services'
-import { LABEL_LIMITS, blogCommentsDefault } from '@/lib/blog/content-utils'
+import { LABEL_LIMITS, blogCommentsDefault, labelProblem } from '@/lib/blog/content-utils'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
@@ -82,6 +82,11 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
     }
     if (labels.length >= LABEL_LIMITS.blog) {
       toast.error(`A blog can have at most ${LABEL_LIMITS.blog} labels. Remove one first.`)
+      return
+    }
+    const problem = labelProblem(trimmed)
+    if (problem) {
+      toast.error(problem)
       return
     }
 

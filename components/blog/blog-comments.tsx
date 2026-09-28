@@ -9,12 +9,11 @@ import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useRelativeTime } from '@/hooks/use-relative-time'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
-import { truncateId } from '@/lib/utils'
 import { normalizeDpnsUsername } from '@/lib/post-helpers'
 import { logger } from '@/lib/logger'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { BLOG_YAPP_TOKEN_COSTS, blogIsV2 } from '@/lib/constants'
-import { mergeComments } from '@/lib/blog/content-utils'
+import { blogAuthorHandle, mergeComments } from '@/lib/blog/content-utils'
 import type { BlogComment } from '@/lib/types'
 import { blogCommentService } from '@/lib/services'
 
@@ -45,9 +44,11 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [content, setContent] = useState('')
-  // Comments posted from here. The read after a write can reach a node that
-  // has not applied it yet; merging these in keeps a paid comment on screen
-  // instead of silently dropping it (and inviting a second, paid, attempt).
+  // Comments posted from here that no read has returned yet. The read after a
+  // write can reach a node that has not applied it; merging these in keeps a
+  // paid comment on screen instead of silently dropping it (and inviting a
+  // second, paid, attempt). Once a read returns one, the network owns it again
+  // (a moderator's removal then shows).
   const createdRef = useRef<BlogComment[]>([])
 
   useEffect(() => {
@@ -73,6 +74,8 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
         ? await checkBlockedForAuthors(user.identityId, authorIds)
         : new Map<string, boolean>()
 
+      const returned = new Set(allComments.map((comment) => comment.id))
+      createdRef.current = createdRef.current.filter((comment) => !returned.has(comment.id))
       const filtered = mergeComments(
         allComments.filter((comment) => !blockedMap.get(comment.ownerId)),
         createdRef.current.filter((comment) => comment.blogPostId === blogPostId)
@@ -199,7 +202,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
         {!isLoading && !error && comments.map((comment) => {
           const resolvedUsername = usernames.get(comment.ownerId)
           const username = resolvedUsername ? normalizeDpnsUsername(resolvedUsername) : null
-          const displayName = username ? `@${username}` : truncateId(comment.ownerId, 8, 6)
+          const displayName = blogAuthorHandle(username, comment.ownerId)
           const isOwnComment = user?.identityId === comment.ownerId
 
           return (
