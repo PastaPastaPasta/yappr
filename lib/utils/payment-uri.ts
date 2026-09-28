@@ -29,7 +29,8 @@ const bech32 = (hrps: string[], min: number, max?: number) =>
  * `bitcoin:notanaddress`; it does not verify checksums.
  */
 const DESTINATION_SHAPES: Record<string, RegExp> = {
-  'bitcoin:': new RegExp(`^(${BASE58}{25,34}|${bech32(['bc', 'tb', 'bcrt'], 8, 87)})$`),
+  // Legacy Base58 runs to 35 characters for testnet P2SH (`2…`).
+  'bitcoin:': new RegExp(`^(${BASE58}{25,35}|${bech32(['bc', 'tb', 'bcrt'], 8, 87)})$`),
   'litecoin:': new RegExp(`^(${BASE58}{25,34}|${bech32(['ltc', 'tltc'], 8, 87)})$`),
   'dogecoin:': new RegExp(`^${BASE58}{25,34}$`),
   'bitcoincash:': new RegExp(`^(${BASE58}{25,34}|[qpQP]${BECH32}{41})$`),

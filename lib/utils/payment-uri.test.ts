@@ -69,6 +69,7 @@ describe('isValidPaymentAddress', () => {
     ['bitcoin:', 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'],
     ['bitcoin:', 'BC1QAR0SRRR7XFKVY5L643LYDNW9RE59GTZZWF5MDQ'],
     ['bitcoin:', 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx'],
+    ['bitcoin:', '2MsLXsEGDDUgsgRwwzqQbPvr9MZRApVae6w'],
     ['litecoin:', 'LVg2kJoFNg45Nbpy53h7Fe1wKyeXVRhMH9'],
     ['litecoin:', 'ltc1qg82tlldsuv7el0lf8ueg8mv0fz5s8tsx4n9jxv'],
     ['dogecoin:', 'DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L'],
