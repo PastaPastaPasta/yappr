@@ -48,6 +48,7 @@ vi.stubGlobal('window', {})
 
 import { CREATE_NOT_RECORDED_ERROR, isIdentityNonceConflictError } from '@/lib/error-utils'
 import { classifyWriteFailure } from './dm-v5/write-failure'
+import { loadReservation, stillPending } from './identity-nonce'
 import { stateTransitionService } from './state-transition-service'
 
 const OWNER = 'owner'
@@ -74,6 +75,20 @@ describe('createDocument with an inconclusive outcome', () => {
 
     expect(sdk.stateTransitions.broadcastStateTransition).toHaveBeenCalledTimes(1)
     expect(result).toMatchObject({ success: true, confirmed: false, transactionHash: 'doc-101' })
+  })
+
+  it('keeps a create refused as too far in future pending, so an SDK-signed write cannot take its nonce', async () => {
+    sdk.stateTransitions.broadcastStateTransition.mockRejectedValueOnce(new Error(
+      'state transition broadcast error: Identity owner is trying to set an invalid identity nonce. The current identity nonce is 76, we are setting 101, error is nonce too far in future'
+    ))
+    // The settlement read comes from a node that has not executed it either.
+    sdk.identities.contractNonceWithProof.mockResolvedValue(proved(n(100), 50))
+
+    const first = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'one' })
+
+    expect(first).toMatchObject({ success: true, confirmed: false, transactionHash: 'doc-101' })
+    // Platform still at 100: an up-to-date node may hold 101, which the SDK would also sign.
+    expect(stillPending(n(100), loadReservation(OWNER, CONTRACT)).map((p) => p.nonce)).toEqual([n(101)])
   })
 
   it('does not rebuild an indexOnly create refused for its nonce: the caller reads it back by value', async () => {

@@ -8,7 +8,7 @@
  */
 
 import { TokenDirectPurchaseTransition } from '@dashevo/evo-sdk';
-import { buildUnsignedTokenBatch } from './token-transition-builder';
+import { buildUnsignedTokenBatch, type WalletTransitionRequest } from './token-transition-builder';
 
 /**
  * Build the unsigned state transition bytes for a YAPP direct purchase.
@@ -16,13 +16,14 @@ import { buildUnsignedTokenBatch } from './token-transition-builder';
  * @param buyerId - Identity ID (Base58) of the buyer the wallet signs for
  * @param amount - Whole YAPP tokens to buy
  * @param totalAgreedPrice - Max credits to spend, as quoted to the user
- * @returns Serialized unsigned StateTransition bytes for the dash-st: URI
+ * @returns Serialized unsigned StateTransition bytes for the dash-st: URI, and
+ *   `discard` for a request abandoned before it was shown
  */
 export function buildUnsignedDirectPurchaseTransition(
   buyerId: string,
   amount: bigint,
   totalAgreedPrice: bigint
-): Promise<Uint8Array> {
+): Promise<WalletTransitionRequest> {
   return buildUnsignedTokenBatch('TokenPurchaseBuilder', buyerId, (base) =>
     new TokenDirectPurchaseTransition({
       base,

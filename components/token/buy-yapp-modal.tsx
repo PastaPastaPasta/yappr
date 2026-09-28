@@ -209,9 +209,10 @@ export function BuyYappModal() {
       const baseline = await tokenService.getBalance(user.identityId)
       if (walletSessionRef.current !== session) return
       walletBaselineRef.current = baseline
-      const bytes = await buildUnsignedDirectPurchaseTransition(user.identityId, amountBig, costCredits)
-      if (walletSessionRef.current !== session) return
-      setWalletUri(buildYapprStateTransitionUri(bytes, getConfiguredNetwork()))
+      const request = await buildUnsignedDirectPurchaseTransition(user.identityId, amountBig, costCredits)
+      // Abandoned before its QR went up: no wallet has it, so free its nonce.
+      if (walletSessionRef.current !== session) return request.discard()
+      setWalletUri(buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return
       logger.error('Failed to build wallet signing request:', err)

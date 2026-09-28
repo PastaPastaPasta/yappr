@@ -146,6 +146,16 @@ export function isIdentityNonceConflictError(error: unknown): boolean {
 }
 
 /**
+ * Whether a 40204 refusal proves the refused nonce can never execute: it is
+ * already present (at the tip or filled in behind it) or too far behind the
+ * tip. "Too far in future" proves nothing of the kind: it comes from a node
+ * behind the one that may already have admitted the same transition.
+ */
+export function isNonceSpentRefusal(error: unknown): boolean {
+  return /nonce (already present|too far in past)/i.test(extractErrorMessage(error))
+}
+
+/**
  * Whether Platform gave a verdict on a transition: refused it (a consensus
  * error, at broadcast or as a paid error at execution) rather than leaving its
  * outcome unknown. A refused transition does not execute later.

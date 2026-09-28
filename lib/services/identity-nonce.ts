@@ -24,15 +24,14 @@
 import { Identifier } from '@dashevo/evo-sdk';
 import { logger } from '@/lib/logger';
 import { scopedKey } from '@/lib/storage-scope';
-import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isAffectedStateSnapshotError, isConsensusRefusal } from '@/lib/error-utils';
+import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isAffectedStateSnapshotError, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal } from '@/lib/error-utils';
 import { allocateIdentityContractNonce, identityContractNonceConsumed } from '@/lib/document-id';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { getEvoSdk } from './evo-sdk-service';
 
 /**
  * A signed transition that may still execute. `nonce` is null when the SDK
- * chose it; `expiresAt` is null for one handed to a wallet, which may sign and
- * broadcast it at any later time.
+ * chose it; only such a one has an `expiresAt` (see {@link PENDING_LIFETIME_MS}).
  */
 export interface PendingTransition {
   id: string;
@@ -47,13 +46,16 @@ export interface NonceReservation {
 }
 
 /**
- * How long a transition this browser broadcast, and that was neither
- * confirmed nor refused, is treated as able to execute. Tenderdash re-checks
- * its mempool after every block and a valid transition executes in the next
- * one, so one that has not executed within minutes of its broadcast was
- * dropped. Nothing bounds one handed to a wallet: the protocol gives a
- * transition no deadline, and the wallet may broadcast it long after its QR
- * is gone, so that one stays pending until its nonce is consumed.
+ * How long an SDK-signed transition that was neither confirmed nor refused
+ * holds other writes back. Elapsed time does not make a transition unusable
+ * (the protocol gives it no deadline), so a transition whose nonce is known
+ * (a create, a wallet request) never expires: it stays pending until Platform
+ * shows that nonce consumed. The nonce of an SDK-signed one is unknown, so
+ * nothing on Platform can show it consumed; without a bound it would stop
+ * every later write from this browser for good. Tenderdash re-checks its
+ * mempool after every block and a valid transition executes in the next one,
+ * so this bound is only reached by a transition that was dropped. Owning that
+ * nonce (building these transitions like creates) is what removes the bound.
  */
 const PENDING_LIFETIME_MS = 15 * 60 * 1000;
 
@@ -114,8 +116,8 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
 
 /**
  * The pending transitions that may still execute, given the raw value
- * `identities.contractNonce` returned: not expired (one handed to a wallet
- * never expires), and not one whose own nonce is consumed. Consumption is final, so a node that is behind only
+ * `identities.contractNonce` returned: not one whose own nonce is consumed,
+ * and not an SDK-signed one past its lifetime. Consumption is final, so a node that is behind only
  * keeps one pending longer. Nothing about an SDK-signed one is known, so it
  * stays pending until its outcome is known or it expires.
  */
@@ -141,21 +143,14 @@ export function allocateNonce(current: bigint | undefined | null, reservation: N
 /**
  * Record a signed transition as pending before its broadcast (one that errors
  * may still have gone out), dropping what `current` shows settled. `nonce` is
- * null for one the SDK signs; `handedToWallet` marks one a wallet signs and
- * broadcasts later, which never expires. The mark never goes down. Throws
+ * null for one the SDK signs. The mark never goes down. Throws
  * {@link NONCE_STORE_ERROR} when localStorage cannot hold it, and the
  * transition must then not be sent.
  */
-export function reserveNonce(
-  ownerId: string,
-  contractId: string,
-  nonce: bigint | null,
-  current: bigint | undefined | null,
-  handedToWallet = false
-): PendingTransition {
+export function reserveNonce(ownerId: string, contractId: string, nonce: bigint | null, current: bigint | undefined | null): PendingTransition {
   const previous = loadReservation(ownerId, contractId);
   // Unique across tabs: releasing one must never release another.
-  const entry = { id: crypto.randomUUID(), nonce, expiresAt: handedToWallet ? null : Date.now() + PENDING_LIFETIME_MS };
+  const entry = { id: crypto.randomUUID(), nonce, expiresAt: nonce === null ? Date.now() + PENDING_LIFETIME_MS : null };
   const mark = previous?.mark ?? BigInt(0);
   saveReservation(ownerId, contractId, {
     mark: nonce !== null && nonce > mark ? nonce : mark,
@@ -182,6 +177,12 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
   }
 }
 
+/** Whether `error` shows the transition will not execute later (see {@link withSdkSignedWrite}). */
+function isVerdict(error: unknown): boolean {
+  if (isIdentityNonceConflictError(error)) return isNonceSpentRefusal(error);
+  return isConsensusRefusal(error) || isAffectedStateSnapshotError(error);
+}
+
 /**
  * Run a write the SDK signs itself under the identity's write lock.
  *
@@ -190,9 +191,10 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
  * write starts only once nothing this browser signed may still execute, so
  * whatever it signs cannot meet one of those. It is recorded as pending with
  * no nonce: if its outcome stays unknown (a timeout, a transport failure) no
- * later write starts until it expires. A consensus refusal is a verdict (a
- * nonce refusal included: the nonce was taken when the broadcast, or the
- * SDK's retry of it, arrived). So, for its nonce, is the affected-state
+ * later write starts until it expires. A consensus refusal is a verdict, but
+ * a nonce refusal only when it shows the nonce spent ("already present", "too
+ * far in past"): "too far in future" can come from a node behind one that
+ * admitted the same transition. So, for its nonce, is the affected-state
  * snapshot a strict wait refuses: DAPI answers with a proof only for a
  * transition that executed (rs-dapi `wait_for_state_transition_result`); what
  * the snapshot leaves unproven is only the write's effect, which the caller
@@ -222,7 +224,7 @@ export async function withSdkSignedWrite<T>(ownerId: string, contractId: string,
       releaseNonce(ownerId, contractId, entry);
       return result;
     } catch (error) {
-      if (isConsensusRefusal(error) || isAffectedStateSnapshotError(error)) releaseNonce(ownerId, contractId, entry);
+      if (isVerdict(error)) releaseNonce(ownerId, contractId, entry);
       throw error;
     }
   });

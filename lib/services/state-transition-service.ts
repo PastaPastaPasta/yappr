@@ -11,7 +11,7 @@ import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT
 import { declaredActionFee, tokenCostFor, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
 import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, tokenPaymentOptions } from '../transition-agreements';
-import { CREATE_NOT_RECORDED_ERROR, PENDING_WRITE_ERROR, extractErrorMessage, messageWithConsensusCode, isConsensusRefusal, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isAffectedStateSnapshotError, isIdentityNonceConflictError } from '../error-utils';
+import { CREATE_NOT_RECORDED_ERROR, PENDING_WRITE_ERROR, extractErrorMessage, messageWithConsensusCode, isConsensusRefusal, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isAffectedStateSnapshotError, isIdentityNonceConflictError, isNonceSpentRefusal } from '../error-utils';
 import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
 import { identityService } from './identity-service';
@@ -590,13 +590,15 @@ class StateTransitionService {
       // very transition executing before an SDK retry of its broadcast. Only a
       // proof tells which, so it is never rebuilt. indexOnly callers read the
       // write back by value on a failure; a strict create is settled by proof,
-      // or else reported unconfirmed.
+      // or else reported unconfirmed. It stays pending unless the refusal shows
+      // the nonce spent: "too far in future" comes from a node behind one that
+      // may have admitted it.
       const nonceRefused = async (refusal: unknown): Promise<StateTransitionResult> => {
-        decided({ success: false });
+        if (isNonceSpentRefusal(refusal)) decided({ success: false });
         try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
         if (affectedStateMode) return { success: false, error: messageWithConsensusCode(refusal) };
         const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
-        if (settled) return settled;
+        if (settled) return decided(settled);
         logger.warn(`${documentType} ${documentId} refused for its nonce with its outcome unproven — reporting it unconfirmed:`, extractErrorMessage(refusal));
         return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
       };

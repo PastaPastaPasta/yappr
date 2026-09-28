@@ -94,6 +94,23 @@ describe('withSdkSignedWrite', () => {
     expect(loadReservation(OWNER, CONTRACT)?.pending).toEqual([])
   })
 
+  it('keeps an SDK write pending when it is refused as too far in future: a node behind may be the one answering', async () => {
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const refused = await runSdkWrite(async () => {
+      throw { code: 40204, message: 'Identity x is trying to set an invalid identity nonce. The current identity nonce is 76, we are setting 101, error is nonce too far in future' }
+    })
+    expect(refused.ok).toBe(false)
+    expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(1)
+  })
+
+  it('releases an SDK write refused because its nonce is already present', async () => {
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    await runSdkWrite(async () => {
+      throw { code: 40204, message: 'Identity x is trying to set an invalid identity nonce. The current identity nonce is 101, we are setting 101, error is nonce already present at tip' }
+    })
+    expect(loadReservation(OWNER, CONTRACT)?.pending).toEqual([])
+  })
+
   it('releases an SDK write the network refused', async () => {
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     const refused = await runSdkWrite(async () => { throw { code: 40106, message: 'Document X has invalid revision' } })
@@ -136,9 +153,9 @@ describe('an SDK-signed write whose outcome is unknown', () => {
   })
 })
 
-describe('a transition handed to a wallet', () => {
+describe('a transition whose nonce is known (a create, a wallet request)', () => {
   it('stays pending, however long ago, until Platform shows its nonce consumed', async () => {
-    reserveNonce(OWNER, CONTRACT, n(101), n(100), true)
+    reserveNonce(OWNER, CONTRACT, n(101), n(100))
     vi.setSystemTime(Date.now() + 60 * 60 * 1000)
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     const write = vi.fn(async () => 'sent')
