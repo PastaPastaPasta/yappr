@@ -246,7 +246,8 @@ function AddItemPage() {
         imageUrls: allImageUrls.length > 0 ? allImageUrls : undefined,
         category: category.trim() || undefined,
         stockQuantity: hasVariants ? undefined : (stockQuantity ? parseInt(stockQuantity, 10) : undefined),
-        status: 'active' as const,
+        // No status: an edit keeps a paused or sold-out product so, and a create defaults to active.
+        // variants is always named, so unticking "has variants" removes the stored ones.
         variants
       }
 

@@ -488,6 +488,15 @@ function StoreDetailContent() {
 
           <BlockedOwnerBanner ownerId={store.ownerId} className="mx-4 mb-4" />
 
+          {store.status !== 'active' && (
+            <div role="status" className="mx-4 my-3 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/50">
+              <ExclamationTriangleIcon className="h-6 w-6 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+              <p className="font-semibold text-amber-800 dark:text-amber-200">
+                This store is {store.status === 'closed' ? 'closed' : 'paused'} and is not accepting orders.
+              </p>
+            </div>
+          )}
+
           {/* Encryption key warning */}
           {sellerHasEncryptionKey === false && (
             <div className="mx-4 my-3 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/50">

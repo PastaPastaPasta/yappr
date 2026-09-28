@@ -103,8 +103,9 @@ function InventoryPage() {
     router.push(`/store/item/add?itemId=${item.id}&storeId=${store?.id}`)
   }, [router, store?.id])
 
+  // storeItem cannot be deleted on chain; the archived item stays listed under the Deleted filter.
   const handleItemDeleted = useCallback((itemId: string) => {
-    setItems(prev => prev.filter(item => item.id !== itemId))
+    setItems(prev => prev.map(item => item.id === itemId ? { ...item, status: 'deleted' } : item))
     toast.success('Item deleted')
   }, [])
 

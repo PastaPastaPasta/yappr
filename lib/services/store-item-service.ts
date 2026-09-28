@@ -272,22 +272,32 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       status: data.status ?? existing.status
     };
 
-    if (data.description !== undefined) documentData.description = data.description;
-    if (data.section !== undefined) documentData.section = data.section;
-    if (data.category !== undefined) documentData.category = data.category;
-    if (data.subcategory !== undefined) documentData.subcategory = data.subcategory;
-    // An empty list clears the field (the encoder answers undefined for none).
-    if (data.tags !== undefined) documentData.tags = storedList(data.tags, TAG_LIMITS);
-    if (data.imageUrls !== undefined) documentData.imageUrls = storedList(data.imageUrls, IMAGE_LIMITS);
-    if (data.basePrice !== undefined) documentData.basePrice = data.basePrice;
-    if (data.currency !== undefined) documentData.currency = data.currency;
-    if (data.weight !== undefined) documentData.weight = data.weight;
-    // An explicit undefined clears stock tracking; an omitted field preserves it.
-    if (Object.prototype.hasOwnProperty.call(data, 'stockQuantity')) documentData.stockQuantity = data.stockQuantity;
-    if (data.sku !== undefined) documentData.sku = data.sku;
-    if (data.variants !== undefined) documentData.variants = JSON.stringify(data.variants);
+    // A key given as undefined clears that optional field (e.g. unticking variants
+    // or stock tracking); an omitted key preserves the stored value.
+    if ('description' in data) documentData.description = data.description;
+    if ('section' in data) documentData.section = data.section;
+    if ('category' in data) documentData.category = data.category;
+    if ('subcategory' in data) documentData.subcategory = data.subcategory;
+    // An empty list clears the field too (the encoder answers undefined for none).
+    if ('tags' in data) documentData.tags = data.tags && storedList(data.tags, TAG_LIMITS);
+    if ('imageUrls' in data) documentData.imageUrls = data.imageUrls && storedList(data.imageUrls, IMAGE_LIMITS);
+    if ('basePrice' in data) documentData.basePrice = data.basePrice;
+    if ('currency' in data) documentData.currency = data.currency;
+    if ('weight' in data) documentData.weight = data.weight;
+    if ('stockQuantity' in data) documentData.stockQuantity = data.stockQuantity;
+    if ('sku' in data) documentData.sku = data.sku;
+    if ('variants' in data) documentData.variants = data.variants && JSON.stringify(data.variants);
 
     return this.update(itemId, ownerId, documentData);
+  }
+
+  /**
+   * "Delete" a product. `storeItem` is `canBeDeleted: false` (its reviews
+   * reference it), so the listing is archived with the `deleted` status, which
+   * every buyer-facing read already filters out.
+   */
+  async archiveItem(itemId: string, ownerId: string, storeId: string): Promise<StoreItem> {
+    return this.updateItem(itemId, ownerId, storeId, { status: 'deleted' });
   }
 
   // =========================================================================

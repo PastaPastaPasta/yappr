@@ -15,7 +15,10 @@ import { PoliciesEditor } from '@/components/store/policies-editor'
 import { parseStorePolicies, serializeStorePolicies, isPoliciesWithinLimit } from '@/lib/utils/policies'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
+import { extractErrorMessage } from '@/lib/error-utils'
 import type { SocialLink, ParsedPaymentUri, StorePolicy } from '@/lib/types'
+
+const ONE_STORE_MESSAGE = 'You already have a store. Each account can have one store; manage it from Store > Manage.'
 
 function CreateStorePage() {
   const formId = useId()
@@ -131,13 +134,22 @@ function CreateStorePage() {
         await storeService.updateStore(storeId, user.identityId, updateData)
         router.push('/store/manage')
       } else {
+        // The contract allows one store per identity; say so instead of letting consensus refuse it.
+        if (await storeService.hasStore(user.identityId)) {
+          setError(ONE_STORE_MESSAGE)
+          return
+        }
         // Payment methods are added later via the Settings tab
         await storeService.createStore(user.identityId, storeData)
         router.push('/store')
       }
     } catch (err) {
       logger.error(`Failed to ${isEditMode ? 'update' : 'create'} store:`, err)
-      setError(err instanceof Error ? err.message : `Failed to ${isEditMode ? 'update' : 'create'} store`)
+      if (!isEditMode && /duplicate unique properties/i.test(extractErrorMessage(err))) {
+        setError(ONE_STORE_MESSAGE)
+      } else {
+        setError(err instanceof Error ? err.message : `Failed to ${isEditMode ? 'update' : 'create'} store`)
+      }
     } finally {
       setIsSubmitting(false)
     }

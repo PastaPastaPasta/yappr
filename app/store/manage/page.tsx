@@ -116,7 +116,7 @@ function StoreManagePage() {
         ])
 
         if (itemsResult.status === 'fulfilled') {
-          setItems(itemsResult.value)
+          setItems(itemsResult.value.filter(item => item.status !== 'deleted'))
         } else {
           logger.error('Failed to load items:', itemsResult.reason)
           setItemsLoadError(true)
@@ -156,7 +156,7 @@ function StoreManagePage() {
     setIsReloadingItems(true)
     try {
       const allItems = await storeItemService.getAllByStore(store.id)
-      setItems(allItems)
+      setItems(allItems.filter(item => item.status !== 'deleted'))
       setItemsLoadError(false)
     } catch (error) {
       logger.error('Failed to reload items:', error)
@@ -171,8 +171,9 @@ function StoreManagePage() {
 
     try {
       setIsDeleting(true)
-      const deleted = await storeItemService.delete(deleteItemId, user.identityId)
-      if (!deleted) throw new Error('Delete was not confirmed')
+      const item = items.find(i => i.id === deleteItemId)
+      if (!item) throw new Error('Product not found')
+      await storeItemService.archiveItem(deleteItemId, user.identityId, item.storeId)
       setItems(items.filter(i => i.id !== deleteItemId))
       setDeleteItemId(null)
     } catch (error) {
@@ -690,6 +691,7 @@ function StoreManagePage() {
                             setStore(updated)
                           } catch (error) {
                             logger.error('Failed to update status:', error)
+                            toast.error('Failed to update store status. Please try again.')
                           }
                         }}
                         className="px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"

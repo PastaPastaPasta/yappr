@@ -7,7 +7,7 @@ import { BuildingStorefrontIcon, ExclamationTriangleIcon } from '@heroicons/reac
 import { CartItemRow } from './cart-item-row'
 import { Button } from '@/components/ui/button'
 import { formatPrice } from '@/lib/utils/format'
-import { cartService, type CartItemAvailability } from '@/lib/services/cart-service'
+import { cartService, getCartCurrency, type CartItemAvailability } from '@/lib/services/cart-service'
 import type { BlockSource } from '@/lib/services/block-service'
 import type { CartItem, Store } from '@/lib/types'
 
@@ -28,7 +28,9 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
     const router = useRouter()
 
     const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
-    const currency = items[0]?.currency || 'USD'
+    // null when this store's lines are priced in different currencies: no single subtotal exists.
+    const currency = getCartCurrency(items)
+    const storeClosed = store !== undefined && store.status !== 'active'
     const hasAvailabilityIssue = availability.some(result => result.reason)
 
     const handleQuantityChange = (item: CartItem, newQuantity: number) => {
@@ -112,9 +114,19 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
         <div className="flex items-center justify-between mb-4">
           <span className="font-medium">Subtotal</span>
           <span className="font-bold text-lg">
-            {formatPrice(subtotal, currency)}
+            {currency ? formatPrice(subtotal, currency) : '—'}
           </span>
         </div>
+        {storeClosed && (
+          <p role="alert" className="mb-4 text-sm text-red-600">
+            This store is not accepting orders right now.
+          </p>
+        )}
+        {!currency && (
+          <p role="alert" className="mb-4 text-sm text-red-600">
+            These items are priced in different currencies and cannot be checked out together. Remove the items in one currency to continue.
+          </p>
+        )}
         {isCheckingAvailability ? (
           <p role="status" className="mb-4 text-sm text-gray-500">Checking availability...</p>
         ) : hasAvailabilityIssue && (
@@ -123,7 +135,7 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
             <button className="mt-2 text-yappr-600 underline" onClick={onRefreshAvailability}>Check availability again</button>
           </div>
         )}
-        <Button className="w-full" onClick={handleCheckout} disabled={isCheckingAvailability || hasAvailabilityIssue}>
+        <Button className="w-full" onClick={handleCheckout} disabled={isCheckingAvailability || hasAvailabilityIssue || !currency || storeClosed}>
           Checkout from {store?.name || 'Store'}
         </Button>
       </div>
