@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { LockClosedIcon, PaperAirplaneIcon, PlusIcon } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
@@ -157,10 +157,8 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
     startDirect(pendingStart).catch((error) => toast.error(errorText(error, 'Failed to start conversation')))
   }, [pendingStart, engine, snapshot?.ready, identityId, startDirect])
 
-  const openNewMessage = (event?: MouseEvent<HTMLElement>) => {
-    event?.preventDefault()
-    setDialog('message')
-  }
+  // Not preventDefault: on the "+" menu item that keeps the menu open (and the page inert) over the new thread.
+  const openNewMessage = () => setDialog('message')
 
   if (!engine) {
     return (

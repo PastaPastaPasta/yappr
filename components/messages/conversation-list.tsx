@@ -38,7 +38,7 @@ interface ConversationListProps {
   showHidden: boolean
   onToggleHidden: () => void
   onSelect: (key: string) => void
-  onNewMessage: (event: React.MouseEvent<HTMLElement>) => void
+  onNewMessage: () => void
   onNewGroup: () => void
   onOpenSettings: () => void
   className?: string
