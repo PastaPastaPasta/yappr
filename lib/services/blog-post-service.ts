@@ -270,7 +270,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
         }
         published.push(...page.filter(isPublishedBlogPost))
       }
-      return published.slice(0, perBlog)
+      // Creation order is not publication order (imports backdate), so rank before cutting.
+      return publishedPostsNewestFirst(published).slice(0, perBlog)
     })
   }
 

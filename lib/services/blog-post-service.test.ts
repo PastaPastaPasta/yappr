@@ -135,6 +135,18 @@ describe('public discovery reads past drafts (QA D-27)', () => {
     expect(refill).toHaveBeenCalledWith(blogId, { limit: 20, startAfter: 'draft' });
   });
 
+  it('keeps the blog\'s newest publication when a refill returns a backdated import first', async () => {
+    const draft = post('draft', blogId, 3_000);
+    const imported = post('imported', blogId, 2_500, 100);
+    const newer = post('newer', blogId, 2_000, 2_000);
+    vi.spyOn(blogPostService, 'getPostsByBlogs').mockResolvedValue(new Map([[blogId, [draft]]]));
+    vi.spyOn(blogPostService, 'getPostsByBlog').mockResolvedValue([imported, newer]);
+
+    const recent = await blogPostService.getRecentPosts([blogId, otherBlogId], 1);
+
+    expect(recent.map((item) => item.id)).toEqual(['newer']);
+  });
+
   it('does not read on when the first page already ended the blog\'s history', async () => {
     vi.spyOn(blogPostService, 'getPostsByBlogs').mockResolvedValue(new Map([[blogId, [post('draft', blogId, 3_000)]]]));
     const refill = vi.spyOn(blogPostService, 'getPostsByBlog');
