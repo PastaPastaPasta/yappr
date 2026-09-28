@@ -380,7 +380,11 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     return false;
   }
 
-  /** Poll for liked-state ABSENCE — the delete-side twin of waitForLikeVisible. */
+  /**
+   * Poll for liked-state ABSENCE — the delete-side twin of waitForLikeVisible.
+   * Only a successful empty read counts: a failed read proves nothing, and a
+   * "gone" answer authorises deleting the beat companion.
+   */
   private async waitForLikeGone(
     targetId: string,
     ownerId: string,
@@ -388,7 +392,11 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     { attempts = 3, intervalMs = 2_500 }: { attempts?: number; intervalMs?: number } = {}
   ): Promise<boolean> {
     for (let attempt = 0; attempt < attempts; attempt++) {
-      if (!(await this.getLike(targetId, ownerId, kind))) return true;
+      try {
+        if (!(await this.queryLike(targetId, ownerId, kind))) return true;
+      } catch (error) {
+        logger.warn('like readback failed:', error);
+      }
       if (attempt < attempts - 1) {
         await new Promise((resolve) => setTimeout(resolve, intervalMs));
       }
@@ -629,33 +637,38 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    */
   async getLike(postId: string, ownerId: string, kind: TargetKind = 'post'): Promise<LikeDocument | null> {
     try {
-      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-      const { docType, field, ownerFirst } = likeIndexFor(kind);
-
-      // Equality on both index properties. `in` is a RANGE to Drive, and a query
-      // may only range over the last property it constrains — so on a
-      // target-first index like `like.postAndOwner` / `likeReply.replyAndOwner`,
-      // `[field in [...], $ownerId ==]` comes back EMPTY rather than erroring
-      // (see queryOwnedPostIds). Both where and orderBy list the index's
-      // properties in the order the contract declares them, so orderBy is derived
-      // from where and the two cannot drift apart.
-      const targetClause: DocumentWhereClause = [field, '==', postId];
-      const ownerClause: DocumentWhereClause = ['$ownerId', '==', ownerId];
-      const where = ownerFirst ? [ownerClause, targetClause] : [targetClause, ownerClause];
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: docType,
-        where,
-        orderBy: where.map(([property]) => [property, 'asc'] as DocumentOrderByClause),
-        limit: 1
-      });
-
-      const documents = normalizeSDKResponse(response);
-      return documents.length > 0 ? this.transformDocumentFor(documents[0], kind) : null;
+      return await this.queryLike(postId, ownerId, kind);
     } catch (error) {
       logger.error('Error getting like:', error);
       return null;
     }
+  }
+
+  /** getLike without the error swallowing: a failed read throws. */
+  private async queryLike(postId: string, ownerId: string, kind: TargetKind): Promise<LikeDocument | null> {
+    const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+    const { docType, field, ownerFirst } = likeIndexFor(kind);
+
+    // Equality on both index properties. `in` is a RANGE to Drive, and a query
+    // may only range over the last property it constrains — so on a
+    // target-first index like `like.postAndOwner` / `likeReply.replyAndOwner`,
+    // `[field in [...], $ownerId ==]` comes back EMPTY rather than erroring
+    // (see queryOwnedPostIds). Both where and orderBy list the index's
+    // properties in the order the contract declares them, so orderBy is derived
+    // from where and the two cannot drift apart.
+    const targetClause: DocumentWhereClause = [field, '==', postId];
+    const ownerClause: DocumentWhereClause = ['$ownerId', '==', ownerId];
+    const where = ownerFirst ? [ownerClause, targetClause] : [targetClause, ownerClause];
+    const response = await sdk.documents.query({
+      dataContractId: this.contractId,
+      documentTypeName: docType,
+      where,
+      orderBy: where.map(([property]) => [property, 'asc'] as DocumentOrderByClause),
+      limit: 1
+    });
+
+    const documents = normalizeSDKResponse(response);
+    return documents.length > 0 ? this.transformDocumentFor(documents[0], kind) : null;
   }
 
   /**

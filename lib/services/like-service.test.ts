@@ -121,6 +121,23 @@ describe('v9 unlike of a tagged post', () => {
     expect(chain.rows.beat).toHaveLength(2)
   })
 
+  it('touches no beat when the like delete did not land and its readbacks fail', async () => {
+    chain.deletes.like = { lands: false, report: 'snapshot' }
+    // Once the delete is sent, every like read errors: a failed read must not
+    // pass for "the like is gone".
+    mocks.query.mockImplementation(async (query) => {
+      if (query.documentTypeName === 'like' && mocks.deleteDocumentByValues.mock.calls.length > 0) {
+        throw new Error('DAPI unavailable')
+      }
+      return answer(query)
+    })
+
+    await expect(unlike()).resolves.toBe(false)
+
+    expect(beatDeletes()).toHaveLength(0)
+    expect(chain.rows.beat).toHaveLength(2)
+  })
+
   it('removes the beat after a confirmed like delete too', async () => {
     chain.deletes = { like: { lands: true, report: 'confirmed' }, beat: { lands: true, report: 'confirmed' } }
 
