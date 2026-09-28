@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowPathIcon, ScaleIcon } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { useSdk } from '@/contexts/sdk-context'
 import { logger } from '@/lib/logger'
 import { electedModeration } from '@/lib/contract-topology'
 import { createElectionStatusLoader } from '@/lib/election-status-loader'
@@ -25,6 +26,9 @@ export function ElectionStatusPanel() {
   // keys on the boolean anyway, so it runs once per mount, never per render.
   const declaration = electedModeration()
   const elected = declaration !== null
+  // A panel mounts (and its effect runs) before SdkProvider has called
+  // initialize(), so a read on mount fails with "SDK not configured".
+  const { isReady: sdkReady, error: sdkError } = useSdk()
   // One loader per mounted panel: concurrent loads share a single read.
   const loader = useMemo(() => createElectionStatusLoader(() => moderationElectionService.getStatus()), [])
   const [status, setStatus] = useState<ElectionStatus | null>(null)
@@ -45,15 +49,16 @@ export function ElectionStatusPanel() {
   }, [loader])
 
   useEffect(() => {
-    if (elected) refresh().catch(() => { /* reported inside */ })
-  }, [elected, refresh])
+    if (elected && sdkReady) refresh().catch(() => { /* reported inside */ })
+  }, [elected, sdkReady, refresh])
 
   if (!declaration) return null
 
   const contest = status?.contest ?? null
   const seated = status?.seated ?? null
   // Never claims "none" for a part that failed to read: an unknown phase says so.
-  const { phase, error, emptyStateKnown } = electionView(status, failed)
+  // An SDK that never came up reads as a failure (with Retry), not "Loading" forever.
+  const { phase, error, emptyStateKnown } = electionView(status, failed || (!status && !sdkReady && sdkError !== null))
 
   return (
     <Card data-testid="election-status">

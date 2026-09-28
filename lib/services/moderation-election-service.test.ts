@@ -84,6 +84,21 @@ describe('reading the contest', () => {
     expect(sdk.voting.votePollsByEndDate).toHaveBeenCalledTimes(2);
     expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).toMatchObject({ startTimeMs: 1099, startTimeIncluded: false });
   });
+
+  it('reads the first end-date page without a time bound (wasm-sdk beta.5 refuses every startTimeMs)', async () => {
+    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([{ identityId: leader, voteTally: 0 }]));
+    // Mirrors wasm-sdk 4.2.0-beta.5 (platform P-02): any time bound is rejected.
+    sdk.voting.votePollsByEndDate.mockImplementation(async (query: Record<string, unknown>) => {
+      if ('startTimeMs' in query || 'endTimeMs' in query) {
+        throw new Error('Invalid vote polls by end date query: fromObject: serde deserialization error: invalid type: integer, expected f64');
+      }
+      return [entry(1790643047008, target)];
+    });
+    const { contest, endTimeFailed } = await moderationElectionService.getContest(target);
+    expect(contest?.endsAtMs).toBe(1790643047008);
+    expect(endTimeFailed).toBe(false);
+    expect(sdk.voting.votePollsByEndDate).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('getStatus reports failed reads instead of passing them off as empty', () => {

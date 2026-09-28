@@ -289,15 +289,17 @@ class ModerationElectionService {
 
   /**
    * The contest's end, from the vote-poll end-date index: pages forward in end
-   * time (100 entries a page, at most {@link MAX_END_DATE_PAGES}) from a day
-   * ago, so a busy network with more than 100 open polls still finds it.
+   * time (100 entries a page, at most {@link MAX_END_DATE_PAGES}) from the
+   * earliest open poll, so a busy network with more than 100 open polls still
+   * finds it. The first page is unbounded: wasm-sdk 4.2.0-beta.5 refuses every
+   * `startTimeMs` (an integer is "expected f64", a float "must be an integer"),
+   * so only a later page, needed past 100 open polls, can hit that and fail.
    */
   private async contestEnd(sdk: EvoSDK, targetContractId: string): Promise<number | null> {
     {
-      let startTimeMs = Date.now() - 86_400_000;
-      let startTimeIncluded = true;
+      let bound: { startTimeMs: number; startTimeIncluded: boolean } | null = null;
       for (let page = 0; page < MAX_END_DATE_PAGES; page++) {
-        const entries = await sdk.voting.votePollsByEndDate({ startTimeMs, startTimeIncluded, orderAscending: true, limit: 100 });
+        const entries = await sdk.voting.votePollsByEndDate({ ...bound, orderAscending: true, limit: 100 });
         let last: number | null = null;
         let found: number | null = null;
         try {
@@ -312,8 +314,7 @@ class ModerationElectionService {
         }
         if (found !== null) return found;
         if (entries.length < 100 || last === null) return null;
-        startTimeMs = last;
-        startTimeIncluded = false;
+        bound = { startTimeMs: last, startTimeIncluded: false };
       }
       return null;
     }
