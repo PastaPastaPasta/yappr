@@ -252,9 +252,16 @@ class PrivateFeedFollowerService {
   // ============================================================
 
   /**
-   * Get a specific follow request
+   * Get a specific follow request. Concurrent reads of one pair (every private
+   * post card of a feed owner checks access at once) share one query.
    */
+  private getFollowRequestReads = new RequestDeduplicator<string, FollowRequestDocument | null>(0);
+
   async getFollowRequest(ownerId: string, requesterId: string): Promise<FollowRequestDocument | null> {
+    return this.getFollowRequestReads.dedupe(`${ownerId}:${requesterId}`, () => this.fetchFollowRequest(ownerId, requesterId));
+  }
+
+  private async fetchFollowRequest(ownerId: string, requesterId: string): Promise<FollowRequestDocument | null> {
     try {
       const sdk = await getEvoSdk();
 
@@ -287,9 +294,15 @@ class PrivateFeedFollowerService {
   }
 
   /**
-   * Get a grant for a specific user
+   * Get a grant for a specific user. Concurrent reads of one pair share one query.
    */
+  private getGrantReads = new RequestDeduplicator<string, PrivateFeedGrantDocument | null>(0);
+
   async getGrant(ownerId: string, recipientId: string): Promise<PrivateFeedGrantDocument | null> {
+    return this.getGrantReads.dedupe(`${ownerId}:${recipientId}`, () => this.fetchGrant(ownerId, recipientId));
+  }
+
+  private async fetchGrant(ownerId: string, recipientId: string): Promise<PrivateFeedGrantDocument | null> {
     try {
       const sdk = await getEvoSdk();
 

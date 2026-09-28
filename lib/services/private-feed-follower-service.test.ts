@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: vi.fn() }));
+const { query } = vi.hoisted(() => ({ query: vi.fn() }));
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: {} }));
 vi.mock('./private-feed-service', () => ({ privateFeedService: {} }));
 import { PrivateFeedFollowerService } from './private-feed-follower-service';
@@ -49,5 +50,23 @@ describe('private feed request status', () => {
     canDecrypt.mockResolvedValue(true);
     await expect(service.getAccessStatus('owner', 'requester')).resolves.toBe('approved');
     expect(cleanup).toHaveBeenCalledWith('owner', 'requester');
+  });
+});
+
+describe('private feed access reads', () => {
+  it('shares one grant and one request query across concurrent checks of a pair', async () => {
+    vi.restoreAllMocks();
+    query.mockReset().mockResolvedValue(new Map());
+    const reader = new PrivateFeedFollowerService();
+    vi.spyOn(reader, 'canDecrypt').mockResolvedValue(false);
+
+    // Three private posts by one owner check access at the same time.
+    const statuses = await Promise.all([1, 2, 3].map(() => reader.getAccessStatus('owner', 'requester')));
+    expect(statuses).toEqual(['none', 'none', 'none']);
+    expect(query.mock.calls.map(([q]) => q.documentTypeName).sort()).toEqual(['followRequest', 'privateFeedGrant']);
+
+    // Settled reads are not cached: a later check sees a fresh answer.
+    await reader.getAccessStatus('owner', 'requester');
+    expect(query).toHaveBeenCalledTimes(4);
   });
 });
