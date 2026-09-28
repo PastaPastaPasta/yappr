@@ -284,6 +284,23 @@ describe('4.2.0-beta.4 rejections', () => {
   })
 
   it.each([
+    ['quotedPostId', 'post', /post was removed by the moderators/],
+    ['postId', 'post', /post was removed by the moderators/],
+    ['rootPostId', 'post', /post was removed by the moderators/],
+    ['replyToReplyId', 'reply', /reply was removed by the moderators/],
+    ['blogPostId', 'blogPost', /no longer exists/],
+  ])('names the removed document for a 40120 on %s, not a missing account (QA D-20)', (path, documentType, message) => {
+    const error = new Error(`referenced deletable document (own contract, document type ${documentType}) 9BN7B3vnAAAA not found for path ${path}`)
+    expect(isReferenceNotFoundError(error)).toBe(true)
+    expect(categorizeError(error)).toMatch(message)
+    expect(categorizeError(error)).not.toMatch(/account/)
+  })
+
+  it('keeps the account message for an identity reference', () => {
+    expect(categorizeError(new Error('referenced identity 9t2e not found for path followingId'))).toMatch(/account no longer exists/)
+  })
+
+  it.each([
     ['NOT_MODERATOR', 'Identity 9t2e is not the owner or a moderator of contract 8Xv3'],
     ['NOT_MODERATOR', 'Identity 9t2e is not a recipient of the moderators fee pot of contract 8Xv3 and can not claim it'],
     ['NOT_WARNED', 'Identity 9t2e carries no warning on contract 8Xv3'],

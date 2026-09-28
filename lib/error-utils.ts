@@ -883,6 +883,15 @@ export function categorizeError(error: unknown): string {
   // A reference rejection is permanent and specific: say what is actually wrong
   // rather than offering YAPP or a retry.
   if (isReferenceNotFoundError(error)) {
+    // A document target names its type: "referenced deletable document (own
+    // contract, document type post) <id> not found for path quotedPostId".
+    // Posts and replies are permanent for their owners on v9, so a missing one
+    // was taken down by the contract's moderators.
+    const documentType = /\breferenced \w+ document \([^)]*\bdocument type (\w+)/i.exec(extractErrorMessage(error))?.[1]
+    if (documentType === 'post' || documentType === 'reply') {
+      return `That ${documentType} was removed by the moderators, so this action can't be completed.`
+    }
+    if (documentType) return 'What this points to no longer exists on Dash Platform, so this action can\'t be completed.'
     return 'That account no longer exists on Dash Platform, so this action can\'t be completed.'
   }
 
