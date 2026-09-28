@@ -71,3 +71,25 @@ export function planPayment(docType: string, action: DocumentAction, balance: bi
 export function paymentIsChoosable(docType: string): boolean {
   return tokenCostFor(docType)?.optional === true
 }
+
+/**
+ * The compose hint for a plan: what it spends, and the label of the switch to
+ * the other currency (null when there is nothing to switch to).
+ *
+ * The action fee is shown only when the signer pays it. Whoever pays the gas
+ * pays the fee, so a sponsored YAPP write costs the user no credits at all.
+ * A YAPP setting that fell back to credits offers no switch: "Use credits
+ * instead" would describe what is already happening, and YAPP cannot be used.
+ */
+export function paymentHintCopy(plan: PaymentPlan, balance: bigint | null, creditsPerDash: number): { text: string; toggle: string | null } {
+  const feeCredits = plan.actionFee ? plan.actionFee.owner + plan.actionFee.moderators : 0n
+  const fee = feeCredits > 0n ? ` + ${(Number(feeCredits) / creditsPerDash).toFixed(4)} DASH moderation fee` : ''
+  if (plan.payWith === 'yapp') {
+    const covered = feeCredits > 0n ? 'network and moderation fees' : 'network fee'
+    const text = plan.gasMayBeSponsored ? `Pays ${plan.yapp.toString()} YAPP, ${covered} covered by Yappr` : `Pays ${plan.yapp.toString()} YAPP${fee}`
+    return { text, toggle: 'Use credits instead' }
+  }
+  if (plan.fallbackReason !== 'insufficient-yapp') return { text: `Pays in credits${fee}`, toggle: 'Use YAPP instead' }
+  // `null` means the balance query itself failed, not that it came back empty.
+  return { text: `Pays in credits${balance === null ? ' (YAPP balance unavailable)' : ' (not enough YAPP)'}${fee}`, toggle: null }
+}

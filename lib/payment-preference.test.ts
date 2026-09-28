@@ -43,3 +43,32 @@ describe('planPayment', () => {
     expect(planPayment('post', 'replace', 100n, 'yapp')).toMatchObject({ payWith: 'credits', yapp: 0n, actionFee: null })
   })
 })
+
+describe('paymentHintCopy', () => {
+  const CREDITS_PER_DASH = 100_000_000_000
+
+  it('does not charge the moderation fee to a sponsored YAPP write (QA D-33)', async () => {
+    const { planPayment, paymentHintCopy } = await load('v9')
+    expect(paymentHintCopy(planPayment('post', 'create', 100n, 'yapp'), 100n, CREDITS_PER_DASH)).toEqual({
+      text: 'Pays 10 YAPP, network and moderation fees covered by Yappr', toggle: 'Use credits instead',
+    })
+    expect(paymentHintCopy(planPayment('reply', 'create', 100n, 'yapp'), 100n, CREDITS_PER_DASH).text).toBe('Pays 3 YAPP, network and moderation fees covered by Yappr')
+  })
+
+  it('shows the fee when paying in credits', async () => {
+    const { planPayment, paymentHintCopy } = await load('v9')
+    expect(paymentHintCopy(planPayment('post', 'create', 100n, 'credits'), 100n, CREDITS_PER_DASH)).toEqual({
+      text: 'Pays in credits + 0.0008 DASH moderation fee', toggle: 'Use YAPP instead',
+    })
+  })
+
+  it('offers no "use credits" switch when YAPP already fell back to credits (QA D-47)', async () => {
+    const { planPayment, paymentHintCopy } = await load('v9')
+    expect(paymentHintCopy(planPayment('post', 'create', null, 'yapp'), null, CREDITS_PER_DASH)).toEqual({
+      text: 'Pays in credits (YAPP balance unavailable) + 0.0008 DASH moderation fee', toggle: null,
+    })
+    expect(paymentHintCopy(planPayment('post', 'create', 9n, 'yapp'), 9n, CREDITS_PER_DASH)).toEqual({
+      text: 'Pays in credits (not enough YAPP) + 0.0008 DASH moderation fee', toggle: null,
+    })
+  })
+})
