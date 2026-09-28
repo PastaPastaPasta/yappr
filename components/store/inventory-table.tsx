@@ -177,8 +177,7 @@ export function InventoryTable({
       const itemId = idsToDelete[i]
       setBulkDeleteProgress({ current: i + 1, total })
       try {
-        const deleted = await storeItemService.delete(itemId, ownerId)
-        if (!deleted) throw new Error('Delete was not confirmed')
+        await storeItemService.archiveItem(itemId, ownerId, storeId)
         onItemDeleted(itemId)
       } catch (err) {
         failedIds.push(itemId)
@@ -194,7 +193,7 @@ export function InventoryTable({
     } else {
       setShowBulkDeleteDialog(false)
     }
-  }, [selectedItems, filteredItemIds, ownerId, onItemDeleted])
+  }, [selectedItems, filteredItemIds, ownerId, storeId, onItemDeleted])
 
   const toggleExpand = useCallback((itemId: string) => {
     setExpandedItems(prev => {
@@ -281,8 +280,7 @@ export function InventoryTable({
 
     try {
       setIsDeleting(true)
-      const deleted = await storeItemService.delete(deleteItemId, ownerId)
-      if (!deleted) throw new Error('Delete was not confirmed')
+      await storeItemService.archiveItem(deleteItemId, ownerId, storeId)
       onItemDeleted(deleteItemId)
       setDeleteItemId(null)
     } catch (err) {
@@ -291,7 +289,7 @@ export function InventoryTable({
     } finally {
       setIsDeleting(false)
     }
-  }, [deleteItemId, ownerId, onItemDeleted])
+  }, [deleteItemId, ownerId, storeId, onItemDeleted])
 
   const renderStockCell = useCallback((
     item: StoreItem,

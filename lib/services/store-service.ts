@@ -174,16 +174,17 @@ class StoreService extends BaseDocumentService<Store> {
   ): Promise<Store> {
     const documentData: Record<string, unknown> = {};
 
+    // A key given as undefined clears that optional field; an omitted key keeps it.
     if (data.name !== undefined) documentData.name = data.name;
-    if (data.description !== undefined) documentData.description = data.description;
-    if (data.logoUrl !== undefined) documentData.logoUrl = data.logoUrl;
-    if (data.bannerUrl !== undefined) documentData.bannerUrl = data.bannerUrl;
     if (data.status !== undefined) documentData.status = data.status;
-    if (data.paymentUris !== undefined) documentData.paymentUris = JSON.stringify(data.paymentUris);
-    if (data.defaultCurrency !== undefined) documentData.defaultCurrency = data.defaultCurrency;
-    if (data.policies !== undefined) documentData.policies = data.policies;
-    if (data.location !== undefined) documentData.location = data.location;
-    if (data.contactMethods !== undefined) documentData.contactMethods = JSON.stringify(data.contactMethods);
+    if ('description' in data) documentData.description = data.description;
+    if ('logoUrl' in data) documentData.logoUrl = data.logoUrl;
+    if ('bannerUrl' in data) documentData.bannerUrl = data.bannerUrl;
+    if ('paymentUris' in data) documentData.paymentUris = data.paymentUris && JSON.stringify(data.paymentUris);
+    if ('defaultCurrency' in data) documentData.defaultCurrency = data.defaultCurrency;
+    if ('policies' in data) documentData.policies = data.policies;
+    if ('location' in data) documentData.location = data.location;
+    if ('contactMethods' in data) documentData.contactMethods = data.contactMethods && JSON.stringify(data.contactMethods);
 
     return this.update(storeId, ownerId, documentData);
   }

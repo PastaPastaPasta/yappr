@@ -39,3 +39,15 @@ describe('store replacements re-encode the parsed JSON fields (docs/SOCIAL_V9.md
     expect(replacement.paymentUris).toBe(JSON.stringify(paymentUris));
   });
 });
+
+describe('store edits can clear optional fields (QA D-10)', () => {
+  it('a blanked description, location and logo leave the replacement', async () => {
+    get.mockResolvedValue({ ...raw, location: 'Portland', logoUrl: 'https://example.com/logo.png' });
+    await storeService.updateStore('store', 'owner', { name: 'Anvil', description: undefined, location: undefined, logoUrl: undefined });
+    const replacement = updateDocument.mock.calls[0][4];
+    expect(replacement).not.toHaveProperty('description');
+    expect(replacement).not.toHaveProperty('location');
+    expect(replacement).not.toHaveProperty('logoUrl');
+    expect(replacement).toMatchObject({ name: 'Anvil', status: 'active', paymentUris: JSON.stringify(paymentUris) });
+  });
+});

@@ -131,3 +131,31 @@ describe('complete store product list', () => {
     expect(query).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('product edits (QA D-09, D-11, D-22)', () => {
+  const variants = { axes: [{ name: 'Size', options: ['S', 'M'] }], combinations: [{ key: 'S', price: 1000 }, { key: 'M', price: 1500 }] };
+
+  it('an edit that names no status keeps a paused product paused', async () => {
+    get.mockResolvedValue({ ...raw, status: 'paused' });
+    await storeItemService.updateItem('item', 'owner', storeId, { title: 'Tracked product', description: 'New copy' });
+    expect(updateDocument.mock.calls[0][4]).toMatchObject({ status: 'paused', description: 'New copy' });
+  });
+
+  it('unticking variants removes them so the base price applies', async () => {
+    get.mockResolvedValue({ ...raw, variants: JSON.stringify(variants) });
+    const result = await storeItemService.updateItem('item', 'owner', storeId, { basePrice: 999, variants: undefined });
+    expect(updateDocument.mock.calls[0][4]).not.toHaveProperty('variants');
+    expect(storeItemService.getPriceRange(result)).toEqual({ min: 999, max: 999 });
+  });
+
+  it('a blanked description leaves the replacement', async () => {
+    await storeItemService.updateItem('item', 'owner', storeId, { description: undefined });
+    expect(updateDocument.mock.calls[0][4]).not.toHaveProperty('description');
+  });
+
+  it('archiving replaces the item with the deleted status instead of deleting it', async () => {
+    const result = await storeItemService.archiveItem('item', 'owner', storeId);
+    expect(updateDocument.mock.calls[0][4]).toMatchObject({ status: 'deleted', title: raw.title, stockQuantity: 7 });
+    expect(result.status).toBe('deleted');
+  });
+});

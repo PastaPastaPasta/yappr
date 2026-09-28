@@ -30,3 +30,18 @@ describe('zone replacements (docs/SOCIAL_V9.md TODO 20)', () => {
     expect(replacement.storeId).toBeInstanceOf(Uint8Array);
   });
 });
+
+describe('zone edits can clear optional fields (QA D-10)', () => {
+  it('making a zone worldwide and free removes countryPattern, flatRate and tiers', async () => {
+    get.mockResolvedValue({ ...raw, rateType: 'flat', countryPattern: 'GB', flatRate: 300 });
+    await shippingZoneService.updateZone('zone', 'owner', storeId, {
+      name: 'Worldwide', rateType: 'flat', currency: 'USD', priority: 0,
+      countryPattern: undefined, flatRate: undefined, tiers: undefined,
+    });
+    const replacement = updateDocument.mock.calls[0][4];
+    expect(replacement).not.toHaveProperty('countryPattern');
+    expect(replacement).not.toHaveProperty('flatRate');
+    expect(replacement).not.toHaveProperty('tiers');
+    expect(replacement).toMatchObject({ name: 'Worldwide', postalPatterns: raw.postalPatterns });
+  });
+});

@@ -168,12 +168,14 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
       rateType: data.rateType ?? existing.rateType
     };
 
-    if (data.postalPatterns !== undefined) documentData.postalPatterns = JSON.stringify(data.postalPatterns);
-    if (data.countryPattern !== undefined) documentData.countryPattern = data.countryPattern;
-    if (data.flatRate !== undefined) documentData.flatRate = data.flatRate;
-    if (data.tiers !== undefined) documentData.tiers = JSON.stringify(data.tiers);
-    if (data.currency !== undefined) documentData.currency = data.currency;
-    if (data.priority !== undefined) documentData.priority = data.priority;
+    // A key given as undefined clears that optional field (a worldwide zone, a free
+    // rate, no weight pricing); an omitted key keeps the stored value.
+    if ('postalPatterns' in data) documentData.postalPatterns = data.postalPatterns && JSON.stringify(data.postalPatterns);
+    if ('countryPattern' in data) documentData.countryPattern = data.countryPattern;
+    if ('flatRate' in data) documentData.flatRate = data.flatRate;
+    if ('tiers' in data) documentData.tiers = data.tiers && JSON.stringify(data.tiers);
+    if ('currency' in data) documentData.currency = data.currency;
+    if ('priority' in data) documentData.priority = data.priority;
 
     return this.update(zoneId, ownerId, documentData);
   }
