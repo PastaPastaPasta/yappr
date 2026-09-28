@@ -201,7 +201,7 @@ report (41201). Until that registration, the client must not ship against
 | | Published v9 | With `report` |
 | --- | ---: | ---: |
 | Signed create | 18,291 B | 19,798 B (202 B under the budget) |
-| sha256 | `a20635e4…c29c` | `590e1e5d5f33bfeb9e99d5706c8a52fe0dcc23115229b0f03da454410033a8d1` |
+| sha256 | `a20635e4…c29c` | `590e1e5d…a8d1` (superseded: the beta.6 re-cut folds `report` in, see [CONTRACTS_BETA6.md](CONTRACTS_BETA6.md)) |
 
 Readers report a post or reply to the moderators; the moderators remove it,
 act on its author, or dismiss the reports. Yappr has no backend, so a report is
