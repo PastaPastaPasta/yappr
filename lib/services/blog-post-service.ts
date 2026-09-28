@@ -1,4 +1,5 @@
 import { queryDocumentBundle } from './document-query-bundle'
+import { mapLimit } from './pagination-utils'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import type { BlogPost } from '@/lib/types'
@@ -7,7 +8,8 @@ import { compressContent, decompressContent, joinChunks, splitIntoChunks } from 
 import { generateSlug } from '@/lib/utils/slug'
 import { retryAsync } from '@/lib/retry-utils'
 import { extractErrorMessage, isRateLimitedError } from '@/lib/error-utils'
-import { labelsFromStored, publishedPostsNewestFirst, storedLabels } from '@/lib/blog/content-utils'
+import { isPublishedBlogPost, labelsFromStored, publishedPostsNewestFirst, storedLabels } from '@/lib/blog/content-utils'
+import { logger } from '@/lib/logger'
 
 export interface BlogPostQueryOptions {
   limit?: number
@@ -36,6 +38,19 @@ export interface UpdateBlogPostData {
   slug?: string
   publishedAt?: number
 }
+
+/**
+ * The pre-publish slug lookup stayed rate-limited, so the publish stopped
+ * before anything was broadcast. Only this failure can promise that nothing
+ * was published: a rate limit on the write's own wait may follow a broadcast
+ * that landed.
+ */
+export class PrePublishRateLimitError extends Error {}
+
+// Reading past a blog's drafts to fill its public slots: page size, and a cap
+// so a blog of nothing but drafts cannot hold discovery up indefinitely.
+const PUBLISHED_REFILL_PAGE = 20
+const PUBLISHED_REFILL_MAX_PAGES = 5
 
 function appendTimestampSuffix(slug: string): string {
   return `${slug}-${Date.now().toString(36)}`.slice(0, 63).replace(/-+$/, '')
@@ -130,7 +145,10 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       }),
       { initialDelayMs: 1500, retryCondition: isRateLimitedError }
     )
-    if (!lookup.success) throw lookup.error ?? new Error('Slug lookup failed')
+    if (!lookup.success) {
+      const error = lookup.error ?? new Error('Slug lookup failed')
+      throw isRateLimitedError(error) ? new PrePublishRateLimitError(error.message) : error
+    }
     if (lookup.data) {
       slug = appendTimestampSuffix(slug)
     }
@@ -229,6 +247,33 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     return new Map(ids.map((id, index) => [id, pages[index].map(doc => this.transformDocument(doc))]))
   }
 
+  /**
+   * Up to `perBlog` published posts per blog, newest created first. Drafts are
+   * dropped, so a blog whose full first page held drafts is read on (by cursor)
+   * until its public slots are filled or its history runs out; otherwise a
+   * newer draft would hide the blog's published articles.
+   */
+  private async getPublishedPostsByBlogs(blogIds: string[], perBlog: number): Promise<BlogPost[][]> {
+    const firstPages = await this.getPostsByBlogs(blogIds, perBlog)
+    return mapLimit(Array.from(firstPages.entries()), 3, async ([blogId, firstPage]) => {
+      const published = firstPage.filter(isPublishedBlogPost)
+      let page = firstPage
+      let pageLimit = perBlog
+      for (let refills = 0; refills < PUBLISHED_REFILL_MAX_PAGES && published.length < perBlog && page.length >= pageLimit; refills++) {
+        pageLimit = PUBLISHED_REFILL_PAGE
+        try {
+          page = await this.getPostsByBlog(blogId, { limit: pageLimit, startAfter: page[page.length - 1].id })
+        } catch (error) {
+          // Tolerated like the first page: this blog contributes what it has.
+          logger.warn(`Reading past drafts failed for blog ${blogId}:`, error)
+          break
+        }
+        published.push(...page.filter(isPublishedBlogPost))
+      }
+      return published.slice(0, perBlog)
+    })
+  }
+
   async getPostsByOwner(ownerId: string, options: BlogPostQueryOptions = {}): Promise<BlogPost[]> {
     const queryOptions: QueryOptions = {
       where: [['$ownerId', '==', ownerId]],
@@ -249,7 +294,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
 
     // Fetch enough posts per blog to fill the requested limit
     const perBlogLimit = Math.min(Math.ceil(limit / blogIds.length), limit)
-    const results = Array.from((await this.getPostsByBlogs(blogIds, perBlogLimit)).values())
+    const results = await this.getPublishedPostsByBlogs(blogIds, perBlogLimit)
 
     // Merge, drop drafts, sort by publication date desc, and take top N
     return publishedPostsNewestFirst(results.flat()).slice(0, limit)
@@ -267,7 +312,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const lowerQuery = query.toLowerCase()
 
     // Fetch a reasonable number of posts per blog for client-side filtering
-    const results = Array.from((await this.getPostsByBlogs(blogIds, 20)).values())
+    const results = await this.getPublishedPostsByBlogs(blogIds, 20)
 
     // Filter by title, subtitle, or labels matching the query
     return publishedPostsNewestFirst(results.flat())

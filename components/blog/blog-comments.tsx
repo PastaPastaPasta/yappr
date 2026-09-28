@@ -65,6 +65,9 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
 
     setIsLoading(true)
     setError(null)
+    // What is on screen stays up while this read runs (and if it fails), so a
+    // just-posted comment is not hidden; drop anything left from another post.
+    setComments((prev) => prev.filter((comment) => comment.blogPostId === blogPostId))
 
     try {
       const allComments = await blogCommentService.getCommentsByPost(blogPostId, { limit: 100 })
@@ -184,7 +187,9 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
       </div>
 
       <div className="mt-4 space-y-3">
-        {isLoading && <p className="text-sm text-[var(--blog-text)]/75">Loading comments...</p>}
+        {isLoading && (
+          <p className="text-sm text-[var(--blog-text)]/75">{comments.length > 0 ? 'Refreshing comments...' : 'Loading comments...'}</p>
+        )}
 
         {!isLoading && error && (
           <div className="flex items-center justify-between rounded-lg border p-3" style={{ borderColor: 'var(--blog-border)' }}>
@@ -199,7 +204,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
           <p className="text-sm text-[var(--blog-text)]/75">No comments yet.</p>
         )}
 
-        {!isLoading && !error && comments.map((comment) => {
+        {comments.map((comment) => {
           const resolvedUsername = usernames.get(comment.ownerId)
           const username = resolvedUsername ? normalizeDpnsUsername(resolvedUsername) : null
           const displayName = blogAuthorHandle(username, comment.ownerId)

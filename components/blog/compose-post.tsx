@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/switch'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { blogPostService, blogService } from '@/lib/services'
+import { PrePublishRateLimitError } from '@/lib/services/blog-post-service'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { validateHttpUrl } from '@/lib/utils'
 import { LABEL_LIMITS, blogCommentsDefault, decodeSummary, encodeSummary, labelProblem } from '@/lib/blog/content-utils'
@@ -312,7 +313,10 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     } catch (err) {
       logger.error(isEditing ? 'Failed to update blog post:' : 'Failed to publish blog post:', err)
       if (err instanceof ListLimitError) toast.error(err.message)
-      else if (isRateLimitedError(err)) toast.error(`Dash Platform is rate-limiting requests right now. Nothing was ${isEditing ? 'saved' : 'published'}; wait a moment and try again.`)
+      // Only the pre-publish lookup fails before anything is broadcast; a rate
+      // limit later on may follow a write that landed, and a blind retry pays twice.
+      else if (err instanceof PrePublishRateLimitError) toast.error('Dash Platform is rate-limiting requests right now. Nothing was published; wait a moment and try again.')
+      else if (isRateLimitedError(err)) toast.error(`Dash Platform is rate-limiting requests right now, so the ${isEditing ? 'update' : 'post'} may or may not have gone through. Check your blog before trying again.`)
       else toast.error(isEditing ? 'Failed to update post' : 'Failed to publish post')
     } finally {
       setIsPublishing(false)

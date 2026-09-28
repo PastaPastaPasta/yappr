@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import bs58 from 'bs58';
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: {} }) }));
-import { blogPostService } from './blog-post-service';
+import { PrePublishRateLimitError, blogPostService } from './blog-post-service';
 import type { BlogPost } from '@/lib/types';
 
 const blogId = bs58.encode(new Uint8Array(32).fill(3));
@@ -90,12 +90,65 @@ describe('the pre-publish slug check (QA D-54)', () => {
     const settled = expect(published).rejects.toThrow(/rate limited/);
     await vi.runAllTimersAsync();
     await settled;
+    // Typed apart from a rate limit on the write itself, which may follow a broadcast that landed.
+    await expect(published).rejects.toBeInstanceOf(PrePublishRateLimitError);
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('does not mark a rate limit from the write itself as pre-publish', async () => {
+    vi.spyOn(blogPostService, 'getPostBySlug').mockResolvedValue(null);
+    const service = blogPostService as unknown as { create(ownerId: string, data: Record<string, unknown>): Promise<BlogPost> };
+    vi.spyOn(service, 'create').mockRejectedValue(new Error(rateLimited.message));
+
+    const published = blogPostService.createPost(ownerId, { blogId, title: 'Hello', content });
+    await expect(published).rejects.toThrow(/rate limited/);
+    await expect(published).rejects.not.toBeInstanceOf(PrePublishRateLimitError);
   });
 
   it('does not retry a failure that is not a rate limit', async () => {
     const lookup = vi.spyOn(blogPostService, 'getPostBySlug').mockRejectedValue(new Error('invalid query'));
     await expect(blogPostService.createPost(ownerId, { blogId, title: 'Hello', content })).rejects.toThrow('invalid query');
     expect(lookup).toHaveBeenCalledOnce();
+  });
+});
+
+describe('public discovery reads past drafts (QA D-27)', () => {
+  const otherBlogId = bs58.encode(new Uint8Array(32).fill(5));
+  const post = (id: string, forBlog: string, createdAt: number, publishedAt?: number) =>
+    ({ id, blogId: forBlog, ownerId, createdAt: new Date(createdAt), title: id, content: [], slug: id, publishedAt } as BlogPost);
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fills a blog\'s slot past a newer draft instead of dropping its published article', async () => {
+    const draft = post('draft', blogId, 3_000);
+    const article = post('article', blogId, 2_000, 2_000);
+    const other = post('other', otherBlogId, 1_000, 1_000);
+    vi.spyOn(blogPostService, 'getPostsByBlogs').mockResolvedValue(new Map([[blogId, [draft]], [otherBlogId, [other]]]));
+    const refill = vi.spyOn(blogPostService, 'getPostsByBlog').mockResolvedValue([article]);
+
+    const recent = await blogPostService.getRecentPosts([blogId, otherBlogId], 2);
+
+    expect(recent.map((item) => item.id)).toEqual(['article', 'other']);
+    expect(refill).toHaveBeenCalledOnce();
+    expect(refill).toHaveBeenCalledWith(blogId, { limit: 20, startAfter: 'draft' });
+  });
+
+  it('does not read on when the first page already ended the blog\'s history', async () => {
+    vi.spyOn(blogPostService, 'getPostsByBlogs').mockResolvedValue(new Map([[blogId, [post('draft', blogId, 3_000)]]]));
+    const refill = vi.spyOn(blogPostService, 'getPostsByBlog');
+
+    expect(await blogPostService.searchPosts([blogId], 'draft')).toEqual([]);
+    expect(refill).not.toHaveBeenCalled();
+  });
+
+  it('stops reading after a bounded number of all-draft pages', async () => {
+    const drafts = (prefix: string) => Array.from({ length: 20 }, (_, index) => post(`${prefix}${index}`, blogId, 1_000 - index));
+    vi.spyOn(blogPostService, 'getPostsByBlogs').mockResolvedValue(new Map([[blogId, drafts('first')]]));
+    const refill = vi.spyOn(blogPostService, 'getPostsByBlog').mockImplementation(async () => drafts('next'));
+
+    expect(await blogPostService.searchPosts([blogId], 'x')).toEqual([]);
+    expect(refill).toHaveBeenCalledTimes(5);
   });
 });
