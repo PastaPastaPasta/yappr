@@ -11,7 +11,7 @@ import { useLinkPreview } from '@/hooks/use-link-preview'
 import { extractFirstUrl, stripFirstUrlAndTrim, stripTrailingPunctuation } from '@/lib/link-preview/urls'
 import { useYapprPostReference } from '@/hooks/use-yappr-post-reference'
 import { useSettingsStore } from '@/lib/store'
-import { cashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
+import { cashtagDisplayToStorage, hashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
 import { HASHTAG_MAX_LENGTH, hashtagsAreInline } from '@/lib/contract-topology'
 import { MentionLink } from './mention-link'
 import { cn, isEmojiOnly } from '@/lib/utils'
@@ -306,7 +306,8 @@ export function PostContent({
     }
 
     if (part.type === 'hashtag') {
-      const tag = part.value.slice(1).toLowerCase()
+      // v9 indexes a tag cut to the contract ceiling; link to that page.
+      const tag = hashtagDisplayToStorage(part.value, hashtagsAreInline() ? HASHTAG_MAX_LENGTH : undefined)
       const validationStatus = hashtagValidations?.get(tag)
       const isFailed = validationStatus === 'invalid'
 
