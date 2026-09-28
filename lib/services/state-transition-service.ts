@@ -17,7 +17,7 @@ import { tokenService } from './token-service';
 import { identityService } from './identity-service';
 import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
-import { allocateIdentityContractNonce, documentIdForCreate, identityContractNonceConsumed } from '@/lib/document-id';
+import { allocateIdentityContractNonce, documentIdForCreate, identityContractNonceConsumed, nextIdentityContractNonce } from '@/lib/document-id';
 import { buildSignedCreateTransition } from '@/lib/manual-batch';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import {
@@ -68,13 +68,21 @@ const NONCE_RESERVATION_PREFIX = scopedKey('yappr:nonce-reserved:');
 const reservedNonces = new Map<string, bigint>();
 
 /**
- * Creates that lose their nonce to another write are rebuilt under a fresh
+ * Creates Platform refuses for their nonce (40204) are rebuilt under a fresh
  * one this many times before the failure is surfaced.
  */
 const MAX_NONCE_COLLISION_RETRIES = 2;
 
-/** A create whose nonce another write consumed: it can never execute, and nothing was written. */
-const LOST_TO_NONCE_COLLISION = 'lost-to-nonce-collision';
+/** A create Platform refused for its nonce (40204): nothing executed, so a rebuild is safe. */
+const REFUSED_FOR_NONCE = 'refused-for-nonce';
+
+/**
+ * A create whose nonce was consumed while its document never appeared. Almost
+ * always another write by this identity that took the nonce first, but a paid
+ * consensus rejection of this very transition looks the same from here, so it
+ * is surfaced rather than rebuilt (which could pay again).
+ */
+const NONCE_TAKEN_ERROR = 'This was not saved: another write from your account went out at the same moment and took its place. Please try again.';
 
 function loadReservedNonce(key: string): bigint | null {
   try {
@@ -457,11 +465,11 @@ class StateTransitionService {
    *
    * The facade takes the next nonce from the SDK's cache, which knows only
    * Platform and the facade's own writes, never a nonce `createDocument`
-   * broadcast. So when this browser broadcast a nonce Platform has not yet
-   * consumed, this waits (briefly) for Platform to catch up before signing.
-   * A facade write that fails may still have gone out, so its nonce is then
-   * recorded as reserved and the next create skips it; one that succeeds
-   * has already executed.
+   * broadcast. So while this browser holds a reserved nonce ahead of
+   * Platform's tip, this waits (briefly) for Platform to catch up before
+   * signing, and afterwards records the nonce the facade will have used as
+   * reserved: the next create then skips it even if the node it asks is a
+   * block behind, or the facade write went out but reported a failure.
    */
   private async withFacadeNonce<T>(ownerId: string, contractId: string, write: () => Promise<T>): Promise<T> {
     return withIdentityWriteLock(ownerId, contractId, async () => {
@@ -469,7 +477,8 @@ class StateTransitionService {
       const reservationKey = `${NONCE_RESERVATION_PREFIX}${ownerId}:${contractId}`;
       const reserved = loadReservedNonce(reservationKey);
       let current = await sdk.identities.contractNonce(ownerId, contractId);
-      for (let attempt = 0; attempt < 5 && reserved !== null && !identityContractNonceConsumed(current, reserved); attempt++) {
+      const reservationAhead = () => allocateIdentityContractNonce(current, reserved) > nextIdentityContractNonce(current);
+      for (let attempt = 0; attempt < 5 && reservationAhead(); attempt++) {
         logger.debug(`Waiting for nonce ${reserved} to execute before a facade write (Platform at ${current})`);
         await new Promise((resolve) => setTimeout(resolve, 2_000));
         current = await sdk.identities.contractNonce(ownerId, contractId);
@@ -477,9 +486,8 @@ class StateTransitionService {
       try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
       try {
         return await write();
-      } catch (error) {
+      } finally {
         reserveNonce(reservationKey, allocateIdentityContractNonce(current, reserved));
-        throw error;
       }
     });
   }
@@ -487,11 +495,11 @@ class StateTransitionService {
   /**
    * Whether an unconfirmed create can still land. Its document is not on
    * Platform (the caller just probed); if its nonce has been consumed anyway,
-   * another write by this identity took that nonce and this transition can
-   * never execute. Answers the confirmed result when the document turns out
-   * to have landed, LOST_TO_NONCE_COLLISION when it cannot, and null when
-   * that is not known (the nonce is still free, or a read failed). Either
-   * answer settles the cached bytes.
+   * this transition can never execute (QA D-01: another write took the
+   * nonce). Answers the confirmed result when the document turns out to have
+   * landed, a failure when it cannot, and null when that is not known (the
+   * nonce is still free, or a read failed). Either answer settles the cached
+   * bytes.
    */
   private async settleUnconfirmedCreate(
     sdk: ConnectedSdk,
@@ -500,7 +508,7 @@ class StateTransitionService {
     ownerId: string,
     documentId: string,
     nonce: bigint
-  ): Promise<StateTransitionResult | typeof LOST_TO_NONCE_COLLISION | null> {
+  ): Promise<StateTransitionResult | null> {
     try {
       const current = await sdk.identities.contractNonce(ownerId, contractId);
       if (!identityContractNonceConsumed(current, nonce)) return null;
@@ -516,7 +524,7 @@ class StateTransitionService {
       }
       logger.warn(`Nonce ${nonce} was consumed but ${documentType} ${documentId} is not on Platform: another write took its nonce`);
       clearPendingSTBytes(documentId);
-      return LOST_TO_NONCE_COLLISION;
+      return { success: false, error: NONCE_TAKEN_ERROR };
     } catch (error) {
       logger.warn(`Could not settle unconfirmed ${documentType} ${documentId}:`, extractErrorMessage(error));
       return null;
@@ -535,9 +543,9 @@ class StateTransitionService {
    *
    * Writes by one identity to one contract run one at a time, across tabs
    * (`withIdentityWriteLock`), so two never read the same nonce (QA D-01).
-   * Another device can still take a nonce first; a create that loses its
-   * nonce that way is rebuilt under a fresh one, and failed if that keeps
-   * happening, rather than reported as sent.
+   * Another device can still take a nonce first. A create Platform refuses
+   * for its nonce is rebuilt under a fresh one; one whose nonce is consumed
+   * while it never lands is reported as failed, not as sent.
    *
    * Instead of using sdk.documents.create() (which atomically builds,
    * signs, broadcasts, and waits — bumping the nonce each time), we:
@@ -611,13 +619,10 @@ class StateTransitionService {
     return withIdentityWriteLock(ownerId, contractId, async () => {
       for (let attempt = 0; attempt <= MAX_NONCE_COLLISION_RETRIES; attempt++) {
         const result = await this.createDocumentOnce(contractId, documentType, ownerId, documentData, options);
-        if (result !== LOST_TO_NONCE_COLLISION) return result;
-        logger.warn(`${documentType} create lost its nonce to another write by this identity (attempt ${attempt + 1})`);
+        if (result !== REFUSED_FOR_NONCE) return result;
+        logger.warn(`${documentType} create refused for its nonce, rebuilding (attempt ${attempt + 1})`);
       }
-      return {
-        success: false,
-        error: 'Another write from this account took the same slot, so this one was not saved and nothing was charged. Please try again.',
-      };
+      return { success: false, error: NONCE_TAKEN_ERROR };
     });
   }
 
@@ -627,7 +632,7 @@ class StateTransitionService {
     ownerId: string,
     documentData: Parameters<StateTransitionService['createDocument']>[3],
     options: Parameters<StateTransitionService['createDocument']>[4]
-  ): Promise<StateTransitionResult | typeof LOST_TO_NONCE_COLLISION> {
+  ): Promise<StateTransitionResult | typeof REFUSED_FOR_NONCE> {
     const affectedStateMode = options?.confirmation === 'affectedState';
     try {
       const sdk = await getEvoSdk();
@@ -790,9 +795,9 @@ class StateTransitionService {
           }
         }
         if (isIdentityNonceConflictError(broadcastErr)) {
-          // Refused before execution, so nothing was written or charged.
+          // Refused before execution: nothing was written.
           clearPendingSTBytes(documentId);
-          return LOST_TO_NONCE_COLLISION;
+          return REFUSED_FOR_NONCE;
         }
         throw broadcastErr;
       }
@@ -844,7 +849,7 @@ class StateTransitionService {
           }
           clearPendingSTBytes(documentId);
           // "nonce already present" is another write's nonce, not this document.
-          if (!doc && isIdentityNonceConflictError(waitErr)) return LOST_TO_NONCE_COLLISION;
+          if (!doc && isIdentityNonceConflictError(waitErr)) return REFUSED_FOR_NONCE;
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return {
             success: true,
