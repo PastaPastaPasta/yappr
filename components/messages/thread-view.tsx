@@ -14,7 +14,7 @@ import { EmojiPicker } from '@/components/compose/emoji-picker'
 import { isEmojiOnly } from '@/lib/utils'
 import type { UserDetails } from '@/lib/utils/resolve-user-details'
 import type { InboxRow } from './conversation-list'
-import { MenuContent, MenuItem } from './dm-ui'
+import { MenuContent, MenuItem, memberCount } from './dm-ui'
 import { displayNameOf } from './use-dm-engine'
 
 export interface ThreadMessage {
@@ -88,7 +88,7 @@ export function ThreadView({ row, messages, details, status, isLoading, blocked,
               </div>
               <div className="min-w-0 flex-1">
                 <p className="font-semibold truncate text-sm sm:text-base">{title}</p>
-                <p className="text-xs text-gray-500 truncate">{row.memberIds.length} members</p>
+                <p className="text-xs text-gray-500 truncate">{memberCount(row.memberIds.length)}</p>
               </div>
             </button>
           ) : (

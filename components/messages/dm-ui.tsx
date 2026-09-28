@@ -12,6 +12,9 @@ export function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
+/** A group's member count: "1 member", "3 members". */
+export const memberCount = (count: number): string => `${count} member${count === 1 ? '' : 's'}`
+
 interface DmDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
