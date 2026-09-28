@@ -28,14 +28,14 @@ could never join `moderatedDocumentTypes` through a contract update.
 
 | Contract | Change | Signed create (cap 20,480, budget 20,000) |
 | --- | --- | ---: |
-| social v9 | `report` type (#579); one-hour election windows; `tombstoneIsBlank` as `ifThen` + `length`; quote and nested-reply owner bindings; two countable tombstone indexes | **19,885 B** (was 18,291; 115 B under the budget) |
+| social v9 | `report` type (#579) with a 90-day `ttl`; one-hour election windows; `tombstoneIsBlank` as `ifThen` + `length`; quote and nested-reply owner bindings; three countable tombstone indexes | **19,989 B** (was 18,291; 11 B under the budget) |
 | blog v4 → topology `v5` | comments-off enforced (D-29); only a blog's owner posts to it | 6,501 B (was 6,282) |
 | storefront, pollr, profile, DM v4/v5, key exchange, key backup, vault, auth vault | none | byte-identical |
 
 ### sha256 of each file the publisher pins
 
 ```
-311911b610d39a8ad4145fe49116a819621ef7a3f4e2631203c3831130d16b7e  yappr-social-contract-v9.json   (changed)
+2ad9efa6942c864af2f948b22c9551a58aa065aa48e27b8da75ec1fbaeb3b121  yappr-social-contract-v9.json   (changed)
 1f9f34cea3ccdf584a67b630c0dadb13c459edaedcd9184cd75c10272b4be351  yappr-blog-contract.json        (changed)
 fb533f474e70f96e04cb82fbddcbb0dbe46eafb5a5cd5adcfca608e4559f3329  yappr-storefront-contract.json
 e107f561b58dd98a1f6cb3fe29dfc6e973c6dc13c45bfeea35195d632bce76ac  pollr-contract.json
@@ -63,9 +63,13 @@ exchange, vault and auth vault are published from the testnet snapshot
 | 3 | `tombstoneIsBlank` (post, reply) becomes `ifThen[deleted = 1, allOf[length(content) = 0, absent mediaUrl, absent encryptedContent]]` | The meaning is unchanged: `length` reads an absent `content` as 0, which replaces beta.5's `absent ∨ ""` pair. It saves bytes for 1 and 5 | −62 |
 | 4 | `post.quotedPostId` and `post.quotedReplyId` agree `quotedPostOwnerId ← $ownerId`. `reply.replyToReplyId` agrees `parentOwnerId ← $ownerId` | Before this, the "quotes of my posts" and "replies to me" notification keys could name anyone. Every writer already sends the target's author (below). A **direct** reply (no `replyToReplyId`) is **not** bound: `rootPostId` has no agreement, and adding `parentOwnerId ← $ownerId` to it would refuse every nested reply, whose `parentOwnerId` is the parent reply's author rather than the root's. The client closes that gap on read: `getRepliesToMyContent` keeps a direct reply only when the root post really is the user's | +146 |
 | 5 | Countable `post.quoteDeletedCount [quotedPostId, deleted]` and `reply.rootDeletedCount [rootPostId, deleted]` | **QA D-44**: quote and reply counts include tombstones. A count with `deleted == true` gives the tombstoned bucket, so live = total − tombstoned, in one extra grouped count. The write shape does not change; the client read change is a follow-up | +179 |
+| 6 | Countable `reply.replyDeletedCount [replyToReplyId, deleted]` | Completes **QA D-44** for a reply's nested replies, the third count the UI shows | +93 |
+| 7 | `report.ttl: 7776000` (90 days) | A report is only useful while the post is under review. Unreviewed reports should not pile up in the queue or in state forever. `$createdAt` was already required. **Provisional pending platform input**: a later re-cut may change the lifetime or drop it | +11 |
 | — | Post and reply descriptions shortened to one line | Room for the above | −172 |
 
-Post now carries 10 of the 10 indexes a type may have, and reply carries 7.
+Post now carries 10 of the 10 indexes a type may have, and reply carries 8.
+The client read side of the three tombstone counts (live = total − `deleted ==
+true`) is a follow-up: the counts the UI shows today still include tombstones.
 
 ### Blog (topology `v5`)
 
@@ -136,9 +140,18 @@ The reason codes are frozen with the contract: 0 spam or scam, 1 harassment,
 or activity, 7 impersonation, 8 something else (`lib/reports.ts`, pinned
 against this file by `lib/reports.test.ts`).
 
+**Lifetime.** A report expires 90 days after it is filed (`ttl: 7776000`,
+provisional). The platform then deletes it, with no refund. A document with a
+`ttl` pays for its lifetime up front instead of for permanent storage, and
+refunds nothing on any delete. Between expiry and the cleanup block, the
+expired report still holds its `ownerAndPost`/`ownerAndReply` entry, so a
+re-report is refused 40105, which the client already words as "already
+reported". A report is never replaced, so 40140 (`DocumentExpiredError`) cannot
+reach the client. Deleting an expired report still passes.
+
 **Withdrawing and dismissing.** A report is immutable. Its reporter withdraws
-it by deleting it (`canBeDeleted` is the contract default) and gets the storage
-refund. The moderators dismiss it by deleting it as moderators, for the whole
+it by deleting it (`canBeDeleted` is the contract default); a report has a
+`ttl`, so there is no storage refund. The moderators dismiss it by deleting it as moderators, for the whole
 team. That is why `report` is moderator-deletable and moderated for
 `deleteDocuments` alone:
 
@@ -186,7 +199,7 @@ countable: the queue counts the reports it has read.
 | D-25: `storeOrder.storeStatus` copy, and `storeIsOpen` | **Deferred** with D-14, for the same reason (the checkout must copy `store.status`). Storefront stays byte-identical |
 | `storeOrder.sellerId distinctFrom $ownerId` (no self-orders) | Rejected: verify-storefront s19a deliberately self-orders to prove the review `distinctFrom` |
 | `countOf` caps (one store per owner, ballots per poll, posts per owner) | One store per owner is already the unique `store.owner` index, and `countOf` refuses a unique index anyway. Ballots are indexOnly, which `countOf` cannot count. `post.byOwner` is ranked, which `countOf` refuses. No product limit calls for a new countable index |
-| Tombstone counts for `quotedReplyId` and `replyToReplyId` | `quotedReplyId` does not fit, because post is at 10/10 indexes. `replyToReplyId` would fit on reply (7 indexes, +93 B), and is prepared as a candidate for the next JSON bundle |
+| Tombstone count for `quotedReplyId` | It does not fit: post is at 10/10 indexes (`replyToReplyId` was adopted, #6) |
 | DM `bodyContiguous` | Keep DM unchanged (decided): no TTL and no re-cut |
 
 ### Other beta.6 changes, checked
@@ -221,9 +234,9 @@ countable: the queue counts the reports it has read.
 ## Validation and battery cases
 
 ```
-node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v9.json --strict-size   # 19,885 B
+node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v9.json --strict-size   # 19,989 B
 node scripts/validate-contract-offline.mjs contracts/yappr-blog-contract.json --strict-size        # 6,501 B
-node scripts/validate-contract-offline.mjs --probes        # 49 probes
+node scripts/validate-contract-offline.mjs --probes        # 51 probes
 node scripts/validate-contract-offline.mjs --constraints   # 53 cases, rs-dpp 4.2.0-beta.6 validation
 node scripts/verify-{v9,blog,storefront,pollr}.mjs --self-test
 ```
@@ -236,7 +249,9 @@ node scripts/verify-{v9,blog,storefront,pollr}.mjs --self-test
   - "3600 s window" moves to a mainnet-only probe;
   - a 0 s control is added (accepted off mainnet);
   - a window over four weeks is added (refused everywhere);
-  - the `tombstoneIsBlank` probe follows the `ifThen` path.
+  - the `tombstoneIsBlank` probe follows the `ifThen` path;
+  - two report `ttl` probes are added: a `ttl` with no `$createdAt` in `required`,
+    and one over a year (both refused by the parse).
 - **`--constraints`** now runs on the wasm-sdk alone: it evaluates each case
   with `DataContract.checkDocumentPropertyConstraints` (platform#5051), the
   rule check consensus runs, so the optional `@dashevo/wasm-dpp` install is
@@ -253,7 +268,7 @@ node scripts/verify-{v9,blog,storefront,pollr}.mjs --self-test
 | Battery | Case | Covers |
 | --- | --- | --- |
 | verify-v9 | o4 | A quote of B's post, or of B's reply, naming A as the owner is refused 40127; the reply quote naming B lands. A reply to B's reply naming A is refused 40127; naming B, it lands |
-| verify-v9 | t1 | A quotes and replies to a fresh post of B's twice each, then tombstones one of each. Total counts read 2, and the `deleted == true` counts read 1 (`quoteDeletedCount`, `rootDeletedCount`) |
+| verify-v9 | t1 | A quotes and replies to a fresh post of B's twice each, then tombstones one of each. Total counts read 2, and the `deleted == true` counts read 1 (`quoteDeletedCount`, `rootDeletedCount`). `replyDeletedCount` has no live case yet; its self-test pins the index |
 | verify-v9 | e0 | (existing) now pins 3600/3600 against the published declaration |
 | verify-v9 | r1 | (#579) Reports: two creates land; the duplicate (40105), wrong author (40127), self-report (10419), ghost post (40120) and three constraint refusals are refused; the reporter withdraws one; the interim owner dismisses the other; the reporter reports again |
 | verify-v9 | r2 | **Post-seat, for the publisher.** Once a team is seated (about two hours with one-hour windows), run `verify-v9 --only r2 --team-member bot:<n> --reason-doc <id>`. A member dismissing A's report without a listed reason is refused 41203, and with one it lands. The member's own report, and the `ownerProtected` owner's report, cannot be dismissed (41102). The case skips while no team is seated |

@@ -374,6 +374,9 @@ const PROBES = [
   { label: 'ttl of 60 s (under the one-hour floor)', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.savedAddress.ttl = 60; } },
   { label: 'ttl with documentsKeepHistory', file: STOREFRONT, expect: 'wasm', mutate: (s) => { const t = s.documentSchemas.savedAddress; t.ttl = 86_400; t.documentsKeepHistory = true; } },
   { label: 'ttl on the target of a permanentDocument owner gate (privateFeedState)', file: SOCIAL_V9, expect: 'audit', node: '40122', mutate: (s) => { s.documentSchemas.privateFeedState.ttl = 86_400; } },
+  // beta.6 v9: report carries a 90-day ttl (the one-hour floor and a one-year ceiling).
+  { label: 'report ttl without $createdAt in required', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { const t = s.documentSchemas.report; t.required = t.required.filter((p) => p !== '$createdAt'); } },
+  { label: 'report ttl over one year', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.report.ttl = 31_536_001; } },
   { label: 'immutable contract reference with an owner requirement on a transferable type (#4982)', file: STOREFRONT, expect: 'audit', node: 'registration', mutate: (s) => {
     const t = s.documentSchemas.savedAddress;
     t.transferable = 1; t.documentsMutable = true; t.immutable = ['appContractId'];

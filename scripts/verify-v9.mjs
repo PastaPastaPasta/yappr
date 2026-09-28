@@ -924,6 +924,8 @@ function selfTest() {
   expect('a nested reply binds parentOwnerId to the parent reply\'s $ownerId (o4d)', agreement('reply', 'replyToReplyId').parentOwnerId === '$ownerId');
   const countable = (type, name, props) => schemas[type].indices.some((i) => i.name === name && i.countable === true && JSON.stringify(i.properties.map((p) => Object.keys(p)[0])) === JSON.stringify(props));
   expect('post counts tombstoned quotes per post, reply tombstoned replies per root (t1)', countable('post', 'quoteDeletedCount', ['quotedPostId', 'deleted']) && countable('reply', 'rootDeletedCount', ['rootPostId', 'deleted']));
+  expect('reply counts tombstoned nested replies per parent reply (D-44)', countable('reply', 'replyDeletedCount', ['replyToReplyId', 'deleted']));
+  expect('a report expires 90 days after it is filed', schemas.report.ttl === 7_776_000 && schemas.report.required.includes('$createdAt'));
   expect('the election windows are one hour each on this devnet cut (e0c)', moderators.joinWindow === 3600 && moderators.voteWindow === 3600);
   expect('post freezes language, hashtag, the quote and deleted (f1, f2)', ['language', 'hashtag', 'quotedPostId', 'quotedPostOwnerId', 'deleted'].every((p) => schemas.post.immutable?.includes(p)));
   expect('post allows setting deleted once (f2)', schemas.post.immutableAllowSetting?.includes('deleted'));

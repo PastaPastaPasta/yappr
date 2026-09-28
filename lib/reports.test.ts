@@ -35,6 +35,14 @@ const record = (overrides: Partial<ReportRecord>): ReportRecord => ({
   ...overrides,
 })
 
+describe('report lifetime', () => {
+  it('matches the 90 days the dialog and the queue promise', () => {
+    const report = (socialContractV9.documentSchemas as unknown as Record<string, { ttl?: number; required: string[] }>).report
+    expect(report.ttl).toBe(90 * 24 * 60 * 60)
+    expect(report.required).toContain('$createdAt')
+  })
+})
+
 describe('report reasons', () => {
   it('should cover exactly the codes the v9 contract accepts', () => {
     expect(REPORT_REASONS.map((reason) => reason.code)).toEqual(REPORT_REASONS.map((_, index) => index))

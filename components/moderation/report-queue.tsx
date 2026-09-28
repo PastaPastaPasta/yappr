@@ -265,7 +265,8 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
         <CardTitle className="flex items-center gap-2"><FlagIcon className="h-5 w-5" /> Reports</CardTitle>
         <CardDescription>
           Posts and replies readers reported, newest report first. Dismissing deletes every report on the post, one
-          moderation transition each, and leaves a public removal record per report; the reporters are not refunded.
+          moderation transition each, and leaves a public removal record per report. Reports expire on their own 90 days
+          after they were filed.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

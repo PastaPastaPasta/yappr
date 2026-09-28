@@ -73,7 +73,12 @@ class ReportService {
     });
   }
 
-  /** The reporter deletes its own report (it gets the storage refund; moderators never see it again). */
+  /**
+   * The reporter deletes its own report; moderators never see it again. A report
+   * carries a 90-day \`ttl\`, so it refunds nothing, and a delete after it expired
+   * (before the platform's cleanup reached it) still passes: only a replace or a
+   * restore is refused (40140), and a report is never replaced.
+   */
   async withdrawReport(reporterId: string, reportId: string): Promise<StateTransitionResult> {
     if (!contractTakesReports()) return { success: false, error: 'This contract takes no reports' };
     return stateTransitionService.deleteDocument(YAPPR_CONTRACT_ID, 'report', reportId, reporterId);

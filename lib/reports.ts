@@ -11,7 +11,8 @@
  *   unique indexes, 40105);
  * - "something else" must say what (`otherHasNote`, 10422);
  * - reports are immutable: the reporter withdraws one by deleting it, and the
- *   moderators dismiss one by deleting it as moderators (a removal record).
+ *   moderators dismiss one by deleting it as moderators (a removal record);
+ * - a report expires 90 days after it was filed (\`ttl\`), refunding nothing.
  *
  * A report is public: anyone can read who reported what, and why.
  */

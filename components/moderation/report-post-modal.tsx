@@ -164,6 +164,7 @@ export function ReportPostModal() {
           <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
             Your report goes to this community&apos;s moderators. Reports are public on Dash Platform: anyone, including
             the {noun}&apos;s author, can see that you reported it, the reason you pick and anything you write in the details.
+            A report expires after 90 days.
           </Dialog.Description>
           <fieldset className="mb-4" disabled={busy}>
             <legend className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">What is wrong with it?</legend>
