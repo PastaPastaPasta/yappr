@@ -108,12 +108,16 @@ export const CONSTRAINT_CASES = {
 };
 
 /**
- * The rejection a live write breaking `rule` must produce: code 10422 AND the
- * node's message naming exactly this rule (quoted, so a rule whose name is a
- * prefix of another, or a different rule's 10422, cannot pass).
+ * The rejection a live write breaking `rule` must produce: the node's 10422
+ * `DocumentPropertyConstraintViolatedError` message naming exactly this rule
+ * (quoted and followed by its `:` reason, so a rule whose name is a prefix of
+ * another, or a different rule's 10422, cannot pass). The prose is that error's
+ * Display and no other error produces it. The number itself is not required:
+ * on moutai (beta.5) the broadcast refusal reaches the SDK as a `Protocol`
+ * WasmSdkError with `code: -1` and the prose only.
  */
 export const constraintViolation = (rule) =>
-  new RegExp(`(?=[\\s\\S]*\\b10422\\b)[\\s\\S]*breaks its propertyConstraints rule \\\\?"${rule}\\\\?"`, 'i');
+  new RegExp(`breaks its propertyConstraints rule \\\\?"${rule}\\\\?":`, 'i');
 
 /** The refused CREATE cases of one contract and doctype, as [label, data, rule]. */
 export function refusedCreates(file, docType) {
