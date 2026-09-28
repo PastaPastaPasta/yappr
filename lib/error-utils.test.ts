@@ -8,6 +8,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   categorizeError,
+  isAffectedStateSnapshotError,
   classifyModerationError,
   isActionFeeAgreementError,
   isDocumentPropertyRuleError,
@@ -372,5 +373,21 @@ describe('4.2.0-beta.5 rejections', () => {
     expect(isContestFundError(error)).toBe(false)
     expect(isTrailingBytesError(error)).toBe(false)
     expect(isContestedDocumentsNotYetAllowedError(error)).toBe(false)
+  })
+})
+
+describe('isAffectedStateSnapshotError', () => {
+  // evo-sdk 4.2.0-beta.5, thrown by documents.create/delete on indexOnly types (QA D-05, platform P-03).
+  const SNAPSHOT = '[WASM] received a verified VerifiedDocuments snapshot for this transition family; use the *_affected_state wait APIs and treat the result as a height-pinned snapshot'
+
+  it('recognises the strict wait refusing an affected-state proof', () => {
+    expect(isAffectedStateSnapshotError(new Error(SNAPSHOT))).toBe(true)
+    expect(isAffectedStateSnapshotError({ message: SNAPSHOT, code: -1 })).toBe(true)
+  })
+
+  it('is not a timeout, a duplicate, or any other error', () => {
+    expect(isTimeoutError(new Error(SNAPSHOT))).toBe(false)
+    expect(isAffectedStateSnapshotError(new Error('deadline expired before operation could complete'))).toBe(false)
+    expect(isAffectedStateSnapshotError(new Error('Document not found'))).toBe(false)
   })
 })
