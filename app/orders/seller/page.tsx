@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
@@ -23,9 +23,12 @@ import { orderStatusService } from '@/lib/services/order-status-service'
 import { getPaymentVerificationUrl } from '@/lib/services/insight-api-service'
 import { dpnsService } from '@/lib/services'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
+import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import toast from 'react-hot-toast'
 import { ClipboardIcon } from '@heroicons/react/24/outline'
 import type { StoreOrder, OrderStatusUpdate, OrderStatus, OrderPayload } from '@/lib/types'
+
+const ORDERS_PAGE_SIZE = 50
 
 /**
  * Decrypt order payload using seller's encryption private key.
@@ -82,6 +85,53 @@ function SellerOrdersPage() {
   const [statusMessage, setStatusMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined)
+  const [hasMore, setHasMore] = useState(false)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [hasSellerKey, setHasSellerKey] = useState(true)
+  const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
+
+  /** Fetch one page (newest first), decrypt it, and resolve its statuses and buyer names. */
+  const loadOrdersPage = useCallback(async (sellerId: string, startAfter?: string) => {
+    const { orders: pageOrders, nextCursor: cursor } = await storeOrderService.getSellerOrders(sellerId, { limit: ORDERS_PAGE_SIZE, startAfter })
+
+    // Get seller's encryption private key for decryption
+    const sellerPrivateKey = getEncryptionKeyBytes(sellerId)
+    setHasSellerKey(sellerPrivateKey !== null)
+
+    // Decrypt order payloads
+    const payloadMap = new Map<string, OrderPayload>()
+    await Promise.all(
+      pageOrders.map(async (order) => {
+        const payload = await decryptSellerOrderPayload(order, sellerPrivateKey)
+        if (payload) {
+          payloadMap.set(order.id, payload)
+        }
+      })
+    )
+
+    // Latest genuine status per order: one `in` query per 100 orders
+    // (v2 gates the writer against the order's sellerId, so every update here is the seller's own).
+    const [statusMap, usernameMap] = await Promise.all([
+      orderStatusService.getLatestStatuses(pageOrders.map((order) => order.id)).catch((e) => {
+        logger.error('Failed to load order statuses:', e)
+        return new Map<string, OrderStatusUpdate>()
+      }),
+      dpnsService.resolveUsernamesBatch([...new Set(pageOrders.map((order) => order.buyerId))]).catch((e) => {
+        logger.error('Failed to resolve buyer usernames:', e)
+        return new Map<string, string | null>()
+      }),
+    ])
+
+    setOrders(prev => startAfter ? [...prev, ...pageOrders] : pageOrders)
+    setOrderPayloads(prev => startAfter ? new Map([...prev, ...payloadMap]) : payloadMap)
+    setOrderStatuses(prev => startAfter ? new Map([...prev, ...statusMap]) : statusMap)
+    const names = [...usernameMap].filter((entry): entry is [string, string] => entry[1] !== null)
+    setBuyerUsernames(prev => startAfter ? new Map([...prev, ...names]) : new Map(names))
+    setNextCursor(cursor)
+    setHasMore(pageOrders.length === ORDERS_PAGE_SIZE)
+  }, [])
+
   // Load seller orders
   useEffect(() => {
     if (!sdkReady || !user?.identityId) return
@@ -89,39 +139,7 @@ function SellerOrdersPage() {
     const loadOrders = async () => {
       try {
         setIsLoading(true)
-        const { orders: sellerOrders } = await storeOrderService.getSellerOrders(user.identityId, { limit: 50 })
-        setOrders(sellerOrders)
-
-        // Get seller's encryption private key for decryption
-        const sellerPrivateKey = getEncryptionKeyBytes(user.identityId)
-
-        // Decrypt order payloads
-        const payloadMap = new Map<string, OrderPayload>()
-        await Promise.all(
-          sellerOrders.map(async (order) => {
-            const payload = await decryptSellerOrderPayload(order, sellerPrivateKey)
-            if (payload) {
-              payloadMap.set(order.id, payload)
-            }
-          })
-        )
-        setOrderPayloads(payloadMap)
-
-        // Latest genuine status per order: one `in` query per 100 orders
-        // (v2 gates the writer against the order's sellerId, so every update here is the seller's own).
-        const [statusMap, usernameMap] = await Promise.all([
-          orderStatusService.getLatestStatuses(sellerOrders.map((order) => order.id)).catch((e) => {
-            logger.error('Failed to load order statuses:', e)
-            return new Map<string, OrderStatusUpdate>()
-          }),
-          dpnsService.resolveUsernamesBatch([...new Set(sellerOrders.map((order) => order.buyerId))]).catch((e) => {
-            logger.error('Failed to resolve buyer usernames:', e)
-            return new Map<string, string | null>()
-          }),
-        ])
-
-        setOrderStatuses(statusMap)
-        setBuyerUsernames(new Map([...usernameMap].filter((entry): entry is [string, string] => entry[1] !== null)))
+        await loadOrdersPage(user.identityId)
       } catch (error) {
         logger.error('Failed to load seller orders:', error)
       } finally {
@@ -130,7 +148,35 @@ function SellerOrdersPage() {
     }
 
     loadOrders().catch((error) => logger.error(error))
-  }, [sdkReady, user?.identityId])
+  }, [sdkReady, user?.identityId, loadOrdersPage])
+
+  const handleLoadMore = async () => {
+    if (!user?.identityId || !nextCursor || isLoadingMore) return
+    setIsLoadingMore(true)
+    try {
+      await loadOrdersPage(user.identityId, nextCursor)
+    } catch (error) {
+      logger.error('Failed to load more seller orders:', error)
+      toast.error('Failed to load more orders. Please try again.')
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }
+
+  /** Once the key is stored, decrypt the orders already on the page. */
+  const handleAddEncryptionKey = () => {
+    openEncryptionKeyModal('read_orders', () => {
+      const sellerPrivateKey = user?.identityId ? getEncryptionKeyBytes(user.identityId) : null
+      if (!sellerPrivateKey) return
+      setHasSellerKey(true)
+      Promise.all(orders.map(async (order) => [order.id, await decryptSellerOrderPayload(order, sellerPrivateKey)] as const))
+        .then((entries) => {
+          const decrypted = entries.filter((entry): entry is readonly [string, OrderPayload] => entry[1] !== null)
+          setOrderPayloads(prev => new Map([...prev, ...decrypted]))
+        })
+        .catch((error) => logger.error('Failed to decrypt seller orders:', error))
+    })
+  }
 
   const handleUpdateStatus = async (orderId: string) => {
     if (!user?.identityId) return
@@ -155,6 +201,7 @@ function SellerOrdersPage() {
       setStatusMessage('')
     } catch (error) {
       logger.error('Failed to update status:', error)
+      toast.error('Failed to update order status. Please try again.')
     } finally {
       setIsSubmitting(false)
     }
@@ -198,6 +245,15 @@ function SellerOrdersPage() {
               <p className="text-sm text-gray-400 mt-1">Orders from buyers will appear here</p>
             </div>
           ) : (
+            <>
+            {!hasSellerKey && orders.some(order => !orderPayloads.has(order.id)) && (
+              <div role="alert" className="m-4 p-4 border border-yellow-200 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg space-y-3">
+                <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                  Order details are encrypted to your store&apos;s encryption key. Add it on this device to read them.
+                </p>
+                <Button size="sm" onClick={handleAddEncryptionKey}>Add Encryption Key</Button>
+              </div>
+            )}
             <div className="divide-y divide-gray-200 dark:divide-gray-800">
               {orders.map((order, index) => {
                 const status = orderStatuses.get(order.id)
@@ -363,7 +419,7 @@ function SellerOrdersPage() {
                         ) : (
                           <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
                             <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                              Unable to decode order details.
+                              {hasSellerKey ? 'Unable to decode order details.' : 'Add your encryption key to read this order.'}
                             </p>
                           </div>
                         )}
@@ -431,6 +487,14 @@ function SellerOrdersPage() {
                 )
               })}
             </div>
+            {hasMore && (
+              <div className="p-4 flex justify-center">
+                <Button variant="outline" onClick={handleLoadMore} disabled={isLoadingMore}>
+                  {isLoadingMore ? 'Loading...' : 'Load more orders'}
+                </Button>
+              </div>
+            )}
+            </>
           )}
     </PageShell>
   )

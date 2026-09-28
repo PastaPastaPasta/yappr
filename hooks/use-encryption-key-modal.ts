@@ -8,6 +8,7 @@ export type EncryptionKeyAction =
   | 'recover_follower_keys'
   | 'sync_state'
   | 'read_messages'
+  | 'read_orders'
   | 'generic'
 
 interface EncryptionKeyPayload {
@@ -42,6 +43,8 @@ export function getEncryptionKeyActionDescription(action: EncryptionKeyAction): 
       return 'sync your private feed state'
     case 'read_messages':
       return 'read and send your messages'
+    case 'read_orders':
+      return 'read the orders buyers sent to your store'
     case 'generic':
     default:
       return 'use private feed features'

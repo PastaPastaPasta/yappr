@@ -65,12 +65,12 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
   }
 
   /**
-   * Get orders for a seller
+   * Get orders for a seller, newest first
    */
   async getSellerOrders(sellerId: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ orders: StoreOrder[]; nextCursor?: string }> {
     const { documents } = await this.query({
       where: [['sellerId', '==', sellerId]],
-      orderBy: [['sellerId', 'asc'], ['$createdAt', 'asc']],
+      orderBy: [['sellerId', 'asc'], ['$createdAt', 'desc']],
       limit: options.limit || 20,
       startAfter: options.startAfter
     });
