@@ -255,6 +255,18 @@ export const toRemoval = (entry: RemovalEntry): DocumentRemoval => ({
   restoredBy: entry.restoredBy ?? null,
 });
 
+/**
+ * What the hole a missing post or reply leaves may claim. A takedown needs a
+ * standing removal record, or proof of absence with no record saying
+ * otherwise. A RESTORED record means the document is live again, so its
+ * absence here is a failed read, not a takedown, and the old reason no longer
+ * applies. With neither record nor proof, the stub says "unavailable".
+ */
+export function missingDocumentState(removal: DocumentRemoval | null, proven: boolean): 'removed' | 'loadFailed' | 'unavailable' {
+  if (removal) return removal.restoredAt === null ? 'removed' : 'loadFailed';
+  return proven ? 'removed' : 'unavailable';
+}
+
 class ModerationService {
   /**
    * The in-flight or recent team fetch: a feed of cards asks once, not once

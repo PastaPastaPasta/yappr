@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ShieldExclamationIcon } from '@heroicons/react/24/outline'
+import { ExclamationTriangleIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline'
 import { cn } from '@/lib/utils'
 import type { TargetKind } from '@/lib/contract-topology'
-import { moderationService, type DocumentRemoval } from '@/lib/services/moderation-service'
+import { missingDocumentState, moderationService, type DocumentRemoval } from '@/lib/services/moderation-service'
 
 interface RemovedPostStubProps {
   /** The id the reader expected and the chain no longer has. */
@@ -50,7 +50,8 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
   }, [documentId, kind])
 
   const noun = kind === 'reply' ? 'reply' : 'post'
-  const removed = proven || removal !== null
+  const state = missingDocumentState(removal, proven)
+  const Icon = state === 'loadFailed' ? ExclamationTriangleIcon : ShieldExclamationIcon
   return (
     <div
       data-testid={`removed-${noun}-${documentId}`}
@@ -63,10 +64,14 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
       )}
     >
       <p className="flex items-center gap-2 italic">
-        <ShieldExclamationIcon className="h-4 w-4 shrink-0" />
-        {removed ? `This ${noun} was removed by the contract's moderators.` : `This ${noun} is unavailable.`}
+        <Icon className="h-4 w-4 shrink-0" />
+        {state === 'removed'
+          ? `This ${noun} was removed by the contract's moderators.`
+          : state === 'loadFailed'
+            ? `This ${noun} could not be loaded. Try again later.`
+            : `This ${noun} is unavailable.`}
       </p>
-      {removal?.reason && <p className="mt-1 not-italic">Reason: {removal.reason}</p>}
+      {state === 'removed' && removal?.reason && <p className="mt-1 not-italic">Reason: {removal.reason}</p>}
     </div>
   )
 }
