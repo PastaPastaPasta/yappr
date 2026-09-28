@@ -24,7 +24,7 @@ import { useRecoveryModal } from '@/hooks/use-recovery-modal'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
 import { useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
 import { useReportPostModal } from '@/hooks/use-report-post-modal'
-import { useIsModerator } from '@/hooks/use-is-moderator'
+import { useModerationRole } from '@/hooks/use-is-moderator'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { usePostEngagement } from '@/hooks/use-post-engagement'
 import { shouldGateSensitive } from '@/lib/sensitive-content'
@@ -185,13 +185,15 @@ export function PostCard({
   const { open: openModeratorRemoveModal } = useModeratorRemoveModal()
   // The contract's moderation team may delete someone else's post outright
   // (v9). Their own posts they tombstone like everyone else.
-  const isModerator = useIsModerator()
+  const { isModerator, isProtected } = useModerationRole()
   const canModerate = isModerator && !isOwnPost && moderatorDeletableTypes().includes(targetKind)
   const { open: openReportModal } = useReportPostModal()
   // Anyone but the author may report a live post or reply to the moderators
   // (v9); consensus refuses a self-report (10419) anyway. A moderator removes
-  // it instead: a moderator's report could not be dismissed (41102).
-  const canReport = contractTakesReports() && !isOwnPost && !isTombstoned && !isModerator
+  // it instead, and no identity protected from moderation (a moderator, or a
+  // seated team's ownerProtected owner) may report: its report could never be
+  // dismissed (41102).
+  const canReport = contractTakesReports() && !isOwnPost && !isTombstoned && !isProtected
   // Whether each hashtag/mention index document actually landed on Platform.
   const { validations: hashtagValidations } = usePostFieldValidation('hashtag', post)
   const { validations: mentionValidations } = usePostFieldValidation('mention', post)

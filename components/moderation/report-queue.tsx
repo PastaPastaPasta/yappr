@@ -198,7 +198,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     const fresh = all.filter((report) => !shown.has(report.id))
     if (fresh.length > 0) {
       setDismissing(null)
-      toast(`${fresh.length} new report${fresh.length === 1 ? '' : 's'} came in on this ${noun}. Review ${fresh.length === 1 ? 'it' : 'them'}, then dismiss again.`, { duration: 8000 })
+      toast(`${fresh.length} more report${fresh.length === 1 ? '' : 's'} on this ${noun} that ${fresh.length === 1 ? 'wasn\'t' : 'weren\'t'} shown. Review ${fresh.length === 1 ? 'it' : 'them'}, then dismiss again.`, { duration: 8000 })
       return
     }
     const own = all.filter((report) => report.reporterId === user.identityId)

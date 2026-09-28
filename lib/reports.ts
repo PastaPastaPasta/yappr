@@ -1,6 +1,6 @@
 /**
  * Reporting a post or reply to the social contract's moderators: the v9
- * `report` document type (docs/CONTRACTS_BETA5.md) and the queue the
+ * `report` document type (docs/CONTRACTS_BETA6.md) and the queue the
  * moderators work from.
  *
  * What consensus enforces on a report:
@@ -16,7 +16,7 @@
  * A report is public: anyone can read who reported what, and why.
  */
 import type { TargetKind } from './contract-topology'
-import { categorizeError, extractErrorMessage, isReferenceNotFoundError } from './error-utils'
+import { categorizeError, extractErrorMessage, hasConsensusCode, isReferenceNotFoundError } from './error-utils'
 import { identifierToBase58 } from './services/sdk-helpers'
 
 export interface ReportReason {
@@ -32,7 +32,7 @@ export const REPORT_REASONS: readonly ReportReason[] = Object.freeze([
   { code: 1, label: 'Harassment or bullying', hint: 'Targeting, insulting or intimidating someone' },
   { code: 2, label: 'Hate', hint: 'Attacking people for who they are' },
   { code: 3, label: 'Violence or threats', hint: 'Threatening, inciting or glorifying violence' },
-  { code: 4, label: 'Sexual content', hint: 'Explicit sexual content, or any involving a minor' },
+  { code: 4, label: 'Sexual content', hint: 'Explicit sexual content' },
   { code: 5, label: 'Self-harm', hint: 'Encouraging suicide or self-injury' },
   { code: 6, label: 'Illegal goods or activity', hint: 'Selling or promoting something illegal' },
   { code: 7, label: 'Impersonation', hint: 'Pretending to be someone else' },
@@ -66,7 +66,7 @@ export function reportInputProblem(reason: number | null, note: string): string 
  * `ownerAndPost` / `ownerAndReply` index, 40105): the first one stands.
  */
 export function isAlreadyReportedError(error: unknown): boolean {
-  return /duplicate unique properties|duplicateuniqueindex|\b40105\b/i.test(extractErrorMessage(error))
+  return /duplicate unique properties|duplicateuniqueindex/i.test(extractErrorMessage(error)) || hasConsensusCode(error, [40105])
 }
 
 /** What to tell a reporter whose report was refused. */
@@ -82,7 +82,8 @@ export function reportFailureMessage(error: unknown, noun: 'post' | 'reply'): st
  * dismissed it, or it was withdrawn from another device.
  */
 export function isReportGoneError(error: unknown): boolean {
-  return /documentnotfounderror|\b40101\b|[1-9A-HJ-NP-Za-km-z]{32,44} document not found/i.test(extractErrorMessage(error))
+  return /documentnotfounderror|[1-9A-HJ-NP-Za-km-z]{32,44} document not found/i.test(extractErrorMessage(error)) ||
+    hasConsensusCode(error, [40101])
 }
 
 /** What to tell a reporter whose withdrawal was refused. */
@@ -106,7 +107,8 @@ export interface ReportRecord {
 
 /**
  * A raw `report` document as a {@link ReportRecord}, or null when it names no
- * target (consensus refuses that, so only a malformed read produces one).
+ * target, no target owner or no integer reason (consensus refuses each, so only
+ * a malformed read produces one).
  */
 export function toReportRecord(doc: Record<string, unknown>): ReportRecord | null {
   const data = (doc.data ?? doc) as Record<string, unknown>
@@ -115,15 +117,18 @@ export function toReportRecord(doc: Record<string, unknown>): ReportRecord | nul
   const targetId = postId ?? replyId
   const id = identifierToBase58(doc.$id ?? doc.id)
   const reporterId = identifierToBase58(doc.$ownerId ?? doc.ownerId)
-  if (!targetId || !id || !reporterId) return null
+  const targetOwnerId = identifierToBase58(data.targetOwnerId ?? doc.targetOwnerId)
+  const reason = Number(data.reason ?? doc.reason)
+  // Consensus requires both; a read missing either is malformed, not a report.
+  if (!targetId || !id || !reporterId || !targetOwnerId || !Number.isInteger(reason)) return null
   const note = data.note ?? doc.note
   return {
     id,
     reporterId,
     kind: postId ? 'post' : 'reply',
     targetId,
-    targetOwnerId: identifierToBase58(data.targetOwnerId ?? doc.targetOwnerId) ?? '',
-    reason: Number(data.reason ?? doc.reason),
+    targetOwnerId,
+    reason,
     note: typeof note === 'string' && note.length > 0 ? note : null,
     createdAt: Number(doc.$createdAt ?? doc.createdAt ?? 0),
   }

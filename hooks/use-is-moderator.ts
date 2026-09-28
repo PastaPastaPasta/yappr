@@ -5,32 +5,50 @@ import { useAuth } from '@/contexts/auth-context'
 import { contractIsModerated } from '@/lib/contract-topology'
 import { moderationService } from '@/lib/services/moderation-service'
 
+interface ModerationRole {
+  /** On the social contract's moderation team (its owner or an appointed or seated moderator). */
+  isModerator: boolean
+  /**
+   * Protected from moderation (Drive `ContractModerators::protects`): whoever
+   * may moderate now, plus a seated team's `ownerProtected` owner. Moderators
+   * cannot delete such an identity's documents (41102), so its reports could
+   * never be dismissed.
+   */
+  isProtected: boolean
+}
+
+const NONE: ModerationRole = { isModerator: false, isProtected: false }
+
 /**
- * Whether the signed-in identity is on the social contract's moderation team
- * (its owner or an appointed moderator), read off the contract itself rather
- * than a hardcoded id. False off a moderated topology, while logged out, and
- * until the contract has been fetched.
+ * The signed-in identity's standing on the social contract's moderation, read
+ * off the contract itself rather than a hardcoded id. Both false off a
+ * moderated topology, while logged out, and until the contract has been fetched.
  */
-export function useIsModerator(): boolean {
+export function useModerationRole(): ModerationRole {
   const { user } = useAuth()
   const identityId = user?.identityId
-  const [isModerator, setIsModerator] = useState(false)
+  const [role, setRole] = useState<ModerationRole>(NONE)
 
   useEffect(() => {
     if (!identityId || !contractIsModerated()) {
-      setIsModerator(false)
+      setRole(NONE)
       return
     }
     let cancelled = false
-    moderationService.isModerator(identityId).then((result) => {
-      if (!cancelled) setIsModerator(result)
+    Promise.all([moderationService.isModerator(identityId), moderationService.getProtectedIdentities()]).then(([isModerator, protectedIds]) => {
+      if (!cancelled) setRole({ isModerator, isProtected: isModerator || protectedIds.has(identityId) })
     }).catch(() => {
-      if (!cancelled) setIsModerator(false)
+      if (!cancelled) setRole(NONE)
     })
     return () => {
       cancelled = true
     }
   }, [identityId])
 
-  return isModerator
+  return role
+}
+
+/** Whether the signed-in identity is on the social contract's moderation team. */
+export function useIsModerator(): boolean {
+  return useModerationRole().isModerator
 }

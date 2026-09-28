@@ -90,6 +90,13 @@ describe('toReportRecord', () => {
   it('should drop a document naming no target', () => {
     expect(toReportRecord({ $id: idOf(9), $ownerId: idOf(8), targetOwnerId: idOf(6), reason: 0 })).toBeNull()
   })
+
+  it('should drop a document with no target owner or no integer reason', () => {
+    const base = { $id: idOf(9), $ownerId: idOf(8), postId: idOf(7) }
+    expect(toReportRecord({ ...base, reason: 0 })).toBeNull()
+    expect(toReportRecord({ ...base, targetOwnerId: idOf(6) })).toBeNull()
+    expect(toReportRecord({ ...base, targetOwnerId: idOf(6), reason: 'spam' })).toBeNull()
+  })
 })
 
 describe('groupReports', () => {
@@ -135,6 +142,11 @@ describe('reportFailureMessage', () => {
     expect(reportFailureMessage(missing, 'reply')).toBe('This reply has been removed, so there is nothing to report.')
   })
 
+  it('should read the numeric code a beta.6 SDK error carries, and the (code=n) a write result keeps', () => {
+    expect(isAlreadyReportedError({ code: 40105, message: 'refused' })).toBe(true)
+    expect(isAlreadyReportedError('Failed to create report: refused (code=40105)')).toBe(true)
+  })
+
   it('should not read an id containing 40105 as a duplicate', () => {
     expect(isAlreadyReportedError('state transition 9a401051f failed')).toBe(false)
   })
@@ -146,6 +158,12 @@ describe('withdrawFailureMessage', () => {
     expect(isReportGoneError(gone)).toBe(true)
     expect(isReportGoneError('ConsensusError { code: 40101 }')).toBe(true)
     expect(withdrawFailureMessage(gone)).toMatch(/already gone/)
+  })
+
+  it('should read 40101 as a number or a (code=n) suffix, but not bare digits', () => {
+    expect(isReportGoneError({ code: 40101, message: 'refused' })).toBe(true)
+    expect(isReportGoneError('Failed to delete: refused (code=40101)')).toBe(true)
+    expect(isReportGoneError('transition 7f401015 failed')).toBe(false)
   })
 
   it('should not read a query cursor that went missing as a withdrawn report', () => {

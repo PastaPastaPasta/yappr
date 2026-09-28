@@ -415,4 +415,14 @@ describe('dismissing reports', () => {
     expect(result).toMatchObject({ success: false, errorCode: 'MAYBE_APPLIED', dismissed: ['R1'] })
     expect(sdk.contracts.moderatorDeleteDocument).toHaveBeenCalledTimes(2)
   })
+
+  it('counts a report that is already gone (40101) as dismissed and carries on', async () => {
+    withReports()
+    sdk.contracts.moderatorDeleteDocument
+      .mockRejectedValueOnce({ code: 40101, message: 'refused' })
+      .mockRejectedValueOnce(new Error('Document 8Xv3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa document not found'))
+      .mockResolvedValueOnce({})
+    const result = await moderationService.dismissReports(MODERATOR, ['R1', 'R2', 'R3'], reason)
+    expect(result).toMatchObject({ success: true, dismissed: ['R1', 'R2', 'R3'] })
+  })
 })
