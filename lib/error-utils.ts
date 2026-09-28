@@ -139,11 +139,22 @@ export function isAlreadyExistsError(error: unknown): boolean {
 export function isIdentityNonceConflictError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
   return (
+    msg === NONCE_TAKEN_ERROR ||
     /invalididentitynonce|invalid identity nonce/i.test(msg) ||
     /nonce (already present|too far) /i.test(msg) ||
     hasConsensusCode(msg, [40204])
   )
 }
+
+/**
+ * What `stateTransitionService.createDocument` reports for a create that lost
+ * its identity contract nonce to another write by the same identity (QA D-01):
+ * its nonce was consumed and its document never appeared, or Platform kept
+ * refusing it for its nonce. Nothing was written. Matched by
+ * {@link isIdentityNonceConflictError}, so callers that retry a nonce clash
+ * (DM v5's `classifyWriteFailure`) retry this too.
+ */
+export const NONCE_TAKEN_ERROR = 'This was not saved: another write from your account went out at the same moment and took its place (invalid identity nonce). Please try again.'
 
 /**
  * Checks if an error from waitForResponse is a non-fatal verification
@@ -971,6 +982,9 @@ export function categorizeError(error: unknown): string {
   }
   if (isFeeMultiplierNotToleratedError(error)) {
     return 'The network\'s fee level changed while this was being sent. Nothing was posted — try again.'
+  }
+  if (isIdentityNonceConflictError(error)) {
+    return 'Another write from your account went out at the same moment, so this one was not saved. Try again.'
   }
   if (isActionFeeAgreementError(error)) {
     return 'This app is out of date with the network\'s fee rules. Reload to get the latest version.'

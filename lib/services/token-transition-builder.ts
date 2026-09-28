@@ -13,11 +13,9 @@ import { getEvoSdk } from './evo-sdk-service';
 import { tokenService } from './token-service';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION } from '../constants';
 import { TokenBaseTransition, TokenTransition, BatchedTransition, BatchTransition } from '@dashevo/evo-sdk';
-
-// DIP-30 identity-contract nonce: u64 where the lower 40 bits are the sequence
-// number and the upper 24 bits a missing-revision bitset. Only the sequence
-// part is incremented for the next transition.
-const SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1);
+import { allocateIdentityContractNonce } from '@/lib/document-id';
+import { withIdentityWriteLock } from '@/lib/identity-write-lock';
+import { loadReservedNonce, reserveNonce } from './identity-nonce';
 
 /**
  * Serialize an unsigned single-transition batch for `ownerId`.
@@ -39,9 +37,16 @@ export async function buildUnsignedTokenBatch(
   const sdk = await getEvoSdk();
   const tokenId = await tokenService.getTokenId();
 
-  const rawNonce = (await sdk.identities.contractNonce(ownerId, YAPPR_CONTRACT_ID)) ?? BigInt(0);
-  const nonce = (rawNonce & SEQUENCE_MASK) + BigInt(1);
-  logger.debug(`${label}: nonce raw=${rawNonce} using=${nonce}`);
+  // The wallet broadcasts later, so the lock cannot cover that; taking the
+  // nonce past any pending write, and reserving it, keeps a create made while
+  // the QR is up from signing the same one (QA D-01).
+  const nonce = await withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
+    const rawNonce = await sdk.identities.contractNonce(ownerId, YAPPR_CONTRACT_ID);
+    const next = allocateIdentityContractNonce(rawNonce, loadReservedNonce(ownerId, YAPPR_CONTRACT_ID));
+    reserveNonce(ownerId, YAPPR_CONTRACT_ID, next);
+    logger.debug(`${label}: nonce raw=${rawNonce} using=${next}`);
+    return next;
+  });
 
   const base = new TokenBaseTransition({
     identityContractNonce: nonce,

@@ -7,6 +7,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import {
+  NONCE_TAKEN_ERROR,
   categorizeError,
   isAffectedStateSnapshotError,
   classifyModerationError,
@@ -654,6 +655,12 @@ describe('isIdentityNonceConflictError (40204)', () => {
     expect(isIdentityNonceConflictError(new Error(IN_PAST))).toBe(true)
     expect(isIdentityNonceConflictError(new Error('InvalidIdentityNonceError: nonce too far in future'))).toBe(true)
     expect(isIdentityNonceConflictError({ message: 'state transition broadcast error: {"code":40204}' })).toBe(true)
+  })
+
+  it("claims createDocument's own give-up message, and tells the user to retry rather than buy YAPP", () => {
+    expect(isIdentityNonceConflictError(new Error(NONCE_TAKEN_ERROR))).toBe(true)
+    expect(categorizeError(new Error(NONCE_TAKEN_ERROR))).toMatch(/not saved\. try again/i)
+    expect(categorizeError(new Error(AT_TIP))).toMatch(/not saved\. try again/i)
   })
 
   it('does not claim a timeout, a duplicate document or bare digits', () => {
