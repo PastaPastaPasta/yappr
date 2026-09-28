@@ -6,7 +6,7 @@ import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants';
 import { contractIsModerated, contractKeepsWarnings, moderationListsKept, moderatorDeletableTypes, type TargetKind } from '@/lib/contract-topology';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
-import { classifyModerationError, extractErrorMessage, isTimeoutError, type ModerationErrorKind } from '@/lib/error-utils';
+import { classifyModerationError, consensusCodeOf, extractErrorMessage, isTimeoutError, type ModerationErrorKind } from '@/lib/error-utils';
 import { RESTORE_WINDOW_MS, dropSnapshot, loadSnapshot, removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots';
 import { getEvoSdk } from './evo-sdk-service';
 import { identifierToBase58 } from './sdk-helpers';
@@ -670,7 +670,8 @@ class ModerationService {
     const msg = extractErrorMessage(error);
     logger.error('Moderation failed:', msg);
     const lower = msg.toLowerCase();
-    const code = (n: number) => new RegExp(`\\bcode"?\\s*[=:]\\s*${n}\\b`).test(msg);
+    const numeric = consensusCodeOf(error);
+    const code = (n: number) => numeric === n || new RegExp(`\\bcode"?\\s*[=:]\\s*${n}\\b`, 'i').test(msg);
     if (lower.includes('critical key required') || (lower.includes('security level') && lower.includes('critical'))) {
       return { success: false, error: 'Moderation needs your CRITICAL key to authorize', errorCode: 'NEEDS_CRITICAL_KEY' };
     }
@@ -684,7 +685,8 @@ class ModerationService {
     if (code(41111) || /already.{0,30}claimed.{0,30}epoch|alreadyclaimedthisepoch/.test(lower)) {
       return { success: false, error: 'The moderators pot was already paid out this epoch', errorCode: 'ALREADY_CLAIMED' };
     }
-    if (code(41112) || /nothing.{0,10}to.{0,10}claim/.test(lower)) {
+    // 41112 ContractFeesNothingToClaimError: "The <pot> fee pot of contract <c> holds nothing that can be paid out".
+    if (code(41112) || /nothing.{0,10}to.{0,10}claim|holds nothing that can be paid out/.test(lower)) {
       return { success: false, error: 'The moderators pot is empty', errorCode: 'NOTHING_TO_CLAIM' };
     }
     if (lower.includes('private key not found')) {

@@ -7,7 +7,7 @@ import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
 import { starterGrantAmount } from '../contract-topology';
-import { extractErrorMessage } from '../error-utils';
+import { extractErrorMessage, isOncePerIdentityAlreadyClaimedError } from '../error-utils';
 
 export interface TokenResult {
   success: boolean;
@@ -340,7 +340,7 @@ class TokenService {
         errorCode: 'NEEDS_CRITICAL_KEY',
       };
     }
-    if (/\bcode"?\s*[=:]\s*40722\b/.test(msg) || lower.includes('alreadyclaimed')) {
+    if (isOncePerIdentityAlreadyClaimedError(error) || lower.includes('alreadyclaimed')) {
       return { success: false, error: 'This identity already claimed its starter YAPP', errorCode: 'ALREADY_CLAIMED' };
     }
     if (lower.includes('not authorized') || lower.includes('noone')) {
