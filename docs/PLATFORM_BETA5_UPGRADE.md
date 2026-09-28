@@ -332,3 +332,252 @@ On `beta5/sdk`, with the beta.5 tarballs installed `--no-save`:
 - that 40140, 40114 and 40141 render with the texts the matchers expect;
 - that a contested DPNS registration without `contestFund` is charged the
   protocol-14 base fund (0.1 DASH) on a fresh devnet.
+
+## Deployment evidence
+
+Observed on moutai on 2026-09-27 and 2026-09-28, running drive/dapi `4.2.0-beta.5`,
+Tenderdash 1.8.1 and protocol 14. The Platform state was wiped for beta.5 and the
+Core chain persisted. `/devnet` has served these contracts since staging
+`6b08e29c` (#578).
+
+This section closes the "Not verified until the re-cut contracts are on moutai"
+list above:
+
+- a beta.5 node accepted the manual-path create (gate 1, below);
+- the propertyConstraints refusals render with the texts the matchers expect
+  (19 live refusals, below);
+- the contest fund is charged on a moderation election (below).
+
+A contested DPNS name was not registered.
+
+### Identities and the eleven ids
+
+All 162 identities were rebuilt from their retained Core asset locks, using ChainLock
+proofs, and every one kept its original id:
+
+- the maker, CI and the personal account;
+- 100 corpus personas;
+- 48 non-social personas;
+- 3 battery bots;
+- 8 DM v5 e2e bots.
+
+An independent read-back matched every on-chain key set against the retained key
+material, with 0 problems.
+
+Maker nonces were used up before publishing, so that no new contract could collide with
+an old id. Nonces 1–42 reproduce every beta.1–beta.4 contract id, and all 42 were
+burned with credit transfers. Publication therefore started at nonce **43**.
+
+Eleven contracts went out from nonces 43–53 into ONE group,
+`4rod8XnbrihaSaXaRvCS1EZp6wkoBRBK2i18JkFUKCNR`, registered on the social create. Every
+id equals the pre-computed plan. The sources are `contracts/` at `beta5/contracts`
+429da9df (#577), pinned by sha256. Key backup, key exchange, vault and auth vault use the
+testnet-snapshot schemas, as on beta.1–beta.4.
+
+| nonce | contract | id |
+| ---: | --- | --- |
+| 43 | social v9 (elected moderation, interim contractOwner, ownerProtected) | `HCAoKyuAbQ63cg6LU44F1Wz2wwqBR2iFybwJk58G9dsa` |
+| 44 | profile v2 | `oGoDQZCNByNqxXd7rVorwrwN5k5o4QxAYyW3ZK4ujK7` |
+| 45 | key backup | `4REjm1twafAsHyjVgX1Fh6YqNyScoUJQxJa9cz6CfDMK` |
+| 46 | key exchange | `83MxtqJX5MrK8c1HLi42EHSp4SxbpxCfeTbhgc8Azd9s` |
+| 47 | vault | `AXcTG5LYuSiCABzEU1UY8Fytr6L4nFiuiBMFb8Mkt1qo` |
+| 48 | auth vault | `GmcHNydsRJLpiqKExP6omTkFz2Y9HUCaQCE82dFQFrH4` |
+| 49 | storefront v4 (appointed: personal + maker) | `6YAiMU17xCDWt3aDrj6M5SivLMdhUvTQQEYRUYdfFhcy` |
+| 50 | blog v4 (appointed: personal + maker) | `B5DRanUCmZMCdJqZTXTwaPh2yGyHjub1CfJYmdVcjakw` |
+| 51 | DM v4 (legacy threads) | `9X6NtW6qNgKkjCu575k4TAYqf2Y5ck3jaMy6vHoPGcCz` |
+| 52 | pollr v4 | `GnrJoaUiSfgstNfjZQ9LX1TfkmhMrc3gNoSE1aidXNpS` |
+| 53 | DM v5 | `GK6JTyLCmKvkSFNnYcGGMsdhNmbVFHVLMMVKhsfwpAop` |
+
+**Before broadcasting.** Each stage ran twice as a dry run:
+
+- unsigned;
+- signed with the real maker key and not broadcast.
+
+Every signed transition was decoded again and had to re-encode to exactly the same
+bytes, because #5011 refuses trailing bytes. Social v9 is 18,341 B signed, under the
+20,480 B cap.
+
+**Registration cost.** 340.0e9 registration plus 1.59e9 storage. That is exactly the
+protocol-14 schedule: beta.5 did not change registration fees.
+
+**Read-back.** A fresh connection that signs nothing scored **375 checks, 0 failures**.
+It covered:
+
+- every id against `generateId(maker, planned nonce)`;
+- the group against `contractGroupId(maker, 43)`;
+- the pinned sha256 of every source;
+- the elected declaration: interim `contractOwner`, `ownerProtected`, windows of 86,400 s,
+  `maxAddedModerators` 10;
+- every `propertyConstraints` rule name, per document type;
+- that no type declares `ttl`;
+- **byte equality**, described next.
+
+The chain stamps `createdAt`, `createdAtBlockHeight` and `createdAtEpoch` on each
+contract, which adds 13 B. With only those removed, each on-chain contract serializes
+to exactly the bytes of its pinned file.
+
+YAPP `BEJDfLzrhu6HHZ48isHgf2a837Epry1ESuzNhHMDZFYV` is priced at 1,000,000 credits per
+token, with a 100-token minimum. All 148 seed-ledger personas, CI and personal hold the
+once-per-identity grant, and a second claim is refused with 40722.
+
+**Gate 1 passed on the manual path.** `verify-v8.mjs --only a3` against v9 showed:
+
+- a post carrying `$actionFeeAgreement`, built by the hand-built batch, landed;
+- Platform stored exactly the id derived locally (`2efWkW6K…`);
+- the moderators pot grew by exactly 80,000,000 for the post and 16,000,000 for the
+  reply, at 1000‰.
+
+### Corpus
+
+18,000 operations were replayed with pipeline window 8, concurrency 20 and
+`SEED_RECONCILE_MS=5000`. `--topology` is gone from staging; the seeder is v9-only. The
+folded journal holds **exactly 18,000 `done`, with no unresolved failures**.
+
+The first pass completed 17,674 operations in 5,709 s (3.1 ops/s), plus a 300-op probe.
+It consumed 726.9e9 persona credits and 55,351 YAPP. Its failures, all of which landed on
+the resume:
+
+- **Dependency waits.** Late-like dependency waits timed out on lines 8566, 7236, 10456,
+  10805, 11883, 12781, 16965 and 17882: the same lines as on beta.3 and beta.4.
+- **A deliberate election ban.** Two follows by persona 55 were refused ("is banned on
+  contract") while the election test's owner-ban control held; the owner then unbanned
+  it.
+- **An emptied account.** Persona 96, which owns the throwaway election contract, ran out
+  of credits (`Insufficient identity balance`) and was topped up from CI.
+
+`ops/verify-count-trees.mjs` ran 8 probes with 0 failures:
+
+- `post.byOwner` = 135 and `follow.followerCount` = 54 for corpus persona 0, the same as
+  on beta.2–beta.4;
+- the like and beat ranked and windowed axes all answered.
+
+After the writer stopped, a fresh read-only audit re-proved every operation with
+`queryWithProof` and `countWithProof`. It used batches of 10, because the DAPI proxy
+still truncates large proved responses (*"missing grpc-status trailer … possible
+truncation by a proxy"*), and quorum rotations were absorbed by reconnects. It proved
+**18,000 / 18,000 operations** and **2,905 / 2,905 beat companions**, the same as
+beta.4, against the recorded corpus hash.
+
+The censuses:
+
+- **Posts:** every one of the 5,968 journaled posts is present.
+- **Replies:** a primary-index walk found every one of the 2,144 journaled replies. The
+  network holds 2,156 replies in all.
+
+The censuses also found writes the seeder did not make:
+
+- 30 posts and 8 replies were made under seven corpus personas (#65, #66, #67, #70, #71,
+  #73, #86) between 02:37Z and 02:43Z;
+- their content looks like QA fixtures ("🔒", "S3QA-… public teaser line");
+- the census therefore requires every journaled id to be present, and records extras
+  rather than failing on them.
+
+**The contract still decides who pays.** The maker went from 4,299.7e9 credits at nonce
+42 to **2,309.7e9** at nonce 53, a spend of 1,990.0e9. That covers:
+
+- 341.6e9 of registration;
+- the gas the contract sponsors on YAPP-paying operations;
+- the moderators fee on those posts and replies.
+
+The moderators pot stands at **514,944,000,000** and has not been claimed: claiming it as
+the interim moderator is a pre-seat case that the election exercises.
+
+### Non-social seeders
+
+| seeder | result |
+| --- | --- |
+| storefront v4 | 221 created, 2 already present, 0 failed; seeder checks pass |
+| blog v4 | 167 created, 0 failed |
+| DM (legacy v4 contract) | 12 conversations, 246 messages; newest decrypted 12/12 (the first attempt was rate-limited by DAPI; the retry is clean) |
+| pollr v4 | 181 created, 153 ballots; every poll embedded and tallying |
+| tips | 120/120 tips confirmed, 851 YAPP moved |
+
+### Batteries
+
+| battery | beta.4 | beta.5 |
+| --- | ---: | ---: |
+| gate 1, `verify-v8.mjs --only a3` on v9 | 5 / 0 | **5 / 0** |
+| `verify-v9.mjs --moderator maker` (e0 d1 p1 b1 w1 m1 m2 o1–o3 f1–f3 **c1**) | 40 / 0 | **77 / 0** (c1 10/10) |
+| `verify-blog.mjs` (+**b19**) | 67 / 0 | **69 / 0** (b19 2/2) |
+| `verify-storefront.mjs` (+**s20**) | 91 / 0 | **96 / 0** (s20 5/5) |
+| `verify-pollr.mjs` (+**p12**) | 39 / 0 | **41 / 0** (p12 2/2) |
+| `verify-dm.mjs` (DM v4) | 31 / 0 | **31 / 0** |
+| `verify-dm-v5.mjs` | 106 / 0 | **106 / 0** |
+| `verify-tips.mjs` | 28 / 0 | **28 / 0** |
+| count trees | 8 / 0 | **8 / 0** |
+
+`verify-v9` has more checks than on beta.4 because staging's battery carries the o1–o3
+and f1–f3 cases from v7, plus the new c1.
+
+**The propertyConstraints refusals arrive with no number.** The 19 live refusals
+(c1 10, s20 5, b19 2, p12 2) each reached the SDK as a
+`WasmSdkError { name: 'Protocol', code: -1 }` whose only text is the rs-dpp Display:
+
+> A document of type "blogPost" breaks its propertyConstraints rule "chunksContiguous": it does not hold
+
+`isDocumentPropertyRuleError` matches the prose, so the client is unaffected. The
+batteries' matcher had also required the digits `10422` and scored the first live b19
+run 67/2. It now matches the quoted rule name followed by its colon (#577, d7c6a9d4),
+which is still exact per rule. Every refusal names exactly the rule its case targets.
+
+### Election (contested documents before epoch 4, #4995)
+
+The beta.4 block is gone: `electedCharter` creates are accepted at epoch 0, and every
+election filed below was accepted.
+
+- An `electedCharter` goes through `sdk.documents.create` with `contestFund`
+  50,000,000,000. The hand-built batch has no fund field.
+- The applicant is charged the 0.5 DASH join price plus the fee, e.g. 50,084,406,580
+  credits.
+- The poll's index value is stored as `Value::Identifier` (tag `0x10`). A vote-state
+  query keyed by the base58 string reaches it.
+
+**E1, social v9, one applicant, no votes.**
+
+- The leader is tess1999 (#5). The charter is `D27ycPTGTp6W8rPJX3CtUygzdsCNKWNUnc9DvCAhkFuK`:
+  moderators share 60, split 40/30/30, listing reasons SPM and ABU.
+- Join requests were filed by #0, #1 and #2.
+- The apply, `electedCharter` `BxABe8dZEfYJenExHiQnEP8iGtNi2pKtCcuo7SRhXziJ` with members
+  [#0, #1], was accepted at 2026-09-28T00:50:45Z.
+- **The contest ends 2026-09-29T00:50:47Z**; the seat goes to the only contender at the
+  first block after that.
+
+Checks made before the seat:
+
+- **1.3:** a post agreeing to a 48M moderators fee was refused with 40139 — *"declares a
+  moderators fee of 80000000 credits; the transition agreed to 48000000, which is not
+  discounted: the contract has no seated moderation charter"*.
+- **1.5:** the interim owner's ban was accepted, as the control. The banned persona's
+  corpus writes were refused with 41107, and the owner then unbanned it.
+- An unlisted reason, OFF, is filed and ready for 1.8.
+- The moderators pot was deliberately left unclaimed; step 1.7 needs it.
+
+**E2, a throwaway elected contract, two applicants, with votes.** The contract is
+`6JhsWSVb2WywzQsy292XQvb7VyaxcAmwqGe1MSsTZE7f`.
+
+- A (#27) applied at 00:57:13Z, and B (#11) at 01:30:29Z. B's application moved the end to
+  **2026-09-30T00:57:13Z**, i.e. join plus vote window, as designed.
+- Masternode votes were B from nodes 1–7, A from nodes 8–10, and abstain from 11–12. The
+  tally reads **B 28, A 12, abstain 8** (evonode weight 4).
+- Node 1 repeating its vote was refused with 40304 (*"Masternode vote is already
+  present…"*). Switching to A and back to B both landed.
+- The earliest contender is A, so an award to B will show that the votes decided.
+
+Two findings on the vote path:
+
+1. **The facade refuses an `Identifier` object as `masternodeProTxHash`.**
+   `sdk.voting.masternodeVote` fails before signing with *"Invalid identifier. Expected
+   Identifier, Uint8Array, array or string"*. The same 32 bytes passed as a base58
+   string are accepted. The facade also resolves `undefined` either way, so each vote was
+   proved by the voter's identity nonce advancing.
+2. **A Lock vote on this no-locking poll never surfaced a refusal.** The plan expects
+   40307. Instead the transition sat in the mempool cache: *"tx already exists in
+   cache"* on rebroadcast, the voter nonce stayed at 0, and waiting on the hash timed out.
+   It was not counted.
+
+Still open, as their windows allow:
+
+- E1 1.6–1.16 after 2026-09-29T00:50:47Z: the seated team, 41101/41113/41203/41102, the
+  discount, add/remove/resign, and the claim split;
+- E2 2.6, the late applicant (40111), after 2026-09-29T00:57:13Z;
+- E2 2.7–2.9, the award to B, 40105 and 41101, after 2026-09-30T00:57:13Z.
