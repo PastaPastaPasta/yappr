@@ -59,8 +59,51 @@ describe('isValidPaymentAddress', () => {
 
   it('preserves non-Dash payment payload support', () => {
     expect(isValidPaymentAddress('bitcoin:', 'bc1qexample?amount=1')).toBe(true)
-    expect(isValidPaymentAddress('ethereum:', 'pay-0x123@1?value=1')).toBe(true)
+    expect(isValidPaymentAddress('ethereum:', 'pay-0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed@1?value=1')).toBe(true)
     expect(isValidPaymentAddress('lightning:', 'user@example.com')).toBe(true)
     expect(isValidPaymentAddress('bitcoin:', '  ')).toBe(false)
+  })
+
+  it.each([
+    ['bitcoin:', '1BoatSLRHtKNngkdXEeobR76b53LETtpyT'],
+    ['bitcoin:', 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'],
+    ['bitcoin:', 'BC1QAR0SRRR7XFKVY5L643LYDNW9RE59GTZZWF5MDQ'],
+    ['bitcoin:', 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx'],
+    ['litecoin:', 'LVg2kJoFNg45Nbpy53h7Fe1wKyeXVRhMH9'],
+    ['litecoin:', 'ltc1qg82tlldsuv7el0lf8ueg8mv0fz5s8tsx4n9jxv'],
+    ['dogecoin:', 'DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L'],
+    ['bitcoincash:', 'qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a'],
+    ['zcash:', 't1Rv4exT7bqhZqi2j7xz8bUHDMxwosrjADU'],
+    ['ethereum:', '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'],
+    ['ethereum:', 'vitalik.eth'],
+    ['monero:', `4${'A'.repeat(94)}`],
+    ['solana:', '7EcDhSYGxXyscszYEp35KHN8vvw3svAuLKTzXwCFLtV'],
+    ['tron:', 'TJCnKsPa7y5okkXvQAidZBzqx3QyQ6sxMW'],
+    ['polkadot:', '15oF4uVJwmo4TdGW7VfQxNLavjCXviqxT9S1MgbjMNHr6Sp5'],
+    ['ripple:', 'rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh'],
+    ['stellar:', `G${'A'.repeat(55)}`],
+    ['stellar:', 'alice*example.com'],
+    ['cardano:', `addr1${'q'.repeat(98)}`],
+    ['lightning:', 'lnbc2500u1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypq'],
+  ])('accepts a plausible %s destination %s', (scheme, address) => {
+    expect(isValidPaymentAddress(scheme, address)).toBe(true)
+  })
+
+  it.each([
+    ['bitcoin:', 'notanaddress'],
+    ['bitcoin:', '1BoatSLRHtKNngkdXEeobR76b53LETtpyT0'],
+    ['bitcoin:', 'bc1qexampleb'],
+    ['litecoin:', 'hello world'],
+    ['ethereum:', 'pay-0x123@1'],
+    ['ethereum:', '0xZZZeb6053F3E94C9b9A09f33669435E7Ef1BeAed'],
+    ['monero:', '4short'],
+    ['solana:', 'javascript:alert(1)'],
+    ['tron:', 'XJCnKsPa7y5okkXvQAidZBzqx3QyQ6sxMW'],
+    ['ripple:', 'not-an-address'],
+    ['stellar:', 'gabc'],
+    ['cardano:', 'addr1short'],
+    ['lightning:', 'hello'],
+  ])('rejects an obviously invalid %s destination %s', (scheme, address) => {
+    expect(isValidPaymentAddress(scheme, address)).toBe(false)
   })
 })
