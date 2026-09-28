@@ -29,6 +29,11 @@ export interface CastVoteResult {
   created: number[];
   /** Choices the voter had already cast (unique-index rejection). */
   alreadyVoted: number[];
+  /**
+   * A single-choice ballot was refused as a duplicate, but which choice it
+   * collided with couldn't be read. The voter has voted; their choice is unknown.
+   */
+  unresolvedDuplicate: boolean;
   /** Choices that hit a real error and are still uncast — safe to retry. */
   failed: number[];
   /** Message from the first hard failure, if any. */
@@ -82,7 +87,7 @@ function normalizeChoices(choices: number[]): number[] {
 
 /** A ballot refused before anything was written. */
 function refused(error: string, failed: number[] = []): CastVoteResult {
-  return { success: false, created: [], alreadyVoted: [], failed, error };
+  return { success: false, created: [], alreadyVoted: [], unresolvedDuplicate: false, failed, error };
 }
 
 /** Read the `choice` field off a raw vote document (nested `data` or flat). */
@@ -182,6 +187,7 @@ class PollrVoteService {
     const docType = pollrVoteDocType(poll.multiChoice);
     const created: number[] = [];
     const alreadyVoted: number[] = [];
+    let unresolvedDuplicate = false;
     const failed: number[] = [];
     let firstError: string | undefined;
 
@@ -193,7 +199,9 @@ class PollrVoteService {
         // Checked BEFORE the landed probe: on a duplicate the entry is already
         // there from an earlier ballot, so the probe would happily report this
         // rejected write as created.
-        alreadyVoted.push(...(await this.resolveDuplicate(poll, choice, ownerId)));
+        const collided = await this.resolveDuplicate(poll, choice, ownerId);
+        if (collided) alreadyVoted.push(...collided);
+        else unresolvedDuplicate = true;
       } else if (await this.ballotLanded(poll, choice, ownerId, { whenUnknown: false })) {
         created.push(choice);
       } else {
@@ -254,6 +262,7 @@ class PollrVoteService {
       success: failed.length === 0,
       created,
       alreadyVoted: normalizeChoices(alreadyVoted),
+      unresolvedDuplicate,
       failed,
       error: firstError,
     };
@@ -333,10 +342,10 @@ class PollrVoteService {
    * the choice just attempted. On `vote` it does not: the voter had already
    * cast a ballot, but not necessarily this one, and reporting the attempted
    * choice would tick "your vote" against an option they never picked. Re-read
-   * the ballot to find out which it really is, and fall back to the attempted
-   * choice only if that read fails too.
+   * the ballot to find out which it really is; null when that read fails or
+   * finds nothing, since the attempted choice is then only a guess.
    */
-  private async resolveDuplicate(poll: Poll, choice: number, ownerId: string): Promise<number[]> {
+  private async resolveDuplicate(poll: Poll, choice: number, ownerId: string): Promise<number[] | null> {
     if (poll.multiChoice) return [choice];
 
     try {
@@ -348,7 +357,7 @@ class PollrVoteService {
         error: extractErrorMessage(error),
       });
     }
-    return [choice];
+    return null;
   }
 
   /**

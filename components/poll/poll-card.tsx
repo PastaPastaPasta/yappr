@@ -179,12 +179,17 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       if (recordedList.length > 0) {
         setMyVotes((current) => Array.from(new Set([...current, ...recordedList])).sort((a, b) => a - b))
       }
+      // The voter has a ballot on chain but it couldn't be read which: close the
+      // ballot as when own votes fail to load, rather than tick a guessed choice.
+      if (result.unresolvedDuplicate) {
+        setVotesUnavailable(true)
+      }
       // Anything that didn't make it stays selected so the user can retry it —
       // except on a single-choice poll, where the ballot is settled the moment
       // anything is recorded. A duplicate there reports the choice already on
       // Platform, not the one just attempted, so filtering by index alone would
       // leave the rejected pick selected and the ballot stuck open.
-      const settled = !poll.multiChoice && recordedList.length > 0
+      const settled = !poll.multiChoice && (recordedList.length > 0 || result.unresolvedDuplicate)
       setSelected((current) => (settled ? [] : current.filter((choice) => !recorded.has(choice))))
       if (result.failed.length === 0) {
         setAddingChoices(false)
@@ -202,7 +207,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
 
       if (result.created.length > 0) {
         toast.success('Vote counted')
-      } else if (result.alreadyVoted.length > 0 && result.failed.length === 0) {
+      } else if ((result.alreadyVoted.length > 0 || result.unresolvedDuplicate) && result.failed.length === 0) {
         toast('You had already voted', { icon: 'ℹ️' })
       }
       if (result.failed.length > 0) {
@@ -212,7 +217,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       // A duplicate means the voter already cast a ballot this card's tally
       // predates (another tab or device), so the numbers on screen are short by
       // that vote. Re-read them rather than leave "✓ your vote" on a 0.
-      if (result.alreadyVoted.length > 0) {
+      if (result.alreadyVoted.length > 0 || result.unresolvedDuplicate) {
         setTally(await pollrVoteService.refreshTally(poll, optimistic, result))
       }
     } catch (error) {

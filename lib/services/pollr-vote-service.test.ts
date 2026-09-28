@@ -249,6 +249,25 @@ describe('tally after an already-voted refusal', () => {
     expect(await service.getTally(poll())).toEqual({ counts: [0, 1, 0], total: 1 });
   });
 
+  it.each([
+    ['fails', () => mocks.query.mockRejectedValue(new Error('down'))],
+    ['finds no ballot', () => mocks.query.mockResolvedValue(new Map())],
+  ])('does not invent a single-choice vote when the duplicate’s ballot read %s', async (_, arrangeRead) => {
+    const service = await loadService('v4');
+    // Another tab voted 0; this tab tried 1 and was refused, but can't read which ballot it hit.
+    mocks.createDocument.mockResolvedValue({ success: false, error: 'broadcast rejected: code=40105' });
+    arrangeRead();
+    mocks.count.mockResolvedValue(new Map([['80', 1n]]));
+
+    const result = await service.castVote(poll(), [1], VOTER);
+    expect(result).toMatchObject({ created: [], alreadyVoted: [], failed: [], unresolvedDuplicate: true });
+    expect(await service.refreshTally(poll(), { counts: [0, 0, 0], total: 0 }, result)).toEqual({
+      counts: [1, 0, 0],
+      total: 1,
+    });
+    expect(await service.getTally(poll())).toEqual({ counts: [1, 0, 0], total: 1 });
+  });
+
   it('refreshTally re-reads past the cache and falls back to the optimistic tally on failure', async () => {
     const service = await loadService('v4');
     mocks.count.mockResolvedValue(new Map([['80', 1n], ['81', 1n]]));
