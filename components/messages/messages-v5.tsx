@@ -307,6 +307,7 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
       <DmSettingsDialog
         open={dialog === 'settings'}
         onOpenChange={(open) => setDialog(open ? 'settings' : null)}
+        ready={snapshot?.ready ?? false}
         retention={snapshot?.retention ?? '30d'}
         onRetention={(retention) => engine.setRetention(retention)}
         blocked={snapshot?.blocked ?? []}
