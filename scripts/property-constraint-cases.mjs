@@ -107,9 +107,13 @@ export const CONSTRAINT_CASES = {
   ],
 };
 
-/** The rejection a live write breaking `rule` must produce: the code, or the node's words naming the rule. */
+/**
+ * The rejection a live write breaking `rule` must produce: code 10422 AND the
+ * node's message naming exactly this rule (quoted, so a rule whose name is a
+ * prefix of another, or a different rule's 10422, cannot pass).
+ */
 export const constraintViolation = (rule) =>
-  new RegExp(`\\bcode"?\\s*[=:]\\s*10422\\b|breaks its propertyConstraints rule "?${rule}"?`, 'i');
+  new RegExp(`(?=[\\s\\S]*\\b10422\\b)[\\s\\S]*breaks its propertyConstraints rule \\\\?"${rule}\\\\?"`, 'i');
 
 /** The refused CREATE cases of one contract and doctype, as [label, data, rule]. */
 export function refusedCreates(file, docType) {

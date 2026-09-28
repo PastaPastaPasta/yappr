@@ -274,7 +274,12 @@ async function caseB18TypedLabels(ctx) {
 async function caseB19PropertyConstraints(ctx) {
   const { battery, author, run } = ctx;
   console.log('\n--- b19. propertyConstraints: content chunks are contiguous (10422) ---');
-  // Under the fixture blog; b1b/b1c (one chunk each) are the accepted side.
+  // Under b1's fixture blog, or (for `--only b19`) a fresh one; b1b/b1c (one chunk each) are the accepted side.
+  if (!ctx.blogId) {
+    const blog = await battery.probeCreate('b19 fixture blog created', null, author, 'blog', blogData(`${run}-b19`));
+    ctx.blogId = blog.ok ? blog.id : null;
+    if (!ctx.blogId) return;
+  }
   for (const [label, data, rule] of refusedCreates(CONTRACT_FILE, 'blogPost')) {
     await battery.probeCreate(`b19 ${label} is refused (10422 ${rule})`, constraintViolation(rule), author, 'blogPost', { ...data, blogId: id32(ctx.blogId), slug: `gap-${run}-${Date.now()}` });
   }

@@ -380,9 +380,23 @@ async function caseS19SelfReview(ctx) {
   await battery.probeCreate('s19b a review of it by the seller is refused (10419 sellerId = $ownerId)', NOT_DISTINCT, seller, 'storeReview', storeReviewData({ storeId: id32(ctx.storeId), orderId: id32(order.id), sellerId: id32(seller.ownerId), rating: 5 }), { tokenCost: REVIEW_COST.storeReview });
 }
 
+/** The seller's store: s1's fixture, or (for `--only s20`) the seller's existing store, created if absent. */
+async function ensureSellerStore(ctx) {
+  if (ctx.storeId) return ctx.storeId;
+  const { battery, seller } = ctx;
+  const [first] = await battery.queryDocs('store', { where: [['$ownerId', '==', seller.ownerId]], limit: 1 });
+  if (first) ctx.storeId = battery.b58(first.$id);
+  else {
+    const created = await battery.probeCreate('s20 seller store created', null, seller, 'store', storeData({ name: 'Ann Store' }));
+    ctx.storeId = created.ok ? created.id : null;
+  }
+  return ctx.storeId;
+}
+
 async function caseS20PropertyConstraints(ctx) {
   const { battery, seller } = ctx;
   console.log('\n--- s20. propertyConstraints: currency and tier co-occurrence (10422) ---');
+  if (!(await ensureSellerStore(ctx))) { battery.check('s20 fixture', false, 'no seller store'); return; }
   // Under the seller's real store, so the writer gate passes and only the rule can refuse.
   for (const docType of ['storeItem', 'shippingZone']) {
     for (const [label, data, rule] of refusedCreates(CONTRACT_FILE, docType)) {

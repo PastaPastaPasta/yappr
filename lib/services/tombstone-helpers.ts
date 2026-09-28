@@ -89,11 +89,12 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
       const base58 = identifierToBase58(stored);
       if (base58) replacement[field] = identifierStringToDocumentBytes(base58);
       else if (stored !== undefined && stored !== null) {
-        // Present but undecodable. Dropping it would be a 40128, which the handler below would otherwise
-        // blame on the descriptor. Name the real cause here instead.
+        // Present but undecodable. Dropping it is refused: 40128 when it is immutable, and on a post
+        // whose embed id it is, 10422 (`embedAllOrNone`) first, since the embed's doc type stays.
+        // The handler below would blame either on the descriptor, so name the real cause here.
         logger.error(
           `Tombstone of ${documentType} ${documentId}: stored ${field} could not be decoded as an ` +
-            'identifier, so it cannot be preserved; the replace will be rejected if it is immutable.'
+            'identifier, so it cannot be preserved; the replace will be refused (10422 or 40128).'
         );
       }
     }

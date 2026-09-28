@@ -235,7 +235,7 @@ node scripts/verify-{v9,storefront,pollr,blog}.mjs --self-test
   | verify-blog | b19 | 2 gapped posts under the fixture blog |
 
   The accepted side of each rule is the fixtures the existing cases already
-  write. The self-tests pin each contract's rule names (`DECLARED_RULES`).
+  write. A live refusal counts only as 10422 naming the exact rule. The self-tests pin each contract's rule names (`DECLARED_RULES`).
 - **Seeders.** Every storeItem (48), shippingZone (15), poll (14) and blogPost
   (46, edits included) the non-social seeders write passes rs-dpp validation
   under these cuts, checked with the same oracle. The social seeder writes
@@ -262,6 +262,9 @@ node scripts/verify-{v9,storefront,pollr,blog}.mjs --self-test
 - **No seeder change** is needed: every seeder shape satisfies the new rules.
 - **Run the live cases after registration:**
   `verify-v9 --only c1`, `verify-storefront --only s20`, `verify-pollr --only p12`
-  and `verify-blog --only b19`, alongside the usual batteries. c1's refused
-  creates carry the post action fee, so the refusal is the rule and not the fee.
+  and `verify-blog --only b19`, alongside the usual batteries. Each case runs
+  alone: c1, s20 and b19 create or reuse their own fixture (anchor post,
+  seller store, blog) when their fixture case has not run. A refusal scores only
+  if it is 10422 AND the message names that exact rule. c1's refused creates
+  carry the post action fee, so the refusal is the rule and not the fee.
   A refused create costs its sender a basic-validation fee only.
