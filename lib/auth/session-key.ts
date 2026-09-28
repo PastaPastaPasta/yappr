@@ -1,10 +1,11 @@
 import { matchIdentityKey, type IdentityKeyLike } from '@/lib/crypto/keys'
-import { KeyPurpose } from '@/lib/crypto/identity-keys'
+import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { logger } from '@/lib/logger'
 
 /**
  * Whether the stored private key `wif` signs for the session identity: it
- * matches one of the identity's enabled AUTHENTICATION keys. Login already
+ * matches one of the identity's enabled CRITICAL or HIGH AUTHENTICATION keys,
+ * the only keys that sign documents. Login already
  * refuses any other key, so a mismatch at restore means the key slot was
  * overwritten or corrupted, and the session must not be restored with it.
  *
@@ -21,7 +22,11 @@ export async function storedKeyBelongsToIdentity(
   network: 'testnet' | 'mainnet'
 ): Promise<boolean> {
   const matches = (keys: readonly IdentityKeyLike[]) =>
-    matchIdentityKey(wif, keys, { network, purpose: KeyPurpose.AUTHENTICATION }).ok
+    matchIdentityKey(wif, keys, {
+      network,
+      purpose: KeyPurpose.AUTHENTICATION,
+      allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
+    }).ok
   if (matches(sessionKeys)) return true
   try {
     const fetched = await fetchKeys()

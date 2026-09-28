@@ -9,8 +9,12 @@ import { storedKeyBelongsToIdentity } from './session-key'
 
 const A_PRIV = Uint8Array.from({ length: 32 }, (_, i) => i + 1)
 const B_PRIV = Uint8Array.from({ length: 32 }, (_, i) => 200 - i)
-const authKey = (priv: Uint8Array, purpose: number = KeyPurpose.AUTHENTICATION) => ({
-  id: 1, type: KeyType.ECDSA_SECP256K1, purpose, securityLevel: SecurityLevel.HIGH,
+const authKey = (
+  priv: Uint8Array,
+  purpose: number = KeyPurpose.AUTHENTICATION,
+  securityLevel: number = SecurityLevel.HIGH
+) => ({
+  id: 1, type: KeyType.ECDSA_SECP256K1, purpose, securityLevel,
   data: bytesToBase64(getPublicKey(priv)),
 })
 const A_WIF = privateKeyToWif(A_PRIV, 'testnet')
@@ -40,6 +44,15 @@ describe('storedKeyBelongsToIdentity (session restore)', () => {
     const encryptionOnly = [authKey(A_PRIV, KeyPurpose.ENCRYPTION)]
     expect(await storedKeyBelongsToIdentity(A_WIF, encryptionOnly, async () => encryptionOnly, 'testnet')).toBe(false)
   })
+
+  it.each([SecurityLevel.MASTER, SecurityLevel.MEDIUM])(
+    'does not count an authentication key at security level %i, which cannot sign documents',
+    async (level) => {
+      const keys = [authKey(A_PRIV, KeyPurpose.AUTHENTICATION, level)]
+      expect(await storedKeyBelongsToIdentity(A_WIF, keys, async () => null, 'testnet')).toBe(false)
+      expect(await storedKeyBelongsToIdentity(A_WIF, [], async () => keys, 'testnet')).toBe(false)
+    }
+  )
 
   it('keeps the session when the identity cannot be read', async () => {
     expect(await storedKeyBelongsToIdentity(A_WIF, [], async () => { throw new Error('offline') }, 'testnet')).toBe(true)
