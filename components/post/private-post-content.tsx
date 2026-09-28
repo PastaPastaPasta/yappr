@@ -751,7 +751,7 @@ export function PrivatePostContent({
             )}
             {/* Request Access button for no-keys (non-owner), or pending badge for pending requests */}
             {/* Posts always show request button for non-owners (replies don't reach this component) */}
-            {(state.reason === 'no-keys' || state.reason === 'pending' || isPending) && !isOwner && renderRequestButton()}
+            {(state.reason === 'no-keys' || state.reason === 'revoked' || state.reason === 'pending' || isPending) && !isOwner && renderRequestButton()}
           </div>
         </div>
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -44,6 +44,10 @@ export function PrivateFeedFollowers() {
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
   const refreshKey = usePrivateFeedRefreshStore((s) => s.refreshKey)
   const triggerRefresh = usePrivateFeedRefreshStore((s) => s.triggerRefresh)
+  // A revocation that succeeded can still read back its grant for a moment
+  // (slow node, or a grant delete that failed after the rekey). The follower is
+  // cryptographically revoked either way, so keep them out of the list.
+  const revokedIdsRef = useRef(new Set<string>())
 
   const loadFollowers = useCallback(async () => {
     if (!user?.identityId) {
@@ -65,7 +69,8 @@ export function PrivateFeedFollowers() {
       }
 
       // Get all private followers
-      const grants = await privateFeedService.getPrivateFollowers(user.identityId)
+      const grants = (await privateFeedService.getPrivateFollowers(user.identityId))
+        .filter(grant => !revokedIdsRef.current.has(grant.recipientId))
 
       if (grants.length === 0) {
         setFollowers([])
@@ -144,6 +149,7 @@ export function PrivateFeedFollowers() {
 
       if (result.success) {
         // Remove from local state
+        revokedIdsRef.current.add(follower.id)
         setFollowers((prev) => prev.filter((f) => f.id !== follower.id))
         toast.success(
           `Revoked access for ${follower.username ? `@${follower.username}` : follower.displayName}`
