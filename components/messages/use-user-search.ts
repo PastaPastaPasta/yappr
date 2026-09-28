@@ -44,8 +44,9 @@ export function useUserSearch(input: string, viewerId: string | undefined) {
 
   useEffect(() => {
     const query = input.trim()
+    // Every input change retires the lookup in flight, including one that starts no search of its own.
+    const currentSearchId = ++searchIdRef.current
     if (isIdentityIdText(query)) {
-      const currentSearchId = ++searchIdRef.current
       setIsSearching(true)
       const debounceTimer = setTimeout(() => {
         lookupIdentityId(query)
@@ -71,10 +72,10 @@ export function useUserSearch(input: string, viewerId: string | undefined) {
     // Only search if at least 3 characters (like DashPay)
     if (query.length < 3) {
       setResults([])
+      setIsSearching(false)
       return
     }
 
-    const currentSearchId = ++searchIdRef.current
     setIsSearching(true)
 
     const debounceTimer = setTimeout(async () => {
