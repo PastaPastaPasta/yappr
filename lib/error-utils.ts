@@ -63,10 +63,27 @@ export function consensusCodeOf(error: unknown, depth: number = 0): number | nul
 }
 
 /**
+ * The error's message, with its numeric consensus code appended as
+ * ` (code=<n>)` when it has one and the message does not already label it.
+ * For write paths that keep only a string (`StateTransitionResult.error`,
+ * rethrown as `new Error(result.error)`): the labelled form is what
+ * {@link hasConsensusCode} reads back, so the code survives the flattening.
+ */
+export function messageWithConsensusCode(error: unknown): string {
+  const message = extractErrorMessage(error)
+  const code = consensusCodeOf(error)
+  if (code === null || new RegExp(`\\bcode"?\\s*[=:]\\s*${code}\\b`, 'i').test(message)) return message
+  return `${message} (code=${code})`
+}
+
+/**
  * Checks if an error is a timeout error that might indicate success.
  * DAPI gateway often times out even when transactions succeed.
  */
 export function isTimeoutError(error: unknown): boolean {
+  // A consensus refusal carries its code (4.2.0-beta.6+) and is final, whatever
+  // its prose says: never "the gateway timed out, the write may have landed".
+  if (consensusCodeOf(error) !== null) return false
   // "expired" below is meant for a gateway deadline. A consensus refusal that
   // also says "expired" — a document past its time to live (40140), or an
   // identity key past its expiry — is final, and reading it as "may have
@@ -87,6 +104,11 @@ export function isTimeoutError(error: unknown): boolean {
  * the broadcast likely succeeded even though we didn't get confirmation.
  */
 export function isAlreadyExistsError(error: unknown): boolean {
+  // A numeric consensus code means Platform judged THIS transition and refused
+  // it (40100 "Document ... is already present", 40204 "nonce already present
+  // at tip"): final, not a sign that an earlier broadcast of it landed. The
+  // mempool/chain duplicates this is for come from DAPI and carry no code.
+  if (consensusCodeOf(error) !== null) return false
   const msg = extractErrorMessage(error).toLowerCase()
   return (
     msg.includes('already in mempool') ||

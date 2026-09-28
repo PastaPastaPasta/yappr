@@ -11,7 +11,11 @@ import {
   isAffectedStateSnapshotError,
   classifyModerationError,
   consensusCodeOf,
+  messageWithConsensusCode,
   isActionFeeAgreementError,
+  isAlreadyExistsError,
+  isContestNotJoinableError,
+  isNonFatalWaitError,
   isDocumentPropertyRuleError,
   isModerationNotYetSeatedError,
   isModeratorsShareMismatchError,
@@ -516,11 +520,111 @@ describe('4.2.0-beta.6: consensus errors reach JS with their numeric code (platf
     expect(isWriteGateError(sdkError(40127, VALUE_MISMATCH))).toBe(false)
   })
 
+  it('never reads a broadcast error\'s generic 1 or 20000 as one of the consensus codes it matches', () => {
+    // 1 is ConsensusError::DefaultError and 20000 IdentityNotFoundError: neither is
+    // in any matcher's set, and 1 is below the five-digit consensus range.
+    expect(consensusCodeOf(sdkError(1, OPAQUE))).toBeNull()
+    for (const code of [1, 20000]) {
+      const error = sdkError(code, OPAQUE)
+      for (const [, matcher] of byCode) expect(matcher(error)).toBe(false)
+      expect(isPermanentProtocol14Error(error)).toBe(false)
+      expect(classifyModerationError(error)).toBeNull()
+      expect(categorizeError(error)).toBe(`Failed to create post: ${OPAQUE}`)
+    }
+  })
+
   it('does not let one numeric code claim a neighbour', () => {
     const banned = sdkError(41107, OPAQUE)
     expect(isGasPayerError(banned)).toBe(false)
     expect(isDocumentExpiredError(banned)).toBe(false)
     expect(isImmutablePropertyChangedError(sdkError(40127, OPAQUE))).toBe(false)
     expect(isPropertyAgreementError(sdkError(40128, OPAQUE))).toBe(false)
+  })
+})
+
+describe('every consensus code against every matcher', () => {
+  const sdkError = (code: number) => ({ code, message: 'Failed to broadcast: Protocol error: consensus refusal', name: 'Protocol', isRetriable: false })
+
+  const matchers: Record<string, (error: unknown) => boolean> = {
+    isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isAffectedStateSnapshotError,
+    isInsufficientTokenError, isFrozenBalanceError, isReferenceNotFoundError, isPropertyAgreementError,
+    isWriteGateError, isImmutablePropertyChangedError, isInvalidDocumentIdError, isModerationBarredError,
+    isBarredFromContractError, isGasPayerError, isActionFeeAgreementError, isModeratorsShareMismatchError,
+    isFeeMultiplierNotToleratedError, isGasSponsorShortError, isReferencedTypeNotDeletableError,
+    isOncePerIdentityAlreadyClaimedError, isPropertyMaxBytesError, isDocumentPropertyRuleError,
+    isReferenceRequirementError, isModerationNotYetSeatedError, isDocumentExpiredError, isContestFundError,
+    isContestNotJoinableError, isContestFullError, isTrailingBytesError, isContestedDocumentsNotYetAllowedError,
+  }
+
+  // The matchers each code may claim. The only overlaps are supersets by design:
+  // isModerationBarredError ⊃ 41107/41108, isGasPayerError ⊃ 40222,
+  // isActionFeeAgreementError ⊃ 40134/40139, isContestFundError ⊃ 40141.
+  const intended: Record<number, string[]> = {
+    10405: ['isInvalidDocumentIdError'],
+    41107: ['isBarredFromContractError', 'isModerationBarredError'],
+    41108: ['isBarredFromContractError', 'isModerationBarredError'],
+    41114: ['isModerationBarredError'],
+    40129: ['isGasPayerError'],
+    40130: ['isGasPayerError'],
+    40222: ['isGasSponsorShortError', 'isGasPayerError'],
+    40132: ['isActionFeeAgreementError'],
+    40133: ['isActionFeeAgreementError'],
+    40134: ['isFeeMultiplierNotToleratedError', 'isActionFeeAgreementError'],
+    40139: ['isModeratorsShareMismatchError', 'isActionFeeAgreementError'],
+    40131: ['isReferencedTypeNotDeletableError'],
+    40722: ['isOncePerIdentityAlreadyClaimedError'],
+    10421: ['isPropertyMaxBytesError'],
+    10419: ['isDocumentPropertyRuleError'],
+    10422: ['isDocumentPropertyRuleError'],
+    40135: ['isReferenceRequirementError'],
+    40136: ['isReferenceRequirementError'],
+    40137: ['isReferenceRequirementError'],
+    40138: ['isReferenceRequirementError'],
+    41200: ['isModerationNotYetSeatedError'],
+    40140: ['isDocumentExpiredError'],
+    40114: ['isContestFundError'],
+    40141: ['isContestFullError', 'isContestFundError'],
+    40111: ['isContestNotJoinableError'],
+    10418: ['isContestedDocumentsNotYetAllowedError'],
+    40120: ['isReferenceNotFoundError'],
+    40121: ['isReferenceNotFoundError'],
+    40122: ['isReferenceNotFoundError'],
+    40123: ['isReferenceNotFoundError'],
+    40124: ['isReferenceNotFoundError'],
+    40125: ['isReferenceNotFoundError'],
+    40127: ['isPropertyAgreementError'],
+    40128: ['isImmutablePropertyChangedError'],
+    40700: ['isInsufficientTokenError'],
+    40702: ['isFrozenBalanceError'],
+    // Matched only by private helpers or by classifyModerationError, or by nothing:
+    // key expiry, vote choice, moderation-only codes, already-present, nonce,
+    // generatedFrom, and the generic broadcast codes.
+    20016: [], 40219: [], 40307: [], 41101: [], 41111: [], 41112: [],
+    40100: [], 40204: [], 10424: [], 10002: [], 20000: [], 1: [],
+  }
+
+  it.each(Object.entries(intended))('code %s claims exactly its matchers', (code, expected) => {
+    const error = sdkError(Number(code))
+    const claimed = Object.entries(matchers).filter(([, matcher]) => matcher(error)).map(([name]) => name)
+    expect(claimed.sort()).toEqual([...expected].sort())
+  })
+
+  it('claims the same through the flattened string a write result carries', () => {
+    for (const [code, expected] of Object.entries(intended)) {
+      const flattened = new Error(messageWithConsensusCode(sdkError(Number(code))))
+      const claimed = Object.entries(matchers).filter(([, matcher]) => matcher(flattened)).map(([name]) => name)
+      // A code below the consensus range (1) is never labelled; everything else round-trips.
+      expect(claimed.sort(), `code ${code}`).toEqual([...expected].sort())
+    }
+  })
+})
+
+describe('messageWithConsensusCode', () => {
+  it('labels a numeric consensus code once, and leaves everything else as it was', () => {
+    expect(messageWithConsensusCode({ code: 40132, message: 'refused' })).toBe('refused (code=40132)')
+    expect(messageWithConsensusCode({ code: 40132, message: 'refused, code=40132' })).toBe('refused, code=40132')
+    expect(messageWithConsensusCode({ code: -1, message: 'refused' })).toBe('refused')
+    expect(messageWithConsensusCode({ code: 1, message: 'rejected' })).toBe('rejected')
+    expect(messageWithConsensusCode(new Error('plain'))).toBe('plain')
   })
 })

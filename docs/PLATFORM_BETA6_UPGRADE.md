@@ -63,30 +63,67 @@ the yappr release assets, not npm.
 
 ## Consensus codes: prose first, numeric code second
 
-Testnet still runs pre-beta.6 nodes and SDK paths that deliver prose with
-`code = -1`, so **every matcher still reads the prose first**, and none of the
-prose patterns were removed. The numeric code is now a second route:
+Testnet still runs pre-beta.6 nodes and SDK paths that send prose with
+`code = -1`, so **every matcher still reads the prose first**. No prose pattern
+was removed. The numeric code is a second route, and it has to survive the
+places where Yappr turns an error into a string.
 
-- `consensusCodeOf(error)` returns the numeric `code` of the error, or of a
-  nested `error`/`cause`, when it is a five-digit integer. Otherwise it returns
-  null. `-1`, gRPC statuses, DOMException codes and string codes are never read
-  as a consensus code. A freed wasm error whose getter throws is also handled.
-- `hasConsensusCode(error, codes)` takes the error, not the message. It accepts
-  the numeric code or a labelled code in the message (`code=40128`,
-  `"code":40128`, case-insensitive), and never bare digits.
-- Matchers that had no numeric route before now have one: 40700 (token
-  balance), 40702 (frozen account), 40120–40125 (reference family), 40127
-  (property agreement), and 40128 through the shared helper. `isWriteGateError`
-  still needs the `$ownerId` prose to tell a gate from a value mismatch. The
-  code alone says only that it is a 40127. `isTrailingBytesError` also stays
-  prose-only, because a numeric 10002 is any parse failure and only the
-  trailing-bytes cause is the code defect it reports.
+**Reading the code.** `consensusCodeOf(error)` returns the numeric `code` of
+the error, or of a nested `error` or `cause`, when it is a five-digit integer
+(10000 to 99999). Otherwise it returns null. That rules out `-1`, the generic
+broadcast code `1` (`ConsensusError::DefaultError`), gRPC statuses and string
+codes. A freed wasm error whose getter throws returns null too. Code `20000`
+(`IdentityNotFoundError`) is read as a code, but no matcher's set contains it,
+so it matches nothing.
 
-`lib/error-utils.test.ts` pins both shapes: every matcher is recognised by a
-`WasmSdkError`-shaped object carrying only its code behind opaque prose, and
-the same object with `code: -1` is not claimed. It also pins that the older
-prose still matches with `code: -1`, that a numeric 40140 stays out of
-`isTimeoutError`, and that one code never claims a neighbour.
+**Matching the code.** `hasConsensusCode(error, codes)` takes the error. It
+accepts the numeric code, or a labelled code in the message (`code=40128`,
+`"code":40128`, any case). Bare digits never match. Matchers that had no
+numeric route before now have one: 40700 (token balance), 40702 (frozen
+account), 40120–40125 (reference family), 40127 (property agreement) and 40128.
+Two matchers deliberately stay prose-bound. `isWriteGateError` still needs the
+`$ownerId` wording, because the code alone only says it is a 40127, not whether
+it is a gate or a value mismatch. `isTrailingBytesError` stays prose-only
+because a 10002 can be any parse failure.
+
+**Keeping the code through a string.** `stateTransitionService`'s create,
+replace, delete and delete-by-values catches used to return
+`error: extractErrorMessage(error)`, and callers rethrow `new Error(result.error)`.
+That dropped the numeric code, so on the main write path only the prose could
+match. Those catches now return `messageWithConsensusCode(error)`, which
+appends ` (code=<n>)` when the error has a code and the message does not
+already label it. The labelled-code route then reads it back.
+`lib/retry-utils.test.ts` runs such a string through `categorizeError` and
+`retryPostCreation`.
+
+**A code means the refusal is final.** `isTimeoutError` and
+`isAlreadyExistsError` now return false for any error that carries a
+consensus code. A refusal is a judgement on this transition, not a gateway
+deadline or an earlier broadcast landing. That covers 40100 "Document … is
+already present" and 40204 "… nonce already present at tip". The mempool and
+chain duplicates `isAlreadyExistsError` exists for come from DAPI with no
+consensus code, so they still match.
+
+**Service-local classifiers.** `tokenService.claimStarterGrant` used a
+labelled-code check that never recognised a second claim. It now uses
+`isOncePerIdentityAlreadyClaimedError`, which matches the numeric 40722 or the
+prose "already claimed the once-per-identity distribution". The moderation pot
+claim accepts the numeric 41111/41112, and also the 41112 prose "holds nothing
+that can be paid out".
+
+**Tests.** `lib/error-utils.test.ts` crosses every code Yappr handles, plus
+1, 20000, 10002, 10424, 40100 and 40204, with every exported matcher. Only the
+intended pairs may match, plus four overlaps where one matcher contains
+another's code by design:
+
+- `isModerationBarredError` includes 41107 and 41108
+- `isGasPayerError` includes 40222
+- `isActionFeeAgreementError` includes 40134 and 40139
+- `isContestFundError` includes 40141
+
+The same matrix is run again through the flattened string. Older prose with
+`code: -1` still matches. `lib/services/token-service.test.ts` and
+`moderation-service.test.ts` pin the two service fixes.
 
 ## The hand-built create still decodes exactly
 
@@ -158,7 +195,7 @@ On `beta6/sdk`, after `rm -rf node_modules && npm ci`:
 
 - `npm ls @dashevo/wasm-sdk`: one copy, `4.2.0-beta.6`, deduped under evo-sdk.
 - `npm run lint` and `npm run lint:dead` (knip) are clean.
-- `npm run test`: 106 files and 1,211 tests pass.
+- `npm run test`: 107 files and 1,275 tests pass.
 - `npm run build` and `npm run build:devnet`: both static exports succeed.
 - `validate-contract-offline.mjs` on every contract, plus `--probes` (48/48).
   The results are in the table above.
