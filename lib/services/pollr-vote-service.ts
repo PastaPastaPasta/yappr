@@ -369,14 +369,20 @@ class PollrVoteService {
    *
    * A duplicate means this tab's tally predates a vote the voter cast
    * elsewhere, so folding in only the new writes leaves that earlier vote
-   * uncounted. The fresh read supplies it; merging keeps the just-written
-   * votes the count tree may not show yet. Falls back to `optimistic` when the
-   * read fails, which is no worse than before the collision.
+   * uncounted. The fresh read supplies it; merging keeps the votes `created`
+   * in this same call, which the count tree may not show yet. Falls back to
+   * `optimistic` when the read fails, which is no worse than before the
+   * collision.
    */
-  async refreshTally(poll: Poll, optimistic: PollTally | null, myChoices: number[]): Promise<PollTally | null> {
+  async refreshTally(
+    poll: Poll,
+    optimistic: PollTally | null,
+    created: number[],
+    myChoices: number[]
+  ): Promise<PollTally | null> {
     this.invalidateTally(poll.id);
     try {
-      const tally = reconcileTally(await this.getTally(poll), optimistic, myChoices);
+      const tally = reconcileTally(await this.getTally(poll), optimistic, created, myChoices);
       this.tallyCache.set(poll.id, tally);
       return tally;
     } catch (error) {
@@ -504,8 +510,19 @@ class PollrVoteService {
     const sdk = await getEvoSdk();
     const docType = pollrVoteDocType(poll.multiChoice);
 
+    // The close time is advisory, so ballots can land after it and the count
+    // tree has no time axis to leave them out. v3 ballots carry `$createdAt`
+    // under `pollVotesByTime`, so a closed poll is tallied from its on-time
+    // ballots in one read, keeping "Final results" final. v4 ballots are
+    // indexOnly with no time index, so there is nothing to bound them by there.
+    const onTime =
+      !pollrIsV4() && typeof poll.endsAt === 'number' && poll.endsAt < Date.now()
+        ? await this.countOnTimeBallots(sdk, poll.id, docType, poll.endsAt)
+        : null;
+
     // Each step falls through to the next only when it couldn't produce counts.
     const counts =
+      onTime ??
       (await this.countByChoiceGrouped(sdk, poll.id, docType, size)) ??
       (await this.countByChoiceIndividually(sdk, poll.id, docType, size)) ??
       (pollrIsV4()
@@ -518,17 +535,6 @@ class PollrVoteService {
     // loudly instead, and cache nothing, so the caller can offer a retry.
     if (!counts) {
       throw new PollTallyUnavailableError(poll.id);
-    }
-
-    // The close time is advisory, so ballots can land after it and the count
-    // tree has no time axis to leave them out. v3 ballots carry `$createdAt`
-    // under `pollVotesByTime`, so a closed poll's late ballots are read (almost
-    // always none) and taken back out, keeping "Final results" final. v4
-    // ballots are indexOnly with no time index, so there is nothing to bound
-    // them by there.
-    if (!pollrIsV4() && typeof poll.endsAt === 'number' && poll.endsAt < Date.now()) {
-      const late = await this.lateChoices(sdk, poll.id, docType, poll.endsAt);
-      if (late) subtractChoices(counts, late);
     }
 
     // The total is the sum of the poll's REAL options. `choice` is schema-valid
@@ -689,20 +695,27 @@ class PollrVoteService {
   }
 
   /**
-   * v3: the choices of ballots created after `closedAt`, off `pollVotesByTime`.
-   * Null when they can't all be read — the tally then keeps them rather than
-   * subtracting a partial set.
+   * v3, closed poll: count the ballots created by `closedAt`, off
+   * `pollVotesByTime`. One bounded read, so the counts can't mix chain states
+   * the way a count-tree read minus a separate late-ballot read could. Null
+   * when they can't all be read; the caller then falls back to the count tree,
+   * late ballots included, rather than show a partial count as final.
    */
-  private async lateChoices(sdk: Sdk, pollId: string, docType: string, closedAt: number): Promise<number[] | null> {
+  private async countOnTimeBallots(
+    sdk: Sdk,
+    pollId: string,
+    docType: string,
+    closedAt: number
+  ): Promise<number[] | null> {
     try {
-      const { documents, reachedLimit } = await paginateFetchAll(
+      const { documents: choices, reachedLimit } = await paginateFetchAll(
         sdk,
         () => ({
           dataContractId: POLLR_CONTRACT_ID,
           documentTypeName: docType,
           where: [
             ['pollId', '==', pollId],
-            ['$createdAt', '>', closedAt],
+            ['$createdAt', '<=', closedAt],
           ],
           orderBy: [
             ['pollId', 'asc'],
@@ -712,12 +725,16 @@ class PollrVoteService {
         readChoice
       );
       if (reachedLimit) {
-        logger.warn('PollrVoteService: too many late ballots to exclude; final tally includes them', { pollId });
+        logger.warn('PollrVoteService: too many ballots to bound by close time; final tally includes late ones', { pollId });
         return null;
       }
-      return documents;
+      const counts = zeroCounts();
+      for (const choice of choices) {
+        if (isValidChoice(choice)) counts[choice] += 1;
+      }
+      return counts;
     } catch (error) {
-      logger.warn('PollrVoteService: could not read late ballots; final tally includes them', {
+      logger.warn('PollrVoteService: could not read on-time ballots; final tally includes late ones', {
         pollId,
         error: extractErrorMessage(error),
       });
@@ -763,25 +780,25 @@ class PollrVoteService {
   }
 }
 
-/** Take each listed choice's ballot back out of `counts`, in place. */
-export function subtractChoices(counts: number[], choices: number[]): void {
-  for (const choice of choices) {
-    if (isValidChoice(choice) && counts[choice] > 0) counts[choice] -= 1;
-  }
-}
-
 /**
  * Merge a freshly read tally with the caller's optimistic one.
  *
- * Ballots are immutable, so no option's count can have gone down: taking the
- * larger count per option keeps writes the count tree has not caught up with
- * yet, and every choice the voter has recorded counts at least once. The total
- * is re-summed so the percentages still add up.
+ * The fresh counts are trusted: ballots can be deleted, so a stale count is no
+ * lower bound. Only the options `created` in this call keep their optimistic
+ * count, since the count tree may not show those writes yet, and every choice
+ * the voter has recorded counts at least once. The total is re-summed so the
+ * percentages still add up.
  */
-export function reconcileTally(fresh: PollTally, optimistic: PollTally | null, myChoices: number[]): PollTally {
+export function reconcileTally(
+  fresh: PollTally,
+  optimistic: PollTally | null,
+  created: number[],
+  myChoices: number[]
+): PollTally {
   const counts = fresh.counts.map((count, index) => {
+    const pending = created.includes(index) ? optimistic?.counts[index] ?? 0 : 0;
     const floor = myChoices.includes(index) ? 1 : 0;
-    return Math.max(count, optimistic?.counts[index] ?? 0, floor);
+    return Math.max(count, pending, floor);
   });
   return { counts, total: counts.reduce((sum, count) => sum + count, 0) };
 }

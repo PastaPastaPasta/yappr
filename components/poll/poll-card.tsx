@@ -213,7 +213,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       // that vote. Re-read them rather than leave "✓ your vote" on a 0.
       if (result.alreadyVoted.length > 0) {
         const myChoices = Array.from(new Set([...myVotes, ...recordedList]))
-        setTally(await pollrVoteService.refreshTally(poll, optimistic, myChoices))
+        setTally(await pollrVoteService.refreshTally(poll, optimistic, result.created, myChoices))
       }
     } catch (error) {
       logger.error('PollCard: failed to cast vote', error)
