@@ -426,7 +426,10 @@ export function TipModal() {
         tipService.tipNoteFor(tipTarget, noteMessage)
       )
       // Abandoned before its QR went up: no wallet has it, so free its nonce.
-      if (walletSessionRef.current !== session) return request.discard()
+      if (walletSessionRef.current !== session) {
+        await request.discard()
+        return
+      }
       setWalletUri(buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return

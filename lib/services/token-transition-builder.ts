@@ -22,11 +22,12 @@ import { allocateNonce, loadReservation, releaseNonce, reserveNonce } from './id
  * hold a nonce reserved as pending until Platform shows it consumed, since a
  * wallet can sign them at any later time. Call `discard` only while the bytes
  * have never been shown (the build was abandoned before its QR went up); once
- * a wallet may have them, only consumption of the nonce frees it.
+ * a wallet may have them, only consumption of the nonce frees it. It takes the
+ * write lock, like every other change to the shared reservation.
  */
 export interface WalletTransitionRequest {
   bytes: Uint8Array;
-  discard: () => void;
+  discard: () => Promise<void>;
 }
 
 /**
@@ -74,6 +75,7 @@ export async function buildUnsignedTokenBatch(
     logger.debug(`${label}: unsigned transition bytes length: ${bytes.length}`);
 
     const entry = reserveNonce(ownerId, YAPPR_CONTRACT_ID, nonce, rawNonce);
-    return { bytes, discard: () => releaseNonce(ownerId, YAPPR_CONTRACT_ID, entry) };
+    const discard = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => releaseNonce(ownerId, YAPPR_CONTRACT_ID, entry));
+    return { bytes, discard };
   });
 }

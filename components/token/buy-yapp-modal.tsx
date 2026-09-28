@@ -211,7 +211,10 @@ export function BuyYappModal() {
       walletBaselineRef.current = baseline
       const request = await buildUnsignedDirectPurchaseTransition(user.identityId, amountBig, costCredits)
       // Abandoned before its QR went up: no wallet has it, so free its nonce.
-      if (walletSessionRef.current !== session) return request.discard()
+      if (walletSessionRef.current !== session) {
+        await request.discard()
+        return
+      }
       setWalletUri(buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return
