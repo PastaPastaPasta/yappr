@@ -16,6 +16,7 @@ import { usePrivateFeedRequest } from '@/hooks/use-private-feed-request'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
+import { privateFeedKeyStore } from '@/lib/services/private-feed-key-store'
 
 interface PrivatePostContentProps {
   post: Post
@@ -529,6 +530,14 @@ export function PrivatePostContent({
       void attemptDecryption()
     }
   }, [state.status, attemptDecryption])
+
+  // A post waiting on key recovery unlocks as soon as keys arrive, whether they
+  // were recovered from another post on this page or in another tab.
+  const awaitingKeys = state.status === 'locked' && state.reason === 'approved-no-keys'
+  useEffect(() => {
+    if (!awaitingKeys) return
+    return privateFeedKeyStore.subscribeFollowerKeys(() => setState({ status: 'idle' }))
+  }, [awaitingKeys])
 
   // Handle retry for decryption failures (Test 5.7)
   const handleRetry = useCallback(() => {
