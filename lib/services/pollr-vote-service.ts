@@ -45,6 +45,11 @@ export interface PollTally {
    * counts may include late ballots, so they must not be presented as final.
    */
   lateIncluded?: boolean;
+  /**
+   * A closed v3 poll tallied from only its ballots created by the close time:
+   * a ballot missing from these counts is late, not lagging.
+   */
+  cutoffVerified?: boolean;
 }
 
 /** The leading option of a poll, from the v4 ranked index. */
@@ -550,6 +555,7 @@ class PollrVoteService {
 
     const tally: PollTally = { counts, total };
     if (closedAt !== null && !onTime) tally.lateIncluded = true;
+    if (onTime) tally.cutoffVerified = true;
     this.tallyCache.set(poll.id, tally);
 
     return { ...tally, counts: resize(tally.counts, size) };
@@ -796,7 +802,9 @@ class PollrVoteService {
  * lower bound. Only the options `created` in this call keep their optimistic
  * count, since the count tree may not show those writes yet, and every choice
  * the voter has recorded counts at least once. The total is re-summed so the
- * percentages still add up.
+ * percentages still add up. A cutoff-verified tally is returned as read: a
+ * ballot it leaves out landed after the close, so adding it back would put a
+ * late vote into the final results. The fresh tally's flags are kept either way.
  */
 export function reconcileTally(
   fresh: PollTally,
@@ -804,12 +812,13 @@ export function reconcileTally(
   created: number[],
   myChoices: number[]
 ): PollTally {
+  if (fresh.cutoffVerified) return fresh;
   const counts = fresh.counts.map((count, index) => {
     const pending = created.includes(index) ? optimistic?.counts[index] ?? 0 : 0;
     const floor = myChoices.includes(index) ? 1 : 0;
     return Math.max(count, pending, floor);
   });
-  return { counts, total: counts.reduce((sum, count) => sum + count, 0) };
+  return { ...fresh, counts, total: counts.reduce((sum, count) => sum + count, 0) };
 }
 
 /** Trim or pad a counts array to the poll's actual option count. */

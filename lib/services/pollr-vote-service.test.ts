@@ -265,7 +265,7 @@ describe('final results on a closed poll', () => {
       ['b', { choice: 1 }],
     ]));
 
-    expect(await service.getTally(closed())).toEqual({ counts: [1, 1, 0], total: 2 });
+    expect(await service.getTally(closed())).toEqual({ counts: [1, 1, 0], total: 2, cutoffVerified: true });
     expect(mocks.count).not.toHaveBeenCalled();
     const onTimeQuery = mocks.query.mock.calls[0][0];
     expect(onTimeQuery.where).toEqual([['pollId', '==', id(9)], ['$createdAt', '<=', closed().endsAt]]);
@@ -299,6 +299,31 @@ describe('final results on a closed poll', () => {
     const open = await loadService('v3');
     mocks.count.mockResolvedValue(new Map([['80', 2n]]));
     expect(await open.getTally(poll({ endsAt: Date.now() + 60_000 }))).not.toHaveProperty('lateIncluded');
+  });
+
+  it('a refresh after an already-voted refusal adds no late ballot to a cutoff-verified tally', async () => {
+    const service = await loadService('v3');
+    // The voter's option-2 pick was written after the close, so the on-time read leaves it out.
+    mocks.query.mockResolvedValue(new Map([['a', { choice: 0 }], ['b', { choice: 1 }]]));
+    const optimistic = { counts: [1, 1, 1], total: 3 };
+
+    expect(await service.refreshTally(closed(), optimistic, [2], [0, 2])).toEqual({
+      counts: [1, 1, 0],
+      total: 2,
+      cutoffVerified: true,
+    });
+  });
+
+  it('a refresh keeps a capped closed-poll tally marked as not final', async () => {
+    const service = await loadService('v3');
+    const fullPage = new Map(Array.from({ length: 100 }, (_, i) => [`d${i}`, { $id: `d${i}`, choice: 0 }]));
+    mocks.query.mockResolvedValue(fullPage);
+    mocks.count.mockResolvedValue(new Map([['80', 1001n], ['81', 1n]]));
+
+    const refreshed = await service.refreshTally(closed(), { counts: [1001, 1, 1], total: 1003 }, [2], [2]);
+    expect(refreshed).toEqual({ counts: [1001, 1, 1], total: 1003, lateIncluded: true });
+    // The cached copy keeps the flag too.
+    expect(await service.getTally(closed())).toMatchObject({ lateIncluded: true });
   });
 
   it('does not bound by close time while the poll is open, or on v4', async () => {
