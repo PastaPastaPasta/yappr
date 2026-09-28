@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const follower = vi.hoisted(() => ({ catchUp: vi.fn() }));
+const follower = vi.hoisted(() => ({ catchUp: vi.fn(), recoverFollowerKeys: vi.fn() }));
+const secrets = vi.hoisted(() => ({ getEncryptionKeyBytes: vi.fn() }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: vi.fn() }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: {} }));
 vi.mock('./identity-service', () => ({ identityService: {} }));
 vi.mock('./private-feed-follower-service', () => ({ privateFeedFollowerService: follower }));
+vi.mock('@/lib/secure-storage', () => secrets);
 import { prepareInheritedEncryption, privateFeedService } from './private-feed-service';
 import { privateFeedKeyStore } from './private-feed-key-store';
 import { privateFeedCryptoService } from './private-feed-crypto-service';
@@ -30,6 +32,8 @@ beforeEach(() => {
     get length() { return storage.size; },
   });
   follower.catchUp.mockReset();
+  follower.recoverFollowerKeys.mockReset();
+  secrets.getEncryptionKeyBytes.mockReset();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -73,6 +77,30 @@ describe('inherited reply encryption epoch (QA D-04)', () => {
 
     const result = await prepareInheritedEncryption('should not be written', { ownerId, epoch: 1 }, replierId);
     expect(result).toEqual({ success: false, error: 'Cannot encrypt reply: Access has been revoked' });
+  });
+
+  it('recovers from a re-approval grant before encrypting, and asks for the key when it is not stored', async () => {
+    privateFeedKeyStore.storePathKeys(ownerId, pathKeys);
+    privateFeedKeyStore.storeCachedCEK(ownerId, 1, chain[1]);
+    follower.catchUp.mockResolvedValueOnce({ success: false, error: 'RECOVERY_NEEDED:Local keys predate the current grant' });
+    secrets.getEncryptionKeyBytes.mockReturnValue(null);
+    const blocked = await prepareInheritedEncryption('renewed', { ownerId, epoch: 1 }, replierId);
+    expect(blocked.success === false && blocked.error).toMatch(/^SYNC_REQUIRED:/);
+    expect(follower.recoverFollowerKeys).not.toHaveBeenCalled();
+
+    const followerKey = new Uint8Array(32).fill(5);
+    secrets.getEncryptionKeyBytes.mockReturnValue(followerKey);
+    follower.catchUp
+      .mockResolvedValueOnce({ success: false, error: 'RECOVERY_NEEDED:Local keys predate the current grant' })
+      .mockResolvedValueOnce({ success: true });
+    follower.recoverFollowerKeys.mockImplementation(async () => {
+      privateFeedKeyStore.storeCachedCEK(ownerId, 3, chain[3]);
+      return { success: true };
+    });
+    const result = await prepareInheritedEncryption('renewed', { ownerId, epoch: 1 }, replierId);
+    if (!result.success) throw new Error(result.error);
+    expect(follower.recoverFollowerKeys).toHaveBeenCalledWith(ownerId, replierId, followerKey);
+    expect(result.data.epoch).toBe(3);
   });
 
   it('refuses without keys for the feed, before any network sync', async () => {

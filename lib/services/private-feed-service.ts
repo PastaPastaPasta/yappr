@@ -1343,7 +1343,21 @@ export async function prepareInheritedEncryption(
     // 3. Apply any rekeys since the last sync, so the reply uses the feed's
     // current epoch. A revoked follower cannot apply them and cannot reply.
     const { privateFeedFollowerService } = await import('./private-feed-follower-service');
-    const catchUp = await privateFeedFollowerService.catchUp(source.ownerId, authorId);
+    let catchUp = await privateFeedFollowerService.catchUp(source.ownerId, authorId);
+    if (catchUp.error?.startsWith('RECOVERY_NEEDED:')) {
+      // Re-approved since these keys were cached: recover from the new grant.
+      const { getEncryptionKeyBytes } = await import('@/lib/secure-storage');
+      const followerKey = getEncryptionKeyBytes(authorId);
+      if (!followerKey) {
+        return {
+          success: false,
+          error: 'SYNC_REQUIRED:Your private feed access was renewed. Please enter your encryption key to sync.',
+        };
+      }
+      // Recovery tolerates a failed catch-up; encrypting must not, so check again.
+      catchUp = await privateFeedFollowerService.recoverFollowerKeys(source.ownerId, authorId, followerKey);
+      if (catchUp.success) catchUp = await privateFeedFollowerService.catchUp(source.ownerId, authorId);
+    }
     if (!catchUp.success) {
       return {
         success: false,

@@ -48,6 +48,12 @@ describe('private feed request status', () => {
     await expect(service.getAccessStatus('owner', 'requester')).resolves.toBe('revoked');
   });
 
+  it('does not call a failed grant read revoked', async () => {
+    vi.mocked(service.getGrant).mockRejectedValue(new Error('offline'));
+    vi.spyOn(service, 'canDecrypt').mockResolvedValue(true);
+    await expect(service.getAccessStatus('owner', 'requester')).resolves.toBe('none');
+  });
+
   it('asks for key recovery when the local keys predate a re-approval grant (QA D-17)', async () => {
     vi.mocked(service.getGrant).mockResolvedValue({ ...grant, epoch: 3 });
     vi.spyOn(service, 'canDecrypt').mockResolvedValue(true);
@@ -104,6 +110,13 @@ describe('catching up after a revocation (QA D-17)', () => {
     const clear = vi.spyOn(privateFeedKeyStore, 'clearFeedKeys').mockImplementation(() => undefined);
     await expect(service.catchUp('owner', 'requester')).resolves.toEqual({ success: false, error: 'Access has been revoked' });
     expect(clear).not.toHaveBeenCalled();
+  });
+
+  it('fails, rather than reporting up to date, when the rekey read fails', async () => {
+    vi.mocked(internals().getRekeyDocumentsAfter).mockRestore();
+    query.mockRejectedValueOnce(new Error('offline'));
+    const result = await service.catchUp('owner', 'requester');
+    expect(result.success).toBe(false);
   });
 
   it('asks for recovery when a newer grant replaced the revoked one', async () => {
