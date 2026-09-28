@@ -8,6 +8,7 @@
  */
 
 import bs58 from 'bs58'
+import { hexToBytes } from '@/lib/bytes'
 import type { IdentityId, RetentionSetting } from '@/lib/dm/types'
 import { logger } from '@/lib/logger'
 import {
@@ -32,7 +33,7 @@ import type { Scheduler } from './self-state-store'
 import { sendContent } from './sender'
 import { SWEEP_INTERVAL_MS, sweep } from './sweep'
 import type { DmChain, KeyValueStore } from './types'
-import { pointerKey, splitText, type Exclusive } from './util'
+import { hexId, pointerKey, splitText, type Exclusive } from './util'
 
 export const BACKGROUND_POLL_MS = 30_000
 export const OPEN_POLL_MS = 4_000
@@ -177,10 +178,35 @@ export class DmEngine {
     const status = await store.load()
     this.ctx.scanCursor = store.state.inviteScanCursor
     await attachSaved(this.ctx)
+    for (const block of this.ctx.cache.blocks()) {
+      const id = hexToBytes(block.id)
+      if (id.length === 32) store.restoreBlock({ id, blocked: block.blocked, changedAt: block.changedAt })
+    }
+    this.restorePositions()
     if (status !== 'loaded' && (await this.ctx.chain.hasWritten().catch(() => false))) {
       // The user has written DM v5 documents but has no readable self-state: rebuild (§9).
       this.startRecovery()
     }
+    // An edit the last page did not live to save is saved now (§5.5); recovery saves what it rebuilt itself.
+    if (!this.recovery && store.isDirty) this.saveNow('edits from the last visit')
+  }
+
+  /**
+   * Re-apply this device's read and hidden positions (the local cache keeps
+   * them, because a save started as the page closes never finishes). Positions
+   * only move forward, so one already saved changes nothing. Runs after every
+   * poll too, for conversations found again from their invite.
+   */
+  private restorePositions(): void {
+    for (const conv of Array.from(this.ctx.convs.values())) {
+      const positions = this.ctx.cache.positions(conv.key)
+      if (positions) this.ctx.store.touch(conv.entry, positions)
+    }
+  }
+
+  /** Keep a conversation's positions in the local cache, so a reload before the save keeps them. */
+  private notePositions(conv: Conv): void {
+    this.ctx.cache.notePositions(conv.key, conv.entry.readAt, conv.entry.hiddenAt)
   }
 
   stop(): void {
@@ -212,6 +238,7 @@ export class DmEngine {
       await this.run(async () => {
         await this.ensureLoaded()
         await pollOnce(this.ctx)
+        this.restorePositions()
       })
       this.error = null
     } catch (error) {
@@ -372,7 +399,13 @@ export class DmEngine {
     if (!conv) return
     const newest = timeline(conv).at(-1)
     if (newest) this.ctx.store.touch(conv.entry, { readAt: newest.createdAt })
+    this.notePositions(conv)
     this.emit()
+  }
+
+  /** Save an explicit choice (block, delete, leave) now rather than on the coalescing timer (§5.5). */
+  private saveNow(what: string): void {
+    this.flush().catch((error) => logger.warn(`DM v5: saving ${what} failed:`, error))
   }
 
   /** Open (without writing anything) a 1:1 with `peerId`. Returns its key. */
@@ -403,12 +436,16 @@ export class DmEngine {
     // Hidden up to the newest message held: anything newer, even one already on its way, un-hides it.
     const at = newest?.createdAt ?? this.ctx.chain.now()
     this.ctx.store.touch(conv.entry, { hiddenAt: at, readAt: newest?.createdAt ?? 0 })
+    this.notePositions(conv)
     this.emit()
+    this.saveNow('the deleted conversation')
   }
 
   setBlocked(peerId: string, blocked: boolean): void {
-    this.ctx.store.setBlocked(bs58.decode(peerId), blocked, this.ctx.chain.now())
+    const entry = this.ctx.store.setBlocked(bs58.decode(peerId), blocked, this.ctx.chain.now())
+    this.ctx.cache.noteBlock({ id: hexId(entry.id), blocked: entry.blocked, changedAt: entry.changedAt })
     this.emit()
+    this.saveNow(blocked ? 'the block' : 'the unblock')
   }
 
   setRetention(retention: RetentionSetting): void {
@@ -453,6 +490,9 @@ export class DmEngine {
     await this.run(() => leaveGroup(this.ctx, conv))
     this.ctx.cache.noteLeft(conv.key)
     this.ctx.store.touch(conv.entry, { hiddenAt: this.ctx.chain.now() })
+    this.notePositions(conv)
+    this.emit()
+    this.saveNow('leaving the group')
   }
 
   dismissMigrationNotice(): void {

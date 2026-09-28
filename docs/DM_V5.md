@@ -400,10 +400,15 @@ later. Picking up other devices' saves compares the document id as well as the
 revision. A failed save is always retried
 on the coalescing timer, never left for the page to close.
 
-**When it is written:** changes are coalesced to save fees, and flushed when
-the page is hidden or closed (`visibilitychange`/`pagehide`). It is also
-written immediately when the user starts a conversation, so their other devices
-find it. Incoming 1:1s need no immediate write, because invites are permanent
+**When it is written:** background changes (read positions) are coalesced to
+save fees, and flushed when the page is hidden or closed
+(`visibilitychange`/`pagehide`). A save started as the page closes rarely
+finishes (signing and broadcasting outlive the page), so each device also keeps
+its own read and hidden positions and block entries in its local cache and
+re-applies them on load, saving whatever the last visit did not. Explicit
+choices (block, unblock, delete conversation, leave, retention) are written
+immediately. It is also written immediately when the user starts a
+conversation, so their other devices find it. Incoming 1:1s need no immediate write, because invites are permanent
 and every device scans them. **Joining a group does:** its grant sits in a 1:1
 stream the sweep deletes, and once the roster moves on (the member is later
 removed) the grant no longer verifies, so a join left to the coalesced save is
@@ -734,7 +739,8 @@ from two devices are harmless, because keys are deterministic.
 | Leave | n/a | 1 message; owner removes on next open | |
 | Rename / end a group | n/a | 1 roster replace | |
 | Resend keys (manual) | n/a | 1 grant | |
-| Mark read, block | 1 receipt replace | 0 now; one coalesced self-state replace | |
+| Mark read | 1 receipt replace | 0 now; one coalesced self-state replace | |
+| Block, delete conversation | n/a | 1 self-state replace | |
 | Sweep | n/a | 1 delete per message | About half refunded for short messages, more for long ones |
 
 ## 8. Remaining leaks

@@ -3,8 +3,11 @@
  * with the 40106 merge-and-retry, coalescing and the lifetime cap.
  *
  * - Edits are coalesced: `markDirty` schedules one save `COALESCE_MS` later;
- *   the engine also flushes on `visibilitychange`/`pagehide` and immediately
- *   when the user starts a conversation (`flush`).
+ *   the engine also flushes on `visibilitychange`/`pagehide`, and immediately
+ *   when the user starts a conversation or makes an explicit choice (block,
+ *   delete, leave, retention). It keeps its own edits in the local cache and
+ *   re-applies them on load (`restoreBlock`, `touch`), because a save started
+ *   as the page closes does not finish.
  * - A save refused as stale (40106) or duplicate (40105, another device
  *   created the document first) re-reads, merges (`mergeSelfStates`) and saves
  *   again.
@@ -290,24 +293,33 @@ export class SelfStateStore {
     return this.allBlocks().filter((b) => b.blocked).map((b) => b.id)
   }
 
-  setBlocked(id: IdentityId, blocked: boolean, now: number): void {
+  /** Block or unblock `id`. Returns the entry as it now stands. */
+  setBlocked(id: IdentityId, blocked: boolean, now: number): BlockEntry {
     const existing = this.allBlocks().find((b) => bytesEqual(b.id, id))
     const changedAt = Math.max(now, (existing?.changedAt ?? 0) + 1)
     if (existing) {
       existing.blocked = blocked
       existing.changedAt = changedAt
       if (this.state.blocks.includes(existing)) this.markDirty()
-      return
+      return existing
     }
     const entry: BlockEntry = { id, blocked, changedAt }
     this.state.blocks.push(entry)
     if (selfStateFits(this.state)) {
       this.markDirty()
-      return
+      return entry
     }
     // The block still applies on this device; it just cannot be saved (the cap).
     this.state.blocks.pop()
     this.unsavedBlocks.push(entry)
+    return entry
+  }
+
+  /** Re-apply a block this device made but may not have saved: the newer change wins, as in a merge. */
+  restoreBlock(entry: BlockEntry): void {
+    const existing = this.allBlocks().find((b) => bytesEqual(b.id, entry.id))
+    if (existing && existing.changedAt >= entry.changedAt) return
+    this.setBlocked(entry.id, entry.blocked, entry.changedAt)
   }
 
   setRetention(retention: RetentionSetting, now: number): void {
