@@ -24,7 +24,7 @@
 import { Identifier } from '@dashevo/evo-sdk';
 import { logger } from '@/lib/logger';
 import { scopedKey } from '@/lib/storage-scope';
-import { PENDING_WRITE_ERROR, isAffectedStateSnapshotError, isConsensusRefusal } from '@/lib/error-utils';
+import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isAffectedStateSnapshotError, isConsensusRefusal } from '@/lib/error-utils';
 import { allocateIdentityContractNonce, identityContractNonceConsumed } from '@/lib/document-id';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { getEvoSdk } from './evo-sdk-service';
@@ -55,56 +55,54 @@ const PENDING_LIFETIME_MS = 15 * 60 * 1000;
 const PENDING_POLLS = 5;
 const PENDING_POLL_MS = 2_000;
 
-/** Kept in localStorage so every tab sees it; read and written only under the write lock. */
+/**
+ * Kept in localStorage, the one copy every tab reads and writes, only under
+ * the write lock. A transition is signed only once its reservation is stored
+ * there: one this tab alone knew of would be invisible to the next tab to take
+ * the lock.
+ */
 const RESERVATION_PREFIX = scopedKey('yappr:nonce-reservation:');
 
-/** This tab's copy of every reservation it saved. */
-const reservations = new Map<string, NonceReservation>();
-
-/** Keys whose last save did not reach localStorage: this tab's copy is newer than the stored one. */
-const unsaved = new Set<string>();
-
-let pendingIds = 0;
+/**
+ * Entries this tab released (each on a verdict) whose release localStorage may
+ * not have stored: never read back as pending, so a failed write cannot bring
+ * a settled one back.
+ */
+const released = new Set<string>();
 
 function reservationKey(ownerId: string, contractId: string): string {
   return `${RESERVATION_PREFIX}${ownerId}:${contractId}`;
 }
 
-function merge(a: NonceReservation | null, b: NonceReservation | null): NonceReservation | null {
-  if (!a || !b) return a ?? b;
-  const ids = new Set(a.pending.map((p) => p.id));
-  return { mark: a.mark > b.mark ? a.mark : b.mark, pending: [...a.pending, ...b.pending.filter((p) => !ids.has(p.id))] };
-}
-
+/**
+ * Throws {@link NONCE_STORE_ERROR} when localStorage cannot be read: nothing
+ * is then known about what this browser signed, so nothing is sent.
+ */
 export function loadReservation(ownerId: string, contractId: string): NonceReservation | null {
-  const key = reservationKey(ownerId, contractId);
-  const local = reservations.get(key) ?? null;
-  let stored: NonceReservation | null;
   try {
-    const raw = localStorage.getItem(key);
-    const parsed = raw ? (JSON.parse(raw) as { mark: string; pending: { id: string; nonce: string | null; expiresAt: number }[] }) : null;
-    stored = parsed && {
+    const raw = localStorage.getItem(reservationKey(ownerId, contractId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { mark: string; pending: { id: string; nonce: string | null; expiresAt: number }[] };
+    return {
       mark: BigInt(parsed.mark),
-      pending: parsed.pending.map((p) => ({ id: p.id, nonce: p.nonce === null ? null : BigInt(p.nonce), expiresAt: p.expiresAt })),
+      pending: parsed.pending
+        .filter((p) => !released.has(p.id))
+        .map((p) => ({ id: p.id, nonce: p.nonce === null ? null : BigInt(p.nonce), expiresAt: p.expiresAt })),
     };
-  } catch {
-    // Storage blocked or the value unreadable: this tab's copy is all there is.
-    return local;
+  } catch (error) {
+    logger.warn('Could not read nonce reservations:', error);
+    throw new Error(NONCE_STORE_ERROR);
   }
-  // Storage works for reads but refused this tab's last write (full): keep both.
-  return unsaved.has(key) ? merge(stored, local) : stored;
 }
 
+/** Throws {@link NONCE_STORE_ERROR} when localStorage refuses the write (blocked or full). */
 function saveReservation(ownerId: string, contractId: string, reservation: NonceReservation): void {
-  const key = reservationKey(ownerId, contractId);
-  reservations.set(key, reservation);
   try {
     const pending = reservation.pending.map((p) => ({ id: p.id, nonce: p.nonce === null ? null : p.nonce.toString(), expiresAt: p.expiresAt }));
-    localStorage.setItem(key, JSON.stringify({ mark: reservation.mark.toString(), pending }));
-    unsaved.delete(key);
-  } catch {
-    // Storage blocked or full: only this tab knows, and loadReservation reads its copy.
-    unsaved.add(key);
+    localStorage.setItem(reservationKey(ownerId, contractId), JSON.stringify({ mark: reservation.mark.toString(), pending }));
+  } catch (error) {
+    logger.warn('Could not store nonce reservations:', error);
+    throw new Error(NONCE_STORE_ERROR);
   }
 }
 
@@ -137,11 +135,14 @@ export function allocateNonce(current: bigint | undefined | null, reservation: N
 /**
  * Record a signed transition as pending before its broadcast (one that errors
  * may still have gone out), dropping what `current` shows settled. `nonce` is
- * null for one the SDK signs. The mark never goes down.
+ * null for one the SDK signs. The mark never goes down. Throws
+ * {@link NONCE_STORE_ERROR} when localStorage cannot hold it, and the
+ * transition must then not be sent.
  */
 export function reserveNonce(ownerId: string, contractId: string, nonce: bigint | null, current: bigint | undefined | null): PendingTransition {
   const previous = loadReservation(ownerId, contractId);
-  const entry = { id: `${Date.now()}-${++pendingIds}`, nonce, expiresAt: Date.now() + PENDING_LIFETIME_MS };
+  // Unique across tabs: releasing one must never release another.
+  const entry = { id: crypto.randomUUID(), nonce, expiresAt: Date.now() + PENDING_LIFETIME_MS };
   const mark = previous?.mark ?? BigInt(0);
   saveReservation(ownerId, contractId, {
     mark: nonce !== null && nonce > mark ? nonce : mark,
@@ -150,11 +151,22 @@ export function reserveNonce(ownerId: string, contractId: string, nonce: bigint 
   return entry;
 }
 
-/** The transition was confirmed or refused: it will not execute later. The mark stays. */
+/**
+ * The transition was confirmed or refused: it will not execute later. The
+ * mark stays. When localStorage refuses the write, other tabs keep the entry
+ * pending until it expires, which only holds their writes back.
+ */
 export function releaseNonce(ownerId: string, contractId: string, entry: PendingTransition): void {
-  const reservation = loadReservation(ownerId, contractId);
-  if (!reservation?.pending.some((p) => p.id === entry.id)) return;
-  saveReservation(ownerId, contractId, { mark: reservation.mark, pending: reservation.pending.filter((p) => p.id !== entry.id) });
+  try {
+    const reservation = loadReservation(ownerId, contractId);
+    if (reservation?.pending.some((p) => p.id === entry.id)) {
+      saveReservation(ownerId, contractId, { mark: reservation.mark, pending: reservation.pending.filter((p) => p.id !== entry.id) });
+    }
+  } catch {
+    // Already logged; this tab no longer reads it as pending.
+  } finally {
+    released.add(entry.id);
+  }
 }
 
 /**

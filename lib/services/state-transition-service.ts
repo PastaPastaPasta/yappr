@@ -820,18 +820,22 @@ class StateTransitionService {
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
         }
-        // The wait on a dropped duplicate can also end in a transport failure
-        // ("rate limited", QA S1-02) that carries no verdict on the transition:
-        // unconfirmed unless a proof settles it, never a failure to retry.
-        // (indexOnly callers read a failure back by value instead.)
-        if (!affectedStateMode && /transport error|rate limited/i.test(extractErrorMessage(waitErr))) {
-          const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
-          if (settled) return decided(settled);
-          try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-          return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
+        // Refused: it never executes, and nothing was written.
+        if (isConsensusRefusal(waitErr)) {
+          decided({ success: false });
+          throw waitErr;
         }
-        if (isConsensusRefusal(waitErr)) decided({ success: false });
-        throw waitErr;
+        // Any other wait failure (transport, "rate limited" on a dropped
+        // duplicate as in QA S1-02, a malformed response) carries no verdict:
+        // the broadcast went out and may have executed. Unconfirmed unless a
+        // proof settles it, never a failure a caller would rebuild. (indexOnly
+        // callers read a failure back by value instead.)
+        if (affectedStateMode) throw waitErr;
+        logger.warn(`Wait on ${documentId} failed without a verdict — reporting it unconfirmed:`, extractErrorMessage(waitErr));
+        const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
+        if (settled) return decided(settled);
+        try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
+        return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
       }
 
       // Cleanup old entries periodically

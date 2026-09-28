@@ -178,6 +178,13 @@ export const CREATE_NOT_RECORDED_ERROR = 'This was not saved: the network used i
 export const PENDING_WRITE_ERROR = 'An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again.'
 
 /**
+ * Why a write was not sent at all: this browser's storage would not record
+ * its nonce as pending, so the next write (in this tab or another) could not
+ * see it and might sign the same one (QA D-01, `lib/services/identity-nonce.ts`).
+ */
+export const NONCE_STORE_ERROR = 'This browser\'s storage is full or blocked, so this was not sent. Free up site storage, then try again.'
+
+/**
  * Checks if an error from waitForResponse is a non-fatal verification
  * issue that should not fail an operation whose broadcast succeeded.
  * These are typically transient network/propagation issues (e.g. a newly
@@ -1007,7 +1014,7 @@ export function categorizeError(error: unknown): string {
   if (isIdentityNonceConflictError(error)) {
     return 'Another write from your account went out at the same moment, so this one was not saved. Try again.'
   }
-  if (extractErrorMessage(error) === CREATE_NOT_RECORDED_ERROR || extractErrorMessage(error) === PENDING_WRITE_ERROR) {
+  if ([CREATE_NOT_RECORDED_ERROR, PENDING_WRITE_ERROR, NONCE_STORE_ERROR].includes(extractErrorMessage(error))) {
     return extractErrorMessage(error)
   }
   if (isActionFeeAgreementError(error)) {

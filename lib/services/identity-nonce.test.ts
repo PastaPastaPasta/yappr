@@ -3,7 +3,8 @@
  * run while a transition this browser signed may still execute (the polling
  * budget used to lapse into the write); nothing may take a nonce while an
  * SDK-signed transition whose nonce is unknown may still execute; the mark
- * never goes down; and a reservation survives localStorage refusing a write.
+ * never goes down; and nothing is signed unless its reservation is stored
+ * where every tab sees it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -25,10 +26,11 @@ vi.stubGlobal('localStorage', {
   removeItem: (key: string) => { storage.delete(key) },
 })
 
-import { PENDING_WRITE_ERROR } from '@/lib/error-utils'
+import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR } from '@/lib/error-utils'
 import { allocateNonce, loadReservation, releaseNonce, reserveNonce, stillPending, withSdkSignedWrite } from './identity-nonce'
 
 const n = (value: number) => BigInt(value)
+const PENDING_STORE = NONCE_STORE_ERROR
 let owner = 0
 let OWNER = ''
 const CONTRACT = 'contract'
@@ -160,18 +162,52 @@ describe('allocateNonce', () => {
   })
 })
 
-describe('a reservation localStorage refuses to store', () => {
-  it('is still seen by the next allocation (storage full, nothing stored before)', () => {
-    storageFull.value = true
+describe('localStorage, the one store every tab shares', () => {
+  it('is where a reservation lives: another tab (a fresh module) sees it and goes past it', async () => {
     reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    vi.resetModules()
+    const otherTab = await import('./identity-nonce')
+    expect(otherTab.allocateNonce(n(100), otherTab.loadReservation(OWNER, CONTRACT))).toBe(n(102))
+  })
+
+  it('refuses to reserve when it cannot store, so nothing is signed that another tab could not see', () => {
+    storageFull.value = true
+    expect(() => reserveNonce(OWNER, CONTRACT, n(101), n(100))).toThrow(PENDING_STORE)
+    storageFull.value = false
+    expect(loadReservation(OWNER, CONTRACT)).toBeNull()
+  })
+
+  it('does not run an SDK-signed write it cannot record as pending', async () => {
+    storageFull.value = true
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const write = vi.fn(async () => 'sent')
+
+    const outcome = await runSdkWrite(write)
+
+    expect(write).not.toHaveBeenCalled()
+    expect(outcome).toEqual({ ok: false, error: new Error(NONCE_STORE_ERROR) })
+  })
+
+  it('never brings a released entry back when the release could not be stored', () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    const entry = reserveNonce(OWNER, CONTRACT, null, n(100))
+    storageFull.value = true
+    releaseNonce(OWNER, CONTRACT, entry)
+    storageFull.value = false
+    expect(loadReservation(OWNER, CONTRACT)?.pending.map((p) => p.nonce)).toEqual([n(101)])
     expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT))).toBe(n(102))
   })
 
-  it('is still seen by the next allocation when an older value is stored', () => {
-    reserveNonce(OWNER, CONTRACT, n(101), n(100))
-    storageFull.value = true
-    reserveNonce(OWNER, CONTRACT, n(102), n(100))
-    expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT))).toBe(n(103))
-    expect(loadReservation(OWNER, CONTRACT)?.pending.map((p) => p.nonce)).toEqual([n(101), n(102)])
+  it('gives every pending entry its own id, even on the same clock tick in two tabs, so releasing one never releases another', async () => {
+    vi.setSystemTime(1_000_000)
+    vi.resetModules()
+    const tabA = await import('./identity-nonce')
+    vi.resetModules()
+    const tabB = await import('./identity-nonce')
+    const first = tabA.reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    const second = tabB.reserveNonce(OWNER, CONTRACT, n(102), n(100))
+    expect(second.id).not.toBe(first.id)
+    tabB.releaseNonce(OWNER, CONTRACT, second)
+    expect(tabA.loadReservation(OWNER, CONTRACT)?.pending.map((p) => p.nonce)).toEqual([n(101)])
   })
 })

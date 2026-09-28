@@ -127,6 +127,31 @@ describe('createDocument with an inconclusive outcome', () => {
     expect(result).toMatchObject({ success: true, confirmed: false })
   })
 
+  it.each(['gRPC error: unavailable', 'network request failed', 'missing response message'])(
+    'reports a wait that failed without a verdict (%s) as unconfirmed, so no caller rebuilds it',
+    async (message) => {
+      sdk.stateTransitions.broadcastStateTransition.mockResolvedValue(undefined)
+      sdk.stateTransitions.waitForResponse.mockRejectedValue(new Error(message))
+      sdk.identities.contractNonceWithProof.mockRejectedValue(new Error('transport error: unavailable'))
+
+      const result = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'hi' })
+
+      expect(sdk.stateTransitions.broadcastStateTransition).toHaveBeenCalledTimes(1)
+      expect(result).toMatchObject({ success: true, confirmed: false })
+    }
+  )
+
+  it('still fails a create the wait reports refused, and holds nothing back after it', async () => {
+    sdk.stateTransitions.broadcastStateTransition.mockResolvedValue(undefined)
+    sdk.stateTransitions.waitForResponse.mockRejectedValueOnce({ code: 40106, message: 'Document X has invalid revision' }).mockResolvedValue({})
+
+    const refused = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'one' })
+    const next = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'two' })
+
+    expect(refused).toMatchObject({ success: false })
+    expect(next).toMatchObject({ success: true, confirmed: true })
+  })
+
   it('reports a broadcast that failed without a verdict as unconfirmed, so no caller rebuilds it', async () => {
     sdk.stateTransitions.broadcastStateTransition.mockRejectedValue(new Error('transport error: connection reset'))
     sdk.identities.contractNonceWithProof.mockRejectedValue(new Error('transport error: unavailable'))
