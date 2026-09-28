@@ -201,3 +201,84 @@ describe('ballot reads', () => {
     expect(await service.getWinner(poll())).toBeNull();
   });
 });
+
+describe('tally after an already-voted refusal', () => {
+  it('counts the voter’s earlier ballot that a stale tally was missing', async () => {
+    const { reconcileTally } = await import('./pollr-vote-service');
+    // The stale tab saw only Black; the voter's Green ballot came from another tab.
+    const stale = { counts: [0, 1, 0], total: 1 };
+    expect(reconcileTally({ counts: [1, 1, 0], total: 2 }, stale, [0])).toEqual({ counts: [1, 1, 0], total: 2 });
+    // The count tree still lags: the voter's own recorded choice is never shown at 0.
+    expect(reconcileTally({ counts: [0, 1, 0], total: 1 }, stale, [0])).toEqual({ counts: [1, 1, 0], total: 2 });
+  });
+
+  it('keeps just-written selections the count tree has not caught up with', async () => {
+    const { reconcileTally } = await import('./pollr-vote-service');
+    // Multi-choice: the new pick (3) landed in this call, the fresh read predates it.
+    const optimistic = { counts: [1, 0, 1, 1], total: 3 };
+    expect(reconcileTally({ counts: [1, 1, 1, 0], total: 3 }, optimistic, [0, 1, 2, 3])).toEqual({
+      counts: [1, 1, 1, 1],
+      total: 4,
+    });
+  });
+
+  it('refreshTally re-reads past the cache and falls back to the optimistic tally on failure', async () => {
+    const service = await loadService('v4');
+    mocks.count.mockResolvedValue(new Map([['80', 1n], ['81', 1n]]));
+    service.applyOptimisticVotes(id(9), { counts: [0, 0, 0], total: 0 }, [1]);
+
+    expect(await service.refreshTally(poll(), { counts: [0, 1, 0], total: 1 }, [0])).toEqual({
+      counts: [1, 1, 0],
+      total: 2,
+    });
+    expect(mocks.count).toHaveBeenCalledTimes(1);
+
+    mocks.count.mockRejectedValue(new Error('down'));
+    mocks.query.mockRejectedValue(new Error('down'));
+    const optimistic = { counts: [0, 1, 0], total: 1 };
+    expect(await withoutWaiting(service.refreshTally(poll(), optimistic, [0]))).toBe(optimistic);
+  });
+});
+
+describe('final results on a closed poll', () => {
+  const closed = () => poll({ endsAt: Date.now() - 60_000 });
+
+  it('v3 leaves out ballots created after the poll closed', async () => {
+    const service = await loadService('v3');
+    mocks.count.mockResolvedValue(new Map([['80', 2n], ['81', 1n]]));
+    // One ballot for option 0 landed after endsAt.
+    mocks.query.mockResolvedValue(new Map([['late', { choice: 0 }]]));
+
+    expect(await service.getTally(closed())).toEqual({ counts: [1, 1, 0], total: 2 });
+    const lateQuery = mocks.query.mock.calls[0][0];
+    expect(lateQuery.where).toEqual([['pollId', '==', id(9)], ['$createdAt', '>', closed().endsAt]]);
+    expect(lateQuery.orderBy).toEqual([['pollId', 'asc'], ['$createdAt', 'asc']]);
+  });
+
+  it('v3 keeps the count-tree tally when the late ballots cannot be read', async () => {
+    const service = await loadService('v3');
+    mocks.count.mockResolvedValue(new Map([['80', 2n], ['81', 1n]]));
+    mocks.query.mockRejectedValue(new Error('down'));
+
+    expect(await service.getTally(closed())).toEqual({ counts: [2, 1, 0], total: 3 });
+  });
+
+  it('does not look for late ballots while the poll is open, or on v4', async () => {
+    const v3 = await loadService('v3');
+    mocks.count.mockResolvedValue(new Map([['80', 2n]]));
+    await v3.getTally(poll({ endsAt: Date.now() + 60_000 }));
+    expect(mocks.query).not.toHaveBeenCalled();
+
+    vi.resetModules();
+    const v4 = await loadService('v4');
+    await v4.getTally(closed());
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('never takes a count below zero', async () => {
+    const { subtractChoices } = await import('./pollr-vote-service');
+    const counts = [1, 0, 2];
+    subtractChoices(counts, [0, 0, 1, 2, 42]);
+    expect(counts).toEqual([0, 0, 1]);
+  });
+});

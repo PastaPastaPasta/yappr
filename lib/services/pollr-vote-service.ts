@@ -365,6 +365,30 @@ class PollrVoteService {
   }
 
   /**
+   * Re-read the tally after a ballot collided with one already on chain.
+   *
+   * A duplicate means this tab's tally predates a vote the voter cast
+   * elsewhere, so folding in only the new writes leaves that earlier vote
+   * uncounted. The fresh read supplies it; merging keeps the just-written
+   * votes the count tree may not show yet. Falls back to `optimistic` when the
+   * read fails, which is no worse than before the collision.
+   */
+  async refreshTally(poll: Poll, optimistic: PollTally | null, myChoices: number[]): Promise<PollTally | null> {
+    this.invalidateTally(poll.id);
+    try {
+      const tally = reconcileTally(await this.getTally(poll), optimistic, myChoices);
+      this.tallyCache.set(poll.id, tally);
+      return tally;
+    } catch (error) {
+      logger.warn('PollrVoteService: could not refresh the tally after a duplicate ballot', {
+        pollId: poll.id,
+        error: extractErrorMessage(error),
+      });
+      return optimistic;
+    }
+  }
+
+  /**
    * Which choices `userId` has already cast on this poll.
    *
    * v3 reads the unique index, which leads with [pollId, $ownerId]: one ranged
@@ -494,6 +518,17 @@ class PollrVoteService {
     // loudly instead, and cache nothing, so the caller can offer a retry.
     if (!counts) {
       throw new PollTallyUnavailableError(poll.id);
+    }
+
+    // The close time is advisory, so ballots can land after it and the count
+    // tree has no time axis to leave them out. v3 ballots carry `$createdAt`
+    // under `pollVotesByTime`, so a closed poll's late ballots are read (almost
+    // always none) and taken back out, keeping "Final results" final. v4
+    // ballots are indexOnly with no time index, so there is nothing to bound
+    // them by there.
+    if (!pollrIsV4() && typeof poll.endsAt === 'number' && poll.endsAt < Date.now()) {
+      const late = await this.lateChoices(sdk, poll.id, docType, poll.endsAt);
+      if (late) subtractChoices(counts, late);
     }
 
     // The total is the sum of the poll's REAL options. `choice` is schema-valid
@@ -653,6 +688,43 @@ class PollrVoteService {
     }
   }
 
+  /**
+   * v3: the choices of ballots created after `closedAt`, off `pollVotesByTime`.
+   * Null when they can't all be read — the tally then keeps them rather than
+   * subtracting a partial set.
+   */
+  private async lateChoices(sdk: Sdk, pollId: string, docType: string, closedAt: number): Promise<number[] | null> {
+    try {
+      const { documents, reachedLimit } = await paginateFetchAll(
+        sdk,
+        () => ({
+          dataContractId: POLLR_CONTRACT_ID,
+          documentTypeName: docType,
+          where: [
+            ['pollId', '==', pollId],
+            ['$createdAt', '>', closedAt],
+          ],
+          orderBy: [
+            ['pollId', 'asc'],
+            ['$createdAt', 'asc'],
+          ],
+        }),
+        readChoice
+      );
+      if (reachedLimit) {
+        logger.warn('PollrVoteService: too many late ballots to exclude; final tally includes them', { pollId });
+        return null;
+      }
+      return documents;
+    } catch (error) {
+      logger.warn('PollrVoteService: could not read late ballots; final tally includes them', {
+        pollId,
+        error: extractErrorMessage(error),
+      });
+      return null;
+    }
+  }
+
   /** Fallback 2 (v3): page `pollVotesByTime` and tally client-side. */
   private async countByChoiceScan(sdk: Sdk, pollId: string, docType: string): Promise<number[] | null> {
     try {
@@ -689,6 +761,29 @@ class PollrVoteService {
       return null;
     }
   }
+}
+
+/** Take each listed choice's ballot back out of `counts`, in place. */
+export function subtractChoices(counts: number[], choices: number[]): void {
+  for (const choice of choices) {
+    if (isValidChoice(choice) && counts[choice] > 0) counts[choice] -= 1;
+  }
+}
+
+/**
+ * Merge a freshly read tally with the caller's optimistic one.
+ *
+ * Ballots are immutable, so no option's count can have gone down: taking the
+ * larger count per option keeps writes the count tree has not caught up with
+ * yet, and every choice the voter has recorded counts at least once. The total
+ * is re-summed so the percentages still add up.
+ */
+export function reconcileTally(fresh: PollTally, optimistic: PollTally | null, myChoices: number[]): PollTally {
+  const counts = fresh.counts.map((count, index) => {
+    const floor = myChoices.includes(index) ? 1 : 0;
+    return Math.max(count, optimistic?.counts[index] ?? 0, floor);
+  });
+  return { counts, total: counts.reduce((sum, count) => sum + count, 0) };
 }
 
 /** Trim or pad a counts array to the poll's actual option count. */

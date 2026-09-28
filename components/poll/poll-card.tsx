@@ -193,9 +193,11 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       // few seconds behind the write, and that stale answer would be cached.
       // Only when a real tally is in hand — incrementing an invented zero
       // baseline would turn "results unavailable" into a confident wrong number.
-      if (result.created.length > 0 && tally) {
-        setTally(pollrVoteService.applyOptimisticVotes(poll.id, tally, result.created))
-      }
+      const optimistic =
+        result.created.length > 0 && tally
+          ? pollrVoteService.applyOptimisticVotes(poll.id, tally, result.created)
+          : tally
+      setTally(optimistic)
 
       if (result.created.length > 0) {
         toast.success('Vote counted')
@@ -205,13 +207,21 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       if (result.failed.length > 0) {
         toast.error(categorizeError(result.error))
       }
+
+      // A duplicate means the voter already cast a ballot this card's tally
+      // predates (another tab or device), so the numbers on screen are short by
+      // that vote. Re-read them rather than leave "✓ your vote" on a 0.
+      if (result.alreadyVoted.length > 0) {
+        const myChoices = Array.from(new Set([...myVotes, ...recordedList]))
+        setTally(await pollrVoteService.refreshTally(poll, optimistic, myChoices))
+      }
     } catch (error) {
       logger.error('PollCard: failed to cast vote', error)
       toast.error(categorizeError(error))
     } finally {
       setSubmitting(false)
     }
-  }, [poll, selected, tally, user, openLoginPrompt])
+  }, [poll, selected, tally, myVotes, user, openLoginPrompt])
 
   if (loading) {
     return (
