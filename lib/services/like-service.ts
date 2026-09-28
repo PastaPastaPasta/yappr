@@ -755,7 +755,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
           [ownerField, '==', userId],
           ['$createdAt', '>', sinceTimestamp]
         ],
-        orderBy: [[ownerField, 'asc'], ['$createdAt', 'asc']],
+        orderBy: [[ownerField, 'asc'], ['$createdAt', 'desc']],
         limit: 100
       });
 
