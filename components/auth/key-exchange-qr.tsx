@@ -72,6 +72,7 @@ export function KeyExchangeQR({ uri, size = 200 }: KeyExchangeQRProps) {
       <div className="p-4 bg-white rounded-2xl ring-1 ring-gray-200 dark:ring-neutral-700 shadow-sm">
         <QRCodeSVG
           value={uri}
+          title="QR code to scan with your Dash wallet"
           size={size}
           level="M"
           includeMargin={false}

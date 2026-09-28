@@ -224,6 +224,7 @@ export default function ExplorePage() {
             <div className="flex items-center gap-4 p-4">
               {isSearchFocused && (
                 <button
+                  aria-label="Close search"
                   onClick={() => {
                     setIsSearchFocused(false)
                     setSearchQuery('')

@@ -204,6 +204,7 @@ export function PaymentQRCode({
         >
           <QRCodeSVG
             value={uriWithAmount}
+            title="Payment QR code to scan with your wallet"
             size={size}
             level="M"
             includeMargin={false}

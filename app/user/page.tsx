@@ -452,7 +452,7 @@ function UserProfileContent() {
       <PageShell>
         <PageHeader borderless>
           <div className="flex items-center gap-4 px-4 py-3">
-            <button onClick={() => router.back()} className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900">
+            <button aria-label="Back" onClick={() => router.back()} className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900">
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
             <div className="flex-1">
