@@ -226,7 +226,9 @@ class ReplyService extends BaseDocumentService<Reply> {
       } else if (options.encryption.type === 'inherited' && options.encryption.source) {
         encryptionResult = await prepareInheritedEncryption(
           content,
-          options.encryption.source
+          options.encryption.source,
+          ownerId,
+          options.encryption.encryptionPrivateKey
         );
       } else {
         throw new Error('Invalid encryption options: inherited type requires source');

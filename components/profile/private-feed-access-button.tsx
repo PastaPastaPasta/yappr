@@ -187,27 +187,39 @@ export function PrivateFeedAccessButton({
       )
     }
 
-    // Revoked state
+    // Revoked state: say so, and still allow asking the owner again
     if (status === 'revoked') {
       return (
-        <Tooltip.Provider>
-          <Tooltip.Root>
-            <Tooltip.Trigger asChild>
-              <div data-testid="access-revoked" className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-lg">
-                <LockClosedIcon className="h-4 w-4" />
-                <span>Revoked</span>
-              </div>
-            </Tooltip.Trigger>
-            <Tooltip.Portal>
-              <Tooltip.Content
-                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                sideOffset={5}
-              >
-                Your access to this private feed has been revoked
-              </Tooltip.Content>
-            </Tooltip.Portal>
-          </Tooltip.Root>
-        </Tooltip.Provider>
+        <div className="flex items-center gap-2">
+          <Tooltip.Provider>
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
+                <div data-testid="access-revoked" className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-lg">
+                  <LockClosedIcon className="h-4 w-4" />
+                  <span>Revoked</span>
+                </div>
+              </Tooltip.Trigger>
+              <Tooltip.Portal>
+                <Tooltip.Content
+                  className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+                  sideOffset={5}
+                >
+                  Your access to this private feed has been revoked
+                </Tooltip.Content>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          </Tooltip.Provider>
+          <Button
+            data-testid="request-access-btn"
+            variant="outline"
+            size="sm"
+            onClick={handleRequestAccess}
+            disabled={isProcessing || isRequestProcessing}
+            className="border-yappr-500 text-yappr-600 hover:bg-yappr-50 dark:border-yappr-400 dark:text-yappr-400 dark:hover:bg-yappr-950/30"
+          >
+            {isProcessing || isRequestProcessing ? 'Requesting...' : 'Request again'}
+          </Button>
+        </div>
       )
     }
 

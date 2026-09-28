@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger';
 import { useId, useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
+import { withoutRevokedGrants } from '@/lib/utils/revoked-grants'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -33,6 +34,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
   const { user, mergeSecretsIntoAuthVault } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const refreshKey = usePrivateFeedRefreshStore((state) => state.refreshKey)
+  const triggerRefresh = usePrivateFeedRefreshStore((state) => state.triggerRefresh)
   const [isEnabled, setIsEnabled] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isEnabling, setIsEnabling] = useState(false)
@@ -91,7 +93,10 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
         // Get follower count from on-chain grants (authoritative source)
         // Falls back to local recipientMap if on-chain query fails
         try {
-          const followers = await privateFeedService.getPrivateFollowers(user.identityId)
+          const followers = withoutRevokedGrants(
+            await privateFeedService.getPrivateFollowers(user.identityId),
+            usePrivateFeedRefreshStore.getState().revokedGrantsFor(user.identityId)
+          )
           setFollowerCount(followers.length)
         } catch (err) {
           logger.error('Failed to get followers from chain, using local state:', err)
@@ -219,8 +224,10 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
           logger.error('Failed to store encryption key after enabling private feed:', error)
           toast.error('Private feed enabled, but your key could not be saved. Enter it again to manage your feed.')
         }
-        // Refresh all status to ensure consistent UI state
-        await checkPrivateFeedStatus()
+        // Refresh this card's status and the sibling requests, followers and
+        // dashboard cards, which still read "disabled". This card re-reads its
+        // status from the refresh key, so it is not checked again here.
+        triggerRefresh()
       } else {
         setKeyError(result.error || 'Failed to enable private feed')
         toast.error(result.error || 'Failed to enable private feed')

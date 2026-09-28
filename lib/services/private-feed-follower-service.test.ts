@@ -5,6 +5,7 @@ vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { que
 vi.mock('./state-transition-service', () => ({ stateTransitionService: {} }));
 vi.mock('./private-feed-service', () => ({ privateFeedService: {} }));
 import { PrivateFeedFollowerService } from './private-feed-follower-service';
+import { privateFeedKeyStore } from './private-feed-key-store';
 
 let service: PrivateFeedFollowerService;
 const request = { $id: 'request', $ownerId: 'requester', targetId: 'owner', $createdAt: 100 };
@@ -37,7 +38,27 @@ describe('private feed request status', () => {
 
   it('returns none after the requester cancels the ungranted request', async () => {
     vi.mocked(service.getFollowRequest).mockResolvedValue(null);
+    vi.spyOn(service, 'canDecrypt').mockResolvedValue(false);
     await expect(service.getAccessStatus('owner', 'requester')).resolves.toBe('none');
+  });
+
+  it('reports revoked, not none, when this device still holds keys but the grant is gone (QA D-17)', async () => {
+    vi.mocked(service.getFollowRequest).mockResolvedValue(null);
+    vi.spyOn(service, 'canDecrypt').mockResolvedValue(true);
+    await expect(service.getAccessStatus('owner', 'requester')).resolves.toBe('revoked');
+  });
+
+  it('does not call a failed grant read revoked', async () => {
+    vi.mocked(service.getGrant).mockRejectedValue(new Error('offline'));
+    vi.spyOn(service, 'canDecrypt').mockResolvedValue(true);
+    await expect(service.getAccessStatus('owner', 'requester')).resolves.toBe('none');
+  });
+
+  it('asks for key recovery when the local keys predate a re-approval grant (QA D-17)', async () => {
+    vi.mocked(service.getGrant).mockResolvedValue({ ...grant, epoch: 3 });
+    vi.spyOn(service, 'canDecrypt').mockResolvedValue(true);
+    vi.spyOn(privateFeedKeyStore, 'getCachedEpoch').mockReturnValue(2);
+    await expect(service.getAccessStatus('owner', 'requester')).resolves.toBe('approved-no-keys');
   });
 
   it('still requires a grant for approved status and preserves the key-recovery state', async () => {
@@ -48,6 +69,7 @@ describe('private feed request status', () => {
     expect(cleanup).not.toHaveBeenCalled();
 
     canDecrypt.mockResolvedValue(true);
+    vi.spyOn(privateFeedKeyStore, 'getCachedEpoch').mockReturnValue(1);
     await expect(service.getAccessStatus('owner', 'requester')).resolves.toBe('approved');
     expect(cleanup).toHaveBeenCalledWith('owner', 'requester');
   });
@@ -68,5 +90,38 @@ describe('private feed access reads', () => {
     // Settled reads are not cached: a later check sees a fresh answer.
     await reader.getAccessStatus('owner', 'requester');
     expect(query).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe('catching up after a revocation (QA D-17)', () => {
+  const rekey = { $id: 'rekey', $ownerId: 'owner', $createdAt: 200, epoch: 2, revokedLeaf: 0, packets: new Uint8Array(), encryptedCEK: new Uint8Array() };
+  const internals = () => service as unknown as {
+    getRekeyDocumentsAfter: (ownerId: string, epoch: number) => Promise<unknown[]>;
+    applyRekey: (ownerId: string, rekey: unknown) => Promise<{ success: boolean; error?: string }>;
+  };
+
+  beforeEach(() => {
+    vi.spyOn(privateFeedKeyStore, 'getCachedEpoch').mockReturnValue(1);
+    vi.spyOn(internals(), 'getRekeyDocumentsAfter').mockResolvedValue([rekey]);
+    vi.spyOn(internals(), 'applyRekey').mockResolvedValue({ success: false, error: 'Failed to derive new root key - may be revoked' });
+  });
+
+  it('keeps the keys that still open pre-revocation posts', async () => {
+    const clear = vi.spyOn(privateFeedKeyStore, 'clearFeedKeys').mockImplementation(() => undefined);
+    await expect(service.catchUp('owner', 'requester')).resolves.toEqual({ success: false, error: 'Access has been revoked' });
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it('fails, rather than reporting up to date, when the rekey read fails', async () => {
+    vi.mocked(internals().getRekeyDocumentsAfter).mockRestore();
+    query.mockRejectedValueOnce(new Error('offline'));
+    const result = await service.catchUp('owner', 'requester');
+    expect(result.success).toBe(false);
+  });
+
+  it('asks for recovery when a newer grant replaced the revoked one', async () => {
+    vi.mocked(service.getGrant).mockResolvedValue({ ...grant, epoch: 2 });
+    const result = await service.catchUp('owner', 'requester');
+    expect(result.error).toMatch(/^RECOVERY_NEEDED:/);
   });
 });

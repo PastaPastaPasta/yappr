@@ -153,9 +153,11 @@ class PrivateFeedService {
 
   /**
    * Get the latest epoch for an owner by checking rekey documents
-   * Returns 1 if no rekey documents exist
+   * Returns 1 if no rekey documents exist, and also on a failed read unless
+   * `throwOnError` is set: anything that encrypts must not mistake a failed
+   * read for "no revocations yet".
    */
-  async getLatestEpoch(ownerId: string): Promise<number> {
+  async getLatestEpoch(ownerId: string, options: { throwOnError?: boolean } = {}): Promise<number> {
     try {
       const sdk = await getEvoSdk();
 
@@ -175,6 +177,7 @@ class PrivateFeedService {
       return documents[0].epoch as number;
     } catch (error) {
       logger.error('Error fetching latest epoch:', error);
+      if (options.throwOnError) throw error;
       return 1;
     }
   }
@@ -182,7 +185,10 @@ class PrivateFeedService {
   /**
    * Get all rekey documents for an owner, ordered by epoch
    */
-  async getRekeyDocuments(ownerId: string): Promise<PrivateFeedRekeyDocument[]> {
+  async getRekeyDocuments(
+    ownerId: string,
+    options: { throwOnError?: boolean } = {}
+  ): Promise<PrivateFeedRekeyDocument[]> {
     try {
       const sdk = await getEvoSdk();
 
@@ -211,6 +217,7 @@ class PrivateFeedService {
       return documents;
     } catch (error) {
       logger.error('Error fetching rekey documents:', error);
+      if (options.throwOnError) throw error;
       return [];
     }
   }
@@ -1018,8 +1025,9 @@ class PrivateFeedService {
         return { success: false, error: `Invalid feed seed length: ${feedSeed.length}` };
       }
 
-      // 4. Fetch ALL PrivateFeedRekey documents (ordered by epoch)
-      const rekeyDocs = await this.getRekeyDocuments(ownerId);
+      // 4. Fetch ALL PrivateFeedRekey documents (ordered by epoch). A failed
+      // read must fail recovery: an empty list would roll the epoch back to 1.
+      const rekeyDocs = await this.getRekeyDocuments(ownerId, { throwOnError: true });
       logger.debug(`Found ${rekeyDocs.length} rekey documents`);
 
       // 5. Build revokedLeaves list from rekey docs (in epoch order)
@@ -1169,6 +1177,9 @@ export type PrepareEncryptionResult =
 // Max plaintext size per SPEC §7.5.1 (999 bytes to leave room for version prefix)
 const EXPORTED_MAX_PLAINTEXT_SIZE = 999;
 
+const EPOCH_UNVERIFIED_ERROR =
+  'Could not confirm your private feed\'s current encryption epoch, so nothing was posted. Check your connection and try again.';
+
 /**
  * Prepare owner encryption for a private post (SPEC §8.2)
  *
@@ -1208,8 +1219,15 @@ export async function prepareOwnerEncryption(
       }
     }
 
-    // 1. SYNC CHECK (SPEC §8.2 step 1)
-    const chainEpoch = await privateFeedService.getLatestEpoch(ownerId);
+    // 1. SYNC CHECK (SPEC §8.2 step 1). Fail closed: if the chain epoch cannot
+    // be read, a revocation made on another device may be missing locally, and
+    // encrypting at the stale epoch would let the revoked follower read this.
+    let chainEpoch: number;
+    try {
+      chainEpoch = await privateFeedService.getLatestEpoch(ownerId, { throwOnError: true });
+    } catch {
+      return { success: false, error: EPOCH_UNVERIFIED_ERROR };
+    }
     const localEpoch = privateFeedKeyStore.getCurrentEpoch();
 
     if (chainEpoch > localEpoch) {
@@ -1219,6 +1237,9 @@ export async function prepareOwnerEncryption(
         const recoveryResult = await privateFeedService.recoverOwnerState(ownerId, encryptionPrivateKey);
         if (!recoveryResult.success) {
           return { success: false, error: `Sync failed: ${recoveryResult.error}` };
+        }
+        if (privateFeedKeyStore.getCurrentEpoch() < chainEpoch) {
+          return { success: false, error: EPOCH_UNVERIFIED_ERROR };
         }
         logger.debug('Automatic recovery completed, continuing with encryption');
       } else {
@@ -1298,17 +1319,30 @@ export async function prepareOwnerEncryption(
  * Prepare inherited encryption for a reply to a private post (PRD §5.5)
  *
  * When replying to a private post, the reply inherits encryption from the
- * root private post in the thread. This ensures anyone who can read the
- * parent can also read the reply.
+ * root private post in the thread: it is encrypted to the same FEED, so the
+ * feed's followers can read it. It is encrypted at the feed's CURRENT epoch,
+ * not the root's (SPEC §16.3): a follower revoked after the root was posted
+ * holds the root's epoch key, and must not be able to read replies written
+ * after the revocation. Readers derive each reply's own epoch key.
  *
  * @param content - The plaintext content to encrypt
- * @param source - The encryption source (feed owner ID and epoch)
+ * @param source - The encryption source (feed owner ID and the root post's epoch)
+ * @param authorId - The identity writing the reply
+ * @param encryptionPrivateKey - Optional: the feed owner's key for automatic sync
  * @returns PrepareEncryptionResult with encrypted data or error
  */
 export async function prepareInheritedEncryption(
   content: string,
-  source: { ownerId: string; epoch: number }
+  source: { ownerId: string; epoch: number },
+  authorId: string,
+  encryptionPrivateKey?: Uint8Array
 ): Promise<PrepareEncryptionResult> {
+  // The feed owner replying in their own thread encrypts exactly like a new
+  // private post, including the multi-device sync check (SPEC §8.2).
+  if (authorId === source.ownerId) {
+    return prepareOwnerEncryption(source.ownerId, content, undefined, encryptionPrivateKey);
+  }
+
   try {
     // 1. Validate plaintext size
     const plaintextBytes = utf8Encode(content);
@@ -1319,40 +1353,60 @@ export async function prepareInheritedEncryption(
       };
     }
 
-    // 2. Get the CEK from the cached follower keys for this feed owner
-    const cached = privateFeedKeyStore.getCachedCEK(source.ownerId);
-    if (!cached) {
+    // 2. A follower must hold keys for this feed at all
+    if (!privateFeedKeyStore.getCachedCEK(source.ownerId)) {
       return {
         success: false,
         error: 'Cannot encrypt reply: no access to private feed encryption keys',
       };
     }
 
-    // 3. Derive CEK for the specified epoch
-    let cek: Uint8Array;
-    if (cached.epoch === source.epoch) {
-      cek = cached.cek;
-    } else if (cached.epoch > source.epoch) {
-      cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, source.epoch);
-    } else {
+    // 3. Apply any rekeys since the last sync, so the reply uses the feed's
+    // current epoch. A revoked follower cannot apply them and cannot reply.
+    const { privateFeedFollowerService } = await import('./private-feed-follower-service');
+    let catchUp = await privateFeedFollowerService.catchUp(source.ownerId, authorId);
+    if (catchUp.error?.startsWith('RECOVERY_NEEDED:')) {
+      // Re-approved since these keys were cached: recover from the new grant.
+      const { getEncryptionKeyBytes } = await import('@/lib/secure-storage');
+      const followerKey = getEncryptionKeyBytes(authorId);
+      if (!followerKey) {
+        return {
+          success: false,
+          error: 'SYNC_REQUIRED:Your private feed access was renewed. Please enter your encryption key to sync.',
+        };
+      }
+      // Recovery tolerates a failed catch-up; encrypting must not, so check again.
+      catchUp = await privateFeedFollowerService.recoverFollowerKeys(source.ownerId, authorId, followerKey);
+      if (catchUp.success) catchUp = await privateFeedFollowerService.catchUp(source.ownerId, authorId);
+    }
+    if (!catchUp.success) {
+      return {
+        success: false,
+        error: `Cannot encrypt reply: ${catchUp.error || 'could not sync private feed keys'}`,
+      };
+    }
+
+    const cached = privateFeedKeyStore.getCachedCEK(source.ownerId);
+    if (!cached || cached.epoch < source.epoch) {
       return {
         success: false,
         error: 'Cannot encrypt reply: encryption key state is out of date',
       };
     }
 
-    // 4. Encrypt content using the feed owner's ID as AAD
+    // 4. Encrypt content at the current epoch, using the feed owner's ID as AAD
     const ownerIdBytes = identifierToBytes(source.ownerId);
     const encrypted = privateFeedCryptoService.encryptPostContent(
-      cek,
+      cached.cek,
       content,
       ownerIdBytes,
-      source.epoch
+      cached.epoch
     );
 
     logger.debug('Prepared inherited encryption:', {
       feedOwnerId: source.ownerId,
-      epoch: source.epoch,
+      rootEpoch: source.epoch,
+      epoch: cached.epoch,
       encryptedContentLength: encrypted.ciphertext.length,
     });
 
@@ -1360,7 +1414,7 @@ export async function prepareInheritedEncryption(
       success: true,
       data: {
         encryptedContent: encrypted.ciphertext,
-        epoch: source.epoch,
+        epoch: cached.epoch,
         nonce: encrypted.nonce,
       },
     };

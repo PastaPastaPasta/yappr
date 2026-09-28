@@ -257,8 +257,17 @@ class PrivateFeedFollowerService {
    */
   private getFollowRequestReads = new RequestDeduplicator<string, FollowRequestDocument | null>(0);
 
-  async getFollowRequest(ownerId: string, requesterId: string): Promise<FollowRequestDocument | null> {
-    return this.getFollowRequestReads.dedupe(`${ownerId}:${requesterId}`, () => this.fetchFollowRequest(ownerId, requesterId));
+  async getFollowRequest(
+    ownerId: string,
+    requesterId: string,
+    options: { throwOnError?: boolean } = {}
+  ): Promise<FollowRequestDocument | null> {
+    try {
+      return await this.getFollowRequestReads.dedupe(`${ownerId}:${requesterId}`, () => this.fetchFollowRequest(ownerId, requesterId));
+    } catch (error) {
+      if (options.throwOnError) throw error;
+      return null;
+    }
   }
 
   private async fetchFollowRequest(ownerId: string, requesterId: string): Promise<FollowRequestDocument | null> {
@@ -289,7 +298,7 @@ class PrivateFeedFollowerService {
       };
     } catch (error) {
       logger.error('Error fetching follow request:', error);
-      return null;
+      throw error;
     }
   }
 
@@ -298,8 +307,17 @@ class PrivateFeedFollowerService {
    */
   private getGrantReads = new RequestDeduplicator<string, PrivateFeedGrantDocument | null>(0);
 
-  async getGrant(ownerId: string, recipientId: string): Promise<PrivateFeedGrantDocument | null> {
-    return this.getGrantReads.dedupe(`${ownerId}:${recipientId}`, () => this.fetchGrant(ownerId, recipientId));
+  async getGrant(
+    ownerId: string,
+    recipientId: string,
+    options: { throwOnError?: boolean } = {}
+  ): Promise<PrivateFeedGrantDocument | null> {
+    try {
+      return await this.getGrantReads.dedupe(`${ownerId}:${recipientId}`, () => this.fetchGrant(ownerId, recipientId));
+    } catch (error) {
+      if (options.throwOnError) throw error;
+      return null;
+    }
   }
 
   private async fetchGrant(ownerId: string, recipientId: string): Promise<PrivateFeedGrantDocument | null> {
@@ -333,7 +351,7 @@ class PrivateFeedFollowerService {
       };
     } catch (error) {
       logger.error('Error fetching grant:', error);
-      return null;
+      throw error;
     }
   }
 
@@ -519,12 +537,18 @@ class PrivateFeedFollowerService {
         if (!result.success) {
           // If we failed to derive root key, check if we've actually been revoked
           if (result.error?.includes('Failed to derive new root key') && myId) {
-            const grant = await this.getGrant(ownerId, myId);
+            const grant = await this.getGrant(ownerId, myId, { throwOnError: true });
             if (!grant) {
-              // Grant is gone - definitively revoked
-              // Clear local keys since they're no longer valid
-              privateFeedKeyStore.clearFeedKeys(ownerId);
+              // Grant is gone - definitively revoked. The local keys stay: posts
+              // from before the revocation remain readable on this device
+              // (SPEC §3.4), and they are what tells getAccessStatus that this
+              // device was revoked rather than never approved.
               return { success: false, error: 'Access has been revoked' };
+            }
+            if (grant.epoch > cachedEpoch) {
+              // Re-approved after a revocation: these keys belong to the
+              // earlier grant and must be recovered from the current one.
+              return { success: false, error: 'RECOVERY_NEEDED:Local keys predate the current grant' };
             }
           }
           return result;
@@ -679,7 +703,9 @@ class PrivateFeedFollowerService {
   }
 
   /**
-   * Get rekey documents with epoch greater than a given value
+   * Get rekey documents with epoch greater than a given value.
+   * Throws on a failed read: an empty result means "up to date", and a reply
+   * must never be encrypted at a stale epoch because a read failed.
    */
   private async getRekeyDocumentsAfter(
     ownerId: string,
@@ -716,7 +742,7 @@ class PrivateFeedFollowerService {
       return documents;
     } catch (error) {
       logger.error('Error fetching rekey documents:', error);
-      return [];
+      throw error;
     }
   }
 
@@ -812,14 +838,18 @@ class PrivateFeedFollowerService {
     autoCleanup: boolean = true
   ): Promise<'none' | 'pending' | 'approved' | 'approved-no-keys' | 'revoked'> {
     try {
-      // Check if we have an active grant
-      const grant = await this.getGrant(ownerId, myId);
+      // Check if we have an active grant. A failed read must not look like a
+      // missing grant, or an approved follower would be shown as revoked.
+      const grant = await this.getGrant(ownerId, myId, { throwOnError: true });
 
       if (grant) {
         // We have a grant - check if we can still decrypt
-        // If we have keys and can decrypt current epoch, we're approved
+        // If we have keys and can decrypt current epoch, we're approved.
+        // Keys cached below the grant's epoch are left from an earlier
+        // approval that was revoked, so they need recovering from this grant.
         const canDecrypt = await this.canDecrypt(ownerId);
-        if (canDecrypt) {
+        const cachedEpoch = privateFeedKeyStore.getCachedEpoch(ownerId);
+        if (canDecrypt && cachedEpoch !== null && cachedEpoch >= grant.epoch) {
           // Auto-cleanup: Delete stale FollowRequest if it exists (PRD §4.5)
           if (autoCleanup) {
             this.cleanupStaleFollowRequest(ownerId, myId).catch(err => {
@@ -839,12 +869,18 @@ class PrivateFeedFollowerService {
       }
 
       // No grant - check for pending request
-      const request = await this.getFollowRequest(ownerId, myId);
+      const request = await this.getFollowRequest(ownerId, myId, { throwOnError: true });
       if (request) {
         // A feed-wide rekey does not identify whether this requester was revoked.
         // Without a grant, the requester-owned document remains pending on the
         // owner's side and must remain cancellable by its owner.
         return 'pending';
+      }
+
+      // No grant and no request, but this device holds keys for the feed: it
+      // was approved here, and the owner has since revoked that access.
+      if (await this.canDecrypt(ownerId)) {
+        return 'revoked';
       }
 
       return 'none';

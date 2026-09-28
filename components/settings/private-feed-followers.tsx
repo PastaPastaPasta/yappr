@@ -19,6 +19,7 @@ import Link from 'next/link'
 import { TREE_CAPACITY } from '@/lib/services'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
 import { resolveUserDetailsBatch, type UserDetails } from '@/lib/utils/resolve-user-details'
+import { withoutRevokedGrants } from '@/lib/utils/revoked-grants'
 
 interface PrivateFollower extends UserDetails {
   grantedAt: Date
@@ -43,6 +44,7 @@ export function PrivateFeedFollowers() {
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
   const refreshKey = usePrivateFeedRefreshStore((s) => s.refreshKey)
+  const markGrantRevoked = usePrivateFeedRefreshStore((s) => s.markGrantRevoked)
 
   const loadFollowers = useCallback(async () => {
     if (!user?.identityId) {
@@ -64,7 +66,10 @@ export function PrivateFeedFollowers() {
       }
 
       // Get all private followers
-      const grants = await privateFeedService.getPrivateFollowers(user.identityId)
+      const grants = withoutRevokedGrants(
+        await privateFeedService.getPrivateFollowers(user.identityId),
+        usePrivateFeedRefreshStore.getState().revokedGrantsFor(user.identityId)
+      )
 
       if (grants.length === 0) {
         setFollowers([])
@@ -147,6 +152,10 @@ export function PrivateFeedFollowers() {
         toast.success(
           `Revoked access for ${follower.username ? `@${follower.username}` : follower.displayName}`
         )
+        // The follower is cryptographically revoked even if their grant still
+        // reads back for a moment: hide it in every card, and refresh the stats
+        // and dashboard, since the revocation advanced the epoch.
+        markGrantRevoked(user.identityId, follower.id, follower.grantedAt.getTime())
       } else {
         // Check if this is a sync required error
         if (result.error?.startsWith('SYNC_REQUIRED:')) {
@@ -332,8 +341,9 @@ export function PrivateFeedFollowers() {
         {followers.length > 0 && (
           <div className="pt-4 border-t text-xs text-gray-500">
             <p>
-              Revoking access will prevent the user from seeing your future private posts. They
-              will still be able to see posts from when they had access.
+              Revoking access will prevent the user from seeing your future private posts and
+              replies. Posts from when they had access stay readable only on devices where they
+              already unlocked them.
             </p>
           </div>
         )}
