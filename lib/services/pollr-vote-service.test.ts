@@ -284,6 +284,23 @@ describe('final results on a closed poll', () => {
     expect(mocks.count).not.toHaveBeenCalled();
   });
 
+  it('v3 marks a capped on-time read’s count-tree fallback as not final', async () => {
+    const service = await loadService('v3');
+    // Every page comes back full, so the on-time read hits its pagination cap.
+    const fullPage = new Map(Array.from({ length: 100 }, (_, i) => [`d${i}`, { $id: `d${i}`, choice: 0 }]));
+    mocks.query.mockResolvedValue(fullPage);
+    mocks.count.mockResolvedValue(new Map([['80', 1001n], ['81', 1n]]));
+
+    expect(await service.getTally(closed())).toEqual({ counts: [1001, 1, 0], total: 1002, lateIncluded: true });
+    // The flag survives the cache, so a later load can't relabel it final.
+    expect(await service.getTally(closed())).toMatchObject({ lateIncluded: true });
+
+    vi.resetModules();
+    const open = await loadService('v3');
+    mocks.count.mockResolvedValue(new Map([['80', 2n]]));
+    expect(await open.getTally(poll({ endsAt: Date.now() + 60_000 }))).not.toHaveProperty('lateIncluded');
+  });
+
   it('does not bound by close time while the poll is open, or on v4', async () => {
     const v3 = await loadService('v3');
     mocks.count.mockResolvedValue(new Map([['80', 2n]]));

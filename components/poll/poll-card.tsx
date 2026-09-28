@@ -395,8 +395,9 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
           {/* "Final results" would vouch for numbers we don't have. */}
           {tallyUnavailable ? 'Vote count unavailable' : `${formatNumber(total)} vote${total === 1 ? '' : 's'}`}
           {poll.multiChoice && ' · multiple choice'}
-          {isClosed && !tallyUnavailable && ' · Final results'}
-          {isClosed && tallyUnavailable && ' · Closed'}
+          {/* Nor when the count couldn't be bounded by the close time. */}
+          {isClosed && !tallyUnavailable && !tally?.lateIncluded && ' · Final results'}
+          {isClosed && (tallyUnavailable || tally?.lateIncluded) && ' · Closed'}
         </span>
         {!user && !isClosed && (
           <button

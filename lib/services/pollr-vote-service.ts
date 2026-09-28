@@ -40,6 +40,11 @@ export interface PollTally {
   counts: number[];
   /** Total vote documents for the poll (a multi-choice ballot contributes one per selection). */
   total: number;
+  /**
+   * A closed v3 poll with too many ballots to bound by its close time: the
+   * counts may include late ballots, so they must not be presented as final.
+   */
+  lateIncluded?: boolean;
 }
 
 /** The leading option of a poll, from the v4 ranked index. */
@@ -505,7 +510,7 @@ class PollrVoteService {
     const size = Math.min(Math.max(poll.options.length, 1), POLL_MAX_OPTIONS);
 
     const cached = this.tallyCache.get(poll.id);
-    if (cached) return { total: cached.total, counts: resize(cached.counts, size) };
+    if (cached) return { ...cached, counts: resize(cached.counts, size) };
 
     const sdk = await getEvoSdk();
     const docType = pollrVoteDocType(poll.multiChoice);
@@ -515,10 +520,9 @@ class PollrVoteService {
     // under `pollVotesByTime`, so a closed poll is tallied from its on-time
     // ballots in one read, keeping "Final results" final. v4 ballots are
     // indexOnly with no time index, so there is nothing to bound them by there.
-    const onTime =
-      !pollrIsV4() && typeof poll.endsAt === 'number' && poll.endsAt < Date.now()
-        ? await this.countOnTimeBallots(sdk, poll.id, docType, poll.endsAt)
-        : null;
+    const closedAt =
+      !pollrIsV4() && typeof poll.endsAt === 'number' && poll.endsAt < Date.now() ? poll.endsAt : null;
+    const onTime = closedAt === null ? null : await this.countOnTimeBallots(sdk, poll.id, docType, closedAt);
 
     // Each step falls through to the next only when it couldn't produce counts.
     const counts =
@@ -545,9 +549,10 @@ class PollrVoteService {
     const total = counts.slice(0, size).reduce((sum, count) => sum + count, 0);
 
     const tally: PollTally = { counts, total };
+    if (closedAt !== null && !onTime) tally.lateIncluded = true;
     this.tallyCache.set(poll.id, tally);
 
-    return { total: tally.total, counts: resize(tally.counts, size) };
+    return { ...tally, counts: resize(tally.counts, size) };
   }
 
   /** Drop the cached tally so the next read reflects a just-cast vote. */
@@ -700,11 +705,10 @@ class PollrVoteService {
    * the way a count-tree read minus a separate late-ballot read could.
    *
    * Null when there are more than one read can page through; the caller then
-   * falls back to the count tree, late ballots included, rather than show a
-   * partial count as final. The on-time set never changes once the poll has
-   * closed, so that fallback is the same answer on every load. A failed read
-   * throws {@link PollTallyUnavailableError} instead: falling back there would
-   * let a transient error flip "Final results" to a count with late ballots in.
+   * falls back to the count tree and marks the tally `lateIncluded`, so it is
+   * shown but not as final. A failed read throws
+   * {@link PollTallyUnavailableError} instead: falling back there would let a
+   * transient error flip "Final results" to a count with late ballots in.
    */
   private async countOnTimeBallots(
     sdk: Sdk,
@@ -730,7 +734,7 @@ class PollrVoteService {
         readChoice
       );
       if (reachedLimit) {
-        logger.warn('PollrVoteService: too many ballots to bound by close time; final tally includes late ones', { pollId });
+        logger.warn('PollrVoteService: too many ballots to bound by close time; tally includes late ones', { pollId });
         return null;
       }
       const counts = zeroCounts();
