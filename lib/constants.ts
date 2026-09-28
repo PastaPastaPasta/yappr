@@ -160,10 +160,11 @@ export const blogTopology = (): BlogTopology =>
   BLOG_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_BLOG_TOPOLOGY) ?? 'v1'
 /** True on v2 and every later cut (the v2 write surface). */
 export const blogIsV2 = () => blogTopology() !== 'v1'
+const blogTopologyAtLeast = (topology: BlogTopology) => BLOG_TOPOLOGIES.indexOf(blogTopology()) >= BLOG_TOPOLOGIES.indexOf(topology)
 /** True on v4 and later: blog and post labels are written as lists, not comma-separated strings. */
-export const blogLabelsAreTyped = () => blogTopology() === 'v4' || blogTopology() === 'v5'
+export const blogLabelsAreTyped = () => blogTopologyAtLeast('v4')
 /** True on v5 and later: a comment carries its post's `commentsEnabled` as `postCommentsEnabled`. */
-export const blogCommentsCopyPostFlag = () => blogTopology() === 'v5'
+export const blogCommentsCopyPostFlag = () => blogTopologyAtLeast('v5')
 // ---- profile topology ----
 // `v1` is the unified profile contract live on testnet/production:
 // `paymentUris` and `socialLinks` are JSON strings. `v2` (4.2.0-beta.4,

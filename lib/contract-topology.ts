@@ -725,7 +725,7 @@ export function contractKeepsWarnings(): boolean {
   return moderationListsKept().includes('warnings')
 }
 
-/** The document types the contract's moderators may delete (v9: post, reply). */
+/** The document types the contract's moderators may delete (v9: post, reply, report). */
 export function moderatorDeletableTypes(): readonly string[] {
   if (!contractIsModerated()) return []
   return Object.entries(V9_SCHEMAS)
