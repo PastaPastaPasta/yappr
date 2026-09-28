@@ -147,14 +147,23 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // `v4` (4.2.0-beta.4, docs/SOCIAL_V9.md) is v3 plus a warning list and
 // `blog.labels`/`blogPost.labels` as typed string ARRAYS (v1–v3: a
 // comma-separated string; each cut refuses the other's encoding).
-export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4'] as const
+//
+// `v5` (4.2.0-beta.6, docs/CONTRACTS_BETA6.md) is v4 plus two gates: a comment
+// copies its post's `commentsEnabled` into `postCommentsEnabled` (bound by
+// the `blogPostId` agreement, and `false` refused by the `commentsOpen` rule),
+// and only a blog's owner may post to it. v4 has no `postCommentsEnabled`, so
+// a v5 comment would be refused there (and a v4 comment on a v5 contract is
+// refused whenever the post stores the flag).
+export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5'] as const
 export type BlogTopology = (typeof BLOG_TOPOLOGIES)[number]
 export const blogTopology = (): BlogTopology =>
   BLOG_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_BLOG_TOPOLOGY) ?? 'v1'
 /** True on v2 and every later cut (the v2 write surface). */
 export const blogIsV2 = () => blogTopology() !== 'v1'
 /** True on v4 and later: blog and post labels are written as lists, not comma-separated strings. */
-export const blogLabelsAreTyped = () => blogTopology() === 'v4'
+export const blogLabelsAreTyped = () => blogTopology() === 'v4' || blogTopology() === 'v5'
+/** True on v5 and later: a comment carries its post's `commentsEnabled` as `postCommentsEnabled`. */
+export const blogCommentsCopyPostFlag = () => blogTopology() === 'v5'
 // ---- profile topology ----
 // `v1` is the unified profile contract live on testnet/production:
 // `paymentUris` and `socialLinks` are JSON strings. `v2` (4.2.0-beta.4,

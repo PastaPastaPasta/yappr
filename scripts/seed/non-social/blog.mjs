@@ -21,7 +21,14 @@ import {
  * list of at most 64 (blog) / 16 (post) labels of 1-40 characters; v1-v3 the
  * comma-separated string. Chosen by NEXT_PUBLIC_BLOG_TOPOLOGY, like the app.
  */
-const labelsTyped = () => envValue('NEXT_PUBLIC_BLOG_TOPOLOGY') === 'v4';
+const labelsTyped = () => ['v4', 'v5'].includes(envValue('NEXT_PUBLIC_BLOG_TOPOLOGY'));
+/**
+ * Blog v5 (4.2.0-beta.6) makes a comment copy its post's `commentsEnabled`
+ * (`postCommentsEnabled`, bound by the `blogPostId` agreement, 40127 on a
+ * mismatch). Every seeded post stores the flag, and only posts with it true get
+ * comments, so a v5 comment always carries `true`.
+ */
+const commentsCopyPostFlag = () => envValue('NEXT_PUBLIC_BLOG_TOPOLOGY') === 'v5';
 const labelList = (csv) => [...new Set(csv.split(',').map((label) => label.trim()).filter(Boolean))];
 const storedLabels = (csv) => (labelsTyped() ? labelList(csv) : csv);
 const TYPED_LABEL_LIMITS = { blog: 64, post: 16, length: 40 };
@@ -560,6 +567,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
         // Must equal the post's $ownerId or consensus rejects (40127).
         blogPostOwnerId: id32(actors.get(ownerOf(comment.postKey).owner).ownerId),
         content: comment.content,
+        ...(commentsCopyPostFlag() ? { postCommentsEnabled: true } : {}),
       }, {
         tokenCost: COMMENT_COST,
         adopt: resumed ? async () => {

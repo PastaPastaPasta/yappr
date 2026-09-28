@@ -18,8 +18,8 @@
       "warnings": true,
       "moderators": {
         "$type": "elected",
-        "joinWindow": 86400,
-        "voteWindow": 86400,
+        "joinWindow": 3600,
+        "voteWindow": 3600,
         "seatContestable": false,
         "maxAddedModerators": 10,
         "moderatedDocumentTypes": {
@@ -701,6 +701,18 @@
           "countable": true
         },
         {
+          "name": "quoteDeletedCount",
+          "properties": [
+            {
+              "quotedPostId": "asc"
+            },
+            {
+              "deleted": "asc"
+            }
+          ],
+          "countable": true
+        },
+        {
           "name": "byOwner",
           "properties": [
             {
@@ -749,7 +761,10 @@
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
             "type": "deletableDocument",
-            "documentType": "post"
+            "documentType": "post",
+            "propertyAgreement": {
+              "quotedPostOwnerId": "$ownerId"
+            }
           }
         },
         "language": {
@@ -821,7 +836,10 @@
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
             "type": "deletableDocument",
-            "documentType": "reply"
+            "documentType": "reply",
+            "propertyAgreement": {
+              "quotedPostOwnerId": "$ownerId"
+            }
           }
         },
         "deleted": {
@@ -844,7 +862,7 @@
           "gasFeesPaidBy": 2
         }
       },
-      "description": "A top-level post in the social network (not a reply). Permanent for its owner (a delete is a tombstone replace); the contract's moderators may remove it",
+      "description": "A top-level post. A delete is a tombstone replace; moderators may remove it",
       "additionalProperties": false,
       "documentsMutable": true,
       "canBeDeleted": false,
@@ -972,9 +990,9 @@
           ]
         },
         "tombstoneIsBlank": {
-          "anyOf": [
+          "ifThen": [
             {
-              "notEqual": [
+              "equal": [
                 "deleted",
                 1
               ]
@@ -982,18 +1000,11 @@
             {
               "allOf": [
                 {
-                  "anyOf": [
+                  "equal": [
                     {
-                      "absent": "content"
+                      "length": "content"
                     },
-                    {
-                      "equal": [
-                        "content",
-                        {
-                          "const": ""
-                        }
-                      ]
-                    }
+                    0
                   ]
                 },
                 {
@@ -1358,6 +1369,18 @@
           "countable": true
         },
         {
+          "name": "rootDeletedCount",
+          "properties": [
+            {
+              "rootPostId": "asc"
+            },
+            {
+              "deleted": "asc"
+            }
+          ],
+          "countable": true
+        },
+        {
           "name": "replyToReplyAndTime",
           "properties": [
             {
@@ -1428,7 +1451,10 @@
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
             "type": "deletableDocument",
-            "documentType": "reply"
+            "documentType": "reply",
+            "propertyAgreement": {
+              "parentOwnerId": "$ownerId"
+            }
           }
         },
         "parentOwnerId": {
@@ -1476,7 +1502,7 @@
           "gasFeesPaidBy": 2
         }
       },
-      "description": "A reply, anchored to its thread root; replyToReplyId is presentational nesting only. Permanent for its owner (a delete is a tombstone replace); the contract's moderators may remove it",
+      "description": "A reply under its thread root. A delete is a tombstone replace; moderators may remove it",
       "additionalProperties": false,
       "documentsMutable": true,
       "canBeDeleted": false,
@@ -1540,9 +1566,9 @@
           }
         },
         "tombstoneIsBlank": {
-          "anyOf": [
+          "ifThen": [
             {
-              "notEqual": [
+              "equal": [
                 "deleted",
                 1
               ]
@@ -1550,18 +1576,11 @@
             {
               "allOf": [
                 {
-                  "anyOf": [
+                  "equal": [
                     {
-                      "absent": "content"
+                      "length": "content"
                     },
-                    {
-                      "equal": [
-                        "content",
-                        {
-                          "const": ""
-                        }
-                      ]
-                    }
+                    0
                   ]
                 },
                 {

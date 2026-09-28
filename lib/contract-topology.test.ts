@@ -163,13 +163,17 @@ describe('contract topology', () => {
   })
 
   it('declares a tombstone rule that forbids exactly what the tombstone blanks, and nothing it preserves', async () => {
-    // beta.5 `tombstoneIsBlank`: deleted: true ⇒ content '' or absent, no mediaUrl, no
-    // encryptedContent. `tombstoneDocument` writes content '' and drops the rest, so a
-    // preserve set naming a forbidden property would turn every delete into a 10422.
+    // `tombstoneIsBlank` (beta.6 form): deleted: true ⇒ content of length 0 (`length`
+    // reads an absent one as 0), no mediaUrl, no encryptedContent. `tombstoneDocument`
+    // writes content '' and drops the rest, so a preserve set naming a forbidden property
+    // would turn every delete into a 10422.
     const { tombstonePreservationFor } = await topologyModule('v9')
     for (const kind of ['post', 'reply'] as const) {
       const rule = JSON.stringify(V9[kind].propertyConstraints?.tombstoneIsBlank ?? null)
-      const forbidden = [...rule.matchAll(/"absent":"(\w+)"/g)].map(([, name]) => name)
+      const forbidden = [
+        ...[...rule.matchAll(/"absent":"(\w+)"/g)].map(([, name]) => name),
+        ...[...rule.matchAll(/"equal":\[\{"length":"(\w+)"\},0\]/g)].map(([, name]) => name),
+      ]
       expect(forbidden.sort(), kind).toEqual(['content', 'encryptedContent', 'mediaUrl'])
       const { identifiers, scalars } = tombstonePreservationFor(kind)
       const preserved = [...identifiers, ...scalars]
@@ -283,8 +287,8 @@ describe('contract topology', () => {
       const v9 = await topologyModule('v9')
       const abilities = ['deleteDocuments', 'ban', 'suspend', 'warn']
       expect(v9.electedModeration()).toEqual({
-        joinWindowSeconds: 86_400,
-        voteWindowSeconds: 86_400,
+        joinWindowSeconds: 3_600,
+        voteWindowSeconds: 3_600,
         seatContestable: false,
         electionDelaySeconds: null,
         maxAddedModerators: 10,

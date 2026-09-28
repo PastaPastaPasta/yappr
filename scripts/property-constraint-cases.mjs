@@ -1,7 +1,9 @@
 /**
- * The 4.2.0-beta.5 `propertyConstraints` rules Yappr's contracts declare, and
- * the documents each must accept and refuse (DocumentPropertyConstraintViolated,
- * 10422). docs/CONTRACTS_BETA5.md explains every rule.
+ * The `propertyConstraints` rules Yappr's contracts declare, and the documents
+ * each must accept and refuse (DocumentPropertyConstraintViolated, 10422).
+ * docs/CONTRACTS_BETA5.md explains the beta.5 rules and docs/CONTRACTS_BETA6.md
+ * the beta.6 ones (`tombstoneIsBlank` as `ifThen` + `length`, blog
+ * `commentsOpen`).
  *
  * One table, two consumers:
  *   - `validate-contract-offline.mjs --constraints` runs every case through
@@ -32,7 +34,7 @@ export const DECLARED_RULES = {
     shippingZone: ['flatRateHasCurrency', 'tieredHasTiers'],
   },
   'pollr-contract.json': { poll: ['optionsContiguous'] },
-  'yappr-blog-contract.json': { blogPost: ['chunksContiguous'] },
+  'yappr-blog-contract.json': { blogPost: ['chunksContiguous'], blogComment: ['commentsOpen'] },
 };
 
 // ---- Base documents (valid under every rule) --------------------------------
@@ -46,6 +48,7 @@ const embed = () => ({ embedContractId: id(), embedDocType: 'poll', embedId: id(
 export const baseItem = () => ({ storeId: id(), title: 'constraint probe', status: 'active' });
 export const baseZone = () => ({ storeId: id(), name: 'constraint probe', rateType: 'flat' });
 export const basePoll = () => ({ question: 'constraint probe?', option0: 'a', option1: 'b' });
+export const baseComment = () => ({ blogPostId: id(), blogPostOwnerId: id(), content: 'constraint probe' });
 export const baseBlogPost = () => ({ blogId: id(), title: 'constraint probe', slug: 'constraint-probe', data0: bytes(16) });
 
 const drop = (fields, ...names) => Object.fromEntries(Object.entries(fields).filter(([key]) => !names.includes(key)));
@@ -71,6 +74,9 @@ export const CONSTRAINT_CASES = {
     ['post: quoting a post AND a reply', 'post', { ...basePost(), quotedPostId: id(), quotedReplyId: id(), quotedPostOwnerId: id() }, 'oneQuoteTarget'],
     ['post: a tombstone (blank, quote kept)', 'post', { ...basePost(), content: '', deleted: true, quotedPostId: id(), quotedPostOwnerId: id(), hashtag: 'kept' }, null, { replace: true }],
     ['post: a tombstone whose dead quote was cleared (owner kept)', 'post', { ...basePost(), content: '', deleted: true, quotedPostOwnerId: id() }, null, { replace: true }],
+    // beta.6: `length` reads a missing `content` as 0, so the ifThen form keeps
+    // beta.5's "absent or ''" meaning in one comparison.
+    ['post: a tombstone that leaves content out', 'post', { ...drop(basePost(), 'content'), deleted: true }, null, { replace: true }],
     ['post: a tombstone keeping its text', 'post', { ...basePost(), deleted: true }, 'tombstoneIsBlank', { replace: true }],
     ['post: a tombstone keeping its media', 'post', { ...basePost(), content: '', deleted: true, mediaUrl: 'https://example.com/a.png' }, 'tombstoneIsBlank', { replace: true }],
     ['post: a tombstone keeping its ciphertext', 'post', { ...basePost(), content: '', deleted: true, ...privateFields() }, 'tombstoneIsBlank', { replace: true }],
@@ -113,6 +119,11 @@ export const CONSTRAINT_CASES = {
     ['blogPost: four chunks', 'blogPost', { ...baseBlogPost(), data1: bytes(8), data2: bytes(8), data3: bytes(8) }, null],
     ['blogPost: data2 with no data1', 'blogPost', { ...baseBlogPost(), data2: bytes(8) }, 'chunksContiguous'],
     ['blogPost: data3 with no data2', 'blogPost', { ...baseBlogPost(), data1: bytes(8), data3: bytes(8) }, 'chunksContiguous'],
+    // postCommentsEnabled copies the post's commentsEnabled through the blogPostId
+    // agreement (40127 on a mismatch), so the rule judges the post's own flag.
+    ['blogComment: on a post that leaves commentsEnabled out (on by default)', 'blogComment', baseComment(), null],
+    ['blogComment: on a post with commentsEnabled true', 'blogComment', { ...baseComment(), postCommentsEnabled: true }, null],
+    ['blogComment: on a post with commentsEnabled false', 'blogComment', { ...baseComment(), postCommentsEnabled: false }, 'commentsOpen'],
   ],
 };
 
@@ -122,8 +133,9 @@ export const CONSTRAINT_CASES = {
  * (quoted and followed by its `:` reason, so a rule whose name is a prefix of
  * another, or a different rule's 10422, cannot pass). The prose is that error's
  * Display and no other error produces it. The number itself is not required:
- * on moutai (beta.5) the broadcast refusal reaches the SDK as a `Protocol`
- * WasmSdkError with `code: -1` and the prose only.
+ * on beta.5 the broadcast refusal reached the SDK with `code: -1` and the
+ * prose only. From beta.6 (platform#5112) `describeErr` also carries
+ * `code=10422`; the rule's name in the prose is still what scores the case.
  */
 export const constraintViolation = (rule) =>
   new RegExp(`breaks its propertyConstraints rule \\\\?"${rule}\\\\?":`, 'i');

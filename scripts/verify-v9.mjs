@@ -85,6 +85,16 @@
  *       none, "something else" without a note); A withdraws the reply report;
  *       the interim owner dismisses the post report (a removal record owned by
  *       A), which then no longer fetches, and A may report the post again
+ * The 4.2.0-beta.6 re-cut (docs/CONTRACTS_BETA6.md):
+ *   o4  a quote's quotedPostOwnerId and a nested reply's parentOwnerId agree
+ *       with the target's $ownerId: a quote of B's post naming A, and a reply
+ *       to B's reply naming A, are refused 40127; the true owner lands (the
+ *       quote and reply fixtures elsewhere are the other accepted side). A
+ *       direct reply (no replyToReplyId) is not bound, so it is not probed
+ *   t1  the tombstone counts: [quotedPostId, deleted] and [rootPostId,
+ *       deleted] count a target's quotes and replies that are tombstones, so
+ *       total minus that is the live count (QA D-44). A quotes and replies
+ *       to a fresh post of B's, tombstones one of each, and both counts read 1
  *
  * ## Run
  *
@@ -595,6 +605,65 @@ async function caseO3RepostOwnerAgreement(ctx) {
   expectAccepted('o3c a repost naming the post owner\'s $ownerId is accepted', await repostWith(bs58.decode(botB.ownerId)));
 }
 
+async function caseO4QuoteAndParentOwner(ctx) {
+  const { botA, botB } = ctx;
+  console.log('\n--- o4. a quote and a nested reply name their target\'s real owner (40127, beta.6) ---');
+  const postId = await ensurePost(ctx, 'anchor');
+  const replyId = await ensureReply(ctx);
+  if (!postId || !replyId) { check('o4 fixture', false, 'no anchor post or reply'); return; }
+  const [post, reply, a, b] = [postId, replyId, botA.ownerId, botB.ownerId].map((id) => bs58.decode(id));
+  const create = async (docType, data) => {
+    const { agreement } = await feeAgreement(ctx, docType === 'post' ? POST_ACTION_FEE : REPLY_ACTION_FEE);
+    return manualCreate(ctx, botA, { docType, data, agreement });
+  };
+  expectRejected('o4a a quote of B\'s post naming A as its owner is refused', await create('post', postData({ content: 'o4 forged quote owner', quotedPostId: post, quotedPostOwnerId: a })), PROPERTY_MISMATCH);
+  expectRejected('o4b a quote of B\'s reply naming A as its owner is refused', await create('post', { ...postData({ content: 'o4 forged reply-quote owner', quotedPostOwnerId: a }), quotedReplyId: reply }), PROPERTY_MISMATCH);
+  expectAccepted('o4c a quote of B\'s reply naming B lands', await create('post', { ...postData({ content: 'o4 reply quote', quotedPostOwnerId: b }), quotedReplyId: reply }));
+  expectRejected('o4d a reply to B\'s reply naming A as the parent owner is refused', await create('reply', { ...replyData({ content: 'o4 forged parent', rootPostId: post, parentOwnerId: a }), replyToReplyId: reply }), PROPERTY_MISMATCH);
+  expectAccepted('o4e a reply to B\'s reply naming B lands', await create('reply', { ...replyData({ content: 'o4 nested reply', rootPostId: post, parentOwnerId: b }), replyToReplyId: reply }));
+}
+
+/** A count over the compound [target, deleted] index; `deleted` true is the tombstone bucket. */
+async function tombstoneCount(ctx, docType, field, id) {
+  return readback(async () => {
+    const raw = await ctx.sdk.documents.count({ dataContractId: ctx.contractId, documentTypeName: docType, where: [[field, '==', id], ['deleted', '==', true]] });
+    const total = raw instanceof Map ? raw.get('') : raw?.[''];
+    return total === undefined || total === null ? 0 : Number(total);
+  });
+}
+
+async function caseT1TombstoneCounts(ctx) {
+  const { botA, botB } = ctx;
+  console.log('\n--- t1. quote and reply counts can leave tombstones out (QA D-44, beta.6) ---');
+  const target = await createFeed(ctx, botB, 'post', postData({ content: `t1 target ${Date.now()}` }), 't1 target');
+  if (!target) { check('t1 fixture', false, 'no target post'); return; }
+  const targetBytes = bs58.decode(target);
+  const owner = bs58.decode(botB.ownerId);
+  const quotes = [], replies = [];
+  for (let i = 0; i < 2; i++) {
+    quotes.push(await createFeed(ctx, botA, 'post', postData({ content: `t1 quote ${i}`, quotedPostId: targetBytes, quotedPostOwnerId: owner }), `t1 quote ${i}`));
+    replies.push(await createFeed(ctx, botA, 'reply', replyData({ content: `t1 reply ${i}`, rootPostId: targetBytes, parentOwnerId: owner }), `t1 reply ${i}`));
+  }
+  if ([...quotes, ...replies].some((id) => !id)) { check('t1 fixtures', false, 'a quote or reply did not land'); return; }
+  await settle();
+  const quote = quotes[0];
+  const quoteDoc = await fetchDocument(ctx.sdk, ctx.contractId, 'post', quote);
+  expectAccepted('t1a A tombstones one quote', await attemptReplace(ctx.sdk, botA, { contractId: ctx.contractId, docType: 'post', id: quote, revision: BigInt(quoteDoc?.revision ?? 1),
+    data: postData({ content: '', quotedPostId: targetBytes, quotedPostOwnerId: owner, deleted: true }) }));
+  const replyDoc = await fetchDocument(ctx.sdk, ctx.contractId, 'reply', replies[0]);
+  expectAccepted('t1b A tombstones one reply', await attemptReplace(ctx.sdk, botA, { contractId: ctx.contractId, docType: 'reply', id: replies[0], revision: BigInt(replyDoc?.revision ?? 1),
+    data: replyData({ content: '', rootPostId: targetBytes, parentOwnerId: owner, deleted: true }) }));
+  await settle();
+  const [quoteTotal, quoteDead, replyTotal, replyDead] = await Promise.all([
+    countBy(ctx.sdk, ctx.contractId, 'post', 'quotedPostId', target),
+    tombstoneCount(ctx, 'post', 'quotedPostId', target),
+    countBy(ctx.sdk, ctx.contractId, 'reply', 'rootPostId', target),
+    tombstoneCount(ctx, 'reply', 'rootPostId', target),
+  ]);
+  check('t1c quotes: total 2, tombstoned 1 (quoteDeletedCount), so 1 live', quoteTotal === 2 && quoteDead === 1, `total=${quoteTotal} tombstoned=${quoteDead}`);
+  check('t1d replies: total 2, tombstoned 1 (rootDeletedCount), so 1 live', replyTotal === 2 && replyDead === 1, `total=${replyTotal} tombstoned=${replyDead}`);
+}
+
 async function caseF1TombstoneImmutability(ctx) {
   console.log('\n--- f1. a tombstone must carry every immutable property verbatim (40128) ---');
   ctx.f1Ran = true;
@@ -740,6 +809,8 @@ const CASES = new Map([
   ['o1', caseO1LikeOwnerAgreement],
   ['o2', caseO2LikeReplyOwnerAgreement],
   ['o3', caseO3RepostOwnerAgreement],
+  ['o4', caseO4QuoteAndParentOwner],
+  ['t1', caseT1TombstoneCounts],
   ['f1', caseF1TombstoneImmutability],
   ['f2', caseF2DeletedIsSettableOnce],
   ['f3', caseF3MutableFieldsStayMutable],
@@ -754,7 +825,8 @@ const CASES = new Map([
  * files a `submittedCharter` for this contract; members file `joinRequest`s
  * (`buildJoinRequest`); the leader files an `electedCharter` (opens the
  * contest, 0.5 DASH prefund); masternodes vote over joinWindow + voteWindow
- * (one day each on v9, so the run spans ≥ 1 day); after seating:
+ * (one hour each on the beta.6 devnet cut, which #5108 allows off mainnet, so
+ * a contested run fits in about two hours); after seating:
  * `team(contractId)`, the owner's ban refused 41101, a member's ban naming a
  * listed reason lands, one naming none is 41203, the owner cannot be banned
  * (ownerProtected, 41102), an addition past maxAddedModerators is 41202, and the
@@ -787,6 +859,11 @@ function selfTest() {
   expect('like.postId agrees hashtag and postAuthor with the post\'s $ownerId (o1)', agreement('like', 'postId').hashtag === 'hashtag' && agreement('like', 'postId').postAuthor === '$ownerId');
   expect('likeReply.replyId agrees replyAuthor with the reply\'s $ownerId (o2)', agreement('likeReply', 'replyId').replyAuthor === '$ownerId');
   expect('repost.postId agrees postOwnerId with the post\'s $ownerId (o3)', agreement('repost', 'postId').postOwnerId === '$ownerId');
+  expect('a quote binds quotedPostOwnerId to the quoted post\'s or reply\'s $ownerId (o4a, o4b)', agreement('post', 'quotedPostId').quotedPostOwnerId === '$ownerId' && agreement('post', 'quotedReplyId').quotedPostOwnerId === '$ownerId');
+  expect('a nested reply binds parentOwnerId to the parent reply\'s $ownerId (o4d)', agreement('reply', 'replyToReplyId').parentOwnerId === '$ownerId');
+  const countable = (type, name, props) => schemas[type].indices.some((i) => i.name === name && i.countable === true && JSON.stringify(i.properties.map((p) => Object.keys(p)[0])) === JSON.stringify(props));
+  expect('post counts tombstoned quotes per post, reply tombstoned replies per root (t1)', countable('post', 'quoteDeletedCount', ['quotedPostId', 'deleted']) && countable('reply', 'rootDeletedCount', ['rootPostId', 'deleted']));
+  expect('the election windows are one hour each on this devnet cut (e0c)', moderators.joinWindow === 3600 && moderators.voteWindow === 3600);
   expect('post freezes language, hashtag, the quote and deleted (f1, f2)', ['language', 'hashtag', 'quotedPostId', 'quotedPostOwnerId', 'deleted'].every((p) => schemas.post.immutable?.includes(p)));
   expect('post allows setting deleted once (f2)', schemas.post.immutableAllowSetting?.includes('deleted'));
   expect('post content, mediaUrl and sensitive stay mutable (f3)', ['content', 'mediaUrl', 'sensitive'].every((p) => !schemas.post.immutable?.includes(p)));

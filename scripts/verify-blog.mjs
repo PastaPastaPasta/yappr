@@ -15,7 +15,9 @@
  * warning list (b17 warns and clears) and stores `labels` as a typed string
  * array (b18: a list reads back as a list; an over-long label is refused). The
  * beta.5 re-cut adds `propertyConstraints` (b19: content chunks are contiguous;
- * a gap is refused 10422).
+ * a gap is refused 10422). The beta.6 re-cut (v5) makes a comment copy its
+ * post's `commentsEnabled` (b20: a comment on a comments-off post is refused)
+ * and lets only a blog's owner post to it (b21).
  *   node scripts/verify-blog.mjs --self-test   # offline: contract declares what the cases assert
  */
 import bs58 from 'bs58';
@@ -39,7 +41,10 @@ const blogData = (run, labels) => ({ name: `Battery ${run}`, description: 'blog 
 // stored value byte-identically, so it is a parameter, not a fresh `Date.now()`.
 // Passing `null` omits it, which is how a DRAFT is written.
 const postData = ({ blogId, title, slug, publishedAt = Date.now() }) => ({ blogId, title, slug, data0: crypto.getRandomValues(new Uint8Array(64)), ...(publishedAt === null ? {} : { publishedAt }) });
-const commentData = ({ blogPostId, blogPostOwnerId, content }) => ({ blogPostId, blogPostOwnerId, content });
+// v5 (beta.6): `postCommentsEnabled` must equal the post's `commentsEnabled`,
+// absence included (40127). Every fixture post leaves the flag out, so the
+// fixture comments leave it out too; b20 writes the other shapes.
+const commentData = ({ blogPostId, blogPostOwnerId, content, postCommentsEnabled }) => ({ blogPostId, blogPostOwnerId, content, ...(postCommentsEnabled === undefined ? {} : { postCommentsEnabled }) });
 
 // ---- Cases ------------------------------------------------------------------
 
@@ -285,12 +290,53 @@ async function caseB19PropertyConstraints(ctx) {
   }
 }
 
+async function caseB20CommentsOff(ctx) {
+  const { battery, author, reader, run } = ctx;
+  console.log('\n--- b20. a comment carries its post\'s commentsEnabled; comments off is refused (beta.6 v5) ---');
+  if (!ctx.blogId) {
+    const blog = await battery.probeCreate('b20 fixture blog created', null, author, 'blog', blogData(`${run}-b20`));
+    ctx.blogId = blog.ok ? blog.id : null;
+    if (!ctx.blogId) return;
+  }
+  const post = (title, commentsEnabled) => battery.probeCreate(`b20 fixture post with commentsEnabled ${commentsEnabled}`, null, author, 'blogPost',
+    { ...postData({ blogId: id32(ctx.blogId), title: `${title} ${run}`, slug: `${title.toLowerCase()}-${run}` }), commentsEnabled });
+  const [on, off] = [await post('Open', true), await post('Closed', false)];
+  const owner = id32(author.ownerId);
+  const comment = (label, expect, postId, postCommentsEnabled) => battery.probeCreate(label, expect, reader, 'blogComment',
+    commentData({ blogPostId: id32(postId), blogPostOwnerId: owner, content: `${label} ${run}`, postCommentsEnabled }), { tokenCost: COMMENT_COST });
+  if (on.ok) {
+    const landed = await comment('b20a a comment copying commentsEnabled true lands', null, on.id, true);
+    if (landed.ok) ctx.readerComments += 1;
+    await comment('b20b a comment leaving the flag out of a post that stores true is refused (40127)', PROPERTY_MISMATCH, on.id, undefined);
+  }
+  if (off.ok) {
+    // The honest copy of `false` passes the agreement and breaks the rule; lying
+    // about it (true, or leaving it out) breaks the agreement first.
+    await comment('b20c a comment on a comments-off post is refused (10422 commentsOpen)', constraintViolation('commentsOpen'), off.id, false);
+    await comment('b20d claiming comments are on for a comments-off post is refused (40127)', PROPERTY_MISMATCH, off.id, true);
+    await comment('b20e leaving the flag out on a comments-off post is refused (40127)', PROPERTY_MISMATCH, off.id, undefined);
+  }
+}
+
+async function caseB21OwnerGate(ctx) {
+  const { battery, author, stranger, run } = ctx;
+  console.log('\n--- b21. only a blog\'s owner posts to it (beta.6 v5) ---');
+  if (!ctx.blogId) {
+    const blog = await battery.probeCreate('b21 fixture blog created', null, author, 'blog', blogData(`${run}-b21`));
+    ctx.blogId = blog.ok ? blog.id : null;
+    if (!ctx.blogId) return;
+  }
+  // Before v5 a stranger could squat a slug on someone else's blog (blogAndSlug is unique).
+  await battery.probeCreate('b21a a stranger posting to the author\'s blog is refused (40127)', PROPERTY_MISMATCH, stranger, 'blogPost',
+    postData({ blogId: id32(ctx.blogId), title: `Squat ${run}`, slug: `squat-${run}` }));
+}
+
 const CASES = new Map([
   ['b1', caseB1Fixtures], ['b2', caseB2BlogRefs], ['b3', caseB3Comments], ['b4', caseB4Counts],
   ['b5', caseB5Rankings], ['b6', caseB6Windowed], ['b7', caseB7Edit], ['b8', caseB8Permanence],
   ['b9', caseB9Tokens], ['b10', caseB10CommentDelete], ['b11', caseB11FollowDelete], ['b12', caseB12Immutable],
   ['b13', caseB13Ban], ['b14', caseB14ModeratorDelete], ['b17', caseB17Warn], ['b18', caseB18TypedLabels],
-  ['b19', caseB19PropertyConstraints],
+  ['b19', caseB19PropertyConstraints], ['b20', caseB20CommentsOff], ['b21', caseB21OwnerGate],
 ]);
 
 await runBattery({
@@ -301,12 +347,14 @@ await runBattery({
   yapp: { default: DEFAULT_YAPP, actors: ['reader', 'stranger'], require: true },
   banner: ({ socialId }) => `; YAPP from ${socialId}`,
   selfTest: () => selfTestModerated(CONTRACT_FILE, {
-    // b3a: the notification key binds to the post's REAL owner.
-    blogComment: { agreements: { blogPostId: { blogPostOwnerId: '$ownerId' } }, moderatorDeletable: true },
+    // b3a: the notification key binds to the post's REAL owner. b20: the post's
+    // commentsEnabled is copied, and a copy of `false` is refused (beta.6 v5).
+    blogComment: { agreements: { blogPostId: { blogPostOwnerId: '$ownerId', postCommentsEnabled: 'commentsEnabled' } }, moderatorDeletable: true, constraints: DECLARED_RULES[CONTRACT_FILE].blogComment },
     // b12: blogId frozen, publishedAt write-once. b15: moderators may remove a post.
     // b18: labels are typed string arrays (beta.4 v4).
     // b19: content chunks are contiguous (beta.5).
-    blogPost: { immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'], moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
+    // b21: only the blog's owner posts to it (beta.6 v5).
+    blogPost: { agreements: { blogId: { $ownerId: '$ownerId' } }, immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'], moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
     blog: { moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 64, maxLength: 40 } } },
   }, { moderation: { banlist: true, suspensions: true, warnings: true } }),
   setup: async ({ battery, tokenId, reader, moderator }) => ({ startedAt: Date.now() - 60_000, readerComments: 0, strangerCommentId: null, draftId: null, publishedAt: null, readerYappBefore: await battery.yappBalance(tokenId, reader.ownerId), moderator: { ...moderator, identity: await battery.readback(() => battery.sdk.identities.fetch(moderator.ownerId)) } }),
