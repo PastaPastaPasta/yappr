@@ -85,6 +85,10 @@
  *       none, "something else" without a note); A withdraws the reply report;
  *       the interim owner dismisses the post report (a removal record owned by
  *       A), which then no longer fetches, and A may report the post again
+ *   r2  (post-seat; skips until a team is seated) a seated member dismisses
+ *       A's report: without a listed reason it is 41203, with one it lands;
+ *       the member's own report and the ownerProtected owner's report cannot
+ *       be dismissed (41102). Needs --team-member bot:<n> --reason-doc <id>
  * The 4.2.0-beta.6 re-cut (docs/CONTRACTS_BETA6.md):
  *   o4  a quote's quotedPostOwnerId and a nested reply's parentOwnerId agree
  *       with the target's $ownerId: a quote of B's post naming A, and a reply
@@ -153,6 +157,10 @@ const V9 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
 const POST_ACTION_FEE = actionFeeFor('post');
 const REPLY_ACTION_FEE = actionFeeFor('reply');
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
+// r2 (post-seat): a member of the SEATED team signs the dismissals, and a
+// `reason` document its proposal lists is what a dismissal must cite (41203).
+const TEAM_MEMBER_SPEC = takeFlag('--team-member', null);
+const REASON_DOCUMENT_ID = takeFlag('--reason-doc', null);
 // v9's interim is `contractOwner`, which appoints nobody: before a charter is
 // seated the contract owner is the ONLY identity that may moderate, so a
 // `bot:<n>` moderator would score every moderator case as a 41101 failure.
@@ -778,6 +786,57 @@ async function caseR1Reports(ctx) {
   expectAccepted('r1k A may report the post again after the dismissal', await report({ postId: post, targetOwnerId: author, reason: 0 }));
 }
 
+/**
+ * r2, the publisher's POST-SEAT step: run once masternodes have seated a team
+ * (one-hour windows on this devnet cut), with `--team-member bot:<n>` (a seated
+ * member or the leader) and `--reason-doc <id>` (a `reason` document the seated
+ * proposal lists). Skips on an unseated contract, where r1 covers the interim.
+ */
+async function caseR2SeatedDismissals(ctx) {
+  const { sdk, contractId, botA, botB } = ctx;
+  console.log('\n--- r2. a seated team dismisses reports: a listed reason is required (41203); protected reporters stay (41102) ---');
+  if (!ctx.seated) { console.log('SKIP  r2: no charter is seated yet; run it after the election seats a team'); return; }
+  if (!TEAM_MEMBER_SPEC || !REASON_DOCUMENT_ID) { check('r2 needs --team-member bot:<n> and --reason-doc <id>', false); return; }
+  const member = await resolveModerator(sdk, TEAM_MEMBER_SPEC);
+  const postId = await createFeed(ctx, botB, 'post', postData({ content: `r2 reported ${Date.now()}` }), 'the r2 post');
+  if (!postId) { check('r2 fixture', false, 'no post to report'); return; }
+  const [post, author] = [postId, botB.ownerId].map((id) => bs58.decode(id));
+  const fileReport = async (who, label) => {
+    const outcome = await attemptCreate(sdk, who, { contractId, docType: 'report', data: reportData({ postId: post, targetOwnerId: author, reason: 0 }) });
+    expectAccepted(label, outcome);
+    return outcome.ok ? outcome.id : null;
+  };
+  const dismiss = (documentId, withReason) => errorOf(() => sdk.contracts.moderatorDeleteDocument({
+    identity: member.identity, contractId, documentTypeName: 'report', documentId,
+    reason: { text: 'v9 battery r2: report reviewed', documents: [{ documentTypeName: 'post', documentId: postId }], ...(withReason ? { reasonDocumentId: REASON_DOCUMENT_ID } : {}) },
+    signer: member.signer,
+  }));
+  const REASON_NOT_LISTED = /\bcode"?\s*[=:]\s*41203\b|reason.{0,80}not listed|moderationreasonnotlisted/i;
+  const TARGET_NOT_ALLOWED = /\bcode"?\s*[=:]\s*41102\b|contractmoderationtargetnotallowed|protected|not allowed/i;
+
+  const reportA = await fileReport(botA, 'r2a A reports B\'s post');
+  if (reportA) {
+    const bare = await dismiss(reportA, false);
+    expectRejected('r2b a dismissal citing no listed reason is refused (41203)', { ok: bare === null, error: bare }, REASON_NOT_LISTED);
+    const listed = await dismiss(reportA, true);
+    check('r2c a dismissal citing a listed reason lands', listed === null, (listed ?? '').slice(0, 200));
+  }
+  // A team member's report: the team may not delete what a moderator wrote.
+  const reportMember = await fileReport(member, 'r2d the team member reports B\'s post');
+  if (reportMember) {
+    const refused = await dismiss(reportMember, true);
+    expectRejected('r2e dismissing a team member\'s report is refused (41102)', { ok: refused === null, error: refused }, TARGET_NOT_ALLOWED);
+    await deleteOwn(ctx, member, 'report', reportMember);
+  }
+  // The contract owner is ownerProtected once a team is seated.
+  const reportOwner = await fileReport(ctx.moderator, 'r2f the contract owner reports B\'s post');
+  if (reportOwner) {
+    const refused = await dismiss(reportOwner, true);
+    expectRejected('r2g dismissing the ownerProtected owner\'s report is refused (41102)', { ok: refused === null, error: refused }, TARGET_NOT_ALLOWED);
+    await deleteOwn(ctx, ctx.moderator, 'report', reportOwner);
+  }
+}
+
 // ---- Registry ------------------------------------------------------------------
 
 async function ensurePrepared(ctx) {
@@ -816,6 +875,7 @@ const CASES = new Map([
   ['f3', caseF3MutableFieldsStayMutable],
   ['c1', caseC1PropertyConstraints],
   ['r1', prepared(caseR1Reports)],
+  ['r2', prepared(caseR2SeatedDismissals)],
 ]);
 
 /**
@@ -947,7 +1007,7 @@ await runBattery({
   contractEnvVar: 'V9_CONTRACT_ID',
   usage:
     'Usage: node scripts/verify-v9.mjs --contract <id> [--bot <n>] [--bot2 <n>]\n' +
-    '       [--moderator maker] [--owner <id>] [--owner2 <id>] [--only e0,p1] [--dry-run|--self-test]',
+    '       [--moderator maker] [--owner <id>] [--owner2 <id>] [--team-member bot:<n> --reason-doc <id>] [--only e0,p1] [--dry-run|--self-test]',
   cases: CASES,
   shapes: SHAPES,
   replaceShapes: [

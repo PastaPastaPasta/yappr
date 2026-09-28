@@ -36,10 +36,10 @@
  *   node scripts/validate-contract-offline.mjs <file> --strict-size   # size over 20,000 B fails
  *   node scripts/validate-contract-offline.mjs <file> --network mainnet   # mainnet's one-day election-window floor (default devnet: 0)
  *   node scripts/validate-contract-offline.mjs --probes
- *   node scripts/validate-contract-offline.mjs --constraints   # propertyConstraints accept/refuse cases (needs @dashevo/wasm-dpp)
+ *   node scripts/validate-contract-offline.mjs --constraints   # propertyConstraints accept/refuse cases (wasm-sdk checkDocumentPropertyConstraints)
  */
 import { readFileSync } from 'node:fs';
-import { DataContract, DataContractCreateTransition, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
+import { DataContract, DataContractCreateTransition, Document, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import { renderModeration } from './register-lib.mjs';
 import { CREATE_TRANSITION_BUDGET, auditNodeRules, createTransitionSize, metaSchemaProblems, runContractProbes } from './contract-probes.mjs';
@@ -170,7 +170,7 @@ async function main() {
     if (failed > 0) throw new Error(`${failed} probe(s) did not behave as recorded`);
   }
   if (constraints) {
-    const failed = await runConstraintCases({ loadContractSource, parseContract, platformVersion: PlatformVersion.latest() });
+    const failed = await runConstraintCases({ loadContractSource, parseContract, platformVersion: PlatformVersion.latest(), Document });
     if (failed > 0) throw new Error(`${failed} propertyConstraints case(s) did not behave as recorded`);
   }
 }

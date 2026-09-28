@@ -7,9 +7,10 @@
  *
  * One table, two consumers:
  *   - `validate-contract-offline.mjs --constraints` runs every case through
- *     rs-dpp's own document validation offline (`ExtendedDocument.validate`
- *     from @dashevo/wasm-dpp, which the node runs on a create or replace), so
- *     a rule that drifts from its cases fails before anything is registered;
+ *     rs-dpp's own rule evaluation offline (the wasm-sdk's
+ *     `DataContract.checkDocumentPropertyConstraints`, the check the node runs
+ *     on a create or replace), so a rule that drifts from its cases fails
+ *     before anything is registered;
  *   - the live batteries (verify-v9 c1 and r1, verify-storefront s20,
  *     verify-pollr p12, verify-blog b19) broadcast the refused create cases against the
  *     registered contract; their existing fixtures are the accepted side.
@@ -150,54 +151,35 @@ export function refusedCreates(file, docType) {
 // ---- Offline oracle ------------------------------------------------------------
 
 /**
- * Runs every case through rs-dpp's document validation, offline. The wasm-sdk
- * the app ships has no document validator (it validates on broadcast), so this
- * uses @dashevo/wasm-dpp at the same version: `ExtendedDocument.validate` is
- * `DataContract::validate_document`, the check the node runs on a create or
- * replace, `propertyConstraints` included. wasm-dpp is not a dependency (the
- * app never loads it); without it the run is SKIPPED with a notice, as the ajv
- * meta-schema check is. Install it for a run with
- * `npm install --no-save <the @dashevo/wasm-dpp tarball of the pinned SDK>`.
+ * Runs every case through the `propertyConstraints` check consensus runs on a
+ * create or replace, offline: from 4.2.0-beta.6 (platform#5051) the wasm-sdk's
+ * `DataContract.checkDocumentPropertyConstraints` evaluates a document's rules
+ * with rs-dpp's own code, so no extra package is needed. It judges the rules
+ * alone (not the JSON schema), and uses the device clock for system times;
+ * none of Yappr's rules reads a time, a height or a total.
  *
- * Returns the number of cases whose outcome is not the recorded one, or null
- * when skipped. The contract bytes come from the wasm-sdk parse, so the two
- * packages must be the same platform version.
+ * Returns the number of cases whose outcome is not the recorded one.
  */
-export async function runConstraintCases({ loadContractSource, parseContract, platformVersion }) {
-  let wasmDpp;
-  try {
-    const { createRequire } = await import('node:module');
-    const module = createRequire(import.meta.url)('@dashevo/wasm-dpp');
-    wasmDpp = await (module.default ?? module)();
-  } catch (e) {
-    console.log(`\npropertyConstraints cases: SKIPPED (@dashevo/wasm-dpp unavailable: ${String(e?.message ?? e).slice(0, 80)})`);
-    return null;
-  }
-  const protocolVersion = platformVersion.protocolVersion ?? platformVersion.version;
-  const contracts = new wasmDpp.DataContractFactory(protocolVersion);
-  const documents = new wasmDpp.DocumentFactory(protocolVersion, { generate: () => bytes(32) });
-  const owner = new wasmDpp.Identifier(Buffer.from(id()));
+export async function runConstraintCases({ loadContractSource, parseContract, platformVersion, Document }) {
+  const owner = id();
   let failures = 0;
-  console.log('\npropertyConstraints cases (rs-dpp document validation, the check a create or replace runs):');
+  console.log('\npropertyConstraints cases (DataContract.checkDocumentPropertyConstraints, the rules a create or replace runs):');
   for (const [file, cases] of Object.entries(CONSTRAINT_CASES)) {
-    const contract = await contracts.createFromBuffer(parseContract(loadContractSource(`contracts/${file}`)).toBytes(platformVersion), true);
+    const contract = parseContract(loadContractSource(`contracts/${file}`), platformVersion);
     for (const [label, docType, data, rule] of cases) {
-      // wasm-dpp reads byte properties from Buffers (a bare Uint8Array arrives as a map).
-      const values = Object.fromEntries(Object.entries(data).map(([key, value]) => [key, value instanceof Uint8Array ? Buffer.from(value) : value]));
-      let error = null;
+      let violation = null;
       try {
-        const result = documents.create(contract, owner, docType, values).validate(protocolVersion);
-        error = result.isValid() ? null : result.getFirstError();
+        const document = Document.fromObject({
+          $formatVersion: '0', $id: id(), $ownerId: owner, $dataContractId: contract.id.toBytes(), $type: docType,
+          $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...data,
+        }, platformVersion);
+        violation = contract.checkDocumentPropertyConstraints(document) ?? null;
       } catch (e) {
-        error = { message: String(e?.message ?? e) };
+        violation = { rule: null, message: String(e?.message ?? e) };
       }
-      const code = error?.getCode?.();
-      const message = String(error?.message ?? '');
-      const ok = rule === null
-        ? error === null
-        : code === 10422 && message.includes(`rule "${rule}"`);
+      const ok = rule === null ? violation === null : violation?.rule === rule;
       if (!ok) failures += 1;
-      const outcome = error === null ? 'accepted' : `${code} ${message.slice(0, 110)}`;
+      const outcome = violation === null ? 'accepted' : `10422 "${violation.rule}": ${String(violation.message).slice(0, 100)}`;
       console.log(`${ok ? 'PASS' : 'FAIL'}  ${file.replace(/\.json$/, '')}: ${label} — ${outcome}${ok ? '' : ` (expected ${rule === null ? 'accepted' : `10422 on "${rule}"`})`}`);
     }
   }

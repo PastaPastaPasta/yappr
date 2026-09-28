@@ -23,8 +23,8 @@ storefront `v4`, blog `v4`, pollr `v4`, profile `v2`, DM `v4`/`v5`). The
 reason is that nothing a client writes changes shape: each new rule only
 refuses a document that no Yappr write path produces (see the audit below). A
 client that targets beta.4 therefore behaves identically against these cuts.
-The `report` type below is not part of this cut: it waits for the
-[next v9 registration](#next-v9-registration-the-report-type).
+The `report` type (#579) is not part of this cut: the beta.6 re-cut
+registers it ([CONTRACTS_BETA6.md](CONTRACTS_BETA6.md#the-report-type)).
 
 | Contract | beta.5 grammar adopted | Signed create (cap 20,480) | Change |
 | --- | --- | ---: | --- |
@@ -188,102 +188,6 @@ Social v9 grows by 1,319 B, to 18,291 B signed, which is still 1,709 B under
 the 20,000-byte budget. Every rule fits with room to spare (the largest is 22
 of 32 nodes, and post carries 6 of 16 rules), so nothing had to be dropped.
 
-## Next v9 registration: the `report` type
-
-**Not in the v9 published on 2026-09-28** (`HCAoKyuA…`, from the file at sha256
-`a20635e4…` above). The repo's v9 file carries it for the next registration
-of v9, which gets a new contract id: an update cannot add it, because an
-elected declaration is fixed at creation in every field, so `report` could
-never join `moderatedDocumentTypes` and a seated team could never dismiss a
-report (41201). Until that registration, the client must not ship against
-`HCAoKyuA…`: it would offer reports the contract cannot take.
-
-| | Published v9 | With `report` |
-| --- | ---: | ---: |
-| Signed create | 18,291 B | 19,798 B (202 B under the budget) |
-| sha256 | `a20635e4…c29c` | `590e1e5d…a8d1` (superseded: the beta.6 re-cut folds `report` in, see [CONTRACTS_BETA6.md](CONTRACTS_BETA6.md)) |
-
-Readers report a post or reply to the moderators; the moderators remove it,
-act on its author, or dismiss the reports. Yappr has no backend, so a report is
-a document, and it lives in social v9 because that is where the moderators and
-the reported types are. A separate contract would add a registration and an
-env var, would have to be re-registered with every social cut (its references
-name the social contract's id), and the social contract's moderators could not
-delete its documents.
-
-```json
-"report": {
-  "properties": {
-    "postId":        { identifier, "refersTo": { "type": "deletableDocument", "documentType": "post",  "propertyAgreement": { "targetOwnerId": "$ownerId" } } },
-    "replyId":       { identifier, "refersTo": { "type": "deletableDocument", "documentType": "reply", "propertyAgreement": { "targetOwnerId": "$ownerId" } } },
-    "targetOwnerId": { identifier, "distinctFrom": "$ownerId" },
-    "reason":        { "type": "integer", "minimum": 0, "maximum": 8 },
-    "note":          { "type": "string", "minLength": 1, "maxLength": 500 }
-  },
-  "required": ["$createdAt", "targetOwnerId", "reason"],
-  "indices": ["ownerAndPost (unique): $ownerId, postId", "ownerAndReply (unique): $ownerId, replyId",
-              "byPost: postId", "byReply: replyId", "byTime: $createdAt"],
-  "documentsMutable": false, "canBeDeletedByModerators": true,
-  "propertyConstraints": { "oneTarget": …, "otherHasNote": … }
-}
-```
-
-and `config.moderation.moderators.moderatedDocumentTypes.report` is
-`["deleteDocuments"]`.
-
-| Rule | What consensus refuses | Code |
-| --- | --- | --- |
-| `oneTarget` | a report naming both a post and a reply, or neither | 10422 |
-| `otherHasNote` | reason 8 ("something else") without a note | 10422 |
-| `refersTo` | a report of a post or reply that does not exist (a removed one included) | 40120 |
-| `propertyAgreement` | `targetOwnerId` other than the target's author, so the queue can name the author even after the target is removed | 40127 |
-| `distinctFrom` | reporting your own post or reply | 10419 |
-| unique `ownerAndPost` / `ownerAndReply` | a second report of the same target by the same reporter. A unique index skips a document whose property is absent, so a reply report never collides on the post index. | 40105 |
-
-The reason codes are frozen with the contract: 0 spam or scam, 1 harassment,
-2 hate, 3 violence or threats, 4 sexual content, 5 self-harm, 6 illegal goods
-or activity, 7 impersonation, 8 something else (`lib/reports.ts`, pinned
-against this file by `lib/reports.test.ts`).
-
-**Withdrawing and dismissing.** A report is immutable. Its reporter withdraws
-it by deleting it (`canBeDeleted` is the contract default) and gets the storage
-refund. The moderators dismiss it by deleting it as moderators, for the whole
-team. That is why `report` is moderator-deletable and moderated for
-`deleteDocuments` alone:
-
-- every dismissal is its own moderation transition and leaves a removal record
-  forever; the client cites the reported post in the record's
-  `reason.documents`;
-- a seated elected team must cite a charter reason for each one (41203), as for
-  any deletion, so its charter needs a reason that fits a dismissal;
-- the reporter gets no refund;
-- a report filed by an identity the network protects from moderation cannot be
-  dismissed (41102): whoever may moderate right now (the interim owner, or the
-  seated leader and members) and, once a team is seated, the `ownerProtected`
-  owner. The client offers moderators no Report item, withdraws a moderator's
-  own reports when it dismisses (a withdrawal is the reporter's own delete),
-  and leaves the rest for their authors to withdraw;
-- the unique entry goes with the report, so the reporter may report the same
-  post again after a dismissal.
-
-Removing the reported post does not delete its reports. The queue shows them
-as handled, once the removal record confirms the post is gone, and offers to
-clear them, which costs the same per report. Before it dismisses, the queue
-reads every report on the post again: reports withdrawn or dismissed meanwhile
-drop out, and new ones are shown for review instead of being dismissed unseen.
-
-**Privacy.** Reports are public: anyone can read who reported what, and why.
-Encrypting them to the moderators is not possible while the team can change at
-every election. The dialog says so before a report is filed.
-
-**Queries.** `ownerAndPost`/`ownerAndReply` answer "have I reported this?".
-`byTime` feeds the moderators' queue, newest first. `byPost`/`byReply` list
-every report on one target when the moderators dismiss them. No index is
-countable: the queue counts the reports it has read.
-
-**Size.** The type adds 1,507 B signed. To fit, `byPost`/`byReply` carry no
-`$createdAt` (the queue sorts client-side), and the type description is short.
-
 ## Other beta.5 changes, checked
 
 - **#4983** (`immutableAllowSetting` on a deletableDocument reference): the only
@@ -303,7 +207,7 @@ countable: the queue counts the reports it has read.
 node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v9.json --strict-size
 node scripts/validate-contract-offline.mjs contracts/<each file above>
 node scripts/validate-contract-offline.mjs --probes        # 48 probes (5 new for these rules)
-node scripts/validate-contract-offline.mjs --constraints   # 49 accept/refuse cases, rs-dpp validation
+node scripts/validate-contract-offline.mjs --constraints   # 43 accept/refuse cases, rs-dpp validation
 node scripts/verify-{v9,storefront,pollr,blog}.mjs --self-test
 ```
 
@@ -328,7 +232,6 @@ node scripts/verify-{v9,storefront,pollr,blog}.mjs --self-test
   | Battery | Case | Covers |
   | --- | --- | --- |
   | verify-v9 | c1 | 8 post/reply create refusals, then a tombstone replace keeping `mediaUrl` (refused) and the same tombstone without it (lands) |
-  | verify-v9 | r1 | (next v9 registration) reports: a post and a reply report land; a duplicate (40105), a wrong author (40127), a self-report (10419), a ghost post (40120) and the 3 `report` constraint refusals are refused; the reporter withdraws one; the interim owner dismisses the other, and the reporter may report again |
   | verify-storefront | s20 | 4 item/zone refusals under the seller's real store |
   | verify-pollr | p12 | 2 gapped polls |
   | verify-blog | b19 | 2 gapped posts under the fixture blog |
@@ -361,8 +264,7 @@ node scripts/verify-{v9,storefront,pollr,blog}.mjs --self-test
 - **No seeder change** is needed: every seeder shape satisfies the new rules.
 - **Run the live cases after registration:**
   `verify-v9 --only c1`, `verify-storefront --only s20`, `verify-pollr --only p12`
-  and `verify-blog --only b19`, alongside the usual batteries (and
-  `verify-v9 --only r1` once v9 is registered with `report`). Each case runs
+  and `verify-blog --only b19`, alongside the usual batteries. Each case runs
   alone: c1, s20 and b19 create or reuse their own fixture (anchor post,
   seller store, blog) when their fixture case has not run. A refusal scores only
   if it is 10422 AND the message names that exact rule. c1's refused creates

@@ -58,7 +58,7 @@ exchange, vault and auth vault are published from the testnet snapshot
 
 | # | Change | Why | Δ signed |
 | --- | --- | --- | ---: |
-| 1 | The `report` doctype and `moderatedDocumentTypes.report = ["deleteDocuments"]` (#579) | Readers report a post or reply, and the moderators dismiss reports by deleting them. The design is in [CONTRACTS_BETA5.md § the report type](CONTRACTS_BETA5.md#next-v9-registration-the-report-type) | +1,507 |
+| 1 | The `report` doctype and `moderatedDocumentTypes.report = ["deleteDocuments"]` (#579) | Readers report a post or reply, and the moderators dismiss reports by deleting them. The design is in [the report type](#the-report-type) below | +1,507 |
 | 2 | `joinWindow` and `voteWindow` go from 86,400 to **3,600** | #5108 keeps the one-day floor on mainnet only, and every other network takes 0. With one hour each, a contested election re-test runs in about two hours. A window of 0 would resolve in a block or two, leaving no time to file a second applicant or cast votes. `seatContestable: false` needs no cool-down | −4 |
 | 3 | `tombstoneIsBlank` (post, reply) becomes `ifThen[deleted = 1, allOf[length(content) = 0, absent mediaUrl, absent encryptedContent]]` | The meaning is unchanged: `length` reads an absent `content` as 0, which replaces beta.5's `absent ∨ ""` pair. It saves bytes for 1 and 5 | −62 |
 | 4 | `post.quotedPostId` and `post.quotedReplyId` agree `quotedPostOwnerId ← $ownerId`. `reply.replyToReplyId` agrees `parentOwnerId ← $ownerId` | Before this, the "quotes of my posts" and "replies to me" notification keys could name anyone. Every writer already sends the target's author (below) | +146 |
@@ -83,6 +83,97 @@ The comment write shape changes, so blog moves to topology **`v5`**
   the owner, and copies its flag. It refuses before paying when the flag is
   `false`, or when the post cannot be read, since guessing would be refused
   for every post that stores the flag.
+
+## The `report` type
+
+The beta.5 v9 published on 2026-09-28 (`HCAoKyuA…`) has no `report` type, and a
+contract update cannot add it: the elected declaration is fixed at creation, so
+`report` could never join `moderatedDocumentTypes`, and a seated team would get
+41201 on every dismissal.
+
+The type was written in #579 by QuantumExplorer against the beta.5 file and
+folded into this cut. Its size and pin are part of the v9 figures above.
+
+Readers report a post or reply to the moderators; the moderators remove it,
+act on its author, or dismiss the reports. Yappr has no backend, so a report is
+a document, and it lives in social v9 because that is where the moderators and
+the reported types are. A separate contract would add a registration and an
+env var, would have to be re-registered with every social cut (its references
+name the social contract's id), and the social contract's moderators could not
+delete its documents.
+
+```json
+"report": {
+  "properties": {
+    "postId":        { identifier, "refersTo": { "type": "deletableDocument", "documentType": "post",  "propertyAgreement": { "targetOwnerId": "$ownerId" } } },
+    "replyId":       { identifier, "refersTo": { "type": "deletableDocument", "documentType": "reply", "propertyAgreement": { "targetOwnerId": "$ownerId" } } },
+    "targetOwnerId": { identifier, "distinctFrom": "$ownerId" },
+    "reason":        { "type": "integer", "minimum": 0, "maximum": 8 },
+    "note":          { "type": "string", "minLength": 1, "maxLength": 500 }
+  },
+  "required": ["$createdAt", "targetOwnerId", "reason"],
+  "indices": ["ownerAndPost (unique): $ownerId, postId", "ownerAndReply (unique): $ownerId, replyId",
+              "byPost: postId", "byReply: replyId", "byTime: $createdAt"],
+  "documentsMutable": false, "canBeDeletedByModerators": true,
+  "propertyConstraints": { "oneTarget": …, "otherHasNote": … }
+}
+```
+
+and `config.moderation.moderators.moderatedDocumentTypes.report` is
+`["deleteDocuments"]`.
+
+| Rule | What consensus refuses | Code |
+| --- | --- | --- |
+| `oneTarget` | a report naming both a post and a reply, or neither | 10422 |
+| `otherHasNote` | reason 8 ("something else") without a note | 10422 |
+| `refersTo` | a report of a post or reply that does not exist (a removed one included) | 40120 |
+| `propertyAgreement` | `targetOwnerId` other than the target's author, so the queue can name the author even after the target is removed | 40127 |
+| `distinctFrom` | reporting your own post or reply | 10419 |
+| unique `ownerAndPost` / `ownerAndReply` | a second report of the same target by the same reporter. A unique index skips a document whose property is absent, so a reply report never collides on the post index. | 40105 |
+
+The reason codes are frozen with the contract: 0 spam or scam, 1 harassment,
+2 hate, 3 violence or threats, 4 sexual content, 5 self-harm, 6 illegal goods
+or activity, 7 impersonation, 8 something else (`lib/reports.ts`, pinned
+against this file by `lib/reports.test.ts`).
+
+**Withdrawing and dismissing.** A report is immutable. Its reporter withdraws
+it by deleting it (`canBeDeleted` is the contract default) and gets the storage
+refund. The moderators dismiss it by deleting it as moderators, for the whole
+team. That is why `report` is moderator-deletable and moderated for
+`deleteDocuments` alone:
+
+- every dismissal is its own moderation transition and leaves a removal record
+  forever; the client cites the reported post in the record's
+  `reason.documents`;
+- a seated elected team must cite a charter reason for each one (41203), as for
+  any deletion, so its charter needs a reason that fits a dismissal;
+- the reporter gets no refund;
+- a report filed by an identity the network protects from moderation cannot be
+  dismissed (41102): whoever may moderate right now (the interim owner, or the
+  seated leader and members) and, once a team is seated, the `ownerProtected`
+  owner. The client offers moderators no Report item, withdraws a moderator's
+  own reports when it dismisses (a withdrawal is the reporter's own delete),
+  and leaves the rest for their authors to withdraw;
+- the unique entry goes with the report, so the reporter may report the same
+  post again after a dismissal.
+
+Removing the reported post does not delete its reports. The queue shows them
+as handled, once the removal record confirms the post is gone, and offers to
+clear them, which costs the same per report. Before it dismisses, the queue
+reads every report on the post again: reports withdrawn or dismissed meanwhile
+drop out, and new ones are shown for review instead of being dismissed unseen.
+
+**Privacy.** Reports are public: anyone can read who reported what, and why.
+Encrypting them to the moderators is not possible while the team can change at
+every election. The dialog says so before a report is filed.
+
+**Queries.** `ownerAndPost`/`ownerAndReply` answer "have I reported this?".
+`byTime` feeds the moderators' queue, newest first. `byPost`/`byReply` list
+every report on one target when the moderators dismiss them. No index is
+countable: the queue counts the reports it has read.
+
+**Size.** The type adds 1,507 B signed. To fit, `byPost`/`byReply` carry no
+`$createdAt` (the queue sorts client-side), and the type description is short.
 
 ## Rejected or deferred
 
@@ -146,14 +237,16 @@ node scripts/verify-{v9,blog,storefront,pollr}.mjs --self-test
   - a 0 s control is added (accepted off mainnet);
   - a window over four weeks is added (refused everywhere);
   - the `tombstoneIsBlank` probe follows the `ifThen` path.
-- **`--constraints`** now runs: `@dashevo/wasm-dpp` 4.2.0-beta.6 was built from
-  the tag (it is not on npm; install it `--no-save`). #579's six `report` cases
-  run for the first time, with four new cases:
+- **`--constraints`** now runs on the wasm-sdk alone: it evaluates each case
+  with `DataContract.checkDocumentPropertyConstraints` (platform#5051), the
+  rule check consensus runs, so the optional `@dashevo/wasm-dpp` install is
+  gone. #579's six `report` cases run for the first time, with four new cases:
   - a tombstone that leaves `content` out (accepted);
   - three `blogComment` flag shapes (absent and `true` accepted, `false` refused
     `commentsOpen`).
 
-  Removing `commentsOpen` turns its refusal into a FAIL (checked).
+  Removing `commentsOpen` or `otherHasNote` turns its refusal into a FAIL
+  (checked).
 
 ### New live cases
 
@@ -163,6 +256,7 @@ node scripts/verify-{v9,blog,storefront,pollr}.mjs --self-test
 | verify-v9 | t1 | A quotes and replies to a fresh post of B's twice each, then tombstones one of each. Total counts read 2, and the `deleted == true` counts read 1 (`quoteDeletedCount`, `rootDeletedCount`) |
 | verify-v9 | e0 | (existing) now pins 3600/3600 against the published declaration |
 | verify-v9 | r1 | (#579) Reports: two creates land; the duplicate (40105), wrong author (40127), self-report (10419), ghost post (40120) and three constraint refusals are refused; the reporter withdraws one; the interim owner dismisses the other; the reporter reports again |
+| verify-v9 | r2 | **Post-seat, for the publisher.** Once a team is seated (about two hours with one-hour windows), run `verify-v9 --only r2 --team-member bot:<n> --reason-doc <id>`. A member dismissing A's report without a listed reason is refused 41203, and with one it lands. The member's own report, and the `ownerProtected` owner's report, cannot be dismissed (41102). The case skips while no team is seated |
 | verify-blog | b20 | Comments-off: a comment copying `true` lands; leaving the flag out on a `true` post is 40127; on a `false` post, the honest `false` is 10422 `commentsOpen`, and `true` or absent is 40127 |
 | verify-blog | b21 | A stranger posting to the author's blog is refused 40127 |
 
@@ -185,6 +279,7 @@ node scripts/verify-{v9,blog,storefront,pollr}.mjs --self-test
   (41102); their authors withdraw them.
 - **Run after registration:**
   - `verify-v9 --only e0,o4,t1,c1,r1`
+  - after the election seats a team: `verify-v9 --only r2 --team-member bot:<n> --reason-doc <id>`
   - `verify-blog --only b3,b19,b20,b21`
   - the usual full batteries
 
