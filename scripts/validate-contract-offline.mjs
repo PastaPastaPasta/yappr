@@ -34,6 +34,7 @@
  *   node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v9.json
  *   node scripts/validate-contract-offline.mjs <file> --immutable post,reply
  *   node scripts/validate-contract-offline.mjs <file> --strict-size   # size over 20,000 B fails
+ *   node scripts/validate-contract-offline.mjs <file> --network mainnet   # mainnet's one-day election-window floor (default devnet: 0)
  *   node scripts/validate-contract-offline.mjs --probes
  *   node scripts/validate-contract-offline.mjs --constraints   # propertyConstraints accept/refuse cases (needs @dashevo/wasm-dpp)
  */
@@ -64,11 +65,15 @@ function parseArgs(argv) {
   // --strict-size: over the 20,000-byte headroom budget is a FAILURE, not a
   // warning. Run it on every social cut before registering it.
   const strictSize = argv.includes('--strict-size');
-  // Skip the flag AND its value, so `--immutable post,reply <file>` does not
+  const networkIndex = argv.indexOf('--network');
+  const network = networkIndex === -1 ? 'devnet' : argv[networkIndex + 1];
+  if (!['devnet', 'testnet', 'mainnet'].includes(network)) throw new Error(`--network must be devnet, testnet or mainnet (got "${network}")`);
+  // Skip each flag's value, so `--immutable post,reply <file>` does not
   // resolve the positional to "post,reply".
-  const file = argv.find((arg, index) => !arg.startsWith('--') && (flagIndex === -1 || index !== flagIndex + 1));
+  const valueIndexes = new Set([flagIndex, networkIndex].filter((index) => index !== -1).map((index) => index + 1));
+  const file = argv.find((arg, index) => !arg.startsWith('--') && !valueIndexes.has(index));
   if (!file && !probes && !constraints) throw new Error('usage: node scripts/validate-contract-offline.mjs <contract.json> [--immutable a,b] | --probes | --constraints');
-  return { file, immutable, probes, constraints, strictSize };
+  return { file, immutable, probes, constraints, strictSize, network };
 }
 
 /** A contract file in the shape registration assembles it: schemas, config (file or default), tokens. */
@@ -93,7 +98,7 @@ function parseContract(source, platformVersion = PlatformVersion.latest()) {
   }, true, platformVersion);
 }
 
-function validateFile(file, immutable, strictSize) {
+function validateFile(file, immutable, strictSize, network) {
   const source = loadContractSource(file);
   const platformVersion = PlatformVersion.latest();
   const contract = parseContract(source, platformVersion);
@@ -140,7 +145,7 @@ function validateFile(file, immutable, strictSize) {
   console.log(`    create size:      ~${size.bytes} B signed (budget ${CREATE_TRANSITION_BUDGET}, cap 20480)`);
   const meta = metaSchemaProblems(source);
   console.log(`    meta-schema v3:   ${meta.length === 0 ? 'ok' : `${meta.length} problem(s)`}`);
-  const problems = [...auditNodeRules(source), ...meta];
+  const problems = [...auditNodeRules(source, { network }), ...meta];
   // Over the cap is a refusal; between the budget and the cap is a warning
   // (v8, published at ~20,300 B, sits there: any growth would not register).
   if (size.overCap) problems.push(`the create transition is ~${size.bytes} B signed, over the 20480 B cap (rs-dapi refuses it, Drive 10602)`);
@@ -156,8 +161,8 @@ function validateFile(file, immutable, strictSize) {
 async function main() {
   // The wasm module backs every class below; nothing works before it loads.
   await ensureInitialized();
-  const { file, immutable, probes, constraints, strictSize } = parseArgs(process.argv.slice(2));
-  if (file) validateFile(file, immutable, strictSize);
+  const { file, immutable, probes, constraints, strictSize, network } = parseArgs(process.argv.slice(2));
+  if (file) validateFile(file, immutable, strictSize, network);
   if (probes) {
     const platformVersion = PlatformVersion.latest();
     const sizeOf = (contract) => createTransitionSize(contract, { DataContractCreateTransition, platformVersion });

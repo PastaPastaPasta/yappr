@@ -42,8 +42,9 @@ import { fileURLToPath } from 'node:url';
 const LIMITS = {
   maxStateTransitionSize: 20_480,
   // The one-day floor is mainnet's; from 4.2.0-beta.6 (#5108) any other network
-  // takes 0. Audited at the mainnet floor, so a cut that passes here passes everywhere.
-  electionWindow: [86_400, 2_419_200],
+  // takes 0 (elected.rs `window_min`). The ceiling holds everywhere.
+  electionWindow: [0, 2_419_200],
+  mainnetElectionWindowFloor: 86_400,
   challengeCoolDown: [1_209_600, 94_608_000],
   maxAddedModerators: 15,
   maxModerators: 16,
@@ -178,11 +179,12 @@ function referenceBudget(schema) {
   return total;
 }
 
-function auditElected(elected, moderation, schemas) {
+function auditElected(elected, moderation, schemas, { network }) {
   const problems = [];
+  const bounds = network === 'mainnet' ? [LIMITS.mainnetElectionWindowFloor, LIMITS.electionWindow[1]] : LIMITS.electionWindow;
   for (const key of ['joinWindow', 'voteWindow']) {
     const value = elected[key] ?? 604_800;
-    if (!within(value, LIMITS.electionWindow)) problems.push(`elected ${key} ${value} s is outside ${LIMITS.electionWindow.join(' to ')} s (10900)`);
+    if (!within(value, bounds)) problems.push(`elected ${key} ${value} s is outside ${bounds.join(' to ')} s on ${network} (10900)`);
   }
   if (typeof elected.seatContestable !== 'boolean') problems.push('elected seatContestable is required');
   if (elected.seatContestable === true && !within(elected.challengeCoolDown, LIMITS.challengeCoolDown)) {
@@ -217,9 +219,10 @@ function auditElected(elected, moderation, schemas) {
 /**
  * The node-side registration rules Yappr's cuts depend on and the wasm parse
  * skips. Returns a list of problems (empty = the node would accept on these
- * counts).
+ * counts). `network` picks the election-window floor: one day on mainnet,
+ * 0 elsewhere (#5108). Yappr's cuts register on moutai, so devnet is the default.
  */
-export function auditNodeRules(source) {
+export function auditNodeRules(source, { network = 'devnet' } = {}) {
   const problems = [];
   const schemas = source.documentSchemas;
   const config = source.config ?? {};
@@ -235,7 +238,7 @@ export function auditNodeRules(source) {
       const ids = moderators.identities ?? [];
       if (ids.length === 0 || ids.length > LIMITS.maxModerators) problems.push(`${ids.length} appointed moderators; 1 to ${LIMITS.maxModerators} allowed (10900)`);
     } else if (moderators.$type === 'elected') {
-      problems.push(...auditElected(moderators, moderation, schemas));
+      problems.push(...auditElected(moderators, moderation, schemas, { network }));
     }
   }
 
@@ -312,8 +315,11 @@ const PROBES = [
 
   // Elected declaration (config/moderation/elected.rs). The windows are
   // basic-structure rules of the create transition: the node refuses 10900.
-  { label: 'elected joinWindow of 3600 s', file: SOCIAL_V9, expect: 'audit', node: '10900', mutate: (s) => { elected(s).joinWindow = 3600; } },
-  { label: 'elected voteWindow of 3600 s', file: SOCIAL_V9, expect: 'audit', node: '10900', mutate: (s) => { elected(s).voteWindow = 3600; } },
+  // Since 4.2.0-beta.6 (#5108) the one-day floor is mainnet's only: v9 as cut
+  // declares 3600 s windows for moutai, and a window of 0 is legal off mainnet.
+  { label: 'elected windows of 0 s off mainnet (control)', file: SOCIAL_V9, expect: 'accepted', mutate: (s) => { elected(s).joinWindow = 0; elected(s).voteWindow = 0; } },
+  { label: 'elected joinWindow of 3600 s on mainnet', file: SOCIAL_V9, network: 'mainnet', expect: 'audit', node: '10900', mutate: () => {} },
+  { label: 'elected voteWindow over four weeks', file: SOCIAL_V9, expect: 'audit', node: '10900', mutate: (s) => { elected(s).voteWindow = 2_419_201; } },
   { label: 'elected maxAddedModerators 16', file: SOCIAL_V9, expect: 'audit', node: '10900', mutate: (s) => { elected(s).maxAddedModerators = 16; } },
   { label: 'elected warn ability without a warning list', file: SOCIAL_V9, expect: 'audit', node: '10900', mutate: (s) => { s.config.moderation.warnings = false; } },
   { label: 'elected deleteDocuments on a type moderators cannot delete', file: SOCIAL_V9, expect: 'audit', node: '10900', mutate: (s) => { elected(s).moderatedDocumentTypes.follow = ['deleteDocuments']; } },
@@ -389,7 +395,7 @@ const PROBES = [
   { label: 'propertyConstraints anyOf directly inside anyOf', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { r: { anyOf: [{ anyOf: [{ equal: ['weight', 0] }, { equal: ['weight', 1] }] }, { equal: ['weight', 2] }] } }; } },
   // The rules the beta.5 cuts declare (property-constraint-cases.mjs): each
   // leans on a parse rule a slip would trip, and on the node-only limits.
-  { label: 'tombstoneIsBlank reading a property post does not have', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.post.propertyConstraints.tombstoneIsBlank.anyOf[1].allOf[1] = { absent: 'mediaUrls' }; } },
+  { label: 'tombstoneIsBlank reading a property post does not have', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.post.propertyConstraints.tombstoneIsBlank.ifThen[1].allOf[1] = { absent: 'mediaUrls' }; } },
   { label: 'tieredHasTiers comparing rateType with a value outside its enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.shippingZone.propertyConstraints.tieredHasTiers.anyOf[0] = { equal: ['rateType', { const: 'flat_rate' }] }; } },
   { label: 'privateAllOrNone reading a string property as an integer operand', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.post.propertyConstraints.privateAllOrNone = { greaterThan: ['language', 0] }; } },
   { label: 'a 17th propertyConstraints rule on post (16 max)', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => {
@@ -417,7 +423,7 @@ export function runContractProbes({ loadContractSource, parseContract, sizeOf })
     }
     const audit = [];
     if (!wasmError) {
-      audit.push(...auditNodeRules(source), ...metaSchemaProblems(source));
+      audit.push(...auditNodeRules(source, { network: probe.network ?? 'devnet' }), ...metaSchemaProblems(source));
       const size = sizeOf(parseContract(source));
       if (size.overCap) audit.push(`create transition ~${size.bytes} B, over the 20480 B cap`);
     }
