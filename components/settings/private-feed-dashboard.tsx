@@ -16,6 +16,7 @@ import { TREE_CAPACITY, MAX_EPOCH } from '@/lib/services'
 import { formatTime } from '@/lib/utils'
 import Link from 'next/link'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
+import { withoutRevokedGrants } from '@/lib/utils/revoked-grants'
 import { resolveUserDetailsBatch } from '@/lib/utils/resolve-user-details'
 
 function getEpochProgressColor(isWarning: boolean, percent: number): string {
@@ -85,8 +86,11 @@ export function PrivateFeedDashboard() {
       }
       const { postService } = await import('@/lib/services/post-service')
 
-      // Get followers from grants
-      const followers = await privateFeedService.getPrivateFollowers(user.identityId)
+      // Get followers from grants, without any revoked in this session
+      const followers = withoutRevokedGrants(
+        await privateFeedService.getPrivateFollowers(user.identityId),
+        usePrivateFeedRefreshStore.getState().revokedGrantsFor(user.identityId)
+      )
 
       // Bail out if a newer request has started
       if (currentRequestId !== requestIdRef.current) return

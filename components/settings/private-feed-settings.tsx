@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger';
 import { useId, useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
+import { withoutRevokedGrants } from '@/lib/utils/revoked-grants'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -92,7 +93,10 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
         // Get follower count from on-chain grants (authoritative source)
         // Falls back to local recipientMap if on-chain query fails
         try {
-          const followers = await privateFeedService.getPrivateFollowers(user.identityId)
+          const followers = withoutRevokedGrants(
+            await privateFeedService.getPrivateFollowers(user.identityId),
+            usePrivateFeedRefreshStore.getState().revokedGrantsFor(user.identityId)
+          )
           setFollowerCount(followers.length)
         } catch (err) {
           logger.error('Failed to get followers from chain, using local state:', err)

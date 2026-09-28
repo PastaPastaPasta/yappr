@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -44,12 +44,7 @@ export function PrivateFeedFollowers() {
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
   const refreshKey = usePrivateFeedRefreshStore((s) => s.refreshKey)
-  const triggerRefresh = usePrivateFeedRefreshStore((s) => s.triggerRefresh)
-  // A revocation that succeeded can still read back its grant for a moment
-  // (slow node, or a grant delete that failed after the rekey). The follower is
-  // cryptographically revoked either way, so keep that grant out of the list.
-  // A re-approval writes a newer grant, which shows again.
-  const revokedGrantsRef = useRef(new Map<string, number>())
+  const markGrantRevoked = usePrivateFeedRefreshStore((s) => s.markGrantRevoked)
 
   const loadFollowers = useCallback(async () => {
     if (!user?.identityId) {
@@ -73,7 +68,7 @@ export function PrivateFeedFollowers() {
       // Get all private followers
       const grants = withoutRevokedGrants(
         await privateFeedService.getPrivateFollowers(user.identityId),
-        revokedGrantsRef.current
+        usePrivateFeedRefreshStore.getState().revokedGrantsFor(user.identityId)
       )
 
       if (grants.length === 0) {
@@ -153,13 +148,14 @@ export function PrivateFeedFollowers() {
 
       if (result.success) {
         // Remove from local state
-        revokedGrantsRef.current.set(follower.id, follower.grantedAt.getTime())
         setFollowers((prev) => prev.filter((f) => f.id !== follower.id))
         toast.success(
           `Revoked access for ${follower.username ? `@${follower.username}` : follower.displayName}`
         )
-        // The revocation advanced the epoch; refresh the stats and dashboard
-        triggerRefresh()
+        // The follower is cryptographically revoked even if their grant still
+        // reads back for a moment: hide it in every card, and refresh the stats
+        // and dashboard, since the revocation advanced the epoch.
+        markGrantRevoked(user.identityId, follower.id, follower.grantedAt.getTime())
       } else {
         // Check if this is a sync required error
         if (result.error?.startsWith('SYNC_REQUIRED:')) {
