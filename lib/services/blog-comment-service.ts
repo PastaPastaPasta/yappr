@@ -1,9 +1,10 @@
 import { queryDocumentBundle } from './document-query-bundle'
 import { documentCount, groupedDocumentCount, mapLimit, paginateCount } from './pagination-utils'
 import { BaseDocumentService, type QueryOptions } from './document-service'
-import { YAPPR_BLOG_CONTRACT_ID, blogIsV2 } from '@/lib/constants'
+import { YAPPR_BLOG_CONTRACT_ID, blogCommentsCopyPostFlag, blogIsV2 } from '@/lib/constants'
 import type { BlogComment } from '@/lib/types'
 import { identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers'
+import { isPropertyAgreementError } from '@/lib/error-utils'
 import { getEvoSdk } from './evo-sdk-service'
 import { blogStatsService } from './blog-stats-service'
 
@@ -35,19 +36,29 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
    * the post's own `$ownerId` (a system-field propertyAgreement on
    * `blogPostId`), so a caller's idea of who owns the post is not good enough —
    * the post is fetched and its real owner used verbatim. On v1 nothing is
-   * checked and the caller's value stands.
+   * checked and the caller's value stands. On v5 the same read also supplies
+   * the post's `commentsEnabled`, which the comment must copy.
    */
-  private async resolvePostOwnerId(blogPostId: string, fallback: string): Promise<string> {
-    if (!blogIsV2()) return fallback
+  private async resolvePostLinkage(blogPostId: string, fallback: string, fresh = false): Promise<{ ownerId: string; postFields: Record<string, boolean> }> {
+    if (!blogIsV2()) return { ownerId: fallback, postFields: {} }
     const { blogPostService } = await import('./blog-post-service')
+    if (fresh) blogPostService.clearCache(blogPostId)
     // `get()` swallows read failures and returns null, so an absent post is
     // indistinguishable from a timed-out node. Prefer the caller's value over
     // refusing to comment: consensus (40127) is the real arbiter, and a
     // rejected create charges no YAPP.
     const post = await blogPostService.getPost(blogPostId)
-    const owner = post?.ownerId || fallback
-    if (!owner) throw new Error('Cannot resolve the post owner for this comment')
-    return owner
+    const ownerId = post?.ownerId || fallback
+    if (!ownerId) throw new Error('Cannot resolve the post owner for this comment')
+    if (!blogCommentsCopyPostFlag()) return { ownerId, postFields: {} }
+    // v5: `postCommentsEnabled` must equal the post's `commentsEnabled`, absence
+    // included (40127), and `false` is refused (`commentsOpen`, 10422). Guessing
+    // the flag would be refused for every post that stores one, so an unread
+    // post stops the comment here instead.
+    if (!post) throw new Error('Could not load this post to check that it takes comments. Try again.')
+    if (post.commentsEnabled === false) throw new Error('Comments are turned off for this post')
+    // Only a stored boolean is copied: an absent (or null) flag agrees with an absent copy.
+    return { ownerId, postFields: typeof post.commentsEnabled === 'boolean' ? { postCommentsEnabled: post.commentsEnabled } : {} }
   }
 
   async createComment(
@@ -64,12 +75,26 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
       throw new Error('Comment content exceeds 500 characters')
     }
 
-    const postOwnerId = await this.resolvePostOwnerId(blogPostId, blogPostOwnerId)
-    const comment = await this.create(ownerId, {
-      blogPostId: requireDocumentIdentifierBytes(blogPostId, 'blogPostId'),
-      blogPostOwnerId: requireDocumentIdentifierBytes(postOwnerId, 'blogPostOwnerId'),
-      content: trimmedContent,
-    })
+    const write = async (fresh: boolean) => {
+      const { ownerId: postOwnerId, postFields } = await this.resolvePostLinkage(blogPostId, blogPostOwnerId, fresh)
+      return this.create(ownerId, {
+        blogPostId: requireDocumentIdentifierBytes(blogPostId, 'blogPostId'),
+        blogPostOwnerId: requireDocumentIdentifierBytes(postOwnerId, 'blogPostOwnerId'),
+        content: trimmedContent,
+        ...postFields,
+      })
+    }
+    let comment: BlogComment
+    try {
+      comment = await write(false)
+    } catch (error) {
+      // 40127: the copied owner or commentsEnabled no longer agrees with the
+      // post, most likely because a cached read went stale (the author just
+      // turned comments off, say). A refused create charges nothing: re-read the
+      // post past the cache and try once more; a post now closed stops there.
+      if (!blogCommentsCopyPostFlag() || !isPropertyAgreementError(error)) throw error
+      comment = await write(true)
+    }
     // The comment changed this post's count tree and the "most discussed" page.
     blogStatsService.invalidate()
     return comment

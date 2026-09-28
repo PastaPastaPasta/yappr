@@ -18,8 +18,8 @@
       "warnings": true,
       "moderators": {
         "$type": "elected",
-        "joinWindow": 86400,
-        "voteWindow": 86400,
+        "joinWindow": 3600,
+        "voteWindow": 3600,
         "seatContestable": false,
         "maxAddedModerators": 10,
         "moderatedDocumentTypes": {
@@ -34,6 +34,9 @@
             "ban",
             "suspend",
             "warn"
+          ],
+          "report": [
+            "deleteDocuments"
           ]
         },
         "interim": {
@@ -698,6 +701,18 @@
           "countable": true
         },
         {
+          "name": "quoteDeletedCount",
+          "properties": [
+            {
+              "quotedPostId": "asc"
+            },
+            {
+              "deleted": "asc"
+            }
+          ],
+          "countable": true
+        },
+        {
           "name": "byOwner",
           "properties": [
             {
@@ -746,7 +761,10 @@
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
             "type": "deletableDocument",
-            "documentType": "post"
+            "documentType": "post",
+            "propertyAgreement": {
+              "quotedPostOwnerId": "$ownerId"
+            }
           }
         },
         "language": {
@@ -818,7 +836,10 @@
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
             "type": "deletableDocument",
-            "documentType": "reply"
+            "documentType": "reply",
+            "propertyAgreement": {
+              "quotedPostOwnerId": "$ownerId"
+            }
           }
         },
         "deleted": {
@@ -841,7 +862,7 @@
           "gasFeesPaidBy": 2
         }
       },
-      "description": "A top-level post in the social network (not a reply). Permanent for its owner (a delete is a tombstone replace); the contract's moderators may remove it",
+      "description": "A top-level post. A delete is a tombstone replace; moderators may remove it",
       "additionalProperties": false,
       "documentsMutable": true,
       "canBeDeleted": false,
@@ -969,9 +990,9 @@
           ]
         },
         "tombstoneIsBlank": {
-          "anyOf": [
+          "ifThen": [
             {
-              "notEqual": [
+              "equal": [
                 "deleted",
                 1
               ]
@@ -979,18 +1000,11 @@
             {
               "allOf": [
                 {
-                  "anyOf": [
+                  "equal": [
                     {
-                      "absent": "content"
+                      "length": "content"
                     },
-                    {
-                      "equal": [
-                        "content",
-                        {
-                          "const": ""
-                        }
-                      ]
-                    }
+                    0
                   ]
                 },
                 {
@@ -1355,6 +1369,18 @@
           "countable": true
         },
         {
+          "name": "rootDeletedCount",
+          "properties": [
+            {
+              "rootPostId": "asc"
+            },
+            {
+              "deleted": "asc"
+            }
+          ],
+          "countable": true
+        },
+        {
           "name": "replyToReplyAndTime",
           "properties": [
             {
@@ -1370,6 +1396,18 @@
           "properties": [
             {
               "replyToReplyId": "asc"
+            }
+          ],
+          "countable": true
+        },
+        {
+          "name": "replyDeletedCount",
+          "properties": [
+            {
+              "replyToReplyId": "asc"
+            },
+            {
+              "deleted": "asc"
             }
           ],
           "countable": true
@@ -1425,7 +1463,10 @@
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
             "type": "deletableDocument",
-            "documentType": "reply"
+            "documentType": "reply",
+            "propertyAgreement": {
+              "parentOwnerId": "$ownerId"
+            }
           }
         },
         "parentOwnerId": {
@@ -1473,7 +1514,7 @@
           "gasFeesPaidBy": 2
         }
       },
-      "description": "A reply, anchored to its thread root; replyToReplyId is presentational nesting only. Permanent for its owner (a delete is a tombstone replace); the contract's moderators may remove it",
+      "description": "A reply under its thread root. A delete is a tombstone replace; moderators may remove it",
       "additionalProperties": false,
       "documentsMutable": true,
       "canBeDeleted": false,
@@ -1537,9 +1578,9 @@
           }
         },
         "tombstoneIsBlank": {
-          "anyOf": [
+          "ifThen": [
             {
-              "notEqual": [
+              "equal": [
                 "deleted",
                 1
               ]
@@ -1547,18 +1588,11 @@
             {
               "allOf": [
                 {
-                  "anyOf": [
+                  "equal": [
                     {
-                      "absent": "content"
+                      "length": "content"
                     },
-                    {
-                      "equal": [
-                        "content",
-                        {
-                          "const": ""
-                        }
-                      ]
-                    }
+                    0
                   ]
                 },
                 {
@@ -1776,6 +1810,161 @@
           "terminal": "$ownerId"
         }
       ]
+    },
+    "report": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerAndPost",
+          "unique": true,
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "ownerAndReply",
+          "unique": true,
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "replyId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byPost",
+          "properties": [
+            {
+              "postId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byReply",
+          "properties": [
+            {
+              "replyId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byTime",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "documentsMutable": false,
+      "canBeDeletedByModerators": true,
+      "required": [
+        "$createdAt",
+        "targetOwnerId",
+        "reason"
+      ],
+      "properties": {
+        "postId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 0,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "post",
+            "propertyAgreement": {
+              "targetOwnerId": "$ownerId"
+            }
+          }
+        },
+        "replyId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 1,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "reply",
+            "propertyAgreement": {
+              "targetOwnerId": "$ownerId"
+            }
+          }
+        },
+        "targetOwnerId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 2,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "distinctFrom": "$ownerId"
+        },
+        "reason": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8,
+          "position": 3
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "position": 4
+        }
+      },
+      "propertyConstraints": {
+        "oneTarget": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "present": "postId"
+                },
+                {
+                  "absent": "replyId"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "absent": "postId"
+                },
+                {
+                  "present": "replyId"
+                }
+              ]
+            }
+          ]
+        },
+        "otherHasNote": {
+          "anyOf": [
+            {
+              "notEqual": [
+                "reason",
+                8
+              ]
+            },
+            {
+              "present": "note"
+            }
+          ]
+        }
+      },
+      "description": "A post or reply reported to the moderators, who dismiss it by deleting it",
+      "additionalProperties": false,
+      "ttl": 7776000
     }
   },
   "tokens": {

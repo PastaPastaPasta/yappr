@@ -1,15 +1,18 @@
 /**
- * The 4.2.0-beta.5 `propertyConstraints` rules Yappr's contracts declare, and
- * the documents each must accept and refuse (DocumentPropertyConstraintViolated,
- * 10422). docs/CONTRACTS_BETA5.md explains every rule.
+ * The `propertyConstraints` rules Yappr's contracts declare, and the documents
+ * each must accept and refuse (DocumentPropertyConstraintViolated, 10422).
+ * docs/CONTRACTS_BETA5.md explains the beta.5 rules and docs/CONTRACTS_BETA6.md
+ * the beta.6 ones (`tombstoneIsBlank` as `ifThen` + `length`, blog
+ * `commentsOpen`).
  *
  * One table, two consumers:
  *   - `validate-contract-offline.mjs --constraints` runs every case through
- *     rs-dpp's own document validation offline (`ExtendedDocument.validate`
- *     from @dashevo/wasm-dpp, which the node runs on a create or replace), so
- *     a rule that drifts from its cases fails before anything is registered;
- *   - the live batteries (verify-v9 c1, verify-storefront s20, verify-pollr
- *     p12, verify-blog b19) broadcast the refused create cases against the
+ *     rs-dpp's own rule evaluation offline (the wasm-sdk's
+ *     `DataContract.checkDocumentPropertyConstraints`, the check the node runs
+ *     on a create or replace), so a rule that drifts from its cases fails
+ *     before anything is registered;
+ *   - the live batteries (verify-v9 c1 and r1, verify-storefront s20,
+ *     verify-pollr p12, verify-blog b19) broadcast the refused create cases against the
  *     registered contract; their existing fixtures are the accepted side.
  *
  * `data` holds only the properties a rule reads plus what the schema requires;
@@ -25,24 +28,28 @@ export const DECLARED_RULES = {
   'yappr-social-contract-v9.json': {
     post: ['embedAllOrNone', 'oneQuoteTarget', 'privateAllOrNone', 'privateHasNoMedia', 'quoteNamesOwner', 'tombstoneIsBlank'],
     reply: ['privateAllOrNone', 'privateHasNoMedia', 'tombstoneIsBlank'],
+    report: ['oneTarget', 'otherHasNote'],
   },
   'yappr-storefront-contract.json': {
     storeItem: ['pricedHasCurrency'],
     shippingZone: ['flatRateHasCurrency', 'tieredHasTiers'],
   },
   'pollr-contract.json': { poll: ['optionsContiguous'] },
-  'yappr-blog-contract.json': { blogPost: ['chunksContiguous'] },
+  'yappr-blog-contract.json': { blogPost: ['chunksContiguous'], blogComment: ['commentsOpen'] },
 };
 
 // ---- Base documents (valid under every rule) --------------------------------
 
 export const basePost = () => ({ content: 'constraint probe', language: 'en' });
 export const baseReply = () => ({ content: 'constraint probe', rootPostId: id(), parentOwnerId: id() });
+/** Reason 0 is spam; 8 is "something else", which must say what. */
+export const baseReport = () => ({ postId: id(), targetOwnerId: id(), reason: 0 });
 const privateFields = () => ({ encryptedContent: bytes(48), epoch: 1, nonce: bytes(24) });
 const embed = () => ({ embedContractId: id(), embedDocType: 'poll', embedId: id() });
 export const baseItem = () => ({ storeId: id(), title: 'constraint probe', status: 'active' });
 export const baseZone = () => ({ storeId: id(), name: 'constraint probe', rateType: 'flat' });
 export const basePoll = () => ({ question: 'constraint probe?', option0: 'a', option1: 'b' });
+export const baseComment = () => ({ blogPostId: id(), blogPostOwnerId: id(), content: 'constraint probe' });
 export const baseBlogPost = () => ({ blogId: id(), title: 'constraint probe', slug: 'constraint-probe', data0: bytes(16) });
 
 const drop = (fields, ...names) => Object.fromEntries(Object.entries(fields).filter(([key]) => !names.includes(key)));
@@ -68,6 +75,9 @@ export const CONSTRAINT_CASES = {
     ['post: quoting a post AND a reply', 'post', { ...basePost(), quotedPostId: id(), quotedReplyId: id(), quotedPostOwnerId: id() }, 'oneQuoteTarget'],
     ['post: a tombstone (blank, quote kept)', 'post', { ...basePost(), content: '', deleted: true, quotedPostId: id(), quotedPostOwnerId: id(), hashtag: 'kept' }, null, { replace: true }],
     ['post: a tombstone whose dead quote was cleared (owner kept)', 'post', { ...basePost(), content: '', deleted: true, quotedPostOwnerId: id() }, null, { replace: true }],
+    // beta.6: `length` reads a missing `content` as 0, so the ifThen form keeps
+    // beta.5's "absent or ''" meaning in one comparison.
+    ['post: a tombstone that leaves content out', 'post', { ...drop(basePost(), 'content'), deleted: true }, null, { replace: true }],
     ['post: a tombstone keeping its text', 'post', { ...basePost(), deleted: true }, 'tombstoneIsBlank', { replace: true }],
     ['post: a tombstone keeping its media', 'post', { ...basePost(), content: '', deleted: true, mediaUrl: 'https://example.com/a.png' }, 'tombstoneIsBlank', { replace: true }],
     ['post: a tombstone keeping its ciphertext', 'post', { ...basePost(), content: '', deleted: true, ...privateFields() }, 'tombstoneIsBlank', { replace: true }],
@@ -78,6 +88,12 @@ export const CONSTRAINT_CASES = {
     ['reply: a private reply carrying mediaUrl', 'reply', { ...baseReply(), ...privateFields(), mediaUrl: 'ipfs://bafy' }, 'privateHasNoMedia'],
     ['reply: a tombstone', 'reply', { ...baseReply(), content: '', deleted: true }, null, { replace: true }],
     ['reply: a tombstone keeping its text', 'reply', { ...baseReply(), deleted: true }, 'tombstoneIsBlank', { replace: true }],
+    ['report: a post report', 'report', baseReport(), null],
+    ['report: a reply report', 'report', { ...drop(baseReport(), 'postId'), replyId: id() }, null],
+    ['report: "something else" saying what', 'report', { ...baseReport(), reason: 8, note: 'constraint probe' }, null],
+    ['report: naming a post AND a reply', 'report', { ...baseReport(), replyId: id() }, 'oneTarget'],
+    ['report: naming neither', 'report', drop(baseReport(), 'postId'), 'oneTarget'],
+    ['report: "something else" with no note', 'report', { ...baseReport(), reason: 8 }, 'otherHasNote'],
   ],
   'yappr-storefront-contract.json': [
     ['storeItem: priced with a currency', 'storeItem', { ...baseItem(), basePrice: 1000, currency: 'USD' }, null],
@@ -104,6 +120,11 @@ export const CONSTRAINT_CASES = {
     ['blogPost: four chunks', 'blogPost', { ...baseBlogPost(), data1: bytes(8), data2: bytes(8), data3: bytes(8) }, null],
     ['blogPost: data2 with no data1', 'blogPost', { ...baseBlogPost(), data2: bytes(8) }, 'chunksContiguous'],
     ['blogPost: data3 with no data2', 'blogPost', { ...baseBlogPost(), data1: bytes(8), data3: bytes(8) }, 'chunksContiguous'],
+    // postCommentsEnabled copies the post's commentsEnabled through the blogPostId
+    // agreement (40127 on a mismatch), so the rule judges the post's own flag.
+    ['blogComment: on a post that leaves commentsEnabled out (on by default)', 'blogComment', baseComment(), null],
+    ['blogComment: on a post with commentsEnabled true', 'blogComment', { ...baseComment(), postCommentsEnabled: true }, null],
+    ['blogComment: on a post with commentsEnabled false', 'blogComment', { ...baseComment(), postCommentsEnabled: false }, 'commentsOpen'],
   ],
 };
 
@@ -113,8 +134,9 @@ export const CONSTRAINT_CASES = {
  * (quoted and followed by its `:` reason, so a rule whose name is a prefix of
  * another, or a different rule's 10422, cannot pass). The prose is that error's
  * Display and no other error produces it. The number itself is not required:
- * on moutai (beta.5) the broadcast refusal reaches the SDK as a `Protocol`
- * WasmSdkError with `code: -1` and the prose only.
+ * on beta.5 the broadcast refusal reached the SDK with `code: -1` and the
+ * prose only. From beta.6 (platform#5112) `describeErr` also carries
+ * `code=10422`; the rule's name in the prose is still what scores the case.
  */
 export const constraintViolation = (rule) =>
   new RegExp(`breaks its propertyConstraints rule \\\\?"${rule}\\\\?":`, 'i');
@@ -129,54 +151,35 @@ export function refusedCreates(file, docType) {
 // ---- Offline oracle ------------------------------------------------------------
 
 /**
- * Runs every case through rs-dpp's document validation, offline. The wasm-sdk
- * the app ships has no document validator (it validates on broadcast), so this
- * uses @dashevo/wasm-dpp at the same version: `ExtendedDocument.validate` is
- * `DataContract::validate_document`, the check the node runs on a create or
- * replace, `propertyConstraints` included. wasm-dpp is not a dependency (the
- * app never loads it); without it the run is SKIPPED with a notice, as the ajv
- * meta-schema check is. Install it for a run with
- * `npm install --no-save <the @dashevo/wasm-dpp tarball of the pinned SDK>`.
+ * Runs every case through the `propertyConstraints` check consensus runs on a
+ * create or replace, offline: from 4.2.0-beta.6 (platform#5051) the wasm-sdk's
+ * `DataContract.checkDocumentPropertyConstraints` evaluates a document's rules
+ * with rs-dpp's own code, so no extra package is needed. It judges the rules
+ * alone (not the JSON schema), and uses the device clock for system times;
+ * none of Yappr's rules reads a time, a height or a total.
  *
- * Returns the number of cases whose outcome is not the recorded one, or null
- * when skipped. The contract bytes come from the wasm-sdk parse, so the two
- * packages must be the same platform version.
+ * Returns the number of cases whose outcome is not the recorded one.
  */
-export async function runConstraintCases({ loadContractSource, parseContract, platformVersion }) {
-  let wasmDpp;
-  try {
-    const { createRequire } = await import('node:module');
-    const module = createRequire(import.meta.url)('@dashevo/wasm-dpp');
-    wasmDpp = await (module.default ?? module)();
-  } catch (e) {
-    console.log(`\npropertyConstraints cases: SKIPPED (@dashevo/wasm-dpp unavailable: ${String(e?.message ?? e).slice(0, 80)})`);
-    return null;
-  }
-  const protocolVersion = platformVersion.protocolVersion ?? platformVersion.version;
-  const contracts = new wasmDpp.DataContractFactory(protocolVersion);
-  const documents = new wasmDpp.DocumentFactory(protocolVersion, { generate: () => bytes(32) });
-  const owner = new wasmDpp.Identifier(Buffer.from(id()));
+export async function runConstraintCases({ loadContractSource, parseContract, platformVersion, Document }) {
+  const owner = id();
   let failures = 0;
-  console.log('\npropertyConstraints cases (rs-dpp document validation, the check a create or replace runs):');
+  console.log('\npropertyConstraints cases (DataContract.checkDocumentPropertyConstraints, the rules a create or replace runs):');
   for (const [file, cases] of Object.entries(CONSTRAINT_CASES)) {
-    const contract = await contracts.createFromBuffer(parseContract(loadContractSource(`contracts/${file}`)).toBytes(platformVersion), true);
+    const contract = parseContract(loadContractSource(`contracts/${file}`), platformVersion);
     for (const [label, docType, data, rule] of cases) {
-      // wasm-dpp reads byte properties from Buffers (a bare Uint8Array arrives as a map).
-      const values = Object.fromEntries(Object.entries(data).map(([key, value]) => [key, value instanceof Uint8Array ? Buffer.from(value) : value]));
-      let error = null;
+      let violation = null;
       try {
-        const result = documents.create(contract, owner, docType, values).validate(protocolVersion);
-        error = result.isValid() ? null : result.getFirstError();
+        const document = Document.fromObject({
+          $formatVersion: '0', $id: id(), $ownerId: owner, $dataContractId: contract.id.toBytes(), $type: docType,
+          $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...data,
+        }, platformVersion);
+        violation = contract.checkDocumentPropertyConstraints(document) ?? null;
       } catch (e) {
-        error = { message: String(e?.message ?? e) };
+        violation = { rule: null, message: String(e?.message ?? e) };
       }
-      const code = error?.getCode?.();
-      const message = String(error?.message ?? '');
-      const ok = rule === null
-        ? error === null
-        : code === 10422 && message.includes(`rule "${rule}"`);
+      const ok = rule === null ? violation === null : violation?.rule === rule;
       if (!ok) failures += 1;
-      const outcome = error === null ? 'accepted' : `${code} ${message.slice(0, 110)}`;
+      const outcome = violation === null ? 'accepted' : `10422 "${violation.rule}": ${String(violation.message).slice(0, 100)}`;
       console.log(`${ok ? 'PASS' : 'FAIL'}  ${file.replace(/\.json$/, '')}: ${label} — ${outcome}${ok ? '' : ` (expected ${rule === null ? 'accepted' : `10422 on "${rule}"`})`}`);
     }
   }

@@ -81,7 +81,7 @@ describe('contract topology', () => {
       m.hasFlatThreads(), m.quoteFieldsAreSplit(), m.likeSurfacesAreSplit(), m.referencesAreEnforced(),
       m.deletesAreTombstones(), m.likesAreIndexOnly(), m.hashtagsAreInline(), m.prefixRankingsAvailable(),
       m.followRankingsAvailable(), m.windowedRankingsAvailable(), m.contractIsModerated(), m.referencesMayDangle(),
-      m.contractKeepsWarnings(), m.privateFeedWritesAreGated(), m.blockFollowsAreTyped(),
+      m.contractKeepsWarnings(), m.privateFeedWritesAreGated(), m.blockFollowsAreTyped(), m.contractTakesReports(),
     ]
     const v9 = await topologyModule('v9')
     expect(capabilities(v9).every(Boolean)).toBe(true)
@@ -163,13 +163,17 @@ describe('contract topology', () => {
   })
 
   it('declares a tombstone rule that forbids exactly what the tombstone blanks, and nothing it preserves', async () => {
-    // beta.5 `tombstoneIsBlank`: deleted: true ⇒ content '' or absent, no mediaUrl, no
-    // encryptedContent. `tombstoneDocument` writes content '' and drops the rest, so a
-    // preserve set naming a forbidden property would turn every delete into a 10422.
+    // `tombstoneIsBlank` (beta.6 form): deleted: true ⇒ content of length 0 (`length`
+    // reads an absent one as 0), no mediaUrl, no encryptedContent. `tombstoneDocument`
+    // writes content '' and drops the rest, so a preserve set naming a forbidden property
+    // would turn every delete into a 10422.
     const { tombstonePreservationFor } = await topologyModule('v9')
     for (const kind of ['post', 'reply'] as const) {
       const rule = JSON.stringify(V9[kind].propertyConstraints?.tombstoneIsBlank ?? null)
-      const forbidden = [...rule.matchAll(/"absent":"(\w+)"/g)].map(([, name]) => name)
+      const forbidden = [
+        ...[...rule.matchAll(/"absent":"(\w+)"/g)].map(([, name]) => name),
+        ...[...rule.matchAll(/"equal":\[\{"length":"(\w+)"\},0\]/g)].map(([, name]) => name),
+      ]
       expect(forbidden.sort(), kind).toEqual(['content', 'encryptedContent', 'mediaUrl'])
       const { identifiers, scalars } = tombstonePreservationFor(kind)
       const preserved = [...identifiers, ...scalars]
@@ -215,7 +219,7 @@ describe('contract topology', () => {
 
     it('pins the moderation declarations against the v9 JSON', async () => {
       const v9 = await topologyModule('v9')
-      expect(v9.moderatorDeletableTypes()).toEqual(['post', 'reply'])
+      expect(v9.moderatorDeletableTypes()).toEqual(['post', 'reply', 'report'])
       expect(v9.moderationListsKept()).toEqual(['banlist', 'suspensions', 'warnings'])
       expect(socialContractV9.config.$formatVersion).toBe('2')
       // Every reference at a moderator-deletable type is deletable, and no
@@ -283,12 +287,12 @@ describe('contract topology', () => {
       const v9 = await topologyModule('v9')
       const abilities = ['deleteDocuments', 'ban', 'suspend', 'warn']
       expect(v9.electedModeration()).toEqual({
-        joinWindowSeconds: 86_400,
-        voteWindowSeconds: 86_400,
+        joinWindowSeconds: 3_600,
+        voteWindowSeconds: 3_600,
         seatContestable: false,
         electionDelaySeconds: null,
         maxAddedModerators: 10,
-        moderatedDocumentTypes: { post: abilities, reply: abilities },
+        moderatedDocumentTypes: { post: abilities, reply: abilities, report: ['deleteDocuments'] },
         interim: 'contractOwner',
         ownerProtected: true,
       })

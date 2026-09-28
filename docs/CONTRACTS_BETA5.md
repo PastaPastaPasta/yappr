@@ -23,6 +23,8 @@ storefront `v4`, blog `v4`, pollr `v4`, profile `v2`, DM `v4`/`v5`). The
 reason is that nothing a client writes changes shape: each new rule only
 refuses a document that no Yappr write path produces (see the audit below). A
 client that targets beta.4 therefore behaves identically against these cuts.
+The `report` type (#579) is not part of this cut: the beta.6 re-cut
+registers it ([CONTRACTS_BETA6.md](CONTRACTS_BETA6.md#the-report-type)).
 
 | Contract | beta.5 grammar adopted | Signed create (cap 20,480) | Change |
 | --- | --- | ---: | --- |

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import bs58 from 'bs58'
 
 const query = vi.hoisted(() => vi.fn())
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }))
@@ -51,5 +52,30 @@ describe('reply sensitive flag', () => {
     expect(shouldGateSensitive(flagged, 'blur')).toBe(true)
     expect(plain.sensitive).toBeUndefined()
     expect(shouldGateSensitive(plain, 'blur')).toBe(false)
+  })
+})
+
+describe('reply notifications on v9', () => {
+  const idOf = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
+  const [ME, ROOT_MINE, ROOT_THEIRS, MY_REPLY] = [1, 2, 3, 4].map(idOf)
+
+  it('keeps nested replies and direct replies under my own root, and drops a direct reply that only claims me', async () => {
+    // The topology descriptor is cached per module: a fresh registry reads v9.
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9')
+    const { replyService: v9Replies } = await import('./reply-service')
+    const { postService } = await import('./post-service')
+    const getMany = vi.spyOn(postService, 'getMany').mockResolvedValue([{ id: ROOT_MINE, author: { id: ME } }] as never)
+    const reply = (id: string, rootPostId: string, replyToReplyId?: string) => ({
+      $id: id, $ownerId: 'Stranger', $createdAt: 1, content: id, rootPostId, parentOwnerId: ME, ...(replyToReplyId ? { replyToReplyId } : {}),
+    })
+    const replies = await v9Replies.getRepliesToMyContent(ME, undefined, [
+      reply('direct-mine', ROOT_MINE),
+      reply('direct-spoofed', ROOT_THEIRS),
+      reply('nested', ROOT_THEIRS, MY_REPLY),
+    ])
+    expect(replies.map((r) => r.id).sort()).toEqual(['direct-mine', 'nested'])
+    expect(getMany).toHaveBeenCalledWith([ROOT_MINE, ROOT_THEIRS])
+    vi.unstubAllEnvs()
   })
 })

@@ -1,8 +1,9 @@
 /**
  * Registration-day battery for **contract v9**
- * (`contracts/yappr-social-contract-v9.json`, docs/SOCIAL_V9.md): the
- * 4.2.0-beta.4 grammar Yappr adopted, exercised against a freshly registered
- * contract on a beta.4 devnet. The machinery is verify-lib; the v8 write path
+ * (`contracts/yappr-social-contract-v9.json`, docs/SOCIAL_V9.md and
+ * docs/CONTRACTS_BETA6.md): the protocol-14 grammar Yappr adopted, as re-cut
+ * for 4.2.0-beta.6, exercised against a freshly registered contract on a
+ * beta.6 devnet. The machinery is verify-lib; the v8 write path
  * (manual batches carrying `$actionFeeAgreement`) is social-battery-lib. v9
  * keeps v8's fees, costs and grant byte for byte, so `verify-v8.mjs` runs
  * against a v9 contract unchanged for those; this file is the v9 deltas only.
@@ -75,6 +76,31 @@
  *       `tombstoneIsBlank`. The accepted side is every other case's fixture:
  *       the f1 tombstone, the quote posts, the anchor reply
  *
+ * Reports (the `report` type the beta.5 re-cut adds, docs/CONTRACTS_BETA5.md):
+ *
+ *   r1  A reports B's post; a second report of it by A is 40105; A reports
+ *       B's reply ("something else", with a note); a report naming someone
+ *       other than the author is 40127, B reporting its own post is 10419, a
+ *       report of a ghost post is 40120; every refused report create in
+ *       property-constraint-cases.mjs is 10422 naming its rule (two targets,
+ *       none, "something else" without a note); A withdraws the reply report;
+ *       the interim owner dismisses the post report (a removal record owned by
+ *       A), which then no longer fetches, and A may report the post again
+ *   r2  (post-seat; skips until a team is seated) a seated member dismisses
+ *       A's report: without a listed reason it is 41203, with one it lands;
+ *       the member's own report and the ownerProtected owner's report cannot
+ *       be dismissed (41102). Needs --team-member bot:<n> --reason-doc <id>
+ * The 4.2.0-beta.6 re-cut (docs/CONTRACTS_BETA6.md):
+ *   o4  a quote's quotedPostOwnerId and a nested reply's parentOwnerId agree
+ *       with the target's $ownerId: a quote of B's post naming A, and a reply
+ *       to B's reply naming A, are refused 40127; the true owner lands (the
+ *       quote and reply fixtures elsewhere are the other accepted side). A
+ *       direct reply (no replyToReplyId) is not bound, so it is not probed
+ *   t1  the tombstone counts: [quotedPostId, deleted] and [rootPostId,
+ *       deleted] count a target's quotes and replies that are tombstones, so
+ *       total minus that is the live count (QA D-44). A quotes and replies
+ *       to a fresh post of B's, tombstones one of each, and both counts read 1
+ *
  * ## Run
  *
  *   node scripts/verify-v9.mjs --self-test          # offline: contract + shapes
@@ -132,6 +158,10 @@ const V9 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
 const POST_ACTION_FEE = actionFeeFor('post');
 const REPLY_ACTION_FEE = actionFeeFor('reply');
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
+// r2 (post-seat): a member of the SEATED team signs the dismissals, and a
+// `reason` document its proposal lists is what a dismissal must cite (41203).
+const TEAM_MEMBER_SPEC = takeFlag('--team-member', null);
+const REASON_DOCUMENT_ID = takeFlag('--reason-doc', null);
 // v9's interim is `contractOwner`, which appoints nobody: before a charter is
 // seated the contract owner is the ONLY identity that may moderate, so a
 // `bot:<n>` moderator would score every moderator case as a 41101 failure.
@@ -188,6 +218,14 @@ const followRequestData = ({ targetId }) => ({ targetId });
 const feedStateData = () => ({ treeCapacity: 1024, maxEpoch: 2000, encryptedSeed: randomIdBytes() });
 const grantData = ({ recipientId, leafIndex = 0, epoch = 1 }) => ({ recipientId, leafIndex, epoch, encryptedPayload: crypto.getRandomValues(new Uint8Array(96)) });
 const rekeyData = ({ epoch = 2, revokedLeaf = 0 } = {}) => ({ epoch, revokedLeaf, packets: crypto.getRandomValues(new Uint8Array(64)), encryptedCEK: crypto.getRandomValues(new Uint8Array(48)) });
+/** A report names exactly one of `postId` / `replyId`; reason 8 ("something else") must carry a note. */
+const reportData = ({ postId, replyId, targetOwnerId, reason = 0, note } = {}) => ({
+  ...(postId ? { postId } : {}),
+  ...(replyId ? { replyId } : {}),
+  targetOwnerId,
+  reason,
+  ...(note === undefined ? {} : { note }),
+});
 /** A typed identifier array is a list of 32-byte ids — never one packed byte array. */
 const blockFollowData = (ids) => ({ followedBlockers: ids.map((id) => (typeof id === 'string' ? bs58.decode(id) : id)) });
 
@@ -576,6 +614,65 @@ async function caseO3RepostOwnerAgreement(ctx) {
   expectAccepted('o3c a repost naming the post owner\'s $ownerId is accepted', await repostWith(bs58.decode(botB.ownerId)));
 }
 
+async function caseO4QuoteAndParentOwner(ctx) {
+  const { botA, botB } = ctx;
+  console.log('\n--- o4. a quote and a nested reply name their target\'s real owner (40127, beta.6) ---');
+  const postId = await ensurePost(ctx, 'anchor');
+  const replyId = await ensureReply(ctx);
+  if (!postId || !replyId) { check('o4 fixture', false, 'no anchor post or reply'); return; }
+  const [post, reply, a, b] = [postId, replyId, botA.ownerId, botB.ownerId].map((id) => bs58.decode(id));
+  const create = async (docType, data) => {
+    const { agreement } = await feeAgreement(ctx, docType === 'post' ? POST_ACTION_FEE : REPLY_ACTION_FEE);
+    return manualCreate(ctx, botA, { docType, data, agreement });
+  };
+  expectRejected('o4a a quote of B\'s post naming A as its owner is refused', await create('post', postData({ content: 'o4 forged quote owner', quotedPostId: post, quotedPostOwnerId: a })), PROPERTY_MISMATCH);
+  expectRejected('o4b a quote of B\'s reply naming A as its owner is refused', await create('post', { ...postData({ content: 'o4 forged reply-quote owner', quotedPostOwnerId: a }), quotedReplyId: reply }), PROPERTY_MISMATCH);
+  expectAccepted('o4c a quote of B\'s reply naming B lands', await create('post', { ...postData({ content: 'o4 reply quote', quotedPostOwnerId: b }), quotedReplyId: reply }));
+  expectRejected('o4d a reply to B\'s reply naming A as the parent owner is refused', await create('reply', { ...replyData({ content: 'o4 forged parent', rootPostId: post, parentOwnerId: a }), replyToReplyId: reply }), PROPERTY_MISMATCH);
+  expectAccepted('o4e a reply to B\'s reply naming B lands', await create('reply', { ...replyData({ content: 'o4 nested reply', rootPostId: post, parentOwnerId: b }), replyToReplyId: reply }));
+}
+
+/** A count over the compound [target, deleted] index; `deleted` true is the tombstone bucket. */
+async function tombstoneCount(ctx, docType, field, id) {
+  return readback(async () => {
+    const raw = await ctx.sdk.documents.count({ dataContractId: ctx.contractId, documentTypeName: docType, where: [[field, '==', id], ['deleted', '==', true]] });
+    const total = raw instanceof Map ? raw.get('') : raw?.[''];
+    return total === undefined || total === null ? 0 : Number(total);
+  });
+}
+
+async function caseT1TombstoneCounts(ctx) {
+  const { botA, botB } = ctx;
+  console.log('\n--- t1. quote and reply counts can leave tombstones out (QA D-44, beta.6) ---');
+  const target = await createFeed(ctx, botB, 'post', postData({ content: `t1 target ${Date.now()}` }), 't1 target');
+  if (!target) { check('t1 fixture', false, 'no target post'); return; }
+  const targetBytes = bs58.decode(target);
+  const owner = bs58.decode(botB.ownerId);
+  const quotes = [], replies = [];
+  for (let i = 0; i < 2; i++) {
+    quotes.push(await createFeed(ctx, botA, 'post', postData({ content: `t1 quote ${i}`, quotedPostId: targetBytes, quotedPostOwnerId: owner }), `t1 quote ${i}`));
+    replies.push(await createFeed(ctx, botA, 'reply', replyData({ content: `t1 reply ${i}`, rootPostId: targetBytes, parentOwnerId: owner }), `t1 reply ${i}`));
+  }
+  if ([...quotes, ...replies].some((id) => !id)) { check('t1 fixtures', false, 'a quote or reply did not land'); return; }
+  await settle();
+  const quote = quotes[0];
+  const quoteDoc = await fetchDocument(ctx.sdk, ctx.contractId, 'post', quote);
+  expectAccepted('t1a A tombstones one quote', await attemptReplace(ctx.sdk, botA, { contractId: ctx.contractId, docType: 'post', id: quote, revision: BigInt(quoteDoc?.revision ?? 1),
+    data: postData({ content: '', quotedPostId: targetBytes, quotedPostOwnerId: owner, deleted: true }) }));
+  const replyDoc = await fetchDocument(ctx.sdk, ctx.contractId, 'reply', replies[0]);
+  expectAccepted('t1b A tombstones one reply', await attemptReplace(ctx.sdk, botA, { contractId: ctx.contractId, docType: 'reply', id: replies[0], revision: BigInt(replyDoc?.revision ?? 1),
+    data: replyData({ content: '', rootPostId: targetBytes, parentOwnerId: owner, deleted: true }) }));
+  await settle();
+  const [quoteTotal, quoteDead, replyTotal, replyDead] = await Promise.all([
+    countBy(ctx.sdk, ctx.contractId, 'post', 'quotedPostId', target),
+    tombstoneCount(ctx, 'post', 'quotedPostId', target),
+    countBy(ctx.sdk, ctx.contractId, 'reply', 'rootPostId', target),
+    tombstoneCount(ctx, 'reply', 'rootPostId', target),
+  ]);
+  check('t1c quotes: total 2, tombstoned 1 (quoteDeletedCount), so 1 live', quoteTotal === 2 && quoteDead === 1, `total=${quoteTotal} tombstoned=${quoteDead}`);
+  check('t1d replies: total 2, tombstoned 1 (rootDeletedCount), so 1 live', replyTotal === 2 && replyDead === 1, `total=${replyTotal} tombstoned=${replyDead}`);
+}
+
 async function caseF1TombstoneImmutability(ctx) {
   console.log('\n--- f1. a tombstone must carry every immutable property verbatim (40128) ---');
   ctx.f1Ran = true;
@@ -641,6 +738,106 @@ async function caseC1PropertyConstraints(ctx) {
     await replaceOwnPost(ctx, fixture.id, { content: '', deleted: true, ...immutablesOf(ctx, fixture.quoted) }));
 }
 
+async function caseR1Reports(ctx) {
+  const { sdk, contractId, botA, botB, moderator } = ctx;
+  console.log('\n--- r1. reports: one per reporter and target, author-agreed, withdrawable, dismissed by a moderator ---');
+  // B's posts and reply are fresh each run, so A has reported none of them yet.
+  const postId = await ensurePost(ctx, 'anchor');
+  const replyId = await ensureReply(ctx);
+  const otherId = await ensurePost(ctx, 'reported');
+  if (!postId || !replyId || !otherId) { check('r1 fixture', false, 'no anchor post, anchor reply or second post'); return; }
+  const [post, reply, other, author] = [postId, replyId, otherId, botB.ownerId].map((id) => bs58.decode(id));
+  const report = (data) => attemptCreate(sdk, botA, { contractId, docType: 'report', data: reportData(data) });
+
+  const postReport = await report({ postId: post, targetOwnerId: author, reason: 0 });
+  expectAccepted('r1a A reports B\'s post', postReport);
+  await expectCreateRefused(ctx, 'r1b a second report of the same post by A is refused (40105)', botA, 'report', reportData({ postId: post, targetOwnerId: author, reason: 1 }), DUPLICATE_UNIQUE);
+  const replyReport = await report({ replyId: reply, targetOwnerId: author, reason: 8, note: 'v9 battery report' });
+  expectAccepted('r1c A reports B\'s reply ("something else", with a note)', replyReport);
+  await expectCreateRefused(ctx, 'r1d a report naming someone other than the author is refused (40127)', botA, 'report', reportData({ postId: other, targetOwnerId: randomIdBytes(), reason: 0 }), PROPERTY_MISMATCH);
+  await expectCreateRefused(ctx, 'r1e B reporting its own post is refused (10419)', botB, 'report', reportData({ postId: post, targetOwnerId: author, reason: 0 }), NOT_DISTINCT);
+  await expectCreateRefused(ctx, 'r1f a report of a post that does not exist is refused (40120)', botA, 'report', reportData({ postId: randomIdBytes(), targetOwnerId: author, reason: 0 }), REFERENCE_NOT_FOUND);
+  // Real targets, so the refusal can only be the rule.
+  for (const [label, data, rule] of refusedCreates(CONTRACT_FILE.replace('contracts/', ''), 'report')) {
+    const fields = { ...data, ...(data.postId ? { postId: other } : {}), ...(data.replyId ? { replyId: reply } : {}), targetOwnerId: author };
+    await expectCreateRefused(ctx, `r1g ${label} is refused (10422 ${rule})`, botA, 'report', fields, constraintViolation(rule));
+  }
+
+  if (replyReport.ok) {
+    const withdrawn = await deleteOwn(ctx, botA, 'report', replyReport.id);
+    await settle();
+    check('r1h A withdraws its reply report', withdrawn === null && (await fetchDocument(sdk, contractId, 'report', replyReport.id)) === null, (withdrawn ?? '').slice(0, 160));
+  }
+
+  if (!postReport.ok || interimOnly(ctx, 'r1i–r1k')) return;
+  try {
+    const removal = await sdk.contracts.moderatorDeleteDocument({
+      identity: moderator.identity, contractId, documentTypeName: 'report', documentId: postReport.id,
+      reason: { text: 'v9 battery: report reviewed', documents: [{ documentTypeName: 'post', documentId: postId }] },
+      signer: moderator.signer,
+    });
+    check('r1i the interim owner dismisses A\'s report (the removal record names A)', idOf(removal.documentOwnerId) === botA.ownerId, `hash=${removal.documentHash}`);
+  } catch (e) {
+    check('r1i the interim owner dismisses A\'s report', false, describeErr(e).slice(0, 220));
+    return;
+  }
+  await settle();
+  check('r1j the dismissed report no longer fetches', (await fetchDocument(sdk, contractId, 'report', postReport.id)) === null);
+  // The unique entry went with the document: a dismissal does not stop a new report.
+  expectAccepted('r1k A may report the post again after the dismissal', await report({ postId: post, targetOwnerId: author, reason: 0 }));
+}
+
+/**
+ * r2, the publisher's POST-SEAT step: run once masternodes have seated a team
+ * (one-hour windows on this devnet cut), with `--team-member bot:<n>` (a seated
+ * member or the leader) and `--reason-doc <id>` (a `reason` document the seated
+ * proposal lists). Skips on an unseated contract, where r1 covers the interim.
+ */
+async function caseR2SeatedDismissals(ctx) {
+  const { sdk, contractId, botA, botB } = ctx;
+  console.log('\n--- r2. a seated team dismisses reports: a listed reason is required (41203); protected reporters stay (41102) ---');
+  if (!ctx.seated) { console.log('SKIP  r2: no charter is seated yet; run it after the election seats a team'); return; }
+  if (!TEAM_MEMBER_SPEC || !REASON_DOCUMENT_ID) { check('r2 needs --team-member bot:<n> and --reason-doc <id>', false); return; }
+  const member = await resolveModerator(sdk, TEAM_MEMBER_SPEC);
+  const postId = await createFeed(ctx, botB, 'post', postData({ content: `r2 reported ${Date.now()}` }), 'the r2 post');
+  if (!postId) { check('r2 fixture', false, 'no post to report'); return; }
+  const [post, author] = [postId, botB.ownerId].map((id) => bs58.decode(id));
+  const fileReport = async (who, label) => {
+    const outcome = await attemptCreate(sdk, who, { contractId, docType: 'report', data: reportData({ postId: post, targetOwnerId: author, reason: 0 }) });
+    expectAccepted(label, outcome);
+    return outcome.ok ? outcome.id : null;
+  };
+  const dismiss = (documentId, withReason) => errorOf(() => sdk.contracts.moderatorDeleteDocument({
+    identity: member.identity, contractId, documentTypeName: 'report', documentId,
+    reason: { text: 'v9 battery r2: report reviewed', documents: [{ documentTypeName: 'post', documentId: postId }], ...(withReason ? { reasonDocumentId: REASON_DOCUMENT_ID } : {}) },
+    signer: member.signer,
+  }));
+  const REASON_NOT_LISTED = /\bcode"?\s*[=:]\s*41203\b|reason.{0,80}not listed|moderationreasonnotlisted/i;
+  const TARGET_NOT_ALLOWED = /\bcode"?\s*[=:]\s*41102\b|contractmoderationtargetnotallowed|protected|not allowed/i;
+
+  const reportA = await fileReport(botA, 'r2a A reports B\'s post');
+  if (reportA) {
+    const bare = await dismiss(reportA, false);
+    expectRejected('r2b a dismissal citing no listed reason is refused (41203)', { ok: bare === null, error: bare }, REASON_NOT_LISTED);
+    const listed = await dismiss(reportA, true);
+    check('r2c a dismissal citing a listed reason lands', listed === null, (listed ?? '').slice(0, 200));
+  }
+  // A team member's report: the team may not delete what a moderator wrote.
+  const reportMember = await fileReport(member, 'r2d the team member reports B\'s post');
+  if (reportMember) {
+    const refused = await dismiss(reportMember, true);
+    expectRejected('r2e dismissing a team member\'s report is refused (41102)', { ok: refused === null, error: refused }, TARGET_NOT_ALLOWED);
+    await deleteOwn(ctx, member, 'report', reportMember);
+  }
+  // The contract owner is ownerProtected once a team is seated.
+  const reportOwner = await fileReport(ctx.moderator, 'r2f the contract owner reports B\'s post');
+  if (reportOwner) {
+    const refused = await dismiss(reportOwner, true);
+    expectRejected('r2g dismissing the ownerProtected owner\'s report is refused (41102)', { ok: refused === null, error: refused }, TARGET_NOT_ALLOWED);
+    await deleteOwn(ctx, ctx.moderator, 'report', reportOwner);
+  }
+}
+
 // ---- Registry ------------------------------------------------------------------
 
 async function ensurePrepared(ctx) {
@@ -672,10 +869,14 @@ const CASES = new Map([
   ['o1', caseO1LikeOwnerAgreement],
   ['o2', caseO2LikeReplyOwnerAgreement],
   ['o3', caseO3RepostOwnerAgreement],
+  ['o4', caseO4QuoteAndParentOwner],
+  ['t1', caseT1TombstoneCounts],
   ['f1', caseF1TombstoneImmutability],
   ['f2', caseF2DeletedIsSettableOnce],
   ['f3', caseF3MutableFieldsStayMutable],
   ['c1', caseC1PropertyConstraints],
+  ['r1', prepared(caseR1Reports)],
+  ['r2', prepared(caseR2SeatedDismissals)],
 ]);
 
 /**
@@ -685,7 +886,8 @@ const CASES = new Map([
  * files a `submittedCharter` for this contract; members file `joinRequest`s
  * (`buildJoinRequest`); the leader files an `electedCharter` (opens the
  * contest, 0.5 DASH prefund); masternodes vote over joinWindow + voteWindow
- * (one day each on v9, so the run spans ≥ 1 day); after seating:
+ * (one hour each on the beta.6 devnet cut, which #5108 allows off mainnet, so
+ * a contested run fits in about two hours); after seating:
  * `team(contractId)`, the owner's ban refused 41101, a member's ban naming a
  * listed reason lands, one naming none is 41203, the owner cannot be banned
  * (ownerProtected, 41102), an addition past maxAddedModerators is 41202, and the
@@ -718,11 +920,21 @@ function selfTest() {
   expect('like.postId agrees hashtag and postAuthor with the post\'s $ownerId (o1)', agreement('like', 'postId').hashtag === 'hashtag' && agreement('like', 'postId').postAuthor === '$ownerId');
   expect('likeReply.replyId agrees replyAuthor with the reply\'s $ownerId (o2)', agreement('likeReply', 'replyId').replyAuthor === '$ownerId');
   expect('repost.postId agrees postOwnerId with the post\'s $ownerId (o3)', agreement('repost', 'postId').postOwnerId === '$ownerId');
+  expect('a quote binds quotedPostOwnerId to the quoted post\'s or reply\'s $ownerId (o4a, o4b)', agreement('post', 'quotedPostId').quotedPostOwnerId === '$ownerId' && agreement('post', 'quotedReplyId').quotedPostOwnerId === '$ownerId');
+  expect('a nested reply binds parentOwnerId to the parent reply\'s $ownerId (o4d)', agreement('reply', 'replyToReplyId').parentOwnerId === '$ownerId');
+  const countable = (type, name, props) => schemas[type].indices.some((i) => i.name === name && i.countable === true && JSON.stringify(i.properties.map((p) => Object.keys(p)[0])) === JSON.stringify(props));
+  expect('post counts tombstoned quotes per post, reply tombstoned replies per root (t1)', countable('post', 'quoteDeletedCount', ['quotedPostId', 'deleted']) && countable('reply', 'rootDeletedCount', ['rootPostId', 'deleted']));
+  expect('reply counts tombstoned nested replies per parent reply (D-44)', countable('reply', 'replyDeletedCount', ['replyToReplyId', 'deleted']));
+  expect('a report expires 90 days after it is filed', schemas.report.ttl === 7_776_000 && schemas.report.required.includes('$createdAt'));
+  expect('the election windows are one hour each on this devnet cut (e0c)', moderators.joinWindow === 3600 && moderators.voteWindow === 3600);
   expect('post freezes language, hashtag, the quote and deleted (f1, f2)', ['language', 'hashtag', 'quotedPostId', 'quotedPostOwnerId', 'deleted'].every((p) => schemas.post.immutable?.includes(p)));
   expect('post allows setting deleted once (f2)', schemas.post.immutableAllowSetting?.includes('deleted'));
   expect('post content, mediaUrl and sensitive stay mutable (f3)', ['content', 'mediaUrl', 'sensitive'].every((p) => !schemas.post.immutable?.includes(p)));
+  expect('report is moderator-deletable and moderated for deletion only (r1i)', schemas.report.canBeDeletedByModerators === true && JSON.stringify(moderators.moderatedDocumentTypes.report) === '["deleteDocuments"]');
+  expect('one report per reporter and post, and per reporter and reply (r1b)', ['postId', 'replyId'].every((p) => schemas.report.indices.some((i) => i.unique && JSON.stringify(i.properties) === JSON.stringify([{ $ownerId: 'asc' }, { [p]: 'asc' }]))));
+  expect('report.targetOwnerId agrees with the post\'s or reply\'s $ownerId and is not the reporter (r1d, r1e)', agreement('report', 'postId').targetOwnerId === '$ownerId' && agreement('report', 'replyId').targetOwnerId === '$ownerId' && schemas.report.properties.targetOwnerId.distinctFrom === '$ownerId');
   for (const [type, rules] of Object.entries(DECLARED_RULES['yappr-social-contract-v9.json'])) {
-    expect(`${type} declares exactly the propertyConstraints rules c1 asserts`, JSON.stringify(Object.keys(schemas[type].propertyConstraints ?? {}).sort()) === JSON.stringify([...rules].sort()));
+    expect(`${type} declares exactly the propertyConstraints rules c1 and r1 assert`, JSON.stringify(Object.keys(schemas[type].propertyConstraints ?? {}).sort()) === JSON.stringify([...rules].sort()));
   }
   for (const problem of problems) console.error(`FAIL  ${problem}`);
   if (problems.length > 0) { console.error(`${CONTRACT_FILE} no longer declares what this battery asserts`); return 1; }
@@ -755,6 +967,8 @@ const SHAPES = [
   ['like (hashtag absent)', 'like', likeData({ postId: someId(), postAuthor: someId() })],
   ['likeReply', 'likeReply', likeReplyData({ replyId: someId(), replyAuthor: someId() })],
   ['repost', 'repost', repostData({ postId: someId(), postOwnerId: someId() })],
+  ['report (post)', 'report', reportData({ postId: someId(), targetOwnerId: someId() })],
+  ['report (reply, something else + note)', 'report', reportData({ replyId: someId(), targetOwnerId: someId(), reason: 8, note: 'why' })],
 ];
 if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) {
   await ensureInitialized();
@@ -796,7 +1010,7 @@ await runBattery({
   contractEnvVar: 'V9_CONTRACT_ID',
   usage:
     'Usage: node scripts/verify-v9.mjs --contract <id> [--bot <n>] [--bot2 <n>]\n' +
-    '       [--moderator maker] [--owner <id>] [--owner2 <id>] [--only e0,p1] [--dry-run|--self-test]',
+    '       [--moderator maker] [--owner <id>] [--owner2 <id>] [--team-member bot:<n> --reason-doc <id>] [--only e0,p1] [--dry-run|--self-test]',
   cases: CASES,
   shapes: SHAPES,
   replaceShapes: [

@@ -19,6 +19,15 @@ document `ttl`. See [docs/CONTRACTS_BETA5.md](../docs/CONTRACTS_BETA5.md) for
 the rules, the rejected candidates (key-exchange TTL among them) and the
 sha256 of every file.
 
+**The 4.2.0-beta.6 re-cut** (moutai was wiped again) edits only social v9 and
+blog in place. v9 gains the `report` type (readers report a post or reply to
+the moderators, who dismiss a report by deleting it), one-hour election
+windows for devnet, quote and nested-reply owner bindings, and countable
+tombstone buckets for quote and reply counts. Blog (topology `v5`) refuses a
+comment on a comments-off post and a post by anyone but the blog's owner.
+Every other file is byte-identical to beta.5. See
+[docs/CONTRACTS_BETA6.md](../docs/CONTRACTS_BETA6.md).
+
 These are the only two social contracts that exist on any chain, and the only
 two topologies the client knows. The differences are wired into the app
 through `lib/contract-topology.ts` and selected per deployment with

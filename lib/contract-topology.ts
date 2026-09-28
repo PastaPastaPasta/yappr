@@ -725,7 +725,7 @@ export function contractKeepsWarnings(): boolean {
   return moderationListsKept().includes('warnings')
 }
 
-/** The document types the contract's moderators may delete (v9: post, reply). */
+/** The document types the contract's moderators may delete (v9: post, reply, report). */
 export function moderatorDeletableTypes(): readonly string[] {
   if (!contractIsModerated()) return []
   return Object.entries(V9_SCHEMAS)
@@ -888,4 +888,15 @@ export function privateFeedWritesAreGated(): boolean {
  */
 export function blockFollowsAreTyped(): boolean {
   return isV9()
+}
+
+/**
+ * True when posts and replies can be reported to the moderators (v9's
+ * `report` type): one report per reporter and target, the target's author
+ * agreed by consensus (40127) and never the reporter (10419). Its reporter may
+ * withdraw it; the moderators dismiss it by deleting it. Off a moderated
+ * topology nobody would read a report, so none can be filed.
+ */
+export function contractTakesReports(): boolean {
+  return contractIsModerated() && V9_SCHEMAS.report?.canBeDeletedByModerators === true
 }

@@ -341,7 +341,7 @@ export function isImmutablePropertyChangedError(error: unknown): boolean {
  * (`code=41107`, `"code":41107`) — never the bare digits, since five-digit codes
  * occur inside timestamps and credit amounts.
  */
-function hasConsensusCode(error: unknown, codes: readonly number[]): boolean {
+export function hasConsensusCode(error: unknown, codes: readonly number[]): boolean {
   const numeric = consensusCodeOf(error)
   if (numeric !== null && codes.includes(numeric)) return true
   const message = extractErrorMessage(error)

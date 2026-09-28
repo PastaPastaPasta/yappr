@@ -156,7 +156,10 @@
           "description": "Reference to parent blog document",
           "refersTo": {
             "type": "deletableDocument",
-            "documentType": "blog"
+            "documentType": "blog",
+            "propertyAgreement": {
+              "$ownerId": "$ownerId"
+            }
           }
         },
         "title": {
@@ -343,7 +346,8 @@
             "type": "deletableDocument",
             "documentType": "blogPost",
             "propertyAgreement": {
-              "blogPostOwnerId": "$ownerId"
+              "blogPostOwnerId": "$ownerId",
+              "postCommentsEnabled": "commentsEnabled"
             }
           }
         },
@@ -362,6 +366,10 @@
           "maxLength": 500,
           "position": 2,
           "description": "Comment content"
+        },
+        "postCommentsEnabled": {
+          "type": "boolean",
+          "position": 3
         }
       },
       "additionalProperties": false,
@@ -373,7 +381,20 @@
           "amount": 1
         }
       },
-      "canBeDeletedByModerators": true
+      "canBeDeletedByModerators": true,
+      "propertyConstraints": {
+        "commentsOpen": {
+          "notEqual": [
+            {
+              "ifAbsent": [
+                "postCommentsEnabled",
+                1
+              ]
+            },
+            0
+          ]
+        }
+      }
     },
     "blogFollow": {
       "type": "object",

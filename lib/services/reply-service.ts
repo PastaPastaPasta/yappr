@@ -363,11 +363,31 @@ class ReplyService extends BaseDocumentService<Reply> {
       });
 
       const documents = normalizeSDKResponse(response);
-      return documents.map((doc) => this.transformDocument(doc));
+      return this.withTrueParentOwner(userId, documents.map((doc) => this.transformDocument(doc)));
     } catch (error) {
       logger.error('Error getting replies to my content:', error);
       return [];
     }
+  }
+
+  /**
+   * Drops replies that name `userId` as their parent's owner falsely. On v9 the
+   * contract binds `parentOwnerId` to the parent reply's `$ownerId` only when
+   * `replyToReplyId` is present; a DIRECT reply (to the thread root) is not
+   * bound, so anyone could file one that lands in a stranger's notifications.
+   * Those are kept only when the root post really is `userId`'s: one batched
+   * `$id in` read of the roots (cached), and a root that cannot be read is not
+   * trusted. On v2 nothing is bound and there is no root field, so nothing
+   * changes there.
+   */
+  private async withTrueParentOwner(userId: string, replies: Reply[]): Promise<Reply[]> {
+    if (!replyLinkage().replyToReply) return replies;
+    const direct = replies.filter((reply) => !reply.replyToReplyId && reply.rootPostId);
+    if (direct.length === 0) return replies;
+    const { postService } = await import('./post-service');
+    const roots = await postService.getMany(direct.map((reply) => reply.rootPostId as string));
+    const mine = new Set(roots.filter((post) => post.author.id === userId).map((post) => post.id));
+    return replies.filter((reply) => reply.replyToReplyId || !reply.rootPostId || mine.has(reply.rootPostId));
   }
 
   /**
