@@ -18,7 +18,7 @@ import { BlogViewer } from './blog-viewer'
 import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
 import { EmbedPreview } from './embed-preview'
-import { decodeSummary, estimateReadingTime, getBlogPostUrl } from '@/lib/blog/content-utils'
+import { blogAuthorHandle, blogPostDate, commentsAreEnabled, decodeSummary, estimateReadingTime, formatLabels, getBlogPostUrl } from '@/lib/blog/content-utils'
 import { getReaderOverrideStyle, getReaderFontSize, getAppThemeForReadingMode } from '@/lib/blog/reader-preferences'
 import { normalizeBlogThemeConfig } from '@/lib/blog/theme-types'
 import { ReadingPreferencesPopover } from './reading-preferences'
@@ -77,7 +77,9 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
     () => normalizeBlogThemeConfig(blog.themeConfig).colors.bg,
     [blog.themeConfig],
   )
-  const relativeTime = useRelativeTime(post.createdAt)
+  const relativeTime = useRelativeTime(blogPostDate(post))
+  const authorHandle = blogAuthorHandle(username, blog.ownerId)
+  const commentsEnabled = commentsAreEnabled(post)
 
   // Capture the original app theme once before we override it (during render, not in an effect)
   if (savedThemeRef.current === undefined && theme !== undefined) {
@@ -144,7 +146,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   }
 
   const handleShareX = () => {
-    const text = `${post.title} by @${username}`
+    const text = username ? `${post.title} by @${username}` : post.title
     window.open(`https://x.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(postUrl)}`, '_blank', 'noopener')
   }
 
@@ -191,9 +193,11 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
             </p>
           )}
 
-          <p className="mt-4 text-sm" style={{ color: 'var(--blog-text)', opacity: 0.6 }}>
-            {commentCount} {commentCount === 1 ? 'comment' : 'comments'}
-          </p>
+          {commentsEnabled && (
+            <p className="mt-4 text-sm" style={{ color: 'var(--blog-text)', opacity: 0.6 }}>
+              {commentCount} {commentCount === 1 ? 'comment' : 'comments'}
+            </p>
+          )}
 
           {/* Author row */}
           <div className="mt-4 flex items-center gap-3">
@@ -203,7 +207,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
                 {blog.name}
               </p>
               <p className="truncate text-xs" style={{ color: 'var(--blog-text)', opacity: 0.6 }}>
-                @{username} · {relativeTime}
+                {authorHandle} · {relativeTime}
               </p>
             </div>
             {!isOwnBlog && user && (
@@ -233,7 +237,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
               {post.labels && (
                 <>
                   <span>·</span>
-                  <span>{post.labels}</span>
+                  <span>{formatLabels(post.labels)}</span>
                 </>
               )}
               {(post.$revision ?? 1) > 1 && (
@@ -282,7 +286,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
                       Share on Reddit
                     </DropdownMenu.Item>
                     <DropdownMenu.Separator className="my-1 h-px bg-gray-200 dark:bg-gray-800" />
-                    <EmbedPreview post={post} username={username} />
+                    <EmbedPreview post={post} username={username || authorHandle} />
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
@@ -325,7 +329,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
             <BlogComments
               blogPostId={post.id}
               blogPostOwnerId={post.ownerId}
-              commentsEnabled={post.commentsEnabled !== false}
+              commentsEnabled={commentsEnabled}
               onCommentCountChange={setCommentCount}
             />
           </div>
@@ -339,7 +343,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
             </button>
             <button type="button" className={SIDEBAR_BUTTON_ACTIVE_CLASS} aria-label="Jump to comments" onClick={scrollToComments}>
               <ChatBubbleLeftIcon className="h-5 w-5 text-gray-400 transition group-hover:text-blue-500" />
-              {commentCount > 0 && (
+              {commentsEnabled && commentCount > 0 && (
                 <span className="mt-0.5 block text-center text-[10px] text-gray-400">{commentCount}</span>
               )}
             </button>

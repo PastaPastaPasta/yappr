@@ -1,0 +1,109 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  blogAuthorHandle,
+  blogCommentsDefault,
+  blogPostDate,
+  isPublishedBlogPost,
+  labelsFromStored,
+  mergeComments,
+  publishedPostsNewestFirst,
+  storedLabels,
+} from './content-utils'
+import { ListLimitError } from '@/lib/typed-array-codecs'
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
+
+const day = (n: number) => Date.UTC(2026, 8, n)
+
+describe('drafts are not public (QA D-27)', () => {
+  it('treats a post with no publishedAt as a draft', () => {
+    expect(isPublishedBlogPost({})).toBe(false)
+    expect(isPublishedBlogPost({ publishedAt: 0 })).toBe(true)
+    expect(isPublishedBlogPost({ publishedAt: day(2) })).toBe(true)
+  })
+
+  it('drops drafts from a public listing and orders it by publication date', () => {
+    const createdToday = new Date(day(27))
+    const posts = [
+      { id: 'draft', createdAt: new Date(day(28)) },
+      { id: 'sep-2', publishedAt: day(2), createdAt: createdToday },
+      { id: 'sep-16', publishedAt: day(16), createdAt: createdToday },
+      { id: 'sep-6', publishedAt: day(6), createdAt: createdToday },
+    ]
+    expect(publishedPostsNewestFirst(posts).map((post) => post.id)).toEqual(['sep-16', 'sep-6', 'sep-2'])
+  })
+})
+
+describe('the date a reader sees (QA D-51)', () => {
+  it('is publishedAt, not the document creation time', () => {
+    const post = { publishedAt: day(2), createdAt: new Date(day(27)) }
+    expect(blogPostDate(post).getTime()).toBe(day(2))
+  })
+
+  it('falls back to the creation time for a post without one', () => {
+    const createdAt = new Date(day(27))
+    expect(blogPostDate({ createdAt })).toBe(createdAt)
+  })
+})
+
+describe('author handle (QA D-52)', () => {
+  it('is @username when there is one', () => {
+    expect(blogAuthorHandle('alice', '8DSffvR5abcdefghijklmnopqrstuvosiL')).toBe('@alice')
+  })
+
+  it('is a shortened identity id, never a bare "@", without a DPNS name', () => {
+    for (const missing of ['', null, undefined]) {
+      expect(blogAuthorHandle(missing, '8DSffvR5abcdefghijklmnopqrstuvosiL')).toBe('8DSffvR5...uvosiL')
+    }
+  })
+})
+
+describe('comments default (QA D-53)', () => {
+  it('is on when the blog never set it, matching what new posts do', () => {
+    expect(blogCommentsDefault({})).toBe(true)
+    expect(blogCommentsDefault(undefined)).toBe(true)
+  })
+
+  it('keeps an explicit choice', () => {
+    expect(blogCommentsDefault({ commentsEnabledDefault: false })).toBe(false)
+    expect(blogCommentsDefault({ commentsEnabledDefault: true })).toBe(true)
+  })
+})
+
+describe('just-created comments survive a lagging reload (QA D-28)', () => {
+  const at = (n: number) => new Date(day(28) + n)
+  const older = { id: 'a', createdAt: at(1) }
+  const mine = { id: 'mine', createdAt: at(3) }
+
+  it('keeps a created comment the read did not return, in time order', () => {
+    const newer = { id: 'b', createdAt: at(5) }
+    expect(mergeComments([older, newer], [mine]).map((comment) => comment.id)).toEqual(['a', 'mine', 'b'])
+  })
+
+  it('does not duplicate a created comment the read already returned', () => {
+    expect(mergeComments([older, mine], [mine]).map((comment) => comment.id)).toEqual(['a', 'mine'])
+  })
+})
+
+describe('labels are a list (QA D-55)', () => {
+  it('keeps a label containing a comma whole on blog v4', () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v4')
+    expect(storedLabels(['alpha,beta', 'gamma'], 'blog')).toEqual(['alpha,beta', 'gamma'])
+    expect(labelsFromStored(['alpha,beta', 'gamma'])).toEqual(['alpha,beta', 'gamma'])
+  })
+
+  it('refuses a comma on the CSV cuts instead of silently splitting the label', () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v3')
+    expect(() => storedLabels(['alpha,beta'], 'blog')).toThrow(ListLimitError)
+    expect(storedLabels(['alpha', 'beta'], 'blog')).toBe('alpha,beta')
+  })
+
+  it('reads a v1-v3 CSV string as a list and omits an empty one', () => {
+    expect(labelsFromStored('oncall, databases')).toEqual(['oncall', 'databases'])
+    expect(labelsFromStored('')).toBeUndefined()
+    expect(labelsFromStored([])).toBeUndefined()
+    expect(storedLabels([], 'post')).toBeUndefined()
+  })
+})

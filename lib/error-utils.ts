@@ -99,6 +99,15 @@ export function isTimeoutError(error: unknown): boolean {
 }
 
 /**
+ * The DAPI gateway refused the request for volume (gRPC RESOURCE_EXHAUSTED,
+ * "rate limited"). Transient: the same request goes through a moment later.
+ */
+export function isRateLimitedError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  return msg.includes('rate limited') || msg.includes('resource has been exhausted') || msg.includes('resource_exhausted')
+}
+
+/**
  * Checks if an error indicates the state transition already exists
  * (in mempool, in chain, or nonce already used). These errors mean
  * the broadcast likely succeeded even though we didn't get confirmation.

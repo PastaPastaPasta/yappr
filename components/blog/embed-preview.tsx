@@ -10,6 +10,7 @@ import { escapeHtml, renderEmbedHtml } from '@/lib/embed/embed-renderer'
 import type { EmbedTheme } from '@/lib/embed/embed-types'
 import { APP_URL } from '@/lib/constants'
 import { createEmbedSnippets } from '@/lib/embed/embed-snippets'
+import { blogPostDate } from '@/lib/blog/content-utils'
 
 interface EmbedPreviewProps {
   post: BlogPost
@@ -28,7 +29,7 @@ export function EmbedPreview({ post, username }: EmbedPreviewProps) {
   const html = useMemo(() => renderEmbedHtml(post.content), [post.content])
 
   const previewDoc = useMemo(() => {
-    const createdLabel = post.createdAt.toLocaleDateString()
+    const createdLabel = blogPostDate(post).toLocaleDateString()
 
     return `<!doctype html>
 <html>
@@ -49,7 +50,7 @@ export function EmbedPreview({ post, username }: EmbedPreviewProps) {
     </div>
   </body>
 </html>`
-  }, [html, post.createdAt, post.title, theme, username])
+  }, [html, post, theme, username])
 
   const handleCopy = async () => {
     try {

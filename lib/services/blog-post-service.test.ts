@@ -48,3 +48,54 @@ describe('identifier encoding on the edit path', () => {
     expect(replacePayload({}).author).toBeUndefined();
   });
 });
+
+describe('the pre-publish slug check (QA D-54)', () => {
+  // What the SDK rejects with when the DAPI gateway throttles: a WasmSdkError, not an Error.
+  const rateLimited = { message: 'no available addresses to retry, last error: grpc error: code: \'Some resource has been exhausted\', message: "rate limited"' };
+  const content = [{ type: 'paragraph', content: [{ type: 'text', text: 'hi' }] }];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function spyCreate() {
+    const service = blogPostService as unknown as { create(ownerId: string, data: Record<string, unknown>): Promise<BlogPost> };
+    return vi.spyOn(service, 'create').mockImplementation(async (_owner, data) => ({ id: 'new', slug: data.slug } as BlogPost));
+  }
+
+  it('retries a rate-limited lookup instead of failing the publish outright', async () => {
+    const lookup = vi.spyOn(blogPostService, 'getPostBySlug')
+      .mockRejectedValueOnce(rateLimited)
+      .mockResolvedValueOnce(null);
+    const create = spyCreate();
+
+    const published = blogPostService.createPost(ownerId, { blogId, title: 'Hello', content });
+    await vi.runAllTimersAsync();
+
+    await expect(published).resolves.toMatchObject({ slug: 'hello' });
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it('gives up with the gateway\'s message (for the rate-limit toast) when it stays throttled', async () => {
+    vi.spyOn(blogPostService, 'getPostBySlug').mockRejectedValue(rateLimited);
+    const create = spyCreate();
+
+    const published = blogPostService.createPost(ownerId, { blogId, title: 'Hello', content });
+    const settled = expect(published).rejects.toThrow(/rate limited/);
+    await vi.runAllTimersAsync();
+    await settled;
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a failure that is not a rate limit', async () => {
+    const lookup = vi.spyOn(blogPostService, 'getPostBySlug').mockRejectedValue(new Error('invalid query'));
+    await expect(blogPostService.createPost(ownerId, { blogId, title: 'Hello', content })).rejects.toThrow('invalid query');
+    expect(lookup).toHaveBeenCalledOnce();
+  });
+});

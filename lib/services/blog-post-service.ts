@@ -5,7 +5,9 @@ import type { BlogPost } from '@/lib/types'
 import { identifierToBase58, normalizeBytes, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { compressContent, decompressContent, joinChunks, splitIntoChunks } from '@/lib/utils/compression'
 import { generateSlug } from '@/lib/utils/slug'
-import { labelsCsv, storedLabels } from '@/lib/blog/content-utils'
+import { retryAsync } from '@/lib/retry-utils'
+import { extractErrorMessage, isRateLimitedError } from '@/lib/error-utils'
+import { labelsFromStored, publishedPostsNewestFirst, storedLabels } from '@/lib/blog/content-utils'
 
 export interface BlogPostQueryOptions {
   limit?: number
@@ -18,7 +20,7 @@ export interface CreateBlogPostData {
   subtitle?: string
   content: unknown
   coverImage?: string
-  labels?: string
+  labels?: string[]
   commentsEnabled?: boolean
   slug?: string
   publishedAt?: number
@@ -29,7 +31,7 @@ export interface UpdateBlogPostData {
   subtitle?: string
   content?: unknown
   coverImage?: string
-  labels?: string
+  labels?: string[]
   commentsEnabled?: boolean
   slug?: string
   publishedAt?: number
@@ -58,8 +60,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     if (typeof fields.blogId === 'string') {
       fields.blogId = fields.blogId ? requireDocumentIdentifierBytes(fields.blogId, 'blogId') : undefined
     }
-    // The app models labels as CSV; store them as the configured cut does.
-    if ('labels' in fields) fields.labels = storedLabels(fields.labels, 'post')
+    // Store the app's label list as the configured cut does.
+    if ('labels' in fields) fields.labels = storedLabels(doc.labels, 'post')
     // Re-compress and chunk content into data0–data3 (only set chunks that exist)
     if (doc.content && Array.isArray(doc.content) && doc.content.length > 0) {
       const compressed = compressContent(doc.content)
@@ -105,7 +107,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       subtitle: (data.subtitle ?? doc.subtitle) as string | undefined,
       content,
       coverImage: (data.coverImage ?? doc.coverImage) as string | undefined,
-      labels: labelsCsv(data.labels ?? doc.labels),
+      labels: labelsFromStored(data.labels ?? doc.labels),
       commentsEnabled: (data.commentsEnabled ?? doc.commentsEnabled) as boolean | undefined,
       slug: (data.slug || doc.slug || '') as string,
       publishedAt: (data.publishedAt ?? doc.publishedAt) as number | undefined,
@@ -119,9 +121,17 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     }
 
     let slug = data.slug || generateSlug(data.title)
-    // Check for collision and append suffix if needed
-    const existing = await this.getPostBySlug(data.blogId, slug)
-    if (existing) {
+    // Check for collision and append suffix if needed. This is a read, so a
+    // rate-limited one is safe to repeat before giving up on the publish. The
+    // SDK rejects with a WasmSdkError, not an Error; keep its message readable.
+    const lookup = await retryAsync(
+      () => this.getPostBySlug(data.blogId, slug).catch((error: unknown) => {
+        throw error instanceof Error ? error : new Error(extractErrorMessage(error))
+      }),
+      { initialDelayMs: 1500, retryCondition: isRateLimitedError }
+    )
+    if (!lookup.success) throw lookup.error ?? new Error('Slug lookup failed')
+    if (lookup.data) {
       slug = appendTimestampSuffix(slug)
     }
 
@@ -241,11 +251,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const perBlogLimit = Math.min(Math.ceil(limit / blogIds.length), limit)
     const results = Array.from((await this.getPostsByBlogs(blogIds, perBlogLimit)).values())
 
-    // Merge, sort by createdAt desc, and take top N
-    return results
-      .flat()
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      .slice(0, limit)
+    // Merge, drop drafts, sort by publication date desc, and take top N
+    return publishedPostsNewestFirst(results.flat()).slice(0, limit)
   }
 
   /**
@@ -263,15 +270,13 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const results = Array.from((await this.getPostsByBlogs(blogIds, 20)).values())
 
     // Filter by title, subtitle, or labels matching the query
-    return results
-      .flat()
+    return publishedPostsNewestFirst(results.flat())
       .filter(post => {
         const titleMatch = post.title?.toLowerCase().includes(lowerQuery)
         const subtitleMatch = post.subtitle?.toLowerCase().includes(lowerQuery)
-        const labelsMatch = post.labels?.toLowerCase().includes(lowerQuery)
+        const labelsMatch = post.labels?.some(label => label.toLowerCase().includes(lowerQuery))
         return titleMatch || subtitleMatch || labelsMatch
       })
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .slice(0, limit)
   }
 }

@@ -1,5 +1,6 @@
 import { blogLabelsAreTyped } from '@/lib/constants'
-import { LIST_LIMITS, assertListLimits, decodeLabelList, encodeLabelList } from '@/lib/typed-array-codecs'
+import { LIST_LIMITS, ListLimitError, assertListLimits, decodeLabelList, encodeLabelList, uniqueStrings } from '@/lib/typed-array-codecs'
+import { truncateId } from '@/lib/utils/common'
 
 /** Zero-width space used to flag a summary as hidden from the post view. */
 export const SUMMARY_HIDDEN_PREFIX = '\u200B'
@@ -92,40 +93,82 @@ export function getBlogPostUrl(blogId: string, slug: string): string {
   return `/blog?blog=${encodeURIComponent(blogId)}&post=${encodeURIComponent(slug)}`
 }
 
-export function parseLabels(value?: string): string[] {
-  if (!value) return []
-  return Array.from(new Set(value.split(',').map((item) => item.trim()).filter(Boolean)))
-}
-
 /**
- * The app models labels as one comma-separated string. Blog v1–v3 store that
- * string; blog v4 stores a typed list (docs/SOCIAL_V9.md). These two convert
- * at the service boundary, so everything above it keeps the CSV model.
+ * Labels as the configured blog cut stores them; undefined when there are
+ * none (the field is then omitted). The app models labels as a list; blog v4
+ * stores that list (docs/SOCIAL_V9.md), v1–v3 a comma-separated string. On v4
+ * the contract caps the list (64 on a blog, 16 on a post, 40 characters each)
+ * and a longer one is refused after signing, so it throws a
+ * {@link ListLimitError} with a user-facing message first. v1–v3 keep their
+ * own byte cap, but a label holding a comma cannot survive their encoding (it
+ * would read back as two), so it is refused the same way.
  */
-export function labelsCsv(stored: unknown): string | undefined {
-  const labels = decodeLabelList(stored)
-  return labels.length > 0 ? labels.join(',') : undefined
-}
-
-/**
- * Labels (CSV or a list) as the configured blog cut stores them; undefined
- * when there are none. On blog v4 the contract caps the list (64 on a blog,
- * 16 on a post, 40 characters each) and a longer one is refused after
- * signing, so it throws a {@link ListLimitError} with a user-facing message
- * first. v1–v3 keep their own byte cap and are not re-checked here.
- */
-export function storedLabels(labels: unknown, of: 'blog' | 'post'): string | string[] | undefined {
-  const list = decodeLabelList(labels)
+export function storedLabels(labels: readonly string[] | undefined, of: 'blog' | 'post'): string | string[] | undefined {
+  const list = uniqueStrings(labels ?? [])
   const typed = blogLabelsAreTyped()
   if (typed) assertListLimits(list, of === 'blog' ? LIST_LIMITS.blogLabels : LIST_LIMITS.postLabels)
+  else if (list.some((label) => label.includes(','))) throw new ListLimitError('Labels can\'t contain a comma on this network.')
   return encodeLabelList(list, typed)
+}
+
+/** Stored labels (a v4 list or a v1–v3 comma-separated string) as the app's list; undefined when there are none. */
+export function labelsFromStored(stored: unknown): string[] | undefined {
+  const labels = decodeLabelList(stored)
+  return labels.length > 0 ? labels : undefined
 }
 
 /** The v4 caps a UI should hold labels to (it also holds them on older cuts, which is harmless). */
 export const LABEL_LIMITS = { blog: LIST_LIMITS.blogLabels.maxItems, post: LIST_LIMITS.postLabels.maxItems, length: LIST_LIMITS.postLabels.maxLength } as const
 
-export function labelsToCsv(items: string[]): string {
-  return Array.from(new Set(items.map((item) => item.trim()).filter(Boolean))).join(',')
+/** Labels for display as one line of text. */
+export function formatLabels(labels?: readonly string[]): string {
+  return (labels ?? []).join(', ')
+}
+
+/**
+ * A post with no `publishedAt` is a draft. The app always sets it on create,
+ * but other clients (and the seeder) can write drafts, and nothing on chain
+ * hides them: every public surface has to filter them out itself.
+ */
+export function isPublishedBlogPost(post: { publishedAt?: number }): boolean {
+  return post.publishedAt !== undefined
+}
+
+/** The date a reader should see: when the post was published, else when it was created. */
+export function blogPostDate(post: { publishedAt?: number; createdAt: Date }): Date {
+  return post.publishedAt !== undefined ? new Date(post.publishedAt) : post.createdAt
+}
+
+/** A blog's public listing: drafts dropped, newest publication first. */
+export function publishedPostsNewestFirst<T extends { publishedAt?: number; createdAt: Date }>(posts: readonly T[]): T[] {
+  return posts.filter(isPublishedBlogPost).sort((a, b) => blogPostDate(b).getTime() - blogPostDate(a).getTime())
+}
+
+/** A post's comments are on unless it explicitly turned them off. */
+export function commentsAreEnabled(post: { commentsEnabled?: boolean }): boolean {
+  return post.commentsEnabled !== false
+}
+
+/** A blog's default for new posts: on unless the blog explicitly turned it off (the field is optional). */
+export function blogCommentsDefault(blog?: { commentsEnabledDefault?: boolean }): boolean {
+  return blog?.commentsEnabledDefault ?? true
+}
+
+/** How to name a blog's author: `@username`, or a shortened identity id when they have no DPNS name. */
+export function blogAuthorHandle(username: string | null | undefined, ownerId: string): string {
+  return username ? `@${username}` : truncateId(ownerId, 8, 6)
+}
+
+/**
+ * The comments to show: what the last read returned, plus comments this
+ * client created that the read did not include yet (a node that has not
+ * caught up with the write answers without them), oldest first.
+ */
+export function mergeComments<T extends { id: string; createdAt: Date }>(loaded: readonly T[], created: readonly T[]): T[] {
+  const ids = new Set(loaded.map((comment) => comment.id))
+  const missing = created.filter((comment) => !ids.has(comment.id))
+  if (missing.length === 0) return [...loaded]
+  return [...loaded, ...missing].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
 }
 
 export function estimateReadingTime(content: unknown): number {

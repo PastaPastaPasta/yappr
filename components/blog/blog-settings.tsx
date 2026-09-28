@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { blogService } from '@/lib/services'
-import { LABEL_LIMITS, labelsToCsv, parseLabels } from '@/lib/blog/content-utils'
+import { LABEL_LIMITS, blogCommentsDefault } from '@/lib/blog/content-utils'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
@@ -25,14 +25,12 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
   const [description, setDescription] = useState(blog.description || '')
   const [avatar, setAvatar] = useState(blog.avatar || '')
   const [headerImage, setHeaderImage] = useState(blog.headerImage || '')
-  const [commentsEnabledDefault, setCommentsEnabledDefault] = useState(Boolean(blog.commentsEnabledDefault))
-  const [labels, setLabels] = useState(blog.labels || '')
+  const [commentsEnabledDefault, setCommentsEnabledDefault] = useState(blogCommentsDefault(blog))
+  const [labels, setLabels] = useState<string[]>(blog.labels ?? [])
   const [newLabel, setNewLabel] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [isSavingLabels, setIsSavingLabels] = useState(false)
 
-
-  const parsedLabels = useMemo(() => parseLabels(labels), [labels])
 
   const handleSave = async () => {
     setIsSaving(true)
@@ -42,7 +40,7 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
         description: description.trim() || undefined,
         avatar: avatar || undefined,
         headerImage: headerImage || undefined,
-        labels: parsedLabels.join(',') || undefined,
+        labels: labels.length > 0 ? labels : undefined,
         commentsEnabledDefault,
       })
 
@@ -57,13 +55,12 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
 
   const persistLabels = async (nextLabels: string[]) => {
     setIsSavingLabels(true)
-    const csv = labelsToCsv(nextLabels)
     const previous = labels
-    setLabels(csv)
+    setLabels(nextLabels)
 
     try {
       const updated = await blogService.updateBlog(blog.id, ownerId, {
-        labels: csv || undefined,
+        labels: nextLabels.length > 0 ? nextLabels : undefined,
       })
       onUpdated?.(updated)
       toast.success('Labels updated')
@@ -79,21 +76,21 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
   const addLabel = async () => {
     const trimmed = newLabel.trim()
     if (!trimmed) return
-    if (parsedLabels.includes(trimmed)) {
+    if (labels.includes(trimmed)) {
       setNewLabel('')
       return
     }
-    if (parsedLabels.length >= LABEL_LIMITS.blog) {
+    if (labels.length >= LABEL_LIMITS.blog) {
       toast.error(`A blog can have at most ${LABEL_LIMITS.blog} labels. Remove one first.`)
       return
     }
 
-    await persistLabels([...parsedLabels, trimmed])
+    await persistLabels([...labels, trimmed])
     setNewLabel('')
   }
 
   const removeLabel = async (label: string) => {
-    await persistLabels(parsedLabels.filter((item) => item !== label))
+    await persistLabels(labels.filter((item) => item !== label))
   }
 
   return (
@@ -134,10 +131,10 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {parsedLabels.length === 0 ? (
+          {labels.length === 0 ? (
             <p className="text-xs text-gray-500">No labels yet.</p>
           ) : (
-            parsedLabels.map((label) => (
+            labels.map((label) => (
               <button
                 key={label}
                 type="button"

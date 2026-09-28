@@ -57,7 +57,7 @@ describe('blog optional-field updates', () => {
       YAPPR_BLOG_CONTRACT_ID, 'blog', blogId, ownerId,
       { ...content, commentsEnabledDefault: false }, 7
     )
-    expect(result).toMatchObject({ ...content, commentsEnabledDefault: false })
+    expect(result).toMatchObject({ ...content, labels: ['only-label'], commentsEnabledDefault: false })
   })
 
   it('rejects failed replacements so settings cannot report a successful clear', async () => {
@@ -76,19 +76,36 @@ describe('blog optional-field updates', () => {
 })
 
 describe('blog v4 typed labels (docs/SOCIAL_V9.md)', () => {
-  it('writes labels as a list on blog v4 and reads a stored list back as the app\'s CSV', async () => {
+  it('writes labels as a list on blog v4 and reads a stored list back as a list', async () => {
     vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v4')
     try {
       get.mockResolvedValueOnce({ ...raw, labels: ['oncall', 'databases'] })
-      const result = await blogService.updateBlog(blogId, ownerId, { labels: 'oncall,databases,essays' })
+      const result = await blogService.updateBlog(blogId, ownerId, { labels: ['oncall', 'databases', 'essays'] })
       expect(updateDocument).toHaveBeenCalledExactlyOnceWith(
         YAPPR_BLOG_CONTRACT_ID, 'blog', blogId, ownerId,
         { ...content, labels: ['oncall', 'databases', 'essays'] }, 7
       )
-      expect(result.labels).toBe('oncall,databases,essays')
+      expect(result.labels).toEqual(['oncall', 'databases', 'essays'])
     } finally {
       vi.unstubAllEnvs()
     }
+  })
+
+  it('keeps a label containing a comma as ONE label on v4 (QA D-55)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v4')
+    try {
+      get.mockResolvedValueOnce({ ...raw, labels: ['oncall'] })
+      const result = await blogService.updateBlog(blogId, ownerId, { labels: ['oncall', 'alpha,beta'] })
+      expect(updateDocument.mock.calls[0][4].labels).toEqual(['oncall', 'alpha,beta'])
+      expect(result.labels).toEqual(['oncall', 'alpha,beta'])
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('refuses a label containing a comma on v1-v3, whose CSV encoding would split it', async () => {
+    await expect(blogService.updateBlog(blogId, ownerId, { labels: ['alpha,beta'] })).rejects.toThrow(/comma/)
+    expect(updateDocument).not.toHaveBeenCalled()
   })
 
   it('re-encodes an untouched stored list on v4 instead of sending the CSV model', async () => {
@@ -107,7 +124,7 @@ describe('blog v4 label limits', () => {
   it('refuses more than 64 blog labels before anything is written', async () => {
     vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v4')
     try {
-      const labels = Array.from({ length: 65 }, (_, i) => `label${i}`).join(',')
+      const labels = Array.from({ length: 65 }, (_, i) => `label${i}`)
       await expect(blogService.updateBlog(blogId, ownerId, { labels })).rejects.toThrow(/At most 64 blog labels/)
       expect(updateDocument).not.toHaveBeenCalled()
     } finally {
@@ -116,8 +133,8 @@ describe('blog v4 label limits', () => {
   })
 
   it('does not apply the v4 caps on blog v3 (its own byte cap stands)', async () => {
-    const labels = Array.from({ length: 65 }, (_, i) => `l${i}`).join(',')
+    const labels = Array.from({ length: 65 }, (_, i) => `l${i}`)
     await blogService.updateBlog(blogId, ownerId, { labels })
-    expect(updateDocument.mock.calls[0][4].labels).toBe(labels)
+    expect(updateDocument.mock.calls[0][4].labels).toBe(labels.join(','))
   })
 })

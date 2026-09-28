@@ -35,6 +35,7 @@ import { ProfileTabs, type ProfileBlog } from '@/components/profile/profile-tabs
 import { ImageCustomizationModal } from '@/components/profile/image-customization-modal'
 import { EMPTY_DRAFT, type ProfileDraft } from '@/components/profile/profile-edit-form'
 import { ListLimitError } from '@/lib/typed-array-codecs'
+import { isPublishedBlogPost } from '@/lib/blog/content-utils'
 
 const PAGE_SIZE = 50
 
@@ -217,7 +218,8 @@ function UserProfileContent() {
           const pages = await blogPostService.getPostsByBlogs(ownerBlogs.map(blog => blog.id), 100)
           setBlogs(ownerBlogs.map(blog => ({
             id: blog.id, name: blog.name, description: blog.description,
-            postCount: pages.get(blog.id)?.length ?? 0,
+            // Drafts are not public; the owner's dashboard counts them.
+            postCount: pages.get(blog.id)?.filter(isPublishedBlogPost).length ?? 0,
           })))
         } catch (blogError) {
           logger.error('Failed to load blogs for profile:', blogError)

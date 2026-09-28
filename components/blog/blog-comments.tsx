@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ import { normalizeDpnsUsername } from '@/lib/post-helpers'
 import { logger } from '@/lib/logger'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { BLOG_YAPP_TOKEN_COSTS, blogIsV2 } from '@/lib/constants'
+import { mergeComments } from '@/lib/blog/content-utils'
 import type { BlogComment } from '@/lib/types'
 import { blogCommentService } from '@/lib/services'
 
@@ -44,6 +45,10 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [content, setContent] = useState('')
+  // Comments posted from here. The read after a write can reach a node that
+  // has not applied it yet; merging these in keeps a paid comment on screen
+  // instead of silently dropping it (and inviting a second, paid, attempt).
+  const createdRef = useRef<BlogComment[]>([])
 
   useEffect(() => {
     onCommentCountChange?.(comments.length)
@@ -68,7 +73,10 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
         ? await checkBlockedForAuthors(user.identityId, authorIds)
         : new Map<string, boolean>()
 
-      const filtered = allComments.filter((comment) => !blockedMap.get(comment.ownerId))
+      const filtered = mergeComments(
+        allComments.filter((comment) => !blockedMap.get(comment.ownerId)),
+        createdRef.current.filter((comment) => comment.blogPostId === blogPostId)
+      )
       setComments(filtered)
 
       const filteredAuthorIds = Array.from(new Set(filtered.map((comment) => comment.ownerId).filter(Boolean)))
@@ -100,8 +108,10 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
 
     try {
       setIsSubmitting(true)
-      await blogCommentService.createComment(authedUser.identityId, blogPostId, blogPostOwnerId, trimmedContent)
+      const created = await blogCommentService.createComment(authedUser.identityId, blogPostId, blogPostOwnerId, trimmedContent)
+      createdRef.current = [...createdRef.current, created]
       setContent('')
+      setComments((prev) => mergeComments(prev, [created]))
       await loadComments()
     } catch (error) {
       logger.error('Failed to post blog comment:', error)
@@ -123,6 +133,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
         throw new Error('Comment deletion was not confirmed')
       }
 
+      createdRef.current = createdRef.current.filter((comment) => comment.id !== commentId)
       setComments((prev) => prev.filter((comment) => comment.id !== commentId))
     } catch (error) {
       logger.error('Failed to delete blog comment:', error)

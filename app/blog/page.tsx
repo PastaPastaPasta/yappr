@@ -21,7 +21,7 @@ import { BlogPostView } from '@/components/blog/blog-post-view'
 import { ThemeEditor } from '@/components/blog/theme-editor'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { getBlogPostUrl } from '@/lib/blog/content-utils'
+import { blogPostDate, formatLabels, getBlogPostUrl, isPublishedBlogPost } from '@/lib/blog/content-utils'
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 import toast from 'react-hot-toast'
 
@@ -84,12 +84,14 @@ function BlogPageContent() {
         setViewBlog(blog)
         setViewUsername(resolved ? normalizeDpnsUsername(resolved) : null)
 
-        if (postSlugParam && !post) {
+        // A draft is only readable by its owner (from the dashboard, as a preview).
+        const visible = post && (isPublishedBlogPost(post) || post.ownerId === user?.identityId) ? post : null
+        if (postSlugParam && !visible) {
           setError('Post not found')
           setViewPost(null)
           return
         }
-        setViewPost(post)
+        setViewPost(visible)
       } catch {
         if (cancelled) return
         setError('Failed to load blog')
@@ -108,7 +110,7 @@ function BlogPageContent() {
     return () => {
       cancelled = true
     }
-  }, [sdkReady, blogIdParam, postSlugParam])
+  }, [sdkReady, blogIdParam, postSlugParam, user?.identityId])
 
   useEffect(() => {
     let cancelled = false
@@ -294,7 +296,7 @@ function BlogPageContent() {
               ) : (
                 <div className="divide-y divide-gray-200 dark:divide-gray-800/60">
                   {ownerPosts.map((post) => {
-                    const isPublished = post.publishedAt !== undefined
+                    const isPublished = isPublishedBlogPost(post)
                     return (
                       <div key={post.id} className="group flex items-start gap-3 py-3.5 first:pt-0 last:pb-0">
                         <button
@@ -314,9 +316,9 @@ function BlogPageContent() {
                             </span>
                           </div>
                           <div className="mt-1 flex items-center gap-2">
-                            <span className="text-xs text-gray-500">{post.createdAt.toLocaleDateString()}</span>
+                            <span className="text-xs text-gray-500">{blogPostDate(post).toLocaleDateString()}</span>
                             {post.labels && (
-                              <span className="text-xs text-gray-600">{post.labels}</span>
+                              <span className="text-xs text-gray-600">{formatLabels(post.labels)}</span>
                             )}
                           </div>
                         </button>

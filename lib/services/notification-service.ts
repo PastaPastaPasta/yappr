@@ -6,6 +6,7 @@ import { identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk
 import { YAPPR_CONTRACT_ID, blogIsV2 } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
+import { isPublishedBlogPost } from '../blog/content-utils';
 import { likesAreIndexOnly, likeSurfacesAreSplit, likeIndexFor, replyLinkage, type TargetKind } from '../contract-topology';
 
 // Constants for notification queries
@@ -300,7 +301,8 @@ class NotificationService {
 
       const pages = await blogPostService.getPostsByBlogs(followedBlogIds, 10);
       return Array.from(pages.entries()).flatMap(([blogId, posts]) => posts
-        .filter(post => post.createdAt.getTime() > sinceTimestamp)
+        // A draft is not a new post for the blog's followers.
+        .filter(post => post.createdAt.getTime() > sinceTimestamp && isPublishedBlogPost(post))
         .map(post => ({
           id: `blogPost-${post.id}`, type: 'blogPost' as const, fromUserId: post.ownerId,
           postId: post.id, blogId, blogPostTitle: post.title, blogPostSlug: post.slug,

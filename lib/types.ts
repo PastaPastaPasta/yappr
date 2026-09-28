@@ -82,7 +82,7 @@ export interface Blog {
   avatar?: string
   themeConfig?: BlogThemeConfig
   commentsEnabledDefault?: boolean
-  labels?: string
+  labels?: string[]
 }
 
 export interface BlogPost {
@@ -96,7 +96,7 @@ export interface BlogPost {
   subtitle?: string
   content: Record<string, unknown>[]
   coverImage?: string
-  labels?: string
+  labels?: string[]
   commentsEnabled?: boolean
   slug: string
   publishedAt?: number
