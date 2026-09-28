@@ -19,6 +19,7 @@ import Link from 'next/link'
 import { TREE_CAPACITY } from '@/lib/services'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
 import { resolveUserDetailsBatch, type UserDetails } from '@/lib/utils/resolve-user-details'
+import { withoutRevokedGrants } from '@/lib/utils/revoked-grants'
 
 interface PrivateFollower extends UserDetails {
   grantedAt: Date
@@ -46,8 +47,9 @@ export function PrivateFeedFollowers() {
   const triggerRefresh = usePrivateFeedRefreshStore((s) => s.triggerRefresh)
   // A revocation that succeeded can still read back its grant for a moment
   // (slow node, or a grant delete that failed after the rekey). The follower is
-  // cryptographically revoked either way, so keep them out of the list.
-  const revokedIdsRef = useRef(new Set<string>())
+  // cryptographically revoked either way, so keep that grant out of the list.
+  // A re-approval writes a newer grant, which shows again.
+  const revokedGrantsRef = useRef(new Map<string, number>())
 
   const loadFollowers = useCallback(async () => {
     if (!user?.identityId) {
@@ -69,8 +71,10 @@ export function PrivateFeedFollowers() {
       }
 
       // Get all private followers
-      const grants = (await privateFeedService.getPrivateFollowers(user.identityId))
-        .filter(grant => !revokedIdsRef.current.has(grant.recipientId))
+      const grants = withoutRevokedGrants(
+        await privateFeedService.getPrivateFollowers(user.identityId),
+        revokedGrantsRef.current
+      )
 
       if (grants.length === 0) {
         setFollowers([])
@@ -149,7 +153,7 @@ export function PrivateFeedFollowers() {
 
       if (result.success) {
         // Remove from local state
-        revokedIdsRef.current.add(follower.id)
+        revokedGrantsRef.current.set(follower.id, follower.grantedAt.getTime())
         setFollowers((prev) => prev.filter((f) => f.id !== follower.id))
         toast.success(
           `Revoked access for ${follower.username ? `@${follower.username}` : follower.displayName}`
