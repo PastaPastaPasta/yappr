@@ -883,6 +883,19 @@ export function TipModal() {
                         Sign with my wallet instead
                       </button>
                     )}
+
+                    {/* The login key here can't move tokens, so without this the
+                        wallet QR is the only way forward. Buy YAPP offers the
+                        same paste-a-critical-key path. */}
+                    {isYapp && canSignLocally === false && (
+                      <button
+                        type="button"
+                        onClick={() => { setState('needKey'); setError(null); setShowKeyEntry(true) }}
+                        className="w-full text-xs text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+                      >
+                        Paste a critical private key instead
+                      </button>
+                    )}
                   </div>
                 )}
 
