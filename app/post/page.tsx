@@ -107,7 +107,7 @@ function PostDetailContent() {
   }, [replyThreads, enrichRepliesProgressively])
 
   const handleReply = () => {
-    if (!post || !canReplyToPrivate) return
+    if (!post || post.deleted || !canReplyToPrivate) return
     setReplyingTo(post)
     setComposeOpen(true)
   }
@@ -174,7 +174,12 @@ function PostDetailContent() {
             {/* Proved YAPP tips on this post — one token-history read, detail view only */}
             <PostTips postId={post.id} authorId={post.author.id} />
 
-            {user ? (
+            {post.deleted ? (
+              // Consensus accepts a reply to a tombstone; the post is gone for readers.
+              <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
+                <p className="text-gray-500 text-sm">This post was deleted, so it can&apos;t be replied to.</p>
+              </div>
+            ) : user ? (
               isCheckingAccess ? (
                 <div className="p-4 border-b border-gray-200 dark:border-gray-800">
                   <Button

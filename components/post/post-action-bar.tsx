@@ -36,6 +36,8 @@ const MENU_ITEM = 'flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 d
 interface PostActionBarProps {
   postId: string
   isOwnPost: boolean
+  /** A tombstone: nothing new may point at it, but an existing like or repost can be undone. */
+  deleted: boolean
   reply: { count: number; enabled: boolean; reason?: string | null; onClick: () => void }
   /** `allowed` false hides the Repost item; the control still shows the count and Quote. */
   repost: { count: number; active: boolean; loading: boolean; allowed: boolean; onClick: () => void }
@@ -54,8 +56,11 @@ export function stopAndRun(e: React.MouseEvent, action: () => void | Promise<voi
 }
 
 /** The reply / repost / like / tip / bookmark / share row under a post. */
-export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark, onQuote, onTip, onShare }: PostActionBarProps) {
+export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like, bookmark, onQuote, onTip, onShare }: PostActionBarProps) {
   const repostLabel = repost.allowed ? 'Repost or quote' : 'Quote'
+  const showRepostItem = repost.allowed && (!deleted || repost.active)
+  const likeDisabled = like.loading || (deleted && !like.active)
+  const tipDisabled = isOwnPost || deleted
 
   return (
     <div className="flex items-center justify-between mt-1 -ml-2 max-w-[485px]">
@@ -82,7 +87,7 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark
                 data-testid={`repost-menu-btn-${postId}`}
                 aria-label={repost.allowed ? `${repostLabel}, ${repost.count} repost${repost.count === 1 ? '' : 's'}${repost.active ? ', reposted' : ''}` : repostLabel}
                 onClick={stopPropagation}
-                disabled={repost.loading}
+                disabled={repost.loading || (deleted && !showRepostItem)}
                 className={cn(
                   'group flex items-center gap-1 p-2 rounded-full transition-colors hover:bg-green-50 dark:hover:bg-green-950',
                   repost.loading && 'opacity-50 cursor-wait',
@@ -103,16 +108,18 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark
               onClick={stopPropagation}
             >
               {/* Reposting a reply has no doctype on v9, so the item is absent rather than failing. */}
-              {repost.allowed && (
+              {showRepostItem && (
                 <DropdownMenu.Item onClick={(e) => stopAndRun(e, repost.onClick)} className={MENU_ITEM}>
                   <ArrowPathIcon className={cn('h-5 w-5', repost.active && 'text-green-500')} />
                   {repost.active ? 'Undo Repost' : 'Repost'}
                 </DropdownMenu.Item>
               )}
-              <DropdownMenu.Item onClick={(e) => stopAndRun(e, onQuote)} className={MENU_ITEM}>
-                <PencilSquareIcon className="h-5 w-5" />
-                Quote
-              </DropdownMenu.Item>
+              {!deleted && (
+                <DropdownMenu.Item onClick={(e) => stopAndRun(e, onQuote)} className={MENU_ITEM}>
+                  <PencilSquareIcon className="h-5 w-5" />
+                  Quote
+                </DropdownMenu.Item>
+              )}
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
@@ -123,10 +130,11 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark
             aria-label={`Like, ${like.count} like${like.count === 1 ? '' : 's'}`}
             aria-pressed={like.active}
             onClick={(e) => stopAndRun(e, like.onClick)}
-            disabled={like.loading}
+            disabled={likeDisabled}
             className={cn(
               'group flex items-center gap-1 p-2 rounded-full transition-colors hover:bg-red-50 dark:hover:bg-red-950',
               like.loading && 'opacity-50 cursor-wait',
+              deleted && !like.active && 'opacity-50 cursor-not-allowed',
               like.active && 'text-red-500'
             )}
           >
@@ -139,14 +147,14 @@ export function PostActionBar({ postId, isOwnPost, reply, repost, like, bookmark
           </button>
         </ActionTooltip>
 
-        <ActionTooltip label={isOwnPost ? "Can't tip yourself" : 'Tip'}>
+        <ActionTooltip label={isOwnPost ? "Can't tip yourself" : deleted ? "Can't tip a deleted post" : 'Tip'}>
           <button
             aria-label="Tip"
             onClick={(e) => stopAndRun(e, onTip)}
-            disabled={isOwnPost}
-            className={cn('group flex items-center gap-1 p-2 rounded-full transition-colors', isOwnPost ? 'opacity-40 cursor-not-allowed' : 'hover:bg-amber-50 dark:hover:bg-amber-950')}
+            disabled={tipDisabled}
+            className={cn('group flex items-center gap-1 p-2 rounded-full transition-colors', tipDisabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-amber-50 dark:hover:bg-amber-950')}
           >
-            <CurrencyDollarIcon className={cn('h-5 w-5 transition-colors', isOwnPost ? 'text-gray-400' : 'text-gray-500 group-hover:text-amber-500')} />
+            <CurrencyDollarIcon className={cn('h-5 w-5 transition-colors', tipDisabled ? 'text-gray-400' : 'text-gray-500 group-hover:text-amber-500')} />
           </button>
         </ActionTooltip>
 

@@ -227,10 +227,14 @@ export function PostCard({
       setShowLikesModal(true)
       return
     }
+    // A tombstone still exists on chain, so consensus accepts new engagement
+    // with it; only undoing an existing like or repost is offered.
+    if (isTombstoned && !engagement.liked) return
     if (!requireAuth()) return
     return engagement.toggleLike()
   }
   const handleRepost = () => {
+    if (isTombstoned && !engagement.reposted) return
     if (!requireAuth()) return
     return engagement.toggleRepost()
   }
@@ -239,12 +243,12 @@ export function PostCard({
     return engagement.toggleBookmark()
   }
   const handleQuote = () => {
-    if (!requireAuth()) return
+    if (isTombstoned || !requireAuth()) return
     setQuotingPost(enrichedPost)
     setComposeOpen(true)
   }
   const handleReply = () => {
-    if (!requireAuth()) return
+    if (isTombstoned || !requireAuth()) return
     if (!canReplyToPrivate) {
       toast.error(cantReplyReason || "Can't reply to this post")
       return
@@ -254,7 +258,7 @@ export function PostCard({
   }
   const handleShare = () => copy(`${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH || ''}/post/?id=${post.id}`, 'Link copied to clipboard')
   const handleTip = () => {
-    if (!requireAuth()) return
+    if (isTombstoned || !requireAuth()) return
     openTipModal(enrichedPost)
   }
 
@@ -365,9 +369,11 @@ export function PostCard({
                 </Tooltip.Provider>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50" sideOffset={5}>
-                    <DropdownMenu.Item onClick={(e) => stopAndRun(e, toggleFollow)} disabled={followLoading} className={cn(CARD_MENU_ITEM, 'disabled:opacity-50')}>
-                      {isFollowing ? 'Unfollow' : 'Follow'} {authorLabel}
-                    </DropdownMenu.Item>
+                    {!isOwnPost && (
+                      <DropdownMenu.Item onClick={(e) => stopAndRun(e, toggleFollow)} disabled={followLoading} className={cn(CARD_MENU_ITEM, 'disabled:opacity-50')}>
+                        {isFollowing ? 'Unfollow' : 'Follow'} {authorLabel}
+                      </DropdownMenu.Item>
+                    )}
                     <DropdownMenu.Item
                       onClick={(e) => {
                         e.stopPropagation()
@@ -390,9 +396,11 @@ export function PostCard({
                         Delete {isReply ? 'reply' : 'post'}
                       </DropdownMenu.Item>
                     )}
-                    <DropdownMenu.Item onClick={(e) => stopAndRun(e, toggleBlock)} disabled={blockLoading} className={cn(CARD_MENU_ITEM, 'text-red-500 disabled:opacity-50')}>
-                      {isBlocked ? 'Unblock' : 'Block'} {authorLabel}
-                    </DropdownMenu.Item>
+                    {!isOwnPost && (
+                      <DropdownMenu.Item onClick={(e) => stopAndRun(e, toggleBlock)} disabled={blockLoading} className={cn(CARD_MENU_ITEM, 'text-red-500 disabled:opacity-50')}>
+                        {isBlocked ? 'Unblock' : 'Block'} {authorLabel}
+                      </DropdownMenu.Item>
+                    )}
                     {canModerate && (
                       <DropdownMenu.Item
                         data-testid={`moderator-remove-${post.id}`}
@@ -475,7 +483,13 @@ export function PostCard({
           <PostActionBar
             postId={post.id}
             isOwnPost={isOwnPost}
-            reply={{ count: stats.replies, enabled: canReplyToPrivate, reason: cantReplyReason, onClick: handleReply }}
+            deleted={isTombstoned}
+            reply={{
+              count: stats.replies,
+              enabled: canReplyToPrivate && !isTombstoned,
+              reason: isTombstoned ? `This ${isReply ? 'reply' : 'post'} was deleted` : cantReplyReason,
+              onClick: handleReply,
+            }}
             repost={{ count: totalReposts, active: engagement.reposted, loading: engagement.repostLoading, allowed: repostable, onClick: handleRepost }}
             like={{ count: engagement.likes, active: engagement.liked, loading: engagement.likeLoading, onClick: handleLike }}
             bookmark={bookmarkable ? bookmarkAction ?? { active: engagement.bookmarked, loading: engagement.bookmarkLoading, onClick: handleBookmark } : undefined}
