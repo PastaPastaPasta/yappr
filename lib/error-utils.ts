@@ -42,6 +42,11 @@ export function extractErrorMessage(error: unknown, depth: number = 0): string {
  * DAPI gateway often times out even when transactions succeed.
  */
 export function isTimeoutError(error: unknown): boolean {
+  // "expired" below is meant for a gateway deadline. A consensus refusal that
+  // also says "expired" — a document past its time to live (40140), or an
+  // identity key past its expiry — is final, and reading it as "may have
+  // landed" would report a refused write as sent.
+  if (isDocumentExpiredError(error) || isKeyExpiredError(error)) return false
   const msg = extractErrorMessage(error).toLowerCase()
   return (
     msg.includes('timeout') ||
@@ -576,6 +581,137 @@ export function isModerationNotYetSeatedError(error: unknown): boolean {
 }
 
 /**
+ * **40140** `DocumentExpiredError` (4.2.0-beta.5, platform#5007): the document's
+ * type declares a `ttl`, and its `$createdAt` plus the ttl has passed, so it can
+ * no longer be replaced, transferred, bought, repriced or restored by a
+ * moderator. The platform deletes it after the block; its owner may still
+ * delete it. Paid and permanent.
+ * Message: "Document <id> of type "<t>" on contract <c> expired at <ms>, its
+ * $createdAt plus the type's time to live, which block time <ms> is not before".
+ */
+export function isDocumentExpiredError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentexpirederror/i.test(msg) ||
+    /expired at \d+, its \$createdat plus the type's time to live/i.test(msg) ||
+    hasConsensusCode(msg, [40140])
+  )
+}
+
+/**
+ * An identity key past its `expiresAt` (protocol 14, platform#4798): 20016
+ * `PublicKeyExpiredError` when it signs, 40219 `IdentityPublicKeyAlreadyExpiredError`
+ * when it is added already expired. Matched only so {@link isTimeoutError} never
+ * reads either as a gateway deadline.
+ */
+function isKeyExpiredError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /publickeyexpired|identitypublickeyalreadyexpired/i.test(msg) ||
+    /identity public key \d+ (is )?expired at/i.test(msg) ||
+    hasConsensusCode(msg, [20016, 40219])
+  )
+}
+
+/**
+ * A contested create (a contested DPNS name, a moderation election charter)
+ * the contest would not take:
+ *
+ * - **40114** `DocumentContestNotPaidForError` — the create stated less than
+ *   the fund to join. From 4.2.0-beta.5 (platform#5039, #5034) a contender
+ *   states the MOST it pays (`contestFund`) and is charged the fund to join:
+ *   0.1 DASH for a DPNS name, doubling once the contest holds 250 contenders and
+ *   again every 50 more. A create naming no `contestFund` has the SDK read the
+ *   fund just before signing, so this means others joined in between, or a
+ *   caller-stated cap was too low. Message: "Contest for document <id> was not
+ *   paid for, needs payment of <n> Credits".
+ * - **40141** `DocumentContestMaximumContendersReachedError` (#5029) — the
+ *   contest already holds 1,000 contenders. Message: "The vote poll <p> already
+ *   has 1000 contenders, the most a contest accepts".
+ *
+ * Both are paid refusals of the transition as built. Permanent for automatic
+ * retry (the signed transition's stated fund cannot change); a manual retry
+ * builds a new transition, which the SDK prices at the current join fund.
+ */
+export function isContestFundError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    isContestFullError(error) ||
+    /documentcontestnotpaidfor/i.test(msg) ||
+    /contest for document .* was not paid for, needs payment of/i.test(msg) ||
+    hasConsensusCode(msg, [40114])
+  )
+}
+
+/**
+ * **40111** `DocumentContestNotJoinableError`: the contest opened longer ago than
+ * its join window (a week on mainnet for DPNS; the target's `joinWindow` for a
+ * moderation election), so no new contender may enter until it ends. Message:
+ * "Document Contest for vote_poll <p> is not joinable <info>, it started <t> and
+ * it is now <t>, and you can only join for <d>".
+ */
+export function isContestNotJoinableError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentcontestnotjoinable/i.test(msg) ||
+    /document contest for vote_poll .* is not joinable/i.test(msg) ||
+    hasConsensusCode(msg, [40111])
+  )
+}
+
+/** The 40141 member of {@link isContestFundError}: the contest is full, and paying more does not help. */
+export function isContestFullError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentcontestmaximumcontendersreached/i.test(msg) ||
+    /already has \d+ contenders, the most a contest accepts/i.test(msg) ||
+    hasConsensusCode(msg, [40141])
+  )
+}
+
+/**
+ * The fund in credits a 40114 says the contest needs, or null. A caller that
+ * wants to offer "pay up to X" reads it from here.
+ */
+export function contestFundNeededFromError(error: unknown): bigint | null {
+  const match = /needs payment of (\d+) credits/i.exec(extractErrorMessage(error))
+  return match ? BigInt(match[1]) : null
+}
+
+/**
+ * **10002** `SerializedObjectParsingError` for bytes left over after a state
+ * transition — refused, unpaid, from protocol 14 at 4.2.0-beta.5 (platform#5011).
+ * A transition built by the SDK or by `lib/manual-batch.ts` is exactly its
+ * bytes (pinned in `manual-batch.test.ts`), so this is a code-level defect: a
+ * cached transition whose bytes were padded or concatenated.
+ * Message (drive-abci `decode_raw_state_transitions` v1 wraps the inner
+ * message, without the ProtocolError prefix): "Parsing of serialized object
+ * failed due to: unable to deserialize dpp::state_transition::StateTransition:
+ * <n> bytes left over after the value".
+ */
+export function isTrailingBytesError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return /bytes left over after the value/i.test(msg)
+}
+
+/**
+ * 10418 `ContestedDocumentsTemporarilyNotAllowedError` ("Contested documents are
+ * not allowed until epoch 4. Current epoch is 0") is NO LONGER PRODUCED from
+ * 4.2.0-beta.5 (platform#4995 removed the gate); rs-dpp keeps the variant so
+ * older nodes still decode. Matched so a pre-beta.5 node's refusal gets its own
+ * message ("not accepted yet") instead of raw prose. Permanent for automatic
+ * retry: the gate lifts with the epoch or an upgrade, not by resending.
+ */
+export function isContestedDocumentsNotYetAllowedError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /contesteddocumentstemporarilynotallowed/i.test(msg) ||
+    /contested documents are not allowed until epoch/i.test(msg) ||
+    hasConsensusCode(msg, [10418])
+  )
+}
+
+/**
  * What a refused MODERATION transition (ban, warn, delete, restore, fee claim,
  * or a charter write of the election flow) means, for the moderator client.
  * Null when the error is none of these. The codes are shared with ordinary
@@ -662,7 +798,11 @@ export function isPermanentProtocol14Error(error: unknown): boolean {
     isDocumentPropertyRuleError(error) ||
     isReferenceRequirementError(error) ||
     isVoteChoiceNotAllowedError(error) ||
-    isModerationNotYetSeatedError(error)
+    isModerationNotYetSeatedError(error) ||
+    isDocumentExpiredError(error) ||
+    isContestFundError(error) ||
+    isTrailingBytesError(error) ||
+    isContestedDocumentsNotYetAllowedError(error)
   )
 }
 
@@ -704,6 +844,18 @@ export function categorizeError(error: unknown): string {
     // not match what the seated charter takes. Paying the full fee always passes.
     return 'The moderator fee share didn\'t match what the seated moderation charter takes. Nothing was posted — try again at the full fee.'
   }
+  if (isDocumentExpiredError(error)) {
+    return 'This has expired and can no longer be changed. The network removes it shortly.'
+  }
+  if (isContestFullError(error)) {
+    return 'Too many people are already competing for this, so the contest is closed to new entries.'
+  }
+  if (isContestFundError(error)) {
+    return 'Joining this contest now costs more than was offered, because others joined first. Try again to pay the current amount.'
+  }
+  if (isContestedDocumentsNotYetAllowedError(error)) {
+    return 'This network does not accept contested names yet. Try again later, or pick a name that is not contested.'
+  }
   if (isFeeMultiplierNotToleratedError(error)) {
     return 'The network\'s fee level changed while this was being sent. Nothing was posted — try again.'
   }
@@ -712,6 +864,7 @@ export function categorizeError(error: unknown): string {
   }
   if (
     isInvalidDocumentIdError(error) ||
+    isTrailingBytesError(error) ||
     isReferencedTypeNotDeletableError(error) ||
     isReferenceRequirementError(error) ||
     isVoteChoiceNotAllowedError(error)

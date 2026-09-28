@@ -3,7 +3,7 @@ import { chunk, mapLimit } from './pagination-utils';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
-import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, YAPPR_PROFILE_CONTRACT_ID, keyNetwork } from '../constants';
+import { CREDITS_PER_DASH, DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, YAPPR_PROFILE_CONTRACT_ID, keyNetwork } from '../constants';
 import { documentToPlainObject, identifierToBase58, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
@@ -11,6 +11,51 @@ import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { likesAreIndexOnly } from '@/lib/contract-topology';
 import { getPrimaryUsername, sortUsernames } from '@/lib/utils/username';
+import {
+  contestFundNeededFromError,
+  extractErrorMessage,
+  isContestFullError,
+  isContestFundError,
+  isContestedDocumentsNotYetAllowedError,
+  isContestNotJoinableError,
+} from '@/lib/error-utils';
+
+
+/**
+ * What a failed DPNS registration tells the user. A contested name (fewer than
+ * 20 characters, only letters, hyphens and the digits 0 and 1) joins a
+ * masternode vote and pays into its fund. The fund depends on the network's
+ * protocol version (0.2 DASH under protocol 12/13, 0.1 DASH at protocol 14,
+ * where it also doubles once a contest holds 250 contenders, platform#5034), so
+ * no figure is hard-coded here. From 4.2.0-beta.5 the registration states the
+ * most it pays (`contestFund`, #5039); Yappr leaves it out, so the SDK reads the
+ * price just before it signs. The refusals below are what remains.
+ */
+export function describeDpnsRegistrationError(error: unknown): string {
+  const message = extractErrorMessage(error);
+  if (isContestFullError(error)) {
+    return 'This name already has the most contenders a vote accepts, so it is closed to new registrations. Try a different name.';
+  }
+  if (isContestFundError(error)) {
+    const needed = contestFundNeededFromError(error);
+    const price = needed === null ? '' : ` (${Number(needed) / CREDITS_PER_DASH} DASH now)`;
+    return `Others joined the vote for this name while you were registering, so it now costs more to enter${price}. Try again to pay the current price.`;
+  }
+  // 40111: the contest for this name opened more than its join window ago (a
+  // week on mainnet), so no new contender may enter until it ends.
+  if (isContestNotJoinableError(error)) {
+    return 'The vote for this name has been running too long to join. Wait for it to end, or pick a different name.';
+  }
+  if (isContestedDocumentsNotYetAllowedError(error)) {
+    return 'This network does not accept contested names yet. Pick a name of 20 or more characters, or one with a digit from 2 to 9.';
+  }
+  // Drive: "Insufficient identity <id> balance <b> required <r>". A contested
+  // name needs its contest fund on top of the fees.
+  if (/insufficient identity .* balance/i.test(message)) {
+    return 'Your identity does not have enough credits for this registration. A contested name also pays a contest fund into its vote, priced by the network before you sign. Top up and try again.';
+  }
+  return message || 'Registration failed';
+}
 
 /**
  * Extract documents array from SDK response (handles Map, Array, and object formats)
@@ -434,7 +479,9 @@ class DpnsService {
         identityKey
       );
 
-      // Register the name
+      // Register the name. `contestFund` is left out on purpose: for a contested
+      // name the SDK reads the fund to join just before it signs (beta.5), which
+      // is the least that is accepted and what is charged.
       logger.debug(`Registering DPNS name: ${label}`);
       await sdk.dpns.registerName({
         label,
@@ -585,7 +632,7 @@ class DpnsService {
           label: reg.label,
           success: false,
           isContested: false,
-          error: error instanceof Error ? error.message : 'Registration failed',
+          error: describeDpnsRegistrationError(error),
         });
       }
     }

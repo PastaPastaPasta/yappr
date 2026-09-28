@@ -9,7 +9,7 @@
  * `rangeCountable`/`countable` contradiction, a lookup whose key can move) fails
  * here rather than after a funded state transition.
  *
- * What the wasm parse does NOT run (measured on 4.2.0-beta.4, see
+ * What the wasm parse does NOT run (measured on 4.2.0-beta.4 and 4.2.0-beta.5, see
  * `scripts/contract-probes.mjs`): the JSON meta-schema (an unknown keyword
  * parses; checked here with ajv against the vendored rs-dpp meta-schema v3),
  * the 20,480-byte state transition cap (measured here on the create

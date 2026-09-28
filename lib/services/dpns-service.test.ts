@@ -4,7 +4,7 @@ const query = vi.hoisted(() => vi.fn());
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }));
 vi.mock('./signer-service', () => ({ signerService: {} }));
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: vi.fn() }));
-import { dpnsService } from './dpns-service';
+import { describeDpnsRegistrationError, dpnsService } from './dpns-service';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -104,5 +104,39 @@ describe('DPNS composite cache seeds', () => {
     dpnsService.seedUsernames(new Map([['111111111', 'new.dash']]));
     expect(await dpnsService.resolveUsername('111111111')).toBe('new.dash');
     expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe('describeDpnsRegistrationError (contested names, 4.2.0-beta.5)', () => {
+  it('names the current price when others joined the vote first (40114)', () => {
+    const message = describeDpnsRegistrationError(new Error('Contest for document 8NAd was not paid for, needs payment of 20000000000 Credits'));
+    expect(message).toMatch(/others joined the vote/i);
+    expect(message).toContain('0.2 DASH');
+  });
+
+  it('says a full contest is closed rather than asking for more (40141)', () => {
+    expect(describeDpnsRegistrationError(new Error('The vote poll P already has 1000 contenders, the most a contest accepts')))
+      .toMatch(/closed to new registrations/i);
+  });
+
+  it('says a contest past its join window cannot be joined (40111)', () => {
+    expect(describeDpnsRegistrationError(new Error('Document Contest for vote_poll V1 is not joinable ContestInfo, it started 1 and it is now 2, and you can only join for 3')))
+      .toMatch(/too long to join/i);
+    expect(describeDpnsRegistrationError(new Error('consensus error code=40111'))).toMatch(/too long to join/i);
+  });
+
+  it('points a node that still refuses contested names before epoch 4 at a non-contested name (10418)', () => {
+    expect(describeDpnsRegistrationError(new Error('Contested documents are not allowed until epoch 4. Current epoch is 0')))
+      .toMatch(/20 or more characters/i);
+  });
+
+  it('mentions the contest fund, without a hard-coded price, when the identity is short of credits', () => {
+    const message = describeDpnsRegistrationError(new Error('Insufficient identity 9t2e balance 5000000000 required 10020000000'));
+    expect(message).toMatch(/contest fund/i);
+    expect(message).not.toMatch(/\d\s*DASH/);
+  });
+
+  it('passes any other error through unchanged', () => {
+    expect(describeDpnsRegistrationError(new Error('Username alice is already taken'))).toBe('Username alice is already taken');
   });
 });

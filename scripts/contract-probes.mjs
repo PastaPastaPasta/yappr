@@ -3,7 +3,7 @@
  * and the negative probes that record which refusals are local and which only
  * a node makes. Used by `validate-contract-offline.mjs`.
  *
- * Measured on @dashevo/wasm-sdk 4.2.0-beta.4 with `DataContract.fromJSON(json,
+ * Measured on @dashevo/wasm-sdk 4.2.0-beta.5 (first on beta.4) with `DataContract.fromJSON(json,
  * true, latest)`: the structural parser runs (lookups, distinctFrom targets,
  * contested + moderator delete, immutable deletable lookups, serde shape of
  * the moderation declaration), but the rules behind rs-dpp's `validation`
@@ -20,8 +20,15 @@
  *     lookup held by an `immutable` property.
  *   - The JSON meta-schema (an unknown keyword parses).
  *
+ * 4.2.0-beta.5 adds two the parse also skips (both behind the `validation`
+ * feature): `immutableAllowSetting` on a deletableDocument reference (#4983)
+ * and an immutable contract reference with an `owner` requirement on a
+ * transferable type (#4982). The document `ttl` rules (#5007) ARE in the parse,
+ * but a `ttl` also makes its type deletable for the 40122/40131 checks
+ * (`documents_can_disappear`), which is registration-time.
+ *
  * `auditNodeRules` re-implements the ones Yappr's cuts rely on, from the rs-dpp
- * source at v4.2.0-beta.4 (config/moderation/{mod,elected}.rs,
+ * source at v4.2.0-beta.5 (config/moderation/{mod,elected}.rs,
  * try_from_schema/v3/mod.rs, create_document_types_from_document_schemas/v1).
  */
 
@@ -55,13 +62,14 @@ export const SIGNATURE_ALLOWANCE = 100;
 // ---- JSON meta-schema --------------------------------------------------------
 
 /**
- * rs-dpp's document meta-schema v3 at v4.2.0-beta.4, vendored byte for byte
+ * rs-dpp's document meta-schema v3 at v4.2.0-beta.5 (beta.5 added `ttl` and
+ * the anyOf/allOf/not/in/present/absent/const propertyConstraints grammar), vendored byte for byte
  * (`packages/rs-dpp/schema/meta_schemas/document/v3/document-meta.json`) and
  * pinned by hash. The wasm parse does not run it, so a keyword typo or a
  * keyword in the wrong place parses locally and is refused by the node.
  */
 const META_SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'meta-schema', 'document-meta-v3.json');
-const META_SCHEMA_SHA256 = 'a3882aa7dc4bc4169f196eb7bdd61aeecdf830a8cacf73d121ebb25e7a0da70f';
+const META_SCHEMA_SHA256 = 'a19c151a9e417a4853b9a4a978a708f6fc1f2441c6d34d670a9411f1cb15264a';
 
 let metaValidator;
 /**
@@ -74,7 +82,7 @@ function metaSchemaValidator() {
   if (metaValidator !== undefined) return metaValidator;
   const text = readFileSync(META_SCHEMA_PATH);
   const digest = createHash('sha256').update(text).digest('hex');
-  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v4.2.0-beta.4 meta-schema (sha256 ${digest})`);
+  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v4.2.0-beta.5 meta-schema (sha256 ${digest})`);
   try {
     const require = createRequire(import.meta.url);
     const Ajv2020 = require('ajv/dist/2020').default;
@@ -114,24 +122,43 @@ const INTERIM_KINDS = ['contractOwner', 'appointedModerators', 'notYetUsable', '
 
 const within = (value, [min, max]) => Number.isInteger(value) && value >= min && value <= max;
 
-/** Can a document of `schema` be deleted by anyone (owner or moderator)? */
+/**
+ * Can a document of `schema` disappear — deleted by its owner, a moderator, or
+ * (4.2.0-beta.5, #5007) the platform once its `ttl` passes? rs-dpp
+ * `documents_can_disappear`.
+ */
 function deletable(schema, config) {
   const ownerMay = schema.canBeDeleted ?? config.documentsCanBeDeletedContractDefault ?? true;
-  return ownerMay === true || schema.canBeDeletedByModerators === true;
+  return ownerMay === true || schema.canBeDeletedByModerators === true || schema.ttl !== undefined;
 }
 
-/** Every reference declaration of a doctype: [path, refersTo] (leaves of anyOf/allOf included). */
+/** Can a document of `schema` change owner (transfer or trade)? rs-dpp `owner_can_change`. */
+function ownerCanChange(schema) {
+  return (schema.transferable ?? 0) !== 0 || (schema.tradeMode ?? 0) !== 0;
+}
+
+/**
+ * Every reference declaration of a doctype: [path, refersTo, inExpression]
+ * (leaves of anyOf/allOf included; `inExpression` marks such a leaf). Paths are
+ * dotted through object properties (`meta.storeId`), as rs-dpp's
+ * `flattened_properties` walks them; a typed array's items end in `[]`.
+ */
 function referenceDeclarations(schema) {
   const out = [];
-  const leaves = (path, ref) => {
-    for (const key of ['anyOf', 'allOf']) if (Array.isArray(ref[key])) { for (const leaf of ref[key]) leaves(path, leaf); return; }
-    out.push([path, ref]);
+  const leaves = (path, ref, inExpression = false) => {
+    for (const key of ['anyOf', 'allOf']) if (Array.isArray(ref[key])) { for (const leaf of ref[key]) leaves(path, leaf, true); return; }
+    out.push([path, ref, inExpression]);
+  };
+  const walk = (properties, prefix) => {
+    for (const [name, definition] of Object.entries(properties ?? {})) {
+      const path = prefix ? `${prefix}.${name}` : name;
+      if (definition.refersTo) leaves(path, definition.refersTo);
+      if (definition.items?.refersTo) leaves(`${path}[]`, definition.items.refersTo);
+      if (definition.type === 'object' && definition.properties) walk(definition.properties, path);
+    }
   };
   if (schema.ownerRefersTo) leaves('$ownerId', schema.ownerRefersTo);
-  for (const [name, definition] of Object.entries(schema.properties ?? {})) {
-    if (definition.refersTo) leaves(name, definition.refersTo);
-    if (definition.items?.refersTo) leaves(`${name}[]`, definition.items.refersTo);
-  }
+  walk(schema.properties, '');
   return out;
 }
 
@@ -218,14 +245,35 @@ export function auditNodeRules(source) {
     }
     const budget = referenceBudget(schema);
     if (budget > LIMITS.maxReferencesPerDocument) problems.push(`${name}: up to ${budget} references per document, above ${LIMITS.maxReferencesPerDocument}`);
-    for (const [path, ref] of referenceDeclarations(schema)) {
-      // validate_no_immutable_deletable_element_references: a deletable lookup (or
-      // a typed array of deletable refs) under `immutable` could never be
-      // re-validated once its target is gone, so the type could never be replaced.
-      const topLevel = path.replace(/\[\]$/, '');
+    // #4983 (beta.5): a single deletableDocument reference by id, declared as the
+    // whole refersTo (not inside anyOf/allOf, not a lookup), may be cleared once its
+    // target is gone, so it may not also be settable while absent. rs-dpp matches the
+    // whole target, not its leaves (validate_no_immutable_deletable_element_references).
+    for (const path of schema.immutableAllowSetting ?? []) {
+      const ref = schema.properties?.[path]?.refersTo;
+      if (ref?.type === 'deletableDocument' && !ref.lookup) {
+        problems.push(`${name}.${path}: immutableAllowSetting on a deletableDocument reference (#4983)`);
+      }
+    }
+    for (const [path, ref, inExpression] of referenceDeclarations(schema)) {
+      // validate_no_immutable_deletable_element_references: a deletable lookup, a
+      // typed array of deletable refs, or a by-id deletable ref inside an object,
+      // held under an `immutable` top-level property, could never be re-validated
+      // once its target is gone, so the type could never be replaced.
+      const topLevel = path.split('.')[0].replace(/\[\]$/, '');
       const heldImmutably = (schema.immutable ?? []).includes(topLevel);
-      if (heldImmutably && ref.type === 'deletableDocument' && (ref.lookup || path.endsWith('[]'))) {
-        problems.push(`${name}.${path}: a deletableDocument ${ref.lookup ? 'lookup' : 'typed array'} under \`immutable\``);
+      const isList = path.endsWith('[]');
+      const nested = path.replace(/\[\]$/, '') !== topLevel;
+      if (heldImmutably && ref.type === 'deletableDocument' && (ref.lookup || isList || (nested && !inExpression))) {
+        const heldAs = ref.lookup ? 'lookup' : isList ? 'typed array' : 'reference inside an object';
+        problems.push(`${name}.${path}: a deletableDocument ${heldAs} under \`immutable\``);
+      }
+      // #4982 (beta.5): an immutable contract reference with an owner requirement on a
+      // type whose documents can change owner could never be replaced by the new owner.
+      // rs-dpp reads `owner` as present only when it names a relation (a JSON null is none).
+      const ownerRequirement = ref.contractRequirements?.owner;
+      if (heldImmutably && ref.type === 'contract' && ownerRequirement !== undefined && ownerRequirement !== null && ownerCanChange(schema)) {
+        problems.push(`${name}.${path}: immutable contract reference with an owner requirement on a transferable type (#4982)`);
       }
       if (ref.contractId || !ref.documentType || !['permanentDocument', 'deletableDocument'].includes(ref.type)) continue;
       const target = schemas[ref.documentType];
@@ -296,6 +344,44 @@ const PROBES = [
     for (const schema of Object.values(s.documentSchemas)) for (const d of Object.values(schema.properties)) d.description = 'x'.repeat(60);
   } },
   { label: 'storefront distinctFrom on a byte array that is not an identifier', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.storeOrder.properties.nonce.distinctFrom = '$ownerId'; } },
+
+  // 4.2.0-beta.5 registration refusals (docs/PLATFORM_BETA5_UPGRADE.md).
+  { label: 'immutableAllowSetting on a deletableDocument reference (#4983)', file: SOCIAL_V9, expect: 'audit', node: 'registration', mutate: (s) => { s.documentSchemas.post.immutableAllowSetting.push('quotedPostId'); } },
+  // A by-id deletableDocument cannot be an expression leaf at all (the parse refuses
+  // it), so #4983 only ever concerns a whole-target reference, which is what the audit reads.
+  { label: 'a by-id deletableDocument inside anyOf (refused by the parse, not #4983)', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => {
+    const p = s.documentSchemas.post;
+    p.properties.quotedPostId.refersTo = { anyOf: [{ type: 'deletableDocument', documentType: 'post' }, { type: 'identity' }] };
+    p.immutableAllowSetting.push('quotedPostId');
+  } },
+  // Document TTL (#5007): the parse refuses the structural pairings and the
+  // one-hour floor; the deletability a ttl gives its type (40122) is judged at registration.
+  { label: 'ttl of one day on savedAddress (control)', file: STOREFRONT, expect: 'accepted', mutate: (s) => { s.documentSchemas.savedAddress.ttl = 86_400; } },
+  { label: 'ttl on a type without $createdAt in required', file: STOREFRONT, expect: 'wasm', mutate: (s) => { const t = s.documentSchemas.savedAddress; t.ttl = 86_400; t.required = t.required.filter((p) => p !== '$createdAt'); } },
+  { label: 'ttl on an indexOnly type', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.like.ttl = 86_400; } },
+  { label: 'ttl of 0', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.savedAddress.ttl = 0; } },
+  { label: 'ttl of 60 s (under the one-hour floor)', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.savedAddress.ttl = 60; } },
+  { label: 'ttl with documentsKeepHistory', file: STOREFRONT, expect: 'wasm', mutate: (s) => { const t = s.documentSchemas.savedAddress; t.ttl = 86_400; t.documentsKeepHistory = true; } },
+  { label: 'ttl on the target of a permanentDocument owner gate (privateFeedState)', file: SOCIAL_V9, expect: 'audit', node: '40122', mutate: (s) => { s.documentSchemas.privateFeedState.ttl = 86_400; } },
+  { label: 'immutable contract reference with an owner requirement on a transferable type (#4982)', file: STOREFRONT, expect: 'audit', node: 'registration', mutate: (s) => {
+    const t = s.documentSchemas.savedAddress;
+    t.transferable = 1; t.documentsMutable = true; t.immutable = ['appContractId'];
+    t.properties.appContractId = { type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position: 99, refersTo: { type: 'contract', contractRequirements: { owner: 'self' } } };
+  } },
+  { label: 'immutable object holding a by-id deletableDocument reference (nested path)', file: STOREFRONT, expect: 'audit', node: 'registration', mutate: (s) => {
+    const t = s.documentSchemas.savedAddress;
+    t.documentsMutable = true; t.immutable = ['link'];
+    t.properties.link = { type: 'object', position: 98, additionalProperties: false, properties: { storeId: { type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position: 0, refersTo: { type: 'deletableDocument', documentType: 'shippingZone' } } } };
+  } },
+  { label: 'immutable object holding a contract reference with an owner requirement on a transferable type (#4982, nested path)', file: STOREFRONT, expect: 'audit', node: 'registration', mutate: (s) => {
+    const t = s.documentSchemas.savedAddress;
+    t.transferable = 1; t.documentsMutable = true; t.immutable = ['app'];
+    t.properties.app = { type: 'object', position: 97, additionalProperties: false, properties: { contractId: { type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position: 0, refersTo: { type: 'contract', contractRequirements: { owner: 'other' } } } } };
+  } },
+  // propertyConstraints grammar (#5036-#5042).
+  { label: 'propertyConstraints enum const + absent (control)', file: STOREFRONT, expect: 'accepted', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { soldOutHasNoStock: { anyOf: [{ notEqual: ['status', { const: 'sold_out' }] }, { absent: 'stockQuantity' }, { equal: ['stockQuantity', 0] }] } }; } },
+  { label: 'propertyConstraints const outside the enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { r: { equal: ['status', { const: 'gone' }] } }; } },
+  { label: 'propertyConstraints anyOf directly inside anyOf', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { r: { anyOf: [{ anyOf: [{ equal: ['weight', 0] }, { equal: ['weight', 1] }] }, { equal: ['weight', 2] }] } }; } },
 ];
 
 /** Runs every probe; returns the number whose outcome differs from the recorded one. */
