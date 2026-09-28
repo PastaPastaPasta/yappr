@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline'
 import { blogCommentService, blogPostService } from '@/lib/services'
-import { estimateReadingTime, getBlogPostUrl, getPostExcerpt, parseLabels } from '@/lib/blog/content-utils'
+import { blogPostDate, commentsAreEnabled, estimateReadingTime, formatLabels, getBlogPostUrl, getPostExcerpt, publishedPostsNewestFirst } from '@/lib/blog/content-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BlogThemeProvider } from './theme-provider'
@@ -37,7 +37,8 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
       setLoading(true)
       setError(null)
       try {
-        const result = await blogPostService.getPostsByBlog(blog.id, { limit: 100 })
+        // Public listing: drafts are the owner's business (they see them in the dashboard).
+        const result = publishedPostsNewestFirst(await blogPostService.getPostsByBlog(blog.id, { limit: 100 }))
         if (cancelled) return
 
         setPosts(result)
@@ -58,11 +59,11 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
     return () => { cancelled = true }
   }, [blog.id])
 
-  const blogLabels = useMemo(() => parseLabels(blog.labels), [blog.labels])
+  const blogLabels = useMemo(() => blog.labels ?? [], [blog.labels])
 
   const filteredPosts = useMemo(() => {
     if (activeLabel === 'All') return posts
-    return posts.filter((post) => parseLabels(post.labels).includes(activeLabel))
+    return posts.filter((post) => post.labels?.includes(activeLabel))
   }, [activeLabel, posts])
 
   const pagedPosts = useMemo(() => filteredPosts.slice(0, page * pageSize), [filteredPosts, page])
@@ -93,7 +94,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
           {blog.avatar && (
             <IpfsImage src={blog.avatar} alt={`${blog.name} avatar`} className="h-9 w-9 rounded-full object-cover" />
           )}
-          <span>{blog.labels || 'Publishing on Yappr'}</span>
+          <span>{formatLabels(blog.labels) || 'Publishing on Yappr'}</span>
           {!isOwnBlog && (
             <button
               type="button"
@@ -168,13 +169,16 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
                 </h3>
                 {excerpt && <p className="mt-2 line-clamp-2 text-sm text-[var(--blog-text)]/75">{excerpt}</p>}
                 <div className="mt-2 flex items-center gap-2 text-xs text-[var(--blog-text)]/60">
-                  <span>{post.createdAt.toLocaleDateString()}</span>
+                  <span>{blogPostDate(post).toLocaleDateString()}</span>
                   <span>• {estimateReadingTime(post.content)} min read</span>
-                  {post.labels && <span>• {post.labels}</span>}
-                  <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-[var(--blog-border)] px-2 py-0.5 text-[11px] text-[var(--blog-text)]/75">
-                    <ChatBubbleLeftIcon className="h-3 w-3" />
-                    {commentCounts[post.id] || 0}
-                  </span>
+                  {post.labels && <span>• {formatLabels(post.labels)}</span>}
+                  {/* The post page shows no comments when they are off, so neither does its card. */}
+                  {commentsAreEnabled(post) && (
+                    <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-[var(--blog-border)] px-2 py-0.5 text-[11px] text-[var(--blog-text)]/75">
+                      <ChatBubbleLeftIcon className="h-3 w-3" />
+                      {commentCounts[post.id] || 0}
+                    </span>
+                  )}
                 </div>
               </Link>
             )

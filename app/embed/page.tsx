@@ -9,6 +9,7 @@ import { dpnsService } from '@/lib/services/dpns-service'
 import type { BlogPost } from '@/lib/types'
 import { EMBED_STYLES } from '@/lib/embed/embed-styles'
 import { renderEmbedHtml } from '@/lib/embed/embed-renderer'
+import { blogPostDate, isPublishedBlogPost } from '@/lib/blog/content-utils'
 import type { EmbedTheme } from '@/lib/embed/embed-types'
 
 interface EmbedState {
@@ -49,7 +50,8 @@ function EmbedPageContent() {
 
       try {
         const post = await blogPostService.getPost(postId)
-        if (!post) {
+        // A draft is not public: it embeds no more than it lists.
+        if (!post || !isPublishedBlogPost(post)) {
           if (!cancelled) {
             setState({ post: null, author: 'unknown', loading: false, error: 'Post not found.' })
           }
@@ -97,7 +99,7 @@ function EmbedPageContent() {
     return `/blog?blog=${encodeURIComponent(state.post.blogId)}&post=${encodeURIComponent(state.post.slug)}`
   }, [state.post])
 
-  const createdLabel = state.post?.createdAt.toLocaleDateString() || ''
+  const createdLabel = state.post ? blogPostDate(state.post).toLocaleDateString() : ''
   const error = postId ? state.error : 'This embed link is missing its post.'
 
   return (

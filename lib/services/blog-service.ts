@@ -3,7 +3,7 @@ import type { Blog } from '@/lib/types'
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 import { normalizeBlogThemeConfig } from '@/lib/blog/theme-types'
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
-import { labelsCsv, storedLabels } from '@/lib/blog/content-utils'
+import { labelsFromStored, storedLabels } from '@/lib/blog/content-utils'
 import { normalizeBytes } from './sdk-helpers'
 import { compressContent, decompressContent } from '@/lib/utils/compression'
 
@@ -14,7 +14,7 @@ export interface CreateBlogData {
   avatar?: string
   themeConfig?: BlogThemeConfig
   commentsEnabledDefault?: boolean
-  labels?: string
+  labels?: string[]
 }
 
 export interface UpdateBlogData extends Partial<CreateBlogData> {}
@@ -65,8 +65,8 @@ class BlogService extends BaseDocumentService<Blog> {
     if (fields.themeConfig && typeof fields.themeConfig === 'object' && !(fields.themeConfig instanceof Uint8Array)) {
       fields.themeConfig = serializeThemeConfig(fields.themeConfig as BlogThemeConfig)
     }
-    // The app models labels as CSV; store them as the configured cut does.
-    if ('labels' in fields) fields.labels = storedLabels(fields.labels, 'blog')
+    // Store the app's label list as the configured cut does.
+    if ('labels' in fields) fields.labels = storedLabels(doc.labels, 'blog')
     return fields
   }
 
@@ -85,25 +85,25 @@ class BlogService extends BaseDocumentService<Blog> {
       avatar: (data.avatar || doc.avatar) as string | undefined,
       themeConfig: deserializeThemeConfig(data.themeConfig || doc.themeConfig),
       commentsEnabledDefault: (data.commentsEnabledDefault ?? doc.commentsEnabledDefault) as boolean | undefined,
-      labels: labelsCsv(data.labels ?? doc.labels),
+      labels: labelsFromStored(data.labels ?? doc.labels),
     }
   }
 
-  private prepareData(data: Record<string, unknown>): Record<string, unknown> {
-    const result = { ...data }
+  private prepareData(data: UpdateBlogData): Record<string, unknown> {
+    const result: Record<string, unknown> = { ...data }
     if (result.themeConfig && typeof result.themeConfig === 'object' && !(result.themeConfig instanceof Uint8Array)) {
       result.themeConfig = serializeThemeConfig(result.themeConfig as BlogThemeConfig)
     }
     // An explicit `undefined` clears labels during the replace merge; keep it.
-    if ('labels' in result && result.labels !== undefined) result.labels = storedLabels(result.labels, 'blog')
+    if (data.labels !== undefined) result.labels = storedLabels(data.labels, 'blog')
     return result
   }
 
   async createBlog(ownerId: string, data: CreateBlogData): Promise<Blog> {
     const cleaned = Object.fromEntries(
-      Object.entries(data).filter(([, v]) => v !== undefined)
+      Object.entries(this.prepareData(data)).filter(([, v]) => v !== undefined)
     )
-    return this.create(ownerId, this.prepareData(cleaned))
+    return this.create(ownerId, cleaned)
   }
 
   async updateBlog(blogId: string, ownerId: string, data: UpdateBlogData): Promise<Blog> {

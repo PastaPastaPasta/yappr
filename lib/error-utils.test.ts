@@ -42,6 +42,7 @@ import {
   isContestedDocumentsNotYetAllowedError,
   isDocumentExpiredError,
   isTimeoutError,
+  isRateLimitedError,
   isTrailingBytesError,
 } from './error-utils'
 
@@ -626,5 +627,18 @@ describe('messageWithConsensusCode', () => {
     expect(messageWithConsensusCode({ code: -1, message: 'refused' })).toBe('refused')
     expect(messageWithConsensusCode({ code: 1, message: 'rejected' })).toBe('rejected')
     expect(messageWithConsensusCode(new Error('plain'))).toBe('plain')
+  })
+})
+
+describe('isRateLimitedError (QA D-54)', () => {
+  it('recognises the DAPI gateway throttling a request', () => {
+    expect(isRateLimitedError({ message: 'no available addresses to retry, last error: grpc error: code: \'Some resource has been exhausted\', message: "rate limited"' })).toBe(true)
+    expect(isRateLimitedError(new Error('transport error: grpc error: code: \'Some resource has been exhausted\', message: "rate limited"'))).toBe(true)
+    expect(isRateLimitedError(new Error('RESOURCE_EXHAUSTED'))).toBe(true)
+  })
+
+  it('does not claim other failures', () => {
+    expect(isRateLimitedError(new Error('fetch failed'))).toBe(false)
+    expect(isRateLimitedError(new Error('Insufficient token balance'))).toBe(false)
   })
 })

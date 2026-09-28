@@ -9,11 +9,11 @@ import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useRelativeTime } from '@/hooks/use-relative-time'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
-import { truncateId } from '@/lib/utils'
 import { normalizeDpnsUsername } from '@/lib/post-helpers'
 import { logger } from '@/lib/logger'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { BLOG_YAPP_TOKEN_COSTS, blogIsV2 } from '@/lib/constants'
+import { blogAuthorHandle, createCommentReads, mergeComments } from '@/lib/blog/content-utils'
 import type { BlogComment } from '@/lib/types'
 import { blogCommentService } from '@/lib/services'
 
@@ -44,21 +44,31 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [content, setContent] = useState('')
+  // Comments posted from here that no read has returned yet. The read after a
+  // write can reach a node that has not applied it; merging these in keeps a
+  // paid comment on screen instead of silently dropping it (and inviting a
+  // second, paid, attempt).
+  const [reads] = useState(() => createCommentReads<BlogComment>())
 
   useEffect(() => {
     onCommentCountChange?.(comments.length)
   }, [comments.length, onCommentCountChange])
 
   const loadComments = useCallback(async () => {
+    const read = reads.begin()
     if (!commentsEnabled) {
       setComments([])
       setUsernames(new Map())
       setAvatars(new Map())
+      setIsLoading(false)
       return
     }
 
     setIsLoading(true)
     setError(null)
+    // What is on screen stays up while this read runs (and if it fails), so a
+    // just-posted comment is not hidden; drop anything left from another post.
+    setComments((prev) => prev.filter((comment) => comment.blogPostId === blogPostId))
 
     try {
       const allComments = await blogCommentService.getCommentsByPost(blogPostId, { limit: 100 })
@@ -68,21 +78,23 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
         ? await checkBlockedForAuthors(user.identityId, authorIds)
         : new Map<string, boolean>()
 
-      const filtered = allComments.filter((comment) => !blockedMap.get(comment.ownerId))
+      const filtered = reads.settle(read, blogPostId, allComments, allComments.filter((comment) => !blockedMap.get(comment.ownerId)))
+      if (!filtered) return
       setComments(filtered)
 
       const filteredAuthorIds = Array.from(new Set(filtered.map((comment) => comment.ownerId).filter(Boolean)))
       const { loadIdentityBatch } = await import('@/lib/services/identity-batch')
       const { usernames: resolvedUsernames, avatars: resolvedAvatars } = await loadIdentityBatch(filteredAuthorIds)
+      if (!reads.isCurrent(read)) return
 
       setUsernames(resolvedUsernames)
       setAvatars(resolvedAvatars)
     } catch {
-      setError('Failed to load comments')
+      if (reads.isCurrent(read)) setError('Failed to load comments')
     } finally {
-      setIsLoading(false)
+      if (reads.isCurrent(read)) setIsLoading(false)
     }
-  }, [blogPostId, commentsEnabled, user?.identityId])
+  }, [blogPostId, commentsEnabled, reads, user?.identityId])
 
   useEffect(() => {
     loadComments().catch(() => {
@@ -100,8 +112,10 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
 
     try {
       setIsSubmitting(true)
-      await blogCommentService.createComment(authedUser.identityId, blogPostId, blogPostOwnerId, trimmedContent)
+      const created = await blogCommentService.createComment(authedUser.identityId, blogPostId, blogPostOwnerId, trimmedContent)
+      reads.added(created)
       setContent('')
+      setComments((prev) => mergeComments(prev, [created]))
       await loadComments()
     } catch (error) {
       logger.error('Failed to post blog comment:', error)
@@ -123,6 +137,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
         throw new Error('Comment deletion was not confirmed')
       }
 
+      reads.removed(commentId)
       setComments((prev) => prev.filter((comment) => comment.id !== commentId))
     } catch (error) {
       logger.error('Failed to delete blog comment:', error)
@@ -170,7 +185,9 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
       </div>
 
       <div className="mt-4 space-y-3">
-        {isLoading && <p className="text-sm text-[var(--blog-text)]/75">Loading comments...</p>}
+        {isLoading && (
+          <p className="text-sm text-[var(--blog-text)]/75">{comments.length > 0 ? 'Refreshing comments...' : 'Loading comments...'}</p>
+        )}
 
         {!isLoading && error && (
           <div className="flex items-center justify-between rounded-lg border p-3" style={{ borderColor: 'var(--blog-border)' }}>
@@ -185,10 +202,10 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
           <p className="text-sm text-[var(--blog-text)]/75">No comments yet.</p>
         )}
 
-        {!isLoading && !error && comments.map((comment) => {
+        {comments.map((comment) => {
           const resolvedUsername = usernames.get(comment.ownerId)
           const username = resolvedUsername ? normalizeDpnsUsername(resolvedUsername) : null
-          const displayName = username ? `@${username}` : truncateId(comment.ownerId, 8, 6)
+          const displayName = blogAuthorHandle(username, comment.ownerId)
           const isOwnComment = user?.identityId === comment.ownerId
 
           return (

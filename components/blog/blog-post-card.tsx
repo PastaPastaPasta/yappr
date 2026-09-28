@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { IpfsImage } from '@/components/ui/ipfs-image'
-import { estimateReadingTime, getPostExcerpt, parseLabels } from '@/lib/blog/content-utils'
+import { blogPostDate, estimateReadingTime, getPostExcerpt } from '@/lib/blog/content-utils'
 import type { BlogPostWithAuthor } from '@/lib/types'
 
 interface BlogPostCardProps {
@@ -47,7 +47,7 @@ export function BlogPostCard({ post, onClick, index = 0, className = '' }: BlogP
             {post.blogName && post.authorDisplayName && <span>·</span>}
             {post.authorDisplayName && <span>{post.authorDisplayName}</span>}
             {(post.blogName || post.authorDisplayName) && <span>·</span>}
-            <span>{post.createdAt.toLocaleDateString()}</span>
+            <span>{blogPostDate(post).toLocaleDateString()}</span>
             <span>·</span>
             <span>{estimateReadingTime(post.content)} min read</span>
           </div>
@@ -61,7 +61,7 @@ export function BlogPostCard({ post, onClick, index = 0, className = '' }: BlogP
           )}
           {post.labels && (
             <div className="flex flex-wrap gap-1 mt-1.5">
-              {parseLabels(post.labels).slice(0, 3).map((label, i) => (
+              {post.labels.slice(0, 3).map((label, i) => (
                 <span
                   key={`${label}-${i}`}
                   className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-yappr-100 dark:bg-yappr-900/30 text-yappr-700 dark:text-yappr-300 rounded"

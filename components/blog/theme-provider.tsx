@@ -11,6 +11,7 @@ import {
   sanitizeCustomCSS,
   type BlogThemeConfig,
 } from '@/lib/blog/theme-types'
+import { formatLabels } from '@/lib/blog/content-utils'
 
 // Module-level ref counts for shared Google Font <link> elements.
 // Multiple BlogThemeProvider instances may share the same font — only remove from
@@ -23,7 +24,7 @@ interface BlogThemeProviderProps {
   blogDescription?: string
   username?: string
   headerImage?: string
-  labels?: string
+  labels?: string[]
   title?: string
   subtitle?: string
   meta?: ReactNode
@@ -222,10 +223,10 @@ export function BlogThemeProvider({
                 About this blog
               </h3>
               {blogDescription && <p className="mt-2">{blogDescription}</p>}
-              {labels && (
+              {labels && labels.length > 0 && (
                 <div className="mt-3">
                   <p className="text-xs uppercase tracking-wider text-[var(--blog-accent)]">Topics</p>
-                  <p className="mt-1">{labels}</p>
+                  <p className="mt-1">{formatLabels(labels)}</p>
                 </div>
               )}
             </aside>

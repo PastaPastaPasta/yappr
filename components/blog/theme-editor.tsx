@@ -444,7 +444,7 @@ export function ThemeEditor({ initialThemeConfig, blogName, blogDescription, onS
                 username="preview"
                 title="Preview post title"
                 subtitle="This subtitle demonstrates typography and spacing."
-                labels="design, notes"
+                labels={['design', 'notes']}
                 meta={<span>Feb 28, 2026 &middot; 5 min read</span>}
               >
                 <article className="space-y-3 rounded-xl border border-[var(--blog-border)] bg-[var(--blog-surface)] p-4">

@@ -1,11 +1,15 @@
 import { queryDocumentBundle } from './document-query-bundle'
+import { mapLimit } from './pagination-utils'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import type { BlogPost } from '@/lib/types'
 import { identifierToBase58, normalizeBytes, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { compressContent, decompressContent, joinChunks, splitIntoChunks } from '@/lib/utils/compression'
 import { generateSlug } from '@/lib/utils/slug'
-import { labelsCsv, storedLabels } from '@/lib/blog/content-utils'
+import { retryAsync } from '@/lib/retry-utils'
+import { extractErrorMessage, isRateLimitedError } from '@/lib/error-utils'
+import { isPublishedBlogPost, labelsFromStored, publishedPostsNewestFirst, storedLabels } from '@/lib/blog/content-utils'
+import { logger } from '@/lib/logger'
 
 export interface BlogPostQueryOptions {
   limit?: number
@@ -18,7 +22,7 @@ export interface CreateBlogPostData {
   subtitle?: string
   content: unknown
   coverImage?: string
-  labels?: string
+  labels?: string[]
   commentsEnabled?: boolean
   slug?: string
   publishedAt?: number
@@ -29,11 +33,24 @@ export interface UpdateBlogPostData {
   subtitle?: string
   content?: unknown
   coverImage?: string
-  labels?: string
+  labels?: string[]
   commentsEnabled?: boolean
   slug?: string
   publishedAt?: number
 }
+
+/**
+ * The pre-publish slug lookup stayed rate-limited, so the publish stopped
+ * before anything was broadcast. Only this failure can promise that nothing
+ * was published: a rate limit on the write's own wait may follow a broadcast
+ * that landed.
+ */
+export class PrePublishRateLimitError extends Error {}
+
+// Reading on to fill a blog's public slots past drafts: page size, and a cap so
+// a blog of nothing but drafts cannot hold discovery up indefinitely.
+const PUBLISHED_REFILL_PAGE = 20
+const PUBLISHED_REFILL_MAX_PAGES = 3
 
 function appendTimestampSuffix(slug: string): string {
   return `${slug}-${Date.now().toString(36)}`.slice(0, 63).replace(/-+$/, '')
@@ -58,8 +75,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     if (typeof fields.blogId === 'string') {
       fields.blogId = fields.blogId ? requireDocumentIdentifierBytes(fields.blogId, 'blogId') : undefined
     }
-    // The app models labels as CSV; store them as the configured cut does.
-    if ('labels' in fields) fields.labels = storedLabels(fields.labels, 'post')
+    // Store the app's label list as the configured cut does.
+    if ('labels' in fields) fields.labels = storedLabels(doc.labels, 'post')
     // Re-compress and chunk content into data0–data3 (only set chunks that exist)
     if (doc.content && Array.isArray(doc.content) && doc.content.length > 0) {
       const compressed = compressContent(doc.content)
@@ -105,7 +122,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       subtitle: (data.subtitle ?? doc.subtitle) as string | undefined,
       content,
       coverImage: (data.coverImage ?? doc.coverImage) as string | undefined,
-      labels: labelsCsv(data.labels ?? doc.labels),
+      labels: labelsFromStored(data.labels ?? doc.labels),
       commentsEnabled: (data.commentsEnabled ?? doc.commentsEnabled) as boolean | undefined,
       slug: (data.slug || doc.slug || '') as string,
       publishedAt: (data.publishedAt ?? doc.publishedAt) as number | undefined,
@@ -119,9 +136,20 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     }
 
     let slug = data.slug || generateSlug(data.title)
-    // Check for collision and append suffix if needed
-    const existing = await this.getPostBySlug(data.blogId, slug)
-    if (existing) {
+    // Check for collision and append suffix if needed. This is a read, so a
+    // rate-limited one is safe to repeat before giving up on the publish. The
+    // SDK rejects with a WasmSdkError, not an Error; keep its message readable.
+    const lookup = await retryAsync(
+      () => this.getPostBySlug(data.blogId, slug).catch((error: unknown) => {
+        throw error instanceof Error ? error : new Error(extractErrorMessage(error))
+      }),
+      { initialDelayMs: 1500, retryCondition: isRateLimitedError }
+    )
+    if (!lookup.success) {
+      const error = lookup.error ?? new Error('Slug lookup failed')
+      throw isRateLimitedError(error) ? new PrePublishRateLimitError(error.message) : error
+    }
+    if (lookup.data) {
       slug = appendTimestampSuffix(slug)
     }
 
@@ -219,6 +247,37 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     return new Map(ids.map((id, index) => [id, pages[index].map(doc => this.transformDocument(doc))]))
   }
 
+  /**
+   * Up to `perBlog` published posts per blog, newest publication first. Pages
+   * come in creation order, so a blog is read on (by cursor) while drafts leave
+   * its slots unfilled, up to PUBLISHED_REFILL_MAX_PAGES further pages; what was
+   * read is then ranked by publication date. Reading stops once the slots are
+   * filled, so a backdated import (published long before it was created) holds
+   * its slot over an older-created, newer-published article until newer posts
+   * push it out; ranking a blog's whole history would cost reads on every load.
+   */
+  private async getPublishedPostsByBlogs(blogIds: string[], perBlog: number): Promise<BlogPost[][]> {
+    const firstPages = await this.getPostsByBlogs(blogIds, perBlog)
+    return mapLimit(Array.from(firstPages.entries()), 3, async ([blogId, firstPage]) => {
+      const published = firstPage.filter(isPublishedBlogPost)
+      let page = firstPage
+      let pageLimit = perBlog
+      for (let refills = 0; refills < PUBLISHED_REFILL_MAX_PAGES && page.length >= pageLimit && published.length < perBlog; refills++) {
+        pageLimit = PUBLISHED_REFILL_PAGE
+        try {
+          page = await this.getPostsByBlog(blogId, { limit: pageLimit, startAfter: page[page.length - 1].id })
+        } catch (error) {
+          // Tolerated like the first page: this blog contributes what it has.
+          logger.warn(`Reading on for published posts failed for blog ${blogId}:`, error)
+          break
+        }
+        published.push(...page.filter(isPublishedBlogPost))
+      }
+      // Creation order is not publication order, so rank before cutting.
+      return publishedPostsNewestFirst(published).slice(0, perBlog)
+    })
+  }
+
   async getPostsByOwner(ownerId: string, options: BlogPostQueryOptions = {}): Promise<BlogPost[]> {
     const queryOptions: QueryOptions = {
       where: [['$ownerId', '==', ownerId]],
@@ -239,13 +298,10 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
 
     // Fetch enough posts per blog to fill the requested limit
     const perBlogLimit = Math.min(Math.ceil(limit / blogIds.length), limit)
-    const results = Array.from((await this.getPostsByBlogs(blogIds, perBlogLimit)).values())
+    const results = await this.getPublishedPostsByBlogs(blogIds, perBlogLimit)
 
-    // Merge, sort by createdAt desc, and take top N
-    return results
-      .flat()
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      .slice(0, limit)
+    // Merge, drop drafts, sort by publication date desc, and take top N
+    return publishedPostsNewestFirst(results.flat()).slice(0, limit)
   }
 
   /**
@@ -260,18 +316,16 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const lowerQuery = query.toLowerCase()
 
     // Fetch a reasonable number of posts per blog for client-side filtering
-    const results = Array.from((await this.getPostsByBlogs(blogIds, 20)).values())
+    const results = await this.getPublishedPostsByBlogs(blogIds, 20)
 
     // Filter by title, subtitle, or labels matching the query
-    return results
-      .flat()
+    return publishedPostsNewestFirst(results.flat())
       .filter(post => {
         const titleMatch = post.title?.toLowerCase().includes(lowerQuery)
         const subtitleMatch = post.subtitle?.toLowerCase().includes(lowerQuery)
-        const labelsMatch = post.labels?.toLowerCase().includes(lowerQuery)
+        const labelsMatch = post.labels?.some(label => label.toLowerCase().includes(lowerQuery))
         return titleMatch || subtitleMatch || labelsMatch
       })
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .slice(0, limit)
   }
 }

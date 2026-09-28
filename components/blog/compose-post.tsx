@@ -10,10 +10,12 @@ import { Switch } from '@/components/ui/switch'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { BLOG_POST_SIZE_LIMIT } from '@/lib/constants'
 import { blogPostService, blogService } from '@/lib/services'
+import { PrePublishRateLimitError } from '@/lib/services/blog-post-service'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { validateHttpUrl } from '@/lib/utils'
-import { LABEL_LIMITS, labelsToCsv, parseLabels, decodeSummary, encodeSummary } from '@/lib/blog/content-utils'
-import { ListLimitError } from '@/lib/typed-array-codecs'
+import { LABEL_LIMITS, blogCommentsDefault, decodeSummary, encodeSummary, labelProblem } from '@/lib/blog/content-utils'
+import { ListLimitError, decodeLabelList } from '@/lib/typed-array-codecs'
+import { isRateLimitedError } from '@/lib/error-utils'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import { useFileDrop } from '@/hooks/use-file-drop'
 import type { Blog, BlogPost } from '@/lib/types'
@@ -34,7 +36,8 @@ interface DraftData {
   title: string
   subtitle: string
   coverImage: string
-  labels: string
+  /** A list; drafts saved before labels became a list hold a comma-separated string. */
+  labels: string[] | string
   commentsEnabled: boolean
   blocks: unknown[]
   summaryHidden?: boolean
@@ -53,7 +56,7 @@ function loadDraft(identityId: string, blogId: string): DraftData | null {
 function resolveCommentsEnabled(editPost?: BlogPost, savedDraft?: DraftData | null, blog?: Blog): boolean {
   if (editPost) return Boolean(editPost.commentsEnabled ?? true)
   if (savedDraft) return Boolean(savedDraft.commentsEnabled ?? true)
-  return Boolean(blog?.commentsEnabledDefault ?? true)
+  return blogCommentsDefault(blog)
 }
 
 function resolveInitialBlocks(editPost?: BlogPost, savedDraft?: DraftData | null): unknown[] {
@@ -78,7 +81,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
   const [summary, setSummary] = useState(editDecoded.text || savedDraft?.subtitle || '')
   const [summaryHidden, setSummaryHidden] = useState(editDecoded.hidden || savedDraft?.summaryHidden || false)
   const [coverImage, setCoverImage] = useState(editPost?.coverImage ?? savedDraft?.coverImage ?? '')
-  const [labels, setLabels] = useState(editPost?.labels ?? savedDraft?.labels ?? '')
+  const [labels, setLabels] = useState<string[]>(editPost?.labels ?? decodeLabelList(savedDraft?.labels))
   const [customLabel, setCustomLabel] = useState('')
   const [commentsEnabled, setCommentsEnabled] = useState(
     resolveCommentsEnabled(editPost, savedDraft, blog)
@@ -164,8 +167,8 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     }
   }, [pendingLabelFocus, showSettings])
 
-  const availableLabels = useMemo(() => parseLabels(blog.labels), [blog.labels])
-  const selectedLabels = useMemo(() => parseLabels(labels), [labels])
+  const availableLabels = useMemo(() => blog.labels ?? [], [blog.labels])
+  const selectedLabels = labels
 
   const draftKey = useMemo(() => {
     if (!user?.identityId) return ''
@@ -199,14 +202,14 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
 
   const toggleLabel = (label: string) => {
     if (selectedLabels.includes(label)) {
-      setLabels(labelsToCsv(selectedLabels.filter((item) => item !== label)))
+      setLabels(selectedLabels.filter((item) => item !== label))
       return
     }
     if (selectedLabels.length >= LABEL_LIMITS.post) {
       toast.error(`A post can have at most ${LABEL_LIMITS.post} labels.`)
       return
     }
-    setLabels(labelsToCsv([...selectedLabels, label]))
+    setLabels([...selectedLabels, label])
   }
 
   const addCustomLabel = () => {
@@ -220,7 +223,12 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       toast.error(`A post can have at most ${LABEL_LIMITS.post} labels.`)
       return
     }
-    setLabels(labelsToCsv([...selectedLabels, trimmed]))
+    const problem = labelProblem(trimmed)
+    if (problem) {
+      toast.error(problem)
+      return
+    }
+    setLabels([...selectedLabels, trimmed])
     setCustomLabel('')
   }
 
@@ -247,7 +255,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       title: title.trim(),
       subtitle: trimmedSummary ? encodeSummary(trimmedSummary, summaryHidden) : '',
       coverImage: coverImage || '',
-      labels: labels || '',
+      labels,
       commentsEnabled,
       content: blocks,
     }
@@ -277,17 +285,16 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
         setSummary('')
         setSummaryHidden(false)
         setCoverImage('')
-        setLabels('')
+        setLabels([])
         setCustomLabel('')
         setBlocks([])
-        setCommentsEnabled(Boolean(blog.commentsEnabledDefault ?? true))
+        setCommentsEnabled(blogCommentsDefault(blog))
       }
 
       // Register any new post labels to the blog so they appear as filter pills
-      const postLabels = parseLabels(labels)
-      if (postLabels.length > 0) {
-        const existingBlogLabels = parseLabels(blog.labels)
-        const newLabels = postLabels.filter((l) => !existingBlogLabels.includes(l))
+      if (labels.length > 0) {
+        const existingBlogLabels = blog.labels ?? []
+        const newLabels = labels.filter((l) => !existingBlogLabels.includes(l))
         // The blog's taxonomy is capped too (64 on blog v4): register what fits
         // and say what did not, instead of sending a list the contract refuses.
         const room = Math.max(0, LABEL_LIMITS.blog - existingBlogLabels.length)
@@ -296,7 +303,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
           toast(`The blog already has ${existingBlogLabels.length} labels; ${newLabels.length - registered.length} new label(s) were not added to its list.`)
         }
         if (registered.length > 0) {
-          const allLabels = labelsToCsv([...existingBlogLabels, ...registered])
+          const allLabels = [...existingBlogLabels, ...registered]
           blogService.updateBlog(blog.id, user.identityId, { labels: allLabels }).catch((err) => {
             logger.warn('Failed to register new labels to blog:', err)
             toast.error(err instanceof ListLimitError ? err.message : 'The post was saved, but its labels could not be added to the blog\'s list.')
@@ -304,7 +311,13 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
         }
       }
     } catch (err) {
-      toast.error(err instanceof ListLimitError ? err.message : isEditing ? 'Failed to update post' : 'Failed to publish post')
+      logger.error(isEditing ? 'Failed to update blog post:' : 'Failed to publish blog post:', err)
+      if (err instanceof ListLimitError) toast.error(err.message)
+      // Only the pre-publish lookup fails before anything is broadcast; a rate
+      // limit later on may follow a write that landed, and a blind retry pays twice.
+      else if (err instanceof PrePublishRateLimitError) toast.error('Dash Platform is rate-limiting requests right now. Nothing was published; wait a moment and try again.')
+      else if (isRateLimitedError(err)) toast.error(`Dash Platform is rate-limiting requests right now, so the ${isEditing ? 'update' : 'post'} may or may not have gone through. Check your blog before trying again.`)
+      else toast.error(isEditing ? 'Failed to update post' : 'Failed to publish post')
     } finally {
       setIsPublishing(false)
     }
