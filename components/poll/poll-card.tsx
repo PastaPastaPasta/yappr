@@ -213,8 +213,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       // predates (another tab or device), so the numbers on screen are short by
       // that vote. Re-read them rather than leave "✓ your vote" on a 0.
       if (result.alreadyVoted.length > 0) {
-        const myChoices = Array.from(new Set([...myVotes, ...recordedList]))
-        setTally(await pollrVoteService.refreshTally(poll, optimistic, result.created, myChoices))
+        setTally(await pollrVoteService.refreshTally(poll, optimistic, result))
       }
     } catch (error) {
       logger.error('PollCard: failed to cast vote', error)
@@ -222,7 +221,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     } finally {
       setSubmitting(false)
     }
-  }, [poll, selected, tally, myVotes, user, openLoginPrompt])
+  }, [poll, selected, tally, user, openLoginPrompt])
 
   if (loading) {
     return (

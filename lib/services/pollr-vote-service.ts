@@ -380,19 +380,20 @@ class PollrVoteService {
    * A duplicate means this tab's tally predates a vote the voter cast
    * elsewhere, so folding in only the new writes leaves that earlier vote
    * uncounted. The fresh read supplies it; merging keeps the votes `created`
-   * in this same call, which the count tree may not show yet. Falls back to
-   * `optimistic` when the read fails, which is no worse than before the
-   * collision.
+   * in this same call, which the count tree may not show yet. Only choices
+   * this call established (written or refused as duplicates) floor the
+   * counts: an older remembered choice may since have been deleted. Falls
+   * back to `optimistic` when the read fails, which is no worse than before
+   * the collision.
    */
   async refreshTally(
     poll: Poll,
     optimistic: PollTally | null,
-    created: number[],
-    myChoices: number[]
+    { created, alreadyVoted }: Pick<CastVoteResult, 'created' | 'alreadyVoted'>
   ): Promise<PollTally | null> {
     this.invalidateTally(poll.id);
     try {
-      const tally = reconcileTally(await this.getTally(poll), optimistic, created, myChoices);
+      const tally = reconcileTally(await this.getTally(poll), optimistic, created, [...created, ...alreadyVoted]);
       this.tallyCache.set(poll.id, tally);
       return tally;
     } catch (error) {

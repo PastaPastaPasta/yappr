@@ -235,12 +235,26 @@ describe('tally after an already-voted refusal', () => {
     });
   });
 
+  it('refreshTally does not restore a remembered choice whose ballot was deleted', async () => {
+    const service = await loadService('v4');
+    // This tab remembered choice 0; elsewhere that ballot was deleted and choice 1 cast,
+    // so adding choice 1 here was refused as a duplicate.
+    mocks.count.mockResolvedValue(new Map([['81', 1n]]));
+    const stale = { counts: [1, 0, 0], total: 1 };
+
+    expect(await service.refreshTally(poll(), stale, { created: [], alreadyVoted: [1] })).toEqual({
+      counts: [0, 1, 0],
+      total: 1,
+    });
+    expect(await service.getTally(poll())).toEqual({ counts: [0, 1, 0], total: 1 });
+  });
+
   it('refreshTally re-reads past the cache and falls back to the optimistic tally on failure', async () => {
     const service = await loadService('v4');
     mocks.count.mockResolvedValue(new Map([['80', 1n], ['81', 1n]]));
     service.applyOptimisticVotes(id(9), { counts: [0, 0, 0], total: 0 }, [1]);
 
-    expect(await service.refreshTally(poll(), { counts: [0, 1, 0], total: 1 }, [], [0])).toEqual({
+    expect(await service.refreshTally(poll(), { counts: [0, 1, 0], total: 1 }, { created: [], alreadyVoted: [0] })).toEqual({
       counts: [1, 1, 0],
       total: 2,
     });
@@ -249,7 +263,7 @@ describe('tally after an already-voted refusal', () => {
     mocks.count.mockRejectedValue(new Error('down'));
     mocks.query.mockRejectedValue(new Error('down'));
     const optimistic = { counts: [0, 1, 0], total: 1 };
-    expect(await withoutWaiting(service.refreshTally(poll(), optimistic, [], [0]))).toBe(optimistic);
+    expect(await withoutWaiting(service.refreshTally(poll(), optimistic, { created: [], alreadyVoted: [0] }))).toBe(optimistic);
   });
 });
 
@@ -307,7 +321,7 @@ describe('final results on a closed poll', () => {
     mocks.query.mockResolvedValue(new Map([['a', { choice: 0 }], ['b', { choice: 1 }]]));
     const optimistic = { counts: [1, 1, 1], total: 3 };
 
-    expect(await service.refreshTally(closed(), optimistic, [2], [0, 2])).toEqual({
+    expect(await service.refreshTally(closed(), optimistic, { created: [2], alreadyVoted: [0] })).toEqual({
       counts: [1, 1, 0],
       total: 2,
       cutoffVerified: true,
@@ -320,7 +334,7 @@ describe('final results on a closed poll', () => {
     mocks.query.mockResolvedValue(fullPage);
     mocks.count.mockResolvedValue(new Map([['80', 1001n], ['81', 1n]]));
 
-    const refreshed = await service.refreshTally(closed(), { counts: [1001, 1, 1], total: 1003 }, [2], [2]);
+    const refreshed = await service.refreshTally(closed(), { counts: [1001, 1, 1], total: 1003 }, { created: [2], alreadyVoted: [] });
     expect(refreshed).toEqual({ counts: [1001, 1, 1], total: 1003, lateIncluded: true });
     // The cached copy keeps the flag too.
     expect(await service.getTally(closed())).toMatchObject({ lateIncluded: true });
@@ -332,7 +346,7 @@ describe('final results on a closed poll', () => {
     // The optimistic tally holds a selection written after the close.
     const optimistic = { counts: [1, 1, 1], total: 3 };
 
-    expect(await withoutWaiting(service.refreshTally(closed(), optimistic, [2], [0, 2]))).toEqual({
+    expect(await withoutWaiting(service.refreshTally(closed(), optimistic, { created: [2], alreadyVoted: [0] }))).toEqual({
       ...optimistic,
       lateIncluded: true,
     });
