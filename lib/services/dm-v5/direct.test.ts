@@ -486,6 +486,23 @@ describe('sender', () => {
     for (const piece of pieces) expect(new TextEncoder().encode(piece).length).toBeLessThanOrEqual(MAX_TEXT_BYTES)
     expect(pieces.join('')).toBe('é'.repeat(MAX_TEXT_BYTES))
   })
+
+  it('never splits inside an emoji sequence or an accented letter (QA D-57)', () => {
+    const family = '\u{1F469}\u200D\u{1F469}\u200D\u{1F467}' // 18 bytes, one grapheme
+    // The family straddles the boundary: a code-point split ends piece 1 with 1F469 200D 1F469.
+    const text = 'a'.repeat(MAX_TEXT_BYTES - 10) + family + 'tail'
+    const pieces = splitText(text)
+    expect(pieces).toEqual(['a'.repeat(MAX_TEXT_BYTES - 10), `${family}tail`])
+    const accented = 'e\u0301' // é as e + combining acute: 3 bytes, one grapheme
+    expect(splitText(`ab${accented}`, 3)).toEqual(['ab', accented])
+  })
+
+  it('splits a single character larger than a message on code points', () => {
+    const zalgo = `a${'\u0301'.repeat(10)}` // one grapheme, 21 bytes
+    const pieces = splitText(zalgo, 8)
+    for (const piece of pieces) expect(new TextEncoder().encode(piece).length).toBeLessThanOrEqual(8)
+    expect(pieces.join('')).toBe(zalgo)
+  })
 })
 
 describe('peers', () => {
