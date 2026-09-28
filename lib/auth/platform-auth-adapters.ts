@@ -32,7 +32,6 @@ import {
   getPrivateKey,
   getTransferKey,
   hasEncryptionKey,
-  hasPrivateKey,
   storeAuthVaultDek,
   storeEncryptionKey,
   storeEncryptionKeyType,
@@ -41,6 +40,7 @@ import {
   storeTransferKey,
 } from '@/lib/secure-storage'
 import { identityService } from '@/lib/services/identity-service'
+import { storedKeyBelongsToIdentity } from '@/lib/auth/session-key'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import { profileService } from '@/lib/services/profile-service'
@@ -102,6 +102,45 @@ function fromSessionUser(savedUser: Record<string, unknown>): AuthUser | null {
         : undefined,
     publicKeys: Array.isArray(savedUser.publicKeys) ? savedUser.publicKeys as AuthUser['publicKeys'] : [],
   }
+}
+
+function readStoredSession(): AuthSessionSnapshot | null {
+  if (typeof window === 'undefined') return null
+  const savedSession = localStorage.getItem(SESSION_STORAGE_KEY)
+  if (!savedSession) return null
+
+  try {
+    const parsed = JSON.parse(savedSession) as { user?: Record<string, unknown>; timestamp?: number }
+    if (!parsed.user) return null
+    const user = fromSessionUser(parsed.user)
+    if (!user) return null
+    return toSessionSnapshot(user, typeof parsed.timestamp === 'number' ? parsed.timestamp : Date.now())
+  } catch (error) {
+    logger.error('Failed to parse session:', error)
+    return null
+  }
+}
+
+/**
+ * platform-auth calls `secretStore.hasPrivateKey` only to decide whether the
+ * saved session can be restored. A stored key that belongs to another
+ * identity must not restore it either, so the key must also sign for the
+ * session identity; otherwise the controller clears the session.
+ */
+async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
+  const wif = getPrivateKey(identityId)
+  if (!wif) return false
+  const session = readStoredSession()
+  // `data` is optional on the session shape and required by the matcher.
+  const sessionKeys = session?.user.identityId === identityId
+    ? session.user.publicKeys.map((key) => ({ ...key, data: key.data }))
+    : []
+  const belongs = await storedKeyBelongsToIdentity(wif, sessionKeys, async () => {
+    await ensureSdk()
+    return (await identityService.getIdentity(identityId))?.publicKeys ?? null
+  }, keyNetwork())
+  if (!belongs) logger.warn(`Session restore: the stored key does not belong to ${identityId}; signing out`)
+  return belongs
 }
 
 function toSessionSnapshot(user: AuthUser, timestamp: number): AuthSessionSnapshot {
@@ -239,22 +278,7 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     // platform-auth uses this only for address/WIF encoding, so devnet maps to testnet.
     network: keyNetwork(),
     sessionStore: {
-      getSession() {
-        if (typeof window === 'undefined') return null
-        const savedSession = localStorage.getItem(SESSION_STORAGE_KEY)
-        if (!savedSession) return null
-
-        try {
-          const parsed = JSON.parse(savedSession) as { user?: Record<string, unknown>; timestamp?: number }
-          if (!parsed.user) return null
-          const user = fromSessionUser(parsed.user)
-          if (!user) return null
-          return toSessionSnapshot(user, typeof parsed.timestamp === 'number' ? parsed.timestamp : Date.now())
-        } catch (error) {
-          logger.error('Failed to parse session:', error)
-          return null
-        }
-      },
+      getSession: readStoredSession,
       setSession(snapshot) {
         if (typeof window === 'undefined') return
         localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(toStoredSession(snapshot)))
@@ -267,7 +291,7 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     secretStore: {
       storePrivateKey,
       getPrivateKey,
-      hasPrivateKey,
+      hasPrivateKey: hasSessionPrivateKey,
       clearPrivateKey: async (identityId) => {
         clearPrivateKey(identityId)
       },
