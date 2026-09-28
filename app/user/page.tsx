@@ -16,7 +16,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { profileCreateHref } from '@/lib/auth/return-to'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
-import { useBlock } from '@/hooks/use-block'
+import { useBlockProvenance } from '@/hooks/use-block'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { YappFlow } from '@/components/profile/yapp-flow'
@@ -112,7 +112,7 @@ function UserProfileContent() {
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
   const [isUsernameModalOpen, setIsUsernameModalOpen] = useState(false)
 
-  const { isBlocked: isBlockedByMe, isLoading: blockLoading, toggleBlock } = useBlock(userId || '')
+  const { isBlocked: isBlockedByMe, isOwnBlock, isLoading: blockLoading, unblock } = useBlockProvenance(userId ?? undefined)
   const { openForUser: openTipModal } = useTipModal()
   const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({ currentUserId: viewerId })
   const tabs = useProfileTabs(userId, enrichProgressively)
@@ -547,13 +547,28 @@ function UserProfileContent() {
                       <NoSymbolIcon className="h-6 w-6 text-red-500" />
                     </div>
                     <div>
-                      <p className="font-semibold">You blocked this user</p>
-                      <p className="text-sm text-gray-500">You won&apos;t see their posts in your feeds</p>
+                      <p className="font-semibold">{isOwnBlock ? 'You blocked this user' : 'This user is blocked'}</p>
+                      <p className="text-sm text-gray-500">
+                        {isOwnBlock
+                          ? "You won't see their posts in your feeds"
+                          : "Blocked by a block list you follow. You won't see their posts in your feeds"}
+                      </p>
                     </div>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => toggleBlock()} disabled={blockLoading}>
-                    Unblock
-                  </Button>
+                  {isOwnBlock ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { unblock().catch((error) => logger.error('Profile: unblock failed:', error)) }}
+                      disabled={blockLoading}
+                    >
+                      Unblock
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={() => router.push('/settings?section=privacy')}>
+                      Manage block lists
+                    </Button>
+                  )}
                 </div>
               </div>
             )}

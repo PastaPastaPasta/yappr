@@ -176,6 +176,8 @@ export interface ListLimits {
   noun: string
   maxItems: number
   maxLength: number
+  /** The contract's per-element `maxBytes`: UTF-8 bytes, which multibyte text hits before `maxLength`. */
+  maxBytes: number
   /** Every element must match (e.g. image URL schemes). */
   pattern?: RegExp
   /** What `pattern` requires, for the message. */
@@ -183,12 +185,12 @@ export interface ListLimits {
 }
 
 export const LIST_LIMITS = {
-  blogLabels: { noun: 'blog labels', maxItems: 64, maxLength: 40 },
-  postLabels: { noun: 'post labels', maxItems: 16, maxLength: 40 },
-  storeTags: { noun: 'tags', maxItems: 32, maxLength: 64 },
-  storeImageUrls: { noun: 'image URLs', maxItems: 8, maxLength: 512, pattern: /^(https?|ipfs):\/\/.+$/, patternHint: 'start with https://, http:// or ipfs://' },
-  profilePaymentUris: { noun: 'payment addresses', maxItems: 16, maxLength: 512, pattern: /^[A-Za-z][A-Za-z0-9+.-]*:.+$/, patternHint: 'look like scheme:address' },
-  profileSocialLinks: { noun: 'social links', maxItems: 16, maxLength: 256 },
+  blogLabels: { noun: 'blog labels', maxItems: 64, maxLength: 40, maxBytes: 160 },
+  postLabels: { noun: 'post labels', maxItems: 16, maxLength: 40, maxBytes: 160 },
+  storeTags: { noun: 'tags', maxItems: 32, maxLength: 64, maxBytes: 128 },
+  storeImageUrls: { noun: 'image URLs', maxItems: 8, maxLength: 512, maxBytes: 512, pattern: /^(https?|ipfs):\/\/.+$/, patternHint: 'start with https://, http:// or ipfs://' },
+  profilePaymentUris: { noun: 'payment addresses', maxItems: 16, maxLength: 512, maxBytes: 512, pattern: /^[A-Za-z][A-Za-z0-9+.-]*:.+$/, patternHint: 'look like scheme:address' },
+  profileSocialLinks: { noun: 'social links', maxItems: 16, maxLength: 256, maxBytes: 256 },
 } as const satisfies Record<string, ListLimits>
 
 /** A list the target cut would refuse; `message` is written for the user. */
@@ -199,11 +201,21 @@ export class ListLimitError extends Error {
   }
 }
 
-/** Why `values` breaks `limits`, or null when it fits. Lengths count characters, as the contract's maxLength does. */
+/** UTF-8 length of `value`, which is what the contract's `maxBytes` counts. */
+export function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length
+}
+
+/**
+ * Why `values` breaks `limits`, or null when it fits. `maxLength` counts
+ * characters and `maxBytes` counts UTF-8 bytes, as the contract does.
+ */
 export function listLimitProblem(values: readonly string[], limits: ListLimits): string | null {
   if (values.length > limits.maxItems) return `At most ${limits.maxItems} ${limits.noun} are allowed (you have ${values.length}).`
   const tooLong = values.find((value) => [...value].length > limits.maxLength)
   if (tooLong !== undefined) return `Each of the ${limits.noun} can be at most ${limits.maxLength} characters ("${tooLong.slice(0, 24)}…" is longer).`
+  const tooManyBytes = values.find((value) => utf8ByteLength(value) > limits.maxBytes)
+  if (tooManyBytes !== undefined) return `Each of the ${limits.noun} can be at most ${limits.maxBytes} bytes; accented letters and emoji count as more than one ("${tooManyBytes.slice(0, 24)}…" is longer).`
   const pattern = limits.pattern
   if (pattern) {
     const bad = values.find((value) => !pattern.test(value))

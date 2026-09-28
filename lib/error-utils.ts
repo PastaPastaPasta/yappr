@@ -524,7 +524,8 @@ export function isPropertyMaxBytesError(error: unknown): boolean {
  *   #4962) — an integer rule between two properties failed: "A document of
  *   type "<t>" breaks its propertyConstraints rule "<rule>": <why>".
  *
- * Both are basic (unpaid) and permanent for the document as built.
+ * Both are basic errors and permanent for the document as built. Drive
+ * refuses a 10422 as a paid error, so the copy never says nothing was charged.
  */
 export function isDocumentPropertyRuleError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
@@ -533,6 +534,16 @@ export function isDocumentPropertyRuleError(error: unknown): boolean {
     /must differ from .*, but the two values are equal/i.test(msg) ||
     /breaks its propertyconstraints rule/i.test(msg) ||
     hasConsensusCode(msg, [10419, 10422])
+  )
+}
+
+/** The 10419 (`distinctFrom`) member of {@link isDocumentPropertyRuleError}. */
+function isPropertyNotDistinctError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentpropertynotdistinct/i.test(msg) ||
+    /must differ from .*, but the two values are equal/i.test(msg) ||
+    hasConsensusCode(msg, [10419])
   )
 }
 
@@ -838,8 +849,13 @@ export function categorizeError(error: unknown): string {
     // UTF-8, where an emoji or a non-Latin letter takes up to four.
     return 'This is too long for the network once emoji and special characters are counted. Shorten it and try again.'
   }
+  // No "nothing was charged": Drive refuses a 10422 as a paid error
+  // (platform batch/tests/document/property_constraints.rs).
+  if (isPropertyNotDistinctError(error)) {
+    return 'The network doesn\'t allow this combination: you can\'t do this to yourself.'
+  }
   if (isDocumentPropertyRuleError(error)) {
-    return 'The network doesn\'t allow this combination (for example, doing it to yourself). Nothing was charged.'
+    return 'The network doesn\'t allow this combination of values. Check what you entered and try again.'
   }
   if (isOncePerIdentityAlreadyClaimedError(error)) {
     return 'You\'ve already claimed this — it can only be claimed once per account.'

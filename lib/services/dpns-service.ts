@@ -21,6 +21,33 @@ import {
 } from '@/lib/error-utils';
 
 
+/** Credits in one duff, the smallest Core unit (1e-8 DASH). */
+const CREDITS_PER_DUFF = BigInt(CREDITS_PER_DASH) / 100_000_000n;
+
+/**
+ * `credits` in DASH, exact to the duff and without trailing zeros:
+ * 20000000000n → "0.2". A price rounds up so it is never shown as less than
+ * it is; a balance rounds down so it is never shown as more.
+ */
+export function formatCreditsAsDash(credits: bigint, round: 'up' | 'down' = 'up'): string {
+  const duffs = (credits + (round === 'up' ? CREDITS_PER_DUFF - 1n : 0n)) / CREDITS_PER_DUFF;
+  const whole = duffs / 100_000_000n;
+  const fraction = (duffs % 100_000_000n).toString().padStart(8, '0').replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+/**
+ * The least a contested DPNS name pays into its vote: 0.1 DASH from protocol
+ * 14 and 0.2 DASH under protocol 12/13. It only goes up from here (it doubles
+ * once a contest holds 250 contenders), so a balance below it is certain to
+ * be refused, and checking it before the preorder saves that fee. The SDK
+ * still prices the real fund just before it signs.
+ */
+export function minimumContestFundCredits(protocolVersion: number | null): bigint {
+  const dash = protocolVersion === null || protocolVersion >= 14 ? 10n : 20n;
+  return (BigInt(CREDITS_PER_DASH) * dash) / 100n;
+}
+
 /**
  * What a failed DPNS registration tells the user. A contested name (fewer than
  * 20 characters, only letters, hyphens and the digits 0 and 1) joins a
@@ -38,7 +65,7 @@ export function describeDpnsRegistrationError(error: unknown): string {
   }
   if (isContestFundError(error)) {
     const needed = contestFundNeededFromError(error);
-    const price = needed === null ? '' : ` (${Number(needed) / CREDITS_PER_DASH} DASH now)`;
+    const price = needed === null ? '' : ` (${formatCreditsAsDash(needed)} DASH now)`;
     return `Others joined the vote for this name while you were registering, so it now costs more to enter${price}. Try again to pay the current price.`;
   }
   // 40111: the contest for this name opened more than its join window ago (a
@@ -461,6 +488,25 @@ class DpnsService {
         throw new Error('Identity not found');
       }
 
+      if (isContested) {
+        // Refuse before the preorder is paid: registerName pays it first and
+        // only then finds the balance short of the contest fund.
+        const protocolVersion = await sdk.epoch.current().then(
+          (epoch) => epoch.protocolVersion,
+          (error) => {
+            logger.warn('DPNS: epoch read failed; checking the lowest contest fund:', extractErrorMessage(error));
+            return null;
+          }
+        );
+        const minimumFund = minimumContestFundCredits(protocolVersion);
+        if (identity.balance < minimumFund) {
+          throw new Error(
+            `${label} is a contested name, and entering its vote pays at least ${formatCreditsAsDash(minimumFund)} DASH from your credits. ` +
+            `This identity has ${formatCreditsAsDash(identity.balance, 'down')} DASH. Top up, or pick a name of 20 or more characters or one with a digit from 2 to 9.`
+          );
+        }
+      }
+
       // Get WASM public keys to find the matching signing key
       const wasmPublicKeys = identity.publicKeys;
 
@@ -612,9 +658,11 @@ class DpnsService {
       const reg = registrations[i];
       onProgress?.(i, registrations.length, reg.label);
 
+      // Known before the attempt, so a failure still says whether the name was contested.
+      let isContested = false;
       try {
         const sdk = await getEvoSdk();
-        const isContested = await sdk.dpns.isContestedUsername(reg.label);
+        isContested = await sdk.dpns.isContestedUsername(reg.label);
 
         await this.registerUsername(
           reg.label,
@@ -631,7 +679,7 @@ class DpnsService {
         results.push({
           label: reg.label,
           success: false,
-          isContested: false,
+          isContested,
           error: describeDpnsRegistrationError(error),
         });
       }

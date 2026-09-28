@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getSocialLinkUrl } from './profile-links'
-import { validateSocialHandle } from './social-link-validation'
+import { socialLinkAddProblem, validateSocialHandle } from './social-link-validation'
 
 describe('social handle validation', () => {
   it.each([
@@ -25,5 +25,21 @@ describe('social handle validation', () => {
     expect(validateSocialHandle(platform, '@qa_persona53')).toBeNull()
     expect(validateSocialHandle(platform, 'qa-persona53')).not.toBeNull()
     expect(validateSocialHandle(platform, 'qa.persona53')).not.toBeNull()
+  })
+})
+
+describe('adding a social link', () => {
+  it('counts UTF-8 bytes, not characters, against the 256-byte contract limit', () => {
+    // 200 characters but 400 bytes; the stored "other:" string is 406 bytes.
+    expect(socialLinkAddProblem([], { platform: 'other', handle: 'é'.repeat(200) }, 'Other')).toMatch(/at most 250 bytes/)
+    expect(socialLinkAddProblem([], { platform: 'other', handle: 'é'.repeat(125) }, 'Other')).toBeNull()
+    expect(socialLinkAddProblem([], { platform: 'other', handle: 'x'.repeat(250) }, 'Other')).toBeNull()
+    expect(socialLinkAddProblem([], { platform: 'other', handle: 'é'.repeat(126) }, 'Other')).not.toBeNull()
+  })
+
+  it('refuses a link that is already in the list', () => {
+    const existing = [{ platform: 'github', handle: 'sigrid-qa' }]
+    expect(socialLinkAddProblem(existing, { platform: 'github', handle: 'sigrid-qa' }, 'GitHub')).toBe('This link is already added')
+    expect(socialLinkAddProblem(existing, { platform: 'twitter', handle: 'sigrid-qa' }, 'Twitter/X')).toBeNull()
   })
 })

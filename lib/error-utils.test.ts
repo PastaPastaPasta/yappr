@@ -243,11 +243,11 @@ describe('4.2.0-beta.4 rejections', () => {
   // Messages transcribed from the rs-dpp `#[error(...)]` formats at tag v4.2.0-beta.4.
   const cases: Array<[string, (error: unknown) => boolean, string, RegExp]> = [
     ['10419 DocumentPropertyNotDistinctError', isDocumentPropertyRuleError,
-      'Document type "follow" property "followingId" must differ from "$ownerId", but the two values are equal', /combination/i],
+      'Document type "follow" property "followingId" must differ from "$ownerId", but the two values are equal', /can't do this to yourself/i],
     ['10421 DocumentPropertyMaxBytesExceededError', isPropertyMaxBytesError,
       'Property content is 2140 bytes in UTF-8, over its maxBytes of 2000', /shorten it/i],
     ['10422 DocumentPropertyConstraintViolatedError', isDocumentPropertyRuleError,
-      'A document of type "listing" breaks its propertyConstraints rule "minPrice <= maxPrice": 30 > 20', /combination/i],
+      'A document of type "listing" breaks its propertyConstraints rule "minPrice <= maxPrice": 30 > 20', /combination of values/i],
     ['40135 ReferencedContractRequirementNotMetError', isReferenceRequirementError,
       "referenced contract 8Xv3 for path storeContractId does not meet the reference's requirement moderation elected", /report this/i],
     ['40136 ReferencedIdentityKeyRequirementNotMetError', isReferenceRequirementError,
@@ -268,6 +268,18 @@ describe('4.2.0-beta.4 rejections', () => {
     expect(matcher(error)).toBe(true)
     expect(isPermanentProtocol14Error(error)).toBe(true)
     expect(categorizeError(error)).toMatch(expected)
+  })
+
+  it('words a propertyConstraints refusal (10422) as neither self-directed nor free', () => {
+    for (const message of [
+      'A document of type "listing" breaks its propertyConstraints rule "minPrice <= maxPrice": 30 > 20',
+      'rejected: code=10422',
+    ]) {
+      const copy = categorizeError(new Error(message))
+      expect(copy).not.toMatch(/yourself/i)
+      expect(copy).not.toMatch(/nothing was charged/i)
+    }
+    expect(categorizeError(new Error('rejected: code=10419'))).toMatch(/yourself/i)
   })
 
   it('never tells a 40139 to reload: it is a share mismatch, not a stale client', () => {

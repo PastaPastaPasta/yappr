@@ -20,6 +20,8 @@ export interface UseBlockOptions {
   initialValue?: boolean
 }
 
+const STILL_BLOCKED_BY_LIST = 'A block list you follow still blocks this user. Manage block lists in Settings.'
+
 /** Whether the viewer blocks `targetUserId`, with an optimistic toggle. */
 export function useBlock(targetUserId: string, options: UseBlockOptions = {}): UseBlockResult {
   const { isOn, isLoading, toggle, refresh } = useToggleRelation<string | undefined, { success: boolean; error?: string; autoRevoked?: boolean }>({
@@ -38,11 +40,20 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
     },
     turnOff: async (viewerId, subjectId) => {
       const { blockService } = await import('@/lib/services/block-service')
-      return blockService.unblockUser(viewerId, subjectId)
+      const result = await blockService.unblockUser(viewerId, subjectId)
+      if (!result.success) return result
+      // Only the viewer's own block can be deleted; a followed block list
+      // keeps blocking, so the toggle must roll back instead of claiming success.
+      const after = await blockService.getBlockProvenance(subjectId, viewerId).catch((error) => {
+        logger.error('useBlock: status check after unblock failed:', error)
+        return null
+      })
+      return after?.isBlocked ? { success: false, error: STILL_BLOCKED_BY_LIST } : result
     },
     onMessage: (result) => (result.autoRevoked ? 'User blocked and private feed access revoked' : 'User blocked'),
     offMessage: 'User unblocked',
-    failedMessage: () => 'Failed to update block status',
+    failedMessage: (error) =>
+      error instanceof Error && error.message === STILL_BLOCKED_BY_LIST ? STILL_BLOCKED_BY_LIST : 'Failed to update block status',
   })
   return { isBlocked: isOn, isLoading, toggleBlock: toggle, refresh }
 }
