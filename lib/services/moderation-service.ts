@@ -3,7 +3,7 @@ import { Document, PlatformVersion } from '@dashevo/evo-sdk';
 import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
 import type { ContractModerationReason, ContractModerationStatus, ContractWarning } from '@dashevo/wasm-sdk';
 import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants';
-import { contractIsModerated, contractKeepsWarnings, moderationListsKept, moderatorDeletableTypes, type TargetKind } from '@/lib/contract-topology';
+import { contractIsModerated, contractKeepsWarnings, electedModeration, moderationListsKept, moderatorDeletableTypes, type TargetKind } from '@/lib/contract-topology';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import { classifyModerationError, extractErrorMessage, isTimeoutError, type ModerationErrorKind } from '@/lib/error-utils';
@@ -196,6 +196,17 @@ export function resolveModerationTeam(
   }
   const appointed = moderators?.$type === 'appointedModerators' ? toIds(moderators.identities) : [];
   return { ownerId, appointed, elected: false, ownerModerates: true };
+}
+
+/**
+ * The identities no moderation may act on, mirroring Drive's
+ * `ContractModerators::protects`: everyone who may moderate right now, and the
+ * owner when an elected declaration says `ownerProtected`. A moderator's
+ * delete of a document one of them owns (a report they filed, say) is a paid
+ * 41102.
+ */
+export function protectedIdentities(team: ModerationTeam, ownerProtected: boolean): Set<string> {
+  return new Set([...team.appointed, ...(team.ownerModerates || ownerProtected ? [team.ownerId] : [])]);
 }
 
 /** The moderating identity and a signer holding its CRITICAL key. */
@@ -593,6 +604,56 @@ class ModerationService {
       logger.warn('moderationService: could not snapshot the document before removal; it will not be restorable', error);
       return false;
     }
+  }
+
+  /** {@link protectedIdentities} for the contract as it stands; empty off a moderated topology. */
+  async getProtectedIdentities(): Promise<Set<string>> {
+    const team = await this.getTeam();
+    if (!team) return new Set();
+    return protectedIdentities(team, electedModeration()?.ownerProtected === true);
+  }
+
+  /** True when the contract's moderators may dismiss reports (v9: `report` is moderator-deletable). */
+  canDismissReports(): boolean {
+    return moderatorDeletableTypes().includes('report');
+  }
+
+  /**
+   * Dismisses reports by deleting them as a moderator, one moderation
+   * transition each, in order, stopping at the first refusal. Each leaves a
+   * removal record carrying `reason` (cite the reported post in
+   * `reason.documents`, so the record says what was reviewed); a seated
+   * elected team must also cite a charter reason (41203). The reporter gets no
+   * refund. No copy is kept: a dismissed report is not restored from here.
+   * A report filed by a {@link protectedIdentities protected} identity cannot
+   * be dismissed (41102); leave those out.
+   *
+   * `dismissed` lists the reports confirmed gone, also on a failure part-way.
+   */
+  async dismissReports(
+    moderatorId: string,
+    reportIds: readonly string[],
+    reason: string | ModerationReasonInput,
+    onDismissed?: (reportId: string) => void
+  ): Promise<ModerationResult & { dismissed: string[] }> {
+    const dismissed: string[] = [];
+    if (!this.canDismissReports()) {
+      return { success: false, error: 'Moderators cannot dismiss reports on this contract', errorCode: 'NOT_MODERATED', dismissed };
+    }
+    const result = await this.moderate(moderatorId, async (sdk, auth) => {
+      for (const documentId of reportIds) {
+        await sdk.contracts.moderatorDeleteDocument({
+          ...auth,
+          contractId: YAPPR_CONTRACT_ID,
+          documentTypeName: 'report',
+          documentId,
+          reason: reasonOf(reason),
+        });
+        dismissed.push(documentId);
+        onDismissed?.(documentId);
+      }
+    });
+    return { ...result, dismissed };
   }
 
   /** Pays the moderators pot out to the whole team (any member may claim). */

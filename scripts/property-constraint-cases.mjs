@@ -8,8 +8,8 @@
  *     rs-dpp's own document validation offline (`ExtendedDocument.validate`
  *     from @dashevo/wasm-dpp, which the node runs on a create or replace), so
  *     a rule that drifts from its cases fails before anything is registered;
- *   - the live batteries (verify-v9 c1, verify-storefront s20, verify-pollr
- *     p12, verify-blog b19) broadcast the refused create cases against the
+ *   - the live batteries (verify-v9 c1 and r1, verify-storefront s20,
+ *     verify-pollr p12, verify-blog b19) broadcast the refused create cases against the
  *     registered contract; their existing fixtures are the accepted side.
  *
  * `data` holds only the properties a rule reads plus what the schema requires;
@@ -25,6 +25,7 @@ export const DECLARED_RULES = {
   'yappr-social-contract-v9.json': {
     post: ['embedAllOrNone', 'oneQuoteTarget', 'privateAllOrNone', 'privateHasNoMedia', 'quoteNamesOwner', 'tombstoneIsBlank'],
     reply: ['privateAllOrNone', 'privateHasNoMedia', 'tombstoneIsBlank'],
+    report: ['oneTarget', 'otherHasNote'],
   },
   'yappr-storefront-contract.json': {
     storeItem: ['pricedHasCurrency'],
@@ -38,6 +39,8 @@ export const DECLARED_RULES = {
 
 export const basePost = () => ({ content: 'constraint probe', language: 'en' });
 export const baseReply = () => ({ content: 'constraint probe', rootPostId: id(), parentOwnerId: id() });
+/** Reason 0 is spam; 8 is "something else", which must say what. */
+export const baseReport = () => ({ postId: id(), targetOwnerId: id(), reason: 0 });
 const privateFields = () => ({ encryptedContent: bytes(48), epoch: 1, nonce: bytes(24) });
 const embed = () => ({ embedContractId: id(), embedDocType: 'poll', embedId: id() });
 export const baseItem = () => ({ storeId: id(), title: 'constraint probe', status: 'active' });
@@ -78,6 +81,12 @@ export const CONSTRAINT_CASES = {
     ['reply: a private reply carrying mediaUrl', 'reply', { ...baseReply(), ...privateFields(), mediaUrl: 'ipfs://bafy' }, 'privateHasNoMedia'],
     ['reply: a tombstone', 'reply', { ...baseReply(), content: '', deleted: true }, null, { replace: true }],
     ['reply: a tombstone keeping its text', 'reply', { ...baseReply(), deleted: true }, 'tombstoneIsBlank', { replace: true }],
+    ['report: a post report', 'report', baseReport(), null],
+    ['report: a reply report', 'report', { ...drop(baseReport(), 'postId'), replyId: id() }, null],
+    ['report: "something else" saying what', 'report', { ...baseReport(), reason: 8, note: 'constraint probe' }, null],
+    ['report: naming a post AND a reply', 'report', { ...baseReport(), replyId: id() }, 'oneTarget'],
+    ['report: naming neither', 'report', drop(baseReport(), 'postId'), 'oneTarget'],
+    ['report: "something else" with no note', 'report', { ...baseReport(), reason: 8 }, 'otherHasNote'],
   ],
   'yappr-storefront-contract.json': [
     ['storeItem: priced with a currency', 'storeItem', { ...baseItem(), basePrice: 1000, currency: 'USD' }, null],

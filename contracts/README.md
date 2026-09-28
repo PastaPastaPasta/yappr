@@ -15,7 +15,10 @@ overrides).
 **The 4.2.0-beta.5 re-cut** (moutai was wiped) edits v9, storefront, blog and
 pollr in place with `propertyConstraints` co-occurrence rules and keeps every
 other file byte-identical; no topology label moves and no contract takes a
-document `ttl`. See [docs/CONTRACTS_BETA5.md](../docs/CONTRACTS_BETA5.md) for
+document `ttl`. The repo's v9 file has since gained a `report` type (readers
+report a post or reply to the moderators, who dismiss a report by deleting it)
+for the NEXT v9 registration; the v9 published on 2026-09-28 does not have it.
+See [docs/CONTRACTS_BETA5.md](../docs/CONTRACTS_BETA5.md) for
 the rules, the rejected candidates (key-exchange TTL among them) and the
 sha256 of every file.
 

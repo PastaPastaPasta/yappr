@@ -34,6 +34,9 @@
             "ban",
             "suspend",
             "warn"
+          ],
+          "report": [
+            "deleteDocuments"
           ]
         },
         "interim": {
@@ -1776,6 +1779,160 @@
           "terminal": "$ownerId"
         }
       ]
+    },
+    "report": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerAndPost",
+          "unique": true,
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "ownerAndReply",
+          "unique": true,
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "replyId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byPost",
+          "properties": [
+            {
+              "postId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byReply",
+          "properties": [
+            {
+              "replyId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byTime",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "documentsMutable": false,
+      "canBeDeletedByModerators": true,
+      "required": [
+        "$createdAt",
+        "targetOwnerId",
+        "reason"
+      ],
+      "properties": {
+        "postId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 0,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "post",
+            "propertyAgreement": {
+              "targetOwnerId": "$ownerId"
+            }
+          }
+        },
+        "replyId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 1,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "reply",
+            "propertyAgreement": {
+              "targetOwnerId": "$ownerId"
+            }
+          }
+        },
+        "targetOwnerId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 2,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "distinctFrom": "$ownerId"
+        },
+        "reason": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8,
+          "position": 3
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "position": 4
+        }
+      },
+      "propertyConstraints": {
+        "oneTarget": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "present": "postId"
+                },
+                {
+                  "absent": "replyId"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "absent": "postId"
+                },
+                {
+                  "present": "replyId"
+                }
+              ]
+            }
+          ]
+        },
+        "otherHasNote": {
+          "anyOf": [
+            {
+              "notEqual": [
+                "reason",
+                8
+              ]
+            },
+            {
+              "present": "note"
+            }
+          ]
+        }
+      },
+      "description": "A post or reply reported to the moderators, who dismiss it by deleting it",
+      "additionalProperties": false
     }
   },
   "tokens": {

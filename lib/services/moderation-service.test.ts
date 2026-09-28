@@ -21,7 +21,7 @@ const sdk = vi.hoisted(() => ({
   identities: { fetch: vi.fn() },
   moderationCharters: { team: vi.fn() },
 }))
-const topology = vi.hoisted(() => ({ moderated: true, lists: ['banlist', 'suspensions'] as string[], deletable: ['post', 'reply'] }))
+const topology = vi.hoisted(() => ({ moderated: true, lists: ['banlist', 'suspensions'] as string[], deletable: ['post', 'reply'], ownerProtected: true }))
 const fromBytes = vi.hoisted(() => vi.fn(() => ({ restored: true })))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
@@ -38,6 +38,7 @@ vi.mock('@/lib/contract-topology', () => ({
   moderationListsKept: () => (topology.moderated ? topology.lists : []),
   contractKeepsWarnings: () => topology.moderated && topology.lists.includes('warnings'),
   moderatorDeletableTypes: () => (topology.moderated ? topology.deletable : []),
+  electedModeration: () => (topology.moderated ? { ownerProtected: topology.ownerProtected } : null),
 }))
 
 const storage = new Map<string, string>()
@@ -49,7 +50,7 @@ vi.stubGlobal('localStorage', {
   get length() { return storage.size },
 })
 
-import { moderationService, resolveModerationTeam, toModerationReason, toRemoval, toWarning } from './moderation-service'
+import { moderationService, protectedIdentities, resolveModerationTeam, toModerationReason, toRemoval, toWarning } from './moderation-service'
 import { removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots'
 
 const MODERATOR = 'Mod111111111111111111111111111111111111111'
@@ -316,5 +317,63 @@ describe('remove then restore', () => {
     expect(await moderationService.restoreDocument(MODERATOR, 'post', 'D1')).toMatchObject({ errorCode: 'NOT_MODERATED' })
     expect(await moderationService.removeDocument(MODERATOR, 'post', 'D1', 'x')).toMatchObject({ errorCode: 'NOT_MODERATED' })
     expect(sdk.contracts.moderatorDeleteDocument).not.toHaveBeenCalled()
+  })
+})
+
+describe('who is protected from moderation (mirrors Drive ContractModerators::protects)', () => {
+  it('protects whoever may moderate: the interim owner, or the seated team', () => {
+    expect(protectedIdentities(resolveModerationTeam(OWNER, elected({ $type: 'contractOwner' }), null), false)).toEqual(new Set([OWNER]))
+    const seated = resolveModerationTeam(OWNER, elected({ $type: 'contractOwner' }), { leaderId: LEADER, members: [MEMBER] })
+    expect(protectedIdentities(seated, false)).toEqual(new Set([LEADER, MEMBER]))
+  })
+
+  it('protects the owner of an elected contract that says ownerProtected, once it no longer moderates', () => {
+    const seated = resolveModerationTeam(OWNER, elected({ $type: 'contractOwner' }), { leaderId: LEADER, members: [MEMBER] })
+    expect(protectedIdentities(seated, true)).toEqual(new Set([LEADER, MEMBER, OWNER]))
+  })
+
+  it('reads the team and the declaration for the contract as it stands', async () => {
+    const contract = { ownerId: { toBase58: () => OWNER }, config: { moderation: { moderators: elected({ $type: 'contractOwner' }) } } }
+    sdk.contracts.fetch.mockResolvedValue(contract)
+    sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [], free: vi.fn() })
+    expect(await moderationService.getProtectedIdentities()).toEqual(new Set([LEADER, OWNER]))
+  })
+})
+
+describe('dismissing reports', () => {
+  const withReports = () => { topology.deletable = ['post', 'reply', 'report'] }
+  const reason = { text: 'reviewed', documents: [{ documentTypeName: 'post', documentId: 'P1' }] }
+
+  beforeEach(() => { topology.deletable = ['post', 'reply'] })
+
+  it('refuses locally when the contract does not let moderators delete reports', async () => {
+    const result = await moderationService.dismissReports(MODERATOR, ['R1'], reason)
+    expect(result).toMatchObject({ success: false, errorCode: 'NOT_MODERATED', dismissed: [] })
+    expect(sdk.contracts.moderatorDeleteDocument).not.toHaveBeenCalled()
+  })
+
+  it('deletes each report as a moderator, in order, citing the reported post, and keeps no copy', async () => {
+    withReports()
+    sdk.contracts.moderatorDeleteDocument.mockResolvedValue({})
+    const seen: string[] = []
+    const result = await moderationService.dismissReports(MODERATOR, ['R1', 'R2'], reason, (id) => seen.push(id))
+    expect(result).toMatchObject({ success: true, dismissed: ['R1', 'R2'] })
+    expect(seen).toEqual(['R1', 'R2'])
+    expect(sdk.contracts.moderatorDeleteDocument.mock.calls.map(([args]) => [args.documentTypeName, args.documentId, args.reason])).toEqual([
+      ['report', 'R1', reason],
+      ['report', 'R2', reason],
+    ])
+    expect(sdk.documents.get).not.toHaveBeenCalled()
+    expect(storage.size).toBe(0)
+  })
+
+  it('stops at the first refusal and says which reports are already gone', async () => {
+    withReports()
+    sdk.contracts.moderatorDeleteDocument
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error('wait for state transition result timed out'))
+    const result = await moderationService.dismissReports(MODERATOR, ['R1', 'R2', 'R3'], reason)
+    expect(result).toMatchObject({ success: false, errorCode: 'MAYBE_APPLIED', dismissed: ['R1'] })
+    expect(sdk.contracts.moderatorDeleteDocument).toHaveBeenCalledTimes(2)
   })
 })
