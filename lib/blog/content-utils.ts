@@ -140,19 +140,25 @@ export function isPublishedBlogPost(post: { publishedAt?: number }): boolean {
   return post.publishedAt !== undefined
 }
 
+type DatedBlogPost = { publishedAt?: number; createdAt: Date; $revision?: number }
+
 /**
  * The date a reader should see: when the post was published, else when it was
  * created. `publishedAt` is author-supplied and uncapped, so it may backdate a
  * post (an import) but not date it after the network recorded it; a future
- * value would otherwise pin the post to the top of every listing.
+ * value would otherwise pin the post to the top of every listing, so it falls
+ * back to the creation time. A draft can be published by a later revision (the
+ * contract allows setting `publishedAt` once), and posts carry no `$updatedAt`,
+ * so a revised post may be dated up to now rather than up to its creation.
  */
-export function blogPostDate(post: { publishedAt?: number; createdAt: Date }): Date {
+export function blogPostDate(post: DatedBlogPost, now = Date.now()): Date {
   if (post.publishedAt === undefined) return post.createdAt
-  return new Date(Math.min(post.publishedAt, post.createdAt.getTime()))
+  const latest = (post.$revision ?? 1) > 1 ? now : post.createdAt.getTime()
+  return post.publishedAt <= latest ? new Date(post.publishedAt) : post.createdAt
 }
 
 /** A blog's public listing: drafts dropped, newest publication first. */
-export function publishedPostsNewestFirst<T extends { publishedAt?: number; createdAt: Date }>(posts: readonly T[]): T[] {
+export function publishedPostsNewestFirst<T extends DatedBlogPost>(posts: readonly T[]): T[] {
   return posts.filter(isPublishedBlogPost).sort((a, b) => blogPostDate(b).getTime() - blogPostDate(a).getTime())
 }
 

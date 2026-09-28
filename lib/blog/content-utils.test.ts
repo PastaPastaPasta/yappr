@@ -48,6 +48,23 @@ describe('the date a reader sees (QA D-51)', () => {
     expect(blogPostDate({ publishedAt: Date.UTC(2099, 0, 1), createdAt }).getTime()).toBe(day(27))
   })
 
+  it('keeps the date a draft was published by a later revision', () => {
+    const published = { publishedAt: day(28), createdAt: new Date(day(1)), $revision: 2 }
+    expect(blogPostDate(published, day(28) + 1).getTime()).toBe(day(28))
+    const older = { publishedAt: day(15), createdAt: new Date(day(15)) }
+    vi.useFakeTimers({ now: day(28) + 1 })
+    try {
+      expect(publishedPostsNewestFirst([older, published])).toEqual([published, older])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still does not let a revised post date itself in the future', () => {
+    const revised = { publishedAt: Date.UTC(2099, 0, 1), createdAt: new Date(day(1)), $revision: 2 }
+    expect(blogPostDate(revised, day(28)).getTime()).toBe(day(1))
+  })
+
   it('falls back to the creation time for a post without one', () => {
     const createdAt = new Date(day(27))
     expect(blogPostDate({ createdAt })).toBe(createdAt)
