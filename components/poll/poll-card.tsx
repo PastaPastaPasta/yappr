@@ -12,6 +12,7 @@ import { cn, formatNumber } from '@/lib/utils'
 import { categorizeError } from '@/lib/error-utils'
 import { pollrPollUrl } from '@/lib/poll-embed'
 import type { Poll, PollTally } from '@/lib/services'
+import { tallyIsFinal } from '@/lib/services/pollr-vote-service'
 
 interface PollCardProps {
   pollId: string
@@ -395,9 +396,9 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
           {/* "Final results" would vouch for numbers we don't have. */}
           {tallyUnavailable ? 'Vote count unavailable' : `${formatNumber(total)} vote${total === 1 ? '' : 's'}`}
           {poll.multiChoice && ' · multiple choice'}
-          {/* Nor when the count couldn't be bounded by the close time. */}
-          {isClosed && !tallyUnavailable && !tally?.lateIncluded && ' · Final results'}
-          {isClosed && (tallyUnavailable || tally?.lateIncluded) && ' · Closed'}
+          {/* Nor when the count wasn't bounded by the close time. */}
+          {isClosed && tally && tallyIsFinal(tally) && ' · Final results'}
+          {isClosed && !(tally && tallyIsFinal(tally)) && ' · Closed'}
         </span>
         {!user && !isClosed && (
           <button

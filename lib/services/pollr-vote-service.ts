@@ -830,6 +830,16 @@ export function reconcileTally(
   return { ...fresh, counts, total: counts.reduce((sum, count) => sum + count, 0) };
 }
 
+/**
+ * Whether a closed poll's tally may be shown as final results. On v3 that
+ * takes a tally read by the close time: an optimistic or open-poll one can
+ * hold a ballot written after it. v4 has no time axis to bound by, so only a
+ * tally known to include late ballots is excluded there.
+ */
+export function tallyIsFinal(tally: PollTally): boolean {
+  return pollrIsV4() ? !tally.lateIncluded : Boolean(tally.cutoffVerified);
+}
+
 /** A closed v3 poll's close time, the cutoff its ballots are tallied by; else null. */
 function closedCutoff(poll: Poll): number | null {
   return !pollrIsV4() && typeof poll.endsAt === 'number' && poll.endsAt < Date.now() ? poll.endsAt : null;

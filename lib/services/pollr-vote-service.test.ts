@@ -350,6 +350,21 @@ describe('final results on a closed poll', () => {
     expect(await service.getTally(poll({ endsAt }))).toEqual({ counts: [1, 1, 0], total: 2, cutoffVerified: true });
   });
 
+  it('only a cutoff-verified v3 tally counts as final results', async () => {
+    await loadService('v3');
+    const { tallyIsFinal } = await import('./pollr-vote-service');
+    // An optimistic tally from a ballot that finished after the close carries no flag.
+    expect(tallyIsFinal({ counts: [1, 1, 0], total: 2 })).toBe(false);
+    expect(tallyIsFinal({ counts: [1, 1, 0], total: 2, lateIncluded: true })).toBe(false);
+    expect(tallyIsFinal({ counts: [1, 1, 0], total: 2, cutoffVerified: true })).toBe(true);
+
+    vi.resetModules();
+    await loadService('v4');
+    const v4 = await import('./pollr-vote-service');
+    expect(v4.tallyIsFinal({ counts: [1, 1, 0], total: 2 })).toBe(true);
+    expect(v4.tallyIsFinal({ counts: [1, 1, 0], total: 2, lateIncluded: true })).toBe(false);
+  });
+
   it('does not bound by close time while the poll is open, or on v4', async () => {
     const v3 = await loadService('v3');
     mocks.count.mockResolvedValue(new Map([['80', 2n]]));
