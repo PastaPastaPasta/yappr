@@ -49,7 +49,7 @@ vi.stubGlobal('localStorage', {
   get length() { return storage.size },
 })
 
-import { moderationService, resolveModerationTeam, toModerationReason, toRemoval, toWarning } from './moderation-service'
+import { missingDocumentState, moderationService, resolveModerationTeam, toModerationReason, toRemoval, toWarning } from './moderation-service'
 import { removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots'
 
 const MODERATOR = 'Mod111111111111111111111111111111111111111'
@@ -163,6 +163,29 @@ describe('read shapes', () => {
     expect(removal).toMatchObject({ documentHash: 'ab'.repeat(32), restoredAt: 20, restoredBy: 'M2', removedAt: 10 })
     expect(toRemoval({ documentId: 'D1', documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: '' }, removedAt: BigInt(10), documentHash: '00' }))
       .toMatchObject({ restoredAt: null, restoredBy: null })
+  })
+})
+
+describe('what a missing post or reply may claim', () => {
+  const record = (restoredAt: number | null) => toRemoval({
+    documentId: 'D1', documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: 'v9 battery takedown' },
+    removedAt: BigInt(10), documentHash: '00', ...(restoredAt === null ? {} : { restoredAt: BigInt(restoredAt), restoredBy: 'M2' }),
+  })
+
+  it('claims a takedown for a standing removal record, proven absent or not', () => {
+    expect(missingDocumentState(record(null), false)).toBe('removed')
+    expect(missingDocumentState(record(null), true)).toBe('removed')
+  })
+
+  it('never claims a takedown for a RESTORED document that failed to load (QA D-08)', () => {
+    expect(missingDocumentState(record(20), false)).toBe('loadFailed')
+    // A record saying the document is live again outweighs a proof of absence.
+    expect(missingDocumentState(record(20), true)).toBe('loadFailed')
+  })
+
+  it('without a record, only a proof of absence claims a takedown', () => {
+    expect(missingDocumentState(null, true)).toBe('removed')
+    expect(missingDocumentState(null, false)).toBe('unavailable')
   })
 })
 
