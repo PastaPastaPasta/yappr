@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   effect: null as EffectCallback | null, cleanup: null as (() => void) | null,
   getBlockProvenance: vi.fn(), unblockUser: vi.fn(), cacheSet: vi.fn(),
   toastSuccess: vi.fn(), toastError: vi.fn(),
+  useToggleRelation: vi.fn(() => ({ isOn: false, isLoading: false, toggle: vi.fn(), refresh: vi.fn() })),
 }))
 // Run the real hook outside a renderer: useState/useRef keep slots across
 // renders (keyed by call order, like React's hook slots), and the one effect
@@ -34,13 +35,13 @@ vi.mock('react', async (original) => ({
 }))
 vi.mock('react-hot-toast', () => ({ default: { success: mocks.toastSuccess, error: mocks.toastError } }))
 vi.mock('@/contexts/auth-context', () => ({ useAuth: () => ({ user: { identityId: 'viewer' } }) }))
-vi.mock('@/hooks/use-toggle-relation', () => ({ useToggleRelation: vi.fn() }))
+vi.mock('@/hooks/use-toggle-relation', () => ({ useToggleRelation: mocks.useToggleRelation }))
 vi.mock('@/lib/caches/user-status-cache', () => ({ blockStatusCache: { set: mocks.cacheSet } }))
 vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } }))
 vi.mock('@/lib/services/block-service', () => ({
   blockService: { getBlockProvenance: mocks.getBlockProvenance, unblockUser: mocks.unblockUser },
 }))
-import { useBlockProvenance } from '@/hooks/use-block'
+import { useBlock, useBlockProvenance } from '@/hooks/use-block'
 
 function render(targetUserId: string) {
   let result!: ReturnType<typeof useBlockProvenance>
@@ -140,5 +141,34 @@ describe('useBlockProvenance', () => {
     await flush()
     expect(render('second')).toMatchObject({ ...notBlocked, isLoading: false })
     expect(mocks.cacheSet).not.toHaveBeenCalledWith('viewer', 'first', true)
+  })
+})
+
+describe('useBlock unblock', () => {
+  type TurnOff = (viewerId: string, subjectId: string) => Promise<{ success: boolean; error?: string }>
+  function blockToggleOptions() {
+    function Probe() { useBlock('target'); return null }
+    renderToString(createElement(Probe))
+    const [options] = mocks.useToggleRelation.mock.lastCall as unknown as [{
+      turnOff: TurnOff
+      failedMessage: (error: unknown) => string
+    }]
+    return options
+  }
+
+  it('fails instead of claiming success when a followed block list still blocks the user', async () => {
+    mocks.getBlockProvenance.mockResolvedValueOnce(inheritedOnly)
+    const { turnOff, failedMessage } = blockToggleOptions()
+    const result = await turnOff('viewer', 'target')
+    expect(mocks.unblockUser).toHaveBeenCalledWith('viewer', 'target')
+    expect(result.success).toBe(false)
+    expect(failedMessage(new Error(result.error))).toMatch(/block list you follow still blocks/)
+  })
+
+  it('reports success once nothing blocks the user any more', async () => {
+    mocks.getBlockProvenance.mockResolvedValueOnce(notBlocked)
+    const { turnOff, failedMessage } = blockToggleOptions()
+    expect(await turnOff('viewer', 'target')).toEqual({ success: true })
+    expect(failedMessage(new Error('boom'))).toBe('Failed to update block status')
   })
 })
