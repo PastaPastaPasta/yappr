@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, LockClosedIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, FlagIcon, LockClosedIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
@@ -23,12 +23,13 @@ import { usePostFieldValidation } from '@/hooks/use-post-field-validation'
 import { useRecoveryModal } from '@/hooks/use-recovery-modal'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
 import { useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
+import { useReportPostModal } from '@/hooks/use-report-post-modal'
 import { useIsModerator } from '@/hooks/use-is-moderator'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { usePostEngagement } from '@/hooks/use-post-engagement'
 import { shouldGateSensitive } from '@/lib/sensitive-content'
 import { findPollrPollLink, getEmbeddedPollId, stripPollrPollLink } from '@/lib/poll-embed'
-import { deletesAreTombstones, moderatorDeletableTypes, referencesMayDangle, targetKindOf } from '@/lib/contract-topology'
+import { contractTakesReports, deletesAreTombstones, moderatorDeletableTypes, referencesMayDangle, targetKindOf } from '@/lib/contract-topology'
 import { quoteTargetOf } from '@/lib/feed/resolve-quoted-posts'
 import { stopPropagation } from '@/lib/utils/events'
 import { IconButton } from '@/components/ui/icon-button'
@@ -184,7 +185,13 @@ export function PostCard({
   const { open: openModeratorRemoveModal } = useModeratorRemoveModal()
   // The contract's moderation team may delete someone else's post outright
   // (v9). Their own posts they tombstone like everyone else.
-  const canModerate = useIsModerator() && !isOwnPost && moderatorDeletableTypes().includes(targetKind)
+  const isModerator = useIsModerator()
+  const canModerate = isModerator && !isOwnPost && moderatorDeletableTypes().includes(targetKind)
+  const { open: openReportModal } = useReportPostModal()
+  // Anyone but the author may report a live post or reply to the moderators
+  // (v9); consensus refuses a self-report (10419) anyway. A moderator removes
+  // it instead: a moderator's report could not be dismissed (41102).
+  const canReport = contractTakesReports() && !isOwnPost && !isTombstoned && !isModerator
   // Whether each hashtag/mention index document actually landed on Platform.
   const { validations: hashtagValidations } = usePostFieldValidation('hashtag', post)
   const { validations: mentionValidations } = usePostFieldValidation('mention', post)
@@ -399,6 +406,19 @@ export function PostCard({
                     {!isOwnPost && (
                       <DropdownMenu.Item onClick={(e) => stopAndRun(e, toggleBlock)} disabled={blockLoading} className={cn(CARD_MENU_ITEM, 'text-red-500 disabled:opacity-50')}>
                         {isBlocked ? 'Unblock' : 'Block'} {authorLabel}
+                      </DropdownMenu.Item>
+                    )}
+                    {canReport && (
+                      <DropdownMenu.Item
+                        data-testid={`report-${post.id}`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (requireAuth()) openReportModal(enrichedPost)
+                        }}
+                        className={cn(CARD_MENU_ITEM, 'flex items-center gap-2')}
+                      >
+                        <FlagIcon className="h-4 w-4" />
+                        Report {isReply ? 'reply' : 'post'}
                       </DropdownMenu.Item>
                     )}
                     {canModerate && (

@@ -9,6 +9,8 @@ import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import { CharterReasonPicker, useSeatedReasons } from '@/components/moderation/charter-reason-picker'
 import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
+import { ReportQueue } from '@/components/moderation/report-queue'
+import { contractTakesReports, type TargetKind } from '@/lib/contract-topology'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
 import {
   moderationService,
@@ -192,6 +194,17 @@ export function ContractModerationSettings() {
     if (id) lookUp(id).catch(() => { /* reported inside */ })
   }
 
+  /** From a report: the author goes in the identity field and the reported post or reply is cited. */
+  const moderateAuthor = (authorId: string, kind: TargetKind, documentId: string) => {
+    setTargetId(authorId)
+    setCitedPosts(kind === 'post' ? documentId : '')
+    setCitedReplies(kind === 'reply' ? documentId : '')
+    const field = document.getElementById('contract-moderation-target')
+    field?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    field?.focus({ preventScroll: true })
+    lookUp(authorId).catch(() => { /* reported inside */ })
+  }
+
   /** The entered identity's standing on every list the contract keeps, warnings included. */
   const lookUp = async (identityId: string) => {
     const id = identityId.trim()
@@ -207,6 +220,7 @@ export function ContractModerationSettings() {
   return (
     <div className="space-y-4">
       <ElectionStatusPanel />
+      {contractTakesReports() && <ReportQueue seatedReasons={seatedReasons} onModerateAuthor={moderateAuthor} />}
       <Card>
         <CardHeader>
           <CardTitle>Contract Moderation</CardTitle>

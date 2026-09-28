@@ -75,6 +75,17 @@
  *       `tombstoneIsBlank`. The accepted side is every other case's fixture:
  *       the f1 tombstone, the quote posts, the anchor reply
  *
+ * Reports (the `report` type the beta.5 re-cut adds, docs/CONTRACTS_BETA5.md):
+ *
+ *   r1  A reports B's post; a second report of it by A is 40105; A reports
+ *       B's reply ("something else", with a note); a report naming someone
+ *       other than the author is 40127, B reporting its own post is 10419, a
+ *       report of a ghost post is 40120; every refused report create in
+ *       property-constraint-cases.mjs is 10422 naming its rule (two targets,
+ *       none, "something else" without a note); A withdraws the reply report;
+ *       the interim owner dismisses the post report (a removal record owned by
+ *       A), which then no longer fetches, and A may report the post again
+ *
  * ## Run
  *
  *   node scripts/verify-v9.mjs --self-test          # offline: contract + shapes
@@ -188,6 +199,14 @@ const followRequestData = ({ targetId }) => ({ targetId });
 const feedStateData = () => ({ treeCapacity: 1024, maxEpoch: 2000, encryptedSeed: randomIdBytes() });
 const grantData = ({ recipientId, leafIndex = 0, epoch = 1 }) => ({ recipientId, leafIndex, epoch, encryptedPayload: crypto.getRandomValues(new Uint8Array(96)) });
 const rekeyData = ({ epoch = 2, revokedLeaf = 0 } = {}) => ({ epoch, revokedLeaf, packets: crypto.getRandomValues(new Uint8Array(64)), encryptedCEK: crypto.getRandomValues(new Uint8Array(48)) });
+/** A report names exactly one of `postId` / `replyId`; reason 8 ("something else") must carry a note. */
+const reportData = ({ postId, replyId, targetOwnerId, reason = 0, note } = {}) => ({
+  ...(postId ? { postId } : {}),
+  ...(replyId ? { replyId } : {}),
+  targetOwnerId,
+  reason,
+  ...(note === undefined ? {} : { note }),
+});
 /** A typed identifier array is a list of 32-byte ids — never one packed byte array. */
 const blockFollowData = (ids) => ({ followedBlockers: ids.map((id) => (typeof id === 'string' ? bs58.decode(id) : id)) });
 
@@ -641,6 +660,55 @@ async function caseC1PropertyConstraints(ctx) {
     await replaceOwnPost(ctx, fixture.id, { content: '', deleted: true, ...immutablesOf(ctx, fixture.quoted) }));
 }
 
+async function caseR1Reports(ctx) {
+  const { sdk, contractId, botA, botB, moderator } = ctx;
+  console.log('\n--- r1. reports: one per reporter and target, author-agreed, withdrawable, dismissed by a moderator ---');
+  // B's posts and reply are fresh each run, so A has reported none of them yet.
+  const postId = await ensurePost(ctx, 'anchor');
+  const replyId = await ensureReply(ctx);
+  const otherId = await ensurePost(ctx, 'reported');
+  if (!postId || !replyId || !otherId) { check('r1 fixture', false, 'no anchor post, anchor reply or second post'); return; }
+  const [post, reply, other, author] = [postId, replyId, otherId, botB.ownerId].map((id) => bs58.decode(id));
+  const report = (data) => attemptCreate(sdk, botA, { contractId, docType: 'report', data: reportData(data) });
+
+  const postReport = await report({ postId: post, targetOwnerId: author, reason: 0 });
+  expectAccepted('r1a A reports B\'s post', postReport);
+  await expectCreateRefused(ctx, 'r1b a second report of the same post by A is refused (40105)', botA, 'report', reportData({ postId: post, targetOwnerId: author, reason: 1 }), DUPLICATE_UNIQUE);
+  const replyReport = await report({ replyId: reply, targetOwnerId: author, reason: 8, note: 'v9 battery report' });
+  expectAccepted('r1c A reports B\'s reply ("something else", with a note)', replyReport);
+  await expectCreateRefused(ctx, 'r1d a report naming someone other than the author is refused (40127)', botA, 'report', reportData({ postId: other, targetOwnerId: randomIdBytes(), reason: 0 }), PROPERTY_MISMATCH);
+  await expectCreateRefused(ctx, 'r1e B reporting its own post is refused (10419)', botB, 'report', reportData({ postId: post, targetOwnerId: author, reason: 0 }), NOT_DISTINCT);
+  await expectCreateRefused(ctx, 'r1f a report of a post that does not exist is refused (40120)', botA, 'report', reportData({ postId: randomIdBytes(), targetOwnerId: author, reason: 0 }), REFERENCE_NOT_FOUND);
+  // Real targets, so the refusal can only be the rule.
+  for (const [label, data, rule] of refusedCreates(CONTRACT_FILE.replace('contracts/', ''), 'report')) {
+    const fields = { ...data, ...(data.postId ? { postId: other } : {}), ...(data.replyId ? { replyId: reply } : {}), targetOwnerId: author };
+    await expectCreateRefused(ctx, `r1g ${label} is refused (10422 ${rule})`, botA, 'report', fields, constraintViolation(rule));
+  }
+
+  if (replyReport.ok) {
+    const withdrawn = await deleteOwn(ctx, botA, 'report', replyReport.id);
+    await settle();
+    check('r1h A withdraws its reply report', withdrawn === null && (await fetchDocument(sdk, contractId, 'report', replyReport.id)) === null, (withdrawn ?? '').slice(0, 160));
+  }
+
+  if (!postReport.ok || interimOnly(ctx, 'r1i–r1k')) return;
+  try {
+    const removal = await sdk.contracts.moderatorDeleteDocument({
+      identity: moderator.identity, contractId, documentTypeName: 'report', documentId: postReport.id,
+      reason: { text: 'v9 battery: report reviewed', documents: [{ documentTypeName: 'post', documentId: postId }] },
+      signer: moderator.signer,
+    });
+    check('r1i the interim owner dismisses A\'s report (the removal record names A)', idOf(removal.documentOwnerId) === botA.ownerId, `hash=${removal.documentHash}`);
+  } catch (e) {
+    check('r1i the interim owner dismisses A\'s report', false, describeErr(e).slice(0, 220));
+    return;
+  }
+  await settle();
+  check('r1j the dismissed report no longer fetches', (await fetchDocument(sdk, contractId, 'report', postReport.id)) === null);
+  // The unique entry went with the document: a dismissal does not stop a new report.
+  expectAccepted('r1k A may report the post again after the dismissal', await report({ postId: post, targetOwnerId: author, reason: 0 }));
+}
+
 // ---- Registry ------------------------------------------------------------------
 
 async function ensurePrepared(ctx) {
@@ -676,6 +744,7 @@ const CASES = new Map([
   ['f2', caseF2DeletedIsSettableOnce],
   ['f3', caseF3MutableFieldsStayMutable],
   ['c1', caseC1PropertyConstraints],
+  ['r1', prepared(caseR1Reports)],
 ]);
 
 /**
@@ -721,8 +790,11 @@ function selfTest() {
   expect('post freezes language, hashtag, the quote and deleted (f1, f2)', ['language', 'hashtag', 'quotedPostId', 'quotedPostOwnerId', 'deleted'].every((p) => schemas.post.immutable?.includes(p)));
   expect('post allows setting deleted once (f2)', schemas.post.immutableAllowSetting?.includes('deleted'));
   expect('post content, mediaUrl and sensitive stay mutable (f3)', ['content', 'mediaUrl', 'sensitive'].every((p) => !schemas.post.immutable?.includes(p)));
+  expect('report is moderator-deletable and moderated for deletion only (r1i)', schemas.report.canBeDeletedByModerators === true && JSON.stringify(moderators.moderatedDocumentTypes.report) === '["deleteDocuments"]');
+  expect('one report per reporter and post, and per reporter and reply (r1b)', ['postId', 'replyId'].every((p) => schemas.report.indices.some((i) => i.unique && JSON.stringify(i.properties) === JSON.stringify([{ $ownerId: 'asc' }, { [p]: 'asc' }]))));
+  expect('report.targetOwnerId agrees with the post\'s or reply\'s $ownerId and is not the reporter (r1d, r1e)', agreement('report', 'postId').targetOwnerId === '$ownerId' && agreement('report', 'replyId').targetOwnerId === '$ownerId' && schemas.report.properties.targetOwnerId.distinctFrom === '$ownerId');
   for (const [type, rules] of Object.entries(DECLARED_RULES['yappr-social-contract-v9.json'])) {
-    expect(`${type} declares exactly the propertyConstraints rules c1 asserts`, JSON.stringify(Object.keys(schemas[type].propertyConstraints ?? {}).sort()) === JSON.stringify([...rules].sort()));
+    expect(`${type} declares exactly the propertyConstraints rules c1 and r1 assert`, JSON.stringify(Object.keys(schemas[type].propertyConstraints ?? {}).sort()) === JSON.stringify([...rules].sort()));
   }
   for (const problem of problems) console.error(`FAIL  ${problem}`);
   if (problems.length > 0) { console.error(`${CONTRACT_FILE} no longer declares what this battery asserts`); return 1; }
@@ -755,6 +827,8 @@ const SHAPES = [
   ['like (hashtag absent)', 'like', likeData({ postId: someId(), postAuthor: someId() })],
   ['likeReply', 'likeReply', likeReplyData({ replyId: someId(), replyAuthor: someId() })],
   ['repost', 'repost', repostData({ postId: someId(), postOwnerId: someId() })],
+  ['report (post)', 'report', reportData({ postId: someId(), targetOwnerId: someId() })],
+  ['report (reply, something else + note)', 'report', reportData({ replyId: someId(), targetOwnerId: someId(), reason: 8, note: 'why' })],
 ];
 if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) {
   await ensureInitialized();

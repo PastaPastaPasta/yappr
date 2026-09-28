@@ -81,7 +81,7 @@ describe('contract topology', () => {
       m.hasFlatThreads(), m.quoteFieldsAreSplit(), m.likeSurfacesAreSplit(), m.referencesAreEnforced(),
       m.deletesAreTombstones(), m.likesAreIndexOnly(), m.hashtagsAreInline(), m.prefixRankingsAvailable(),
       m.followRankingsAvailable(), m.windowedRankingsAvailable(), m.contractIsModerated(), m.referencesMayDangle(),
-      m.contractKeepsWarnings(), m.privateFeedWritesAreGated(), m.blockFollowsAreTyped(),
+      m.contractKeepsWarnings(), m.privateFeedWritesAreGated(), m.blockFollowsAreTyped(), m.contractTakesReports(),
     ]
     const v9 = await topologyModule('v9')
     expect(capabilities(v9).every(Boolean)).toBe(true)
@@ -215,7 +215,7 @@ describe('contract topology', () => {
 
     it('pins the moderation declarations against the v9 JSON', async () => {
       const v9 = await topologyModule('v9')
-      expect(v9.moderatorDeletableTypes()).toEqual(['post', 'reply'])
+      expect(v9.moderatorDeletableTypes()).toEqual(['post', 'reply', 'report'])
       expect(v9.moderationListsKept()).toEqual(['banlist', 'suspensions', 'warnings'])
       expect(socialContractV9.config.$formatVersion).toBe('2')
       // Every reference at a moderator-deletable type is deletable, and no
@@ -288,7 +288,7 @@ describe('contract topology', () => {
         seatContestable: false,
         electionDelaySeconds: null,
         maxAddedModerators: 10,
-        moderatedDocumentTypes: { post: abilities, reply: abilities },
+        moderatedDocumentTypes: { post: abilities, reply: abilities, report: ['deleteDocuments'] },
         interim: 'contractOwner',
         ownerProtected: true,
       })
