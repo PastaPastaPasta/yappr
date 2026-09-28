@@ -39,6 +39,17 @@ export function cashtagDisplayToStorage(tag: string, maxLength?: number): string
 }
 
 /**
+ * Convert a display hashtag to storage format
+ * e.g., "#Dash" -> "dash"
+ * An optional ceiling truncates it the way `firstHashtag` does, so a link to
+ * an over-long tag opens the page it was indexed under.
+ */
+export function hashtagDisplayToStorage(tag: string, maxLength?: number): string {
+  const normalized = (tag.startsWith('#') ? tag.slice(1) : tag).toLowerCase()
+  return maxLength === undefined ? normalized : normalized.slice(0, maxLength)
+}
+
+/**
  * Get the display text for a stored tag
  * e.g., "dash_cashtag" -> "$DASH", "dash" -> "#dash"
  */

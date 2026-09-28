@@ -9,6 +9,7 @@ import {
   firstHashtag,
   firstIndexedTag,
   getTagDisplayText,
+  hashtagDisplayToStorage,
   isCashtagStorage,
   normalizeDpnsUsername,
 } from './post-helpers'
@@ -26,6 +27,13 @@ describe('hashtags', () => {
   it('truncates the first tag to the contract ceiling', () => {
     const long = 'a'.repeat(70)
     expect(firstHashtag(`#${long}`, 61)).toBe('a'.repeat(61))
+  })
+
+  it('links an over-long tag to the page it was indexed under (QA D-21)', () => {
+    const content = `#${'B'.repeat(62)}`
+    expect(hashtagDisplayToStorage(`#${'B'.repeat(62)}`, 61)).toBe(firstHashtag(content, 61))
+    expect(hashtagDisplayToStorage('#Dash')).toBe('dash')
+    expect(hashtagDisplayToStorage('#Dash', 61)).toBe('dash')
   })
 })
 

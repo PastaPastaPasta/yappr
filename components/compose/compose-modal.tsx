@@ -20,7 +20,7 @@ import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
 import { PaymentHint } from './payment-hint'
 import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { planPosts, publishThread } from '@/lib/compose/publish-thread'
-import { CHARACTER_LIMIT } from '@/lib/compose/limits'
+import { CHARACTER_LIMIT, characterCount, hasVisibleContent } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import { Button } from '@/components/ui/button'
@@ -143,18 +143,19 @@ export function ComposeModal() {
   }, [isComposeOpen])
 
   const unpostedPosts = threadPosts.filter((p) => !p.postedPostId)
-  const unpostedWithContent = unpostedPosts.filter((p) => p.content.trim().length > 0)
+  const unpostedWithContent = unpostedPosts.filter((p) => hasVisibleContent(p.content))
   const postedPosts = threadPosts.filter((p) => p.postedPostId)
   const imageUrl = image.attached?.uploadResult?.url
   // Public posts carry the image in the mediaUrl field at no character cost.
   // Encrypted posts keep the URL inside the content, so only they pay for it.
   const imageUrlExtraLength = imageUrl && willBeEncrypted ? imageUrl.length + 2 : 0
   const firstUnposted = unpostedWithContent[0]
-  const hasTeaserOverLimit = visibility === 'private-with-teaser' && !!firstPost?.teaser && firstPost.teaser.length > TEASER_LIMIT
-  const hasOverLimit = unpostedWithContent.some((p, i) => p.content.length + (i === 0 ? imageUrlExtraLength : 0) > CHARACTER_LIMIT) || hasTeaserOverLimit
+  const firstUnpostedLength = firstUnposted ? characterCount(firstUnposted.content) : 0
+  const hasTeaserOverLimit = visibility === 'private-with-teaser' && !!firstPost?.teaser && characterCount(firstPost.teaser) > TEASER_LIMIT
+  const hasOverLimit = unpostedWithContent.some((p, i) => characterCount(p.content) + (i === 0 ? imageUrlExtraLength : 0) > CHARACTER_LIMIT) || hasTeaserOverLimit
   const isOverLimitDueToImage =
-    !!firstUnposted && imageUrlExtraLength > 0 && firstUnposted.content.length <= CHARACTER_LIMIT && firstUnposted.content.length + imageUrlExtraLength > CHARACTER_LIMIT
-  const imageOverage = isOverLimitDueToImage && firstUnposted ? firstUnposted.content.length + imageUrlExtraLength - CHARACTER_LIMIT : 0
+    !!firstUnposted && imageUrlExtraLength > 0 && firstUnpostedLength <= CHARACTER_LIMIT && firstUnpostedLength + imageUrlExtraLength > CHARACTER_LIMIT
+  const imageOverage = isOverLimitDueToImage ? firstUnpostedLength + imageUrlExtraLength - CHARACTER_LIMIT : 0
 
   const isValidEncryptedPost = !willBeEncrypted || threadPosts.length <= 1
   const isInheritedEncryptionReady = !replyingTo || !isPrivatePost(replyingTo) || (!inherited.loading && !inherited.error)
@@ -211,8 +212,9 @@ export function ComposeModal() {
       const mediaUrlField = uploadedUrl && !mediaInEncryptedContent ? mediaUrlForContract(uploadedUrl) : undefined
       const posts = planPosts(threadPosts, uploadedUrl, mediaInEncryptedContent)
 
-      if (posts.length > 0 && posts[0].content.length > CHARACTER_LIMIT) {
-        toast.error(`Post is ${posts[0].content.length - CHARACTER_LIMIT} characters over the limit once the image URL is included. Trim your text.`)
+      const firstLength = posts.length > 0 ? characterCount(posts[0].content) : 0
+      if (firstLength > CHARACTER_LIMIT) {
+        toast.error(`Post is ${firstLength - CHARACTER_LIMIT} characters over the limit once the image URL is included. Trim your text.`)
         return
       }
       if (willBeEncrypted && posts.length > 1) {
@@ -336,7 +338,7 @@ export function ComposeModal() {
     }
   }
 
-  const teaserLength = firstPost?.teaser?.length || 0
+  const teaserLength = firstPost?.teaser ? characterCount(firstPost.teaser) : 0
 
   return (
     <>

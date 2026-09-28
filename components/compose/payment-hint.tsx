@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
-import { paymentIsChoosable, planPayment } from '@/lib/payment-preference'
+import { paymentHintCopy, paymentIsChoosable, planPayment } from '@/lib/payment-preference'
 import { tokenService } from '@/lib/services/token-service'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
 
@@ -32,30 +32,20 @@ export function PaymentHint({ docType }: { docType: 'post' | 'reply' }) {
   }, [identityId, docType])
 
   if (!identityId || !paymentIsChoosable(docType) || balance === undefined) return null
-  const plan = planPayment(docType, 'create', balance, payWith)
-  const feeCredits = plan.actionFee ? plan.actionFee.owner + plan.actionFee.moderators : 0n
-  const fee = feeCredits > 0n ? ` + ${(Number(feeCredits) / CREDITS_PER_DASH).toFixed(4)} DASH moderation fee` : ''
-
-  let text: string
-  if (plan.payWith === 'yapp') {
-    text = `Pays ${plan.yapp.toString()} YAPP${plan.gasMayBeSponsored ? ', network fee covered by Yappr' : ''}${fee}`
-  } else if (plan.fallbackReason !== 'insufficient-yapp') {
-    text = `Pays in credits${fee}`
-  } else {
-    // `null` means the balance query itself failed, not that it came back empty.
-    text = `Pays in credits${balance === null ? ' (YAPP balance unavailable)' : ' (not enough YAPP)'}${fee}`
-  }
+  const { text, toggle } = paymentHintCopy(planPayment(docType, 'create', balance, payWith), balance, CREDITS_PER_DASH)
 
   return (
     <div data-testid="compose-payment-hint" className="flex items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
       <span>{text}</span>
-      <button
-        type="button"
-        onClick={() => setPayWith(payWith === 'yapp' ? 'credits' : 'yapp')}
-        className="underline hover:text-yappr-600 dark:hover:text-yappr-400"
-      >
-        {payWith === 'yapp' ? 'Use credits instead' : 'Use YAPP instead'}
-      </button>
+      {toggle && (
+        <button
+          type="button"
+          onClick={() => setPayWith(payWith === 'yapp' ? 'credits' : 'yapp')}
+          className="underline hover:text-yappr-600 dark:hover:text-yappr-400"
+        >
+          {toggle}
+        </button>
+      )}
     </div>
   )
 }

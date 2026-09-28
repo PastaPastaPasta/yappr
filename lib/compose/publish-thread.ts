@@ -5,6 +5,7 @@ import type { PostVisibility, ThreadPost } from '@/lib/store'
 import type { EncryptionOptions, EncryptionSource } from '@/lib/services/post-service'
 import type { PostEmbed } from '@/lib/poll-embed'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
+import { hasVisibleContent } from '@/lib/compose/limits'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
@@ -40,7 +41,7 @@ export function planPosts(threadPosts: ThreadPost[], imageUrl: string | undefine
       if (rootLanded) predecessorPostedId = p.postedPostId
       continue
     }
-    if (p.content.trim().length === 0) continue
+    if (!hasVisibleContent(p.content)) continue
     plan.push({
       threadPostId: p.id,
       // Only encrypted posts carry the image URL in their text.

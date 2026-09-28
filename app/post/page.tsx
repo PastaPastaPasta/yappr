@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
@@ -72,6 +72,11 @@ function PostDetailContent() {
   const rootPostOwnerId = (replyChain[0] ?? post)?.author.id ?? ''
   const { canReply: canReplyToPrivate, isLoading: isCheckingAccess, reason: cantReplyReason } = useCanReplyToPrivate(post, rootPostOwnerId)
 
+  // The owner can delete the main post from its card; the fetched `post` does
+  // not change until a reload, so remember it here to retire the reply prompt.
+  const [deletedPostId, setDeletedPostId] = useState<string | null>(null)
+  const isDeleted = Boolean(post?.deleted) || (!!post && post.id === deletedPostId)
+
   useEffect(() => {
     resetReplyEnrichment()
   }, [postId, resetReplyEnrichment])
@@ -107,7 +112,7 @@ function PostDetailContent() {
   }, [replyThreads, enrichRepliesProgressively])
 
   const handleReply = () => {
-    if (!post || !canReplyToPrivate) return
+    if (!post || isDeleted || !canReplyToPrivate) return
     setReplyingTo(post)
     setComposeOpen(true)
   }
@@ -168,13 +173,18 @@ function PostDetailContent() {
 
             {/* Main post - the one being viewed */}
             <div className="border-b border-gray-200 dark:border-gray-800">
-              <PostCard post={post} enrichment={postEnrichment} rootPostOwnerId={rootPostOwnerId} />
+              <PostCard post={post} enrichment={postEnrichment} rootPostOwnerId={rootPostOwnerId} onDelete={setDeletedPostId} />
             </div>
 
             {/* Proved YAPP tips on this post — one token-history read, detail view only */}
             <PostTips postId={post.id} authorId={post.author.id} />
 
-            {user ? (
+            {isDeleted ? (
+              // Consensus accepts a reply to a tombstone; the post is gone for readers.
+              <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
+                <p className="text-gray-500 text-sm">This post was deleted, so it can&apos;t be replied to.</p>
+              </div>
+            ) : user ? (
               isCheckingAccess ? (
                 <div className="p-4 border-b border-gray-200 dark:border-gray-800">
                   <Button
