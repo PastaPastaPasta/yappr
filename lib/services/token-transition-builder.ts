@@ -38,13 +38,14 @@ export async function buildUnsignedTokenBatch(
   const tokenId = await tokenService.getTokenId();
 
   // The wallet broadcasts later, so the lock cannot cover that; taking the
-  // nonce past every one this browser signed, and reserving it as pending,
-  // keeps a write made while the QR is up from signing the same one (QA D-01).
+  // nonce past every one this browser signed, and reserving it as pending
+  // until Platform shows it consumed (the wallet may sign it long after the QR
+  // is gone), keeps any later write from signing the same one (QA D-01).
   const nonce = await withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
     const rawNonce = await sdk.identities.contractNonce(ownerId, YAPPR_CONTRACT_ID);
     const next = allocateNonce(rawNonce, loadReservation(ownerId, YAPPR_CONTRACT_ID));
     if (next === null) throw new Error(PENDING_WRITE_ERROR);
-    reserveNonce(ownerId, YAPPR_CONTRACT_ID, next, rawNonce);
+    reserveNonce(ownerId, YAPPR_CONTRACT_ID, next, rawNonce, true);
     logger.debug(`${label}: nonce raw=${rawNonce} using=${next}`);
     return next;
   });

@@ -136,6 +136,24 @@ describe('an SDK-signed write whose outcome is unknown', () => {
   })
 })
 
+describe('a transition handed to a wallet', () => {
+  it('stays pending, however long ago, until Platform shows its nonce consumed', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100), true)
+    vi.setSystemTime(Date.now() + 60 * 60 * 1000)
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const write = vi.fn(async () => 'sent')
+
+    const blocked = await runSdkWrite(write)
+
+    expect(write).not.toHaveBeenCalled()
+    expect(blocked).toEqual({ ok: false, error: new Error(PENDING_WRITE_ERROR) })
+    expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT))).toBe(n(102))
+
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
+    expect(await runSdkWrite(write)).toEqual({ ok: true, value: 'sent' })
+  })
+})
+
 describe('allocateNonce', () => {
   it('goes past every nonce this browser chose, whether or not it executed, and whatever a lagging node reports', () => {
     const entry = reserveNonce(OWNER, CONTRACT, n(101), n(100))

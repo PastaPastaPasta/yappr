@@ -29,11 +29,15 @@ import { allocateIdentityContractNonce, identityContractNonceConsumed } from '@/
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { getEvoSdk } from './evo-sdk-service';
 
-/** A signed transition that may still execute. `nonce` is null when the SDK chose it. */
+/**
+ * A signed transition that may still execute. `nonce` is null when the SDK
+ * chose it; `expiresAt` is null for one handed to a wallet, which may sign and
+ * broadcast it at any later time.
+ */
 export interface PendingTransition {
   id: string;
   nonce: bigint | null;
-  expiresAt: number;
+  expiresAt: number | null;
 }
 
 export interface NonceReservation {
@@ -43,11 +47,13 @@ export interface NonceReservation {
 }
 
 /**
- * How long a signed transition that was neither confirmed nor refused is
- * treated as able to execute. Tenderdash re-checks its mempool after every
- * block and a valid transition executes in the next one, so one that has not
- * executed within minutes of its broadcast was dropped; a wallet can sign one
- * handed to it until its QR gives way (5 minutes).
+ * How long a transition this browser broadcast, and that was neither
+ * confirmed nor refused, is treated as able to execute. Tenderdash re-checks
+ * its mempool after every block and a valid transition executes in the next
+ * one, so one that has not executed within minutes of its broadcast was
+ * dropped. Nothing bounds one handed to a wallet: the protocol gives a
+ * transition no deadline, and the wallet may broadcast it long after its QR
+ * is gone, so that one stays pending until its nonce is consumed.
  */
 const PENDING_LIFETIME_MS = 15 * 60 * 1000;
 
@@ -82,7 +88,7 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
   try {
     const raw = localStorage.getItem(reservationKey(ownerId, contractId));
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { mark: string; pending: { id: string; nonce: string | null; expiresAt: number }[] };
+    const parsed = JSON.parse(raw) as { mark: string; pending: { id: string; nonce: string | null; expiresAt: number | null }[] };
     return {
       mark: BigInt(parsed.mark),
       pending: parsed.pending
@@ -108,13 +114,13 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
 
 /**
  * The pending transitions that may still execute, given the raw value
- * `identities.contractNonce` returned: not expired, and not one whose own
- * nonce is consumed. Consumption is final, so a node that is behind only
+ * `identities.contractNonce` returned: not expired (one handed to a wallet
+ * never expires), and not one whose own nonce is consumed. Consumption is final, so a node that is behind only
  * keeps one pending longer. Nothing about an SDK-signed one is known, so it
  * stays pending until its outcome is known or it expires.
  */
 export function stillPending(current: bigint | undefined | null, reservation: NonceReservation | null, now = Date.now()): PendingTransition[] {
-  return (reservation?.pending ?? []).filter((p) => p.expiresAt > now && (p.nonce === null || !identityContractNonceConsumed(current, p.nonce)));
+  return (reservation?.pending ?? []).filter((p) => (p.expiresAt === null || p.expiresAt > now) && (p.nonce === null || !identityContractNonceConsumed(current, p.nonce)));
 }
 
 /**
@@ -135,14 +141,21 @@ export function allocateNonce(current: bigint | undefined | null, reservation: N
 /**
  * Record a signed transition as pending before its broadcast (one that errors
  * may still have gone out), dropping what `current` shows settled. `nonce` is
- * null for one the SDK signs. The mark never goes down. Throws
+ * null for one the SDK signs; `handedToWallet` marks one a wallet signs and
+ * broadcasts later, which never expires. The mark never goes down. Throws
  * {@link NONCE_STORE_ERROR} when localStorage cannot hold it, and the
  * transition must then not be sent.
  */
-export function reserveNonce(ownerId: string, contractId: string, nonce: bigint | null, current: bigint | undefined | null): PendingTransition {
+export function reserveNonce(
+  ownerId: string,
+  contractId: string,
+  nonce: bigint | null,
+  current: bigint | undefined | null,
+  handedToWallet = false
+): PendingTransition {
   const previous = loadReservation(ownerId, contractId);
   // Unique across tabs: releasing one must never release another.
-  const entry = { id: crypto.randomUUID(), nonce, expiresAt: Date.now() + PENDING_LIFETIME_MS };
+  const entry = { id: crypto.randomUUID(), nonce, expiresAt: handedToWallet ? null : Date.now() + PENDING_LIFETIME_MS };
   const mark = previous?.mark ?? BigInt(0);
   saveReservation(ownerId, contractId, {
     mark: nonce !== null && nonce > mark ? nonce : mark,
