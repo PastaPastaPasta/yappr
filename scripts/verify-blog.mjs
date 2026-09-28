@@ -13,7 +13,9 @@
  * one appointed at publish time; v3 (beta.3) is a moderated cut, so b13/b14
  * ban the stranger and take a comment and a post down. v4 (beta.4) keeps a
  * warning list (b17 warns and clears) and stores `labels` as a typed string
- * array (b18: a list reads back as a list; an over-long label is refused).
+ * array (b18: a list reads back as a list; an over-long label is refused). The
+ * beta.5 re-cut adds `propertyConstraints` (b19: content chunks are contiguous;
+ * a gap is refused 10422).
  *   node scripts/verify-blog.mjs --self-test   # offline: contract declares what the cases assert
  */
 import bs58 from 'bs58';
@@ -23,6 +25,9 @@ import {
 } from './battery-lib.mjs';
 import { randomEntropy } from './seed/seed-lib.mjs';
 import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, REFERENCE_NOT_FOUND_DELETABLE, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
+import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
+
+const CONTRACT_FILE = 'yappr-blog-contract.json';
 
 const COMMENT_COST = 1n;
 const DEFAULT_YAPP = 20n;
@@ -266,11 +271,26 @@ async function caseB18TypedLabels(ctx) {
   await battery.probeCreate('b18g the v3 comma-separated STRING is refused on v4', NOT_A_LIST, author, 'blog', blogData(`${run}-csv`, 'oncall,databases'));
 }
 
+async function caseB19PropertyConstraints(ctx) {
+  const { battery, author, run } = ctx;
+  console.log('\n--- b19. propertyConstraints: content chunks are contiguous (10422) ---');
+  // Under b1's fixture blog, or (for `--only b19`) a fresh one; b1b/b1c (one chunk each) are the accepted side.
+  if (!ctx.blogId) {
+    const blog = await battery.probeCreate('b19 fixture blog created', null, author, 'blog', blogData(`${run}-b19`));
+    ctx.blogId = blog.ok ? blog.id : null;
+    if (!ctx.blogId) return;
+  }
+  for (const [label, data, rule] of refusedCreates(CONTRACT_FILE, 'blogPost')) {
+    await battery.probeCreate(`b19 ${label} is refused (10422 ${rule})`, constraintViolation(rule), author, 'blogPost', { ...data, blogId: id32(ctx.blogId), slug: `gap-${run}-${Date.now()}` });
+  }
+}
+
 const CASES = new Map([
   ['b1', caseB1Fixtures], ['b2', caseB2BlogRefs], ['b3', caseB3Comments], ['b4', caseB4Counts],
   ['b5', caseB5Rankings], ['b6', caseB6Windowed], ['b7', caseB7Edit], ['b8', caseB8Permanence],
   ['b9', caseB9Tokens], ['b10', caseB10CommentDelete], ['b11', caseB11FollowDelete], ['b12', caseB12Immutable],
   ['b13', caseB13Ban], ['b14', caseB14ModeratorDelete], ['b17', caseB17Warn], ['b18', caseB18TypedLabels],
+  ['b19', caseB19PropertyConstraints],
 ]);
 
 await runBattery({
@@ -280,12 +300,13 @@ await runBattery({
   actors: { author: 210, reader: 211, stranger: 212, moderator: 260 },
   yapp: { default: DEFAULT_YAPP, actors: ['reader', 'stranger'], require: true },
   banner: ({ socialId }) => `; YAPP from ${socialId}`,
-  selfTest: () => selfTestModerated('yappr-blog-contract.json', {
+  selfTest: () => selfTestModerated(CONTRACT_FILE, {
     // b3a: the notification key binds to the post's REAL owner.
     blogComment: { agreements: { blogPostId: { blogPostOwnerId: '$ownerId' } }, moderatorDeletable: true },
     // b12: blogId frozen, publishedAt write-once. b15: moderators may remove a post.
     // b18: labels are typed string arrays (beta.4 v4).
-    blogPost: { immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'], moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } } },
+    // b19: content chunks are contiguous (beta.5).
+    blogPost: { immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'], moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
     blog: { moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 64, maxLength: 40 } } },
   }, { moderation: { banlist: true, suspensions: true, warnings: true } }),
   setup: async ({ battery, tokenId, reader, moderator }) => ({ startedAt: Date.now() - 60_000, readerComments: 0, strangerCommentId: null, draftId: null, publishedAt: null, readerYappBefore: await battery.yappBalance(tokenId, reader.ownerId), moderator: { ...moderator, identity: await battery.readback(() => battery.sdk.identities.fetch(moderator.ownerId)) } }),

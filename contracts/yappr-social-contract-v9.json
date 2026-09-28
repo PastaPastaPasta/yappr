@@ -865,6 +865,144 @@
         "create": {
           "moderators": 80000000
         }
+      },
+      "propertyConstraints": {
+        "embedAllOrNone": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "present": "embedContractId"
+                },
+                {
+                  "present": "embedDocType"
+                },
+                {
+                  "present": "embedId"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "absent": "embedContractId"
+                },
+                {
+                  "absent": "embedDocType"
+                },
+                {
+                  "absent": "embedId"
+                }
+              ]
+            }
+          ]
+        },
+        "oneQuoteTarget": {
+          "not": {
+            "allOf": [
+              {
+                "present": "quotedPostId"
+              },
+              {
+                "present": "quotedReplyId"
+              }
+            ]
+          }
+        },
+        "privateAllOrNone": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "present": "encryptedContent"
+                },
+                {
+                  "present": "epoch"
+                },
+                {
+                  "present": "nonce"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "absent": "encryptedContent"
+                },
+                {
+                  "absent": "epoch"
+                },
+                {
+                  "absent": "nonce"
+                }
+              ]
+            }
+          ]
+        },
+        "privateHasNoMedia": {
+          "not": {
+            "allOf": [
+              {
+                "present": "encryptedContent"
+              },
+              {
+                "present": "mediaUrl"
+              }
+            ]
+          }
+        },
+        "quoteNamesOwner": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "absent": "quotedPostId"
+                },
+                {
+                  "absent": "quotedReplyId"
+                }
+              ]
+            },
+            {
+              "present": "quotedPostOwnerId"
+            }
+          ]
+        },
+        "tombstoneIsBlank": {
+          "anyOf": [
+            {
+              "notEqual": [
+                "deleted",
+                1
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "absent": "content"
+                    },
+                    {
+                      "equal": [
+                        "content",
+                        {
+                          "const": ""
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "absent": "mediaUrl"
+                },
+                {
+                  "absent": "encryptedContent"
+                }
+              ]
+            }
+          ]
+        }
       }
     },
     "postMention": {
@@ -1353,6 +1491,85 @@
         "pricing": "feeMultiplier",
         "create": {
           "moderators": 16000000
+        }
+      },
+      "propertyConstraints": {
+        "privateAllOrNone": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "present": "encryptedContent"
+                },
+                {
+                  "present": "epoch"
+                },
+                {
+                  "present": "nonce"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "absent": "encryptedContent"
+                },
+                {
+                  "absent": "epoch"
+                },
+                {
+                  "absent": "nonce"
+                }
+              ]
+            }
+          ]
+        },
+        "privateHasNoMedia": {
+          "not": {
+            "allOf": [
+              {
+                "present": "encryptedContent"
+              },
+              {
+                "present": "mediaUrl"
+              }
+            ]
+          }
+        },
+        "tombstoneIsBlank": {
+          "anyOf": [
+            {
+              "notEqual": [
+                "deleted",
+                1
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "absent": "content"
+                    },
+                    {
+                      "equal": [
+                        "content",
+                        {
+                          "const": ""
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "absent": "mediaUrl"
+                },
+                {
+                  "absent": "encryptedContent"
+                }
+              ]
+            }
+          ]
         }
       }
     },

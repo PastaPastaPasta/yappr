@@ -66,6 +66,15 @@
  *   f3  the mutable properties still are: a replace may blank `content` and
  *       drop `mediaUrl`/`sensitive`
  *
+ * The 4.2.0-beta.5 re-cut's `propertyConstraints` (docs/CONTRACTS_BETA5.md):
+ *
+ *   c1  every refused post/reply create in property-constraint-cases.mjs is
+ *       refused 10422 naming its rule (a quote without its owner, a partial
+ *       encryption triple or embed, a private post with media, two quote
+ *       targets); a tombstone replace that keeps `mediaUrl` is refused
+ *       `tombstoneIsBlank`. The accepted side is every other case's fixture:
+ *       the f1 tombstone, the quote posts, the anchor reply
+ *
  * ## Run
  *
  *   node scripts/verify-v9.mjs --self-test          # offline: contract + shapes
@@ -116,6 +125,7 @@ import {
   wifForBot,
 } from './social-battery-lib.mjs';
 import { describeErr } from './owner-keys.mjs';
+import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 
 const CONTRACT_FILE = 'contracts/yappr-social-contract-v9.json';
 const V9 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
@@ -606,6 +616,31 @@ async function caseF3MutableFieldsStayMutable(ctx) {
     await replaceOwnPost(ctx, fixture.id, { content: '', ...immutablesOf(ctx, fixture.quoted) }));
 }
 
+async function caseC1PropertyConstraints(ctx) {
+  const { botA } = ctx;
+  console.log('\n--- c1. propertyConstraints: post and reply co-occurrence rules (10422) ---');
+  // Refused creates carry the action fee, so the refusal is the rule and never a missing fee.
+  const anchor = await ensurePost(ctx, 'anchor');
+  const fields = (data) => ({ ...data, ...(data.rootPostId ? { rootPostId: bs58.decode(anchor), parentOwnerId: bs58.decode(ctx.botB.ownerId) } : {}) });
+  for (const docType of ['post', 'reply']) {
+    if (docType === 'reply' && !anchor) { check('c1 reply fixture', false, 'no anchor post'); continue; }
+    for (const [label, data, rule] of refusedCreates(CONTRACT_FILE.replace('contracts/', ''), docType)) {
+      const { agreement } = await feeAgreement(ctx, docType === 'post' ? POST_ACTION_FEE : REPLY_ACTION_FEE);
+      const outcome = await manualCreate(ctx, botA, { docType, data: fields(data), agreement });
+      if (outcome.ok && outcome.id) console.log(`     (${label} LANDED as ${outcome.id}; it stays, since ${docType} cannot be deleted by its owner)`);
+      expectRejected(`c1 ${label} is refused (10422 ${rule})`, outcome, constraintViolation(rule));
+    }
+  }
+  // A replace is judged on the whole document: a tombstone that keeps its media is refused.
+  const fixture = await ensureOwnMutablePost(ctx, 'constraint', { mediaUrl: 'ipfs://bafyconstraintfixture' });
+  if (!fixture) { check('c1 tombstone fixture', false, 'no fixture post available'); return; }
+  expectRejected('c1 a tombstone that keeps `mediaUrl` is refused (10422 tombstoneIsBlank)',
+    await replaceOwnPost(ctx, fixture.id, { content: '', deleted: true, mediaUrl: 'ipfs://bafyconstraintfixture', ...immutablesOf(ctx, fixture.quoted) }),
+    constraintViolation('tombstoneIsBlank'));
+  expectAccepted('c1 the same tombstone without its media lands (control)',
+    await replaceOwnPost(ctx, fixture.id, { content: '', deleted: true, ...immutablesOf(ctx, fixture.quoted) }));
+}
+
 // ---- Registry ------------------------------------------------------------------
 
 async function ensurePrepared(ctx) {
@@ -640,6 +675,7 @@ const CASES = new Map([
   ['f1', caseF1TombstoneImmutability],
   ['f2', caseF2DeletedIsSettableOnce],
   ['f3', caseF3MutableFieldsStayMutable],
+  ['c1', caseC1PropertyConstraints],
 ]);
 
 /**
@@ -685,6 +721,9 @@ function selfTest() {
   expect('post freezes language, hashtag, the quote and deleted (f1, f2)', ['language', 'hashtag', 'quotedPostId', 'quotedPostOwnerId', 'deleted'].every((p) => schemas.post.immutable?.includes(p)));
   expect('post allows setting deleted once (f2)', schemas.post.immutableAllowSetting?.includes('deleted'));
   expect('post content, mediaUrl and sensitive stay mutable (f3)', ['content', 'mediaUrl', 'sensitive'].every((p) => !schemas.post.immutable?.includes(p)));
+  for (const [type, rules] of Object.entries(DECLARED_RULES['yappr-social-contract-v9.json'])) {
+    expect(`${type} declares exactly the propertyConstraints rules c1 asserts`, JSON.stringify(Object.keys(schemas[type].propertyConstraints ?? {}).sort()) === JSON.stringify([...rules].sort()));
+  }
   for (const problem of problems) console.error(`FAIL  ${problem}`);
   if (problems.length > 0) { console.error(`${CONTRACT_FILE} no longer declares what this battery asserts`); return 1; }
   console.log(`${CONTRACT_FILE} declares every rule this battery asserts`);

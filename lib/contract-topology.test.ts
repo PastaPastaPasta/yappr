@@ -31,6 +31,7 @@ type Schemas = Record<string, {
     maxItems?: number
   }>
   ownerRefersTo?: unknown
+  propertyConstraints?: Record<string, unknown>
 }>
 
 const V9 = socialContractV9.documentSchemas as unknown as Schemas
@@ -159,6 +160,33 @@ describe('contract topology', () => {
     }
     const v2 = await topologyModule('v2')
     expect(v2.tombstonePreservationFor('post')).toEqual({ identifiers: [], scalars: [] })
+  })
+
+  it('declares a tombstone rule that forbids exactly what the tombstone blanks, and nothing it preserves', async () => {
+    // beta.5 `tombstoneIsBlank`: deleted: true ⇒ content '' or absent, no mediaUrl, no
+    // encryptedContent. `tombstoneDocument` writes content '' and drops the rest, so a
+    // preserve set naming a forbidden property would turn every delete into a 10422.
+    const { tombstonePreservationFor } = await topologyModule('v9')
+    for (const kind of ['post', 'reply'] as const) {
+      const rule = JSON.stringify(V9[kind].propertyConstraints?.tombstoneIsBlank ?? null)
+      const forbidden = [...rule.matchAll(/"absent":"(\w+)"/g)].map(([, name]) => name)
+      expect(forbidden.sort(), kind).toEqual(['content', 'encryptedContent', 'mediaUrl'])
+      const { identifiers, scalars } = tombstonePreservationFor(kind)
+      const preserved = [...identifiers, ...scalars]
+      expect(preserved.filter((name) => forbidden.includes(name)), kind).toEqual([])
+      // The tombstone drops the whole encryption triple, so `privateAllOrNone` holds
+      // (all absent); preserving part of it would make every private delete a 10422.
+      const triple = ['encryptedContent', 'epoch', 'nonce']
+      expect(V9[kind].propertyConstraints?.privateAllOrNone, kind).toBeDefined()
+      expect(preserved.filter((name) => triple.includes(name)), kind).toEqual([])
+    }
+    // An embed is preserved whole or not at all, so `embedAllOrNone` holds on a tombstone.
+    const { identifiers, scalars } = tombstonePreservationFor('post')
+    const embed = ['embedContractId', 'embedDocType', 'embedId']
+    expect(V9.post.propertyConstraints?.embedAllOrNone).toBeDefined()
+    expect(embed.filter((name) => [...identifiers, ...scalars].includes(name)).sort()).toEqual([...embed].sort())
+    // A quote target is preserved with its owner, so `quoteNamesOwner` holds on a tombstone.
+    expect(identifiers).toEqual(expect.arrayContaining(['quotedPostId', 'quotedReplyId', 'quotedPostOwnerId']))
   })
 
   describe('moderation, costs, fees and the grant', () => {

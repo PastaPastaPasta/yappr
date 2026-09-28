@@ -248,7 +248,33 @@
       "immutableAllowSetting": [
         "publishedAt"
       ],
-      "canBeDeletedByModerators": true
+      "canBeDeletedByModerators": true,
+      "propertyConstraints": {
+        "chunksContiguous": {
+          "allOf": [
+            {
+              "anyOf": [
+                {
+                  "absent": "data2"
+                },
+                {
+                  "present": "data1"
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "absent": "data3"
+                },
+                {
+                  "present": "data2"
+                }
+              ]
+            }
+          ]
+        }
+      }
     },
     "blogComment": {
       "type": "object",

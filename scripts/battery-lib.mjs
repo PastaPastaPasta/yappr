@@ -566,6 +566,10 @@ export function selfTest(file, expect) {
       if (rules[key] === undefined) continue;
       compare(`${docType} ${key}`, sortedNames(schema[key]), sortedNames(rules[key]));
     }
+    // The names of the propertyConstraints rules (property-constraint-cases.mjs holds their cases).
+    if (rules.constraints !== undefined) {
+      compare(`${docType} propertyConstraints`, sortedNames(Object.keys(schema.propertyConstraints ?? {})), sortedNames(rules.constraints));
+    }
   }
 
   for (const problem of problems) console.error(`FAIL  ${problem}`);
