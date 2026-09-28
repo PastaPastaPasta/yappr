@@ -27,6 +27,7 @@ export function PrivateFeedFollowRequests() {
   const [isLoading, setIsLoading] = useState(true)
   const [processingId, setProcessingId] = useState<string | null>(null)
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
+  const refreshKey = usePrivateFeedRefreshStore((s) => s.refreshKey)
   const triggerRefresh = usePrivateFeedRefreshStore((s) => s.triggerRefresh)
 
   const loadRequests = useCallback(async () => {
@@ -79,7 +80,7 @@ export function PrivateFeedFollowRequests() {
 
   useEffect(() => {
     loadRequests().catch(err => logger.error('Failed to load follow requests:', err))
-  }, [loadRequests])
+  }, [loadRequests, refreshKey])
 
   const handleApprove = async (request: FollowRequestUser) => {
     if (!user?.identityId || processingId) return

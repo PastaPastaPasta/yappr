@@ -33,6 +33,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
   const { user, mergeSecretsIntoAuthVault } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const refreshKey = usePrivateFeedRefreshStore((state) => state.refreshKey)
+  const triggerRefresh = usePrivateFeedRefreshStore((state) => state.triggerRefresh)
   const [isEnabled, setIsEnabled] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isEnabling, setIsEnabling] = useState(false)
@@ -219,8 +220,10 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
           logger.error('Failed to store encryption key after enabling private feed:', error)
           toast.error('Private feed enabled, but your key could not be saved. Enter it again to manage your feed.')
         }
-        // Refresh all status to ensure consistent UI state
+        // Refresh all status to ensure consistent UI state, then the sibling
+        // requests, followers and dashboard cards, which still read "disabled"
         await checkPrivateFeedStatus()
+        triggerRefresh()
       } else {
         setKeyError(result.error || 'Failed to enable private feed')
         toast.error(result.error || 'Failed to enable private feed')
