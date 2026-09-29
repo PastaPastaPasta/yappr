@@ -151,7 +151,7 @@ Singleton service classes handle all Dash Platform operations:
 - State transitions retrieve private keys on-demand for signing
 
 ### Data Contract Structure
-The deployed social contract (`contracts/yappr-social-contract-v2.json` on staging/prod; the /devnet build runs the v9 contract, `contracts/yappr-social-contract-v9.json`, see `docs/SOCIAL_V9.md`) defines 16 document types:
+The deployed social contract (`contracts/yappr-social-contract-v2.json` on staging/prod) defines the 16 document types below. The /devnet build moves to v10 (`contracts/yappr-social-contract-v10.json`, Platform 4.2.0-beta.7, see `docs/SOCIAL_V10.md`: real deletes, no `beat`, the DashPay profile plus a `yapprProfile` extension, moderator-resolved reports, a locked YAPP); v9 (`docs/SOCIAL_V9.md`) was the moutai cut. Topology `v2`:
 - `profile` - User data (name, bio, avatar/banner references)
 - `post`, `reply` - Content; `post` is 500 chars, optional media
 - `like`, `repost`, `follow`, `followRequest` - Social interactions
