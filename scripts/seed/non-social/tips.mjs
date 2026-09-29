@@ -13,9 +13,8 @@
 import bs58 from 'bs58';
 import { normalizeId, reportSelfTest } from '../../battery-lib.mjs';
 import { POST_LINK_BASE, WAIT_MAYBE_LANDED, YAPP_TOKEN_POSITION, describeErr, profileContractId, readback, sleep } from '../seed-lib.mjs';
-import { envValue } from '../feature-seed-lib.mjs';
 import {
-  actorsFor, counts, ensureTokens, fakeId, loadCheckpoint, network, pick, printTable, rngFrom, saveCheckpoint,
+  actorsFor, counts, ensureTokens, envValue, fakeId, loadCheckpoint, network, pick, printTable, rngFrom, saveCheckpoint,
   shuffled, weightedPick,
 } from '../feature-seed-lib.mjs';
 
@@ -219,17 +218,17 @@ async function run({ args, handle, battery, socialId }) {
     { network: network(), socialContractId: socialId, tokenId, seed: args.seed }, fresh);
 
   if (!state.plan) {
-    // No "posts per author" aggregate exists, so walk the timeline index forward
-    // in time — the only index that pages the whole corpus — and tally owners.
-    // Ties break on the identity id, so the ranking is stable. v10's timeline is
-    // global ([$createdAt]); v9's was per language ([language, $createdAt]).
-    const perLanguage = envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') !== 'v10';
+    // No "posts per author" aggregate exists, so walk the languageTimeline index
+    // forward in time — the only index that pages the whole corpus — and tally
+    // owners. Ties break on the identity id, so the ranking is stable. (v9 only:
+    // run() refuses v10 above.)
     const tally = new Map();
     let cursor = 0;
     for (let page = 0; page < args.scanPages; page++) {
-      const rows = await battery.queryDocs('post', perLanguage
-        ? { where: [['language', '==', args.language], ['$createdAt', '>', cursor]], orderBy: [['language', 'asc'], ['$createdAt', 'asc']], limit: 100 }
-        : { where: [['$createdAt', '>', cursor]], orderBy: [['$createdAt', 'asc']], limit: 100 }, socialId);
+      const rows = await battery.queryDocs('post', {
+        where: [['language', '==', args.language], ['$createdAt', '>', cursor]],
+        orderBy: [['language', 'asc'], ['$createdAt', 'asc']], limit: 100,
+      }, socialId);
       if (rows.length === 0) break;
       for (const row of rows) tally.set(normalizeId(row.$ownerId), (tally.get(normalizeId(row.$ownerId)) ?? 0) + 1);
       cursor = Number(rows[rows.length - 1].$createdAt);

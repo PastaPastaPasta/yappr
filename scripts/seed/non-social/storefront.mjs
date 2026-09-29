@@ -14,8 +14,8 @@ import { getPublicKey, getSharedSecret } from '@noble/secp256k1';
 import { decodeIntGroupKey, id32, normalizeId, reportSelfTest } from '../../battery-lib.mjs';
 import { YAPP_TOKEN_POSITION, addressFor, ledgerEntry } from '../seed-lib.mjs';
 import {
-  actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, envValue, fakeId, loadCheckpoint,
-  loadLedger, network, personaKeys, phaseRunner, pick, printTable, rngFrom, utf8,
+  actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, fakeId, loadCheckpoint,
+  loadLedger, network, personaKeys, phaseRunner, pick, printTable, rngFrom, topologyAtLeast, utf8,
 } from '../feature-seed-lib.mjs';
 
 /**
@@ -24,7 +24,7 @@ import {
  * NEXT_PUBLIC_STOREFRONT_TOPOLOGY, like the app.
  */
 const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5'];
-const storefrontAtLeast = (topology) => STOREFRONT_TOPOLOGIES.indexOf(envValue('NEXT_PUBLIC_STOREFRONT_TOPOLOGY') ?? 'v1') >= STOREFRONT_TOPOLOGIES.indexOf(topology);
+const storefrontAtLeast = (topology) => topologyAtLeast(STOREFRONT_TOPOLOGIES, 'NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
 const listsTyped = () => storefrontAtLeast('v4');
 /** v5 (QA D-25): an order copies its store's status into `storeStatus`. */
 const ordersCarryStoreStatus = () => storefrontAtLeast('v5');

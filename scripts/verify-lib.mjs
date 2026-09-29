@@ -23,6 +23,7 @@ import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
 import { createdId, deriveDocumentIdBytes, findRecentByValues } from './seed/seed-lib.mjs';
+export { TOKEN_COST } from './seed/seed-lib.mjs';
 const SDK_TIMEOUT_MS = 30000;
 const DEFAULT_DEVNET_NAME = 'moutai';
 const DEFAULT_SEED_COUNT = 5;
@@ -456,7 +457,6 @@ export function expectRejected(label, outcome, pattern) {
 }
 // ---- Topology-independent document shapes ----------------------------------
 
-export const TOKEN_COST = { post: 10, reply: 3, like: 1, likeReply: 1, repost: 1 };
 export const likeData = ({ postId, hashtag, postAuthor }) => ({
   postId,
   ...(hashtag === undefined ? {} : { hashtag }),

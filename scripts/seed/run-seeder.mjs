@@ -115,7 +115,7 @@ import {
   substituteLinks,
   wifFromHex,
 } from './seed-lib.mjs';
-import { mediaFieldsFor } from './media-hash.mjs';
+import { dHashFromLuma, mediaFieldsFor } from './media-hash.mjs';
 
 const SDK_TIMEOUT_MS = 30_000;
 /**
@@ -910,6 +910,14 @@ async function selfTest() {
   check('an unresolved media URL fails the plan instead of writing a 10101', (() => {
     try { planOp({ ...postOp, mediaUrl: 'https://example.com/b.png' }, planCtx('')); return false; } catch (e) { return /not resolved/.test(e.message); }
   })());
+  // The pinned dHash: bit = right pixel brighter, row-major, most significant bit first.
+  const hex = (grid) => Buffer.from(dHashFromLuma(grid)).toString('hex');
+  check('dHash: a left-to-right ramp sets every bit, a flat or right-to-left grid none',
+    hex(Array.from({ length: 72 }, (_, i) => i % 9)) === 'ffffffffffffffff' &&
+      hex(new Array(72).fill(7)) === '0000000000000000' && hex(Array.from({ length: 72 }, (_, i) => 9 - (i % 9))) === '0000000000000000');
+  check('dHash: row r is byte r, its first pair the most significant bit',
+    hex(Array.from({ length: 72 }, (_, i) => (i === 1 ? 1 : 0))) === '8000000000000000' &&
+      hex(Array.from({ length: 72 }, (_, i) => (i === 7 * 9 + 8 ? 1 : 0))) === '0000000000000001');
   check('content: 1000 characters plan; 1001, or 2001 bytes in fewer characters, refuse', (() => {
     const plan = (content) => { try { planOp({ ...postOp, content }, planCtx('')); return true; } catch { return false; } };
     return plan('x'.repeat(1000)) && !plan('x'.repeat(1001)) && !plan('€'.repeat(667)) && plan('😀'.repeat(500));
@@ -1118,7 +1126,7 @@ try {
     ? (await import('./pipeline.mjs')).buildPipelinedExecutor({
         handle, contractId, actors, ledger, progressRefs: progress.refs,
         planOp, mediaFor, entryExists, paymentFor: writeShapeFor({ handle }).paymentFor,
-        window: args.window, log: (m) => console.log(`  ${m}`),
+        window: args.window,
       })
     : buildExecutor({ handle, contractId, actors, progressRefs: progress.refs, mediaFor });
   if (args.pipeline) console.log(`executor: PIPELINED (window ${args.window} in flight per identity, concurrency ${args.concurrency})`);

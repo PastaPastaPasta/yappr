@@ -60,8 +60,9 @@ const LIMITS = {
  * (rs-dapi refuses a larger broadcast; Drive decodes it as 10602).
  */
 export const CREATE_TRANSITION_BUDGET = 20_000;
-const STATE_TRANSITION_CAP = LIMITS.maxStateTransitionSize;
-export const SIGNATURE_ALLOWANCE = 100;
+/** The state transition cap every broadcast must fit (rs-dapi refuses a larger one; Drive decodes it as 10602). */
+export const STATE_TRANSITION_CAP = LIMITS.maxStateTransitionSize;
+const SIGNATURE_ALLOWANCE = 100;
 
 // ---- JSON meta-schema --------------------------------------------------------
 
@@ -132,7 +133,7 @@ const within = (value, [min, max]) => Number.isInteger(value) && value >= min &&
 /** `moderatorAbilities.delete: true` (rs-dpp `document_schema_lets_moderators_delete`). */
 export const moderatorsMayDelete = (schema) => schema.moderatorAbilities?.delete === true;
 /** A non-empty `moderatorAbilities.changeFields` (rs-dpp `document_schema_lets_moderators_change_fields`). */
-export const moderatorsMayChangeFields = (schema) => (schema.moderatorAbilities?.changeFields?.length ?? 0) > 0;
+const moderatorsMayChangeFields = (schema) => (schema.moderatorAbilities?.changeFields?.length ?? 0) > 0;
 
 /**
  * Can a document of `schema` disappear — deleted by its owner, a moderator, or
@@ -261,7 +262,7 @@ function propertyAt(schema, path) {
  * with distinct names. wasm-dpp2 refuses the same shapes; the wasm-sdk parse
  * accepts every one of them.
  */
-export function auditIndexShapes(schemas) {
+function auditIndexShapes(schemas) {
   const problems = [];
   for (const [name, schema] of Object.entries(schemas)) {
     const indices = schema.indices ?? [];
@@ -536,7 +537,7 @@ export function runContractProbes({ loadContractSource, parseContract, parseWith
     if (!wasmError) {
       audit.push(...auditNodeRules(source, { network: probe.network ?? 'devnet' }), ...metaSchemaProblems(source));
       const size = sizeOf(parseContract(source));
-      if (size.overCap) audit.push(`create transition ~${size.bytes} B, over the 20480 B cap`);
+      if (size.overCap) audit.push(`create transition ~${size.bytes} B, over the ${STATE_TRANSITION_CAP} B cap`);
     }
     const outcome = wasmError ? 'wasm' : dpp2Error ? 'dpp2' : audit.length > 0 ? 'audit' : 'accepted';
     const auditMissed = probe.auditToo && audit.length === 0;

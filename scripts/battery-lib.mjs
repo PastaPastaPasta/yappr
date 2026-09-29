@@ -16,9 +16,12 @@ import { join } from 'node:path';
 import { IdentitySigner, TokenPaymentInfo, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID } from './derive-identities.mjs';
-import { resolveOwner, signerFor } from './owner-keys.mjs';
+import { signerFor } from './owner-keys.mjs';
+import { resolveMakerOwner } from './social-battery-lib.mjs';
 import {
+  ALREADY_CLAIMED,
   REPO_ROOT,
+  STARTER_GRANT,
   YAPP_TOKEN_POSITION,
   buildDocument,
   createSdkHandle,
@@ -31,17 +34,12 @@ import {
   readback as readbackWith,
   sleep,
   socialContractId,
+  tokenBalance,
   wifFromHex,
 } from './seed/seed-lib.mjs';
-import { readEnvFile } from './derive-identities.mjs';
-
-const envDevnet = (name) => readEnvFile(join(REPO_ROOT, '.env.devnet'))[name];
 
 export const SETTLE_MS = 3000;
 export const POLL_ATTEMPTS = 3;
-/** The once-per-identity starter grant a persona may claim before the owner mints the rest. */
-const STARTER_GRANT = 100n;
-const ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|already claimed/i;
 
 // ---- Expected consensus rejection shapes (matched against describeErr text) ----
 export const REFERENCE_NOT_FOUND = /\b40120\b|referenced .*not found/i;
@@ -141,10 +139,7 @@ export function createBattery({ handle, contractId, socialId }) {
     return { ownerId: entry.identityId, identityKey, signer, wif, label: `${entry.handle}(${personaIdx})` };
   }
 
-  async function yappBalance(tokenId, ownerId) {
-    const balances = await readback(() => sdk.tokens.balances([ownerId], tokenId));
-    return (balances instanceof Map ? balances.get(ownerId) : undefined) ?? 0n;
-  }
+  const yappBalance = (tokenId, ownerId) => tokenBalance(readback, sdk, tokenId, ownerId);
 
   /** An identity's CREDIT balance — what a cost measurement diffs. */
   async function balanceOf(ownerId) {
@@ -155,7 +150,7 @@ export function createBattery({ handle, contractId, socialId }) {
   let minterPromise = null;
   /** The contract owner (the devnet maker, seed index 9), who alone may mint YAPP. */
   const minter = () => (minterPromise ??= (async () => {
-    const owner = resolveOwner({ botIndex: 9, ownerId: process.env.DEVNET_MAKER_IDENTITY_ID || envDevnet('DEVNET_MAKER_IDENTITY_ID') });
+    const owner = resolveMakerOwner();
     return { ownerId: owner.ownerId, ...(await signerFor(sdk, owner)) };
   })());
 

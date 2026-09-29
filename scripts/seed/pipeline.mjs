@@ -96,7 +96,7 @@ function buildSignedCreate({ contractId, actor, docType, data, nonce, payment, a
   return { st, id };
 }
 
-export function buildPipelinedExecutor({ handle, contractId, actors, ledger, progressRefs, planOp, mediaFor, entryExists, paymentFor, window = DEFAULT_WINDOW, log = () => {} }) {
+export function buildPipelinedExecutor({ handle, contractId, actors, ledger, progressRefs, planOp, mediaFor, entryExists, paymentFor, window = DEFAULT_WINDOW }) {
   const resolveRef = (ref) => {
     const record = progressRefs.get(ref);
     if (!record) throw new Error(`ref "${ref}" not materialized (checkpoint out of sync)`);

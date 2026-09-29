@@ -50,7 +50,7 @@ import { readFileSync } from 'node:fs';
 import { DataContract, DataContractCreateTransition, Document, PlatformVersion, documentCreateCost, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, { DataContract as NodeRulesDataContract, PlatformVersion as NodeRulesPlatformVersion } from '@dashevo/wasm-dpp2';
 import { renderModeration } from './register-lib.mjs';
-import { CREATE_TRANSITION_BUDGET, auditNodeRules, createTransitionSize, metaSchemaProblems, moderatorsMayDelete, runContractProbes } from './contract-probes.mjs';
+import { CREATE_TRANSITION_BUDGET, STATE_TRANSITION_CAP, auditNodeRules, createTransitionSize, metaSchemaProblems, moderatorsMayDelete, runContractProbes } from './contract-probes.mjs';
 import { runConstraintCases } from './property-constraint-cases.mjs';
 
 /** Any valid 32-byte identifier; schema validation never looks at it. */
@@ -177,12 +177,12 @@ function validateFile(file, immutable, strictSize, network) {
   }
   // The node-side rules neither parse runs, for the declarations Yappr uses.
   const size = createTransitionSize(contract, { DataContractCreateTransition, platformVersion });
-  console.log(`    create size:      ~${size.bytes} B signed (budget ${CREATE_TRANSITION_BUDGET}, cap 20480)`);
+  console.log(`    create size:      ~${size.bytes} B signed (budget ${CREATE_TRANSITION_BUDGET}, cap ${STATE_TRANSITION_CAP})`);
   const meta = metaSchemaProblems(source);
   console.log(`    meta-schema v3:   ${meta.length === 0 ? 'ok' : `${meta.length} problem(s)`}`);
   const problems = [...auditNodeRules(source, { network }), ...meta];
   // Over the cap is a refusal; between the budget and the cap is a warning.
-  if (size.overCap) problems.push(`the create transition is ~${size.bytes} B signed, over the 20480 B cap (rs-dapi refuses it, Drive 10602)`);
+  if (size.overCap) problems.push(`the create transition is ~${size.bytes} B signed, over the ${STATE_TRANSITION_CAP} B cap (rs-dapi refuses it, Drive 10602)`);
   else if (!size.fits && strictSize) problems.push(`the create transition is ~${size.bytes} B signed, over the ${CREATE_TRANSITION_BUDGET} B headroom budget (--strict-size)`);
   else if (!size.fits) console.log(`WARN  the create transition is ~${size.bytes} B signed, inside the cap but over the ${CREATE_TRANSITION_BUDGET} B headroom budget`);
   for (const problem of problems) console.error(`FAIL  ${problem}`);

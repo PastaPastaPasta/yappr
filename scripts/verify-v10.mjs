@@ -86,7 +86,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import bs58 from 'bs58';
 import { DataContract, Document, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
-import { PREFER_CONTRACT_OWNER, REPO_ROOT, actionFeeFor, paymentInfo, tokenCostFor } from './seed/seed-lib.mjs';
+import {
+  ALREADY_CLAIMED, DASHPAY_CONTRACT_ID, DASHPAY_PROFILE_LIMITS, PREFER_CONTRACT_OWNER, REPO_ROOT, STARTER_GRANT, YAPP_TOKEN_POSITION,
+  actionFeeFor, paymentInfo, tokenBalance, tokenCostFor,
+} from './seed/seed-lib.mjs';
 import {
   DUPLICATE_UNIQUE,
   PROPERTY_MISMATCH,
@@ -110,6 +113,7 @@ import {
   runBattery,
 } from './verify-lib.mjs';
 import {
+  asOutcome,
   describeValue,
   errorOf,
   feeAgreement,
@@ -127,9 +131,6 @@ const CONTRACT_FILE = 'contracts/yappr-social-contract-v10.json';
 const V10 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
 const POST_ACTION_FEE = actionFeeFor('post');
 const REPLY_ACTION_FEE = actionFeeFor('reply');
-/** DashPay (a system contract, the same id on every network): v10's base profile. */
-const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7';
-const YAPP_TOKEN_POSITION = 0;
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
 // r2 (post-seat): a member of the SEATED team, and a `reason` document its proposal lists (41203).
 const TEAM_MEMBER_SPEC = takeFlag('--team-member', null);
@@ -169,7 +170,6 @@ const FIELDS_INVALID = /\bcode"?\s*[=:]\s*10905\b|the fields a moderator's docum
 const REASON_NOT_LISTED = /\bcode"?\s*[=:]\s*41203\b|reason.{0,80}not listed|moderationreasonnotlisted/i;
 const TOKEN_PAUSED = /\bcode"?\s*[=:]\s*40711\b|token .{0,60} is paused/i;
 const NOT_FOR_SALE = /\bcode"?\s*[=:]\s*40721\b|not available for direct sale|no direct-purchase price/i;
-const ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|already claimed/i;
 
 // ---- v10 document shapes -----------------------------------------------------
 
@@ -206,7 +206,7 @@ const reportData = ({ postId, replyId, targetOwnerId, reason = 0, note, status }
 /** A typed identifier array is a list of 32-byte ids — never one packed byte array. */
 const blockFollowData = (ids) => ({ followedBlockers: ids.map((id) => (typeof id === 'string' ? bs58.decode(id) : id)) });
 /** The DashPay profile v10 builds on (displayName ≤25, publicMessage ≤140). */
-const dashpayProfileData = (name) => ({ displayName: name.slice(0, 25), publicMessage: 'v10 battery DashPay profile' });
+const dashpayProfileData = (name) => ({ displayName: name.slice(0, DASHPAY_PROFILE_LIMITS.displayName), publicMessage: 'v10 battery DashPay profile' });
 const yapprProfileData = () => ({ location: 'Battery', pronouns: 'it/its', socialLinks: ['github:yappr'] });
 
 // ---- Reads ---------------------------------------------------------------------
@@ -430,7 +430,7 @@ async function caseW1Warnings(ctx) {
   const none = await standingOf(ctx, botB.ownerId, ['warnings']);
   check('w1h …and the status proves no warnings', Array.isArray(none.warnings) && none.warnings.length === 0, describeValue(none));
   const again = await errorOf(() => sdk.contracts.clearUserWarnings({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }));
-  expectRejected('w1i clearing an identity with no warnings is refused (41117)', { ok: again === null, error: again }, NOT_WARNED);
+  expectRejected('w1i clearing an identity with no warnings is refused (41117)', asOutcome(again), NOT_WARNED);
 }
 
 async function caseM1DeleteRestore(ctx) {
@@ -462,7 +462,7 @@ async function caseM1DeleteRestore(ctx) {
   await settle();
   check('m1d the post fetches again', (await fetchDocument(sdk, contractId, 'post', postId)) !== null);
   const again = await errorOf(restore);
-  expectRejected('m1e restoring a live document is refused (41122)', { ok: again === null, error: again }, ALREADY_RESTORED);
+  expectRejected('m1e restoring a live document is refused (41122)', asOutcome(again), ALREADY_RESTORED);
 }
 
 async function caseM2InterimBan(ctx) {
@@ -647,7 +647,7 @@ async function caseX1RealDeletes(ctx) {
   // An author's delete leaves no removal record, so there is nothing to restore.
   if (interimOnly(ctx, 'x1m')) return;
   const restore = await errorOf(() => sdk.contracts.moderatorRestoreDocument({ identity: moderator.identity, contractId, documentTypeName: 'post', document: stored, signer: moderator.signer }));
-  expectRejected('x1m a moderator cannot restore an author\'s own delete (41119: no removal record)', { ok: restore === null, error: restore }, NO_REMOVAL_RECORD);
+  expectRejected('x1m a moderator cannot restore an author\'s own delete (41119: no removal record)', asOutcome(restore), NO_REMOVAL_RECORD);
 }
 
 // ---- v10: media hashes and content limits ----------------------------------------
@@ -794,11 +794,11 @@ async function caseR1Reports(ctx) {
   check('r1n byStatus [status, $createdAt] lists it under status 2', [...byStatus.keys()].map(idOf).includes(postReport.id), `${byStatus.size} report(s)`);
 
   const noop = await changeReport(ctx, moderator, postReport.id, { status: 2, resolution: 'post removed' });
-  expectRejected('r1o a change that changes nothing is refused (10905)', { ok: noop === null, error: noop }, FIELDS_INVALID);
+  expectRejected('r1o a change that changes nothing is refused (10905)', asOutcome(noop), FIELDS_INVALID);
   const foreign = await changeReport(ctx, moderator, postReport.id, { note: 'rewritten' });
-  expectRejected('r1p a field outside changeFields is refused (41123)', { ok: foreign === null, error: foreign }, FIELD_NOT_CHANGEABLE);
+  expectRejected('r1p a field outside changeFields is refused (41123)', asOutcome(foreign), FIELD_NOT_CHANGEABLE);
   const orphan = await changeReport(ctx, moderator, postReport.id, { resolution: 'status dropped', status: null });
-  expectRejected('r1q a resolution without a status is refused (10422 resolvedHasStatus)', { ok: orphan === null, error: orphan }, constraintViolation('resolvedHasStatus'));
+  expectRejected('r1q a resolution without a status is refused (10422 resolvedHasStatus)', asOutcome(orphan), constraintViolation('resolvedHasStatus'));
 
   // References are not checked again: a report on a post that is gone still resolves.
   const gonePost = await createFeed(ctx, botB, 'post', postData({ content: `r1 gone ${Date.now()}` }), 'r1 gone post');
@@ -841,7 +841,7 @@ async function caseR2SeatedResolution(ctx) {
   expectAccepted('r2a A reports B\'s post', filed);
   if (!filed.ok) return;
   const bare = await changeReport(ctx, member, filed.id, { status: 1 }, { text: 'v10 battery r2' });
-  expectRejected('r2b a resolution citing no listed reason is refused (41203)', { ok: bare === null, error: bare }, REASON_NOT_LISTED);
+  expectRejected('r2b a resolution citing no listed reason is refused (41203)', asOutcome(bare), REASON_NOT_LISTED);
   const listed = await changeReport(ctx, member, filed.id, { status: 1, resolution: 'no action' }, { text: 'v10 battery r2', reasonDocumentId: REASON_DOCUMENT_ID });
   check('r2c a resolution citing a listed reason lands', listed === null, (listed ?? '').slice(0, 200));
   // Field changes are no deletion: the owner's protection does not stop them.
@@ -859,13 +859,6 @@ const TODAY = { timeRange: [{ field: '$createdAt', selector: 'newest', grid: { r
 
 async function rankedToday(ctx, extra) {
   return readback(() => ctx.sdk.documents.ranked({ dataContractId: ctx.contractId, documentTypeName: 'like', aggregate: { type: 'count' }, direction: 'desc', limit: 100, ...TODAY, ...extra }));
-}
-
-/** The like A wrote on `postId` today, as the byLiker index returns it (its $createdAt is needed to delete it by values). */
-async function ownLike(ctx, postId) {
-  const page = await readback(() => ctx.sdk.documents.query({ dataContractId: ctx.contractId, documentTypeName: 'like', where: [['$ownerId', '==', ctx.botA.ownerId], ['postId', '==', postId]], limit: 1 }));
-  for (const document of page.values()) if (document) return document;
-  return null;
 }
 
 async function caseT2TrendingOnLike(ctx) {
@@ -895,7 +888,8 @@ async function caseT2TrendingOnLike(ctx) {
   const allTime = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, where: [['hashtag', '==', tag]], limit: 10 }));
   check('t2g the all-time per-tag ranking (byHashtagPost) agrees', Number(allTime.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1);
 
-  const stored = await ownLike(ctx, tagged);
+  // A's like as the byLiker index returns it: its $createdAt is needed to delete it by values.
+  const stored = await queryOne(ctx, 'like', [['$ownerId', '==', botA.ownerId], ['postId', '==', tagged]]);
   if (!stored) { check('t2 unlike fixture', false, 'A\'s like is not readable'); return; }
   const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, id: stored.id.toBytes?.() ?? bs58.decode(idOf(stored.id)),
     createdAt: Number(stored.createdAt), data: likeData({ postId: bs58.decode(tagged), hashtag: tag, postAuthor: owner }) });
@@ -917,10 +911,7 @@ async function caseY1YappLocked(ctx) {
   const { sdk, contractId, botA, botB } = ctx;
   console.log('\n--- y1. YAPP: paused for good (no transfer), never priced (no purchase); costs and the grant still work ---');
   const tokenId = await readback(() => sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
-  const balance = async (id) => {
-    const balances = await readback(() => sdk.tokens.balances([id], tokenId));
-    return (balances instanceof Map ? balances.get(id) : undefined) ?? 0n;
-  };
+  const balance = (id) => tokenBalance(readback, sdk, tokenId, id);
   const before = { a: await balance(botA.ownerId), b: await balance(botB.ownerId) };
   const transfer = await errorOf(() => sdk.tokens.transfer({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION, senderId: botA.ownerId, recipientId: botB.ownerId, amount: 1n, identityKey: botA.identityKey, signer: botA.signer }));
   await settle();
@@ -931,7 +922,7 @@ async function caseY1YappLocked(ctx) {
   const price = prices instanceof Map ? prices.get(tokenId) : prices?.[tokenId];
   check('y1b YAPP has no direct-purchase price', price === undefined || price === null, describeValue(price));
   const purchase = await errorOf(() => sdk.tokens.directPurchase({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION, buyerId: botA.ownerId, amount: 100n, maxTotalCost: 10_000_000_000n, identityKey: botA.identityKey, signer: botA.signer }));
-  expectRejected('y1c a direct purchase is refused (40721: not for sale)', { ok: purchase === null, error: purchase }, NOT_FOR_SALE);
+  expectRejected('y1c a direct purchase is refused (40721: not for sale)', asOutcome(purchase), NOT_FOR_SALE);
 
   // A token COST is not a transfer: posting still pays 10 YAPP from a paused token.
   const { agreement } = await feeAgreement(ctx, POST_ACTION_FEE);
@@ -948,9 +939,9 @@ async function caseY1YappLocked(ctx) {
   const start = await balance(fresh.ownerId);
   const first = await claim();
   await settle();
-  check('y1f a fresh identity claims its 100 starter YAPP (a claim is not a transfer)', (await balance(fresh.ownerId)) === start + 100n, (first ?? '').slice(0, 160));
+  check(`y1f a fresh identity claims its ${STARTER_GRANT} starter YAPP (a claim is not a transfer)`, (await balance(fresh.ownerId)) === start + STARTER_GRANT, (first ?? '').slice(0, 160));
   const second = await claim();
-  expectRejected('y1g a second claim is refused (40722)', { ok: second === null, error: second }, ALREADY_CLAIMED);
+  expectRejected('y1g a second claim is refused (40722)', asOutcome(second), ALREADY_CLAIMED);
 }
 
 // ---- Registry ------------------------------------------------------------------

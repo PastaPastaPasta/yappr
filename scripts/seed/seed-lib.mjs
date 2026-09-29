@@ -54,8 +54,24 @@ export const REPORT_FILE = join(REPO_ROOT, '.seed-report.local.json');
 // ---- Network / contract constants --------------------------------------------
 
 export const YAPP_TOKEN_POSITION = 0;
-/** YAPP create costs per doctype (contracts/yappr-social-contract-v10.json tokenCost; v9's are the same). */
-export const TOKEN_COST = { post: 10, reply: 3, like: 1, likeReply: 1, repost: 1 };
+
+/** The social contract the seeder writes (v10), read once: every limit and cost below comes from it. */
+const SOCIAL_CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v10.json'), 'utf8'));
+const SOCIAL_DOCUMENT_SCHEMAS = SOCIAL_CONTRACT.documentSchemas;
+
+/** YAPP create costs per doctype (the v10 JSON's tokenCost; v9's are the same). */
+export const TOKEN_COST = Object.fromEntries(['post', 'reply', 'like', 'likeReply', 'repost']
+  .map((docType) => [docType, SOCIAL_DOCUMENT_SCHEMAS[docType].tokenCost.create.amount]));
+/** The once-per-identity YAPP starter grant a persona may claim. */
+export const STARTER_GRANT = BigInt(SOCIAL_CONTRACT.tokens['0'].distributionRules.oncePerIdentityDistribution.amount);
+/** TokenOncePerIdentityDistributionAlreadyClaimedError: a second claim. */
+export const ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|already claimed/i;
+
+/** One identity's balance off a `tokens.balances` answer (0 when absent). */
+export async function tokenBalance(read, sdk, tokenId, identityId) {
+  const balances = await read(() => sdk.tokens.balances([identityId], tokenId));
+  return (balances instanceof Map ? balances.get(identityId) : undefined) ?? 0n;
+}
 /** Base URL posts are linked as in seeded content ({{link:REF}} substitution). */
 export const POST_LINK_BASE = 'https://yap.pr/devnet/post/?id=';
 /** base58 of a 32-byte id is at most 44 chars — the worst case a link expands to. */
@@ -111,7 +127,7 @@ export function profileContractId() {
 /** The topology the seeded contract must have (`.env.devnet`). */
 export const SEEDED_TOPOLOGY = 'v10';
 /** `post.hashtag` / `like.hashtag` maxLength (the ranked key-size ceiling). */
-export const HASHTAG_MAX = 61;
+export const HASHTAG_MAX = SOCIAL_DOCUMENT_SCHEMAS.post.properties.hashtag.maxLength;
 
 /**
  * Refuses to seed a contract of another shape: every write below is a v10
@@ -275,8 +291,7 @@ export function validateHandle(handle, { allowContested = false } = {}) {
  * a persona valid here is valid on either.
  */
 export function profileLimits() {
-  const contract = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', 'yappr-social-contract-v10.json'), 'utf8'));
-  const extension = contract.documentSchemas.yapprProfile.properties;
+  const extension = SOCIAL_DOCUMENT_SCHEMAS.yapprProfile.properties;
   return { ...extension, displayName: { maxLength: DASHPAY_PROFILE_LIMITS.displayName }, bio: { maxLength: DASHPAY_PROFILE_LIMITS.publicMessage } };
 }
 
@@ -374,35 +389,26 @@ export const OP_TYPES = ['post', 'quote', 'reply', 'like', 'likeReply', 'repost'
 const MEDIA_URL_PATTERN = /^(https?|ipfs):\/\/.+$/;
 const LINK_PLACEHOLDER = /\{\{link:([A-Za-z0-9_-]+)\}\}/g;
 /** `post.content` / `reply.content` maxLength, in code points (v10). */
-export const CONTENT_MAX = 1000;
+export const CONTENT_MAX = SOCIAL_DOCUMENT_SCHEMAS.post.properties.content.maxLength;
 /** `post.content` / `reply.content` maxBytes, in UTF-8 bytes (v10: 10421 over it). */
-export const CONTENT_MAX_BYTES = 2000;
-export const MEDIA_URL_MAX = 512;
+export const CONTENT_MAX_BYTES = SOCIAL_DOCUMENT_SCHEMAS.post.properties.content.maxBytes;
+export const MEDIA_URL_MAX = SOCIAL_DOCUMENT_SCHEMAS.post.properties.mediaUrl.maxLength;
 
 /** Code points, as `maxLength` counts them (an emoji is one, not two UTF-16 units). */
 export const codePointLength = (text) => Array.from(text).length;
 export const utf8Length = (text) => Buffer.byteLength(text, 'utf8');
 
-/**
- * Worst-case rendered length of `content` once every {{link:REF}} expands, in
- * code points (the link text is ASCII, so it adds as many bytes as characters).
- */
-export function expandedContentLength(content) {
-  let length = codePointLength(content);
-  for (const match of content.matchAll(LINK_PLACEHOLDER)) {
-    length += POST_LINK_MAX - match[0].length;
-  }
-  return length;
+/** How much every {{link:REF}} can grow `content` by. The link text is ASCII, so as many bytes as characters. */
+function linkGrowth(content) {
+  let growth = 0;
+  for (const match of content.matchAll(LINK_PLACEHOLDER)) growth += POST_LINK_MAX - match[0].length;
+  return growth;
 }
 
+/** Worst-case rendered length of `content` once every {{link:REF}} expands, in code points. */
+export const expandedContentLength = (content) => codePointLength(content) + linkGrowth(content);
 /** Worst-case UTF-8 byte length of `content` once every {{link:REF}} expands. */
-export function expandedContentBytes(content) {
-  let bytes = utf8Length(content);
-  for (const match of content.matchAll(LINK_PLACEHOLDER)) {
-    bytes += POST_LINK_MAX - match[0].length;
-  }
-  return bytes;
-}
+export const expandedContentBytes = (content) => utf8Length(content) + linkGrowth(content);
 
 /** Replaces {{link:REF}} with the deployed post URL. `resolve(ref)` → base58 post id. */
 export function substituteLinks(content, resolve) {
@@ -830,10 +836,6 @@ export const FEE_MULTIPLIER_TOLERANCE_PERCENT = 20;
 /** Agreed when the epoch read fails: 40132 is certain without an agreement, 40134 unlikely at 1.0x. */
 export const DEFAULT_FEE_MULTIPLIER_PERMILLE = 1000n;
 
-const SOCIAL_DOCUMENT_SCHEMAS = JSON.parse(
-  readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v10.json'), 'utf8')
-).documentSchemas;
-
 /**
  * What `docType`'s create costs in YAPP, and how that payment may be made:
  * `{ amount, optional, gasFeesPaidBy }`, read off the committed contract. The
@@ -990,6 +992,19 @@ export function createDocument(sdk, { contractId, actor, docType, document, data
 export const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
 /** Confirmation-wait shapes that do NOT mean the write was refused (readback decides). */
 export const WAIT_MAYBE_LANDED = /504|gateway|deadline|timed? ?out|timeout|wait.*state.*transition|AffectedState/i;
+
+/**
+ * After a write threw: false when the error is a refusal; otherwise (a gateway
+ * timeout on the wait, or a dead SDK, which is reconnected first) waits a beat
+ * and answers `probe()`, the chain's word on whether the write landed.
+ */
+export async function landedAfter(handle, error, probe) {
+  const text = describeErr(error);
+  if (!WAIT_MAYBE_LANDED.test(text) && !TRANSPORT_COLLAPSE.test(text)) return false;
+  if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
+  await sleep(3000);
+  return probe();
+}
 /** Retry-worthy transient transport noise. */
 /**
  * A query refused because the doctype has no index for the where clause. Unlike

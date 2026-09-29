@@ -64,26 +64,26 @@ import {
 } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import {
+  ALREADY_CLAIMED,
   CRITICAL_AUTH_KEY_ID,
+  DASHPAY_CONTRACT_ID,
   DUPLICATE_UNIQUE,
   LEDGER_FILE,
+  STARTER_GRANT,
   TREASURY_KEY_FILE,
-  TRANSPORT_COLLAPSE,
-  WAIT_MAYBE_LANDED,
   YAPP_TOKEN_POSITION,
   addressFor,
-  DASHPAY_CONTRACT_ID,
-  profileDocumentsFor,
   buildDocument,
   createSdkHandle,
   describeErr,
   generateIdentityKeySet,
   generateKeypairHex,
+  landedAfter,
   ledgerEntry,
   loadLedger,
   loadPersonas,
   network,
-  paymentInfo,
+  profileDocumentsFor,
   profileLimits,
   randomEntropy,
   readback,
@@ -91,10 +91,13 @@ import {
   sleep,
   socialContractId,
   stateRank,
+  tokenBalance,
   validateHandle,
   validatePersona,
   wifFromHex,
 } from './seed-lib.mjs';
+import { signerFor } from '../owner-keys.mjs';
+import { resolveMakerOwner } from '../social-battery-lib.mjs';
 import {
   ASSET_LOCK_FEE_DUFFS,
   addressOfPrivateKeyHex,
@@ -108,10 +111,6 @@ import {
 
 const DEFAULT_CREDITS_PER_DUFFS = 8_000_000;
 const DEFAULT_YAPP_PER_IDENTITY = 600n;
-/** The once-per-identity starter grant (social v10 tokens.0.distributionRules). */
-const STARTER_GRANT = 100n;
-/** TokenOncePerIdentityDistributionAlreadyClaimedError. */
-const ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|already claimed/i;
 const CHAIN_LOCK_TIMEOUT_MS = 600_000;
 const CHAIN_LOCK_POLL_MS = 10_000;
 const SDK_TIMEOUT_MS = 30_000;
@@ -440,12 +439,7 @@ async function phaseRegister(handle, ledger, only, parallel) {
         });
       } catch (e) {
         // The gateway 504s the confirmation wait routinely; the chain decides.
-        const text = describeErr(e);
-        if (!WAIT_MAYBE_LANDED.test(text) && !TRANSPORT_COLLAPSE.test(text)) throw e;
-        if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
-        await sleep(3000);
-        const landed = await readback(handle, () => sdk.identities.fetch(identityIdBase58));
-        if (!landed) throw e;
+        if (!(await landedAfter(handle, e, async () => Boolean(await readback(handle, () => sdk.identities.fetch(identityIdBase58)))))) throw e;
       }
       entry.state = 'registered';
       saveLedger(ledger);
@@ -502,12 +496,8 @@ async function createUniqueByOwner(handle, { contractId, docType, entry, identit
   try {
     await sdk.documents.create({ document, identityKey, signer });
   } catch (e) {
-    const text = describeErr(e);
-    if (DUPLICATE_UNIQUE.test(text)) return false; // a previous run got there first
-    if (!WAIT_MAYBE_LANDED.test(text) && !TRANSPORT_COLLAPSE.test(text)) throw e;
-    if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
-    await sleep(3000);
-    if ((await find()).size === 0) throw e;
+    if (DUPLICATE_UNIQUE.test(describeErr(e))) return false; // a previous run got there first
+    if (!(await landedAfter(handle, e, async () => (await find()).size > 0))) throw e;
   }
   return true;
 }
@@ -537,12 +527,8 @@ async function phaseDpns(handle, ledger, only, parallel) {
       try {
         await sdk.dpns.registerName({ label: entry.handle, identity, identityKey, signer });
       } catch (e) {
-        const text = describeErr(e);
-        if (!WAIT_MAYBE_LANDED.test(text) && !TRANSPORT_COLLAPSE.test(text)) throw e;
-        if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
-        await sleep(3000);
-        const nowNamed = await readback(handle, () => sdk.dpns.username(entry.identityId));
-        if (!nowNamed || !nowNamed.toLowerCase().startsWith(`${entry.handle}.`)) throw e;
+        const named = async () => Boolean((await readback(handle, () => sdk.dpns.username(entry.identityId)))?.toLowerCase().startsWith(`${entry.handle}.`));
+        if (!(await landedAfter(handle, e, named))) throw e;
       }
       entry.state = 'named';
       saveLedger(ledger);
@@ -555,37 +541,23 @@ async function phaseDpns(handle, ledger, only, parallel) {
 
 // ---- Phase YAPP ---------------------------------------------------------------------
 
-/** The devnet maker (contract owner, seed index 9): holds the YAPP base supply. */
+/**
+ * The devnet maker (the contract owner, seed index 9, DEVNET_MAKER_IDENTITY_ID;
+ * its key needs E2E_SEED_PHRASE in the env or .env.local): the only identity
+ * that may mint YAPP.
+ */
 async function makerContext(handle) {
-  const { deriveIdentityKeys, criticalAuthKey, readEnvFile: readEnv, REPO_ROOT: root } = await import('../derive-identities.mjs');
-  const { join } = await import('node:path');
-  const makerId = process.env.DEVNET_MAKER_IDENTITY_ID
-    ?? readEnv(join(root, '.env.devnet')).DEVNET_MAKER_IDENTITY_ID;
-  if (!makerId) throw new Error('DEVNET_MAKER_IDENTITY_ID missing from the environment and .env.devnet');
-  const { wif } = criticalAuthKey(deriveIdentityKeys(9)); // needs E2E_SEED_PHRASE (env or .env.local)
-  const identity = await readback(handle, () => handle.sdk.identities.fetch(makerId));
-  if (!identity) throw new Error(`maker identity ${makerId} not found on this devnet`);
-  const identityKey = identity.getPublicKeyById(CRITICAL_AUTH_KEY_ID);
-  const signer = new IdentitySigner();
-  signer.addKeyFromWif(wif);
-  return { makerId, identityKey, signer };
+  const owner = resolveMakerOwner();
+  const { identityKey, signer } = await signerFor(handle.sdk, owner);
+  return { makerId: owner.ownerId, identityKey, signer };
 }
 
 async function phaseYapp(handle, ledger, only, yappTarget, yappSource, parallel) {
   const sdk = handle.sdk;
   const contractId = socialContractId();
   const tokenId = await readback(handle, () => sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
-  const balanceOf = async (entry) => {
-    const balances = await readback(handle, () => sdk.tokens.balances([entry.identityId], tokenId));
-    return (balances instanceof Map ? balances.get(entry.identityId) : undefined) ?? 0n;
-  };
-  const reconciled = async (e, entry, target) => {
-    const text = describeErr(e);
-    if (!WAIT_MAYBE_LANDED.test(text) && !TRANSPORT_COLLAPSE.test(text)) return false;
-    if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
-    await sleep(3000);
-    return (await balanceOf(entry)) >= target;
-  };
+  const balanceOf = (entry) => tokenBalance((fn) => readback(handle, fn), sdk, tokenId, entry.identityId);
+  const reconciled = (e, entry, target) => landedAfter(handle, e, async () => (await balanceOf(entry)) >= target);
 
   // Lazy: the maker keys are not touched unless an identity actually needs a mint
   // (so a fully-provisioned re-run needs no seed phrase).

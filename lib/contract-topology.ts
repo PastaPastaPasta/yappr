@@ -25,7 +25,7 @@
  * app believes it is talking to part-way through a session.
  */
 
-import { getContractTopology, type ContractTopology } from './constants'
+import { DASHPAY_CONTRACT_ID, getContractTopology, type ContractTopology } from './constants'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 
@@ -155,13 +155,6 @@ export interface ContractTopologyDescriptor {
   readonly interactions: Readonly<Record<TargetKind, InteractionSurface>>
   /** What a tombstone of each doctype must reproduce verbatim. */
   readonly tombstonePreserves: Readonly<Record<TargetKind, TombstonePreservation>>
-  /**
-   * The v10 generation of the moderated devnet contract (4.2.0-beta.7): real
-   * deletes, no `beat`, no `post.language`, `keyGeneration` for the private
-   * feed, media hashes, moderator-resolved reports, the DashPay-based profile
-   * and a paused, unpriced YAPP. False on v2 and v9.
-   */
-  readonly v10: boolean
 }
 
 /** Nothing to carry over: the topology deletes documents instead of blanking them. */
@@ -203,7 +196,6 @@ const V2_DESCRIPTOR: ContractTopologyDescriptor = {
   // v2 posts and replies are ordinary deletable documents, so a delete is a
   // delete and no tombstone is ever built ({@link deletesAreTombstones}).
   tombstonePreserves: { post: NOTHING_PRESERVED, reply: NOTHING_PRESERVED },
-  v10: false,
 }
 
 /**
@@ -245,7 +237,6 @@ const V9_REPLY_INTERACTIONS: InteractionSurface = {
 
 const V9_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v9',
-  v10: false,
   replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId' },
   tombstonePreserves: {
     post: {
@@ -276,7 +267,6 @@ const V9_DESCRIPTOR: ContractTopologyDescriptor = {
  */
 const V10_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v10',
-  v10: true,
   replyLinkage: V9_DESCRIPTOR.replyLinkage,
   tombstonePreserves: { post: NOTHING_PRESERVED, reply: NOTHING_PRESERVED },
   interactions: V9_DESCRIPTOR.interactions,
@@ -315,9 +305,14 @@ function isDevnetCut(): boolean {
   return topologyDescriptor().topology !== 'v2'
 }
 
-/** True on the 4.2.0-beta.7 cut (v10). */
+/**
+ * True on the 4.2.0-beta.7 cut (v10): real deletes, no `beat`, no
+ * `post.language`, `keyGeneration` for the private feed, media hashes,
+ * moderator-resolved reports, the DashPay-based profile and a paused,
+ * unpriced YAPP.
+ */
 export function isV10(): boolean {
-  return topologyDescriptor().v10
+  return topologyDescriptor().topology === 'v10'
 }
 
 /** How reply documents name their parents on this topology. */
@@ -558,12 +553,12 @@ export interface ContentLimits {
 }
 
 export function contentLimits(): ContentLimits {
-  if (!isV10()) return { maxLength: 500, maxBytes: null, encryptedMaxBytes: 1024 }
-  const content = socialContractV10.documentSchemas.post.properties.content as { maxLength: number; maxBytes: number }
+  // v2 declares the same 500 / 1024 as v9, which devnetContract() reads for it.
+  const post = devnetSchemas().post.properties ?? {}
   return {
-    maxLength: content.maxLength,
-    maxBytes: content.maxBytes,
-    encryptedMaxBytes: socialContractV10.documentSchemas.post.properties.encryptedContent.maxItems,
+    maxLength: post.content?.maxLength ?? 0,
+    maxBytes: post.content?.maxBytes ?? null,
+    encryptedMaxBytes: post.encryptedContent?.maxItems ?? 0,
   }
 }
 
@@ -588,7 +583,7 @@ export function privateFeedKeyFields(): { readonly generation: 'epoch' | 'keyGen
 }
 
 /** The DashPay contract, whose `profile` is v10's base profile (a system contract on every network). */
-export const DASHPAY_PROFILE = { contractId: 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7', documentType: 'profile' } as const
+export const DASHPAY_PROFILE = { contractId: DASHPAY_CONTRACT_ID, documentType: 'profile' } as const
 
 /**
  * Where a user's profile lives (v10): the DashPay `profile` holds the display
@@ -786,7 +781,15 @@ interface SocialDocumentSchema {
   canBeDeletedByModerators?: boolean
   moderatorAbilities?: ModeratorAbilities
   required?: string[]
-  properties?: Record<string, { refersTo?: { type?: string } }>
+  ownerRefersTo?: unknown
+  properties?: Record<string, {
+    refersTo?: { type?: string }
+    distinctFrom?: string
+    items?: { distinctFrom?: string }
+    maxLength?: number
+    maxBytes?: number
+    maxItems?: number
+  }>
   tokenCost?: { create?: { amount: number; optional?: boolean; gasFeesPaidBy?: number } }
   actionFees?: { pricing?: string } & Partial<Record<DocumentAction, { owner?: number; moderators?: number }>>
 }
@@ -962,8 +965,8 @@ export function starterGrantAmount(): bigint | null {
  * still pays out, and the contract owner still mints. Tips must be credit tips.
  */
 export function yappIsLocked(): boolean {
-  if (!isV10()) return false
-  const token = socialContractV10.tokens['0'] as {
+  if (!isDevnetCut()) return false
+  const token = devnetContract().tokens['0'] as {
     startAsPaused?: boolean
     distributionRules: { changeDirectPurchasePricingRules: { authorizedToMakeChange: { $type: string } } }
   }
@@ -999,11 +1002,6 @@ export interface ElectedModerationDeclaration {
   readonly ownerProtected: boolean
 }
 
-interface GrammarDocumentSchema {
-  ownerRefersTo?: unknown
-  properties: Record<string, { distinctFrom?: string; items?: { distinctFrom?: string } }>
-}
-
 interface DeclaredElectedModeration {
   moderators: {
     joinWindow: number
@@ -1015,10 +1013,6 @@ interface DeclaredElectedModeration {
     interim: { $type: ElectedModerationDeclaration['interim'] }
     ownerProtected?: boolean
   }
-}
-
-function grammarSchemas(): Record<string, GrammarDocumentSchema> {
-  return devnetContract().documentSchemas as unknown as Record<string, GrammarDocumentSchema>
 }
 
 /**
@@ -1060,7 +1054,7 @@ function buildElectedDeclaration(): ElectedModerationDeclaration {
  */
 export function ownerDistinctProperties(docType: string): readonly string[] {
   if (!isDevnetCut()) return []
-  return Object.entries(grammarSchemas()[docType]?.properties ?? {})
+  return Object.entries(devnetSchemas()[docType]?.properties ?? {})
     .filter(([, property]) => (property.distinctFrom ?? property.items?.distinctFrom) === '$ownerId')
     .map(([name]) => name)
 }
@@ -1072,7 +1066,7 @@ export function ownerDistinctProperties(docType: string): readonly string[] {
  * exists when the grant is written (40120 on `recipientId`).
  */
 export function privateFeedWritesAreGated(): boolean {
-  return isDevnetCut() && grammarSchemas().privateFeedGrant?.ownerRefersTo !== undefined
+  return isDevnetCut() && devnetSchemas().privateFeedGrant?.ownerRefersTo !== undefined
 }
 
 /**
