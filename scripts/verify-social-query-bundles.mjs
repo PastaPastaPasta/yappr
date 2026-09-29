@@ -1,18 +1,38 @@
 #!/usr/bin/env node
 /** Read-only equivalence probes against the deployed devnet. No signing keys.
- * NETWORK=devnet node scripts/verify-social-query-bundles.mjs [report.json]
+ * NETWORK=devnet V10_CONTRACT_ID=<social v10 id> node scripts/verify-social-query-bundles.mjs [report.json]
  * Counts document facade requests after connection/contract warm-up, not HTTP
- * retries, subqueries, quorum reads, or complete rendered-screen traffic. */
+ * retries, subqueries, quorum reads, or complete rendered-screen traffic.
+ *
+ * Social v10 has no repost type: a repost is a post quoting its target with no
+ * content, so it notifies through post.quotedPostOwnerAndTime, sits in its
+ * author's own post pages, and the quote count is the repost count. Per-reply
+ * counts pin the root (repliesOf [rootPostId, replyToReplyId, $createdAt]). */
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import bs58 from 'bs58';
-import { connectSdk, devnetName } from './sdk-env.mjs';
+import { connectSdk, devnetName, envValue } from './sdk-env.mjs';
 
-const social = 'CdUkSHkQwGXXAkzKqrcrjUWLsj7qErK9XAZmLzJEhirU';
-const profile = '6cyzfCVkov5RqJzRpXTmCAjYWBGqB1SzsBxrsnd8AUyb';
-const dpns = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec';
-const dm = 'ACggUAB9rYpZUTBggrgx54R43iSprQztyuwYx16Y25xC';
-const blog = '3XiMRzaPPjknf2fYtz6oGob4G5D69A9MLu4x58A8WZiF';
+const social = process.env.V10_CONTRACT_ID;
+if (!social) {
+  console.error('Set V10_CONTRACT_ID to the social v10 contract under test (there is no default).');
+  process.exit(1);
+}
+/** A contract id from the environment or `.env.devnet`; the devnet's own, never a baked-in chain's. */
+function contractId(name) {
+  const value = envValue(name);
+  if (!value) {
+    console.error(`Set ${name} (environment or .env.devnet) to the devnet's contract id.`);
+    process.exit(1);
+  }
+  return value;
+}
+// v10 retires the profile contract: the base profile is DashPay's `profile`
+// (a system contract, the same id on every chain), keyed by its owner.
+const profile = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7';
+const dpns = envValue('NEXT_PUBLIC_DPNS_CONTRACT_ID') || 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec';
+const dm = contractId('NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID');
+const blog = contractId('NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID');
 const sdk = await connectSdk({ net: 'devnet', timeoutMs: 20000 });
 await sdk.contracts.fetch(dpns);
 await sdk.contracts.getMany([social, profile, dm, blog]);
@@ -25,8 +45,8 @@ const canonical = docs => JSON.stringify(docs.map(doc => Object.fromEntries(
 )), (_, value) => typeof value === 'bigint' ? value.toString() : value);
 const timeline = records(await sdk.documents.query({
   dataContractId: social, documentTypeName: 'post',
-  where: [['language', '==', 'en'], ['$createdAt', '>', 0]],
-  orderBy: [['language', 'asc'], ['$createdAt', 'desc']], limit: 20,
+  where: [['$createdAt', '>', 0]],
+  orderBy: [['$createdAt', 'desc']], limit: 20,
 }));
 assert(timeline.length, 'Need public posts to exercise nonempty queries');
 const owner = id(timeline[0].$ownerId);
@@ -74,14 +94,15 @@ await verify('profiles and DPNS including profile-less identity', [
 ]);
 await verify('notification sources', [
   ['follow', 'followingId'], ['postMention', 'mentionedUserId'], ['followRequest', 'targetId'],
-  ['like', 'postAuthor'], ['likeReply', 'replyAuthor'], ['repost', 'postOwnerId'], ['reply', 'parentOwnerId'],
+  ['like', 'postAuthor'], ['likeReply', 'replyAuthor'], ['post', 'quotedPostOwnerId'], ['reply', 'parentOwnerId'],
 ].map(([documentTypeName, field]) => ({
   dataContractId: social, documentTypeName,
   where: [[field, '==', owner], ['$createdAt', '>', 0]],
   orderBy: [[field, 'asc'], ['$createdAt', 'asc']], limit: 100,
 })));
-await verify('following repost pages', owners.map(ownerId => ({
-  dataContractId: social, documentTypeName: 'repost',
+// A followed author's reposts are posts: their own post pages carry them.
+await verify('following post pages (reposts included)', owners.map(ownerId => ({
+  dataContractId: social, documentTypeName: 'post',
   where: [['$ownerId', '==', ownerId], ['$createdAt', '>', 0]],
   orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100,
 })));
@@ -111,34 +132,60 @@ await verify('blog comment count pages', timeline.slice(0, 2).map(doc => ({
   orderBy: [['blogPostId', 'asc'], ['$createdAt', 'asc']], limit: 100,
 })));
 
+/** The root of a thread with direct replies, for the reply page (per-reply counts pin the root). */
+async function threadRoot() {
+  for (const doc of timeline) {
+    const rootPostId = id(doc.$id);
+    const direct = await sdk.documents.count({ dataContractId: social, documentTypeName: 'reply',
+      where: [['rootPostId', '==', rootPostId], ['replyToReplyId', '==', null]] });
+    if (Number(direct.get('') ?? 0) > 0) return rootPostId;
+  }
+  return id(timeline[0].$id);
+}
+
 async function verifyEnrichment(kind) {
   const name = `${kind} composite enrichment counts and viewer marks`;
   try {
-    const pageQuery = { dataContractId: social, documentTypeName: kind,
-      where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 };
+    // A post page is an author's posts; a reply page is a thread's direct replies
+    // (the page the thread view counts children on, under its root). The reply
+    // composite is by id, as load-post-enrichment sends it: a repliesOf page with
+    // a repliesOf count slot is refused ("lands at the merged root").
+    const root = kind === 'reply' ? await threadRoot() : null;
+    const pageQuery = kind === 'post'
+      ? { dataContractId: social, documentTypeName: kind,
+        where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]],
+        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 }
+      : { dataContractId: social, documentTypeName: kind,
+        where: [['rootPostId', '==', root], ['replyToReplyId', '==', null]],
+        orderBy: [['$createdAt', 'asc']], limit: 20 };
     const page = records(await sdk.documents.query(pageQuery));
     const ids = page.map(doc => id(doc.$id));
     const targetField = kind === 'post' ? 'postId' : 'replyId';
     const likeType = kind === 'post' ? 'like' : 'likeReply';
-    const countSources = [[likeType, targetField],
-      ...(kind === 'post' ? [['repost', 'postId']] : []),
-      ['reply', kind === 'post' ? 'rootPostId' : 'replyToReplyId'],
-      ['post', kind === 'post' ? 'quotedPostId' : 'quotedReplyId']];
-    const subQueries = countSources.map(([documentType, field]) => ({
-      documentType, kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field },
+    // [documentType, bound field, fixed where]; the quote count is the repost count.
+    const countSources = [[likeType, targetField, []],
+      kind === 'post' ? ['reply', 'rootPostId', []] : ['reply', 'replyToReplyId', [['rootPostId', '==', root]]],
+      ['post', kind === 'post' ? 'quotedPostId' : 'quotedReplyId', []]];
+    const subQueries = countSources.map(([documentType, field, where]) => ({
+      documentType, kind: 'counts', ...(where.length ? { where } : {}), bind: { source: 'page', sourceProperty: '$id', field },
     }));
     subQueries.push({ documentType: likeType, where: [['$ownerId', '==', owner]],
       bind: { source: 'page', sourceProperty: '$id', field: targetField } });
-    const result = await sdk.documents.composite({
-      dataContractId: social, documentType: kind, where: pageQuery.where,
-      orderBy: pageQuery.orderBy, limit: 20, subQueries,
-    });
-    assert.equal(canonical(result.pageDocuments.map(doc => doc.toObject())), canonical(page));
+    if (kind === 'reply' && ids.length === 0) throw new Error('the thread root has no direct replies to page');
+    const byId = (docs) => [...docs].sort((a, b) => id(a.$id).localeCompare(id(b.$id)));
+    const result = kind === 'post'
+      ? await sdk.documents.composite({
+        dataContractId: social, documentType: kind, where: pageQuery.where,
+        orderBy: pageQuery.orderBy, limit: 20, subQueries,
+      })
+      : await sdk.documents.composite({
+        dataContractId: social, documentType: kind, where: [['$id', 'in', ids]], limit: ids.length, subQueries,
+      });
+    assert.equal(canonical(byId(result.pageDocuments.map(doc => doc.toObject()))), canonical(byId(page)));
     for (let i = 0; i < countSources.length; i++) {
-      const [documentTypeName, field] = countSources[i];
+      const [documentTypeName, field, where] = countSources[i];
       const counts = ids.length ? await sdk.documents.count({ dataContractId: social,
-        documentTypeName, where: [[field, 'in', ids]], groupBy: [field] }) : new Map();
+        documentTypeName, where: [...where, [field, 'in', ids]], groupBy: [field] }) : new Map();
       for (const postId of ids) {
         const hex = Buffer.from(bs58.decode(postId)).toString('hex');
         assert.equal(Number(result.subResults[i].counts.get(postId) ?? 0), Number(counts.get(hex) ?? 0));

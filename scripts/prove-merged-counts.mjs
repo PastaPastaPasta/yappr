@@ -3,6 +3,7 @@
  * "Merged count indexes"). The re-cut drops every count-only index whose list
  * twin can carry the count, and the app then counts through the twins:
  *
+ *   (like is copied too, unchanged by the re-cut, for the feed page's slots)
  *   post    ownerAndTime [$ownerId, $createdAt]   rangeCountable, ranked at $ownerId
  *           quotesOfPost / quotesOfReply [quoted…, $createdAt]  rangeCountable
  *           ownerAndQuotedPost / ownerAndQuotedReply   unique, skipIfAbsent (one repost/quote per target)
@@ -16,10 +17,10 @@
  * below the shallowest `at` level of a prefix-level ranking (the at-chain
  * form); the composite feed's count slots use the same picker. This script
  * proves each query shape the client issues against a THROWAWAY contract
- * whose post, reply and follow types are copied verbatim from
- * contracts/yappr-social-contract-v10.json (index lists, properties, rules),
- * minus what needs other documents or tokens (refersTo, action fees, token
- * costs, moderation). So what passes here is the exact index layout the
+ * whose post, reply, follow and like types are copied verbatim from
+ * contracts/yappr-social-contract-v10.json (index lists, properties, rules,
+ * references), minus what needs the contract's token or moderation (action
+ * fees, token costs, moderator abilities). So what passes here is the exact index layout the
  * social contract publishes.
  *
  * Writes (3 owners A/B/C, 3 targets T1-T3), then asserts:
@@ -37,6 +38,12 @@
  *   n1-n2  quote/repost notifications, alone and as a composite sibling
  *   t1-t2  the whole thread at the app's page size, and paged with startAfter
  *   l1-l2  the quote lists at limit 100, of a post and of a reply
+ *   c5     the For You page exactly as composite-feed-page builds it (timeline
+ *          page; like, reply and quote counts; the quoted-post join; the
+ *          viewer's likes; DPNS names), minus the profile slot (v10's profile
+ *          is DashPay's, #602)
+ *   c6     a profile page (ownerAndTime) with the quoted-post join and counts
+ *   g1     the following feed: `$ownerId in` + `$createdAt >` on ranked ownerAndTime
  *   c2x/c3x  a bound slot extending the page's own index path is refused
  *          ("lands at the merged root"): such counts are separate queries
  *
@@ -69,19 +76,17 @@ const CONSENSUS_CODE = /\bcode"?\s*[=:]\s*\d{4,5}\b/;
 
 // ---- The throwaway contract -------------------------------------------------
 
-/** Removes every `refersTo` (a reference needs its target documents or identities to exist). */
-function withoutReferences(value) {
-  if (Array.isArray(value)) return value.map(withoutReferences);
-  if (value === null || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'refersTo').map(([key, inner]) => [key, withoutReferences(inner)]));
-}
-
-/** post, reply and follow exactly as social v10 declares their indexes and properties. */
+/**
+ * post, reply, follow and like exactly as social v10 declares them (indexes,
+ * properties, rules, references: the fixture satisfies every `where`, and the
+ * feed's by-id quote join needs `refersTo`), minus what needs the contract's
+ * token or moderation (token costs, action fees, moderator abilities).
+ */
 function proofContractSource() {
   const social = JSON.parse(readFileSync(SOCIAL_V10, 'utf8'));
   const documentSchemas = {};
-  for (const type of ['post', 'reply', 'follow']) {
-    const schema = withoutReferences(social.documentSchemas[type]);
+  for (const type of ['post', 'reply', 'follow', 'like']) {
+    const schema = structuredClone(social.documentSchemas[type]);
     for (const key of ['actionFees', 'tokenCost', 'moderatorAbilities']) delete schema[key];
     documentSchemas[type] = schema;
   }
@@ -279,6 +284,12 @@ async function main() {
   await mustCreate('r6 (A → T2)', A, 'reply', { content: 'r6', rootPostId: id(T2), parentOwnerId: id(A.ownerId) });
   const qr = await mustCreate('qr (A reposts r1)', A, 'post', { quotedReplyId: id(r1), quotedPostOwnerId: id(B.ownerId) });
   for (const [who, whom] of [[A, B], [C, B], [A, C], [B, A]]) await mustCreate(`${who.label} follows ${whom.label}`, who, 'follow', { followingId: id(whom.ownerId) });
+  // Likes are indexOnly: the create may report a fault after the broadcast, so
+  // the like count below decides (c5 checks it).
+  for (const [who, target] of [[B, T1], [C, T1], [B, T2]]) {
+    const { document } = buildDocument({ contractId, docType: 'like', ownerId: who.ownerId, data: { postId: id(target), postAuthor: id(A.ownerId) }, entropy: randomIdBytes() });
+    await sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer }).catch((e) => console.log(`     (like by ${who.label} reported: ${describeErr(e).slice(0, 120)})`));
+  }
   await sleep(SETTLE_MS);
 
   const q = (documentTypeName, rest) => ({ dataContractId: contractId, documentTypeName, ...rest });
@@ -485,6 +496,52 @@ async function main() {
   console.log('\n--- l. quote lists ---');
   await attempt('l1', () => sdk.documents.query(q('post', { where: [['quotedPostId', 'in', [T1]]], orderBy: [['quotedPostId', 'asc'], ['$createdAt', 'desc']], limit: 100 })), (r) => check('l1 quotes of T1 at limit 100, newest first: q1 and q3', newestFirst(docsOf(r), [q1, q3]), JSON.stringify(ids(r))));
   await attempt('l2', () => sdk.documents.query(q('post', { where: [['quotedReplyId', 'in', [r1]]], orderBy: [['quotedReplyId', 'asc'], ['$createdAt', 'desc']], limit: 100 })), (r) => check('l2 quotes/reposts of reply r1 (quotesOfReply): qr', same(ids(r), [qr]), JSON.stringify(ids(r))));
+
+  // ---- c5/c6/g1: the feed pages as the app builds them ----
+  console.log('\n--- c5/c6/g1. feed pages ---');
+  const dpnsId = envValue('NEXT_PUBLIC_DPNS_CONTRACT_ID') || 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec';
+  const fromPage = (sourceProperty, field) => ({ source: 'page', sourceProperty, field });
+  await attempt('c5', () => sdk.documents.composite({
+    dataContractId: contractId,
+    documentType: 'post',
+    where: [['$createdAt', '>', 0]],
+    orderBy: [['$createdAt', 'desc']],
+    limit: 20,
+    subQueries: [
+      { documentType: 'like', kind: 'counts', bind: fromPage('$id', 'postId') },
+      { documentType: 'reply', kind: 'counts', bind: fromPage('$id', 'rootPostId') },
+      { documentType: 'post', kind: 'counts', bind: fromPage('$id', 'quotedPostId') },
+      { documentType: 'post', bind: fromPage('quotedPostId', '$id') },
+      { dataContractId: dpnsId, documentType: 'domain', bind: fromPage('$ownerId', 'records.identity'), limit: 100 },
+      { documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId') },
+    ],
+  }), (result) => {
+    const [likes, replies, quotes] = result.subResults.slice(0, 3).map((sub) => countEntries(sub.counts));
+    const quoted = new Set(result.subResults[3].documents.map(idOf));
+    const myLikes = result.subResults[5].documents.length;
+    check('c5 the For You page: likes T1 2 / T2 1, replies T1 5 / T2 1, quotes T1 2 / T2 1, quoted posts T1+T2 joined, B\'s likes 2',
+      likes[T1] === 2 && likes[T2] === 1 && replies[T1] === 5 && replies[T2] === 1 && quotes[T1] === 2 && quotes[T2] === 1 && quoted.has(T1) && quoted.has(T2) && myLikes === 2,
+      `likes ${JSON.stringify(likes)} replies ${JSON.stringify(replies)} quotes ${JSON.stringify(quotes)} quoted ${JSON.stringify([...quoted])} myLikes ${myLikes}`);
+  });
+  await attempt('c6', () => sdk.documents.composite({
+    dataContractId: contractId,
+    documentType: 'post',
+    where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]],
+    orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+    limit: 20,
+    subQueries: [
+      { documentType: 'post', kind: 'counts', bind: fromPage('$id', 'quotedPostId') },
+      { documentType: 'reply', kind: 'counts', bind: fromPage('$id', 'rootPostId') },
+      { documentType: 'post', bind: fromPage('quotedPostId', '$id') },
+    ],
+  }), (result) => {
+    const quoted = new Set(result.subResults[2].documents.map(idOf));
+    check('c6 B\'s profile page (ownerAndTime) with the quoted-post join: q1 and q2, quoting T1 and T2', result.pageDocuments.length === 2 && quoted.has(T1) && quoted.has(T2), `page ${result.pageDocuments.length} quoted ${JSON.stringify([...quoted])}`);
+  });
+  await attempt('g1', () => sdk.documents.query(q('post', { where: [['$ownerId', 'in', [B.ownerId, C.ownerId]], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100 })), (r) => {
+    const got = new Set(ids(r));
+    check('g1 the following feed (`$ownerId in` + `$createdAt >`, ranked ownerAndTime): q1, q2, q3', got.size === 3 && got.has(q1) && got.has(q2) && got.has(q3), JSON.stringify([...got]));
+  });
 
   console.log(`\nthrowaway contract ${contractId}`);
   console.log(failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`);
