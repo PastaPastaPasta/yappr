@@ -1,6 +1,6 @@
 /**
- * Manual registration of a yappr social contract on a devnet (moutai by
- * default).
+ * Manual registration of a yappr social contract on a devnet (the one
+ * `.env.devnet` names, or DEVNET_NAME / DAPI_ADDRESSES / QUORUM_URL).
  *
  * The name is historical — the script is file-agnostic. It publishes any
  * contract JSON from `contracts/` as a brand-new contract; pick the file with
@@ -36,8 +36,8 @@
  * v13. Configured from the environment so this script needs no edit when the
  * devnet is re-genesised:
  *
- *   DEVNET_NAME     devnet name           (default: moutai)
- *   DAPI_ADDRESSES  comma-separated DAPI  (default: https://seed-{1..5}.<devnet>.networks.dash.org:1443)
+ *   DEVNET_NAME     devnet name           (else NEXT_PUBLIC_DEVNET_NAME in .env.devnet)
+ *   DAPI_ADDRESSES  comma-separated DAPI  (else NEXT_PUBLIC_DAPI_ADDRESSES in .env.devnet)
  *
  * Non-trusted, proofs off: a devnet has no published quorum info to verify
  * against, so every query is served in trusted mode against the seeds above.
@@ -95,8 +95,9 @@
 import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DataContract, EvoSDK, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
+import { DataContract, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
+import { devnetConfig, devnetSdk as buildDevnetSdk } from './sdk-env.mjs';
 import { auditModeration, requireModeratorsExist, withModerators } from './register-lib.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -107,43 +108,14 @@ const YAPP_TOKEN_POSITION = 0;
 /** Enough YAPP for a battery run: posts cost 10, replies 3, likes/reposts 1. */
 const DEFAULT_FUND_AMOUNT = 1000n;
 const SDK_TIMEOUT_MS = 30000;
-const DEFAULT_DEVNET_NAME = 'moutai';
-const DEFAULT_SEED_COUNT = 5;
 /** Placeholder owner for `--dry-run`, so the contract can be assembled without an identity. */
 const DRY_RUN_OWNER = '11111111111111111111111111111111';
 
-// ---- Devnet SDK (inline on purpose: this script owns its network config) ----
+// ---- Devnet SDK: sdk-env's config (env, then `.env.devnet`) ----------------
 
-/** `seed-1..5.<devnet>.networks.dash.org:1443` — the standard devnet seed layout. */
-function defaultDevnetAddresses(devnetName) {
-  return Array.from(
-    { length: DEFAULT_SEED_COUNT },
-    (_, i) => `https://seed-${i + 1}.${devnetName}.networks.dash.org:1443`
-  );
-}
-
-/** Reads `DEVNET_NAME` / `DAPI_ADDRESSES` and builds a non-trusted devnet SDK. */
 function devnetSdk() {
-  const devnetName = process.env.DEVNET_NAME?.trim() || DEFAULT_DEVNET_NAME;
-  const configured = (process.env.DAPI_ADDRESSES ?? '')
-    .split(',')
-    .map((address) => address.trim())
-    .filter(Boolean)
-    .map((address) => (address.includes('://') ? address : `https://${address}`));
-  const addresses = configured.length > 0 ? configured : defaultDevnetAddresses(devnetName);
-  const sdk = new EvoSDK({
-    network: 'devnet',
-    devnetName,
-    addresses,
-    // trusted mode is mandatory: wasm-sdk panics on `proofs: false` ("queries
-    // without proofs are not supported yet") and refuses non-trusted proofs.
-    // The trusted context prefetches quorum keys from
-    // https://quorums.<devnetName>.networks.dash.org (or QUORUM_URL).
-    trusted: true,
-    ...(process.env.QUORUM_URL ? { quorumUrl: process.env.QUORUM_URL } : {}),
-    settings: { timeoutMs: SDK_TIMEOUT_MS },
-  });
-  return { sdk, devnetName, addresses };
+  const config = devnetConfig();
+  return { sdk: buildDevnetSdk({ timeoutMs: SDK_TIMEOUT_MS, config }), devnetName: config.devnetName, addresses: config.addresses };
 }
 
 // ---- Contract assembly ------------------------------------------------------

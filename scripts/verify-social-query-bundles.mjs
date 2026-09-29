@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import bs58 from 'bs58';
-import { connectSdk } from './sdk-env.mjs';
+import { connectSdk, devnetName } from './sdk-env.mjs';
 
 const social = 'CdUkSHkQwGXXAkzKqrcrjUWLsj7qErK9XAZmLzJEhirU';
 const profile = '6cyzfCVkov5RqJzRpXTmCAjYWBGqB1SzsBxrsnd8AUyb';
@@ -159,6 +159,6 @@ async function verifyEnrichment(kind) {
 await verifyEnrichment('post');
 await verifyEnrichment('reply');
 
-const report = { at: new Date().toISOString(), network: 'moutai', baseline: '4105c5d1', reports };
+const report = { at: new Date().toISOString(), network: devnetName(), baseline: '4105c5d1', reports };
 if (process.argv[2]) writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
 process.exit(reports.every(result => result.equivalent) ? 0 : 1);

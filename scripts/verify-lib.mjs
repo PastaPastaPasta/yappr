@@ -13,7 +13,6 @@
  */
 import {
   Document,
-  EvoSDK,
   IdentitySigner,
   PlatformVersion,
   TokenPaymentInfo,
@@ -23,10 +22,9 @@ import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
 import { createdId, deriveDocumentIdBytes, findRecentByValues } from './seed/seed-lib.mjs';
+import { devnetConfig, devnetSdk } from './sdk-env.mjs';
 export { TOKEN_COST } from './seed/seed-lib.mjs';
 const SDK_TIMEOUT_MS = 30000;
-const DEFAULT_DEVNET_NAME = 'moutai';
-const DEFAULT_SEED_COUNT = 5;
 /** Reads settle behind the write quorum; give the chain a beat before asserting. */
 const SETTLE_MS = 3000;
 /** How many settle intervals to wait before calling a write absent (~9s). */
@@ -39,67 +37,15 @@ const YAPP_TOKEN_POSITION = 0;
 const MIN_YAPP_BALANCE = 150n;
 // ---- Devnet SDK -------------------------------------------------------------
 
-function defaultDevnetAddresses(devnetName) {
-  return Array.from(
-    { length: DEFAULT_SEED_COUNT },
-    (_, i) => `https://seed-${i + 1}.${devnetName}.networks.dash.org:1443`
-  );
+/** The devnet SDK the batteries run on: sdk-env's config (env, then `.env.devnet`). */
+function batterySdk() {
+  const config = devnetConfig();
+  return { sdk: devnetSdk({ timeoutMs: SDK_TIMEOUT_MS, config }), devnetName: config.devnetName, addresses: config.addresses };
 }
-
-function devnetSdk() {
-  const devnetName = process.env.DEVNET_NAME?.trim() || DEFAULT_DEVNET_NAME;
-  const configured = (process.env.DAPI_ADDRESSES ?? '')
-    .split(',')
-    .map((address) => address.trim())
-    .filter(Boolean)
-    .map((address) => (address.includes('://') ? address : `https://${address}`));
-  const addresses = configured.length > 0 ? configured : defaultDevnetAddresses(devnetName);
-  const sdk = new EvoSDK({
-    network: 'devnet',
-    devnetName,
-    addresses,
-    // trusted mode is mandatory: wasm-sdk panics on `proofs: false` and refuses
-    // non-trusted proof verification; quorum keys are prefetched from
-    // https://quorums.<devnetName>.networks.dash.org (or QUORUM_URL).
-    trusted: true,
-    ...(process.env.QUORUM_URL ? { quorumUrl: process.env.QUORUM_URL } : {}),
-    settings: { timeoutMs: SDK_TIMEOUT_MS },
-  });
-  return { sdk, devnetName, addresses };
-}
-
-// ---- Resilient connection ---------------------------------------------------
-//
-// Long runs (~20 min) outlive devnet quorum rotations: the trusted context
-// prefetches quorum keys at connect, a mid-run DKG makes newer proofs verify
-// against a quorum it never learned ("invalid quorum: Quorum not found"), the
-// failing proofs ban every DAPI address ("no available addresses …"), and the
-// SDK instance is dead. There is no refresh API, so the cure is a FULL
-// reconnect: build a fresh EvoSDK (fresh quorum prefetch + address pool),
-// re-ratchet the protocol version, re-cache the contract, and swap it in. All
-// battery code holds `sdkHandle` — a proxy that always forwards to the current
-// instance — so a swap is transparent to in-flight helpers.
-
-/** Errors that mean "this SDK instance is dead", not "this request was refused". */
-const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
-
-let activeSdk = null;
-let reconnectContractId = null;
-let reconnectPromise = null;
-
-const sdkHandle = new Proxy(
-  {},
-  {
-    get(_, prop) {
-      const value = activeSdk[prop];
-      return typeof value === 'function' ? value.bind(activeSdk) : value;
-    },
-  }
-);
 
 /** Connect + protocol-version ratchet + contract cache: everything a fresh instance needs. */
 async function buildConnectedSdk(contractId) {
-  const { sdk, devnetName, addresses } = devnetSdk();
+  const { sdk, devnetName, addresses } = batterySdk();
   await sdk.connect();
   // PROTOCOL-VERSION RATCHET (load-bearing): rs-sdk starts every devnet at
   // protocol version 12 and only ratchets upward from *verified* response
@@ -590,7 +536,7 @@ function dryRun(args, { cases, shapes, replaceShapes = [] }) {
     console.log(`document shape ok: ${label.padEnd(34)} (${docType}, replace at revision 2)`);
   }
 
-  const { devnetName, addresses } = devnetSdk();
+  const { devnetName, addresses } = devnetConfig();
   console.log(
     `would run cases ${selectedCases(args, cases).join(', ')} on devnet "${devnetName}" ` +
     `via ${addresses[0]} (+${addresses.length - 1} more)`

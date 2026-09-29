@@ -34,6 +34,7 @@ import {
   DELETE_FORBIDDEN, DUPLICATE_UNIQUE, b64, createBattery, parseOnly, reportSelfTest, runCases,
 } from './battery-lib.mjs';
 import { resolveOwner, signerFor } from './owner-keys.mjs';
+import { devnetName } from './sdk-env.mjs';
 import {
   REPO_ROOT, buildDocument, createSdkHandle, createdId, describeErr, randomEntropy, readEnvFile,
 } from './seed/seed-lib.mjs';
@@ -760,7 +761,7 @@ try {
   if (args.evidence) {
     mkdirSync(dirname(args.evidence), { recursive: true });
     const run = {
-      network: 'devnet moutai',
+      network: `devnet ${devnetName()}`,
       protocolVersion,
       startedAt,
       finishedAt: new Date().toISOString(),
