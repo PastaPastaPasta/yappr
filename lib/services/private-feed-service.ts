@@ -31,7 +31,7 @@ import {
 } from './private-feed-crypto-service';
 import { privateFeedKeyStore } from './private-feed-key-store';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
-import { privateFeedKeyFields, privateFeedWritesAreGated } from '@/lib/contract-topology';
+import { contentLimits, isV10, privateFeedKeyFields, privateFeedWritesAreGated } from '@/lib/contract-topology';
 import { isReferenceNotFoundError, referencedPathFromError } from '@/lib/error-utils';
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
 import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys';
@@ -1175,7 +1175,26 @@ export type PrepareEncryptionResult =
   | { success: false; error: string };
 
 // Max plaintext size per SPEC §7.5.1 (999 bytes to leave room for version prefix)
-const EXPORTED_MAX_PLAINTEXT_SIZE = 999;
+const LEGACY_MAX_PLAINTEXT_SIZE = 999;
+
+// What encryptPostContent adds to the plaintext: the version byte and the 16-byte Poly1305 tag.
+const CIPHERTEXT_OVERHEAD = 1 + 16;
+
+/**
+ * The largest plaintext, in UTF-8 bytes, a private post or reply may carry.
+ * v2/v9 keep SPEC §7.5.1's 999 B; v10 fills `encryptedContent` (2048 B) less
+ * the ciphertext overhead, 2031 B.
+ */
+function maxPlaintextBytes(): number {
+  return isV10() ? contentLimits().encryptedMaxBytes - CIPHERTEXT_OVERHEAD : LEGACY_MAX_PLAINTEXT_SIZE;
+}
+
+/** Refuse `content` over the private plaintext cap, before anything is encrypted. */
+function plaintextTooLong(content: string): { success: false; error: string } | null {
+  const size = utf8Encode(content).length;
+  const max = maxPlaintextBytes();
+  return size > max ? { success: false, error: `Content too long: ${size} bytes (max ${max})` } : null;
+}
 
 const KEY_GENERATION_UNVERIFIED_ERROR =
   'Could not confirm your private feed\'s current encryption key generation, so nothing was posted. Check your connection and try again.';
@@ -1251,13 +1270,8 @@ export async function prepareOwnerEncryption(
     }
 
     // 2. Validate plaintext size (SPEC §8.2 step 2)
-    const plaintextBytes = utf8Encode(content);
-    if (plaintextBytes.length > EXPORTED_MAX_PLAINTEXT_SIZE) {
-      return {
-        success: false,
-        error: `Content too long: ${plaintextBytes.length} bytes (max ${EXPORTED_MAX_PLAINTEXT_SIZE})`,
-      };
-    }
+    const tooLong = plaintextTooLong(content);
+    if (tooLong) return tooLong;
 
     // 3. Get feed seed and current CEK
     const feedSeed = privateFeedKeyStore.getFeedSeed();
@@ -1345,13 +1359,8 @@ export async function prepareInheritedEncryption(
 
   try {
     // 1. Validate plaintext size
-    const plaintextBytes = utf8Encode(content);
-    if (plaintextBytes.length > EXPORTED_MAX_PLAINTEXT_SIZE) {
-      return {
-        success: false,
-        error: `Content too long: ${plaintextBytes.length} bytes (max ${EXPORTED_MAX_PLAINTEXT_SIZE})`,
-      };
-    }
+    const tooLong = plaintextTooLong(content);
+    if (tooLong) return tooLong;
 
     // 2. A follower must hold keys for this feed at all
     if (!privateFeedKeyStore.getCachedCEK(source.ownerId)) {
