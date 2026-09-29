@@ -41,13 +41,19 @@ describe('rewriteDapiUrl', () => {
 
 describe('installDapiPathShim', () => {
   const realFetch = globalThis.fetch
-  let calls: Array<{ url: string; init?: RequestInit }>
+  let calls: Array<{ url: string; init?: RequestInit; request?: Request }>
+  // The Request the wrapper handed on; a rewrite always passes one for a Request input.
+  const sentRequest = (index = 0): Request => {
+    const request = calls[index]?.request
+    if (!request) throw new Error(`call ${index} did not pass a Request`)
+    return request
+  }
 
   beforeEach(() => {
     calls = []
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-      calls.push({ url, init })
+      calls.push({ url, init, request: input instanceof Request ? input : undefined })
       return new Response('ok')
     }) as typeof fetch
   })
@@ -64,10 +70,25 @@ describe('installDapiPathShim', () => {
       headers: { 'content-type': 'application/grpc-web+proto' },
       body,
     })
-    await fetch(request, { method: 'POST' })
+    const controller = new AbortController()
+    await fetch(request, { method: 'POST', signal: controller.signal })
     expect(calls).toHaveLength(1)
     expect(calls[0].url).toBe(`${NODE}/${METHOD}`)
-    expect(calls[0].init).toEqual({ method: 'POST' })
+    expect(calls[0].init).toEqual({ method: 'POST', signal: controller.signal })
+    const sent = sentRequest()
+    expect(sent.method).toBe('POST')
+    expect(sent.headers.get('content-type')).toBe('application/grpc-web+proto')
+    expect(new Uint8Array(await sent.arrayBuffer())).toEqual(body)
+  })
+
+  it('never reads the body off Request.body, which Firefox and Safari lack', async () => {
+    installDapiPathShim([NODE])
+    const body = new Uint8Array([0, 0, 0, 0, 2, 9, 9])
+    const request = new Request(`${NODE}//${METHOD}`, { method: 'POST', body })
+    // What Firefox exposes: no `body` stream on a Request.
+    Object.defineProperty(request, 'body', { value: undefined })
+    await fetch(request)
+    expect(new Uint8Array(await sentRequest().arrayBuffer())).toEqual(body)
   })
 
   it('forwards anything else unchanged', async () => {

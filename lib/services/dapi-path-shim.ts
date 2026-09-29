@@ -19,8 +19,8 @@
  * - the path starts with `//org.dash.platform.`.
  * It collapses that leading `//` to `/`. Every other request, including the
  * quorum-service prefetch and any request to another host, goes through
- * untouched. On a gateway that already merges slashes the rewrite changes
- * nothing it would not have done itself.
+ * untouched. A rewritten request is rebuilt with its body read into a buffer
+ * (see `retarget`), and is otherwise the same request on the single-slash path.
  *
  * Remove the shim once platform fixes the SDK to stop emitting the double
  * slash.
@@ -64,6 +64,31 @@ function requestUrl(input: RequestInfo | URL): string {
 }
 
 /**
+ * `request` on a new URL. The body is read into a buffer and passed
+ * explicitly. `new Request(url, request)` would take it from `request.body`,
+ * which Firefox and Safari do not implement: the copy would go out empty. In
+ * Chromium it would become a streaming upload, which needs HTTP/2. The gRPC-web
+ * bodies here are small, single messages.
+ */
+async function retarget(request: Request, url: string): Promise<Request> {
+  const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
+  return new Request(url, {
+    method: request.method,
+    headers: request.headers,
+    body: hasBody ? await request.arrayBuffer() : undefined,
+    mode: request.mode,
+    credentials: request.credentials,
+    cache: request.cache,
+    redirect: request.redirect,
+    referrer: request.referrer,
+    referrerPolicy: request.referrerPolicy,
+    integrity: request.integrity,
+    keepalive: request.keepalive,
+    signal: request.signal,
+  });
+}
+
+/**
  * Installs the rewrite for `addresses`. Call it before the SDK connects. It is
  * idempotent: later calls only add their origins to the installed wrapper. A
  * no-op when `fetch` is missing or no address parses.
@@ -81,12 +106,11 @@ export function installDapiPathShim(addresses: readonly string[]): void {
 
   const rewritten = new Set(origins);
   const original = globalThis.fetch.bind(globalThis);
-  const wrapped: ShimmedFetch = (input, init) => {
+  const wrapped: ShimmedFetch = async (input, init) => {
     const fixed = rewriteDapiUrl(requestUrl(input), rewritten);
     if (fixed === null) return original(input, init);
-    // A Request is rebuilt on the new URL so that it keeps its method,
-    // headers, body and signal. `init` is passed through unchanged.
-    return original(input instanceof Request ? new Request(fixed, input) : fixed, init);
+    if (!(input instanceof Request)) return original(fixed, init);
+    return original(await retarget(input, fixed), init);
   };
   wrapped[SHIM_ORIGINS] = rewritten;
   globalThis.fetch = wrapped;
