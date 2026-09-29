@@ -48,6 +48,8 @@ export const baseReply = () => ({ content: 'constraint probe', rootPostId: id(),
 export const baseReport = () => ({ postId: id(), targetOwnerId: id(), reason: 0 });
 const privateFields = () => ({ encryptedContent: bytes(48), keyGeneration: 1, nonce: bytes(24) });
 const embed = () => ({ embedContractId: id(), embedDocType: 'poll', embedId: id() });
+/** v10: a mediaUrl needs its hash and fingerprint (dependentRequired, 10101 before any rule runs). */
+const media = (mediaUrl) => ({ mediaUrl, mediaHash: bytes(32), mediaFingerprint: bytes(8) });
 export const baseOrder = () => ({ storeId: id(), sellerId: id(), encryptedPayload: bytes(64), nonce: bytes(24), storeStatus: 'active' });
 export const baseItem = () => ({ storeId: id(), title: 'constraint probe', status: 'active' });
 export const baseZone = () => ({ storeId: id(), name: 'constraint probe', rateType: 'flat' });
@@ -70,7 +72,7 @@ export const CONSTRAINT_CASES = {
     ['post: a private post (all three encryption fields, teaser)', 'post', { ...basePost(), content: '🔒', ...privateFields() }, null],
     ['post: ciphertext without its nonce', 'post', { ...basePost(), ...drop(privateFields(), 'nonce') }, 'privateAllOrNone'],
     ['post: a keyGeneration alone', 'post', { ...basePost(), keyGeneration: 3 }, 'privateAllOrNone'],
-    ['post: a private post carrying mediaUrl', 'post', { ...basePost(), ...privateFields(), mediaUrl: 'https://example.com/a.png' }, 'privateHasNoMedia'],
+    ['post: a private post carrying media', 'post', { ...basePost(), ...privateFields(), ...media('https://example.com/a.png') }, 'privateHasNoMedia'],
     ['post: a poll embed (all three fields)', 'post', { ...basePost(), ...embed() }, null],
     ['post: an embed missing its doc type', 'post', { ...basePost(), ...drop(embed(), 'embedDocType') }, 'embedAllOrNone'],
     ['post: a quote with its owner', 'post', { ...basePost(), quotedPostId: id(), quotedPostOwnerId: id() }, null],
@@ -80,7 +82,7 @@ export const CONSTRAINT_CASES = {
     ['reply: a public reply', 'reply', baseReply(), null],
     ['reply: a private reply', 'reply', { ...baseReply(), content: '🔒', ...privateFields() }, null],
     ['reply: a nonce alone', 'reply', { ...baseReply(), nonce: bytes(24) }, 'privateAllOrNone'],
-    ['reply: a private reply carrying mediaUrl', 'reply', { ...baseReply(), ...privateFields(), mediaUrl: 'ipfs://bafy' }, 'privateHasNoMedia'],
+    ['reply: a private reply carrying media', 'reply', { ...baseReply(), ...privateFields(), ...media('ipfs://bafy') }, 'privateHasNoMedia'],
     ['report: a post report', 'report', baseReport(), null],
     ['report: a reply report', 'report', { ...drop(baseReport(), 'postId'), replyId: id() }, null],
     ['report: "something else" saying what', 'report', { ...baseReport(), reason: 8, note: 'constraint probe' }, null],

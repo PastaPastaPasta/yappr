@@ -5,7 +5,9 @@
  * (`contracts/yappr-social-contract-v9.json`) carries it unchanged, so this
  * battery runs against v9 (a 4.2.0-beta.6 chain: it writes v9 tombstones and
  * `language`). On v10 (4.2.0-beta.7) the same grammar is covered by
- * `verify-v10.mjs` (m1, m2, w1, y1, r1). The machinery is
+ * `verify-v10.mjs`: a1–a4, s1, k1, k2 are ported from this file, and its
+ * m1/m2/w1/y1 cover ban, delete/restore, warnings and the starter grant. The
+ * machinery is
  * {@link file://./verify-lib.mjs}.
  *
  * There is NO default contract id. Pass `--contract` or set `V8_CONTRACT_ID`.

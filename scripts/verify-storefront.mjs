@@ -421,7 +421,9 @@ async function caseS21StoreMustBeOpen(ctx) {
   const setStatus = async (status) => battery.probeReplace(`s21 the owner sets the store ${status}`, null, stranger, 'store', storeId, storeData({ name: `Cy Store ${run}`, status }), await battery.revisionOf('store', storeId));
   try {
     await place('s21a an order at the active store lands', null, 'active');
-    await place('s21b an order claiming the active store is "paused" is refused (40127: the copy must match)', PROPERTY_MISMATCH, 'paused');
+    // The rule runs in the structure stage, before the `where` state read: a
+    // non-active copy is 10422 whatever the store says.
+    await place('s21b an order copying "paused" to an active store is refused (10422 storeIsOpen, before the where)', constraintViolation('storeIsOpen'), 'paused');
     await setStatus('paused');
     await place('s21c an order at the paused store is refused (40127: storeStatus active no longer matches)', PROPERTY_MISMATCH, 'active');
     await place('s21d copying the true "paused" status is refused by the rule (10422 storeIsOpen)', constraintViolation('storeIsOpen'), 'paused');

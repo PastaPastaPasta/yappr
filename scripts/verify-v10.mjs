@@ -59,11 +59,13 @@
  *       fields, is stamped `$moderatedBy`/`$moderatedAt`, and `byModerator`
  *       and `byStatus` list it; a no-op change is 10905; a field outside
  *       changeFields is 41123; a resolve after the post is deleted still
- *       lands; the owner purges a report with no removal record
- *       (`documentRemovals` finds none) and A may report the target again
+ *       lands; the owner purges a report (r1r–r1t on a deleted post; r1v–r1y
+ *       on the resolved one): it is gone, `documentRemovals` refuses the type
+ *       (no records), a restore is 41119, and A may report the post again
  *   r2  (post-seat) a seated member resolves a report: without a listed reason
  *       41203, with one it lands; a protected reporter's report still resolves
- *       (changes are not deletions). Needs --team-member bot:<n> --reason-doc <id>
+ *       (changes are not deletions) but cannot be deleted (41102). Needs
+ *       --team-member bot:<n> --reason-doc <id>
  *   t2  trending without `beat`: a tagged like lands in `like.byDayHashtagPost`
  *       (the ranked day window groups the run's tag with the right count and
  *       ranks the post within it); an untagged like leaves the window alone;
@@ -71,6 +73,19 @@
  *   y1  YAPP is locked: a transfer is refused (40711, paused); a direct
  *       purchase is refused (no price: 40721); a post paying 10 YAPP still
  *       lands; the starter grant is claimed once (a second claim 40722)
+ *
+ * ## Carried from verify-v8 (the v8 grammar v10 keeps; verify-v8 needs a v9 chain)
+ *
+ *   a1  a post without `$actionFeeAgreement` is 40132
+ *   a2  a mismatched agreement (amount, or fixed pricing) is 40133 (never 40134)
+ *   a3  the agreed fee lands, the locally derived nonce-committed id is the one
+ *       Platform stored, and the moderators pot grows by the post and reply fees
+ *   a4  the interim owner claims the moderators pot; a second claim is 41111
+ *   s1  a suspension refuses priced and unpriced creates (41108) until it lapses
+ *   k1  optional token cost: a like without payment info pays credits, one with
+ *       it pays 1 YAPP on the paused token and the contract owner pays the gas
+ *   k2  payment info with no YAPP is 40700, never a credits fallback
+ *       (`--poor <n>`, default 2; skipped when that bot holds YAPP)
  *
  * ## Run
  *
@@ -85,11 +100,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import bs58 from 'bs58';
-import { DataContract, Document, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
+import { DataContract, Document, DocumentActionFeeAgreement, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
 import {
-  ALREADY_CLAIMED, DASHPAY_CONTRACT_ID, DASHPAY_PROFILE_LIMITS, PREFER_CONTRACT_OWNER, REPO_ROOT, STARTER_GRANT, YAPP_TOKEN_POSITION,
-  actionFeeFor, paymentInfo, tokenBalance, tokenCostFor,
+  ALREADY_CLAIMED, DASHPAY_CONTRACT_ID, DASHPAY_PROFILE_LIMITS, FEE_MULTIPLIER_NOT_TOLERATED, PREFER_CONTRACT_OWNER, REPO_ROOT,
+  STARTER_GRANT, TOKEN_COST, YAPP_TOKEN_POSITION, actionFeeAgreementOptions, actionFeeFor, paymentInfo, tokenBalance, tokenCostFor,
 } from './seed/seed-lib.mjs';
+import { loadIdentityIds } from './derive-identities.mjs';
 import {
   DUPLICATE_UNIQUE,
   PROPERTY_MISMATCH,
@@ -138,6 +154,10 @@ const REASON_DOCUMENT_ID = takeFlag('--reason-doc', null);
 // x3a/y1d need an identity that has neither a DashPay profile nor a starter claim.
 const FRESH_BOT = takeFlag('--fresh-bot', null);
 const FRESH_OWNER = takeFlag('--fresh-owner', null);
+// k2 needs an identity holding NO YAPP (40700); verify-v8's `--poor`.
+const POOR_BOT_INDEX = Number(takeFlag('--poor', '2'));
+/** Long enough for the refused write to run, short enough to wait out. */
+const SUSPENSION_MS = 25_000;
 if (MODERATOR_SPEC !== 'maker') {
   console.error(`--moderator ${MODERATOR_SPEC}: v10's interim moderator is the contract owner alone (interim: contractOwner appoints nobody); run with --moderator maker (the default)`);
   process.exit(1);
@@ -151,6 +171,12 @@ const NOT_FOUND_ON_OWNER = /\$ownerId/;
 const NOT_FOUND_ON_RECIPIENT = /recipientId/;
 const DUPLICATE_ITEMS = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror.{0,2000}?(uniqueitems|duplicate items|has non-unique elements|must not have duplicate)/i;
 const NOT_WARNED = /\bcode"?\s*[=:]\s*41117\b|carries no warning|contractusernotwarned/i;
+const SUSPENDED = /\bcode"?\s*[=:]\s*41108\b|contractusersuspended|is suspended/i;
+const INSUFFICIENT_TOKENS = /\bcode"?\s*[=:]\s*40700\b|not have enough token|insufficient token|identitydoesnothaveenoughtokenbalance/i;
+// 40132/40133 may arrive as prose (verify-v8's matchers, measured live on beta.3).
+const AGREEMENT_NOT_SET = /\bcode"?\s*[=:]\s*40132\b|fee agreement.{0,40}not set|actionfeeagreementnotset|carries no action fee agreement/i;
+const AGREEMENT_MISMATCH = /\bcode"?\s*[=:]\s*40133\b|fee agreement.{0,40}mismatch|actionfeeagreementmismatch|but the transition agreed to [\d,]+ and [\d,]+ credits/i;
+const ALREADY_CLAIMED_EPOCH = /\bcode"?\s*[=:]\s*41111\b|already.{0,30}claimed.{0,30}epoch|alreadyclaimedthisepoch/i;
 const ALREADY_RESTORED = /\bcode"?\s*[=:]\s*41122\b|already restored|contractdocumentalreadyrestored/i;
 const BANNED = /\bcode"?\s*[=:]\s*41107\b|contractuserbanned|is banned/i;
 /** JSON schema (10101): dependentRequired, maxLength, an undeclared property. */
@@ -158,7 +184,8 @@ const SCHEMA_REFUSED = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror:/i;
 /** DocumentPropertyMaxBytesExceededError: "Property content is N bytes in UTF-8, over its maxBytes of 2000". */
 const MAX_BYTES = /\bcode"?\s*[=:]\s*10421\b|bytes in utf-8, over its maxbytes/i;
 /** A replace of a type with documentsMutable false (drive-abci advanced structure). */
-const NOT_MUTABLE = /is not mutable and can not be replaced|\bcode"?\s*[=:]\s*1040[0-9]\b/i;
+/** A replace of a documentsMutable:false type (the advanced-structure refusal), or its revision check (40106) if that runs first. */
+const NOT_MUTABLE = /is not mutable and can not be replaced|\bcode"?\s*[=:]\s*(1040[0-9]|40106)\b|invaliddocumentrevision/i;
 /** A restore with no removal record: an author's delete leaves none (41119). */
 const NO_REMOVAL_RECORD = /\bcode"?\s*[=:]\s*41119\b|keeps no record of a moderator's deletion|contractdocumentremovalnotfound/i;
 /** A reporter writing a moderator-only field (41124). */
@@ -167,6 +194,7 @@ const MODERATOR_FIELD = /\bcode"?\s*[=:]\s*41124\b|only the moderators of contra
 const FIELD_NOT_CHANGEABLE = /\bcode"?\s*[=:]\s*41123\b|can not be changed by moderators/i;
 /** A change that changes nothing, or names no field (10905). */
 const FIELDS_INVALID = /\bcode"?\s*[=:]\s*10905\b|the fields a moderator's document change sets are invalid/i;
+const TARGET_NOT_ALLOWED = /\bcode"?\s*[=:]\s*41102\b|contractmoderationtargetnotallowed/i;
 const REASON_NOT_LISTED = /\bcode"?\s*[=:]\s*41203\b|reason.{0,80}not listed|moderationreasonnotlisted/i;
 const TOKEN_PAUSED = /\bcode"?\s*[=:]\s*40711\b|token .{0,60} is paused/i;
 const NOT_FOR_SALE = /\bcode"?\s*[=:]\s*40721\b|not available for direct sale|no direct-purchase price/i;
@@ -656,9 +684,13 @@ async function caseX2MediaAndLimits(ctx) {
   const { sdk, contractId, botA } = ctx;
   console.log('\n--- x2. media hash + fingerprint (dependentRequired, 10101), 1000 characters / 2000 bytes (10101 / 10421), no language ---');
   const media = await mediaFields();
+  // The reply cases need B's anchor post; its absence is a fixture failure, not an abort of x2.
+  const anchorId = await ensurePost(ctx, 'anchor');
+  const anchor = anchorId ? bs58.decode(anchorId) : null;
+  if (!anchor) check('x2 reply fixture', false, 'no anchor post: x2c and x2j are skipped');
   await expectFeedRefused(ctx, 'x2a mediaUrl without its hash and fingerprint is refused (10101)', botA, 'post', postData({ content: 'x2 bare url', media: { mediaUrl: media.mediaUrl } }), SCHEMA_REFUSED);
   await expectFeedRefused(ctx, 'x2b a mediaHash without mediaUrl is refused (10101)', botA, 'post', postData({ content: 'x2 bare hash', media: { mediaHash: media.mediaHash } }), SCHEMA_REFUSED);
-  await expectFeedRefused(ctx, 'x2c a reply with mediaUrl and no fingerprint is refused (10101)', botA, 'reply', { ...replyData({ content: 'x2 reply media', rootPostId: bs58.decode(await ensurePost(ctx, 'anchor')), parentOwnerId: bs58.decode(ctx.botB.ownerId) }), mediaUrl: media.mediaUrl, mediaHash: media.mediaHash }, SCHEMA_REFUSED);
+  if (anchor) await expectFeedRefused(ctx, 'x2c a reply with mediaUrl and no fingerprint is refused (10101)', botA, 'reply', { ...replyData({ content: 'x2 reply media', rootPostId: anchor, parentOwnerId: bs58.decode(ctx.botB.ownerId) }), mediaUrl: media.mediaUrl, mediaHash: media.mediaHash }, SCHEMA_REFUSED);
   const withMedia = await createFeedOutcome(ctx, botA, 'post', postData({ content: 'x2 with media', media }));
   expectAccepted('x2d mediaUrl with its 32-byte hash and 8-byte fingerprint lands', withMedia);
   if (withMedia.ok) {
@@ -671,7 +703,7 @@ async function caseX2MediaAndLimits(ctx) {
   // 667 three-byte characters: 667 code points (under 1000) but 2001 UTF-8 bytes.
   await expectFeedRefused(ctx, 'x2h 667 three-byte characters (2001 bytes) are refused (10421 maxBytes)', botA, 'post', postData({ content: '€'.repeat(667) }), MAX_BYTES);
   expectAccepted('x2i 666 three-byte characters (1998 bytes) land', await createFeedOutcome(ctx, botA, 'post', postData({ content: '€'.repeat(666) })));
-  await expectFeedRefused(ctx, 'x2j a reply over 2000 bytes is refused too (10421)', botA, 'reply', replyData({ content: '€'.repeat(667), rootPostId: bs58.decode(await ensurePost(ctx, 'anchor')), parentOwnerId: bs58.decode(ctx.botB.ownerId) }), MAX_BYTES);
+  if (anchor) await expectFeedRefused(ctx, 'x2j a reply over 2000 bytes is refused too (10421)', botA, 'reply', replyData({ content: '€'.repeat(667), rootPostId: anchor, parentOwnerId: bs58.decode(ctx.botB.ownerId) }), MAX_BYTES);
   await expectFeedRefused(ctx, 'x2k a post carrying `language` is refused (10101: the property is gone)', botA, 'post', { ...postData({ content: 'x2 language' }), language: 'en' }, SCHEMA_REFUSED);
 
   // The global timeline replaces the per-language one: a fresh post heads it.
@@ -821,6 +853,20 @@ async function caseR1Reports(ctx) {
   }
   // A resolved report keeps its unique entry, so a second report of the post stays refused.
   await expectCreateRefused(ctx, 'r1u a resolved report still holds its place (a re-report is 40105)', botA, 'report', reportData({ postId: post, targetOwnerId: author, reason: 3 }), DUPLICATE_UNIQUE);
+
+  // Purge the resolved report: final, no record (a type that keeps none is refused by
+  // documentRemovals, and nothing can be restored), and its unique entry goes with it.
+  const reportDoc = await fetchDocument(sdk, contractId, 'report', postReport.id);
+  const purge = await errorOf(() => sdk.contracts.moderatorDeleteDocument({ identity: moderator.identity, contractId, documentTypeName: 'report', documentId: postReport.id, reason: { text: 'v10 battery purge' }, signer: moderator.signer }));
+  await settle();
+  check('r1v the moderator purges the resolved report; it no longer fetches', purge === null && (await fetchDocument(sdk, contractId, 'report', postReport.id)) === null, (purge ?? '').slice(0, 200));
+  const removals = await errorOf(() => sdk.contracts.documentRemovals({ contractId, documentTypeName: 'report', documentIds: [postReport.id] }));
+  expectRejected('r1w documentRemovals refuses report: its deletions keep no record', asOutcome(removals), /whose moderators' deletions keep\s+records/i);
+  if (reportDoc) {
+    const restore = await errorOf(() => sdk.contracts.moderatorRestoreDocument({ identity: moderator.identity, contractId, documentTypeName: 'report', document: reportDoc, signer: moderator.signer }));
+    expectRejected('r1x the purge cannot be restored (41119)', asOutcome(restore), NO_REMOVAL_RECORD);
+  }
+  expectAccepted('r1y A may report the post again once the report is purged', await report({ postId: post, targetOwnerId: author, reason: 0 }));
 }
 
 /**
@@ -849,6 +895,13 @@ async function caseR2SeatedResolution(ctx) {
   if (ownerReport.ok) {
     const onOwner = await changeReport(ctx, member, ownerReport.id, { status: 1 }, { text: 'v10 battery r2', reasonDocumentId: REASON_DOCUMENT_ID });
     check('r2d the team resolves the protected owner\'s report too (a change, not a deletion)', onOwner === null, (onOwner ?? '').slice(0, 200));
+    // …but a DELETION of it is refused: the ownerProtected owner's documents are out of the team's reach.
+    const deleted = await errorOf(() => sdk.contracts.moderatorDeleteDocument({
+      identity: member.identity, contractId, documentTypeName: 'report', documentId: ownerReport.id,
+      reason: { text: 'v10 battery r2', reasonDocumentId: REASON_DOCUMENT_ID }, signer: member.signer,
+    }));
+    expectRejected('r2e the team cannot delete the protected owner\'s report (41102)', asOutcome(deleted), TARGET_NOT_ALLOWED);
+    await deleteOwn(ctx, ctx.moderator, 'report', ownerReport.id);
   }
 }
 
@@ -859,6 +912,32 @@ const TODAY = { timeRange: [{ field: '$createdAt', selector: 'newest', grid: { r
 
 async function rankedToday(ctx, extra) {
   return readback(() => ctx.sdk.documents.ranked({ dataContractId: ctx.contractId, documentTypeName: 'like', aggregate: { type: 'count' }, direction: 'desc', limit: 100, ...TODAY, ...extra }));
+}
+
+/**
+ * `{ id, createdAt }` of `likerId`'s like of `postId` by `postAuthor`, read off
+ * `byAuthorTimePost` (which carries $createdAt) newest first, or null.
+ */
+async function likeWithCreatedAt(ctx, postAuthor, postId, likerId) {
+  let startAfter;
+  for (let page = 0; page < 5; page++) {
+    const result = await readback(() => ctx.sdk.documents.query({
+      dataContractId: ctx.contractId, documentTypeName: 'like', where: [['postAuthor', '==', postAuthor]],
+      orderBy: [['postAuthor', 'asc'], ['$createdAt', 'desc']], limit: 100, ...(startAfter ? { startAfter } : {}),
+    }));
+    let last = null;
+    for (const document of result.values()) {
+      if (!document) continue;
+      last = document;
+      const data = document.toJSON?.() ?? {};
+      if (data.postId === postId && idOf(document.ownerId) === likerId && document.createdAt !== undefined) {
+        return { id: document.id.toBytes?.() ?? bs58.decode(idOf(document.id)), createdAt: Number(document.createdAt) };
+      }
+    }
+    if (result.size < 100 || !last) return null;
+    startAfter = idOf(last.id);
+  }
+  return null;
 }
 
 async function caseT2TrendingOnLike(ctx) {
@@ -888,11 +967,14 @@ async function caseT2TrendingOnLike(ctx) {
   const allTime = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, where: [['hashtag', '==', tag]], limit: 10 }));
   check('t2g the all-time per-tag ranking (byHashtagPost) agrees', Number(allTime.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1);
 
-  // A's like as the byLiker index returns it: its $createdAt is needed to delete it by values.
-  const stored = await queryOne(ctx, 'like', [['$ownerId', '==', botA.ownerId], ['postId', '==', tagged]]);
-  if (!stored) { check('t2 unlike fixture', false, 'A\'s like is not readable'); return; }
-  const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, id: stored.id.toBytes?.() ?? bs58.decode(idOf(stored.id)),
-    createdAt: Number(stored.createdAt), data: likeData({ postId: bs58.decode(tagged), hashtag: tag, postAuthor: owner }) });
+  // A delete by values needs the like's $createdAt. byLiker and byPost do not carry
+  // it (an indexOnly document is synthesized from the index it is read through),
+  // so read it the way like-service's recoverLikeTuple does: through
+  // byAuthorTimePost [postAuthor, $createdAt, postId], newest first.
+  const stored = await likeWithCreatedAt(ctx, botB.ownerId, tagged, botA.ownerId);
+  if (!stored) { check('t2 unlike fixture', false, 'A\'s like was not found on byAuthorTimePost with its $createdAt'); return; }
+  const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, id: stored.id,
+    createdAt: stored.createdAt, data: likeData({ postId: bs58.decode(tagged), hashtag: tag, postAuthor: owner }) });
   expectAccepted('t2h A unlikes the tagged post (delete by values)', await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await entryExists(sdk, contractId, 'like', 'postId', tagged, botA.ownerId)) }));
   await settle();
   try {
@@ -938,10 +1020,172 @@ async function caseY1YappLocked(ctx) {
   const claim = () => errorOf(() => sdk.tokens.claim({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION, identityId: fresh.ownerId, distributionType: 'oncePerIdentity', identityKey: fresh.identityKey, signer: fresh.signer }));
   const start = await balance(fresh.ownerId);
   const first = await claim();
+  if (first !== null && ALREADY_CLAIMED.test(first)) {
+    console.log(`SKIP  y1f–y1g: ${fresh.label} already claimed its grant on an earlier run; pass a --fresh-bot that has not`);
+    return;
+  }
   await settle();
   check(`y1f a fresh identity claims its ${STARTER_GRANT} starter YAPP (a claim is not a transfer)`, (await balance(fresh.ownerId)) === start + STARTER_GRANT, (first ?? '').slice(0, 160));
   const second = await claim();
   expectRejected('y1g a second claim is refused (40722)', asOutcome(second), ALREADY_CLAIMED);
+}
+
+// ---- Carried from verify-v8: fees, suspension, token costs (v8 needs a v9 chain) ----
+
+const creditsOf = async (ctx, ownerId) => (await readback(() => ctx.sdk.identities.balance(ownerId))) ?? 0n;
+const moderatorsPot = async (ctx) => (await readback(() => ctx.sdk.contracts.feePots(ctx.contractId))).moderators;
+const yappPayment = (amount) => paymentInfo(amount, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }).tokenPaymentInfo;
+async function tokenIdOf(ctx) {
+  ctx.tokenId ??= await readback(() => ctx.sdk.tokens.calculateId(ctx.contractId, YAPP_TOKEN_POSITION));
+  return ctx.tokenId;
+}
+const yappOf = async (ctx, ownerId) => tokenBalance(readback, ctx.sdk, await tokenIdOf(ctx), ownerId);
+
+async function caseA1NoAgreement(ctx) {
+  console.log('\n--- a1. post create without an action fee agreement → 40132 ---');
+  // sdk.documents.create has no agreement option: exactly what an un-upgraded client sends.
+  const outcome = await attemptCreate(ctx.sdk, ctx.botA, { contractId: ctx.contractId, docType: 'post', data: postData({ content: 'no agreement' }) });
+  expectRejected('a1a post without $actionFeeAgreement is refused (40132)', outcome, AGREEMENT_NOT_SET);
+}
+
+/** A 40134 (a stale multiplier across an epoch turn) is not the 40133 a2 means to prove. */
+function expectMismatch(label, outcome) {
+  if (!outcome.ok && FEE_MULTIPLIER_NOT_TOLERATED.test(outcome.error ?? '')) {
+    check(label, false, `refused for the stale fee multiplier (40134), not the agreement: ${(outcome.error ?? '').slice(0, 160)}`);
+    return outcome;
+  }
+  return expectRejected(label, outcome, AGREEMENT_MISMATCH);
+}
+
+async function caseA2MismatchedAgreement(ctx) {
+  console.log('\n--- a2. post create with a mismatched agreement → 40133 ---');
+  const { knownPermille } = await feeAgreement(ctx, POST_ACTION_FEE);
+  const wrong = new DocumentActionFeeAgreement(actionFeeAgreementOptions({ ...POST_ACTION_FEE, moderators: 1n }, knownPermille));
+  expectMismatch('a2a agreement naming the wrong moderators amount is refused (40133)', await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'wrong fee' }), agreement: wrong }));
+  const fixed = new DocumentActionFeeAgreement(actionFeeAgreementOptions({ ...POST_ACTION_FEE, pricing: 'fixed' }, knownPermille));
+  expectMismatch('a2b agreement to FIXED pricing on a feeMultiplier fee is the same mismatch (40133)', await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'fixed pricing' }), agreement: fixed }));
+}
+
+async function caseA3AgreedFee(ctx) {
+  const { botA } = ctx;
+  console.log('\n--- a3. the agreed fee lands, the derived id matches, the moderators pot grows ---');
+  const potBefore = (await moderatorsPot(ctx)).credits;
+  const { agreement, knownPermille } = await feeAgreement(ctx, POST_ACTION_FEE);
+  const post = await manualCreate(ctx, botA, { docType: 'post', data: postData({ content: 'agreed fee', hashtag: ctx.tag }), agreement });
+  expectAccepted('a3a post with the declared agreement lands', post);
+  if (!post.ok) return;
+  check('a3b the nonce-committed v1 id derived locally is the id Platform stored', post.fromResult && post.resultId === post.derivedId, `derived=${post.derivedId} result=${post.resultId ?? '(no result: broadcast wait threw)'}`);
+  await settle();
+  const potAfterPost = (await moderatorsPot(ctx)).credits;
+  const expectedPostFee = (POST_ACTION_FEE.moderators * knownPermille) / 1000n;
+  check('a3c the moderators pot grew by the post fee × the epoch multiplier', potAfterPost - potBefore === expectedPostFee, `pot ${potBefore}→${potAfterPost} (Δ${potAfterPost - potBefore}, expected ${expectedPostFee} at ${knownPermille}‰)`);
+  const { agreement: replyAgreement } = await feeAgreement(ctx, REPLY_ACTION_FEE);
+  const reply = await manualCreate(ctx, botA, { docType: 'reply', data: replyData({ rootPostId: bs58.decode(post.id), parentOwnerId: bs58.decode(botA.ownerId) }), agreement: replyAgreement });
+  expectAccepted('a3d reply with its own declared agreement lands', reply);
+  await settle();
+  const potAfterReply = (await moderatorsPot(ctx)).credits;
+  check('a3e …growing the pot by the reply fee × multiplier', reply.ok && potAfterReply - potAfterPost === (REPLY_ACTION_FEE.moderators * knownPermille) / 1000n, `Δ${potAfterReply - potAfterPost}`);
+}
+
+async function caseA4Claim(ctx) {
+  const { sdk, contractId, moderator } = ctx;
+  console.log('\n--- a4. claimFees pays the moderators pot; once per epoch (41111) ---');
+  if (interimOnly(ctx, 'a4')) return;
+  const pot = await moderatorsPot(ctx);
+  if (pot.credits === 0n) { check('a4 pot is funded (run a3 first)', false, 'the moderators pot is empty'); return; }
+  const before = await creditsOf(ctx, moderator.ownerId);
+  const first = await errorOf(() => sdk.contracts.claimFees({ identity: moderator.identity, contractId, pot: 'moderators', signer: moderator.signer }));
+  if (first !== null && ALREADY_CLAIMED_EPOCH.test(first)) { check('a4a the pot was already claimed this epoch (an earlier run); the refusal is 41111', true, first.slice(0, 160)); return; }
+  check('a4a the interim owner claims the moderators pot', first === null, (first ?? '').slice(0, 220));
+  if (first !== null) return;
+  await settle();
+  check('a4b the claimant\'s credits rose (net of the claim\'s own fee)', (await creditsOf(ctx, moderator.ownerId)) > before);
+  const second = await errorOf(() => sdk.contracts.claimFees({ identity: moderator.identity, contractId, pot: 'moderators', signer: moderator.signer }));
+  expectRejected('a4c a second claim in the same epoch is refused (41111)', asOutcome(second), ALREADY_CLAIMED_EPOCH);
+}
+
+async function caseS1Suspend(ctx) {
+  const { sdk, contractId, botB, moderator } = ctx;
+  console.log('\n--- s1. suspend: refused (41108) until the block time lapses ---');
+  if (interimOnly(ctx, 's1')) return;
+  const until = Date.now() + SUSPENSION_MS;
+  const suspended = await errorOf(() => sdk.contracts.suspendUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, until: BigInt(until), reason: { text: 'v10 battery suspension' }, signer: moderator.signer }));
+  check('s1a the interim owner suspends B for ~25 s', suspended === null, (suspended ?? '').slice(0, 220));
+  if (suspended !== null) return;
+  const status = await standingOf(ctx, botB.ownerId, ['suspensions']);
+  check('s1b moderationStatus proves the suspension and its end', status.suspendedUntil !== undefined && Number(status.suspendedUntil) === until, describeValue(status));
+  const { agreement } = await feeAgreement(ctx, POST_ACTION_FEE);
+  expectRejected('s1c B\'s post while suspended is refused (41108)', await manualCreate(ctx, botB, { docType: 'post', data: postData({ content: 'suspended post' }), agreement }), SUSPENDED);
+  const probe = () => attemptCreate(sdk, botB, { contractId, docType: 'block', data: blockData({ blockedId: randomIdBytes() }) });
+  expectRejected('s1d …and so is an unpriced create', await probe(), SUSPENDED);
+  await settle(Math.max(until - Date.now() + 8000, 0));
+  // `until` is judged against BLOCK time, which trails the wall clock on a quiet devnet.
+  let lapsed = await probe();
+  let retries = 0;
+  for (; retries < 12 && !lapsed.ok && SUSPENDED.test(lapsed.error ?? ''); retries++) {
+    await settle(10_000);
+    lapsed = await probe();
+  }
+  expectAccepted(`s1e B's create lands once the suspension lapsed (after ${retries} block-time retr${retries === 1 ? 'y' : 'ies'})`, lapsed);
+  check('s1f the lapsed suspension was swept by that write', (await standingOf(ctx, botB.ownerId, ['suspensions'])).suspendedUntil === undefined);
+}
+
+async function caseK1OptionalTokenCost(ctx) {
+  const { sdk, contractId, botA, botB } = ctx;
+  console.log('\n--- k1. optional token cost: credits without payment info, YAPP + sponsored gas with it ---');
+  const targets = [await createPost(ctx, botB, 'k1 credits-paid like target'), await createPost(ctx, botB, 'k1 yapp-paid like target')];
+  if (targets.some((id) => !id)) { check('k1 fixtures', false, 'could not create the target posts'); return; }
+  const likeOn = (postId) => attemptCreateIndexOnly(sdk, botA, {
+    contractId, docType: 'like', data: likeData({ postId: bs58.decode(postId), postAuthor: bs58.decode(botB.ownerId) }),
+    accepted: () => entryExists(sdk, contractId, 'like', 'postId', postId, botA.ownerId),
+  });
+  const [creditsBefore, yappBefore] = await Promise.all([creditsOf(ctx, botA.ownerId), yappOf(ctx, botA.ownerId)]);
+  expectAccepted('k1a a like WITHOUT payment info lands', await likeOn(targets[0]));
+  await settle();
+  const [creditsAfter, yappAfter] = await Promise.all([creditsOf(ctx, botA.ownerId), yappOf(ctx, botA.ownerId)]);
+  check('k1b …charging credits and no YAPP', creditsAfter < creditsBefore && yappAfter === yappBefore, `credits ${creditsBefore}→${creditsAfter} yapp ${yappBefore}→${yappAfter}`);
+  const [ownerBefore, aCreditsBefore, aYappBefore] = await Promise.all([creditsOf(ctx, ctx.ownerId), creditsOf(ctx, botA.ownerId), yappOf(ctx, botA.ownerId)]);
+  const paidError = await errorOf(async () => {
+    const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, data: likeData({ postId: bs58.decode(targets[1]), postAuthor: bs58.decode(botB.ownerId) }), entropy: randomIdBytes() });
+    await sdk.documents.create({ document, identityKey: botA.identityKey, signer: botA.signer, tokenPaymentInfo: yappPayment(TOKEN_COST.like), settings: { identityNonceStaleTimeS: 0 } });
+  });
+  await settle();
+  const landed = await entryExists(sdk, contractId, 'like', 'postId', targets[1], botA.ownerId);
+  check('k1c a like WITH payment info (PreferContractOwner gas) lands on the paused token', landed, landed ? '' : (paidError ?? '').slice(0, 220));
+  const [ownerAfter, aCreditsAfter, aYappAfter] = await Promise.all([creditsOf(ctx, ctx.ownerId), creditsOf(ctx, botA.ownerId), yappOf(ctx, botA.ownerId)]);
+  check(`k1d …charging exactly ${TOKEN_COST.like} YAPP`, aYappBefore - aYappAfter === BigInt(TOKEN_COST.like), `yapp ${aYappBefore}→${aYappAfter}`);
+  check('k1e …and the contract OWNER paid the gas (its credits moved, A\'s did not)', ownerAfter < ownerBefore && aCreditsAfter === aCreditsBefore, `owner ${ownerBefore}→${ownerAfter} A ${aCreditsBefore}→${aCreditsAfter}`);
+}
+
+async function resolvePoorBot(sdk) {
+  const ownerId = loadIdentityIds()[POOR_BOT_INDEX];
+  if (!ownerId) return null;
+  try {
+    const owner = resolveOwner({ botIndex: POOR_BOT_INDEX, ownerId });
+    const { identityKey, signer } = await signerFor(sdk, owner);
+    return { ownerId, identityKey, signer, label: owner.label };
+  } catch (e) {
+    console.log(`     (no poor bot: ${describeErr(e).slice(0, 120)})`);
+    return null;
+  }
+}
+
+async function caseK2InsufficientYapp(ctx) {
+  const { sdk, contractId, botB } = ctx;
+  console.log('\n--- k2. payment info with insufficient YAPP is a refusal (40700), never a credits fallback ---');
+  const poor = await resolvePoorBot(sdk);
+  if (!poor) { console.log('SKIP  k2 needs a bot with no YAPP (--poor <index>); none resolved'); return; }
+  const balance = await yappOf(ctx, poor.ownerId);
+  if (balance > 0n) { console.log(`SKIP  k2: ${poor.label} holds ${balance} YAPP; pick a --poor bot with none`); return; }
+  const target = await createPost(ctx, botB, 'k2 poor bot target');
+  if (!target) { check('k2 fixture', false, 'no target post'); return; }
+  const error = await errorOf(async () => {
+    const { document } = buildDocument({ contractId, docType: 'like', ownerId: poor.ownerId, data: likeData({ postId: bs58.decode(target), postAuthor: bs58.decode(botB.ownerId) }), entropy: randomIdBytes() });
+    await sdk.documents.create({ document, identityKey: poor.identityKey, signer: poor.signer, tokenPaymentInfo: yappPayment(TOKEN_COST.like) });
+  });
+  await settle();
+  const landed = await entryExists(sdk, contractId, 'like', 'postId', target, poor.ownerId);
+  expectRejected('k2a a like with payment info and 0 YAPP is refused (40700)', { ok: landed, error }, INSUFFICIENT_TOKENS);
 }
 
 // ---- Registry ------------------------------------------------------------------
@@ -984,6 +1228,13 @@ const CASES = new Map([
   ['r2', prepared(caseR2SeatedResolution)],
   ['t2', caseT2TrendingOnLike],
   ['y1', caseY1YappLocked],
+  ['a1', prepared(caseA1NoAgreement)],
+  ['a2', prepared(caseA2MismatchedAgreement)],
+  ['a3', prepared(caseA3AgreedFee)],
+  ['a4', prepared(caseA4Claim)],
+  ['s1', prepared(caseS1Suspend)],
+  ['k1', prepared(caseK1OptionalTokenCost)],
+  ['k2', prepared(caseK2InsufficientYapp)],
 ]);
 
 // ---- Self-test ------------------------------------------------------------------
