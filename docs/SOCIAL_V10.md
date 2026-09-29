@@ -38,7 +38,7 @@ All sizes are the signed create measured with the beta.7 SDK. The cap is 20,480 
 
 | Contract | Topology | Change | Signed create |
 | --- | --- | --- | ---: |
-| social v10 | `v10` | new cut (below) | **18,178 B** (1,822 B under budget) |
+| social v10 | `v10` | new cut (below), re-cut for merged count indexes and reposts-as-quotes | **17,284 B** (2,716 B under budget; 18,178 B before the re-cut) |
 | storefront | `v5` | beta.7 grammar; QA D-25 (an order needs an open store); `categoryAndTime` skips items with no section | 14,861 B (was 14,588 on beta.6) |
 | blog | `v5` | beta.7 grammar only; keeps the beta.6 comments-off rule and owner gate | 6,489 B |
 | pollr | `v4` | beta.7 grammar only | 6,004 B |
@@ -52,7 +52,7 @@ Every file parses under full validation twice, and passes the node-rule audit:
 - the wasm-dpp2 parse (meta-schema and index shapes);
 - `auditNodeRules`, which covers election windows, abilities, reference targets, `where` sides and index shapes.
 
-The negative probes (73) and the `propertyConstraints` cases (50) behave as recorded:
+The negative probes (74) and the `propertyConstraints` cases (58) behave as recorded:
 
 ```bash
 node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v10.json --strict-size --cost
@@ -63,7 +63,7 @@ node scripts/validate-contract-offline.mjs --constraints
 ### sha256 of each file the publisher pins
 
 ```
-e29f77f6013aa9f02aa57fdf85cd11e2c43f603838d688647b1f0fb6f855f955  yappr-social-contract-v10.json   (new)
+d9318f6dd9cc74d6afaaa9b9611db30966ed3feb0b0294541fd194ac2a09b429  yappr-social-contract-v10.json   (new; e29f77f6… before the re-cut)
 ecd08e7676c88cf8e623cce82ddfe614d96444f487f1d2cf43411fe4762d0735  yappr-storefront-contract.json   (changed)
 464b605e652d6dac031fee9576d9573bf25b5fe6dda530b7f8330da78d915dbe  yappr-blog-contract.json        (changed)
 dbc8006389b4caf421b1379de2a76bbf105182d10c76e614c8ba16a8f13113d5  pollr-contract.json             (changed)
@@ -107,15 +107,83 @@ The translation is mechanical, and `lib/contract-topology.test.ts` pins every v1
 | 7 | **The DashPay profile is the base profile; `yapprProfile` is the extension**, in social. `ownerRefersTo` requires a DashPay `profile` owned by the writer (`findBy { $ownerId: "." }` into DashPay's unique `ownerId` index; 40120 without one), moderator-deletable. The legacy social `profile` doctype and the profile contract are retired on v10 | Users with a DashPay profile show their name and avatar at once; one registration. DashPay caps the name at 25 and the bio (`publicMessage`) at 140. Payment addresses stay in `yapprProfile.paymentUris` |
 | 8 | **No doctype descriptions** | Kept here instead; they would cost about 1,183 B of the headroom |
 | 9 | **`beat` removed; trending is ROLLING, on `like` itself.** `like` keeps 7 indexes: byPost, byHashtagPost (`skipIfAbsent`), byAuthorPost, byAuthorTimePost, byLiker, plus **`byTrendPost`** `[$createdAt, postId]` (72h windows every 24h, ranked) for top posts and **`byTrendHashtagPost`** `[$createdAt, hashtag, postId]` (24h windows every 6h, `skipIfAbsent`, ranked at `[hashtag, postId]`) for trending tags and a tag's top posts. `byDayPost`, `byDayAuthorPost` and `byDayHashtagPost` are gone: there is no windowed creator axis, so the creator leaderboard and a profile's top are all-time on v10. All windows expire after a week (`ttl` 604800) | One transition per like instead of two. The client reads each rolling grid through its **oldest** open window, which always spans ~18-24h (tags) or ~48-72h (posts), where a daily grid restarts empty at midnight UTC. The two grids stay distinct, so neither shares the other's storage or `ttl`. The all-time `byHashtagPost` must stay, with its own skip (#5162 refuses an indexOnly optional property without an untimed single-skip index). **Decision:** BETA7-PLAN's D-3 proposed the daily grid (cheaper by ~11.9M per tagged like); the user reversed it on 2026-09-28 in favour of this rolling design, measured then through drive-abci at 77.5M untagged / 91.3M tagged steady, against 76.7M / 117.5M for v9's like + beat |
-| 10 | **`skipIfAbsent` on every stored index over an optional property**: post `quotesOfPost`, `quotesOfReply`, `quotedPostOwnerAndTime`, `quoteCount`, `quoteReplyCount`, `tagAndTime`; reply `replyToReplyAndTime`, `byReplyToReply`; report `ownerAndPost`, `ownerAndReply`, `byPost`, `byReply` | No null-key entries. A plain post is 167.5M / 135.8M against v9's 323.5M / 189.9M. Every client read of these indexes binds the property with `==`, which a skip index serves |
+| 10 | **`skipIfAbsent` on every stored index over an optional property**: post `quotesOfPost`, `quotesOfReply`, `quotedPostOwnerAndTime`, `tagAndTime`, `ownerAndQuotedPost`, `ownerAndQuotedReply`; report `ownerAndPost`, `ownerAndReply`, `byPost`, `byReply`. Not `repliesOf`: its `replyToReplyId` must stay nullable, since direct replies live under the null branch (#16) | No null-key entries. A plain post is 167.5M / 135.8M against v9's 323.5M / 189.9M. Every client read of these indexes binds the property with `==`, which a skip index serves |
 | 11 | **Reports are resolved, not deleted.** `status` (1 no action, 2 content removed, 3 user actioned) and `resolution` (1–200 characters) are `moderatorAbilities.changeFields`, written with `moderatorChangeDocumentFields`; `byStatus [status, $createdAt]` and `byModerator [$moderatedBy, $moderatedAt]`; the 90-day `ttl` stays; `resolvedHasStatus` refuses a resolution without a status; moderators may still delete a report, with `deleteKeepsRecord: false` (spam purge, no removal record); the elected set gives `report` `["deleteDocuments", "changeDocumentFields"]` | The report stays visible with its outcome, stamped with who handled it and when. A field change does not count toward the team's action share. A reporter who sets `status` is refused 41124. `byStatus` does not skip, because an open report has no status |
-| 12 | **YAPP cannot be transferred or bought.** `startAsPaused: true`; `changeDirectPurchasePricingRules` authorized and admin `noOne`; `emergencyActionRules` already `noOne`, so nobody can unpause | Only transfers read the pause in drive-abci, so the token costs on post (10), reply (3), like (1), likeReply (1) and repost (1), the 100 once-per-identity grant, and owner mint and burn keep working. Seeders and batteries mint or claim; tips on v10 are credit tips |
+| 12 | **YAPP cannot be transferred or bought.** `startAsPaused: true`; `changeDirectPurchasePricingRules` authorized and admin `noOne`; `emergencyActionRules` already `noOne`, so nobody can unpause | Only transfers read the pause in drive-abci, so the token costs on post (10, a repost included), reply (3), like (1) and likeReply (1), the 100 once-per-identity grant, and owner mint and burn keep working. Seeders and batteries mint or claim; tips on v10 are credit tips |
 | 13 | **Election windows 3600 / 3600 s**, elected with the owner as interim and `ownerProtected`; `yapprProfile` moderated for `deleteDocuments` | Devnet only (the mainnet floor is one day; `--network mainnet` fails the audit on purpose) |
+| 14 | **Merged count indexes.** Every count-only index whose list twin can carry the count is dropped, and the twin is made `rangeCountable` (ranked where a leaderboard reads it). See [Merged count indexes](#merged-count-indexes) | One tree per relationship instead of two: follow −20.6M, a nested reply −25.8M, a plain post −9.7M per create. The counts read the same way |
+| 15 | **Reposts are quotes.** The `repost` doctype is gone. A repost is a `post` with `quotedPostId` (or `quotedReplyId`) and `quotedPostOwnerId` and no content. The unique `ownerAndQuotedPost` / `ownerAndQuotedReply` (`skipIfAbsent`) allow one quote **or** repost per author per target (**40105** on a second). A new rule, `notEmpty`, requires text, ciphertext, media, an embed or a quote (**10422**); ciphertext counts, so a private post with no teaser is valid | The user's design (2026-09-29). Reposts arrive through the post queries, so the feed's separate repost merge goes away; the quote count is the repost count; replies can be reposted (`quotedReplyId`). `quotedPostOwnerId` stays where-bound, and `quotedPostOwnerAndTime` drives "X reposted / quoted you". Pricing stays per doctype: a repost pays the post price (10 YAPP and the 80M action fee), accepted by the user |
+| 16 | **One reply index for threads.** `repliesOf [rootPostId, replyToReplyId, $createdAt]`, `rangeCountable`, ranked at `rootPostId`, replaces `rootAndTime`, `byRoot`, `replyToReplyAndTime` and `byReplyToReply`. `replyToReplyId` is nullable, not skipped: a reply to the root sits under the null branch | The ranking at `rootPostId` makes every level below it a count tree, so the thread total (`rootPostId ==`), a reply's count (`+ replyToReplyId ==`) and the direct-reply count (`replyToReplyId == null`) are each one read. A reply to a reply costs 25.8M less. The thread's global newest-first order across branches is lost (see below) |
 
 Two changes on top of the `V10B7-FINAL` prototype:
 
 - the rekey index is renamed `ownerAndKeyVersion` → `ownerAndKeyGeneration`, to match the property;
 - `report.resolution` gains `minLength: 1` and the `resolvedHasStatus` rule (+71 B). Without them, a moderator could write an empty note, or a note with no outcome.
+
+### Merged count indexes
+
+**Before (e29f77f6) and after (d9318f6d):**
+
+| Type | Before | After | Why |
+| --- | --- | --- | --- |
+| post | `ownerAndTime [$ownerId, $createdAt]` + `byOwner [$ownerId]` (rangeCountable, ranked) | `ownerAndTime`, `rangeCountable`, `rankedCountable { at: "$ownerId" }` | Author post counts and the top-authors ranking from the list index |
+| post | `quotesOfPost [quotedPostId, $createdAt]` + `quoteCount [quotedPostId]` | `quotesOfPost`, `rangeCountable` | The quote (= repost) count from the list |
+| post | `quotesOfReply [quotedReplyId, $createdAt]` + `quoteReplyCount [quotedReplyId]` | `quotesOfReply`, `rangeCountable` | Same, for replies |
+| post | — | `ownerAndQuotedPost [$ownerId, quotedPostId]`, `ownerAndQuotedReply [$ownerId, quotedReplyId]`, unique, `skipIfAbsent` | One quote or repost per author per target; also "view your repost" |
+| post | `timeline`, `quotedPostOwnerAndTime`, `tagAndTime` | unchanged | 8 indexes (was 9) |
+| reply | `rootAndTime [rootPostId, $createdAt]` + `byRoot [rootPostId]`, `replyToReplyAndTime [replyToReplyId, $createdAt]` + `byReplyToReply [replyToReplyId]` | `repliesOf [rootPostId, replyToReplyId, $createdAt]`, `rangeCountable`, `rankedCountable { at: "rootPostId" }` | One index for the thread, its counts at two levels and the most-replied ranking. 3 indexes (was 6) |
+| follow | `following [$ownerId, $createdAt]` + `followingCount [$ownerId]` | `following`, `rangeCountable` | The following count from the list |
+| follow | `followers [followingId, $createdAt]` + `followerCount [followingId]` (rangeCountable, ranked) | `followers`, `rangeCountable`, `rankedCountable { at: "followingId" }` | The follower count and "most followed" from the list |
+| repost | 4 indexes | removed | Reposts are quotes (#15) |
+| like, likeReply, report, bookmark, block, postMention, followRequest | — | unchanged | indexOnly terminal counts and the agreed rolling design stay; the rest have no count-only twin |
+
+**How the counts read.** The count index picker of rs-drive v4.2.0-beta.7 (`drive_document_count_query/index_picker.rs`, `path_query.rs`) serves two forms beyond an exact match. The composite feed's count slots use the same picker:
+
+- **Prefix-to-last.** A count pinning every property but the last of a `rangeCountable` index reads the terminal tree's whole-prefix total. So `quotedPostId == T`, `$ownerId == A`, `followingId == B` and `$ownerId in [...]` with `groupBy` read `[X, $createdAt]` directly, with no `$createdAt` range. A `$createdAt > 0` range also works (the range-aggregate form).
+- **At-chain.** Below the shallowest level of a `rankedCountable { at }` ranking, every level is a count tree, so any contiguous pin at or below it is one read. That is what gives `repliesOf` its thread count (`rootPostId == R`), a reply's count (`rootPostId == R && replyToReplyId == P`) and the direct-reply count (`replyToReplyId == null`).
+
+`replyToReplyId == P` alone is not a prefix of `repliesOf`, so a reply's count always pins its `rootPostId`, which every reply carries. Batched per-reply counts are `rootPostId == R && replyToReplyId in [...]`, grouped by `replyToReplyId`.
+
+**The composite path rule.** A composite query's page carries a limit, and grovedb refuses a budget at the merged root. So a bound sub-query whose index path **extends the page's own** is refused ("lands at the merged root"). The client therefore:
+
+- reads a viewer's own quote or repost (`ownerAndQuotedPost`) with a separate batched query, because profile and following pages sit on post's `$ownerId` path;
+- counts a thread page's replies with a separate batched count, not a slot beside a `repliesOf` page.
+
+The feed page (a timeline page with quote and reply slots) and the author card (rooted on the DashPay profile) are on other paths and unaffected.
+
+**Thread order.** A thread reads direct replies as `rootPostId == R && replyToReplyId == null` ordered by `$createdAt` (either direction, paged with `startAfter`), and a reply's children as `replyToReplyId == P` under the same root. A whole-thread scan (`rootPostId == R`, ordered by `replyToReplyId` then `$createdAt`) returns the replies grouped by parent. Before, `rootAndTime` gave the whole thread strictly newest-first across branches; on v10 there is no such order, and pages walk one branch at a time.
+
+**Proven live.** `scripts/prove-merged-counts.mjs` registers a throwaway contract whose post, reply and follow types are these, copied from the file minus references, fees and token costs. It writes a fixture from three identities (never the maker; the first registers the contract and needs about 40 × 10⁹ credits) and runs every shape the client issues. On bonsia at `e701fed6` (bots 1, 3 and 2; throwaway contract `AHtbCJeyhF3nfjhzzmgMnJGg6kremFrL9foeNY4CQBk1`) **all 46 checks passed**:
+
+- **u1–u3:** 40105 on a second quote of a post and on a second repost of a reply; 10422 `notEmpty`.
+- **q1–q4:** quote counts `==`, the same with a `$createdAt` range, batched `in` + `groupBy`, and the app's quote list.
+- **a1–a3:** author counts, single and batched, and the ranked top authors.
+- **r1–r8:** all of `repliesOf`:
+  - the thread, per-reply and null-pin counts;
+  - the direct-reply list, ascending, descending and paged;
+  - a reply's children, and the whole-thread scan;
+  - batched per root and per reply;
+  - the most-replied ranking.
+- **f1–f5:** follower and following counts, single and batched, and the most-followed ranking.
+- **c1–c4:** composite slots:
+  - an author page with quote and reply count slots;
+  - a replies page on `ownerAndTime`, with per-reply slots pinned to their root;
+  - the author card off another doctype;
+  - a by-id (`$id in`) reply page with root-pinned slots.
+- **c2x/c3x:** the path rule's refusals.
+- **w1/w2:** bare reposts of a post and of a reply, read back.
+- **o1/o2:** the viewer's own quote or repost per target (`ownerAndQuotedPost` / `ownerAndQuotedReply` with `in`).
+- **n1/n2:** the quote/repost notification source, alone and as a composite sibling beside follows and replies.
+- **t1/t2:** the whole thread at the app's page size (50), and paged with `startAfter`.
+- **l1/l2:** the quote lists at limit 100, of a post and of a reply.
+- **c5:** the For You page exactly as `composite-feed-page` builds it: a timeline page; like, reply and quote counts; the quoted-post join; the viewer's likes; DPNS names. The profile slot is left out because v10's profile is DashPay's (#602).
+- **c6:** a profile page on `ownerAndTime` with the quoted-post join.
+- **g1:** the following feed's `$ownerId in` + `$createdAt >` read on the ranked `ownerAndTime`.
+
+Earlier runs:
+- `ErQcL7YL…`: 4 grouped-count assertions compared in the wrong order (the data was right), and the two composites were refused by the path rule. Both fixed in `7a55a051`.
+- `EaxoC5My…`: 32/32 before the client shapes were added.
+- `BrQyHojS…`: 43/43 before c5/c6/g1.
 
 ### The DashPay profile and the extension
 
@@ -154,8 +222,22 @@ These are `documentCreateCost` figures in credits, as new / known index values. 
 | post, 1000 ASCII characters | — | 183.5M / 151.8M |
 | post with media | — | 177.0M / 145.3M |
 | reply, top-level | 213.6M / 107.8M | 126.6M / 81.4M |
+| repost | 90.1M / 51.7M (the `repost` doctype) | a post, see below |
 | report, open (post) | 12.0M / 13.3M | 14.4M / 16.2M |
 | yapprProfile | — | 137.2M |
+
+**The re-cut, measured the same way** (140-character text; `totalCredits`: storage, processing and the action fee):
+
+| Document | Before (e29f77f6) | After (d9318f6d) | Δ new values |
+| --- | ---: | ---: | ---: |
+| post, plain | 155.9M / 124.2M | 146.2M / 116.5M | −9.7M |
+| quote | 216.2M / 153.0M | 210.7M / 148.2M | −5.5M |
+| repost | 90.1M / 51.7M (`repost`, 1 YAPP) | 206.1M / 143.6M (a bare quote: 80.0M of it the action fee, and 10 YAPP) | +116.0M |
+| reply to the root | 115.1M / 69.9M | 122.8M / 63.6M | +7.8M |
+| reply to a reply | 151.4M / 88.3M | 125.6M / 64.6M | −25.8M |
+| follow | 106.7M / 58.8M | 86.1M / 43.3M | −20.6M |
+
+A reply to the root costs more the first time a thread gets one (the null branch and the ranking row) and less after that. A repost costs what a post costs; the user accepted that, rather than pricing a content-less post separately.
 
 `node scripts/validate-contract-offline.mjs <file> --cost` prints the defaults for every type.
 
@@ -164,6 +246,10 @@ These are `documentCreateCost` figures in credits, as new / known index values. 
 | Candidate | Why not |
 | --- | --- |
 | Doctype descriptions back (19,512 B) | 488 B of headroom is too thin for the next beta |
+| Keeping the count-only indexes beside their list twins | Every count they served reads from the twin (prefix-to-last, at-chain), proven live; each cost one more tree per write |
+| `repliesOf` ranked at both `rootPostId` and `replyToReplyId` | 189.4M / 120.7M per reply against 180.4M / 119.5M; the ranking at `rootPostId` already makes the deeper level a count tree, and nothing ranks replies per parent |
+| Keeping `rootAndTime` + `replyToReplyAndTime` (both made `rangeCountable`) | 185.4M / 127.7M per reply against 180.4M / 119.5M, and two indexes where one serves every thread read; the price is the whole-thread newest-first order |
+| A separate `repost` doctype priced below a post | The user chose one shape: a repost is a quote, with one quote or repost per author per target |
 | The like "lean" variant (drop the all-time `byHashtagPost`) | Refused by #5162 (see #9). Probed |
 | A daily grid for top posts and tags (BETA7-PLAN D-3), and a daily creator window | Reversed by the user (2026-09-28): trending must be rolling. The daily variant measured 133.2M / 46.7M untagged and 185.4M / 61.8M tagged, so rolling costs +0.4M / +0.5M untagged and +11.4M / +11.9M tagged, all of it processing (a TTL'd window adds no storage). Dropping the creator window saves an index per like |
 | Dropping the report `ttl` | Reports would become permanent storage, about 8× the cost per report |
@@ -212,14 +298,28 @@ The election ops script files reasons with `--reasons SPM:Spam,ABU:Abuse,REP:Rep
   - it gains `auditIndexShapes`, the port of the v10 study's `index-audit.py` (10205, 10206, 10208, 10209, and the 10-index limit);
   - the probes move to v10 and record a third layer (`dpp2`: refused only by wasm-dpp2);
   - the beta.6 v9 file is recorded as refused on beta.7.
-- **`scripts/property-constraint-cases.mjs`**: the v10 rules (no tombstone rule; report `resolvedHasStatus`) and storefront `storeIsOpen`.
+- **`scripts/property-constraint-cases.mjs`**: the v10 rules (no tombstone rule; report `resolvedHasStatus`; post `notEmpty`, with a bare repost, a reply repost, media-only, embed-only and ciphertext-only accepted) and storefront `storeIsOpen`.
+- **`scripts/prove-merged-counts.mjs`**: the live proof of the merged count indexes and of every query shape the reposts-as-quotes client issues (above). `--dry-run` builds and parses its contract offline.
 - **`lib/contract-topology.ts`**:
   - `v10` joins `v2` and `v9`, and every client change gates on it;
   - the contract-derived numbers (costs, fees, grant, lists, election windows, distinctFrom) read the configured cut's JSON;
-  - the new capability helpers are `isV10`, `postsHaveLanguage`, `contentLimits`, `mediaCarriesHashes`, `privateFeedKeyFields`, `dashpayProfileExtension`, `windowedRankingFor` (per axis: doctype, grid, `newest`/`oldest`, label), `moderatorAbilitiesFor`, `moderatorDeletionKeepsRecord`, `reportResolutionFields`/`reportsAreResolved` and `yappIsLocked`.
+  - the new capability helpers are `isV10`, `postsHaveLanguage`, `contentLimits`, `mediaCarriesHashes`, `privateFeedKeyFields`, `dashpayProfileExtension`, `windowedRankingFor` (per axis: doctype, grid, `newest`/`oldest`, label), `moderatorAbilitiesFor`, `moderatorDeletionKeepsRecord`, `reportResolutionFields`/`reportsAreResolved` and `yappIsLocked`;
+  - for the re-cut: `repostsAreQuotes` (no `repost` surface; reposting creates a bare quote), `ownQuoteIndexFor`, `replyCountNeedsRoot` and `authorPostCountsAreRanked`.
+- **Client (v10 only; v2 and v9 unchanged).**
+  - Count reads: reply-card child counts pin the root. The viewer's own quote or repost and a multi-root page's child counts are separate batched reads next to the composite page. The top contributors come from the ranked `ownerAndTime`.
+  - Reposts: a repost creates a bare quote, and un-reposting deletes it; a quote with text is never deleted without a confirm. While a bare repost stands, the menu offers Undo Repost; a quote offers "View your quote". A 40105 on your own bare repost (a double click, a lost acknowledgement) counts as done.
+  - Display: a bare repost renders as "X reposted" over its target, and the feed collapses several reposts of one target into one card ("X and N others reposted"). A bare repost opened directly redirects to its target. Blocked or hidden-sensitive targets stay hidden when reposted. A repost of a deleted post shows its owner a Remove button.
+  - The separate repost feed merge is gone, and the engagements page splits the quote list into Reposts and Quotes.
+  - Notifications: "reposted / quoted your post" come from `quotedPostOwnerAndTime`.
+  - Threads read `repliesOf`: direct replies under the null branch, and children per parent.
+  - `createPost` writes `language` only where posts carry one, and timeline reads use `postTimelineClauses` (both from #600).
 - **Storefront topology.** `lib/constants.ts` adds `v5` (`storefrontOrdersCarryStoreStatus`).
 - **Batteries.**
-  - `scripts/verify-v10.mjs` replaces verify-v9. It keeps e0, d1, p1, b1, w1, m1, m2 and o1–o4, drops the tombstone cases, and adds x1 (deletes and 40120), x2 (media 10101, 10421, no language, the timeline), x3 (the extension and DashPay), c1, r1/r2 (resolve, 41124, 10905, 41123, purge with no record, 41102 on the protected owner), t2 (rolling trending on like) and y1 (YAPP transfer 40711, purchase 40721, a paid post, the grant). It also carries verify-v8's a1–a4 (40132; a2's under-declared moderators part is a refused charter discount, 40139, while fixed pricing or a larger part is 40133; the derived id and pot growth; 41111), s1 (41108) and k1/k2 (credits vs YAPP with sponsored gas, 40700), since verify-v8 needs a v9 chain.
+  - `scripts/verify-v10.mjs` replaces verify-v9. For the re-cut:
+    - o3 and x1i now cover the bare repost;
+    - q1 covers repost-as-post: 40132 without the agreement, 40105 on a second repost or quote per author per target (post and reply), exact quote counts, `quotedPostOwnerAndTime`, and 10422 `notEmpty`;
+    - q2 covers the merged counts, exact on fresh targets: batched quotes, thread, per-reply and null-pin counts, author and follow counts, and the ranked top authors.
+  - It keeps e0, d1, p1, b1, w1, m1, m2 and o1–o4, drops the tombstone cases, and adds x1 (deletes and 40120), x2 (media 10101, 10421, no language, the timeline), x3 (the extension and DashPay), c1, r1/r2 (resolve, 41124, 10905, 41123, purge with no record, 41102 on the protected owner), t2 (rolling trending on like) and y1 (YAPP transfer 40711, purchase 40721, a paid post, the grant). It also carries verify-v8's a1–a4 (40132; a2's under-declared moderators part is a refused charter discount, 40139, while fixed pricing or a larger part is 40133; the derived id and pot growth; 41111), s1 (41108) and k1/k2 (credits vs YAPP with sponsored gas, 40700), since verify-v8 needs a v9 chain.
   - `verify-storefront` adds s21 (D-25).
   - The blog, storefront and pollr self-tests assert `where`.
 - **Registration.** `register-social-v3-draft.mjs` defaults to v10 and funds bots by owner **mint** (a transfer is refused on the paused token).
@@ -228,6 +328,8 @@ The election ops script files reasons with `--reasons SPM:Spam,ABU:Abuse,REP:Rep
   - The provisioner writes a DashPay profile plus `yapprProfile`, and funds YAPP by owner mint (`--yapp-source maker`) or claim then mint (`claim`).
   - `ensureYapp` claims, then mints.
   - The tips seeder refuses v10 (there is nothing to transfer).
+  - Corpus reposts are written as bare quotes (a post, at the post's price), and the generator never gives one author two quotes/reposts of one target (40105).
+  - Progress-journal records carry the contract id, and a run against another contract refuses the journal.
   - The non-social personas #200–260 are in `scripts/seed/personas.non-social.json`.
 
 ## Publishing on bonsia
