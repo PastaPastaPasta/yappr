@@ -33,3 +33,14 @@ it('captures the viewer once before ranking and isolates hydrated caches across 
   expect(mocks.ranked).toHaveBeenCalledTimes(2);
   expect(mocks.hydrate.mock.calls[1][0].currentUserId).toBe('viewerB');
 });
+
+it.each([['v9', 'beat'], ['v10', 'like']])("reads today's hashtag window from the %s cut's %s doctype", async (topology, docType) => {
+  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology);
+  mocks.ranked.mockResolvedValue({ entries: [] });
+  const { topHashtagsByLikes, topLikedPosts } = await import('./ranked-likes');
+  await topHashtagsByLikes(12, 'today');
+  await topLikedPosts({ hashtag: 'dash', window: 'today' });
+  expect(mocks.ranked.mock.calls.map(([query]) => query.documentTypeName)).toEqual([docType, docType]);
+  await topHashtagsByLikes(12, 'all');
+  expect(mocks.ranked.mock.calls[2][0].documentTypeName).toBe('like');
+});

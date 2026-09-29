@@ -29,7 +29,7 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import { getEvoSdk } from './evo-sdk-service';
-import { WINDOWED_DAY_GRID, referencesMayDangle, windowedRankingsAvailable } from '../contract-topology';
+import { WINDOWED_DAY_GRID, dailyHashtagWindowDocType, referencesMayDangle, windowedRankingsAvailable } from '../contract-topology';
 
 /**
  * Which slice of time a ranking covers. `'all'` is the all-time axis;
@@ -104,10 +104,10 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
           ? [['postAuthor', '==', postAuthor] as [string, '==', unknown]]
           : undefined;
 
-    // Today's per-tag top lives on `beat.byDayHashtagPost` (like.hashtag is
-    // optional and cannot sit below a bucket); every other axis has its
-    // windowed twin on `like` itself.
-    const documentTypeName = window === 'today' && hashtag !== undefined ? 'beat' : 'like';
+    // Today's per-tag top lives on `byDayHashtagPost`: the `beat` companion on
+    // v9, `like` itself on v10 (dailyHashtagWindowDocType). Every other axis
+    // has its windowed twin on `like`.
+    const documentTypeName = window === 'today' && hashtag !== undefined ? (dailyHashtagWindowDocType() ?? 'like') : 'like';
 
     const result = await sdk.documents.ranked({
       dataContractId: YAPPR_CONTRACT_ID,
@@ -199,9 +199,9 @@ async function rankedGroupCounts(
  * "untagged bucket" group can appear.
  */
 export async function topHashtagsByLikes(limit: number = 12, window: RankingWindow = 'all'): Promise<RankedGroupCount[]> {
-  // Today's trending rides the tagged-only `beat` doctype (see topLikedPosts).
+  // Today's trending rides byDayHashtagPost: `beat` on v9, `like` on v10 (see topLikedPosts).
   // A failed read rejects, so the trending cache never holds it as "no tags".
-  return rankedGroupCounts(window === 'today' ? 'beat' : 'like', 'hashtag', limit, window, true);
+  return rankedGroupCounts(window === 'today' ? (dailyHashtagWindowDocType() ?? 'like') : 'like', 'hashtag', limit, window, true);
 }
 
 /**
