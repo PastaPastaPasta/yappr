@@ -3,10 +3,13 @@
  * CORPUS_FORMAT.md) against the devnet social contract as the seed
  * identities provisioned by provision-seed-identities.mjs.
  *
- * The target is the v9 social contract (`.env.devnet`; the run refuses any
+ * The target is the v10 social contract (`.env.devnet`; the run refuses any
  * other NEXT_PUBLIC_CONTRACT_TOPOLOGY). The corpus `''` convention means
  * "untagged", and an untagged post/quote/like OMITS the hashtag property
- * (writing `''` is propertyAgreement consensus error 40127).
+ * (writing `''` is `where` consensus error 40127). A post or reply with a
+ * `mediaUrl` carries the sha256 and dHash of the bytes at that URL
+ * (media-hash.mjs), fetched once per URL before the run starts. A like is one
+ * transition: v10 has no `beat` companion.
  *
  * Two things shape what a create CARRIES: `post` and `reply` must agree to the
  * action fee their type declares (`$actionFeeAgreement`, 40132 without), which
@@ -85,12 +88,15 @@ import {
   createdId,
   deriveDocumentIdBytes,
   describeErr,
+  CONTENT_MAX,
+  CONTENT_MAX_BYTES,
+  codePointLength,
   expandedContentLength,
+  utf8Length,
   findRecentByValues,
   hashtagProps,
   ledgerEntry,
   likeValueTuple,
-  beatValueTuple,
   loadLedger,
   loadPersonas,
   loadProgress,
@@ -109,6 +115,7 @@ import {
   substituteLinks,
   wifFromHex,
 } from './seed-lib.mjs';
+import { mediaFieldsFor } from './media-hash.mjs';
 
 const SDK_TIMEOUT_MS = 30_000;
 /**
@@ -331,17 +338,20 @@ const DUPLICATE_IS_SUCCESS = new Set(['like', 'likeReply', 'follow', 'bookmark',
  * indexOnly types is described by `existenceKey` and bound to the network in
  * buildExecutor. An untagged post/quote/like OMITS the hashtag property (the
  * corpus '' convention and an absent checkpoint hashtag are equivalent).
+ * `mediaFor(url)` answers the `{ mediaHash, mediaFingerprint }` of a URL,
+ * computed before the run (`resolveCorpusMedia`).
  */
-export function planOp(op, { actors, resolveRef }) {
+export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
   const bytes = (base58) => bs58.decode(base58);
   const actor = actors.get(op.author);
   if (!actor) throw new Error(`author ${op.author} has no provisioned identity`);
   const finalContent = typeof op.content === 'string'
     ? substituteLinks(op.content, (ref) => resolveRef(ref).id)
     : undefined;
-  if (finalContent !== undefined && finalContent.length > 500) {
-    throw new Error(`line ${op.line}: content is ${finalContent.length} chars after link substitution (max 500)`);
+  if (finalContent !== undefined && (codePointLength(finalContent) > CONTENT_MAX || utf8Length(finalContent) > CONTENT_MAX_BYTES)) {
+    throw new Error(`line ${op.line}: content is ${codePointLength(finalContent)} characters / ${utf8Length(finalContent)} bytes after link substitution (max ${CONTENT_MAX} / ${CONTENT_MAX_BYTES})`);
   }
+  const media = op.mediaUrl ? { mediaUrl: op.mediaUrl, ...mediaFor(op.mediaUrl) } : {};
 
   switch (op.type) {
     case 'post':
@@ -352,9 +362,8 @@ export function planOp(op, { actors, resolveRef }) {
         tokenCost: TOKEN_COST.post,
         data: {
           content: finalContent ?? '',
-          language: 'en',
           ...hashtagProps(op.hashtag),
-          ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
+          ...media,
           ...(op.sensitive !== undefined ? { sensitive: op.sensitive } : {}),
           ...(quoted ? { quotedPostId: bytes(quoted.id), quotedPostOwnerId: bytes(quoted.ownerId) } : {}),
         },
@@ -372,29 +381,24 @@ export function planOp(op, { actors, resolveRef }) {
           rootPostId: bytes(root.id),
           parentOwnerId: bytes(parent.ownerId),
           ...(parent.kind === 'reply' ? { replyToReplyId: bytes(parent.id) } : {}),
-          ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
+          ...media,
         },
         refRecord: (id) => ({ kind: 'reply', id, ownerId: actor.ownerId, hashtag: '' }),
       };
     }
     case 'like': {
       const target = resolveRef(op.targetRef);
-      const beat = beatValueTuple(target);
       return {
         docType: 'like',
         tokenCost: TOKEN_COST.like,
         indexOnly: true,
-        // propertyAgreement: hashtag and postAuthor MUST mirror the post —
-        // including hashtag ABSENCE (both-absent = agreement; '' on a like of
-        // an untagged post is consensus error 40127). `postAuthor` binds to
+        // where: hashtag and postAuthor MUST mirror the post — including
+        // hashtag ABSENCE (both-absent = agreement; '' on a like of an
+        // untagged post is consensus error 40127). `postAuthor` binds to
         // `post.$ownerId`. The same tuple is what a delete-by-values carries.
+        // The like itself feeds today's trending tags (byDayHashtagPost).
         data: likeValueTuple(target),
         existenceKey: { keyField: 'postId', keyValue: target.id },
-        // A like of a tagged post carries a `beat` companion (today's
-        // trending rides beat.byDayHashtagPost). Written as a second
-        // indexOnly create after the like lands; its own existence read is
-        // the acceptance probe, and a duplicate (resume) is success.
-        ...(beat ? { companion: { docType: 'beat', data: beat, existenceKey: { keyField: 'postId', keyValue: target.id } } } : {}),
       };
     }
     case 'likeReply': {
@@ -465,7 +469,7 @@ function writeShapeFor({ handle }) {
   };
 }
 
-function buildExecutor({ handle, contractId, actors, progressRefs }) {
+function buildExecutor({ handle, contractId, actors, progressRefs, mediaFor }) {
   const writeShape = writeShapeFor({ handle });
   const resolveRef = (ref) => {
     const record = progressRefs.get(ref);
@@ -483,7 +487,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs }) {
    */
   return async function executeOp(op) {
     const actor = actors.get(op.author);
-    const plan = planOp(op, { actors, resolveRef });
+    const plan = planOp(op, { actors, resolveRef, mediaFor });
     // One draw per op, reused by every attempt. Under protocol 14 that does NOT
     // make the id stable across a retry — the id commits to the nonce too — so
     // what recognises a broadcast that landed is the by-value `accepted` probe
@@ -510,51 +514,6 @@ function buildExecutor({ handle, contractId, actors, progressRefs }) {
         return id != null;
       };
 
-    // A like of a tagged post carries a `beat` companion. It is written
-    // AFTER the like is confirmed on chain (a beat without its like would be a
-    // phantom trending vote), through the same indexOnly acceptance loop: the
-    // chain decides, a duplicate on resume is success, transport collapse
-    // reconnects. A companion failure fails the op so a retry re-runs the
-    // (duplicate-tolerant) like and then the beat again.
-    const writeCompanion = async () => {
-      if (!plan.companion) return;
-      const companion = plan.companion;
-      const { document: companionDoc } = buildDocument({
-        contractId,
-        docType: companion.docType,
-        ownerId: actor.ownerId,
-        data: companion.data,
-        entropy: randomEntropy(),
-      });
-      const companionAccepted = () =>
-        entryExists(handle, contractId, companion.docType, companion.existenceKey.keyField, companion.existenceKey.keyValue, actor.ownerId);
-      if (await companionAccepted()) return; // resumed after a landed beat
-      let companionError = null;
-      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        try {
-          // A beat is unpriced and unagreed: the plain facade create.
-          await handle.sdk.documents.create({ document: companionDoc, identityKey: actor.identityKey, signer: actor.signer });
-          if (await companionAccepted()) return;
-          companionError = new Error(`${companion.docType} create returned but the entry is not on chain`);
-        } catch (e) {
-          companionError = e;
-          const text = describeErr(e);
-          if (DUPLICATE_UNIQUE.test(text)) return;
-          if (TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text)) {
-            try { await handle.reconnect(text); } catch { /* next attempt retries */ }
-          }
-          for (let poll = 0; poll < SETTLE_POLLS; poll++) {
-            await sleep(SETTLE_MS);
-            try { if (await companionAccepted()) return; } catch (readError) { companionError = readError; }
-          }
-          const isConsensus = /code=4\d{4}/.test(text) || /consensus/i.test(text);
-          if (isConsensus) throw e;
-        }
-        await sleep(2_000 * attempt);
-      }
-      throw companionError ?? new Error(`${companion.docType} companion failed after retries`);
-    };
-
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
@@ -568,13 +527,12 @@ function buildExecutor({ handle, contractId, actors, progressRefs }) {
         }
         // indexOnly: a clean return still gets one confirming read (cheap, and
         // the SDK's post-broadcast behavior for these types is unreliable).
-        if (await accepted()) { await writeCompanion(); return plan.refRecord ? plan.refRecord(id) : null; }
+        if (await accepted()) return plan.refRecord ? plan.refRecord(id) : null;
         lastError = new Error('create returned but the entry is not on chain');
       } catch (e) {
         lastError = e;
         const text = describeErr(e);
         if (DUPLICATE_UNIQUE.test(text) && DUPLICATE_IS_SUCCESS.has(op.type)) {
-          await writeCompanion(); // end state already holds; the beat may still be missing (resume)
           return plan.refRecord ? plan.refRecord(id) : null;
         }
         if (TRANSPORT_COLLAPSE.test(text)) {
@@ -589,7 +547,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs }) {
         for (let poll = 0; poll < settlePolls; poll++) {
           await sleep(SETTLE_MS);
           try {
-            if (await accepted()) { await writeCompanion(); return plan.refRecord ? plan.refRecord(id) : null; }
+            if (await accepted()) return plan.refRecord ? plan.refRecord(id) : null;
           } catch (readError) {
             lastError = readError;
           }
@@ -610,6 +568,30 @@ function buildExecutor({ handle, contractId, actors, progressRefs }) {
     }
     throw lastError ?? new Error('op failed after retries');
   };
+}
+
+// ---- Media -----------------------------------------------------------------------------
+
+function missingMedia(url) {
+  throw new Error(`media ${url} was not resolved before the run (resolveCorpusMedia)`);
+}
+
+/**
+ * The `{ mediaHash, mediaFingerprint }` of every distinct `mediaUrl` in the
+ * corpus, fetched before any write so a media op never waits on (or fails
+ * over) an image download mid-run. Returns the sync lookup planOp takes.
+ */
+export async function resolveCorpusMedia(ops, { fetchBytes, log = () => {} } = {}) {
+  const urls = [...new Set(ops.map((op) => op.mediaUrl).filter(Boolean))];
+  const resolved = new Map();
+  let decoded = 0;
+  for (const url of urls) {
+    const fields = await mediaFieldsFor(url, { fetchBytes, log });
+    if (fields.decoded) decoded += 1;
+    resolved.set(url, { mediaHash: fields.mediaHash, mediaFingerprint: fields.mediaFingerprint });
+  }
+  if (urls.length > 0) log(`media: ${urls.length} URL(s) hashed, ${decoded} fingerprinted from the decoded image`);
+  return (url) => resolved.get(url) ?? missingMedia(url);
 }
 
 // ---- Actors ---------------------------------------------------------------------------
@@ -806,8 +788,12 @@ async function selfTest() {
   check('parse: self-follow rejected', rejects('{"type":"follow","author":0,"target":0}', 'follow itself'));
   check('parse: oversize expanded content rejected', rejects(
     '{"type":"post","ref":"p1","author":0,"content":"x","hashtag":""}\n' +
-    JSON.stringify({ type: 'post', ref: 'p2', author: 0, content: 'y'.repeat(440) + '{{link:p1}}', hashtag: '' }),
+    JSON.stringify({ type: 'post', ref: 'p2', author: 0, content: 'y'.repeat(940) + '{{link:p1}}', hashtag: '' }),
     'can expand'
+  ));
+  check('parse: content over 2000 UTF-8 bytes rejected though under 1000 characters', rejects(
+    JSON.stringify({ type: 'post', ref: 'p1', author: 0, content: '€'.repeat(667), hashtag: '' }),
+    'UTF-8 bytes'
   ));
 
   // Link substitution
@@ -895,7 +881,7 @@ async function selfTest() {
   });
   check('max-ops: executes exactly the cap', results4.done === 3 && journal4.length === 3, `done=${results4.done}`);
 
-  // ---- Document shapes: hashtag ABSENCE, no attested author, beat companions ----
+  // ---- Document shapes: hashtag ABSENCE, no attested author, no language, media hashes ----
   const owner = bs58.encode(new Uint8Array(32).fill(1));
   const targetId = bs58.encode(new Uint8Array(32).fill(2));
   const planCtx = (refHashtag) => ({
@@ -909,15 +895,25 @@ async function selfTest() {
 
   const plannedPost = planOp(postOp, planCtx('')).data;
   const plannedReply = planOp(replyOp, planCtx('')).data;
-  check('post OMITS the attested author column (additionalProperties would reject it)',
-    !('author' in plannedPost) && plannedPost.language === 'en');
+  check('post OMITS the attested author column and `language` (v10 has neither)',
+    !('author' in plannedPost) && !('language' in plannedPost));
   check('reply OMITS the attested author column, keeping its parent linkage',
     !('author' in plannedReply) && plannedReply.rootPostId instanceof Uint8Array && plannedReply.parentOwnerId instanceof Uint8Array);
-  check('tagged like plans a beat companion { postId, hashtag }', (() => {
-    const plan = planOp(likeOp, planCtx('dash'));
-    return plan.companion?.docType === 'beat' && plan.companion.data.hashtag === 'dash' && plan.companion.data.postId instanceof Uint8Array && plan.companion.existenceKey.keyField === 'postId';
+  check('a like is ONE document: tagged or not, no beat companion', planOp(likeOp, planCtx('dash')).companion === undefined && planOp(likeOp, planCtx('')).companion === undefined);
+  const media = { mediaHash: new Uint8Array(32).fill(3), mediaFingerprint: new Uint8Array(8).fill(4) };
+  const withMedia = planOp({ ...postOp, mediaUrl: 'https://example.com/a.png' }, { ...planCtx(''), mediaFor: () => media }).data;
+  check('a post with mediaUrl carries its hash and fingerprint (dependentRequired)',
+    withMedia.mediaUrl === 'https://example.com/a.png' && withMedia.mediaHash === media.mediaHash && withMedia.mediaFingerprint === media.mediaFingerprint);
+  const replyWithMedia = planOp({ ...replyOp, mediaUrl: 'ipfs://bafy' }, { ...planCtx(''), mediaFor: () => media }).data;
+  check('a reply with mediaUrl carries them too', replyWithMedia.mediaHash === media.mediaHash && replyWithMedia.mediaFingerprint === media.mediaFingerprint);
+  check('a post without media carries neither', !('mediaHash' in plannedPost) && !('mediaFingerprint' in plannedPost));
+  check('an unresolved media URL fails the plan instead of writing a 10101', (() => {
+    try { planOp({ ...postOp, mediaUrl: 'https://example.com/b.png' }, planCtx('')); return false; } catch (e) { return /not resolved/.test(e.message); }
   })());
-  check('untagged like plans NO companion', planOp(likeOp, planCtx('')).companion === undefined);
+  check('content: 1000 characters plan; 1001, or 2001 bytes in fewer characters, refuse', (() => {
+    const plan = (content) => { try { planOp({ ...postOp, content }, planCtx('')); return true; } catch { return false; } };
+    return plan('x'.repeat(1000)) && !plan('x'.repeat(1001)) && !plan('€'.repeat(667)) && plan('😀'.repeat(500));
+  })());
   check('untagged post OMITS hashtag', !('hashtag' in plannedPost));
   check('tagged post keeps its hashtag', planOp({ ...postOp, hashtag: 'dash' }, planCtx('')).data.hashtag === 'dash');
   const plannedQuote = planOp(quoteOp, planCtx('')).data;
@@ -966,7 +962,7 @@ async function selfTest() {
       replyFee?.moderators === 16_000_000n && replyFee.owner === 0n,
     `post=${postFee?.moderators} reply=${replyFee?.moderators}`);
   check('nothing but post and reply charges an action fee',
-    ['like', 'likeReply', 'repost', 'follow', 'bookmark', 'beat'].every((docType) => actionFeeFor(docType) === null));
+    ['like', 'likeReply', 'repost', 'follow', 'bookmark', 'yapprProfile'].every((docType) => actionFeeFor(docType) === null));
 
   const agreed = actionFeeAgreementOptions(postFee, 1000n);
   check('the agreement names the exact declared amounts, each pot on its own, plus the known multiplier',
@@ -1116,14 +1112,15 @@ try {
   console.log(`actors: ${actors.size} identities loaded from the ledger`);
   const tokenId = await readback(handle, () => handle.sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
   const before = await snapshotBalances(handle, actors, tokenId);
+  const mediaFor = await resolveCorpusMedia(ops.filter((op) => !progress.completed.has(op.line)), { log: (m) => console.log(`  ${m}`) });
 
   const executor = args.pipeline
     ? (await import('./pipeline.mjs')).buildPipelinedExecutor({
         handle, contractId, actors, ledger, progressRefs: progress.refs,
-        planOp, entryExists, paymentFor: writeShapeFor({ handle }).paymentFor,
+        planOp, mediaFor, entryExists, paymentFor: writeShapeFor({ handle }).paymentFor,
         window: args.window, log: (m) => console.log(`  ${m}`),
       })
-    : buildExecutor({ handle, contractId, actors, progressRefs: progress.refs });
+    : buildExecutor({ handle, contractId, actors, progressRefs: progress.refs, mediaFor });
   if (args.pipeline) console.log(`executor: PIPELINED (window ${args.window} in flight per identity, concurrency ${args.concurrency})`);
   // The engine publishes refs through deferreds; the executor reads settled
   // records from progress.refs, so keep the two in sync as records land.

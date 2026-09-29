@@ -32,19 +32,19 @@ A JSON array of persona objects:
 |---|---|---|
 | `idx` | yes | unique non-negative integer; corpus ops reference personas by this |
 | `handle` | yes | the DPNS label: charset `[a-z0-9-]`, 3–19 chars, no leading/trailing hyphen, **must contain at least one digit 2–9** (a label with a 2–9 digit can never match DPNS's contested-name pattern, so registration never enters a masternode vote) |
-| `displayName` | yes | 1–50 chars (unified profile contract `displayName.maxLength`) |
-| `bio` | no | ≤ 160 chars |
+| `displayName` | yes | 1–25 chars (DashPay `profile.displayName`, v10's base profile) |
+| `bio` | no | ≤ 140 chars (written as DashPay `profile.publicMessage`) |
 | `location` | no | ≤ 50 chars |
 | `website` | no | ≤ 200 chars, must match `^https?://.+$` |
-| `avatarSeed` | yes | any short string; the provisioner stores the profile `avatar` field as `{"seed":<avatarSeed>,"style":<dicebear style>}` with the style derived deterministically from the seed |
+| `avatarSeed` | yes | any short string; the provisioner stores the `yapprProfile.avatar` field as `{"seed":<avatarSeed>,"style":<dicebear style>}` with the style derived deterministically from the seed |
 | `style` | generator-only | free-text writing-style hints for the corpus generator; not written on chain |
 | `interests` | generator-only | topic hints for the generator; not written on chain |
 | `activity` | generator-only | relative activity weight (e.g. 0–1) for the generator; not written on chain |
 | `contested` | no | `true` lets the handle omit the 2–9 digit (e.g. `alice`); such a label matches DPNS's contested pattern and its registration goes through a masternode vote — reserve for hero personas |
 
-Profile field limits are validated against the checked-in
-`contracts/yappr-profile-contract.json` (the unified profile contract the app
-reads), not hardcoded.
+Profile field limits are DashPay's for the name and bio (25/140, its v2 schema
+on every network) and the checked-in `contracts/yappr-social-contract-v10.json`
+`yapprProfile` extension for the rest.
 
 ## `corpus.<name>.jsonl`
 
@@ -71,10 +71,10 @@ the executor cannot deadlock.
 
 | type | fields | maps to (social contract; see the topology note below for `hashtag`) |
 |---|---|---|
-| `post` | `ref`, `author`, `content`, `hashtag`, `mediaUrl?`, `sensitive?` | `post` — `author` = owner id bytes (poster-attested), `language` always `"en"` |
+| `post` | `ref`, `author`, `content`, `hashtag`, `mediaUrl?`, `sensitive?` | `post` — no `language` (v10); a `mediaUrl` brings its `mediaHash` + `mediaFingerprint` |
 | `quote` | `ref`, `author`, `content`, `quotedRef`, `hashtag`, `mediaUrl?` | `post` with `quotedPostId` + `quotedPostOwnerId` resolved from the ref map |
-| `reply` | `ref`, `author`, `rootRef`, `parentRef`, `content`, `mediaUrl?` | `reply` — `rootPostId` from `rootRef`; `parentOwnerId` = owner of `parentRef`; `replyToReplyId` set iff `parentRef` is a reply |
-| `like` | `author`, `targetRef` (post) | indexOnly `like` `{postId, hashtag?, postAuthor}` — `hashtag`/`postAuthor` **copied from the target post's recorded values** (propertyAgreement: a mismatch is consensus error 40127; under v5, an untagged target means like.`hashtag` is **omitted**, exactly like the post's) |
+| `reply` | `ref`, `author`, `rootRef`, `parentRef`, `content`, `mediaUrl?` | `reply` — `rootPostId` from `rootRef`; `parentOwnerId` = owner of `parentRef`; `replyToReplyId` set iff `parentRef` is a reply; media as for `post` |
+| `like` | `author`, `targetRef` (post) | indexOnly `like` `{postId, hashtag?, postAuthor}` — `hashtag`/`postAuthor` **copied from the target post's recorded values** (`where`: a mismatch is consensus error 40127; an untagged target means like.`hashtag` is **omitted**, exactly like the post's). One transition: the like feeds today's trending tags itself (v10 has no `beat`) |
 | `likeReply` | `author`, `targetRef` (reply) | indexOnly `likeReply` `{replyId, replyAuthor}` |
 | `repost` | `author`, `targetRef` (post) | `repost` `{postId, postOwnerId}` |
 | `follow` | `author`, `target` (persona idx) | `follow` `{followingId}` |
@@ -85,17 +85,21 @@ the executor cannot deadlock.
 - `author` / `follow.target`: a persona `idx`. Self-follow is invalid.
 - `hashtag`: required on `post`/`quote`; `''` always means **untagged** in
   corpus files. On chain `hashtag` is optional
-  (`contracts/yappr-social-contract-v9.json`): untagged **omits the property
-  entirely** on the post AND on every like of it (propertyAgreement treats
+  (`contracts/yappr-social-contract-v10.json`): untagged **omits the property
+  entirely** on the post AND on every like of it (a `where` entry treats
   both-absent as agreement; writing `''` is consensus error 40127; the like's
-  `byHashtagPost` index is `skipIfAbsent`, so absence writes no entry). Tags
-  match `^[a-z0-9_]{1,61}$`, enforced at parse time.
-- `content`: `language` is always `"en"`. May contain `{{link:REF}}`
-  placeholders, where `REF` must be an **earlier post/quote ref**; the executor
-  replaces each with `https://yap.pr/devnet/post/?id=<realPostId>`. The
-  validator budgets 44 chars for the id (worst-case base58 of 32 bytes) and
-  rejects any line whose expanded content could exceed 500 chars.
-- `mediaUrl`: optional, ≤ 512 chars, must match `^(https?|ipfs)://.+$`.
+  `byHashtagPost` and `byDayHashtagPost` indexes are `skipIfAbsent`, so absence
+  writes no entry). Tags match `^[a-z0-9_]{1,61}$`, enforced at parse time.
+- `content`: may contain `{{link:REF}}` placeholders, where `REF` must be an
+  **earlier post/quote ref**; the executor replaces each with
+  `https://yap.pr/devnet/post/?id=<realPostId>`. The validator budgets 44
+  chars for the id (worst-case base58 of 32 bytes) and rejects any line whose
+  expanded content could exceed 1000 characters (code points, as `maxLength`
+  counts them) or 2000 UTF-8 bytes (`maxBytes`, 10421).
+- `mediaUrl`: optional, ≤ 512 chars, must match `^(https?|ipfs)://.+$`. The
+  executor fetches each distinct URL once before the run and writes the sha256
+  of its bytes as `mediaHash` and the pinned 9x8 dHash as `mediaFingerprint`
+  (`media-hash.mjs`); consensus requires both whenever the URL is set.
 - `sensitive`: optional boolean (posts only).
 - Duplicate interactions (`like`/`likeReply`/`repost`/`bookmark`/`follow` with
   the same author + target appearing twice) are rejected at parse time — on
@@ -106,7 +110,7 @@ the executor cannot deadlock.
 The executor materializes each `ref` into `{kind, id, ownerId, hashtag}`
 (base58 document id, base58 owner identity id, the post's hashtag) and
 checkpoints the map in `.seed-progress.local.json`, so likes created on a
-resumed run still carry the exact propertyAgreement values of the original
+resumed run still carry the exact `where` values of the original
 post. A ref's `hashtag` recorded as `''` and one missing the key entirely are
 equivalent ("untagged") and replay to identical documents: both omit the
 property.

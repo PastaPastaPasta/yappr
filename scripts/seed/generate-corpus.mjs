@@ -36,7 +36,7 @@ import {
   LAST_NAMES, LINK_LINES, TREND_CANDIDATES, TREND_LINES,
 } from './corpus-archetypes.mjs';
 import { loadBanks } from './author-banks.mjs';
-import { CONTENT_MAX, HASHTAG_MAX, expandedContentLength, loadPersonas, parseCorpus, validateHandle } from './seed-lib.mjs';
+import { CONTENT_MAX, DASHPAY_PROFILE_LIMITS, HASHTAG_MAX, expandedContentLength, loadPersonas, parseCorpus, validateHandle } from './seed-lib.mjs';
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -297,7 +297,8 @@ export function buildPersonas(rng, users, bankSlots) {
     const last = rng.pick(LAST_NAMES);
     let displayName = `${first} ${last}`;
     if (rng.chance(0.18)) displayName = rng.pick(NICKNAME_STYLES)(first, last);
-    if (displayName.length > 50 || takenNames.has(displayName.toLowerCase())) continue;
+    // DashPay's profile (v10's base) caps the name at 25 and the bio (publicMessage) at 140.
+    if (displayName.length > DASHPAY_PROFILE_LIMITS.displayName || takenNames.has(displayName.toLowerCase())) continue;
     takenNames.add(displayName.toLowerCase());
     const handle = makeHandle(rng, first, last, archetype, takenHandles);
     takenHandles.add(handle);
@@ -307,7 +308,8 @@ export function buildPersonas(rng, users, bankSlots) {
     const city = cityFull.split(',')[0];
     const slotsCtx = { city, handle };
     let bio = fillSlots(rng.pick(A.bios), slotsCtx);
-    if (bio.length > 160) bio = `${bio.slice(0, 157).replace(/\s+\S*$/, '')}...`;
+    const bioMax = DASHPAY_PROFILE_LIMITS.publicMessage;
+    if (bio.length > bioMax) bio = `${bio.slice(0, bioMax - 3).replace(/\s+\S*$/, '')}...`;
     const persona = {
       idx: personas.length,
       handle,
@@ -755,7 +757,7 @@ export function generate(opts) {
     if (rng.chance(0.2)) {
       hashtag = quoted.hashtag && rng.chance(0.5) ? quoted.hashtag : pickTag(p.archetype);
       const withTag = `${text} #${hashtag}`;
-      if (!contents.has(withTag) && withTag.length <= CONTENT_MAX) { contents.delete(text); text = withTag; contents.add(text); } else hashtag = '';
+      if (!contents.has(withTag) && expandedContentLength(withTag) <= CONTENT_MAX) { contents.delete(text); text = withTag; contents.add(text); } else hashtag = '';
     }
     if (EMOJI_RE.test(text)) quotesWithEmoji += 1;
     return { text, hashtag };
@@ -1105,7 +1107,7 @@ export function generate(opts) {
       usedAuthors.add(author);
       const parent = targets[r.target] ?? post;
       const content = fill(r.content, { name: firstNames[parent.author] });
-      if (contents.has(content) || content.length > CONTENT_MAX) continue;
+      if (contents.has(content) || expandedContentLength(content) > CONTENT_MAX) continue;
       const likes = Math.max(0, Math.round(rng.lognormal(Math.log(users * 0.02 + 1), 0.9)));
       const node = mk(author, parent, dt + delay(700, 0.9), content, r.intent, r.role === 'dashdev' ? Math.round(users * 0.2) : Math.min(likes, Math.round(users * 0.1)));
       node.parentIntent = parent.intent ?? null;

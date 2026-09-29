@@ -1,7 +1,8 @@
 # Devnet content seeding — ops runbook
 
-Seeds the moutai devnet (social contract `NEXT_PUBLIC_YAPPR_CONTRACT_ID` in
-`.env.devnet`, topology v9) with synthetic users and content. Built for a 10-user /
+Seeds the devnet (bonsia on 4.2.0-beta.7: social contract
+`NEXT_PUBLIC_YAPPR_CONTRACT_ID` in `.env.devnet`, topology v10) with synthetic
+users and content. Built for a 10-user /
 ~1100-op pilot first, but resumable and parallel from the start so the same
 scripts scale to 500 users / 50k posts.
 
@@ -12,6 +13,7 @@ scripts/seed/
   asset-lock-lib.mjs             split tx + DIP-2 type-8 asset-lock construction, Insight API
   provision-seed-identities.mjs  treasury → funded/registered/profiled/named/YAPP'd identities
   run-seeder.mjs                 corpus executor (checkpointed, per-author sequential, parallel across authors)
+  media-hash.mjs                 sha256 + pinned 9x8 dHash of a mediaUrl's bytes (v10 mediaHash/mediaFingerprint)
 ```
 
 Everything state-bearing lives in gitignored, chmod-600 files at the repo root.
@@ -26,12 +28,15 @@ The treasury key and the identity ledger contain PRIVATE KEYS.
   DAPI pool, Insight URL, contract ids — from `.env.devnet`).
 - YAPP funding (the contract prices post/reply/like creates in YAPP; credits
   are the alternative, see `--credits-fraction`):
-  - default `--yapp-source maker` transfers from the devnet maker (seed
-    index 9) and therefore needs `E2E_SEED_PHRASE` in the environment or
-    `.env.local`, plus `DEVNET_MAKER_IDENTITY_ID` (already in `.env.devnet`);
-  - `--yapp-source purchase` has each identity buy YAPP with its own credits,
-    but requires a direct-purchase price on **this** contract first; set one with
-    `NETWORK=devnet node scripts/set-yapp-price.mjs --contract <id> --owner <makerId> --owner-index 9`.
+  - v10's YAPP is paused for good and has no purchase price: it can be
+    neither transferred nor bought, only claimed (the 100 once-per-identity
+    starter grant) or minted by the contract owner;
+  - default `--yapp-source maker` MINTS from the devnet maker (the contract
+    owner, seed index 9) straight to each identity, and therefore needs
+    `E2E_SEED_PHRASE` in the environment or `.env.local`, plus
+    `DEVNET_MAKER_IDENTITY_ID` (in `.env.devnet`);
+  - `--yapp-source claim` has each identity claim its own starter grant first
+    (parallel) and mints only the remainder.
 
 ## 1. Fund the treasury
 
@@ -41,8 +46,8 @@ NETWORK=devnet node scripts/seed/provision-seed-identities.mjs --treasury-addres
 
 Generates `.seed-treasury.local.key` (64-hex, chmod 600) on first run and
 prints the P2PKH address (devnets use testnet prefixes). Send devnet DASH to it
-from the moutai faucet: <https://faucet.moutai.networks.dash.org/> (faucet
-etiquette: one request at a time, honour rate limits).
+from the devnet faucet (bonsia: <https://faucet.bonsia.networks.dash.org/>;
+faucet etiquette: one request at a time, honour rate limits).
 
 ### Funding math (pilot: 10 identities, ~1100 ops)
 
@@ -82,13 +87,15 @@ broadcast, so a crash never strands funds):
    burn output + `AssetLockPayload.creditOutputs`; proof outpoint = `txid:0`).
 3. **REGISTER** — waits for ChainLock coverage of every lock tx concurrently
    (Insight block height + DAPI `getStatus` `core_chain_locked_height`;
-   InstantSend proofs are REFUSED on moutai and would silently burn funds),
+   InstantSend proofs are REFUSED on the devnet and would silently burn funds),
    then creates each identity with 5 fresh random keys (same purpose/security
    layout as the e2e bots; auth key id 1 signs everything).
-4. **PROFILE** — profile document on the unified profile contract, fields
-   validated against its maxLengths.
+4. **PROFILE** — v10: the DashPay `profile` (displayName ≤ 25, the bio as
+   `publicMessage` ≤ 140) first, then the social `yapprProfile` extension
+   (location, website, the DiceBear avatar recipe), which consensus refuses
+   without the DashPay profile (40120).
 5. **DPNS** — registers the persona handle.
-6. **YAPP** — maker transfer (default) or direct purchase, up to `--yapp`.
+6. **YAPP** — owner mint (default) or starter claim plus mint, up to `--yapp`.
 
 Ends with a table: personaIdx, state, handle, identityId, credits, YAPP.
 
@@ -116,12 +123,14 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
   resumed run never moves an author between funding models. Every
   post/reply create is also a hand-built batch carrying the contract's action
   fee agreement (`sdk.documents.create` cannot express one; 40132 without).
-- The seeder writes v9 documents only, and refuses to run unless
-  `NEXT_PUBLIC_CONTRACT_TOPOLOGY` (env / `.env.devnet`) is `v9`. The corpus
+- The seeder writes v10 documents only, and refuses to run unless
+  `NEXT_PUBLIC_CONTRACT_TOPOLOGY` (env / `.env.devnet`) is `v10`. The corpus
   `"hashtag": ""` convention means "untagged", and the seeder **omits the
-  hashtag property** on untagged posts and on their likes (propertyAgreement
+  hashtag property** on untagged posts and on their likes (a `where` entry's
   both-absent; `''` is consensus error 40127). Tags longer than 61 characters
-  are rejected at parse time.
+  are rejected at parse time. A like is one transition (no `beat`), a post
+  carries no `language`, and every `mediaUrl` is fetched once before the run
+  so its post or reply can carry `mediaHash`/`mediaFingerprint`.
 - Per-author ops are strictly sequential (identity contract nonce); different
   authors run in parallel behind a global in-flight cap (`--concurrency`).
 - `--max-ops N` executes at most N new ops then stops cleanly (useful as a
@@ -166,5 +175,5 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
 
 ```bash
 node scripts/seed/provision-seed-identities.mjs --self-test   # split/asset-lock construction, validation, ledger states
-node scripts/seed/run-seeder.mjs --self-test                  # corpus parsing, ref resolution, scheduling, resume, max-ops, v9 document shapes
+node scripts/seed/run-seeder.mjs --self-test                  # corpus parsing, ref resolution, scheduling, resume, max-ops, v10 document shapes
 ```

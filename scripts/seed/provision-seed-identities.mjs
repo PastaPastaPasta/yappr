@@ -9,8 +9,8 @@
  * so no funds are ever stranded behind key material that existed only in memory.
  *
  * Phases (each identity advances independently; re-running skips what's done;
- * --parallel N runs the per-identity phases REGISTER/PROFILE/DPNS/YAPP-purchase
- * N identities at a time — maker YAPP transfers stay serial):
+ * --parallel N runs the per-identity phases REGISTER/PROFILE/DPNS/YAPP-claim
+ * N identities at a time — maker YAPP mints stay serial):
  *   SPLIT     one core-chain tx spends treasury UTXO(s) into one P2PKH output
  *             per identity (default 8,000,000 duffs, --credits-per overrides),
  *             each paying a fresh one-shot asset-lock key; change → treasury
@@ -20,26 +20,29 @@
  *             InstantSend proofs are REFUSED on moutai), then create the
  *             identity with 5 fresh random keys (same purpose/security-level
  *             set as the e2e bots)
- *   PROFILE   create the persona's profile document on the unified profile
- *             contract (validated against its maxLengths)
+ *   PROFILE   the persona's profile on v10: a DashPay `profile` (displayName,
+ *             publicMessage = bio) first, then the social `yapprProfile`
+ *             extension (location, website, the DiceBear avatar recipe), which
+ *             consensus refuses without the DashPay profile (40120). Each is
+ *             unique per owner, so a re-run finds and skips what exists.
  *   DPNS      register the persona's handle
- *   YAPP      fund each identity with YAPP (the v4 social contract charges
- *             YAPP per post/reply/like create). Two sources:
- *               --yapp-source purchase  direct purchase with the identity's own
- *                                       credits — requires the token's
- *                                       direct-purchase price to be set on THIS
- *                                       contract (scripts/set-yapp-price.mjs
- *                                       --contract <id> --owner <makerId>
- *                                       --owner-index 9). As of 2026-08-30 the
- *                                       v4 draft (Aux325if…) has NO price set.
- *               --yapp-source maker     (default) token transfer from the
- *                                       devnet maker (seed index 9, keys from
+ *   YAPP      fund each identity with YAPP (the social contract charges YAPP
+ *             per post/reply/like create). v10's YAPP is paused for good and
+ *             has no purchase price, so neither a transfer nor a direct
+ *             purchase can ever land; the two sources are:
+ *               --yapp-source claim     the identity claims its 100 YAPP
+ *                                       once-per-identity starter grant itself
+ *                                       (parallel), then the maker mints the rest
+ *               --yapp-source maker     (default) the devnet maker (the contract
+ *                                       owner, seed index 9, keys from
  *                                       E2E_SEED_PHRASE, id from
  *                                       DEVNET_MAKER_IDENTITY_ID in .env.devnet)
+ *                                       MINTS the whole amount to the identity
+ *                                       (mintingAllowChoosingDestination), serial
  *
  * Setup: put a 64-hex private key in `.seed-treasury.local.key` (chmod 600) and
  * send devnet DASH to its address (printed by --treasury-address) from the
- * moutai faucet: https://faucet.moutai.networks.dash.org/
+ * devnet faucet (bonsia: https://faucet.bonsia.networks.dash.org/).
  *
  * Run:
  *   NETWORK=devnet node scripts/seed/provision-seed-identities.mjs --personas <file> \
@@ -69,7 +72,8 @@ import {
   WAIT_MAYBE_LANDED,
   YAPP_TOKEN_POSITION,
   addressFor,
-  avatarFieldFor,
+  DASHPAY_CONTRACT_ID,
+  profileDocumentsFor,
   buildDocument,
   createSdkHandle,
   describeErr,
@@ -80,7 +84,6 @@ import {
   loadPersonas,
   network,
   paymentInfo,
-  profileContractId,
   profileLimits,
   randomEntropy,
   readback,
@@ -105,8 +108,10 @@ import {
 
 const DEFAULT_CREDITS_PER_DUFFS = 8_000_000;
 const DEFAULT_YAPP_PER_IDENTITY = 600n;
-/** YAPP direct purchase enforces a minimum amount (set-yapp-price.mjs: 100). */
-const MIN_YAPP_PURCHASE = 100n;
+/** The once-per-identity starter grant (social v10 tokens.0.distributionRules). */
+const STARTER_GRANT = 100n;
+/** TokenOncePerIdentityDistributionAlreadyClaimedError. */
+const ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|already claimed/i;
 const CHAIN_LOCK_TIMEOUT_MS = 600_000;
 const CHAIN_LOCK_POLL_MS = 10_000;
 const SDK_TIMEOUT_MS = 30_000;
@@ -137,8 +142,8 @@ function parseArgs(argv) {
       default: throw new Error(`Unknown flag: ${argv[i]}`);
     }
   }
-  if (!['maker', 'purchase'].includes(args.yappSource)) {
-    throw new Error('--yapp-source must be "maker" (token transfer from seed index 9) or "purchase" (direct purchase)');
+  if (!['maker', 'claim'].includes(args.yappSource)) {
+    throw new Error('--yapp-source must be "maker" (owner mint from seed index 9) or "claim" (the starter grant, then a mint for the rest); YAPP can no longer be transferred or bought');
   }
   if (!args.selfTest && !args.treasuryAddress && !args.personas) {
     throw new Error('--personas <file> is required (or --self-test / --treasury-address)');
@@ -456,71 +461,55 @@ async function phaseRegister(handle, ledger, only, parallel) {
 
 async function phaseProfile(handle, ledger, only, personasByIdx, parallel) {
   const sdk = handle.sdk;
-  const contractId = profileContractId();
+  const socialId = socialContractId();
   const todo = selected(ledger, only).filter((entry) => stateRank(entry.state) === stateRank('registered'));
   await forEachParallel(todo, parallel, async (entry) => {
     try {
       const persona = personasByIdx.get(entry.personaIdx);
       if (!persona) throw new Error(`persona ${entry.personaIdx} missing from the personas file`);
-
-      const existing = await readback(handle, () =>
-        sdk.documents.query({
-          dataContractId: contractId,
-          documentTypeName: 'profile',
-          where: [['$ownerId', '==', entry.identityId]],
-        })
-      );
-      if (existing.size > 0) {
-        entry.state = 'profiled';
-        saveLedger(ledger);
-        console.log(`  persona ${entry.personaIdx}: profile already exists`);
-        return;
-      }
-
       const identity = await readback(handle, () => sdk.identities.fetch(entry.identityId));
       if (!identity) throw new Error(`identity ${entry.identityId} not readable`);
       const identityKey = identity.getPublicKeyById(CRITICAL_AUTH_KEY_ID);
       const signer = buildSignerFor(entry);
-      const { document } = buildDocument({
-        contractId,
-        docType: 'profile',
-        ownerId: entry.identityId,
-        entropy: randomEntropy(),
-        data: {
-          displayName: persona.displayName,
-          ...(persona.bio ? { bio: persona.bio } : {}),
-          ...(persona.location ? { location: persona.location } : {}),
-          ...(persona.website ? { website: persona.website } : {}),
-          avatar: avatarFieldFor(persona),
-        },
-      });
-      try {
-        await sdk.documents.create({ document, identityKey, signer });
-      } catch (e) {
-        const text = describeErr(e);
-        if (DUPLICATE_UNIQUE.test(text)) {
-          // unique-by-$ownerId — someone (a previous run) got there first
-        } else if (WAIT_MAYBE_LANDED.test(text) || TRANSPORT_COLLAPSE.test(text)) {
-          if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
-          await sleep(3000);
-          // The id is only known from a create that RETURNED (protocol 14: it is
-          // derived from the nonce the SDK picked); profile is unique by $ownerId,
-          // so read it back the same way the idempotency check above does.
-          const landed = await readback(handle, () => sdk.documents.query({
-            dataContractId: contractId, documentTypeName: 'profile', where: [['$ownerId', '==', entry.identityId]], limit: 1,
-          }));
-          if (!landed || landed.size === 0) throw e;
-        } else {
-          throw e;
-        }
+      const documents = profileDocumentsFor(persona);
+      // DashPay first: the extension's ownerRefersTo finds it by $ownerId (40120 without).
+      const wrote = [];
+      for (const [contractId, docType, data] of [[DASHPAY_CONTRACT_ID, 'profile', documents.dashpay], [socialId, 'yapprProfile', documents.extension]]) {
+        if (await createUniqueByOwner(handle, { contractId, docType, entry, identityKey, signer, data })) wrote.push(docType);
       }
       entry.state = 'profiled';
       saveLedger(ledger);
-      console.log(`  persona ${entry.personaIdx}: profile created ("${persona.displayName}")`);
+      console.log(`  persona ${entry.personaIdx}: ${wrote.length > 0 ? `wrote ${wrote.join(' + ')}` : 'profile already exists'} ("${persona.displayName}")`);
     } catch (e) {
       noteError(ledger, entry, 'profile', e);
     }
   });
+}
+
+/**
+ * Creates `docType` for `entry` unless one exists (both profile types are
+ * unique by $ownerId). Answers true when it wrote one. The id is only known
+ * from a create that RETURNED (protocol 14), so a create that threw on its
+ * wait is reconciled by the same by-owner read the idempotency check uses.
+ */
+async function createUniqueByOwner(handle, { contractId, docType, entry, identityKey, signer, data }) {
+  const sdk = handle.sdk;
+  const find = () => readback(handle, () => sdk.documents.query({
+    dataContractId: contractId, documentTypeName: docType, where: [['$ownerId', '==', entry.identityId]], limit: 1,
+  }));
+  if ((await find()).size > 0) return false;
+  const { document } = buildDocument({ contractId, docType, ownerId: entry.identityId, entropy: randomEntropy(), data });
+  try {
+    await sdk.documents.create({ document, identityKey, signer });
+  } catch (e) {
+    const text = describeErr(e);
+    if (DUPLICATE_UNIQUE.test(text)) return false; // a previous run got there first
+    if (!WAIT_MAYBE_LANDED.test(text) && !TRANSPORT_COLLAPSE.test(text)) throw e;
+    if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
+    await sleep(3000);
+    if ((await find()).size === 0) throw e;
+  }
+  return true;
 }
 
 // ---- Phase DPNS ---------------------------------------------------------------------
@@ -586,103 +575,76 @@ async function phaseYapp(handle, ledger, only, yappTarget, yappSource, parallel)
   const sdk = handle.sdk;
   const contractId = socialContractId();
   const tokenId = await readback(handle, () => sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
+  const balanceOf = async (entry) => {
+    const balances = await readback(handle, () => sdk.tokens.balances([entry.identityId], tokenId));
+    return (balances instanceof Map ? balances.get(entry.identityId) : undefined) ?? 0n;
+  };
+  const reconciled = async (e, entry, target) => {
+    const text = describeErr(e);
+    if (!WAIT_MAYBE_LANDED.test(text) && !TRANSPORT_COLLAPSE.test(text)) return false;
+    if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
+    await sleep(3000);
+    return (await balanceOf(entry)) >= target;
+  };
 
-  // Lazy: neither the maker keys nor the price are touched unless an identity
-  // actually needs funding (so a fully-provisioned re-run needs no seed phrase).
-  let pricePromise = null;
-  const getPrice = () => (pricePromise ??= (async () => {
-    const prices = await readback(handle, () => sdk.tokens.directPurchasePrices([tokenId]));
-    const priceInfo = prices instanceof Map ? prices.get(tokenId) : prices?.[tokenId];
-    const pricePerToken = priceInfo?.currentPrice !== undefined ? BigInt(priceInfo.currentPrice) : null;
-    if (pricePerToken === null) {
-      throw new Error(
-        `YAPP token ${tokenId} has no direct-purchase price on contract ${contractId}. Either set one\n` +
-        `  (NETWORK=devnet node scripts/set-yapp-price.mjs --contract ${contractId} --owner <makerId> --owner-index 9)\n` +
-        '  or re-run with --yapp-source maker.'
-      );
-    }
-    return pricePerToken;
-  })());
+  // Lazy: the maker keys are not touched unless an identity actually needs a mint
+  // (so a fully-provisioned re-run needs no seed phrase).
   let makerPromise = null;
   const getMaker = () => (makerPromise ??= makerContext(handle));
 
-  // Maker transfers all spend ONE identity's nonce sequence and the SDK waits
-  // per call, so they stay serial; direct purchases are per-identity and parallelise.
-  const todo = selected(ledger, only).filter((entry) => stateRank(entry.state) === stateRank('named'));
-  const limit = yappSource === 'maker' ? 1 : parallel;
-  await forEachParallel(todo, limit, async (entry) => {
+  /** The identity's own once-per-identity claim (a claim is not a transfer: the paused token pays it). */
+  const claim = async (entry, balance) => {
+    const identity = await readback(handle, () => sdk.identities.fetch(entry.identityId));
+    const identityKey = identity.getPublicKeyById(CRITICAL_AUTH_KEY_ID);
+    console.log(`  persona ${entry.personaIdx}: claiming the ${STARTER_GRANT} YAPP starter grant …`);
     try {
-      if (yappTarget === 0n) {
-        entry.state = 'ready';
-        saveLedger(ledger);
-        return;
-      }
-      const balances = await readback(handle, () => sdk.tokens.balances([entry.identityId], tokenId));
-      const balance = (balances instanceof Map ? balances.get(entry.identityId) : undefined) ?? 0n;
-      if (balance >= yappTarget) {
-        entry.state = 'ready';
-        saveLedger(ledger);
-        console.log(`  persona ${entry.personaIdx}: already holds ${balance} YAPP`);
-        return;
-      }
-      let amount = yappTarget - balance;
+      await sdk.tokens.claim({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION, identityId: entry.identityId, distributionType: 'oncePerIdentity', identityKey, signer: buildSignerFor(entry) });
+    } catch (e) {
+      // 40722: claimed on an earlier run; the balance read below decides.
+      if (!ALREADY_CLAIMED.test(describeErr(e)) && !(await reconciled(e, entry, balance + STARTER_GRANT))) throw e;
+    }
+    return balanceOf(entry);
+  };
 
-      const settledOk = async () => {
-        await sleep(3000);
-        const after = await readback(handle, () => sdk.tokens.balances([entry.identityId], tokenId));
-        return ((after instanceof Map ? after.get(entry.identityId) : undefined) ?? 0n) >= yappTarget;
-      };
+  /** The maker (contract owner) mints `amount` straight to the identity. */
+  const mint = async (entry, amount, target) => {
+    const maker = await getMaker();
+    console.log(`  persona ${entry.personaIdx}: minting ${amount} YAPP from the maker …`);
+    try {
+      await sdk.tokens.mint({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION, amount, identityId: maker.makerId, recipientId: entry.identityId, identityKey: maker.identityKey, signer: maker.signer });
+    } catch (e) {
+      if (!(await reconciled(e, entry, target))) throw e;
+    }
+  };
 
-      if (yappSource === 'maker') {
-        const maker = await getMaker();
-        console.log(`  persona ${entry.personaIdx}: transferring ${amount} YAPP from the maker …`);
-        try {
-          await sdk.tokens.transfer({
-            dataContractId: contractId,
-            tokenPosition: YAPP_TOKEN_POSITION,
-            amount,
-            senderId: maker.makerId,
-            recipientId: entry.identityId,
-            identityKey: maker.identityKey,
-            signer: maker.signer,
-          });
-        } catch (e) {
-          const text = describeErr(e);
-          if (!WAIT_MAYBE_LANDED.test(text) && !TRANSPORT_COLLAPSE.test(text)) throw e;
-          if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
-          if (!(await settledOk())) throw e;
-        }
-      } else {
-        const pricePerToken = await getPrice();
-        if (amount < MIN_YAPP_PURCHASE) amount = MIN_YAPP_PURCHASE; // SetPrices lowest tier
-        const identity = await readback(handle, () => sdk.identities.fetch(entry.identityId));
-        const identityKey = identity.getPublicKeyById(CRITICAL_AUTH_KEY_ID); // direct purchase requires CRITICAL
-        const signer = buildSignerFor(entry);
-        console.log(`  persona ${entry.personaIdx}: buying ${amount} YAPP (${amount * pricePerToken} credits) …`);
-        try {
-          await sdk.tokens.directPurchase({
-            dataContractId: contractId,
-            tokenPosition: YAPP_TOKEN_POSITION,
-            buyerId: entry.identityId,
-            amount,
-            maxTotalCost: amount * pricePerToken,
-            identityKey,
-            signer,
-          });
-        } catch (e) {
-          const text = describeErr(e);
-          if (!WAIT_MAYBE_LANDED.test(text) && !TRANSPORT_COLLAPSE.test(text)) throw e;
-          if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
-          if (!(await settledOk())) throw e;
-        }
+  const todo = selected(ledger, only).filter((entry) => stateRank(entry.state) === stateRank('named'));
+  const ready = (entry, note) => { entry.state = 'ready'; saveLedger(ledger); if (note) console.log(`  persona ${entry.personaIdx}: ${note}`); };
+  const shortfall = new Map();
+  // Claims are each identity's own transition and parallelise; mints all spend the
+  // maker's nonce sequence, so they run one at a time afterwards.
+  await forEachParallel(todo, yappSource === 'claim' ? parallel : 1, async (entry) => {
+    try {
+      if (yappTarget === 0n) return ready(entry);
+      let balance = await balanceOf(entry);
+      if (balance < yappTarget && yappSource === 'claim' && !entry.starterClaimed) {
+        balance = await claim(entry, balance);
+        entry.starterClaimed = true;
+        saveLedger(ledger);
       }
-      entry.state = 'ready';
-      saveLedger(ledger);
-      console.log(`  persona ${entry.personaIdx}: YAPP funded`);
+      if (balance >= yappTarget) return ready(entry, `holds ${balance} YAPP`);
+      shortfall.set(entry, yappTarget - balance);
     } catch (e) {
       noteError(ledger, entry, 'yapp', e);
     }
   });
+  for (const [entry, amount] of shortfall) {
+    try {
+      await mint(entry, amount, yappTarget);
+      ready(entry, 'YAPP funded');
+    } catch (e) {
+      noteError(ledger, entry, 'yapp', e);
+    }
+  }
 }
 
 // ---- Final table ---------------------------------------------------------------------
@@ -729,11 +691,16 @@ function selfTest() {
 
   // Persona validation against the real contract limits
   const limits = profileLimits();
-  const persona = { idx: 0, handle: 'alice42', displayName: 'Alice', bio: 'hi', avatarSeed: 'alice-seed' };
+  const persona = { idx: 0, handle: 'alice42', displayName: 'Alice', bio: 'hi', avatarSeed: 'alice-seed', location: 'Lisbon' };
   check('persona: valid persona passes', validatePersona(persona, limits).length === 0);
-  check('persona: displayName over 50 fails', validatePersona({ ...persona, displayName: 'x'.repeat(51) }, limits).length > 0);
+  check('persona: displayName over DashPay\'s 25 fails', validatePersona({ ...persona, displayName: 'x'.repeat(26) }, limits).length > 0);
+  check('persona: bio over DashPay\'s 140 fails', validatePersona({ ...persona, bio: 'x'.repeat(141) }, limits).length > 0);
   check('persona: bad website fails', validatePersona({ ...persona, website: 'ftp://x' }, limits).length > 0);
-  check('persona: avatar JSON is stable', avatarFieldFor(persona) === avatarFieldFor(persona));
+  const documents = profileDocumentsFor(persona);
+  check('profile: the DashPay document carries the name and the bio as publicMessage',
+    JSON.stringify(documents.dashpay) === JSON.stringify({ displayName: 'Alice', publicMessage: 'hi' }));
+  check('profile: the extension carries the rest and a stable DiceBear recipe',
+    documents.extension.location === 'Lisbon' && documents.extension.avatar === profileDocumentsFor(persona).extension.avatar && !('displayName' in documents.extension));
 
   // Split tx construction with fabricated UTXOs (nothing broadcast)
   const treasury = generateKeypairHex();
@@ -788,7 +755,7 @@ try {
 } catch (e) {
   console.error(e.message);
   console.error('Usage: NETWORK=devnet node scripts/seed/provision-seed-identities.mjs --personas <file>');
-  console.error('         [--credits-per <duffs>] [--yapp <tokens>] [--yapp-source maker|purchase] [--only <idx,idx>]');
+  console.error('         [--credits-per <duffs>] [--yapp <tokens>] [--yapp-source maker|claim] [--only <idx,idx>]');
   console.error('       node scripts/seed/provision-seed-identities.mjs --self-test | --treasury-address');
   process.exit(1);
 }
@@ -804,7 +771,7 @@ if (args.treasuryAddress) {
     console.log(`treasury key generated and written to ${TREASURY_KEY_FILE} (mode 600)`);
   }
   console.log(`treasury address: ${addressOfPrivateKeyHex(loadTreasuryKeyHex())}`);
-  console.log('fund it from https://faucet.moutai.networks.dash.org/ — see scripts/seed/README.md for amounts');
+  console.log('fund it from the devnet faucet (bonsia: https://faucet.bonsia.networks.dash.org/) — see scripts/seed/README.md for amounts');
   process.exit(0);
 }
 
@@ -832,7 +799,7 @@ try {
 
   console.log('\nConnecting SDK');
   const handle = createSdkHandle({
-    contractIds: [socialContractId(), profileContractId()],
+    contractIds: [socialContractId(), DASHPAY_CONTRACT_ID],
     timeoutMs: SDK_TIMEOUT_MS,
     log: (msg) => console.log(`  ${msg}`),
   });

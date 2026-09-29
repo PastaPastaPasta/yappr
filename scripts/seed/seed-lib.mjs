@@ -54,7 +54,7 @@ export const REPORT_FILE = join(REPO_ROOT, '.seed-report.local.json');
 // ---- Network / contract constants --------------------------------------------
 
 export const YAPP_TOKEN_POSITION = 0;
-/** YAPP create costs per doctype (contracts/yappr-social-contract-v9.json tokenCost). */
+/** YAPP create costs per doctype (contracts/yappr-social-contract-v10.json tokenCost; v9's are the same). */
 export const TOKEN_COST = { post: 10, reply: 3, like: 1, likeReply: 1, repost: 1 };
 /** Base URL posts are linked as in seeded content ({{link:REF}} substitution). */
 export const POST_LINK_BASE = 'https://yap.pr/devnet/post/?id=';
@@ -73,34 +73,48 @@ export function socialContractId() {
   return id;
 }
 
-/** The unified profile contract the app reads profiles from. */
+/**
+ * The DashPay contract: v10's base profile (a system contract, the same id on
+ * every network). The social `yapprProfile` extension requires a DashPay
+ * `profile` owned by its writer (ownerRefersTo, 40120 otherwise).
+ */
+export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7';
+
+/**
+ * The contract profiles are read from: DashPay on v10, the unified profile
+ * contract (NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID) before it.
+ */
 export function profileContractId() {
+  if (envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') === 'v10') return DASHPAY_CONTRACT_ID;
   const id = envValue('NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID');
   if (!id) throw new Error('NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID missing from the environment and .env.devnet');
   return id;
 }
 
-// ---- Document shapes (social v9) ----------------------------------------------
+// ---- Document shapes (social v10) ---------------------------------------------
 //
-// The seeder writes to the devnet social contract, which is v9
-// (contracts/yappr-social-contract-v9.json); nothing else exists to seed. The
-// corpus format keeps `"hashtag": ""` for "untagged", and on chain that is an
-// ABSENT property: an untagged post OMITS `hashtag`, and a like of it OMITS
-// `like.hashtag` too — propertyAgreement treats both-absent as agreement,
-// while sending `''` is consensus mismatch 40127. The like's delete-by-values
-// tuple must reproduce the same absence (it is the same value tuple). A like
-// of a TAGGED post also writes a `beat` companion, which carries today's
-// trending-hashtag axis. post and reply creates agree to an action fee, and
-// their token costs are `optional` with the contract owner offering the gas —
-// see `actionFeeFor` / `paymentInfo` below.
+// The seeder writes to the devnet social contract, which is v10
+// (contracts/yappr-social-contract-v10.json, 4.2.0-beta.7); nothing else exists
+// to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
+// that is an ABSENT property: an untagged post OMITS `hashtag`, and a like of
+// it OMITS `like.hashtag` too — a `where` entry treats both-absent as
+// agreement, while sending `''` is consensus mismatch 40127. The like's
+// delete-by-values tuple must reproduce the same absence (it is the same value
+// tuple). There is no `beat` companion any more: the like itself carries
+// today's hashtag window (`like.byDayHashtagPost`, skipped when untagged).
+// There is no `language` either. A post or reply naming `mediaUrl` must carry
+// `mediaHash` (sha256 of the bytes) and `mediaFingerprint` (8-byte dHash)
+// beside it (`mediaFieldsFor`). post and reply creates agree to an action fee,
+// and their token costs are `optional` with the contract owner offering the
+// gas — see `actionFeeFor` / `paymentInfo` below.
 
 /** The topology the seeded contract must have (`.env.devnet`). */
-export const SEEDED_TOPOLOGY = 'v9';
-/** v9's `post.hashtag` / `like.hashtag` maxLength (the ranked key-size ceiling). */
+export const SEEDED_TOPOLOGY = 'v10';
+/** `post.hashtag` / `like.hashtag` maxLength (the ranked key-size ceiling). */
 export const HASHTAG_MAX = 61;
 
 /**
- * Refuses to seed a contract of another shape: every write below is a v9
+ * Refuses to seed a contract of another shape: every write below is a v10
  * document, and a stale `NEXT_PUBLIC_CONTRACT_TOPOLOGY` would otherwise spend
  * credits on writes consensus rejects.
  */
@@ -122,23 +136,10 @@ export function hashtagProps(hashtag) {
 }
 
 /**
- * The `beat` companion a like of a TAGGED post writes beside itself — the
- * tagged-only indexOnly doctype whose byDayHashtagPost serves today's
- * trending hashtags / per-tag top. `null` for an untagged target
- * (beat.hashtag is required). Its postId refersTo the post with
- * propertyAgreement on hashtag, so consensus checks the tag.
- */
-export function beatValueTuple(target) {
-  const tag = target.hashtag ?? '';
-  if (tag === '') return null;
-  return { postId: bs58.decode(target.id), hashtag: tag };
-}
-
-/**
  * The like doc's data value tuple for a target post ref record. Used for the
  * create AND for delete-by-values (indexOnly deletes carry the whole value
- * tuple) — both must mirror the post's propertyAgreement values exactly,
- * including hashtag ABSENCE. `postAuthor` binds to the post's `$ownerId`.
+ * tuple) — both must mirror the post's `where` values exactly, including
+ * hashtag ABSENCE. `postAuthor` binds to the post's `$ownerId`.
  */
 export function likeValueTuple(target) {
   return {
@@ -265,12 +266,40 @@ export function validateHandle(handle, { allowContested = false } = {}) {
   return null;
 }
 
-/** Field limits of the unified profile contract, read from the checked-in JSON. */
+/**
+ * The field limits a persona must fit: v10's DashPay profile (displayName 25,
+ * publicMessage 140 — the persona `bio`) beside the social `yapprProfile`
+ * extension (location, website, avatar recipe). DashPay's are its v2 schema,
+ * which every network carries; the extension's are read from the checked-in
+ * v10 JSON. Tighter than the retired profile contract's 50/160 everywhere, so
+ * a persona valid here is valid on either.
+ */
 export function profileLimits() {
-  const contract = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', 'yappr-profile-contract.json'), 'utf8'));
-  const schema = contract.documentSchemas?.profile ?? contract.documents?.profile ?? contract.profile;
-  if (!schema) throw new Error('contracts/yappr-profile-contract.json has no profile document schema');
-  return schema.properties;
+  const contract = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', 'yappr-social-contract-v10.json'), 'utf8'));
+  const extension = contract.documentSchemas.yapprProfile.properties;
+  return { ...extension, displayName: { maxLength: DASHPAY_PROFILE_LIMITS.displayName }, bio: { maxLength: DASHPAY_PROFILE_LIMITS.publicMessage } };
+}
+
+/** DashPay profile v2 (system contract): the field lengths a persona's name and bio must fit. */
+export const DASHPAY_PROFILE_LIMITS = { displayName: 25, publicMessage: 140 };
+
+/**
+ * A persona's v10 profile as two documents: the DashPay `profile` (name and
+ * bio; no avatarUrl, since a DiceBear recipe has no bytes to hash) and the
+ * social `yapprProfile` extension, written after it.
+ */
+export function profileDocumentsFor(persona) {
+  return {
+    dashpay: {
+      displayName: persona.displayName,
+      ...(persona.bio ? { publicMessage: persona.bio } : {}),
+    },
+    extension: {
+      ...(persona.location ? { location: persona.location } : {}),
+      ...(persona.website ? { website: persona.website } : {}),
+      avatar: avatarFieldFor(persona),
+    },
+  };
 }
 
 /** DiceBear styles the app's avatar renderer accepts (unified-profile-service.ts). */
@@ -344,16 +373,35 @@ export function loadPersonas(file) {
 export const OP_TYPES = ['post', 'quote', 'reply', 'like', 'likeReply', 'repost', 'follow', 'bookmark'];
 const MEDIA_URL_PATTERN = /^(https?|ipfs):\/\/.+$/;
 const LINK_PLACEHOLDER = /\{\{link:([A-Za-z0-9_-]+)\}\}/g;
-export const CONTENT_MAX = 500;
+/** `post.content` / `reply.content` maxLength, in code points (v10). */
+export const CONTENT_MAX = 1000;
+/** `post.content` / `reply.content` maxBytes, in UTF-8 bytes (v10: 10421 over it). */
+export const CONTENT_MAX_BYTES = 2000;
 export const MEDIA_URL_MAX = 512;
 
-/** Worst-case rendered length of `content` once every {{link:REF}} expands. */
+/** Code points, as `maxLength` counts them (an emoji is one, not two UTF-16 units). */
+export const codePointLength = (text) => Array.from(text).length;
+export const utf8Length = (text) => Buffer.byteLength(text, 'utf8');
+
+/**
+ * Worst-case rendered length of `content` once every {{link:REF}} expands, in
+ * code points (the link text is ASCII, so it adds as many bytes as characters).
+ */
 export function expandedContentLength(content) {
-  let length = content.length;
+  let length = codePointLength(content);
   for (const match of content.matchAll(LINK_PLACEHOLDER)) {
     length += POST_LINK_MAX - match[0].length;
   }
   return length;
+}
+
+/** Worst-case UTF-8 byte length of `content` once every {{link:REF}} expands. */
+export function expandedContentBytes(content) {
+  let bytes = utf8Length(content);
+  for (const match of content.matchAll(LINK_PLACEHOLDER)) {
+    bytes += POST_LINK_MAX - match[0].length;
+  }
+  return bytes;
 }
 
 /** Replaces {{link:REF}} with the deployed post URL. `resolve(ref)` → base58 post id. */
@@ -425,7 +473,9 @@ export function parseCorpus(text, personas) {
         else if (target !== 'post') fail(line, `{{link:${match[1]}}} must reference a post ref, got ${target}`);
       }
       const expanded = expandedContentLength(content);
-      if (expanded > CONTENT_MAX) fail(line, `content can expand to ${expanded} chars (max ${CONTENT_MAX})`);
+      if (expanded > CONTENT_MAX) fail(line, `content can expand to ${expanded} characters (max ${CONTENT_MAX})`);
+      const bytes = expandedContentBytes(content);
+      if (bytes > CONTENT_MAX_BYTES) fail(line, `content can expand to ${bytes} UTF-8 bytes (max ${CONTENT_MAX_BYTES})`);
       return undefined;
     };
 
@@ -781,7 +831,7 @@ export const FEE_MULTIPLIER_TOLERANCE_PERCENT = 20;
 export const DEFAULT_FEE_MULTIPLIER_PERMILLE = 1000n;
 
 const SOCIAL_DOCUMENT_SCHEMAS = JSON.parse(
-  readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v9.json'), 'utf8')
+  readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v10.json'), 'utf8')
 ).documentSchemas;
 
 /**

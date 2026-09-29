@@ -96,7 +96,7 @@ function buildSignedCreate({ contractId, actor, docType, data, nonce, payment, a
   return { st, id };
 }
 
-export function buildPipelinedExecutor({ handle, contractId, actors, ledger, progressRefs, planOp, entryExists, paymentFor, window = DEFAULT_WINDOW, log = () => {} }) {
+export function buildPipelinedExecutor({ handle, contractId, actors, ledger, progressRefs, planOp, mediaFor, entryExists, paymentFor, window = DEFAULT_WINDOW, log = () => {} }) {
   const resolveRef = (ref) => {
     const record = progressRefs.get(ref);
     if (!record) throw new Error(`ref "${ref}" not materialized (checkpoint out of sync)`);
@@ -160,18 +160,10 @@ export function buildPipelinedExecutor({ handle, contractId, actors, ledger, pro
 
   return async function executeOp(op) {
     const actor = actors.get(op.author);
-    const plan = planOp(op, { actors, resolveRef });
+    const plan = planOp(op, { actors, resolveRef, mediaFor });
     await waitWindow(actor.personaIdx);
     try {
       const { id } = await submit({ actor, docType: plan.docType, data: plan.data, tokenCost: plan.tokenCost, existenceKeyPlan: plan, duplicateIsSuccess: ['like', 'likeReply', 'follow', 'bookmark', 'repost'].includes(op.type) });
-      if (plan.companion) {
-        // The beat: a second transition after the like is on chain (batch cap is 1).
-        try {
-          await submit({ actor, docType: plan.companion.docType, data: plan.companion.data, tokenCost: undefined, existenceKeyPlan: plan.companion, duplicateIsSuccess: true });
-        } catch (e) {
-          log(`line ${op.line}: beat companion failed (${describeErr(e).slice(0, 120)}) — like stands, tag under-counts today`);
-        }
-      }
       return plan.refRecord ? plan.refRecord(id) : null;
     } finally {
       releaseWindow(actor.personaIdx);
