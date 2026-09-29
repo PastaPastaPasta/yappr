@@ -39,12 +39,22 @@ interface PostActionBarProps {
   /** A tombstone: nothing new may point at it, but an existing like or repost can be undone. */
   deleted: boolean
   reply: { count: number; enabled: boolean; reason?: string | null; onClick: () => void }
-  /** `allowed` false hides the Repost item; the control still shows the count and Quote. */
-  repost: { count: number; active: boolean; loading: boolean; allowed: boolean; onClick: () => void }
+  /**
+   * `allowed` false hides the Repost item; the control still shows the count and Quote.
+   * `undoLabel` names the undo when it is not a plain "Undo Repost" (v10: the
+   * viewer's slot holds a quote with text, and undoing deletes it).
+   */
+  repost: { count: number; active: boolean; loading: boolean; allowed: boolean; undoLabel?: string; onClick: () => void }
   like: { count: number; active: boolean; loading: boolean; onClick: () => void }
   /** Absent where the topology has no bookmark doctype for this kind. */
   bookmark?: { active: boolean; loading: boolean; onClick: () => void }
   onQuote: () => void
+  /**
+   * The Quote item's label (default "Quote"); v10 says "View your quote" when
+   * the viewer's one quote-or-repost slot holds a quote, and passes null to
+   * hide the item while it holds a bare repost (undone from the Repost item).
+   */
+  quoteLabel?: string | null
   onTip: () => void
   onShare: () => void
 }
@@ -56,7 +66,7 @@ export function stopAndRun(e: React.MouseEvent, action: () => void | Promise<voi
 }
 
 /** The reply / repost / like / tip / bookmark / share row under a post. */
-export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like, bookmark, onQuote, onTip, onShare }: PostActionBarProps) {
+export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like, bookmark, onQuote, quoteLabel = 'Quote', onTip, onShare }: PostActionBarProps) {
   const repostLabel = repost.allowed ? 'Repost or quote' : 'Quote'
   const showRepostItem = repost.allowed && (!deleted || repost.active)
   const likeDisabled = like.loading || (deleted && !like.active)
@@ -107,17 +117,17 @@ export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like,
               sideOffset={5}
               onClick={stopPropagation}
             >
-              {/* Reposting a reply has no doctype on v9, so the item is absent rather than failing. */}
+              {/* Reposting a reply has no doctype on v9, so the item is absent rather than failing (v10 reposts it as a quote). */}
               {showRepostItem && (
                 <DropdownMenu.Item onClick={(e) => stopAndRun(e, repost.onClick)} className={MENU_ITEM}>
                   <ArrowPathIcon className={cn('h-5 w-5', repost.active && 'text-green-500')} />
-                  {repost.active ? 'Undo Repost' : 'Repost'}
+                  {repost.active ? repost.undoLabel ?? 'Undo Repost' : 'Repost'}
                 </DropdownMenu.Item>
               )}
-              {!deleted && (
+              {!deleted && quoteLabel !== null && (
                 <DropdownMenu.Item onClick={(e) => stopAndRun(e, onQuote)} className={MENU_ITEM}>
                   <PencilSquareIcon className="h-5 w-5" />
-                  Quote
+                  {quoteLabel}
                 </DropdownMenu.Item>
               )}
             </DropdownMenu.Content>

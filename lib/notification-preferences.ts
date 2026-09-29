@@ -4,6 +4,9 @@ import type { Notification } from '@/lib/types'
 const NOTIFICATION_TYPE_TO_SETTING: Record<Notification['type'], keyof NotificationSettings | null> = {
   like: 'likes',
   repost: 'reposts',
+  // A v10 quote shares the repost slot on chain (one per author and target),
+  // so the reposts preference covers it.
+  quote: 'reposts',
   reply: 'replies',
   follow: 'follows',
   mention: 'mentions',

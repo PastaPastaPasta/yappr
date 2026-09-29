@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, FlagIcon, LockClosedIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
@@ -27,10 +27,12 @@ import { useReportPostModal } from '@/hooks/use-report-post-modal'
 import { useModerationRole } from '@/hooks/use-is-moderator'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { usePostEngagement } from '@/hooks/use-post-engagement'
-import { shouldGateSensitive } from '@/lib/sensitive-content'
+import { isSensitivePost, shouldGateSensitive } from '@/lib/sensitive-content'
 import { findPollrPollLink, getEmbeddedPollId, stripPollrPollLink } from '@/lib/poll-embed'
-import { contractTakesReports, deletesAreTombstones, moderatorDeletableTypes, referencesMayDangle, targetKindOf } from '@/lib/contract-topology'
+import { contractTakesReports, deletesAreTombstones, moderatorDeletableTypes, referencesMayDangle, repostsAreQuotes, targetKindOf } from '@/lib/contract-topology'
 import { quoteTargetOf } from '@/lib/feed/resolve-quoted-posts'
+import { isBareRepost, type OwnQuote } from '@/lib/feed/quote-reposts'
+import { logger } from '@/lib/logger'
 import { stopPropagation } from '@/lib/utils/events'
 import { IconButton } from '@/components/ui/icon-button'
 import { UserAvatar } from '@/components/ui/avatar-image'
@@ -55,7 +57,7 @@ export interface ProgressiveEnrichment {
   profileLoaded?: boolean
   avatarUrl: string | undefined
   stats: { likes: number; reposts: number; replies: number; quotes: number; views: number } | undefined
-  interactions: { liked: boolean; reposted: boolean; bookmarked: boolean } | undefined
+  interactions: { liked: boolean; reposted: boolean; bookmarked: boolean; ownQuote?: OwnQuote } | undefined
   isBlocked: boolean | undefined
   isFollowing: boolean | undefined
   replyTo?: { id: string; authorId: string; authorUsername: string | null }
@@ -92,7 +94,136 @@ function parentHandleOf(parent: Post): string {
 
 const CARD_MENU_ITEM = 'px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none'
 
-export function PostCard({
+/**
+ * A post or reply card. A v10 bare repost (a quote post with nothing of its
+ * own) renders as its target under an "X reposted" banner, the way a v9
+ * `repost` document does, instead of as an empty quote card.
+ */
+export function PostCard(props: PostCardProps) {
+  return isBareRepost(props.post) ? <BareRepostCard {...props} /> : <PostCardView {...props} />
+}
+
+/**
+ * v10: a bare repost shown as the post it reposts. The target comes from the
+ * batch quote pass (or the per-card fallback) and is enriched here, so its
+ * counts and the viewer's marks are the target's, not the repost's; the
+ * repost's own enrichment names the reposter.
+ */
+function BareRepostCard({ post, enrichment, onDelete }: PostCardProps) {
+  const { user } = useAuth()
+  const viewerId = user?.identityId
+  const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
+  const { quotedPost, loading, unavailable } = useQuotedPost(post)
+  const [enriched, setEnriched] = useState<Post | null>(null)
+  const [removed, setRemoved] = useState(false)
+  const [removing, setRemoving] = useState(false)
+
+  // Keyed on the target's id, not the object: a feed replacing post objects
+  // must not re-enrich. The ref hands the effect the current object.
+  const quotedRef = useRef(quotedPost)
+  useEffect(() => {
+    quotedRef.current = quotedPost
+  })
+  const quotedId = quotedPost?.id
+  useEffect(() => {
+    const target = quotedRef.current
+    if (!quotedId || !target) return
+    let current = true
+    import('@/lib/services/post-service')
+      .then(({ postService }) => postService.enrichPostsBatch([target]))
+      .then(([result]) => {
+        if (current && result) setEnriched(result)
+      })
+      .catch((error) => logger.warn('Reposted post enrichment failed; showing it without counts', error))
+    return () => {
+      current = false
+    }
+  }, [quotedId])
+  // The target renders at once and picks up its counts when they arrive.
+  const target = enriched && enriched.id === quotedId ? enriched : quotedPost
+
+  const username = resolveUsernameState(enrichment?.username, post.author)
+  const reposter = {
+    id: post.author.id,
+    username: username || undefined,
+    displayName: enrichment?.displayName ?? post.author.displayName,
+  }
+
+  const isOwnRepost = viewerId === post.author.id
+  // The target is what shows, so a blocked author, or a sensitive target the
+  // viewer hides, must not come back through someone else's repost. (Feeds
+  // filter both before render; this covers every other list.)
+  const targetBlocked = enriched?._enrichment?.authorIsBlocked === true
+  const targetHidden = target !== null && sensitiveContentMode === 'hide' && isSensitivePost(target) && target.author.id !== viewerId
+  // A target proved removed leaves nothing to browse: only the reposter sees
+  // the stub, to remove the repost.
+  const targetGone = post.quotedPostRemoved === true && !isOwnRepost
+  if (removed || targetBlocked || targetHidden || targetGone) return null
+
+  const removeRepost = async () => {
+    if (!viewerId || removing) return
+    setRemoving(true)
+    try {
+      const { postService } = await import('@/lib/services/post-service')
+      if (!(await postService.deletePost(post.id, viewerId))) throw new Error('Delete failed')
+      toast.success('Removed repost')
+      setRemoved(true)
+      onDelete?.(post.id)
+    } catch (error) {
+      logger.error('Remove repost failed:', error)
+      toast.error('Failed to remove the repost. Please try again.')
+    } finally {
+      setRemoving(false)
+    }
+  }
+
+  if (target) {
+    return (
+      <PostCardView
+        post={{ ...target, repostedBy: reposter, repostTimestamp: post.createdAt, repostedByOthers: post.repostedByOthers }}
+        // Deleting the target drops the repost that showed it.
+        onDelete={onDelete ? () => onDelete(post.id) : undefined}
+      />
+    )
+  }
+
+  const quotedTarget = quoteTargetOf(post)
+  return (
+    <article data-testid={`post-card-${post.id}`} className="border-b border-gray-200 dark:border-gray-800 px-4 pt-3 pb-3">
+      <Link href={`/user?id=${post.author.id}`} onClick={stopPropagation} className="flex items-center gap-2 text-sm text-gray-500 ml-9 hover:underline">
+        <ArrowPathIcon className="h-4 w-4" />
+        <span>{repostBanner(reposter, post.repostedByOthers)}</span>
+      </Link>
+      {unavailable && !loading
+        ? quotedTarget && quotedTarget.where !== 'blogPost'
+          ? <RemovedPostStub documentId={quotedTarget.id} kind={quotedTarget.where} proven={post.quotedPostRemoved === true} className="ml-9" />
+          : <EmbeddedPostUnavailable className="ml-9" />
+        : <EmbeddedPostSkeleton className="ml-9" />}
+      {/* The reposted post is gone; its reposter can still delete the repost. */}
+      {unavailable && !loading && isOwnRepost && (
+        <button
+          type="button"
+          data-testid={`remove-repost-${post.id}`}
+          onClick={(e) => stopAndRun(e, removeRepost)}
+          disabled={removing}
+          className="mt-2 ml-9 inline-flex items-center gap-1 text-sm text-red-500 hover:underline disabled:opacity-50"
+        >
+          <TrashIcon className="h-4 w-4" />
+          Remove repost
+        </button>
+      )}
+    </article>
+  )
+}
+
+/** "@alice reposted", or "@alice and 2 others reposted" for a collapsed card. */
+function repostBanner(reposter: { username?: string; displayName?: string }, others = 0): string {
+  const name = reposter.username ? `@${reposter.username}` : reposter.displayName || 'Someone'
+  if (others <= 0) return `${name} reposted`
+  return `${name} and ${others} ${others === 1 ? 'other' : 'others'} reposted`
+}
+
+function PostCardView({
   post,
   hideAvatar = false,
   isOwnPost: isOwnPostProp,
@@ -144,6 +275,9 @@ export function PostCard({
     quotes: progressiveEnrichment?.stats?.quotes ?? post.quotes,
     views: progressiveEnrichment?.stats?.views ?? post.views,
   }
+  // On v10 a repost IS a quote post, so the quote count is the whole repost
+  // count and there is no separate repost count to add to it.
+  const repostsAreQuotePosts = repostsAreQuotes()
   const engagement = usePostEngagement(
     post,
     viewerId,
@@ -151,15 +285,18 @@ export function PostCard({
       liked: progressiveEnrichment?.interactions?.liked ?? post.liked ?? false,
       likes: stats.likes,
       reposted: progressiveEnrichment?.interactions?.reposted ?? post.reposted ?? false,
-      reposts: stats.reposts,
+      reposts: repostsAreQuotePosts ? stats.quotes : stats.reposts,
       bookmarked: progressiveEnrichment?.interactions?.bookmarked ?? post.bookmarked ?? false,
+      ownQuote: progressiveEnrichment?.interactions?.ownQuote ?? post.ownQuote,
     },
     targetKind
   )
   const { repostable, bookmarkable } = engagement
   // The repost control shows reposts plus quote-posts; where the topology
   // forbids reposting this kind there is no repost doctype to have counted.
-  const totalReposts = (repostable ? engagement.reposts : 0) + stats.quotes
+  const totalReposts = repostsAreQuotePosts ? engagement.reposts : (repostable ? engagement.reposts : 0) + stats.quotes
+  // v10: the viewer's one quote-or-repost slot for this target, when held.
+  const ownQuote = repostsAreQuotePosts && engagement.reposted ? engagement.ownQuote : null
 
   // The resolved author travels with the post into compose, tip and navigation
   // so cached copies render without loading skeletons.
@@ -242,10 +379,21 @@ export function PostCard({
     if (!requireAuth()) return
     return engagement.toggleLike()
   }
-  const handleRepost = () => {
+  const handleRepost = async () => {
     if (isTombstoned && !engagement.reposted) return
     if (!requireAuth()) return
-    return engagement.toggleRepost()
+    // v10: undoing a quote WITH text deletes that text too, so the hook hands
+    // it back instead, and it is confirmed like any other delete, quote shown.
+    const quote = await engagement.toggleRepost()
+    if (!quote) return
+    const { postService } = await import('@/lib/services/post-service')
+    const quotePost = await postService.getPostById(quote.id)
+    // Never delete a quote's text unconfirmed: without the quote to show, stop.
+    if (!quotePost) {
+      toast.error('Could not load your quote. Try again in a moment.')
+      return
+    }
+    openDeleteModal(quotePost, () => engagement.removeOwnQuote(quote))
   }
   const handleBookmark = () => {
     if (!requireAuth()) return
@@ -253,6 +401,13 @@ export function PostCard({
   }
   const handleQuote = () => {
     if (isTombstoned || !requireAuth()) return
+    // v10 allows one quote or repost per author and target; a second would be
+    // refused (40105), so the viewer is taken to their quote (a bare repost
+    // hides this item: it is undone from the Repost item instead).
+    if (ownQuote) {
+      router.push(`/post?id=${ownQuote.id}`)
+      return
+    }
     setQuotingPost(enrichedPost)
     setComposeOpen(true)
   }
@@ -301,7 +456,7 @@ export function PostCard({
       profileLoaded,
       avatarUrl,
       stats: progressiveEnrichment?.stats ?? stats,
-      interactions: progressiveEnrichment?.interactions ?? { liked: engagement.liked, reposted: engagement.reposted, bookmarked: engagement.bookmarked },
+      interactions: progressiveEnrichment?.interactions ?? { liked: engagement.liked, reposted: engagement.reposted, bookmarked: engagement.bookmarked, ownQuote: engagement.ownQuote ?? undefined },
       isBlocked: progressiveEnrichment?.isBlocked ?? isBlocked,
       isFollowing: authorIsFollowing,
       replyTo: progressiveEnrichment?.replyTo,
@@ -324,7 +479,7 @@ export function PostCard({
       {post.repostedBy && (
         <Link href={`/user?id=${post.repostedBy.id}`} onClick={stopPropagation} className="flex items-center gap-2 text-sm text-gray-500 mb-2 ml-9 hover:underline">
           <ArrowPathIcon className="h-4 w-4" />
-          <span>{post.repostedBy.username ? `@${post.repostedBy.username}` : post.repostedBy.displayName || 'Someone'} reposted</span>
+          <span>{repostBanner(post.repostedBy, post.repostedByOthers)}</span>
         </Link>
       )}
       <div className="flex gap-3">
@@ -512,10 +667,20 @@ export function PostCard({
               reason: isTombstoned ? `This ${isReply ? 'reply' : 'post'} was deleted` : cantReplyReason,
               onClick: handleReply,
             }}
-            repost={{ count: totalReposts, active: engagement.reposted, loading: engagement.repostLoading, allowed: repostable, onClick: handleRepost }}
+            repost={{
+              count: totalReposts,
+              active: engagement.reposted,
+              loading: engagement.repostLoading,
+              allowed: repostable,
+              undoLabel: ownQuote && !ownQuote.bare ? 'Delete your quote' : undefined,
+              onClick: handleRepost,
+            }}
             like={{ count: engagement.likes, active: engagement.liked, loading: engagement.likeLoading, onClick: handleLike }}
             bookmark={bookmarkable ? bookmarkAction ?? { active: engagement.bookmarked, loading: engagement.bookmarkLoading, onClick: handleBookmark } : undefined}
             onQuote={handleQuote}
+            // v10's one slot: a bare repost is undone from the Repost item (no
+            // Quote, which would be refused); a quote with text is visited.
+            quoteLabel={ownQuote ? (ownQuote.bare ? null : 'View your quote') : undefined}
             onTip={handleTip}
             onShare={handleShare}
           />

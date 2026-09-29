@@ -1,4 +1,5 @@
 import type { TargetKind } from '@/lib/contract-topology'
+import type { OwnQuote } from '@/lib/feed/quote-reposts'
 import type { User } from './user'
 
 export interface Media {
@@ -37,8 +38,11 @@ export interface Post {
   quotes: number
   views: number
   liked?: boolean
+  /** v10: the viewer has quoted OR reposted it (one slot per author and target). */
   reposted?: boolean
   bookmarked?: boolean
+  /** v10: the viewer's own quote or bare repost of this post/reply, when `reposted`. */
+  ownQuote?: OwnQuote
   media?: Media[]
   quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
   quotedPostOwnerId?: string // ID of quoted post owner (for notification queries)
@@ -63,6 +67,7 @@ export interface Post {
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
   repostedBy?: { id: string; username?: string; displayName?: string }  // If this is a repost, who reposted it
   repostTimestamp?: Date  // When the repost was created (for timeline sorting)
+  repostedByOthers?: number  // v10 feed: further reposters of the same target collapsed into this card
   // Reply fields (present when this Post object represents a Reply for display)
   parentId?: string        // ID of post or reply being replied to (only on replies)
   parentOwnerId?: string   // Owner of parent (only on replies)

@@ -12,6 +12,7 @@ import {
   HeartIcon,
   ArrowPathRoundedSquareIcon,
   ChatBubbleLeftIcon,
+  ChatBubbleBottomCenterTextIcon,
   ChevronDownIcon,
   FunnelIcon,
   BookOpenIcon,
@@ -90,6 +91,8 @@ function notificationMessage(notification: Notification): string {
   if (notification.targetKind === 'reply') {
     if (notification.type === 'like') return 'liked your reply'
     if (notification.type === 'reply') return 'replied to your reply'
+    if (notification.type === 'repost') return 'reposted your reply'
+    if (notification.type === 'quote') return 'quoted your reply'
   }
   return NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'
 }
@@ -112,6 +115,7 @@ const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
   mention: <AtSymbolIcon className="h-5 w-5 text-yellow-500" />,
   like: <HeartIcon className="h-5 w-5 text-red-500" />,
   repost: <ArrowPathRoundedSquareIcon className="h-5 w-5 text-green-500" />,
+  quote: <ChatBubbleBottomCenterTextIcon className="h-5 w-5 text-green-500" />,
   reply: <ChatBubbleLeftIcon className="h-5 w-5 text-blue-500" />,
   blogPost: <BookOpenIcon className="h-5 w-5 text-yappr-500" />,
   blogComment: <ChatBubbleLeftIcon className="h-5 w-5 text-yappr-500" />,
@@ -125,6 +129,7 @@ const NOTIFICATION_MESSAGES: Record<Notification['type'], string> = {
   mention: 'mentioned you in a post',
   like: 'liked your post',
   repost: 'reposted your post',
+  quote: 'quoted your post',
   reply: 'replied to your post',
   blogPost: 'published a new blog post',
   blogComment: 'commented on your blog post',
@@ -136,7 +141,7 @@ const NOTIFICATION_MESSAGES: Record<Notification['type'], string> = {
 const EMPTY_STATE_MESSAGES: Record<NotificationFilter, string> = {
   all: 'When someone interacts with you, you\'ll see it here',
   like: 'When someone likes your post, you\'ll see it here',
-  repost: 'When someone reposts your post, you\'ll see it here',
+  repost: 'When someone reposts or quotes your post, you\'ll see it here',
   reply: 'When someone replies to your post, you\'ll see it here',
   follow: 'When someone follows you, you\'ll see it here',
   mention: 'When someone mentions you, you\'ll see it here',
@@ -173,6 +178,8 @@ function NotificationsPage() {
     }
     // The Blog tab covers both blog sources: new posts and comments on yours.
     if (tabFilter === 'blogPost') return notifs.filter(n => n.type === 'blogPost' || n.type === 'blogComment')
+    // v10 quotes share the Reposts tab: on chain a quote and a repost are one slot.
+    if (tabFilter === 'repost') return notifs.filter(n => n.type === 'repost' || n.type === 'quote')
     return notifs.filter(n => n.type === tabFilter)
   }
 

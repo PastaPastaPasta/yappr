@@ -86,6 +86,10 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
   // v9 only: quotes of replies live in their own field. Absent on v2 documents.
   const rawQuotedReplyId = data.quotedReplyId || doc.quotedReplyId;
   const quotedReplyId = rawQuotedReplyId ? identifierToBase58(rawQuotedReplyId) || undefined : undefined;
+  // The quoted document's author (consensus-bound on v9/v10). A v10 bare
+  // repost is shown as that author's post, so block filtering reads it.
+  const rawQuotedPostOwnerId = data.quotedPostOwnerId || doc.quotedPostOwnerId;
+  const quotedPostOwnerId = rawQuotedPostOwnerId ? identifierToBase58(rawQuotedPostOwnerId) || undefined : undefined;
   const rawHashtag = data.hashtag ?? doc.hashtag;
 
   const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
@@ -141,6 +145,7 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     }] : undefined,
     quotedPostId,
     quotedReplyId,
+    quotedPostOwnerId,
     deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
     sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
     // v9 omits the untagged property on chain; normalize that absence to the

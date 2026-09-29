@@ -1,14 +1,15 @@
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
-import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
+import { BaseDocumentService, QueryOptions, DocumentResult, postTimelineClauses, queryRawDocuments } from './document-service';
 import { Post, PostQueryOptions, Reply } from '../../types';
 import type { BlogPost } from '@/lib/types';
 import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
-import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
-import { HASHTAG_MAX_LENGTH, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, quoteFieldFor, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions, type PostInteractionState } from './post-stats-helpers';
+import { HASHTAG_MAX_LENGTH, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, ownQuoteIndexFor, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
 import { firstIndexedTag } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
@@ -163,7 +164,7 @@ class PostService extends BaseDocumentService<Post> {
 
   // Request deduplicators for batch/count operations
   private statsDeduplicator = new RequestDeduplicator<string, Map<string, PostStats>>();
-  private interactionsDeduplicator = new RequestDeduplicator<string, Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>>();
+  private interactionsDeduplicator = new RequestDeduplicator<string, Map<string, PostInteractionState>>();
   private countUserPostsDeduplicator = new RequestDeduplicator<string, number>();
   private countAllPostsDeduplicator = new RequestDeduplicator<string, number>();
 
@@ -421,20 +422,23 @@ class PostService extends BaseDocumentService<Post> {
 
       // Use teaser or placeholder as public content
       data.content = encryptionResult.data.teaser || PRIVATE_POST_PLACEHOLDER;
-    } else {
-      // Public post - use content directly
+    } else if (content || !repostsAreQuotes()) {
+      // Public post - use content directly. A v10 repost is a quote with no
+      // content at all (the contract's `notEmpty` rule accepts it because it
+      // quotes something), so an empty body is omitted there.
       data.content = content;
     }
 
-    // Language is required - default to 'en' if not provided
-    data.language = options.language || 'en';
+    // Language is required on v2/v9 - default to 'en' if not
+    // provided. v10 has no `language` property at all (one global timeline).
+    if (postsHaveLanguage()) data.language = options.language || 'en';
 
     // The single indexed tag — first hashtag, or first cashtag when no hashtag
     // exists, from the PUBLIC content only (`data.content` is already the
     // teaser/placeholder for private posts, so encrypted text never leaks into
     // the index); '' when untagged.
     if (hashtagsAreInline()) {
-      const tag = firstIndexedTag(data.content as string, HASHTAG_MAX_LENGTH);
+      const tag = firstIndexedTag((data.content as string | undefined) ?? '', HASHTAG_MAX_LENGTH);
       // An untagged post OMITS the optional property — likes mirror the
       // absence under the absence-aware propertyAgreement, and `skipIfAbsent`
       // keeps untagged likes out of byHashtagPost entirely.
@@ -465,20 +469,16 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * Get timeline posts.
-   * Uses the languageTimeline index: [language, $createdAt].
-   * @param language - Language code to filter by (defaults to 'en')
+   * Uses the languageTimeline index [language, $createdAt], or v10's global
+   * timeline [$createdAt] (see {@link postTimelineClauses}).
+   * @param language - Language code to filter by (defaults to 'en'; ignored on v10)
    * @param options - Query options
    */
   async getTimeline(options: QueryOptions & { language?: string } = {}): Promise<DocumentResult<Post>> {
     const { language = 'en', ...queryOptions } = options;
 
     const defaultOptions: QueryOptions = {
-      // Use languageTimeline index: [language, $createdAt]
-      where: [
-        ['language', '==', language],
-        ['$createdAt', '>', 0]
-      ],
-      orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
+      ...postTimelineClauses(language),
       limit: 20,
       ...queryOptions
     };
@@ -590,7 +590,9 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Count posts by user via the `byOwner` count tree (O(1)).
+   * Count posts by user via the `byOwner` count tree (O(1)); on v10
+   * `$ownerId ==` is served by the rangeCountable `ownerAndTime`. v10 counts
+   * the author's bare reposts too: they are posts.
    * Deduplicates in-flight requests.
    */
   async countUserPosts(userId: string): Promise<number> {
@@ -644,11 +646,7 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get user interactions with a post or reply
    */
-  private async getUserInteractions(target: KindedTarget): Promise<{
-    liked: boolean;
-    reposted: boolean;
-    bookmarked: boolean;
-  }> {
+  private async getUserInteractions(target: KindedTarget): Promise<PostInteractionState> {
     return fetchUserInteractions(target, this.getCurrentUserId());
   }
 
@@ -663,14 +661,10 @@ class PostService extends BaseDocumentService<Post> {
    * Batch get user interactions for multiple posts/replies.
    * Deduplicates in-flight requests.
    */
-  async getBatchUserInteractions(targets: readonly KindedTarget[]): Promise<Map<string, {
-    liked: boolean;
-    reposted: boolean;
-    bookmarked: boolean;
-  }>> {
+  async getBatchUserInteractions(targets: readonly KindedTarget[]): Promise<Map<string, PostInteractionState>> {
     const currentUserId = this.getCurrentUserId();
     if (!currentUserId || targets.length === 0) {
-      const result = new Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>();
+      const result = new Map<string, PostInteractionState>();
       targets.forEach(({ id }) => result.set(id, { liked: false, reposted: false, bookmarked: false }));
       return result;
     }
@@ -738,7 +732,9 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * Count quotes of a post or reply — O(1) count tree on the quote field for
-   * that kind (`quoteCount` on v2, plus `quoteReplyCount` on v9).
+   * that kind (`quoteCount` on v2, plus `quoteReplyCount` on v9; v10 serves
+   * `==` off the rangeCountable `quotesOfPost`/`quotesOfReply`). On v10 bare
+   * reposts are quotes, so this is the repost count too.
    */
   async countQuotes(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
     const quoteField = quoteFieldFor(kind);
@@ -769,6 +765,40 @@ class PostService extends BaseDocumentService<Post> {
       quotedPostIds,
       (id) => this.countQuotes(id, kind)
     );
+  }
+
+  /**
+   * v10: the author's own quote or bare repost of each target, through the
+   * unique `ownerAndQuotedPost`/`ownerAndQuotedReply [$ownerId, field]` index
+   * (`$ownerId == author && field in [...]`, one query per 100 targets). A
+   * target has at most one. Empty where the topology has no such index, and
+   * on error (fails closed: nothing reads as reposted).
+   */
+  async getOwnQuotes(ownerId: string, targetIds: string[], kind: TargetKind = 'post'): Promise<Map<string, OwnQuote>> {
+    const index = ownQuoteIndexFor(kind);
+    const ids = Array.from(new Set(targetIds.filter(Boolean)));
+    const result = new Map<string, OwnQuote>();
+    if (!index || ids.length === 0) return result;
+    try {
+      await mapLimit(chunk(ids, 100), 2, async (batch) => {
+        const documents = await queryRawDocuments({
+          dataContractId: this.contractId,
+          documentTypeName: index.docType,
+          where: [['$ownerId', '==', ownerId], [index.field, 'in', batch]],
+          orderBy: [['$ownerId', 'asc'], [index.field, 'asc']],
+          limit: batch.length,
+        });
+        for (const doc of documents) {
+          const post = this.transformDocument(doc);
+          const target = index.field === 'quotedReplyId' ? post.quotedReplyId : post.quotedPostId;
+          if (target && post.author.id === ownerId) result.set(target, ownQuoteOf(post));
+        }
+      });
+      return result;
+    } catch (error) {
+      logger.error('Error fetching own quotes:', error);
+      return new Map();
+    }
   }
 
   /**

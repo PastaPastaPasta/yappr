@@ -882,6 +882,15 @@ export function classifyModerationError(error: unknown): ModerationErrorKind | n
 }
 
 /**
+ * 40105 (DuplicateUniqueIndexError): a unique index already holds this value.
+ * On v10 that is a second quote or repost of the same target by one author
+ * (`post.ownerAndQuotedPost`/`ownerAndQuotedReply`).
+ */
+export function isDuplicateUniqueIndexError(error: unknown): boolean {
+  return classifyModerationError(error) === 'UNIQUE_VALUE_TAKEN'
+}
+
+/**
  * Every protocol-14 rejection above that is permanent for the transition as
  * built — the set `retryPostCreation` must never retry and `categorizeError`
  * must never present as transient. `isReferenceNotFoundError` and

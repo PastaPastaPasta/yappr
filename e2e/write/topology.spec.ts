@@ -6,11 +6,13 @@
  * Everything here is a claim the contract's shape makes that the client has to
  * honour, and that a unit test could not check because it depends on consensus:
  * a reply names its thread ROOT so a reply-to-a-reply must appear in the root's
- * thread; reply likes live in their own `likeReply` doctype; `repost.postId` and
- * `bookmark.postId` are `refersTo`-checked against `post`, so those controls must
- * not exist on a reply card at all; a quote of a reply goes in `quotedReplyId`;
- * and "delete" leaves a tombstone on v9 (`post`/`reply` are permanent) but
- * really removes the document on v10.
+ * thread; reply likes live in their own `likeReply` doctype; `bookmark.postId`
+ * (and on v9 `repost.postId`) are `refersTo`-checked against `post`, so those
+ * controls must not exist on a reply card at all; a quote of a reply goes in
+ * `quotedReplyId`; on v10 there is no repost doctype, so a repost of a post OR a
+ * reply is a content-less quote post, one per author and target; and "delete"
+ * leaves a tombstone on v9 (`post`/`reply` are permanent) but really removes
+ * the document on v10.
  *
  * This runs against the devnet (`.env.devnet`) and self-skips anywhere else,
  * since on v2 every assertion below is either meaningless or actively wrong.
@@ -36,7 +38,7 @@ import { expectedSocialContractId, expectedTopology } from '../fixtures/contract
 import { reloadUntilVisible } from '../fixtures/eventual'
 import { uniqueTag } from '../fixtures/run-tag'
 import { CONTRACT_TOPOLOGIES } from '../../lib/constants'
-import { deletesAreTombstones, windowedRankingFor, type RankingAxis, type WindowedRanking } from '../../lib/contract-topology'
+import { deletesAreTombstones, repostsAreQuotes, windowedRankingFor, type RankingAxis, type WindowedRanking } from '../../lib/contract-topology'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -89,7 +91,8 @@ const WRONG_TOPOLOGY_REASON = `the compiled topology ${SPEC_TOPOLOGY} is not a d
 /**
  * What the app itself says about the compiled topology, read through lib/'s own
  * helpers so this spec names no cut: whether a delete is a tombstone (v9) or a
- * removal (v10), and each ranked axis's recent window (v9 a daily "Today" on
+ * removal (v10), whether a repost is a `repost` document (v9) or a bare quote
+ * post (v10), and each ranked axis's recent window (v9 a daily "Today" on
  * every axis; v10 "3 days" on `like.byTrendPost`, "24h" on
  * `like.byTrendHashtagPost`, and no creator window). The descriptor resolves
  * the topology from the env on first use, so it is read once here with the
@@ -105,7 +108,7 @@ function topologyFacts(topology: string) {
       hashtags: windowedRankingFor('hashtags'),
       creators: windowedRankingFor('creators'),
     }
-    return { deletesAreTombstones: deletesAreTombstones(), windows }
+    return { deletesAreTombstones: deletesAreTombstones(), repostsAreQuotes: repostsAreQuotes(), windows }
   } finally {
     if (saved === undefined) delete process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY
     else process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY = saved
@@ -113,6 +116,8 @@ function topologyFacts(topology: string) {
 }
 const FACTS = topologyFacts(SPEC_TOPOLOGY)
 const DELETES_ARE_REAL = FACTS?.deletesAreTombstones === false
+/** v10: a repost is a bare quote post, so a reply can be reposted too. */
+const REPOSTS_ARE_QUOTES = FACTS?.repostsAreQuotes === true
 const WINDOWS = FACTS?.windows
 /** `doctype.index` of an axis's window, for test titles. */
 function windowIndex(axis: RankingAxis): string {
@@ -228,10 +233,11 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     )
   })
 
-  test('repost and bookmark controls are absent on a reply card', async ({ page }) => {
-    // Consensus rejects a reply id on repost.postId / bookmark.postId, so offering
-    // the controls would be offering a write that cannot succeed. The root post's
-    // own card, on the same page, still has both.
+  test(REPOSTS_ARE_QUOTES ? 'bookmark is absent on a reply card, repost is offered' : 'repost and bookmark controls are absent on a reply card', async ({ page }) => {
+    // Consensus rejects a reply id on bookmark.postId (and on v9 repost.postId),
+    // so offering the controls would be offering a write that cannot succeed.
+    // On v10 a repost is a quote post, and quotedReplyId takes a reply. The root
+    // post's own card, on the same page, still has both.
     test.setTimeout(120_000)
 
     await page.goto(appUrl(`/post?id=${rootPostId}`))
@@ -242,10 +248,11 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
 
     // The repost/quote dropdown still exists on a reply (quoting IS allowed), so
     // this checks the menu's contents rather than the trigger.
-    await expect(page.getByTestId(`repost-menu-btn-${firstReplyId}`)).toHaveAccessibleName('Quote')
+    await expect(page.getByTestId(`repost-menu-btn-${firstReplyId}`))
+      .toHaveAccessibleName(REPOSTS_ARE_QUOTES ? 'Repost or quote, 0 reposts' : 'Quote')
     await page.getByTestId(`repost-menu-btn-${firstReplyId}`).click()
     await expect(page.getByRole('menuitem', { name: 'Quote' })).toBeVisible()
-    await expect(page.getByRole('menuitem', { name: /Repost/ })).toHaveCount(0)
+    await expect(page.getByRole('menuitem', { name: /Repost/ })).toHaveCount(REPOSTS_ARE_QUOTES ? 1 : 0)
     await page.keyboard.press('Escape')
 
     // The root post's card, on the same page, still has both — so this is the
@@ -282,6 +289,43 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     await toggled.click()
     await expect(toggled).toHaveAttribute('aria-pressed', 'false')
     await expect(toggled).toBeEnabled({ timeout: 60_000 })
+  })
+
+  test('reposting a reply writes a bare quote, holds the one slot, and counts as a quote', async ({ page }) => {
+    // v10 only: no repost doctype. The repost is a `post` with quotedReplyId and
+    // no content (notEmpty lets it through because it quotes); the count on the
+    // control is the quotesOfReply count; ownerAndQuotedReply is unique, so while
+    // it stands the menu offers only its undo, never a second quote (consensus
+    // would refuse that one, 40105). Undone at the end so the quote
+    // test below can write its own quote of the same reply.
+    test.skip(!REPOSTS_ARE_QUOTES, 'reposts are repost documents on this topology')
+    test.setTimeout(420_000)
+
+    await page.goto(appUrl(`/post?id=${rootPostId}`))
+    const repostButton = page.getByTestId(`repost-menu-btn-${firstReplyId}`)
+    await expect(repostButton).toHaveAccessibleName('Repost or quote, 0 reposts', { timeout: 60_000 })
+    await repostButton.click()
+    await page.getByRole('menuitem', { name: 'Repost', exact: true }).click()
+    await expect(repostButton).toHaveAccessibleName('Repost or quote, 1 repost, reposted')
+    await expect(repostButton).toBeEnabled({ timeout: COMPOSE_TIMEOUT })
+
+    // Read back: the count comes from the quote count, the pressed state from
+    // the viewer's ownerAndQuotedReply lookup.
+    await reloadUntilVisible(page, appUrl(`/post?id=${rootPostId}`), (p) =>
+      p.getByTestId(`repost-menu-btn-${firstReplyId}`).and(p.getByRole('button', { name: 'Repost or quote, 1 repost, reposted' }))
+    )
+
+    // The slot is held: no second repost and no quote beside it, only the undo.
+    await page.getByTestId(`repost-menu-btn-${firstReplyId}`).click()
+    await expect(page.getByRole('menuitem', { name: 'Undo Repost' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: /Quote|View your/ })).toHaveCount(0)
+
+    // Undo deletes the bare quote post: the count and the slot come back.
+    await page.getByRole('menuitem', { name: 'Undo Repost' }).click()
+    await expect(page.getByTestId(`repost-menu-btn-${firstReplyId}`)).toHaveAccessibleName('Repost or quote, 0 reposts')
+    await reloadUntilVisible(page, appUrl(`/post?id=${rootPostId}`), (p) =>
+      p.getByTestId(`repost-menu-btn-${firstReplyId}`).and(p.getByRole('button', { name: 'Repost or quote, 0 reposts' }))
+    )
   })
 
   test('a quote of a reply renders the quoted reply', async ({ page, bot }) => {

@@ -227,11 +227,22 @@ export async function topCreatorsByLikes(limit: number = 10, window: RankingWind
 }
 
 /**
- * The most-followed identities — the v9 ranked chain on
- * `follow.followerCount [followingId]`. Keys are base58 identity ids.
+ * The most-followed identities — the ranked chain at `followingId` (v9
+ * `follow.followerCount [followingId]`, v10 `follow.followers [followingId,
+ * $createdAt]` ranked at `followingId`). Keys are base58 identity ids.
  */
 export async function mostFollowedUsers(limit: number = 10): Promise<RankedGroupCount[]> {
   return rankedGroupCounts('follow', 'followingId', limit);
+}
+
+/**
+ * The authors with the most posts — v10's ranked chain on `post.ownerAndTime
+ * [$ownerId, $createdAt]` (`rankedCountable {at: $ownerId}`), which counts
+ * bare reposts too (they are posts). Keys are base58 identity ids. Rejects on
+ * failure so the caller can fall back to its scan.
+ */
+export async function topAuthorsByPostCount(limit: number = 100): Promise<RankedGroupCount[]> {
+  return rankedGroupCounts('post', '$ownerId', limit, null, true);
 }
 
 export interface HydratedTopPostsOptions {

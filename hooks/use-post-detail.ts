@@ -1,9 +1,11 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { Post, Reply, ReplyThread } from '@/lib/types'
 import { postService, replyToPost } from '@/lib/services/post-service'
 import { replyService } from '@/lib/services/reply-service'
 import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
+import { isBareRepost, quotedTargetIdOf } from '@/lib/feed/quote-reposts'
 import { hasFlatThreads, referencesMayDangle, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
@@ -186,7 +188,8 @@ function nestUnderReply(
 }
 
 /**
- * Assemble a thread from the flat reply list a v9 `rootAndTime` query returns.
+ * Assemble a thread from the flat reply list a v9 `rootAndTime` (v10 `repliesOf`)
+ * query returns.
  *
  * Every reply in a thread names the same `rootPostId`, so one query has all of
  * them and the shape is reconstructed here rather than discovered by walking the
@@ -262,6 +265,7 @@ export function usePostDetail({
   postId,
   enabled = true
 }: UsePostDetailOptions): UsePostDetailResult {
+  const router = useRouter()
   // Get initial navigation data synchronously from store (for useState initializers)
   // This must be done outside hooks to capture the value at component mount time
   const getInitialData = () => {
@@ -452,6 +456,15 @@ export function usePostDetail({
         return
       }
 
+      // v10: a bare repost has no page of its own. It renders as its target,
+      // and replies, likes and tips must act on the target, not on the repost
+      // document, so its link goes to the target (a reply opens in its thread).
+      const repostTarget = isBareRepost(loadedPost) ? quotedTargetIdOf(loadedPost) : undefined
+      if (repostTarget) {
+        router.replace(`/post?id=${repostTarget}`)
+        return
+      }
+
       threadRootIdRef.current = threadRootIdOf(loadedPost)
 
       // If the loaded item is a reply, show the context it hangs off
@@ -493,19 +506,23 @@ export function usePostDetail({
       let replyThreads: ReplyThread[]
 
       if (hasFlatThreads()) {
-        // One query for the entire thread, keyed on the root every reply shares.
-        const result = await replyService.getReplies(threadRootIdOf(loadedPost))
+        // One query for the entire thread, keyed on the root every reply shares
+        // (v9: oldest first across branches; v10: grouped by parent, direct
+        // replies first — see replyService.getReplies).
+        const rootId = threadRootIdOf(loadedPost)
+        const result = await replyService.getReplies(rootId)
         if (!isCurrent()) return
         replies = result.documents
         replyCursorRef.current = result.nextCursor
         setHasMoreReplies(Boolean(result.nextCursor))
 
         // Viewing a reply renders a slice of the thread — its own subtree — but
-        // the thread query pages oldest-first from the root, so on threads
-        // longer than one page that slice can sit entirely past the loaded
-        // page. Landing here from a "Continue thread" row would then show
+        // the thread query pages from the root (oldest first on v9, parent by
+        // parent on v10), so on threads longer than one page that slice can sit
+        // entirely past the loaded page. Landing here from a "Continue thread" row would then show
         // "No replies yet" despite the row promising more. Fetch the focused
-        // subtree level by level (targeted replyToReplyId queries) down to the
+        // subtree level by level (targeted replyToReplyId queries, pinned to
+        // the thread root on v10) down to the
         // full depth the page renders: every rendered reply then either shows
         // its children or is a nested item whose own Continue row (backed by
         // enrichment counts) leads onward.
@@ -513,7 +530,7 @@ export function usePostDetail({
           const renderedDepth = MAX_NESTED_DEPTH + 1
           let frontier = [loadedPost.id]
           for (let depth = 0; depth < renderedDepth && frontier.length > 0; depth++) {
-            const childrenMap = await replyService.getNestedReplies(frontier)
+            const childrenMap = await replyService.getNestedReplies(frontier, { rootPostId: rootId })
             if (!isCurrent()) return
             const known = new Set(replies.map((reply) => reply.id))
             const fresh = Array.from(childrenMap.values()).flat()
@@ -554,7 +571,7 @@ export function usePostDetail({
         setIsLoadingReplies(false)
       }
     }
-  }, [postId, enabled, enrich, fetchReplyChain])
+  }, [postId, enabled, enrich, fetchReplyChain, router])
 
   /**
    * Fetch the next page of the thread (v9 only — v2's `getReplies` covers one

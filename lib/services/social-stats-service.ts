@@ -56,6 +56,8 @@ export async function loadUserStats(userId: string) {
 }
 
 export async function loadEngagementCounts(postId: string, kind: TargetKind) {
+  // Null on v10, which has no repost doctype: `quotes` there counts the bare
+  // reposts too, and `reposts` stays 0 (the engagements page splits the list).
   const repost = repostIndexFor(kind);
   if (likesAreIndexOnly()) {
     try {

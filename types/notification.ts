@@ -3,7 +3,8 @@ import type { User } from './user'
 
 export interface Notification {
   id: string
-  type: 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'privateFeedRequest' | 'privateFeedApproved' | 'privateFeedRevoked' | 'blogPost' | 'blogComment'
+  /** `quote` is v10 only: a quote with text of the user's post or reply (a bare quote is a `repost`). */
+  type: 'follow' | 'mention' | 'like' | 'repost' | 'quote' | 'reply' | 'privateFeedRequest' | 'privateFeedApproved' | 'privateFeedRevoked' | 'blogPost' | 'blogComment'
   from: User
   post?: Post
   createdAt: Date

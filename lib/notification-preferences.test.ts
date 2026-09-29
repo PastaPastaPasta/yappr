@@ -10,7 +10,7 @@ const enabled: NotificationSettings = {
 
 describe('notification visibility and unread counts', () => {
   it.each([
-    ['like', 'likes'], ['repost', 'reposts'], ['reply', 'replies'],
+    ['like', 'likes'], ['repost', 'reposts'], ['quote', 'reposts'], ['reply', 'replies'],
     ['follow', 'follows'], ['mention', 'mentions'], ['blogPost', 'blogPosts'],
     ['blogComment', 'blogPosts'],
   ] as const)('excludes disabled %s notifications from the unread count', (type, setting) => {

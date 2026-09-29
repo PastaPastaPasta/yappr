@@ -1,12 +1,12 @@
 import { logger } from '@/lib/logger';
 import type { DocumentResult, QueryOptions } from './document-service';
-import { queryRawDocuments } from './document-service';
+import { postTimelineClauses, queryRawDocuments } from './document-service';
 import type { Post } from '../types';
 import type { PostStats } from './post-service';
 import { identifierToHex, type DocumentWhereClause } from './sdk-helpers';
 import { chunk, mapLimit, rangeDistinctCount } from './pagination-utils';
 import { getEvoSdk } from './evo-sdk-service';
-import { quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
+import { authorPostCountsAreRanked, quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
 
 function normalizeIdentifier(value: unknown): string | null {
   if (typeof value === 'string') {
@@ -165,7 +165,9 @@ let authorCountTreeUnsupported = false;
 /**
  * Per-author post counts from the `byOwner` count tree, in ONE grouped count
  * query — or null when it can't be answered, letting callers fall back to the
- * legacy scan. Two distinct null cases:
+ * legacy scan. (v2/v9: a range-distinct count needs an index ENDING in
+ * `$ownerId`; v10 has none and reads {@link fetchAuthorPostCountsViaRanking}.)
+ * Two distinct null cases:
  *
  * - The contract doesn't declare `rangeCountable: true` on that index (older
  *   cuts): rangeDistinctCount reports this as null and it is remembered for
@@ -231,8 +233,25 @@ export async function fetchTopPostsByLikes(
   }
 }
 
+/**
+ * v10: the top authors by post count, one proved ranked read on
+ * `post.ownerAndTime` (ranked at `$ownerId`), at most 100. Null on failure, so
+ * the caller falls back to the scan for this call.
+ */
+async function fetchAuthorPostCountsViaRanking(): Promise<Map<string, number> | null> {
+  try {
+    const { topAuthorsByPostCount } = await import('./ranked-likes');
+    return new Map((await topAuthorsByPostCount(100)).map((entry) => [entry.key, entry.count]));
+  } catch (error) {
+    logger.warn('fetchAuthorPostCountsViaRanking: ranked read failed, falling back to scan for this call:', error);
+    return null;
+  }
+}
+
 export async function fetchAuthorPostCounts(contractId: string): Promise<Map<string, number>> {
-  const grouped = await fetchAuthorPostCountsViaCountTree(contractId);
+  const grouped = authorPostCountsAreRanked()
+    ? await fetchAuthorPostCountsViaRanking()
+    : await fetchAuthorPostCountsViaCountTree(contractId);
   if (grouped && grouped.size > 0) return grouped;
 
   const authorCounts = new Map<string, number>();
@@ -247,11 +266,7 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<Map<str
       const documents = await queryRawDocuments({
         dataContractId: contractId,
         documentTypeName: 'post',
-        where: [
-          ['language', '==', 'en'],
-          ['$createdAt', '>', 0],
-        ],
-        orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
+        ...postTimelineClauses('en'),
         limit: PAGE_SIZE,
         startAfter,
       });
@@ -286,7 +301,10 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<Map<str
  * orderBy tail follows the index that field belongs to: v2's unique
  * `quotedPostAndOwner [quotedPostId, $ownerId]`, or v9's chronological
  * `quotesOfPost`/`quotesOfReply [<field>, $createdAt]` (v9 dropped the
- * uniqueness — quotes are content, so the same author may quote a target twice).
+ * uniqueness — quotes are content, so the same author may quote a target twice;
+ * v10 makes it one quote or repost per author again, through the separate
+ * `ownerAndQuotedPost`/`ownerAndQuotedReply`, and lists through the same
+ * chronological indexes). On v10 the list holds the target's bare reposts too.
  */
 export async function fetchQuotePosts(
   quotedPostId: string,

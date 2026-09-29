@@ -10,6 +10,7 @@ import { PostCard } from '@/components/post/post-card';
 import { useSettingsStore } from '@/lib/store';
 import { useAuth } from '@/contexts/auth-context';
 import { filterHiddenSensitive } from '@/lib/sensitive-content';
+import { collapseReposts, type OwnQuote } from '@/lib/feed/quote-reposts';
 
 interface FeedPostListProps {
   posts: Post[] | null;
@@ -28,7 +29,7 @@ interface FeedPostListProps {
     displayName: string | undefined;
     avatarUrl: string | undefined;
     stats: { likes: number; reposts: number; replies: number; quotes: number; views: number } | undefined;
-    interactions: { liked: boolean; reposted: boolean; bookmarked: boolean } | undefined;
+    interactions: { liked: boolean; reposted: boolean; bookmarked: boolean; ownQuote?: OwnQuote } | undefined;
     isBlocked: boolean | undefined;
     isFollowing: boolean | undefined;
     replyTo?: { id: string; authorId: string; authorUsername: string | null };
@@ -53,7 +54,8 @@ export function FeedPostList({
   const { user } = useAuth();
   // 'hide' filters at render time so pagination cursors stay untouched — a
   // short page is fine, a broken cursor is not.
-  const visiblePosts = posts && filterHiddenSensitive(posts, sensitiveContentMode, user?.identityId);
+  // v10: one card per reposted target (render time too, for the same reason).
+  const visiblePosts = posts && collapseReposts(filterHiddenSensitive(posts, sensitiveContentMode, user?.identityId));
 
   const { sentinelRef, isSuspended, loadMore } = useInfiniteScroll({
     hasMore,

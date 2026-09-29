@@ -7,7 +7,8 @@ import { YAPPR_CONTRACT_ID, blogIsV2 } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
 import { isPublishedBlogPost } from '../blog/content-utils';
-import { likesAreIndexOnly, likeSurfacesAreSplit, likeIndexFor, replyLinkage, type TargetKind } from '../contract-topology';
+import { likesAreIndexOnly, likeSurfacesAreSplit, likeIndexFor, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
+import { quoteNotificationType, quotedTargetIdOf } from '../feed/quote-reposts';
 
 // Constants for notification queries
 const NOTIFICATION_QUERY_LIMIT = 100;
@@ -20,9 +21,10 @@ const INITIAL_FETCH_MS = INITIAL_FETCH_DAYS * 24 * 60 * 60 * 1000;
 type PrivateFeedNotificationType = 'privateFeedRequest' | 'privateFeedApproved' | 'privateFeedRevoked';
 
 /**
- * Engagement notification types
+ * Engagement notification types. `quote` is v10 only: a quote with text of the
+ * user's post or reply (a bare quote is a v10 repost, and notifies as one).
  */
-type EngagementNotificationType = 'like' | 'repost' | 'reply';
+type EngagementNotificationType = 'like' | 'repost' | 'quote' | 'reply';
 
 /**
  * Blog notification types. `blogPost` is "a blog you follow published";
@@ -201,9 +203,11 @@ class NotificationService {
 
   /**
    * Get reposts of user's posts since timestamp (for notification queries).
-   * Uses the postOwnerReposts index via repostService.getRepostsOfMyPosts()
+   * Uses the postOwnerReposts index via repostService.getRepostsOfMyPosts().
+   * On v10 reposts are quote posts: see {@link getQuoteNotifications}.
    */
   async getRepostNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
+    if (repostsAreQuotes()) return this.getQuoteNotifications(userId, sinceTimestamp, preloaded);
     try {
       const { repostService } = await import('./repost-service');
       const reposts = await repostService.getRepostsOfMyPosts(userId, new Date(sinceTimestamp), preloaded);
@@ -218,6 +222,43 @@ class NotificationService {
         }));
     } catch (error) {
       logger.error('Error fetching repost notifications:', error);
+      return [];
+    }
+  }
+
+  /**
+   * v10: reposts AND quotes of the user's posts and replies, since timestamp.
+   * Both are `post` documents naming the user in `quotedPostOwnerId` (bound by
+   * consensus to the quoted document's owner), read newest first off
+   * `post.quotedPostOwnerAndTime [quotedPostOwnerId, $createdAt]`. A bare quote
+   * notifies as `repost` and links to the reposted post or reply; a quote with
+   * text notifies as `quote` and links to the quote.
+   */
+  async getQuoteNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
+    try {
+      const documents = preloaded ?? await queryDocuments(await getEvoSdk(), {
+        dataContractId: YAPPR_CONTRACT_ID,
+        documentTypeName: 'post',
+        where: [['quotedPostOwnerId', '==', userId], ['$createdAt', '>', sinceTimestamp]],
+        orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'desc']],
+        limit: NOTIFICATION_QUERY_LIMIT,
+      });
+      const { transformRawPost } = await import('../feed/transform-raw-post');
+      return documents.map((doc) => transformRawPost(doc)).flatMap((post): RawNotification[] => {
+        const targetId = quotedTargetIdOf(post);
+        if (!targetId) return [];
+        const type = quoteNotificationType(post);
+        return [{
+          id: `${type}-${post.id}`,
+          type,
+          fromUserId: post.author.id,
+          postId: type === 'repost' ? targetId : post.id,
+          targetKind: post.quotedReplyId ? 'reply' : 'post',
+          createdAt: post.createdAt.getTime(),
+        }];
+      });
+    } catch (error) {
+      logger.error('Error fetching repost and quote notifications:', error);
       return [];
     }
   }
@@ -662,7 +703,9 @@ class NotificationService {
     const sources = [
       ['follow', 'followingId'], ['postMention', 'mentionedUserId'], ['followRequest', 'targetId'],
       ...kinds.map(kind => { const index = likeIndexFor(kind); if (!index.ownerField) throw new Error('Notification index has no author field'); return [index.docType, index.ownerField]; }),
-      ['repost', 'postOwnerId'], ['reply', 'parentOwnerId'],
+      // v10 has no repost doctype: reposts and quotes are posts naming the
+      // quoted document's owner.
+      repostsAreQuotes() ? ['post', 'quotedPostOwnerId'] : ['repost', 'postOwnerId'], ['reply', 'parentOwnerId'],
     ];
     // Newest first: a source with more than a page of events since the
     // watermark keeps its most recent ones. Oldest first returned the stale

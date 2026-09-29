@@ -3,6 +3,7 @@ import { Post } from '@/lib/types';
 import { loadIdentityBatch } from '@/lib/services/identity-batch';
 import { profileDataByOwnerId } from '@/lib/services/post-enrichment-helpers';
 import { repostService } from '@/lib/services/repost-service';
+import { repostsAreQuotes } from '@/lib/contract-topology';
 import { attachQuotedPosts } from './resolve-quoted-posts';
 
 export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Promise<Post[]> {
@@ -15,7 +16,9 @@ export async function enrichPostsWithRepostsAndQuotes(postsToEnrich: Post[]): Pr
 
   try {
     const postIds = enrichedPosts.map((post) => post.id);
-    if (postIds.length > 0) {
+    // v10 has no repost documents to attribute: a repost is a bare quote post
+    // that arrives with the page and renders its own "X reposted" banner.
+    if (postIds.length > 0 && !repostsAreQuotes()) {
       const reposts = await repostService.getRepostsByPostIds(postIds);
 
       const repostMap = new Map<string, { postId: string; $ownerId: string; $createdAt: number }>();

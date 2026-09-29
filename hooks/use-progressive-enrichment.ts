@@ -8,6 +8,7 @@ import { blockService } from '@/lib/services/block-service'
 import { followService } from '@/lib/services/follow-service'
 import { blockStatusCache, followStatusCache } from '@/lib/caches/user-status-cache'
 import { targetOf, type KindedTarget } from '@/lib/contract-topology'
+import { repostedAuthorIdOf, type OwnQuote } from '@/lib/feed/quote-reposts'
 
 export interface PostStats {
   likes: number
@@ -19,8 +20,11 @@ export interface PostStats {
 
 export interface UserInteractions {
   liked: boolean
+  /** v10: true when the viewer has quoted or reposted it (one slot per target). */
   reposted: boolean
   bookmarked: boolean
+  /** v10: the viewer's quote or bare repost of it, when `reposted`. */
+  ownQuote?: OwnQuote
 }
 
 export interface ProfileData {
@@ -293,8 +297,14 @@ export function useProgressiveEnrichment(
           }))
         }).catch(err => logger.error('Progressive enrichment: interactions failed', err))
 
-        // Priority 5: Block status (always query for filtering)
-        const blockPromise = blockService.checkBlockedBatch(currentUserId, authorIds)
+        // Priority 5: Block status (always query for filtering). A v10 bare
+        // repost is shown as its target's author's post, so that author is
+        // checked too (none on v2/v9).
+        const blockIds = Array.from(new Set([
+          ...authorIds,
+          ...posts.map(repostedAuthorIdOf).filter((id): id is string => id !== null),
+        ]))
+        const blockPromise = blockService.checkBlockedBatch(currentUserId, blockIds)
         blockPromise.then(blockStatus => {
           if (!isValid()) return
           blockStatusCache.seed(currentUserId, blockStatus)

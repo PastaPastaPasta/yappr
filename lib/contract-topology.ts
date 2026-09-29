@@ -41,6 +41,12 @@ export type TargetKind = 'post' | 'reply'
 export interface KindedTarget {
   id: string
   kind: TargetKind
+  /**
+   * A reply's thread root, when known. On v10 a reply's child count lives
+   * under `repliesOf [rootPostId, replyToReplyId, ...]`, so it can only be
+   * read with the root pinned ({@link replyCountNeedsRoot}).
+   */
+  rootPostId?: string
 }
 
 /**
@@ -96,7 +102,10 @@ export interface InteractionSurface {
    * differ). Null on v2, where likes are ordinary stored documents.
    */
   indexOnlyLike: IndexOnlyLikeShape | null
-  /** Reposts of this kind, or null when the topology forbids reposting it. */
+  /**
+   * `repost` documents of this kind, or null when there are none: v9 forbids
+   * reposting a reply, and v10 has no repost doctype (a repost is a quote).
+   */
   repost: OwnedTargetIndex | null
   /** Bookmarks of this kind, or null when the topology forbids bookmarking it. */
   bookmark: OwnedTargetIndex | null
@@ -128,6 +137,15 @@ export interface ReplyLinkage {
    * double duty as both root link and nesting link.
    */
   replyToReply: string | null
+  /**
+   * True when every reply index starts at the root (v10's single
+   * `repliesOf [rootPostId, replyToReplyId, $createdAt]`): a reply's children
+   * are only reachable, listed or counted, with `rootPostId ==` pinned, and a
+   * whole-thread listing comes back grouped by parent rather than by time.
+   * False on v9 (`rootAndTime` and `replyToReplyAndTime` are separate indexes)
+   * and v2.
+   */
+  nestedUnderRoot: boolean
 }
 
 /**
@@ -191,7 +209,7 @@ const V2_INTERACTIONS: InteractionSurface = {
 /** v2 — testnet (staging, production, /testing). Both kinds share every surface. */
 const V2_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v2',
-  replyLinkage: { root: 'parentId', replyToReply: null },
+  replyLinkage: { root: 'parentId', replyToReply: null, nestedUnderRoot: false },
   interactions: { post: V2_INTERACTIONS, reply: V2_INTERACTIONS },
   // v2 posts and replies are ordinary deletable documents, so a delete is a
   // delete and no tombstone is ever built ({@link deletesAreTombstones}).
@@ -237,7 +255,7 @@ const V9_REPLY_INTERACTIONS: InteractionSurface = {
 
 const V9_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v9',
-  replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId' },
+  replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId', nestedUnderRoot: false },
   tombstonePreserves: {
     post: {
       // post.immutable minus `deleted`: the quote graph and the embed triple
@@ -255,13 +273,25 @@ const V9_DESCRIPTOR: ContractTopologyDescriptor = {
 
 /**
  * v10 — `contracts/yappr-social-contract-v10.json`, the 4.2.0-beta.7 devnet
- * (docs/SOCIAL_V10.md). The interaction surfaces are v9's exactly (the same
- * doctypes, fields and index orders); what differs is carried by capability
- * helpers below:
+ * (docs/SOCIAL_V10.md). Likes, bookmarks, quotes and the reply linkage FIELDS
+ * are v9's; what differs:
  *
+ * - **Reposts are quotes.** There is no `repost` doctype: a repost is a `post`
+ *   naming its target in `quotedPostId`/`quotedReplyId` with no content, so
+ *   posts AND replies can be reposted, the quote count is the repost count,
+ *   and the unique `ownerAndQuotedPost`/`ownerAndQuotedReply` indexes allow
+ *   one quote or repost per author and target (a second is 40105). See
+ *   {@link repostsAreQuotes} and {@link ownQuoteIndexFor}.
+ * - **One reply index.** `repliesOf [rootPostId, replyToReplyId, $createdAt]`
+ *   replaces `rootAndTime`/`byRoot`/`replyToReplyAndTime`/`byReplyToReply`:
+ *   every reply read pins the root ({@link replyCountNeedsRoot}).
+ * - **Merged count indexes.** `X ==`/`X in` counts are served by the
+ *   rangeCountable list indexes (`quotesOfPost`, `ownerAndTime`, `followers`,
+ *   `following`); the posts-per-author ranking is a ranked query on
+ *   `ownerAndTime` ({@link authorPostCountsAreRanked}).
  * - **Real deletes.** `post`/`reply` are immutable and owner-deletable: a
  *   delete removes the document, nothing is preserved, and a reply, quote,
- *   like, repost, bookmark or report aimed at a deleted post is refused 40120.
+ *   like, bookmark or report aimed at a deleted post is refused 40120.
  * - **No `beat`, rolling windows.** Trending tags read
  *   `like.byTrendHashtagPost` (24h windows every 6h, `skipIfAbsent`) and top
  *   posts `like.byTrendPost` (72h windows every 24h); there is no windowed
@@ -269,9 +299,12 @@ const V9_DESCRIPTOR: ContractTopologyDescriptor = {
  */
 const V10_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v10',
-  replyLinkage: V9_DESCRIPTOR.replyLinkage,
+  replyLinkage: { ...V9_DESCRIPTOR.replyLinkage, nestedUnderRoot: true },
   tombstonePreserves: { post: NOTHING_PRESERVED, reply: NOTHING_PRESERVED },
-  interactions: V9_DESCRIPTOR.interactions,
+  interactions: {
+    post: { ...V9_POST_INTERACTIONS, repost: null },
+    reply: V9_REPLY_INTERACTIONS,
+  },
 }
 
 /** Recursively freezes a plain-object descriptor. */
@@ -332,9 +365,44 @@ export function likeIndexFor(kind: TargetKind): OwnedTargetIndex {
   return interactionsFor(kind).like
 }
 
-/** Where this kind's reposts live, or null when the kind cannot be reposted. */
+/**
+ * Where this kind's `repost` DOCUMENTS live, or null when there are none: a
+ * v9 reply, and every kind on v10, where a repost is a quote post
+ * ({@link repostsAreQuotes}). Null does not mean "cannot be reposted"; ask
+ * {@link canRepost} for that.
+ */
 export function repostIndexFor(kind: TargetKind): OwnedTargetIndex | null {
   return interactionsFor(kind).repost
+}
+
+/**
+ * True when a repost is a `post` quoting its target with no content (v10):
+ * no `repost` doctype, the quote count IS the repost count, un-reposting
+ * deletes that post, and reposts arrive in feeds through ordinary post
+ * queries instead of a separate repost merge.
+ */
+export function repostsAreQuotes(): boolean {
+  return isV10()
+}
+
+/**
+ * The unique "(this author, that target)" quote index for a kind (v10:
+ * `post.ownerAndQuotedPost [$ownerId, quotedPostId]` and
+ * `post.ownerAndQuotedReply [$ownerId, quotedReplyId]`, both `skipIfAbsent`),
+ * which answers "has the viewer already quoted or reposted this?". Null where
+ * quotes are not unique per author (v2's `quotedPostAndOwner` is target-first
+ * and v9 has none), or the kind cannot be quoted.
+ */
+export function ownQuoteIndexFor(kind: TargetKind): (OwnedTargetIndex & { index: string }) | null {
+  const field = quoteFieldFor(kind)
+  if (!repostsAreQuotes() || !field) return null
+  return {
+    docType: 'post',
+    index: field === 'quotedReplyId' ? 'ownerAndQuotedReply' : 'ownerAndQuotedPost',
+    field,
+    ownerFirst: true,
+    ownerField: 'quotedPostOwnerId',
+  }
 }
 
 /** Where this kind's bookmarks live, or null when the kind cannot be bookmarked. */
@@ -362,6 +430,27 @@ export function quoteListingOrderProperty(): '$ownerId' | '$createdAt' {
 /** The `reply` property whose count tree holds this kind's reply count. */
 export function replyCountFieldFor(kind: TargetKind): string {
   return interactionsFor(kind).replyCountField
+}
+
+/**
+ * True when counting this kind's replies needs the thread root pinned as well
+ * (v10 replies): `repliesOf` starts at `rootPostId`, so a reply's children
+ * are `rootPostId == R && replyToReplyId == P` (batched: `replyToReplyId in`
+ * grouped by `replyToReplyId`, one query per root). A post's count is its
+ * whole thread, `rootPostId ==`, on every topology.
+ */
+export function replyCountNeedsRoot(kind: TargetKind): boolean {
+  return kind === 'reply' && replyLinkage().nestedUnderRoot
+}
+
+/**
+ * True when "posts per author" is a proved ranked query (v10: `ranked` on
+ * `post` grouped by `$ownerId`, served by `ownerAndTime`'s
+ * `rankedCountable {at: $ownerId}`). Elsewhere it is a range-distinct count
+ * over an index ending in `$ownerId` (v9's `byOwner`), with a scan fallback.
+ */
+export function authorPostCountsAreRanked(): boolean {
+  return isV10()
 }
 
 /**
@@ -481,10 +570,11 @@ export function prefixRankingsAvailable(): boolean {
 }
 
 /**
- * True when `follow.followerCount [followingId]` carries the full ranked
- * chain (v9), making "most followed" a proved ranked groupBy on `followingId`.
- * The O(1) follower COUNT (countable chain) exists on both topologies and is
- * not gated here.
+ * True when follows carry a ranked chain at `followingId` (v9's
+ * `followerCount [followingId]`, v10's `followers [followingId, $createdAt]`
+ * ranked at `followingId`), making "most followed" a proved ranked groupBy on
+ * `followingId`. The O(1) follower COUNT exists on every topology and is not
+ * gated here.
  */
 export function followRankingsAvailable(): boolean {
   return isDevnetCut()
@@ -647,8 +737,13 @@ export function dashpayProfileExtension(): { readonly base: typeof DASHPAY_PROFI
   return isV10() ? { base: DASHPAY_PROFILE, extensionDocType: 'yapprProfile' } : null
 }
 
+/**
+ * True when this kind can be reposted: through a `repost` document on v2 (both
+ * kinds) and v9 (posts only), through a content-less quote post on v10 (posts
+ * via `quotedPostId`, replies via `quotedReplyId`).
+ */
 export function canRepost(kind: TargetKind): boolean {
-  return repostIndexFor(kind) !== null
+  return repostsAreQuotes() ? quoteFieldFor(kind) !== null : repostIndexFor(kind) !== null
 }
 
 export function canBookmark(kind: TargetKind): boolean {
@@ -716,9 +811,13 @@ export function targetKindOf(target: KindBearing): TargetKind {
   return target.targetKind ?? (target.parentId ? 'reply' : 'post')
 }
 
-/** A Post-shaped object reduced to `{ id, kind }` for topology dispatch. */
-export function targetOf(post: KindBearing & { id: string }): KindedTarget {
-  return { id: post.id, kind: targetKindOf(post) }
+/**
+ * A Post-shaped object reduced to `{ id, kind }` for topology dispatch, plus
+ * a reply's thread root when it carries one (what v10's per-reply counts pin).
+ */
+export function targetOf(post: KindBearing & { id: string; rootPostId?: string }): KindedTarget {
+  const kind = targetKindOf(post)
+  return kind === 'reply' && post.rootPostId ? { id: post.id, kind, rootPostId: post.rootPostId } : { id: post.id, kind }
 }
 
 /** Stable identity of a kind's engagement surface, for cache/dedupe keys. */

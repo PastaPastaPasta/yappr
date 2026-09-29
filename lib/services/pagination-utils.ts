@@ -131,7 +131,9 @@ export async function documentCount(
  * DAPI round-trip instead of one `documentCount` call per id.
  *
  * Requires the queried document type to declare a `countable` index whose sole
- * property is `groupField` (e.g. `byPost`/`byParent` in yappr-social-contract-v2).
+ * property is `groupField` (e.g. `byPost`/`byParent` in yappr-social-contract-v2),
+ * or (v10) a `rangeCountable` index `[...where fields, groupField, $createdAt]`,
+ * which Drive serves as the prefix-to-last total per group.
  * `ids` are base58 identifier strings; the returned map is keyed the same way.
  *
  * The SDK's raw grouped-count map is keyed by hex-encoded property bytes — an
@@ -142,7 +144,17 @@ export async function documentCount(
  */
 export async function groupedDocumentCount(
   sdk: SDK,
-  query: { dataContractId: unknown; documentTypeName: string; groupField: string },
+  query: {
+    dataContractId: unknown;
+    documentTypeName: string;
+    groupField: string;
+    /**
+     * Fixed equality clauses ahead of the grouped `in` — the index prefix the
+     * group field sits under (v10's per-reply counts pin `rootPostId ==`
+     * before `replyToReplyId in`). None by default.
+     */
+    where?: unknown[][];
+  },
   ids: string[],
   fallbackCount: (id: string) => Promise<number>
 ): Promise<Map<string, number>> {
@@ -165,7 +177,7 @@ export async function groupedDocumentCount(
       const raw: unknown = await sdk.documents.count({
         dataContractId: query.dataContractId,
         documentTypeName: query.documentTypeName,
-        where: [[query.groupField, 'in', batch]],
+        where: [...(query.where ?? []), [query.groupField, 'in', batch]],
         groupBy: [query.groupField],
       });
 
@@ -195,6 +207,30 @@ export async function groupedDocumentCount(
   });
 
   return result;
+}
+
+/**
+ * Split ids by the thread root each belongs to, for counts that must pin the
+ * root (v10's per-reply child counts: one grouped query per root). Ids with no
+ * known root come back in `unrooted`, in input order.
+ */
+export function groupIdsByRoot(
+  ids: readonly string[],
+  roots: ReadonlyMap<string, string>
+): { byRoot: Map<string, string[]>; unrooted: string[] } {
+  const byRoot = new Map<string, string[]>();
+  const unrooted: string[] = [];
+  for (const id of ids) {
+    const root = roots.get(id);
+    if (!root) {
+      unrooted.push(id);
+      continue;
+    }
+    const group = byRoot.get(root);
+    if (group) group.push(id);
+    else byRoot.set(root, [id]);
+  }
+  return { byRoot, unrooted };
 }
 
 /**

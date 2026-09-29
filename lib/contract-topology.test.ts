@@ -21,7 +21,7 @@ type Schemas = Record<string, {
   immutable?: string[]
   immutableAllowSetting?: string[]
   required?: string[]
-  indices?: Array<{ name: string; preallocated?: boolean; skipIfAbsent?: boolean | string[]; properties: Array<Record<string, string>> }>
+  indices?: Array<{ name: string; preallocated?: boolean; skipIfAbsent?: boolean | string[]; unique?: boolean; rangeCountable?: boolean; rankedCountable?: boolean | { at: string | string[] }; properties: Array<Record<string, string>> }>
   moderatorAbilities?: { delete?: boolean; deleteKeepsRecord?: boolean; changeFields?: string[] }
   dependentRequired?: Record<string, string[]>
   documentsMutable?: boolean
@@ -344,13 +344,22 @@ describe('contract topology', () => {
       ]
       const only10 = (m: Awaited<ReturnType<typeof topologyModule>>) => [
         m.isV10(), m.mediaCarriesHashes(), m.reportsAreResolved(), m.yappIsLocked(), m.dashpayProfileExtension() !== null, !m.postsHaveLanguage(),
+        m.repostsAreQuotes(), m.ownQuoteIndexFor('post') !== null, m.replyCountNeedsRoot('reply'),
+        m.authorPostCountsAreRanked(),
       ]
       const read = async (topology: string) => {
         const m = await topologyModule(topology)
         return { surfaces: surfaces(m), shared: shared(m), only10: only10(m) }
       }
       const [v2, v9, v10] = [await read('v2'), await read('v9'), await read('v10')]
-      expect(v10.surfaces).toEqual(v9.surfaces)
+      // v9's surfaces but two: no repost doctype (a repost is a quote), and the
+      // reply indexes all start at the root.
+      const [v9Post, v9Reply] = v9.surfaces.kinds
+      expect(v10.surfaces).toEqual({
+        linkage: { ...v9.surfaces.linkage, nestedUnderRoot: true },
+        kinds: [[v9Post[0], null, ...v9Post.slice(2)], v9Reply],
+      })
+      expect(v9.surfaces.linkage.nestedUnderRoot).toBe(false)
       expect(v10.shared.every(Boolean)).toBe(true)
       expect(v10.only10.every(Boolean)).toBe(true)
       expect(v9.only10.some(Boolean)).toBe(false)
@@ -464,7 +473,8 @@ describe('contract topology', () => {
     it('pins the translated references: each where is the v9 agreement flipped', () => {
       const flip = (agreement: Record<string, string>) => Object.fromEntries(Object.entries(agreement).map(([mine, its]) => [its, mine]))
       const legacy = (schema: Schemas[string], property: string) => (schema.properties[property].refersTo as { propertyAgreement?: Record<string, string> }).propertyAgreement
-      for (const [docType, property] of [['like', 'postId'], ['likeReply', 'replyId'], ['post', 'quotedPostId'], ['post', 'quotedReplyId'], ['reply', 'replyToReplyId'], ['repost', 'postId'], ['report', 'postId'], ['report', 'replyId']]) {
+      // (v9's repost.postId has no v10 twin: the doctype is gone, see the reposts-as-quotes test.)
+      for (const [docType, property] of [['like', 'postId'], ['likeReply', 'replyId'], ['post', 'quotedPostId'], ['post', 'quotedReplyId'], ['reply', 'replyToReplyId'], ['report', 'postId'], ['report', 'replyId']]) {
         expect(V10[docType].properties[property].refersTo?.where, `${docType}.${property}`).toEqual(flip(legacy(V9[docType], property) ?? {}))
       }
       expect(V10.privateFeedGrant.properties.recipientId.refersTo?.findBy).toEqual({ targetId: '$ownerId', $ownerId: '.' })
@@ -482,13 +492,79 @@ describe('contract topology', () => {
       expect(token.distributionRules.mintingAllowChoosingDestination).toBe(true)
       expect(v10.starterGrantAmount()).toBe(100n)
       const sponsored = { optional: true, gasFeesPaidBy: 2 }
-      for (const [docType, amount] of [['post', 10], ['reply', 3], ['like', 1], ['likeReply', 1], ['repost', 1]] as const) {
+      for (const [docType, amount] of [['post', 10], ['reply', 3], ['like', 1], ['likeReply', 1]] as const) {
         expect(v10.tokenCostFor(docType), docType).toEqual({ amount, ...sponsored })
       }
+      // A repost is a post, priced as one.
+      expect(v10.tokenCostFor('repost')).toBeNull()
       expect(v10.declaredActionFee('post', 'create')).toEqual({ owner: 0n, moderators: 80_000_000n, pricing: 'feeMultiplier' })
       expect(v10.declaredActionFee('reply', 'create')).toEqual({ owner: 0n, moderators: 16_000_000n, pricing: 'feeMultiplier' })
       expect(v10.declaredActionFee('post', 'delete')).toBeNull()
       expect((await topologyModule('v9')).yappIsLocked()).toBe(false)
+    })
+
+    it('makes reposts quotes: no repost doctype, one quote or repost per author and target', async () => {
+      const v10 = await topologyModule('v10')
+      expect(V10.repost).toBeUndefined()
+      expect(v10.repostIndexFor('post')).toBeNull()
+      expect(v10.repostIndexFor('reply')).toBeNull()
+      // Posts AND replies can be reposted, through the quote fields.
+      expect([v10.canRepost('post'), v10.canRepost('reply')]).toEqual([true, true])
+      const index = (docType: string, name: string) => V10[docType].indices?.find((entry) => entry.name === name)
+      const keys = (docType: string, name: string) => index(docType, name)?.properties.map((entry) => Object.keys(entry)[0])
+      for (const kind of ['post', 'reply'] as const) {
+        const own = v10.ownQuoteIndexFor(kind)
+        expect(own, kind).not.toBeNull()
+        if (!own) continue
+        expect(own.field).toBe(v10.quoteFieldFor(kind))
+        expect(keys(own.docType, own.index), own.index).toEqual(['$ownerId', own.field])
+        expect(index(own.docType, own.index)).toMatchObject({ unique: true, skipIfAbsent: true })
+        // The quote count (the repost count) is the rangeCountable listing index.
+        const listing = kind === 'post' ? 'quotesOfPost' : 'quotesOfReply'
+        expect(keys('post', listing)).toEqual([own.field, '$createdAt'])
+        expect(index('post', listing)?.rangeCountable).toBe(true)
+      }
+      // The notification source for reposts and quotes of my posts.
+      expect(keys('post', 'quotedPostOwnerAndTime')).toEqual(['quotedPostOwnerId', '$createdAt'])
+      // An empty post is refused unless it quotes (or carries media/ciphertext/an embed).
+      expect(JSON.stringify(V10.post.propertyConstraints?.notEmpty)).toContain('"present":"quotedReplyId"')
+      const v9 = await topologyModule('v9')
+      expect([v9.repostsAreQuotes(), v9.ownQuoteIndexFor('post'), v9.canRepost('reply')]).toEqual([false, null, false])
+      expect(v9.repostIndexFor('post')).toEqual({ docType: 'repost', field: 'postId', ownerFirst: true, ownerField: 'postOwnerId' })
+      const v2 = await topologyModule('v2')
+      expect([v2.repostsAreQuotes(), v2.ownQuoteIndexFor('post'), v2.canRepost('reply')]).toEqual([false, null, true])
+    })
+
+    it('merges the count indexes into their list twins', () => {
+      const names = (docType: string) => V10[docType].indices?.map((entry) => entry.name)
+      const index = (docType: string, name: string) => V10[docType].indices?.find((entry) => entry.name === name)
+      const keys = (docType: string, name: string) => index(docType, name)?.properties.map((entry) => Object.keys(entry)[0])
+      for (const removed of ['quoteCount', 'quoteReplyCount', 'byOwner']) expect(names('post'), removed).not.toContain(removed)
+      for (const removed of ['rootAndTime', 'byRoot', 'replyToReplyAndTime', 'byReplyToReply']) expect(names('reply'), removed).not.toContain(removed)
+      for (const removed of ['followerCount', 'followingCount']) expect(names('follow'), removed).not.toContain(removed)
+      // Posts per author: `$ownerId ==` counts and the ranked top authors.
+      expect(keys('post', 'ownerAndTime')).toEqual(['$ownerId', '$createdAt'])
+      expect(index('post', 'ownerAndTime')).toMatchObject({ rangeCountable: true, rankedCountable: { at: '$ownerId' } })
+      // One reply index, rooted: every reply read pins rootPostId.
+      expect(keys('reply', 'repliesOf')).toEqual(['rootPostId', 'replyToReplyId', '$createdAt'])
+      expect(index('reply', 'repliesOf')).toMatchObject({ rangeCountable: true, rankedCountable: { at: 'rootPostId' } })
+      expect(index('reply', 'repliesOf')?.skipIfAbsent).toBeUndefined()
+      expect(V10.reply.required).toContain('rootPostId')
+      expect(keys('follow', 'followers')).toEqual(['followingId', '$createdAt'])
+      expect(index('follow', 'followers')).toMatchObject({ rangeCountable: true, rankedCountable: { at: 'followingId' } })
+      expect(keys('follow', 'following')).toEqual(['$ownerId', '$createdAt'])
+      expect(index('follow', 'following')?.rangeCountable).toBe(true)
+    })
+
+    it('counts a reply\'s children only under its root, and a post\'s thread by root alone', async () => {
+      const v10 = await topologyModule('v10')
+      expect([v10.replyCountNeedsRoot('post'), v10.replyCountNeedsRoot('reply')]).toEqual([false, true])
+      expect([v10.replyCountFieldFor('post'), v10.replyCountFieldFor('reply')]).toEqual(['rootPostId', 'replyToReplyId'])
+      expect(v10.targetOf({ id: 'r', targetKind: 'reply', rootPostId: 'root' })).toEqual({ id: 'r', kind: 'reply', rootPostId: 'root' })
+      // A post is its own root: nothing to carry.
+      expect(v10.targetOf({ id: 'p', rootPostId: 'ignored' })).toEqual({ id: 'p', kind: 'post' })
+      const v9 = await topologyModule('v9')
+      expect([v9.replyCountNeedsRoot('reply'), v9.replyLinkage().nestedUnderRoot, v9.authorPostCountsAreRanked()]).toEqual([false, false, false])
     })
 
     it('puts skipIfAbsent on every stored index over an optional property only', () => {
@@ -497,8 +573,9 @@ describe('contract topology', () => {
         for (const index of schema.indices ?? []) {
           const optional = index.properties.map((entry) => Object.keys(entry)[0]).filter((name) => !name.startsWith('$') && !required.has(name))
           // byStatus stays unskipped: an open report has no status, and a skip index
-          // could not serve the `status == null` side of the queue.
-          const expected = optional.length > 0 && index.name !== 'byStatus'
+          // could not serve the `status == null` side of the queue. repliesOf too:
+          // a direct reply has no replyToReplyId and must sit under the null branch.
+          const expected = optional.length > 0 && index.name !== 'byStatus' && index.name !== 'repliesOf'
           expect(index.skipIfAbsent === true, `${docType}.${index.name}`).toBe(expected)
         }
       }
