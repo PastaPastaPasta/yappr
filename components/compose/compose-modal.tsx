@@ -22,6 +22,7 @@ import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { planPosts, publishThread } from '@/lib/compose/publish-thread'
 import { characterCount, contentOverage, hasVisibleContent, isOverContentLimit } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
+import type { UploadResult } from '@/lib/upload'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -196,10 +197,10 @@ export function ComposeModal() {
     // An earlier attempt's poll, so a retry never creates a second one.
     let pollId: string | null = poll.createdPollId
 
-    let uploadedUrl: string | undefined
+    let uploaded: UploadResult | null = null
     try {
       if (image.attached && !image.attached.uploadResult) setPostingProgress({ current: 0, total: 1, status: 'Uploading image...' })
-      uploadedUrl = (await image.ensureUploaded()) ?? undefined
+      uploaded = await image.ensureUploaded()
     } catch (err) {
       logger.error('Failed to upload image:', err)
       toast.error('Failed to upload image')
@@ -207,6 +208,7 @@ export function ComposeModal() {
       return
     }
 
+    const uploadedUrl = uploaded?.url
     try {
       const isPrivate = isPrivateVisibility
       const mediaInEncryptedContent = !!uploadedUrl && (isPrivate || inherited.source !== null)
@@ -274,6 +276,9 @@ export function ComposeModal() {
         inheritedEncryption: inherited.source,
         pollEmbed: pollId ? buildPollEmbed(pollId) : undefined,
         mediaUrlField,
+        // v10 only (set by the upload where the contract requires them); they
+        // travel with mediaUrl and never with URL-in-content private media.
+        mediaHashes: mediaUrlField ? uploaded?.hashes : undefined,
         markSensitive,
         onProgress: setPostingProgress,
       })

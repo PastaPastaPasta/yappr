@@ -6,6 +6,12 @@ export interface Media {
   id: string
   type: 'image' | 'video' | 'gif'
   url: string
+  /**
+   * v10: the posted image's sha256 (`mediaHash`) and dHash
+   * (`mediaFingerprint`), so a reader can tell when the URL now serves a
+   * different picture. Absent on v2/v9 documents.
+   */
+  hashes?: { mediaHash: Uint8Array; mediaFingerprint: Uint8Array }
   thumbnail?: string
   alt?: string
   width?: number

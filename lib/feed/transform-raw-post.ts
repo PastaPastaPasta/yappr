@@ -1,7 +1,7 @@
 import { Post } from '@/lib/types';
 import { identifierToBase58, normalizeBytes } from '@/lib/services/sdk-helpers';
 import { extractPostEmbedFields } from '@/lib/poll-embed';
-import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
+import { mediaFromDocument } from '@/lib/media/media-fields';
 import { hashtagsAreInline, privateFeedKeyFields } from '@/lib/contract-topology';
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
@@ -113,7 +113,6 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
   // cards render without the post's image while the detail page shows it.
   // normalizeMediaUrl restores ipfs:// from stored gateway URLs so IpfsImage
   // gets multi-gateway failover instead of being pinned to one host.
-  const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
   return {
     id,
@@ -140,11 +139,7 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     liked: (doc.liked as boolean | undefined) || false,
     reposted: (doc.reposted as boolean | undefined) || false,
     bookmarked: (doc.bookmarked as boolean | undefined) || false,
-    media: mediaUrl ? [{
-      id: id + '-media',
-      type: 'image',
-      url: normalizeMediaUrl(mediaUrl),
-    }] : undefined,
+    media: mediaFromDocument(id, data, doc),
     quotedPostId,
     quotedReplyId,
     quotedPostOwnerId,
