@@ -37,9 +37,13 @@ interface RemovedPostStubProps {
  * proven absence with no record reads as the author's own delete.
  */
 export function RemovedPostStub({ documentId, kind, className, variant = 'embed', proven = false, removedByModerator = false }: RemovedPostStubProps) {
-  // Null until (and unless) a record is found: the stub reads the same either
-  // way, so there is no separate "still looking" rendering to distinguish.
+  // Null until (and unless) a record is found.
   const [removal, setRemoval] = useState<DocumentRemoval | null>(null)
+  // True once the record lookup ANSWERED. On v10 a proven hole with no record
+  // is the author's delete, but only a lookup that succeeded can say "no
+  // record": while it is pending, or after it failed, a takedown would read
+  // as the author's delete, so the stub claims neither.
+  const [recordsRead, setRecordsRead] = useState(false)
   // Where authors delete for real (v10), a hole nobody proved yet is proved
   // here: absent from its doctype with no removal record is the author's
   // delete rather than a failed read. Only for a known kind, which callers
@@ -51,18 +55,21 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
     let cancelled = false
     // Removal records are kept per document type; an unknown kind asks both.
     const kinds: TargetKind[] = kind ? [kind] : ['post', 'reply']
+    setRecordsRead(false)
     setProvedHere(false)
-    Promise.all(kinds.map((k) => moderationService.getRemovals(k, [documentId])))
+    Promise.all(kinds.map((k) => moderationService.readRemovals(k, [documentId])))
       .then(async (pages) => {
         const found = pages.map((page) => page.get(documentId)).find(Boolean) ?? null
         if (cancelled) return
         setRemoval(found)
+        setRecordsRead(true)
         // Only once no record claims it, so a takedown never reads as the
         // author's delete while its record is still loading.
         if (found || proven || removedByModerator || !kind || !authorDeletesLeaveHoles()) return
         const absent = await provenAbsent(kind, [documentId])
         if (!cancelled) setProvedHere(absent.has(documentId))
       })
+      // A failed lookup leaves recordsRead false: the hole stays neutral.
       .catch(() => {
         if (!cancelled) setRemoval(null)
       })
@@ -72,7 +79,7 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
   }, [documentId, kind, proven, removedByModerator])
 
   const noun = kind === 'reply' ? 'reply' : 'post'
-  const state = missingDocumentState(removal, proven || provedHere)
+  const state = missingDocumentState(removal, proven || provedHere, { recordsRead })
   const Icon = state === 'loadFailed' ? ExclamationTriangleIcon : state === 'deleted' ? TrashIcon : ShieldExclamationIcon
   return (
     <div
