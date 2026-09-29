@@ -139,9 +139,10 @@ describe('hammingDistance and mediaFingerprintChanged', () => {
   })
 
   it('treats more than MEDIA_CHANGED_DISTANCE bits as a changed image', () => {
-    expect(MEDIA_CHANGED_DISTANCE).toBe(10)
-    expect(mediaFingerprintChanged(zero, withBits(10))).toBe(false)
-    expect(mediaFingerprintChanged(zero, withBits(11))).toBe(true)
+    // docs/SOCIAL_V10.md pins 12 or less as "the same image, re-encoded".
+    expect(MEDIA_CHANGED_DISTANCE).toBe(12)
+    expect(mediaFingerprintChanged(zero, withBits(12))).toBe(false)
+    expect(mediaFingerprintChanged(zero, withBits(13))).toBe(true)
   })
 
   it('rejects fingerprints of different lengths', () => {

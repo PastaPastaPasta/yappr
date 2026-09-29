@@ -41,11 +41,12 @@ const GRID_WIDTH = DHASH_COLUMNS
 const GRID_HEIGHT = DHASH_ROWS
 
 /**
- * Hamming distances above this mean the image changed. Re-encoding, resizing
- * and gateway transcoding stay well under it; a different picture lands
- * around 32, the expected distance between unrelated hashes.
+ * Hamming distances above this mean the image changed; 12 or less is "the
+ * same image, re-encoded", as docs/SOCIAL_V10.md pins it for every client.
+ * Measured there: the same picture at half size differs by 6 bits, a
+ * different picture by 24 (32 is the expectation for unrelated hashes).
  */
-export const MEDIA_CHANGED_DISTANCE = 10
+export const MEDIA_CHANGED_DISTANCE = 12
 
 /** The [start, end) source range box-averaged into output cell `cell` of `cells`. */
 function cellRange(cell: number, cells: number, size: number): [number, number] {

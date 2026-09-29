@@ -56,7 +56,7 @@ export async function computeMediaHashes(file: Blob): Promise<MediaHashes> {
 /**
  * Whether the image at `url` is no longer the one that was posted: the bytes
  * differ from `mediaHash` AND the picture's fingerprint is more than
- * `MEDIA_CHANGED_DISTANCE` (10) bits from `mediaFingerprint`. A re-encoded
+ * `MEDIA_CHANGED_DISTANCE` (12) bits from `mediaFingerprint`. A re-encoded
  * copy of the same picture passes. Resolves null when the image cannot be
  * fetched or decoded here (a gateway without CORS, say): nothing is known,
  * so nothing is claimed.
