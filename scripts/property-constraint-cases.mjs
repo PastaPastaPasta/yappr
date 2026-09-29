@@ -27,7 +27,7 @@ const id = () => bytes(32);
 /** Every rule name a contract declares, keyed by file then doctype: the self-tests pin these. */
 export const DECLARED_RULES = {
   'yappr-social-contract-v10.json': {
-    post: ['embedAllOrNone', 'oneQuoteTarget', 'privateAllOrNone', 'privateHasNoMedia', 'quoteNamesOwner'],
+    post: ['embedAllOrNone', 'notEmpty', 'oneQuoteTarget', 'privateAllOrNone', 'privateHasNoMedia', 'quoteNamesOwner'],
     reply: ['privateAllOrNone', 'privateHasNoMedia'],
     report: ['oneTarget', 'otherHasNote', 'resolvedHasStatus'],
   },
@@ -79,6 +79,16 @@ export const CONSTRAINT_CASES = {
     ['post: a reply quote with its owner', 'post', { ...basePost(), quotedReplyId: id(), quotedPostOwnerId: id() }, null],
     ['post: a quote naming no owner', 'post', { ...basePost(), quotedPostId: id() }, 'quoteNamesOwner'],
     ['post: quoting a post AND a reply', 'post', { ...basePost(), quotedPostId: id(), quotedReplyId: id(), quotedPostOwnerId: id() }, 'oneQuoteTarget'],
+    // notEmpty (v10): a repost is a quote with no content; a post must carry
+    // text, ciphertext, media, an embed or a quote.
+    ['post: a bare repost (quote, no content)', 'post', { quotedPostId: id(), quotedPostOwnerId: id() }, null],
+    ['post: a bare repost of a reply', 'post', { quotedReplyId: id(), quotedPostOwnerId: id() }, null],
+    ['post: nothing at all', 'post', {}, 'notEmpty'],
+    ['post: an empty content string alone', 'post', { content: '' }, 'notEmpty'],
+    ['post: only a hashtag and the sensitive flag', 'post', { hashtag: 'dash', sensitive: true }, 'notEmpty'],
+    ['post: media with no text', 'post', { ...media('https://example.com/a.png') }, null],
+    ['post: an embed with no text', 'post', { ...embed() }, null],
+    ['post: a private post with no teaser (ciphertext is content)', 'post', { ...privateFields() }, null],
     ['reply: a public reply', 'reply', baseReply(), null],
     ['reply: a private reply', 'reply', { ...baseReply(), content: '🔒', ...privateFields() }, null],
     ['reply: a nonce alone', 'reply', { ...baseReply(), nonce: bytes(24) }, 'privateAllOrNone'],

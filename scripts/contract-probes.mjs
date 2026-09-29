@@ -455,7 +455,12 @@ const PROBES = [
   { label: 'an index on $id', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10208', mutate: (s) => { types(s).follow.indices.push({ name: 'probe', properties: [{ $id: 'asc' }] }); } },
   { label: 'an index on a typed array (hashtag arrays, V10-DESIGN §6)', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10206', mutate: (s) => { types(s).yapprProfile.indices.push({ name: 'probe', properties: [{ socialLinks: 'asc' }] }); } },
   { label: 'an indexed string of maxLength 64', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10205', mutate: (s) => { const p = types(s).post; p.properties.embedDocType.maxLength = 64; p.indices.push({ name: 'probe', properties: [{ embedDocType: 'asc' }] }); } },
-  { label: 'an 11th index on post', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10101', mutate: (s) => { types(s).post.indices.push({ name: 'probe1', properties: [{ sensitive: 'asc' }] }, { name: 'probe2', properties: [{ keyGeneration: 'asc' }] }); } },
+  // Pads post to exactly 11 indexes whatever the cut declares (8 at the beta.7 re-cut).
+  { label: 'an 11th index on post', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10101', mutate: (s) => {
+    const { indices } = types(s).post;
+    const spare = ['sensitive', 'keyGeneration', 'mediaUrl', 'embedDocType', 'nonce'];
+    for (let n = 0; indices.length < 11; n++) indices.push({ name: `probe${n}`, properties: [{ [spare[n]]: 'asc' }] });
+  } },
 
   // distinctFrom (#4917).
   { label: 'distinctFrom naming a property the type does not have', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).follow.properties.followingId.distinctFrom = 'nope'; } },
@@ -510,7 +515,8 @@ const PROBES = [
   { label: 'resolvedHasStatus reading a property report does not have', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).report.propertyConstraints.resolvedHasStatus.anyOf[1] = { present: 'state' }; } },
   { label: 'privateAllOrNone reading a string property as an integer operand', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).post.propertyConstraints.privateAllOrNone = { greaterThan: ['content', 0] }; } },
   { label: 'a 17th propertyConstraints rule on post (16 max)', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => {
-    for (let n = 0; n < 12; n++) types(s).post.propertyConstraints[`extra${n}`] = { absent: 'content' };
+    const rules = types(s).post.propertyConstraints;
+    for (let n = 0; Object.keys(rules).length < 17; n++) rules[`extra${n}`] = { absent: 'content' };
   } },
   // rs-dpp node_count: allOf 1 + each `anyOf [absent, present]` 3; 22 as cut, so 4 more make 34.
   { label: 'a 34-node optionsContiguous rule (32 max)', file: 'contracts/pollr-contract.json', expect: 'wasm', mutate: (s) => {

@@ -235,7 +235,6 @@
       "indices": [
         {
           "name": "ownerAndFollowing",
-          "unique": true,
           "properties": [
             {
               "$ownerId": "asc"
@@ -243,7 +242,8 @@
             {
               "followingId": "asc"
             }
-          ]
+          ],
+          "unique": true
         },
         {
           "name": "following",
@@ -254,7 +254,8 @@
             {
               "$createdAt": "asc"
             }
-          ]
+          ],
+          "rangeCountable": true
         },
         {
           "name": "followers",
@@ -265,26 +266,11 @@
             {
               "$createdAt": "asc"
             }
-          ]
-        },
-        {
-          "name": "followerCount",
-          "properties": [
-            {
-              "followingId": "asc"
-            }
           ],
           "rangeCountable": true,
-          "rankedCountable": true
-        },
-        {
-          "name": "followingCount",
-          "properties": [
-            {
-              "$ownerId": "asc"
-            }
-          ],
-          "countable": true
+          "rankedCountable": {
+            "at": "followingId"
+          }
         }
       ],
       "documentsMutable": false,
@@ -633,7 +619,11 @@
             {
               "$createdAt": "asc"
             }
-          ]
+          ],
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": "$ownerId"
+          }
         },
         {
           "name": "timeline",
@@ -653,6 +643,7 @@
               "$createdAt": "asc"
             }
           ],
+          "rangeCountable": true,
           "skipIfAbsent": true
         },
         {
@@ -665,6 +656,7 @@
               "$createdAt": "asc"
             }
           ],
+          "rangeCountable": true,
           "skipIfAbsent": true
         },
         {
@@ -680,36 +672,6 @@
           "skipIfAbsent": true
         },
         {
-          "name": "quoteCount",
-          "properties": [
-            {
-              "quotedPostId": "asc"
-            }
-          ],
-          "countable": true,
-          "skipIfAbsent": true
-        },
-        {
-          "name": "quoteReplyCount",
-          "properties": [
-            {
-              "quotedReplyId": "asc"
-            }
-          ],
-          "countable": true,
-          "skipIfAbsent": true
-        },
-        {
-          "name": "byOwner",
-          "properties": [
-            {
-              "$ownerId": "asc"
-            }
-          ],
-          "rangeCountable": true,
-          "rankedCountable": true
-        },
-        {
           "name": "tagAndTime",
           "properties": [
             {
@@ -719,6 +681,32 @@
               "$createdAt": "asc"
             }
           ],
+          "skipIfAbsent": true
+        },
+        {
+          "name": "ownerAndQuotedPost",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "quotedPostId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "ownerAndQuotedReply",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "quotedReplyId": "asc"
+            }
+          ],
+          "unique": true,
           "skipIfAbsent": true
         }
       ],
@@ -963,6 +951,33 @@
             },
             {
               "present": "quotedPostOwnerId"
+            }
+          ]
+        },
+        "notEmpty": {
+          "anyOf": [
+            {
+              "greaterThan": [
+                {
+                  "length": "content"
+                },
+                0
+              ]
+            },
+            {
+              "present": "encryptedContent"
+            },
+            {
+              "present": "mediaUrl"
+            },
+            {
+              "present": "embedId"
+            },
+            {
+              "present": "quotedPostId"
+            },
+            {
+              "present": "quotedReplyId"
             }
           ]
         }
@@ -1239,28 +1254,11 @@
           ]
         },
         {
-          "name": "rootAndTime",
+          "name": "repliesOf",
           "properties": [
             {
               "rootPostId": "asc"
             },
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        },
-        {
-          "name": "byRoot",
-          "properties": [
-            {
-              "rootPostId": "asc"
-            }
-          ],
-          "countable": true
-        },
-        {
-          "name": "replyToReplyAndTime",
-          "properties": [
             {
               "replyToReplyId": "asc"
             },
@@ -1268,17 +1266,10 @@
               "$createdAt": "asc"
             }
           ],
-          "skipIfAbsent": true
-        },
-        {
-          "name": "byReplyToReply",
-          "properties": [
-            {
-              "replyToReplyId": "asc"
-            }
-          ],
-          "countable": true,
-          "skipIfAbsent": true
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": "rootPostId"
+          }
         },
         {
           "name": "parentOwnerAndTime",
@@ -1459,94 +1450,6 @@
           "mediaUrl"
         ]
       }
-    },
-    "repost": {
-      "type": "object",
-      "indices": [
-        {
-          "name": "ownerAndPost",
-          "unique": true,
-          "properties": [
-            {
-              "$ownerId": "asc"
-            },
-            {
-              "postId": "asc"
-            }
-          ]
-        },
-        {
-          "name": "byPost",
-          "properties": [
-            {
-              "postId": "asc"
-            }
-          ],
-          "countable": true
-        },
-        {
-          "name": "ownerAndTime",
-          "properties": [
-            {
-              "$ownerId": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        },
-        {
-          "name": "postOwnerAndTime",
-          "properties": [
-            {
-              "postOwnerId": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        }
-      ],
-      "documentsMutable": false,
-      "required": [
-        "$createdAt",
-        "postId",
-        "postOwnerId"
-      ],
-      "properties": {
-        "postId": {
-          "type": "array",
-          "maxItems": 32,
-          "minItems": 32,
-          "position": 0,
-          "byteArray": true,
-          "contentMediaType": "application/x.dash.dpp.identifier",
-          "refersTo": {
-            "type": "deletableDocument",
-            "documentType": "post",
-            "where": {
-              "$ownerId": "postOwnerId"
-            }
-          }
-        },
-        "postOwnerId": {
-          "type": "array",
-          "maxItems": 32,
-          "minItems": 32,
-          "position": 1,
-          "byteArray": true,
-          "contentMediaType": "application/x.dash.dpp.identifier"
-        }
-      },
-      "tokenCost": {
-        "create": {
-          "tokenPosition": 0,
-          "amount": 1,
-          "optional": true,
-          "gasFeesPaidBy": 2
-        }
-      },
-      "additionalProperties": false
     },
     "report": {
       "type": "object",

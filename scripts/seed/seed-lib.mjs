@@ -59,8 +59,12 @@ export const YAPP_TOKEN_POSITION = 0;
 const SOCIAL_CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v10.json'), 'utf8'));
 const SOCIAL_DOCUMENT_SCHEMAS = SOCIAL_CONTRACT.documentSchemas;
 
-/** YAPP create costs per doctype (the v10 JSON's tokenCost; v9's are the same). */
-export const TOKEN_COST = Object.fromEntries(['post', 'reply', 'like', 'likeReply', 'repost']
+/**
+ * YAPP create costs per doctype (the v10 JSON's tokenCost; v9's are the same).
+ * v10 has no `repost` doctype: a repost is a post quoting its target with no
+ * content, so it costs a post.
+ */
+export const TOKEN_COST = Object.fromEntries(['post', 'reply', 'like', 'likeReply']
   .map((docType) => [docType, SOCIAL_DOCUMENT_SCHEMAS[docType].tokenCost.create.amount]));
 /** The once-per-identity YAPP starter grant a persona may claim. */
 export const STARTER_GRANT = BigInt(SOCIAL_CONTRACT.tokens['0'].distributionRules.oncePerIdentityDistribution.amount);
@@ -576,7 +580,7 @@ export function parseCorpus(text, personas) {
 export function corpusYappCost(ops, { paysCredits = () => false } = {}) {
   const perAuthor = new Map();
   let total = 0;
-  const costOf = { post: TOKEN_COST.post, quote: TOKEN_COST.post, reply: TOKEN_COST.reply, like: TOKEN_COST.like, likeReply: TOKEN_COST.likeReply, repost: TOKEN_COST.repost };
+  const costOf = { post: TOKEN_COST.post, quote: TOKEN_COST.post, reply: TOKEN_COST.reply, like: TOKEN_COST.like, likeReply: TOKEN_COST.likeReply, repost: TOKEN_COST.post };
   for (const op of ops) {
     const cost = costOf[op.type] ?? 0;
     if (cost === 0 || paysCredits(op.author)) continue;
