@@ -83,6 +83,7 @@ function FeedPage() {
               onSortModeChange={handleSortModeChange}
               rankingWindow={rankingWindow}
               onRankingWindowChange={setRankingWindow}
+              activeTab={activeTab}
             />
           )}
 

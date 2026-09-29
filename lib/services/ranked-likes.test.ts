@@ -71,3 +71,11 @@ it('reads nothing windowed on v2, which has no windows', async () => {
   expect([await topHashtagsByLikes(12, 'today'), await topLikedPosts({ window: 'today' }), await topCreatorsByLikes(10, 'today')]).toEqual([[], [], []]);
   expect(mocks.ranked).not.toHaveBeenCalled();
 });
+
+it('reads the Following Top all-time on v10 (per-author has no window there)', async () => {
+  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10');
+  mocks.ranked.mockResolvedValue({ entries: [] });
+  const { topLikedPostsByAuthorsHydrated } = await import('./ranked-likes');
+  await topLikedPostsByAuthorsHydrated({ authorIds: ['authorA', 'authorB'], window: 'today' });
+  expect(mocks.ranked.mock.calls.map(([query]) => ('timeRange' in query ? 'windowed' : query.documentTypeName))).toEqual(['like', 'like']);
+});

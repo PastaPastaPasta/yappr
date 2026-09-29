@@ -68,10 +68,10 @@
  *       --team-member bot:<n> --reason-doc <id>
  *   t2  trending without `beat`: a tagged like lands in `like.byTrendHashtagPost`
  *       (24h windows every 6h, read through the oldest open window) and the
- *       post in `like.byTrendPost` (72h every 24h)
- *       (the ranked day window groups the run's tag with the right count and
- *       ranks the post within it); an untagged like leaves the window alone;
- *       unliking drops the count again
+ *       post in `like.byTrendPost` (72h every 24h): the tag window groups the
+ *       run's tag with the right count and ranks the post within it, an
+ *       untagged like leaves it alone, the 3-day window counts both; unliking
+ *       drops the counts again
  *   y1  YAPP is locked: a transfer is refused (40711, paused); a direct
  *       purchase is refused (no price: 40721); a post paying 10 YAPP still
  *       lands; the starter grant is claimed once (a second claim 40722)
@@ -990,6 +990,8 @@ async function caseT2TrendingOnLike(ctx) {
   try {
     const after = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
     check('t2i the tag\'s window no longer counts the post', Number(after.entries.find((e) => e.groupValue === tagged)?.value ?? 0) === 0, `groups=${after.entries.length}`);
+    const afterTop = await rankedWindow(ctx, TOP_POSTS, { groupBy: 'postId' });
+    check('t2k …nor does the 3-day window (byTrendPost), while the untagged like stays', Number(afterTop.entries.find((e) => e.groupValue === tagged)?.value ?? 0) === 0 && Number(afterTop.entries.find((e) => e.groupValue === untagged)?.value ?? -1) === 1, `groups=${afterTop.entries.length}`);
   } catch (e) {
     // A window bucket that drained to nothing can fail proof generation instead of proving empty (platform#4592).
     const cold = /single-path axis read must produce exactly one axis descent/i.test(describeErr(e));
