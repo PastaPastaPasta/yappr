@@ -30,7 +30,13 @@
  *          list asc/desc + paging, children of a reply, whole-thread scan,
  *          batched per root, batched per reply, composite slot, ranked roots
  *   f1-f5  follower / following counts: single, batched, ranked
- *   c1-c3  composite count slots (feed page, a replies page, the author card)
+ *   c1-c4  composite count slots (feed page, a replies page, the author card,
+ *          a by-id reply page with slots pinned to its root)
+ *   w1-w2  bare reposts of a post and of a reply, read back
+ *   o1-o2  the viewer's own quote/repost per target (ownerAndQuoted…, `in`)
+ *   n1-n2  quote/repost notifications, alone and as a composite sibling
+ *   t1-t2  the whole thread at the app's page size, and paged with startAfter
+ *   l1-l2  the quote lists at limit 100, of a post and of a reply
  *   c2x/c3x  a bound slot extending the page's own index path is refused
  *          ("lands at the merged root"): such counts are separate queries
  *
@@ -181,6 +187,13 @@ const countEntries = (map) => Object.fromEntries([...map.entries()].map(([key, v
 const total = (map) => Number(map.get('') ?? 0n);
 const docsOf = (result) => (result instanceof Map ? [...result.values()] : Object.values(result ?? {})).filter(Boolean);
 const idOf = (doc) => toBase58(doc.id ?? doc.$id ?? doc.toObject?.().$id);
+const createdAtOf = (doc) => Number(doc.createdAt ?? doc.$createdAt ?? doc.toObject?.().$createdAt ?? 0);
+/** Exactly `expected` (as a set), newest first (writes in one block share a `$createdAt`). */
+const newestFirst = (docs, expected) => {
+  const got = docs.map(idOf);
+  const times = docs.map(createdAtOf);
+  return got.length === expected.length && expected.every((id) => got.includes(id)) && times.every((t, i) => i === 0 || t <= times[i - 1]);
+};
 
 // ---- The run ----------------------------------------------------------------
 
@@ -253,9 +266,9 @@ async function main() {
   const T1 = await mustCreate('T1', A, 'post', { content: 'target one' });
   const T2 = await mustCreate('T2', A, 'post', { content: 'target two' });
   const T3 = await mustCreate('T3', A, 'post', { content: 'target three' });
-  await mustCreate('q1 (B quotes T1)', B, 'post', { content: 'quote one', quotedPostId: id(T1), quotedPostOwnerId: id(A.ownerId) });
-  await mustCreate('q2 (B reposts T2, no content)', B, 'post', { quotedPostId: id(T2), quotedPostOwnerId: id(A.ownerId) });
-  await mustCreate('q3 (C quotes T1)', C, 'post', { content: 'quote three', quotedPostId: id(T1), quotedPostOwnerId: id(A.ownerId) });
+  const q1 = await mustCreate('q1 (B quotes T1)', B, 'post', { content: 'quote one', quotedPostId: id(T1), quotedPostOwnerId: id(A.ownerId) });
+  const q2 = await mustCreate('q2 (B reposts T2, no content)', B, 'post', { quotedPostId: id(T2), quotedPostOwnerId: id(A.ownerId) });
+  const q3 = await mustCreate('q3 (C quotes T1)', C, 'post', { content: 'quote three', quotedPostId: id(T1), quotedPostOwnerId: id(A.ownerId) });
   const r1 = await mustCreate('r1 (B → T1)', B, 'reply', { content: 'r1', rootPostId: id(T1), parentOwnerId: id(A.ownerId) });
   await sleep(1100);
   const r2 = await mustCreate('r2 (C → T1)', C, 'reply', { content: 'r2', rootPostId: id(T1), parentOwnerId: id(A.ownerId) });
@@ -264,7 +277,7 @@ async function main() {
   const r4 = await mustCreate('r4 (C → r1)', C, 'reply', { content: 'r4', rootPostId: id(T1), replyToReplyId: id(r1), parentOwnerId: id(B.ownerId) });
   const r5 = await mustCreate('r5 (B → r3)', B, 'reply', { content: 'r5', rootPostId: id(T1), replyToReplyId: id(r3), parentOwnerId: id(A.ownerId) });
   await mustCreate('r6 (A → T2)', A, 'reply', { content: 'r6', rootPostId: id(T2), parentOwnerId: id(A.ownerId) });
-  await mustCreate('qr (A reposts r1)', A, 'post', { quotedReplyId: id(r1), quotedPostOwnerId: id(B.ownerId) });
+  const qr = await mustCreate('qr (A reposts r1)', A, 'post', { quotedReplyId: id(r1), quotedPostOwnerId: id(B.ownerId) });
   for (const [who, whom] of [[A, B], [C, B], [A, C], [B, A]]) await mustCreate(`${who.label} follows ${whom.label}`, who, 'follow', { followingId: id(whom.ownerId) });
   await sleep(SETTLE_MS);
 
@@ -398,6 +411,80 @@ async function main() {
     dataContractId: contractId, documentType: 'post', where: [['$ownerId', '==', B.ownerId]], orderBy: [['$createdAt', 'asc']], limit: 1,
     subQueries: [{ documentType: 'post', kind: 'counts', bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } }],
   });
+
+  await attempt('c4', () => sdk.documents.composite({
+    dataContractId: contractId,
+    documentType: 'reply',
+    where: [['$id', 'in', [r1, r3, r4]]],
+    limit: 3,
+    subQueries: [
+      { documentType: 'reply', kind: 'counts', where: [['rootPostId', '==', T1]], bind: { source: 'page', sourceProperty: '$id', field: 'replyToReplyId' } },
+      { documentType: 'post', kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field: 'quotedReplyId' } },
+    ],
+  }), (result) => {
+    const [children, reposts] = result.subResults.map((sub) => countEntries(sub.counts));
+    check('c4 a by-id reply page (`$id in`) with slots pinned to T1: children r1 2, r3 1, r4 0; reposts r1 1', result.pageDocuments.length === 3 && children[r1] === 2 && children[r3] === 1 && !children[r4] && reposts[r1] === 1, `children ${JSON.stringify(children)} reposts ${JSON.stringify(reposts)}`);
+  });
+
+  // ---- w: the bare-repost writes, read back ----
+  console.log('\n--- w. bare reposts (a post with a quote and nothing of its own) ---');
+  const plainOf = async (docId) => (await sdk.documents.get(contractId, 'post', docId))?.toObject?.() ?? null;
+  await attempt('w1', () => plainOf(q2), (doc) => check('w1 B\'s bare repost of T2 stored with its target and no content', doc !== null && toBase58(doc.quotedPostId) === T2 && !doc.content, doc ? `quotedPostId ${toBase58(doc.quotedPostId)} content ${JSON.stringify(doc.content ?? null)}` : 'missing'));
+  await attempt('w2', () => plainOf(qr), (doc) => check('w2 A\'s bare repost of reply r1 stored with quotedReplyId and no content', doc !== null && toBase58(doc.quotedReplyId) === r1 && !doc.content, doc ? `quotedReplyId ${toBase58(doc.quotedReplyId)} content ${JSON.stringify(doc.content ?? null)}` : 'missing'));
+
+  // ---- o: the viewer's own quote/repost (post-service getOwnQuotes) ----
+  console.log('\n--- o. own quote or repost per target ---');
+  await attempt('o1', () => sdk.documents.query(q('post', { where: [['$ownerId', '==', B.ownerId], ['quotedPostId', 'in', [T1, T2, T3]]], orderBy: [['$ownerId', 'asc'], ['quotedPostId', 'asc']], limit: 3 })), (r) => {
+    const got = new Set(ids(r));
+    check('o1 B\'s own quotes of T1-T3 (ownerAndQuotedPost, `in`): q1 and the bare repost q2', got.size === 2 && got.has(q1) && got.has(q2), JSON.stringify([...got]));
+  });
+  await attempt('o2', () => sdk.documents.query(q('post', { where: [['$ownerId', '==', A.ownerId], ['quotedReplyId', 'in', [r1, r2]]], orderBy: [['$ownerId', 'asc'], ['quotedReplyId', 'asc']], limit: 2 })), (r) => check('o2 A\'s own reposts of r1/r2 (ownerAndQuotedReply): qr', same(ids(r), [qr]), JSON.stringify(ids(r))));
+
+  // ---- n: notifications (notification-service fetchNotifications) ----
+  console.log('\n--- n. "X reposted / quoted you" ---');
+  const quotedA = { where: [['quotedPostOwnerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
+  await attempt('n1', () => sdk.documents.query(q('post', quotedA)), (r) => {
+    check('n1 posts quoting A (quotedPostOwnerAndTime), newest first: q1, q2, q3', newestFirst(docsOf(r), [q1, q2, q3]), JSON.stringify(ids(r)));
+  });
+  await attempt('n2', () => sdk.documents.composite({
+    dataContractId: contractId,
+    documentType: 'follow',
+    where: [['followingId', '==', A.ownerId], ['$createdAt', '>', 0]],
+    orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']],
+    limit: 100,
+    subQueries: [
+      { documentType: 'post', ...quotedA },
+      { documentType: 'reply', where: [['parentOwnerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['parentOwnerId', 'asc'], ['$createdAt', 'desc']], limit: 100 },
+    ],
+  }), (result) => {
+    const [quotes, replies] = result.subResults.map((sub) => sub.documents);
+    check('n2 the same as a composite sibling beside follows and replies: 1 follower, 3 quotes/reposts, 4 replies', result.pageDocuments.length === 1 && newestFirst(quotes, [q1, q2, q3]) && replies.length === 4, `follows ${result.pageDocuments.length} quotes ${JSON.stringify(quotes.map(idOf))} replies ${replies.length}`);
+  });
+
+  // ---- t: the whole thread (reply-service getReplies on repliesOf) ----
+  console.log('\n--- t. the whole thread, grouped by parent ---');
+  const thread = { where: [['rootPostId', '==', T1]], orderBy: [['replyToReplyId', 'asc'], ['$createdAt', 'asc']] };
+  let wholeThread = [];
+  await attempt('t1', () => sdk.documents.query(q('reply', { ...thread, limit: 50 })), (r) => {
+    wholeThread = ids(r);
+    check('t1 the thread at the app\'s page size (50): all 5 replies, direct ones first', wholeThread.length === 5 && same(wholeThread.slice(0, 2), [r1, r2]), JSON.stringify(wholeThread));
+  });
+  await attempt('t2', async () => {
+    const walked = [];
+    let cursor;
+    for (let page = 0; page < 5; page++) {
+      const docs = ids(await sdk.documents.query(q('reply', { ...thread, limit: 2, ...(cursor ? { startAfter: cursor } : {}) })));
+      walked.push(...docs);
+      if (docs.length < 2) break;
+      cursor = docs.at(-1);
+    }
+    return walked;
+  }, (walked) => check('t2 paging the thread 2 at a time with startAfter walks the same 5 in the same order', walked.length === 5 && same(walked, wholeThread), JSON.stringify(walked)));
+
+  // ---- l: the quote lists (post-query-helpers fetchQuotePosts) ----
+  console.log('\n--- l. quote lists ---');
+  await attempt('l1', () => sdk.documents.query(q('post', { where: [['quotedPostId', 'in', [T1]]], orderBy: [['quotedPostId', 'asc'], ['$createdAt', 'desc']], limit: 100 })), (r) => check('l1 quotes of T1 at limit 100, newest first: q1 and q3', newestFirst(docsOf(r), [q1, q3]), JSON.stringify(ids(r))));
+  await attempt('l2', () => sdk.documents.query(q('post', { where: [['quotedReplyId', 'in', [r1]]], orderBy: [['quotedReplyId', 'asc'], ['$createdAt', 'desc']], limit: 100 })), (r) => check('l2 quotes/reposts of reply r1 (quotesOfReply): qr', same(ids(r), [qr]), JSON.stringify(ids(r))));
 
   console.log(`\nthrowaway contract ${contractId}`);
   console.log(failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`);
