@@ -24,6 +24,9 @@
  *   set -a; . <private ops dir>/credentials.env; set +a
  *   NETWORK=devnet node scripts/verify-dm-v5.mjs [--contract <id>] [--variants uniqueTag=<id>,nonUniqueTag=<id>,uniqueTagOwner=<id>] \
  *     [--only invites,messages,...] [--evidence <path>|--no-evidence]
+ *     [--maker-id <id>] [--bot-a-id <id>] [--bot-b-id <id>] [--variant-owner-id <id>]
+ *   Identity ids default to DEVNET_MAKER_IDENTITY_ID and the identity pool
+ *   (DEVNET_IDENTITY_IDS, else .env.devnet's E2E_IDENTITY_IDS); none are baked in.
  *   node scripts/verify-dm-v5.mjs --self-test   # offline: the contract declares what the cases assert
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -122,14 +125,30 @@ function selfTest() {
 
 // ---- Arguments -------------------------------------------------------------------
 
+/**
+ * The devnet's own identities, never a baked-in chain's: the maker is
+ * DEVNET_MAKER_IDENTITY_ID and the bots are seed indexes 0/1/2 of the identity
+ * pool (DEVNET_IDENTITY_IDS, else `.env.devnet`'s E2E_IDENTITY_IDS), the same
+ * sources verify-lib and battery-lib read. An explicit flag wins.
+ */
+function devnetIdentities(env) {
+  const pool = (process.env.DEVNET_IDENTITY_IDS || env.E2E_IDENTITY_IDS || '')
+    .split(',').map((id) => id.trim()).filter(Boolean);
+  return {
+    maker: process.env.DEVNET_MAKER_IDENTITY_ID || env.DEVNET_MAKER_IDENTITY_ID || null,
+    bots: [pool[0] ?? null, pool[1] ?? null, pool[2] ?? null],
+  };
+}
+
 function parseArgs(argv) {
   const env = readEnvFile(join(REPO_ROOT, '.env.devnet'));
+  const ids = devnetIdentities(env);
   const args = {
     contract: process.env[CONTRACT_ENV] || env[CONTRACT_ENV] || null,
-    maker: { index: 9, id: env.DEVNET_MAKER_IDENTITY_ID || '3JKc6iVG74LEMSrAtB4VSHPQW2mtgKAw8s3Ki6tTFcRQ' },
-    botA: { index: 0, id: 'EjVyhRotn2vCcoCe2a5KCBLH5NsqQmnrHj3rfwgdtoD7' },
-    botB: { index: 1, id: 'H8bQ2PC6suWR32AndM1rqZ7LJM5SHwa3T2Ezf7Z2rA5w' },
-    botV: { index: 2, id: '47da17QAtS9mnRSPNP7FMDSJQQWNj9xoixFX13EKQzNa' },
+    maker: { index: 9, id: ids.maker },
+    botA: { index: 0, id: ids.bots[0] },
+    botB: { index: 1, id: ids.bots[1] },
+    botV: { index: 2, id: ids.bots[2] },
     variants: null,
     only: null,
     evidence: DEFAULT_EVIDENCE,
@@ -149,6 +168,19 @@ function parseArgs(argv) {
     }
   }
   if (!args.contract) throw new Error(`Pass --contract <id> or set ${CONTRACT_ENV} in .env.devnet`);
+  const missing = [
+    [args.maker, '--maker-id', 'DEVNET_MAKER_IDENTITY_ID'],
+    [args.botA, '--bot-a-id', 'identity pool entry 0'],
+    [args.botB, '--bot-b-id', 'identity pool entry 1'],
+    [args.botV, '--variant-owner-id', 'identity pool entry 2'],
+  ].filter(([actor]) => !actor.id);
+  if (missing.length > 0) {
+    throw new Error(
+      `No devnet identity for ${missing.map(([, flag, source]) => `${flag} (${source})`).join(', ')}: ` +
+      'set DEVNET_MAKER_IDENTITY_ID and E2E_IDENTITY_IDS (≥ 3 ids, seed indexes 0-2) in .env.devnet, ' +
+      'or DEVNET_IDENTITY_IDS in the environment, or pass the flags'
+    );
+  }
   for (const kind of Object.keys(args.variants ?? {})) {
     if (!['uniqueTag', 'nonUniqueTag', 'uniqueTagOwner'].includes(kind)) throw new Error(`--variants: unknown layout ${kind}`);
   }
