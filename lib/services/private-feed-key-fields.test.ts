@@ -85,9 +85,13 @@ describe.each(Object.entries(FIELDS) as [keyof typeof FIELDS, (typeof FIELDS)[ke
         reply: [{ $id: 'reply1', $ownerId: ownerId, $createdAt: 2, content: '🔒', parentId: recipientId, parentOwnerId: ownerId, rootPostId: recipientId, [generation]: 5, ...encrypted }],
       });
       expect(transformRawPost({ $id: 'post1', $ownerId: ownerId, $createdAt: 1, content: '🔒', [generation]: 3, ...encrypted }).keyGeneration).toBe(3);
-      // The other topology's name is not this contract's property and is ignored.
-      const foreign = generation === 'epoch' ? 'keyGeneration' : 'epoch';
-      expect(transformRawPost({ $id: 'post2', $ownerId: ownerId, $createdAt: 1, content: '🔒', [foreign]: 3, ...encrypted }).keyGeneration).toBeUndefined();
+      // A Post re-transformed for an optimistic feed card keeps its generation.
+      const built = transformRawPost({ $id: 'post1', $ownerId: ownerId, $createdAt: 1, content: '🔒', [generation]: 3, ...encrypted });
+      expect(transformRawPost({ ...built, id: 'post1' }).keyGeneration).toBe(3);
+      if (generation === 'keyGeneration') {
+        // v10 has no `epoch` property: the pre-v10 name is not read off its documents.
+        expect(transformRawPost({ $id: 'post2', $ownerId: ownerId, $createdAt: 1, content: '🔒', epoch: 3, ...encrypted }).keyGeneration).toBeUndefined();
+      }
 
       const { documents } = await replyService.getUserReplies(ownerId, { limit: 1, skipEnrichment: true });
       expect(documents[0]?.keyGeneration).toBe(5);

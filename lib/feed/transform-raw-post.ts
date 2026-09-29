@@ -94,7 +94,8 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
 
   const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
   const rawNonce = data.nonce || doc.nonce;
-  const keyGeneration = (data[privateFeedKeyFields().generation] ?? doc[privateFeedKeyFields().generation]) as number | undefined;
+  // Also takes an already-built Post (optimistic feed cards), which names it keyGeneration.
+  const keyGeneration = (data[privateFeedKeyFields().generation] ?? doc[privateFeedKeyFields().generation] ?? doc.keyGeneration) as number | undefined;
 
   const username = (existingAuthor.username as string | undefined) || '';
   const hasResolvedUsername = Boolean(username && !username.startsWith('user_'));
