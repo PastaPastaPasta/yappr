@@ -26,12 +26,12 @@ import { stateTransitionService } from './state-transition-service';
 import {
   privateFeedCryptoService,
   TREE_CAPACITY,
-  MAX_EPOCH,
+  MAX_KEY_GENERATION,
   PROTOCOL_VERSION,
 } from './private-feed-crypto-service';
 import { privateFeedKeyStore } from './private-feed-key-store';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
-import { privateFeedWritesAreGated } from '@/lib/contract-topology';
+import { privateFeedKeyFields, privateFeedWritesAreGated } from '@/lib/contract-topology';
 import { isReferenceNotFoundError, referencedPathFromError } from '@/lib/error-utils';
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
 import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys';
@@ -49,7 +49,7 @@ export interface PrivateFeedStateDocument {
   $ownerId: string;
   $createdAt: number;
   treeCapacity: number;
-  maxEpoch: number;
+  maxKeyGeneration: number;
   encryptedSeed: Uint8Array;
 }
 
@@ -60,7 +60,7 @@ export interface PrivateFeedRekeyDocument {
   $id: string;
   $ownerId: string;
   $createdAt: number;
-  epoch: number;
+  keyGeneration: number;
   revokedLeaf: number;
   packets: Uint8Array;
   encryptedCEK: Uint8Array;
@@ -142,7 +142,7 @@ class PrivateFeedService {
         $ownerId: doc.$ownerId as string,
         $createdAt: doc.$createdAt as number,
         treeCapacity: doc.treeCapacity as number,
-        maxEpoch: doc.maxEpoch as number,
+        maxKeyGeneration: doc[privateFeedKeyFields().latest] as number,
         encryptedSeed: requireBytes(doc.encryptedSeed, 'encryptedSeed'),
       };
     } catch (error) {
@@ -152,38 +152,38 @@ class PrivateFeedService {
   }
 
   /**
-   * Get the latest epoch for an owner by checking rekey documents
+   * Get the latest key generation for an owner by checking rekey documents
    * Returns 1 if no rekey documents exist, and also on a failed read unless
    * `throwOnError` is set: anything that encrypts must not mistake a failed
    * read for "no revocations yet".
    */
-  async getLatestEpoch(ownerId: string, options: { throwOnError?: boolean } = {}): Promise<number> {
+  async getLatestKeyGeneration(ownerId: string, options: { throwOnError?: boolean } = {}): Promise<number> {
     try {
       const sdk = await getEvoSdk();
 
-      // Query rekey documents ordered by epoch descending to get the latest
+      // Query rekey documents ordered by key generation descending to get the latest
       const documents = await queryDocuments(sdk, {
         dataContractId: this.contractId,
         documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_REKEY,
         where: [['$ownerId', '==', ownerId]],
-        orderBy: [['epoch', 'desc']],
+        orderBy: [[privateFeedKeyFields().generation, 'desc']],
         limit: 1,
       });
 
       if (documents.length === 0) {
-        return 1; // No revocations yet, epoch is 1
+        return 1; // No revocations yet, key generation is 1
       }
 
-      return documents[0].epoch as number;
+      return documents[0][privateFeedKeyFields().generation] as number;
     } catch (error) {
-      logger.error('Error fetching latest epoch:', error);
+      logger.error('Error fetching latest key generation:', error);
       if (options.throwOnError) throw error;
       return 1;
     }
   }
 
   /**
-   * Get all rekey documents for an owner, ordered by epoch
+   * Get all rekey documents for an owner, ordered by key generation
    */
   async getRekeyDocuments(
     ownerId: string,
@@ -198,7 +198,7 @@ class PrivateFeedService {
           dataContractId: this.contractId,
           documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_REKEY,
           where: [['$ownerId', '==', ownerId]],
-          orderBy: [['epoch', 'asc']],
+          orderBy: [[privateFeedKeyFields().generation, 'asc']],
           limit: 100,
           ...(startAfter && { startAfter }),
         }),
@@ -206,12 +206,12 @@ class PrivateFeedService {
           $id: doc.$id as string,
           $ownerId: doc.$ownerId as string,
           $createdAt: doc.$createdAt as number,
-          epoch: doc.epoch as number,
+          keyGeneration: doc[privateFeedKeyFields().generation] as number,
           revokedLeaf: doc.revokedLeaf as number,
           packets: requireBytes(doc.packets, 'packets'),
           encryptedCEK: requireBytes(doc.encryptedCEK, 'encryptedCEK'),
         }),
-        { maxResults: 2000 } // SPEC allows up to 2000 epochs
+        { maxResults: 2000 } // SPEC allows up to 2000 key generations
       );
 
       return documents;
@@ -278,10 +278,10 @@ class PrivateFeedService {
       // 3. Generate feed seed (SPEC §8.1 step 1)
       const feedSeed = privateFeedCryptoService.generateFeedSeed();
 
-      // 4. Pre-compute epoch chain (SPEC §8.1 steps 2-3)
+      // 4. Pre-compute the CEK chain (SPEC §8.1 steps 2-3)
       // Note: We don't store the full chain, just compute CEK[1] for immediate use
-      const epochChain = privateFeedCryptoService.generateEpochChain(feedSeed, MAX_EPOCH);
-      const cek1 = epochChain[1];
+      const cekChain = privateFeedCryptoService.generateCekChain(feedSeed, MAX_KEY_GENERATION);
+      const cek1 = cekChain[1];
 
       // 5. Encrypt feedSeed to owner's public key using ECIES (SPEC §8.1 step 4)
       // versionedPayload = 0x01 || feedSeed
@@ -303,13 +303,13 @@ class PrivateFeedService {
       // This is a typed write, so binary fields stay as Uint8Array.
       const documentData = {
         treeCapacity: TREE_CAPACITY,
-        maxEpoch: MAX_EPOCH,
+        [privateFeedKeyFields().latest]: MAX_KEY_GENERATION,
         encryptedSeed,
       };
 
       logger.debug('Creating PrivateFeedState document:', {
         treeCapacity: TREE_CAPACITY,
-        maxEpoch: MAX_EPOCH,
+        maxKeyGeneration: MAX_KEY_GENERATION,
         encryptedSeedLength: encryptedSeed.length,
       });
 
@@ -398,20 +398,20 @@ class PrivateFeedService {
         }
       }
 
-      // 2. SYNC CHECK: Compare chain epoch vs local epoch
-      const chainEpoch = await this.getLatestEpoch(ownerId);
-      let localEpoch = privateFeedKeyStore.getCurrentEpoch();
+      // 2. SYNC CHECK: Compare chain key generation vs local key generation
+      const chainKeyGeneration = await this.getLatestKeyGeneration(ownerId);
+      let localKeyGeneration = privateFeedKeyStore.getCurrentKeyGeneration();
 
-      if (chainEpoch > localEpoch) {
+      if (chainKeyGeneration > localKeyGeneration) {
         if (encryptionPrivateKey) {
           // Automatic recovery with provided key
           const recoveryResult = await this.recoverOwnerState(ownerId, encryptionPrivateKey);
           if (!recoveryResult.success) {
             return { success: false, error: `Sync failed: ${recoveryResult.error}` };
           }
-          // Refresh feedSeed and localEpoch after recovery
+          // Refresh feedSeed and localKeyGeneration after recovery
           feedSeed = privateFeedKeyStore.getFeedSeed();
-          localEpoch = privateFeedKeyStore.getCurrentEpoch();
+          localKeyGeneration = privateFeedKeyStore.getCurrentKeyGeneration();
           if (!feedSeed) {
             return { success: false, error: 'Feed seed not available after recovery' };
           }
@@ -472,19 +472,19 @@ class PrivateFeedService {
       let cek: Uint8Array;
       const cached = privateFeedKeyStore.getCachedCEK(ownerId);
 
-      if (cached && cached.epoch === localEpoch) {
+      if (cached && cached.keyGeneration === localKeyGeneration) {
         cek = cached.cek;
-      } else if (cached && cached.epoch > localEpoch) {
-        cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, localEpoch);
+      } else if (cached && cached.keyGeneration > localKeyGeneration) {
+        cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, localKeyGeneration);
       } else {
-        const chain = privateFeedCryptoService.generateEpochChain(feedSeed, MAX_EPOCH);
-        cek = chain[localEpoch];
+        const chain = privateFeedCryptoService.generateCekChain(feedSeed, MAX_KEY_GENERATION);
+        cek = chain[localKeyGeneration];
       }
 
       // 7. Build grant payload
       const grantPayload = {
         version: PROTOCOL_VERSION,
-        grantEpoch: localEpoch,
+        grantKeyGeneration: localKeyGeneration,
         leafIndex,
         pathKeys,
         currentCEK: cek,
@@ -500,7 +500,7 @@ class PrivateFeedService {
         ownerIdBytes,
         requesterIdBytes,
         leafIndex,
-        localEpoch
+        localKeyGeneration
       );
 
       // 10. Encrypt payload using ECIES to requester's public key
@@ -514,14 +514,14 @@ class PrivateFeedService {
       const documentData = {
         recipientId: identifierToBytes(requesterId),
         leafIndex,
-        epoch: localEpoch,
+        [privateFeedKeyFields().generation]: localKeyGeneration,
         encryptedPayload,
       };
 
       logger.debug('Creating PrivateFeedGrant document:', {
         recipientId: requesterId,
         leafIndex,
-        epoch: localEpoch,
+        keyGeneration: localKeyGeneration,
         encryptedPayloadLength: encryptedPayload.length,
       });
 
@@ -591,20 +591,20 @@ class PrivateFeedService {
         }
       }
 
-      // 2. SYNC CHECK: Compare chain epoch vs local epoch
-      const chainEpoch = await this.getLatestEpoch(ownerId);
-      let localEpoch = privateFeedKeyStore.getCurrentEpoch();
+      // 2. SYNC CHECK: Compare chain key generation vs local key generation
+      const chainKeyGeneration = await this.getLatestKeyGeneration(ownerId);
+      let localKeyGeneration = privateFeedKeyStore.getCurrentKeyGeneration();
 
-      if (chainEpoch > localEpoch) {
+      if (chainKeyGeneration > localKeyGeneration) {
         if (encryptionPrivateKey) {
           // Automatic recovery with provided key
           const recoveryResult = await this.recoverOwnerState(ownerId, encryptionPrivateKey);
           if (!recoveryResult.success) {
             return { success: false, error: `Sync failed: ${recoveryResult.error}` };
           }
-          // Refresh feedSeed and localEpoch after recovery
+          // Refresh feedSeed and localKeyGeneration after recovery
           feedSeed = privateFeedKeyStore.getFeedSeed();
-          localEpoch = privateFeedKeyStore.getCurrentEpoch();
+          localKeyGeneration = privateFeedKeyStore.getCurrentKeyGeneration();
           if (!feedSeed) {
             return { success: false, error: 'Feed seed not available after recovery' };
           }
@@ -637,19 +637,19 @@ class PrivateFeedService {
       const leafIndex = grant.leafIndex as number;
       const grantId = grant.$id as string;
 
-      // 4. Advance epoch
-      const newEpoch = localEpoch + 1;
+      // 4. Advance key generation
+      const newKeyGeneration = localKeyGeneration + 1;
 
-      if (newEpoch > MAX_EPOCH) {
+      if (newKeyGeneration > MAX_KEY_GENERATION) {
         return {
           success: false,
           error: 'Maximum revocations reached. Migration required.',
         };
       }
 
-      // 5. Compute new CEK for the new epoch
-      const epochChain = privateFeedCryptoService.generateEpochChain(feedSeed, MAX_EPOCH);
-      const newCEK = epochChain[newEpoch];
+      // 5. Compute new CEK for the new key generation
+      const cekChain = privateFeedCryptoService.generateCekChain(feedSeed, MAX_KEY_GENERATION);
+      const newCEK = cekChain[newKeyGeneration];
 
       // 6. Compute revoked path from leaf to root
       const revokedPath = privateFeedCryptoService.computePath(leafIndex);
@@ -706,7 +706,7 @@ class PrivateFeedService {
         const wrapKeyA = privateFeedCryptoService.deriveWrapKey(siblingKey);
         const nonceA = privateFeedCryptoService.deriveRekeyNonce(
           ownerIdBytes,
-          newEpoch,
+          newKeyGeneration,
           nodeId,
           targetVersion,
           siblingOfChild,
@@ -714,7 +714,7 @@ class PrivateFeedService {
         );
         const aadA = privateFeedCryptoService.buildRekeyAAD(
           ownerIdBytes,
-          newEpoch,
+          newKeyGeneration,
           nodeId,
           targetVersion,
           siblingOfChild,
@@ -741,7 +741,7 @@ class PrivateFeedService {
           const wrapKeyB = privateFeedCryptoService.deriveWrapKey(childNewKey);
           const nonceB = privateFeedCryptoService.deriveRekeyNonce(
             ownerIdBytes,
-            newEpoch,
+            newKeyGeneration,
             nodeId,
             targetVersion,
             updatedChild,
@@ -749,7 +749,7 @@ class PrivateFeedService {
           );
           const aadB = privateFeedCryptoService.buildRekeyAAD(
             ownerIdBytes,
-            newEpoch,
+            newKeyGeneration,
             nodeId,
             targetVersion,
             updatedChild,
@@ -775,7 +775,7 @@ class PrivateFeedService {
         newRootKey,
         newCEK,
         ownerIdBytes,
-        newEpoch
+        newKeyGeneration
       );
 
       // 12. Encode packets
@@ -783,14 +783,14 @@ class PrivateFeedService {
 
       // 13. Create PrivateFeedRekey document
       const rekeyData = {
-        epoch: newEpoch,
+        [privateFeedKeyFields().generation]: newKeyGeneration,
         revokedLeaf: leafIndex,
         packets: encodedPackets,
         encryptedCEK,
       };
 
       logger.debug('Creating PrivateFeedRekey document:', {
-        epoch: newEpoch,
+        keyGeneration: newKeyGeneration,
         revokedLeaf: leafIndex,
         packetsCount: packets.length,
         packetsLength: encodedPackets.length,
@@ -809,7 +809,7 @@ class PrivateFeedService {
       }
 
       // 14. Update local state
-      privateFeedKeyStore.storeCurrentEpoch(newEpoch);
+      privateFeedKeyStore.storeCurrentKeyGeneration(newKeyGeneration);
       privateFeedKeyStore.storeRevokedLeaves(newRevokedLeaves);
 
       // Update recipient map
@@ -845,13 +845,13 @@ class PrivateFeedService {
       }
 
       // Update cached CEK
-      privateFeedKeyStore.storeCachedCEK(ownerId, newEpoch, newCEK);
+      privateFeedKeyStore.storeCachedCEK(ownerId, newKeyGeneration, newCEK);
 
       // Note: Notification documents cannot be created here due to ownership constraints
       // (we can't sign documents owned by the recipient). Revoked followers discover
       // revocation when their grant stops working or via grant expiry checks.
 
-      logger.debug(`Revoked follower ${followerId} (leaf ${leafIndex}), new epoch: ${newEpoch}`);
+      logger.debug(`Revoked follower ${followerId} (leaf ${leafIndex}), new key generation: ${newKeyGeneration}`);
       return { success: true };
     } catch (error) {
       logger.error('Error revoking follower:', error);
@@ -909,10 +909,10 @@ class PrivateFeedService {
   // ============================================================
 
   /**
-   * Get current epoch from local storage
+   * Get current key generation from local storage
    */
-  getCurrentEpoch(): number {
-    return privateFeedKeyStore.getCurrentEpoch();
+  getCurrentKeyGeneration(): number {
+    return privateFeedKeyStore.getCurrentKeyGeneration();
   }
 
   /**
@@ -978,7 +978,7 @@ class PrivateFeedService {
    * Per SPEC §8.8, this:
    * 1. Decrypts feedSeed from PrivateFeedState using owner's encryption key
    * 2. Fetches ALL PrivateFeedRekey documents to rebuild revokedLeaves list
-   * 3. Determines currentEpoch from rekey documents
+   * 3. Determines currentKeyGeneration from rekey documents
    * 4. Fetches ALL PrivateFeedGrant documents to rebuild recipientId → leafIndex mapping
    * 5. Derives availableLeaves from grants (authoritative source)
    * 6. Stores all state in local storage
@@ -1025,22 +1025,22 @@ class PrivateFeedService {
         return { success: false, error: `Invalid feed seed length: ${feedSeed.length}` };
       }
 
-      // 4. Fetch ALL PrivateFeedRekey documents (ordered by epoch). A failed
-      // read must fail recovery: an empty list would roll the epoch back to 1.
+      // 4. Fetch ALL PrivateFeedRekey documents (ordered by key generation). A failed
+      // read must fail recovery: an empty list would roll the key generation back to 1.
       const rekeyDocs = await this.getRekeyDocuments(ownerId, { throwOnError: true });
       logger.debug(`Found ${rekeyDocs.length} rekey documents`);
 
-      // 5. Build revokedLeaves list from rekey docs (in epoch order)
+      // 5. Build revokedLeaves list from rekey docs (in key generation order)
       const revokedLeaves: number[] = [];
       for (const rekey of rekeyDocs) {
         revokedLeaves.push(rekey.revokedLeaf);
       }
 
-      // 6. Determine currentEpoch
-      const currentEpoch = rekeyDocs.length > 0
-        ? rekeyDocs[rekeyDocs.length - 1].epoch
+      // 6. Determine currentKeyGeneration
+      const currentKeyGeneration = rekeyDocs.length > 0
+        ? rekeyDocs[rekeyDocs.length - 1].keyGeneration
         : 1;
-      logger.debug(`Current epoch: ${currentEpoch}, revoked leaves: ${revokedLeaves.length}`);
+      logger.debug(`Current key generation: ${currentKeyGeneration}, revoked leaves: ${revokedLeaves.length}`);
 
       // 7. Fetch ALL PrivateFeedGrant documents
       const grants = await this.getPrivateFollowers(ownerId);
@@ -1069,8 +1069,8 @@ class PrivateFeedService {
       // Store feedSeed
       privateFeedKeyStore.storeFeedSeed(feedSeed);
 
-      // Store currentEpoch
-      privateFeedKeyStore.storeCurrentEpoch(currentEpoch);
+      // Store currentKeyGeneration
+      privateFeedKeyStore.storeCurrentKeyGeneration(currentKeyGeneration);
 
       // Store revokedLeaves
       privateFeedKeyStore.storeRevokedLeaves(revokedLeaves);
@@ -1082,9 +1082,9 @@ class PrivateFeedService {
       privateFeedKeyStore.storeRecipientMap(recipientMap);
 
       // 11. Compute and cache current CEK for immediate use
-      const epochChain = privateFeedCryptoService.generateEpochChain(feedSeed, MAX_EPOCH);
-      const currentCEK = epochChain[currentEpoch];
-      privateFeedKeyStore.storeCachedCEK(ownerId, currentEpoch, currentCEK);
+      const cekChain = privateFeedCryptoService.generateCekChain(feedSeed, MAX_KEY_GENERATION);
+      const currentCEK = cekChain[currentKeyGeneration];
+      privateFeedKeyStore.storeCachedCEK(ownerId, currentKeyGeneration, currentCEK);
 
       logger.debug('Owner recovery completed successfully');
       return { success: true };
@@ -1121,13 +1121,13 @@ class PrivateFeedService {
         return await this.recoverOwnerState(ownerId, encryptionPrivateKey);
       }
 
-      // Compare chain epoch vs local epoch
-      const chainEpoch = await this.getLatestEpoch(ownerId);
-      const localEpoch = privateFeedKeyStore.getCurrentEpoch();
+      // Compare chain key generation vs local key generation
+      const chainKeyGeneration = await this.getLatestKeyGeneration(ownerId);
+      const localKeyGeneration = privateFeedKeyStore.getCurrentKeyGeneration();
 
-      if (chainEpoch > localEpoch) {
+      if (chainKeyGeneration > localKeyGeneration) {
         // Local state is behind - need recovery
-        logger.debug(`Local epoch ${localEpoch} < chain epoch ${chainEpoch}, running recovery`);
+        logger.debug(`Local key generation ${localKeyGeneration} < chain key generation ${chainKeyGeneration}, running recovery`);
         return await this.recoverOwnerState(ownerId, encryptionPrivateKey);
       }
 
@@ -1162,7 +1162,7 @@ export type { PrivateFeedService };
  */
 export interface EncryptedPostData {
   encryptedContent: Uint8Array;
-  epoch: number;
+  keyGeneration: number;
   nonce: Uint8Array;
   teaser?: string;
 }
@@ -1177,8 +1177,8 @@ export type PrepareEncryptionResult =
 // Max plaintext size per SPEC §7.5.1 (999 bytes to leave room for version prefix)
 const EXPORTED_MAX_PLAINTEXT_SIZE = 999;
 
-const EPOCH_UNVERIFIED_ERROR =
-  'Could not confirm your private feed\'s current encryption epoch, so nothing was posted. Check your connection and try again.';
+const KEY_GENERATION_UNVERIFIED_ERROR =
+  'Could not confirm your private feed\'s current encryption key generation, so nothing was posted. Check your connection and try again.';
 
 /**
  * Prepare owner encryption for a private post (SPEC §8.2)
@@ -1219,27 +1219,27 @@ export async function prepareOwnerEncryption(
       }
     }
 
-    // 1. SYNC CHECK (SPEC §8.2 step 1). Fail closed: if the chain epoch cannot
+    // 1. SYNC CHECK (SPEC §8.2 step 1). Fail closed: if the chain key generation cannot
     // be read, a revocation made on another device may be missing locally, and
-    // encrypting at the stale epoch would let the revoked follower read this.
-    let chainEpoch: number;
+    // encrypting at the stale key generation would let the revoked follower read this.
+    let chainKeyGeneration: number;
     try {
-      chainEpoch = await privateFeedService.getLatestEpoch(ownerId, { throwOnError: true });
+      chainKeyGeneration = await privateFeedService.getLatestKeyGeneration(ownerId, { throwOnError: true });
     } catch {
-      return { success: false, error: EPOCH_UNVERIFIED_ERROR };
+      return { success: false, error: KEY_GENERATION_UNVERIFIED_ERROR };
     }
-    const localEpoch = privateFeedKeyStore.getCurrentEpoch();
+    const localKeyGeneration = privateFeedKeyStore.getCurrentKeyGeneration();
 
-    if (chainEpoch > localEpoch) {
-      logger.debug(`Chain epoch ${chainEpoch} > local epoch ${localEpoch}, need recovery`);
+    if (chainKeyGeneration > localKeyGeneration) {
+      logger.debug(`Chain key generation ${chainKeyGeneration} > local key generation ${localKeyGeneration}, need recovery`);
 
       if (encryptionPrivateKey) {
         const recoveryResult = await privateFeedService.recoverOwnerState(ownerId, encryptionPrivateKey);
         if (!recoveryResult.success) {
           return { success: false, error: `Sync failed: ${recoveryResult.error}` };
         }
-        if (privateFeedKeyStore.getCurrentEpoch() < chainEpoch) {
-          return { success: false, error: EPOCH_UNVERIFIED_ERROR };
+        if (privateFeedKeyStore.getCurrentKeyGeneration() < chainKeyGeneration) {
+          return { success: false, error: KEY_GENERATION_UNVERIFIED_ERROR };
         }
         logger.debug('Automatic recovery completed, continuing with encryption');
       } else {
@@ -1265,20 +1265,20 @@ export async function prepareOwnerEncryption(
       return { success: false, error: 'Private feed not enabled' };
     }
 
-    // Get current epoch after potential recovery
-    const currentEpoch = privateFeedKeyStore.getCurrentEpoch();
+    // Get current key generation after potential recovery
+    const currentKeyGeneration = privateFeedKeyStore.getCurrentKeyGeneration();
 
-    // Get or derive CEK for current epoch
+    // Get or derive CEK for current key generation
     let cek: Uint8Array;
     const cached = privateFeedKeyStore.getCachedCEK(ownerId);
 
-    if (cached && cached.epoch === currentEpoch) {
+    if (cached && cached.keyGeneration === currentKeyGeneration) {
       cek = cached.cek;
-    } else if (cached && cached.epoch > currentEpoch) {
-      cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, currentEpoch);
+    } else if (cached && cached.keyGeneration > currentKeyGeneration) {
+      cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, currentKeyGeneration);
     } else {
-      const chain = privateFeedCryptoService.generateEpochChain(feedSeed, MAX_EPOCH);
-      cek = chain[currentEpoch];
+      const chain = privateFeedCryptoService.generateCekChain(feedSeed, MAX_KEY_GENERATION);
+      cek = chain[currentKeyGeneration];
     }
 
     // 4-8. Encrypt content (SPEC §8.2 steps 3-8)
@@ -1287,13 +1287,13 @@ export async function prepareOwnerEncryption(
       cek,
       content,
       ownerIdBytes,
-      currentEpoch
+      currentKeyGeneration
     );
 
     logger.debug('Prepared owner encryption:', {
       hasTeaser: !!teaser,
       encryptedContentLength: encrypted.ciphertext.length,
-      epoch: currentEpoch,
+      keyGeneration: currentKeyGeneration,
       nonceLength: encrypted.nonce.length,
     });
 
@@ -1301,7 +1301,7 @@ export async function prepareOwnerEncryption(
       success: true,
       data: {
         encryptedContent: encrypted.ciphertext,
-        epoch: currentEpoch,
+        keyGeneration: currentKeyGeneration,
         nonce: encrypted.nonce,
         teaser,
       },
@@ -1320,20 +1320,20 @@ export async function prepareOwnerEncryption(
  *
  * When replying to a private post, the reply inherits encryption from the
  * root private post in the thread: it is encrypted to the same FEED, so the
- * feed's followers can read it. It is encrypted at the feed's CURRENT epoch,
+ * feed's followers can read it. It is encrypted at the feed's CURRENT key generation,
  * not the root's (SPEC §16.3): a follower revoked after the root was posted
- * holds the root's epoch key, and must not be able to read replies written
- * after the revocation. Readers derive each reply's own epoch key.
+ * holds the root's CEK, and must not be able to read replies written after
+ * the revocation. Readers derive the CEK of each reply's own key generation.
  *
  * @param content - The plaintext content to encrypt
- * @param source - The encryption source (feed owner ID and the root post's epoch)
+ * @param source - The encryption source (feed owner ID and the root post's key generation)
  * @param authorId - The identity writing the reply
  * @param encryptionPrivateKey - Optional: the feed owner's key for automatic sync
  * @returns PrepareEncryptionResult with encrypted data or error
  */
 export async function prepareInheritedEncryption(
   content: string,
-  source: { ownerId: string; epoch: number },
+  source: { ownerId: string; keyGeneration: number },
   authorId: string,
   encryptionPrivateKey?: Uint8Array
 ): Promise<PrepareEncryptionResult> {
@@ -1362,7 +1362,7 @@ export async function prepareInheritedEncryption(
     }
 
     // 3. Apply any rekeys since the last sync, so the reply uses the feed's
-    // current epoch. A revoked follower cannot apply them and cannot reply.
+    // current key generation. A revoked follower cannot apply them and cannot reply.
     const { privateFeedFollowerService } = await import('./private-feed-follower-service');
     let catchUp = await privateFeedFollowerService.catchUp(source.ownerId, authorId);
     if (catchUp.error?.startsWith('RECOVERY_NEEDED:')) {
@@ -1387,26 +1387,26 @@ export async function prepareInheritedEncryption(
     }
 
     const cached = privateFeedKeyStore.getCachedCEK(source.ownerId);
-    if (!cached || cached.epoch < source.epoch) {
+    if (!cached || cached.keyGeneration < source.keyGeneration) {
       return {
         success: false,
         error: 'Cannot encrypt reply: encryption key state is out of date',
       };
     }
 
-    // 4. Encrypt content at the current epoch, using the feed owner's ID as AAD
+    // 4. Encrypt content at the current key generation, using the feed owner's ID as AAD
     const ownerIdBytes = identifierToBytes(source.ownerId);
     const encrypted = privateFeedCryptoService.encryptPostContent(
       cached.cek,
       content,
       ownerIdBytes,
-      cached.epoch
+      cached.keyGeneration
     );
 
     logger.debug('Prepared inherited encryption:', {
       feedOwnerId: source.ownerId,
-      rootEpoch: source.epoch,
-      epoch: cached.epoch,
+      rootKeyGeneration: source.keyGeneration,
+      keyGeneration: cached.keyGeneration,
       encryptedContentLength: encrypted.ciphertext.length,
     });
 
@@ -1414,7 +1414,7 @@ export async function prepareInheritedEncryption(
       success: true,
       data: {
         encryptedContent: encrypted.ciphertext,
-        epoch: cached.epoch,
+        keyGeneration: cached.keyGeneration,
         nonce: encrypted.nonce,
       },
     };

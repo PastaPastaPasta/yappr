@@ -154,7 +154,7 @@ export function PrivateFeedFollowers() {
         )
         // The follower is cryptographically revoked even if their grant still
         // reads back for a moment: hide it in every card, and refresh the stats
-        // and dashboard, since the revocation advanced the epoch.
+        // and dashboard, since the revocation advanced the key generation.
         markGrantRevoked(user.identityId, follower.id, follower.grantedAt.getTime())
       } else {
         // Check if this is a sync required error

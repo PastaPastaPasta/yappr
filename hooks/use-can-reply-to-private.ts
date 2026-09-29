@@ -7,7 +7,7 @@ import { isPrivatePost } from '@/components/post/private-post-content'
 import { privateFeedKeyStore } from '@/lib/services/private-feed-key-store'
 
 /**
- * Reply controls follow the local keys available for this post's epoch.
+ * Reply controls follow the local keys available for this post's key generation.
  * Recovery and normal rekey catch-up update the store, so the UI changes with
  * the content without a reload. The existing encryption/write checks still
  * enforce access; this hook only controls the reply affordance.
@@ -22,13 +22,13 @@ export function useCanReplyToPrivate(post: Post | null | undefined, rootPostOwne
   const { user } = useAuth()
   const isPrivate = post ? isPrivatePost(post) : false
   const feedOwnerId = rootPostOwnerId || post?.author.id
-  const epoch = post?.epoch
+  const keyGeneration = post?.keyGeneration
   const subscribe = useCallback((listener: () => void) => {
     return isPrivate ? privateFeedKeyStore.subscribeFollowerKeys(listener) : () => undefined
   }, [isPrivate])
   const getSnapshot = useCallback(() => {
-    return isPrivate && !!feedOwnerId && epoch !== undefined && privateFeedKeyStore.hasKeysForEpoch(feedOwnerId, epoch)
-  }, [isPrivate, feedOwnerId, epoch])
+    return isPrivate && !!feedOwnerId && keyGeneration !== undefined && privateFeedKeyStore.hasKeysForGeneration(feedOwnerId, keyGeneration)
+  }, [isPrivate, feedOwnerId, keyGeneration])
   const hasKeys = useSyncExternalStore(subscribe, getSnapshot, () => false)
   const canReply = !isPrivate || (!!user && (user.identityId === feedOwnerId || hasKeys))
 

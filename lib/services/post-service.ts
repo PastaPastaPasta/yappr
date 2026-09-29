@@ -16,6 +16,7 @@ import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPosts
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
 import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
+import { privateFeedKeyFields } from '@/lib/contract-topology';
 
 /**
  * Encryption options for creating private posts
@@ -28,7 +29,7 @@ export interface EncryptionOptions {
   /** Feed owner's encryption private key for automatic sync/recovery (own posts, and the owner's replies in their own threads) */
   encryptionPrivateKey?: Uint8Array;
   /** Encryption source for inherited encryption (only for 'inherited' type) */
-  source?: { ownerId: string; epoch: number };
+  source?: { ownerId: string; keyGeneration: number };
 }
 
 export interface PostStats {
@@ -74,7 +75,7 @@ export function replyToPost(reply: Reply): Post {
     bookmarked: reply.bookmarked,
     media: reply.media,
     encryptedContent: reply.encryptedContent,
-    epoch: reply.epoch,
+    keyGeneration: reply.keyGeneration,
     nonce: reply.nonce,
     parentId: reply.parentId,
     parentOwnerId: reply.parentOwnerId,
@@ -230,7 +231,7 @@ class PostService extends BaseDocumentService<Post> {
 
     // Extract private feed fields if present
     const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
-    const epoch = (data.epoch ?? doc.epoch) as number | undefined;
+    const keyGeneration = (data[privateFeedKeyFields().generation] ?? doc[privateFeedKeyFields().generation]) as number | undefined;
     const rawNonce = data.nonce || doc.nonce;
 
     // Normalize byte arrays (SDK may return as base64 string, Uint8Array, or regular array)
@@ -277,7 +278,7 @@ class PostService extends BaseDocumentService<Post> {
       ...embed,
       // Private feed fields
       encryptedContent,
-      epoch,
+      keyGeneration,
       nonce,
     };
 
@@ -437,7 +438,7 @@ class PostService extends BaseDocumentService<Post> {
 
       // Set encrypted fields
       data.encryptedContent = encryptionResult.data.encryptedContent;
-      data.epoch = encryptionResult.data.epoch;
+      data[privateFeedKeyFields().generation] = encryptionResult.data.keyGeneration;
       data.nonce = encryptionResult.data.nonce;
 
       // Use teaser or placeholder as public content
