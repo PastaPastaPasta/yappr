@@ -16,11 +16,16 @@ import {
   profileExtensionSource,
   profileSources,
   type ProfileRole,
+  type ImageDigest,
   type ProfileSource,
   type V10ProfilePatch,
 } from '../profile/v10-profile';
 
 type PlainDocument = Record<string, unknown>;
+
+/** How long a save waits for a just-created DashPay profile before the extension (DAPI waits often time out). */
+const DASHPAY_PROFILE_POLLS = 10;
+const DASHPAY_PROFILE_POLL_MS = 2000;
 
 /** The `scheme:` prefix of a payment URI, lower-cased; empty when there is none. */
 export function paymentUriScheme(uri: string): string {
@@ -995,19 +1000,23 @@ class UnifiedProfileService extends BaseDocumentService<User> {
 
     const stored = await this.getV10ProfileDocuments(ownerId);
     const digestUrl = avatarNeedingDigest(stored.base, patch);
-    const avatarDigest = digestUrl
-      ? await (await import('../media/image-digest')).imageDigestForUrl(digestUrl)
-      : undefined;
     const plan = planV10ProfileWrite({
       ...stored,
       patch,
-      avatarDigest,
+      avatarDigest: digestUrl ? await this.imageDigestOrUndefined(digestUrl) : undefined,
       fallbackAvatar: this.encodeAvatarData(ownerId, DEFAULT_AVATAR_STYLE),
     });
 
-    const base = plan.base ? await this.writeProfileDocument('base', ownerId, stored.base, plan.base) : stored.base;
+    let base = stored.base;
+    if (plan.base) {
+      const written = await this.writeProfileDocument('base', ownerId, stored.base, plan.base);
+      base = written.document;
+      // The extension's ownerRefersTo reads the DashPay profile from state, so
+      // a create whose wait timed out must be visible before the extension goes.
+      if (!stored.base && !written.confirmed) await this.waitForDashpayProfile(ownerId);
+    }
     const extension = plan.extension
-      ? await this.writeProfileDocument('extension', ownerId, stored.extension, plan.extension)
+      ? (await this.writeProfileDocument('extension', ownerId, stored.extension, plan.extension)).document
       : stored.extension;
 
     cacheManager.invalidateByTag(`user:${ownerId}`);
@@ -1016,13 +1025,36 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     return this.transformDocument(merged);
   }
 
+  /**
+   * The digest DashPay stores beside an image avatar, or undefined when the
+   * image cannot be fetched or decoded here (a host without CORS headers, an
+   * SVG); the plan then keeps the image in the extension instead.
+   */
+  private async imageDigestOrUndefined(url: string): Promise<ImageDigest | undefined> {
+    try {
+      return await (await import('../media/image-digest')).imageDigestForUrl(url);
+    } catch (error) {
+      logger.warn('UnifiedProfileService: could not fingerprint the avatar; storing it in the Yappr profile only:', error);
+      return undefined;
+    }
+  }
+
+  /** Poll until a just-created DashPay profile is query-visible; rejects when it never shows. */
+  private async waitForDashpayProfile(ownerId: string): Promise<void> {
+    for (let attempt = 0; attempt < DASHPAY_PROFILE_POLLS; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, DASHPAY_PROFILE_POLL_MS));
+      if ((await this.getV10ProfileDocuments(ownerId)).base) return;
+    }
+    throw new Error('Your Dash profile has not landed yet. Please try again in a moment.');
+  }
+
   /** Create or replace one v10 profile document; resolves to it as written. */
   private async writeProfileDocument(
     role: ProfileRole,
     ownerId: string,
     existing: PlainDocument | null,
     content: PlainDocument
-  ): Promise<PlainDocument> {
+  ): Promise<{ document: PlainDocument; confirmed: boolean }> {
     const source = this.sourceFor(role);
     const existingId = existing ? (existing.$id || existing.id) as string | undefined : undefined;
     if (existing && !existingId) throw new Error('Profile document ID not found');
@@ -1039,7 +1071,10 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     if (!result.success || !result.document) {
       throw new Error(result.error || `Failed to save the ${source.documentType} document`);
     }
-    return { $createdAt: existing?.$createdAt ?? existing?.createdAt ?? Date.now(), ...result.document };
+    return {
+      document: { $createdAt: existing?.$createdAt ?? existing?.createdAt ?? Date.now(), ...result.document },
+      confirmed: result.confirmed !== false,
+    };
   }
 
   /**

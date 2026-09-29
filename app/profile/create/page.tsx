@@ -177,7 +177,8 @@ function CreateProfilePage() {
       // Create the profile on the new unified profile contract
       await unifiedProfileService.createProfile(user.identityId, {
         displayName: formData.displayName,
-        bio: formData.bio || undefined,
+        // An empty bio is passed as such: on v10 it clears a prefilled DashPay bio
+        bio: formData.bio,
         location: formData.location || undefined,
         website: normalizedWebsite || undefined,
         pronouns: formData.pronouns || undefined,

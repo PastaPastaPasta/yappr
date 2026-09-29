@@ -110,6 +110,35 @@ describe('v10 profile writes', () => {
     }, 2);
   });
 
+  it('keeps an image it cannot fingerprint in the extension rather than failing the save', async () => {
+    imageDigestForUrl.mockRejectedValueOnce(new Error('CORS'));
+    const profiles = await service();
+    await profiles.updateProfile(ownerId, { avatar: 'https://no-cors.example/a.png' });
+    expect(updateDocument).toHaveBeenCalledExactlyOnceWith(
+      YAPPR_CONTRACT_ID, 'yapprProfile', 'ext-doc', ownerId, { location: 'Lisbon', avatar: 'https://no-cors.example/a.png' }, 1
+    );
+  });
+
+  it('waits for a DashPay profile whose create was not confirmed before writing the extension', async () => {
+    stored = {};
+    createDocument.mockImplementationOnce(async (_contract, type, owner, data) => {
+      setTimeout(() => { stored[DASHPAY_CONTRACT_ID] = [{ $id: 'late', $ownerId: owner, ...data }]; }, 3000);
+      return { success: true, confirmed: false, document: { $id: `new-${type}`, $ownerId: owner, ...data } };
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const profiles = await service();
+      const saving = profiles.createProfile(ownerId, { displayName: 'Ava' });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(createDocument).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2000);
+      await saving;
+      expect(createDocument).toHaveBeenLastCalledWith(YAPPR_CONTRACT_ID, 'yapprProfile', ownerId, { avatar: expect.stringContaining(ownerId) });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('stops before the extension when the DashPay write fails', async () => {
     stored = {};
     createDocument.mockResolvedValueOnce({ success: false, error: 'refused' });

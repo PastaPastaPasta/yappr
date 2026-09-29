@@ -154,7 +154,11 @@ export interface V10ProfileWrite {
   readonly base: PlainDocument | null
   readonly extension: PlainDocument | null
   readonly patch: V10ProfilePatch
-  /** Required when the patch sets an image avatar DashPay does not already store. */
+  /**
+   * The digest of an image avatar DashPay does not already store. Absent when
+   * the image could not be fetched or decoded (a host without CORS, an SVG):
+   * the URI then goes in the extension, and DashPay keeps no image.
+   */
   readonly avatarDigest?: ImageDigest
   /** The recipe written when the extension would otherwise be empty (`minProperties: 1`). */
   readonly fallbackAvatar: string
@@ -237,7 +241,8 @@ export function planV10ProfileWrite({ base, extension, patch, avatarDigest, fall
   const nextBase: PlainDocument = { ...storedBase }
   const nextExtension: PlainDocument = { ...storedExtension }
 
-  applyText(nextBase, 'displayName', patch.displayName)
+  // A blank name keeps the stored one, as the profile contract's edit does.
+  if (patch.displayName?.trim()) nextBase.displayName = patch.displayName.trim()
   applyText(nextBase, 'publicMessage', patch.bio)
   for (const field of ['location', 'website', 'bannerUri', 'pronouns'] as const) {
     applyText(nextExtension, field, patch[field])
@@ -252,15 +257,14 @@ export function planV10ProfileWrite({ base, extension, patch, avatarDigest, fall
 
   if (patch.avatar !== undefined) {
     const avatar = patch.avatar.trim()
-    if (avatar && isImageAvatar(avatar)) {
-      if (avatarNeedingDigest(base, { avatar })) {
-        if (!avatarDigest) throw new Error('An image avatar needs its hash and fingerprint')
-        nextBase.avatarUrl = avatar
-        nextBase.avatarHash = avatarDigest.hash
-        nextBase.avatarFingerprint = avatarDigest.fingerprint
-      }
-    } else {
-      // A recipe, or no avatar: DashPay's image (all three fields travel together) goes.
+    if (avatar && isImageAvatar(avatar) && avatarDigest && avatarNeedingDigest(base, { avatar })) {
+      nextBase.avatarUrl = avatar
+      nextBase.avatarHash = avatarDigest.hash
+      nextBase.avatarFingerprint = avatarDigest.fingerprint
+    } else if (!avatar || !isImageAvatar(avatar) || avatarNeedingDigest(base, { avatar })) {
+      // A recipe, no avatar, or an image that could not be fingerprinted:
+      // DashPay's image (all three fields travel together) goes, and the
+      // extension holds the value.
       delete nextBase.avatarUrl
       delete nextBase.avatarHash
       delete nextBase.avatarFingerprint
@@ -272,16 +276,18 @@ export function planV10ProfileWrite({ base, extension, patch, avatarDigest, fall
 
   const writeBase = !base || !sameContent(storedBase, nextBase)
   if (writeBase) {
-    // A DashPay profile written from here always carries a name, though
-    // DashPay itself only asks for one property.
-    if (!nextBase.displayName) throw new ListLimitError('Display name is required')
+    // A DashPay profile created here always carries a name, though DashPay
+    // itself only asks for one property (a wallet's may have none).
+    if (!base && !nextBase.displayName) throw new ListLimitError('Display name is required')
+    if (Object.keys(nextBase).length === 0) throw new ListLimitError('Your Dash profile needs a name, a bio or an avatar')
     assertMaxLength(nextBase.displayName, DASHPAY_PROFILE_LIMITS.displayName,
       `Display name must be at most ${DASHPAY_PROFILE_LIMITS.displayName} characters`)
     assertMaxLength(nextBase.publicMessage, DASHPAY_PROFILE_LIMITS.bio,
       `Bio must be at most ${DASHPAY_PROFILE_LIMITS.bio} characters`)
   }
-  assertMaxLength(nextExtension.avatar, EXTENSION_AVATAR_MAX_LENGTH,
-    `The avatar settings must be at most ${EXTENSION_AVATAR_MAX_LENGTH} characters; try a shorter seed`)
+  assertMaxLength(nextExtension.avatar, EXTENSION_AVATAR_MAX_LENGTH, typeof nextExtension.avatar === 'string' && isImageAvatar(nextExtension.avatar)
+    ? `The avatar image could not be read to fingerprint it, and its address is over ${EXTENSION_AVATAR_MAX_LENGTH} characters; try uploading it instead`
+    : `The avatar settings must be at most ${EXTENSION_AVATAR_MAX_LENGTH} characters; try a shorter seed`)
 
   return {
     base: writeBase ? nextBase : null,

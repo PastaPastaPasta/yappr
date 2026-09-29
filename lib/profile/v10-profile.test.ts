@@ -93,11 +93,28 @@ describe('planV10ProfileWrite', () => {
     const base = { displayName: 'Ava', corePaymentAddress: address }
     const patch = { avatar: 'ipfs://new' }
     expect(avatarNeedingDigest(base, patch)).toBe('ipfs://new')
-    expect(() => planV10ProfileWrite({ base, extension: { avatar: recipe }, fallbackAvatar: recipe, patch })).toThrow(/hash and fingerprint/)
     expect(planV10ProfileWrite({ base, extension: { avatar: recipe }, fallbackAvatar: recipe, patch, avatarDigest: digest })).toEqual({
       base: { displayName: 'Ava', corePaymentAddress: address, avatarUrl: 'ipfs://new', avatarHash: digest.hash, avatarFingerprint: digest.fingerprint },
       extension: null,
     })
+  })
+
+  it('keeps an image that could not be fingerprinted in the extension, and drops DashPay\'s old one', async () => {
+    const { planV10ProfileWrite } = await profileModule('v10')
+    const base = { displayName: 'Ava', avatarUrl: 'https://x/a.png', avatarHash: digest.hash, avatarFingerprint: digest.fingerprint }
+    expect(planV10ProfileWrite({ base, extension: { avatar: recipe }, fallbackAvatar: recipe, patch: { avatar: 'https://cors.example/b.svg' } }))
+      .toEqual({ base: { displayName: 'Ava' }, extension: { avatar: 'https://cors.example/b.svg' } })
+    expect(() => planV10ProfileWrite({ base, extension: null, fallbackAvatar: recipe, patch: { avatar: `https://x/${'a'.repeat(130)}` } }))
+      .toThrow(/could not be read to fingerprint it/)
+  })
+
+  it('keeps the stored name for a blank one, and edits a wallet profile that has no name', async () => {
+    const { planV10ProfileWrite } = await profileModule('v10')
+    expect(planV10ProfileWrite({ base: { displayName: 'Ava' }, extension: { nsfw: false }, fallbackAvatar: recipe, patch: { displayName: '  ', nsfw: false } }))
+      .toEqual({ base: null, extension: null })
+    const wallet = { avatarUrl: 'https://x/a.png', avatarHash: digest.hash, avatarFingerprint: digest.fingerprint }
+    expect(planV10ProfileWrite({ base: wallet, extension: { avatar: recipe }, fallbackAvatar: recipe, patch: { bio: 'hi' } }))
+      .toEqual({ base: { ...wallet, publicMessage: 'hi' }, extension: null })
   })
 
   it('drops all three DashPay avatar fields when the user switches to a generated avatar', async () => {
