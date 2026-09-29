@@ -99,6 +99,20 @@ describe('planV10ProfileWrite', () => {
     })
   })
 
+  it("carries every DashPay field Yappr does not edit through a replace, but none of the record's metadata", async () => {
+    const { planV10ProfileWrite } = await profileModule('v10')
+    const shielded = new Uint8Array(43).fill(7)
+    const platform = new Uint8Array(21).fill(8)
+    const stored = {
+      $id: 'dash', $ownerId: 'owner', $revision: 4, $createdAt: 1, $updatedAt: 2, ownerId: 'owner', revision: 4,
+      displayName: 'Ava', shieldedAddress: shielded, platformPaymentAddress: Array.from(platform),
+    }
+    expect(planV10ProfileWrite({ base: stored, extension: { avatar: recipe }, fallbackAvatar: recipe, patch: { bio: 'hi' } })).toEqual({
+      base: { displayName: 'Ava', publicMessage: 'hi', shieldedAddress: shielded, platformPaymentAddress: platform },
+      extension: null,
+    })
+  })
+
   it('keeps an image that could not be fingerprinted in the extension, and drops DashPay\'s old one', async () => {
     const { planV10ProfileWrite } = await profileModule('v10')
     const base = { displayName: 'Ava', avatarUrl: 'https://x/a.png', avatarHash: digest.hash, avatarFingerprint: digest.fingerprint }
@@ -149,7 +163,22 @@ describe('planV10ProfileWrite', () => {
     expect(plan({ bio: 'x'.repeat(141) })).toThrow(/at most 140/)
     expect(plan({ displayName: ' ' })).toThrow(/required/)
     expect(plan({ avatar: JSON.stringify({ seed: 'x'.repeat(107), style: 'thumbs' }) })).toThrow(/at most 128/)
+    // yapprProfile's URL patterns, which the retired profile contract did not check.
+    expect(plan({ website: 'example.com' })).toThrow(/Website must start with/)
+    expect(plan({ bannerUri: 'ftp://x/b.png' })).toThrow(/Banner image must be/)
+    expect(plan({ website: ' https://example.com ', bannerUri: 'ipfs://cid' })).not.toThrow()
     // 25 characters of emoji are 50 UTF-16 units, and still fit.
     expect(plan({ displayName: '😀'.repeat(25) })).not.toThrow()
+  })
+})
+
+describe('dashpayKeyBoundsRefusal', () => {
+  it('explains a DashPay write refused because the signing key is bound to another contract', async () => {
+    const { dashpayKeyBoundsRefusal } = await profileModule('v10')
+    expect(dashpayKeyBoundsRefusal(new Error('Broadcast refused (code=20014)'))?.message).toMatch(/limited to Yappr/)
+    expect(dashpayKeyBoundsRefusal({ code: 20014, message: 'refused' })).not.toBeNull()
+    expect(dashpayKeyBoundsRefusal(new Error('ContractBoundedKeyOutOfBoundsError: key 3'))).not.toBeNull()
+    expect(dashpayKeyBoundsRefusal(new Error('Broadcast refused (code=40120)'))).toBeNull()
+    expect(dashpayKeyBoundsRefusal(new Error('timeout'))).toBeNull()
   })
 })

@@ -13,6 +13,7 @@ import {
   avatarNeedingDigest,
   mergeV10ProfileRecords,
   planV10ProfileWrite,
+  dashpayKeyBoundsRefusal,
   profileExtensionSource,
   profileSources,
   type ProfileRole,
@@ -1009,7 +1010,8 @@ class UnifiedProfileService extends BaseDocumentService<User> {
 
     let base = stored.base;
     if (plan.base) {
-      const written = await this.writeProfileDocument('base', ownerId, stored.base, plan.base);
+      const written = await this.writeProfileDocument('base', ownerId, stored.base, plan.base)
+        .catch((error: unknown) => { throw dashpayKeyBoundsRefusal(error) ?? error; });
       base = written.document;
       // The extension's ownerRefersTo reads the DashPay profile from state, so
       // a create whose wait timed out must be visible before the extension goes.

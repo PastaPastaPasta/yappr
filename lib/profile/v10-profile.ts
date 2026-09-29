@@ -1,6 +1,7 @@
 import { YAPPR_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID } from '@/lib/constants'
 import { dashpayProfileExtension } from '@/lib/contract-topology'
 import { normalizeBytes } from '@/lib/bytes'
+import { extractErrorMessage, hasConsensusCode } from '@/lib/error-utils'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 
 /**
@@ -81,9 +82,25 @@ export function isImageAvatar(avatar: string): boolean {
 
 /** The fields `yapprProfile` carries, in the profile contract's names. */
 const EXTENSION_FIELDS = ['location', 'website', 'bannerUri', 'pronouns', 'nsfw', 'paymentUris', 'socialLinks', 'avatar'] as const
-/** DashPay fields Yappr never edits but must carry through a replace (byte arrays). */
-const DASHPAY_PRESERVED_BYTE_FIELDS = ['corePaymentAddress', 'platformPaymentAddress'] as const
+/**
+ * DashPay profile v2's byte arrays, normalized when read back. Yappr edits
+ * only the avatar triple; the payment addresses (and any field a later
+ * DashPay adds) ride through a replace untouched.
+ */
+const DASHPAY_BYTE_FIELDS = new Set(['avatarHash', 'avatarFingerprint', 'corePaymentAddress', 'platformPaymentAddress', 'shieldedAddress'])
 const SYSTEM_FIELDS = ['$id', '$ownerId', '$createdAt', '$updatedAt', '$revision'] as const
+/** Document metadata an SDK record may carry without the `$` prefix; never content. */
+const UNPREFIXED_METADATA_FIELDS = new Set([
+  'id', 'ownerId', 'dataContractId', 'type', 'documentType', 'documentTypeName', 'revision', 'entropy',
+  'createdAt', 'updatedAt', 'transferredAt',
+  'createdAtBlockHeight', 'updatedAtBlockHeight', 'transferredAtBlockHeight',
+  'createdAtCoreBlockHeight', 'updatedAtCoreBlockHeight', 'transferredAtCoreBlockHeight',
+])
+/** `yapprProfile`'s URL patterns, which the profile contract did not have. */
+const EXTENSION_URL_RULES = [
+  { field: 'website', pattern: /^https?:\/\/.+$/, message: 'Website must start with http:// or https://' },
+  { field: 'bannerUri', pattern: /^(https?|ipfs):\/\/.+$/, message: 'Banner image must be an http://, https:// or ipfs:// address' },
+] as const
 
 type PlainDocument = Record<string, unknown>
 
@@ -203,16 +220,21 @@ function assertMaxLength(value: unknown, max: number, message: string): void {
   if (typeof value === 'string' && Array.from(value).length > max) throw new ListLimitError(message)
 }
 
-/** DashPay's content as Yappr writes it back: its own fields plus the preserved byte fields. */
+/**
+ * DashPay's content as Yappr writes it back: every content field it stores,
+ * byte arrays normalized. A replace overwrites the whole document, so a field
+ * dropped here (a wallet's shielded tip address) would be erased.
+ */
 function baseContentFrom(base: PlainDocument | null): PlainDocument {
   if (!base) return {}
-  const content = contentOf(base)
   const out: PlainDocument = {}
-  for (const field of ['displayName', 'publicMessage', 'avatarUrl'] as const) {
-    if (typeof content[field] === 'string') out[field] = content[field]
-  }
-  for (const field of ['avatarHash', 'avatarFingerprint', ...DASHPAY_PRESERVED_BYTE_FIELDS] as const) {
-    const bytes = normalizeBytes(content[field])
+  for (const [field, value] of Object.entries(contentOf(base))) {
+    if (value === undefined || value === null || field.startsWith('$') || UNPREFIXED_METADATA_FIELDS.has(field)) continue
+    if (!DASHPAY_BYTE_FIELDS.has(field)) {
+      out[field] = value
+      continue
+    }
+    const bytes = normalizeBytes(value)
     if (bytes) out[field] = bytes
   }
   return out
@@ -285,6 +307,10 @@ export function planV10ProfileWrite({ base, extension, patch, avatarDigest, fall
     assertMaxLength(nextBase.publicMessage, DASHPAY_PROFILE_LIMITS.bio,
       `Bio must be at most ${DASHPAY_PROFILE_LIMITS.bio} characters`)
   }
+  for (const { field, pattern, message } of EXTENSION_URL_RULES) {
+    const value = nextExtension[field]
+    if (typeof value === 'string' && !pattern.test(value)) throw new ListLimitError(message)
+  }
   assertMaxLength(nextExtension.avatar, EXTENSION_AVATAR_MAX_LENGTH, typeof nextExtension.avatar === 'string' && isImageAvatar(nextExtension.avatar)
     ? `The avatar image could not be read to fingerprint it, and its address is over ${EXTENSION_AVATAR_MAX_LENGTH} characters; try uploading it instead`
     : `The avatar settings must be at most ${EXTENSION_AVATAR_MAX_LENGTH} characters; try a shorter seed`)
@@ -293,4 +319,20 @@ export function planV10ProfileWrite({ base, extension, patch, avatarDigest, fall
     base: writeBase ? nextBase : null,
     extension: extension && sameContent(storedExtension, nextExtension) ? null : nextExtension,
   }
+}
+
+/** `ContractBoundedKeyOutOfBoundsError`: the signing key is bound to another contract. */
+const CONTRACT_BOUNDED_KEY_OUT_OF_BOUNDS = 20014
+
+/**
+ * The refusal of a DashPay profile write signed with a key bound to another
+ * contract (an app key scoped to the social contract), as a message for the
+ * user; null for any other error. The login does not yet ask the wallet for a
+ * `DashPay/profile` binding (docs/SOCIAL_V10.md), so such a key cannot create
+ * or edit the DashPay half of a profile.
+ */
+export function dashpayKeyBoundsRefusal(error: unknown): ListLimitError | null {
+  if (!hasConsensusCode(error, [CONTRACT_BOUNDED_KEY_OUT_OF_BOUNDS]) &&
+      !/ContractBoundedKeyOutOfBounds/i.test(extractErrorMessage(error))) return null
+  return new ListLimitError('The key you signed in with is limited to Yappr and cannot write your Dash profile. Sign in with your identity\'s authentication key to create or edit it.')
 }

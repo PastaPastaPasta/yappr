@@ -146,4 +146,19 @@ describe('v10 profile writes', () => {
     await expect(profiles.createProfile(ownerId, { displayName: 'Ava' })).rejects.toThrow('refused');
     expect(createDocument).toHaveBeenCalledTimes(1);
   });
+
+  it('explains a DashPay write refused because the key is bound to another contract', async () => {
+    stored = {};
+    createDocument.mockResolvedValueOnce({ success: false, error: 'Broadcast refused (code=20014)' });
+    const profiles = await service();
+    await expect(profiles.createProfile(ownerId, { displayName: 'Ava' })).rejects.toThrow(/limited to Yappr/);
+    expect(createDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a website the extension would refuse before writing either document', async () => {
+    const profiles = await service();
+    await expect(profiles.updateProfile(ownerId, { bio: 'new bio', website: 'example.com' })).rejects.toThrow(/http:\/\/ or https:\/\//);
+    expect(updateDocument).not.toHaveBeenCalled();
+    expect(createDocument).not.toHaveBeenCalled();
+  });
 });
