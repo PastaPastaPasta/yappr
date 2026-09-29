@@ -79,7 +79,10 @@
  * ## Carried from verify-v8 (the v8 grammar v10 keeps; verify-v8 needs a v9 chain)
  *
  *   a1  a post without `$actionFeeAgreement` is 40132
- *   a2  a mismatched agreement (amount, or fixed pricing) is 40133 (never 40134)
+ *   a2  an agreement paying moderators LESS than declared is judged as a charter
+ *       discount (40139: unseated, nothing is discounted; seated, only the
+ *       charter's exact share is); any other mismatch (fixed pricing, a larger
+ *       moderators part) is 40133. Never 40134.
  *   a3  the agreed fee lands, the locally derived nonce-committed id is the one
  *       Platform stored, and the moderators pot grows by the post and reply fees
  *   a4  the interim owner claims the moderators pot; a second claim is 41111
@@ -177,6 +180,13 @@ const SUSPENDED = /\bcode"?\s*[=:]\s*41108\b|contractusersuspended|is suspended/
 const INSUFFICIENT_TOKENS = /\bcode"?\s*[=:]\s*40700\b|not have enough token|insufficient token|identitydoesnothaveenoughtokenbalance/i;
 // 40132/40133 may arrive as prose (verify-v8's matchers, measured live on beta.3).
 const AGREEMENT_NOT_SET = /\bcode"?\s*[=:]\s*40132\b|fee agreement.{0,40}not set|actionfeeagreementnotset|carries no action fee agreement/i;
+/**
+ * 40139: a moderators part below the declared one on an elected contract's
+ * moderated type is a discount claim, checked against the seated charter's
+ * share before (instead of) the 40133 amount match.
+ */
+const MODERATORS_SHARE_MISMATCH = /\bcode"?\s*[=:]\s*40139\b|actionfeemoderatorssharemismatch|declares a moderators fee of [\d,]+ credits; the transition agreed to/i;
+const NO_SEATED_CHARTER = /discounted: the contract has no seated moderation charter/i;
 const AGREEMENT_MISMATCH = /\bcode"?\s*[=:]\s*40133\b|fee agreement.{0,40}mismatch|actionfeeagreementmismatch|but the transition agreed to [\d,]+ and [\d,]+ credits/i;
 const ALREADY_CLAIMED_EPOCH = /\bcode"?\s*[=:]\s*41111\b|already.{0,30}claimed.{0,30}epoch|alreadyclaimedthisepoch/i;
 const ALREADY_RESTORED = /\bcode"?\s*[=:]\s*41122\b|already restored|contractdocumentalreadyrestored/i;
@@ -1060,22 +1070,36 @@ async function caseA1NoAgreement(ctx) {
   expectRejected('a1a post without $actionFeeAgreement is refused (40132)', outcome, AGREEMENT_NOT_SET);
 }
 
-/** A 40134 (a stale multiplier across an epoch turn) is not the 40133 a2 means to prove. */
-function expectMismatch(label, outcome) {
+/** A 40134 (a stale multiplier across an epoch turn) is not the agreement refusal a2 means to prove. */
+function expectMismatch(label, outcome, pattern = AGREEMENT_MISMATCH) {
   if (!outcome.ok && FEE_MULTIPLIER_NOT_TOLERATED.test(outcome.error ?? '')) {
     check(label, false, `refused for the stale fee multiplier (40134), not the agreement: ${(outcome.error ?? '').slice(0, 160)}`);
     return outcome;
   }
-  return expectRejected(label, outcome, AGREEMENT_MISMATCH);
+  return expectRejected(label, outcome, pattern);
 }
 
 async function caseA2MismatchedAgreement(ctx) {
-  console.log('\n--- a2. post create with a mismatched agreement → 40133 ---');
+  console.log('\n--- a2. post create with a mismatched agreement → 40139 (a discount) / 40133 ---');
   const { knownPermille } = await feeAgreement(ctx, POST_ACTION_FEE);
-  const wrong = new DocumentActionFeeAgreement(actionFeeAgreementOptions({ ...POST_ACTION_FEE, moderators: 1n }, knownPermille));
-  expectMismatch('a2a agreement naming the wrong moderators amount is refused (40133)', await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'wrong fee' }), agreement: wrong }));
+  ctx.seated ??= (await readback(() => ctx.sdk.moderationCharters.seatedCharter(ctx.contractId))) != null;
+  // drive's batch validation (v4.2.0-beta.7, rs-drive state_transition_action/batch/v0):
+  // same pricing and owner part with a SMALLER moderators part on an elected
+  // contract's moderated type is a discount claim, judged only against the
+  // seated charter's share; everything else is the 40133 exact match.
+  const discounted = new DocumentActionFeeAgreement(actionFeeAgreementOptions({ ...POST_ACTION_FEE, moderators: 1n }, knownPermille));
+  const underpaid = expectMismatch(
+    `a2a an under-declared moderators part is a refused discount (40139, ${ctx.seated ? 'not the seated charter\'s share' : 'no charter seated'})`,
+    await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'discounted fee' }), agreement: discounted }),
+    MODERATORS_SHARE_MISMATCH
+  );
+  if (!ctx.seated && !underpaid.ok && MODERATORS_SHARE_MISMATCH.test(underpaid.error ?? '')) {
+    check('a2a\' unseated, the refusal says nothing may be discounted', NO_SEATED_CHARTER.test(underpaid.error ?? ''), (underpaid.error ?? '').slice(0, 200));
+  }
   const fixed = new DocumentActionFeeAgreement(actionFeeAgreementOptions({ ...POST_ACTION_FEE, pricing: 'fixed' }, knownPermille));
-  expectMismatch('a2b agreement to FIXED pricing on a feeMultiplier fee is the same mismatch (40133)', await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'fixed pricing' }), agreement: fixed }));
+  expectMismatch('a2b agreement to FIXED pricing on a feeMultiplier fee is a mismatch (40133)', await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'fixed pricing' }), agreement: fixed }));
+  const overpaid = new DocumentActionFeeAgreement(actionFeeAgreementOptions({ ...POST_ACTION_FEE, moderators: POST_ACTION_FEE.moderators + 1n }, knownPermille));
+  expectMismatch('a2c agreement naming a LARGER moderators part is a mismatch, not a discount (40133)', await manualCreate(ctx, ctx.botA, { docType: 'post', data: postData({ content: 'overpaid fee' }), agreement: overpaid }));
 }
 
 async function caseA3AgreedFee(ctx) {
