@@ -10,6 +10,7 @@ import { authVaultService } from '@/lib/services/auth-vault-service'
 import { tokenService } from '@/lib/services/token-service'
 import { getPasskeyPrfSupport } from '@/lib/webauthn/passkey-support'
 import { YAPP_TOKEN_COSTS } from '@/lib/constants'
+import { yappIsLocked } from '@/lib/contract-topology'
 import { Spinner } from '@/components/ui/spinner'
 import { KeyExchangeQR } from './key-exchange-qr'
 import { KeyRegistrationFlow } from './key-registration-flow'
@@ -33,8 +34,11 @@ interface WalletLoginPanelProps {
  * After a wallet login lands on a ready account, decide whether to prompt for
  * YAPP right away: true when the balance can't cover a single post. A failed
  * balance fetch is "unknown", not zero, so it never triggers the prompt.
+ * Where YAPP cannot be bought (v10) there is nothing to prompt for: the
+ * starter-grant modal offers the one-time grant on its own.
  */
 async function needsYappPrompt(identityId: string): Promise<boolean> {
+  if (yappIsLocked()) return false
   try {
     const balance = await tokenService.getBalance(identityId)
     return balance < BigInt(YAPP_TOKEN_COSTS.post)

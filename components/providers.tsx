@@ -15,6 +15,7 @@ import { EncryptionKeyModal } from '@/components/auth/encryption-key-modal'
 import { BuyYappModal } from '@/components/token/buy-yapp-modal'
 import { StarterGrantModal } from '@/components/token/starter-grant-modal'
 import { QueryInspectorGate } from '@/components/query-inspector/inspector-gate'
+import { yappIsLocked } from '@/lib/contract-topology'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -30,7 +31,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <UsernameModalProvider />
           <KeyBackupModal />
           <TipModal />
-          <BuyYappModal />
+          {!yappIsLocked() && <BuyYappModal />}
           <StarterGrantModal />
           <RecoveryModal />
           <DeleteConfirmationModal />

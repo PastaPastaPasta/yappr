@@ -248,6 +248,14 @@ describe('protocol-14 rejections', () => {
     const v2 = await import('./error-utils')
     expect(v2.categorizeError(shortOfYapp)).not.toMatch(/credits/i)
     expect(v2.categorizeError(shortOfYapp)).toMatch(/enough YAPP/i)
+    expect(v2.categorizeError(shortOfYapp)).toMatch(/buy more/i)
+    expect(v9.categorizeError(shortOfYapp)).toMatch(/buy more/i)
+    // v10's YAPP is locked: it cannot be bought, so credits are the only way out.
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    const v10 = await import('./error-utils')
+    expect(v10.categorizeError(shortOfYapp)).toMatch(/credits/i)
+    expect(v10.categorizeError(shortOfYapp)).not.toMatch(/buy/i)
   })
 
   it('keeps the frozen-account message for a frozen token account, not the moderation one', () => {
