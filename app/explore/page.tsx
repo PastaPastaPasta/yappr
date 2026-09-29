@@ -41,8 +41,11 @@ export default function ExplorePage() {
   const [isLoadingBlogs, setIsLoadingBlogs] = useState(true)
   const [topPosts, setTopPosts] = useState<Post[]>([])
   const [isLoadingTop, setIsLoadingTop] = useState(false)
-  /** v9: which slice the ranked surfaces show (Top posts, trending, creators). */
-  const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
+  // Each ranked tab keeps its own window: the axes' windows differ (v10: 24h
+  // tags, 3-day posts, all-time creators), so one choice must not leak across.
+  const [trendingWindow, setTrendingWindow] = useState<RankingWindow>('all')
+  const [topWindow, setTopWindow] = useState<RankingWindow>('all')
+  const [creatorsWindow, setCreatorsWindow] = useState<RankingWindow>('all')
   const blogsLoadedRef = useRef(false)
   const blogCacheRef = useRef<{ blogIds: string[]; blogMap: Map<string, Blog> } | null>(null)
 
@@ -56,7 +59,7 @@ export default function ExplorePage() {
       setIsLoadingTop(true)
       try {
         const { topLikedPostsHydrated } = await import('@/lib/services/ranked-likes')
-        let posts = await topLikedPostsHydrated({ limit: 20, window: rankingWindow })
+        let posts = await topLikedPostsHydrated({ limit: 20, window: topWindow })
 
         // Filter out posts from blocked users, same as the search results above.
         if (user?.identityId && posts.length > 0) {
@@ -75,7 +78,7 @@ export default function ExplorePage() {
     }
 
     loadTopPosts().catch(err => logger.error('Failed to load top posts:', err))
-  }, [activeTab, user?.identityId, rankingWindow])
+  }, [activeTab, user?.identityId, topWindow])
 
   // Load trending hashtags
   useEffect(() => {
@@ -86,7 +89,7 @@ export default function ExplorePage() {
           timeWindowHours: 168, // 1 week
           minPosts: 1,
           limit: 12,
-          window: rankingWindow,
+          window: trendingWindow,
         })
         setTrendingHashtags(trending)
       } catch (error) {
@@ -97,7 +100,7 @@ export default function ExplorePage() {
     }
 
     loadTrendingHashtags().catch(err => logger.error('Failed to load trending hashtags:', err))
-  }, [rankingWindow])
+  }, [trendingWindow])
 
   // Discovery is lazy; search has its own blog loader.
   useEffect(() => {
@@ -413,7 +416,7 @@ export default function ExplorePage() {
                       transition={{ duration: 0.15 }}
                     >
                       {/* Trending Hashtags */}
-                      <RankingWindowToggle axis="hashtags" value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-trending" />
+                      <RankingWindowToggle axis="hashtags" value={trendingWindow} onChange={setTrendingWindow} testIdPrefix="explore-trending" />
                       <div className="divide-y divide-gray-200 dark:divide-gray-800">
                         {isLoadingTrends ? (
                           <div className="p-8 text-center">
@@ -469,7 +472,7 @@ export default function ExplorePage() {
                       transition={{ duration: 0.15 }}
                     >
                       {/* Global most-liked posts (proved ranking, top 20) */}
-                      <RankingWindowToggle axis="posts" value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-top" />
+                      <RankingWindowToggle axis="posts" value={topWindow} onChange={setTopWindow} testIdPrefix="explore-top" />
                       <div className="divide-y divide-gray-200 dark:divide-gray-800">
                         {isLoadingTop ? (
                           <div className="p-8 text-center">
@@ -498,8 +501,8 @@ export default function ExplorePage() {
                       transition={{ duration: 0.15 }}
                     >
                       {/* v9 creator leaderboard (proved prefix rankings). */}
-                      <RankingWindowToggle axis="creators" value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-creators" />
-                      <TopCreators window={rankingWindow} />
+                      <RankingWindowToggle axis="creators" value={creatorsWindow} onChange={setCreatorsWindow} testIdPrefix="explore-creators" />
+                      <TopCreators window={creatorsWindow} />
                     </motion.div>
                   ) : (
                     <motion.div
