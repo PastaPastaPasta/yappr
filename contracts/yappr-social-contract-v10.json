@@ -443,7 +443,7 @@
           "terminal": "postId"
         },
         {
-          "name": "byDayPost",
+          "name": "byTrendPost",
           "properties": [
             {
               "$createdAt": "asc"
@@ -457,41 +457,13 @@
           "rankedCountable": true,
           "timeRange": {
             "on": "$createdAt",
-            "range": 86400,
+            "range": 259200,
             "step": 86400,
             "ttl": 604800
           }
         },
         {
-          "name": "byDayAuthorPost",
-          "properties": [
-            {
-              "$createdAt": "asc"
-            },
-            {
-              "postAuthor": "asc"
-            },
-            {
-              "postId": "asc"
-            }
-          ],
-          "terminal": "$ownerId",
-          "rangeCountable": true,
-          "rankedCountable": {
-            "at": [
-              "postAuthor",
-              "postId"
-            ]
-          },
-          "timeRange": {
-            "on": "$createdAt",
-            "range": 86400,
-            "step": 86400,
-            "ttl": 604800
-          }
-        },
-        {
-          "name": "byDayHashtagPost",
+          "name": "byTrendHashtagPost",
           "properties": [
             {
               "$createdAt": "asc"
@@ -514,7 +486,7 @@
           "timeRange": {
             "on": "$createdAt",
             "range": 86400,
-            "step": 86400,
+            "step": 21600,
             "ttl": 604800
           },
           "skipIfAbsent": true

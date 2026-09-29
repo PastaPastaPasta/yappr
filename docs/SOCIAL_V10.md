@@ -38,7 +38,7 @@ All sizes are the signed create measured with the beta.7 SDK. The cap is 20,480 
 
 | Contract | Topology | Change | Signed create |
 | --- | --- | --- | ---: |
-| social v10 | `v10` | new cut (below) | **18,416 B** (1,584 B under budget) |
+| social v10 | `v10` | new cut (below) | **18,178 B** (1,822 B under budget) |
 | storefront | `v5` | beta.7 grammar; QA D-25 (an order needs an open store); `categoryAndTime` skips items with no section | 14,861 B (was 14,588 on beta.6) |
 | blog | `v5` | beta.7 grammar only; keeps the beta.6 comments-off rule and owner gate | 6,489 B |
 | pollr | `v4` | beta.7 grammar only | 6,004 B |
@@ -63,7 +63,7 @@ node scripts/validate-contract-offline.mjs --constraints
 ### sha256 of each file the publisher pins
 
 ```
-8c55d3649619f3eb6f63cc5877e22be321398ef454c90e87cf9893261e18e4fc  yappr-social-contract-v10.json   (new)
+e29f77f6013aa9f02aa57fdf85cd11e2c43f603838d688647b1f0fb6f855f955  yappr-social-contract-v10.json   (new)
 ecd08e7676c88cf8e623cce82ddfe614d96444f487f1d2cf43411fe4762d0735  yappr-storefront-contract.json   (changed)
 464b605e652d6dac031fee9576d9573bf25b5fe6dda530b7f8330da78d915dbe  yappr-blog-contract.json        (changed)
 dbc8006389b4caf421b1379de2a76bbf105182d10c76e614c8ba16a8f13113d5  pollr-contract.json             (changed)
@@ -106,7 +106,7 @@ The translation is mechanical, and `lib/contract-topology.test.ts` pins every v1
 | 6 | **One hashtag** (`post.hashtag`) | An array cannot be indexed (10206). The validator now proves that offline |
 | 7 | **The DashPay profile is the base profile; `yapprProfile` is the extension**, in social. `ownerRefersTo` requires a DashPay `profile` owned by the writer (`findBy { $ownerId: "." }` into DashPay's unique `ownerId` index; 40120 without one), moderator-deletable. The legacy social `profile` doctype and the profile contract are retired on v10 | Users with a DashPay profile show their name and avatar at once; one registration. DashPay caps the name at 25 and the bio (`publicMessage`) at 140. Payment addresses stay in `yapprProfile.paymentUris` |
 | 8 | **No doctype descriptions** | Kept here instead; they would cost about 1,183 B of the headroom |
-| 9 | **`beat` removed**; today's trending tags move to `like.byDayHashtagPost` (`[$createdAt, hashtag, postId]`, daily window, `skipIfAbsent`) | One transition per like instead of two. A tagged like is 185.4M / 61.8M credits (new / known) against 239.5M / 95.2M for like + beat. The all-time `byHashtagPost` must stay, with its own skip (#5162 refuses an indexOnly optional property without an untimed single-skip index) |
+| 9 | **`beat` removed; trending is ROLLING, on `like` itself.** `like` keeps 7 indexes: byPost, byHashtagPost (`skipIfAbsent`), byAuthorPost, byAuthorTimePost, byLiker, plus **`byTrendPost`** `[$createdAt, postId]` (72h windows every 24h, ranked) for top posts and **`byTrendHashtagPost`** `[$createdAt, hashtag, postId]` (24h windows every 6h, `skipIfAbsent`, ranked at `[hashtag, postId]`) for trending tags and a tag's top posts. `byDayPost`, `byDayAuthorPost` and `byDayHashtagPost` are gone: there is no windowed creator axis, so the creator leaderboard and a profile's top are all-time on v10. All windows expire after a week (`ttl` 604800) | One transition per like instead of two. The client reads each rolling grid through its **oldest** open window, which always spans ~18-24h (tags) or ~48-72h (posts), where a daily grid restarts empty at midnight UTC. The two grids stay distinct, so neither shares the other's storage or `ttl`. The all-time `byHashtagPost` must stay, with its own skip (#5162 refuses an indexOnly optional property without an untimed single-skip index). **Decision:** BETA7-PLAN's D-3 proposed the daily grid (cheaper by ~11.9M per tagged like); the user reversed it on 2026-09-28 in favour of this rolling design, measured then through drive-abci at 77.5M untagged / 91.3M tagged steady, against 76.7M / 117.5M for v9's like + beat |
 | 10 | **`skipIfAbsent` on every stored index over an optional property**: post `quotesOfPost`, `quotesOfReply`, `quotedPostOwnerAndTime`, `quoteCount`, `quoteReplyCount`, `tagAndTime`; reply `replyToReplyAndTime`, `byReplyToReply`; report `ownerAndPost`, `ownerAndReply`, `byPost`, `byReply` | No null-key entries. A plain post is 167.5M / 135.8M against v9's 323.5M / 189.9M. Every client read of these indexes binds the property with `==`, which a skip index serves |
 | 11 | **Reports are resolved, not deleted.** `status` (1 no action, 2 content removed, 3 user actioned) and `resolution` (1–200 characters) are `moderatorAbilities.changeFields`, written with `moderatorChangeDocumentFields`; `byStatus [status, $createdAt]` and `byModerator [$moderatedBy, $moderatedAt]`; the 90-day `ttl` stays; `resolvedHasStatus` refuses a resolution without a status; moderators may still delete a report, with `deleteKeepsRecord: false` (spam purge, no removal record); the elected set gives `report` `["deleteDocuments", "changeDocumentFields"]` | The report stays visible with its outcome, stamped with who handled it and when. A field change does not count toward the team's action share. A reporter who sets `status` is refused 41124. `byStatus` does not skip, because an open report has no status |
 | 12 | **YAPP cannot be transferred or bought.** `startAsPaused: true`; `changeDirectPurchasePricingRules` authorized and admin `noOne`; `emergencyActionRules` already `noOne`, so nobody can unpause | Only transfers read the pause in drive-abci, so the token costs on post (10), reply (3), like (1), likeReply (1) and repost (1), the 100 once-per-identity grant, and owner mint and burn keep working. Seeders and batteries mint or claim; tips on v10 are credit tips |
@@ -148,8 +148,8 @@ These are `documentCreateCost` figures in credits, as new / known index values. 
 
 | Document | v9 (translated) | v10 |
 | --- | ---: | ---: |
-| like, untagged | 133.2M / 46.7M | 133.2M / 46.7M |
-| like, tagged | 182.1M / 58.6M **+ beat 57.4M / 36.6M** | **185.4M / 61.8M** |
+| like, untagged | 133.2M / 46.7M | 133.6M / 47.2M |
+| like, tagged | 182.1M / 58.6M **+ beat 57.4M / 36.6M** | **196.8M / 73.7M** |
 | post, plain (no tag, quote or media) | 323.5M / 189.9M | **167.5M / 135.8M** |
 | post, 1000 ASCII characters | — | 183.5M / 151.8M |
 | post with media | — | 177.0M / 145.3M |
@@ -165,7 +165,7 @@ These are `documentCreateCost` figures in credits, as new / known index values. 
 | --- | --- |
 | Doctype descriptions back (19,512 B) | 488 B of headroom is too thin for the next beta |
 | The like "lean" variant (drop the all-time `byHashtagPost`) | Refused by #5162 (see #9). Probed |
-| A 24h/6h rolling hashtag grid | +11.9M per tagged like, and the client reads only today's window |
+| A daily grid for top posts and tags (BETA7-PLAN D-3), and a daily creator window | Reversed by the user (2026-09-28): trending must be rolling. The daily variant measured 133.2M / 46.7M untagged and 185.4M / 61.8M tagged, so rolling costs +0.4M / +0.5M untagged and +11.4M / +11.9M tagged, all of it processing (a TTL'd window adds no storage). Dropping the creator window saves an index per like |
 | Dropping the report `ttl` | Reports would become permanent storage, about 8× the cost per report |
 | `skipIfAbsent` on `report.byStatus` | An open report has no status. A skip index cannot serve the open queue (`status == null`) |
 | A post `ownerRefersTo` DashPay gate (+146 B) | Adds a billed read to every post and duplicates the client's profile gate |
@@ -216,10 +216,10 @@ The election ops script files reasons with `--reasons SPM:Spam,ABU:Abuse,REP:Rep
 - **`lib/contract-topology.ts`**:
   - `v10` joins `v2` and `v9`, and every client change gates on it;
   - the contract-derived numbers (costs, fees, grant, lists, election windows, distinctFrom) read the configured cut's JSON;
-  - the new capability helpers are `isV10`, `postsHaveLanguage`, `contentLimits`, `mediaCarriesHashes`, `privateFeedKeyFields`, `dashpayProfileExtension`, `dailyHashtagWindowDocType`, `moderatorAbilitiesFor`, `moderatorDeletionKeepsRecord`, `reportResolutionFields`/`reportsAreResolved` and `yappIsLocked`.
+  - the new capability helpers are `isV10`, `postsHaveLanguage`, `contentLimits`, `mediaCarriesHashes`, `privateFeedKeyFields`, `dashpayProfileExtension`, `windowedRankingFor` (per axis: doctype, grid, `newest`/`oldest`, label), `moderatorAbilitiesFor`, `moderatorDeletionKeepsRecord`, `reportResolutionFields`/`reportsAreResolved` and `yappIsLocked`.
 - **Storefront topology.** `lib/constants.ts` adds `v5` (`storefrontOrdersCarryStoreStatus`).
 - **Batteries.**
-  - `scripts/verify-v10.mjs` replaces verify-v9. It keeps e0, d1, p1, b1, w1, m1, m2 and o1–o4, drops the tombstone cases, and adds x1 (deletes and 40120), x2 (media 10101, 10421, no language, the timeline), x3 (the extension and DashPay), c1, r1/r2 (resolve, 41124, 10905, 41123, purge with no record, 41102 on the protected owner), t2 (trending on like) and y1 (YAPP transfer 40711, purchase 40721, a paid post, the grant). It also carries verify-v8's a1–a4 (40132, 40133, the derived id and pot growth, 41111), s1 (41108) and k1/k2 (credits vs YAPP with sponsored gas, 40700), since verify-v8 needs a v9 chain.
+  - `scripts/verify-v10.mjs` replaces verify-v9. It keeps e0, d1, p1, b1, w1, m1, m2 and o1–o4, drops the tombstone cases, and adds x1 (deletes and 40120), x2 (media 10101, 10421, no language, the timeline), x3 (the extension and DashPay), c1, r1/r2 (resolve, 41124, 10905, 41123, purge with no record, 41102 on the protected owner), t2 (rolling trending on like) and y1 (YAPP transfer 40711, purchase 40721, a paid post, the grant). It also carries verify-v8's a1–a4 (40132, 40133, the derived id and pot growth, 41111), s1 (41108) and k1/k2 (credits vs YAPP with sponsored gas, 40700), since verify-v8 needs a v9 chain.
   - `verify-storefront` adds s21 (D-25).
   - The blog, storefront and pollr self-tests assert `where`.
 - **Registration.** `register-social-v3-draft.mjs` defaults to v10 and funds bots by owner **mint** (a transfer is refused on the paused token).
