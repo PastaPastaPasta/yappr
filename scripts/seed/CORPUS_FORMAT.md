@@ -88,7 +88,7 @@ the executor cannot deadlock.
   (`contracts/yappr-social-contract-v10.json`): untagged **omits the property
   entirely** on the post AND on every like of it (a `where` entry treats
   both-absent as agreement; writing `''` is consensus error 40127; the like's
-  `byHashtagPost` and `byDayHashtagPost` indexes are `skipIfAbsent`, so absence
+  `byHashtagPost` and `byTrendHashtagPost` indexes are `skipIfAbsent`, so absence
   writes no entry). Tags match `^[a-z0-9_]{1,61}$`, enforced at parse time.
 - `content`: may contain `{{link:REF}}` placeholders, where `REF` must be an
   **earlier post/quote ref**; the executor replaces each with

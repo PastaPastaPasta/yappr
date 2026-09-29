@@ -275,7 +275,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     timeWindowHours?: number;
     minPosts?: number;
     limit?: number;
-    /** v9: `'today'` reads the daily-windowed ranking (`beat.byDayHashtagPost`); default all-time. */
+    /** `'today'` reads the recent window (v9 `beat.byDayHashtagPost`, v10 `like.byTrendHashtagPost`); default all-time. */
     window?: 'all' | 'today';
   } = {}): Promise<TrendingHashtag[]> {
     const {

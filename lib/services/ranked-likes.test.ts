@@ -34,13 +34,40 @@ it('captures the viewer once before ranking and isolates hydrated caches across 
   expect(mocks.hydrate.mock.calls[1][0].currentUserId).toBe('viewerB');
 });
 
-it.each([['v9', 'beat'], ['v10', 'like']])("reads today's hashtag window from the %s cut's %s doctype", async (topology, docType) => {
+const WINDOWED_READS = {
+  // v9: one daily grid, the current UTC day.
+  v9: {
+    hashtags: { documentTypeName: 'beat', timeRange: [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 86400 } }] },
+    posts: { documentTypeName: 'like', timeRange: [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 86400 } }] },
+    creators: { documentTypeName: 'like', timeRange: [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 86400 } }] },
+  },
+  // v10: rolling grids read through their OLDEST open window (the full span); no creator window.
+  v10: {
+    hashtags: { documentTypeName: 'like', timeRange: [{ field: '$createdAt', selector: 'oldest', grid: { range: 86400, step: 21600 } }] },
+    posts: { documentTypeName: 'like', timeRange: [{ field: '$createdAt', selector: 'oldest', grid: { range: 259200, step: 86400 } }] },
+    creators: { documentTypeName: 'like' },
+  },
+} as const;
+
+it.each(['v9', 'v10'] as const)('reads each axis through the %s windows', async (topology) => {
   vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology);
   mocks.ranked.mockResolvedValue({ entries: [] });
-  const { topHashtagsByLikes, topLikedPosts } = await import('./ranked-likes');
+  const { topHashtagsByLikes, topLikedPosts, topCreatorsByLikes } = await import('./ranked-likes');
+  const reads = WINDOWED_READS[topology];
+  const shape = ({ documentTypeName, timeRange }: { documentTypeName: string; timeRange?: unknown }) => ({ documentTypeName, ...(timeRange ? { timeRange } : {}) });
   await topHashtagsByLikes(12, 'today');
   await topLikedPosts({ hashtag: 'dash', window: 'today' });
-  expect(mocks.ranked.mock.calls.map(([query]) => query.documentTypeName)).toEqual([docType, docType]);
+  await topLikedPosts({ window: 'today' });
+  await topLikedPosts({ postAuthor: 'author123', window: 'today' });
+  await topCreatorsByLikes(10, 'today');
+  expect(mocks.ranked.mock.calls.map(([query]) => shape(query))).toEqual([reads.hashtags, reads.hashtags, reads.posts, reads.creators, reads.creators]);
   await topHashtagsByLikes(12, 'all');
-  expect(mocks.ranked.mock.calls[2][0].documentTypeName).toBe('like');
+  expect(shape(mocks.ranked.mock.calls[5][0])).toEqual({ documentTypeName: 'like' });
+});
+
+it('reads nothing windowed on v2, which has no windows', async () => {
+  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v2');
+  const { topHashtagsByLikes, topLikedPosts, topCreatorsByLikes } = await import('./ranked-likes');
+  expect([await topHashtagsByLikes(12, 'today'), await topLikedPosts({ window: 'today' }), await topCreatorsByLikes(10, 'today')]).toEqual([[], [], []]);
+  expect(mocks.ranked).not.toHaveBeenCalled();
 });

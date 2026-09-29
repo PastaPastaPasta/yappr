@@ -41,7 +41,7 @@ export function FeedSortToggle({ sortMode, onSortModeChange, rankingWindow, onRa
         {option('top', 'Top')}
       </div>
       {sortMode === 'top' && (
-        <RankingWindowToggle value={rankingWindow} onChange={onRankingWindowChange} testIdPrefix="feed-top" />
+        <RankingWindowToggle axis="posts" value={rankingWindow} onChange={onRankingWindowChange} testIdPrefix="feed-top" />
       )}
     </>
   );

@@ -117,7 +117,7 @@ export function profileContractId() {
 // agreement, while sending `''` is consensus mismatch 40127. The like's
 // delete-by-values tuple must reproduce the same absence (it is the same value
 // tuple). There is no `beat` companion any more: the like itself carries
-// today's hashtag window (`like.byDayHashtagPost`, skipped when untagged).
+// the rolling hashtag window (`like.byTrendHashtagPost`, skipped when untagged).
 // There is no `language` either. A post or reply naming `mediaUrl` must carry
 // `mediaHash` (sha256 of the bytes) and `mediaFingerprint` (8-byte dHash)
 // beside it (`mediaFieldsFor`). post and reply creates agree to an action fee,

@@ -262,8 +262,10 @@ const V9_DESCRIPTOR: ContractTopologyDescriptor = {
  * - **Real deletes.** `post`/`reply` are immutable and owner-deletable: a
  *   delete removes the document, nothing is preserved, and a reply, quote,
  *   like, repost, bookmark or report aimed at a deleted post is refused 40120.
- * - **No `beat`.** Today's trending tags read `like.byDayHashtagPost`, a
- *   `skipIfAbsent` daily window on the like itself.
+ * - **No `beat`, rolling windows.** Trending tags read
+ *   `like.byTrendHashtagPost` (24h windows every 6h, `skipIfAbsent`) and top
+ *   posts `like.byTrendPost` (72h windows every 24h); there is no windowed
+ *   creator axis ({@link windowedRankingFor}).
  */
 const V10_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v10',
@@ -488,36 +490,84 @@ export function followRankingsAvailable(): boolean {
   return isDevnetCut()
 }
 
+/** The ranked surfaces that can be read over a recent window. */
+export type RankingAxis = 'posts' | 'hashtags' | 'creators'
+
+/** How one axis's recent window is read: the index's doctype and grid, and which window. */
+export interface WindowedRanking {
+  /** The indexOnly doctype carrying the windowed index. */
+  readonly docType: 'like' | 'beat'
+  /** The index (documentation and tests; the query names the grid, not the index). */
+  readonly index: string
+  /** The window grid in seconds, as the contract declares it; `documents.ranked()` names it. */
+  readonly grid: { readonly range: number; readonly step: number }
+  /**
+   * `newest` is the window that started last (up to one `step` of history);
+   * `oldest` is the oldest window still open, which covers nearly a full
+   * `range`. A daily grid has one window, so v9 reads `newest`; v10's rolling
+   * grids read `oldest` so the answer always spans ~18-24h / ~48-72h.
+   */
+  readonly selector: 'newest' | 'oldest'
+  /** What the window toggle calls it. */
+  readonly label: string
+}
+
+type LikeIndexJson = { name: string; timeRange?: { range: number; step: number } }
+
+/** A windowed index of `docType` in `contract`, read off the committed JSON so the grid cannot drift. */
+function windowOf(contract: SocialContractJson, docType: 'like' | 'beat', index: string, selector: WindowedRanking['selector'], label: string): WindowedRanking {
+  const schemas = contract.documentSchemas as unknown as Record<string, { indices?: LikeIndexJson[] }>
+  const timeRange = schemas[docType]?.indices?.find((entry) => entry.name === index)?.timeRange
+  if (!timeRange) throw new Error(`${docType}.${index} declares no timeRange`)
+  return { docType, index, grid: { range: timeRange.range, step: timeRange.step }, selector, label }
+}
+
+let windowedRankings: Readonly<Record<RankingAxis, WindowedRanking | null>> | null = null
+
 /**
- * True when the like axes have DAILY-WINDOWED ranked twins (v9, v10):
- * `like.byDayPost` (today's top posts), `like.byDayAuthorPost` (today's top
- * creators / per-author top) and `byDayHashtagPost` (today's trending tags /
- * per-tag top) on {@link dailyHashtagWindowDocType}. A `timeRange: [{ field: '$createdAt', selector }]`
- * entry on `documents.ranked()` pins the bucket; `newest` is today (UTC day,
- * `range == step == 86400`).
+ * The recent window of a ranked axis on the configured contract, or null when
+ * the axis is all-time only (every axis on v2; creators on v10).
+ *
+ * - **v9** (daily grid, `newest` = today, UTC): top posts `like.byDayPost`,
+ *   trending tags and per-tag top `beat.byDayHashtagPost`, top creators and a
+ *   profile's top `like.byDayAuthorPost`.
+ * - **v10** (rolling, `oldest` = the full window): top posts
+ *   `like.byTrendPost` (72h, a new window every 24h: "3 days"), trending tags
+ *   and per-tag top `like.byTrendHashtagPost` (24h, every 6h: "24h"). No
+ *   creator window: the creator leaderboard and a profile's top stay all-time.
+ */
+export function windowedRankingFor(axis: RankingAxis): WindowedRanking | null {
+  if (!windowedRankingsAvailable()) return null
+  if (!windowedRankings) {
+    windowedRankings = deepFreeze(isV10()
+      ? {
+        posts: windowOf(socialContractV10, 'like', 'byTrendPost', 'oldest', '3 days'),
+        hashtags: windowOf(socialContractV10, 'like', 'byTrendHashtagPost', 'oldest', '24h'),
+        creators: null,
+      }
+      : {
+        posts: windowOf(socialContractV9, 'like', 'byDayPost', 'newest', 'Today'),
+        hashtags: windowOf(socialContractV9, 'beat', 'byDayHashtagPost', 'newest', 'Today'),
+        creators: windowOf(socialContractV9, 'like', 'byDayAuthorPost', 'newest', 'Today'),
+      })
+  }
+  return windowedRankings[axis]
+}
+
+/**
+ * True when the like axes have windowed ranked twins (v9, v10): see
+ * {@link windowedRankingFor} for which axis reads which index. A
+ * `timeRange: [{ field: '$createdAt', selector, grid }]` entry on
+ * `documents.ranked()` pins the window; the node resolves it from block time.
  */
 export function windowedRankingsAvailable(): boolean {
   return isDevnetCut()
 }
 
-/** The daily grid every windowed index shares (seconds, as the contract declares them). */
-export const WINDOWED_DAY_GRID = { range: 86400, step: 86400 } as const
-
-/**
- * The indexOnly doctype holding `byDayHashtagPost`, today's hashtag window:
- * the `beat` companion on v9, the like itself on v10 (a `skipIfAbsent` index,
- * so an untagged like writes nothing there and a query must bind `hashtag`
- * with `==`, `in`, a non-empty lower bound or a ranking by it). Null on v2.
- */
-export function dailyHashtagWindowDocType(): 'beat' | 'like' | null {
-  if (!windowedRankingsAvailable()) return null
-  return isV10() ? 'like' : 'beat'
-}
-
 /**
  * The `beat` companion a like must carry on v9: the tagged-only indexOnly
  * doctype whose `byDayHashtagPost` serves the windowed hashtag rankings.
- * `null` when no companion is written — v2, v10 (the like carries the daily
+ * `null` when no companion is written — v2, v10 (the like carries the rolling
  * hashtag window itself, `skipIfAbsent`), reply likes (no
  * hashtag axis), and likes of UNTAGGED posts (`beat.hashtag` is required, so
  * an untagged like writes no beat, which is the skipIfAbsent economy by other

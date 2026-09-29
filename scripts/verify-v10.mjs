@@ -66,7 +66,9 @@
  *       41203, with one it lands; a protected reporter's report still resolves
  *       (changes are not deletions) but cannot be deleted (41102). Needs
  *       --team-member bot:<n> --reason-doc <id>
- *   t2  trending without `beat`: a tagged like lands in `like.byDayHashtagPost`
+ *   t2  trending without `beat`: a tagged like lands in `like.byTrendHashtagPost`
+ *       (24h windows every 6h, read through the oldest open window) and the
+ *       post in `like.byTrendPost` (72h every 24h)
  *       (the ranked day window groups the run's tag with the right count and
  *       ranks the post within it); an untagged like leaves the window alone;
  *       unliking drops the count again
@@ -907,11 +909,16 @@ async function caseR2SeatedResolution(ctx) {
 
 // ---- v10: trending without beat ------------------------------------------------------
 
-/** Today's window on the like grid (the one the client reads). */
-const TODAY = { timeRange: [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 86400 } }] };
+/** The rolling windows the client reads (lib/contract-topology windowedRankingFor), grids off the committed JSON. */
+const gridOf = (name) => {
+  const { range, step } = V10.documentSchemas.like.indices.find((index) => index.name === name).timeRange;
+  return { timeRange: [{ field: '$createdAt', selector: 'oldest', grid: { range, step } }] };
+};
+const TRENDING_TAGS = gridOf('byTrendHashtagPost');
+const TOP_POSTS = gridOf('byTrendPost');
 
-async function rankedToday(ctx, extra) {
-  return readback(() => ctx.sdk.documents.ranked({ dataContractId: ctx.contractId, documentTypeName: 'like', aggregate: { type: 'count' }, direction: 'desc', limit: 100, ...TODAY, ...extra }));
+async function rankedWindow(ctx, window, extra) {
+  return readback(() => ctx.sdk.documents.ranked({ dataContractId: ctx.contractId, documentTypeName: 'like', aggregate: { type: 'count' }, direction: 'desc', limit: 100, ...window, ...extra }));
 }
 
 /**
@@ -942,7 +949,7 @@ async function likeWithCreatedAt(ctx, postAuthor, postId, likerId) {
 
 async function caseT2TrendingOnLike(ctx) {
   const { sdk, contractId, botA, botB } = ctx;
-  console.log('\n--- t2. trending tags on like.byDayHashtagPost (no beat): tagged likes count, untagged ones do not ---');
+  console.log('\n--- t2. rolling trending on like (no beat): byTrendHashtagPost counts tagged likes only, byTrendPost every like ---');
   const tag = `${ctx.tag}t`;
   const tagged = await createFeed(ctx, botB, 'post', postData({ content: 't2 tagged', hashtag: tag }), 't2 tagged post');
   const untagged = await createFeed(ctx, botB, 'post', postData({ content: 't2 untagged' }), 't2 untagged post');
@@ -956,15 +963,18 @@ async function caseT2TrendingOnLike(ctx) {
   expectAccepted('t2b A likes the untagged post', await like(untagged));
   await settle();
 
-  const tags = await rankedToday(ctx, { groupBy: 'hashtag' });
+  const tags = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'hashtag' });
   const entry = tags.entries.find((e) => e.groupValue === tag);
-  check('t2c today\'s trending tags (groupBy hashtag) carry the run\'s tag at 1', Number(entry?.value ?? -1) === 1, `value=${entry?.value} groups=${tags.entries.length}`);
+  check('t2c the 24h trending tags (groupBy hashtag) carry the run\'s tag at 1', Number(entry?.value ?? -1) === 1, `value=${entry?.value} groups=${tags.entries.length}`);
   check('t2d no untagged group appears (skipIfAbsent)', tags.entries.every((e) => typeof e.groupValue === 'string' && e.groupValue !== ''), describeValue(tags.entries.map((e) => e.groupValue)));
-  const perTag = await rankedToday(ctx, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
-  check('t2e today\'s top posts for the tag rank the tagged post at 1', Number(perTag.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1, `groups=${perTag.entries.length}`);
+  const perTag = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
+  check('t2e the tag\'s 24h top posts rank the tagged post at 1', Number(perTag.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1, `groups=${perTag.entries.length}`);
   const perTagUntagged = perTag.entries.some((e) => e.groupValue === untagged);
   check('t2f the untagged post is not in the tag\'s window', !perTagUntagged);
   const allTime = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, where: [['hashtag', '==', tag]], limit: 10 }));
+  const topPosts = await rankedWindow(ctx, TOP_POSTS, { groupBy: 'postId' });
+  check('t2j the 3-day top posts (byTrendPost) count both the tagged and the untagged like',
+    [tagged, untagged].every((id) => Number(topPosts.entries.find((e) => e.groupValue === id)?.value ?? -1) === 1), `groups=${topPosts.entries.length}`);
   check('t2g the all-time per-tag ranking (byHashtagPost) agrees', Number(allTime.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1);
 
   // A delete by values needs the like's $createdAt. byLiker and byPost do not carry
@@ -978,7 +988,7 @@ async function caseT2TrendingOnLike(ctx) {
   expectAccepted('t2h A unlikes the tagged post (delete by values)', await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await entryExists(sdk, contractId, 'like', 'postId', tagged, botA.ownerId)) }));
   await settle();
   try {
-    const after = await rankedToday(ctx, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
+    const after = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
     check('t2i the tag\'s window no longer counts the post', Number(after.entries.find((e) => e.groupValue === tagged)?.value ?? 0) === 0, `groups=${after.entries.length}`);
   } catch (e) {
     // A window bucket that drained to nothing can fail proof generation instead of proving empty (platform#4592).
@@ -1274,7 +1284,12 @@ function selfTest() {
   expect('post has no language and a global timeline (x2k, x2l)', !schemas.post.properties.language && schemas.post.indices.some((i) => i.name === 'timeline' && JSON.stringify(i.properties) === '[{"$createdAt":"asc"}]'));
   expect('yapprProfile needs a DashPay profile (x3a)', JSON.stringify(schemas.yapprProfile.ownerRefersTo) === JSON.stringify({ type: 'deletableDocument', contractId: DASHPAY_CONTRACT_ID, documentType: 'profile', findBy: { $ownerId: '.' } }));
   expect('yapprProfile is one per owner, non-empty and moderator-deletable (x3d–x3f)', schemas.yapprProfile.indices.some((i) => i.unique && JSON.stringify(i.properties) === '[{"$ownerId":"asc"}]') && schemas.yapprProfile.minProperties === 1 && schemas.yapprProfile.moderatorAbilities?.delete === true && moderators.moderatedDocumentTypes.yapprProfile?.includes('deleteDocuments'));
-  expect('there is no beat, and like carries today\'s hashtag window, skipped when untagged (t2)', !schemas.beat && schemas.like.indices.some((i) => i.name === 'byDayHashtagPost' && i.skipIfAbsent === true && i.timeRange?.range === 86400));
+  const window = (name) => schemas.like.indices.find((i) => i.name === name)?.timeRange;
+  expect('there is no beat; like carries the rolling windows: tags 24h/6h skipped when untagged, posts 72h/24h (t2)',
+    !schemas.beat && schemas.like.indices.some((i) => i.name === 'byTrendHashtagPost' && i.skipIfAbsent === true)
+      && window('byTrendHashtagPost')?.range === 86_400 && window('byTrendHashtagPost')?.step === 21_600
+      && window('byTrendPost')?.range === 259_200 && window('byTrendPost')?.step === 86_400
+      && !schemas.like.indices.some((i) => /^byDay/.test(i.name)));
   expect('a report expires 90 days after it is filed', schemas.report.ttl === 7_776_000 && schemas.report.required.includes('$createdAt'));
   expect('reports are resolved through changeFields status/resolution and purged without a record (r1)', JSON.stringify(schemas.report.moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsRecord: false, changeFields: ['status', 'resolution'] }) && JSON.stringify(moderators.moderatedDocumentTypes.report) === '["deleteDocuments","changeDocumentFields"]');
   expect('reports index byStatus and byModerator (r1m, r1n)', ['byStatus', 'byModerator'].every((n) => schemas.report.indices.some((i) => i.name === n)));

@@ -314,7 +314,7 @@ export function keyNetwork(): KeyNetwork {
 // immutable posts and replies instead of tombstones, content up to 1000
 // characters / 2000 bytes, no `language` (one global `timeline`), media
 // sha256 + dHash beside `mediaUrl`, `keyGeneration` for the private-feed
-// epoch, no `beat` (trending tags on `like.byDayHashtagPost`), reports the
+// epoch, no `beat` (rolling trending on `like.byTrendHashtagPost`/`byTrendPost`), reports the
 // moderators resolve with `status`/`resolution`, the `yapprProfile` extension
 // of the DashPay profile, and a YAPP that can be neither transferred nor bought.
 // The v9 JSON stays in the tree while the client learns v10: moutai (v9) is

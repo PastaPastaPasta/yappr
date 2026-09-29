@@ -201,7 +201,7 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
         ))}
       </div>
 
-      {activeTab === 'top' && <RankingWindowToggle value={top.window} onChange={top.onWindowChange} testIdPrefix="profile-top" />}
+      {activeTab === 'top' && <RankingWindowToggle axis="creators" value={top.window} onChange={top.onWindowChange} testIdPrefix="profile-top" />}
       {activeTab === 'mentions' ? renderMentions() : activeTab === 'blog' ? renderBlogs() : renderPostList(activeTab)}
     </div>
   )

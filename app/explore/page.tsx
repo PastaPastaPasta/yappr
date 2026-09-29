@@ -413,7 +413,7 @@ export default function ExplorePage() {
                       transition={{ duration: 0.15 }}
                     >
                       {/* Trending Hashtags */}
-                      <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-trending" />
+                      <RankingWindowToggle axis="hashtags" value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-trending" />
                       <div className="divide-y divide-gray-200 dark:divide-gray-800">
                         {isLoadingTrends ? (
                           <div className="p-8 text-center">
@@ -469,7 +469,7 @@ export default function ExplorePage() {
                       transition={{ duration: 0.15 }}
                     >
                       {/* Global most-liked posts (proved ranking, top 20) */}
-                      <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-top" />
+                      <RankingWindowToggle axis="posts" value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-top" />
                       <div className="divide-y divide-gray-200 dark:divide-gray-800">
                         {isLoadingTop ? (
                           <div className="p-8 text-center">
@@ -498,7 +498,7 @@ export default function ExplorePage() {
                       transition={{ duration: 0.15 }}
                     >
                       {/* v9 creator leaderboard (proved prefix rankings). */}
-                      <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-creators" />
+                      <RankingWindowToggle axis="creators" value={rankingWindow} onChange={setRankingWindow} testIdPrefix="explore-creators" />
                       <TopCreators window={rankingWindow} />
                     </motion.div>
                   ) : (

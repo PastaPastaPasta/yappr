@@ -364,9 +364,6 @@ describe('contract topology', () => {
       expect(v10.tombstonePreservationFor('post')).toEqual({ identifiers: [], scalars: [] })
       expect(v10.clearableReferencesFor('post')).toEqual([])
       expect(v10.beatCompanionFor('post', 'dash')).toBeNull()
-      expect(v10.dailyHashtagWindowDocType()).toBe('like')
-      expect((await topologyModule('v9')).dailyHashtagWindowDocType()).toBe('beat')
-      expect((await topologyModule('v2')).dailyHashtagWindowDocType()).toBeNull()
       expect(V10.beat).toBeUndefined()
       for (const kind of ['post', 'reply'] as const) {
         expect(V10[kind].documentsMutable, kind).toBe(false)
@@ -377,13 +374,33 @@ describe('contract topology', () => {
       expect(socialContractV10.config.documentsCanBeDeletedContractDefault).toBe(true)
     })
 
-    it('pins the daily hashtag window on like: skipped when untagged, ranked by tag and post', () => {
-      const window = V10.like.indices?.find((index) => index.name === 'byDayHashtagPost')
-      expect(window?.properties.map((entry) => Object.keys(entry)[0])).toEqual(['$createdAt', 'hashtag', 'postId'])
-      expect(window?.skipIfAbsent).toBe(true)
+    it('pins the rolling like windows: 72h/24h top posts, 24h/6h trending tags, no creator window', async () => {
+      const likeIndex = (name: string) => V10.like.indices?.find((index) => index.name === name) as
+        ({ properties: Array<Record<string, string>>; skipIfAbsent?: boolean; timeRange?: Record<string, unknown> } | undefined)
+      expect(V10.like.indices?.map((index) => index.name)).toEqual(['byPost', 'byHashtagPost', 'byAuthorPost', 'byAuthorTimePost', 'byLiker', 'byTrendPost', 'byTrendHashtagPost'])
+      const posts = likeIndex('byTrendPost')
+      expect(posts?.properties.map((entry) => Object.keys(entry)[0])).toEqual(['$createdAt', 'postId'])
+      expect(posts?.timeRange).toEqual({ on: '$createdAt', range: 259_200, step: 86_400, ttl: 604_800 })
+      const tags = likeIndex('byTrendHashtagPost')
+      expect(tags?.properties.map((entry) => Object.keys(entry)[0])).toEqual(['$createdAt', 'hashtag', 'postId'])
+      expect(tags?.timeRange).toEqual({ on: '$createdAt', range: 86_400, step: 21_600, ttl: 604_800 })
+      expect(tags?.skipIfAbsent).toBe(true)
       // The all-time twin must stay (and skip too): #5162 refuses an indexOnly optional
       // property without an untimed single-skip index.
-      expect(V10.like.indices?.find((index) => index.name === 'byHashtagPost')?.skipIfAbsent).toBe(true)
+      expect(likeIndex('byHashtagPost')?.skipIfAbsent).toBe(true)
+      // likeReply has no window to move.
+      expect(V10.likeReply.indices?.some((index) => (index as { timeRange?: unknown }).timeRange)).toBe(false)
+
+      const v10 = await topologyModule('v10')
+      expect(v10.windowedRankingFor('posts')).toEqual({ docType: 'like', index: 'byTrendPost', grid: { range: 259_200, step: 86_400 }, selector: 'oldest', label: '3 days' })
+      expect(v10.windowedRankingFor('hashtags')).toEqual({ docType: 'like', index: 'byTrendHashtagPost', grid: { range: 86_400, step: 21_600 }, selector: 'oldest', label: '24h' })
+      expect(v10.windowedRankingFor('creators')).toBeNull()
+      const v9 = await topologyModule('v9')
+      const day = { grid: { range: 86_400, step: 86_400 }, selector: 'newest', label: 'Today' }
+      expect(v9.windowedRankingFor('posts')).toEqual({ docType: 'like', index: 'byDayPost', ...day })
+      expect(v9.windowedRankingFor('hashtags')).toEqual({ docType: 'beat', index: 'byDayHashtagPost', ...day })
+      expect(v9.windowedRankingFor('creators')).toEqual({ docType: 'like', index: 'byDayAuthorPost', ...day })
+      expect((await topologyModule('v2')).windowedRankingFor('posts')).toBeNull()
     })
 
     it('pins content limits, media hashes and the key-generation rename against the v10 JSON', async () => {

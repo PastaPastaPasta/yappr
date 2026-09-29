@@ -397,7 +397,7 @@ export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
         // hashtag ABSENCE (both-absent = agreement; '' on a like of an
         // untagged post is consensus error 40127). `postAuthor` binds to
         // `post.$ownerId`. The same tuple is what a delete-by-values carries.
-        // The like itself feeds today's trending tags (byDayHashtagPost).
+        // The like itself feeds the rolling trending windows (byTrendPost, byTrendHashtagPost).
         data: likeValueTuple(target),
         existenceKey: { keyField: 'postId', keyValue: target.id },
       };

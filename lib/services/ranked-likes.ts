@@ -29,25 +29,34 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import { getEvoSdk } from './evo-sdk-service';
-import { WINDOWED_DAY_GRID, dailyHashtagWindowDocType, referencesMayDangle, windowedRankingsAvailable } from '../contract-topology';
+import { referencesMayDangle, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
 
 /**
  * Which slice of time a ranking covers. `'all'` is the all-time axis;
- * `'today'` pins the current UTC-day bucket of the windowed twin ({@link windowedRankingsAvailable}) — the node resolves the
- * bucket from block time and the proof verifier re-derives it, so nothing
- * client-side chooses the window.
+ * `'today'` is the axis's recent window ({@link windowedRankingFor}): the
+ * current UTC day on v9, the rolling 24h (tags) or 3-day (posts) window on
+ * v10. The node resolves the window from block time and the proof verifier
+ * re-derives it, so nothing client-side chooses it. (The token keeps its v9
+ * name so the surfaces and their test ids do not move.)
  */
 export type RankingWindow = 'all' | 'today';
 
 /**
- * The `timeRange` member for a windowed ranked query, or nothing for
- * all-time. Every v9 windowed index buckets `$createdAt` on the same daily
- * grid; naming it explicitly keeps the query unambiguous on doctypes that
- * carry more than one grid (`beat` also declares the k=4 rolling grid).
+ * The window a read of `axis` uses: null for all-time, including `'today'` on
+ * an axis with no window (v10's creators), which falls back to all-time.
  */
-function windowClause(window: RankingWindow): { timeRange: { field: string; selector: 'newest'; grid: { range: number; step: number } }[] } | Record<string, never> {
-  if (window !== 'today') return {};
-  return { timeRange: [{ field: '$createdAt', selector: 'newest', grid: { ...WINDOWED_DAY_GRID } }] };
+function windowFor(axis: RankingAxis, window: RankingWindow): WindowedRanking | null {
+  return window === 'today' ? windowedRankingFor(axis) : null;
+}
+
+/**
+ * The `timeRange` member for a windowed ranked query, or nothing for
+ * all-time. The grid is named explicitly, which keeps the query unambiguous on
+ * a doctype that buckets `$createdAt` by more than one grid.
+ */
+function windowClause(windowed: WindowedRanking | null): { timeRange: { field: string; selector: WindowedRanking['selector']; grid: { range: number; step: number } }[] } | Record<string, never> {
+  if (!windowed) return {};
+  return { timeRange: [{ field: '$createdAt', selector: windowed.selector, grid: { ...windowed.grid } }] };
 }
 
 /**
@@ -76,7 +85,7 @@ export interface TopLikedPostsOptions {
   postAuthor?: string;
   /** 1..100, default 10. */
   limit?: number;
-  /** `'today'` reads the v9 daily-windowed twin of the pinned axis; default `'all'`. */
+  /** `'today'` reads the pinned axis's recent window (all-time where it has none); default `'all'`. */
   window?: RankingWindow;
   /** Reject failed reads so callers can retain an existing page and retry. */
   throwOnError?: boolean;
@@ -94,6 +103,7 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
     throw new Error('topLikedPosts: hashtag and postAuthor pin different indexes — pass at most one');
   }
   if (window === 'today' && !windowedRankingsAvailable()) return [];
+  const windowed = windowFor(hashtag !== undefined ? 'hashtags' : postAuthor !== undefined ? 'creators' : 'posts', window);
 
   try {
     const sdk = await getEvoSdk();
@@ -104,10 +114,9 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
           ? [['postAuthor', '==', postAuthor] as [string, '==', unknown]]
           : undefined;
 
-    // Today's per-tag top lives on `byDayHashtagPost`: the `beat` companion on
-    // v9, `like` itself on v10 (dailyHashtagWindowDocType). Every other axis
-    // has its windowed twin on `like`.
-    const documentTypeName = window === 'today' && hashtag !== undefined ? (dailyHashtagWindowDocType() ?? 'like') : 'like';
+    // The windowed per-tag top lives on the `beat` companion on v9; every
+    // other window, and all of v10's, is on `like` itself.
+    const documentTypeName = windowed?.docType ?? 'like';
 
     const result = await sdk.documents.ranked({
       dataContractId: YAPPR_CONTRACT_ID,
@@ -117,7 +126,7 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
       direction: 'desc',
       limit,
       ...(where ? { where } : {}),
-      ...windowClause(window),
+      ...windowClause(windowed),
     });
 
     return result.entries
@@ -128,7 +137,7 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
       }))
       .filter((entry) => entry.postId !== '');
   } catch (error) {
-    if (window === 'today' && isColdBucketError(error)) return [];
+    if (windowed && isColdBucketError(error)) return [];
     logger.error('topLikedPosts: ranked query failed:', error);
     if (options.throwOnError) throw error;
     return [];
@@ -161,10 +170,9 @@ async function rankedGroupCounts(
   documentTypeName: string,
   groupBy: string,
   limit: number,
-  window: RankingWindow = 'all',
+  windowed: WindowedRanking | null = null,
   throwOnError = false
 ): Promise<RankedGroupCount[]> {
-  if (window === 'today' && !windowedRankingsAvailable()) return [];
   try {
     const sdk = await getEvoSdk();
     const result = await sdk.documents.ranked({
@@ -174,7 +182,7 @@ async function rankedGroupCounts(
       aggregate: { type: 'count' },
       direction: 'desc',
       limit,
-      ...windowClause(window),
+      ...windowClause(windowed),
     });
 
     return result.entries
@@ -185,7 +193,7 @@ async function rankedGroupCounts(
       }))
       .filter((entry) => entry.key !== '');
   } catch (error) {
-    if (window === 'today' && isColdBucketError(error)) return [];
+    if (windowed && isColdBucketError(error)) return [];
     if (throwOnError) throw error;
     logger.error(`rankedGroupCounts(${documentTypeName}.${groupBy}): ranked query failed:`, error);
     return [];
@@ -199,9 +207,11 @@ async function rankedGroupCounts(
  * "untagged bucket" group can appear.
  */
 export async function topHashtagsByLikes(limit: number = 12, window: RankingWindow = 'all'): Promise<RankedGroupCount[]> {
-  // Today's trending rides byDayHashtagPost: `beat` on v9, `like` on v10 (see topLikedPosts).
+  if (window === 'today' && !windowedRankingsAvailable()) return [];
+  // Windowed trending: `beat.byDayHashtagPost` on v9, `like.byTrendHashtagPost` on v10.
   // A failed read rejects, so the trending cache never holds it as "no tags".
-  return rankedGroupCounts(window === 'today' ? (dailyHashtagWindowDocType() ?? 'like') : 'like', 'hashtag', limit, window, true);
+  const windowed = windowFor('hashtags', window);
+  return rankedGroupCounts(windowed?.docType ?? 'like', 'hashtag', limit, windowed, true);
 }
 
 /**
@@ -211,7 +221,9 @@ export async function topHashtagsByLikes(limit: number = 12, window: RankingWind
  * base58 identity ids.
  */
 export async function topCreatorsByLikes(limit: number = 10, window: RankingWindow = 'all'): Promise<RankedGroupCount[]> {
-  return rankedGroupCounts('like', 'postAuthor', limit, window);
+  if (window === 'today' && !windowedRankingsAvailable()) return [];
+  // v9 reads `like.byDayAuthorPost`; v10 has no creator window, so this is all-time there.
+  return rankedGroupCounts('like', 'postAuthor', limit, windowFor('creators', window));
 }
 
 /**
@@ -228,7 +240,7 @@ export interface HydratedTopPostsOptions {
   hashtag?: string;
   /** 1..100, default 20. */
   limit?: number;
-  /** `'today'` reads the v9 daily-windowed twin; default `'all'`. */
+  /** `'today'` reads the axis's recent window (all-time where it has none); default `'all'`. */
   window?: RankingWindow;
   /** Skip the 60-second hydrated cache (an explicit user refresh). */
   force?: boolean;
