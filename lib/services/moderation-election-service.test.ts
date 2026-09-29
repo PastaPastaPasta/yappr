@@ -84,9 +84,35 @@ describe('reading the contest', () => {
     expect(contest).toMatchObject({ contenders: [{ identityId: leader, votes: 3 }], endsAtMs: 5000 });
     expect(endTimeFailed).toBe(false);
     expect(sdk.voting.votePollsByEndDate).toHaveBeenCalledTimes(2);
-    // The next page starts after the last entry's bigint, passed back as is (wasm-sdk beta.7, platform#5139).
+    // The next page re-reads the last timestamp, whose group the limit may have
+    // cut short, passing its bigint back as is (wasm-sdk beta.7, platform#5139).
     expect(sdk.voting.votePollsByEndDate.mock.calls[0][0]).not.toHaveProperty('startTimeMs');
-    expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).toMatchObject({ startTimeMs: 1099n, startTimeIncluded: false });
+    expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).toMatchObject({ startTimeMs: 1099n, startTimeIncluded: true });
+  });
+
+  it('counts polls, not timestamp groups, when deciding a page was full', async () => {
+    // 100 polls in 50 timestamps: a full page, though it holds only 50 entries.
+    const pair = (timestampMs: number) => {
+      const one = entry(timestampMs, other);
+      return { ...one, votePolls: [...one.votePolls, ...one.votePolls] };
+    };
+    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([{ identityId: leader, voteTally: 1 }]));
+    sdk.voting.votePollsByEndDate
+      .mockResolvedValueOnce(Array.from({ length: 50 }, (_, i) => pair(2000 + i)))
+      .mockResolvedValueOnce([entry(2049, target)]);
+    const { contest } = await moderationElectionService.getContest(target);
+    expect(contest?.endsAtMs).toBe(2049);
+    expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).toMatchObject({ startTimeMs: 2049n, startTimeIncluded: true });
+  });
+
+  it('moves past a timestamp that fills a whole page on its own', async () => {
+    const crowded = entry(3000, other);
+    const full = { ...crowded, votePolls: Array.from({ length: 100 }, () => crowded.votePolls[0]) };
+    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([{ identityId: leader, voteTally: 1 }]));
+    sdk.voting.votePollsByEndDate.mockResolvedValueOnce([full]).mockResolvedValueOnce([entry(3001, target)]);
+    const { contest } = await moderationElectionService.getContest(target);
+    expect(contest?.endsAtMs).toBe(3001);
+    expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).toMatchObject({ startTimeMs: 3000n, startTimeIncluded: false });
   });
 });
 

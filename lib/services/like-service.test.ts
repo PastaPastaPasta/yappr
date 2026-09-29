@@ -3,16 +3,16 @@ import bs58 from 'bs58'
 
 // The v9 unlike at an in-memory chain: `like` and `beat` rows answered by
 // equality filters, and a delete-by-values that can land, fail to land, and
-// report either the way evo-sdk 4.2.0-beta.5 does. No network.
+// report either as confirmed or as an unproven failure. No network.
 type Row = Record<string, unknown>
 type Where = [string, string, unknown][]
 
-const SNAPSHOT_ERROR = '[WASM] received a verified VerifiedDocuments snapshot for this transition family; use the *_affected_state wait APIs and treat the result as a height-pinned snapshot'
+const UNPROVEN_ERROR = 'wait for state transition result timed out'
 
 const chain = vi.hoisted(() => ({
   rows: { like: [] as Row[], beat: [] as Row[] } as Record<string, Row[]>,
   /** Per doctype: does a delete land, and what does the SDK report? */
-  deletes: {} as Record<string, { lands: boolean; report: 'confirmed' | 'snapshot' }>,
+  deletes: {} as Record<string, { lands: boolean; report: 'confirmed' | 'unproven' }>,
 }))
 const mocks = vi.hoisted(() => ({ query: vi.fn(), deleteDocumentByValues: vi.fn() }))
 
@@ -40,7 +40,7 @@ function deleteByValues(_contract: string, docType: string, _owner: string, tupl
   if (behaviour.lands) chain.rows[docType] = chain.rows[docType].filter((row) => row.$id !== tuple.documentId)
   return behaviour.report === 'confirmed'
     ? { success: true, confirmed: true, transactionHash: tuple.documentId }
-    : { success: false, confirmed: false, transactionHash: tuple.documentId, error: SNAPSHOT_ERROR }
+    : { success: false, confirmed: false, transactionHash: tuple.documentId, error: UNPROVEN_ERROR }
 }
 
 const likeRow = (): Row => ({ $id: id(10), $ownerId: VIEWER, $createdAt: LIKE_AT, postId: POST, postAuthor: AUTHOR, hashtag: 'dash' })
@@ -60,8 +60,9 @@ beforeEach(() => {
   vi.resetAllMocks()
   vi.useFakeTimers()
   chain.rows = { like: [likeRow()], beat: [beatRow(id(20), BEAT_AT), beatRow(id(21), BEAT_AT - 5, OTHER)] }
-  // What beta.5 does on every indexOnly delete (QA D-05): it lands, then throws.
-  chain.deletes = { like: { lands: true, report: 'snapshot' }, beat: { lands: true, report: 'snapshot' } }
+  // The worst case the read-backs exist for: the delete lands but is not proven
+  // (beta.5 threw a snapshot error on every one, QA D-05; beta.7 only on a failed wait).
+  chain.deletes = { like: { lands: true, report: 'unproven' }, beat: { lands: true, report: 'unproven' } }
   mocks.query.mockImplementation(async (query) => answer(query))
   mocks.deleteDocumentByValues.mockImplementation(async (...args: Parameters<typeof deleteByValues>) => deleteByValues(...args))
 })
@@ -71,7 +72,7 @@ afterEach(() => {
 })
 
 describe('v9 unlike of a tagged post', () => {
-  it('removes the beat companion when the like delete lands but reports the snapshot error', async () => {
+  it('removes the beat companion when the like delete lands but is reported unproven', async () => {
     await expect(unlike()).resolves.toBe(true)
 
     expect(chain.rows.like).toEqual([])
@@ -91,7 +92,7 @@ describe('v9 unlike of a tagged post', () => {
   })
 
   it('still reports the unlike as done when the beat delete does not land, after retrying the readback', async () => {
-    chain.deletes.beat = { lands: false, report: 'snapshot' }
+    chain.deletes.beat = { lands: false, report: 'unproven' }
 
     await expect(unlike()).resolves.toBe(true)
 
@@ -113,7 +114,7 @@ describe('v9 unlike of a tagged post', () => {
   })
 
   it('touches no beat when the like delete did not land', async () => {
-    chain.deletes.like = { lands: false, report: 'snapshot' }
+    chain.deletes.like = { lands: false, report: 'unproven' }
 
     await expect(unlike()).resolves.toBe(false)
 
@@ -122,7 +123,7 @@ describe('v9 unlike of a tagged post', () => {
   })
 
   it('touches no beat when the like delete did not land and its readbacks fail', async () => {
-    chain.deletes.like = { lands: false, report: 'snapshot' }
+    chain.deletes.like = { lands: false, report: 'unproven' }
     // Once the delete is sent, every like read errors: a failed read must not
     // pass for "the like is gone".
     mocks.query.mockImplementation(async (query) => {

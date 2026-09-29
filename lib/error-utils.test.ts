@@ -278,8 +278,6 @@ describe('4.2.0-beta.4 rejections', () => {
       'invalid refersTo findBy ($ownerId) declared at privateFeedGrant.$ownerId: no unique index of privateFeedState is over exactly these properties', /report this/i],
     ['40138 ReferencedDocumentListInvalidError (beta.7)', isReferenceRequirementError,
       'invalid refersTo inList tags declared at storeItem.tag: not a list', /report this/i],
-    ['40142 ReferencedDocumentRequirementNotMetError (beta.7)', isReferenceRequirementError,
-      "referenced document 8Xv3 for path offer.commitmentId does not meet the reference's requirement minimumAgeBlocks 10", /report this/i],
     ['40139 DocumentActionFeeModeratorsShareMismatchError', isActionFeeAgreementError,
       "Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 40000000, which is not the seated moderation charter's 60% share of it", /moderator fee share didn't match .*seated moderation charter/i],
     ['40307 by labelled code', isPermanentProtocol14Error, 'rejected: code=40307', /report this/i],
@@ -321,6 +319,19 @@ describe('4.2.0-beta.4 rejections', () => {
     const documentRequirement = new Error("referenced document 8Xv3 for path offer.commitmentId does not meet the reference's requirement minimumAgeBlocks 10")
     expect(isReferenceNotFoundError(documentRequirement)).toBe(false)
     expect(isReferenceNotFoundError(new Error('referenced identity 9t2e not found for path followingId'))).toBe(true)
+  })
+
+  it('treats a 40142 (a revealed commitment too young, beta.7) as transient, not a defect', () => {
+    // rs-dpp v4.2.0-beta.7 referenced_document_requirement_not_met_error.rs; only minimumAgeBlocks raises it.
+    for (const error of [
+      new Error("referenced document 8Xv3 for path offer.commitmentId does not meet the reference's requirement minimumAgeBlocks 10"),
+      { code: 40142, message: 'Failed to broadcast: Protocol error: consensus refusal' },
+    ]) {
+      expect(isReferenceNotFoundError(error)).toBe(false)
+      expect(isReferenceRequirementError(error)).toBe(false)
+      expect(isPermanentProtocol14Error(error)).toBe(false)
+      expect(categorizeError(error)).toMatch(/only just published/i)
+    }
   })
 
   it.each([
@@ -595,7 +606,6 @@ describe('every consensus code against every matcher', () => {
     40136: ['isReferenceRequirementError'],
     40137: ['isReferenceRequirementError'],
     40138: ['isReferenceRequirementError'],
-    40142: ['isReferenceRequirementError'],
     41200: ['isModerationNotYetSeatedError'],
     40140: ['isDocumentExpiredError'],
     40114: ['isContestFundError'],

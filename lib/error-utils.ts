@@ -209,7 +209,7 @@ export function isReferenceNotFoundError(error: unknown): boolean {
   // "referenced contract <c> for path <p> does not meet ...") shares the
   // "referenced ... for path" phrasing below; it is not a dead target, and
   // treating it as one would have tombstone repair drop a live reference.
-  if (isReferenceRequirementError(error)) return false
+  if (isReferenceRequirementError(error) || isReferencedDocumentTooYoungError(error)) return false
   const msg = extractErrorMessage(error).toLowerCase()
   return (
     msg.includes('referencedentitynotfound') ||
@@ -616,22 +616,36 @@ function isPropertyNotDistinctError(error: unknown): boolean {
  * - **40138** `ReferencedDocumentListInvalidError` — "invalid refersTo inList
  *   <l> declared at <p>: ..." from 4.2.0-beta.7; "invalid refersTo listElement
  *   into inList <l> ..." before it;
- * - **40142** `ReferencedDocumentRequirementNotMetError` (4.2.0-beta.7) — "referenced
- *   document <d> for path <p> does not meet the reference's requirement <f> <v>":
- *   a revealed commitment that is too young. It shares the "referenced … for
- *   path" phrasing of a dead target, so it must be claimed here, where
- *   {@link isReferenceNotFoundError} looks first.
  *
  * Both phrasings are matched: testnet nodes still render the older ones.
  */
 export function isReferenceRequirementError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
   return (
-    /referenced(contract|document)requirementnotmet|referencedidentitykeyrequirementnotmet|referenceddocumentlookupinvalid|referenceddocumentlistinvalid/i.test(msg) ||
-    /referenced (contract|document) .* does not meet the reference's requirement/i.test(msg) ||
+    /referencedcontractrequirementnotmet|referencedidentitykeyrequirementnotmet|referenceddocumentlookupinvalid|referenceddocumentlistinvalid/i.test(msg) ||
+    /referenced contract .* does not meet the reference's requirement/i.test(msg) ||
     /referenced public key .* the reference requires/i.test(msg) ||
     /invalid refersto (findby \(|inlist |lookup through index|listelement into inlist)/i.test(msg) ||
-    hasConsensusCode(error, [40135, 40136, 40137, 40138, 40142])
+    hasConsensusCode(error, [40135, 40136, 40137, 40138])
+  )
+}
+
+/**
+ * **40142** `ReferencedDocumentRequirementNotMetError` (4.2.0-beta.7, #5041):
+ * "referenced document <d> for path <p> does not meet the reference's
+ * requirement <f> <v>". Today the only requirement is `minimumAgeBlocks`: the
+ * commitment a create reveals is too young. That is transient, since a few
+ * blocks later the same write passes, so it is kept out of the permanent
+ * {@link isReferenceRequirementError}. It shares the "referenced … for path"
+ * phrasing of a dead target, so {@link isReferenceNotFoundError} excludes it.
+ * No Yappr contract declares such a reference yet.
+ */
+function isReferencedDocumentTooYoungError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /referenceddocumentrequirementnotmet/i.test(msg) ||
+    /referenced document .* does not meet the reference's requirement/i.test(msg) ||
+    hasConsensusCode(error, [40142])
   )
 }
 
@@ -922,6 +936,9 @@ export function categorizeError(error: unknown): string {
   }
   if (isOncePerIdentityAlreadyClaimedError(error)) {
     return 'You\'ve already claimed this — it can only be claimed once per account.'
+  }
+  if (isReferencedDocumentTooYoungError(error)) {
+    return 'What this depends on was only just published. Wait a minute and try again.'
   }
   if (isGasSponsorShortError(error)) {
     // Only reachable for a transition that INSISTS on the contract owner; Yappr

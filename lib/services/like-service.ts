@@ -540,8 +540,8 @@ class LikeService extends BaseDocumentService<LikeDocument> {
         createdAtMs,
         data: this.beatData(targetId, hashtag),
       });
-      // Unconfirmed (optimistic timeout) or unproven (the affected-state
-      // snapshot throw): only the chain can say whether the beat is gone.
+      // Unconfirmed (optimistic timeout) or a reported failure: only the
+      // chain can say whether the beat is gone.
       if (!(result.success && result.confirmed) && !(await this.waitForBeatGone(targetId, ownerId, documentId, createdAtMs))) {
         allGone = false;
       }
