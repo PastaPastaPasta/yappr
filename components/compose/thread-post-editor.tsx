@@ -9,7 +9,7 @@ import { FormatButton, CharacterCounter } from './compose-sub-components'
 import { MentionAutocomplete } from './mention-autocomplete'
 import { EmojiPicker } from './emoji-picker'
 
-import { CHARACTER_LIMIT, characterCount } from '@/lib/compose/limits'
+import { CHARACTER_LIMIT, characterCount, contentOverage } from '@/lib/compose/limits'
 
 interface ThreadPostEditorProps {
   post: ThreadPost
@@ -179,6 +179,8 @@ export function ThreadPostEditor({
 
   const isPosted = !!post.postedPostId
   const effectiveLength = characterCount(post.content) + extraCharacters
+  // v10 also caps content at UTF-8 bytes; always zero where there is no byte limit.
+  const { bytesOver } = contentOverage(post.content, extraCharacters)
 
   return (
     <motion.div
@@ -380,7 +382,9 @@ export function ThreadPostEditor({
           {/* Keep attachment cost and the count visible in edit, preview and locked states. */}
           {isActive && !isPosted && (
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mt-3 text-xs text-gray-500 dark:text-gray-400">
-              {extraCharacters > 0 ? (
+              {bytesOver > 0 ? (
+                <span className="min-w-0 break-words text-red-600 dark:text-red-400">{bytesOver} bytes over the size limit. Emoji and non-Latin text count extra.</span>
+              ) : extraCharacters > 0 ? (
                 <span className="min-w-0 break-words">Image URL +{extraCharacters} chars</span>
               ) : !locked && !showPreview ? (
                 <span>Markdown supported</span>
