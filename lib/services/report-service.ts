@@ -1,12 +1,12 @@
 import { logger } from '@/lib/logger';
 import { extractErrorMessage } from '../error-utils';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { contractTakesReports, type TargetKind } from '../contract-topology';
-import { toReportRecord, type ReportRecord } from '../reports';
+import { contractTakesReports, reportsAreResolved, type TargetKind } from '../contract-topology';
+import { toReportRecord, type ReportRecord, type ReportView } from '../reports';
 import { getEvoSdk } from './evo-sdk-service';
 import { queryRawDocuments } from './document-service';
 import { paginateFetchAll } from './pagination-utils';
-import { identifierStringToDocumentBytes, type DocumentWhereClause } from './sdk-helpers';
+import { identifierStringToDocumentBytes, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { stateTransitionService, type StateTransitionResult } from './state-transition-service';
 
 /** The property naming a report's target, and the unique index it shares with `$ownerId`. */
@@ -28,22 +28,46 @@ export interface ReportInput {
 const records = (docs: Record<string, unknown>[]): ReportRecord[] =>
   docs.map(toReportRecord).filter((report): report is ReportRecord => report !== null);
 
-/** Where the next page of the queue starts: the last report of the previous one. */
+/**
+ * Where the next page of the queue starts: the last report of the previous
+ * one, and the value it was ordered by (`$createdAt`, or `$moderatedAt` for a
+ * moderator's history).
+ */
 export interface ReportCursor {
   id: string;
   createdAt: number;
 }
+
+/**
+ * How a {@link ReportView} is read (v10): the index's equality clause and the
+ * property the page is ordered by. `byStatus` does not skip a missing
+ * `status`, so the open queue reads it with `status == null`: a missing value
+ * is indexed under the empty key, which a null equality reaches.
+ */
+function viewQuery(view: ReportView): { equal: DocumentWhereClause[]; orderBy: '$createdAt' | '$moderatedAt' } {
+  switch (view.kind) {
+    case 'open':
+      return { equal: [['status', '==', null]], orderBy: '$createdAt' };
+    case 'status':
+      return { equal: [['status', '==', view.status]], orderBy: '$createdAt' };
+    case 'moderatedBy':
+      return { equal: [['$moderatedBy', '==', view.moderatorId]], orderBy: '$moderatedAt' };
+  }
+}
+
+const orderValueOf = (report: ReportRecord, orderBy: '$createdAt' | '$moderatedAt'): number =>
+  orderBy === '$moderatedAt' ? report.moderatedAt ?? 0 : report.createdAt;
 
 /** Drive refused a `startAfter` naming a document that no longer exists (StartDocumentNotFound). */
 const isCursorGoneError = (error: unknown): boolean =>
   /startafter document not found|startdocumentnotfound/i.test(extractErrorMessage(error));
 
 /**
- * Reports on the social contract (v9 `report`, see `lib/reports.ts`). The
- * writes are the reporter's; a moderator's dismissal is a moderation
- * transition and lives in `moderationService.dismissReports`. Off a topology
- * that takes reports, every write refuses locally and every read answers
- * nothing.
+ * Reports on the social contract (v9/v10 `report`, see `lib/reports.ts`). The
+ * writes are the reporter's; a moderator's dismissal or resolution is a
+ * moderation transition and lives in `moderationService.dismissReports` /
+ * `resolveReports`. Off a topology that takes reports, every write refuses
+ * locally and every read answers nothing.
  */
 class ReportService {
   /**
@@ -114,6 +138,40 @@ class ReportService {
     const reports = records(docs);
     const last = reports[reports.length - 1];
     return { reports, ...(docs.length === limit && last ? { next: { id: last.id, createdAt: last.createdAt } } : {}) };
+  }
+
+  /**
+   * One page of the queue as `view` lists it, newest first, after `cursor`;
+   * `next` is set while more may follow. Where reports are resolved (v10) the
+   * open queue and a status read `byStatus`, a moderator's history
+   * `byModerator`. Elsewhere (v9) every report is open and this is
+   * {@link listRecent}.
+   *
+   * A cursor naming a report that is gone resumes at its order value, as
+   * {@link listRecent} does, so callers dedupe by id.
+   */
+  async listView(view: ReportView, cursor?: ReportCursor, limit = 100): Promise<{ reports: ReportRecord[]; next?: ReportCursor }> {
+    if (!contractTakesReports()) return { reports: [] };
+    if (!reportsAreResolved()) return view.kind === 'open' ? this.listRecent(cursor, limit) : { reports: [] };
+    const { equal, orderBy } = viewQuery(view);
+    const page = (where: DocumentWhereClause[], startAfter?: string) => queryRawDocuments({
+      dataContractId: YAPPR_CONTRACT_ID,
+      documentTypeName: 'report',
+      where: [...equal, ...where],
+      orderBy: [...equal.map(([field]): DocumentOrderByClause => [field, 'asc']), [orderBy, 'desc']],
+      limit,
+      ...(startAfter ? { startAfter } : {}),
+    });
+    let docs: Record<string, unknown>[];
+    try {
+      docs = await page([[orderBy, '>', 0]], cursor?.id);
+    } catch (error) {
+      if (!cursor || !isCursorGoneError(error)) throw error;
+      docs = await page([[orderBy, '<=', cursor.createdAt]]);
+    }
+    const reports = records(docs);
+    const last = reports[reports.length - 1];
+    return { reports, ...(docs.length === limit && last ? { next: { id: last.id, createdAt: orderValueOf(last, orderBy) } } : {}) };
   }
 
   /** Every report on one post or reply (`byPost` / `byReply`), up to {@link MAX_REPORTS_PER_TARGET}. */

@@ -10,11 +10,17 @@
  * - one report per reporter and target (the `ownerAndPost` / `ownerAndReply`
  *   unique indexes, 40105);
  * - "something else" must say what (`otherHasNote`, 10422);
- * - reports are immutable: the reporter withdraws one by deleting it, and the
- *   moderators dismiss one by deleting it as moderators (a removal record);
- * - a report expires 90 days after it was filed (\`ttl\`), refunding nothing.
+ * - reports are immutable: the reporter withdraws one by deleting it. On v9
+ *   the moderators dismiss one by deleting it as moderators (a removal
+ *   record); on v10 they resolve it instead, writing `status` and
+ *   `resolution` with `moderatorChangeDocumentFields`, which stamps
+ *   `$moderatedBy`/`$moderatedAt` and keeps the report (a reporter who sets
+ *   either field is refused 41124);
+ * - a report expires 90 days after it was filed (\`ttl\`), refunding nothing,
+ *   resolved or not.
  *
- * A report is public: anyone can read who reported what, and why.
+ * A report is public: anyone can read who reported what, and why, and how the
+ * moderators resolved it.
  */
 import type { TargetKind } from './contract-topology'
 import { categorizeError, extractErrorMessage, hasConsensusCode, isReferenceNotFoundError } from './error-utils'
@@ -93,6 +99,40 @@ export function withdrawFailureMessage(error: unknown): string {
   return categorizeError(error)
 }
 
+/**
+ * How the moderators resolved a report (v10 `report.status`). Stored as its
+ * code, so the codes are frozen with the contract (`status` 1..3).
+ */
+export type ReportStatus = 1 | 2 | 3
+
+export const REPORT_STATUSES: ReadonlyArray<Readonly<{ code: ReportStatus; label: string; hint: string }>> = Object.freeze([
+  { code: 1 as const, label: 'No action taken', hint: 'Reviewed: nothing here breaks the rules' },
+  { code: 2 as const, label: 'Content removed', hint: 'The post or reply was taken down' },
+  { code: 3 as const, label: 'Author actioned', hint: 'The author was warned, suspended or banned' },
+].map((status) => Object.freeze(status)))
+
+/** `report.resolution` maxLength (v10). */
+export const REPORT_RESOLUTION_MAX_LENGTH = 200
+
+export function reportStatusLabel(status: number): string {
+  return REPORT_STATUSES.find((known) => known.code === status)?.label ?? `Status ${status}`
+}
+
+function isReportStatus(value: unknown): value is ReportStatus {
+  return value === 1 || value === 2 || value === 3
+}
+
+/**
+ * Why a resolution cannot be written as given, or null when it can: a status
+ * the contract accepts and a note of at most 200 characters. A blank note is
+ * left out rather than sent (`resolution` has a minLength of 1).
+ */
+export function resolutionInputProblem(status: number | null, resolution: string): string | null {
+  if (!isReportStatus(status)) return 'Choose how the report was resolved'
+  if (resolution.trim().length > REPORT_RESOLUTION_MAX_LENGTH) return `Keep the resolution to ${REPORT_RESOLUTION_MAX_LENGTH} characters`
+  return null
+}
+
 /** One report, as the app models it. */
 export interface ReportRecord {
   id: string
@@ -104,6 +144,52 @@ export interface ReportRecord {
   note: string | null
   /** Block time (ms) the report was filed. */
   createdAt: number
+  /** How the moderators resolved it (v10); null while it is open, and always on v9. */
+  status: ReportStatus | null
+  /** The moderators' resolution note (v10), or null. */
+  resolution: string | null
+  /** The last moderator to write `status`/`resolution` (`$moderatedBy`, v10), or null. */
+  moderatedBy: string | null
+  /** Block time (ms) of that write (`$moderatedAt`, v10), or null. */
+  moderatedAt: number | null
+}
+
+/**
+ * Which reports the moderators' queue lists: the ones nobody has resolved yet
+ * (on v9 that is every report, since a handled one is deleted), the ones
+ * resolved with one status (`byStatus`), or the ones one moderator resolved
+ * last (`byModerator`).
+ */
+export type ReportView =
+  | { kind: 'open' }
+  | { kind: 'status'; status: ReportStatus }
+  | { kind: 'moderatedBy'; moderatorId: string }
+
+export const OPEN_REPORTS: ReportView = Object.freeze({ kind: 'open' })
+
+/** True when `report` belongs in `view`: the test the view's query makes, for reports resolved here since. */
+export function reportMatchesView(report: Pick<ReportRecord, 'status' | 'moderatedBy'>, view: ReportView): boolean {
+  switch (view.kind) {
+    case 'open':
+      return report.status === null
+    case 'status':
+      return report.status === view.status
+    case 'moderatedBy':
+      return report.moderatedBy === view.moderatorId
+  }
+}
+
+/**
+ * The reports a resolution would actually change. A report already holding
+ * exactly this status and note is left out: a moderator's change that writes
+ * the values a document already holds is refused (10905).
+ */
+export function reportsNeedingResolution<T extends Pick<ReportRecord, 'status' | 'resolution'>>(
+  reports: readonly T[],
+  status: ReportStatus,
+  resolution: string | null
+): T[] {
+  return reports.filter((report) => report.status !== status || report.resolution !== resolution)
 }
 
 /**
@@ -123,6 +209,9 @@ export function toReportRecord(doc: Record<string, unknown>): ReportRecord | nul
   // Consensus requires both; a read missing either is malformed, not a report.
   if (!targetId || !id || !reporterId || !targetOwnerId || !Number.isInteger(reason)) return null
   const note = data.note ?? doc.note
+  const status = Number(data.status ?? doc.status)
+  const resolution = data.resolution ?? doc.resolution
+  const moderatedAt = Number(doc.$moderatedAt ?? 0)
   return {
     id,
     reporterId,
@@ -132,6 +221,10 @@ export function toReportRecord(doc: Record<string, unknown>): ReportRecord | nul
     reason,
     note: typeof note === 'string' && note.length > 0 ? note : null,
     createdAt: Number(doc.$createdAt ?? doc.createdAt ?? 0),
+    status: isReportStatus(status) ? status : null,
+    resolution: typeof resolution === 'string' && resolution.length > 0 ? resolution : null,
+    moderatedBy: identifierToBase58(doc.$moderatedBy),
+    moderatedAt: Number.isFinite(moderatedAt) && moderatedAt > 0 ? moderatedAt : null,
   }
 }
 

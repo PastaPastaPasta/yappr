@@ -18,9 +18,10 @@ const IDLE: SeatedReasonsState = { reasons: [], required: false, loading: false,
 
 /**
  * The reasons the seated elected team may cite. Once a team is seated on an
- * elected contract (v9), every ban, suspension, warning and deletion it signs
- * must name one of its proposal's `reason` documents (41203 otherwise); lifting
- * and restoring are not bound, and neither is the interim.
+ * elected contract (v9, v10), every ban, suspension, warning and deletion it
+ * signs, and on v10 every report it resolves (`changeDocumentFields`), must
+ * name one of its proposal's `reason` documents (41203 otherwise); lifting and
+ * restoring are not bound, and neither is the interim.
  *
  * Reads nothing until `active` (the modal is open, the moderator panel is
  * shown) and reads again every time it becomes active, so a team seated
