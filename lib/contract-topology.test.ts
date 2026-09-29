@@ -57,12 +57,11 @@ async function topologyModule(topology: string) {
 describe('contract topology', () => {
   it('declares exactly the social contract shapes the repo carries', () => {
     expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10'])
-    // The e2e spec reads the COMPILED bundle and cannot import lib/, so it
-    // names the devnet topology as a literal; drift would silently skip it.
-    const spec = readFileSync(join(process.cwd(), 'e2e/write/topology.spec.ts'), 'utf8')
-    expect(spec.match(/const DEVNET_TOPOLOGY = '([^']+)'/)?.[1]).toBe('v9')
+    // e2e/write/topology.spec.ts runs on whichever devnet cut .env.devnet names
+    // (every topology but v2); a devnet env naming v2 would silently skip it.
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
-    expect(devnetEnv.match(/^NEXT_PUBLIC_CONTRACT_TOPOLOGY=(\S+)/m)?.[1]).toBe('v9')
+    const devnetTopology = devnetEnv.match(/^NEXT_PUBLIC_CONTRACT_TOPOLOGY=(\S+)/m)?.[1]
+    expect(CONTRACT_TOPOLOGIES.filter((topology) => topology !== 'v2')).toContain(devnetTopology)
   })
 
   it('resolves every declared topology to its own descriptor, and v2 when unset', async () => {

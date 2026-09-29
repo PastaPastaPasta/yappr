@@ -1,6 +1,7 @@
 /**
- * The v9 interaction topology (the moutai devnet contract), exercised against a
- * real chain.
+ * The devnet interaction topologies (v9, the moutai cut; v10, the bonsia cut),
+ * exercised against a real chain. Which one runs is read from the env file the
+ * build was compiled from, so flipping `.env.devnet` needs no spec edit.
  *
  * Everything here is a claim the contract's shape makes that the client has to
  * honour, and that a unit test could not check because it depends on consensus:
@@ -8,11 +9,12 @@
  * thread; reply likes live in their own `likeReply` doctype; `repost.postId` and
  * `bookmark.postId` are `refersTo`-checked against `post`, so those controls must
  * not exist on a reply card at all; a quote of a reply goes in `quotedReplyId`;
- * and `post`/`reply` are `canBeDeleted: false`, so "delete" leaves a tombstone.
+ * and "delete" leaves a tombstone on v9 (`post`/`reply` are permanent) but
+ * really removes the document on v10.
  *
- * This runs against the moutai devnet (`.env.devnet` — the only deployment on the
- * v9 contract) and self-skips anywhere else, since on v2 every assertion below is
- * either meaningless or actively wrong. Drive it with:
+ * This runs against the devnet (`.env.devnet`) and self-skips anywhere else,
+ * since on v2 every assertion below is either meaningless or actively wrong.
+ * Drive it with:
  *
  *   npm run build:devnet
  *   E2E_BASE_PATH=/devnet E2E_ENV_FILE=.env.devnet NETWORK=devnet npx playwright test topology
@@ -33,6 +35,8 @@ import { expect, hasSeedPhrase, NO_SEED_REASON, seedContext, test } from '../fix
 import { expectedSocialContractId, expectedTopology } from '../fixtures/contracts'
 import { reloadUntilVisible } from '../fixtures/eventual'
 import { uniqueTag } from '../fixtures/run-tag'
+import { CONTRACT_TOPOLOGIES } from '../../lib/constants'
+import { deletesAreTombstones, windowedRankingFor, type RankingAxis, type WindowedRanking } from '../../lib/contract-topology'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -57,7 +61,7 @@ async function openReadyExplore(page: Page): Promise<void> {
  */
 const IS_DEVNET_RUN = (process.env.E2E_ENV_FILE ?? '').includes('devnet')
 const NOT_DEVNET_REASON =
-  'E2E_ENV_FILE does not select the devnet deployment — the v9 topology is only deployed there'
+  'E2E_ENV_FILE does not select the devnet deployment — the devnet topologies are only deployed there'
 
 /**
  * Synchronous topology read (same sources `expectedTopology()` uses), so the
@@ -78,22 +82,57 @@ function compiledTopology(): string {
 }
 const SPEC_TOPOLOGY = compiledTopology()
 
+/** The devnet cuts this spec covers: every topology the build knows but testnet's v2. */
+const DEVNET_TOPOLOGIES: readonly string[] = CONTRACT_TOPOLOGIES.filter((topology) => topology !== 'v2')
+const IS_DEVNET_TOPOLOGY = DEVNET_TOPOLOGIES.includes(SPEC_TOPOLOGY)
+const WRONG_TOPOLOGY_REASON = `the compiled topology ${SPEC_TOPOLOGY} is not a devnet cut (${DEVNET_TOPOLOGIES.join(', ')})`
 /**
- * The topology the devnet contract has. `CONTRACT_TOPOLOGIES` in
- * lib/constants.ts holds exactly v2 (testnet) and this; the literal is pinned
- * by `lib/contract-topology.test.ts`, because the spec reads the COMPILED
- * bundle and cannot import lib/.
+ * What the app itself says about the compiled topology, read through lib/'s own
+ * helpers so this spec names no cut: whether a delete is a tombstone (v9) or a
+ * removal (v10), and each ranked axis's recent window (v9 a daily "Today" on
+ * every axis; v10 "3 days" on `like.byTrendPost`, "24h" on
+ * `like.byTrendHashtagPost`, and no creator window). The descriptor resolves
+ * the topology from the env on first use, so it is read once here with the
+ * spec's topology set and the env restored after. Null off a devnet cut.
  */
-const DEVNET_TOPOLOGY = 'v9'
-const WRONG_TOPOLOGY_REASON = `the compiled topology is not the devnet contract's ${DEVNET_TOPOLOGY}`
+function topologyFacts(topology: string) {
+  if (!DEVNET_TOPOLOGIES.includes(topology)) return null
+  const saved = process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY
+  process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY = topology
+  try {
+    const windows: Readonly<Record<RankingAxis, WindowedRanking | null>> = {
+      posts: windowedRankingFor('posts'),
+      hashtags: windowedRankingFor('hashtags'),
+      creators: windowedRankingFor('creators'),
+    }
+    return { deletesAreTombstones: deletesAreTombstones(), windows }
+  } finally {
+    if (saved === undefined) delete process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY
+    else process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY = saved
+  }
+}
+const FACTS = topologyFacts(SPEC_TOPOLOGY)
+const DELETES_ARE_REAL = FACTS?.deletesAreTombstones === false
+const WINDOWS = FACTS?.windows
+/** `doctype.index` of an axis's window, for test titles. */
+function windowIndex(axis: RankingAxis): string {
+  const window = WINDOWS?.[axis]
+  return window ? `${window.docType}.${window.index}` : 'no window'
+}
+/** The window a surface's switch must show, or throws where the axis has none. */
+function windowLabel(axis: RankingAxis): string {
+  const window = WINDOWS?.[axis]
+  if (!window) throw new Error(`${SPEC_TOPOLOGY} has no ${axis} window`)
+  return window.label
+}
 
 // The first describe covers the document graph: flat threads, likeReply,
-// posts-only repost/bookmark, dual quote fields and tombstones. The reply-like
-// test doubles as live coverage of the indexOnly likeReply path
+// posts-only repost/bookmark, dual quote fields and deletes (tombstones on v9,
+// real deletes on v10). The reply-like test doubles as live coverage of the indexOnly likeReply path
 // (agreement-bound create + delete-by-values unlike).
-test.describe('v9 interaction topology on the devnet contract', () => {
+test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(SPEC_TOPOLOGY !== DEVNET_TOPOLOGY, WRONG_TOPOLOGY_REASON)
+  test.skip(!IS_DEVNET_TOPOLOGY, WRONG_TOPOLOGY_REASON)
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
@@ -121,7 +160,7 @@ test.describe('v9 interaction topology on the devnet contract', () => {
     // other topology here means the devnet env file lost its flag — which would
     // make every assertion below fail against the UI instead of naming the
     // real problem.
-    expect(topology, `the devnet env file must set NEXT_PUBLIC_CONTRACT_TOPOLOGY=${DEVNET_TOPOLOGY}`).toBe(DEVNET_TOPOLOGY)
+    expect(DEVNET_TOPOLOGIES, `the devnet env file must set NEXT_PUBLIC_CONTRACT_TOPOLOGY to a devnet cut`).toContain(topology)
     expect(topology, 'sync and async topology reads must agree').toBe(SPEC_TOPOLOGY)
 
     await page.goto(appUrl('/about/'))
@@ -274,10 +313,10 @@ test.describe('v9 interaction topology on the devnet contract', () => {
     )
   })
 
-  test('deleting the nested reply leaves a tombstone card', async ({ page }) => {
-    // reply is canBeDeleted:false, so this is a replace that blanks the content
-    // and sets deleted:true. The document — and every refersTo reference to it —
-    // survives; only the text goes.
+  test(DELETES_ARE_REAL ? 'deleting the nested reply removes it' : 'deleting the nested reply leaves a tombstone card', async ({ page }) => {
+    // v9: reply is canBeDeleted:false, so this is a replace that blanks the
+    // content and sets deleted:true; the document and every reference to it
+    // survive. v10: reply is owner-deletable, so the document is removed.
     test.setTimeout(300_000)
 
     await page.goto(appUrl(`/post?id=${rootPostId}`))
@@ -289,11 +328,22 @@ test.describe('v9 interaction topology on the devnet contract', () => {
 
     const confirm = page.getByRole('dialog', { name: /Delete/ })
     await expect(confirm).toBeVisible()
-    // The copy must not promise a permanent removal on a permanent-document contract.
-    await expect(confirm.getByText(/tombstone remains on-chain/)).toBeVisible()
+    // The copy must match what the contract does: a tombstone on v9 (never a
+    // promise of permanent removal), a permanent removal on v10.
+    await expect(confirm.getByText(DELETES_ARE_REAL ? /permanently removed/ : /tombstone remains on-chain/)).toBeVisible()
     await confirm.getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(confirm).toBeHidden({ timeout: COMPOSE_TIMEOUT })
 
+    if (DELETES_ARE_REAL) {
+      // The document is gone: once the thread re-reads, its text is nowhere,
+      // while the reply it answered (and the root) are still there.
+      await expect.poll(async () => {
+        await page.goto(appUrl(`/post?id=${rootPostId}`))
+        await expect(page.getByTestId(`post-card-${firstReplyId}`)).toBeVisible({ timeout: 60_000 })
+        return page.getByText(nestedReplyText).count()
+      }, { timeout: 180_000, intervals: [5_000] }).toBe(0)
+      return
+    }
     // The text is gone from the thread and the deleted card is in its place.
     await reloadUntilVisible(page, appUrl(`/post?id=${rootPostId}`), (p) =>
       p.getByText('This reply was deleted.')
@@ -333,9 +383,9 @@ test.describe('v9 interaction topology on the devnet contract', () => {
  * - the profile Top tab still rides the same index's TERMINAL ranking, proving
  *   the at-form serves both levels at once.
  */
-test.describe('v9 inline hashtags, indexOnly likes and prefix rankings on the devnet contract', () => {
+test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rankings on the devnet contract`, () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(SPEC_TOPOLOGY !== DEVNET_TOPOLOGY, WRONG_TOPOLOGY_REASON)
+  test.skip(!IS_DEVNET_TOPOLOGY, WRONG_TOPOLOGY_REASON)
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
@@ -547,14 +597,17 @@ test.describe('v9 inline hashtags, indexOnly likes and prefix rankings on the de
   })
 })
 
-// DAILY-WINDOWED rankings. A like of a TAGGED post writes a `beat` companion as
-// a second transition once the like lands, and every ranked surface gains a
-// Today | All time switch. The assertions pin the run's own writes on the
-// TODAY window. Tag/author pins guarantee inclusion for the run's own writes;
+// WINDOWED rankings (windowedRankingFor). v9: a like of a TAGGED post writes a
+// `beat` companion as a second transition, and every ranked surface gains a
+// Today | All time switch on a daily grid. v10: no beat; the like itself carries
+// the rolling windows, top posts on `like.byTrendPost` ("3 days") and trending
+// tags on `like.byTrendHashtagPost` ("24h"), and creators have no window, so
+// the profile Top has no switch. The assertions pin the run's own writes on the
+// recent window. Tag/author pins guarantee inclusion for the run's own writes;
 // global top-K assertions allow seeded posts and tags to outrank the CI bot.
-test.describe('v9 daily-windowed rankings on the devnet contract', () => {
+test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () => {
   test.skip(!IS_DEVNET_RUN, NOT_DEVNET_REASON)
-  test.skip(SPEC_TOPOLOGY !== DEVNET_TOPOLOGY, WRONG_TOPOLOGY_REASON)
+  test.skip(!IS_DEVNET_TOPOLOGY, WRONG_TOPOLOGY_REASON)
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
@@ -583,7 +636,7 @@ test.describe('v9 daily-windowed rankings on the devnet contract', () => {
       taggedPostId = ((await card.getAttribute('data-testid')) ?? '').replace('post-card-', '')
       expect(taggedPostId).not.toBe('')
 
-      // Like it: the like lands first, then a beat in a second transition.
+      // Like it (on v9 the like lands first, then a beat in a second transition).
       await page.goto(appUrl(`/post?id=${taggedPostId}`))
       const likeButton = page.getByTestId(`like-btn-${taggedPostId}`)
       await expect(likeButton).toBeVisible({ timeout: 60_000 })
@@ -598,44 +651,56 @@ test.describe('v9 daily-windowed rankings on the devnet contract', () => {
     }
   })
 
-  test("the tag page's Top → Today lists the liked post (beat.byDayHashtagPost, tag + bucket pinned)", async ({ page }) => {
+  test(`the tag page's Top → recent window lists the liked post (${windowIndex('hashtags')}, tag + window pinned)`, async ({ page }) => {
     test.setTimeout(180_000)
     await reloadUntilVisible(page, appUrl(`/hashtag?tag=${hashtag}`), (p) => p.getByTestId('hashtag-sort-top'))
     await page.getByTestId('hashtag-sort-top').click()
     const today = page.getByTestId('hashtag-top-today')
     await expect(today, 'the windowed-ranking toggle must render on the tag page').toBeVisible({ timeout: 30_000 })
+    await expect(today).toHaveText(windowLabel('hashtags'))
     await today.click()
     await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toBeVisible({ timeout: 60_000 })
   })
 
-  test("the profile Top → Today lists the liked post (like.byDayAuthorPost, author + bucket pinned)", async ({ page, bot }) => {
+  test(WINDOWS?.creators
+    ? `the profile Top → recent window lists the liked post (${windowIndex('creators')}, author + window pinned)`
+    : 'the profile Top has no window switch (no creator window) and lists the liked post all-time', async ({ page, bot }) => {
     test.setTimeout(180_000)
     await page.goto(appUrl(`/user?id=${bot.identityId}`), { waitUntil: 'domcontentloaded' })
     const topFilter = page.getByTestId('profile-top-filter')
     await expect(topFilter).toBeVisible({ timeout: 60_000 })
     await topFilter.click()
+    if (!WINDOWS?.creators) {
+      await expect(
+        page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag }).first()
+      ).toBeVisible({ timeout: 60_000 })
+      await expect(page.getByTestId('profile-top-window')).toHaveCount(0)
+      return
+    }
     const today = page.getByTestId('profile-top-today')
     await expect(today).toBeVisible({ timeout: 30_000 })
+    await expect(today).toHaveText(windowLabel('creators'))
     await today.click()
     await expect(
       page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag }).first()
     ).toBeVisible({ timeout: 60_000 })
   })
 
-  test("Explore's trending → Today renders the proved ranking (beat.byDayHashtagPost at hashtag)", async ({ page }) => {
+  test(`Explore's trending → recent window renders the proved ranking (${windowIndex('hashtags')} at hashtag)`, async ({ page }) => {
     test.setTimeout(180_000)
     await openReadyExplore(page)
     const today = page.getByTestId('explore-trending-today')
     await expect(today).toBeVisible({ timeout: 60_000 })
+    await expect(today).toHaveText(windowLabel('hashtags'))
     await today.click()
     await expect(today).toHaveAttribute('aria-pressed', 'true')
     await expect(page.getByText('Loading trending hashtags...', { exact: true })).toBeHidden({ timeout: 60_000 })
     // Seeded tags can outrank this run's one-like tag in the global top-12.
-    // The pinned tag test above proves the run's exact beat membership.
+    // The pinned tag test above proves the run's exact window membership.
     await expect(page.getByText(/\d+ likes?$/).first()).toBeVisible({ timeout: 60_000 })
   })
 
-  test("Explore's Top → Today renders today's ranking (like.byDayPost)", async ({ page }) => {
+  test(`Explore's Top → recent window renders the proved ranking (${windowIndex('posts')})`, async ({ page }) => {
     test.setTimeout(180_000)
     await openReadyExplore(page)
     const topTab = page.getByTestId('explore-top-tab')
@@ -643,10 +708,11 @@ test.describe('v9 daily-windowed rankings on the devnet contract', () => {
     await topTab.click()
     const today = page.getByTestId('explore-top-today')
     await expect(today).toBeVisible({ timeout: 30_000 })
+    await expect(today).toHaveText(windowLabel('posts'))
     await today.click()
     await expect(today).toHaveAttribute('aria-pressed', 'true')
     await expect(page.getByText('Loading top posts...', { exact: true })).toBeHidden({ timeout: 60_000 })
-    // The seeded corpus also lands today; global top-20 need not include the
+    // The seeded corpus also lands in the window; global top-20 need not include the
     // CI bot. Exact membership is checked on the pinned tag/profile surfaces.
     await expect(page.locator('[data-testid^="post-card-"]').first()).toBeVisible({ timeout: 60_000 })
     await expect(page.getByTestId('explore-top-empty')).toHaveCount(0)
