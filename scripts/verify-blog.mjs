@@ -7,10 +7,10 @@
  * aggregates are exact without a baseline; only the YAPP balance is a delta.
  *
  *   NETWORK=devnet node scripts/verify-blog.mjs --contract <id> \
- *     [--author 210] [--reader 211] [--stranger 212] [--moderator 260] [--yapp 20] [--only b4,b5]
+ *     [--author 210] [--reader 211] [--stranger 212] [--moderator 260|maker|personal] [--yapp 20] [--only b4,b5]
  *
- * `--moderator` is the persona the contract was published under (its owner) or
- * one appointed at publish time; v3 (beta.3) is a moderated cut, so b13/b14
+ * `--moderator` is the contract's owner or one it appointed at publish time:
+ * a seed-ledger persona index, `maker` or `personal` (ledger persona 900); v3 (beta.3) is a moderated cut, so b13/b14
  * ban the stranger and take a comment and a post down. v4 (beta.4) keeps a
  * warning list (b17 warns and clears) and stores `labels` as a typed string
  * array (b18: a list reads back as a list; an over-long label is refused). The
@@ -23,7 +23,7 @@
 import bs58 from 'bs58';
 import {
   DELETE_FORBIDDEN, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND, TOKEN_AGREEMENT_MISSING,
-  id32, runBattery,
+  MODERATOR_FLAG, id32, runBattery,
 } from './battery-lib.mjs';
 import { randomEntropy } from './seed/seed-lib.mjs';
 import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, REFERENCE_NOT_FOUND_DELETABLE, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
@@ -345,7 +345,8 @@ await runBattery({
   label: 'blog',
   contract: { env: 'BLOG_CONTRACT_ID' },
   cases: CASES,
-  actors: { author: 210, reader: 211, stranger: 212, moderator: 260 },
+  actors: { author: 210, reader: 211, stranger: 212 },
+  flags: { moderator: { ...MODERATOR_FLAG, default: '260' } },
   yapp: { default: DEFAULT_YAPP, actors: ['reader', 'stranger'], require: true },
   banner: ({ socialId }) => `; YAPP from ${socialId}`,
   selfTest: () => selfTestModerated(CONTRACT_FILE, {
@@ -359,6 +360,10 @@ await runBattery({
     blogPost: { where: { blogId: { $ownerId: '$ownerId' } }, immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'], moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
     blog: { moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 64, maxLength: 40 } } },
   }, { moderation: { banlist: true, suspensions: true, warnings: true } }),
-  setup: async ({ battery, tokenId, reader, moderator }) => ({ startedAt: Date.now() - 60_000, readerComments: 0, strangerCommentId: null, draftId: null, publishedAt: null, readerYappBefore: await battery.yappBalance(tokenId, reader.ownerId), moderator: { ...moderator, identity: await battery.readback(() => battery.sdk.identities.fetch(moderator.ownerId)) } }),
+  setup: async ({ battery, tokenId, reader, args }) => {
+    const moderator = await battery.moderatorActor(args.moderator);
+    console.log(`moderator=${moderator.label}`);
+    return { startedAt: Date.now() - 60_000, readerComments: 0, strangerCommentId: null, draftId: null, publishedAt: null, readerYappBefore: await battery.yappBalance(tokenId, reader.ownerId), moderator };
+  },
   summary: (ctx) => `blog=${ctx.blogId} posts=${ctx.post1},${ctx.post2}`,
 });

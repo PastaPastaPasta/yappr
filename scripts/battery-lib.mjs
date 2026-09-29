@@ -111,6 +111,12 @@ export function decodeDriveError(text) {
 }
 
 /** Creates a battery context: SDK handle, reporting state, and the helper set bound to it. */
+/** The personal account's slot in the private seed ledger (docs/PLATFORM_BETA4_UPGRADE.md). */
+const PERSONAL_PERSONA_IDX = 900;
+
+/** A `--moderator` value: a ledger persona index, `maker` or `personal`. */
+export const MODERATOR_FLAG = { parse: (raw) => raw };
+
 export function createBattery({ handle, contractId, socialId }) {
   let failures = 0;
   const capturedErrors = [];
@@ -137,6 +143,33 @@ export function createBattery({ handle, contractId, socialId }) {
     // `wif` is what a hand-built batch signs with — the only shape that can
     // carry an `$actionFeeAgreement` (v8 post/reply); the signer covers the rest.
     return { ownerId: entry.identityId, identityKey, signer, wif, label: `${entry.handle}(${personaIdx})`, starterClaimed: entry.starterClaimed === true };
+  }
+
+  /**
+   * The moderator a `--moderator` spec names, with the Identity the moderation
+   * calls sign as: a seed-ledger persona index; `maker`, the devnet maker
+   * (DEVNET_MAKER_IDENTITY_ID at seed index 9), which publishes and is
+   * appointed on every moderated cut; or `personal`, the personal account
+   * (ledger persona 900). A contract's appointed set is fixed at publish, so
+   * this must name one of those identities or its owner.
+   */
+  async function moderatorActor(spec) {
+    const value = String(spec).trim();
+    let actor;
+    if (value === 'maker') {
+      const owner = resolveMakerOwner();
+      actor = { ownerId: owner.ownerId, label: `maker(${owner.ownerId})`, ...(await signerFor(sdk, owner)) };
+    } else if (value === 'personal') {
+      if (!ledgerEntry(loadLedger(), PERSONAL_PERSONA_IDX)) {
+        throw new Error(`--moderator personal is seed-ledger persona ${PERSONAL_PERSONA_IDX}, which this ledger does not hold`);
+      }
+      actor = await personaActor(PERSONAL_PERSONA_IDX);
+    } else if (/^\d+$/.test(value)) {
+      actor = await personaActor(Number(value));
+    } else {
+      throw new Error(`--moderator must be a persona index, maker or personal (got "${value}")`);
+    }
+    return { ...actor, identity: await readback(() => sdk.identities.fetch(actor.ownerId)) };
   }
 
   const yappBalance = (tokenId, ownerId) => tokenBalance(readback, sdk, tokenId, ownerId);
@@ -443,7 +476,7 @@ export function createBattery({ handle, contractId, socialId }) {
   }
 
   return {
-    sdk, readback, check, personaActor, yappBalance, balanceOf, ensureYapp, fetchDocument, revisionOf,
+    sdk, readback, check, personaActor, moderatorActor, yappBalance, balanceOf, ensureYapp, fetchDocument, revisionOf,
     attemptWrite, paymentInfo, attemptCreate, attemptReplace, attemptDelete, attemptDeleteByValues,
     attemptCreateByValues, entryExists, expectAccepted, expectRejected, probeCreate, probeReplace, probeDelete,
     countBy, groupedCount, averageBy, sumBy, ranked, checkRanked, queryDocs, groupValueOf, avgOf, approx, b58,

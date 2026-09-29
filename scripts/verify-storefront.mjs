@@ -5,10 +5,11 @@
  * a STRANGER; reviews cost YAPP, so the buyer and stranger are topped up first.
  *
  *   NETWORK=devnet node scripts/verify-storefront.mjs --contract <id> \
- *     [--seller 200] [--buyer 201] [--stranger 202] [--moderator 203] [--yapp 60] [--only s5,s7]
+ *     [--seller 200] [--buyer 201] [--stranger 202] [--moderator maker|personal|<persona>] [--yapp 60] [--only s5,s7]
  *
- * `--moderator` is the persona the contract was published under (its owner) or
- * one appointed at publish time; v3 (beta.3) is a moderated cut, so s14/s15
+ * `--moderator` is the contract's owner or one it appointed at publish time:
+ * `maker` (the default; it publishes and is appointed), `personal` (ledger
+ * persona 900) or any seed-ledger persona index; v3 (beta.3) is a moderated cut, so s14/s15
  * ban the stranger and take reviews down. v4 (beta.4) keeps a warning list
  * (s17), stores `tags`/`imageUrls` as typed string arrays (s18) and refuses a
  * seller reviewing an order on their own store (s19, distinctFrom). The beta.5
@@ -22,7 +23,7 @@
 import bs58 from 'bs58';
 import {
   DELETE_FORBIDDEN, DUPLICATE_UNIQUE, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND,
-  TOKEN_AGREEMENT_MISSING, decodeIntGroupKey, id32, runBattery, settle,
+  MODERATOR_FLAG, TOKEN_AGREEMENT_MISSING, decodeIntGroupKey, id32, runBattery, settle,
 } from './battery-lib.mjs';
 import { describeErr, randomEntropy } from './seed/seed-lib.mjs';
 import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, NOT_DISTINCT, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
@@ -448,7 +449,8 @@ await runBattery({
   label: 'storefront',
   contract: { env: 'STOREFRONT_CONTRACT_ID' },
   cases: CASES,
-  actors: { seller: 200, buyer: 201, stranger: 202, moderator: 203 },
+  actors: { seller: 200, buyer: 201, stranger: 202 },
+  flags: { moderator: { ...MODERATOR_FLAG, default: 'maker' } },
   yapp: { default: DEFAULT_YAPP, actors: ['buyer', 'stranger'], require: true },
   banner: ({ socialId }) => `; YAPP from ${socialId}`,
   selfTest: () => {
@@ -472,6 +474,10 @@ await runBattery({
       store: { moderatorDeletable: false },
     }, { moderation: { banlist: true, suspensions: true, warnings: true } });
   },
-  setup: async ({ battery, tokenId, buyer, moderator }) => ({ reviews: [], itemRatings: {}, zoneId: null, buyerYappBefore: await battery.yappBalance(tokenId, buyer.ownerId), moderator: { ...moderator, identity: await battery.readback(() => battery.sdk.identities.fetch(moderator.ownerId)) } }),
+  setup: async ({ battery, tokenId, buyer, args }) => {
+    const moderator = await battery.moderatorActor(args.moderator);
+    console.log(`moderator=${moderator.label}`);
+    return { reviews: [], itemRatings: {}, zoneId: null, buyerYappBefore: await battery.yappBalance(tokenId, buyer.ownerId), moderator };
+  },
   summary: (ctx) => `store=${ctx.storeId} items=${ctx.item1},${ctx.item2} orders=${ctx.orderId},${ctx.orderId2}`,
 });
