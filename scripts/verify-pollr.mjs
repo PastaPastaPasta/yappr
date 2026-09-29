@@ -273,7 +273,7 @@ await runBattery({
   banner: ({ args }) => (args.v3 ? `; v3 baseline ${args.v3}` : ''),
   // p2c/p2d: a ballot can only ever name the poll's real creator.
   // p12: the options rule (beta.5).
-  selfTest: () => selfTest(CONTRACT_FILE, { vote: { agreements: { pollId: { pollOwnerId: '$ownerId' } } }, multiVote: { agreements: { pollId: { pollOwnerId: '$ownerId' } } }, poll: { constraints: DECLARED_RULES[CONTRACT_FILE].poll } }),
+  selfTest: () => selfTest(CONTRACT_FILE, { vote: { where: { pollId: { $ownerId: 'pollOwnerId' } } }, multiVote: { where: { pollId: { $ownerId: 'pollOwnerId' } } }, poll: { constraints: DECLARED_RULES[CONTRACT_FILE].poll } }),
   setup: () => ({ expectedSingle: new Map(), expectedMulti: new Map() }),
   summary: (ctx) => `pollS=${ctx.pollS} pollM=${ctx.pollM} pollZ=${ctx.pollZ}`,
 });

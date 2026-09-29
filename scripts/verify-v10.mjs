@@ -1,0 +1,1136 @@
+/**
+ * Registration-day battery for **contract v10**
+ * (`contracts/yappr-social-contract-v10.json`, docs/SOCIAL_V10.md): the
+ * 4.2.0-beta.7 cut, exercised against a freshly registered contract on a
+ * beta.7 devnet (bonsia). The machinery is verify-lib; the moderated write path
+ * (manual batches carrying `$actionFeeAgreement`) is social-battery-lib. It
+ * started as verify-v9 and keeps every v9 case that still applies; the
+ * tombstone cases (t1, f1–f3) are gone with the tombstones.
+ *
+ * There is NO default contract id. Pass `--contract` or set `V10_CONTRACT_ID`.
+ *
+ * ## Who moderates
+ *
+ * v10 declares ELECTED moderation with the contract owner as the interim, as v9
+ * did. Until a charter is seated the owner (`--moderator maker`, the default)
+ * is the only moderator; once masternodes seat a team, the owner is refused
+ * 41101 and every moderator case here SKIPS (e0 reads the seat first).
+ *
+ * ## Cases carried from v9
+ *
+ *   e0  the parsed contract declares elected moderation with the owner as the
+ *       interim, all three lists, report changeDocumentFields, no seat yet
+ *   d1  distinctFrom $ownerId: self-follow, self-block, self-request 10419
+ *   p1  private-feed gates (keyGeneration): no privateFeedState → 40120 on
+ *       $ownerId; no followRequest → 40120 on recipientId; self-grant 10419
+ *   b1  typed block follows (identifier list, ghost 40120, self 10419, dup)
+ *   w1  warnings accumulate and clear (41117 on a second clear)
+ *   m1  interim moderator delete + restore of a post (a record is kept)
+ *   m2  interim ban/unban (41107 while banned)
+ *   o1  like.postAuthor and hashtag agree with the post (40127, absence too)
+ *   o2  likeReply.replyAuthor agrees with the reply (40127; re-like 40105)
+ *   o3  repost.postOwnerId agrees with the post (40127)
+ *   o4  quotedPostOwnerId and parentOwnerId agree with the target (40127)
+ *
+ * ## v10 cases
+ *
+ *   x1  real deletes: B deletes its own post; it no longer fetches; the
+ *       quote and reply counts on it fall to 0 exactly; a replace of a post is
+ *       refused (posts are immutable); a reply, quote, repost, like, bookmark
+ *       and report aimed at the deleted post are each refused 40120; an
+ *       author's delete leaves no removal record, so a moderator restore is
+ *       41119
+ *   x2  media and limits: a post with mediaUrl but no hashes, or a hash with
+ *       no mediaUrl, is 10101 (dependentRequired); all three land; content of
+ *       1000 ASCII characters lands, 1001 is 10101; 667 three-byte characters
+ *       (2001 bytes, under 1000 characters) is 10421 (maxBytes); a post with a
+ *       `language` is 10101 (the property is gone); the global timeline
+ *       lists a fresh post
+ *   x3  the yapprProfile extension: A with no DashPay profile is refused 40120
+ *       on $ownerId; A writes a DashPay profile, then the extension lands; a
+ *       second extension is 40105; the moderator deletes it (a record kept)
+ *   c1  every refused post/reply create in property-constraint-cases.mjs is
+ *       10422 naming its rule
+ *   r1  reports: one per reporter and target (40105), author-agreed (40127),
+ *       never the reporter (10419), a ghost 40120, the refused constraint
+ *       cases 10422; A withdraws its reply report; a reporter setting
+ *       `status` is 41124; the interim owner RESOLVES the post report
+ *       (changeDocumentFields: status 2 + resolution): it stays, carries both
+ *       fields, is stamped `$moderatedBy`/`$moderatedAt`, and `byModerator`
+ *       and `byStatus` list it; a no-op change is 10905; a field outside
+ *       changeFields is 41123; a resolve after the post is deleted still
+ *       lands; the owner purges a report with no removal record
+ *       (`documentRemovals` finds none) and A may report the target again
+ *   r2  (post-seat) a seated member resolves a report: without a listed reason
+ *       41203, with one it lands; a protected reporter's report still resolves
+ *       (changes are not deletions). Needs --team-member bot:<n> --reason-doc <id>
+ *   t2  trending without `beat`: a tagged like lands in `like.byDayHashtagPost`
+ *       (the ranked day window groups the run's tag with the right count and
+ *       ranks the post within it); an untagged like leaves the window alone;
+ *       unliking drops the count again
+ *   y1  YAPP is locked: a transfer is refused (40711, paused); a direct
+ *       purchase is refused (no price: 40721); a post paying 10 YAPP still
+ *       lands; the starter grant is claimed once (a second claim 40722)
+ *
+ * ## Run
+ *
+ *   node scripts/verify-v10.mjs --self-test          # offline: contract + shapes
+ *   NETWORK=devnet node scripts/verify-v10.mjs --contract <freshV10Id> \
+ *        [--bot 0] [--bot2 1] [--fresh-bot 2] [--only e0,x1]
+ *
+ * `--fresh-bot <n>` names an identity with no DashPay profile and no starter
+ * claim yet (x3a, y1d); without it those probes SKIP. Both bots need credits
+ * and YAPP on the contract under test (the register script mints it).
+ */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import bs58 from 'bs58';
+import { DataContract, Document, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
+import { PREFER_CONTRACT_OWNER, REPO_ROOT, actionFeeFor, paymentInfo, tokenCostFor } from './seed/seed-lib.mjs';
+import {
+  DUPLICATE_UNIQUE,
+  PROPERTY_MISMATCH,
+  attemptCreate,
+  attemptCreateIndexOnly,
+  attemptDeleteByValues,
+  attemptReplace,
+  buildDocument,
+  check,
+  countBy,
+  entryExists,
+  expectAccepted,
+  expectRejected,
+  fetchDocument,
+  followData,
+  likeData,
+  likeReplyData,
+  randomIdBytes,
+  readback,
+  repostData,
+  runBattery,
+} from './verify-lib.mjs';
+import {
+  describeValue,
+  errorOf,
+  feeAgreement,
+  idOf,
+  manualCreate,
+  resolveModerator,
+  settle,
+  takeFlag,
+  wifForBot,
+} from './social-battery-lib.mjs';
+import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
+import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
+
+const CONTRACT_FILE = 'contracts/yappr-social-contract-v10.json';
+const V10 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
+const POST_ACTION_FEE = actionFeeFor('post');
+const REPLY_ACTION_FEE = actionFeeFor('reply');
+/** DashPay (a system contract, the same id on every network): v10's base profile. */
+const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7';
+const YAPP_TOKEN_POSITION = 0;
+const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
+// r2 (post-seat): a member of the SEATED team, and a `reason` document its proposal lists (41203).
+const TEAM_MEMBER_SPEC = takeFlag('--team-member', null);
+const REASON_DOCUMENT_ID = takeFlag('--reason-doc', null);
+// x3a/y1d need an identity that has neither a DashPay profile nor a starter claim.
+const FRESH_BOT = takeFlag('--fresh-bot', null);
+const FRESH_OWNER = takeFlag('--fresh-owner', null);
+if (MODERATOR_SPEC !== 'maker') {
+  console.error(`--moderator ${MODERATOR_SPEC}: v10's interim moderator is the contract owner alone (interim: contractOwner appoints nobody); run with --moderator maker (the default)`);
+  process.exit(1);
+}
+
+// ---- Expected rejections (code-anchored, see verify-lib) ---------------------
+
+const NOT_DISTINCT = /\bcode"?\s*[=:]\s*10419\b|must differ from "?\$ownerId"?, but the two values are equal/i;
+const REFERENCE_NOT_FOUND = /\bcode"?\s*[=:]\s*40120\b|referenced .{0,80}not found|referencedentitynotfound/i;
+const NOT_FOUND_ON_OWNER = /\$ownerId/;
+const NOT_FOUND_ON_RECIPIENT = /recipientId/;
+const DUPLICATE_ITEMS = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror.{0,2000}?(uniqueitems|duplicate items|has non-unique elements|must not have duplicate)/i;
+const NOT_WARNED = /\bcode"?\s*[=:]\s*41117\b|carries no warning|contractusernotwarned/i;
+const ALREADY_RESTORED = /\bcode"?\s*[=:]\s*41122\b|already restored|contractdocumentalreadyrestored/i;
+const BANNED = /\bcode"?\s*[=:]\s*41107\b|contractuserbanned|is banned/i;
+/** JSON schema (10101): dependentRequired, maxLength, an undeclared property. */
+const SCHEMA_REFUSED = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror:/i;
+/** DocumentPropertyMaxBytesExceededError: "Property content is N bytes in UTF-8, over its maxBytes of 2000". */
+const MAX_BYTES = /\bcode"?\s*[=:]\s*10421\b|bytes in utf-8, over its maxbytes/i;
+/** A replace of a type with documentsMutable false (drive-abci advanced structure). */
+const NOT_MUTABLE = /is not mutable and can not be replaced|\bcode"?\s*[=:]\s*1040[0-9]\b/i;
+/** A restore with no removal record: an author's delete leaves none (41119). */
+const NO_REMOVAL_RECORD = /\bcode"?\s*[=:]\s*41119\b|keeps no record of a moderator's deletion|contractdocumentremovalnotfound/i;
+/** A reporter writing a moderator-only field (41124). */
+const MODERATOR_FIELD = /\bcode"?\s*[=:]\s*41124\b|only the moderators of contract .{0,80} write field/i;
+/** A field the type does not keep for its moderators (41123). */
+const FIELD_NOT_CHANGEABLE = /\bcode"?\s*[=:]\s*41123\b|can not be changed by moderators/i;
+/** A change that changes nothing, or names no field (10905). */
+const FIELDS_INVALID = /\bcode"?\s*[=:]\s*10905\b|the fields a moderator's document change sets are invalid/i;
+const REASON_NOT_LISTED = /\bcode"?\s*[=:]\s*41203\b|reason.{0,80}not listed|moderationreasonnotlisted/i;
+const TOKEN_PAUSED = /\bcode"?\s*[=:]\s*40711\b|token .{0,60} is paused/i;
+const NOT_FOR_SALE = /\bcode"?\s*[=:]\s*40721\b|not available for direct sale|no direct-purchase price/i;
+const ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|already claimed/i;
+
+// ---- v10 document shapes -----------------------------------------------------
+
+const sha256 = async (bytes) => new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+/** A media triple: the URL with the sha256 of some bytes and an 8-byte fingerprint. */
+async function mediaFields(url = 'ipfs://bafyv10batterymedia') {
+  return { mediaUrl: url, mediaHash: await sha256(new TextEncoder().encode(url)), mediaFingerprint: crypto.getRandomValues(new Uint8Array(8)) };
+}
+
+/** Untagged means `hashtag` is ABSENT; every optional property is omitted unless given. There is no `language`. */
+const postData = ({ content = 'v10 battery post', hashtag, sensitive, quotedPostId, quotedPostOwnerId, media } = {}) => ({
+  content,
+  ...(hashtag === undefined ? {} : { hashtag }),
+  ...(sensitive === undefined ? {} : { sensitive }),
+  ...(quotedPostId ? { quotedPostId } : {}),
+  ...(quotedPostOwnerId ? { quotedPostOwnerId } : {}),
+  ...(media ?? {}),
+});
+const replyData = ({ content = 'v10 battery reply', rootPostId, parentOwnerId } = {}) => ({ content, rootPostId, parentOwnerId });
+const blockData = ({ blockedId }) => ({ blockedId });
+const followRequestData = ({ targetId }) => ({ targetId });
+const feedStateData = () => ({ treeCapacity: 1024, maxKeyGeneration: 2000, encryptedSeed: randomIdBytes() });
+const grantData = ({ recipientId, leafIndex = 0, keyGeneration = 1 }) => ({ recipientId, leafIndex, keyGeneration, encryptedPayload: crypto.getRandomValues(new Uint8Array(96)) });
+const rekeyData = ({ keyGeneration = 2, revokedLeaf = 0 } = {}) => ({ keyGeneration, revokedLeaf, packets: crypto.getRandomValues(new Uint8Array(64)), encryptedCEK: crypto.getRandomValues(new Uint8Array(48)) });
+/** A report names exactly one of `postId` / `replyId`; reason 8 ("something else") must carry a note. */
+const reportData = ({ postId, replyId, targetOwnerId, reason = 0, note, status } = {}) => ({
+  ...(postId ? { postId } : {}),
+  ...(replyId ? { replyId } : {}),
+  targetOwnerId,
+  reason,
+  ...(note === undefined ? {} : { note }),
+  ...(status === undefined ? {} : { status }),
+});
+/** A typed identifier array is a list of 32-byte ids — never one packed byte array. */
+const blockFollowData = (ids) => ({ followedBlockers: ids.map((id) => (typeof id === 'string' ? bs58.decode(id) : id)) });
+/** The DashPay profile v10 builds on (displayName ≤25, publicMessage ≤140). */
+const dashpayProfileData = (name) => ({ displayName: name.slice(0, 25), publicMessage: 'v10 battery DashPay profile' });
+const yapprProfileData = () => ({ location: 'Battery', pronouns: 'it/its', socialLinks: ['github:yappr'] });
+
+// ---- Reads ---------------------------------------------------------------------
+
+async function standingOf(ctx, identityId, lists = ['banlist', 'suspensions', 'warnings']) {
+  return readback(() => ctx.sdk.contracts.moderationStatus({ contractId: ctx.contractId, identityId, lists }));
+}
+
+async function queryOne(ctx, docType, where, contractId = ctx.contractId) {
+  const result = await readback(() => ctx.sdk.documents.query({ dataContractId: contractId, documentTypeName: docType, where, limit: 1 }));
+  for (const document of result.values()) if (document) return document;
+  return null;
+}
+
+/** Deletes `who`'s document `id` of `docType`; answers the error or null. */
+const deleteOwn = (ctx, who, docType, id, contractId = ctx.contractId) => errorOf(() => ctx.sdk.documents.delete({
+  document: { id, ownerId: who.ownerId, dataContractId: contractId, documentTypeName: docType },
+  identityKey: who.identityKey, signer: who.signer, settings: { identityNonceStaleTimeS: 0 },
+}));
+
+/** A create that must be refused, scored by `expectRejected`; a create that lands is deleted again. */
+async function expectCreateRefused(ctx, label, who, docType, data, pattern, detailPattern) {
+  const outcome = await attemptCreate(ctx.sdk, who, { contractId: ctx.contractId, docType, data });
+  if (outcome.ok && outcome.id) await deleteOwn(ctx, who, docType, outcome.id);
+  expectRejected(label, outcome, pattern);
+  if (!outcome.ok && detailPattern) {
+    check(`${label} — names the gated path`, detailPattern.test(outcome.error ?? ''), (outcome.error ?? '').slice(0, 160));
+  }
+  return outcome;
+}
+
+/** A post or reply create carrying the declared action fee (a create without it is a paid 40132). */
+async function createFeedOutcome(ctx, who, docType, data) {
+  const { agreement } = await feeAgreement(ctx, docType === 'post' ? POST_ACTION_FEE : REPLY_ACTION_FEE);
+  return manualCreate(ctx, who, { docType, data, agreement });
+}
+
+async function createFeed(ctx, who, docType, data, label) {
+  const created = await createFeedOutcome(ctx, who, docType, data);
+  if (!created.ok) console.log(`     (could not create ${label}: ${(created.error ?? '').slice(0, 200)})`);
+  return created.ok ? created.id : null;
+}
+
+/** A post or reply create that must be refused; one that lands is deleted again (v10 posts are deletable). */
+async function expectFeedRefused(ctx, label, who, docType, data, pattern) {
+  const outcome = await createFeedOutcome(ctx, who, docType, data);
+  if (outcome.ok && outcome.id) await deleteOwn(ctx, who, docType, outcome.id);
+  return expectRejected(label, outcome, pattern);
+}
+
+const createPost = (ctx, who, content) => createFeed(ctx, who, 'post', postData({ content }), 'a post');
+
+/** Skips a moderator case when a charter is seated: the interim owner is refused 41101 there, correctly. */
+function interimOnly(ctx, key) {
+  if (!ctx.seated) return false;
+  console.log(`SKIP  ${key}: a moderation charter is seated on this contract, so the interim owner may no longer moderate (41101). Run the election script's team cases instead.`);
+  return true;
+}
+
+/** The fresh identity of x3a/y1d (no DashPay profile, no starter claim), or null. */
+async function freshActor(ctx) {
+  if (ctx.fresh !== undefined) return ctx.fresh;
+  if (FRESH_BOT === null) { ctx.fresh = null; return null; }
+  const owner = resolveOwner({ botIndex: Number(FRESH_BOT), ...(FRESH_OWNER ? { ownerId: FRESH_OWNER } : {}) });
+  const { identityKey, signer } = await signerFor(ctx.sdk, owner);
+  ctx.fresh = { ownerId: owner.ownerId, identityKey, signer, label: owner.label };
+  return ctx.fresh;
+}
+
+// ---- Cases -----------------------------------------------------------------------
+
+async function caseE0Declaration(ctx) {
+  const { sdk, contractId } = ctx;
+  console.log('\n--- e0. the published contract declares elected moderation, interim owner, three lists ---');
+  const moderation = ctx.contract.config.moderation;
+  const moderators = moderation?.moderators;
+  check('e0a the parsed config keeps banlist, suspensions and warnings',
+    moderation?.banlist === true && moderation?.suspensions === true && moderation?.warnings === true, describeValue(moderation));
+  check('e0b the moderators are elected with the contract owner as the interim',
+    moderators?.$type === 'elected' && moderators?.interim?.$type === 'contractOwner', describeValue(moderators));
+  const declared = V10.config.moderation.moderators;
+  check('e0c the published declaration is the committed one (windows, seat, additions, abilities incl. report changeDocumentFields, owner protection)',
+    moderators?.joinWindow === declared.joinWindow && moderators?.voteWindow === declared.voteWindow
+      && moderators?.seatContestable === declared.seatContestable && moderators?.maxAddedModerators === declared.maxAddedModerators
+      && moderators?.ownerProtected === declared.ownerProtected
+      && JSON.stringify(moderators?.moderatedDocumentTypes) === JSON.stringify(declared.moderatedDocumentTypes),
+    describeValue(moderators));
+  const seated = await readback(() => sdk.moderationCharters.seatedCharter(contractId));
+  ctx.seated = seated !== undefined && seated !== null;
+  check(`e0d the seat is read (${ctx.seated ? 'a charter IS seated: moderator cases will skip' : 'no charter seated: the interim owner moderates'})`, true);
+}
+
+async function caseD1DistinctFrom(ctx) {
+  const { botA, botB } = ctx;
+  console.log('\n--- d1. distinctFrom $ownerId: self-follow, self-block, self-request refused (10419) ---');
+  const self = bs58.decode(botA.ownerId);
+  await expectCreateRefused(ctx, 'd1a a self-follow is refused (10419)', botA, 'follow', followData({ followingId: self }), NOT_DISTINCT);
+  await expectCreateRefused(ctx, 'd1b a self-block is refused (10419)', botA, 'block', blockData({ blockedId: self }), NOT_DISTINCT);
+  await expectCreateRefused(ctx, 'd1c a self follow-request is refused (10419)', botA, 'followRequest', followRequestData({ targetId: self }), NOT_DISTINCT);
+  const existing = await queryOne(ctx, 'follow', [['$ownerId', '==', botA.ownerId], ['followingId', '==', botB.ownerId]]);
+  if (existing) {
+    check('d1d A already follows B (an earlier run): the control is the existing follow', true, `id=${idOf(existing.id)}`);
+  } else {
+    const follow = await attemptCreate(ctx.sdk, botA, { contractId: ctx.contractId, docType: 'follow', data: followData({ followingId: bs58.decode(botB.ownerId) }) });
+    expectAccepted('d1d a follow of someone else lands (control)', follow);
+  }
+}
+
+async function caseP1PrivateFeedGates(ctx) {
+  const { sdk, contractId, botA, botB } = ctx;
+  console.log('\n--- p1. private-feed gates: feed state required, request required, self-grant refused ---');
+  // A is the feed owner. privateFeedState is permanent and unique per owner, so
+  // a re-run finds it; the "no feed yet" probes only run on A's first pass.
+  let feedState = await queryOne(ctx, 'privateFeedState', [['$ownerId', '==', botA.ownerId]]);
+  if (!feedState) {
+    await expectCreateRefused(ctx, 'p1a a rekey by an identity with NO privateFeedState is refused (40120 on $ownerId)', botA, 'privateFeedRekey', rekeyData(), REFERENCE_NOT_FOUND, NOT_FOUND_ON_OWNER);
+    await expectCreateRefused(ctx, 'p1b a grant by an identity with NO privateFeedState is refused (40120 on $ownerId)', botA, 'privateFeedGrant', grantData({ recipientId: bs58.decode(botB.ownerId) }), REFERENCE_NOT_FOUND, NOT_FOUND_ON_OWNER);
+    const enabled = await attemptCreate(sdk, botA, { contractId, docType: 'privateFeedState', data: feedStateData() });
+    expectAccepted('p1c A enables a private feed (privateFeedState)', enabled);
+    feedState = enabled.ok ? await queryOne(ctx, 'privateFeedState', [['$ownerId', '==', botA.ownerId]]) : null;
+  } else {
+    console.log(`SKIP  p1a–p1c: A already has a privateFeedState (${idOf(feedState.id)}) from an earlier run; the no-feed probes need a fresh owner (--bot)`);
+  }
+  if (!feedState) { check('p1 fixture', false, 'A has no privateFeedState'); return; }
+
+  // Clear what an earlier run left: B's request and A's grant to B.
+  const staleGrant = await queryOne(ctx, 'privateFeedGrant', [['$ownerId', '==', botA.ownerId], ['recipientId', '==', botB.ownerId]]);
+  if (staleGrant) await deleteOwn(ctx, botA, 'privateFeedGrant', idOf(staleGrant.id));
+  const staleRequest = await queryOne(ctx, 'followRequest', [['targetId', '==', botA.ownerId], ['$ownerId', '==', botB.ownerId]]);
+  if (staleRequest) await deleteOwn(ctx, botB, 'followRequest', idOf(staleRequest.id));
+  if (staleGrant || staleRequest) await settle();
+
+  const leafIndex = Number(BigInt.asUintN(10, BigInt(Date.now())));
+  await expectCreateRefused(ctx, 'p1d a grant to B with NO followRequest from B is refused (40120 on recipientId)', botA, 'privateFeedGrant', grantData({ recipientId: bs58.decode(botB.ownerId), leafIndex }), REFERENCE_NOT_FOUND, NOT_FOUND_ON_RECIPIENT);
+
+  const request = await attemptCreate(sdk, botB, { contractId, docType: 'followRequest', data: followRequestData({ targetId: bs58.decode(botA.ownerId) }) });
+  expectAccepted('p1e B files a followRequest to A', request);
+  const grant = await attemptCreate(sdk, botA, { contractId, docType: 'privateFeedGrant', data: grantData({ recipientId: bs58.decode(botB.ownerId), leafIndex }) });
+  expectAccepted('p1f A\'s grant to B lands once B\'s request exists', grant);
+
+  // The client's stale-request cleanup: the requester deletes the request after
+  // approval. A grant is never replaced, so nothing re-validates it.
+  if (request.ok && grant.ok) {
+    const cleanupError = await deleteOwn(ctx, botB, 'followRequest', request.id);
+    await settle();
+    check('p1g B deletes its request after approval (the client\'s cleanup)', (await fetchDocument(sdk, contractId, 'followRequest', request.id)) === null, (cleanupError ?? '').slice(0, 160));
+    check('p1h …and A\'s grant to B is still there', (await fetchDocument(sdk, contractId, 'privateFeedGrant', grant.id)) !== null);
+  }
+
+  await expectCreateRefused(ctx, 'p1i a self-grant is refused (10419 distinctFrom, before the request lookup)', botA, 'privateFeedGrant', grantData({ recipientId: bs58.decode(botA.ownerId), leafIndex: (leafIndex + 1) % 1024 }), NOT_DISTINCT);
+
+  // A rekey by the feed owner: the key generation is unique per owner, so pick a fresh one.
+  const keyGeneration = 2 + Number(BigInt.asUintN(20, BigInt(Date.now())));
+  const rekey = await attemptCreate(sdk, botA, { contractId, docType: 'privateFeedRekey', data: rekeyData({ keyGeneration, revokedLeaf: leafIndex }) });
+  expectAccepted('p1j a rekey by the feed owner lands (ownerRefersTo satisfied)', rekey);
+}
+
+async function caseB1TypedBlockFollows(ctx) {
+  const { sdk, contractId, botA, botB } = ctx;
+  console.log('\n--- b1. blockFollow.followedBlockers as a typed identifier array ---');
+  // blockFollow is unique per owner; start from a clean slate so the create path is exercised.
+  const stale = await queryOne(ctx, 'blockFollow', [['$ownerId', '==', botA.ownerId]]);
+  if (stale) { await deleteOwn(ctx, botA, 'blockFollow', idOf(stale.id)); await settle(); }
+
+  const ghost = randomIdBytes();
+  await expectCreateRefused(ctx, 'b1a an element naming no identity is refused (40120 on followedBlockers[0])', botA, 'blockFollow', blockFollowData([ghost]), REFERENCE_NOT_FOUND);
+  await expectCreateRefused(ctx, 'b1b the owner\'s own id as an element is refused (10419)', botA, 'blockFollow', blockFollowData([botB.ownerId, botA.ownerId]), NOT_DISTINCT);
+  await expectCreateRefused(ctx, 'b1c a duplicate element is refused (uniqueItems)', botA, 'blockFollow', blockFollowData([botB.ownerId, botB.ownerId]), DUPLICATE_ITEMS);
+
+  const created = await attemptCreate(sdk, botA, { contractId, docType: 'blockFollow', data: blockFollowData([botB.ownerId]) });
+  expectAccepted('b1d followedBlockers [B] lands as an identifier list', created);
+  if (!created.ok) return;
+  const stored = await fetchDocument(sdk, contractId, 'blockFollow', created.id);
+  const list = stored?.toJSON?.().followedBlockers;
+  check('b1e it reads back as a LIST of base58 ids, not packed bytes', Array.isArray(list) && list.length === 1 && list[0] === botB.ownerId, describeValue(list));
+
+  const withOwner = await attemptReplace(sdk, botA, { contractId, docType: 'blockFollow', id: created.id, revision: BigInt(stored?.revision ?? 1), data: blockFollowData([botB.ownerId, ctx.ownerId]) });
+  expectAccepted('b1f a replace growing the list to [B, contract owner] lands', withOwner);
+}
+
+async function caseW1Warnings(ctx) {
+  const { sdk, contractId, botB, moderator } = ctx;
+  console.log('\n--- w1. warnings: a record, not a bar; accumulate; clear ---');
+  if (interimOnly(ctx, 'w1')) return;
+  const post = await createPost(ctx, botB, 'a post the warning cites');
+  // Start clean: a warning left by an earlier run would shift every count.
+  await errorOf(() => sdk.contracts.clearUserWarnings({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }));
+  const warn = (text) => errorOf(() => sdk.contracts.warnUser({
+    identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer,
+    reason: { text, ...(post ? { documents: [{ documentTypeName: 'post', documentId: post }] } : {}) },
+  }));
+  const first = await warn('v10 battery warning 1');
+  check('w1a the interim owner warns B, citing the post', first === null, (first ?? '').slice(0, 200));
+  await settle();
+  const status = await standingOf(ctx, botB.ownerId, ['warnings']);
+  check('w1b moderationStatus proves one warning with its reason', status.warnings?.length === 1 && status.warnings[0].reason?.text === 'v10 battery warning 1', describeValue(status));
+
+  const bookmark = post ? await attemptCreate(sdk, botB, { contractId, docType: 'bookmark', data: { postId: bs58.decode(post) } }) : null;
+  if (bookmark) expectAccepted('w1c a warned identity still writes (a warning bars nothing)', bookmark);
+
+  const second = await warn('v10 battery warning 2');
+  check('w1d a second warning is accepted', second === null, (second ?? '').slice(0, 200));
+  await settle();
+  const two = await standingOf(ctx, botB.ownerId, ['warnings']);
+  check('w1e warnings accumulate, oldest first', two.warnings?.length === 2 && two.warnings[1].reason?.text === 'v10 battery warning 2', describeValue(two));
+  // Paged in identity-id order: walk until B is found or the list ends.
+  let listed = false;
+  let scanned = 0;
+  for (let startAfter; !listed;) {
+    const page = await readback(() => sdk.contracts.moderationEntries({ contractId, list: 'warnings', ...(startAfter ? { startAfter } : {}) }));
+    scanned += page.entries.length;
+    listed = page.entries.some((entry) => entry.identityId === botB.ownerId);
+    if (!page.nextStartAfter) break;
+    startAfter = page.nextStartAfter;
+  }
+  check('w1f the warnings list lists B', listed, `scanned ${scanned} entries`);
+
+  const cleared = await errorOf(() => sdk.contracts.clearUserWarnings({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }));
+  check('w1g clearWarnings lands', cleared === null, (cleared ?? '').slice(0, 200));
+  await settle();
+  const none = await standingOf(ctx, botB.ownerId, ['warnings']);
+  check('w1h …and the status proves no warnings', Array.isArray(none.warnings) && none.warnings.length === 0, describeValue(none));
+  const again = await errorOf(() => sdk.contracts.clearUserWarnings({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }));
+  expectRejected('w1i clearing an identity with no warnings is refused (41117)', { ok: again === null, error: again }, NOT_WARNED);
+}
+
+async function caseM1DeleteRestore(ctx) {
+  const { sdk, contractId, botB, moderator } = ctx;
+  console.log('\n--- m1. the interim owner deletes and restores a post ---');
+  if (interimOnly(ctx, 'm1')) return;
+  const postId = await createPost(ctx, botB, 'to be removed and restored');
+  if (!postId) { check('m1 fixture', false, 'no post'); return; }
+  // A restore must bring back the document AS IT WAS: keep the fetched instance.
+  const before = await fetchDocument(sdk, contractId, 'post', postId);
+  try {
+    const removal = await sdk.contracts.moderatorDeleteDocument({ identity: moderator.identity, contractId, documentTypeName: 'post', documentId: postId, reason: { text: 'v10 battery takedown' }, signer: moderator.signer });
+    check('m1a the interim owner deletes B\'s post', idOf(removal.documentOwnerId) === botB.ownerId, `hash=${removal.documentHash}`);
+  } catch (e) {
+    check('m1a the interim owner deletes B\'s post', false, describeErr(e).slice(0, 220));
+    return;
+  }
+  await settle();
+  check('m1b the post no longer fetches', (await fetchDocument(sdk, contractId, 'post', postId)) === null);
+
+  const restore = () => sdk.contracts.moderatorRestoreDocument({ identity: moderator.identity, contractId, documentTypeName: 'post', document: before, signer: moderator.signer });
+  try {
+    const record = await restore();
+    check('m1c the owner restores it; the record is marked restored', record.restoredBy !== undefined && idOf(record.restoredBy) === moderator.ownerId, describeValue({ restoredBy: record.restoredBy && idOf(record.restoredBy), restoredAt: record.restoredAt }));
+  } catch (e) {
+    check('m1c the owner restores it', false, describeErr(e).slice(0, 220));
+    return;
+  }
+  await settle();
+  check('m1d the post fetches again', (await fetchDocument(sdk, contractId, 'post', postId)) !== null);
+  const again = await errorOf(restore);
+  expectRejected('m1e restoring a live document is refused (41122)', { ok: again === null, error: again }, ALREADY_RESTORED);
+}
+
+async function caseM2InterimBan(ctx) {
+  const { sdk, contractId, botB, moderator } = ctx;
+  console.log('\n--- m2. the interim owner bans and unbans (v8 authority before any seat) ---');
+  if (interimOnly(ctx, 'm2')) return;
+  const probe = () => attemptCreate(sdk, botB, { contractId, docType: 'block', data: blockData({ blockedId: randomIdBytes() }) });
+  try {
+    await sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, reason: { text: 'v10 battery ban' }, signer: moderator.signer });
+    check('m2a the interim owner bans B', true);
+  } catch (e) {
+    check('m2a the interim owner bans B', false, describeErr(e).slice(0, 220));
+    return;
+  }
+  try {
+    await settle();
+    expectRejected('m2b B\'s create while banned is refused (41107)', await probe(), BANNED);
+  } finally {
+    const unban = await errorOf(() => sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }));
+    check('m2c the owner unbans B', unban === null, unban ? `${unban.slice(0, 200)} — B MAY STILL BE BANNED; unban by hand` : '');
+  }
+  await settle();
+  const after = await standingOf(ctx, botB.ownerId, ['banlist']);
+  check('m2d B is no longer banned', after.banned === false, describeValue(after));
+}
+
+// ---- $ownerId agreements (carried from v7, `where` since beta.7) ---------------
+//
+// Fixtures: posts and the reply are owned by B, so A's likes and reposts agree
+// against a DIFFERENT identity. Likes and reposts pay in credits (the token
+// cost is optional), so these cases need no YAPP.
+
+/** A post owned by B, created once per run and keyed by role. */
+async function ensurePost(ctx, key, overrides = {}) {
+  if (ctx.posts[key]) return ctx.posts[key];
+  const id = await createFeed(ctx, ctx.botB, 'post', postData({ content: `battery ${key}`, ...overrides }), key);
+  if (id) ctx.posts[key] = id;
+  return id;
+}
+
+/** A reply by B on B's anchor post, for the likeReply agreement. */
+async function ensureReply(ctx) {
+  if (ctx.replyId) return ctx.replyId;
+  const rootPostId = await ensurePost(ctx, 'anchor');
+  if (!rootPostId) return null;
+  ctx.replyId = await createFeed(ctx, ctx.botB, 'reply', replyData({
+    rootPostId: bs58.decode(rootPostId),
+    parentOwnerId: bs58.decode(ctx.botB.ownerId),
+    content: 'battery anchor reply',
+  }), 'the anchor reply');
+  return ctx.replyId;
+}
+
+async function caseO1LikeOwnerAgreement(ctx) {
+  const { botA, botB } = ctx;
+  console.log('\n--- o1. like.postAuthor agrees with the post\'s $ownerId (40127) ---');
+  const tagged = await ensurePost(ctx, 'tagged', { hashtag: ctx.tag });
+  const untagged = await ensurePost(ctx, 'untagged');
+  const spare = await ensurePost(ctx, 'spare', { hashtag: ctx.tag });
+  if (!tagged || !untagged || !spare) { check('o1 fixture', false, 'fixture posts unavailable'); return; }
+  const likeOn = (postId, data) => attemptCreateIndexOnly(ctx.sdk, botA, {
+    contractId: ctx.contractId,
+    docType: 'like',
+    data: likeData({ postId: bs58.decode(postId), ...data }),
+    accepted: () => entryExists(ctx.sdk, ctx.contractId, 'like', 'postId', postId, botA.ownerId),
+  });
+  const owner = bs58.decode(botB.ownerId);
+
+  // Every violation targets a post A has NOT yet liked: the 40105 uniqueness
+  // probe fires before the agreement check and would mask the 40127.
+  expectRejected('o1a a like whose postAuthor is the LIKER is refused', await likeOn(tagged, { hashtag: ctx.tag, postAuthor: bs58.decode(botA.ownerId) }), PROPERTY_MISMATCH);
+  expectRejected('o1b a like whose postAuthor is an unrelated identity is refused', await likeOn(tagged, { hashtag: ctx.tag, postAuthor: randomIdBytes() }), PROPERTY_MISMATCH);
+  expectRejected('o1c the hashtag pair holds: a wrong tag is refused', await likeOn(tagged, { hashtag: `${ctx.tag}x`, postAuthor: owner }), PROPERTY_MISMATCH);
+  expectRejected('o1d absence is strict: a tagged like on an UNTAGGED post is refused', await likeOn(untagged, { hashtag: ctx.tag, postAuthor: owner }), PROPERTY_MISMATCH);
+  expectRejected('o1e and the other way: a hashtag-ABSENT like on a TAGGED post is refused', await likeOn(spare, { postAuthor: owner }), PROPERTY_MISMATCH);
+  expectAccepted('o1f a like naming the post owner\'s $ownerId (and its tag) is accepted', await likeOn(tagged, { hashtag: ctx.tag, postAuthor: owner }));
+  expectAccepted('o1g both-absent agrees: a hashtag-less like on an untagged post', await likeOn(untagged, { postAuthor: owner }));
+}
+
+async function caseO2LikeReplyOwnerAgreement(ctx) {
+  const { botA, botB } = ctx;
+  console.log('\n--- o2. likeReply.replyAuthor agrees with the reply\'s $ownerId (40127) ---');
+  const replyId = await ensureReply(ctx);
+  if (!replyId) { check('o2 fixture', false, 'no anchor reply available'); return; }
+  const likeReplyCount = () => countBy(ctx.sdk, ctx.contractId, 'likeReply', 'replyId', replyId);
+  const likeReplyOn = (replyAuthor, accepted) => attemptCreateIndexOnly(ctx.sdk, botA, {
+    contractId: ctx.contractId,
+    docType: 'likeReply',
+    data: likeReplyData({ replyId: bs58.decode(replyId), replyAuthor }),
+    accepted: accepted ?? (() => entryExists(ctx.sdk, ctx.contractId, 'likeReply', 'replyId', replyId, botA.ownerId)),
+  });
+
+  expectRejected('o2a a reply like whose replyAuthor is the LIKER is refused', await likeReplyOn(bs58.decode(botA.ownerId)), PROPERTY_MISMATCH);
+  expectAccepted('o2b a reply like naming the reply owner\'s $ownerId is accepted', await likeReplyOn(bs58.decode(botB.ownerId)));
+  // o2b's entry makes the existence probe true whatever consensus decides, so
+  // the duplicate is scored by the entry COUNT rising above its baseline.
+  const beforeDuplicate = await likeReplyCount();
+  expectRejected('o2c re-liking the same reply is the structural duplicate (40105)',
+    await likeReplyOn(bs58.decode(botB.ownerId), async () => (await likeReplyCount()) > beforeDuplicate), DUPLICATE_UNIQUE);
+}
+
+async function caseO3RepostOwnerAgreement(ctx) {
+  const { botA, botB } = ctx;
+  console.log('\n--- o3. repost.postOwnerId agrees with the post\'s $ownerId (40127) ---');
+  const postId = await ensurePost(ctx, 'reposted');
+  if (!postId) { check('o3 fixture', false, 'no post to repost'); return; }
+  const repostWith = (postOwnerId) => attemptCreate(ctx.sdk, botA, {
+    contractId: ctx.contractId,
+    docType: 'repost',
+    data: repostData({ postId: bs58.decode(postId), postOwnerId }),
+  });
+  // Without the agreement a repost could name any identity in the notification
+  // index and show it "X reposted your post" for a post that is not theirs.
+  expectRejected('o3a a repost naming a third party in postOwnerId is refused', await repostWith(randomIdBytes()), PROPERTY_MISMATCH);
+  expectRejected('o3b a repost naming the REPOSTER in postOwnerId is refused', await repostWith(bs58.decode(botA.ownerId)), PROPERTY_MISMATCH);
+  expectAccepted('o3c a repost naming the post owner\'s $ownerId is accepted', await repostWith(bs58.decode(botB.ownerId)));
+}
+
+async function caseO4QuoteAndParentOwner(ctx) {
+  const { botA, botB } = ctx;
+  console.log('\n--- o4. a quote and a nested reply name their target\'s real owner (40127, beta.6) ---');
+  const postId = await ensurePost(ctx, 'anchor');
+  const replyId = await ensureReply(ctx);
+  if (!postId || !replyId) { check('o4 fixture', false, 'no anchor post or reply'); return; }
+  const [post, reply, a, b] = [postId, replyId, botA.ownerId, botB.ownerId].map((id) => bs58.decode(id));
+  const create = async (docType, data) => {
+    const { agreement } = await feeAgreement(ctx, docType === 'post' ? POST_ACTION_FEE : REPLY_ACTION_FEE);
+    return manualCreate(ctx, botA, { docType, data, agreement });
+  };
+  expectRejected('o4a a quote of B\'s post naming A as its owner is refused', await create('post', postData({ content: 'o4 forged quote owner', quotedPostId: post, quotedPostOwnerId: a })), PROPERTY_MISMATCH);
+  expectRejected('o4b a quote of B\'s reply naming A as its owner is refused', await create('post', { ...postData({ content: 'o4 forged reply-quote owner', quotedPostOwnerId: a }), quotedReplyId: reply }), PROPERTY_MISMATCH);
+  expectAccepted('o4c a quote of B\'s reply naming B lands', await create('post', { ...postData({ content: 'o4 reply quote', quotedPostOwnerId: b }), quotedReplyId: reply }));
+  expectRejected('o4d a reply to B\'s reply naming A as the parent owner is refused', await create('reply', { ...replyData({ content: 'o4 forged parent', rootPostId: post, parentOwnerId: a }), replyToReplyId: reply }), PROPERTY_MISMATCH);
+  expectAccepted('o4e a reply to B\'s reply naming B lands', await create('reply', { ...replyData({ content: 'o4 nested reply', rootPostId: post, parentOwnerId: b }), replyToReplyId: reply }));
+}
+
+
+// ---- v10: real deletes -----------------------------------------------------------
+
+async function caseX1RealDeletes(ctx) {
+  const { sdk, contractId, botA, botB, moderator } = ctx;
+  console.log('\n--- x1. real deletes: the post is gone, counts drop, nothing new may point at it (40120) ---');
+  const target = await createFeed(ctx, botB, 'post', postData({ content: `x1 target ${Date.now()}`, hashtag: ctx.tag }), 'x1 target');
+  if (!target) { check('x1 fixture', false, 'no target post'); return; }
+  const [targetBytes, owner] = [target, botB.ownerId].map((id) => bs58.decode(id));
+  // One quote and one reply by A, so the counts have something to lose.
+  const quote = await createFeed(ctx, botA, 'post', postData({ content: 'x1 quote', quotedPostId: targetBytes, quotedPostOwnerId: owner }), 'x1 quote');
+  const reply = await createFeed(ctx, botA, 'reply', replyData({ content: 'x1 reply', rootPostId: targetBytes, parentOwnerId: owner }), 'x1 reply');
+  if (!quote || !reply) { check('x1 fixtures', false, 'the quote or reply did not land'); return; }
+  await settle();
+
+  const stored = await fetchDocument(sdk, contractId, 'post', target);
+  const replaced = await attemptReplace(sdk, botB, { contractId, docType: 'post', id: target, revision: BigInt(stored?.revision ?? 1), data: postData({ content: 'x1 edited', hashtag: ctx.tag }) });
+  expectRejected('x1a a post cannot be replaced (documentsMutable false: no editing)', replaced, NOT_MUTABLE);
+
+  const quoteBefore = await countBy(sdk, contractId, 'post', 'quotedPostId', target);
+  const replyBefore = await countBy(sdk, contractId, 'reply', 'rootPostId', target);
+  check('x1b before the delete the post has one quote and one reply', quoteBefore === 1 && replyBefore === 1, `quotes=${quoteBefore} replies=${replyBefore}`);
+
+  // A's own quote first: an author's delete of a document others point at.
+  const quoteDeleted = await deleteOwn(ctx, botA, 'post', quote);
+  const deleted = await deleteOwn(ctx, botB, 'post', target);
+  await settle();
+  check('x1c B deletes its own post (a real delete, no tombstone)', deleted === null && (await fetchDocument(sdk, contractId, 'post', target)) === null, (deleted ?? '').slice(0, 200));
+  check('x1d …and A deletes its quote: the quote count drops to 0 exactly', quoteDeleted === null && (await countBy(sdk, contractId, 'post', 'quotedPostId', target)) === 0, (quoteDeleted ?? '').slice(0, 160));
+  check('x1e the existing reply stays (its reference dangles), counted under the dead root', (await fetchDocument(sdk, contractId, 'reply', reply)) !== null && (await countBy(sdk, contractId, 'reply', 'rootPostId', target)) === 1);
+  const replyDeleted = await deleteOwn(ctx, botA, 'reply', reply);
+  await settle();
+  check('x1f A deletes the reply under the deleted root (a v9 tombstone could not): the reply count drops to 0', replyDeleted === null && (await countBy(sdk, contractId, 'reply', 'rootPostId', target)) === 0, (replyDeleted ?? '').slice(0, 160));
+
+  // Every new pointer at the deleted post is refused: QA D-14 in consensus.
+  await expectFeedRefused(ctx, 'x1g a reply to the deleted post is refused (40120)', botA, 'reply', replyData({ content: 'x1 late reply', rootPostId: targetBytes, parentOwnerId: owner }), REFERENCE_NOT_FOUND);
+  await expectFeedRefused(ctx, 'x1h a quote of the deleted post is refused (40120)', botA, 'post', postData({ content: 'x1 late quote', quotedPostId: targetBytes, quotedPostOwnerId: owner }), REFERENCE_NOT_FOUND);
+  await expectCreateRefused(ctx, 'x1i a repost of the deleted post is refused (40120)', botA, 'repost', repostData({ postId: targetBytes, postOwnerId: owner }), REFERENCE_NOT_FOUND);
+  await expectCreateRefused(ctx, 'x1j a bookmark of the deleted post is refused (40120)', botA, 'bookmark', { postId: targetBytes }, REFERENCE_NOT_FOUND);
+  await expectCreateRefused(ctx, 'x1k a report of the deleted post is refused (40120)', botA, 'report', reportData({ postId: targetBytes, targetOwnerId: owner }), REFERENCE_NOT_FOUND);
+  expectRejected('x1l a like of the deleted post is refused (40120)', await attemptCreateIndexOnly(sdk, botA, {
+    contractId, docType: 'like', data: likeData({ postId: targetBytes, hashtag: ctx.tag, postAuthor: owner }),
+    accepted: () => entryExists(sdk, contractId, 'like', 'postId', target, botA.ownerId),
+  }), REFERENCE_NOT_FOUND);
+
+  // An author's delete leaves no removal record, so there is nothing to restore.
+  if (interimOnly(ctx, 'x1m')) return;
+  const restore = await errorOf(() => sdk.contracts.moderatorRestoreDocument({ identity: moderator.identity, contractId, documentTypeName: 'post', document: stored, signer: moderator.signer }));
+  expectRejected('x1m a moderator cannot restore an author\'s own delete (41119: no removal record)', { ok: restore === null, error: restore }, NO_REMOVAL_RECORD);
+}
+
+// ---- v10: media hashes and content limits ----------------------------------------
+
+async function caseX2MediaAndLimits(ctx) {
+  const { sdk, contractId, botA } = ctx;
+  console.log('\n--- x2. media hash + fingerprint (dependentRequired, 10101), 1000 characters / 2000 bytes (10101 / 10421), no language ---');
+  const media = await mediaFields();
+  await expectFeedRefused(ctx, 'x2a mediaUrl without its hash and fingerprint is refused (10101)', botA, 'post', postData({ content: 'x2 bare url', media: { mediaUrl: media.mediaUrl } }), SCHEMA_REFUSED);
+  await expectFeedRefused(ctx, 'x2b a mediaHash without mediaUrl is refused (10101)', botA, 'post', postData({ content: 'x2 bare hash', media: { mediaHash: media.mediaHash } }), SCHEMA_REFUSED);
+  await expectFeedRefused(ctx, 'x2c a reply with mediaUrl and no fingerprint is refused (10101)', botA, 'reply', { ...replyData({ content: 'x2 reply media', rootPostId: bs58.decode(await ensurePost(ctx, 'anchor')), parentOwnerId: bs58.decode(ctx.botB.ownerId) }), mediaUrl: media.mediaUrl, mediaHash: media.mediaHash }, SCHEMA_REFUSED);
+  const withMedia = await createFeedOutcome(ctx, botA, 'post', postData({ content: 'x2 with media', media }));
+  expectAccepted('x2d mediaUrl with its 32-byte hash and 8-byte fingerprint lands', withMedia);
+  if (withMedia.ok) {
+    const stored = (await fetchDocument(sdk, contractId, 'post', withMedia.id))?.toJSON?.();
+    check('x2e the hash and fingerprint read back', typeof stored?.mediaHash === 'string' && typeof stored?.mediaFingerprint === 'string', describeValue({ mediaHash: stored?.mediaHash, mediaFingerprint: stored?.mediaFingerprint }));
+  }
+
+  expectAccepted('x2f content of exactly 1000 characters lands', await createFeedOutcome(ctx, botA, 'post', postData({ content: 'x'.repeat(1000) })));
+  await expectFeedRefused(ctx, 'x2g content of 1001 characters is refused (10101 maxLength)', botA, 'post', postData({ content: 'x'.repeat(1001) }), SCHEMA_REFUSED);
+  // 667 three-byte characters: 667 code points (under 1000) but 2001 UTF-8 bytes.
+  await expectFeedRefused(ctx, 'x2h 667 three-byte characters (2001 bytes) are refused (10421 maxBytes)', botA, 'post', postData({ content: '€'.repeat(667) }), MAX_BYTES);
+  expectAccepted('x2i 666 three-byte characters (1998 bytes) land', await createFeedOutcome(ctx, botA, 'post', postData({ content: '€'.repeat(666) })));
+  await expectFeedRefused(ctx, 'x2j a reply over 2000 bytes is refused too (10421)', botA, 'reply', replyData({ content: '€'.repeat(667), rootPostId: bs58.decode(await ensurePost(ctx, 'anchor')), parentOwnerId: bs58.decode(ctx.botB.ownerId) }), MAX_BYTES);
+  await expectFeedRefused(ctx, 'x2k a post carrying `language` is refused (10101: the property is gone)', botA, 'post', { ...postData({ content: 'x2 language' }), language: 'en' }, SCHEMA_REFUSED);
+
+  // The global timeline replaces the per-language one: a fresh post heads it.
+  const fresh = await createFeed(ctx, botA, 'post', postData({ content: `x2 timeline ${Date.now()}` }), 'x2 timeline post');
+  if (fresh) {
+    const page = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: 'post', where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20 }));
+    check('x2l the global timeline [$createdAt] lists the fresh post among the newest 20', [...page.keys()].map(idOf).includes(fresh), `${page.size} posts`);
+  }
+}
+
+// ---- v10: the DashPay profile extension ------------------------------------------
+
+async function caseX3ProfileExtension(ctx) {
+  const { sdk, contractId, botA, moderator } = ctx;
+  console.log('\n--- x3. yapprProfile needs a DashPay profile (ownerRefersTo, 40120), one per owner (40105) ---');
+  const fresh = await freshActor(ctx);
+  if (!fresh) {
+    console.log('SKIP  x3a: needs --fresh-bot <n>, an identity with no DashPay profile');
+  } else if (await queryOne(ctx, 'profile', [['$ownerId', '==', fresh.ownerId]], DASHPAY_CONTRACT_ID)) {
+    console.log(`SKIP  x3a: ${fresh.label} already has a DashPay profile`);
+  } else {
+    await expectCreateRefused(ctx, 'x3a an extension by an identity with NO DashPay profile is refused (40120 on $ownerId)', fresh, 'yapprProfile', yapprProfileData(), REFERENCE_NOT_FOUND, NOT_FOUND_ON_OWNER);
+  }
+
+  // A's DashPay profile: write it when missing (a system contract; ordinary create).
+  let base = await queryOne(ctx, 'profile', [['$ownerId', '==', botA.ownerId]], DASHPAY_CONTRACT_ID);
+  if (!base) {
+    const created = await attemptCreate(sdk, botA, { contractId: DASHPAY_CONTRACT_ID, docType: 'profile', data: dashpayProfileData(`battery ${botA.ownerId.slice(0, 6)}`) });
+    expectAccepted('x3b A writes a DashPay profile', created);
+    base = created.ok ? await queryOne(ctx, 'profile', [['$ownerId', '==', botA.ownerId]], DASHPAY_CONTRACT_ID) : null;
+  } else {
+    check('x3b A already has a DashPay profile (an earlier run)', true, `id=${idOf(base.id)}`);
+  }
+  if (!base) { check('x3 fixture', false, 'A has no DashPay profile'); return; }
+
+  const stale = await queryOne(ctx, 'yapprProfile', [['$ownerId', '==', botA.ownerId]]);
+  if (stale) { await deleteOwn(ctx, botA, 'yapprProfile', idOf(stale.id)); await settle(); }
+  const extension = await attemptCreate(sdk, botA, { contractId, docType: 'yapprProfile', data: yapprProfileData() });
+  expectAccepted('x3c with a DashPay profile, A\'s yapprProfile extension lands', extension);
+  if (!extension.ok) return;
+  await expectCreateRefused(ctx, 'x3d a second extension by A is refused (40105, one per owner)', botA, 'yapprProfile', { location: 'Twice' }, DUPLICATE_UNIQUE);
+  await expectCreateRefused(ctx, 'x3e an empty extension is refused (10101, minProperties 1)', botA, 'yapprProfile', {}, SCHEMA_REFUSED);
+
+  if (interimOnly(ctx, 'x3f')) return;
+  try {
+    const removal = await sdk.contracts.moderatorDeleteDocument({ identity: moderator.identity, contractId, documentTypeName: 'yapprProfile', documentId: extension.id, reason: { text: 'v10 battery profile takedown' }, signer: moderator.signer });
+    check('x3f the moderator deletes the extension, keeping a removal record', idOf(removal?.documentOwnerId ?? '') === botA.ownerId, describeValue({ owner: removal?.documentOwnerId && idOf(removal.documentOwnerId) }));
+  } catch (e) {
+    check('x3f the moderator deletes the extension', false, describeErr(e).slice(0, 220));
+  }
+}
+
+// ---- v10: propertyConstraints ---------------------------------------------------
+
+async function caseC1PropertyConstraints(ctx) {
+  const { botA } = ctx;
+  console.log('\n--- c1. propertyConstraints: post and reply co-occurrence rules (10422) ---');
+  const anchor = await ensurePost(ctx, 'anchor');
+  const fields = (data) => ({ ...data, ...(data.rootPostId ? { rootPostId: bs58.decode(anchor), parentOwnerId: bs58.decode(ctx.botB.ownerId) } : {}) });
+  for (const docType of ['post', 'reply']) {
+    if (docType === 'reply' && !anchor) { check('c1 reply fixture', false, 'no anchor post'); continue; }
+    for (const [label, data, rule] of refusedCreates(CONTRACT_FILE.replace('contracts/', ''), docType)) {
+      await expectFeedRefused(ctx, `c1 ${label} is refused (10422 ${rule})`, botA, docType, fields(data), constraintViolation(rule));
+    }
+  }
+}
+
+// ---- v10: reports the moderators resolve ------------------------------------------
+
+/** The moderator's field change; answers the error or null. */
+const changeReport = (ctx, who, documentId, fields, reason) => errorOf(() => ctx.sdk.contracts.moderatorChangeDocumentFields({
+  identity: who.identity, contractId: ctx.contractId, documentTypeName: 'report', documentId, fields, signer: who.signer,
+  ...(reason ? { reason } : {}),
+}));
+
+async function caseR1Reports(ctx) {
+  const { sdk, contractId, botA, botB, moderator } = ctx;
+  console.log('\n--- r1. reports: one per reporter and target, author-agreed, resolved by a moderator (status/resolution), purged without a record ---');
+  const postId = await ensurePost(ctx, 'anchor');
+  const replyId = await ensureReply(ctx);
+  const otherId = await ensurePost(ctx, 'reported');
+  if (!postId || !replyId || !otherId) { check('r1 fixture', false, 'no anchor post, anchor reply or second post'); return; }
+  const [post, reply, other, author] = [postId, replyId, otherId, botB.ownerId].map((id) => bs58.decode(id));
+  const report = (data) => attemptCreate(sdk, botA, { contractId, docType: 'report', data: reportData(data) });
+
+  const postReport = await report({ postId: post, targetOwnerId: author, reason: 0 });
+  expectAccepted('r1a A reports B\'s post', postReport);
+  await expectCreateRefused(ctx, 'r1b a second report of the same post by A is refused (40105)', botA, 'report', reportData({ postId: post, targetOwnerId: author, reason: 1 }), DUPLICATE_UNIQUE);
+  const replyReport = await report({ replyId: reply, targetOwnerId: author, reason: 8, note: 'v10 battery report' });
+  expectAccepted('r1c A reports B\'s reply ("something else", with a note)', replyReport);
+  await expectCreateRefused(ctx, 'r1d a report naming someone other than the author is refused (40127)', botA, 'report', reportData({ postId: other, targetOwnerId: randomIdBytes(), reason: 0 }), PROPERTY_MISMATCH);
+  await expectCreateRefused(ctx, 'r1e B reporting its own post is refused (10419)', botB, 'report', reportData({ postId: post, targetOwnerId: author, reason: 0 }), NOT_DISTINCT);
+  await expectCreateRefused(ctx, 'r1f a report of a post that does not exist is refused (40120)', botA, 'report', reportData({ postId: randomIdBytes(), targetOwnerId: author, reason: 0 }), REFERENCE_NOT_FOUND);
+  for (const [label, data, rule] of refusedCreates(CONTRACT_FILE.replace('contracts/', ''), 'report')) {
+    const fields = { ...data, ...(data.postId ? { postId: other } : {}), ...(data.replyId ? { replyId: reply } : {}), targetOwnerId: author };
+    await expectCreateRefused(ctx, `r1g ${label} is refused (10422 ${rule})`, botA, 'report', fields, constraintViolation(rule));
+  }
+  // The moderators' fields: a reporter can never file a report already "handled".
+  await expectCreateRefused(ctx, 'r1h a reporter setting `status` is refused (41124)', botA, 'report', reportData({ postId: other, targetOwnerId: author, reason: 0, status: 1 }), MODERATOR_FIELD);
+
+  if (replyReport.ok) {
+    const withdrawn = await deleteOwn(ctx, botA, 'report', replyReport.id);
+    await settle();
+    check('r1i A withdraws its reply report', withdrawn === null && (await fetchDocument(sdk, contractId, 'report', replyReport.id)) === null, (withdrawn ?? '').slice(0, 160));
+  }
+
+  if (!postReport.ok || interimOnly(ctx, 'r1j–r1s')) return;
+  const resolved = await changeReport(ctx, moderator, postReport.id, { status: 2, resolution: 'post removed' }, { text: 'v10 battery: report reviewed', documents: [{ documentTypeName: 'post', documentId: postId }] });
+  check('r1j the interim owner resolves A\'s report (status 2, a resolution)', resolved === null, (resolved ?? '').slice(0, 220));
+  await settle();
+  const handled = await fetchDocument(sdk, contractId, 'report', postReport.id);
+  const fields = handled?.toJSON?.() ?? {};
+  check('r1k the report stays, carrying status and resolution', fields.status === 2 && fields.resolution === 'post removed', describeValue({ status: fields.status, resolution: fields.resolution }));
+  check('r1l it is stamped $moderatedBy (the owner) and $moderatedAt, at revision 2',
+    idOf(handled?.moderatedBy ?? '') === moderator.ownerId && handled?.moderatedAt !== undefined && BigInt(handled?.revision ?? 0) === 2n,
+    describeValue({ moderatedBy: handled?.moderatedBy && idOf(handled.moderatedBy), moderatedAt: handled?.moderatedAt, revision: handled?.revision }));
+  const byModerator = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: 'report', where: [['$moderatedBy', '==', moderator.ownerId]], orderBy: [['$moderatedBy', 'asc'], ['$moderatedAt', 'desc']], limit: 50 }));
+  check('r1m byModerator [$moderatedBy, $moderatedAt] lists it', [...byModerator.keys()].map(idOf).includes(postReport.id), `${byModerator.size} report(s)`);
+  const byStatus = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: 'report', where: [['status', '==', 2]], orderBy: [['status', 'asc'], ['$createdAt', 'desc']], limit: 50 }));
+  check('r1n byStatus [status, $createdAt] lists it under status 2', [...byStatus.keys()].map(idOf).includes(postReport.id), `${byStatus.size} report(s)`);
+
+  const noop = await changeReport(ctx, moderator, postReport.id, { status: 2, resolution: 'post removed' });
+  expectRejected('r1o a change that changes nothing is refused (10905)', { ok: noop === null, error: noop }, FIELDS_INVALID);
+  const foreign = await changeReport(ctx, moderator, postReport.id, { note: 'rewritten' });
+  expectRejected('r1p a field outside changeFields is refused (41123)', { ok: foreign === null, error: foreign }, FIELD_NOT_CHANGEABLE);
+  const orphan = await changeReport(ctx, moderator, postReport.id, { resolution: 'status dropped', status: null });
+  expectRejected('r1q a resolution without a status is refused (10422 resolvedHasStatus)', { ok: orphan === null, error: orphan }, constraintViolation('resolvedHasStatus'));
+
+  // References are not checked again: a report on a post that is gone still resolves.
+  const gonePost = await createFeed(ctx, botB, 'post', postData({ content: `r1 gone ${Date.now()}` }), 'r1 gone post');
+  const goneReport = gonePost ? await report({ postId: bs58.decode(gonePost), targetOwnerId: author, reason: 1 }) : { ok: false };
+  if (goneReport.ok) {
+    await deleteOwn(ctx, botB, 'post', gonePost);
+    await settle();
+    const late = await changeReport(ctx, moderator, goneReport.id, { status: 1 });
+    check('r1r a report whose post was deleted can still be resolved', late === null, (late ?? '').slice(0, 200));
+    // Purge: a report deletion keeps no record (deleteKeepsRecord false) and refunds nothing (ttl).
+    const purged = await errorOf(async () => {
+      const result = await sdk.contracts.moderatorDeleteDocument({ identity: moderator.identity, contractId, documentTypeName: 'report', documentId: goneReport.id, reason: { text: 'v10 battery purge' }, signer: moderator.signer });
+      if (result !== undefined) throw new Error(`a removal record came back: ${describeValue(result)}`);
+    });
+    check('r1s the moderator purges a report and no removal record comes back', purged === null, (purged ?? '').slice(0, 200));
+    await settle();
+    check('r1t the purged report no longer fetches', (await fetchDocument(sdk, contractId, 'report', goneReport.id)) === null);
+  } else {
+    check('r1r–r1t fixture', false, 'no report on a post to delete');
+  }
+  // A resolved report keeps its unique entry, so a second report of the post stays refused.
+  await expectCreateRefused(ctx, 'r1u a resolved report still holds its place (a re-report is 40105)', botA, 'report', reportData({ postId: post, targetOwnerId: author, reason: 3 }), DUPLICATE_UNIQUE);
+}
+
+/**
+ * r2, the publisher's POST-SEAT step: run once masternodes have seated a team,
+ * with `--team-member bot:<n>` and `--reason-doc <id>` (a `reason` document the
+ * seated proposal lists; a charter meant to handle reports should list one
+ * such as REP "Report handled"). Skips on an unseated contract.
+ */
+async function caseR2SeatedResolution(ctx) {
+  const { sdk, contractId, botA, botB } = ctx;
+  console.log('\n--- r2. a seated team resolves reports: a listed reason is required (41203) ---');
+  if (!ctx.seated) { console.log('SKIP  r2: no charter is seated yet; run it after the election seats a team'); return; }
+  if (!TEAM_MEMBER_SPEC || !REASON_DOCUMENT_ID) { check('r2 needs --team-member bot:<n> and --reason-doc <id>', false); return; }
+  const member = await resolveModerator(sdk, TEAM_MEMBER_SPEC);
+  const postId = await createFeed(ctx, botB, 'post', postData({ content: `r2 reported ${Date.now()}` }), 'the r2 post');
+  if (!postId) { check('r2 fixture', false, 'no post to report'); return; }
+  const filed = await attemptCreate(sdk, botA, { contractId, docType: 'report', data: reportData({ postId: bs58.decode(postId), targetOwnerId: bs58.decode(botB.ownerId), reason: 0 }) });
+  expectAccepted('r2a A reports B\'s post', filed);
+  if (!filed.ok) return;
+  const bare = await changeReport(ctx, member, filed.id, { status: 1 }, { text: 'v10 battery r2' });
+  expectRejected('r2b a resolution citing no listed reason is refused (41203)', { ok: bare === null, error: bare }, REASON_NOT_LISTED);
+  const listed = await changeReport(ctx, member, filed.id, { status: 1, resolution: 'no action' }, { text: 'v10 battery r2', reasonDocumentId: REASON_DOCUMENT_ID });
+  check('r2c a resolution citing a listed reason lands', listed === null, (listed ?? '').slice(0, 200));
+  // Field changes are no deletion: the owner's protection does not stop them.
+  const ownerReport = await attemptCreate(sdk, ctx.moderator, { contractId, docType: 'report', data: reportData({ postId: bs58.decode(postId), targetOwnerId: bs58.decode(botB.ownerId), reason: 0 }) });
+  if (ownerReport.ok) {
+    const onOwner = await changeReport(ctx, member, ownerReport.id, { status: 1 }, { text: 'v10 battery r2', reasonDocumentId: REASON_DOCUMENT_ID });
+    check('r2d the team resolves the protected owner\'s report too (a change, not a deletion)', onOwner === null, (onOwner ?? '').slice(0, 200));
+  }
+}
+
+// ---- v10: trending without beat ------------------------------------------------------
+
+/** Today's window on the like grid (the one the client reads). */
+const TODAY = { timeRange: [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 86400 } }] };
+
+async function rankedToday(ctx, extra) {
+  return readback(() => ctx.sdk.documents.ranked({ dataContractId: ctx.contractId, documentTypeName: 'like', aggregate: { type: 'count' }, direction: 'desc', limit: 100, ...TODAY, ...extra }));
+}
+
+/** The like A wrote on `postId` today, as the byLiker index returns it (its $createdAt is needed to delete it by values). */
+async function ownLike(ctx, postId) {
+  const page = await readback(() => ctx.sdk.documents.query({ dataContractId: ctx.contractId, documentTypeName: 'like', where: [['$ownerId', '==', ctx.botA.ownerId], ['postId', '==', postId]], limit: 1 }));
+  for (const document of page.values()) if (document) return document;
+  return null;
+}
+
+async function caseT2TrendingOnLike(ctx) {
+  const { sdk, contractId, botA, botB } = ctx;
+  console.log('\n--- t2. trending tags on like.byDayHashtagPost (no beat): tagged likes count, untagged ones do not ---');
+  const tag = `${ctx.tag}t`;
+  const tagged = await createFeed(ctx, botB, 'post', postData({ content: 't2 tagged', hashtag: tag }), 't2 tagged post');
+  const untagged = await createFeed(ctx, botB, 'post', postData({ content: 't2 untagged' }), 't2 untagged post');
+  if (!tagged || !untagged) { check('t2 fixture', false, 'no fixture posts'); return; }
+  const owner = bs58.decode(botB.ownerId);
+  const like = (postId, hashtag) => attemptCreateIndexOnly(sdk, botA, {
+    contractId, docType: 'like', data: likeData({ postId: bs58.decode(postId), ...(hashtag ? { hashtag } : {}), postAuthor: owner }),
+    accepted: () => entryExists(sdk, contractId, 'like', 'postId', postId, botA.ownerId),
+  });
+  expectAccepted('t2a A likes the tagged post (one transition, no beat companion)', await like(tagged, tag));
+  expectAccepted('t2b A likes the untagged post', await like(untagged));
+  await settle();
+
+  const tags = await rankedToday(ctx, { groupBy: 'hashtag' });
+  const entry = tags.entries.find((e) => e.groupValue === tag);
+  check('t2c today\'s trending tags (groupBy hashtag) carry the run\'s tag at 1', Number(entry?.value ?? -1) === 1, `value=${entry?.value} groups=${tags.entries.length}`);
+  check('t2d no untagged group appears (skipIfAbsent)', tags.entries.every((e) => typeof e.groupValue === 'string' && e.groupValue !== ''), describeValue(tags.entries.map((e) => e.groupValue)));
+  const perTag = await rankedToday(ctx, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
+  check('t2e today\'s top posts for the tag rank the tagged post at 1', Number(perTag.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1, `groups=${perTag.entries.length}`);
+  const perTagUntagged = perTag.entries.some((e) => e.groupValue === untagged);
+  check('t2f the untagged post is not in the tag\'s window', !perTagUntagged);
+  const allTime = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, where: [['hashtag', '==', tag]], limit: 10 }));
+  check('t2g the all-time per-tag ranking (byHashtagPost) agrees', Number(allTime.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1);
+
+  const stored = await ownLike(ctx, tagged);
+  if (!stored) { check('t2 unlike fixture', false, 'A\'s like is not readable'); return; }
+  const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, id: stored.id.toBytes?.() ?? bs58.decode(idOf(stored.id)),
+    createdAt: Number(stored.createdAt), data: likeData({ postId: bs58.decode(tagged), hashtag: tag, postAuthor: owner }) });
+  expectAccepted('t2h A unlikes the tagged post (delete by values)', await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await entryExists(sdk, contractId, 'like', 'postId', tagged, botA.ownerId)) }));
+  await settle();
+  try {
+    const after = await rankedToday(ctx, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
+    check('t2i the tag\'s window no longer counts the post', Number(after.entries.find((e) => e.groupValue === tagged)?.value ?? 0) === 0, `groups=${after.entries.length}`);
+  } catch (e) {
+    // A window bucket that drained to nothing can fail proof generation instead of proving empty (platform#4592).
+    const cold = /single-path axis read must produce exactly one axis descent/i.test(describeErr(e));
+    check('t2i the tag\'s window no longer counts the post', cold, cold ? 'cold bucket (the empty answer)' : describeErr(e).slice(0, 200));
+  }
+}
+
+// ---- v10: YAPP is locked -----------------------------------------------------------------
+
+async function caseY1YappLocked(ctx) {
+  const { sdk, contractId, botA, botB } = ctx;
+  console.log('\n--- y1. YAPP: paused for good (no transfer), never priced (no purchase); costs and the grant still work ---');
+  const tokenId = await readback(() => sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
+  const balance = async (id) => {
+    const balances = await readback(() => sdk.tokens.balances([id], tokenId));
+    return (balances instanceof Map ? balances.get(id) : undefined) ?? 0n;
+  };
+  const before = { a: await balance(botA.ownerId), b: await balance(botB.ownerId) };
+  const transfer = await errorOf(() => sdk.tokens.transfer({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION, senderId: botA.ownerId, recipientId: botB.ownerId, amount: 1n, identityKey: botA.identityKey, signer: botA.signer }));
+  await settle();
+  const moved = (await balance(botB.ownerId)) !== before.b;
+  expectRejected('y1a a YAPP transfer is refused (40711: the token is paused)', { ok: transfer === null || moved, error: transfer }, TOKEN_PAUSED);
+
+  const prices = await readback(() => sdk.tokens.directPurchasePrices([tokenId]));
+  const price = prices instanceof Map ? prices.get(tokenId) : prices?.[tokenId];
+  check('y1b YAPP has no direct-purchase price', price === undefined || price === null, describeValue(price));
+  const purchase = await errorOf(() => sdk.tokens.directPurchase({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION, buyerId: botA.ownerId, amount: 100n, maxTotalCost: 10_000_000_000n, identityKey: botA.identityKey, signer: botA.signer }));
+  expectRejected('y1c a direct purchase is refused (40721: not for sale)', { ok: purchase === null, error: purchase }, NOT_FOR_SALE);
+
+  // A token COST is not a transfer: posting still pays 10 YAPP from a paused token.
+  const { agreement } = await feeAgreement(ctx, POST_ACTION_FEE);
+  const payment = paymentInfo(tokenCostFor('post').amount, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }).tokenPaymentInfo;
+  const paid = await manualCreate(ctx, botA, { docType: 'post', data: postData({ content: 'y1 paid in YAPP' }), agreement, payment });
+  expectAccepted('y1d a post paying 10 YAPP lands on the paused token', paid);
+  await settle();
+  const after = await balance(botA.ownerId);
+  check('y1e …and A\'s balance fell by exactly the post\'s token cost', after === before.a - BigInt(tokenCostFor('post').amount), `before=${before.a} after=${after}`);
+
+  const fresh = await freshActor(ctx);
+  if (!fresh) { console.log('SKIP  y1f–y1g: needs --fresh-bot <n>, an identity that has not claimed its starter grant'); return; }
+  const claim = () => errorOf(() => sdk.tokens.claim({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION, identityId: fresh.ownerId, distributionType: 'oncePerIdentity', identityKey: fresh.identityKey, signer: fresh.signer }));
+  const start = await balance(fresh.ownerId);
+  const first = await claim();
+  await settle();
+  check('y1f a fresh identity claims its 100 starter YAPP (a claim is not a transfer)', (await balance(fresh.ownerId)) === start + 100n, (first ?? '').slice(0, 160));
+  const second = await claim();
+  expectRejected('y1g a second claim is refused (40722)', { ok: second === null, error: second }, ALREADY_CLAIMED);
+}
+
+// ---- Registry ------------------------------------------------------------------
+
+async function ensurePrepared(ctx) {
+  if (ctx.prepared === true) return;
+  if (ctx.prepared instanceof Error) throw ctx.prepared;
+  try {
+    ctx.contract = await readback(() => ctx.sdk.contracts.fetch(ctx.contractId));
+    ctx.ownerId = ctx.contract.ownerId.toBase58();
+    ctx.moderator = await resolveModerator(ctx.sdk, MODERATOR_SPEC);
+    console.log(`contract owner: ${ctx.ownerId}; moderator: ${ctx.moderator.label}`);
+    if (ctx.seated === null) ctx.seated = (await readback(() => ctx.sdk.moderationCharters.seatedCharter(ctx.contractId))) != null;
+    ctx.prepared = true;
+  } catch (e) {
+    ctx.prepared = e instanceof Error ? e : new Error(String(e));
+    throw ctx.prepared;
+  }
+}
+
+const prepared = (run) => async (ctx) => { await ensurePrepared(ctx); return run(ctx); };
+
+const CASES = new Map([
+  ['e0', prepared(caseE0Declaration)],
+  ['d1', prepared(caseD1DistinctFrom)],
+  ['p1', prepared(caseP1PrivateFeedGates)],
+  ['b1', prepared(caseB1TypedBlockFollows)],
+  ['w1', prepared(caseW1Warnings)],
+  ['m1', prepared(caseM1DeleteRestore)],
+  ['m2', prepared(caseM2InterimBan)],
+  ['o1', caseO1LikeOwnerAgreement],
+  ['o2', caseO2LikeReplyOwnerAgreement],
+  ['o3', caseO3RepostOwnerAgreement],
+  ['o4', caseO4QuoteAndParentOwner],
+  ['x1', prepared(caseX1RealDeletes)],
+  ['x2', caseX2MediaAndLimits],
+  ['x3', prepared(caseX3ProfileExtension)],
+  ['c1', caseC1PropertyConstraints],
+  ['r1', prepared(caseR1Reports)],
+  ['r2', prepared(caseR2SeatedResolution)],
+  ['t2', caseT2TrendingOnLike],
+  ['y1', caseY1YappLocked],
+]);
+
+// ---- Self-test ------------------------------------------------------------------
+
+/** Offline: the committed JSON declares every rule a case asserts. */
+function selfTest() {
+  const schemas = V10.documentSchemas;
+  const problems = [];
+  const expect = (what, ok) => { if (!ok) problems.push(what); };
+  const moderators = V10.config.moderation.moderators;
+  const where = (type, prop) => schemas[type].properties[prop].refersTo?.where ?? {};
+  expect('config $formatVersion is "2"', V10.config.$formatVersion === '2');
+  expect('all three moderation lists are kept (e0, w1)', V10.config.moderation.banlist && V10.config.moderation.suspensions && V10.config.moderation.warnings);
+  expect('moderators are elected with the owner as interim (e0, m1, m2, w1)', moderators.$type === 'elected' && moderators.interim?.$type === 'contractOwner');
+  expect('post and reply are moderator-deletable with a record (m1)', ['post', 'reply'].every((t) => schemas[t].moderatorAbilities?.delete === true && schemas[t].moderatorAbilities.deleteKeepsRecord !== false));
+  for (const [type, prop] of [['follow', 'followingId'], ['block', 'blockedId'], ['followRequest', 'targetId'], ['privateFeedGrant', 'recipientId']]) {
+    expect(`${type}.${prop} is distinctFrom $ownerId (d1, p1i)`, schemas[type].properties[prop].distinctFrom === '$ownerId');
+  }
+  expect('grant and rekey gate the writer on privateFeedState (p1a, p1b)', ['privateFeedGrant', 'privateFeedRekey'].every((t) => schemas[t].ownerRefersTo?.documentType === 'privateFeedState' && schemas[t].ownerRefersTo?.findBy?.$ownerId === '.'));
+  expect('grant.recipientId needs a followRequest found by (targetId, $ownerId) (p1d)', JSON.stringify(schemas.privateFeedGrant.properties.recipientId.refersTo?.findBy) === JSON.stringify({ targetId: '$ownerId', $ownerId: '.' }));
+  expect('the private feed counts key generations (p1)', schemas.privateFeedRekey.properties.keyGeneration && schemas.privateFeedGrant.properties.keyGeneration && schemas.privateFeedState.properties.maxKeyGeneration && !schemas.post.properties.epoch);
+  const blockers = schemas.blockFollow.properties.followedBlockers;
+  expect('followedBlockers is a typed identity array with distinct, owner-excluded items (b1)', blockers.items?.refersTo?.type === 'identity' && blockers.items?.distinctFrom === '$ownerId' && blockers.uniqueItems === true);
+  expect('the post action fee is 80M credits to the moderators (fixtures)', POST_ACTION_FEE?.moderators === 80_000_000n);
+  expect('like.postId agrees hashtag and postAuthor with the post (o1)', where('like', 'postId').hashtag === 'hashtag' && where('like', 'postId').$ownerId === 'postAuthor');
+  expect('likeReply.replyId agrees replyAuthor with the reply (o2)', where('likeReply', 'replyId').$ownerId === 'replyAuthor');
+  expect('repost.postId agrees postOwnerId with the post (o3)', where('repost', 'postId').$ownerId === 'postOwnerId');
+  expect('a quote binds quotedPostOwnerId (o4a, o4b)', where('post', 'quotedPostId').$ownerId === 'quotedPostOwnerId' && where('post', 'quotedReplyId').$ownerId === 'quotedPostOwnerId');
+  expect('a nested reply binds parentOwnerId (o4d)', where('reply', 'replyToReplyId').$ownerId === 'parentOwnerId');
+  expect('post and reply are immutable and owner-deletable, with no tombstone field (x1)', ['post', 'reply'].every((t) => schemas[t].documentsMutable === false && schemas[t].canBeDeleted === undefined && !schemas[t].properties.deleted) && V10.config.documentsCanBeDeletedContractDefault === true);
+  expect('every reference at post or reply is deletable, so a deleted target is 40120 (x1g–x1l)', Object.values(schemas).every((s) => Object.values(s.properties).every((p) => !['post', 'reply'].includes(p.refersTo?.documentType) || p.refersTo.type === 'deletableDocument')));
+  expect('quote and reply counts are countable per target (x1b, x1d, x1f)', schemas.post.indices.some((i) => i.name === 'quoteCount' && i.countable) && schemas.reply.indices.some((i) => i.name === 'byRoot' && i.countable));
+  for (const type of ['post', 'reply']) {
+    expect(`${type} content is 1000 characters / 2000 bytes (x2f–x2j)`, schemas[type].properties.content.maxLength === 1000 && schemas[type].properties.content.maxBytes === 2000);
+    expect(`${type} media hash and fingerprint are required with mediaUrl, and only with it (x2a–x2d)`, JSON.stringify(schemas[type].dependentRequired) === JSON.stringify({ mediaUrl: ['mediaHash', 'mediaFingerprint'], mediaHash: ['mediaUrl'], mediaFingerprint: ['mediaUrl'] }));
+  }
+  expect('post has no language and a global timeline (x2k, x2l)', !schemas.post.properties.language && schemas.post.indices.some((i) => i.name === 'timeline' && JSON.stringify(i.properties) === '[{"$createdAt":"asc"}]'));
+  expect('yapprProfile needs a DashPay profile (x3a)', JSON.stringify(schemas.yapprProfile.ownerRefersTo) === JSON.stringify({ type: 'deletableDocument', contractId: DASHPAY_CONTRACT_ID, documentType: 'profile', findBy: { $ownerId: '.' } }));
+  expect('yapprProfile is one per owner, non-empty and moderator-deletable (x3d–x3f)', schemas.yapprProfile.indices.some((i) => i.unique && JSON.stringify(i.properties) === '[{"$ownerId":"asc"}]') && schemas.yapprProfile.minProperties === 1 && schemas.yapprProfile.moderatorAbilities?.delete === true && moderators.moderatedDocumentTypes.yapprProfile?.includes('deleteDocuments'));
+  expect('there is no beat, and like carries today\'s hashtag window, skipped when untagged (t2)', !schemas.beat && schemas.like.indices.some((i) => i.name === 'byDayHashtagPost' && i.skipIfAbsent === true && i.timeRange?.range === 86400));
+  expect('a report expires 90 days after it is filed', schemas.report.ttl === 7_776_000 && schemas.report.required.includes('$createdAt'));
+  expect('reports are resolved through changeFields status/resolution and purged without a record (r1)', JSON.stringify(schemas.report.moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsRecord: false, changeFields: ['status', 'resolution'] }) && JSON.stringify(moderators.moderatedDocumentTypes.report) === '["deleteDocuments","changeDocumentFields"]');
+  expect('reports index byStatus and byModerator (r1m, r1n)', ['byStatus', 'byModerator'].every((n) => schemas.report.indices.some((i) => i.name === n)));
+  expect('one report per reporter and post, and per reporter and reply (r1b)', ['postId', 'replyId'].every((p) => schemas.report.indices.some((i) => i.unique && JSON.stringify(i.properties) === JSON.stringify([{ $ownerId: 'asc' }, { [p]: 'asc' }]))));
+  expect('report.targetOwnerId agrees with the target and is not the reporter (r1d, r1e)', where('report', 'postId').$ownerId === 'targetOwnerId' && where('report', 'replyId').$ownerId === 'targetOwnerId' && schemas.report.properties.targetOwnerId.distinctFrom === '$ownerId');
+  const token = V10.tokens['0'];
+  expect('YAPP starts paused, nobody can unpause it or price it, and the owner may mint to anyone (y1)', token.startAsPaused === true && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne' && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne' && token.manualMintingRules.authorizedToMakeChange.$type === 'contractOwner' && token.distributionRules.mintingAllowChoosingDestination === true);
+  expect('the starter grant is 100 once per identity (y1f)', token.distributionRules.oncePerIdentityDistribution?.amount === 100);
+  expect('the election windows are one hour each on this devnet cut (e0c)', moderators.joinWindow === 3600 && moderators.voteWindow === 3600);
+  for (const [type, rules] of Object.entries(DECLARED_RULES['yappr-social-contract-v10.json'])) {
+    expect(`${type} declares exactly the propertyConstraints rules c1 and r1 assert`, JSON.stringify(Object.keys(schemas[type].propertyConstraints ?? {}).sort()) === JSON.stringify([...rules].sort()));
+  }
+  for (const problem of problems) console.error(`FAIL  ${problem}`);
+  if (problems.length > 0) { console.error(`${CONTRACT_FILE} no longer declares what this battery asserts`); return 1; }
+  console.log(`${CONTRACT_FILE} declares every rule this battery asserts`);
+  return 0;
+}
+
+if (process.argv.includes('--self-test') && selfTest() !== 0) process.exit(1);
+
+const someId = randomIdBytes;
+const botIndexArg = (flag, fallback) => { const i = process.argv.indexOf(flag); return i === -1 ? fallback : Number(process.argv[i + 1]); };
+const SHAPE_MEDIA = await mediaFields();
+
+// Offline, before runBattery: every shape the live run writes must SERIALIZE
+// under the parsed v10 contract (Document.toBytes runs the type's encoder).
+const SHAPES = [
+  ['follow (self: refused)', 'follow', followData({ followingId: someId() })],
+  ['block', 'block', blockData({ blockedId: someId() })],
+  ['followRequest', 'followRequest', followRequestData({ targetId: someId() })],
+  ['privateFeedState', 'privateFeedState', feedStateData()],
+  ['privateFeedGrant', 'privateFeedGrant', grantData({ recipientId: someId() })],
+  ['privateFeedRekey', 'privateFeedRekey', rekeyData()],
+  ['blockFollow (typed ids)', 'blockFollow', blockFollowData([someId(), someId()])],
+  ['post (credits, agreed fee)', 'post', postData()],
+  ['post (tagged, quote + owner denorm)', 'post', postData({ hashtag: 'v10tag', quotedPostId: someId(), quotedPostOwnerId: someId() })],
+  ['post (media triple + sensitive)', 'post', postData({ media: SHAPE_MEDIA, sensitive: true })],
+  ['post (1000 characters)', 'post', postData({ content: 'x'.repeat(1000) })],
+  ['reply', 'reply', replyData({ rootPostId: someId(), parentOwnerId: someId() })],
+  ['like (tagged)', 'like', likeData({ postId: someId(), hashtag: 'v10tag', postAuthor: someId() })],
+  ['like (hashtag absent)', 'like', likeData({ postId: someId(), postAuthor: someId() })],
+  ['likeReply', 'likeReply', likeReplyData({ replyId: someId(), replyAuthor: someId() })],
+  ['repost', 'repost', repostData({ postId: someId(), postOwnerId: someId() })],
+  ['report (post)', 'report', reportData({ postId: someId(), targetOwnerId: someId() })],
+  ['report (reply, something else + note)', 'report', reportData({ replyId: someId(), targetOwnerId: someId(), reason: 8, note: 'why' })],
+  ['yapprProfile', 'yapprProfile', yapprProfileData()],
+];
+if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) {
+  await ensureInitialized();
+  const placeholder = bs58.encode(new Uint8Array(32).fill(1));
+  const platformVersion = PlatformVersion.latest();
+  const contract = DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: V10.documentSchemas, config: V10.config, tokens: V10.tokens }, true, platformVersion);
+  const owner = new Uint8Array(32).fill(2);
+  const documentOf = (docType, data) => Document.fromObject({
+    $formatVersion: '0', $id: someId(), $ownerId: owner, $dataContractId: bs58.decode(placeholder), $type: docType,
+    $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...data,
+  }, platformVersion);
+  for (const [label, docType, data] of SHAPES) {
+    try {
+      documentOf(docType, data).toBytes(contract, platformVersion);
+      console.log(`serializes under v10: ${label}`);
+    } catch (e) {
+      console.error(`FAIL  ${label} does not serialize under the v10 contract: ${String(e?.message ?? e).slice(0, 200)}`);
+      process.exit(1);
+    }
+  }
+}
+
+await runBattery({
+  name: 'v10',
+  contractEnvVar: 'V10_CONTRACT_ID',
+  usage:
+    'Usage: node scripts/verify-v10.mjs --contract <id> [--bot <n>] [--bot2 <n>] [--fresh-bot <n> [--fresh-owner <id>]]\n' +
+    '       [--moderator maker] [--owner <id>] [--owner2 <id>] [--team-member bot:<n> --reason-doc <id>] [--only e0,x1] [--dry-run|--self-test]',
+  cases: CASES,
+  shapes: SHAPES,
+  replaceShapes: [
+    ['blockFollow (grown list)', 'blockFollow', blockFollowData([someId(), someId(), someId()])],
+    ['yapprProfile (edited)', 'yapprProfile', { ...yapprProfileData(), nsfw: true }],
+  ],
+  makeContext: ({ sdk, contractId, botA, botB }) => ({
+    sdk,
+    contractId,
+    botA: { ...botA, wif: wifForBot(botIndexArg('--bot', 0)) },
+    botB: { ...botB, wif: wifForBot(botIndexArg('--bot2', 1)) },
+    prepared: false,
+    contract: null,
+    ownerId: null,
+    moderator: null,
+    seated: null,
+    /** Run-unique lowercase hashtag, so per-tag assertions stay exact across re-runs. */
+    tag: `v10b${Date.now().toString(36)}`,
+    /** Fixture posts owned by B, keyed by role. */
+    posts: {},
+    replyId: null,
+  }),
+  summarize: (ctx) => {
+    console.log(`seated charter: ${ctx.seated === null ? 'not read' : ctx.seated}`);
+    console.log(`run tag: #${ctx.tag}; fixture posts: ${JSON.stringify(ctx.posts)}`);
+  },
+});

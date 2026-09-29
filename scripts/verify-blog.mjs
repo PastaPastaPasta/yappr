@@ -351,12 +351,12 @@ await runBattery({
   selfTest: () => selfTestModerated(CONTRACT_FILE, {
     // b3a: the notification key binds to the post's REAL owner. b20: the post's
     // commentsEnabled is copied, and a copy of `false` is refused (beta.6 v5).
-    blogComment: { agreements: { blogPostId: { blogPostOwnerId: '$ownerId', postCommentsEnabled: 'commentsEnabled' } }, moderatorDeletable: true, constraints: DECLARED_RULES[CONTRACT_FILE].blogComment },
+    blogComment: { where: { blogPostId: { $ownerId: 'blogPostOwnerId', commentsEnabled: 'postCommentsEnabled' } }, moderatorDeletable: true, constraints: DECLARED_RULES[CONTRACT_FILE].blogComment },
     // b12: blogId frozen, publishedAt write-once. b15: moderators may remove a post.
     // b18: labels are typed string arrays (beta.4 v4).
     // b19: content chunks are contiguous (beta.5).
     // b21: only the blog's owner posts to it (beta.6 v5).
-    blogPost: { agreements: { blogId: { $ownerId: '$ownerId' } }, immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'], moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
+    blogPost: { where: { blogId: { $ownerId: '$ownerId' } }, immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'], moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
     blog: { moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 64, maxLength: 40 } } },
   }, { moderation: { banlist: true, suspensions: true, warnings: true } }),
   setup: async ({ battery, tokenId, reader, moderator }) => ({ startedAt: Date.now() - 60_000, readerComments: 0, strangerCommentId: null, draftId: null, publishedAt: null, readerYappBefore: await battery.yappBalance(tokenId, reader.ownerId), moderator: { ...moderator, identity: await battery.readback(() => battery.sdk.identities.fetch(moderator.ownerId)) } }),

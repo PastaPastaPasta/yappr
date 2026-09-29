@@ -9,13 +9,14 @@
  *
  * Actors are seed-ledger personas (`.seed-identities.local.json`, see
  * scripts/seed/provision-seed-identities.mjs); `personaActor` signs with the
- * persona's CRITICAL auth key, which also covers YAPP direct purchases.
+ * persona's CRITICAL auth key, which also covers the YAPP starter claim.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { IdentitySigner, TokenPaymentInfo, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID } from './derive-identities.mjs';
+import { resolveOwner, signerFor } from './owner-keys.mjs';
 import {
   REPO_ROOT,
   YAPP_TOKEN_POSITION,
@@ -32,19 +33,24 @@ import {
   socialContractId,
   wifFromHex,
 } from './seed/seed-lib.mjs';
+import { readEnvFile } from './derive-identities.mjs';
+
+const envDevnet = (name) => readEnvFile(join(REPO_ROOT, '.env.devnet'))[name];
 
 export const SETTLE_MS = 3000;
 export const POLL_ATTEMPTS = 3;
-export const MIN_YAPP_PURCHASE = 100n;
+/** The once-per-identity starter grant a persona may claim before the owner mints the rest. */
+const STARTER_GRANT = 100n;
+const ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|already claimed/i;
 
 // ---- Expected consensus rejection shapes (matched against describeErr text) ----
 export const REFERENCE_NOT_FOUND = /\b40120\b|referenced .*not found/i;
 /**
- * ReferencedDocumentPropertyMismatchError. Covers BOTH agreement shapes: a value
- * pair that disagrees with the referenced document, and a WRITER GATE
- * (`propertyAgreement: {"$ownerId": …}`) refusing a signer who may not write the
- * document at all — the gate is an agreement pair with the signing identity on
- * the referring side, so consensus reports it the same way.
+ * ReferencedDocumentPropertyMismatchError. Covers BOTH `where` shapes: a value
+ * pair that disagrees with the referenced document, and a WRITER GATE (a
+ * `where` entry valued `"$ownerId"`) refusing a signer who may not write the
+ * document at all — the gate is an entry with the signing identity on the
+ * referring side, so consensus reports it the same way.
  */
 export const PROPERTY_MISMATCH = /\b40127\b|does not agree with the referenced document/i;
 /** DocumentImmutablePropertyChangedError: a replace touched a frozen property. */
@@ -146,23 +152,39 @@ export function createBattery({ handle, contractId, socialId }) {
     return (balances instanceof Map ? balances.get(ownerId) : undefined) ?? 0n;
   }
 
-  /** Buys YAPP for an actor up to `target` (direct purchase, CRITICAL key). */
+  let minterPromise = null;
+  /** The contract owner (the devnet maker, seed index 9), who alone may mint YAPP. */
+  const minter = () => (minterPromise ??= (async () => {
+    const owner = resolveOwner({ botIndex: 9, ownerId: process.env.DEVNET_MAKER_IDENTITY_ID || envDevnet('DEVNET_MAKER_IDENTITY_ID') });
+    return { ownerId: owner.ownerId, ...(await signerFor(sdk, owner)) };
+  })());
+
+  /**
+   * Tops an actor up to `target` YAPP: its own once-per-identity starter claim
+   * first (a claim is not a transfer, so the paused v10 token pays it; a second
+   * claim is 40722 and harmless), then an owner MINT of the rest straight to the
+   * actor. YAPP can no longer be bought or transferred (v10: paused, no price).
+   * Failures are reported, not thrown: the balance read back is what callers trust.
+   */
   async function ensureYapp(tokenId, actor, target) {
-    const balance = await yappBalance(tokenId, actor.ownerId);
+    let balance = await yappBalance(tokenId, actor.ownerId);
     if (balance >= target) return balance;
-    const prices = await readback(() => sdk.tokens.directPurchasePrices([tokenId]));
-    const info = prices instanceof Map ? prices.get(tokenId) : prices?.[tokenId];
-    const price = BigInt(info?.currentPrice ?? 0);
-    if (price === 0n) throw new Error(`YAPP ${tokenId} has no direct-purchase price`);
-    const amount = MIN_YAPP_PURCHASE > target - balance ? MIN_YAPP_PURCHASE : target - balance;
-    console.log(`     buying ${amount} YAPP for ${actor.label} (${amount * price} credits)`);
     try {
-      await sdk.tokens.directPurchase({
-        dataContractId: socialId, tokenPosition: YAPP_TOKEN_POSITION, buyerId: actor.ownerId,
-        amount, maxTotalCost: amount * price, identityKey: actor.identityKey, signer: actor.signer,
-      });
+      await sdk.tokens.claim({ dataContractId: socialId, tokenPosition: YAPP_TOKEN_POSITION, identityId: actor.ownerId, distributionType: 'oncePerIdentity', identityKey: actor.identityKey, signer: actor.signer });
+      console.log(`     ${actor.label} claimed its ${STARTER_GRANT} starter YAPP`);
     } catch (e) {
-      console.log(`     (purchase reported: ${describeErr(e).slice(0, 140)})`);
+      if (!ALREADY_CLAIMED.test(describeErr(e))) console.log(`     (starter claim reported: ${describeErr(e).slice(0, 140)})`);
+    }
+    await settle();
+    balance = await yappBalance(tokenId, actor.ownerId);
+    if (balance >= target) return balance;
+    const amount = target - balance;
+    console.log(`     minting ${amount} YAPP to ${actor.label} from the contract owner`);
+    try {
+      const owner = await minter();
+      await sdk.tokens.mint({ dataContractId: socialId, tokenPosition: YAPP_TOKEN_POSITION, amount, identityId: owner.ownerId, recipientId: actor.ownerId, identityKey: owner.identityKey, signer: owner.signer });
+    } catch (e) {
+      console.log(`     (mint reported: ${describeErr(e).slice(0, 140)})`);
     }
     await settle();
     return yappBalance(tokenId, actor.ownerId);
@@ -534,7 +556,8 @@ export async function runBattery(spec) {
  * `--self-test`.
  *
  * `expect` is keyed by document type:
- *   agreements: { <property>: { <referring>: <referenced>, … } }  exact match
+ *   where: { <property>: { <referenced>: <referring>, … } }  exact match, in
+ *          the beta.7 orientation (the referenced document's property is the key)
  *   immutable / immutableAllowSetting: property names, order-insensitive
  *
  * Returns a process exit code.
@@ -543,7 +566,7 @@ export function selfTest(file, expect) {
   const parsed = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', file), 'utf8'));
   const schemas = parsed.documentSchemas ?? parsed;
   const problems = [];
-  // Both comparisons are order-insensitive: a propertyAgreement is a SET of
+  // Both comparisons are order-insensitive: a `where` is a SET of
   // pairs and an immutable list a set of names, so a build script that emits
   // them in a different order has changed nothing consensus can see.
   const sortedNames = (values) => [...(values ?? [])].sort();
@@ -558,9 +581,9 @@ export function selfTest(file, expect) {
   for (const [docType, rules] of Object.entries(expect)) {
     const schema = schemas[docType];
     if (!schema) { problems.push(`${docType}: document type is missing`); continue; }
-    for (const [property, agreement] of Object.entries(rules.agreements ?? {})) {
-      compare(`${docType}.${property} propertyAgreement`,
-        sortedPairs(schema.properties?.[property]?.refersTo?.propertyAgreement), sortedPairs(agreement));
+    for (const [property, where] of Object.entries(rules.where ?? {})) {
+      compare(`${docType}.${property} where`,
+        sortedPairs(schema.properties?.[property]?.refersTo?.where), sortedPairs(where));
     }
     for (const key of ['immutable', 'immutableAllowSetting']) {
       if (rules[key] === undefined) continue;

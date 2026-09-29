@@ -4,8 +4,8 @@
  *
  * The name is historical — the script is file-agnostic. It publishes any
  * contract JSON from `contracts/` as a brand-new contract; pick the file with
- * `--contract-file` (default `yappr-social-contract-v9.json`, the shape the
- * /devnet build runs). Superseded social cuts are not kept in the repo; see
+ * `--contract-file` (default `yappr-social-contract-v10.json`, the 4.2.0-beta.7
+ * cut the /devnet build moves to). Superseded social cuts are not kept in the repo; see
  * git history if an old shape is ever needed.
  *
  * ## Registered devnet contracts
@@ -69,9 +69,11 @@
  *
  * A fresh contract mints its whole YAPP `baseSupply` to the contract owner, so
  * every other identity starts at zero and its first token-priced write (a post
- * costs 10 YAPP) is refused. `--fund <id>[,<id>…]` transfers `--fund-amount`
- * YAPP from the freshly-registered contract's owner to each id, which is what
- * makes the verification battery able to write posts/replies/likes at all.
+ * costs 10 YAPP) is refused. `--fund <id>[,<id>…]` gives `--fund-amount` YAPP to
+ * each id, which is what makes the verification battery able to write
+ * posts/replies/likes at all. The owner MINTS it to each id
+ * (`mintingAllowChoosingDestination`): v10's YAPP starts paused and can never
+ * be unpaused, so a transfer is refused; on v9 a mint works the same.
  * `--fund-only <contractId>` performs just that step against a contract that
  * already exists, for topping a bot up without republishing anything.
  *
@@ -99,7 +101,7 @@ import { auditModeration, requireModeratorsExist, withModerators } from './regis
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONTRACTS_DIR = join(REPO_ROOT, 'contracts');
-const DEFAULT_CONTRACT_FILE = 'yappr-social-contract-v9.json';
+const DEFAULT_CONTRACT_FILE = 'yappr-social-contract-v10.json';
 /** YAPP is defined at token position 0 of every yappr social contract. */
 const YAPP_TOKEN_POSITION = 0;
 /** Enough YAPP for a battery run: posts cost 10, replies 3, likes/reposts 1. */
@@ -198,7 +200,7 @@ function printSchemaAudit(documentSchemas) {
       `mutable=${schema.documentsMutable ?? 'default'}`,
       `canBeDeleted=${schema.canBeDeleted ?? 'default'}`,
       ...(schema.documentsCountable ? ['countable'] : []),
-      ...(schema.canBeDeletedByModerators ? ['moderatorDelete'] : []),
+      ...(schema.moderatorAbilities ? [`moderators=${JSON.stringify(schema.moderatorAbilities)}`] : []),
     ];
     const cost = schema.tokenCost?.create;
     if (cost) flags.push(`create=${cost.amount} token@${cost.tokenPosition}${cost.optional ? ' (optional)' : ''}${cost.gasFeesPaidBy ? ` gas=${cost.gasFeesPaidBy}` : ''}`);
@@ -232,7 +234,7 @@ function printSchemaAudit(documentSchemas) {
   for (const [target, references] of targets) {
     const schema = documentSchemas[target];
     if (!schema) throw new Error(`refersTo names document type "${target}", which this contract does not define`);
-    const deletable = schema.canBeDeleted !== false || schema.canBeDeletedByModerators === true;
+    const deletable = schema.canBeDeleted !== false || schema.moderatorAbilities?.delete === true || schema.ttl !== undefined;
     for (const { from, type } of references) {
       if (type === 'permanentDocument' && deletable) {
         throw new Error(`${from}: "${target}" is a permanentDocument target but can be deleted (by its owner or by moderators)`);
@@ -246,9 +248,10 @@ function printSchemaAudit(documentSchemas) {
 }
 
 /**
- * Transfers YAPP from the contract owner (who holds the whole freshly-minted
- * `baseSupply`) to each recipient, so their first token-priced document write is
- * not refused for an empty balance.
+ * Mints YAPP from the contract owner straight to each recipient, so their first
+ * token-priced document write is not refused for an empty balance. A mint, not
+ * a transfer: v10's YAPP is paused for good, and a paused token refuses every
+ * transfer while token costs, the starter grant and owner mints still work.
  */
 async function fundRecipients(sdk, { contractId, owner, identityKey, signer, recipients, amount }) {
   // The trusted SDK needs the contract cached before it can verify a token
@@ -259,19 +262,19 @@ async function fundRecipients(sdk, { contractId, owner, identityKey, signer, rec
 
   for (const recipientId of recipients) {
     try {
-      await sdk.tokens.transfer({
+      await sdk.tokens.mint({
         dataContractId: contractId,
         tokenPosition: YAPP_TOKEN_POSITION,
-        senderId: owner.ownerId,
+        identityId: owner.ownerId,
         recipientId,
         amount,
         identityKey,
         signer,
       });
     } catch (e) {
-      // A gateway timeout on a transfer that landed must not look like a
+      // A gateway timeout on a mint that landed must not look like a
       // failure, so the balance read below is what decides.
-      console.log(`  transfer to ${recipientId} reported: ${describeErr(e).slice(0, 160)}`);
+      console.log(`  mint to ${recipientId} reported: ${describeErr(e).slice(0, 160)}`);
     }
   }
 
@@ -431,7 +434,7 @@ try {
 
   console.log('');
   console.log(`.env.devnet → NEXT_PUBLIC_YAPPR_CONTRACT_ID=${contractId}`);
-  console.log(`battery     → NETWORK=devnet node scripts/verify-v9.mjs --contract ${contractId} …`);
+  console.log(`battery     → NETWORK=devnet node scripts/verify-v10.mjs --contract ${contractId} …`);
 } catch (e) {
   console.error('ERROR:', describeErr(e));
   process.exit(1);

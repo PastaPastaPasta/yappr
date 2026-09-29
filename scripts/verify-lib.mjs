@@ -423,9 +423,9 @@ export function expectAccepted(label, outcome) {
 // exists to prevent. The optional quote covers the `"code":40127` rendering.
 
 /**
- * propertyAgreement violation (ReferencedDocumentPropertyMismatchError,
- * 40127). Live message: "the document's <p> does not agree with the referenced
- * document's <q> (propertyAgreement on <field>)".
+ * `where` violation (ReferencedDocumentPropertyMismatchError, 40127). Live
+ * message: "the document's <p> does not agree with the referenced document's
+ * <q> (where on <field>)" — "propertyAgreement on" before 4.2.0-beta.7.
  */
 export const PROPERTY_MISMATCH = /\bcode"?\s*[=:]\s*40127\b|does not agree with the referenced document/i;
 /** Structural uniqueness / unique index (DuplicateUniqueIndexError family, 40105). */

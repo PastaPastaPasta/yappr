@@ -1,10 +1,12 @@
 /**
  * Registration-day battery for the **contract moderation, optional YAPP cost,
  * action fee and starter grant** grammar (4.2.0-beta.3, docs/SOCIAL_V8.md).
- * That grammar was introduced by the v8 cut and the live v9 contract
+ * That grammar was introduced by the v8 cut and the v9 contract
  * (`contracts/yappr-social-contract-v9.json`) carries it unchanged, so this
- * battery runs against v9; `verify-v9.mjs` covers what v9 added. The
- * machinery is {@link file://./verify-lib.mjs}.
+ * battery runs against v9 (a 4.2.0-beta.6 chain: it writes v9 tombstones and
+ * `language`). On v10 (4.2.0-beta.7) the same grammar is covered by
+ * `verify-v10.mjs` (m1, m2, w1, y1, r1). The machinery is
+ * {@link file://./verify-lib.mjs}.
  *
  * There is NO default contract id. Pass `--contract` or set `V8_CONTRACT_ID`.
  *

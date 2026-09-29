@@ -1,6 +1,7 @@
 import bs58 from 'bs58'
 import { describe, expect, it } from 'vitest'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
+import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 import {
   OTHER_REASON_CODE,
   REPORT_NOTE_MAX_LENGTH,
@@ -20,6 +21,21 @@ const schema = (socialContractV9.documentSchemas as unknown as Record<string, {
   properties: Record<string, { minimum?: number; maximum?: number; maxLength?: number }>
   propertyConstraints: Record<string, unknown>
 }>).report
+
+// v10 keeps the reporter's fields byte for byte; only the moderators' status/resolution are new.
+const reporterFields = ['postId', 'replyId', 'targetOwnerId', 'reason', 'note'] as const
+const v10Schema = (socialContractV10.documentSchemas as unknown as Record<string, { properties: Record<string, unknown> }>).report
+
+describe('the report fields the client writes are the same on v9 and v10', () => {
+  it('pins every reporter field of v10 to v9 (the refersTo differs only by the beta.7 grammar)', () => {
+    const valueShape = (definition: unknown) => {
+      const copy = { ...(definition as Record<string, unknown>) }
+      delete copy.refersTo
+      return copy
+    }
+    for (const field of reporterFields) expect(valueShape(v10Schema.properties[field]), field).toEqual(valueShape(schema.properties[field]))
+  })
+})
 
 const idOf = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
 
