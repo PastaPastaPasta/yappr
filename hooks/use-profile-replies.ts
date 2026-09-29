@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { logger } from '@/lib/logger'
 import type { Post } from '@/lib/types'
-import { fetchReplyParents } from '@/lib/feed/resolve-reply-parents'
+import { fetchReplyParents, type MissingReplyParent } from '@/lib/feed/resolve-reply-parents'
 import { replyToPost } from '@/lib/services/post-service'
 
 const PAGE_SIZE = 50
@@ -24,6 +24,7 @@ export function useProfileReplies(userId: string | null, enrichProgressively: (p
   const [hasMore, setHasMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [parents, setParents] = useState<Map<string, Post>>(new Map())
+  const [missingParents, setMissingParents] = useState<Map<string, MissingReplyParent>>(new Map())
   const [parentsLoading, setParentsLoading] = useState(false)
   const request = useRef(newRequest(userId))
 
@@ -37,6 +38,7 @@ export function useProfileReplies(userId: string | null, enrichProgressively: (p
     setHasMore(false)
     setError(null)
     setParents(new Map())
+    setMissingParents(new Map())
     setParentsLoading(false)
     return () => { state.cancelled = true }
   }, [userId])
@@ -68,7 +70,9 @@ export function useProfileReplies(userId: string | null, enrichProgressively: (p
       setParentsLoading(true)
       fetchReplyParents(next)
         .then(found => {
-          if (!state.cancelled) setParents(previous => new Map([...previous, ...found]))
+          if (state.cancelled) return
+          setParents(previous => new Map([...previous, ...found.parents]))
+          if (found.missing.size > 0) setMissingParents(previous => new Map([...previous, ...found.missing]))
         })
         .catch(err => logger.error('Failed to load reply parents:', err))
         .finally(() => {
@@ -89,7 +93,7 @@ export function useProfileReplies(userId: string | null, enrichProgressively: (p
   }, [userId, enrichProgressively])
 
   return {
-    posts, loading, loadingMore, loaded, hasMore, error, parents, parentsLoading, load,
+    posts, loading, loadingMore, loaded, hasMore, error, parents, missingParents, parentsLoading, load,
     // Never rejects: a failure lands in `error`, which the tab renders with its own retry.
     onLoadMore: () => load(true),
     onRetry: () => { void load(posts.length > 0) },

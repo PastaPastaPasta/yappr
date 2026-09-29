@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { AtSymbolIcon } from '@heroicons/react/24/outline'
 import type { Post } from '@/lib/types'
+import type { MissingReplyParent } from '@/lib/feed/resolve-reply-parents'
 import { cn } from '@/lib/utils'
 import { likesAreIndexOnly } from '@/lib/contract-topology'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
@@ -36,6 +37,8 @@ interface ProfileTabsProps {
   posts: Post[]
   replies: PostListState & {
     parents: Map<string, Post>
+    /** v10: parents proved deleted, keyed by reply id; rendered as deleted-parent stubs. */
+    missingParents: Map<string, MissingReplyParent>
     parentsLoading: boolean
     loadingMore: boolean
     hasMore: boolean
@@ -109,6 +112,7 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
             post={post}
             enrichment={tab === 'top' ? undefined : getPostEnrichment(post)}
             parentPost={tab === 'replies' ? replies.parents.get(post.id) : undefined}
+            missingParent={tab === 'replies' ? replies.missingParents.get(post.id) : undefined}
             parentPostLoading={tab === 'replies' && replies.parentsLoading}
           />
         ))}

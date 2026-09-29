@@ -548,6 +548,19 @@ export function deletesAreTombstones(): boolean {
 }
 
 /**
+ * True when an author's delete removes a post or reply that other documents
+ * may still name (v10: real deletes, `deletableDocument` references). A reply
+ * then outlives its deleted parent and a quote its deleted target, and a
+ * proven absence with no moderator removal record is the author's delete.
+ * Readers render a deleted stub in the hole instead of dropping the reply's
+ * context or the subtree under it. False on v2 (nothing a post points at can
+ * disappear) and v9 (an author's delete is a tombstone that keeps its place).
+ */
+export function authorDeletesLeaveHoles(): boolean {
+  return referencesMayDangle() && !deletesAreTombstones()
+}
+
+/**
  * The properties a tombstone of this kind must reproduce verbatim.
  *
  * On v9 these are exactly the doctype's consensus-`immutable` properties

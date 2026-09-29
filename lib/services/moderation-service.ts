@@ -3,7 +3,7 @@ import { Document, PlatformVersion } from '@dashevo/evo-sdk';
 import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
 import type { ContractModerationReason, ContractModerationStatus, ContractWarning } from '@dashevo/wasm-sdk';
 import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants';
-import { contractIsModerated, contractKeepsWarnings, electedModeration, moderationListsKept, moderatorDeletableTypes, moderatorDeletionKeepsRecord, reportsAreResolved, type TargetKind } from '@/lib/contract-topology';
+import { authorDeletesLeaveHoles, contractIsModerated, contractKeepsWarnings, electedModeration, moderationListsKept, moderatorDeletableTypes, moderatorDeletionKeepsRecord, reportsAreResolved, type TargetKind } from '@/lib/contract-topology';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import { classifyModerationError, extractErrorMessage, hasConsensusCode, isDocumentExpiredError, isTimeoutError, type ModerationErrorKind } from '@/lib/error-utils';
@@ -276,14 +276,22 @@ export const toRemoval = (entry: RemovalEntry): DocumentRemoval => ({
 
 /**
  * What the hole a missing post or reply leaves may claim. A takedown needs a
- * standing removal record, or proof of absence with no record saying
- * otherwise. A RESTORED record means the document is live again, so its
- * absence here is a failed read, not a takedown, and the old reason no longer
- * applies. With neither record nor proof, the stub says "unavailable".
+ * standing removal record. A RESTORED record means the document is live
+ * again, so its absence here is a failed read, not a takedown, and the old
+ * reason no longer applies. Proof of absence with no record is a takedown
+ * where only moderators can remove posts (v9), and the author's own delete
+ * where authors can too (`authorsDelete`, v10: every moderator deletion of a
+ * post or reply leaves a record). With neither record nor proof, the stub
+ * says "unavailable".
  */
-export function missingDocumentState(removal: DocumentRemoval | null, proven: boolean): 'removed' | 'loadFailed' | 'unavailable' {
+export function missingDocumentState(
+  removal: DocumentRemoval | null,
+  proven: boolean,
+  authorsDelete = authorDeletesLeaveHoles()
+): 'removed' | 'deleted' | 'loadFailed' | 'unavailable' {
   if (removal) return removal.restoredAt === null ? 'removed' : 'loadFailed';
-  return proven ? 'removed' : 'unavailable';
+  if (!proven) return 'unavailable';
+  return authorsDelete ? 'deleted' : 'removed';
 }
 
 class ModerationService {

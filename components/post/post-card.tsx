@@ -29,7 +29,7 @@ import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { usePostEngagement } from '@/hooks/use-post-engagement'
 import { isSensitivePost, shouldGateSensitive } from '@/lib/sensitive-content'
 import { findPollrPollLink, getEmbeddedPollId, stripPollrPollLink } from '@/lib/poll-embed'
-import { contractTakesReports, deletesAreTombstones, moderatorDeletableTypes, referencesMayDangle, repostsAreQuotes, targetKindOf } from '@/lib/contract-topology'
+import { authorDeletesLeaveHoles, contractTakesReports, deletesAreTombstones, moderatorDeletableTypes, referencesMayDangle, repostsAreQuotes, targetKindOf, type TargetKind } from '@/lib/contract-topology'
 import { quoteTargetOf } from '@/lib/feed/resolve-quoted-posts'
 import { isBareRepost, type OwnQuote } from '@/lib/feed/quote-reposts'
 import { logger } from '@/lib/logger'
@@ -76,6 +76,8 @@ interface PostCardProps {
   parentPost?: Post
   /** True while `parentPost` is still being fetched, so the embed slot is held with a skeleton. */
   parentPostLoading?: boolean
+  /** v10: the reply's parent, proved deleted; rendered as a deleted-parent stub in the parent slot. */
+  missingParent?: { id: string; kind: TargetKind }
   /** Called after a successful delete so a list can drop the card. */
   onDelete?: (postId: string) => void
   /** Let a saved-post list coordinate removal with its other bookmark mutations. */
@@ -231,6 +233,7 @@ function PostCardView({
   rootPostOwnerId,
   parentPost,
   parentPostLoading = false,
+  missingParent,
   onDelete,
   bookmarkAction,
 }: PostCardProps) {
@@ -252,6 +255,8 @@ function PostCardView({
   // A moderator removed it from this card: the document is GONE (not a
   // tombstone), so the card renders the removed stub until the feed drops it.
   const [locallyRemoved, setLocallyRemoved] = useState(false)
+  // v10: the author deleted it from this card, and the document is gone too.
+  const [locallyDeleted, setLocallyDeleted] = useState(false)
   // Beats EVERY content branch (tip, poll, quote, media), or a freshly
   // tombstoned card keeps exposing its former attachments until Platform data arrives.
   const isTombstoned = Boolean(post.deleted) || locallyTombstoned
@@ -443,6 +448,7 @@ function PostCardView({
       // Detail and thread callers pass no onDelete, so the card must flip its
       // own rendering, or the pre-delete content would stay until a reload.
       if (tombstones) setLocallyTombstoned(true)
+      else if (authorDeletesLeaveHoles()) setLocallyDeleted(true)
       onDelete?.(post.id)
     })
   }
@@ -468,7 +474,14 @@ function PostCardView({
   const authorLabel = usernameState ? `@${usernameState}` : displayName
   const optionsLabel = isReply ? 'Reply options' : 'Post options'
 
-  if (locallyRemoved) return <RemovedPostStub documentId={post.id} kind={targetKind} variant="card" />
+  if (locallyRemoved) return <RemovedPostStub documentId={post.id} kind={targetKind} variant="card" removedByModerator />
+  if (locallyDeleted) {
+    return (
+      <p data-testid={`deleted-${targetKind}-${post.id}`} className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 text-sm italic text-gray-500 dark:text-gray-400">
+        {isReply ? 'This reply was deleted.' : 'This post was deleted.'}
+      </p>
+    )
+  }
 
   return (
     <article
@@ -646,13 +659,15 @@ function PostCardView({
 
             {/* Last, so the reply's own content and media stay together, and
                 labelled so the embed does not read as a quote. */}
-            {!isTombstoned && (parentPost || parentPostLoading) && (
+            {!isTombstoned && (parentPost || parentPostLoading || missingParent) && (
               <div className="mt-3">
                 <span className="flex items-center gap-1.5 text-sm text-gray-500">
                   <ChatBubbleOvalLeftIcon className="h-3.5 w-3.5 flex-shrink-0" />
                   <span className="truncate">Replying to{parentPost ? ` ${parentHandleOf(parentPost)}` : ''}</span>
                 </span>
-                {parentPost ? <EmbeddedPostCard post={parentPost} className="mt-1" /> : <EmbeddedPostSkeleton className="mt-1" />}
+                {parentPost ? <EmbeddedPostCard post={parentPost} className="mt-1" />
+                  : missingParent ? <RemovedPostStub documentId={missingParent.id} kind={missingParent.kind} proven className="mt-1" />
+                  : <EmbeddedPostSkeleton className="mt-1" />}
               </div>
             )}
           </SensitiveContentGate>

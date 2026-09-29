@@ -42,6 +42,8 @@ vi.mock('@dashevo/evo-sdk', () => ({
 }))
 vi.mock('@/lib/contract-topology', () => ({
   contractIsModerated: () => topology.moderated,
+  // The moderated cut these tests model is v9: posts tombstone, so an absence is a takedown.
+  authorDeletesLeaveHoles: () => false,
   moderationListsKept: () => (topology.moderated ? topology.lists : []),
   contractKeepsWarnings: () => topology.moderated && topology.lists.includes('warnings'),
   moderatorDeletableTypes: () => (topology.moderated ? topology.deletable : []),
@@ -196,8 +198,16 @@ describe('what a missing post or reply may claim', () => {
   })
 
   it('without a record, only a proof of absence claims a takedown', () => {
-    expect(missingDocumentState(null, true)).toBe('removed')
-    expect(missingDocumentState(null, false)).toBe('unavailable')
+    expect(missingDocumentState(null, true, false)).toBe('removed')
+    expect(missingDocumentState(null, false, false)).toBe('unavailable')
+  })
+
+  it('where authors delete for real (v10), a proven absence without a record is the author\'s delete', () => {
+    expect(missingDocumentState(null, true, true)).toBe('deleted')
+    expect(missingDocumentState(null, false, true)).toBe('unavailable')
+    // A record still outranks the author reading.
+    expect(missingDocumentState(record(null), true, true)).toBe('removed')
+    expect(missingDocumentState(record(20), true, true)).toBe('loadFailed')
   })
 })
 

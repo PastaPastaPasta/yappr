@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ExclamationTriangleIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline'
+import { ExclamationTriangleIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { cn } from '@/lib/utils'
-import type { TargetKind } from '@/lib/contract-topology'
+import { authorDeletesLeaveHoles, type TargetKind } from '@/lib/contract-topology'
+import { provenAbsent } from '@/lib/feed/prove-absent'
 import { missingDocumentState, moderationService, type DocumentRemoval } from '@/lib/services/moderation-service'
 
 interface RemovedPostStubProps {
@@ -20,26 +21,47 @@ interface RemovedPostStubProps {
    * that merely failed to load says "unavailable" until a record proves otherwise.
    */
   proven?: boolean
+  /**
+   * True when the viewer's own moderator action just removed it. The fresh
+   * removal record may not be readable yet, and the hole must never read as
+   * the author's delete meanwhile, so no absence is proved here.
+   */
+  removedByModerator?: boolean
 }
 
 /**
  * The hole a moderator-removed post or reply leaves: the document is gone
  * (a fetch returns nothing and by-id joins list it in `missingIds`), and the
  * only trace is the removal record, which this resolves lazily so a page of
- * intact posts pays nothing for it.
+ * intact posts pays nothing for it. On v10 authors delete for real too, so a
+ * proven absence with no record reads as the author's own delete.
  */
-export function RemovedPostStub({ documentId, kind, className, variant = 'embed', proven = false }: RemovedPostStubProps) {
+export function RemovedPostStub({ documentId, kind, className, variant = 'embed', proven = false, removedByModerator = false }: RemovedPostStubProps) {
   // Null until (and unless) a record is found: the stub reads the same either
   // way, so there is no separate "still looking" rendering to distinguish.
   const [removal, setRemoval] = useState<DocumentRemoval | null>(null)
+  // Where authors delete for real (v10), a hole nobody proved yet is proved
+  // here: absent from its doctype with no removal record is the author's
+  // delete rather than a failed read. Only for a known kind, which callers
+  // pass for references that once resolved (a thread root, a quote); a bare
+  // detail-page id may never have existed, so it keeps saying "unavailable".
+  const [provedHere, setProvedHere] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     // Removal records are kept per document type; an unknown kind asks both.
     const kinds: TargetKind[] = kind ? [kind] : ['post', 'reply']
+    setProvedHere(false)
     Promise.all(kinds.map((k) => moderationService.getRemovals(k, [documentId])))
-      .then((pages) => {
-        if (!cancelled) setRemoval(pages.map((page) => page.get(documentId)).find(Boolean) ?? null)
+      .then(async (pages) => {
+        const found = pages.map((page) => page.get(documentId)).find(Boolean) ?? null
+        if (cancelled) return
+        setRemoval(found)
+        // Only once no record claims it, so a takedown never reads as the
+        // author's delete while its record is still loading.
+        if (found || proven || removedByModerator || !kind || !authorDeletesLeaveHoles()) return
+        const absent = await provenAbsent(kind, [documentId])
+        if (!cancelled) setProvedHere(absent.has(documentId))
       })
       .catch(() => {
         if (!cancelled) setRemoval(null)
@@ -47,11 +69,11 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
     return () => {
       cancelled = true
     }
-  }, [documentId, kind])
+  }, [documentId, kind, proven, removedByModerator])
 
   const noun = kind === 'reply' ? 'reply' : 'post'
-  const state = missingDocumentState(removal, proven)
-  const Icon = state === 'loadFailed' ? ExclamationTriangleIcon : ShieldExclamationIcon
+  const state = missingDocumentState(removal, proven || provedHere)
+  const Icon = state === 'loadFailed' ? ExclamationTriangleIcon : state === 'deleted' ? TrashIcon : ShieldExclamationIcon
   return (
     <div
       data-testid={`removed-${noun}-${documentId}`}
@@ -67,7 +89,9 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
         <Icon className="h-4 w-4 shrink-0" />
         {state === 'removed'
           ? `This ${noun} was removed by the contract's moderators.`
-          : state === 'loadFailed'
+          : state === 'deleted'
+            ? `This ${noun} was deleted by its author.`
+            : state === 'loadFailed'
             ? `This ${noun} could not be loaded. Try again later.`
             : `This ${noun} is unavailable.`}
       </p>
