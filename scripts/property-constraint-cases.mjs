@@ -1,9 +1,10 @@
 /**
  * The `propertyConstraints` rules Yappr's contracts declare, and the documents
  * each must accept and refuse (DocumentPropertyConstraintViolated, 10422).
- * docs/CONTRACTS_BETA5.md explains the beta.5 rules and docs/CONTRACTS_BETA6.md
- * the beta.6 ones (`tombstoneIsBlank` as `ifThen` + `length`, blog
- * `commentsOpen`).
+ * docs/CONTRACTS_BETA5.md explains the beta.5 rules, docs/CONTRACTS_BETA6.md
+ * the beta.6 ones (blog `commentsOpen`) and docs/SOCIAL_V10.md the beta.7 ones
+ * (social v10 drops the tombstone rule and adds report `resolvedHasStatus`;
+ * storefront `storeIsOpen`, QA D-25).
  *
  * One table, two consumers:
  *   - `validate-contract-offline.mjs --constraints` runs every case through
@@ -11,7 +12,7 @@
  *     `DataContract.checkDocumentPropertyConstraints`, the check the node runs
  *     on a create or replace), so a rule that drifts from its cases fails
  *     before anything is registered;
- *   - the live batteries (verify-v9 c1 and r1, verify-storefront s20,
+ *   - the live batteries (verify-v10 c1 and r1, verify-storefront s20,
  *     verify-pollr p12, verify-blog b19) broadcast the refused create cases against the
  *     registered contract; their existing fixtures are the accepted side.
  *
@@ -25,14 +26,15 @@ const id = () => bytes(32);
 
 /** Every rule name a contract declares, keyed by file then doctype: the self-tests pin these. */
 export const DECLARED_RULES = {
-  'yappr-social-contract-v9.json': {
-    post: ['embedAllOrNone', 'oneQuoteTarget', 'privateAllOrNone', 'privateHasNoMedia', 'quoteNamesOwner', 'tombstoneIsBlank'],
-    reply: ['privateAllOrNone', 'privateHasNoMedia', 'tombstoneIsBlank'],
-    report: ['oneTarget', 'otherHasNote'],
+  'yappr-social-contract-v10.json': {
+    post: ['embedAllOrNone', 'oneQuoteTarget', 'privateAllOrNone', 'privateHasNoMedia', 'quoteNamesOwner'],
+    reply: ['privateAllOrNone', 'privateHasNoMedia'],
+    report: ['oneTarget', 'otherHasNote', 'resolvedHasStatus'],
   },
   'yappr-storefront-contract.json': {
     storeItem: ['pricedHasCurrency'],
     shippingZone: ['flatRateHasCurrency', 'tieredHasTiers'],
+    storeOrder: ['storeIsOpen'],
   },
   'pollr-contract.json': { poll: ['optionsContiguous'] },
   'yappr-blog-contract.json': { blogPost: ['chunksContiguous'], blogComment: ['commentsOpen'] },
@@ -40,12 +42,13 @@ export const DECLARED_RULES = {
 
 // ---- Base documents (valid under every rule) --------------------------------
 
-export const basePost = () => ({ content: 'constraint probe', language: 'en' });
+export const basePost = () => ({ content: 'constraint probe' });
 export const baseReply = () => ({ content: 'constraint probe', rootPostId: id(), parentOwnerId: id() });
 /** Reason 0 is spam; 8 is "something else", which must say what. */
 export const baseReport = () => ({ postId: id(), targetOwnerId: id(), reason: 0 });
-const privateFields = () => ({ encryptedContent: bytes(48), epoch: 1, nonce: bytes(24) });
+const privateFields = () => ({ encryptedContent: bytes(48), keyGeneration: 1, nonce: bytes(24) });
 const embed = () => ({ embedContractId: id(), embedDocType: 'poll', embedId: id() });
+export const baseOrder = () => ({ storeId: id(), sellerId: id(), encryptedPayload: bytes(64), nonce: bytes(24), storeStatus: 'active' });
 export const baseItem = () => ({ storeId: id(), title: 'constraint probe', status: 'active' });
 export const baseZone = () => ({ storeId: id(), name: 'constraint probe', rateType: 'flat' });
 export const basePoll = () => ({ question: 'constraint probe?', option0: 'a', option1: 'b' });
@@ -57,15 +60,16 @@ const drop = (fields, ...names) => Object.fromEntries(Object.entries(fields).fil
 /**
  * [label, docType, data, refusedBy] — `refusedBy` is the rule the document
  * breaks, or null when it must be accepted. `replace: true` marks a shape only
- * a replace writes (a tombstone); the offline oracle validates it the same way,
- * because the node runs the rules on a replace against the whole document.
+ * a later write produces (a moderator's field change); the offline oracle
+ * validates it the same way, because the node runs the rules against the
+ * whole changed document.
  */
 export const CONSTRAINT_CASES = {
-  'yappr-social-contract-v9.json': [
+  'yappr-social-contract-v10.json': [
     ['post: a public post', 'post', basePost(), null],
     ['post: a private post (all three encryption fields, teaser)', 'post', { ...basePost(), content: '🔒', ...privateFields() }, null],
     ['post: ciphertext without its nonce', 'post', { ...basePost(), ...drop(privateFields(), 'nonce') }, 'privateAllOrNone'],
-    ['post: an epoch alone', 'post', { ...basePost(), epoch: 3 }, 'privateAllOrNone'],
+    ['post: a keyGeneration alone', 'post', { ...basePost(), keyGeneration: 3 }, 'privateAllOrNone'],
     ['post: a private post carrying mediaUrl', 'post', { ...basePost(), ...privateFields(), mediaUrl: 'https://example.com/a.png' }, 'privateHasNoMedia'],
     ['post: a poll embed (all three fields)', 'post', { ...basePost(), ...embed() }, null],
     ['post: an embed missing its doc type', 'post', { ...basePost(), ...drop(embed(), 'embedDocType') }, 'embedAllOrNone'],
@@ -73,27 +77,22 @@ export const CONSTRAINT_CASES = {
     ['post: a reply quote with its owner', 'post', { ...basePost(), quotedReplyId: id(), quotedPostOwnerId: id() }, null],
     ['post: a quote naming no owner', 'post', { ...basePost(), quotedPostId: id() }, 'quoteNamesOwner'],
     ['post: quoting a post AND a reply', 'post', { ...basePost(), quotedPostId: id(), quotedReplyId: id(), quotedPostOwnerId: id() }, 'oneQuoteTarget'],
-    ['post: a tombstone (blank, quote kept)', 'post', { ...basePost(), content: '', deleted: true, quotedPostId: id(), quotedPostOwnerId: id(), hashtag: 'kept' }, null, { replace: true }],
-    ['post: a tombstone whose dead quote was cleared (owner kept)', 'post', { ...basePost(), content: '', deleted: true, quotedPostOwnerId: id() }, null, { replace: true }],
-    // beta.6: `length` reads a missing `content` as 0, so the ifThen form keeps
-    // beta.5's "absent or ''" meaning in one comparison.
-    ['post: a tombstone that leaves content out', 'post', { ...drop(basePost(), 'content'), deleted: true }, null, { replace: true }],
-    ['post: a tombstone keeping its text', 'post', { ...basePost(), deleted: true }, 'tombstoneIsBlank', { replace: true }],
-    ['post: a tombstone keeping its media', 'post', { ...basePost(), content: '', deleted: true, mediaUrl: 'https://example.com/a.png' }, 'tombstoneIsBlank', { replace: true }],
-    ['post: a tombstone keeping its ciphertext', 'post', { ...basePost(), content: '', deleted: true, ...privateFields() }, 'tombstoneIsBlank', { replace: true }],
-    ['post: `deleted: false` is not judged here (40128 refuses it on a replace)', 'post', { ...basePost(), deleted: false }, null],
     ['reply: a public reply', 'reply', baseReply(), null],
     ['reply: a private reply', 'reply', { ...baseReply(), content: '🔒', ...privateFields() }, null],
     ['reply: a nonce alone', 'reply', { ...baseReply(), nonce: bytes(24) }, 'privateAllOrNone'],
     ['reply: a private reply carrying mediaUrl', 'reply', { ...baseReply(), ...privateFields(), mediaUrl: 'ipfs://bafy' }, 'privateHasNoMedia'],
-    ['reply: a tombstone', 'reply', { ...baseReply(), content: '', deleted: true }, null, { replace: true }],
-    ['reply: a tombstone keeping its text', 'reply', { ...baseReply(), deleted: true }, 'tombstoneIsBlank', { replace: true }],
     ['report: a post report', 'report', baseReport(), null],
     ['report: a reply report', 'report', { ...drop(baseReport(), 'postId'), replyId: id() }, null],
     ['report: "something else" saying what', 'report', { ...baseReport(), reason: 8, note: 'constraint probe' }, null],
     ['report: naming a post AND a reply', 'report', { ...baseReport(), replyId: id() }, 'oneTarget'],
     ['report: naming neither', 'report', drop(baseReport(), 'postId'), 'oneTarget'],
     ['report: "something else" with no note', 'report', { ...baseReport(), reason: 8 }, 'otherHasNote'],
+    // status/resolution are written by the moderators' changeDocumentFields, which
+    // runs the type's rules on the changed document; the offline oracle judges the
+    // same whole document. A reporter setting either is 41124 before any rule runs.
+    ['report: handled with a status and a resolution', 'report', { ...baseReport(), status: 2, resolution: 'post removed' }, null, { replace: true }],
+    ['report: handled with a status alone', 'report', { ...baseReport(), status: 1 }, null, { replace: true }],
+    ['report: a resolution with no status', 'report', { ...baseReport(), resolution: 'looked at it' }, 'resolvedHasStatus', { replace: true }],
   ],
   'yappr-storefront-contract.json': [
     ['storeItem: priced with a currency', 'storeItem', { ...baseItem(), basePrice: 1000, currency: 'USD' }, null],
@@ -108,6 +107,11 @@ export const CONSTRAINT_CASES = {
     ['shippingZone: a flat rate with no currency', 'shippingZone', { ...baseZone(), flatRate: 500 }, 'flatRateHasCurrency'],
     ['shippingZone: weight_tiered with no tiers', 'shippingZone', { ...baseZone(), rateType: 'weight_tiered' }, 'tieredHasTiers'],
     ['shippingZone: price_tiered with no tiers', 'shippingZone', { ...baseZone(), rateType: 'price_tiered', flatRate: 100, currency: 'USD' }, 'tieredHasTiers'],
+    // QA D-25: storeStatus copies the store's status through the storeId agreement
+    // (40127 on a mismatch), so the rule judges the store's own status.
+    ['storeOrder: at an active store', 'storeOrder', baseOrder(), null],
+    ['storeOrder: at a paused store', 'storeOrder', { ...baseOrder(), storeStatus: 'paused' }, 'storeIsOpen'],
+    ['storeOrder: at a closed store', 'storeOrder', { ...baseOrder(), storeStatus: 'closed' }, 'storeIsOpen'],
   ],
   'pollr-contract.json': [
     ['poll: two options', 'poll', basePoll(), null],
