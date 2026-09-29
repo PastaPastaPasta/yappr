@@ -136,7 +136,7 @@ export function createBattery({ handle, contractId, socialId }) {
     signer.addKeyFromWif(wif);
     // `wif` is what a hand-built batch signs with — the only shape that can
     // carry an `$actionFeeAgreement` (v8 post/reply); the signer covers the rest.
-    return { ownerId: entry.identityId, identityKey, signer, wif, label: `${entry.handle}(${personaIdx})` };
+    return { ownerId: entry.identityId, identityKey, signer, wif, label: `${entry.handle}(${personaIdx})`, starterClaimed: entry.starterClaimed === true };
   }
 
   const yappBalance = (tokenId, ownerId) => tokenBalance(readback, sdk, tokenId, ownerId);
@@ -148,11 +148,22 @@ export function createBattery({ handle, contractId, socialId }) {
   }
 
   let minterPromise = null;
-  /** The contract owner (the devnet maker, seed index 9), who alone may mint YAPP. */
+  /**
+   * The devnet maker (seed index 9), who mints YAPP as the social contract's
+   * owner. Says so loudly when the maker does NOT own the contract: every mint
+   * would then be refused (40701), and the fix is the env, not a retry.
+   */
   const minter = () => (minterPromise ??= (async () => {
     const owner = resolveMakerOwner();
+    const contract = await readback(() => sdk.contracts.fetch(socialId));
+    const contractOwner = contract?.ownerId?.toBase58?.() ?? String(contract?.ownerId ?? '');
+    if (contractOwner !== owner.ownerId) {
+      console.log(`     WARNING: the maker ${owner.ownerId} (DEVNET_MAKER_IDENTITY_ID) is not the owner ${contractOwner} of social ${socialId}; YAPP mints will be refused`);
+    }
     return { ownerId: owner.ownerId, ...(await signerFor(sdk, owner)) };
   })());
+  /** Identities known to have claimed their starter grant (the ledger's record, or this run's claim or 40722). */
+  const claimed = new Set();
 
   /**
    * Tops an actor up to `target` YAPP: its own once-per-identity starter claim
@@ -164,15 +175,20 @@ export function createBattery({ handle, contractId, socialId }) {
   async function ensureYapp(tokenId, actor, target) {
     let balance = await yappBalance(tokenId, actor.ownerId);
     if (balance >= target) return balance;
-    try {
-      await sdk.tokens.claim({ dataContractId: socialId, tokenPosition: YAPP_TOKEN_POSITION, identityId: actor.ownerId, distributionType: 'oncePerIdentity', identityKey: actor.identityKey, signer: actor.signer });
-      console.log(`     ${actor.label} claimed its ${STARTER_GRANT} starter YAPP`);
-    } catch (e) {
-      if (!ALREADY_CLAIMED.test(describeErr(e))) console.log(`     (starter claim reported: ${describeErr(e).slice(0, 140)})`);
+    if (actor.starterClaimed) claimed.add(actor.ownerId);
+    if (!claimed.has(actor.ownerId)) {
+      try {
+        await sdk.tokens.claim({ dataContractId: socialId, tokenPosition: YAPP_TOKEN_POSITION, identityId: actor.ownerId, distributionType: 'oncePerIdentity', identityKey: actor.identityKey, signer: actor.signer });
+        console.log(`     ${actor.label} claimed its ${STARTER_GRANT} starter YAPP`);
+      } catch (e) {
+        if (!ALREADY_CLAIMED.test(describeErr(e))) console.log(`     (starter claim reported: ${describeErr(e).slice(0, 140)})`);
+      }
+      // Either way it is spent: a landed claim or 40722 both mean never again.
+      claimed.add(actor.ownerId);
+      await settle();
+      balance = await yappBalance(tokenId, actor.ownerId);
+      if (balance >= target) return balance;
     }
-    await settle();
-    balance = await yappBalance(tokenId, actor.ownerId);
-    if (balance >= target) return balance;
     const amount = target - balance;
     console.log(`     minting ${amount} YAPP to ${actor.label} from the contract owner`);
     try {

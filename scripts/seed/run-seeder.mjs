@@ -58,7 +58,7 @@
  * Use a high --concurrency (hundreds) with it; throughput scales with the
  * number of distinct authors, not with concurrency on one.
  */
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DocumentActionFeeAgreement, IdentitySigner, ensureInitialized } from '@dashevo/evo-sdk';
@@ -136,7 +136,7 @@ const ACTOR_FETCH_CONCURRENCY = 16;
 // ---- CLI ------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { personas: null, corpus: null, concurrency: 10, maxOps: Infinity, selfTest: false, pipeline: false, window: 8, creditsFraction: null };
+  const args = { personas: null, corpus: null, concurrency: 10, maxOps: Infinity, selfTest: false, pipeline: false, window: 8, creditsFraction: null, requireDhash: false };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--personas': args.personas = argv[++i]; break;
@@ -144,6 +144,7 @@ function parseArgs(argv) {
       case '--concurrency': args.concurrency = Number(argv[++i]); break;
       case '--max-ops': args.maxOps = Number(argv[++i]); break;
       case '--pipeline': args.pipeline = true; break;
+      case '--require-dhash': args.requireDhash = true; break;
       case '--window': args.window = Number(argv[++i]); break;
       case '--credits-fraction': args.creditsFraction = Number(argv[++i]); break;
       case '--self-test': args.selfTest = true; break;
@@ -576,22 +577,70 @@ function missingMedia(url) {
   throw new Error(`media ${url} was not resolved before the run (resolveCorpusMedia)`);
 }
 
+const MEDIA_FETCH_CONCURRENCY = 4;
+const MEDIA_FETCH_ATTEMPTS = 3;
+const hexOf = (bytes) => Buffer.from(bytes).toString('hex');
+const bytesOf = (hex) => Uint8Array.from(Buffer.from(hex, 'hex'));
+
+/** The media cache beside the progress journal (`.seed-progress.local.media.json`, gitignored with it). */
+export const mediaCacheFile = (progressFile = PROGRESS_FILE) => `${progressFile.replace(/\.json$/, '')}.media.json`;
+
+function loadMediaCache(file) {
+  if (!file || !existsSync(file)) return {};
+  return JSON.parse(readFileSync(file, 'utf8'));
+}
+
 /**
  * The `{ mediaHash, mediaFingerprint }` of every distinct `mediaUrl` in the
- * corpus, fetched before any write so a media op never waits on (or fails
+ * corpus, resolved before any write so a media op never waits on (or fails
  * over) an image download mid-run. Returns the sync lookup planOp takes.
+ *
+ * Each URL is fetched at most once per ledger: results are cached in
+ * `cacheFile` (url → hex hash, fingerprint, decoded), so a resumed run writes
+ * the hashes the first run computed even if the bytes behind a URL drift.
+ * Fetches run `MEDIA_FETCH_CONCURRENCY` at a time with `MEDIA_FETCH_ATTEMPTS`
+ * tries each. A fingerprint that is a stand-in (no local decoder) is counted
+ * loudly, and `requireDhash` refuses the run instead (a cached stand-in is
+ * then fetched again, in case a decoder is now available).
  */
-export async function resolveCorpusMedia(ops, { fetchBytes, log = () => {} } = {}) {
+export async function resolveCorpusMedia(ops, { fetchBytes, log = () => {}, cacheFile = null, requireDhash = false } = {}) {
   const urls = [...new Set(ops.map((op) => op.mediaUrl).filter(Boolean))];
-  const resolved = new Map();
-  let decoded = 0;
-  for (const url of urls) {
-    const fields = await mediaFieldsFor(url, { fetchBytes, log });
-    if (fields.decoded) decoded += 1;
-    resolved.set(url, { mediaHash: fields.mediaHash, mediaFingerprint: fields.mediaFingerprint });
+  const cache = loadMediaCache(cacheFile);
+  const todo = urls.filter((url) => !cache[url] || (requireDhash && !cache[url].decoded));
+  const failed = [];
+  const queue = [...todo];
+  await Promise.all(Array.from({ length: Math.min(MEDIA_FETCH_CONCURRENCY, queue.length) }, async () => {
+    while (queue.length > 0) {
+      const url = queue.shift();
+      let lastError = null;
+      for (let attempt = 1; attempt <= MEDIA_FETCH_ATTEMPTS; attempt++) {
+        try {
+          const fields = await mediaFieldsFor(url, { fetchBytes });
+          cache[url] = { mediaHash: hexOf(fields.mediaHash), mediaFingerprint: hexOf(fields.mediaFingerprint), decoded: fields.decoded };
+          lastError = null;
+          break;
+        } catch (e) {
+          lastError = e;
+          if (attempt < MEDIA_FETCH_ATTEMPTS) await sleep(1_000 * attempt);
+        }
+      }
+      if (lastError) failed.push(`${url}: ${describeErr(lastError).slice(0, 120)}`);
+    }
+  }));
+  if (cacheFile && todo.length > 0) writeFileSync(cacheFile, JSON.stringify(cache, null, 2) + '\n', { mode: 0o600 });
+  if (failed.length > 0) throw new Error(`could not fetch ${failed.length} media URL(s) after ${MEDIA_FETCH_ATTEMPTS} tries:\n  ${failed.join('\n  ')}`);
+  const standIns = urls.filter((url) => !cache[url].decoded);
+  if (urls.length > 0) log(`media: ${urls.length} URL(s), ${todo.length} fetched, ${urls.length - todo.length} from the cache`);
+  if (standIns.length > 0) {
+    const warning = `${standIns.length} of ${urls.length} media fingerprint(s) are STAND-INS (no local image decoder: macOS sips); the client's near-duplicate check cannot match them`;
+    if (requireDhash) throw new Error(`--require-dhash: ${warning}`);
+    log(`WARNING: ${warning}. Re-run with --require-dhash on a machine with sips to refuse this.`);
   }
-  if (urls.length > 0) log(`media: ${urls.length} URL(s) hashed, ${decoded} fingerprinted from the decoded image`);
-  return (url) => resolved.get(url) ?? missingMedia(url);
+  return (url) => {
+    const entry = cache[url];
+    if (!entry) return missingMedia(url);
+    return { mediaHash: bytesOf(entry.mediaHash), mediaFingerprint: bytesOf(entry.mediaFingerprint) };
+  };
 }
 
 // ---- Actors ---------------------------------------------------------------------------
@@ -918,6 +967,27 @@ async function selfTest() {
   check('dHash: row r is byte r, its first pair the most significant bit',
     hex(Array.from({ length: 72 }, (_, i) => (i === 1 ? 1 : 0))) === '8000000000000000' &&
       hex(Array.from({ length: 72 }, (_, i) => (i === 7 * 9 + 8 ? 1 : 0))) === '0000000000000001');
+  // Media: fetched once, retried, cached beside the journal, stand-ins counted.
+  {
+    const cacheFile = join(mkdtempSync(join(tmpdir(), 'seed-media-')), 'progress.media.json');
+    const mediaOps = [{ mediaUrl: 'https://example.com/a' }, { mediaUrl: 'https://example.com/a' }, { mediaUrl: 'https://example.com/b' }, {}];
+    let fetches = 0;
+    let flaky = 1;
+    const fetchBytes = async (url) => {
+      fetches += 1;
+      if (url.endsWith('/b') && flaky-- > 0) throw new Error('503');
+      return new TextEncoder().encode(url);
+    };
+    const logs = [];
+    const first = await resolveCorpusMedia(mediaOps, { fetchBytes, cacheFile, log: (m) => logs.push(m) });
+    check('media: each distinct URL resolves, a failed fetch is retried', fetches === 3 && first('https://example.com/a').mediaHash.length === 32 && first('https://example.com/b').mediaFingerprint.length === 8, `fetches=${fetches}`);
+    const again = await resolveCorpusMedia(mediaOps, { fetchBytes: async () => { throw new Error('must not refetch'); }, cacheFile });
+    check('media: a resume reads the cache, the same bytes out', Buffer.from(again('https://example.com/a').mediaHash).equals(Buffer.from(first('https://example.com/a').mediaHash)));
+    check('media: stand-in fingerprints are counted loudly', logs.some((m) => /WARNING: 2 of 2 media fingerprint\(s\) are STAND-INS/.test(m)), logs.join(' | '));
+    const refused = await resolveCorpusMedia(mediaOps, { fetchBytes, cacheFile, requireDhash: true }).then(() => false, (e) => /--require-dhash/.test(e.message));
+    check('media: --require-dhash refuses stand-ins', refused);
+    check('media: the cache sits beside the progress journal (gitignored with it)', mediaCacheFile('/x/.seed-progress.local.json') === '/x/.seed-progress.local.media.json');
+  }
   check('content: 1000 characters plan; 1001, or 2001 bytes in fewer characters, refuse', (() => {
     const plan = (content) => { try { planOp({ ...postOp, content }, planCtx('')); return true; } catch { return false; } };
     return plan('x'.repeat(1000)) && !plan('x'.repeat(1001)) && !plan('€'.repeat(667)) && plan('😀'.repeat(500));
@@ -1075,7 +1145,7 @@ try {
 } catch (e) {
   console.error(e.message);
   console.error('Usage: NETWORK=devnet node scripts/seed/run-seeder.mjs --personas <file> --corpus <file>');
-  console.error('         [--concurrency 10] [--max-ops N] [--credits-fraction 0.25]');
+  console.error('         [--concurrency 10] [--max-ops N] [--credits-fraction 0.25] [--require-dhash]');
   console.error('       node scripts/seed/run-seeder.mjs --self-test');
   process.exit(1);
 }
@@ -1120,7 +1190,9 @@ try {
   console.log(`actors: ${actors.size} identities loaded from the ledger`);
   const tokenId = await readback(handle, () => handle.sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
   const before = await snapshotBalances(handle, actors, tokenId);
-  const mediaFor = await resolveCorpusMedia(ops.filter((op) => !progress.completed.has(op.line)), { log: (m) => console.log(`  ${m}`) });
+  const mediaFor = await resolveCorpusMedia(ops.filter((op) => !progress.completed.has(op.line)), {
+    log: (m) => console.log(`  ${m}`), cacheFile: mediaCacheFile(), requireDhash: args.requireDhash,
+  });
 
   const executor = args.pipeline
     ? (await import('./pipeline.mjs')).buildPipelinedExecutor({

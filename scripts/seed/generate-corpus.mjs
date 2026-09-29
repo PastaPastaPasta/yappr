@@ -36,7 +36,7 @@ import {
   LAST_NAMES, LINK_LINES, TREND_CANDIDATES, TREND_LINES,
 } from './corpus-archetypes.mjs';
 import { loadBanks } from './author-banks.mjs';
-import { CONTENT_MAX, DASHPAY_PROFILE_LIMITS, HASHTAG_MAX, expandedContentLength, loadPersonas, parseCorpus, validateHandle } from './seed-lib.mjs';
+import { CONTENT_MAX, DASHPAY_PROFILE_LIMITS, HASHTAG_MAX, codePointLength, expandedContentLength, loadPersonas, parseCorpus, validateHandle } from './seed-lib.mjs';
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -297,8 +297,9 @@ export function buildPersonas(rng, users, bankSlots) {
     const last = rng.pick(LAST_NAMES);
     let displayName = `${first} ${last}`;
     if (rng.chance(0.18)) displayName = rng.pick(NICKNAME_STYLES)(first, last);
-    // DashPay's profile (v10's base) caps the name at 25 and the bio (publicMessage) at 140.
-    if (displayName.length > DASHPAY_PROFILE_LIMITS.displayName || takenNames.has(displayName.toLowerCase())) continue;
+    // DashPay's profile (v10's base) caps the name at 25 and the bio (publicMessage) at 140
+    // characters, counted as code points (as maxLength counts them).
+    if (codePointLength(displayName) > DASHPAY_PROFILE_LIMITS.displayName || takenNames.has(displayName.toLowerCase())) continue;
     takenNames.add(displayName.toLowerCase());
     const handle = makeHandle(rng, first, last, archetype, takenHandles);
     takenHandles.add(handle);
@@ -309,7 +310,7 @@ export function buildPersonas(rng, users, bankSlots) {
     const slotsCtx = { city, handle };
     let bio = fillSlots(rng.pick(A.bios), slotsCtx);
     const bioMax = DASHPAY_PROFILE_LIMITS.publicMessage;
-    if (bio.length > bioMax) bio = `${bio.slice(0, bioMax - 3).replace(/\s+\S*$/, '')}...`;
+    if (codePointLength(bio) > bioMax) bio = `${Array.from(bio).slice(0, bioMax - 3).join('').replace(/\s+\S*$/, '')}...`;
     const persona = {
       idx: personas.length,
       handle,

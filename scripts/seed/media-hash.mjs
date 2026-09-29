@@ -6,7 +6,10 @@
  * appear without it (dependentRequired, 10101).
  *
  * The dHash is pinned here so the seeder, the batteries and the client
- * (`lib/media/dhash.ts`, a later PR) agree bit for bit:
+ * (`lib/media/dhash.ts`, a later PR) use the same parameters (resamplers differ
+ * slightly between decoders, so fingerprints of the same image agree to within a
+ * few bits, which the client's Hamming threshold absorbs; they are not
+ * guaranteed identical):
  *
  *   1. decode the image (EXIF orientation applied) and resize it to exactly
  *      9 columns x 8 rows;
@@ -18,9 +21,10 @@
  * `dHashFromLuma` is the pure part (a 72-entry luma grid in, 8 bytes out) and
  * is what `run-seeder.mjs --self-test` pins. Decoding an image in node needs a codec the repo
  * does not depend on, so `mediaFieldsFor` resizes with macOS `sips` when it is
- * present and otherwise derives a stable stand-in fingerprint from the sha256,
- * saying so. A stand-in is still 8 bytes, so it is valid on chain; only the
- * client's near-duplicate check would treat it as a different image.
+ * present and otherwise derives a stable stand-in fingerprint from the sha256
+ * (`decoded: false`). A stand-in is still 8 bytes, so it is valid on chain, but
+ * the client's near-duplicate check cannot match it against the image: the
+ * seeder counts stand-ins loudly and `--require-dhash` refuses them.
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';

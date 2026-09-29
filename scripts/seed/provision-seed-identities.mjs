@@ -87,6 +87,7 @@ import {
   profileLimits,
   randomEntropy,
   readback,
+  requireSeededTopology,
   saveLedger,
   sleep,
   socialContractId,
@@ -203,6 +204,25 @@ function syncLedger(ledger, personas, only) {
   }
   if (dirty) saveLedger(ledger);
   return ledger;
+}
+
+/**
+ * The PROFILE and YAPP phases belong to one social contract: a ledger resumed
+ * against a different one (a re-cut, a new devnet, a pre-v10 run that never
+ * recorded it) rewinds every entry past REGISTER to `registered`, so the
+ * extension is written and the YAPP funded on the contract in use. DPNS is
+ * re-checked on the way (a name that exists is found, not re-registered).
+ * Pure: exported for the self-test.
+ */
+export function rewindForContract(entries, socialId) {
+  const rewound = [];
+  for (const entry of entries) {
+    if (stateRank(entry.state) <= stateRank('registered') || entry.socialContractId === socialId) continue;
+    entry.state = 'registered';
+    delete entry.starterClaimed;
+    rewound.push(entry.personaIdx);
+  }
+  return rewound;
 }
 
 function selected(ledger, only) {
@@ -472,6 +492,7 @@ async function phaseProfile(handle, ledger, only, personasByIdx, parallel) {
         if (await createUniqueByOwner(handle, { contractId, docType, entry, identityKey, signer, data })) wrote.push(docType);
       }
       entry.state = 'profiled';
+      entry.socialContractId = socialId;
       saveLedger(ledger);
       console.log(`  persona ${entry.personaIdx}: ${wrote.length > 0 ? `wrote ${wrote.join(' + ')}` : 'profile already exists'} ("${persona.displayName}")`);
     } catch (e) {
@@ -714,6 +735,15 @@ function selfTest() {
 
   // Ledger state machine ordering
   check('states: strictly ordered', stateRank('planned') < stateRank('funded') && stateRank('named') < stateRank('ready'));
+  const entries = [
+    { personaIdx: 1, state: 'ready', socialContractId: 'NEW', starterClaimed: true },
+    { personaIdx: 2, state: 'ready', socialContractId: 'OLD', starterClaimed: true },
+    { personaIdx: 3, state: 'named' },
+    { personaIdx: 4, state: 'locked' },
+  ];
+  const rewound = rewindForContract(entries, 'NEW');
+  check('resume: entries profiled for another (or an unrecorded) social contract rewind to registered',
+    JSON.stringify(rewound) === '[2,3]' && entries[1].state === 'registered' && !('starterClaimed' in entries[1]) && entries[0].state === 'ready' && entries[3].state === 'locked');
 
   console.log(failures === 0 ? '\nSELF-TEST PASSED (no network calls, nothing broadcast)' : `\n${failures} SELF-TEST CHECK(S) FAILED`);
   process.exit(failures === 0 ? 0 : 1);
@@ -753,6 +783,9 @@ if (network() !== 'devnet') {
 }
 
 try {
+  // The PROFILE phase writes v10 documents (DashPay profile + yapprProfile); a
+  // v9/v2 contract has neither, so refuse before anything is spent.
+  requireSeededTopology();
   await ensureInitialized();
   const personas = loadPersonas(args.personas);
   const personasByIdx = new Map(personas.map((p) => [p.idx, p]));
@@ -762,6 +795,11 @@ try {
   }
   const ledger = syncLedger(loadLedger(), personas, args.only);
   console.log(`ledger: ${LEDGER_FILE} (${ledger.identities.length} identities tracked)`);
+  const rewound = rewindForContract(selected(ledger, args.only), socialContractId());
+  if (rewound.length > 0) {
+    saveLedger(ledger);
+    console.log(`  ${rewound.length} identit(y/ies) were profiled for another social contract: back to "registered" (${rewound.join(', ')})`);
+  }
 
   console.log('\nPhase SPLIT');
   await phaseSplit(ledger, args.only, args.creditsPer);

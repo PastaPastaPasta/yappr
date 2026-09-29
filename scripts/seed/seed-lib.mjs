@@ -342,10 +342,10 @@ export function validatePersona(persona, limits) {
   if (handleError) errors.push(handleError);
   if (typeof persona.displayName !== 'string' || persona.displayName.trim().length < 1) {
     errors.push('displayName is required');
-  } else if (persona.displayName.length > (limits.displayName?.maxLength ?? 50)) {
+  } else if (codePointLength(persona.displayName) > (limits.displayName?.maxLength ?? 50)) {
     errors.push(`displayName exceeds ${limits.displayName?.maxLength ?? 50} chars`);
   }
-  if (persona.bio !== undefined && (typeof persona.bio !== 'string' || persona.bio.length > (limits.bio?.maxLength ?? 160))) {
+  if (persona.bio !== undefined && (typeof persona.bio !== 'string' || codePointLength(persona.bio) > (limits.bio?.maxLength ?? 160))) {
     errors.push(`bio exceeds ${limits.bio?.maxLength ?? 160} chars`);
   }
   if (persona.location !== undefined && (typeof persona.location !== 'string' || persona.location.length > (limits.location?.maxLength ?? 50))) {
