@@ -43,9 +43,41 @@ function batterySdk() {
   return { sdk: devnetSdk({ timeoutMs: SDK_TIMEOUT_MS, config }), devnetName: config.devnetName, addresses: config.addresses };
 }
 
+// ---- Resilient connection ---------------------------------------------------
+//
+// Long runs (~20 min) outlive devnet quorum rotations: the trusted context
+// prefetches quorum keys at connect, a mid-run DKG makes newer proofs verify
+// against a quorum it never learned ("invalid quorum: Quorum not found"), the
+// failing proofs ban every DAPI address ("no available addresses …"), and the
+// SDK instance is dead. There is no refresh API, so the cure is a FULL
+// reconnect: build a fresh EvoSDK (fresh quorum prefetch + address pool),
+// re-ratchet the protocol version, re-cache the contract, and swap it in. All
+// battery code holds `sdkHandle` — a proxy that always forwards to the current
+// instance — so a swap is transparent to in-flight helpers.
+
+/** Errors that mean "this SDK instance is dead", not "this request was refused". */
+const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
+
+let activeSdk = null;
+let reconnectContractId = null;
+let reconnectPromise = null;
+
+const sdkHandle = new Proxy(
+  {},
+  {
+    get(_, prop) {
+      const value = activeSdk[prop];
+      return typeof value === 'function' ? value.bind(activeSdk) : value;
+    },
+  }
+);
+
+/** Builds an unconnected `{ sdk, devnetName, addresses }`; the self-test swaps in a fake. */
+let sdkFactory = batterySdk;
+
 /** Connect + protocol-version ratchet + contract cache: everything a fresh instance needs. */
 async function buildConnectedSdk(contractId) {
-  const { sdk, devnetName, addresses } = batterySdk();
+  const { sdk, devnetName, addresses } = sdkFactory();
   await sdk.connect();
   // PROTOCOL-VERSION RATCHET (load-bearing): rs-sdk starts every devnet at
   // protocol version 12 and only ratchets upward from *verified* response
@@ -75,6 +107,63 @@ async function reconnectSdk(reason) {
     });
   }
   return reconnectPromise;
+}
+
+/** Connects the run's first instance and returns `sdkHandle` in place of it. */
+async function connectBattery(contractId, makeSdk = batterySdk) {
+  sdkFactory = makeSdk;
+  reconnectContractId = contractId;
+  const first = await buildConnectedSdk(contractId);
+  activeSdk = first.sdk;
+  return { ...first, sdk: sdkHandle };
+}
+
+/**
+ * Offline proof that the connection path runs (every `--dry-run`/`--self-test`
+ * calls it): connect through a fake SDK, collapse its transport, and check that
+ * `readback` rebuilds a fresh, ratcheted, contract-cached instance behind the
+ * same handle. Throws on any failure, including a ReferenceError in the
+ * connection state itself.
+ */
+async function selfTestConnection() {
+  const contractId = 'self-test-contract';
+  const built = [];
+  const fakeSdk = () => {
+    const sdk = {
+      generation: built.length + 1,
+      connected: false,
+      cachedContract: null,
+      async connect() { this.connected = true; },
+      epoch: { current: async () => ({ toJSON: () => ({ protocolVersion: 14 }) }) },
+      contracts: { fetch: async (id) => { sdk.cachedContract = id; } },
+      probe() {
+        if (this.generation === 1) throw new Error('no available addresses to retry');
+        return this.generation;
+      },
+    };
+    built.push(sdk);
+    return { sdk, devnetName: 'self-test', addresses: ['https://self-test.invalid:1443'] };
+  };
+  try {
+    const { sdk, protocolVersion } = await connectBattery(contractId, fakeSdk);
+    const failures = [];
+    if (protocolVersion !== 14) failures.push(`connect ratchet read PV${protocolVersion}, expected PV14`);
+    const answer = await readback(() => sdk.probe());
+    if (answer !== 2) failures.push(`readback answered from generation ${answer}, expected the reconnected 2`);
+    if (built.length !== 2) failures.push(`${built.length} instances built, expected 2 (connect + one reconnect)`);
+    for (const instance of built) {
+      if (!instance.connected || instance.cachedContract !== contractId) {
+        failures.push(`instance ${instance.generation} was not connected with the contract cached`);
+      }
+    }
+    if (sdk.generation !== 2) failures.push('sdkHandle does not forward to the reconnected instance');
+    if (failures.length > 0) throw new Error(`connection self-test failed: ${failures.join('; ')}`);
+    console.log('connection ok: connect, ratchet, contract cache, transport-collapse reconnect behind sdkHandle');
+  } finally {
+    activeSdk = null;
+    reconnectContractId = null;
+    sdkFactory = batterySdk;
+  }
 }
 
 // ---- Reporting --------------------------------------------------------------
@@ -576,14 +665,12 @@ export async function runBattery({
     await ensureInitialized();
 
     if (args.dryRun) {
+      await selfTestConnection();
       dryRun(args, { cases, shapes, replaceShapes });
       process.exit(0);
     }
 
-    reconnectContractId = args.contract;
-    const { sdk: firstSdk, devnetName, addresses, protocolVersion } = await buildConnectedSdk(args.contract);
-    activeSdk = firstSdk;
-    const sdk = sdkHandle;
+    const { sdk, devnetName, addresses, protocolVersion } = await connectBattery(args.contract);
     console.log(`protocol version ratcheted via epoch query: PV${protocolVersion ?? '?'}`);
     const botA = await botSigner(sdk, args.botIndex, args.ownerId);
     const botB = await botSigner(sdk, args.bot2Index, args.owner2Id);
