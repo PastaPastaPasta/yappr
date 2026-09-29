@@ -17,7 +17,8 @@
   ],
   "ignoreDependencies": [
     "platform-auth",
-    "ajv"
+    "ajv",
+    "@dashevo/wasm-dpp2"
   ],
   "ignoreExportsUsedInFile": true,
   "ignoreMembers": [
