@@ -385,6 +385,25 @@ describe('4.2.0-beta.4 rejections', () => {
   })
 })
 
+describe('4.2.0-beta.7 moderator field-change rejections', () => {
+  // Messages transcribed from the rs-dpp `#[error(...)]` formats at tag v4.2.0-beta.7 (50d12037).
+  it.each([
+    ['FIELD_NOT_CHANGEABLE', 'Field note of documents of type report on contract 8Xv3 can not be changed by moderators'],
+    ['MODERATOR_FIELD', 'Only the moderators of contract 8Xv3 write field status of documents of type report, and 9t2e does not moderate it (document D1)'],
+    ['NOTHING_TO_CHANGE', "The fields a moderator's document change sets are invalid: every field already holds the value the change names, so nothing would change"],
+    ['FIELD_NOT_CHANGEABLE', 'consensus error code=41123'],
+    ['MODERATOR_FIELD', '{"code":41124}'],
+    ['NOTHING_TO_CHANGE', 'refused (code=10905)'],
+  ])('classifies a moderator field-change refusal as %s', (kind, message) => {
+    expect(classifyModerationError(new Error(message))).toBe(kind)
+  })
+
+  it('does not read the new codes inside ids or amounts', () => {
+    expect(classifyModerationError(new Error('insufficient balance: 41123000 credits'))).toBeNull()
+    expect(classifyModerationError(new Error('document 8Xv109051 not found'))).toBeNull()
+  })
+})
+
 describe('4.2.0-beta.5 rejections', () => {
   // Messages transcribed from the rs-dpp `#[error(...)]` formats at tag v4.2.0-beta.5
   // (5c79d12d). Most reach JS as prose with code = -1, so each is matched by its words.
@@ -625,7 +644,7 @@ describe('every consensus code against every matcher', () => {
     // Matched only by private helpers or by classifyModerationError, or by nothing:
     // key expiry, vote choice, moderation-only codes, already-present, nonce,
     // generatedFrom, and the generic broadcast codes.
-    20016: [], 40219: [], 40307: [], 41101: [], 41111: [], 41112: [],
+    20016: [], 40219: [], 40307: [], 41101: [], 41111: [], 41112: [], 41123: [], 41124: [], 10905: [],
     40100: [], 40204: [], 10424: [], 10002: [], 20000: [], 1: [],
   }
 

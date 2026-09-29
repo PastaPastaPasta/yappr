@@ -842,6 +842,9 @@ export type ModerationErrorKind =
   | 'INVALID_REASON_DOCUMENTS'
   | 'CHARTER_INVALID'
   | 'CONTEST_NOT_JOINABLE'
+  | 'FIELD_NOT_CHANGEABLE'
+  | 'MODERATOR_FIELD'
+  | 'NOTHING_TO_CHANGE'
 
 /** Each kind: its consensus codes and the prose Drive renders (rs-dpp `#[error]`, 4.2.0-beta.4). */
 const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly number[], RegExp]> = [
@@ -872,6 +875,13 @@ const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly n
   ['INVALID_REASON_DOCUMENTS', [10904], /invalidcontractmoderationreasondocuments|the documents a contract moderation reason cites are invalid/i],
   ['CHARTER_INVALID', [11000, 11001], /moderationchartermalformedfield|moderationcharterrewardsplitnotonehundred|of the moderation charter is malformed|reward split of .* it must sum to 100%/i],
   ['CONTEST_NOT_JOINABLE', [40111], /documentcontestnotjoinable|document contest for vote_poll .* is not joinable/i],
+  // 4.2.0-beta.7 `moderatorAbilities.changeFields` (platform#5158):
+  // 41123 a field the type does not keep for its moderators;
+  ['FIELD_NOT_CHANGEABLE', [41123], /documentfieldnotchangeablebymoderators|of documents of type .* can not be changed by moderators/i],
+  // 41124 a non-moderator writing a moderator field (a reporter pre-setting `status`);
+  ['MODERATOR_FIELD', [41124], /documentmoderatorfieldnotwritable|only the moderators of contract .* write field/i],
+  // 10905 a change naming no field, a `$` property, or only values already held.
+  ['NOTHING_TO_CHANGE', [10905], /invalidcontractmoderationdocumentfields|the fields a moderator's document change sets are invalid/i],
 ]
 
 export function classifyModerationError(error: unknown): ModerationErrorKind | null {
