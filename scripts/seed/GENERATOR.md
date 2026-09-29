@@ -139,7 +139,9 @@ From λ: `replies ~ Poisson(0.25 + λ^0.85)`, `quotes ∝ (λ+0.3)^1.3`,
 `reposts ∝ (λ+0.2)^1.2`, `bookmarks ∝ λ+0.1`, each rescaled to its budget.
 Likes come from the author's followers (60%), same-archetype accounts (15%)
 or the activity urn; reposts/bookmarks/quotes mostly come from likers. Quotes
-are new posts with their own smaller engagement.
+are new posts with their own smaller engagement. A repost is a bare quote on
+v10, so an author quotes or reposts a given post once in all (a quoter who
+already reposted is redrawn, a reposter who already quoted is skipped).
 
 **Threads**: replies attach to the post (top level) or, with rising
 probability as the thread grows, to a recent reply (`parentRef` = a reply ⇒
@@ -201,10 +203,10 @@ emission order.
 
 ## Summary JSON
 
-Per-type counts, YAPP total + max per author (post/quote 10, reply 3,
-like/likeReply/repost 1), estimated credits per type and total (post 188M,
-reply 175M, like 90M untagged / 130M tagged, likeReply 54M, repost 66M, follow
-46M, bookmark 18M), like distribution (max, top10, median, zero share, top-1%
+Per-type counts, YAPP total + max per author (post/quote/repost 10, reply 3,
+like/likeReply 1), estimated credits per type and total (post and repost 188M,
+reply 175M, like 90M untagged / 130M tagged, likeReply 54M, follow 46M,
+bookmark 18M), like distribution (max, top10, median, zero share, top-1%
 share, posts ≥100 likes), hero stats (likes vs runner-up and ratio, replies,
 quotes, reposts, bookmarks, Alice/Bob/Carol mean likes vs everyone), follow
 distribution, thread stats, hashtag stats + burst windows, content stats

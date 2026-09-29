@@ -58,14 +58,19 @@ faucet etiquette: one request at a time, honour rate limits).
 | split-tx fee (~1000 duffs/kB — the devnet runs a low `maxtxfee`) | ~1,000 duffs |
 | **send to treasury** | **1.0 DASH** (leaves ~0.2 DASH change buffer for re-runs/top-ups) |
 
-Each identity's ~8 × 10⁹ credits cover its platform fees (~110 doc writes ≈
-0.3 × 10⁹), DPNS registration, and — under `--yapp-source purchase` — a 600-YAPP
-buy (0.6 × 10⁹ credits at the 1,000,000-credits/YAPP price), with several× headroom.
+Each identity's ~8 × 10⁹ credits cover its platform fees (storage and
+processing, about 0.1–0.2 × 10⁹ per document, plus the post's 80M action fee on
+every post, quote and repost) and DPNS registration. An author with many posts
+spends most of it on action fees, so check the busiest author against it. YAPP costs no credits: on v10 it can
+be neither bought nor transferred, so `--yapp-source maker` (the default) mints
+it from the contract owner and `--yapp-source claim` takes the 100 YAPP starter
+grant first.
 
 YAPP per identity: `run-seeder.mjs` prints the corpus's exact total and
-worst-case per-author cost (post/quote 10, reply 3, like/likeReply/repost 1).
-The `--yapp` default of 600 covers a ~110-op/author mix comfortably; for the
-full-scale run compute it from the printed numbers.
+worst-case per-author cost (post/quote/repost 10 — a v10 repost is a post —
+reply 3, like/likeReply 1). The `--yapp` default of 800 covers the pilot
+corpus's worst author (775); for any other corpus compute it from the printed
+numbers.
 
 Full scale (500 identities at the default credits): 500 × 0.08 DASH = 40 DASH
 plus fees — either raise the faucet ask or lower `--credits-per` to the
@@ -75,7 +80,7 @@ corpus-derived need.
 
 ```bash
 NETWORK=devnet node scripts/seed/provision-seed-identities.mjs \
-  --personas scripts/seed/personas.pilot.json [--yapp 600] [--only 0,1,2]
+  --personas scripts/seed/personas.pilot.json [--yapp 800] [--only 0,1,2]
 ```
 
 Phases (per identity; each persists to `.seed-identities.local.json` BEFORE its
@@ -139,7 +144,11 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
   per executed corpus line + the ref → `{id, ownerId, hashtag}` map). Re-runs
   skip completed lines and retry failures; nothing is ever duplicated —
   documents get stable ids per op, so a retry of a broadcast that DID land
-  converges on the same document.
+  converges on the same document. Records are keyed by corpus line and carry
+  the contract they were written to: a run against another contract refuses
+  the journal (move it aside), and one written before the stamping is resumed
+  with a warning. Editing the corpus (adding or removing lines) invalidates a
+  journal too; start a new one.
 - Failure handling: 504/timeout on the confirmation wait → readback decides;
   indexOnly like/likeReply throws post-broadcast even on success → acceptance
   is an entry-existence query; quorum rotation / address-pool collapse → full

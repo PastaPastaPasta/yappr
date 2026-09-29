@@ -62,7 +62,6 @@ import {
   PrivateKey,
   ensureInitialized,
 } from '@dashevo/evo-sdk';
-import bs58 from 'bs58';
 import {
   ALREADY_CLAIMED,
   CRITICAL_AUTH_KEY_ID,
@@ -111,7 +110,8 @@ import {
 } from './asset-lock-lib.mjs';
 
 const DEFAULT_CREDITS_PER_DUFFS = 8_000_000;
-const DEFAULT_YAPP_PER_IDENTITY = 600n;
+/** Covers the pilot corpus's worst author (775 YAPP: a v10 repost costs a post). */
+const DEFAULT_YAPP_PER_IDENTITY = 800n;
 const CHAIN_LOCK_TIMEOUT_MS = 600_000;
 const CHAIN_LOCK_POLL_MS = 10_000;
 const SDK_TIMEOUT_MS = 30_000;

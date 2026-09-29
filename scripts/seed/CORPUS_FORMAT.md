@@ -76,7 +76,7 @@ the executor cannot deadlock.
 | `reply` | `ref`, `author`, `rootRef`, `parentRef`, `content`, `mediaUrl?` | `reply` — `rootPostId` from `rootRef`; `parentOwnerId` = owner of `parentRef`; `replyToReplyId` set iff `parentRef` is a reply; media as for `post` |
 | `like` | `author`, `targetRef` (post) | indexOnly `like` `{postId, hashtag?, postAuthor}` — `hashtag`/`postAuthor` **copied from the target post's recorded values** (`where`: a mismatch is consensus error 40127; an untagged target means like.`hashtag` is **omitted**, exactly like the post's). One transition: the like feeds today's trending tags itself (v10 has no `beat`) |
 | `likeReply` | `author`, `targetRef` (reply) | indexOnly `likeReply` `{replyId, replyAuthor}` |
-| `repost` | `author`, `targetRef` (post) | `repost` `{postId, postOwnerId}` |
+| `repost` | `author`, `targetRef` (post or reply) | `post` with no content, `quotedPostId` (or `quotedReplyId` for a reply target) + `quotedPostOwnerId` — v10 has no repost type; it is written like a quote and pays the post's token cost and action fee |
 | `follow` | `author`, `target` (persona idx) | `follow` `{followingId}` |
 | `bookmark` | `author`, `targetRef` (post) | `bookmark` `{postId}` |
 
@@ -101,9 +101,13 @@ the executor cannot deadlock.
   of its bytes as `mediaHash` and the pinned 9x8 dHash as `mediaFingerprint`
   (`media-hash.mjs`); consensus requires both whenever the URL is set.
 - `sensitive`: optional boolean (posts only).
-- Duplicate interactions (`like`/`likeReply`/`repost`/`bookmark`/`follow` with
-  the same author + target appearing twice) are rejected at parse time — on
-  chain they would only burn a state transition into consensus error 40105.
+- Duplicate interactions (`like`/`likeReply`/`bookmark`/`follow` with the same
+  author + target appearing twice) are rejected at parse time — on chain they
+  would only burn a state transition into consensus error 40105. `quote` and
+  `repost` share one budget: an author quotes OR reposts a target once in all
+  (`ownerAndQuotedPost` / `ownerAndQuotedReply` are unique), so a second quote,
+  a second repost, or a quote and a repost of the same target by the same
+  author is rejected too.
 
 ### Ref map
 
@@ -117,7 +121,7 @@ property.
 
 ### Token costs (why the generator's op mix matters)
 
-Creates are token-priced: post/quote **10 YAPP**, reply
-**3**, like/likeReply/repost **1**, follow/bookmark/profile **free**.
+Creates are token-priced: post/quote/repost **10 YAPP** (a repost is a post),
+reply **3**, like/likeReply **1**, follow/bookmark/profile **free**.
 `run-seeder.mjs` prints the total and per-author worst case before executing;
 `provision-seed-identities.mjs --yapp <n>` funds each identity.

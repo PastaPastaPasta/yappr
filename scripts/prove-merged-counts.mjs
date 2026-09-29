@@ -52,6 +52,8 @@
  *   node scripts/prove-merged-counts.mjs --identity-id <id> --key-wif-file <file> (×3, in order)
  *   node scripts/prove-merged-counts.mjs --dry-run      # offline: build + validate the contract and fixture
  *
+ * The first identity (A) registers the throwaway contract, which costs about
+ * 40 × 10⁹ credits; B and C need only a few document writes' worth.
  * `--bot <n>` signs as seed index n (E2E_SEED_PHRASE) with identity id n of
  * the pool (DEVNET_IDENTITY_IDS, else E2E_IDENTITY_IDS; `--bot n:<id>` names
  * it). A `--key-wif-file` holds one WIF of a HIGH or CRITICAL authentication

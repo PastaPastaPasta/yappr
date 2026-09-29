@@ -29,15 +29,16 @@
  *   m2  interim ban/unban (41107 while banned)
  *   o1  like.postAuthor and hashtag agree with the post (40127, absence too)
  *   o2  likeReply.replyAuthor agrees with the reply (40127; re-like 40105)
- *   o3  repost.postOwnerId agrees with the post (40127)
+ *   o3  a bare repost (a post quoting its target, no content) names the
+ *       target's real owner in quotedPostOwnerId (40127); v10 has no repost type
  *   o4  quotedPostOwnerId and parentOwnerId agree with the target (40127)
  *
  * ## v10 cases
  *
  *   x1  real deletes: B deletes its own post; it no longer fetches; the
  *       quote and reply counts on it fall to 0 exactly; a replace of a post is
- *       refused (posts are immutable); a reply, quote, repost, like, bookmark
- *       and report aimed at the deleted post are each refused 40120; an
+ *       refused (posts are immutable); a reply, quote, bare repost, like,
+ *       bookmark and report aimed at the deleted post are each refused 40120; an
  *       author's delete leaves no removal record, so a moderator restore is
  *       41119
  *   x2  media and limits: a post with mediaUrl but no hashes, or a hash with
@@ -72,6 +73,21 @@
  *       run's tag with the right count and ranks the post within it, an
  *       untagged like leaves it alone, the 3-day window counts both; unliking
  *       drops the counts again
+ *   q1  a repost is a post: a bare repost without the post agreement is 40132;
+ *       with it and a YAPP payment it lands, costing exactly the post's token
+ *       cost and growing the moderators pot by the post fee; it reads back with
+ *       no content; a second repost, or a quote, of the same post by the same
+ *       author is 40105 (ownerAndQuotedPost); another author's repost lands and
+ *       the quote count is exactly the two reposts; quotedPostOwnerAndTime lists
+ *       it for the post's author; the same for a reply target (quotedReplyId,
+ *       ownerAndQuotedReply 40105, its quote count 1); a post with only a
+ *       hashtag and `sensitive` is 10422 notEmpty, a media-only post lands
+ *   q2  merged counts on the list indexes, exact on fresh targets: quotes
+ *       (`==`, batched `in` + groupBy), replies per thread (`==`, batched),
+ *       per reply (`==`, batched under a root pin), direct replies (the null
+ *       pin); posts per author (`==`, batched) and following / followers
+ *       (`==`, batched) by their deltas; ranked top authors, most followed and
+ *       most replied agree with those counts
  *   y1  YAPP is locked: a transfer is refused (40711, paused); a direct
  *       purchase is refused (no price: 40721); a post paying 10 YAPP still
  *       lands; the starter grant is claimed once (a second claim 40722)
@@ -121,16 +137,18 @@ import {
   buildDocument,
   check,
   countBy,
+  countWhere,
   entryExists,
   expectAccepted,
   expectRejected,
   fetchDocument,
   followData,
+  groupKeyOf,
+  groupedCountBy,
   likeData,
   likeReplyData,
   randomIdBytes,
   readback,
-  repostData,
   runBattery,
 } from './verify-lib.mjs';
 import {
@@ -228,6 +246,8 @@ const postData = ({ content = 'v10 battery post', hashtag, sensitive, quotedPost
   ...(quotedPostOwnerId ? { quotedPostOwnerId } : {}),
   ...(media ?? {}),
 });
+/** A repost: a post quoting its target (a post or a reply) with no content; the quote satisfies notEmpty. */
+const repostOf = ({ postId, replyId, ownerId }) => ({ ...(postId ? { quotedPostId: postId } : { quotedReplyId: replyId }), quotedPostOwnerId: ownerId });
 const replyData = ({ content = 'v10 battery reply', rootPostId, parentOwnerId } = {}) => ({ content, rootPostId, parentOwnerId });
 const blockData = ({ blockedId }) => ({ blockedId });
 const followRequestData = ({ targetId }) => ({ targetId });
@@ -532,8 +552,8 @@ async function caseM2InterimBan(ctx) {
 // ---- $ownerId agreements (carried from v7, `where` since beta.7) ---------------
 //
 // Fixtures: posts and the reply are owned by B, so A's likes and reposts agree
-// against a DIFFERENT identity. Likes and reposts pay in credits (the token
-// cost is optional), so these cases need no YAPP.
+// against a DIFFERENT identity. Likes pay in credits (the token cost is
+// optional); a repost is a post, so it carries the post's action fee agreement.
 
 /** A post owned by B, created once per run and keyed by role. */
 async function ensurePost(ctx, key, overrides = {}) {
@@ -606,19 +626,17 @@ async function caseO2LikeReplyOwnerAgreement(ctx) {
 
 async function caseO3RepostOwnerAgreement(ctx) {
   const { botA, botB } = ctx;
-  console.log('\n--- o3. repost.postOwnerId agrees with the post\'s $ownerId (40127) ---');
+  console.log('\n--- o3. a bare repost names the post\'s real owner in quotedPostOwnerId (40127) ---');
   const postId = await ensurePost(ctx, 'reposted');
   if (!postId) { check('o3 fixture', false, 'no post to repost'); return; }
-  const repostWith = (postOwnerId) => attemptCreate(ctx.sdk, botA, {
-    contractId: ctx.contractId,
-    docType: 'repost',
-    data: repostData({ postId: bs58.decode(postId), postOwnerId }),
-  });
-  // Without the agreement a repost could name any identity in the notification
-  // index and show it "X reposted your post" for a post that is not theirs.
-  expectRejected('o3a a repost naming a third party in postOwnerId is refused', await repostWith(randomIdBytes()), PROPERTY_MISMATCH);
-  expectRejected('o3b a repost naming the REPOSTER in postOwnerId is refused', await repostWith(bs58.decode(botA.ownerId)), PROPERTY_MISMATCH);
-  expectAccepted('o3c a repost naming the post owner\'s $ownerId is accepted', await repostWith(bs58.decode(botB.ownerId)));
+  const repostWith = (ownerId) => repostOf({ postId: bs58.decode(postId), ownerId });
+  // Without the agreement a repost could name any identity in quotedPostOwnerAndTime
+  // and show it "X reposted your post" for a post that is not theirs. The
+  // refusals come first: once A's repost lands, another is the 40105 of
+  // ownerAndQuotedPost, which would mask the agreement.
+  await expectFeedRefused(ctx, 'o3a a bare repost naming a third party in quotedPostOwnerId is refused', botA, 'post', repostWith(randomIdBytes()), PROPERTY_MISMATCH);
+  await expectFeedRefused(ctx, 'o3b a bare repost naming the REPOSTER in quotedPostOwnerId is refused', botA, 'post', repostWith(bs58.decode(botA.ownerId)), PROPERTY_MISMATCH);
+  expectAccepted('o3c a bare repost naming the post owner\'s $ownerId is accepted', await createFeedOutcome(ctx, botA, 'post', repostWith(bs58.decode(botB.ownerId))));
 }
 
 async function caseO4QuoteAndParentOwner(ctx) {
@@ -676,7 +694,7 @@ async function caseX1RealDeletes(ctx) {
   // Every new pointer at the deleted post is refused: QA D-14 in consensus.
   await expectFeedRefused(ctx, 'x1g a reply to the deleted post is refused (40120)', botA, 'reply', replyData({ content: 'x1 late reply', rootPostId: targetBytes, parentOwnerId: owner }), REFERENCE_NOT_FOUND);
   await expectFeedRefused(ctx, 'x1h a quote of the deleted post is refused (40120)', botA, 'post', postData({ content: 'x1 late quote', quotedPostId: targetBytes, quotedPostOwnerId: owner }), REFERENCE_NOT_FOUND);
-  await expectCreateRefused(ctx, 'x1i a repost of the deleted post is refused (40120)', botA, 'repost', repostData({ postId: targetBytes, postOwnerId: owner }), REFERENCE_NOT_FOUND);
+  await expectFeedRefused(ctx, 'x1i a bare repost of the deleted post is refused (40120)', botA, 'post', repostOf({ postId: targetBytes, ownerId: owner }), REFERENCE_NOT_FOUND);
   await expectCreateRefused(ctx, 'x1j a bookmark of the deleted post is refused (40120)', botA, 'bookmark', { postId: targetBytes }, REFERENCE_NOT_FOUND);
   await expectCreateRefused(ctx, 'x1k a report of the deleted post is refused (40120)', botA, 'report', reportData({ postId: targetBytes, targetOwnerId: owner }), REFERENCE_NOT_FOUND);
   expectRejected('x1l a like of the deleted post is refused (40120)', await attemptCreateIndexOnly(sdk, botA, {
@@ -1224,6 +1242,153 @@ async function caseK2InsufficientYapp(ctx) {
   expectRejected('k2a a like with payment info and 0 YAPP is refused (40700)', { ok: landed, error }, INSUFFICIENT_TOKENS);
 }
 
+// ---- v10: a repost is a quote ------------------------------------------------------
+
+async function caseQ1RepostIsAQuote(ctx) {
+  const { sdk, contractId, botA, botB } = ctx;
+  console.log('\n--- q1. a repost is a post quoting its target with no content: the post price, one quote or repost per author and target (40105), notEmpty (10422) ---');
+  const target = await createFeed(ctx, botB, 'post', postData({ content: `q1 target ${Date.now()}` }), 'q1 target');
+  const reply = target
+    ? await createFeed(ctx, botB, 'reply', replyData({ content: 'q1 reply target', rootPostId: bs58.decode(target), parentOwnerId: bs58.decode(botB.ownerId) }), 'q1 reply target')
+    : null;
+  if (!target || !reply) { check('q1 fixtures', false, 'no target post or reply'); return; }
+  const [post, replyBytes, owner] = [target, reply, botB.ownerId].map((id) => bs58.decode(id));
+  const bare = repostOf({ postId: post, ownerId: owner });
+
+  // The refusal first: once A's repost lands, any other is the 40105.
+  await expectCreateRefused(ctx, 'q1a a bare repost without the post action fee agreement is refused (40132: it is a post)', botA, 'post', bare, AGREEMENT_NOT_SET);
+
+  const [yappBefore, potBefore] = [await yappOf(ctx, botA.ownerId), (await moderatorsPot(ctx)).credits];
+  const { agreement, knownPermille } = await feeAgreement(ctx, POST_ACTION_FEE);
+  const repost = await manualCreate(ctx, botA, { docType: 'post', data: bare, agreement, payment: yappPayment(TOKEN_COST.post) });
+  expectAccepted('q1b A\'s bare repost of B\'s post (quotedPostId + quotedPostOwnerId, no content) lands with the post agreement, paying YAPP', repost);
+  if (!repost.ok) return;
+  await settle();
+  const [yappAfter, potAfter] = [await yappOf(ctx, botA.ownerId), (await moderatorsPot(ctx)).credits];
+  check(`q1c it cost the post price: exactly ${TOKEN_COST.post} YAPP`, yappBefore - yappAfter === BigInt(TOKEN_COST.post), `yapp ${yappBefore}→${yappAfter}`);
+  const postFee = (POST_ACTION_FEE.moderators * knownPermille) / 1000n;
+  check('q1d …and the post\'s action fee: the moderators pot grew by it', potAfter - potBefore === postFee, `pot ${potBefore}→${potAfter} (Δ${potAfter - potBefore}, expected ${postFee})`);
+  const stored = (await fetchDocument(sdk, contractId, 'post', repost.id))?.toJSON?.() ?? {};
+  check('q1e it reads back as a post with no content, quoting the target and naming its owner',
+    stored.content === undefined && stored.quotedPostId === target && stored.quotedPostOwnerId === botB.ownerId,
+    describeValue({ content: stored.content, quotedPostId: stored.quotedPostId, quotedPostOwnerId: stored.quotedPostOwnerId }));
+
+  await expectFeedRefused(ctx, 'q1f a second bare repost of the same post by A is refused (40105 ownerAndQuotedPost)', botA, 'post', bare, DUPLICATE_UNIQUE);
+  await expectFeedRefused(ctx, 'q1g a quote of the same post by A is refused too (40105: one quote or repost per author and target)', botA, 'post', postData({ content: 'q1 quote after repost', quotedPostId: post, quotedPostOwnerId: owner }), DUPLICATE_UNIQUE);
+  expectAccepted('q1h another author\'s bare repost of the same post lands (B reposts its own post)', await createFeedOutcome(ctx, botB, 'post', bare));
+  await settle();
+  const quotes = await countBy(sdk, contractId, 'post', 'quotedPostId', target);
+  check('q1i the quote count is the repost count: exactly 2', quotes === 2, `quotes=${quotes}`);
+  const notified = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: 'post', where: [['quotedPostOwnerId', '==', botB.ownerId]], orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'desc']], limit: 20 }));
+  check('q1j quotedPostOwnerAndTime lists A\'s repost for B (the "reposted your post" source)', [...notified.keys()].map(idOf).includes(repost.id), `${notified.size} post(s)`);
+
+  const replyRepost = repostOf({ replyId: replyBytes, ownerId: owner });
+  expectAccepted('q1k A\'s bare repost of B\'s reply (quotedReplyId) lands', await createFeedOutcome(ctx, botA, 'post', replyRepost));
+  await expectFeedRefused(ctx, 'q1l a quote of the same reply by A is refused (40105 ownerAndQuotedReply)', botA, 'post', { ...postData({ content: 'q1 reply quote after repost', quotedPostOwnerId: owner }), quotedReplyId: replyBytes }, DUPLICATE_UNIQUE);
+  await settle();
+  const replyQuotes = await countBy(sdk, contractId, 'post', 'quotedReplyId', reply);
+  check('q1m the reply\'s quote count is exactly 1', replyQuotes === 1, `quotes=${replyQuotes}`);
+
+  await expectFeedRefused(ctx, 'q1n a post with only a hashtag and `sensitive` is refused (10422 notEmpty)', botA, 'post', { hashtag: ctx.tag, sensitive: true }, constraintViolation('notEmpty'));
+  expectAccepted('q1o a media-only post (no content) lands: media satisfies notEmpty', await createFeedOutcome(ctx, botA, 'post', await mediaFields('ipfs://bafyv10batterymediaonly')));
+}
+
+// ---- v10: counts through the merged list indexes ------------------------------------
+
+/** A grouped count with its zero groups dropped (a group may come back as 0 or not at all). */
+const nonZero = (grouped) => JSON.stringify([...grouped].filter(([, n]) => n !== 0).sort(([x], [y]) => x.localeCompare(y)));
+const expectedGroups = (entries) => JSON.stringify(Object.entries(entries).filter(([, n]) => n !== 0).sort(([x], [y]) => x.localeCompare(y)));
+
+/**
+ * A ranked page agrees with a count: the key's entry carries `count`, or a full
+ * page ends at or above it (the key ranks below the page). Either way the page
+ * is ordered.
+ */
+async function checkRankedAgrees(ctx, label, docType, groupBy, key, count) {
+  const page = await readback(() => ctx.sdk.documents.ranked({ dataContractId: ctx.contractId, documentTypeName: docType, groupBy, aggregate: { type: 'count' }, direction: 'desc', limit: 100 }));
+  const values = page.entries.map((entry) => Number(entry.value));
+  const ordered = values.every((value, i) => i === 0 || values[i - 1] >= value);
+  const entry = page.entries.find((e) => groupKeyOf(e.groupValue) === key);
+  const agrees = entry ? Number(entry.value) === count : values.length === 100 && values[values.length - 1] >= count;
+  check(label, ordered && agrees, `${entry ? `value=${entry.value}` : 'below the page'} expected=${count} groups=${values.length} ordered=${ordered}`);
+}
+
+async function caseQ2MergedCounts(ctx) {
+  const { sdk, contractId, botA, botB } = ctx;
+  console.log('\n--- q2. counts through the merged list indexes: quotes, replies, posts per author, follows, ranked ---');
+  const [a, b] = [botA.ownerId, botB.ownerId];
+  const count = (docType, where) => countWhere(sdk, contractId, docType, where);
+  const grouped = (docType, where, field) => groupedCountBy(sdk, contractId, docType, where, [field]);
+  const postsBefore = await grouped('post', [['$ownerId', 'in', [a, b]]], '$ownerId');
+  const aPostsBefore = await count('post', [['$ownerId', '==', a]]);
+
+  // Fresh targets by B, so every per-target count is exact.
+  const targets = [];
+  for (const n of [1, 2, 3]) targets.push(await createFeed(ctx, botB, 'post', postData({ content: `q2 target ${n} ${Date.now()}` }), `q2 target ${n}`));
+  if (targets.some((id) => !id)) { check('q2 fixtures', false, 'a target post did not land'); return; }
+  const [p1, p2, p3] = targets;
+  const [p1Bytes, p2Bytes, aBytes, bBytes] = [p1, p2, a, b].map((id) => bs58.decode(id));
+  // Quotes: A and B repost P1, A quotes P2 → P1 2, P2 1, P3 none. A +2 posts, B +4.
+  const quotes = [
+    await createFeed(ctx, botA, 'post', repostOf({ postId: p1Bytes, ownerId: bBytes }), 'q2 A reposts P1'),
+    await createFeed(ctx, botB, 'post', repostOf({ postId: p1Bytes, ownerId: bBytes }), 'q2 B reposts P1'),
+    await createFeed(ctx, botA, 'post', postData({ content: 'q2 quote of P2', quotedPostId: p2Bytes, quotedPostOwnerId: bBytes }), 'q2 A quotes P2'),
+  ];
+  // Replies: r1 (A) and r2 (B) directly under P1, r3 (A) under r1, r4 (B) under P2.
+  const r1 = await createFeed(ctx, botA, 'reply', replyData({ content: 'q2 r1', rootPostId: p1Bytes, parentOwnerId: bBytes }), 'q2 r1');
+  const r2 = await createFeed(ctx, botB, 'reply', replyData({ content: 'q2 r2', rootPostId: p1Bytes, parentOwnerId: bBytes }), 'q2 r2');
+  const r3 = r1 ? await createFeed(ctx, botA, 'reply', { ...replyData({ content: 'q2 r3', rootPostId: p1Bytes, parentOwnerId: aBytes }), replyToReplyId: bs58.decode(r1) }, 'q2 r3') : null;
+  const r4 = await createFeed(ctx, botB, 'reply', replyData({ content: 'q2 r4', rootPostId: p2Bytes, parentOwnerId: bBytes }), 'q2 r4');
+  if (quotes.some((id) => !id) || ![r1, r2, r3, r4].every(Boolean)) { check('q2 fixtures', false, 'a quote or reply did not land'); return; }
+  await settle();
+
+  const p1Quotes = await count('post', [['quotedPostId', '==', p1]]);
+  check('q2a quotes of P1 (`quotedPostId ==` on quotesOfPost) = 2', p1Quotes === 2, `quotes=${p1Quotes}`);
+  const quoteGroups = await grouped('post', [['quotedPostId', 'in', targets]], 'quotedPostId');
+  check('q2b batched `quotedPostId in` + groupBy: P1 2, P2 1, P3 0', nonZero(quoteGroups) === expectedGroups({ [p1]: 2, [p2]: 1 }), nonZero(quoteGroups));
+  const thread = await count('reply', [['rootPostId', '==', p1]]);
+  check('q2c the whole thread under P1 (`rootPostId ==` on repliesOf) = 3', thread === 3, `replies=${thread}`);
+  const threadGroups = await grouped('reply', [['rootPostId', 'in', targets]], 'rootPostId');
+  check('q2d batched `rootPostId in` + groupBy: P1 3, P2 1, P3 0', nonZero(threadGroups) === expectedGroups({ [p1]: 3, [p2]: 1 }), nonZero(threadGroups));
+  const underR1 = await count('reply', [['rootPostId', '==', p1], ['replyToReplyId', '==', r1]]);
+  check('q2e replies to r1 (root pinned, `replyToReplyId ==`) = 1', underR1 === 1, `replies=${underR1}`);
+  const perReply = await grouped('reply', [['rootPostId', '==', p1], ['replyToReplyId', 'in', [r1, r2]]], 'replyToReplyId');
+  check('q2f batched per reply under P1 (`replyToReplyId in` + groupBy): r1 1, r2 0', nonZero(perReply) === expectedGroups({ [r1]: 1 }), nonZero(perReply));
+  const direct = await count('reply', [['rootPostId', '==', p1], ['replyToReplyId', '==', null]]);
+  check('q2g direct replies to P1 (the null pin) = 2', direct === 2, `replies=${direct}`);
+
+  const aPostsAfter = await count('post', [['$ownerId', '==', a]]);
+  check('q2h A\'s post count (`$ownerId ==` on ownerAndTime) rose by exactly its 2 posts', aPostsAfter - aPostsBefore === 2, `${aPostsBefore}→${aPostsAfter}`);
+  const postsAfter = await grouped('post', [['$ownerId', 'in', [a, b]]], '$ownerId');
+  const delta = (after, before, key) => (after.get(key) ?? 0) - (before.get(key) ?? 0);
+  check('q2i batched `$ownerId in` + groupBy: A +2, B +4 (3 targets and a repost)', delta(postsAfter, postsBefore, a) === 2 && delta(postsAfter, postsBefore, b) === 4, `A ${postsBefore.get(a)}→${postsAfter.get(a)} B ${postsBefore.get(b)}→${postsAfter.get(b)}`);
+
+  // Follows: start from no A→B follow, so its create moves each count by exactly one.
+  const stale = await queryOne(ctx, 'follow', [['$ownerId', '==', a], ['followingId', '==', b]]);
+  if (stale) { await deleteOwn(ctx, botA, 'follow', idOf(stale.id)); await settle(); }
+  const followers = () => count('follow', [['followingId', '==', b]]);
+  const following = () => count('follow', [['$ownerId', '==', a]]);
+  const followerGroups = () => grouped('follow', [['followingId', 'in', [a, b]]], 'followingId');
+  const followingGroups = () => grouped('follow', [['$ownerId', 'in', [a, b]]], '$ownerId');
+  const before = { followers: await followers(), following: await following(), followerGroups: await followerGroups(), followingGroups: await followingGroups() };
+  const follow = await attemptCreate(sdk, botA, { contractId, docType: 'follow', data: followData({ followingId: bBytes }) });
+  expectAccepted('q2 fixture: A follows B', follow);
+  if (!follow.ok) return;
+  await settle();
+  const after = { followers: await followers(), following: await following(), followerGroups: await followerGroups(), followingGroups: await followingGroups() };
+  check('q2j B\'s followers (`followingId ==` on followers) rose by 1', after.followers - before.followers === 1, `${before.followers}→${after.followers}`);
+  check('q2k A\'s following (`$ownerId ==` on following) rose by 1', after.following - before.following === 1, `${before.following}→${after.following}`);
+  check('q2l batched followers (`followingId in` + groupBy): B +1, A +0',
+    delta(after.followerGroups, before.followerGroups, b) === 1 && delta(after.followerGroups, before.followerGroups, a) === 0, `${nonZero(before.followerGroups)} → ${nonZero(after.followerGroups)}`);
+  check('q2m batched following (`$ownerId in` + groupBy): A +1, B +0',
+    delta(after.followingGroups, before.followingGroups, a) === 1 && delta(after.followingGroups, before.followingGroups, b) === 0, `${nonZero(before.followingGroups)} → ${nonZero(after.followingGroups)}`);
+
+  await checkRankedAgrees(ctx, 'q2n ranked top authors (post groupBy $ownerId) agree with A\'s post count', 'post', '$ownerId', a, aPostsAfter);
+  await checkRankedAgrees(ctx, 'q2o ranked most followed (follow groupBy followingId) agree with B\'s follower count', 'follow', 'followingId', b, after.followers);
+  await checkRankedAgrees(ctx, 'q2p ranked most replied roots (reply groupBy rootPostId) agree with P1\'s 3', 'reply', 'rootPostId', p1, 3);
+  check('q2 P3 stayed untouched (no quotes, no replies)', (await count('post', [['quotedPostId', '==', p3]])) === 0 && (await count('reply', [['rootPostId', '==', p3]])) === 0);
+}
+
 // ---- Registry ------------------------------------------------------------------
 
 async function ensurePrepared(ctx) {
@@ -1256,6 +1421,8 @@ const CASES = new Map([
   ['o2', caseO2LikeReplyOwnerAgreement],
   ['o3', caseO3RepostOwnerAgreement],
   ['o4', caseO4QuoteAndParentOwner],
+  ['q1', caseQ1RepostIsAQuote],
+  ['q2', caseQ2MergedCounts],
   ['x1', prepared(caseX1RealDeletes)],
   ['x2', caseX2MediaAndLimits],
   ['x3', prepared(caseX3ProfileExtension)],
@@ -1297,12 +1464,37 @@ function selfTest() {
   expect('the post action fee is 80M credits to the moderators (fixtures)', POST_ACTION_FEE?.moderators === 80_000_000n);
   expect('like.postId agrees hashtag and postAuthor with the post (o1)', where('like', 'postId').hashtag === 'hashtag' && where('like', 'postId').$ownerId === 'postAuthor');
   expect('likeReply.replyId agrees replyAuthor with the reply (o2)', where('likeReply', 'replyId').$ownerId === 'replyAuthor');
-  expect('repost.postId agrees postOwnerId with the post (o3)', where('repost', 'postId').$ownerId === 'postOwnerId');
-  expect('a quote binds quotedPostOwnerId (o4a, o4b)', where('post', 'quotedPostId').$ownerId === 'quotedPostOwnerId' && where('post', 'quotedReplyId').$ownerId === 'quotedPostOwnerId');
+  expect('there is no repost type: a repost is a post (o3, q1)', !schemas.repost);
+  expect('a quote or bare repost binds quotedPostOwnerId (o3, o4a, o4b)', where('post', 'quotedPostId').$ownerId === 'quotedPostOwnerId' && where('post', 'quotedReplyId').$ownerId === 'quotedPostOwnerId');
   expect('a nested reply binds parentOwnerId (o4d)', where('reply', 'replyToReplyId').$ownerId === 'parentOwnerId');
   expect('post and reply are immutable and owner-deletable, with no tombstone field (x1)', ['post', 'reply'].every((t) => schemas[t].documentsMutable === false && schemas[t].canBeDeleted === undefined && !schemas[t].properties.deleted) && V10.config.documentsCanBeDeletedContractDefault === true);
   expect('every reference at post or reply is deletable, so a deleted target is 40120 (x1g–x1l)', Object.values(schemas).every((s) => Object.values(s.properties).every((p) => !['post', 'reply'].includes(p.refersTo?.documentType) || p.refersTo.type === 'deletableDocument')));
-  expect('quote and reply counts are countable per target (x1b, x1d, x1f)', schemas.post.indices.some((i) => i.name === 'quoteCount' && i.countable) && schemas.reply.indices.some((i) => i.name === 'byRoot' && i.countable));
+  // The merged count indexes: every count the battery reads goes through a list index.
+  const index = (type, name) => schemas[type].indices.find((i) => i.name === name);
+  const shape = (type, name) => (index(type, name)?.properties ?? []).map((p) => Object.keys(p)[0]).join(',');
+  const countsAt = (type, name, at) => index(type, name)?.rangeCountable === true && (at === undefined ? index(type, name).rankedCountable === undefined : index(type, name).rankedCountable?.at === at);
+  expect('post ownerAndTime [$ownerId, $createdAt] is rangeCountable, ranked at $ownerId (q2h, q2i, q2n)', shape('post', 'ownerAndTime') === '$ownerId,$createdAt' && countsAt('post', 'ownerAndTime', '$ownerId'));
+  expect('quotesOfPost / quotesOfReply [target, $createdAt] are rangeCountable, skipped when absent (x1b, x1d, q1i, q1m, q2a, q2b)',
+    shape('post', 'quotesOfPost') === 'quotedPostId,$createdAt' && shape('post', 'quotesOfReply') === 'quotedReplyId,$createdAt'
+      && ['quotesOfPost', 'quotesOfReply'].every((n) => countsAt('post', n) && index('post', n).skipIfAbsent === true));
+  expect('one quote or repost per author and target: unique ownerAndQuotedPost / ownerAndQuotedReply, skipped when absent (q1f, q1g, q1l)',
+    shape('post', 'ownerAndQuotedPost') === '$ownerId,quotedPostId' && shape('post', 'ownerAndQuotedReply') === '$ownerId,quotedReplyId'
+      && ['ownerAndQuotedPost', 'ownerAndQuotedReply'].every((n) => index('post', n).unique === true && index('post', n).skipIfAbsent === true));
+  expect('quotedPostOwnerAndTime lists quotes and reposts for the target\'s owner (q1j)', shape('post', 'quotedPostOwnerAndTime') === 'quotedPostOwnerId,$createdAt');
+  expect('reply repliesOf [rootPostId, replyToReplyId, $createdAt] is rangeCountable, ranked at rootPostId, and keeps direct replies (nullable replyToReplyId, no skipIfAbsent) (x1b, x1e, x1f, q2c–q2g, q2p)',
+    shape('reply', 'repliesOf') === 'rootPostId,replyToReplyId,$createdAt' && countsAt('reply', 'repliesOf', 'rootPostId')
+      && index('reply', 'repliesOf').skipIfAbsent === undefined && !schemas.reply.required.includes('replyToReplyId'));
+  expect('follow following [$ownerId, $createdAt] is rangeCountable; followers [followingId, $createdAt] too, ranked at followingId (q2j–q2m, q2o)',
+    shape('follow', 'following') === '$ownerId,$createdAt' && countsAt('follow', 'following')
+      && shape('follow', 'followers') === 'followingId,$createdAt' && countsAt('follow', 'followers', 'followingId'));
+  const removed = { post: ['quoteCount', 'quoteReplyCount', 'byOwner'], reply: ['rootAndTime', 'byRoot', 'replyToReplyAndTime', 'byReplyToReply'], follow: ['followerCount', 'followingCount'] };
+  expect('the count-only indexes are gone (merged into their list twins)', Object.entries(removed).every(([type, names]) => names.every((n) => !index(type, n))));
+  expect('post keeps at most 10 indexes', schemas.post.indices.length <= 10);
+  const notEmpty = schemas.post.propertyConstraints?.notEmpty?.anyOf ?? [];
+  expect('post notEmpty: content, ciphertext, media, an embed or a quote (q1n, q1o; a bare repost passes through its quote)',
+    notEmpty.length === 6 && ['encryptedContent', 'mediaUrl', 'embedId', 'quotedPostId', 'quotedReplyId'].every((p) => notEmpty.some((alt) => alt.present === p))
+      && notEmpty.some((alt) => alt.greaterThan?.[0]?.length === 'content' && alt.greaterThan[1] === 0));
+  expect('a repost costs the post price: 10 YAPP, optional, gas offered to the owner (q1c)', schemas.post.tokenCost?.create?.amount === TOKEN_COST.post && TOKEN_COST.post === 10 && schemas.post.tokenCost.create.optional === true);
   for (const type of ['post', 'reply']) {
     expect(`${type} content is 1000 characters / 2000 bytes (x2f–x2j)`, schemas[type].properties.content.maxLength === 1000 && schemas[type].properties.content.maxBytes === 2000);
     expect(`${type} media hash and fingerprint are required with mediaUrl, and only with it (x2a–x2d)`, JSON.stringify(schemas[type].dependentRequired) === JSON.stringify({ mediaUrl: ['mediaHash', 'mediaFingerprint'], mediaHash: ['mediaUrl'], mediaFingerprint: ['mediaUrl'] }));
@@ -1358,7 +1550,9 @@ const SHAPES = [
   ['like (tagged)', 'like', likeData({ postId: someId(), hashtag: 'v10tag', postAuthor: someId() })],
   ['like (hashtag absent)', 'like', likeData({ postId: someId(), postAuthor: someId() })],
   ['likeReply', 'likeReply', likeReplyData({ replyId: someId(), replyAuthor: someId() })],
-  ['repost', 'repost', repostData({ postId: someId(), postOwnerId: someId() })],
+  ['post (bare repost: a quote, no content)', 'post', repostOf({ postId: someId(), ownerId: someId() })],
+  ['post (bare repost of a reply)', 'post', repostOf({ replyId: someId(), ownerId: someId() })],
+  ['post (media only, no content)', 'post', SHAPE_MEDIA],
   ['report (post)', 'report', reportData({ postId: someId(), targetOwnerId: someId() })],
   ['report (reply, something else + note)', 'report', reportData({ replyId: someId(), targetOwnerId: someId(), reason: 8, note: 'why' })],
   ['yapprProfile', 'yapprProfile', yapprProfileData()],

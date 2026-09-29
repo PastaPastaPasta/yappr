@@ -390,6 +390,8 @@ export function loadPersonas(file) {
 // ---- Corpus (JSONL) -----------------------------------------------------------
 
 export const OP_TYPES = ['post', 'quote', 'reply', 'like', 'likeReply', 'repost', 'follow', 'bookmark'];
+/** One dedupe kind for both: a v10 repost is a bare quote, and an author quotes or reposts a target once (40105). */
+const QUOTE_OR_REPOST = 'quote or repost';
 const MEDIA_URL_PATTERN = /^(https?|ipfs):\/\/.+$/;
 const LINK_PLACEHOLDER = /\{\{link:([A-Za-z0-9_-]+)\}\}/g;
 /** `post.content` / `reply.content` maxLength, in code points (v10). */
@@ -424,13 +426,15 @@ export function substituteLinks(content, resolve) {
  * CORPUS_FORMAT.md. Every structural rule is enforced here so the executor can
  * assume a well-formed op stream:
  *  - refs are unique and defined before use, with the right kind
- *    (post/quote refs for likes/reposts/bookmarks/quotes, reply refs for
- *    likeReply, either for reply parents);
+ *    (post/quote refs for likes/bookmarks/quotes, reply refs for likeReply,
+ *    either for reposts and reply parents);
  *  - authors and follow targets are known persona idx values;
  *  - content fits 500 chars even after {{link}} expansion;
  *  - duplicate interactions that would die as 40105 on chain (same author
- *    liking/reposting/bookmarking/following the same target twice) are
- *    rejected up front as generator bugs.
+ *    liking/bookmarking/following the same target twice, or quoting or
+ *    reposting it more than once in all: a v10 repost IS a quote, and
+ *    ownerAndQuotedPost / ownerAndQuotedReply allow one per author and target)
+ *    are rejected up front as generator bugs.
  *
  * Hashtags are held to the contract's maxLength ({@link HASHTAG_MAX}) — an
  * over-long tag is a generator bug and is rejected, never rewritten.
@@ -521,6 +525,7 @@ export function parseCorpus(text, personas) {
         break;
       case 'quote':
         requireEarlierRef(op.quotedRef, ['post'], 'quotedRef');
+        dedupeKey(QUOTE_OR_REPOST, op.quotedRef);
         defineRef(op.ref, 'post');
         checkContent(op.content);
         checkMediaUrl(op.mediaUrl);
@@ -544,8 +549,8 @@ export function parseCorpus(text, personas) {
         dedupeKey('likeReply', op.targetRef);
         break;
       case 'repost':
-        requireEarlierRef(op.targetRef, ['post'], 'targetRef');
-        dedupeKey('repost', op.targetRef);
+        requireEarlierRef(op.targetRef, ['post', 'reply'], 'targetRef');
+        dedupeKey(QUOTE_OR_REPOST, op.targetRef);
         break;
       case 'bookmark':
         requireEarlierRef(op.targetRef, ['post'], 'targetRef');
@@ -811,7 +816,7 @@ export async function findRecentByValues(sdk, { contractId, docType, ownerId, da
 }
 
 /**
- * Token payment for a token-priced doctype (post/reply/like/likeReply/repost).
+ * Token payment for a token-priced doctype (post/reply/like/likeReply; a repost is a post).
  *
  * `gasFeesPaidBy: 2` (PreferContractOwner) is the offer the social types make: the
  * contract owner pays the gas of a token-paid create when it can, else the
@@ -1025,6 +1030,30 @@ export const NONCE_DESYNC = /nonce/i;
 // (`duplicateIsSuccess`), so an unbounded `40105` matching a credit amount or a
 // document id would silently skip a write that never landed.
 export const DUPLICATE_UNIQUE = /\b40105\b|duplicate unique properties/i;
+
+/** Op kinds whose unique entry IS the end state, so their 40105 means done. */
+const DUPLICATE_MEANS_DONE = new Set(['like', 'likeReply', 'follow', 'bookmark']);
+
+/**
+ * Whether a 40105 on `op` means the write already holds. A repost's 40105 is
+ * ownerAndQuotedPost / ownerAndQuotedReply, which a quote WITH content by the
+ * same author holds just as well: it counts as done only when `ownerId`'s post
+ * holding the entry is a bare repost (an earlier attempt of this op that
+ * landed). `plan.repostTarget` is `{ field, value }` from `planOp`.
+ */
+export async function duplicateIsSuccess(handle, contractId, { op, plan, ownerId }) {
+  if (DUPLICATE_MEANS_DONE.has(op.type)) return true;
+  if (!plan.repostTarget) return false;
+  const { field, value } = plan.repostTarget;
+  const found = await readback(handle, () => handle.sdk.documents.query({
+    dataContractId: contractId, documentTypeName: 'post', where: [['$ownerId', '==', ownerId], [field, '==', value]], limit: 1,
+  }));
+  for (const doc of found.values()) {
+    const stored = doc?.toObject ? doc.toObject() : doc;
+    if (stored && asBase58(stored.$ownerId) === ownerId && !stored.content) return true;
+  }
+  return false;
+}
 
 export function createSdkHandle({ contractIds, timeoutMs = 30000, log = console.log }) {
   let activeSdk = null;

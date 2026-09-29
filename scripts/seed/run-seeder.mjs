@@ -9,7 +9,10 @@
  * (writing `''` is `where` consensus error 40127). A post or reply with a
  * `mediaUrl` carries the sha256 and dHash of the bytes at that URL
  * (media-hash.mjs), fetched once per URL before the run starts. A like is one
- * transition: v10 has no `beat` companion.
+ * transition: v10 has no `beat` companion. A `repost` op is written as a post
+ * quoting its target with no content (v10 has no repost type), through the
+ * same path as a quote; its 40105 is success only when our bare repost is
+ * already there.
  *
  * Two things shape what a create CARRIES: `post` and `reply` must agree to the
  * action fee their type declares (`$actionFeeAgreement`, 40132 without), which
@@ -66,6 +69,7 @@ import bs58 from 'bs58';
 import {
   CRITICAL_AUTH_KEY_ID,
   DUPLICATE_UNIQUE,
+  duplicateIsSuccess,
   FEE_MULTIPLIER_NOT_TOLERATED,
   NONCE_DESYNC,
   PROGRESS_FILE,
@@ -330,9 +334,6 @@ async function entryExists(handle, contractId, docType, keyField, keyValue, owne
   });
 }
 
-/** Duplicate-tolerant op kinds: a 40105 means the end state already holds. */
-const DUPLICATE_IS_SUCCESS = new Set(['like', 'likeReply', 'follow', 'bookmark', 'repost']);
-
 /**
  * Maps one corpus op to {docType, data, tokenCost, indexOnly, refRecord,
  * existenceKey}. Pure (exported for the self-test): the acceptance query for
@@ -413,11 +414,16 @@ export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
       };
     }
     case 'repost': {
+      // v10 has no repost type: a repost is a post quoting its target (a post or
+      // a reply) with no content, written like a quote — the post price and the
+      // post action fee agreement. It defines no ref.
       const target = resolveRef(op.targetRef);
+      const field = target.kind === 'reply' ? 'quotedReplyId' : 'quotedPostId';
       return {
-        docType: 'repost',
-        tokenCost: TOKEN_COST.repost,
-        data: { postId: bytes(target.id), postOwnerId: bytes(target.ownerId) },
+        docType: 'post',
+        tokenCost: TOKEN_COST.post,
+        data: { [field]: bytes(target.id), quotedPostOwnerId: bytes(target.ownerId) },
+        repostTarget: { field, value: target.id },
       };
     }
     case 'follow': {
@@ -533,7 +539,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs, mediaFor }) {
       } catch (e) {
         lastError = e;
         const text = describeErr(e);
-        if (DUPLICATE_UNIQUE.test(text) && DUPLICATE_IS_SUCCESS.has(op.type)) {
+        if (DUPLICATE_UNIQUE.test(text) && await duplicateIsSuccess(handle, contractId, { op, plan, ownerId: actor.ownerId }).catch(() => false)) {
           return plan.refRecord ? plan.refRecord(id) : null;
         }
         if (TRANSPORT_COLLAPSE.test(text)) {
@@ -811,9 +817,9 @@ async function selfTest() {
   check('parse: stats per type', stats.post === 2 && stats.quote === 1 && stats.reply === 2 && stats.like === 1);
   check('parse: line numbers carried', ops[3].line === 4);
 
-  // YAPP cost model: 2 posts + 1 quote = 30, 2 replies = 6, like+likeReply+repost = 3
+  // YAPP cost model: 2 posts + 1 quote = 30, 2 replies = 6, like+likeReply = 2, and the repost is a post = 10
   const { total } = corpusYappCost(ops);
-  check('yapp cost: 39 for the sample corpus', total === 39, `total=${total}`);
+  check('yapp cost: 48 for the sample corpus (a repost costs a post)', total === 48, `total=${total}`);
 
   // Structural rejections
   const rejects = (line, why) => {
@@ -833,6 +839,17 @@ async function selfTest() {
     '{"type":"post","ref":"p1","author":0,"content":"x","hashtag":""}\n{"type":"like","author":1,"targetRef":"p1"}\n{"type":"like","author":1,"targetRef":"p1"}',
     '40105'
   ));
+  // One quote or repost per author and target (ownerAndQuotedPost / ownerAndQuotedReply, 40105).
+  const target = '{"type":"post","ref":"p1","author":0,"content":"x","hashtag":""}\n';
+  check('parse: a second repost of the same post by the same author rejected', rejects(
+    `${target}{"type":"repost","author":1,"targetRef":"p1"}\n{"type":"repost","author":1,"targetRef":"p1"}`, '40105'));
+  check('parse: a repost after a quote of the same post by the same author rejected', rejects(
+    `${target}{"type":"quote","ref":"p2","author":1,"content":"q","quotedRef":"p1","hashtag":""}\n{"type":"repost","author":1,"targetRef":"p1"}`, '40105'));
+  check('parse: a quote after a repost of the same post by the same author rejected', rejects(
+    `${target}{"type":"repost","author":1,"targetRef":"p1"}\n{"type":"quote","ref":"p2","author":1,"content":"q","quotedRef":"p1","hashtag":""}`, '40105'));
+  check('parse: another author\'s repost, and a repost of a reply, are accepted', parseCorpus(
+    `${target}{"type":"repost","author":1,"targetRef":"p1"}\n{"type":"repost","author":2,"targetRef":"p1"}\n` +
+    '{"type":"reply","ref":"r1","author":2,"rootRef":"p1","parentRef":"p1","content":"r"}\n{"type":"repost","author":1,"targetRef":"r1"}', personas).ops.length === 5);
   check('parse: bad hashtag rejected', rejects('{"type":"post","ref":"p1","author":0,"content":"x","hashtag":"UPPER"}', 'hashtag'));
   check('parse: self-follow rejected', rejects('{"type":"follow","author":0,"target":0}', 'follow itself'));
   check('parse: oversize expanded content rejected', rejects(
@@ -994,6 +1011,27 @@ async function selfTest() {
   })());
   check('untagged post OMITS hashtag', !('hashtag' in plannedPost));
   check('tagged post keeps its hashtag', planOp({ ...postOp, hashtag: 'dash' }, planCtx('')).data.hashtag === 'dash');
+  const repostOp = { type: 'repost', author: 1, targetRef: 'p1', line: 5 };
+  const plannedRepost = planOp(repostOp, planCtx('dash'));
+  check('a repost is a POST quoting its target with no content (no hashtag), at the post price',
+    plannedRepost.docType === 'post' && plannedRepost.tokenCost === TOKEN_COST.post && plannedRepost.refRecord === undefined &&
+      JSON.stringify(Object.keys(plannedRepost.data)) === JSON.stringify(['quotedPostId', 'quotedPostOwnerId']) &&
+      bs58.encode(plannedRepost.data.quotedPostId) === targetId && bs58.encode(plannedRepost.data.quotedPostOwnerId) === owner &&
+      plannedRepost.repostTarget.field === 'quotedPostId' && plannedRepost.repostTarget.value === targetId,
+    JSON.stringify(Object.keys(plannedRepost.data)));
+  const replyRepost = planOp(repostOp, { ...planCtx(''), resolveRef: () => ({ kind: 'reply', id: targetId, ownerId: owner }) });
+  check('a repost of a reply quotes it through quotedReplyId',
+    JSON.stringify(Object.keys(replyRepost.data)) === JSON.stringify(['quotedReplyId', 'quotedPostOwnerId']) && replyRepost.repostTarget.field === 'quotedReplyId');
+  // A repost's 40105 counts as done only when the post holding the entry is our bare repost.
+  const holding = (stored) => ({ sdk: { documents: { query: async () => new Map([['x', { toObject: () => stored }]]) } } });
+  const ours = { $ownerId: bs58.decode(owner), quotedPostId: bs58.decode(targetId), quotedPostOwnerId: bs58.decode(owner) };
+  const duplicate = (handle, op, plan) => duplicateIsSuccess(handle, targetId, { op, plan, ownerId: owner });
+  check('a 40105 is done for a like; for a repost only when our bare repost holds the entry, never for a quote',
+    await duplicate(holding(null), likeOp, planOp(likeOp, planCtx(''))) &&
+      await duplicate(holding(ours), repostOp, plannedRepost) &&
+      !(await duplicate(holding({ ...ours, content: 'a quote with text' }), repostOp, plannedRepost)) &&
+      !(await duplicate(holding({ ...ours, $ownerId: bs58.decode(targetId) }), repostOp, plannedRepost)) &&
+      !(await duplicate(holding(ours), quoteOp, planOp(quoteOp, planCtx('')))));
   const plannedQuote = planOp(quoteOp, planCtx('')).data;
   check('untagged quote OMITS hashtag (quote fields intact)', !('hashtag' in plannedQuote) && plannedQuote.quotedPostId instanceof Uint8Array);
   const plannedLike = planOp(likeOp, planCtx(''));
@@ -1040,7 +1078,7 @@ async function selfTest() {
       replyFee?.moderators === 16_000_000n && replyFee.owner === 0n,
     `post=${postFee?.moderators} reply=${replyFee?.moderators}`);
   check('nothing but post and reply charges an action fee',
-    ['like', 'likeReply', 'repost', 'follow', 'bookmark', 'yapprProfile'].every((docType) => actionFeeFor(docType) === null));
+    ['like', 'likeReply', 'follow', 'bookmark', 'yapprProfile'].every((docType) => actionFeeFor(docType) === null));
 
   const agreed = actionFeeAgreementOptions(postFee, 1000n);
   check('the agreement names the exact declared amounts, each pot on its own, plus the known multiplier',
@@ -1114,7 +1152,7 @@ async function selfTest() {
   const creditsAuthors = new Set([0, 1, 2].filter((idx) => paysInCredits(idx, 1)));
   check('credits actors are excluded from the YAPP estimate (counting them over-funds the run)',
     corpusYappCost(ops, { paysCredits: (idx) => creditsAuthors.has(idx) }).total === 0 &&
-      corpusYappCost(ops).total === 39);
+      corpusYappCost(ops).total === 48);
 
   // Protocol 14 document id: the derivation is consensus (wasm-dpp2's
   // `Document.generateId` from beta.4), pinned to rs-dpp's `PINNED_V1_ID`
@@ -1182,6 +1220,17 @@ try {
   }
 
   const contractId = socialContractId();
+  // The journal keys records by corpus LINE and names documents of one
+  // contract: resumed against another contract (or a corpus with lines added
+  // or removed) it would skip the wrong lines and bind refs to foreign ids.
+  // Records carry the contract they were written to; refuse a mismatch.
+  const journaledContracts = new Set([...progress.completed.values()].map((record) => record.contractId).filter(Boolean));
+  if ([...journaledContracts].some((id) => id !== contractId)) {
+    throw new Error(`${PROGRESS_FILE} was written against ${[...journaledContracts].join(', ')}, not ${contractId}: move it aside to seed this contract from scratch`);
+  }
+  if (progress.completed.size > 0 && journaledContracts.size === 0) {
+    console.log(`WARNING: ${PROGRESS_FILE} predates contract stamping; resume only if it was written against ${contractId} and this exact corpus`);
+  }
   const handle = createSdkHandle({ contractIds: [contractId], timeoutMs: SDK_TIMEOUT_MS, log: (msg) => console.log(`  ${msg}`) });
   const { protocolVersion } = await handle.connect();
   console.log(`connected to devnet (PV${protocolVersion ?? '?'}), contract ${contractId}`);
@@ -1205,7 +1254,7 @@ try {
   // The engine publishes refs through deferreds; the executor reads settled
   // records from progress.refs, so keep the two in sync as records land.
   const journal = (record) => {
-    appendProgress(record);
+    appendProgress({ ...record, contractId });
     if (record.status === 'done' && record.ref) {
       progress.refs.set(record.ref, { kind: record.kind, id: record.id, ownerId: record.ownerId, hashtag: record.hashtag ?? '' });
     }

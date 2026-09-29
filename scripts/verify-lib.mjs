@@ -273,16 +273,35 @@ export async function entryExists(sdk, contractId, docType, keyField, keyValue, 
   });
 }
 
-/** Reads one countable index's total for a single key (0 when unmaterialized). */
-export async function countBy(sdk, contractId, docType, field, value) {
+/** The total of a count query (0 when unmaterialized). */
+export async function countWhere(sdk, contractId, docType, where) {
   return readback(async () => {
-    const raw = await sdk.documents.count({
-      dataContractId: contractId,
-      documentTypeName: docType,
-      where: [[field, '==', value]],
-    });
+    const raw = await sdk.documents.count({ dataContractId: contractId, documentTypeName: docType, where });
     const total = raw instanceof Map ? raw.get('') : raw?.[''];
     return total === undefined || total === null ? 0 : Number(total);
+  });
+}
+
+/** Reads one countable index's total for a single key (0 when unmaterialized). */
+export const countBy = (sdk, contractId, docType, field, value) => countWhere(sdk, contractId, docType, [[field, '==', value]]);
+
+/**
+ * A group key as base58 when it is an identifier: count answers key groups by
+ * the value's hex, ranked pages by base58 or bytes, depending on the surface.
+ */
+export function groupKeyOf(value) {
+  if (typeof value === 'string') return /^[0-9a-f]{64}$/i.test(value) ? bs58.encode(Buffer.from(value, 'hex')) : value;
+  if (typeof value?.toBase58 === 'function') return value.toBase58();
+  return bs58.encode(Uint8Array.from(value));
+}
+
+/** A grouped count as a Map of group key (base58 for identifiers) → count; absent groups are absent. */
+export async function groupedCountBy(sdk, contractId, docType, where, groupBy) {
+  return readback(async () => {
+    const raw = await sdk.documents.count({ dataContractId: contractId, documentTypeName: docType, where, groupBy });
+    const grouped = new Map();
+    for (const [key, value] of raw.entries()) if (key !== '') grouped.set(groupKeyOf(key), Number(value));
+    return grouped;
   });
 }
 
@@ -498,7 +517,6 @@ export const likeData = ({ postId, hashtag, postAuthor }) => ({
   postAuthor,
 });
 export const likeReplyData = ({ replyId, replyAuthor }) => ({ replyId, replyAuthor });
-export const repostData = ({ postId, postOwnerId }) => ({ postId, postOwnerId });
 export const followData = ({ followingId }) => ({ followingId });
 // ---- Identities -------------------------------------------------------------
 

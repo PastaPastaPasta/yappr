@@ -245,7 +245,7 @@ async function run({ args, handle, battery, socialId }) {
         where: [['$ownerId', '==', id], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
       }, socialId).then((rows) => rows.map((row) => normalizeId(row.$id)));
       const [posts, replies] = await Promise.all([byOwner('post'), byOwner('reply')]);
-      if (posts.length === 0) { console.log(`  skipping ${id} — no posts on the byOwner index`); continue; }
+      if (posts.length === 0) { console.log(`  skipping ${id} — no posts on ownerAndTime`); continue; }
       authors.push({ id, label: profile?.displayName || id.slice(0, 8), posts, replies });
     }
 

@@ -36,7 +36,7 @@ import {
   LAST_NAMES, LINK_LINES, TREND_CANDIDATES, TREND_LINES,
 } from './corpus-archetypes.mjs';
 import { loadBanks } from './author-banks.mjs';
-import { CONTENT_MAX, DASHPAY_PROFILE_LIMITS, HASHTAG_MAX, codePointLength, expandedContentLength, loadPersonas, parseCorpus, validateHandle } from './seed-lib.mjs';
+import { CONTENT_MAX, DASHPAY_PROFILE_LIMITS, HASHTAG_MAX, TOKEN_COST, codePointLength, expandedContentLength, loadPersonas, parseCorpus, validateHandle } from './seed-lib.mjs';
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -474,7 +474,7 @@ function makeDecks(rng) {
 // ---------------------------------------------------------------------------
 export function generate(opts) {
   const {
-    users, posts: postTarget, ops: opsTarget, seed, mix = DEFAULT_MIX, banksDir, loadedBanks = null, log = () => {},
+    users, posts: postTarget, ops: opsTarget, seed, mix = DEFAULT_MIX, banksDir, loadedBanks = null,
   } = opts;
   const rng = makeRng(seed);
   const deal = makeDecks(rng);
@@ -527,7 +527,7 @@ export function generate(opts) {
   }
   const firstNames = personas.map(firstNameOf);
   const followTarget = Math.round(opsTarget * mix.follow);
-  const { following, followers, edges: followEdges, byArchetype } = buildFollowGraph(rng, personas, followTarget);
+  const { followers, edges: followEdges, byArchetype } = buildFollowGraph(rng, personas, followTarget);
   const followerCount = followers.map((f) => f.length);
   const activityUrn = [];
   personas.forEach((p) => { for (let r = 0; r < Math.ceil(p.activity * 4); r += 1) activityUrn.push(p.idx); });
@@ -547,7 +547,9 @@ export function generate(opts) {
   // --- post bookkeeping -----------------------------------------------------
   let postCounter = 0;
   let replyCounter = 0;
-  const postRefs = []; // {ref, author, t, hashtag, likers:Set, reposters:Set, bookmarkers:Set, likes}
+  // quotedBy: everyone who quoted OR reposted the post. A v10 repost is a bare
+  // quote, and an author may quote or repost a target once in all (40105).
+  const postRefs = []; // {ref, author, t, hashtag, likers:Set, quotedBy:Set, bookmarkers:Set, likes}
   const postByRef = new Map();
   const likeCount = new Map(); // ref -> n
   const replyLikeCount = new Map();
@@ -560,7 +562,6 @@ export function generate(opts) {
   let linkPosts = 0;
   let lorePosts = 0;
   let trendPosts = 0;
-  let quotesWithEmoji = 0;
 
   // --- follows: 80% in the first ~4% of the stream, the rest spread --------
   for (const [u, v] of followEdges) {
@@ -760,7 +761,6 @@ export function generate(opts) {
       const withTag = `${text} #${hashtag}`;
       if (!contents.has(withTag) && expandedContentLength(withTag) <= CONTENT_MAX) { contents.delete(text); text = withTag; contents.add(text); } else hashtag = '';
     }
-    if (EMOJI_RE.test(text)) quotesWithEmoji += 1;
     return { text, hashtag };
   }
 
@@ -812,9 +812,10 @@ export function generate(opts) {
     if (sensitive) o.sensitive = true;
     emit(t, o);
     counts[quotedRef ? 'quote' : 'post'] += 1;
-    perAuthorYapp[author] += 10;
+    perAuthorYapp[author] += TOKEN_COST.post;
+    if (quotedRef) postByRef.get(quotedRef).quotedBy.add(author);
     if (hashtag) tagCounts.set(hashtag, (tagCounts.get(hashtag) ?? 0) + 1);
-    const rec = { ref, author, t, hashtag, likers: new Set(), reposters: new Set(), bookmarkers: new Set(), kind: kind ?? (quotedRef ? 'quote' : 'post') };
+    const rec = { ref, author, t, hashtag, likers: new Set(), quotedBy: new Set(), bookmarkers: new Set(), reposts: 0, kind: kind ?? (quotedRef ? 'quote' : 'post') };
     if (kind === 'trend') rec.burstTag = hashtag;
     postRefs.push(rec);
     postByRef.set(ref, rec);
@@ -826,7 +827,7 @@ export function generate(opts) {
     const ref = `r${replyCounter}`;
     emit(t, { type: 'reply', ref, author, rootRef, parentRef: parent.ref, content });
     counts.reply += 1;
-    perAuthorYapp[author] += 3;
+    perAuthorYapp[author] += TOKEN_COST.reply;
     replyLikeCount.set(ref, 0);
     replyCountByRoot.set(rootRef, (replyCountByRoot.get(rootRef) ?? 0) + 1);
     return { ref, author, t, intent, likers: new Set(), kind: 'reply' };
@@ -836,7 +837,7 @@ export function generate(opts) {
     post.likers.add(liker);
     emit(t, { type: 'like', author: liker, targetRef: post.ref });
     counts.like += 1;
-    perAuthorYapp[liker] += 1;
+    perAuthorYapp[liker] += TOKEN_COST.like;
     likeCount.set(post.ref, likeCount.get(post.ref) + 1);
     return true;
   }
@@ -845,16 +846,17 @@ export function generate(opts) {
     reply.likers.add(liker);
     emit(t, { type: 'likeReply', author: liker, targetRef: reply.ref });
     counts.likeReply += 1;
-    perAuthorYapp[liker] += 1;
+    perAuthorYapp[liker] += TOKEN_COST.likeReply;
     replyLikeCount.set(reply.ref, replyLikeCount.get(reply.ref) + 1);
     return true;
   }
   function addRepost(u, post, t) {
-    if (post.reposters.has(u) || u === post.author) return false;
-    post.reposters.add(u);
+    if (post.quotedBy.has(u) || u === post.author) return false;
+    post.quotedBy.add(u);
+    post.reposts += 1;
     emit(t, { type: 'repost', author: u, targetRef: post.ref });
     counts.repost += 1;
-    perAuthorYapp[u] += 1;
+    perAuthorYapp[u] += TOKEN_COST.post; // a repost is a post
     return true;
   }
   function addBookmark(u, post, t) {
@@ -1053,9 +1055,14 @@ export function generate(opts) {
     // quotes: each is a new post with its own (smaller) engagement
     for (let q = 0; q < quotes; q += 1) {
       const seen = new Set([post.author]);
-      let quoter = likers.length && rng.chance(0.6) ? rng.pick(likers) : pickEngager(post.author, seen);
-      if (quoter === undefined || quoter < 0) quoter = rng.int(0, users - 1);
-      if (quoter === post.author) continue;
+      const pickQuoter = () => {
+        const u = likers.length && rng.chance(0.6) ? rng.pick(likers) : pickEngager(post.author, seen);
+        return u === undefined || u < 0 ? rng.int(0, users - 1) : u;
+      };
+      let quoter = pickQuoter();
+      // One quote or repost per author and target (40105): redraw past those who already did.
+      for (let tries = 0; tries < 5 && post.quotedBy.has(quoter); tries += 1) quoter = pickQuoter();
+      if (quoter === post.author || post.quotedBy.has(quoter)) continue;
       const qp = personas[quoter];
       const { text, hashtag } = composeQuote(qp, post, post.kind === 'hero');
       const qt = post.t + delay(2500 * spread, 1.1);
@@ -1197,7 +1204,7 @@ export function generate(opts) {
       const post = postByRef.get(o.targetRef);
       post.likers.delete(o.author);
       likeCount.set(o.targetRef, likeCount.get(o.targetRef) - 1);
-      perAuthorYapp[o.author] -= 1;
+      perAuthorYapp[o.author] -= TOKEN_COST.like;
       counts.like -= 1;
       drop.add(i);
       surplus -= 1;
@@ -1241,7 +1248,7 @@ export function generate(opts) {
     reply: counts.reply * 175e6,
     like: [...postRefs].reduce((s, p) => s + likeCount.get(p.ref) * (p.hashtag ? 130e6 : 90e6), 0),
     likeReply: counts.likeReply * 54e6,
-    repost: counts.repost * 66e6,
+    repost: counts.repost * 188e6, // a bare quote: a post
     follow: counts.follow * 46e6,
     bookmark: counts.bookmark * 18e6,
   };
@@ -1257,14 +1264,14 @@ export function generate(opts) {
     generatedAt: new Date().toISOString(),
     seed, users, targets: { posts: postTarget, ops: opsTarget, mix },
     counts: { ...counts, total: total() },
-    yapp: { total: perAuthorYapp.reduce((a, b) => a + b, 0), maxPerAuthor: maxYapp, maxAuthor: perAuthorYapp.indexOf(maxYapp), perType: { post: 10, quote: 10, reply: 3, like: 1, likeReply: 1, repost: 1 } },
-    credits: { ...credits, total: creditsTotal, totalDash: Number((creditsTotal / 1e11).toFixed(2)), assumptions: 'post 188M, reply 175M, like 90M untagged / 130M tagged, likeReply 54M, repost 66M, follow 46M, bookmark 18M credits' },
+    yapp: { total: perAuthorYapp.reduce((a, b) => a + b, 0), maxPerAuthor: maxYapp, maxAuthor: perAuthorYapp.indexOf(maxYapp), perType: { post: TOKEN_COST.post, quote: TOKEN_COST.post, reply: TOKEN_COST.reply, like: TOKEN_COST.like, likeReply: TOKEN_COST.likeReply, repost: TOKEN_COST.post } },
+    credits: { ...credits, total: creditsTotal, totalDash: Number((creditsTotal / 1e11).toFixed(2)), assumptions: 'post 188M (a repost is a post), reply 175M, like 90M untagged / 130M tagged, likeReply 54M, follow 46M, bookmark 18M credits' },
     likes: {
       max: likeValues[0], top10: likeValues.slice(0, 10), median, zeroShare: Number(zeroShare.toFixed(3)),
       top1PercentShare: Number((top1 / Math.max(1, likesTotal)).toFixed(3)), postsWith100Plus: likeValues.filter((v) => v >= 100).length,
       meanPerPost: Number((likesTotal / likeValues.length).toFixed(2)),
     },
-    hero: { ref: heroRef, likes: heroLikeCount, runnerUp: runnerUpVal, ratio: Number((heroLikeCount / Math.max(1, runnerUpVal)).toFixed(2)), replies: replyCountByRoot.get(heroRef) ?? 0, reposts: postByRef.get(heroRef).reposters.size, bookmarks: postByRef.get(heroRef).bookmarkers.size, quotes: ops.filter((x) => x.o.type === 'quote' && x.o.quotedRef === heroRef).length, bobMeanLikes: meanLikesOf(1), carolMeanLikes: meanLikesOf(2), aliceMeanLikes: meanLikesOf(0), allMeanLikes: Number((likesTotal / likeValues.length).toFixed(2)) },
+    hero: { ref: heroRef, likes: heroLikeCount, runnerUp: runnerUpVal, ratio: Number((heroLikeCount / Math.max(1, runnerUpVal)).toFixed(2)), replies: replyCountByRoot.get(heroRef) ?? 0, reposts: postByRef.get(heroRef).reposts, bookmarks: postByRef.get(heroRef).bookmarkers.size, quotes: ops.filter((x) => x.o.type === 'quote' && x.o.quotedRef === heroRef).length, bobMeanLikes: meanLikesOf(1), carolMeanLikes: meanLikesOf(2), aliceMeanLikes: meanLikesOf(0), allMeanLikes: Number((likesTotal / likeValues.length).toFixed(2)) },
     follows: { total: counts.follow, maxFollowers: followerSorted[0], top10Followers: followerSorted.slice(0, 10), medianFollowers: followerSorted[Math.floor(followerSorted.length / 2)], zeroFollowers: followerSorted.filter((v) => v === 0).length, bob: followerCount[1], carol: followerCount[2], alice: followerCount[0] },
     replies: { total: counts.reply, meanPerPost: Number((counts.reply / Math.max(1, counts.post + counts.quote)).toFixed(2)), maxThread: replyPerRoot[0] ?? 0, top10Threads: replyPerRoot.slice(0, 10), postsWithReplies: replyCountByRoot.size, threads10Plus: replyPerRoot.filter((v) => v >= 10).length },
     hashtags: { taggedShare: Number((tagged / Math.max(1, counts.post + counts.quote)).toFixed(3)), distinct: tagCounts.size, top: topTags, bursts: bursts.map((b) => ({ tag: b.tag, ...burstLines.get(b.tag) })) },
@@ -1282,7 +1289,10 @@ export function generate(opts) {
   summary.calibration = calibration;
 
   // Personas file: strip generator-internal fields.
-  const personasOut = personas.map(({ tics, archetype, ...p }) => ({ ...p, archetype }));
+  const personasOut = personas.map(({ archetype, ...p }) => {
+    delete p.tics;
+    return { ...p, archetype };
+  });
   return { personas: personasOut, ops: ops.map((x) => x.o), summary };
 }
 
