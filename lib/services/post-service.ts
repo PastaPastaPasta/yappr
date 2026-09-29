@@ -231,7 +231,8 @@ class PostService extends BaseDocumentService<Post> {
 
     // Extract private feed fields if present
     const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
-    const keyGeneration = (data[privateFeedKeyFields().generation] ?? doc[privateFeedKeyFields().generation]) as number | undefined;
+    const { generation } = privateFeedKeyFields();
+    const keyGeneration = (data[generation] ?? doc[generation]) as number | undefined;
     const rawNonce = data.nonce || doc.nonce;
 
     // Normalize byte arrays (SDK may return as base64 string, Uint8Array, or regular array)
