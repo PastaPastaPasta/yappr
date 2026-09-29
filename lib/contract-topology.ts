@@ -1,11 +1,14 @@
 /**
- * Everything that differs between the two social contract interaction
- * topologies that exist on chain, in one frozen descriptor.
+ * Everything that differs between the social contract interaction topologies,
+ * in one frozen descriptor.
  *
  * `v2` is the testnet contract (staging, production, /testing). `v9` is the
- * moutai devnet contract (`contracts/yappr-social-contract-v9.json`,
+ * beta.4-beta.6 devnet contract (`contracts/yappr-social-contract-v9.json`,
  * docs/SOCIAL_V9.md), which replaces every polymorphic identifier field with a
- * mono-typed, `refersTo`-checked one. That splits what used to be a single
+ * mono-typed, `refersTo`-checked one. `v10` is the 4.2.0-beta.7 devnet contract
+ * (`contracts/yappr-social-contract-v10.json`, docs/SOCIAL_V10.md): v9's
+ * interaction surfaces with real deletes instead of tombstones, no `beat`
+ * companion, moderator-resolved reports and the DashPay profile extension. That splits what used to be a single
  * query surface in two: a like of a post lands in `like`, a like of a reply in
  * `likeReply`; a reply names its thread root and its presentational parent
  * separately; reposts and bookmarks stop accepting reply ids at all. Which
@@ -24,6 +27,7 @@
 
 import { getContractTopology, type ContractTopology } from './constants'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
+import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 
 /**
  * Whether a Post-shaped object is backed by a `post` document or a `reply`
@@ -151,6 +155,13 @@ export interface ContractTopologyDescriptor {
   readonly interactions: Readonly<Record<TargetKind, InteractionSurface>>
   /** What a tombstone of each doctype must reproduce verbatim. */
   readonly tombstonePreserves: Readonly<Record<TargetKind, TombstonePreservation>>
+  /**
+   * The v10 generation of the moderated devnet contract (4.2.0-beta.7): real
+   * deletes, no `beat`, no `post.language`, `keyGeneration` for the private
+   * feed, media hashes, moderator-resolved reports, the DashPay-based profile
+   * and a paused, unpriced YAPP. False on v2 and v9.
+   */
+  readonly v10: boolean
 }
 
 /** Nothing to carry over: the topology deletes documents instead of blanking them. */
@@ -192,6 +203,7 @@ const V2_DESCRIPTOR: ContractTopologyDescriptor = {
   // v2 posts and replies are ordinary deletable documents, so a delete is a
   // delete and no tombstone is ever built ({@link deletesAreTombstones}).
   tombstonePreserves: { post: NOTHING_PRESERVED, reply: NOTHING_PRESERVED },
+  v10: false,
 }
 
 /**
@@ -222,8 +234,18 @@ const V9_POST_INTERACTIONS: InteractionSurface = {
   replyCountField: 'rootPostId',
 }
 
+const V9_REPLY_INTERACTIONS: InteractionSurface = {
+  like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyAuthor' },
+  indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null },
+  repost: null,
+  bookmark: null,
+  quoteField: 'quotedReplyId',
+  replyCountField: 'replyToReplyId',
+}
+
 const V9_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v9',
+  v10: false,
   replyLinkage: { root: 'rootPostId', replyToReply: 'replyToReplyId' },
   tombstonePreserves: {
     post: {
@@ -237,17 +259,27 @@ const V9_DESCRIPTOR: ContractTopologyDescriptor = {
     },
     reply: REPLY_LINKAGE_PRESERVED,
   },
-  interactions: {
-    post: V9_POST_INTERACTIONS,
-    reply: {
-      like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyAuthor' },
-      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null },
-      repost: null,
-      bookmark: null,
-      quoteField: 'quotedReplyId',
-      replyCountField: 'replyToReplyId',
-    },
-  },
+  interactions: { post: V9_POST_INTERACTIONS, reply: V9_REPLY_INTERACTIONS },
+}
+
+/**
+ * v10 — `contracts/yappr-social-contract-v10.json`, the 4.2.0-beta.7 devnet
+ * (docs/SOCIAL_V10.md). The interaction surfaces are v9's exactly (the same
+ * doctypes, fields and index orders); what differs is carried by capability
+ * helpers below:
+ *
+ * - **Real deletes.** `post`/`reply` are immutable and owner-deletable: a
+ *   delete removes the document, nothing is preserved, and a reply, quote,
+ *   like, repost, bookmark or report aimed at a deleted post is refused 40120.
+ * - **No `beat`.** Today's trending tags read `like.byDayHashtagPost`, a
+ *   `skipIfAbsent` daily window on the like itself.
+ */
+const V10_DESCRIPTOR: ContractTopologyDescriptor = {
+  topology: 'v10',
+  v10: true,
+  replyLinkage: V9_DESCRIPTOR.replyLinkage,
+  tombstonePreserves: { post: NOTHING_PRESERVED, reply: NOTHING_PRESERVED },
+  interactions: V9_DESCRIPTOR.interactions,
 }
 
 /** Recursively freezes a plain-object descriptor. */
@@ -262,6 +294,7 @@ function deepFreeze<T>(value: T): T {
 const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>> = {
   v2: V2_DESCRIPTOR,
   v9: V9_DESCRIPTOR,
+  v10: V10_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -273,12 +306,18 @@ export function topologyDescriptor(): ContractTopologyDescriptor {
 }
 
 /**
- * True on the devnet contract. Every capability below exists on v9 and not on
- * v2; the helpers keep their own names because each call site is asking about
- * one capability, not about which network it runs on.
+ * True on a moderated devnet contract (v9 and v10). Every capability below
+ * that exists on both and not on v2 asks this; the helpers keep their own
+ * names because each call site is asking about one capability, not about
+ * which network it runs on.
  */
-function isV9(): boolean {
-  return topologyDescriptor().topology === 'v9'
+function isDevnetCut(): boolean {
+  return topologyDescriptor().topology !== 'v2'
+}
+
+/** True on the 4.2.0-beta.7 cut (v10). */
+export function isV10(): boolean {
+  return topologyDescriptor().v10
 }
 
 /** How reply documents name their parents on this topology. */
@@ -320,7 +359,7 @@ export function quoteFieldFor(kind: TargetKind): string | null {
  * are content, not toggles) and a newest-first listing is what the UI wants.
  */
 export function quoteListingOrderProperty(): '$ownerId' | '$createdAt' {
-  return isV9() ? '$createdAt' : '$ownerId'
+  return isDevnetCut() ? '$createdAt' : '$ownerId'
 }
 
 /** The `reply` property whose count tree holds this kind's reply count. */
@@ -365,16 +404,16 @@ export function likeSurfacesAreSplit(): boolean {
  * wait for an unconfirmed parent instead of racing it.
  */
 export function referencesAreEnforced(): boolean {
-  return isV9()
+  return isDevnetCut()
 }
 
 /**
  * True when post and reply documents are permanent (`canBeDeleted: false`) and a
  * "delete" is therefore an edit that blanks the content and sets `deleted: true`
- * rather than a document removal.
+ * rather than a document removal (v9). On v10 a delete removes the document.
  */
 export function deletesAreTombstones(): boolean {
-  return isV9()
+  return topologyDescriptor().topology === 'v9'
 }
 
 /**
@@ -424,7 +463,7 @@ export function likesAreIndexOnly(): boolean {
  * create, like create, unlike delete-by-values, post transform).
  */
 export function hashtagsAreInline(): boolean {
-  return isV9()
+  return isDevnetCut()
 }
 
 /**
@@ -441,7 +480,7 @@ export const HASHTAG_MAX_LENGTH = 61
  * `byAuthorPost {at: [postAuthor, postId]}`.
  */
 export function prefixRankingsAvailable(): boolean {
-  return isV9()
+  return isDevnetCut()
 }
 
 /**
@@ -451,37 +490,116 @@ export function prefixRankingsAvailable(): boolean {
  * not gated here.
  */
 export function followRankingsAvailable(): boolean {
-  return isV9()
+  return isDevnetCut()
 }
 
 /**
- * True when the like axes have DAILY-WINDOWED ranked twins (v9):
+ * True when the like axes have DAILY-WINDOWED ranked twins (v9, v10):
  * `like.byDayPost` (today's top posts), `like.byDayAuthorPost` (today's top
- * creators / per-author top) and `beat.byDayHashtagPost` (today's trending
- * tags / per-tag top). A `timeRange: [{ field: '$createdAt', selector }]`
+ * creators / per-author top) and `byDayHashtagPost` (today's trending tags /
+ * per-tag top) on {@link dailyHashtagWindowDocType}. A `timeRange: [{ field: '$createdAt', selector }]`
  * entry on `documents.ranked()` pins the bucket; `newest` is today (UTC day,
  * `range == step == 86400`).
  */
 export function windowedRankingsAvailable(): boolean {
-  return isV9()
+  return isDevnetCut()
 }
 
 /** The daily grid every windowed index shares (seconds, as the contract declares them). */
 export const WINDOWED_DAY_GRID = { range: 86400, step: 86400 } as const
 
 /**
+ * The indexOnly doctype holding `byDayHashtagPost`, today's hashtag window:
+ * the `beat` companion on v9, the like itself on v10 (a `skipIfAbsent` index,
+ * so an untagged like writes nothing there and a query must bind `hashtag`
+ * with `==`, `in`, a non-empty lower bound or a ranking by it). Null on v2.
+ */
+export function dailyHashtagWindowDocType(): 'beat' | 'like' | null {
+  if (!windowedRankingsAvailable()) return null
+  return isV10() ? 'like' : 'beat'
+}
+
+/**
  * The `beat` companion a like must carry on v9: the tagged-only indexOnly
  * doctype whose `byDayHashtagPost` serves the windowed hashtag rankings.
- * `null` when no companion is written — v2, reply likes (no
+ * `null` when no companion is written — v2, v10 (the like carries the daily
+ * hashtag window itself, `skipIfAbsent`), reply likes (no
  * hashtag axis), and likes of UNTAGGED posts (`beat.hashtag` is required, so
  * an untagged like writes no beat, which is the skipIfAbsent economy by other
  * means). Consensus checks `beat.hashtag` against the post through the same
  * propertyAgreement `like.hashtag` uses.
  */
 export function beatCompanionFor(kind: TargetKind, hashtag: string | null | undefined): { docType: 'beat' } | null {
-  if (!windowedRankingsAvailable() || kind !== 'post') return null
+  if (topologyDescriptor().topology !== 'v9' || kind !== 'post') return null
   if (!hashtag) return null
   return { docType: 'beat' }
+}
+
+/**
+ * True when a post carries a `language` and the feed reads a per-language
+ * timeline (`languageTimeline [language, $createdAt]`, v2 and v9). v10 has
+ * neither: one global `timeline [$createdAt]`, queried
+ * `$createdAt > 0` ordered `desc`.
+ */
+export function postsHaveLanguage(): boolean {
+  return !isV10()
+}
+
+/**
+ * The limits `post.content` and `reply.content` declare: `maxLength` counts
+ * code points, `maxBytes` (v10 only) UTF-8 bytes; a write over either is
+ * refused (JSON schema 10101, 10421 for bytes). `encryptedMaxBytes` is the
+ * `encryptedContent` ceiling a private post's ciphertext must fit.
+ */
+export interface ContentLimits {
+  readonly maxLength: number
+  readonly maxBytes: number | null
+  readonly encryptedMaxBytes: number
+}
+
+export function contentLimits(): ContentLimits {
+  if (!isV10()) return { maxLength: 500, maxBytes: null, encryptedMaxBytes: 1024 }
+  const content = socialContractV10.documentSchemas.post.properties.content as { maxLength: number; maxBytes: number }
+  return {
+    maxLength: content.maxLength,
+    maxBytes: content.maxBytes,
+    encryptedMaxBytes: socialContractV10.documentSchemas.post.properties.encryptedContent.maxItems,
+  }
+}
+
+/**
+ * True when a post or reply naming `mediaUrl` must also carry `mediaHash` (the
+ * 32-byte sha256 of the exact uploaded bytes) and `mediaFingerprint` (the
+ * 8-byte dHash), and neither may appear without the URL (v10,
+ * `dependentRequired`: 10101 otherwise).
+ */
+export function mediaCarriesHashes(): boolean {
+  return isV10()
+}
+
+/**
+ * The property of `post`/`reply`/`privateFeedGrant`/`privateFeedRekey` holding
+ * the private-feed key generation, and of `privateFeedState` holding the
+ * latest one. v10 renamed them from `epoch`/`maxEpoch`; the HKDF labels
+ * (`epoch-chain`) and the ciphertext layout are unchanged.
+ */
+export function privateFeedKeyFields(): { readonly generation: 'epoch' | 'keyGeneration'; readonly latest: 'maxEpoch' | 'maxKeyGeneration' } {
+  return isV10() ? { generation: 'keyGeneration', latest: 'maxKeyGeneration' } : { generation: 'epoch', latest: 'maxEpoch' }
+}
+
+/** The DashPay contract, whose `profile` is v10's base profile (a system contract on every network). */
+export const DASHPAY_PROFILE = { contractId: 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7', documentType: 'profile' } as const
+
+/**
+ * Where a user's profile lives (v10): the DashPay `profile` holds the display
+ * name (≤25), the public message (≤140, the bio) and a hashed avatar URL; the
+ * social `yapprProfile` extension holds everything Yappr adds. The extension
+ * requires a DashPay profile owned by its writer (`ownerRefersTo`, 40120), so
+ * the DashPay profile is written first. Null on v2 and v9, which use the
+ * profile contract (`NEXT_PUBLIC_PROFILE_TOPOLOGY`).
+ */
+export function dashpayProfileExtension(): { readonly base: typeof DASHPAY_PROFILE; readonly extensionDocType: 'yapprProfile' } | null {
+  return isV10() ? { base: DASHPAY_PROFILE, extensionDocType: 'yapprProfile' } : null
 }
 
 export function canRepost(kind: TargetKind): boolean {
@@ -607,8 +725,10 @@ export function groupByInteractionSurface(targets: readonly KindedTarget[]): Sur
 
 // ---------------------------------------------------------------------------
 // Moderation, token costs, action fees and the starter grant, read off the
-// committed v9 contract JSON so that the numbers the client shows and agrees to
-// are the numbers consensus enforces. `lib/contract-topology.test.ts` pins them.
+// committed contract JSON of the configured devnet cut (v9 or v10; v2 reads
+// v9's token amounts, which match its own) so that the numbers the client
+// shows and agrees to are the numbers consensus enforces.
+// `lib/contract-topology.test.ts` pins them.
 
 /** The six document actions a contract may price. */
 export type DocumentAction = 'create' | 'replace' | 'delete' | 'transfer' | 'update_price' | 'purchase'
@@ -650,17 +770,47 @@ export interface ActionFeeDeclaration {
   readonly pricing: 'feeMultiplier' | 'fixed'
 }
 
+/** `moderatorAbilities` (4.2.0-beta.7, v10): what the moderators may do to a type's documents. */
+export interface ModeratorAbilities {
+  readonly delete?: boolean
+  readonly deleteWithin?: number
+  /** Default true: a moderator's deletion leaves a removal record and can be restored. */
+  readonly deleteKeepsRecord?: boolean
+  readonly deleteRefundsOwner?: boolean
+  /** Top-level properties only the moderators write (`moderatorChangeDocumentFields`). */
+  readonly changeFields?: readonly string[]
+}
+
 interface SocialDocumentSchema {
+  /** v9 (beta.4-beta.6 grammar); v10 declares {@link ModeratorAbilities} instead. */
   canBeDeletedByModerators?: boolean
+  moderatorAbilities?: ModeratorAbilities
   required?: string[]
   properties?: Record<string, { refersTo?: { type?: string } }>
   tokenCost?: { create?: { amount: number; optional?: boolean; gasFeesPaidBy?: number } }
   actionFees?: { pricing?: string } & Partial<Record<DocumentAction, { owner?: number; moderators?: number }>>
 }
 
-const V9_SCHEMAS = socialContractV9.documentSchemas as unknown as Record<string, SocialDocumentSchema>
-const V9_GRANT = (socialContractV9.tokens['0'].distributionRules as { oncePerIdentityDistribution?: { amount: number } })
-  .oncePerIdentityDistribution
+type SocialContractJson = typeof socialContractV9 | typeof socialContractV10
+
+/** The committed JSON of the configured devnet cut; v2 reads v9's (see above). */
+function devnetContract(): SocialContractJson {
+  return isV10() ? socialContractV10 : socialContractV9
+}
+
+function devnetSchemas(): Record<string, SocialDocumentSchema> {
+  return devnetContract().documentSchemas as unknown as Record<string, SocialDocumentSchema>
+}
+
+function starterGrant(): { amount: number } | undefined {
+  return (devnetContract().tokens['0'].distributionRules as { oncePerIdentityDistribution?: { amount: number } })
+    .oncePerIdentityDistribution
+}
+
+/** True when moderators may delete documents of `schema`, in either grammar. */
+function moderatorsMayDelete(schema: SocialDocumentSchema | undefined): boolean {
+  return schema?.canBeDeletedByModerators === true || schema?.moderatorAbilities?.delete === true
+}
 
 /**
  * True when the configured contract declares `moderation` (v9): identities can
@@ -668,7 +818,7 @@ const V9_GRANT = (socialContractV9.tokens['0'].distributionRules as { oncePerIde
  * moderators, and `moderationStatus`/`documentRemovals` are answerable.
  */
 export function contractIsModerated(): boolean {
-  return isV9()
+  return isDevnetCut()
 }
 
 /**
@@ -679,12 +829,12 @@ export function contractIsModerated(): boolean {
  * as a removed-post stub instead of failing the page.
  */
 export function referencesMayDangle(): boolean {
-  return isV9()
+  return isDevnetCut()
 }
 
 /**
  * The identifier properties of `docType` a tombstone may DROP when their
- * target has been removed by a moderator (v9: `post.quotedPostId`,
+ * target has been removed by a moderator (v9 only: `post.quotedPostId`,
  * `post.quotedReplyId`, `reply.replyToReplyId`): the optional
  * `deletableDocument` references. A replace re-validates every such
  * reference, so keeping a dead one is 40120, and clearing it is the one change
@@ -694,8 +844,8 @@ export function referencesMayDangle(): boolean {
  * nothing a post points at can disappear.
  */
 export function clearableReferencesFor(docType: string): readonly string[] {
-  if (!referencesMayDangle()) return []
-  const schema = V9_SCHEMAS[docType]
+  if (!deletesAreTombstones()) return []
+  const schema = devnetSchemas()[docType]
   if (!schema?.properties) return []
   const required = new Set(schema.required ?? [])
   return Object.entries(schema.properties)
@@ -714,7 +864,7 @@ export type ModerationList = 'banlist' | 'suspensions' | 'warnings'
  */
 export function moderationListsKept(): readonly ModerationList[] {
   if (!contractIsModerated()) return []
-  const declared = socialContractV9.config as { moderation?: Partial<Record<ModerationList, boolean>> }
+  const declared = devnetContract().config as { moderation?: Partial<Record<ModerationList, boolean>> }
   const moderation = declared.moderation
   if (!moderation) return []
   return (['banlist', 'suspensions', 'warnings'] as const).filter((list) => moderation[list] === true)
@@ -725,12 +875,35 @@ export function contractKeepsWarnings(): boolean {
   return moderationListsKept().includes('warnings')
 }
 
-/** The document types the contract's moderators may delete (v9: post, reply, report). */
+/** The document types the contract's moderators may delete (v9: post, reply, report; v10 adds yapprProfile). */
 export function moderatorDeletableTypes(): readonly string[] {
   if (!contractIsModerated()) return []
-  return Object.entries(V9_SCHEMAS)
-    .filter(([, schema]) => schema.canBeDeletedByModerators === true)
+  return Object.entries(devnetSchemas())
+    .filter(([, schema]) => moderatorsMayDelete(schema))
     .map(([name]) => name)
+}
+
+/**
+ * What the moderators may do to documents of `docType`, as the configured
+ * contract declares it, or null off a moderated topology or on a type they
+ * cannot touch. v9 declares only a delete that keeps a removal record.
+ */
+export function moderatorAbilitiesFor(docType: string): ModeratorAbilities | null {
+  if (!contractIsModerated()) return null
+  const schema = devnetSchemas()[docType]
+  if (schema?.moderatorAbilities) return schema.moderatorAbilities
+  return schema?.canBeDeletedByModerators === true ? { delete: true } : null
+}
+
+/**
+ * True when a moderator's deletion of `docType` leaves a removal record (and
+ * can be restored within a week). False on v10's `report`, which the
+ * moderators purge without a record: `documentRemovals` refuses such a type,
+ * and `moderatorDeleteDocument` resolves to nothing for it.
+ */
+export function moderatorDeletionKeepsRecord(docType: string): boolean {
+  const abilities = moderatorAbilitiesFor(docType)
+  return abilities?.delete === true && abilities.deleteKeepsRecord !== false
 }
 
 /**
@@ -741,9 +914,9 @@ export function moderatorDeletableTypes(): readonly string[] {
  * `lib/contract-topology.test.ts`).
  */
 export function tokenCostFor(docType: string): TokenCostDeclaration | null {
-  const create = V9_SCHEMAS[docType]?.tokenCost?.create
+  const create = devnetSchemas()[docType]?.tokenCost?.create
   if (!create) return null
-  if (!isV9()) return { amount: create.amount, optional: false, gasFeesPaidBy: 0 }
+  if (!isDevnetCut()) return { amount: create.amount, optional: false, gasFeesPaidBy: 0 }
   return {
     amount: create.amount,
     optional: create.optional === true,
@@ -759,8 +932,8 @@ export function tokenCostFor(docType: string): TokenCostDeclaration | null {
  * agreement at all is 40132.
  */
 export function declaredActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
-  if (!isV9()) return null
-  const fees = V9_SCHEMAS[docType]?.actionFees
+  if (!isDevnetCut()) return null
+  const fees = devnetSchemas()[docType]?.actionFees
   if (!fees) return null
   const fee = fees[action]
   if (!fee) return null
@@ -777,8 +950,25 @@ export function declaredActionFee(docType: string, action: DocumentAction): Acti
  * second claim is refused with 40722.
  */
 export function starterGrantAmount(): bigint | null {
-  if (!isV9() || !V9_GRANT) return null
-  return BigInt(V9_GRANT.amount)
+  const grant = starterGrant()
+  if (!isDevnetCut() || !grant) return null
+  return BigInt(grant.amount)
+}
+
+/**
+ * True when YAPP can neither be transferred nor bought (v10): the token starts
+ * paused and no one can ever unpause it or set a direct-purchase price. Posting
+ * and liking still pay YAPP (a token cost is not a transfer), the starter grant
+ * still pays out, and the contract owner still mints. Tips must be credit tips.
+ */
+export function yappIsLocked(): boolean {
+  if (!isV10()) return false
+  const token = socialContractV10.tokens['0'] as {
+    startAsPaused?: boolean
+    distributionRules: { changeDirectPurchasePricingRules: { authorizedToMakeChange: { $type: string } } }
+  }
+  return token.startAsPaused === true
+    && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne'
 }
 
 // ---------------------------------------------------------------------------
@@ -786,8 +976,8 @@ export function starterGrantAmount(): bigint | null {
 // follows (4.2.0-beta.4), read off the committed contract JSON and pinned by
 // `lib/contract-topology.test.ts`.
 
-/** What an elected team may do on one document type. */
-export type ModerationAbility = 'deleteDocuments' | 'ban' | 'suspend' | 'warn'
+/** What an elected team may do on one document type (`changeDocumentFields` from v10). */
+export type ModerationAbility = 'deleteDocuments' | 'ban' | 'suspend' | 'warn' | 'changeDocumentFields'
 
 /** The contract's elected moderation declaration, fixed at its creation. */
 export interface ElectedModerationDeclaration {
@@ -814,8 +1004,7 @@ interface GrammarDocumentSchema {
   properties: Record<string, { distinctFrom?: string; items?: { distinctFrom?: string } }>
 }
 
-const V9_GRAMMAR_SCHEMAS = socialContractV9.documentSchemas as unknown as Record<string, GrammarDocumentSchema>
-const V9_MODERATION = socialContractV9.config.moderation as {
+interface DeclaredElectedModeration {
   moderators: {
     joinWindow: number
     voteWindow: number
@@ -828,6 +1017,10 @@ const V9_MODERATION = socialContractV9.config.moderation as {
   }
 }
 
+function grammarSchemas(): Record<string, GrammarDocumentSchema> {
+  return devnetContract().documentSchemas as unknown as Record<string, GrammarDocumentSchema>
+}
+
 /**
  * The elected moderation declaration (v9), or null when the contract's
  * moderators are the owner or an appointed set. Until a charter is seated the
@@ -836,7 +1029,7 @@ const V9_MODERATION = socialContractV9.config.moderation as {
  * deletion must name a `reason` document its proposal lists (41203).
  */
 export function electedModeration(): ElectedModerationDeclaration | null {
-  if (!isV9()) return null
+  if (!isDevnetCut()) return null
   // One frozen object per resolved topology: React effects depend on it, and a
   // fresh object per call would re-run them on every render.
   if (!electedDeclaration) electedDeclaration = deepFreeze(buildElectedDeclaration())
@@ -846,7 +1039,7 @@ export function electedModeration(): ElectedModerationDeclaration | null {
 let electedDeclaration: ElectedModerationDeclaration | null = null
 
 function buildElectedDeclaration(): ElectedModerationDeclaration {
-  const elected = V9_MODERATION.moderators
+  const elected = (devnetContract().config.moderation as DeclaredElectedModeration).moderators
   return {
     joinWindowSeconds: elected.joinWindow,
     voteWindowSeconds: elected.voteWindow,
@@ -866,8 +1059,8 @@ function buildElectedDeclaration(): ElectedModerationDeclaration {
  * Empty on v2, where only the client stops a self-follow.
  */
 export function ownerDistinctProperties(docType: string): readonly string[] {
-  if (!isV9()) return []
-  return Object.entries(V9_GRAMMAR_SCHEMAS[docType]?.properties ?? {})
+  if (!isDevnetCut()) return []
+  return Object.entries(grammarSchemas()[docType]?.properties ?? {})
     .filter(([, property]) => (property.distinctFrom ?? property.items?.distinctFrom) === '$ownerId')
     .map(([name]) => name)
 }
@@ -879,7 +1072,7 @@ export function ownerDistinctProperties(docType: string): readonly string[] {
  * exists when the grant is written (40120 on `recipientId`).
  */
 export function privateFeedWritesAreGated(): boolean {
-  return isV9() && V9_GRAMMAR_SCHEMAS.privateFeedGrant?.ownerRefersTo !== undefined
+  return isDevnetCut() && grammarSchemas().privateFeedGrant?.ownerRefersTo !== undefined
 }
 
 /**
@@ -887,16 +1080,34 @@ export function privateFeedWritesAreGated(): boolean {
  * (v9) rather than one byte array of 32-byte ids packed end to end.
  */
 export function blockFollowsAreTyped(): boolean {
-  return isV9()
+  return isDevnetCut()
 }
 
 /**
- * True when posts and replies can be reported to the moderators (v9's
- * `report` type): one report per reporter and target, the target's author
- * agreed by consensus (40127) and never the reporter (10419). Its reporter may
- * withdraw it; the moderators dismiss it by deleting it. Off a moderated
- * topology nobody would read a report, so none can be filed.
+ * True when posts and replies can be reported to the moderators (the `report`
+ * type): one report per reporter and target, the target's author agreed by
+ * consensus (40127) and never the reporter (10419). Its reporter may withdraw
+ * it. On v9 the moderators dismiss it by deleting it; on v10 they resolve it
+ * ({@link reportsAreResolved}). Off a moderated topology nobody would read a
+ * report, so none can be filed.
  */
 export function contractTakesReports(): boolean {
-  return contractIsModerated() && V9_SCHEMAS.report?.canBeDeletedByModerators === true
+  return contractIsModerated() && moderatorsMayDelete(devnetSchemas().report)
+}
+
+/**
+ * The fields the moderators write on a report (v10): `status` (1 no action,
+ * 2 content removed, 3 user actioned) and `resolution` (a note of at most 200
+ * characters, never without a status), through
+ * `sdk.contracts.moderatorChangeDocumentFields`. The report stays, stamped
+ * with `$moderatedBy`/`$moderatedAt`, and still expires with its 90-day ttl.
+ * A reporter who sets either is refused 41124. Empty on v9 and v2.
+ */
+export function reportResolutionFields(): readonly string[] {
+  return moderatorAbilitiesFor('report')?.changeFields ?? []
+}
+
+/** True when the moderators mark reports handled instead of deleting them (v10). */
+export function reportsAreResolved(): boolean {
+  return reportResolutionFields().length > 0
 }

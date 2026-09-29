@@ -187,8 +187,10 @@ function CheckoutPage() {
       }
     }
 
-    // Consensus cannot stop an order to a paused or closed store; the client must.
-    // Re-read past the document cache so a store closed mid-checkout is caught.
+    // Before storefront v5 consensus cannot stop an order to a paused or closed
+    // store, so the client must; on v5 it refuses one too (QA D-25), and this
+    // check keeps the buyer from paying for a refusal. Re-read past the document
+    // cache so a store closed mid-checkout is caught.
     if (storeToValidate) {
       let current: Store | null
       try {

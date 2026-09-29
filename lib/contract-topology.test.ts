@@ -14,19 +14,25 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import socialContractV2 from '@/contracts/yappr-social-contract-v2.json'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
+import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 import { CONTRACT_TOPOLOGIES } from './constants'
 
 type Schemas = Record<string, {
   immutable?: string[]
   immutableAllowSetting?: string[]
   required?: string[]
-  indices?: Array<{ preallocated?: boolean }>
+  indices?: Array<{ name: string; preallocated?: boolean; skipIfAbsent?: boolean | string[]; properties: Array<Record<string, string>> }>
+  moderatorAbilities?: { delete?: boolean; deleteKeepsRecord?: boolean; changeFields?: string[] }
+  dependentRequired?: Record<string, string[]>
+  documentsMutable?: boolean
+  canBeDeleted?: boolean
   tokenCost?: { create?: { amount: number } }
   actionFees?: Record<string, unknown>
   properties: Record<string, {
     contentMediaType?: string
     maxLength?: number
-    refersTo?: { type: string; documentType?: string; lookup?: unknown }
+    maxBytes?: number
+    refersTo?: { type: string; documentType?: string; lookup?: unknown; where?: Record<string, string>; findBy?: Record<string, string>; contractId?: string }
     items?: { refersTo?: unknown }
     maxItems?: number
   }>
@@ -35,6 +41,7 @@ type Schemas = Record<string, {
 }>
 
 const V9 = socialContractV9.documentSchemas as unknown as Schemas
+const V10 = socialContractV10.documentSchemas as unknown as Schemas
 const V2 = socialContractV2.documentSchemas as unknown as Schemas
 
 /**
@@ -48,8 +55,8 @@ async function topologyModule(topology: string) {
 }
 
 describe('contract topology', () => {
-  it('declares exactly the two social contracts that exist on chain', () => {
-    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9'])
+  it('declares exactly the social contract shapes the repo carries', () => {
+    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10'])
     // The e2e spec reads the COMPILED bundle and cannot import lib/, so it
     // names the devnet topology as a literal; drift would silently skip it.
     const spec = readFileSync(join(process.cwd(), 'e2e/write/topology.spec.ts'), 'utf8')
@@ -110,7 +117,7 @@ describe('contract topology', () => {
   })
 
   it('names like fields and indexes that exist on each contract', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const like = m.likeIndexFor(kind)
@@ -319,6 +326,166 @@ describe('contract topology', () => {
       // The client's MAX_BLOCK_FOLLOWS is the contract's cap.
       expect(V9.blockFollow.properties.followedBlockers.maxItems).toBe(100)
       expect(V9.blockFollow.properties.followedBlockers.items?.refersTo).toEqual({ type: 'identity' })
+    })
+  })
+  describe('v10 (4.2.0-beta.7)', () => {
+    it('keeps every v9 interaction surface, and v2 and v9 behave as before', async () => {
+      // A descriptor resolves on first use, from the env at that moment, so each
+      // module is read before the next one is loaded.
+      const surfaces = (m: Awaited<ReturnType<typeof topologyModule>>) => ({
+        linkage: m.replyLinkage(),
+        kinds: (['post', 'reply'] as const).map((kind) => [m.likeIndexFor(kind), m.repostIndexFor(kind), m.bookmarkIndexFor(kind),
+          m.quoteFieldFor(kind), m.replyCountFieldFor(kind), m.indexOnlyLikeShapeFor(kind)]),
+      })
+      const shared = (m: Awaited<ReturnType<typeof topologyModule>>) => [
+        m.hasFlatThreads(), m.quoteFieldsAreSplit(), m.likeSurfacesAreSplit(), m.referencesAreEnforced(), m.likesAreIndexOnly(),
+        m.hashtagsAreInline(), m.prefixRankingsAvailable(), m.followRankingsAvailable(), m.windowedRankingsAvailable(),
+        m.contractIsModerated(), m.referencesMayDangle(), m.contractKeepsWarnings(), m.privateFeedWritesAreGated(),
+        m.blockFollowsAreTyped(), m.contractTakesReports(),
+      ]
+      const only10 = (m: Awaited<ReturnType<typeof topologyModule>>) => [
+        m.isV10(), m.mediaCarriesHashes(), m.reportsAreResolved(), m.yappIsLocked(), m.dashpayProfileExtension() !== null, !m.postsHaveLanguage(),
+      ]
+      const read = async (topology: string) => {
+        const m = await topologyModule(topology)
+        return { surfaces: surfaces(m), shared: shared(m), only10: only10(m) }
+      }
+      const [v2, v9, v10] = [await read('v2'), await read('v9'), await read('v10')]
+      expect(v10.surfaces).toEqual(v9.surfaces)
+      expect(v10.shared.every(Boolean)).toBe(true)
+      expect(v10.only10.every(Boolean)).toBe(true)
+      expect(v9.only10.some(Boolean)).toBe(false)
+      expect(v2.only10.some(Boolean)).toBe(false)
+    })
+
+    it('deletes instead of tombstoning, and writes no beat', async () => {
+      const v10 = await topologyModule('v10')
+      expect(v10.deletesAreTombstones()).toBe(false)
+      expect(v10.tombstonePreservationFor('post')).toEqual({ identifiers: [], scalars: [] })
+      expect(v10.clearableReferencesFor('post')).toEqual([])
+      expect(v10.beatCompanionFor('post', 'dash')).toBeNull()
+      expect(v10.dailyHashtagWindowDocType()).toBe('like')
+      expect((await topologyModule('v9')).dailyHashtagWindowDocType()).toBe('beat')
+      expect((await topologyModule('v2')).dailyHashtagWindowDocType()).toBeNull()
+      expect(V10.beat).toBeUndefined()
+      for (const kind of ['post', 'reply'] as const) {
+        expect(V10[kind].documentsMutable, kind).toBe(false)
+        expect(V10[kind].canBeDeleted, kind).toBeUndefined()
+        expect(V10[kind].properties.deleted, kind).toBeUndefined()
+        expect(V10[kind].immutable, kind).toBeUndefined()
+      }
+      expect(socialContractV10.config.documentsCanBeDeletedContractDefault).toBe(true)
+    })
+
+    it('pins the daily hashtag window on like: skipped when untagged, ranked by tag and post', () => {
+      const window = V10.like.indices?.find((index) => index.name === 'byDayHashtagPost')
+      expect(window?.properties.map((entry) => Object.keys(entry)[0])).toEqual(['$createdAt', 'hashtag', 'postId'])
+      expect(window?.skipIfAbsent).toBe(true)
+      // The all-time twin must stay (and skip too): #5162 refuses an indexOnly optional
+      // property without an untimed single-skip index.
+      expect(V10.like.indices?.find((index) => index.name === 'byHashtagPost')?.skipIfAbsent).toBe(true)
+    })
+
+    it('pins content limits, media hashes and the key-generation rename against the v10 JSON', async () => {
+      const v10 = await topologyModule('v10')
+      expect(v10.contentLimits()).toEqual({ maxLength: 1000, maxBytes: 2000, encryptedMaxBytes: 2048 })
+      expect((await topologyModule('v9')).contentLimits()).toEqual({ maxLength: 500, maxBytes: null, encryptedMaxBytes: 1024 })
+      for (const kind of ['post', 'reply'] as const) {
+        expect(V10[kind].properties.content).toMatchObject({ maxLength: 1000, maxBytes: 2000 })
+        expect(V10[kind].properties.language, kind).toBeUndefined()
+        expect(V10[kind].dependentRequired).toEqual({ mediaUrl: ['mediaHash', 'mediaFingerprint'], mediaHash: ['mediaUrl'], mediaFingerprint: ['mediaUrl'] })
+        expect(V10[kind].properties.mediaHash).toMatchObject({ byteArray: true, minItems: 32, maxItems: 32 })
+        expect(V10[kind].properties.mediaFingerprint).toMatchObject({ byteArray: true, minItems: 8, maxItems: 8 })
+      }
+      const { generation, latest } = v10.privateFeedKeyFields()
+      for (const docType of ['post', 'reply', 'privateFeedGrant', 'privateFeedRekey']) {
+        expect(V10[docType].properties[generation], docType).toBeDefined()
+        expect(V10[docType].properties.epoch, docType).toBeUndefined()
+      }
+      expect(V10.privateFeedState.properties[latest]).toBeDefined()
+      expect(V10.privateFeedRekey.indices?.map((index) => index.name)).toEqual(['ownerAndKeyGeneration'])
+      expect((await topologyModule('v9')).privateFeedKeyFields()).toEqual({ generation: 'epoch', latest: 'maxEpoch' })
+      expect(V10.post.indices?.find((index) => index.name === 'timeline')?.properties).toEqual([{ $createdAt: 'asc' }])
+    })
+
+    it('pins the moderation declaration, report resolution and abilities against the v10 JSON', async () => {
+      const v10 = await topologyModule('v10')
+      const abilities = ['deleteDocuments', 'ban', 'suspend', 'warn']
+      expect(v10.electedModeration()).toEqual({
+        joinWindowSeconds: 3_600,
+        voteWindowSeconds: 3_600,
+        seatContestable: false,
+        electionDelaySeconds: null,
+        maxAddedModerators: 10,
+        moderatedDocumentTypes: { post: abilities, reply: abilities, report: ['deleteDocuments', 'changeDocumentFields'], yapprProfile: ['deleteDocuments'] },
+        interim: 'contractOwner',
+        ownerProtected: true,
+      })
+      expect(v10.moderatorDeletableTypes()).toEqual(['post', 'reply', 'report', 'yapprProfile'])
+      expect(v10.reportResolutionFields()).toEqual(['status', 'resolution'])
+      // Posts, replies and profiles keep their removal record (restorable); reports do not.
+      expect(['post', 'reply', 'yapprProfile', 'report'].map((type) => v10.moderatorDeletionKeepsRecord(type))).toEqual([true, true, true, false])
+      expect((await topologyModule('v9')).moderatorDeletionKeepsRecord('report')).toBe(true)
+      expect((await topologyModule('v9')).reportResolutionFields()).toEqual([])
+      expect(V10.report.properties.status).toMatchObject({ type: 'integer', minimum: 1, maximum: 3 })
+      expect(V10.report.properties.resolution).toMatchObject({ type: 'string', minLength: 1, maxLength: 200 })
+      expect(V10.report.required).not.toContain('status')
+      expect(V10.report.indices?.map((index) => index.name)).toEqual(expect.arrayContaining(['byStatus', 'byModerator']))
+      expect(socialContractV10.documentSchemas.report.ttl).toBe(7_776_000)
+      // Nothing is left of the beta.6 grammar.
+      const text = JSON.stringify(socialContractV10)
+      for (const removed of ['canBeDeletedByModerators', 'propertyAgreement', '"lookup"', 'listElement']) expect(text).not.toContain(removed)
+    })
+
+    it('pins the yapprProfile extension to the DashPay profile', async () => {
+      const v10 = await topologyModule('v10')
+      expect(v10.dashpayProfileExtension()).toEqual({ base: { contractId: 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7', documentType: 'profile' }, extensionDocType: 'yapprProfile' })
+      expect(V10.yapprProfile.ownerRefersTo).toEqual({ type: 'deletableDocument', contractId: v10.DASHPAY_PROFILE.contractId, documentType: 'profile', findBy: { $ownerId: '.' } })
+      expect(V10.profile).toBeUndefined()
+      expect(Object.keys(V10.yapprProfile.properties).sort()).toEqual(['avatar', 'bannerUri', 'location', 'nsfw', 'paymentUris', 'pronouns', 'socialLinks', 'website'])
+    })
+
+    it('pins the translated references: each where is the v9 agreement flipped', () => {
+      const flip = (agreement: Record<string, string>) => Object.fromEntries(Object.entries(agreement).map(([mine, its]) => [its, mine]))
+      const legacy = (schema: Schemas[string], property: string) => (schema.properties[property].refersTo as { propertyAgreement?: Record<string, string> }).propertyAgreement
+      for (const [docType, property] of [['like', 'postId'], ['likeReply', 'replyId'], ['post', 'quotedPostId'], ['post', 'quotedReplyId'], ['reply', 'replyToReplyId'], ['repost', 'postId'], ['report', 'postId'], ['report', 'replyId']]) {
+        expect(V10[docType].properties[property].refersTo?.where, `${docType}.${property}`).toEqual(flip(legacy(V9[docType], property) ?? {}))
+      }
+      expect(V10.privateFeedGrant.properties.recipientId.refersTo?.findBy).toEqual({ targetId: '$ownerId', $ownerId: '.' })
+    })
+
+    it('locks YAPP: paused for good, never priced, still granted, costs unchanged', async () => {
+      const v10 = await topologyModule('v10')
+      const token = socialContractV10.tokens['0']
+      expect(token.startAsPaused).toBe(true)
+      expect(token.emergencyActionRules.authorizedToMakeChange.$type).toBe('noOne')
+      expect(token.emergencyActionRules.adminActionTakers.$type).toBe('noOne')
+      expect(token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type).toBe('noOne')
+      expect(token.distributionRules.changeDirectPurchasePricingRules.adminActionTakers.$type).toBe('noOne')
+      expect(token.manualMintingRules.authorizedToMakeChange.$type).toBe('contractOwner')
+      expect(token.distributionRules.mintingAllowChoosingDestination).toBe(true)
+      expect(v10.starterGrantAmount()).toBe(100n)
+      const sponsored = { optional: true, gasFeesPaidBy: 2 }
+      for (const [docType, amount] of [['post', 10], ['reply', 3], ['like', 1], ['likeReply', 1], ['repost', 1]] as const) {
+        expect(v10.tokenCostFor(docType), docType).toEqual({ amount, ...sponsored })
+      }
+      expect(v10.declaredActionFee('post', 'create')).toEqual({ owner: 0n, moderators: 80_000_000n, pricing: 'feeMultiplier' })
+      expect(v10.declaredActionFee('reply', 'create')).toEqual({ owner: 0n, moderators: 16_000_000n, pricing: 'feeMultiplier' })
+      expect(v10.declaredActionFee('post', 'delete')).toBeNull()
+      expect((await topologyModule('v9')).yappIsLocked()).toBe(false)
+    })
+
+    it('puts skipIfAbsent on every stored index over an optional property only', () => {
+      for (const [docType, schema] of Object.entries(V10)) {
+        const required = new Set(schema.required ?? [])
+        for (const index of schema.indices ?? []) {
+          const optional = index.properties.map((entry) => Object.keys(entry)[0]).filter((name) => !name.startsWith('$') && !required.has(name))
+          // byStatus stays unskipped: an open report has no status, and a skip index
+          // could not serve the `status == null` side of the queue.
+          const expected = optional.length > 0 && index.name !== 'byStatus'
+          expect(index.skipIfAbsent === true, `${docType}.${index.name}`).toBe(expected)
+        }
+      }
     })
   })
 })
