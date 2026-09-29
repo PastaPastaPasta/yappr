@@ -110,13 +110,13 @@ export function decodeDriveError(text) {
   });
 }
 
-/** Creates a battery context: SDK handle, reporting state, and the helper set bound to it. */
 /** The personal account's slot in the private seed ledger (docs/PLATFORM_BETA4_UPGRADE.md). */
 const PERSONAL_PERSONA_IDX = 900;
 
 /** A `--moderator` value: a ledger persona index, `maker` or `personal`. */
 export const MODERATOR_FLAG = { parse: (raw) => raw };
 
+/** Creates a battery context: SDK handle, reporting state, and the helper set bound to it. */
 export function createBattery({ handle, contractId, socialId }) {
   let failures = 0;
   const capturedErrors = [];

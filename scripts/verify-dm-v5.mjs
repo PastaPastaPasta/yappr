@@ -26,7 +26,7 @@
  *     [--only invites,messages,...] [--evidence <path>|--no-evidence]
  *     [--maker-id <id>] [--bot-a-id <id>] [--bot-b-id <id>] [--variant-owner-id <id>]
  *   Identity ids default to DEVNET_MAKER_IDENTITY_ID and the identity pool
- *   (DEVNET_IDENTITY_IDS, else .env.devnet's E2E_IDENTITY_IDS); none are baked in.
+ *   (DEVNET_IDENTITY_IDS, else E2E_IDENTITY_IDS from the env or .env.devnet); none are baked in.
  *   node scripts/verify-dm-v5.mjs --self-test   # offline: the contract declares what the cases assert
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -128,11 +128,11 @@ function selfTest() {
 /**
  * The devnet's own identities, never a baked-in chain's: the maker is
  * DEVNET_MAKER_IDENTITY_ID and the bots are seed indexes 0/1/2 of the identity
- * pool (DEVNET_IDENTITY_IDS, else `.env.devnet`'s E2E_IDENTITY_IDS), the same
- * sources verify-lib and battery-lib read. An explicit flag wins.
+ * pool (DEVNET_IDENTITY_IDS, else E2E_IDENTITY_IDS from the environment, then
+ * from `.env.devnet`), the order verify-lib reads it in. An explicit flag wins.
  */
 function devnetIdentities(env) {
-  const pool = (process.env.DEVNET_IDENTITY_IDS || env.E2E_IDENTITY_IDS || '')
+  const pool = (process.env.DEVNET_IDENTITY_IDS || process.env.E2E_IDENTITY_IDS || env.E2E_IDENTITY_IDS || '')
     .split(',').map((id) => id.trim()).filter(Boolean);
   return {
     maker: process.env.DEVNET_MAKER_IDENTITY_ID || env.DEVNET_MAKER_IDENTITY_ID || null,

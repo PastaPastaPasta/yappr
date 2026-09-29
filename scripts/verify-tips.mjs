@@ -36,6 +36,11 @@ const NOTE_MAX = 2048;
 /** The app's tip message cap (lib/tip-note.ts). */
 const MESSAGE_MAX = 280;
 const CONTROL_NOTE = 'battery control transfer, not a tip';
+/**
+ * A key of the wrong purpose signing a credit transfer: refused while signing
+ * (WrongPublicKeyPurposeError 20005) or by consensus (InvalidSignaturePublicKeyPurposeError 20011).
+ */
+const WRONG_KEY_PURPOSE = /\bcode"?\s*[=:]\s*200(05|11)\b|invalid (identity |public )?key purpose/i;
 /** The app's smallest credit tip (lib/services/tip-service.ts MIN_TIP_CREDITS, 0.001 DASH). */
 const MIN_TIP_CREDITS = 100_000_000n;
 const TIP_MESSAGE = 'battery tip';
@@ -90,14 +95,23 @@ async function transferSigner(battery, personaIdx) {
   return { identity, signingKey, signer };
 }
 
-/** Polls a credit balance until it moves off `from` (a confirmation 504 can precede a landed transfer). */
-async function balanceAfter(battery, ownerId, from) {
-  let balance = from;
-  for (let attempt = 0; attempt < 5 && balance === from; attempt++) {
+/** Credit balances of `ids`, read in ONE proved query so they share a block height. */
+async function balancesOf(battery, ids) {
+  const balances = await battery.readback(() => battery.sdk.identities.balances(ids));
+  return ids.map((id) => (balances instanceof Map ? balances.get(id) : undefined) ?? 0n);
+}
+
+/**
+ * Polls `ids` until every balance has moved off `before` (a confirmation 504
+ * can precede a landed transfer), or the attempts run out; returns the last read.
+ */
+async function balancesAfter(battery, ids, before) {
+  let after = before;
+  for (let attempt = 0; attempt < 5 && after.some((balance, i) => balance === before[i]); attempt++) {
     await settle();
-    balance = await battery.balanceOf(ownerId);
+    after = await balancesOf(battery, ids);
   }
-  return balance;
+  return after;
 }
 
 /** One page of `transfer` documents off a token-history index, newest first. */
@@ -238,7 +252,9 @@ async function caseC1CreditTip(ctx) {
   console.log('\n== c1: a credit tip, signed with the TRANSFER key ==');
   const { battery, tipper, creator, credits } = ctx;
   const { identity, signingKey, signer } = await transferSigner(battery, ctx.args.tipper);
-  const before = { tipper: await battery.balanceOf(tipper.ownerId), creator: await battery.balanceOf(creator.ownerId) };
+  const ids = [tipper.ownerId, creator.ownerId];
+  const [tipperBefore, creatorBefore] = await balancesOf(battery, ids);
+  const before = { tipper: tipperBefore, creator: creatorBefore };
   console.log(`     before: tipper=${before.tipper} creator=${before.creator} credits`);
   if (before.tipper < credits * 2n) throw new Error(`tipper holds ${before.tipper} credits, below the ${credits * 2n} a tip plus its fee needs`);
 
@@ -249,8 +265,7 @@ async function caseC1CreditTip(ctx) {
   } catch (e) {
     console.log(`     (credit transfer reported: ${describeErr(e).slice(0, 140)})`);
   }
-  const creatorAfter = await balanceAfter(battery, creator.ownerId, before.creator);
-  const tipperAfter = await battery.balanceOf(tipper.ownerId);
+  const [tipperAfter, creatorAfter] = await balancesAfter(battery, ids, [before.tipper, before.creator]);
   const fee = before.tipper - tipperAfter - credits;
   console.log(`     after:  tipper=${tipperAfter} creator=${creatorAfter} (fee ${fee} credits)`);
   battery.check('c1a the creator received exactly the tip', creatorAfter === before.creator + credits, `${before.creator} -> ${creatorAfter}`);
@@ -263,16 +278,16 @@ async function caseC2AuthKeyRefused(ctx) {
   console.log('\n== c2: an AUTHENTICATION key cannot sign a credit tip ==');
   const { battery, tipper, creator, credits } = ctx;
   const identity = await battery.readback(() => battery.sdk.identities.fetch(tipper.ownerId));
-  const before = await battery.balanceOf(creator.ownerId);
+  const [before] = await balancesOf(battery, [creator.ownerId]);
   let refusal = null;
   try {
     await battery.sdk.identities.creditTransfer({ identity, recipientId: creator.ownerId, amount: credits, signer: tipper.signer, signingKey: tipper.identityKey });
   } catch (e) {
     refusal = describeErr(e);
   }
-  await settle();
-  const after = await battery.balanceOf(creator.ownerId);
-  battery.check('c2a the transfer signed with the CRITICAL auth key is refused', refusal !== null, (refusal ?? 'it was accepted').slice(0, 200));
+  // Wait as long as c1 would for a landed transfer, so a late one is seen.
+  const [after] = await balancesAfter(battery, [creator.ownerId], [before]);
+  battery.check('c2a the transfer signed with the CRITICAL auth key is refused for its purpose (20005/20011)', refusal !== null && WRONG_KEY_PURPOSE.test(refusal), (refusal ?? 'it was accepted').slice(0, 200));
   battery.check('c2b and nothing moved', after === before, `${before} -> ${after}`);
 }
 
