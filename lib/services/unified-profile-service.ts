@@ -1,13 +1,26 @@
 import { logger } from '@/lib/logger';
+import type { EvoSDK } from '@dashevo/evo-sdk';
 import { BaseDocumentService } from './document-service';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
 import { YAPPR_PROFILE_CONTRACT_ID, profileArraysAreTyped } from '../constants';
-import { LIST_LIMITS, assertListLimits, decodePaymentUriList, decodeSocialLinkList, encodePaymentUriList, encodeSocialLinkList, uniqueStrings } from '../typed-array-codecs';
+import { LIST_LIMITS, assertListLimits, decodePaymentUriList, decodeSocialLinkList, encodePaymentUriList, encodeSocialLinkList, socialLinkToString, uniqueStrings } from '../typed-array-codecs';
 import { User, ParsedPaymentUri, SocialLink } from '../../types';
 import { generateAvatarDataUri } from './avatar-generator';
 import { documentToPlainObject } from './sdk-helpers';
 import { stateTransitionService } from './state-transition-service';
+import {
+  avatarNeedingDigest,
+  mergeV10ProfileRecords,
+  planV10ProfileWrite,
+  profileExtensionSource,
+  profileSources,
+  type ProfileRole,
+  type ProfileSource,
+  type V10ProfilePatch,
+} from '../profile/v10-profile';
+
+type PlainDocument = Record<string, unknown>;
 
 /** The `scheme:` prefix of a payment URI, lower-cased; empty when there is none. */
 export function paymentUriScheme(uri: string): string {
@@ -138,15 +151,22 @@ export interface AvatarConfig {
 
 class UnifiedProfileService extends BaseDocumentService<User> {
   private readonly PROFILE_CACHE = 'unified_profiles';
-  private readonly RAW_PROFILE_CACHE = 'unified_profiles_raw';
-  private readonly MISSING_PROFILE_CACHE = 'unified_profiles_missing';
+  /** Per role, the raw documents found and the owners proved to have none. */
+  private readonly ROLE_CACHES: Record<ProfileRole, { raw: string; missing: string }> = {
+    base: { raw: 'unified_profiles_raw', missing: 'unified_profiles_missing' },
+    extension: { raw: 'unified_profiles_extension_raw', missing: 'unified_profiles_extension_missing' },
+  };
   private readonly USERNAME_CACHE = 'usernames';
   private readonly AVATAR_CACHE = 'avatars';
 
   // DataLoader-style batching for raw profile documents: every profile
   // lookup (getProfile, getProfilesByIdentityIds, avatar URLs) funnels
-  // through loadProfileDoc so concurrent requests share one 'in' query.
-  private pendingProfileRequests = new Map<string, Array<(doc: UnifiedProfileDocument | null) => void>>();
+  // through loadProfileDoc so concurrent requests share one 'in' query per
+  // profile document type.
+  private pendingProfileRequests: Record<ProfileRole, Map<string, Array<(doc: PlainDocument | null) => void>>> = {
+    base: new Map(),
+    extension: new Map(),
+  };
   private batchTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
@@ -221,43 +241,85 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
   }
 
+  // ==================== Profile document sources ====================
+
+  private sourceFor(role: ProfileRole): ProfileSource {
+    const found = profileSources().find((entry) => entry.role === role);
+    if (!found) throw new Error(`No ${role} profile document on this contract topology`);
+    return found.source;
+  }
+
+  /** The profile from cached documents: `known` once every role is cached (found or proved absent). */
+  private profileFromCache(ownerId: string): { known: boolean; doc: UnifiedProfileDocument | null } {
+    let known = true;
+    const records: Partial<Record<ProfileRole, PlainDocument | null>> = {};
+    for (const { role } of profileSources()) {
+      const caches = this.ROLE_CACHES[role];
+      const record = cacheManager.get<PlainDocument>(caches.raw, ownerId);
+      if (record) records[role] = record;
+      else if (cacheManager.get<boolean>(caches.missing, ownerId)) records[role] = null;
+      else known = false;
+    }
+    return { known, doc: this.profileFromRecords(records.base ?? null, records.extension ?? null) };
+  }
+
+  /** One profile from its documents (v2/v9: the base alone). */
+  private profileFromRecords(base: PlainDocument | null, extension: PlainDocument | null): UnifiedProfileDocument | null {
+    const record = profileExtensionSource() ? mergeV10ProfileRecords(base, extension) : base;
+    return record ? this.extractDocumentData(record) : null;
+  }
+
+  private cacheRecord(role: ProfileRole, ownerId: string, record: PlainDocument): void {
+    const caches = this.ROLE_CACHES[role];
+    cacheManager.delete(caches.missing, ownerId);
+    cacheManager.set(caches.raw, ownerId, record, {
+      ttl: 300000, // 5 minutes
+      tags: ['profile', `user:${ownerId}`]
+    });
+  }
+
+  private cacheMissing(role: ProfileRole, ownerId: string, ttl: number): void {
+    const caches = this.ROLE_CACHES[role];
+    cacheManager.delete(caches.raw, ownerId);
+    cacheManager.set(caches.missing, ownerId, true, {
+      ttl,
+      tags: ['profile', `user:${ownerId}`]
+    });
+  }
+
   // ==================== Seeding from external lookups ====================
 
   /**
-   * Seed the profile caches from documents fetched elsewhere (a composite
-   * feed page carries the authors' profiles under the same proof as the
-   * posts). Every id in `queriedOwnerIds` without a document is a PROVEN
-   * absence and is negative-cached exactly as a batch miss would be, so
-   * the DataLoader answers later lookups from cache. Returns the found
-   * documents keyed by owner, with their avatar URLs already cached.
+   * Seed the profile caches from documents of one profile role fetched
+   * elsewhere (a composite feed page carries the authors' profiles under the
+   * same proof as the posts). Every id in `queriedOwnerIds` without a document
+   * is a PROVEN absence and is negative-cached exactly as a batch miss would
+   * be, so the DataLoader answers later lookups from cache. Returns the found
+   * profiles keyed by owner (on v10, merged with whatever of the other role is
+   * cached), and caches the avatar URL of every owner whose profile is now
+   * fully known.
    */
   seedProfileDocuments(
     records: readonly Record<string, unknown>[],
-    queriedOwnerIds: readonly string[]
+    queriedOwnerIds: readonly string[],
+    role: ProfileRole = 'base'
   ): Map<string, UnifiedProfileDocument> {
     const found = new Map<string, UnifiedProfileDocument>();
+    const seeded = new Set<string>();
     for (const record of records) {
-      const profileDoc = this.extractDocumentData(record);
-      if (!profileDoc.$ownerId) continue;
-      found.set(profileDoc.$ownerId, profileDoc);
-      cacheManager.delete(this.MISSING_PROFILE_CACHE, profileDoc.$ownerId);
-      cacheManager.set(this.RAW_PROFILE_CACHE, profileDoc.$ownerId, profileDoc, {
-        ttl: 300000,
-        tags: ['profile', `user:${profileDoc.$ownerId}`]
-      });
-      cacheManager.set(this.AVATAR_CACHE, profileDoc.$ownerId, this.parseAvatarField(profileDoc.avatar, profileDoc.$ownerId), {
-        ttl: 300000,
-        tags: ['avatar', `user:${profileDoc.$ownerId}`]
-      });
+      const ownerId = (record.$ownerId || record.ownerId) as string | undefined;
+      if (!ownerId) continue;
+      seeded.add(ownerId);
+      this.cacheRecord(role, ownerId, record);
     }
     for (const ownerId of queriedOwnerIds) {
-      if (found.has(ownerId)) continue;
-      cacheManager.delete(this.RAW_PROFILE_CACHE, ownerId);
-      cacheManager.set(this.MISSING_PROFILE_CACHE, ownerId, true, {
-        ttl: 60000,
-        tags: ['profile', `user:${ownerId}`]
-      });
-      cacheManager.set(this.AVATAR_CACHE, ownerId, this.getDefaultAvatarUrl(ownerId), {
+      if (!seeded.has(ownerId)) this.cacheMissing(role, ownerId, 60000);
+    }
+    for (const ownerId of new Set([...Array.from(seeded), ...queriedOwnerIds])) {
+      const { known, doc } = this.profileFromCache(ownerId);
+      if (doc && seeded.has(ownerId)) found.set(ownerId, doc);
+      if (!known) continue;
+      cacheManager.set(this.AVATAR_CACHE, ownerId, doc ? this.parseAvatarField(doc.avatar, ownerId) : this.getDefaultAvatarUrl(ownerId), {
         ttl: 300000,
         tags: ['avatar', `user:${ownerId}`]
       });
@@ -266,8 +328,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   }
 
   hasCachedProfile(ownerId: string): boolean {
-    return !!cacheManager.get(this.RAW_PROFILE_CACHE, ownerId) ||
-      !!cacheManager.get(this.MISSING_PROFILE_CACHE, ownerId);
+    return this.profileFromCache(ownerId).known;
   }
 
   // ==================== Batching for Profile Documents ====================
@@ -286,46 +347,64 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   }
 
   /**
-   * Load a raw profile document with DataLoader-style batching.
+   * Load a user's profile document(s) with DataLoader-style batching and
+   * merge them into one profile (v10: the DashPay profile and the extension).
+   */
+  private async loadProfileDoc(ownerId: string): Promise<UnifiedProfileDocument | null> {
+    const records = await Promise.all(profileSources().map(({ role }) => this.loadRoleRecord(role, ownerId)));
+    return this.profileFromRecords(records[0], records[1] ?? null);
+  }
+
+  /**
+   * Load one raw profile document with DataLoader-style batching.
    * Concurrent requests within the batch window share a single 'in' query.
-   * Found profiles are cached; misses are negative-cached briefly so users
+   * Found documents are cached; misses are negative-cached briefly so users
    * without a profile document don't trigger a fresh query on every render.
    */
-  private loadProfileDoc(ownerId: string): Promise<UnifiedProfileDocument | null> {
-    const cached = cacheManager.get<UnifiedProfileDocument>(this.RAW_PROFILE_CACHE, ownerId);
+  private loadRoleRecord(role: ProfileRole, ownerId: string): Promise<PlainDocument | null> {
+    const caches = this.ROLE_CACHES[role];
+    const cached = cacheManager.get<PlainDocument>(caches.raw, ownerId);
     if (cached) {
       return Promise.resolve(cached);
     }
-    if (cacheManager.get<boolean>(this.MISSING_PROFILE_CACHE, ownerId)) {
+    if (cacheManager.get<boolean>(caches.missing, ownerId)) {
       return Promise.resolve(null);
     }
 
     return new Promise((resolve) => {
-      const existing = this.pendingProfileRequests.get(ownerId);
+      const pending = this.pendingProfileRequests[role];
+      const existing = pending.get(ownerId);
       if (existing) {
         existing.push(resolve);
       } else {
-        this.pendingProfileRequests.set(ownerId, [resolve]);
+        pending.set(ownerId, [resolve]);
       }
       this.scheduleBatch();
     });
   }
 
+  private async processProfileBatch() {
+    // One SDK handle for every document type's batch, fetched only if one queries.
+    let sdk: Promise<EvoSDK> | undefined;
+    const getSdk = () => (sdk ??= import('./evo-sdk-service').then(({ getEvoSdk }) => getEvoSdk()));
+    await Promise.all(profileSources().map(({ role, source }) => this.processRoleBatch(role, source, getSdk)));
+  }
+
   /**
-   * Process all pending profile requests in batched 'in' queries
+   * Process all pending requests for one profile document type in batched 'in' queries
    *
    * TODO: The 'in' clause doesn't support reliable pagination.
    * The SDK returns incomplete results when subtrees are empty but still count against the limit.
    * Once SDK provides better 'in' query support (e.g., a flag indicating result completeness),
    * implement pagination here to handle cases where results exceed the limit.
    */
-  private async processProfileBatch() {
-    const batch = new Map(this.pendingProfileRequests);
-    this.pendingProfileRequests.clear();
+  private async processRoleBatch(role: ProfileRole, source: ProfileSource, getSdk: () => Promise<EvoSDK>) {
+    const batch = new Map(this.pendingProfileRequests[role]);
+    this.pendingProfileRequests[role].clear();
 
     if (batch.size === 0) return;
 
-    const resolveId = (ownerId: string, doc: UnifiedProfileDocument | null) => {
+    const resolveId = (ownerId: string, doc: PlainDocument | null) => {
       batch.get(ownerId)?.forEach(resolve => resolve(doc));
       batch.delete(ownerId);
     };
@@ -349,46 +428,36 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         } else {
           // Invalid ids can never resolve — cache the miss so repeat
           // lookups don't re-enter the batch loop on every render
-          cacheManager.set(this.MISSING_PROFILE_CACHE, ownerId, true, {
-            ttl: 300000,
-            tags: ['profile', `user:${ownerId}`]
-          });
+          this.cacheMissing(role, ownerId, 300000);
           resolveId(ownerId, null);
         }
       }
       if (validIds.length === 0) return;
 
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
+      const sdk = await getSdk();
 
       // DAPI caps 'in' clauses at 100 values per query
       for (let i = 0; i < validIds.length; i += 100) {
         const chunk = validIds.slice(i, i + 100);
-        const found = new Map<string, UnifiedProfileDocument>();
+        const found = new Map<string, PlainDocument>();
         try {
           const response = await sdk.documents.query({
-            dataContractId: this.contractId,
-            documentTypeName: this.documentType,
+            dataContractId: source.contractId,
+            documentTypeName: source.documentType,
             where: [['$ownerId', 'in', chunk]],
             orderBy: [['$ownerId', 'asc']],
             limit: chunk.length
           });
 
           for (const doc of this.normalizeDocumentResponse(response)) {
-            const profileDoc = this.extractDocumentData(doc);
-            found.set(profileDoc.$ownerId, profileDoc);
-            cacheManager.set(this.RAW_PROFILE_CACHE, profileDoc.$ownerId, profileDoc, {
-              ttl: 300000, // 5 minutes
-              tags: ['profile', `user:${profileDoc.$ownerId}`]
-            });
+            const ownerId = (doc.$ownerId || doc.ownerId) as string;
+            found.set(ownerId, doc);
+            this.cacheRecord(role, ownerId, doc);
           }
 
           for (const ownerId of chunk) {
             if (!found.has(ownerId)) {
-              cacheManager.set(this.MISSING_PROFILE_CACHE, ownerId, true, {
-                ttl: 60000, // 1 minute — new profiles show up quickly
-                tags: ['profile', `user:${ownerId}`]
-              });
+              this.cacheMissing(role, ownerId, 60000); // 1 minute — new profiles show up quickly
             }
           }
         } catch (error) {
@@ -705,6 +774,10 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * Create user profile
    */
   async createProfile(ownerId: string, data: CreateUnifiedProfileData): Promise<User> {
+    if (profileExtensionSource()) {
+      return this.saveV10Profile(ownerId, data);
+    }
+
     const documentData: Record<string, unknown> = {
       displayName: data.displayName,
     };
@@ -734,6 +807,15 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * as Dash Platform document updates replace the entire document.
    */
   async updateProfile(ownerId: string, updates: UpdateUnifiedProfileData): Promise<User | null> {
+    if (profileExtensionSource()) {
+      try {
+        return await this.saveV10Profile(ownerId, updates);
+      } catch (error) {
+        logger.error('UnifiedProfileService: Error updating profile:', error);
+        throw error;
+      }
+    }
+
     try {
       cacheManager.invalidateByTag(`user:${ownerId}`);
 
@@ -854,6 +936,110 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       logger.error('UnifiedProfileService: Error getting raw profile:', error);
       return null;
     }
+  }
+
+  // ==================== v10: DashPay profile + extension ====================
+
+  /**
+   * The v10 profile documents of `ownerId` (the DashPay `profile` and the
+   * `yapprProfile` extension), read fresh because a replace must carry the
+   * current revision. Rejects when a query fails, so an outage is never
+   * mistaken for a missing profile.
+   */
+  private async getV10ProfileDocuments(ownerId: string): Promise<{ base: PlainDocument | null; extension: PlainDocument | null }> {
+    const { getEvoSdk } = await import('./evo-sdk-service');
+    const sdk = await getEvoSdk();
+    const [base, extension] = await Promise.all((['base', 'extension'] as const).map(async (role) => {
+      const source = this.sourceFor(role);
+      const response = await sdk.documents.query({
+        dataContractId: source.contractId,
+        documentTypeName: source.documentType,
+        where: [['$ownerId', '==', ownerId]],
+        limit: 1
+      });
+      return this.normalizeDocumentResponse(response)[0] ?? null;
+    }));
+    return { base, extension };
+  }
+
+  /**
+   * v10: the user's DashPay profile in the profile shape (name, bio and image
+   * avatar; null when they have none) and whether they have the Yappr
+   * extension. A user with a DashPay profile keeps it and adds the extension.
+   * Null off v10.
+   */
+  async getV10ProfileStatus(ownerId: string): Promise<{ dashpay: UnifiedProfileDocument | null; hasExtension: boolean } | null> {
+    if (!profileExtensionSource()) return null;
+    const [base, extension] = await Promise.all([
+      this.loadRoleRecord('base', ownerId),
+      this.loadRoleRecord('extension', ownerId),
+    ]);
+    const dashpay = base ? mergeV10ProfileRecords(base, null) : null;
+    return { dashpay: dashpay ? this.extractDocumentData(dashpay) : null, hasExtension: extension !== null };
+  }
+
+  /**
+   * Write a v10 profile edit: the DashPay profile first (the extension's
+   * `ownerRefersTo` finds it, 40120 without), then the extension, each only
+   * when it is missing or changes. An image avatar DashPay does not already
+   * store is fetched once to hash and fingerprint it.
+   */
+  private async saveV10Profile(ownerId: string, data: UpdateUnifiedProfileData): Promise<User> {
+    cacheManager.invalidateByTag(`user:${ownerId}`);
+
+    const paymentUris = data.paymentUris && uniqueStrings(data.paymentUris);
+    if (paymentUris) assertListLimits(paymentUris, LIST_LIMITS.profilePaymentUris);
+    const socialLinks = data.socialLinks && uniqueStrings(data.socialLinks.map(socialLinkToString));
+    if (socialLinks) assertListLimits(socialLinks, LIST_LIMITS.profileSocialLinks);
+    const patch: V10ProfilePatch = { ...data, paymentUris, socialLinks };
+
+    const stored = await this.getV10ProfileDocuments(ownerId);
+    const digestUrl = avatarNeedingDigest(stored.base, patch);
+    const avatarDigest = digestUrl
+      ? await (await import('../media/image-digest')).imageDigestForUrl(digestUrl)
+      : undefined;
+    const plan = planV10ProfileWrite({
+      ...stored,
+      patch,
+      avatarDigest,
+      fallbackAvatar: this.encodeAvatarData(ownerId, DEFAULT_AVATAR_STYLE),
+    });
+
+    const base = plan.base ? await this.writeProfileDocument('base', ownerId, stored.base, plan.base) : stored.base;
+    const extension = plan.extension
+      ? await this.writeProfileDocument('extension', ownerId, stored.extension, plan.extension)
+      : stored.extension;
+
+    cacheManager.invalidateByTag(`user:${ownerId}`);
+    const merged = mergeV10ProfileRecords(base, extension);
+    if (!merged) throw new Error('Profile not found');
+    return this.transformDocument(merged);
+  }
+
+  /** Create or replace one v10 profile document; resolves to it as written. */
+  private async writeProfileDocument(
+    role: ProfileRole,
+    ownerId: string,
+    existing: PlainDocument | null,
+    content: PlainDocument
+  ): Promise<PlainDocument> {
+    const source = this.sourceFor(role);
+    const existingId = existing ? (existing.$id || existing.id) as string | undefined : undefined;
+    if (existing && !existingId) throw new Error('Profile document ID not found');
+    const result = existingId
+      ? await stateTransitionService.updateDocument(
+          source.contractId,
+          source.documentType,
+          existingId,
+          ownerId,
+          content,
+          Number(existing?.$revision ?? existing?.revision ?? 0)
+        )
+      : await stateTransitionService.createDocument(source.contractId, source.documentType, ownerId, content);
+    if (!result.success || !result.document) {
+      throw new Error(result.error || `Failed to save the ${source.documentType} document`);
+    }
+    return { $createdAt: existing?.$createdAt ?? existing?.createdAt ?? Date.now(), ...result.document };
   }
 
   /**

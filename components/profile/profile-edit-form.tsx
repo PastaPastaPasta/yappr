@@ -4,6 +4,7 @@ import { useId } from 'react'
 import type { SocialLink } from '@/lib/types'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
 import { SocialLinksInput } from '@/components/profile/social-links-input'
+import { profileTextLimits } from '@/lib/profile/v10-profile'
 
 export interface ProfileDraft {
   displayName: string
@@ -49,10 +50,12 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor: string; c
 export function ProfileEditForm({ draft, onChange, disabled }: ProfileEditFormProps) {
   const fieldId = useId()
   const set = <K extends keyof ProfileDraft>(key: K, value: ProfileDraft[K]) => onChange({ ...draft, [key]: value })
+  // v10 keeps the name and bio in the DashPay profile, which caps them lower.
+  const limits = profileTextLimits()
   return (
     <div className="space-y-4">
       <Field label="Name" htmlFor={`${fieldId}-name`}>
-        <input id={`${fieldId}-name`} type="text" value={draft.displayName} onChange={(e) => set('displayName', e.target.value)} className={INPUT} maxLength={50} />
+        <input id={`${fieldId}-name`} type="text" value={draft.displayName} onChange={(e) => set('displayName', e.target.value)} className={INPUT} maxLength={limits.displayName} />
       </Field>
       <Field label="Pronouns" htmlFor={`${fieldId}-pronouns`}>
         <input
@@ -66,8 +69,8 @@ export function ProfileEditForm({ draft, onChange, disabled }: ProfileEditFormPr
         />
       </Field>
       <Field label="Bio" htmlFor={`${fieldId}-bio`}>
-        <textarea id={`${fieldId}-bio`} value={draft.bio} onChange={(e) => set('bio', e.target.value)} className={`${INPUT} resize-none`} rows={3} maxLength={160} />
-        <p className="text-xs text-gray-500 mt-1">{draft.bio.length}/160</p>
+        <textarea id={`${fieldId}-bio`} value={draft.bio} onChange={(e) => set('bio', e.target.value)} className={`${INPUT} resize-none`} rows={3} maxLength={limits.bio} />
+        <p className="text-xs text-gray-500 mt-1">{draft.bio.length}/{limits.bio}</p>
       </Field>
       <Field label="Location" htmlFor={`${fieldId}-location`}>
         <input id={`${fieldId}-location`} type="text" value={draft.location} onChange={(e) => set('location', e.target.value)} className={INPUT} maxLength={50} />

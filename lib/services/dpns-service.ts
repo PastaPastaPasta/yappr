@@ -3,13 +3,14 @@ import { chunk, mapLimit } from './pagination-utils';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
-import { CREDITS_PER_DASH, DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, YAPPR_PROFILE_CONTRACT_ID, keyNetwork } from '../constants';
+import { CREDITS_PER_DASH, DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, keyNetwork } from '../constants';
 import { documentToPlainObject, identifierToBase58, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { likesAreIndexOnly } from '@/lib/contract-topology';
+import { profileSources } from '@/lib/profile/v10-profile';
 import { getPrimaryUsername, sortUsernames } from '@/lib/utils/username';
 import {
   contestFundNeededFromError,
@@ -390,21 +391,26 @@ class DpnsService {
       let documents: Record<string, unknown>[] | undefined;
       if (likesAreIndexOnly()) {
         try {
+          // One sub-query per profile document type (v10: the DashPay profile and the extension).
+          const sources = profileSources();
           const result = await sdk.documents.composite({
             dataContractId: DPNS_CONTRACT_ID, documentType: DPNS_DOCUMENT_TYPE,
             where: query.where, orderBy: query.orderBy, limit,
-            subQueries: [{ dataContractId: YAPPR_PROFILE_CONTRACT_ID, documentType: 'profile',
-              bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } }],
+            subQueries: sources.map(({ source }) => ({ dataContractId: source.contractId, documentType: source.documentType,
+              bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } })),
           });
-          const profiles = result.subResults?.[0];
-          if (!Array.isArray(result.pageDocuments) || result.subResults.length !== 1 ||
-              profiles?.kind !== 'documents' || !Array.isArray(profiles.documents)) {
+          const profiles = result.subResults ?? [];
+          if (!Array.isArray(result.pageDocuments) || profiles.length !== sources.length ||
+              profiles.some(sub => sub?.kind !== 'documents' || !Array.isArray(sub.documents))) {
             throw new Error('DPNS search: incomplete composite response');
           }
           documents = result.pageDocuments.map(documentToPlainObject);
           const owners = documents.map(doc => String(doc.$ownerId || doc.ownerId));
           const { unifiedProfileService } = await import('./unified-profile-service');
-          unifiedProfileService.seedProfileDocuments(profiles.documents.map(documentToPlainObject), owners);
+          sources.forEach(({ role }, i) => {
+            const sub = profiles[i];
+            if (sub.kind === 'documents') unifiedProfileService.seedProfileDocuments(sub.documents.map(documentToPlainObject), owners, role);
+          });
         } catch (error) {
           logger.warn('DPNS search composite failed; using ordinary search', error);
         }

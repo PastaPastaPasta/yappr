@@ -351,6 +351,10 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     profiles: {
       async hasProfile(identityId, username) {
         await ensureSdk()
+        // v10: the Yappr profile is the `yapprProfile` extension; the legacy
+        // social `profile` is retired with the profile contract.
+        const v10 = await unifiedProfileService.getV10ProfileStatus(identityId)
+        if (v10) return v10.hasExtension
         const unifiedProfile = await unifiedProfileService.getProfile(identityId, username)
         if (unifiedProfile) return true
         const legacyProfile = await profileService.getProfile(identityId, username)

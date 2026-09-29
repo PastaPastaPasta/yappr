@@ -55,6 +55,10 @@ export const NOT_DEVNET_REASON = 'E2E_ENV_FILE does not select the devnet deploy
 export const DM_V5_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID')
 export const LEGACY_DM_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID')
 const PROFILE_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID')
+/** v10 profiles: the DashPay `profile` (a system contract) plus the social `yapprProfile` extension. */
+const PROFILE_IS_V10 = envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') === 'v10'
+const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7'
+const SOCIAL_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_CONTRACT_ID')
 export const DM_V5_BUILD = envValue('NEXT_PUBLIC_DM_TOPOLOGY') === 'v5' && DM_V5_CONTRACT_ID !== ''
 export const NOT_V5_REASON = 'the env file does not set NEXT_PUBLIC_DM_TOPOLOGY=v5 with a DM v5 contract id'
 
@@ -388,15 +392,24 @@ const profiles = new Map<number, Promise<void>>()
  * The app sends a signed-in identity without a profile to /profile/create from
  * every page but a few, so every DM actor needs one. Created once per pool slot,
  * from Node, named like the DPNS label so the UI shows the same name either way.
+ * On v10 that is a DashPay profile, then the `yapprProfile` extension (which
+ * consensus refuses without the DashPay profile, 40120).
  */
 function ensureProfile(bot: DmBot): Promise<void> {
   let found = profiles.get(bot.index)
   if (!found) {
-    const exists = async () =>
-      (await queryDocs(PROFILE_CONTRACT_ID, 'profile', { where: [['$ownerId', '==', bot.identityId]], limit: 1 })).length > 0
+    const documents: Array<[string, string, Doc]> = PROFILE_IS_V10
+      ? [
+          [DASHPAY_CONTRACT_ID, 'profile', { displayName: `yappr-dm-e2e-${bot.index}` }],
+          [SOCIAL_CONTRACT_ID, 'yapprProfile', { avatar: JSON.stringify({ seed: bot.identityId, style: 'thumbs' }) }],
+        ]
+      : [[PROFILE_CONTRACT_ID, 'profile', { displayName: `yappr-dm-e2e-${bot.index}` }]]
     found = (async () => {
-      if (await exists()) return
-      await createDoc(bot, PROFILE_CONTRACT_ID, 'profile', { displayName: `yappr-dm-e2e-${bot.index}` }, exists)
+      for (const [contractId, docType, data] of documents) {
+        const exists = async () =>
+          (await queryDocs(contractId, docType, { where: [['$ownerId', '==', bot.identityId]], limit: 1 })).length > 0
+        if (!(await exists())) await createDoc(bot, contractId, docType, data, exists)
+      }
     })()
     found.catch(() => profiles.delete(bot.index))
     profiles.set(bot.index, found)

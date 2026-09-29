@@ -41,6 +41,10 @@ vi.mock('@/lib/contracts/bundled-contracts', () => ({
 }));
 vi.mock('@/lib/query-inspector/capture', () => ({ instrumentSdk: vi.fn() }));
 vi.mock('@/lib/logger', () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
+vi.mock('../profile/v10-profile', () => ({
+  profileBaseSource: () => ({ contractId: 'profile', documentType: 'profile' }),
+  profileExtensionSource: () => null,
+}));
 vi.mock('../constants', () => ({
   YAPPR_DM_CONTRACT_ID: '', YAPPR_DM_V5_CONTRACT_ID: '', dmIsV5: () => false, YAPPR_PROFILE_CONTRACT_ID: 'profile', KEY_EXCHANGE_CONTRACT_ID: '',
   YAPPR_BLOG_CONTRACT_ID: '', YAPPR_STOREFRONT_CONTRACT_ID: '', YAPPR_VAULT_CONTRACT_ID: '',

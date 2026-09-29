@@ -188,4 +188,22 @@ describe('hasYapprProfile', () => {
     query.mockResolvedValueOnce(new Map()).mockRejectedValueOnce(new Error('legacy query failed'))
     await expect(hasYapprProfile(identityId)).rejects.toThrow('legacy query failed')
   })
+
+  it('asks only for the yapprProfile extension on v10, where a DashPay profile alone is not a Yappr profile', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    try {
+      const gate = await import('./profile-gate')
+      query.mockResolvedValueOnce(new Map())
+      await expect(gate.hasYapprProfile(identityId)).resolves.toBe(false)
+      expect(query).toHaveBeenCalledExactlyOnceWith({
+        dataContractId: YAPPR_CONTRACT_ID,
+        documentTypeName: 'yapprProfile',
+        where: [['$ownerId', '==', identityId]],
+        limit: 1,
+      })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
 })

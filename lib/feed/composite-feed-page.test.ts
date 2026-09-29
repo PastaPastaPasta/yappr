@@ -277,3 +277,46 @@ describe('composite feed page on v9', () => {
     expect(myLikes).not.toHaveProperty('limit');
   });
 });
+
+describe('composite feed page on v10 (DashPay profile + yapprProfile)', () => {
+  const answerEvery = async (query: { subQueries: Array<{ kind?: string }> }) => ({
+    pageDocuments: docs,
+    subResults: query.subQueries.map((sub) => sub.kind === 'counts'
+      ? { kind: 'counts', counts: new Map() }
+      : { kind: 'documents', documents: [] }),
+  });
+  const profileSubQueries = (query: { subQueries: Array<{ dataContractId?: string; documentType: string }> }) =>
+    query.subQueries.filter((sub) => sub.documentType === 'profile' || sub.documentType === 'yapprProfile')
+      .map((sub) => [sub.dataContractId, sub.documentType]);
+
+  it('binds the DashPay profile and, while the budget allows, the extension', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10');
+    mocks.composite.mockImplementation(answerEvery);
+    const { DASHPAY_CONTRACT_ID, YAPPR_CONTRACT_ID } = await import('@/lib/constants');
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const page = await loadCompositeFeedPage({ language: 'en', limit: 20 });
+    const query = mocks.composite.mock.calls[0][0];
+    expect(query.subQueries.length).toBeLessThanOrEqual(10);
+    expect(profileSubQueries(query)).toEqual([
+      [DASHPAY_CONTRACT_ID, 'profile'], [DASHPAY_CONTRACT_ID, 'profile'],
+      [YAPPR_CONTRACT_ID, 'yapprProfile'], [YAPPR_CONTRACT_ID, 'yapprProfile'],
+    ]);
+    expect(mocks.seedProfiles).toHaveBeenCalledWith([], ownerIds, 'extension');
+    expect(page.preloaded.avatars?.size).toBe(4);
+  });
+
+  it('binds the extension on a logged-in page too, since the viewer\'s hearts are read beside the composite', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10');
+    mocks.composite.mockImplementation(answerEvery);
+    const { DASHPAY_CONTRACT_ID, YAPPR_CONTRACT_ID } = await import('@/lib/constants');
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const page = await loadCompositeFeedPage({ language: 'en', limit: 20, currentUserId: ownerIds[0] });
+    const query = mocks.composite.mock.calls[0][0];
+    expect(query.subQueries.length).toBeLessThan(10);
+    expect(profileSubQueries(query)).toEqual([[DASHPAY_CONTRACT_ID, 'profile'], [YAPPR_CONTRACT_ID, 'yapprProfile']]);
+    expect(mocks.seedProfiles).toHaveBeenCalledWith([], ownerIds, 'extension');
+    // The extension was read, so a recipe avatar cannot be hiding in it.
+    expect(page.preloaded.avatars?.size).toBe(4);
+    expect(page.preloaded.profiles?.size).toBe(4);
+  });
+});

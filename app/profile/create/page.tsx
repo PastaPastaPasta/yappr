@@ -27,9 +27,22 @@ import {
   DICEBEAR_STYLE_LABELS,
   DEFAULT_AVATAR_STYLE,
   type DiceBearStyle,
+  type UnifiedProfileDocument,
 } from '@/lib/services/unified-profile-service'
+import { isImageAvatar, profileTextLimits } from '@/lib/profile/v10-profile'
 
 type AvatarSource = 'generated' | 'custom'
+
+/**
+ * Whether the user already has a Yappr profile. On v10 that is the
+ * `yapprProfile` extension: a DashPay profile alone is shown here and
+ * completed, not treated as a profile.
+ */
+async function hasYapprProfile(identityId: string): Promise<boolean> {
+  const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+  const v10 = await unifiedProfileService.getV10ProfileStatus(identityId)
+  return v10 ? v10.hasExtension : (await unifiedProfileService.getProfile(identityId)) !== null
+}
 
 function CreateProfilePage() {
   const router = useRouter()
@@ -47,6 +60,10 @@ function CreateProfilePage() {
 
   // Banner state
   const [bannerUrl, setBannerUrl] = useState<string | null>(null)
+
+  // v10: the user's existing DashPay profile, which prefills the form
+  const [dashpayProfile, setDashpayProfile] = useState<UnifiedProfileDocument | null>(null)
+  const limits = profileTextLimits()
 
   const [formData, setFormData] = useState({
     displayName: '',
@@ -69,14 +86,23 @@ function CreateProfilePage() {
       if (!user) return
 
       try {
-        const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
-        const existingProfile = await unifiedProfileService.getProfile(user.identityId)
-
-        if (existingProfile) {
+        if (await hasYapprProfile(user.identityId)) {
           markProfileCreated(user.identityId)
           toast.success('You already have a profile!')
           router.push(returnToOrDefault(currentReturnToParam()))
           return
+        }
+
+        // v10: a DashPay profile is kept as it is; the form only adds to it
+        const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
+        const dashpay = (await unifiedProfileService.getV10ProfileStatus(user.identityId))?.dashpay
+        if (dashpay) {
+          setDashpayProfile(dashpay)
+          setFormData((current) => ({ ...current, displayName: dashpay.displayName, bio: dashpay.bio ?? '' }))
+          if (dashpay.avatar && isImageAvatar(dashpay.avatar)) {
+            setAvatarSource('custom')
+            setCustomAvatarUrl(dashpay.avatar)
+          }
         }
 
         // New profile - default seed to user ID
@@ -195,15 +221,12 @@ function CreateProfilePage() {
         await new Promise(resolve => setTimeout(resolve, 2000))
 
         try {
-          const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
           const { cacheManager } = await import('@/lib/cache-manager')
 
           // Clear cache to ensure we get fresh data from the network
           cacheManager.invalidateByTag(`user:${user.identityId}`)
 
-          const profile = await unifiedProfileService.getProfile(user.identityId)
-
-          if (profile) {
+          if (await hasYapprProfile(user.identityId)) {
             // Profile was actually created despite the timeout
             toast.dismiss()
             toast.success('Profile created successfully!')
@@ -256,6 +279,14 @@ function CreateProfilePage() {
           <p className="text-gray-600 dark:text-gray-400 text-center mb-8">
             Set up your Yappr profile to start connecting
           </p>
+
+          {dashpayProfile && (
+            <div className="bg-yappr-50 dark:bg-yappr-900/20 rounded-lg p-4 mb-6">
+              <p className="text-sm text-yappr-700 dark:text-yappr-300">
+                We found your Dash profile. Its name, bio and avatar are shared with DashPay wallets and stay as they are unless you change them here.
+              </p>
+            </div>
+          )}
 
           {/* Display username if available */}
           {(user?.dpnsUsername || sessionStorage.getItem(scopedKey('yappr_dpns_username'))) && (
@@ -437,7 +468,7 @@ function CreateProfilePage() {
                   onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
                   placeholder="John Doe"
                   required
-                  maxLength={50}
+                  maxLength={limits.displayName}
                 />
               </div>
 
@@ -465,10 +496,10 @@ function CreateProfilePage() {
                   onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
                   placeholder="Tell us about yourself..."
                   rows={3}
-                  maxLength={160}
+                  maxLength={limits.bio}
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  {formData.bio.length}/160 characters
+                  {formData.bio.length}/{limits.bio} characters
                 </p>
               </div>
 
