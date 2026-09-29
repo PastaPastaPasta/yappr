@@ -451,7 +451,7 @@ class PostService extends BaseDocumentService<Post> {
       data.content = content;
     }
 
-    // Language is required on v2/v9 - default to 'en' if not
+    // Language is required where posts carry one - default to 'en' if not
     // provided. v10 has no `language` property at all (one global timeline).
     if (postsHaveLanguage()) data.language = options.language || 'en';
 
@@ -735,8 +735,8 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get post counts per author
    * Returns a Map of authorId -> post count
-   * Uses the languageTimeline index [language, $createdAt] to scan posts.
-   * Note: Currently only counts English posts (language='en').
+   * Falls back to scanning the timeline (see {@link postTimelineClauses}),
+   * which on v2/v9 only sees English posts (language='en').
    */
   async getAuthorPostCounts(): Promise<Map<string, number>> {
     return fetchAuthorPostCounts(this.contractId);

@@ -177,8 +177,8 @@ let authorCountTreeUnsupported = false;
  *   latching — the next call should try the count tree again.
  *
  * Counts posts in EVERY language — consistent with `countAllPosts`, unlike the
- * fallback scan below, which walks the `languageTimeline` index and so only sees
- * `language == 'en'`.
+ * fallback scan below, which on v2/v9 walks the `languageTimeline` index and so
+ * only sees `language == 'en'` (v10 has one global timeline).
  *
  * Returns AT MOST 100 authors — Drive caps a grouped range-distinct count at
  * `DEFAULT_QUERY_LIMIT` and this query is not paginated (see

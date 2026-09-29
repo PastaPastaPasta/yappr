@@ -61,6 +61,7 @@ const MAX_SUB_QUERIES = 10;
 /** Total DPNS document budget across ALL page authors, not per identity. */
 const DPNS_QUERY_LIMIT = 100;
 export interface CompositeFeedPageOptions {
+  /** The timeline's language; ignored where posts carry none (v10). */
   language: string;
   limit: number;
   /** Exact next-page ids selected by a timeline query using startAfter. */
@@ -177,6 +178,8 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
   const repostCounts = repost
     ? slot({ documentType: repost.docType, kind: 'counts', bind: fromPage('$id', repost.field) })
     : -1;
+  // v9 tombstones stay in the reply and quote count trees; on v10 a deleted
+  // reply or quote leaves them, so those counts are exact.
   // A v10 reply's children sit under its root in `repliesOf`, so the slot
   // pins `rootPostId ==` and binds `replyToReplyId`: one root per request.
   // A page spanning several threads is counted separately instead.
@@ -264,6 +267,7 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
     throw new Error(`Feed: composite page needs ${subQueries.length} sub-queries, the limit is ${MAX_SUB_QUERIES}`);
   }
 
+  // The language timeline, or v10's global one (the language is ignored there).
   const timeline = postTimelineClauses(options.language);
   const query: CompositeDocumentsQuery = {
     dataContractId: YAPPR_CONTRACT_ID,
