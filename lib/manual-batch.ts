@@ -4,9 +4,11 @@
  *
  * `stateTransitionService.createDocument` builds creates here rather than
  * through `sdk.documents.create`, because the SDK's `DocumentCreateOptions`
- * (still, at 4.2.0-beta.5) has no `actionFeeAgreement` and no affected-state
- * wait: social v9 charges post and reply creates an action fee (40132 without
- * the agreement), and indexOnly likes confirm only through affected state.
+ * (still, at 4.2.0-beta.7) has no `actionFeeAgreement`: social v9 charges post
+ * and reply creates an action fee (40132 without the agreement). rs-sdk can
+ * state one; wasm-sdk does not plumb it through. The other old reason is gone:
+ * from beta.7 (platform#5136) `documents.create` waits for the affected state
+ * of an indexOnly create itself.
  *
  * Kept free of the SDK connection and of storage so the exact bytes it signs
  * can be pinned offline (`manual-batch.test.ts`): from protocol 14 at beta.5

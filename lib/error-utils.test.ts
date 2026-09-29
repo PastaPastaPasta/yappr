@@ -8,7 +8,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   categorizeError,
-  isAffectedStateSnapshotError,
   classifyModerationError,
   consensusCodeOf,
   messageWithConsensusCode,
@@ -99,6 +98,16 @@ describe('propertyAgreement rejections (40127)', () => {
   it('recognises a writer gate by $ownerId on the REFERRING side', () => {
     expect(isPropertyAgreementError(new Error(WRITER_GATE))).toBe(true)
     expect(isWriteGateError(new Error(WRITER_GATE))).toBe(true)
+  })
+
+  it('recognises the 4.2.0-beta.7 phrasing, which names the rule "where"', () => {
+    // rs-dpp v4.2.0-beta.7 referenced_document_property_mismatch_error.rs.
+    const value = VALUE_MISMATCH.replace('(propertyAgreement on', '(where on')
+    const gate = WRITER_GATE.replace('(propertyAgreement on', '(where on')
+    expect(value).toContain('(where on orderId)')
+    expect(isPropertyAgreementError(new Error(value))).toBe(true)
+    expect(isWriteGateError(new Error(value))).toBe(false)
+    expect(isWriteGateError(new Error(gate))).toBe(true)
   })
 
   it('does not treat an unrelated failure as an agreement rejection', () => {
@@ -264,6 +273,13 @@ describe('4.2.0-beta.4 rejections', () => {
       'invalid refersTo lookup through index byName declared at storeName: the index is not unique', /report this/i],
     ['40138 ReferencedDocumentListInvalidError', isReferenceRequirementError,
       'invalid refersTo listElement into inList tags declared at tag: not a list', /report this/i],
+    // The 4.2.0-beta.7 phrasings, transcribed from rs-dpp at tag v4.2.0-beta.7.
+    ['40137 ReferencedDocumentLookupInvalidError (beta.7)', isReferenceRequirementError,
+      'invalid refersTo findBy ($ownerId) declared at privateFeedGrant.$ownerId: no unique index of privateFeedState is over exactly these properties', /report this/i],
+    ['40138 ReferencedDocumentListInvalidError (beta.7)', isReferenceRequirementError,
+      'invalid refersTo inList tags declared at storeItem.tag: not a list', /report this/i],
+    ['40142 ReferencedDocumentRequirementNotMetError (beta.7)', isReferenceRequirementError,
+      "referenced document 8Xv3 for path offer.commitmentId does not meet the reference's requirement minimumAgeBlocks 10", /report this/i],
     ['40139 DocumentActionFeeModeratorsShareMismatchError', isActionFeeAgreementError,
       "Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 40000000, which is not the seated moderation charter's 60% share of it", /moderator fee share didn't match .*seated moderation charter/i],
     ['40307 by labelled code', isPermanentProtocol14Error, 'rejected: code=40307', /report this/i],
@@ -301,6 +317,9 @@ describe('4.2.0-beta.4 rejections', () => {
     // and tombstone repair drops the reference it names.
     const requirement = new Error("referenced contract 8Xv3 for path storeContractId does not meet the reference's requirement moderation elected")
     expect(isReferenceNotFoundError(requirement)).toBe(false)
+    // 4.2.0-beta.7's 40142 says the same of a referenced DOCUMENT.
+    const documentRequirement = new Error("referenced document 8Xv3 for path offer.commitmentId does not meet the reference's requirement minimumAgeBlocks 10")
+    expect(isReferenceNotFoundError(documentRequirement)).toBe(false)
     expect(isReferenceNotFoundError(new Error('referenced identity 9t2e not found for path followingId'))).toBe(true)
   })
 
@@ -413,19 +432,14 @@ describe('4.2.0-beta.5 rejections', () => {
   })
 })
 
-describe('isAffectedStateSnapshotError', () => {
-  // evo-sdk 4.2.0-beta.5, thrown by documents.create/delete on indexOnly types (QA D-05, platform P-03).
-  const SNAPSHOT = '[WASM] received a verified VerifiedDocuments snapshot for this transition family; use the *_affected_state wait APIs and treat the result as a height-pinned snapshot'
+describe('the strict wait refusing an affected-state proof', () => {
+  // rs-sdk v4.2.0-beta.7 broadcast.rs. Since #5136 documents.create/delete no
+  // longer raise it for indexOnly types; a hand-built strict wait still can.
+  const SNAPSHOT = '[WASM] received a verified VerifiedDocuments snapshot for this transition family; wait with the affected-state APIs instead (wait_for_affected_state in Rust, waitForAffectedState or broadcastAndWaitForAffectedState in JavaScript) and treat the result as a height-pinned snapshot'
 
-  it('recognises the strict wait refusing an affected-state proof', () => {
-    expect(isAffectedStateSnapshotError(new Error(SNAPSHOT))).toBe(true)
-    expect(isAffectedStateSnapshotError({ message: SNAPSHOT, code: -1 })).toBe(true)
-  })
-
-  it('is not a timeout, a duplicate, or any other error', () => {
+  it('is never read as a timeout, so no caller assumes the write landed', () => {
     expect(isTimeoutError(new Error(SNAPSHOT))).toBe(false)
-    expect(isAffectedStateSnapshotError(new Error('deadline expired before operation could complete'))).toBe(false)
-    expect(isAffectedStateSnapshotError(new Error('Document not found'))).toBe(false)
+    expect(isAlreadyExistsError(new Error(SNAPSHOT))).toBe(false)
   })
 })
 
@@ -547,7 +561,7 @@ describe('every consensus code against every matcher', () => {
   const sdkError = (code: number) => ({ code, message: 'Failed to broadcast: Protocol error: consensus refusal', name: 'Protocol', isRetriable: false })
 
   const matchers: Record<string, (error: unknown) => boolean> = {
-    isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isAffectedStateSnapshotError,
+    isTimeoutError, isAlreadyExistsError, isNonFatalWaitError,
     isInsufficientTokenError, isFrozenBalanceError, isReferenceNotFoundError, isPropertyAgreementError,
     isWriteGateError, isImmutablePropertyChangedError, isInvalidDocumentIdError, isModerationBarredError,
     isBarredFromContractError, isGasPayerError, isActionFeeAgreementError, isModeratorsShareMismatchError,
@@ -581,6 +595,7 @@ describe('every consensus code against every matcher', () => {
     40136: ['isReferenceRequirementError'],
     40137: ['isReferenceRequirementError'],
     40138: ['isReferenceRequirementError'],
+    40142: ['isReferenceRequirementError'],
     41200: ['isModerationNotYetSeatedError'],
     40140: ['isDocumentExpiredError'],
     40114: ['isContestFundError'],

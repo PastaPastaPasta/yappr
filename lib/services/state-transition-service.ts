@@ -11,7 +11,7 @@ import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT
 import { declaredActionFee, tokenCostFor, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
 import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, tokenPaymentOptions } from '../transition-agreements';
-import { extractErrorMessage, messageWithConsensusCode, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isAffectedStateSnapshotError } from '../error-utils';
+import { extractErrorMessage, messageWithConsensusCode, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError } from '../error-utils';
 import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
 import { identityService } from './identity-service';
@@ -871,10 +871,11 @@ class StateTransitionService {
    * index-only-delete route in the SDK), the call shape the social batteries
    * prove live on moutai.
    *
-   * indexOnly transitions never resolve as `ExecutionProved`, so the facade's
-   * internal wait can fail after a broadcast that landed; the transient wait
-   * signatures return optimistic success (`confirmed: false`) here, and callers
-   * that must know re-read the liked state off the chain.
+   * indexOnly transitions never resolve as `ExecutionProved`; from 4.2.0-beta.7
+   * the facade waits for the affected state instead, which shows the entry gone
+   * but not that this transition removed it. The transient wait signatures still
+   * return optimistic success (`confirmed: false`), and callers that must know
+   * re-read the liked state off the chain.
    */
   async deleteDocumentByValues(
     contractId: string,
@@ -922,20 +923,12 @@ class StateTransitionService {
       );
 
       try {
+        // From evo-sdk 4.2.0-beta.7 (platform#5136) this resolves once the
+        // proof shows the entry gone: an indexOnly delete waits for the
+        // affected state instead of throwing the strict wait's snapshot error.
         await sdk.documents.delete({ document, identityKey: signingKey, signer });
         logger.debug(`indexOnly delete ${documentId} confirmed`);
       } catch (waitErr) {
-        // Not a rejection, but not proof either: `documents.delete` waits
-        // strictly and refuses the affected-state snapshot an indexOnly delete
-        // is answered with (evo-sdk 4.2.0-beta.5), usually after it landed.
-        // Reported as unconfirmed failure so the caller's chain readback — and
-        // nothing else — decides whether the delete happened.
-        if (isAffectedStateSnapshotError(waitErr)) {
-          logger.warn(`Delete-by-values of ${documentId} unproven (affected-state snapshot) — caller must read back`);
-          // The next write (an unlike's beat delete) follows at once.
-          try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-          return { success: false, transactionHash: documentId, confirmed: false, error: messageWithConsensusCode(waitErr) };
-        }
         if (!isTimeoutError(waitErr) && !isNonFatalWaitError(waitErr) && !isAlreadyExistsError(waitErr)) {
           throw waitErr;
         }

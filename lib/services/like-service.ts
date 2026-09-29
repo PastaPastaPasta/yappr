@@ -455,9 +455,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       }
     );
 
-    // The chain, not the SDK's throw, decides: an indexOnly delete is answered
-    // with an affected-state snapshot the SDK's strict wait refuses, usually
-    // after it landed (same quirk as creates). If the like is gone now, the
+    // A confirmed delete is believed (from 4.2.0-beta.7 the SDK waits for the
+    // affected state). Anything else, such as a timed-out wait or a stale
+    // tuple's rejection, is settled by the chain: if the like is gone now, the
     // delete succeeded.
     let result = await deleteLike(tuple);
     let gone = result.success || await this.waitForLikeGone(targetId, ownerId, kind);
