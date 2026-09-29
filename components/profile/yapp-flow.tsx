@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { CurrencyDollarIcon } from '@heroicons/react/24/outline'
 import { logger } from '@/lib/logger'
 import { tipHistoryService, totalTipped, TIP_PAGE_LIMIT } from '@/lib/services/tip-history-service'
+import { yappIsLocked } from '@/lib/contract-topology'
 
 interface YappFlowProps {
   identityId: string
@@ -38,6 +39,8 @@ export function YappFlow({ identityId, isOwnProfile = false }: YappFlowProps) {
   useEffect(() => {
     let active = true
     setSummary(null)
+    // Where YAPP is locked (v10) it never moves between identities: nothing to sum.
+    if (yappIsLocked()) return
     Promise.all([
       tipHistoryService.getTipsReceived(identityId),
       isOwnProfile ? tipHistoryService.getTipsSent(identityId) : Promise.resolve([]),
