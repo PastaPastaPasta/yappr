@@ -29,7 +29,10 @@
  *   r1-r9  repliesOf: thread count, per-reply count, direct-to-root (null pin)
  *          list asc/desc + paging, children of a reply, whole-thread scan,
  *          batched per root, batched per reply, composite slot, ranked roots
- *   f1-f5  follower / following counts: single, batched, composite, ranked
+ *   f1-f5  follower / following counts: single, batched, ranked
+ *   c1-c3  composite count slots (feed page, a replies page, the author card)
+ *   c2x/c3x  a bound slot extending the page's own index path is refused
+ *          ("lands at the merged root"): such counts are separate queries
  *
  * Usage (NETWORK=devnet; the devnet from the env or `.env.devnet`):
  *   node scripts/prove-merged-counts.mjs --bot 1 --bot 2 --bot 3
@@ -144,6 +147,15 @@ function check(label, ok, detail = '') {
   if (!ok) failures += 1;
 }
 const same = (actual, expected) => JSON.stringify(actual) === JSON.stringify(expected);
+/**
+ * Grouped counts as sets: the node returns groups in key-byte order, and a
+ * group with no documents is absent rather than 0.
+ */
+const sameCounts = (actual, expected) => {
+  const nonZero = (counts) => Object.entries(counts).filter(([, n]) => n !== 0).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return same(nonZero(actual), nonZero(expected));
+};
+const COMPOSITE_MERGED_ROOT = /lands at the merged root/i;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Runs one query, recording a thrown refusal as that query's FAIL instead of aborting the run. */
@@ -272,14 +284,14 @@ async function main() {
   console.log('\n--- q. quote counts on quotesOfPost / quotesOfReply ---');
   await attempt('q1', () => count('post', [['quotedPostId', '==', T1]]), (m) => check('q1 quotes of T1: `quotedPostId ==` (prefix-to-last on quotesOfPost) = 2', total(m) === 2, JSON.stringify(countEntries(m))));
   await attempt('q1b', () => count('post', [['quotedPostId', '==', T1], ['$createdAt', '>', 0]]), (m) => check('q1b same with a `$createdAt > 0` range (range-aggregate form) = 2', total(m) === 2, JSON.stringify(countEntries(m))));
-  await attempt('q2', () => count('post', [['quotedPostId', 'in', [T1, T2, T3]]], ['quotedPostId']), (m) => check('q2 batched `in` + groupBy: T1 2, T2 1, T3 absent (0)', same(countEntries(m), { [T1]: 2, [T2]: 1 }) || same(countEntries(m), { [T1]: 2, [T2]: 1, [T3]: 0 }), JSON.stringify(countEntries(m))));
+  await attempt('q2', () => count('post', [['quotedPostId', 'in', [T1, T2, T3]]], ['quotedPostId']), (m) => check('q2 batched `in` + groupBy: T1 2, T2 1, T3 absent (0)', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1 }), JSON.stringify(countEntries(m))));
   await attempt('q3', () => count('post', [['quotedReplyId', '==', r1]]), (m) => check('q3 reposts of reply r1 (quotesOfReply) = 1', total(m) === 1, JSON.stringify(countEntries(m))));
   await attempt('q4', () => sdk.documents.query(q('post', { where: [['quotedPostId', 'in', [T1]]], orderBy: [['quotedPostId', 'asc'], ['$createdAt', 'desc']], limit: 50 })), (r) => check('q4 the quote list (the app\'s `in [id]` shape) returns both quotes of T1', docsOf(r).length === 2, `${docsOf(r).length} doc(s)`));
 
   // ---- a: posts per author ----
   console.log('\n--- a. posts per author on ownerAndTime ---');
   await attempt('a1', () => count('post', [['$ownerId', '==', A.ownerId]]), (m) => check('a1 A\'s posts: `$ownerId ==` = 4', total(m) === 4, JSON.stringify(countEntries(m))));
-  await attempt('a2', () => count('post', [['$ownerId', 'in', [A.ownerId, B.ownerId, C.ownerId]]], ['$ownerId']), (m) => check('a2 batched per author: A 4, B 2, C 1', same(countEntries(m), { [A.ownerId]: 4, [B.ownerId]: 2, [C.ownerId]: 1 }), JSON.stringify(countEntries(m))));
+  await attempt('a2', () => count('post', [['$ownerId', 'in', [A.ownerId, B.ownerId, C.ownerId]]], ['$ownerId']), (m) => check('a2 batched per author: A 4, B 2, C 1', sameCounts(countEntries(m), { [A.ownerId]: 4, [B.ownerId]: 2, [C.ownerId]: 1 }), JSON.stringify(countEntries(m))));
   await attempt('a3', () => sdk.documents.ranked(q('post', { groupBy: '$ownerId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })), (r) => {
     const got = r.entries.map((entry) => [toBase58(entry.groupValue), Number(entry.value)]);
     check('a3 ranked top authors (rankedCountable at $ownerId): A 4, B 2, C 1', same(got, [[A.ownerId, 4], [B.ownerId, 2], [C.ownerId, 1]]), JSON.stringify(got));
@@ -303,8 +315,8 @@ async function main() {
     const got = ids(r);
     check('r5 whole thread by prefix scan: all 5, grouped by parent (direct first, under null)', got.length === 5 && same(got.slice(0, 2), [r1, r2]) && new Set(got).size === 5 && got.includes(r5), JSON.stringify(got));
   });
-  await attempt('r6', () => count('reply', [['rootPostId', 'in', [T1, T2, T3]]], ['rootPostId']), (m) => check('r6 batched thread counts: T1 5, T2 1, T3 0', same(countEntries(m), { [T1]: 5, [T2]: 1 }) || same(countEntries(m), { [T1]: 5, [T2]: 1, [T3]: 0 }), JSON.stringify(countEntries(m))));
-  await attempt('r7', () => count('reply', [['rootPostId', '==', T1], ['replyToReplyId', 'in', [r1, r2, r3]]], ['replyToReplyId']), (m) => check('r7 batched per-reply counts under T1: r1 2, r3 1, r2 0', same(countEntries(m), { [r1]: 2, [r3]: 1 }) || same(countEntries(m), { [r1]: 2, [r2]: 0, [r3]: 1 }), JSON.stringify(countEntries(m))));
+  await attempt('r6', () => count('reply', [['rootPostId', 'in', [T1, T2, T3]]], ['rootPostId']), (m) => check('r6 batched thread counts: T1 5, T2 1, T3 0', sameCounts(countEntries(m), { [T1]: 5, [T2]: 1 }), JSON.stringify(countEntries(m))));
+  await attempt('r7', () => count('reply', [['rootPostId', '==', T1], ['replyToReplyId', 'in', [r1, r2, r3]]], ['replyToReplyId']), (m) => check('r7 batched per-reply counts under T1: r1 2, r3 1, r2 0', sameCounts(countEntries(m), { [r1]: 2, [r3]: 1 }), JSON.stringify(countEntries(m))));
   await attempt('r8', () => sdk.documents.ranked(q('reply', { groupBy: 'rootPostId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })), (r) => {
     const got = r.entries.map((entry) => [toBase58(entry.groupValue), Number(entry.value)]);
     check('r8 ranked most-replied roots (at rootPostId): T1 5, T2 1', same(got, [[T1, 5], [T2, 1]]), JSON.stringify(got));
@@ -314,8 +326,8 @@ async function main() {
   console.log('\n--- f. follower / following counts ---');
   await attempt('f1', () => count('follow', [['followingId', '==', B.ownerId]]), (m) => check('f1 B\'s followers (followers, at-chain) = 2', total(m) === 2, JSON.stringify(countEntries(m))));
   await attempt('f2', () => count('follow', [['$ownerId', '==', A.ownerId]]), (m) => check('f2 A follows (following, prefix-to-last) = 2', total(m) === 2, JSON.stringify(countEntries(m))));
-  await attempt('f3', () => count('follow', [['followingId', 'in', [A.ownerId, B.ownerId, C.ownerId]]], ['followingId']), (m) => check('f3 batched followers: A 1, B 2, C 1', same(countEntries(m), { [A.ownerId]: 1, [B.ownerId]: 2, [C.ownerId]: 1 }), JSON.stringify(countEntries(m))));
-  await attempt('f4', () => count('follow', [['$ownerId', 'in', [A.ownerId, B.ownerId, C.ownerId]]], ['$ownerId']), (m) => check('f4 batched following: A 2, B 1, C 1', same(countEntries(m), { [A.ownerId]: 2, [B.ownerId]: 1, [C.ownerId]: 1 }), JSON.stringify(countEntries(m))));
+  await attempt('f3', () => count('follow', [['followingId', 'in', [A.ownerId, B.ownerId, C.ownerId]]], ['followingId']), (m) => check('f3 batched followers: A 1, B 2, C 1', sameCounts(countEntries(m), { [A.ownerId]: 1, [B.ownerId]: 2, [C.ownerId]: 1 }), JSON.stringify(countEntries(m))));
+  await attempt('f4', () => count('follow', [['$ownerId', 'in', [A.ownerId, B.ownerId, C.ownerId]]], ['$ownerId']), (m) => check('f4 batched following: A 2, B 1, C 1', sameCounts(countEntries(m), { [A.ownerId]: 2, [B.ownerId]: 1, [C.ownerId]: 1 }), JSON.stringify(countEntries(m))));
   await attempt('f5', () => sdk.documents.ranked(q('follow', { groupBy: 'followingId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })), (r) => {
     const got = r.entries.map((entry) => [toBase58(entry.groupValue), Number(entry.value)]);
     check('f5 ranked most followed (at followingId): B 2 first, then A and C at 1', got.length === 3 && same(got[0], [B.ownerId, 2]) && got.slice(1).every(([, n]) => n === 1), JSON.stringify(got));
@@ -337,10 +349,14 @@ async function main() {
     const [quotes, replies] = result.subResults.map((sub) => countEntries(sub.counts));
     check('c1 feed page slots: quotes per post (T1 2, T2 1) and replies per root (T1 5, T2 1)', quotes[T1] === 2 && quotes[T2] === 1 && !quotes[T3] && replies[T1] === 5 && replies[T2] === 1 && !replies[T3], `quotes ${JSON.stringify(quotes)} replies ${JSON.stringify(replies)}`);
   });
+  // A limited page may not sit at the merged root: a bound sub-query whose
+  // index path extends the page's is refused ("lands at the merged root").
+  // c2/c3 are the shapes the client uses (page on another path); c2x/c3x pin
+  // the refusal so the client never builds the conflicting shape.
   await attempt('c2', () => sdk.documents.composite({
     dataContractId: contractId,
     documentType: 'reply',
-    where: [['rootPostId', '==', T1], ['replyToReplyId', '==', null]],
+    where: [['$ownerId', '==', B.ownerId]],
     orderBy: [['$createdAt', 'asc']],
     limit: 10,
     subQueries: [
@@ -349,11 +365,11 @@ async function main() {
     ],
   }), (result) => {
     const [children, reposts] = result.subResults.map((sub) => countEntries(sub.counts));
-    check('c2 thread page slots: children per reply (r1 2, r2 0) and reposts per reply (r1 1)', children[r1] === 2 && !children[r2] && reposts[r1] === 1, `children ${JSON.stringify(children)} reposts ${JSON.stringify(reposts)}`);
+    check('c2 B\'s replies (ownerAndTime page) with per-reply slots pinned to T1: children r1 2, r5 0; reposts r1 1', children[r1] === 2 && !children[r5] && reposts[r1] === 1 && !reposts[r5], `children ${JSON.stringify(children)} reposts ${JSON.stringify(reposts)}`);
   });
   await attempt('c3', () => sdk.documents.composite({
     dataContractId: contractId,
-    documentType: 'post',
+    documentType: 'reply',
     where: [['$ownerId', '==', B.ownerId]],
     orderBy: [['$createdAt', 'asc']],
     limit: 1,
@@ -364,7 +380,23 @@ async function main() {
     ],
   }), (result) => {
     const [posts, followers, following] = result.subResults.map((sub) => countEntries(sub.counts)[B.ownerId]);
-    check('c3 author-card slots for B: posts 2, followers 2, following 1', posts === 2 && followers === 2 && following === 1, `posts ${posts} followers ${followers} following ${following}`);
+    check('c3 author-card slots for B off a page of another doctype (the app roots on the profile): posts 2, followers 2, following 1', posts === 2 && followers === 2 && following === 1, `posts ${posts} followers ${followers} following ${following}`);
+  });
+  const expectMergedRootRefusal = async (label, query) => {
+    try {
+      await sdk.documents.composite(query);
+      check(label, false, 'accepted');
+    } catch (e) {
+      check(label, COMPOSITE_MERGED_ROOT.test(describeErr(e)), describeErr(e).slice(0, 200));
+    }
+  };
+  await expectMergedRootRefusal('c2x a repliesOf page with a repliesOf count slot is refused (merged root)', {
+    dataContractId: contractId, documentType: 'reply', where: [['rootPostId', '==', T1], ['replyToReplyId', '==', null]], orderBy: [['$createdAt', 'asc']], limit: 10,
+    subQueries: [{ documentType: 'reply', kind: 'counts', where: [['rootPostId', '==', T1]], bind: { source: 'page', sourceProperty: '$id', field: 'replyToReplyId' } }],
+  });
+  await expectMergedRootRefusal('c3x a post page on $ownerId with a post slot bound to $ownerId is refused (merged root)', {
+    dataContractId: contractId, documentType: 'post', where: [['$ownerId', '==', B.ownerId]], orderBy: [['$createdAt', 'asc']], limit: 1,
+    subQueries: [{ documentType: 'post', kind: 'counts', bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } }],
   });
 
   console.log(`\nthrowaway contract ${contractId}`);
