@@ -3,7 +3,7 @@ import { Document, PlatformVersion } from '@dashevo/evo-sdk';
 import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
 import type { ContractModerationReason, ContractModerationStatus, ContractWarning } from '@dashevo/wasm-sdk';
 import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants';
-import { contractIsModerated, contractKeepsWarnings, electedModeration, moderationListsKept, moderatorDeletableTypes, moderatorDeletionKeepsRecord, reportsAreResolved, type TargetKind } from '@/lib/contract-topology';
+import { authorDeletesLeaveHoles, contractIsModerated, contractKeepsWarnings, electedModeration, moderationListsKept, moderatorDeletableTypes, moderatorDeletionKeepsRecord, reportsAreResolved, type TargetKind } from '@/lib/contract-topology';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import { classifyModerationError, extractErrorMessage, hasConsensusCode, isDocumentExpiredError, isTimeoutError, type ModerationErrorKind } from '@/lib/error-utils';
@@ -276,14 +276,29 @@ export const toRemoval = (entry: RemovalEntry): DocumentRemoval => ({
 
 /**
  * What the hole a missing post or reply leaves may claim. A takedown needs a
- * standing removal record, or proof of absence with no record saying
- * otherwise. A RESTORED record means the document is live again, so its
- * absence here is a failed read, not a takedown, and the old reason no longer
- * applies. With neither record nor proof, the stub says "unavailable".
+ * standing removal record. A RESTORED record means the document came back,
+ * so the old reason no longer applies: its absence here is a failed read,
+ * unless authors delete for real (v10) and absence is proved, which is the
+ * author's delete after the restore (a moderator deleting it again would have
+ * left a fresh, standing record). Proof of absence with no record is a takedown
+ * where only moderators can remove posts (v9), and the author's own delete
+ * where authors can too (`authorsDelete`, v10: every moderator deletion of a
+ * post or reply leaves a record). That reading needs the record lookup to
+ * have ANSWERED with nothing (`recordsRead`): while it is pending, or when it
+ * failed, a takedown is indistinguishable from the author's delete, so the
+ * hole claims neither. With neither record nor proof, the stub says
+ * "unavailable".
  */
-export function missingDocumentState(removal: DocumentRemoval | null, proven: boolean): 'removed' | 'loadFailed' | 'unavailable' {
-  if (removal) return removal.restoredAt === null ? 'removed' : 'loadFailed';
-  return proven ? 'removed' : 'unavailable';
+export function missingDocumentState(
+  removal: DocumentRemoval | null,
+  proven: boolean,
+  { recordsRead = false, authorsDelete = authorDeletesLeaveHoles() }: { recordsRead?: boolean; authorsDelete?: boolean } = {}
+): 'removed' | 'deleted' | 'loadFailed' | 'unavailable' {
+  if (removal?.restoredAt === null) return 'removed';
+  if (removal) return proven && authorsDelete && recordsRead ? 'deleted' : 'loadFailed';
+  if (!proven) return 'unavailable';
+  if (!authorsDelete) return 'removed';
+  return recordsRead ? 'deleted' : 'unavailable';
 }
 
 class ModerationService {
@@ -451,22 +466,35 @@ class ModerationService {
    * The removal records of specific documents (at most 100 ids). A document
    * with no record — never removed — is simply absent from the answer, so a
    * caller resolving "why is this post missing?" gets a record or nothing.
-   * Failures answer an empty map: the stub renders without a reason.
+   * Failures answer an empty map: the report queue renders without a reason.
+   * Where "no record" is itself a claim (the author's delete), use the strict
+   * {@link readRemovals}.
    */
   async getRemovals(kind: TargetKind, documentIds: readonly string[]): Promise<Map<string, DocumentRemoval>> {
-    const removals = new Map<string, DocumentRemoval>();
-    if (!this.keepsRemovals(kind) || documentIds.length === 0) return removals;
     try {
-      const sdk = await getEvoSdk();
-      const page = await sdk.contracts.documentRemovals({
-        contractId: YAPPR_CONTRACT_ID,
-        documentTypeName: kind,
-        documentIds: Array.from(new Set(documentIds)).slice(0, 100),
-      });
-      for (const entry of page.removals) removals.set(entry.documentId, toRemoval(entry));
+      return await this.readRemovals(kind, documentIds);
     } catch (error) {
       logger.warn('moderationService: document removals read failed', error);
+      return new Map();
     }
+  }
+
+  /**
+   * The removal records of specific documents, THROWING when the read fails,
+   * so an empty answer means the chain has no record. A type moderators
+   * cannot delete, or whose moderator deletions keep no record, has none to
+   * find.
+   */
+  async readRemovals(kind: TargetKind, documentIds: readonly string[]): Promise<Map<string, DocumentRemoval>> {
+    const removals = new Map<string, DocumentRemoval>();
+    if (!this.keepsRemovals(kind) || documentIds.length === 0) return removals;
+    const sdk = await getEvoSdk();
+    const page = await sdk.contracts.documentRemovals({
+      contractId: YAPPR_CONTRACT_ID,
+      documentTypeName: kind,
+      documentIds: Array.from(new Set(documentIds)).slice(0, 100),
+    });
+    for (const entry of page.removals) removals.set(entry.documentId, toRemoval(entry));
     return removals;
   }
 

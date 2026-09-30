@@ -42,6 +42,8 @@ vi.mock('@dashevo/evo-sdk', () => ({
 }))
 vi.mock('@/lib/contract-topology', () => ({
   contractIsModerated: () => topology.moderated,
+  // The moderated cut these tests model is v9: posts tombstone, so an absence is a takedown.
+  authorDeletesLeaveHoles: () => false,
   moderationListsKept: () => (topology.moderated ? topology.lists : []),
   contractKeepsWarnings: () => topology.moderated && topology.lists.includes('warnings'),
   moderatorDeletableTypes: () => (topology.moderated ? topology.deletable : []),
@@ -196,8 +198,54 @@ describe('what a missing post or reply may claim', () => {
   })
 
   it('without a record, only a proof of absence claims a takedown', () => {
-    expect(missingDocumentState(null, true)).toBe('removed')
-    expect(missingDocumentState(null, false)).toBe('unavailable')
+    expect(missingDocumentState(null, true, { authorsDelete: false })).toBe('removed')
+    expect(missingDocumentState(null, false, { authorsDelete: false })).toBe('unavailable')
+    // v9 needs no record lookup to claim it: only moderators remove posts there.
+    expect(missingDocumentState(null, true, { authorsDelete: false, recordsRead: false })).toBe('removed')
+  })
+
+  it('where authors delete for real (v10), a proven absence with no record found is the author\'s delete', () => {
+    const v10 = { authorsDelete: true, recordsRead: true }
+    expect(missingDocumentState(null, true, v10)).toBe('deleted')
+    expect(missingDocumentState(null, false, v10)).toBe('unavailable')
+    // A record still outranks the author reading.
+    expect(missingDocumentState(record(null), true, v10)).toBe('removed')
+  })
+
+  it('on v10, a proven absence after a restore is the author\'s delete, not a failed read', () => {
+    // The author deleted it after a moderator restored it: the restored record stays, and no new one is left.
+    expect(missingDocumentState(record(20), true, { authorsDelete: true, recordsRead: true })).toBe('deleted')
+    // Without a proof of absence it is still a failed read of a live document.
+    expect(missingDocumentState(record(20), false, { authorsDelete: true, recordsRead: true })).toBe('loadFailed')
+    // v9 keeps the restored record over a proof of absence.
+    expect(missingDocumentState(record(20), true, { authorsDelete: false, recordsRead: true })).toBe('loadFailed')
+  })
+
+  it('on v10, never claims the author\'s delete while the record lookup is pending or failed', () => {
+    // A takedown looks the same as a delete until the lookup answers.
+    expect(missingDocumentState(null, true, { authorsDelete: true })).toBe('unavailable')
+    expect(missingDocumentState(null, true, { authorsDelete: true, recordsRead: false })).toBe('unavailable')
+  })
+})
+
+describe('reading removal records', () => {
+  const ID = 'Doc111111111111111111111111111111111111111'
+
+  it('readRemovals surfaces a failed read, so an empty answer means no record', async () => {
+    sdk.contracts.documentRemovals.mockRejectedValue(new Error('offline'))
+    await expect(moderationService.readRemovals('post', [ID])).rejects.toThrow('offline')
+  })
+
+  it('getRemovals stays lenient for the report queue', async () => {
+    sdk.contracts.documentRemovals.mockRejectedValue(new Error('offline'))
+    expect((await moderationService.getRemovals('post', [ID])).size).toBe(0)
+  })
+
+  it('readRemovals keys the records it finds by document id', async () => {
+    sdk.contracts.documentRemovals.mockResolvedValue({
+      removals: [{ documentId: ID, documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: 'spam' }, removedAt: BigInt(10), documentHash: '00' }],
+    })
+    expect((await moderationService.readRemovals('post', [ID])).get(ID)).toMatchObject({ reason: 'spam', restoredAt: null })
   })
 })
 

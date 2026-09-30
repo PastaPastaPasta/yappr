@@ -6,7 +6,9 @@ import { postService, replyToPost } from '@/lib/services/post-service'
 import { replyService } from '@/lib/services/reply-service'
 import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { isBareRepost, quotedTargetIdOf } from '@/lib/feed/quote-reposts'
-import { hasFlatThreads, referencesMayDangle, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
+import { hasFlatThreads, referencesMayDangle, authorDeletesLeaveHoles, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
+import { deletedReplyStubs, unloadedReplyParents } from '@/lib/feed/deleted-reply-stubs'
+import { provenAbsent } from '@/lib/feed/prove-absent'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
@@ -241,6 +243,17 @@ function assembleFlatThread(mainPost: Post, allReplies: Reply[]): ReplyThread[] 
 }
 
 /**
+ * The reply ids `replies` nest under that are proved deleted (v10, where an
+ * author's delete removes the reply and its children stay). Empty elsewhere,
+ * and when nothing is missing.
+ */
+async function deletedReplyParents(replies: Reply[]): Promise<Set<string>> {
+  if (!authorDeletesLeaveHoles()) return new Set()
+  const candidates = unloadedReplyParents(replies)
+  return candidates.length > 0 ? provenAbsent('reply', candidates) : new Set()
+}
+
+/**
  * Hook for loading and managing post detail state.
  *
  * Handles:
@@ -363,8 +376,9 @@ export function usePostDetail({
       const rootPost = await postService.getPostById(rootId, { skipEnrichment: true })
       if (rootPost) chain.push(rootPost)
       // The reply's `rootPostId` is a deletableDocument reference on v9: a
-      // missing root is a moderator takedown, not a transport fault, and the
-      // page says so instead of showing an orphaned reply.
+      // missing root is a moderator takedown (or on v10 its author's delete),
+      // not a transport fault, and the page says so instead of showing an
+      // orphaned reply.
       else if (referencesMayDangle()) removed.push(rootId)
     } else {
       let currentParentId: string | undefined = mainPost.parentId
@@ -543,6 +557,12 @@ export function usePostDetail({
           }
         }
 
+        // A reply whose parent reply was deleted keeps its place under a
+        // deleted-parent stub instead of dropping out with the parent.
+        const deletedParents = await deletedReplyParents(replies)
+        if (!isCurrent()) return
+        replies = [...deletedReplyStubs(replies, deletedParents), ...replies]
+
         replyThreads = assembleFlatThread(loadedPost, replies)
       } else {
         ;({ replies, replyThreads } = await loadV2Thread(loadedPost, postId, isCurrent))
@@ -588,13 +608,17 @@ export function usePostDetail({
       // Navigating away mid-flight would otherwise merge this thread's next page
       // into whatever post the page moved on to.
       if (threadRootIdRef.current !== rootId) return
+      // A parent on an earlier page is present, so only deleted ones prove absent.
+      const deletedParents = await deletedReplyParents(result.documents)
+      if (threadRootIdRef.current !== rootId) return
       replyCursorRef.current = result.nextCursor
       setHasMoreReplies(Boolean(result.nextCursor))
 
       setState(current => {
         if (!current.post) return current
         const known = new Set(current.replies.map((reply) => reply.id))
-        const merged = [...current.replies, ...result.documents.filter((reply) => !known.has(reply.id))]
+        const loaded = [...current.replies, ...result.documents.filter((reply) => !known.has(reply.id))]
+        const merged = [...deletedReplyStubs(loaded, deletedParents), ...loaded]
         return { ...current, replies: merged, replyThreads: assembleFlatThread(current.post, merged) }
       })
     } catch (err) {

@@ -6,6 +6,12 @@ export interface Media {
   id: string
   type: 'image' | 'video' | 'gif'
   url: string
+  /**
+   * v10: the posted image's sha256 (`mediaHash`) and dHash
+   * (`mediaFingerprint`), so a reader can tell when the URL now serves a
+   * different picture. Absent on v2/v9 documents.
+   */
+  hashes?: { mediaHash: Uint8Array; mediaFingerprint: Uint8Array }
   thumbnail?: string
   alt?: string
   width?: number
@@ -57,7 +63,8 @@ export interface Post {
    * True when the quoted post/reply is PROVEN ABSENT: a composite by-id join
    * listed its id in `missingIds`, which on a v9 contract means the contract's
    * moderators removed it (every reference at post/reply is a deletableDocument
-   * reference). The card renders the removed stub and fetches nothing.
+   * reference), and on v10 that they or its author deleted it. The card
+   * renders the removed stub and fetches nothing.
    */
   quotedPostRemoved?: boolean
   // Cross-contract embed (e.g. a Pollr poll). All three are set together.
@@ -129,6 +136,8 @@ export interface Reply {
   rootPostId?: string     // v9: the post the whole thread hangs off (required on chain)
   replyToReplyId?: string // v9: the reply this one is nested under, if any
   deleted?: boolean       // v9 tombstone marker (see Post.deleted)
+  /** v10: a stand-in for a reply proved deleted, holding its children's place in the thread; never a real document. */
+  deletedStub?: boolean
   sensitive?: boolean     // author-declared NSFW flag (see Post.sensitive)
   parentContent?: Post | Reply  // Lazy-loaded parent
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries

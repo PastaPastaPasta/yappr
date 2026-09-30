@@ -74,7 +74,8 @@ export async function fetchPostStats(
       repostIndexFor(kind) ? repostService.countReposts(postId) : Promise.resolve(0),
       // Polymorphic on v2 (one `parentId` count tree serves both kinds); on v9 a
       // post counts its whole thread and a reply its direct children (v10 pins
-      // the reply's root).
+      // the reply's root). v9 counts include tombstones; v10 deletes leave the
+      // tree, so it is exact.
       replyService.countReplies(postId, kind, target.rootPostId),
       postService.countQuotes(postId, kind),
     ]);

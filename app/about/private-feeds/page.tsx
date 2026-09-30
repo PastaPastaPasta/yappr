@@ -2,7 +2,10 @@
 
 import { LockClosedIcon, KeyIcon, ShieldCheckIcon, QuestionMarkCircleIcon, CpuChipIcon, ArrowPathIcon, ExclamationTriangleIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline'
 import { InfoPage } from '@/components/layout/info-page'
-import { privateFeedKeyFields } from '@/lib/contract-topology'
+import { contentLimits, privateFeedKeyFields } from '@/lib/contract-topology'
+
+/** A full-length post's characters; at about a byte each, 1,000 follower copies cost this many KB. */
+const POST_MAX_LENGTH = contentLimits().maxLength
 
 // Reusable Components
 function CalloutBox({
@@ -171,9 +174,9 @@ export default function PrivateFeedsPage() {
                 </p>
                 <p>
                   <strong>The Fatal Flaw:</strong> Storage explodes. With 1,000 followers, every post
-                  requires 1,000 separate encrypted copies stored on the blockchain. A 500-character
-                  post becomes 500KB of data. Post ten times a day for a year, and you&apos;ve used
-                  nearly 2GB of blockchain storage—just for your posts.
+                  requires 1,000 separate encrypted copies stored on the blockchain. A {POST_MAX_LENGTH}-character
+                  post becomes {POST_MAX_LENGTH}KB of data. Post ten times a day for a year, and you&apos;ve used
+                  nearly {Math.ceil((POST_MAX_LENGTH * 3650) / 1_000_000)}GB of blockchain storage—just for your posts.
                 </p>
                 <p className="text-sm text-gray-500 dark:text-gray-500">
                   <strong>Cost:</strong> O(N) storage per post, where N is your follower count.

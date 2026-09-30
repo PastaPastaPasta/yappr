@@ -1,7 +1,10 @@
 'use client'
 
+import { useCallback, useState } from 'react'
 import { EyeSlashIcon, PhotoIcon } from '@heroicons/react/24/outline'
+import { logger } from '@/lib/logger'
 import { useSettingsStore } from '@/lib/store'
+import { checkServedMedia } from '@/lib/media/media-fingerprint'
 import { cn } from '@/lib/utils'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import type { Media } from '@/lib/types'
@@ -65,22 +68,48 @@ interface GatedPostMediaProps {
 /**
  * A post-card media cell: the follow-gate placeholder while gated, otherwise
  * the image itself with IPFS multi-gateway failover.
+ *
+ * A v10 post names its image's sha256 and dHash. Once the image loads, the
+ * served copy is checked against them, and a picture that is no longer the one
+ * posted (fingerprint more than 10 bits away) gets a small notice. A check
+ * that cannot run (no CORS, undecodable) claims nothing.
  */
 export function GatedPostMedia({ media, gate }: GatedPostMediaProps) {
+  const [changed, setChanged] = useState(false)
+  const hashes = media.hashes
+  const handleLoad = useCallback((loadedUrl: string) => {
+    if (!hashes) return
+    checkServedMedia(loadedUrl, hashes)
+      .then((result) => setChanged(result === true))
+      .catch((error) => logger.warn('Media fingerprint check failed:', error))
+  }, [hashes])
+
   if (gate.gated) {
     return <GatedMediaPlaceholder kind="image" onReveal={gate.reveal} className="h-full rounded-none border-0" />
   }
 
   return (
-    <IpfsImage
-      src={media.url}
-      alt={media.alt || ''}
-      className="absolute inset-0 h-full w-full object-cover"
-      fallback={
-        <div className="flex h-full w-full items-center justify-center text-neutral-400 dark:text-neutral-600">
-          <PhotoIcon className="h-8 w-8" />
-        </div>
-      }
-    />
+    <>
+      <IpfsImage
+        src={media.url}
+        alt={media.alt || ''}
+        className="absolute inset-0 h-full w-full object-cover"
+        onLoad={hashes ? handleLoad : undefined}
+        fallback={
+          <div className="flex h-full w-full items-center justify-center text-neutral-400 dark:text-neutral-600">
+            <PhotoIcon className="h-8 w-8" />
+          </div>
+        }
+      />
+      {changed && (
+        <span
+          data-testid={`media-changed-${media.id}`}
+          title="The image at this link no longer matches the one the author posted."
+          className="absolute bottom-2 left-2 rounded-full bg-black/60 px-2 py-0.5 text-xs text-white"
+        >
+          Media changed since posting
+        </span>
+      )}
+    </>
   )
 }

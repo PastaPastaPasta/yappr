@@ -6,7 +6,8 @@ import { unifiedProfileService } from './unified-profile-service';
 import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';
 import type { EncryptionOptions } from './post-service';
 import { getEvoSdk } from './evo-sdk-service';
-import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
+import { mediaDocumentFields, mediaFromDocument } from '@/lib/media/media-fields';
+import type { MediaHashes } from '@/lib/media/media-fingerprint';
 import { documentCount, groupedDocumentCount, groupIdsByRoot, mapLimit } from './pagination-utils';
 import type { DocumentWhereClause } from './sdk-helpers';
 import { profileDataByOwnerId } from './post-enrichment-helpers';
@@ -74,7 +75,6 @@ class ReplyService extends BaseDocumentService<Reply> {
 
     // Content and other fields may be in data or at root level
     const content = (data.content || doc.content || '') as string;
-    const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
     // Parent linkage, in whichever fields this topology declares. On v9 the
     // thread root and the presentational parent are separate properties, and
@@ -119,11 +119,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       liked: false,
       reposted: false,
       bookmarked: false,
-      media: mediaUrl ? [{
-        id: id + '-media',
-        type: 'image',
-        url: normalizeMediaUrl(mediaUrl)
-      }] : undefined,
+      media: mediaFromDocument(id, data, doc),
       parentId,
       parentOwnerId,
       rootPostId,
@@ -199,6 +195,8 @@ class ReplyService extends BaseDocumentService<Reply> {
     target: ReplyTarget,
     options: {
       mediaUrl?: string;
+      /** v10: required with `mediaUrl` (see `mediaCarriesHashes()`). */
+      mediaHashes?: MediaHashes;
       sensitive?: boolean;
       encryption?: EncryptionOptions;
     } = {}
@@ -258,7 +256,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       // reference; callers must keep it inside the encrypted content instead.
       throw new Error('mediaUrl cannot be combined with encryption');
     }
-    if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
+    Object.assign(data, mediaDocumentFields(options.mediaUrl, options.mediaHashes));
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
     // v10: the one indexed mention, by the rule posts use — the first

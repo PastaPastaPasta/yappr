@@ -8,6 +8,7 @@ import socialContractV2 from '@/contracts/yappr-social-contract-v2.json'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 import { getContractTopology } from '@/lib/constants'
+import { contentLimits } from '@/lib/contract-topology'
 import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
 
 // The deployed social contract for this build's topology, reshaped for display.
@@ -110,7 +111,7 @@ export default function ContractPage() {
                 <ul className="space-y-2 text-sm">
                   <li className="flex items-center gap-2">
                     <div className="h-2 w-2 bg-green-500 rounded-full" />
-                    <span>500 character posts</span>
+                    <span>{contentLimits().maxLength} character posts</span>
                   </li>
                   <li className="flex items-center gap-2">
                     <div className="h-2 w-2 bg-green-500 rounded-full" />

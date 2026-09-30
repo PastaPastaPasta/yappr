@@ -9,8 +9,8 @@ interface IpfsImageProps {
   src: string
   alt: string
   className?: string
-  /** Called when image loads successfully */
-  onLoad?: () => void
+  /** Called when image loads successfully, with the candidate URL that served it */
+  onLoad?: (loadedUrl: string) => void
   /** Called when all gateways fail (after retries are exhausted) */
   onError?: () => void
   /** Fallback element to show when all gateways fail */
@@ -87,8 +87,8 @@ export function IpfsImage({
 
   const handleLoad = useCallback(() => {
     setLoaded(true)
-    onLoad?.()
-  }, [onLoad])
+    onLoad?.(candidateUrls[safeIndex])
+  }, [onLoad, candidateUrls, safeIndex])
 
   const handleError = useCallback(() => {
     if (safeIndex < candidateUrls.length - 1) {

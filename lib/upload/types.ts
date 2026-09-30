@@ -1,3 +1,5 @@
+import type { MediaHashes } from '@/lib/media/media-fingerprint'
+
 /**
  * Upload Provider System Types
  *
@@ -28,6 +30,11 @@ export interface UploadOptions {
  * Result of a successful upload
  */
 export interface UploadResult {
+  /**
+   * The v10 `mediaHash`/`mediaFingerprint` of the uploaded file, set only where
+   * the contract requires them beside `mediaUrl` (see `mediaCarriesHashes()`).
+   */
+  hashes?: MediaHashes
   /** Content Identifier for the uploaded file */
   cid: string
   /** Size of the uploaded file in bytes */

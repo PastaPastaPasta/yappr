@@ -15,8 +15,9 @@ import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
-import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
 import { privateFeedKeyFields } from '@/lib/contract-topology';
+import { mediaDocumentFields, mediaFromDocument } from '@/lib/media/media-fields';
+import type { MediaHashes } from '@/lib/media/media-fingerprint';
 
 /**
  * Encryption options for creating private posts
@@ -212,7 +213,6 @@ class PostService extends BaseDocumentService<Post> {
 
     // Content and other fields may be in data or at root level
     const content = (data.content || doc.content || '') as string;
-    const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
     // Normalize identifier-like fields to base58 for consistent storage.
     const rawQuotedPostId = data.quotedPostId || doc.quotedPostId;
@@ -256,11 +256,7 @@ class PostService extends BaseDocumentService<Post> {
       liked: false,
       reposted: false,
       bookmarked: false,
-      media: mediaUrl ? [{
-        id: id + '-media',
-        type: 'image',
-        url: normalizeMediaUrl(mediaUrl)
-      }] : undefined,
+      media: mediaFromDocument(id, data, doc),
       // Expose IDs for lazy loading at component level
       quotedPostId: quotedPostId || undefined,
       quotedPostOwnerId: quotedPostOwnerId || undefined,
@@ -392,6 +388,8 @@ class PostService extends BaseDocumentService<Post> {
     content: string,
     options: {
       mediaUrl?: string;
+      /** v10: required with `mediaUrl` (see `mediaCarriesHashes()`). */
+      mediaHashes?: MediaHashes;
       quotedPostId?: string;
       quotedPostOwnerId?: string;
       /** v9 only: quoting a reply instead of a post (mutually exclusive with quotedPostId). */
@@ -451,7 +449,7 @@ class PostService extends BaseDocumentService<Post> {
       data.content = content;
     }
 
-    // Language is required on v2/v9 - default to 'en' if not
+    // Language is required where posts carry one - default to 'en' if not
     // provided. v10 has no `language` property at all (one global timeline).
     if (postsHaveLanguage()) data.language = options.language || 'en';
 
@@ -484,7 +482,7 @@ class PostService extends BaseDocumentService<Post> {
       // reference; callers must keep it inside the encrypted content instead.
       throw new Error('mediaUrl cannot be combined with encryption');
     }
-    if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
+    Object.assign(data, mediaDocumentFields(options.mediaUrl, options.mediaHashes));
     if (options.quotedPostId) data.quotedPostId = identifierStringToDocumentBytes(options.quotedPostId);
     if (options.quotedReplyId) data.quotedReplyId = identifierStringToDocumentBytes(options.quotedReplyId);
     if (options.quotedPostOwnerId) data.quotedPostOwnerId = identifierStringToDocumentBytes(options.quotedPostOwnerId);
@@ -735,8 +733,8 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get post counts per author
    * Returns a Map of authorId -> post count
-   * Uses the languageTimeline index [language, $createdAt] to scan posts.
-   * Note: Currently only counts English posts (language='en').
+   * Falls back to scanning the timeline (see {@link postTimelineClauses}),
+   * which on v2/v9 only sees English posts (language='en').
    */
   async getAuthorPostCounts(): Promise<Map<string, number>> {
     return fetchAuthorPostCounts(this.contractId);
