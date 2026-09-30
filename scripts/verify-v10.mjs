@@ -81,7 +81,7 @@
  *       identity). The same for a reply (n1e–n1g) on
  *       `reply.mentionedUserAndTime`. There is no postMention.
  *   n2  the reply notification windows (plain queries, no composite: the
- *       current and the oldest open window of the non-overlapping 3.5-day
+ *       current window and the previous one (`byStart`) of the non-overlapping 3.5-day
  *       grid, deduped): `reply.parentOwnerRecent` lists A's reply for B. Likes stay permanent: the per-target read on
  *       `byAuthorPostTime`/`byAuthorReplyTime` (`author ==`, `target ==`,
  *       `$createdAt >`) lists A's likes of B's post and reply; `byPost` /
@@ -978,12 +978,16 @@ const WINDOW_PAGES = 10;
 /**
  * The notification windows of `docType`'s windowed index `name` as the client
  * reads them: the grid is non-overlapping (step == range) with ttl twice the
- * range, so the last week is the current window (`newest`) and the oldest
- * still open, one `timeRange` option each.
+ * range, so the last week is the current window (`newest`) and the one before
+ * it, named by its start (`byStart`): the node's `oldest` is the oldest window
+ * still containing now, which on this grid is the current one again.
  */
 const notificationWindowsOf = (docType, name) => {
   const { range, step } = V10.documentSchemas[docType].indices.find((index) => index.name === name).timeRange;
-  return ['newest', 'oldest'].map((selector) => ({ timeRange: [{ field: '$createdAt', selector, grid: { range, step } }] }));
+  const stepMs = step * 1000;
+  const previousStart = (Math.floor(Date.now() / stepMs) - 1) * stepMs;
+  return [{ selector: 'newest' }, { selector: 'byStart', startMs: previousStart }]
+    .map((pick) => ({ timeRange: [{ field: '$createdAt', ...pick, grid: { range, step } }] }));
 };
 
 /**
@@ -991,8 +995,7 @@ const notificationWindowsOf = (docType, name) => {
  * both open windows with `where`, lists a document matching `predicate`. A
  * windowed read takes no `$createdAt` clause and no `$createdAt` orderBy (the
  * window is the time bound), so each window pages by id while pages come back
- * full. Right after a boundary both selectors name the same window: a document
- * is counted once.
+ * full. A document is counted once.
  */
 async function windowLists(ctx, docType, indexName, where, predicate) {
   const seen = new Set();
@@ -1659,8 +1662,8 @@ function selfTest() {
     shape('post', 'ownerAndQuotedPost') === '$ownerId,quotedPostId' && shape('post', 'ownerAndQuotedReply') === '$ownerId,quotedReplyId'
       && ['ownerAndQuotedPost', 'ownerAndQuotedReply'].every((n) => index('post', n).unique === true && index('post', n).skipIfAbsent === true));
   // The notification-only indexes: non-overlapping 3.5-day windows (each entry
-  // written once) kept for a week, $createdAt first; read as the newest and the
-  // oldest open window.
+  // written once) kept for a week, $createdAt first; read as the current window
+  // and the previous one by its start.
   const HALF_WEEK_WINDOW = JSON.stringify({ on: '$createdAt', range: 302_400, step: 302_400, ttl: 604_800 });
   const halfWeekly = (type, name, properties) => shape(type, name) === properties && JSON.stringify(index(type, name).timeRange) === HALF_WEEK_WINDOW;
   expect('quotedPostOwnerRecent [$createdAt, quotedPostOwnerId] is on the 3.5-day grid kept a week, skipped when absent (q1j)', halfWeekly('post', 'quotedPostOwnerRecent', '$createdAt,quotedPostOwnerId') && index('post', 'quotedPostOwnerRecent').skipIfAbsent === true);

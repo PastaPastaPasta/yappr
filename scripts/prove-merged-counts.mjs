@@ -36,7 +36,8 @@
  *   w1-w2  bare reposts of a post and of a reply, read back
  *   o1-o2  the viewer's own quote/repost per target (ownerAndQuoted…, `in`)
  *   n1-n8  notifications: replies and quotes/reposts on 3.5-day windows
- *          (timeRange `newest` + `oldest`, recipient pinned, deduped);
+ *          (timeRange `newest` + `byStart` of the previous window, recipient
+ *          pinned, deduped);
  *          mentions on the permanent mentionedUserAndTime (n3); n6x/n7x a
  *          windowed source cannot ride a composite; n8 the permanent sources
  *          (mentions included) bundle
@@ -99,7 +100,7 @@ const CONSENSUS_CODE = /\bcode"?\s*[=:]\s*\d{4,5}\b/;
 function proofContractSource() {
   const social = JSON.parse(readFileSync(SOCIAL_V10, 'utf8'));
   const documentSchemas = {};
-  for (const type of ['post', 'reply', 'follow', 'like', 'likeReply']) {
+  for (const type of ['post', 'reply', 'follow', 'followRequest', 'like', 'likeReply']) {
     const schema = structuredClone(social.documentSchemas[type]);
     for (const key of ['actionFees', 'tokenCost', 'moderatorAbilities']) delete schema[key];
     documentSchemas[type] = schema;
@@ -469,24 +470,27 @@ async function main() {
   });
   await attempt('o2', () => sdk.documents.query(q('post', { where: [['$ownerId', '==', A.ownerId], ['quotedReplyId', 'in', [r1, r2]]], orderBy: [['$ownerId', 'asc'], ['quotedReplyId', 'asc']], limit: 2 })), (r) => check('o2 A\'s own reposts of r1/r2 (ownerAndQuotedReply): qr', same(ids(r), [qr]), JSON.stringify(ids(r))));
 
-  // ---- n: notifications on the 7-day windows (notification-service) ----
-  // Every notification index is [$createdAt, recipient, …] on one grid (7-day
-  // windows every day, ttl a week): read with the `oldest` window, pinned on
-  // the recipient. No `$createdAt >` clause (a raw clause cannot bind bucket
-  // keys) and no time order inside a window: the client filters and sorts.
-  console.log('\n--- n. notifications on the 7-day windows ---');
+  // ---- n: notifications (notification-service) ----
+  // The windowed notification indexes are [$createdAt, recipient] on one grid
+  // (3.5-day windows, ttl a week), read window by window, pinned on the
+  // recipient. No `$createdAt >` clause (a raw clause cannot bind bucket keys)
+  // and no time order inside a window: the client filters and sorts.
+  console.log('\n--- n. notifications: reply/quote windows, permanent mentions ---');
   // 3.5-day windows written once, ttl a week: the current window (`newest`)
-  // and the previous one (`oldest` still open) hold the last 3.5-7 days.
+  // and the previous one hold the last 3.5-7 days. The node's `oldest` is the
+  // oldest window still CONTAINING now (the current one on this grid), so the
+  // previous window is named by its start (`byStart`).
   const WEEK = { range: 302400, step: 302400 };
-  const windowed = (field, recipient, selector = 'oldest') => ({ where: [[field, '==', recipient]], timeRange: [{ field: '$createdAt', selector, grid: WEEK }], limit: 100 });
+  const previousStart = (Math.floor(Date.now() / (WEEK.step * 1000)) - 1) * WEEK.step * 1000;
+  const windowed = (field, recipient, pick = { selector: 'newest' }) => ({ where: [[field, '==', recipient]], timeRange: [{ field: '$createdAt', ...pick, grid: WEEK }], limit: 100 });
   const bothWindows = async (docType, field, recipient) => {
-    const [current, previous] = await Promise.all(['newest', 'oldest'].map((selector) => sdk.documents.query(q(docType, windowed(field, recipient, selector)))));
+    const [current, previous] = await Promise.all([{ selector: 'newest' }, { selector: 'byStart', startMs: previousStart }].map((pick) => sdk.documents.query(q(docType, windowed(field, recipient, pick)))));
     const byId = new Map([...docsOf(current), ...docsOf(previous)].map((d) => [idOf(d), d]));
     return { docs: [...byId.values()], current: docsOf(current).length, previous: docsOf(previous).length };
   };
   const sameSet = (got, expected) => got.length === expected.length && expected.every((x) => got.includes(x));
-  await attempt('n1', () => bothWindows('reply', 'parentOwnerId', A.ownerId), ({ docs, current, previous }) => check('n1 replies to A in the last two 3.5-day windows (parentOwnerRecent, `newest` + `oldest`, deduped): r1, r2, r5, r6, each with its exact $createdAt', sameSet(docs.map(idOf), [r1, r2, r5, r6]) && docs.every((d) => createdAtOf(d) > 0), `${JSON.stringify(docs.map(idOf))} (current window ${current}, oldest open ${previous})`));
-  await attempt('n2', () => bothWindows('post', 'quotedPostOwnerId', A.ownerId), ({ docs, current, previous }) => check('n2 quotes/reposts of A in the last two windows (quotedPostOwnerRecent): q1, q2, q3', sameSet(docs.map(idOf), [q1, q2, q3]), `${JSON.stringify(docs.map(idOf))} (current window ${current}, oldest open ${previous})`));
+  await attempt('n1', () => bothWindows('reply', 'parentOwnerId', A.ownerId), ({ docs, current, previous }) => check('n1 replies to A in the current and the previous 3.5-day window (parentOwnerRecent, `newest` + `byStart`, deduped; the previous read is accepted): r1, r2, r5, r6, each with its exact $createdAt', sameSet(docs.map(idOf), [r1, r2, r5, r6]) && docs.every((d) => createdAtOf(d) > 0), `${JSON.stringify(docs.map(idOf))} (current window ${current}, previous window ${previous})`));
+  await attempt('n2', () => bothWindows('post', 'quotedPostOwnerId', A.ownerId), ({ docs, current, previous }) => check('n2 quotes/reposts of A in the last two windows (quotedPostOwnerRecent): q1, q2, q3', sameSet(docs.map(idOf), [q1, q2, q3]), `${JSON.stringify(docs.map(idOf))} (current window ${current}, previous window ${previous})`));
   // Mentions stay permanent: the mentioning post's own [mentionedUserId, $createdAt].
   const mentionsOfB = { where: [['mentionedUserId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
   await attempt('n3', () => sdk.documents.query(q('post', mentionsOfB)), (r) => check('n3 mentions of B (permanent mentionedUserAndTime, `$createdAt >`, newest first): m1', same(ids(r), [m1]) && docsOf(r).every((d) => createdAtOf(d) > 0), JSON.stringify(ids(r))));
@@ -657,6 +661,10 @@ async function main() {
       }
       return [...seen.keys()];
     }, (got) => check('dc-e2 keyset paging 1 at a time (`$createdAt <=` + dedupe, no id cursor) walks both likers of T1', sameSet(got, [B.ownerId, C.ownerId]), JSON.stringify(got)));
+    // The client's full-page fallback: one target, since the watermark AND at
+    // or below the keyset cursor (a between range on $createdAt).
+    await attempt('dc-e4', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1]], ['$createdAt', '>', 0], ['$createdAt', '<=', Date.now() + 3_600_000]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc'], ['$createdAt', 'desc']], limit: 100 })),
+      (r) => check('dc-e4 one target between the watermark and a keyset cursor (`$createdAt >` and `<=`): B and C liked T1', sameSet(docsOf(r).map(likeOf).map((l) => toBase58(l.$ownerId)), [B.ownerId, C.ownerId]), JSON.stringify(pairsOf(r, 'postId'))));
     // (f) which of my recent posts gained likes: A's latest posts, then one grouped count.
     await attempt('dc-f1', async () => {
       const posts = ids(await sdk.documents.query(q('post', { where: [['$ownerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 })));
@@ -756,10 +764,11 @@ async function main() {
     const [replies, bundle] = await Promise.all([
       sdk.documents.query(q('reply', mentions)),
       sdk.documents.composite({ dataContractId: contractId, documentType: 'follow', where: [['followingId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']], limit: 100,
-        subQueries: [{ documentType: 'post', ...mentions }, { documentType: 'reply', ...mentions }] }),
+        subQueries: [{ documentType: 'post', ...mentions }, { documentType: 'reply', ...mentions },
+          { documentType: 'followRequest', where: [['targetId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['targetId', 'asc'], ['$createdAt', 'desc']], limit: 100 }] }),
     ]);
     return { rm1, replies: ids(replies), posts: bundle.subResults[0].documents.map(idOf), bundled: bundle.subResults[1].documents.map(idOf) };
-  }, ({ rm1, replies, posts, bundled }) => check('rm1 B\'s mentions: the reply (reply.mentionedUserAndTime) and the post m1, alone and as siblings of the permanent bundle', same(replies, [rm1]) && same(bundled, [rm1]) && same(posts, [m1]), `replies ${JSON.stringify(replies)} bundled ${JSON.stringify(bundled)} posts ${JSON.stringify(posts)}`));
+  }, ({ rm1, replies, posts, bundled }) => check('rm1 B\'s mentions: the reply (reply.mentionedUserAndTime) and the post m1, alone and as siblings of the full permanent bundle (follows page, post and reply mentions, follow requests)', same(replies, [rm1]) && same(bundled, [rm1]) && same(posts, [m1]), `replies ${JSON.stringify(replies)} bundled ${JSON.stringify(bundled)} posts ${JSON.stringify(posts)}`));
 
   console.log(`\nthrowaway contract ${contractId}`);
   console.log(failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`);

@@ -13,8 +13,9 @@
  * reply.mentionedUserAndTime) and follow requests are permanent and bundle;
  * replies (reply.parentOwnerRecent) and quotes/reposts
  * (post.quotedPostOwnerRecent) sit on non-overlapping 3.5-day windows kept a
- * week, read through the `timeRange` option (the newest and the oldest open
- * window), which a composite refuses, so each window stays one plain query.
+ * week, read through the `timeRange` option (the current window, `newest`, and
+ * the previous one by its start, `byStart`), which a composite refuses, so each
+ * window stays one plain query.
  * Likes are permanent but keyed by target: byAuthorPostTime /
  * byAuthorReplyTime put the liked post or reply before `$createdAt`, so "who
  * liked it since" is one `target in [recent]` read per kind. There is no
@@ -107,18 +108,22 @@ await verify('profiles and DPNS including profile-less identity', [
 await verify('permanent notification sources', [['follow', 'followingId'], ['post', 'mentionedUserId'], ['reply', 'mentionedUserId'], ['followRequest', 'targetId']].map(([documentTypeName, field]) => ({
   dataContractId: social, documentTypeName,
   where: [[field, '==', owner], ['$createdAt', '>', 0]],
-  orderBy: [[field, 'asc'], ['$createdAt', 'asc']], limit: 100,
+  orderBy: [[field, 'asc'], ['$createdAt', 'desc']], limit: 100,
 })));
 
 const V10 = JSON.parse(readFileSync(new URL('../contracts/yappr-social-contract-v10.json', import.meta.url), 'utf8'));
 /**
- * The two open windows of `documentTypeName`'s windowed notification index,
- * the grid named (like and post bucket $createdAt on several): the current one
- * and the oldest still open (they may coincide right after a boundary).
+ * The current and the previous window of `documentTypeName`'s windowed
+ * notification index, the grid named (like and post bucket $createdAt on
+ * several). The node's `oldest` is the oldest window still containing now,
+ * the current one on this non-overlapping grid, so the previous window is
+ * named by its start.
  */
 function windowsOf(documentTypeName, indexName) {
   const { range, step } = V10.documentSchemas[documentTypeName].indices.find(index => index.name === indexName).timeRange;
-  return ['newest', 'oldest'].map(selector => [{ field: '$createdAt', selector, grid: { range, step } }]);
+  const stepMs = step * 1000;
+  const previousStart = (Math.floor(Date.now() / stepMs) - 1) * stepMs;
+  return [{ selector: 'newest' }, { selector: 'byStart', startMs: previousStart }].map(pick => [{ field: '$createdAt', ...pick, grid: { range, step } }]);
 }
 /** Sources that do not ride a composite (windowed, or one read per target): each is read alone, and only its success is asserted. */
 async function verifyAlone(name, queries) {
@@ -133,7 +138,7 @@ async function verifyAlone(name, queries) {
     console.error(`FAIL ${name}: ${message}`);
   }
 }
-await verifyAlone('notification windows (newest and oldest open)', [
+await verifyAlone('notification windows (current and previous)', [
   ['reply', 'parentOwnerRecent', 'parentOwnerId'], ['post', 'quotedPostOwnerRecent', 'quotedPostOwnerId'],
 ].flatMap(([documentTypeName, indexName, field]) => windowsOf(documentTypeName, indexName).map(timeRange => ({
   dataContractId: social, documentTypeName,
