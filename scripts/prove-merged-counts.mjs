@@ -89,13 +89,19 @@ const CONSENSUS_CODE = /\bcode"?\s*[=:]\s*\d{4,5}\b/;
  * feed's by-id quote join needs `refersTo`), minus what needs the contract's
  * token or moderation (token costs, action fees, moderator abilities).
  */
-function proofContractSource() {
+function proofContractSource(likeOption = null) {
   const social = JSON.parse(readFileSync(SOCIAL_V10, 'utf8'));
   const documentSchemas = {};
   for (const type of ['post', 'reply', 'follow', 'like', 'likeReply']) {
     const schema = structuredClone(social.documentSchemas[type]);
     for (const key of ['actionFees', 'tokenCost', 'moderatorAbilities']) delete schema[key];
     documentSchemas[type] = schema;
+  }
+  if (likeOption === 'A') {
+    // Option A (not in the contract file): the windowed like indexes count.
+    for (const type of ['like', 'likeReply']) {
+      documentSchemas[type].indices = documentSchemas[type].indices.map((index) => (index.name === 'byAuthorRecent' ? { ...index, rangeCountable: true } : index));
+    }
   }
   const config = { ...social.config };
   delete config.moderation;
@@ -109,7 +115,7 @@ function contractJson(source, { id, ownerId }) {
 // ---- Arguments --------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { actors: [], dryRun: false };
+  const args = { actors: [], dryRun: false, likeOption: null };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--bot': {
@@ -125,6 +131,8 @@ function parseArgs(argv) {
         break;
       }
       case '--dry-run': args.dryRun = true; break;
+      // Probe a like-notification design: A = byAuthorRecent made rangeCountable.
+      case '--like-option': args.likeOption = argv[++i]; break;
       default: throw new Error(`Unknown argument: ${argv[i]}`);
     }
   }
@@ -212,7 +220,8 @@ const newestFirst = (docs, expected) => {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
-  const source = proofContractSource();
+  const source = proofContractSource(args.likeOption);
+  if (args.likeOption) console.log(`like-notification option ${args.likeOption}: the throwaway contract differs from the file there`);
 
   // Offline: both parsers accept the throwaway contract, and every fixture document builds.
   DataContract.fromJSON(contractJson(source, { id: DRY_RUN_OWNER, ownerId: DRY_RUN_OWNER }), true, PlatformVersion.latest());
@@ -325,10 +334,11 @@ async function main() {
   // ---- a: posts per author ----
   console.log('\n--- a. posts per author on ownerAndTime ---');
   await attempt('a1', () => count('post', [['$ownerId', '==', A.ownerId]]), (m) => check('a1 A\'s posts: `$ownerId ==` = 4', total(m) === 4, JSON.stringify(countEntries(m))));
-  await attempt('a2', () => count('post', [['$ownerId', 'in', [A.ownerId, B.ownerId, C.ownerId]]], ['$ownerId']), (m) => check('a2 batched per author: A 4, B 2, C 1', sameCounts(countEntries(m), { [A.ownerId]: 4, [B.ownerId]: 2, [C.ownerId]: 1 }), JSON.stringify(countEntries(m))));
+  await attempt('a2', () => count('post', [['$ownerId', 'in', [A.ownerId, B.ownerId, C.ownerId]]], ['$ownerId']), (m) => check('a2 batched per author: A 4, B 2, C 2 (C\'s quote and mention)', sameCounts(countEntries(m), { [A.ownerId]: 4, [B.ownerId]: 2, [C.ownerId]: 2 }), JSON.stringify(countEntries(m))));
   await attempt('a3', () => sdk.documents.ranked(q('post', { groupBy: '$ownerId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })), (r) => {
     const got = r.entries.map((entry) => [toBase58(entry.groupValue), Number(entry.value)]);
-    check('a3 ranked top authors (rankedCountable at $ownerId): A 4, B 2, C 1', same(got, [[A.ownerId, 4], [B.ownerId, 2], [C.ownerId, 1]]), JSON.stringify(got));
+    const rest = Object.fromEntries(got.slice(1));
+    check('a3 ranked top authors (rankedCountable at $ownerId): A 4 first, then B and C at 2', got.length === 3 && same(got[0], [A.ownerId, 4]) && rest[B.ownerId] === 2 && rest[C.ownerId] === 2, JSON.stringify(got));
   });
 
   // ---- r: replies on repliesOf ----
@@ -473,18 +483,6 @@ async function main() {
   await attempt('n1', () => sdk.documents.query(q('reply', windowed('parentOwnerId', A.ownerId))), (r) => check('n1 replies to A this week (parentOwnerRecent): r1, r2, r5, r6, each with its exact $createdAt', sameSet(ids(r), [r1, r2, r5, r6]) && docsOf(r).every((d) => createdAtOf(d) > 0), JSON.stringify(ids(r))));
   await attempt('n2', () => sdk.documents.query(q('post', windowed('quotedPostOwnerId', A.ownerId))), (r) => check('n2 quotes/reposts of A this week (quotedPostOwnerRecent): q1, q2, q3', sameSet(ids(r), [q1, q2, q3]), JSON.stringify(ids(r))));
   await attempt('n3', () => sdk.documents.query(q('post', windowed('mentionedUserId', B.ownerId))), (r) => check('n3 mentions of B this week (mentionedUserRecent): m1', same(ids(r), [m1]), JSON.stringify(ids(r))));
-  await attempt('n4', () => sdk.documents.query(q('like', windowed('postAuthor', A.ownerId))), (r) => {
-    const likes = docsOf(r).map((d) => d.toObject?.() ?? d);
-    const pairs = likes.map((l) => `${toBase58(l.$ownerId)}>${toBase58(l.postId)}`).sort();
-    const expected = [`${B.ownerId}>${T1}`, `${C.ownerId}>${T1}`, `${B.ownerId}>${T2}`].sort();
-    check('n4 likes of A\'s posts this week (like.byAuthorRecent): B→T1, C→T1, B→T2 (rebuilt; $createdAt is the window start)', same(pairs, expected), `${JSON.stringify(pairs)} $createdAt ${JSON.stringify([...new Set(likes.map((l) => String(l.$createdAt)))])}`);
-  });
-  await attempt('n5', () => sdk.documents.query(q('likeReply', windowed('replyAuthor', B.ownerId))), (r) => {
-    const likes = docsOf(r).map((d) => d.toObject?.() ?? d);
-    check('n5 likes of B\'s replies this week (likeReply.byAuthorRecent): A→r1', likes.length === 1 && toBase58(likes[0].$ownerId) === A.ownerId && toBase58(likes[0].replyId) === r1, JSON.stringify(likes.map((l) => [toBase58(l.$ownerId), toBase58(l.replyId)])));
-  });
-  // A windowed source cannot ride the notification bundle: composites take no
-  // timeRange, and without one the windowed index is not admissible.
   const expectRefusal = async (label, run) => {
     try {
       await run();
@@ -493,6 +491,19 @@ async function main() {
       check(label, true, describeErr(e).slice(0, 160));
     }
   };
+  // An indexOnly windowed entry holds only its window's start, so the node
+  // refuses to rebuild documents from it: a windowed like index cannot list
+  // likers. Pinned here; the like-notification design is option A/B/C.
+  await expectRefusal('n4x likes of A\'s posts through the windowed like.byAuthorRecent are refused (indexOnly + IN_TIME_RANGE)', () => sdk.documents.query(q('like', windowed('postAuthor', A.ownerId))));
+  await expectRefusal('n5x the same for likeReply.byAuthorRecent', () => sdk.documents.query(q('likeReply', windowed('replyAuthor', B.ownerId))));
+  if (args.likeOption === 'A') {
+    // Option A: byAuthorRecent made rangeCountable: "your posts got N likes this week".
+    const weekCount = (where, groupBy) => sdk.documents.count(q('like', { where, timeRange: [{ field: '$createdAt', selector: 'oldest', grid: WEEK }], ...(groupBy ? { groupBy } : {}) }));
+    await attempt('n4a', () => weekCount([['postAuthor', '==', A.ownerId]]), (m) => check('n4a option A: likes of A\'s posts this week, one count (windowed prefix-to-last) = 3', total(m) === 3, JSON.stringify(countEntries(m))));
+    await attempt('n4b', () => weekCount([['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2, T3]]], ['postId']), (m) => check('n4b option A: this week per post: T1 2, T2 1', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1 }), JSON.stringify(countEntries(m))));
+  }
+  // A windowed source cannot ride the notification bundle: composites take no
+  // timeRange, and without one the windowed index is not admissible.
   const bundlePage = { dataContractId: contractId, documentType: 'follow', where: [['followingId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
   await expectRefusal('n6x a windowed source as a composite sibling WITH timeRange is refused', () => sdk.documents.composite({ ...bundlePage, subQueries: [{ documentType: 'reply', ...windowed('parentOwnerId', A.ownerId) }] }));
   await expectRefusal('n7x a windowed index read WITHOUT a window (composite sibling or plain) is refused', () => sdk.documents.composite({ ...bundlePage, subQueries: [{ documentType: 'reply', where: [['parentOwnerId', '==', A.ownerId]], limit: 100 }] }));
@@ -539,7 +550,8 @@ async function main() {
       { documentType: 'post', kind: 'counts', bind: fromPage('$id', 'quotedPostId') },
       { documentType: 'post', bind: fromPage('quotedPostId', '$id') },
       { dataContractId: dpnsId, documentType: 'domain', bind: fromPage('$ownerId', 'records.identity'), limit: 100 },
-      { documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId') },
+      // byLiker [$ownerId, postId, $createdAt] is not value-bounded, so the lookup takes a limit.
+      { documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId'), limit: 20 },
     ],
   }), (result) => {
     const [likes, replies, quotes] = result.subResults.slice(0, 3).map((sub) => countEntries(sub.counts));
@@ -566,7 +578,7 @@ async function main() {
   });
   await attempt('g1', () => sdk.documents.query(q('post', { where: [['$ownerId', 'in', [B.ownerId, C.ownerId]], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100 })), (r) => {
     const got = new Set(ids(r));
-    check('g1 the following feed (`$ownerId in` + `$createdAt >`, ranked ownerAndTime): q1, q2, q3', got.size === 3 && got.has(q1) && got.has(q2) && got.has(q3), JSON.stringify([...got]));
+    check('g1 the following feed (`$ownerId in` + `$createdAt >`, ranked ownerAndTime): q1, q2, q3, m1', got.size === 4 && [q1, q2, q3, m1].every((x) => got.has(x)), JSON.stringify([...got]));
   });
 
   // ---- k: likes by liker (byLiker): "did I like X" and the unlike tuple ----
