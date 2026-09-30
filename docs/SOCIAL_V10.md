@@ -38,7 +38,7 @@ All sizes are the signed create measured with the beta.7 SDK. The cap is 20,480 
 
 | Contract | Topology | Change | Signed create |
 | --- | --- | --- | ---: |
-| social v10 | `v10` | new cut (below), re-cut for merged count indexes and reposts-as-quotes, then for single mentions and 7-day notification windows | **17,110 B** (2,890 B under budget; 18,178 B before the re-cuts) |
+| social v10 | `v10` | new cut (below), re-cut for merged count indexes and reposts-as-quotes, then for single mentions, notification windows and like design C | **17,110 B** (2,890 B under budget; 18,178 B before the re-cuts) |
 | storefront | `v5` | beta.7 grammar; QA D-25 (an order needs an open store); `categoryAndTime` skips items with no section | 14,861 B (was 14,588 on beta.6) |
 | blog | `v5` | beta.7 grammar only; keeps the beta.6 comments-off rule and owner gate | 6,489 B |
 | pollr | `v4` | beta.7 grammar only | 6,004 B |
@@ -133,7 +133,7 @@ Two changes on top of the `V10B7-FINAL` prototype:
 | post | `quotesOfPost [quotedPostId, $createdAt]` + `quoteCount [quotedPostId]` | `quotesOfPost`, `rangeCountable` | The quote (= repost) count from the list |
 | post | `quotesOfReply [quotedReplyId, $createdAt]` + `quoteReplyCount [quotedReplyId]` | `quotesOfReply`, `rangeCountable` | Same, for replies |
 | post | — | `ownerAndQuotedPost [$ownerId, quotedPostId]`, `ownerAndQuotedReply [$ownerId, quotedReplyId]`, unique, `skipIfAbsent` | One quote or repost per author per target; also "view your repost" |
-| post | `timeline`, `quotedPostOwnerAndTime`, `tagAndTime` | unchanged here (`quotedPostOwnerAndTime` became the 7-day `quotedPostOwnerRecent` in the next re-cut) | 8 indexes (was 9) |
+| post | `timeline`, `quotedPostOwnerAndTime`, `tagAndTime` | unchanged here (`quotedPostOwnerAndTime` became the windowed `quotedPostOwnerRecent` in the next re-cut) | 8 indexes (was 9) |
 | reply | `rootAndTime [rootPostId, $createdAt]` + `byRoot [rootPostId]`, `replyToReplyAndTime [replyToReplyId, $createdAt]` + `byReplyToReply [replyToReplyId]` | `repliesOf [rootPostId, replyToReplyId, $createdAt]`, `rangeCountable`, `rankedCountable { at: "rootPostId" }` | One index for the thread, its counts at two levels and the most-replied ranking. 3 indexes (was 6) |
 | follow | `following [$ownerId, $createdAt]` + `followingCount [$ownerId]` | `following`, `rangeCountable` | The following count from the list |
 | follow | `followers [followingId, $createdAt]` + `followerCount [followingId]` (rangeCountable, ranked) | `followers`, `rangeCountable`, `rankedCountable { at: "followingId" }` | The follower count and "most followed" from the list |
@@ -179,7 +179,7 @@ The feed page (a timeline page with quote and reply slots) and the author card (
 - **n1/n2:** the quote/repost notification source, alone and as a composite sibling beside follows and replies.
 - **t1/t2:** the whole thread at the app's page size (50), and paged with `startAfter`.
 - **l1/l2:** the quote lists at limit 100, of a post and of a reply.
-- **c5:** the For You page exactly as `composite-feed-page` builds it: a timeline page; like, reply and quote counts; the quoted-post join; the viewer's likes; DPNS names. The profile slot is left out because v10's profile is DashPay's (#602).
+- **c5:** the For You page exactly as `composite-feed-page` builds it: a timeline page; like, reply and quote counts; the quoted-post join; DPNS names. The viewer's hearts are one `byPost` read beside it; c5x pins the refusal of carrying them in the composite. The profile slot is left out because v10's profile is DashPay's (#602).
 - **c6:** a profile page on `ownerAndTime` with the quoted-post join.
 - **g1:** the following feed's `$ownerId in` + `$createdAt >` read on the ranked `ownerAndTime`.
 
@@ -188,7 +188,7 @@ Earlier runs:
 - `EaxoC5My…`: 32/32 before the client shapes were added.
 - `BrQyHojS…`: 43/43 before c5/c6/g1.
 
-### Mentions and 7-day notification windows
+### Mentions and notification windows
 
 **Before (d9318f6d) and after (76843941):**
 
@@ -202,7 +202,7 @@ Earlier runs:
 | like | `byAuthorPost [postAuthor, postId]`, `byAuthorTimePost [postAuthor, $createdAt, postId]`, `byLiker [$ownerId]`→`postId` | `byAuthorPostTime [postAuthor, postId, $createdAt]` ranked at `[postAuthor, postId]`; no `byLiker` (#19) |
 | likeReply | `byAuthorTimeReply [replyAuthor, $createdAt, replyId]`, `byLiker [$ownerId]`→`replyId` | `byAuthorReplyTime [replyAuthor, replyId, $createdAt]`; no `byLiker` |
 
-**The grid (final).** The windows are 3.5 days long and do not overlap, so each document is written once. Entries live a week. Two reads per source cover the last 3.5–7 days, and both are resolved by the node: `newest` (the current window) and `oldest` (the oldest window still open, which is the previous one). The client drops duplicates, filters `$createdAt > since` and sorts.
+**The grid (final).** The windows are 3.5 days long and do not overlap, so each document is written once. Entries live a week. Two reads per source cover the last 3.5–7 days. `newest` names the current window. The previous one is named by its start (`byStart`, computed from the grid and the clock). The node's `oldest` is the oldest window still *containing* now (`oldest_active_start` in rs-dpp), which on a non-overlapping grid is the current window again. The previous window stays queryable for the whole of the current one, because `ttl` is twice the range. If the client's clock runs ahead of block time at a boundary, the node refuses that read as expired, and the client counts it as empty. The client drops duplicates, filters `$createdAt > since` and sorts.
 
 Why not the alternatives:
 - **7d/7d (written once):** `ttl` may not be under `range` and is capped at a week. The previous window would therefore expire the moment the current one starts, and history would reset to nothing every week.
@@ -217,11 +217,11 @@ beta.7 refuses `timeRange` in composite queries (`wasm-sdk` `composite_document.
 - **Stored notifications carry the exact time.** Replies, quotes and reposts come back as the documents themselves.
 - **Likes are not windowed.** The node refuses to rebuild indexOnly documents from a windowed entry, which holds only its window's start (#19).
 
-**Proven live.** `prove-merged-counts` n1–n8 and k1–k4:
+**Proven live.** `prove-merged-counts` n1–n3, n6x–n8, rm1 and dc-*:
 - the reply and quote windows, and the composite refusals;
 - mentions and likes on their permanent indexes, alone and in the permanent bundle;
 - likes (design C, `dc-*`), each against the live node:
-  - the heart state on `byPost`/`byReply`, and the viewer-likes composite slot with a limit;
+  - the heart state on `byPost`/`byReply`, read beside the feed composite (a like count and the viewer's likes on one index cannot share a composite, c5x);
   - top creators and a profile's top posts;
   - the per-post like read with keyset paging, and "which recent posts gained likes";
   - batched counts, and an unlike end to end for both types;
@@ -376,7 +376,7 @@ The election ops script files reasons with `--reasons SPM:Spam,ABU:Abuse,REP:Rep
   - Notifications: replies and quotes/reposts read the current and previous 3.5-day windows (two requests each, deduped, filtered and sorted by the client); follows, mentions (posts and replies) and follow requests ride one permanent bundle (`$createdAt > since`); likes read the user's recent posts and replies that gained likes, then one `target in` read per kind. "reposted / quoted your post" come from `quotedPostOwnerRecent`, mentions from the permanent `mentionedUserAndTime`.
   - Mentions: compose indexes only the first @mention of the public text of a post or a reply as `mentionedUserId`, and the Mentions tab reads both types' permanent `mentionedUserAndTime` (full history).
   - Likes (design C) work as follows:
-    - the heart state and the feed's viewer-likes slot (with a page-size limit) read `byPost`/`byReply`;
+    - the heart state reads `byPost`/`byReply`, one read beside each feed composite (a count and a documents lookup on one index path cannot share a composite);
     - like notifications fan out over the user's recent posts that gained likes;
     - unlike recovers its `$createdAt` from `byAuthorPostTime`, keyset-paged on `$createdAt` (never an id cursor, as in #603).
   - Threads read `repliesOf`: direct replies under the null branch, and children per parent.
@@ -385,7 +385,7 @@ The election ops script files reasons with `--reasons SPM:Spam,ABU:Abuse,REP:Rep
 - **Batteries.**
   - `scripts/verify-v10.mjs` replaces verify-v9. For the re-cut:
     - o3 and x1i now cover the bare repost;
-    - q1 covers repost-as-post: 40132 without the agreement, 40105 on a second repost or quote per author per target (post and reply), exact quote counts, `quotedPostOwnerAndTime`, and 10422 `notEmpty`;
+    - q1 covers repost-as-post: 40132 without the agreement, 40105 on a second repost or quote per author per target (post and reply), exact quote counts, `quotedPostOwnerRecent`, and 10422 `notEmpty`;
     - q2 covers the merged counts, exact on fresh targets: batched quotes, thread, per-reply and null-pin counts, author and follow counts, and the ranked top authors.
   - It keeps e0, d1, p1, b1, w1, m1, m2 and o1–o4, drops the tombstone cases, and adds x1 (deletes and 40120), x2 (media 10101, 10421, no language, the timeline), x3 (the extension and DashPay), c1, r1/r2 (resolve, 41124, 10905, 41123, purge with no record, 41102 on the protected owner), t2 (rolling trending on like) and y1 (YAPP transfer 40711, purchase 40721, a paid post, the grant). It also carries verify-v8's a1–a4 (40132; a2's under-declared moderators part is a refused charter discount, 40139, while fixed pricing or a larger part is 40133; the derived id and pot growth; 41111), s1 (41108) and k1/k2 (credits vs YAPP with sponsored gas, 40700), since verify-v8 needs a v9 chain.
   - `verify-storefront` adds s21 (D-25).
