@@ -19,18 +19,26 @@ the same local pipeline, so notifications look the same and are deduplicated.
 | Type | Source (unchanged from web) | Channel (Android) / category (iOS) | Default | Grouping |
 | --- | --- | --- | --- | --- |
 | DM | DM v5 streams / v3 `directMessage` | Messages, high importance | On | Per conversation |
-| Reply | `reply.parentOwnerId` | Replies & mentions | On | Per thread |
-| Mention | `postMention.mentionedUserId` | Replies & mentions | On | Per post |
-| Like | `like` / `likeReply` | Likes & reposts, low importance | **Summary only** | "@a and 12 others liked your post" |
-| Repost / quote | `repost.postOwnerId` | Likes & reposts | On | Per post |
+| Reply | v10: `reply.parentOwnerRecent [$createdAt, parentOwnerId]`, 3.5-day windows kept a week (v2: `reply.parentOwnerId`) | Replies & mentions | On | Per thread |
+| Mention | v10: `post` / `reply.mentionedUserAndTime` (permanent; the first @mention only) (v2: `postMention.mentionedUserId`) | Replies & mentions | On | Per post |
+| Like | v10: per post. One grouped count finds which of the newest 50 own posts and replies gained likes, then reads up to 20 of them since the cursor (`lib/services/like-service.ts`). Likes on older content never notify. | Likes & reposts, low importance | **Summary only** | "@a and 12 others liked your post" |
+| Repost / quote | v10: `post.quotedPostOwnerRecent` (3.5-day windows; a repost is a bare quote) (v2: `repost.postOwnerId`) | Likes & reposts | On | Per post |
 | Follow | `follow.followingId` | Follows | On | Daily digest after 5 or more |
 | Private-feed request | `followRequest.targetId` | Private feed | On (cannot be turned off, same as web) | — |
 | Private-feed approved | `privateFeedGrant` has no index on the recipient, only `[$ownerId, recipientId]`. So for each owner with a **pending** `followRequest` from me (at most 20, oldest first), probe `[$ownerId == owner, recipientId == me]`. This is new; web declares the type but never produces it. | Private feed | On | — |
 | Blog post / comment | Existing blog sources | Blogs (1.x) | Off | — |
 | Account / security | Local: "Signed out by DashPay", "Key about to expire" | Account, high importance | Always on | — |
 
-Tips have no notification. Credit tips leave no document, and tips on posts
-are out of scope on iOS (see [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tipping)).
+Tips have no notification. Credit tips leave no document today (proved credit
+tips would add a tip-document source in 1.x), and tips on posts are out of
+scope on iOS (see [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tipping)).
+
+**Windowed sources and gaps (D10).** On v10, reply and quote/repost events
+are only readable from the current and the previous 3.5-day window (302,400 s;
+each entry kept 604,800 s). A device that goes longer than that without a
+successful sync never sees the older ones, and likes only notify for recent
+posts. This is accepted: nobody needs week-old notifications, so there is no
+recovery pass and no special banner for it.
 
 ## Shared pipeline
 
@@ -42,7 +50,8 @@ are out of scope on iOS (see [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tippi
           └───────────────┬──────────────────┘
                           ▼
                  SyncCore.run(identity, budget)
-                          │ 1. per-source queries since each source's cursor (limit 20)
+                          │ 1. per-source reads: permanent sources since the cursor;
+                          │    windowed sources read whole (2 windows), then filtered
                           │ 2. DM sweep: stream heads for known conversations + invite scan
                           │ 3. filter: blocked users, muted threads, prefs, quiet hours
                           │ 4. dedupe by document id against shared `seen` table
@@ -57,15 +66,25 @@ are out of scope on iOS (see [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tippi
 - Every run has a budget: 20 s on iOS background, 8 s from an FCM handler.
   Work is done in priority order (DMs, replies/mentions, then the rest). A
   source that runs out of budget keeps its cursor and resumes next run.
+- **The v10 request mix per run:** one permanent composite (follows, post and
+  reply mentions, follow requests); four windowed reads (reply and quote, the
+  current and the previous window each, since composites refuse `timeRange`),
+  paged at 100 up to 10 pages; the like count composite plus the post and
+  reply like reads; up to 20 private-feed probes; and the DM sweep.
+  Windowed reads have no time order and no `since`, so their items are
+  filtered, deduped and sorted on the device.
 
 **Cursors**
 - Each source keeps its own cursor. The web's single `lastFetchTimestamp`,
   taken as the max `$createdAt` across everything, can skip items when sources
   lag each other.
+- A source whose read fails keeps its cursor. It must never report "no items"
+  and let the cursor move past it (the web watermark has this bug today).
 - Cursors are stored in the shared SQLite database (the App Group container on
   iOS), so the NSE and the app agree.
-- A cold start or reinstall starts from 7 days back, the same as web, and
-  reports only the newest 20 so a user returning after a week is not flooded.
+- A cold start or reinstall starts from 7 days back for permanent sources and
+  from whatever the windows still hold for windowed ones, and reports only the
+  newest 20 so a returning user is not flooded.
 
 **Dedupe**
 - The notification identifier is `<type>:<documentId>`. A push, a background
@@ -150,7 +169,7 @@ Platform on the user's behalf.
    a UnifiedPush distributor. It then publishes a `pushEndpoint` document on
    Platform.
 2. Whenever a client makes a write that would notify someone (like, reply,
-   mention, follow, repost, DM, follow request), it looks up the recipient's
+   mention, follow, repost or quote, DM, follow request), it looks up the recipient's
    `pushEndpoint` documents. The lookup is cached for 1 hour. For each device
    it POSTs a small **RFC 8291-encrypted** payload to the endpoint. The client
    doing this can be web or mobile.
@@ -164,7 +183,8 @@ plaintext.
 
 ### `pushEndpoint` document (new, small `yappr-push` contract)
 
-This is a new contract, so the social contract does not change.
+This is a new contract, so the social contract does not change. Its writes
+are signed with the device's `yappr-push`-bound auth key (D6).
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -210,6 +230,8 @@ signed digest = sha256("yappr-push-v1\0" ‖ canonical CBOR of {v,t,a,k,d,p,ts,r
 
 - **Signature encoding.** Yappr auth keys are `ECDSA_HASH160`
   (`lib/services/identity-update-builder.ts:190`): only the hash is on chain.
+  Mobile signs with its `yappr-push`-bound key; `k` names whichever of the
+  actor's keys signed.
   So the signature is **recoverable**. The receiver recovers the public key,
   computes its `hash160`, and compares it with key `k` of identity `a`.
 - **Domain separation.** The `yappr-push-v1` prefix keeps a push signature
@@ -303,10 +325,11 @@ shown as a DM.
   no long transactions in the app. This avoids `0xdead10cc` kills when the
   app is suspended holding a lock, and has a matching QA case.
 - **Filtering entitlement.** To drop pings from blocked or unknown actors, the
-  app needs `com.apple.developer.usernotifications.filtering`, requested from
-  Apple in Phase 0. It is a **G2 dependency**. If it has not been granted by
-  G2, 1.0 ships with the collapsed generic notification. Spam is then limited
-  to one replaceable "New activity" alert, not a stream.
+  app would need `com.apple.developer.usernotifications.filtering`. Apple
+  grants it narrowly, so the plan does not depend on it: request it in
+  Phase 0, and ship 1.0 with the collapsed generic notification unless it is
+  granted. Spam is then limited to one replaceable "New activity" alert, not a
+  stream.
 
 ### Android handlers
 
@@ -336,7 +359,7 @@ shown as a DM.
 
   It never blocks or fails the write.
 - Without this, activity from web users never pushes to mobile users. It is on
-  the Y2 list in [README.md](README.md#critical-dependencies-outside-the-mobile-apps).
+  the Y7 list in [README.md](README.md#critical-dependencies-outside-the-mobile-apps).
 - **Privacy note:** the sender's IP reaches the relay. A web sender pinging
   about a DM tells the relay that *some* sender pinged token X at time t, but
   not who. The same leak applies from mobile senders.
