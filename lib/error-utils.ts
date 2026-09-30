@@ -185,7 +185,8 @@ export function isFrozenBalanceError(error: unknown): boolean {
  * document points at does not exist (or is not usable as a reference target).
  *
  * This is the `refersTo` family introduced with protocol v14. On the yappr v9
- * contract `follow.followingId` and `postMention.mentionedUserId` declare
+ * contract `follow.followingId` and `postMention.mentionedUserId` (v10:
+ * `post.mentionedUserId`) declare
  * `refersTo: { type: 'identity' }`, so following or mentioning an identity that
  * is not on chain is rejected by consensus instead of creating a dangling
  * document. The rejection is permanent: retrying cannot make the target appear.

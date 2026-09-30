@@ -9,7 +9,7 @@ import { hasVisibleContent } from '@/lib/compose/limits'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
-import { hashtagsAreInline, replyLinkageTo, threadRootIdOf } from '@/lib/contract-topology'
+import { hashtagsAreInline, mentionsAreInline, replyLinkageTo, threadRootIdOf } from '@/lib/contract-topology'
 import { resolveQuoteReference } from '@/lib/feed/resolve-quoted-posts'
 import { isUnconfirmed, markUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { dispatchFieldRegistered } from '@/lib/services/post-field-validation'
@@ -267,7 +267,9 @@ function registerIndexes(postId: string, authorId: string, content: string, inde
       })
       .catch((err) => logger.error(`Post ${index + 1}: Failed to create hashtag documents:`, err))
   }
-  const mentions = extractMentions(content)
+  // The inline-mention topology (v10) carries the first mention on the post
+  // itself; replies there index none.
+  const mentions = mentionsAreInline() ? [] : extractMentions(content)
   if (mentions.length > 0) {
     mentionService
       .createPostMentionsFromUsernames(postId, authorId, mentions)

@@ -11,8 +11,10 @@ import { documentCount, groupedDocumentCount, groupIdsByRoot, mapLimit } from '.
 import type { DocumentWhereClause } from './sdk-helpers';
 import { profileDataByOwnerId } from './post-enrichment-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
+import { readNotificationWindow } from './notification-windows';
 import {
   hasFlatThreads,
+  notificationWindowFor,
   replyCountFieldFor,
   replyCountNeedsRoot,
   replyLinkage,
@@ -355,8 +357,10 @@ class ReplyService extends BaseDocumentService<Reply> {
 
   /**
    * Get replies where user's content was replied to - for notifications.
-   * Uses the parentOwnerAndTime index: [parentOwnerId, $createdAt]
-   * Limited to 100 most recent replies for notification purposes.
+   * Uses the parentOwnerAndTime index: [parentOwnerId, $createdAt], limited
+   * to the 100 most recent replies. On v10 it is the rolling
+   * `parentOwnerRecent [$createdAt, parentOwnerId]` window, read whole (paged)
+   * and since-filtered client-side (see readNotificationWindow).
    *
    * @param userId - Identity ID of the content owner
    * @param since - Only return replies created after this timestamp (optional)
@@ -368,16 +372,19 @@ class ReplyService extends BaseDocumentService<Reply> {
 
       const sinceTimestamp = since?.getTime() || 0;
 
-      const response = preloaded ?? await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'reply',
-        where: [
-          ['parentOwnerId', '==', userId],
-          ['$createdAt', '>', sinceTimestamp]
-        ],
-        orderBy: [['parentOwnerId', 'asc'], ['$createdAt', 'desc']],
-        limit: 100
-      });
+      const window = notificationWindowFor('reply');
+      const response = preloaded ?? (window
+        ? await readNotificationWindow(window, userId, sinceTimestamp)
+        : await sdk.documents.query({
+          dataContractId: this.contractId,
+          documentTypeName: 'reply',
+          where: [
+            ['parentOwnerId', '==', userId],
+            ['$createdAt', '>', sinceTimestamp]
+          ],
+          orderBy: [['parentOwnerId', 'asc'], ['$createdAt', 'desc']],
+          limit: 100
+        }));
 
       const documents = normalizeSDKResponse(response);
       return this.withTrueParentOwner(userId, documents.map((doc) => this.transformDocument(doc)));

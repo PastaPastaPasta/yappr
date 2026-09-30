@@ -345,7 +345,7 @@ describe('contract topology', () => {
       const only10 = (m: Awaited<ReturnType<typeof topologyModule>>) => [
         m.isV10(), m.mediaCarriesHashes(), m.reportsAreResolved(), m.yappIsLocked(), m.dashpayProfileExtension() !== null, !m.postsHaveLanguage(),
         m.repostsAreQuotes(), m.ownQuoteIndexFor('post') !== null, m.replyCountNeedsRoot('reply'),
-        m.authorPostCountsAreRanked(),
+        m.authorPostCountsAreRanked(), m.mentionsAreInline(), m.notificationsAreWindowed(),
       ]
       const read = async (topology: string) => {
         const m = await topologyModule(topology)
@@ -396,7 +396,8 @@ describe('contract topology', () => {
       // The all-time twin must stay (and skip too): #5162 refuses an indexOnly optional
       // property without an untimed single-skip index.
       expect(likeIndex('byHashtagPost')?.skipIfAbsent).toBe(true)
-      // likeReply has no window to move.
+      // Like notifications stay permanent: the node cannot rebuild indexOnly
+      // documents from a windowed entry, so likeReply has no window at all.
       expect(V10.likeReply.indices?.some((index) => (index as { timeRange?: unknown }).timeRange)).toBe(false)
 
       const v10 = await topologyModule('v10')
@@ -524,8 +525,8 @@ describe('contract topology', () => {
         expect(keys('post', listing)).toEqual([own.field, '$createdAt'])
         expect(index('post', listing)?.rangeCountable).toBe(true)
       }
-      // The notification source for reposts and quotes of my posts.
-      expect(keys('post', 'quotedPostOwnerAndTime')).toEqual(['quotedPostOwnerId', '$createdAt'])
+      // The notification source for reposts and quotes of my posts (a rolling window).
+      expect(keys('post', 'quotedPostOwnerRecent')).toEqual(['$createdAt', 'quotedPostOwnerId'])
       // An empty post is refused unless it quotes (or carries media/ciphertext/an embed).
       expect(JSON.stringify(V10.post.propertyConstraints?.notEmpty)).toContain('"present":"quotedReplyId"')
       const v9 = await topologyModule('v9')
@@ -565,6 +566,59 @@ describe('contract topology', () => {
       expect(v10.targetOf({ id: 'p', rootPostId: 'ignored' })).toEqual({ id: 'p', kind: 'post' })
       const v9 = await topologyModule('v9')
       expect([v9.replyCountNeedsRoot('reply'), v9.replyLinkage().nestedUnderRoot, v9.authorPostCountsAreRanked()]).toEqual([false, false, false])
+    })
+
+    it('indexes one mention per post inline: no postMention doctype', async () => {
+      expect(V10.postMention).toBeUndefined()
+      expect(V10.post.properties.mentionedUserId).toMatchObject({ contentMediaType: 'application/x.dash.dpp.identifier', refersTo: { type: 'identity' } })
+      expect(V10.post.required).not.toContain('mentionedUserId')
+      expect(V10.reply.properties.mentionedUserId).toBeUndefined()
+      // A descriptor resolves on first use, so each module is read before the next loads.
+      const inline: boolean[] = []
+      for (const topology of ['v2', 'v9', 'v10']) inline.push((await topologyModule(topology)).mentionsAreInline())
+      expect(inline).toEqual([false, false, true])
+      expect(V9.postMention).toBeDefined()
+    })
+
+    it('reads every notification-only source off one 7-day rolling window grid', async () => {
+      const week = { range: 604_800, step: 86_400 }
+      const index = (docType: string, name: string) => V10[docType].indices?.find((entry) => entry.name === name) as
+        ({ properties: Array<Record<string, string>>; skipIfAbsent?: boolean; timeRange?: Record<string, unknown> } | undefined)
+      const keys = (docType: string, name: string) => index(docType, name)?.properties.map((entry) => Object.keys(entry)[0])
+      const v10 = await topologyModule('v10')
+      const expected = {
+        reply: { docType: 'reply', index: 'parentOwnerRecent', recipientField: 'parentOwnerId' },
+        quote: { docType: 'post', index: 'quotedPostOwnerRecent', recipientField: 'quotedPostOwnerId' },
+      } as const
+      for (const [source, shape] of Object.entries(expected) as [keyof typeof expected, (typeof expected)[keyof typeof expected]][]) {
+        expect(v10.notificationWindowFor(source), source).toEqual({ ...shape, grid: week, selector: 'oldest' })
+        expect(index(shape.docType, shape.index)?.timeRange, source).toEqual({ on: '$createdAt', ...week, ttl: 604_800 })
+        expect(keys(shape.docType, shape.index)?.slice(0, 2), source).toEqual(['$createdAt', shape.recipientField])
+      }
+      expect(index('post', 'quotedPostOwnerRecent')?.skipIfAbsent).toBe(true)
+      // Mentions stay permanent (the Mentions tab keeps its history): the
+      // mentioning post's own [mentionedUserId, $createdAt], like tagAndTime.
+      const mentions = index('post', 'mentionedUserAndTime')
+      expect(keys('post', 'mentionedUserAndTime')).toEqual(['mentionedUserId', '$createdAt'])
+      expect(mentions?.skipIfAbsent).toBe(true)
+      expect(mentions?.timeRange).toBeUndefined()
+      expect(v10.mentionDocType()).toBe('post')
+      expect((await topologyModule('v9')).mentionDocType()).toBe('postMention')
+      // The old permanent notification indexes are gone; follows stay permanent.
+      // (Likes are not a windowed source: the node refuses a windowed read of
+      // an indexOnly type, so like notifications keep a permanent author index.)
+      for (const [docType, removed] of [['reply', 'parentOwnerAndTime'], ['post', 'quotedPostOwnerAndTime']]) {
+        expect(index(docType, removed), removed).toBeUndefined()
+      }
+      expect(keys('follow', 'followers')).toEqual(['followingId', '$createdAt'])
+      expect(index('follow', 'followers')?.timeRange).toBeUndefined()
+      expect(index('followRequest', 'target')?.timeRange).toBeUndefined()
+
+      for (const topology of ['v2', 'v9']) {
+        const m = await topologyModule(topology)
+        expect(m.notificationsAreWindowed(), topology).toBe(false)
+        expect(m.notificationWindowFor('reply'), topology).toBeNull()
+      }
     })
 
     it('puts skipIfAbsent on every stored index over an optional property only', () => {

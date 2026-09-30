@@ -655,6 +655,95 @@ export function windowedRankingsAvailable(): boolean {
 }
 
 /**
+ * True when a post names at most one mentioned identity inline, in
+ * `post.mentionedUserId` (optional, `refersTo` identity), and the
+ * `postMention` doctype does not exist (v10). The compose flow indexes only
+ * the first @mention of the public content, like the single inline hashtag;
+ * the rest stay plain text. Mentions are read off the permanent
+ * `post.mentionedUserAndTime [mentionedUserId, $createdAt]` (shaped like
+ * `tagAndTime`), so the Mentions tab keeps its full history.
+ */
+export function mentionsAreInline(): boolean {
+  return isV10()
+}
+
+/**
+ * The doctype mentions are read from, pinned on `mentionedUserId` and walked
+ * by `$createdAt`: the mentioning `post` itself on v10, a `postMention`
+ * document elsewhere. Same field, same index order on both.
+ */
+export function mentionDocType(): 'post' | 'postMention' {
+  return mentionsAreInline() ? 'post' : 'postMention'
+}
+
+/**
+ * The notification sources that v10 keeps on a rolling window: replies and
+ * quotes/reposts (stored doctypes). Mentions stay permanent (the Mentions tab
+ * keeps its history), and likes are not windowed: the node refuses a windowed
+ * document read of an indexOnly type, so like notifications keep their
+ * permanent author index.
+ */
+export type WindowedNotificationSource = 'reply' | 'quote'
+
+/** How one windowed notification source is read (v10). */
+export interface NotificationWindow {
+  readonly docType: string
+  /** The index (documentation and tests; the query names the grid, not the index). */
+  readonly index: string
+  /** The recipient property the read pins with `==`: the index's second property. */
+  readonly recipientField: string
+  /** The window grid in seconds, as the contract declares it. */
+  readonly grid: { readonly range: number; readonly step: number }
+  /** The oldest window still open: nearly the full `range` (6-7 days). */
+  readonly selector: 'oldest'
+}
+
+type IndexJson = { name: string; properties: Array<Record<string, string>>; timeRange?: { range: number; step: number } }
+
+/** A windowed notification index read off the committed JSON, so grid and fields cannot drift. */
+function notificationWindowOf(docType: string, index: string): NotificationWindow {
+  const schemas = devnetContract().documentSchemas as unknown as Record<string, { indices?: IndexJson[] }>
+  const declared = schemas[docType]?.indices?.find((entry) => entry.name === index)
+  const recipientField = declared?.properties[1] ? Object.keys(declared.properties[1])[0] : undefined
+  if (!declared?.timeRange || !recipientField) throw new Error(`${docType}.${index} is not a windowed notification index`)
+  return {
+    docType,
+    index,
+    recipientField,
+    grid: { range: declared.timeRange.range, step: declared.timeRange.step },
+    selector: 'oldest',
+  }
+}
+
+let notificationWindows: Readonly<Record<WindowedNotificationSource, NotificationWindow>> | null = null
+
+/**
+ * The rolling 7-day window a notification source is read from (v10), or null
+ * where the source is a permanent `[recipient, $createdAt]` index read with
+ * `$createdAt >` (v2, v9). Follows, follow requests and likes stay on
+ * permanent indexes on every topology.
+ *
+ * A window is read as `where [[recipientField, '==', me]]` plus
+ * `timeRange: [{ field: '$createdAt', selector: 'oldest', grid }]`, with no
+ * `$createdAt` clause and no orderBy: entries come back in index order, not
+ * time order, so the since-filter and the newest-first sort are client-side.
+ * `timeRange` is refused in composite queries, so each source is its own query.
+ */
+export function notificationWindowFor(source: WindowedNotificationSource): NotificationWindow | null {
+  if (!isV10()) return null
+  notificationWindows ??= deepFreeze({
+    reply: notificationWindowOf('reply', 'parentOwnerRecent'),
+    quote: notificationWindowOf('post', 'quotedPostOwnerRecent'),
+  })
+  return notificationWindows[source]
+}
+
+/** True when the reply and quote/repost notification sources are rolling windows (v10). */
+export function notificationsAreWindowed(): boolean {
+  return notificationWindowFor('reply') !== null
+}
+
+/**
  * The `beat` companion a like must carry on v9: the tagged-only indexOnly
  * doctype whose `byDayHashtagPost` serves the windowed hashtag rankings.
  * `null` when no companion is written — v2, v10 (the like carries the rolling

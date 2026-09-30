@@ -7,8 +7,9 @@ import { YAPPR_CONTRACT_ID, blogIsV2 } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
 import { isPublishedBlogPost } from '../blog/content-utils';
-import { likesAreIndexOnly, likeSurfacesAreSplit, likeIndexFor, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
+import { likesAreIndexOnly, likeSurfacesAreSplit, likeIndexFor, mentionDocType, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
 import { quoteNotificationType, quotedTargetIdOf } from '../feed/quote-reposts';
+import { readNotificationWindow } from './notification-windows';
 
 // Constants for notification queries
 const NOTIFICATION_QUERY_LIMIT = 100;
@@ -69,6 +70,19 @@ interface RawNotification {
 function repliedToKind(reply: { rootPostId?: string; replyToReplyId?: string }): TargetKind | undefined {
   if (!reply.rootPostId) return undefined;
   return reply.replyToReplyId ? 'reply' : 'post';
+}
+
+/**
+ * A permanent `[recipient, $createdAt]` source's events since the watermark,
+ * newest first: a source with more than a page of them keeps its most recent
+ * ones, and every sibling walks the same direction, as a composite requires.
+ */
+function recentQuery(userId: string, sinceTimestamp: number, documentTypeName: string, ownerField: string): QueryDocumentsOptions {
+  return {
+    dataContractId: YAPPR_CONTRACT_ID, documentTypeName,
+    where: [[ownerField, '==', userId], ['$createdAt', '>', sinceTimestamp]],
+    orderBy: [[ownerField, 'asc'], ['$createdAt', 'desc']], limit: NOTIFICATION_QUERY_LIMIT,
+  };
 }
 
 /**
@@ -229,20 +243,24 @@ class NotificationService {
   /**
    * v10: reposts AND quotes of the user's posts and replies, since timestamp.
    * Both are `post` documents naming the user in `quotedPostOwnerId` (bound by
-   * consensus to the quoted document's owner), read newest first off
-   * `post.quotedPostOwnerAndTime [quotedPostOwnerId, $createdAt]`. A bare quote
+   * consensus to the quoted document's owner), read off the rolling
+   * `post.quotedPostOwnerRecent [$createdAt, quotedPostOwnerId]` window and
+   * since-filtered client-side (see readNotificationWindow). A bare quote
    * notifies as `repost` and links to the reposted post or reply; a quote with
    * text notifies as `quote` and links to the quote.
    */
   async getQuoteNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
     try {
-      const documents = preloaded ?? await queryDocuments(await getEvoSdk(), {
-        dataContractId: YAPPR_CONTRACT_ID,
-        documentTypeName: 'post',
-        where: [['quotedPostOwnerId', '==', userId], ['$createdAt', '>', sinceTimestamp]],
-        orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'desc']],
-        limit: NOTIFICATION_QUERY_LIMIT,
-      });
+      const window = notificationWindowFor('quote');
+      const documents = preloaded ?? (window
+        ? await readNotificationWindow(window, userId, sinceTimestamp)
+        : await queryDocuments(await getEvoSdk(), {
+          dataContractId: YAPPR_CONTRACT_ID,
+          documentTypeName: 'post',
+          where: [['quotedPostOwnerId', '==', userId], ['$createdAt', '>', sinceTimestamp]],
+          orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'desc']],
+          limit: NOTIFICATION_QUERY_LIMIT,
+        }));
       const { transformRawPost } = await import('../feed/transform-raw-post');
       return documents.map((doc) => transformRawPost(doc)).flatMap((post): RawNotification[] => {
         const targetId = quotedTargetIdOf(post);
@@ -265,7 +283,8 @@ class NotificationService {
 
   /**
    * Get replies to user's content since timestamp (for notification queries).
-   * Uses the parentOwnerAndTime index via replyService.getRepliesToMyContent()
+   * Uses the parentOwnerAndTime index (v10: the parentOwnerRecent window) via
+   * replyService.getRepliesToMyContent()
    */
   async getReplyNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
     try {
@@ -293,10 +312,12 @@ class NotificationService {
   }
 
   /**
-   * Get new mentions since timestamp
-   * Uses the byMentionedUser index: [mentionedUserId, $createdAt]
+   * Get new mentions since timestamp, off `[mentionedUserId, $createdAt]`:
+   * `postMention.mentionedUserAndTime` on v2/v9, the mentioning posts'
+   * own `post.mentionedUserAndTime` on v10 ({@link getMentioningPostNotifications}).
    */
   async getNewMentions(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
+    if (mentionsAreInline()) return this.getMentioningPostNotifications(userId, sinceTimestamp, preloaded);
     try {
       const sdk = await getEvoSdk();
 
@@ -322,6 +343,23 @@ class NotificationService {
           createdAt: doc.$createdAt as number
         };
       });
+    } catch (error) {
+      logger.error('Error fetching new mentions:', error);
+      return [];
+    }
+  }
+
+  /**
+   * v10: posts naming the user in `mentionedUserId`, since timestamp. The
+   * document IS the post (only its author can write it), so its id, author
+   * and exact `$createdAt` are the notification's.
+   */
+  private async getMentioningPostNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
+    try {
+      const documents = preloaded ?? await queryDocuments(await getEvoSdk(), recentQuery(userId, sinceTimestamp, 'post', 'mentionedUserId'));
+      return documents.flatMap((doc): RawNotification[] => typeof doc.$id === 'string' && typeof doc.$ownerId === 'string'
+        ? [{ id: `mention-${doc.$id}`, type: 'mention', fromUserId: doc.$ownerId, postId: doc.$id, createdAt: Number(doc.$createdAt) }]
+        : []);
     } catch (error) {
       logger.error('Error fetching new mentions:', error);
       return [];
@@ -699,40 +737,20 @@ class NotificationService {
     readIds: Set<string>,
     fallbackTimestamp: number
   ): Promise<NotificationResult> {
-    const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
-    const sources = [
-      ['follow', 'followingId'], ['postMention', 'mentionedUserId'], ['followRequest', 'targetId'],
-      ...kinds.map(kind => { const index = likeIndexFor(kind); if (!index.ownerField) throw new Error('Notification index has no author field'); return [index.docType, index.ownerField]; }),
-      // v10 has no repost doctype: reposts and quotes are posts naming the
-      // quoted document's owner.
-      repostsAreQuotes() ? ['post', 'quotedPostOwnerId'] : ['repost', 'postOwnerId'], ['reply', 'parentOwnerId'],
-    ];
-    // Newest first: a source with more than a page of events since the
-    // watermark keeps its most recent ones. Oldest first returned the stale
-    // end of the window, and the watermark (the newest event of ANY source)
-    // then skipped everything the truncated source had not reached.
-    const [documents, blogPosts, blogComments] = await Promise.all([
-      queryDocumentBundle(sources.map(([documentTypeName, ownerField]) => ({
-        dataContractId: YAPPR_CONTRACT_ID, documentTypeName,
-        where: [[ownerField, '==', userId], ['$createdAt', '>', sinceTimestamp]],
-        orderBy: [[ownerField, 'asc'], ['$createdAt', 'desc']], limit: NOTIFICATION_QUERY_LIMIT,
-      })), true),
+    const [sourced, blogPosts, blogComments] = await Promise.all([
+      notificationsAreWindowed()
+        ? this.fetchWindowedSources(userId, sinceTimestamp)
+        : this.fetchBundledSources(userId, sinceTimestamp),
       this.getBlogPostNotifications(userId, sinceTimestamp),
       this.getBlogCommentNotifications(userId, sinceTimestamp),
     ]);
-    const [followers, mentions, privateFeed, likes, reposts, replies] = await Promise.all([
-      this.getNewFollowers(userId, sinceTimestamp, documents[0]),
-      this.getNewMentions(userId, sinceTimestamp, documents[1]),
-      this.getPrivateFeedNotifications(userId, sinceTimestamp, documents[2]),
-      this.getLikeNotifications(userId, sinceTimestamp, documents.slice(3, 3 + kinds.length)),
-      this.getRepostNotifications(userId, sinceTimestamp, documents[3 + kinds.length]),
-      this.getReplyNotifications(userId, sinceTimestamp, documents[4 + kinds.length]),
-    ]);
 
-    const allRaw = [...followers, ...mentions, ...privateFeed, ...likes, ...reposts, ...replies, ...blogPosts, ...blogComments];
+    const allRaw = [...sourced, ...blogPosts, ...blogComments];
 
     // Drop self-notifications across every type (liking/reposting/replying to your
     // own content, mentioning yourself, your own posts in a blog you follow).
+    // Newest first. On v10 the windowed sources come back in index order, so
+    // this client-side sort is the only time ordering they get.
     const rawNotifications = allRaw.filter(n => n.fromUserId !== userId);
     rawNotifications.sort((a, b) => b.createdAt - a.createdAt);
 
@@ -745,6 +763,65 @@ class NotificationService {
       : fallbackTimestamp;
 
     return { notifications, latestTimestamp };
+  }
+
+  /**
+   * The permanent `[recipient, $createdAt]` notification sources, read
+   * `$createdAt > since` newest first: follows, mentions, follow requests and
+   * likes (`like`, plus `likeReply` where reply likes are split off). Their
+   * order is fixed: callers index the bundle's results by position.
+   */
+  private permanentSources(userId: string, sinceTimestamp: number, kinds: TargetKind[]): QueryDocumentsOptions[] {
+    return [
+      ['follow', 'followingId'], [mentionDocType(), 'mentionedUserId'], ['followRequest', 'targetId'],
+      ...kinds.map(kind => { const index = likeIndexFor(kind); if (!index.ownerField) throw new Error('Notification index has no author field'); return [index.docType, index.ownerField]; }),
+    ].map(([documentTypeName, ownerField]) => recentQuery(userId, sinceTimestamp, documentTypeName, ownerField));
+  }
+
+  /**
+   * v2 and v9: every source is a permanent `[recipient, $createdAt]` index,
+   * all read in one bundle.
+   */
+  private async fetchBundledSources(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+    const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
+    const recent = (documentTypeName: string, ownerField: string) => recentQuery(userId, sinceTimestamp, documentTypeName, ownerField);
+    // Newest first: a source with more than a page of events since the
+    // watermark keeps its most recent ones. Oldest first returned the stale
+    // end of the window, and the watermark (the newest event of ANY source)
+    // then skipped everything the truncated source had not reached.
+    const documents = await queryDocumentBundle([
+      ...this.permanentSources(userId, sinceTimestamp, kinds),
+      recent('repost', 'postOwnerId'), recent('reply', 'parentOwnerId'),
+    ], true);
+    const perSource = await Promise.all([
+      this.getNewFollowers(userId, sinceTimestamp, documents[0]),
+      this.getNewMentions(userId, sinceTimestamp, documents[1]),
+      this.getPrivateFeedNotifications(userId, sinceTimestamp, documents[2]),
+      this.getLikeNotifications(userId, sinceTimestamp, documents.slice(3, 3 + kinds.length)),
+      this.getRepostNotifications(userId, sinceTimestamp, documents[3 + kinds.length]),
+      this.getReplyNotifications(userId, sinceTimestamp, documents[4 + kinds.length]),
+    ]);
+    return perSource.flat();
+  }
+
+  /**
+   * v10: follows, mentions, follow requests and likes stay permanent and ride
+   * one bundle. Replies and quotes/reposts are rolling windows, and
+   * `timeRange` is refused in a composite, so each of those is its own plain
+   * query, all in parallel: three requests a poll, plus a page per full window.
+   */
+  private async fetchWindowedSources(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+    const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
+    const permanent = queryDocumentBundle(this.permanentSources(userId, sinceTimestamp, kinds), true);
+    const perSource = await Promise.all([
+      permanent.then(documents => this.getNewFollowers(userId, sinceTimestamp, documents[0])),
+      permanent.then(documents => this.getNewMentions(userId, sinceTimestamp, documents[1])),
+      permanent.then(documents => this.getPrivateFeedNotifications(userId, sinceTimestamp, documents[2])),
+      permanent.then(documents => this.getLikeNotifications(userId, sinceTimestamp, documents.slice(3, 3 + kinds.length))),
+      this.getRepostNotifications(userId, sinceTimestamp),
+      this.getReplyNotifications(userId, sinceTimestamp),
+    ]);
+    return perSource.flat();
   }
 }
 

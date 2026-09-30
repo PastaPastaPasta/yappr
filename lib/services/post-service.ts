@@ -8,9 +8,9 @@ import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions, type PostInteractionState } from './post-stats-helpers';
-import { HASHTAG_MAX_LENGTH, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, ownQuoteIndexFor, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { HASHTAG_MAX_LENGTH, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, mentionsAreInline, ownQuoteIndexFor, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
-import { firstIndexedTag } from '@/lib/post-helpers';
+import { firstIndexedTag, firstMention } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes } from './post-query-helpers';
@@ -157,6 +157,25 @@ async function fetchBlogPostsAsQuotes(blogPostIds: string[]): Promise<Post[]> {
       };
     })
   );
+}
+
+/**
+ * The identity behind the first @mention of `content`, or null when there is
+ * none or its name does not resolve. DPNS names are owned by identities, so
+ * the id satisfies `post.mentionedUserId`'s `refersTo: identity`.
+ */
+async function resolveMentionedIdentity(content: string): Promise<string | null> {
+  const username = firstMention(content);
+  if (!username) return null;
+  try {
+    const { dpnsService } = await import('./dpns-service');
+    const identityId = await dpnsService.resolveIdentity(username);
+    if (!identityId) logger.warn('Post mention not indexed: could not resolve username', username);
+    return identityId;
+  } catch (error) {
+    logger.warn('Post mention not indexed: username lookup failed', username, error);
+    return null;
+  }
 }
 
 class PostService extends BaseDocumentService<Post> {
@@ -445,6 +464,15 @@ class PostService extends BaseDocumentService<Post> {
       if (tag !== '') {
         data.hashtag = tag;
       }
+    }
+
+    // v10: the one indexed mention — the first @mention of the same PUBLIC
+    // content (a private post's teaser, never its ciphertext), resolved
+    // through DPNS. Every other @mention stays plain text, and a name that
+    // does not resolve is not indexed: the optional property is omitted.
+    if (mentionsAreInline()) {
+      const mentionedUserId = await resolveMentionedIdentity((data.content as string | undefined) ?? '');
+      if (mentionedUserId) data.mentionedUserId = identifierStringToDocumentBytes(mentionedUserId);
     }
 
     // Add optional fields (use contract field names)

@@ -36,25 +36,57 @@ describe('notification sources', () => {
   })
 })
 
-describe('v10 repost and quote notifications', () => {
-  it('reads reposts off post.quotedPostOwnerAndTime instead of a repost doctype', async () => {
+describe('v10 windowed notification sources', () => {
+  it('bundles the permanent sources (mentions included) and reads replies and quotes as separate windowed queries', async () => {
     vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    const query = vi.fn().mockResolvedValue([])
+    const { getEvoSdk } = await import('./evo-sdk-service')
+    vi.mocked(getEvoSdk).mockResolvedValue({ documents: { query } } as unknown as Awaited<ReturnType<typeof getEvoSdk>>)
     const { notificationService } = await import('./notification-service')
     vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])
     vi.spyOn(notificationService, 'getBlogCommentNotifications').mockResolvedValue([])
-    for (const reader of ['getLikeNotifications', 'getRepostNotifications', 'getReplyNotifications'] as const) {
-      vi.spyOn(notificationService, reader).mockResolvedValue([])
-    }
+    const likes = vi.spyOn(notificationService, 'getLikeNotifications').mockResolvedValue([])
 
     await notificationService.pollNewNotifications('viewer', 1000)
+    // The like readers get the bundle's like and likeReply results.
+    expect(likes).toHaveBeenCalledWith('viewer', 1000, [[], []])
 
+    // Follows, mentions (the mentioning post's own permanent index), follow
+    // requests and likes keep the $createdAt > since shape; no windowed source
+    // rides the composite.
     const queries: QueryDocumentsOptions[] = bundle.mock.calls[0][0]
-    expect(queries.map(query => query.documentTypeName))
-      .toEqual(['follow', 'postMention', 'followRequest', 'like', 'likeReply', 'post', 'reply'])
-    expect(queries[5]).toMatchObject({
-      where: [['quotedPostOwnerId', '==', 'viewer'], ['$createdAt', '>', 1000]],
-      orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'desc']],
+    expect(queries.map(query => query.documentTypeName)).toEqual(['follow', 'post', 'followRequest', 'like', 'likeReply'])
+    expect(queries[1].where).toEqual([['mentionedUserId', '==', 'viewer'], ['$createdAt', '>', 1000]])
+    expect(queries.every(query => query.where?.[1]?.[1] === '>' && !('timeRange' in query))).toBe(true)
+
+    const windowed = query.mock.calls.map(([q]) => q)
+    const week = [{ field: '$createdAt', selector: 'oldest', grid: { range: 604_800, step: 86_400 } }]
+    expect(windowed).toHaveLength(2)
+    expect(windowed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ documentTypeName: 'reply', where: [['parentOwnerId', '==', 'viewer']], timeRange: week, limit: 100 }),
+      expect.objectContaining({ documentTypeName: 'post', where: [['quotedPostOwnerId', '==', 'viewer']], timeRange: week, limit: 100 }),
+    ]))
+    for (const q of windowed) expect(q.orderBy, q.documentTypeName).toBeUndefined()
+  })
+
+  it('notifies a mentioning post by its own id, author and exact time, read after the watermark', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    const query = vi.fn().mockResolvedValue([
+      { $id: 'new', $ownerId: 'bob', $createdAt: 1_100, mentionedUserId: 'viewer' },
+    ])
+    const { getEvoSdk } = await import('./evo-sdk-service')
+    vi.mocked(getEvoSdk).mockResolvedValue({ documents: { query } } as unknown as Awaited<ReturnType<typeof getEvoSdk>>)
+    const { notificationService } = await import('./notification-service')
+
+    expect(await notificationService.getNewMentions('viewer', 1_000)).toEqual([
+      { id: 'mention-new', type: 'mention', fromUserId: 'bob', postId: 'new', createdAt: 1_100 },
+    ])
+    // The permanent post.mentionedUserAndTime walk, filtered by the node.
+    expect(query.mock.calls[0][0]).toMatchObject({
+      documentTypeName: 'post',
+      where: [['mentionedUserId', '==', 'viewer'], ['$createdAt', '>', 1_000]],
     })
+    expect(query.mock.calls[0][0]).not.toHaveProperty('timeRange')
   })
 
   it('notifies a bare quote as a repost of the target and a quote with text as a quote', async () => {

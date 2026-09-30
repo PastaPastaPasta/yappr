@@ -5,6 +5,7 @@ import { stateTransitionService } from './state-transition-service';
 import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes } from './sdk-helpers';
 import { dpnsService } from './dpns-service';
 import { paginateFetchAll } from './pagination-utils';
+import { mentionsAreInline } from '../contract-topology';
 
 export interface PostMentionDocument {
   $id: string;
@@ -39,6 +40,12 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    * System identifier fields arrive as base58, while identifier-like document fields may
    * arrive as base64 or raw bytes in query results.
    */
+  /** v10: a post naming the user in `mentionedUserId`, as a mention record (the post IS the mention). */
+  private mentionFromPost(doc: Record<string, unknown>, userId: string): PostMentionDocument {
+    const $id = doc.$id as string;
+    return { $id, $ownerId: doc.$ownerId as string, $createdAt: Number(doc.$createdAt), postId: $id, mentionedUserId: userId };
+  }
+
   protected transformDocument(doc: Record<string, unknown>): PostMentionDocument {
     const data = (doc.data || doc) as Record<string, unknown>;
     const rawPostId = data.postId || doc.postId;
@@ -68,6 +75,12 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    * Create a single mention document for a post
    */
   async createPostMention(postId: string, ownerId: string, mentionedUserId: string): Promise<boolean> {
+    if (mentionsAreInline()) {
+      // v10: no postMention doctype. The post's one indexed mention is written
+      // with the post itself (postService.createPost) and cannot be added later.
+      logger.warn('MentionService: mentions are inline on this contract; no mention document to create');
+      return false;
+    }
     if (!postId) {
       logger.warn('MentionService: Invalid postId');
       return false;
@@ -228,8 +241,14 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    * Get posts that mention a specific user.
    * Paginates through all results to return complete list.
    * Returns mention documents - caller should fetch actual posts and filter by ownership.
+   *
+   * v10: the mentioning posts themselves, off the permanent
+   * `post.mentionedUserAndTime [mentionedUserId, $createdAt]` (the same walk
+   * as `postMention`'s), mapped onto the mention shape with `postId` = the
+   * post's id and `$ownerId` its author.
    */
   async getPostsMentioningUser(userId: string): Promise<PostMentionDocument[]> {
+    const inline = mentionsAreInline();
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
@@ -238,14 +257,14 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
         sdk,
         () => ({
           dataContractId: this.contractId,
-          documentTypeName: this.documentType,
+          documentTypeName: inline ? 'post' : this.documentType,
           where: [
             ['mentionedUserId', '==', userId],
             ['$createdAt', '>', 0]
           ],
           orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']]
         }),
-        (doc) => this.transformDocument(doc)
+        (doc) => inline ? this.mentionFromPost(doc, userId) : this.transformDocument(doc)
       );
 
       return documents;
