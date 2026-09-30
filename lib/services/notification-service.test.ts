@@ -64,15 +64,15 @@ describe('v10 windowed notification sources', () => {
     }
     expect(queries.every(query => query.where?.[1]?.[1] === '>' && !('timeRange' in query))).toBe(true)
 
-    // Two plain reads per windowed source: the current and the oldest open window.
+    // Two plain reads per windowed source: the current window and the previous one by its start.
     const windowed = query.mock.calls.map(([q]) => q)
     const grid = { range: 302_400, step: 302_400 }
-    const window = (selector: string) => [{ field: '$createdAt', selector, grid }]
     expect(windowed).toHaveLength(4)
-    expect(windowed).toEqual(expect.arrayContaining(['newest', 'oldest'].flatMap((selector) => [
-      expect.objectContaining({ documentTypeName: 'reply', where: [['parentOwnerId', '==', 'viewer']], timeRange: window(selector), limit: 100 }),
-      expect.objectContaining({ documentTypeName: 'post', where: [['quotedPostOwnerId', '==', 'viewer']], timeRange: window(selector), limit: 100 }),
-    ])))
+    for (const [documentTypeName, field] of [['reply', 'parentOwnerId'], ['post', 'quotedPostOwnerId']]) {
+      const reads = windowed.filter((q) => q.documentTypeName === documentTypeName)
+      expect(reads.map((q) => q.timeRange[0].selector).sort()).toEqual(['byStart', 'newest'])
+      for (const q of reads) expect(q).toMatchObject({ where: [[field, '==', 'viewer']], timeRange: [expect.objectContaining({ field: '$createdAt', grid })], limit: 100 })
+    }
     for (const q of windowed) expect(q.orderBy, q.documentTypeName).toBeUndefined()
   })
 

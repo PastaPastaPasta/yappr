@@ -753,16 +753,14 @@ export interface NotificationWindow {
   readonly index: string
   /** The recipient property the read pins with `==`: the index's second property. */
   readonly recipientField: string
-  /** The window grid in seconds, as the contract declares it. */
-  readonly grid: { readonly range: number; readonly step: number }
   /**
-   * The windows a read covers, each resolved by the node from block time: the
-   * current one (`newest`) and the oldest still open. The grid is
-   * non-overlapping (`step == range`) with `ttl` twice the range, so at most
-   * two windows are open and together they hold the last week; right after a
-   * boundary both selectors may name the same window.
+   * The window grid in seconds, as the contract declares it: non-overlapping
+   * (`step == range`) with `ttl` twice the range, so the current window
+   * (`newest`) and the one before it (named `byStart`) hold the last week.
+   * The node's `oldest` is the oldest window still containing now, which on
+   * this grid is the current one again (see lib/services/notification-windows).
    */
-  readonly selectors: readonly ['newest', 'oldest']
+  readonly grid: { readonly range: number; readonly step: number }
 }
 
 type IndexJson = { name: string; properties: Array<Record<string, string>>; timeRange?: { range: number; step: number } }
@@ -778,7 +776,6 @@ function notificationWindowOf(docType: string, index: string): NotificationWindo
     index,
     recipientField,
     grid: { range: declared.timeRange.range, step: declared.timeRange.step },
-    selectors: ['newest', 'oldest'],
   }
 }
 
@@ -792,8 +789,8 @@ let notificationWindows: Readonly<Record<WindowedNotificationSource, Notificatio
  * {@link likeNotificationsPinTarget}).
  *
  * A source is read as `where [[recipientField, '==', me]]` plus
- * `timeRange: [{ field: '$createdAt', selector, grid }]` once per selector
- * (`newest`, `oldest`: the two open 3.5-day windows), with no `$createdAt`
+ * `timeRange: [{ field: '$createdAt', selector, grid }]` twice: `newest` (the
+ * current 3.5-day window) and `byStart` of the previous one, with no `$createdAt`
  * clause and no orderBy: entries come back in index order, not time order, so
  * the dedupe, the since-filter and the newest-first sort are client-side.
  * `timeRange` is refused in composite queries, so each read is its own query.

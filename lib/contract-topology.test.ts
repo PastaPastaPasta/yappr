@@ -638,7 +638,7 @@ describe('contract topology', () => {
       expect(V9.postMention).toBeDefined()
     })
 
-    it('reads every notification-only source off two open 3.5-day windows of one grid', async () => {
+    it('reads every notification-only source off the current and the previous 3.5-day window of one grid', async () => {
       const halfWeek = { range: 302_400, step: 302_400 }
       const index = (docType: string, name: string) => V10[docType].indices?.find((entry) => entry.name === name) as
         ({ properties: Array<Record<string, string>>; skipIfAbsent?: boolean; timeRange?: Record<string, unknown> } | undefined)
@@ -649,7 +649,7 @@ describe('contract topology', () => {
         quote: { docType: 'post', index: 'quotedPostOwnerRecent', recipientField: 'quotedPostOwnerId' },
       } as const
       for (const [source, shape] of Object.entries(expected) as [keyof typeof expected, (typeof expected)[keyof typeof expected]][]) {
-        expect(v10.notificationWindowFor(source), source).toEqual({ ...shape, grid: halfWeek, selectors: ['newest', 'oldest'] })
+        expect(v10.notificationWindowFor(source), source).toEqual({ ...shape, grid: halfWeek })
         // Non-overlapping windows, each written once, kept for two windows: a week.
         expect(index(shape.docType, shape.index)?.timeRange, source).toEqual({ on: '$createdAt', ...halfWeek, ttl: 604_800 })
         expect(keys(shape.docType, shape.index)?.slice(0, 2), source).toEqual(['$createdAt', shape.recipientField])

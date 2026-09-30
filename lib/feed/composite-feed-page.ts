@@ -213,13 +213,10 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
   let myBookmarks = -1;
   if (options.currentUserId) {
     // The viewer's marks on the page: `$ownerId == me` pins the owner-first
-    // index, the bound post id is its terminal, so these are value-bounded and
-    // a limit is refused. v10's likes have no owner-first index: the bound id
-    // leads `byPost`/`byReply` and `$ownerId` is its terminal, which is not
-    // value-bounded, so the node requires a limit — one like per page id at
-    // most. (v10's own quote/repost is a `post` lookup on `$ownerId`, which a
-    // page on `ownerAndTime` would refuse as a merged root: it is read
-    // separately.)
+    // index and the bound post id is its terminal, so these are value-bounded
+    // and a limit is refused. (v10's own quote/repost is a `post` lookup on
+    // `$ownerId`, which a page on `ownerAndTime` would refuse as a merged
+    // root: it is read separately.)
     const mine = [['$ownerId', '==', options.currentUserId]];
     // v10's hearts sit on the like-count index itself (`byPost`/`byReply`,
     // `$ownerId` its terminal), and a composite refuses a documents lookup on
@@ -304,14 +301,6 @@ function loadOwnQuotes(ids: string[], options: CompositeFeedPageOptions): Promis
 // ---- Result ----
 
 /**
- * The v10 reads a composite page cannot carry: the viewer's own quote/repost
- * of each page item (a `post` lookup on `ownerAndQuotedPost`/
- * `ownerAndQuotedReply`, which shares the `$ownerId` level with an
- * `ownerAndTime` page and is refused beside it), and the child counts of a
- * reply page whose replies span several roots (one grouped count per root).
- * Both are ordinary requests next to the composite; nothing here runs on v2/v9.
- */
-/**
  * v10: the viewer's hearts on the page, read beside the composite on the
  * like-count index (`target in [ids] && $ownerId == me`); null when logged
  * out or where the composite carries them (v2, v9).
@@ -323,6 +312,15 @@ function loadViewerLikes(ids: string[], options: CompositeFeedPageOptions): Prom
   return import('@/lib/services/like-service').then(({ likeService }) => likeService.getUserLikedPostIds(viewer, ids, kind));
 }
 
+/**
+ * The v10 reads a composite page cannot carry: the viewer's own quote/repost
+ * of each page item (a `post` lookup on `ownerAndQuotedPost`/
+ * `ownerAndQuotedReply`, which shares the `$ownerId` level with an
+ * `ownerAndTime` page and is refused beside it), and the child counts of a
+ * reply page whose replies span several roots (one grouped count per root),
+ * and the viewer's hearts ({@link loadViewerLikes}). All are ordinary
+ * requests next to the composite; nothing here runs on v2/v9.
+ */
 async function loadSeparateReads(
   pageIds: string[],
   sourcePosts: Post[],

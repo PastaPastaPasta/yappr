@@ -53,6 +53,15 @@ const LIKE_RECOVERY_MAX_PAGES = 5;
  * notify — the accepted compromise of dropping `byAuthorTimePost`.
  */
 const LIKE_NOTIFICATION_RECENT_TARGETS = 20;
+/** Recent content read to find those targets: bare reposts (own quote posts with nothing of their own) never gain likes and are skipped. */
+const LIKE_NOTIFICATION_RECENT_SCAN = 50;
+
+/** A raw post that quotes something and carries nothing of its own (a v10 bare repost). */
+function isRawBareRepost(doc: Record<string, unknown>): boolean {
+  const quotes = Boolean(doc.quotedPostId || doc.quotedReplyId);
+  const content = typeof doc.content === 'string' ? doc.content.trim() : '';
+  return quotes && !content && !doc.encryptedContent && !doc.mediaUrl && !doc.embedId;
+}
 const LIKE_NOTIFICATION_PAGE_SIZE = 100;
 /** Keyset pages per target when the one `in` read comes back full (1,000 likes of one target since the last poll). */
 const LIKE_NOTIFICATION_MAX_PAGES = 10;
@@ -684,7 +693,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   /** getLike without the error swallowing: a failed read throws. */
   private async queryLike(postId: string, ownerId: string, kind: TargetKind): Promise<LikeDocument | null> {
     const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-    const { docType, field, ownerFirst } = likeIndexFor(kind);
+    const { docType, field, ownerFirst, ownerIsTerminal } = likeIndexFor(kind);
 
     // Equality on both index properties. `in` is a RANGE to Drive, and a query
     // may only range over the last property it constrains — so on a
@@ -700,7 +709,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       dataContractId: this.contractId,
       documentTypeName: docType,
       where,
-      orderBy: where.map(([property]) => [property, 'asc'] as DocumentOrderByClause),
+      // v10 pins byPost/byReply's value and terminal with equalities alone, the
+      // shape proven live; v2/v9 keep the orderBy their stored indexes take.
+      ...(ownerIsTerminal ? {} : { orderBy: where.map(([property]) => [property, 'asc'] as DocumentOrderByClause) }),
       limit: 1
     });
 
@@ -871,8 +882,10 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * `sinceTimestamp`, newest content first. Likes of older content do not
    * notify — the accepted cost of dropping the author-wide time index.
    *
-   * 1. ONE composite: the user's newest {@link LIKE_NOTIFICATION_RECENT_TARGETS}
-   *    posts on `ownerAndTime [$ownerId, $createdAt]` with a like-count slot
+   * 1. ONE composite: the user's newest {@link LIKE_NOTIFICATION_RECENT_SCAN}
+   *    posts on `ownerAndTime [$ownerId, $createdAt]` (the first
+   *    {@link LIKE_NOTIFICATION_RECENT_TARGETS} that are not bare reposts are
+   *    kept: a repost never gains likes) with a like-count slot
    *    bound page `$id` → `postId` (grouped on the countable `byPost`/`byReply`).
    * 2. ONE plain read over every one of them with a count > 0: `author == me
    *    && target in [liked] && $createdAt > since` ordered `[author, target,
@@ -881,8 +894,11 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    *    newest first). Each row carries the liker (`$ownerId`), the exact
    *    `$createdAt` and its target, read off the row itself.
    *
-   * Worst case 1 + 1 requests per kind. Throws on any failed read, so a
-   * partial answer never advances the notification watermark.
+   * Normally 1 composite + 1 read per kind; a full read falls back to
+   * per-target keyset reads. A failed read throws here, but
+   * getLikesOnMyPosts catches it and returns nothing, so the notification
+   * watermark can then pass this source (a known, pre-existing trait of every
+   * notification source).
    */
   private async getLikesOnMyRecentContent(userId: string, sinceTimestamp: number, kind: TargetKind, shape: IndexOnlyLikeShape): Promise<LikeDocument[]> {
     const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
@@ -891,9 +907,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     const result = await sdk.documents.composite({
       dataContractId: this.contractId,
       documentType: kind,
-      where: [['$ownerId', '==', userId]],
+      where: [['$ownerId', '==', userId], ['$createdAt', '>', 0]],
       orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
-      limit: LIKE_NOTIFICATION_RECENT_TARGETS,
+      limit: LIKE_NOTIFICATION_RECENT_SCAN,
       subQueries: [{ documentType: docType, kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field } }],
     });
     const countsResult = result.subResults?.[0];
@@ -905,6 +921,8 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     const liked = result.pageDocuments
       .map((doc) => documentToPlainObject(doc))
       .sort((a, b) => Number(b.$createdAt) - Number(a.$createdAt))
+      .filter((doc) => !isRawBareRepost(doc))
+      .slice(0, LIKE_NOTIFICATION_RECENT_TARGETS)
       .flatMap((doc) => (typeof doc.$id === 'string' ? [doc.$id] : []))
       .filter((targetId) => Number(counts.get(targetId) ?? 0) > 0);
     if (liked.length === 0) return [];

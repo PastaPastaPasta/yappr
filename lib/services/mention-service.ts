@@ -40,11 +40,6 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     super('postMention');
   }
 
-  /**
-   * Transform document from SDK response to typed object
-   * System identifier fields arrive as base58, while identifier-like document fields may
-   * arrive as base64 or raw bytes in query results.
-   */
   /** v10: a post or reply naming the user in `mentionedUserId`, as a mention record (the document IS the mention). */
   private mentionFromDocument(doc: Record<string, unknown>, userId: string, targetKind: TargetKind): PostMentionDocument {
     const $id = doc.$id as string;
@@ -54,6 +49,11 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     };
   }
 
+  /**
+   * Transform document from SDK response to typed object
+   * System identifier fields arrive as base58, while identifier-like document fields may
+   * arrive as base64 or raw bytes in query results.
+   */
   protected transformDocument(doc: Record<string, unknown>): PostMentionDocument {
     const data = (doc.data || doc) as Record<string, unknown>;
     const rawPostId = data.postId || doc.postId;

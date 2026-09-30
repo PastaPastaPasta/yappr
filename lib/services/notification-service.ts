@@ -260,24 +260,19 @@ class NotificationService {
   /**
    * v10: reposts AND quotes of the user's posts and replies, since timestamp.
    * Both are `post` documents naming the user in `quotedPostOwnerId` (bound by
-   * consensus to the quoted document's owner), read off the two open
-   * `post.quotedPostOwnerRecent [$createdAt, quotedPostOwnerId]` windows and
+   * consensus to the quoted document's owner), read off the current and the
+   * previous `post.quotedPostOwnerRecent [$createdAt, quotedPostOwnerId]` window and
    * since-filtered client-side (see readNotificationWindow). A bare quote
    * notifies as `repost` and links to the reposted post or reply; a quote with
    * text notifies as `quote` and links to the quote.
    */
   async getQuoteNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
     try {
+      // Quote notifications exist only where reposts are quotes (v10), which
+      // always reads the quote windows.
       const window = notificationWindowFor('quote');
-      const documents = preloaded ?? (window
-        ? await readNotificationWindow(window, userId, sinceTimestamp)
-        : await queryDocuments(await getEvoSdk(), {
-          dataContractId: YAPPR_CONTRACT_ID,
-          documentTypeName: 'post',
-          where: [['quotedPostOwnerId', '==', userId], ['$createdAt', '>', sinceTimestamp]],
-          orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'desc']],
-          limit: NOTIFICATION_QUERY_LIMIT,
-        }));
+      if (!window && !preloaded) return [];
+      const documents = preloaded ?? (window ? await readNotificationWindow(window, userId, sinceTimestamp) : []);
       const { transformRawPost } = await import('../feed/transform-raw-post');
       return documents.map((doc) => transformRawPost(doc)).flatMap((post): RawNotification[] => {
         const targetId = quotedTargetIdOf(post);

@@ -297,16 +297,17 @@ describe('liked state ("did I like these?")', () => {
     })])
   })
 
-  it('v10 reads one target with both equalities, target first', async () => {
+  it('v10 reads one target with both equalities, target first, and no orderBy (the proven shape)', async () => {
     const likeService = await likeServiceOn('v10')
 
     expect(await likeService.isLiked(POST, VIEWER, 'post')).toBe(true)
 
-    expect(queriesOf('like')).toEqual([expect.objectContaining({
+    const reads = queriesOf('like')
+    expect(reads).toEqual([expect.objectContaining({
       where: [['postId', '==', POST], ['$ownerId', '==', VIEWER]],
-      orderBy: [['postId', 'asc'], ['$ownerId', 'asc']],
       limit: 1,
     })])
+    expect(reads[0].orderBy).toBeUndefined()
   })
 
   it('v9 keeps the owner-first byLiker batch', async () => {
@@ -353,13 +354,14 @@ describe('v10 like notifications: recent content → like counts → one read pe
 
     const likes = await likeService.getLikesOnMyPosts(ME, new Date(SINCE), kind)
 
-    // One composite: my newest posts on ownerAndTime + their like counts.
+    // One composite: my newest content on ownerAndTime (50 read, the first 20
+    // that are not bare reposts kept) + their like counts.
     expect(mocks.composite).toHaveBeenCalledTimes(1)
     expect(mocks.composite.mock.calls[0][0]).toMatchObject({
       documentType: kind,
-      where: [['$ownerId', '==', ME]],
+      where: [['$ownerId', '==', ME], ['$createdAt', '>', 0]],
       orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
-      limit: 20,
+      limit: 50,
       subQueries: [{ documentType: docType, kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field } }],
     })
     // One plain read over every liked target (the unliked 5th skipped), since-filtered.
@@ -393,6 +395,20 @@ describe('v10 like notifications: recent content → like counts → one read pe
     expect(reads[0].where).toContainEqual(['postId', 'in', mine.filter((_, i) => i !== 4).map((doc) => doc.$id)])
     expect(reads.some((read) => read.where.some(([field, op]) => field === '$createdAt' && op === '<='))).toBe(true)
     for (const read of reads) expect(read).not.toHaveProperty('startAfter')
+  })
+
+  it('skips my own bare reposts when choosing the recent posts, so a heavy reposter\'s posts still notify', async () => {
+    // 25 bare reposts newer than any real post, then my 12 real posts.
+    const reposts = Array.from({ length: 25 }, (_, i) => ({ $id: id(200 + i), $ownerId: ME, $createdAt: SINCE + 1_000 + i, quotedPostId: POST }))
+    const page = [...reposts, ...mine]
+    mocks.composite.mockResolvedValue({ pageDocuments: page, subResults: [{ kind: 'counts', counts: new Map(page.map((doc) => [doc.$id, 3n])) }] })
+    chain.rows = { like: [] }
+    const likeService = await likeServiceOn('v10')
+
+    await likeService.getLikesOnMyPosts(ME, new Date(SINCE), 'post')
+
+    const inClause = queriesOf('like')[0].where.find(([field, op]) => field === 'postId' && op === 'in')
+    expect(inClause?.[2]).toEqual(mine.map((doc) => doc.$id))
   })
 
   it('reads nothing more when no recent post has a like', async () => {
