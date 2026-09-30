@@ -593,29 +593,46 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
       const { docType } = likeIndexFor(kind);
 
-      let startAfter: string | undefined;
+      // indexOnly rows carry synthesized ids (a one-way hash of the index
+      // position), which Drive refuses as startAfter cursors — page two of an
+      // id-cursor walk errors out. Keyset-paginate on the terminal `$createdAt`
+      // instead: page one is the plain author prefix, later pages add a range
+      // clause on the terminal with the same orderBy. The bound is inclusive
+      // (`<=`) because likes sharing a millisecond or block share a
+      // `$createdAt`, and `<` would skip the ones the previous page cut off; the
+      // rows that boundary re-serves are dropped by `seen`. A run of more than
+      // one page of likes at a single timestamp cannot be walked past — the page
+      // then adds nothing new and the walk stops.
+      const seen = new Set<string>();
+      let before: number | null = null;
       for (let page = 0; page < LIKE_RECOVERY_MAX_PAGES; page++) {
+        const where: DocumentWhereClause[] = [[shape.authorField, '==', targetAuthor]];
+        if (before !== null) where.push(['$createdAt', '<=', before]);
         const response = await sdk.documents.query({
           dataContractId: this.contractId,
           documentTypeName: docType,
-          where: [[shape.authorField, '==', targetAuthor]],
+          where,
           orderBy: [[shape.authorField, 'asc'], ['$createdAt', 'desc']],
           limit: LIKE_RECOVERY_PAGE_SIZE,
-          ...(startAfter ? { startAfter } : {}),
         });
 
         const documents = normalizeSDKResponse(response);
+        let added = 0;
         for (const doc of documents) {
           const like = this.transformDocumentFor(doc, kind);
+          const key = `${like.$ownerId}|${like.postId}|${like.$createdAt}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          added++;
           if (like.postId === targetId && like.$ownerId === ownerId && like.$createdAt) {
             return { documentId: like.$id, createdAt: Number(like.$createdAt) };
           }
         }
 
-        if (documents.length < LIKE_RECOVERY_PAGE_SIZE) break;
-        const lastId = documents[documents.length - 1]?.$id;
-        if (typeof lastId !== 'string' || !lastId) break;
-        startAfter = lastId;
+        if (documents.length < LIKE_RECOVERY_PAGE_SIZE || added === 0) break;
+        const last = Number(this.transformDocumentFor(documents[documents.length - 1], kind).$createdAt);
+        if (!Number.isFinite(last) || last <= 0) break;
+        before = last;
       }
       return null;
     } catch (error) {
