@@ -193,6 +193,31 @@ export function reportsNeedingResolution<T extends Pick<ReportRecord, 'status' |
 }
 
 /**
+ * What a row's resolution form starts from. Open reports start at content
+ * removed on a removed target and no action otherwise, with no note. Resolved
+ * reports start at the status and note they share, so changing one keeps the
+ * other. Where they differ nothing is filled in: the status is left unchosen
+ * (`statusesDiffer`), and `notesDiffer` warns that the note replaces them all.
+ */
+export function resolutionFormStart(
+  reports: ReadonlyArray<Pick<ReportRecord, 'status' | 'resolution'>>,
+  removed: boolean
+): { status: ReportStatus | null; note: string; statusesDiffer: boolean; notesDiffer: boolean } {
+  const statuses = new Set(reports.map((report) => report.status))
+  const notes = new Set(reports.map((report) => report.resolution))
+  const statusesDiffer = statuses.size > 1
+  const notesDiffer = notes.size > 1
+  const [sharedStatus] = statuses
+  const [sharedNote] = notes
+  return {
+    status: statusesDiffer ? null : sharedStatus ?? (removed ? 2 : 1),
+    note: notesDiffer ? '' : sharedNote ?? '',
+    statusesDiffer,
+    notesDiffer,
+  }
+}
+
+/**
  * A raw `report` document as a {@link ReportRecord}, or null when it names no
  * target, no target owner or no integer reason (consensus refuses each, so only
  * a malformed read produces one).

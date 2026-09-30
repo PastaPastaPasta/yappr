@@ -18,6 +18,7 @@ import {
   reportReasonLabel,
   reportStatusLabel,
   reportsNeedingResolution,
+  resolutionFormStart,
   resolutionInputProblem,
   toReportRecord,
   withdrawFailureMessage,
@@ -269,5 +270,19 @@ describe('report resolution (v10)', () => {
     ]
     expect(reportsNeedingResolution(reports, 2, null).map((report) => report.id)).toEqual([idOf(10), idOf(12), idOf(13)])
     expect(reportsNeedingResolution(reports, 2, 'gone').map((report) => report.id)).toEqual([idOf(10), idOf(11), idOf(13)])
+  })
+
+  it('starts a changed resolution from the values its reports share, and picks nothing where they differ', () => {
+    const open = { status: null, resolution: null }
+    // Open reports: a default, since there is nothing to keep.
+    expect(resolutionFormStart([open, open], false)).toEqual({ status: 1, note: '', statusesDiffer: false, notesDiffer: false })
+    expect(resolutionFormStart([open], true)).toEqual({ status: 2, note: '', statusesDiffer: false, notesDiffer: false })
+    // Resolved alike: keep both, even on a removed target.
+    const actioned = { status: 3 as const, resolution: 'Banned for spam' }
+    expect(resolutionFormStart([actioned, actioned], true)).toEqual({ status: 3, note: 'Banned for spam', statusesDiffer: false, notesDiffer: false })
+    // Differing notes: none is chosen for the others to be overwritten with.
+    expect(resolutionFormStart([actioned, { status: 3, resolution: null }], false)).toEqual({ status: 3, note: '', statusesDiffer: false, notesDiffer: true })
+    // Differing statuses: the moderator must choose one.
+    expect(resolutionFormStart([actioned, { status: 1, resolution: 'Banned for spam' }], false)).toEqual({ status: null, note: 'Banned for spam', statusesDiffer: true, notesDiffer: false })
   })
 })

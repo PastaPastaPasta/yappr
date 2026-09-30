@@ -19,6 +19,7 @@ import {
   reportReasonLabel,
   reportStatusLabel,
   reportsNeedingResolution,
+  resolutionFormStart,
   resolutionInputProblem,
   withdrawFailureMessage,
   type ReportRecord,
@@ -59,8 +60,11 @@ const sameView = (a: ReportView, b: ReportView) => JSON.stringify(a) === JSON.st
 /** The resolution form open on one row (v10). */
 interface ResolveForm {
   key: string
-  status: ReportStatus
+  /** Null until chosen, where the row's reports were resolved differently. */
+  status: ReportStatus | null
   note: string
+  /** The row's reports carry different notes: the one written here replaces them all. */
+  notesDiffer: boolean
 }
 
 /** A row being worked on, and how far along. */
@@ -345,8 +349,8 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
   }
 
   const openResolveForm = (group: ReportedTarget) => {
-    const removed = targets.get(keyOf(group))?.state === 'removed'
-    setResolveForm({ key: keyOf(group), status: removed ? 2 : 1, note: '' })
+    const { status, note, notesDiffer } = resolutionFormStart(group.reports, targets.get(keyOf(group))?.state === 'removed')
+    setResolveForm({ key: keyOf(group), status, note, notesDiffer })
   }
 
   /**
@@ -356,9 +360,10 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
    */
   const resolve = async (group: ReportedTarget, form: ResolveForm) => {
     if (!user || dismissing || loading) return
-    const problem = resolutionInputProblem(form.status, form.note)
-    if (problem) {
-      toast.error(problem)
+    const { status } = form
+    const problem = resolutionInputProblem(status, form.note)
+    if (problem || status === null) {
+      toast.error(problem ?? 'Choose how the report was resolved')
       return
     }
     if (!charterReasonReady('resolutions')) return
@@ -371,7 +376,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
       return
     }
     const note = form.note.trim() || null
-    const pending = reportsNeedingResolution(read.all, form.status, note)
+    const pending = reportsNeedingResolution(read.all, status, note)
     if (pending.length === 0) {
       setDismissing(null)
       setResolveForm(null)
@@ -380,8 +385,8 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     }
     setDismissing({ key, verb: 'Resolving', done: 0, total: pending.length })
     const step = () => setDismissing((progress) => (progress ? { ...progress, done: progress.done + 1 } : progress))
-    const result = await moderationService.resolveReports(user.identityId, pending, { status: form.status, note: form.note }, {
-      text: `Report resolved: ${reportStatusLabel(form.status).toLowerCase()}`,
+    const result = await moderationService.resolveReports(user.identityId, pending, { status, note: form.note }, {
+      text: `Report resolved: ${reportStatusLabel(status).toLowerCase()}`,
       documents: [{ documentTypeName: group.kind, documentId: group.targetId }],
       ...(seatedReasons.required && reasonDocumentId ? { reasonDocumentId } : {}),
     }, step)
@@ -392,7 +397,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     setReports((previous) => previous
       .filter((report) => !goneIds.has(report.id))
       .map((report) => (resolvedIds.has(report.id)
-        ? { ...report, status: form.status, resolution: note, moderatedBy: user.identityId, moderatedAt: now }
+        ? { ...report, status, resolution: note, moderatedBy: user.identityId, moderatedAt: now }
         : report)))
     const count = result.resolved.length
     if (result.errorCode === 'MAYBE_APPLIED') {
@@ -405,7 +410,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     }
     setResolveForm(null)
     const goneNote = result.gone.length > 0 ? ` ${reportsNoun(result.gone.length)} had been withdrawn or had expired.` : ''
-    toast.success(`${reportsNoun(count)} resolved: ${reportStatusLabel(form.status).toLowerCase()}.${goneNote}`)
+    toast.success(`${reportsNoun(count)} resolved: ${reportStatusLabel(status).toLowerCase()}.${goneNote}`)
   }
 
   const remove = (group: ReportedTarget, post: Post) => {
@@ -553,6 +558,9 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                   <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-2" data-testid={`report-resolve-form-${group.targetId}`}>
                     <fieldset disabled={dismissing !== null}>
                       <legend className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">How were these reports resolved?</legend>
+                      {form.status === null && (
+                        <p className="text-xs text-amber-700 dark:text-amber-400 mb-1">These reports were resolved differently. Choose the outcome for all of them.</p>
+                      )}
                       {REPORT_STATUSES.map((option) => (
                         <label key={option.code} className="flex items-start gap-2 py-1 text-sm cursor-pointer">
                           <input
@@ -582,6 +590,11 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                       onChange={(e) => setResolveForm({ ...form, note: e.target.value })}
                       className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-yappr-500"
                     />
+                    {form.notesDiffer && (
+                      <p className="text-xs text-amber-700 dark:text-amber-400">
+                        These reports carry different notes. The note written here replaces all of them; left empty, it removes them.
+                      </p>
+                    )}
                     <p className="text-xs text-gray-500 dark:text-gray-400 text-right">{form.note.length}/{REPORT_RESOLUTION_MAX_LENGTH}</p>
                     <div className="flex flex-wrap gap-2">
                       <Button
