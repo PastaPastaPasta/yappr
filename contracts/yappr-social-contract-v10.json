@@ -56,7 +56,6 @@
       "indices": [
         {
           "name": "ownerAndBlocked",
-          "unique": true,
           "properties": [
             {
               "$ownerId": "asc"
@@ -64,7 +63,8 @@
             {
               "blockedId": "asc"
             }
-          ]
+          ],
+          "unique": true
         },
         {
           "name": "ownerBlocks",
@@ -107,12 +107,12 @@
       "indices": [
         {
           "name": "owner",
-          "unique": true,
           "properties": [
             {
               "$ownerId": "asc"
             }
-          ]
+          ],
+          "unique": true
         }
       ],
       "required": [
@@ -147,12 +147,12 @@
       "indices": [
         {
           "name": "owner",
-          "unique": true,
           "properties": [
             {
               "$ownerId": "asc"
             }
-          ]
+          ],
+          "unique": true
         }
       ],
       "required": [
@@ -187,7 +187,6 @@
       "indices": [
         {
           "name": "ownerAndPost",
-          "unique": true,
           "properties": [
             {
               "$ownerId": "asc"
@@ -195,7 +194,8 @@
             {
               "postId": "asc"
             }
-          ]
+          ],
+          "unique": true
         },
         {
           "name": "ownerBookmarks",
@@ -299,7 +299,6 @@
       "indices": [
         {
           "name": "targetAndRequester",
-          "unique": true,
           "properties": [
             {
               "targetId": "asc"
@@ -307,7 +306,8 @@
             {
               "$ownerId": "asc"
             }
-          ]
+          ],
+          "unique": true
         },
         {
           "name": "target",
@@ -405,28 +405,40 @@
           }
         },
         {
-          "name": "byAuthorTimePost",
+          "name": "byAuthorRecent",
           "properties": [
             {
-              "postAuthor": "asc"
+              "$createdAt": "asc"
             },
             {
-              "$createdAt": "asc"
+              "postAuthor": "asc"
             },
             {
               "postId": "asc"
             }
           ],
-          "terminal": "$ownerId"
+          "terminal": "$ownerId",
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 604800,
+            "step": 86400,
+            "ttl": 604800
+          }
         },
         {
           "name": "byLiker",
           "properties": [
             {
               "$ownerId": "asc"
+            },
+            {
+              "postId": "asc"
+            },
+            {
+              "$createdAt": "asc"
             }
           ],
-          "terminal": "postId"
+          "terminal": "postAuthor"
         },
         {
           "name": "byTrendPost",
@@ -543,28 +555,40 @@
           "countable": "countable"
         },
         {
-          "name": "byAuthorTimeReply",
+          "name": "byAuthorRecent",
           "properties": [
             {
-              "replyAuthor": "asc"
+              "$createdAt": "asc"
             },
             {
-              "$createdAt": "asc"
+              "replyAuthor": "asc"
             },
             {
               "replyId": "asc"
             }
           ],
-          "terminal": "$ownerId"
+          "terminal": "$ownerId",
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 604800,
+            "step": 86400,
+            "ttl": 604800
+          }
         },
         {
           "name": "byLiker",
           "properties": [
             {
               "$ownerId": "asc"
+            },
+            {
+              "replyId": "asc"
+            },
+            {
+              "$createdAt": "asc"
             }
           ],
-          "terminal": "replyId"
+          "terminal": "replyAuthor"
         }
       ],
       "required": [
@@ -660,15 +684,21 @@
           "skipIfAbsent": true
         },
         {
-          "name": "quotedPostOwnerAndTime",
+          "name": "quotedPostOwnerRecent",
           "properties": [
             {
-              "quotedPostOwnerId": "asc"
+              "$createdAt": "asc"
             },
             {
-              "$createdAt": "asc"
+              "quotedPostOwnerId": "asc"
             }
           ],
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 604800,
+            "step": 86400,
+            "ttl": 604800
+          },
           "skipIfAbsent": true
         },
         {
@@ -707,6 +737,24 @@
             }
           ],
           "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "mentionedUserRecent",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "mentionedUserId": "asc"
+            }
+          ],
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 604800,
+            "step": 86400,
+            "ttl": 604800
+          },
           "skipIfAbsent": true
         }
       ],
@@ -831,6 +879,17 @@
           "minItems": 8,
           "maxItems": 8,
           "position": 14
+        },
+        "mentionedUserId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 15,
+          "refersTo": {
+            "type": "identity"
+          }
         }
       },
       "tokenCost": {
@@ -995,68 +1054,11 @@
         ]
       }
     },
-    "postMention": {
-      "type": "object",
-      "indices": [
-        {
-          "name": "mentionedUserAndTime",
-          "properties": [
-            {
-              "mentionedUserId": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        },
-        {
-          "name": "postAndMentioned",
-          "unique": true,
-          "properties": [
-            {
-              "postId": "asc"
-            },
-            {
-              "mentionedUserId": "asc"
-            }
-          ]
-        }
-      ],
-      "documentsMutable": false,
-      "required": [
-        "$createdAt",
-        "postId",
-        "mentionedUserId"
-      ],
-      "properties": {
-        "postId": {
-          "type": "array",
-          "maxItems": 32,
-          "minItems": 32,
-          "position": 0,
-          "byteArray": true,
-          "contentMediaType": "application/x.dash.dpp.identifier"
-        },
-        "mentionedUserId": {
-          "type": "array",
-          "maxItems": 32,
-          "minItems": 32,
-          "position": 1,
-          "byteArray": true,
-          "contentMediaType": "application/x.dash.dpp.identifier",
-          "refersTo": {
-            "type": "identity"
-          }
-        }
-      },
-      "additionalProperties": false
-    },
     "privateFeedGrant": {
       "type": "object",
       "indices": [
         {
           "name": "ownerAndRecipient",
-          "unique": true,
           "properties": [
             {
               "$ownerId": "asc"
@@ -1064,11 +1066,11 @@
             {
               "recipientId": "asc"
             }
-          ]
+          ],
+          "unique": true
         },
         {
           "name": "ownerAndLeaf",
-          "unique": true,
           "properties": [
             {
               "$ownerId": "asc"
@@ -1076,7 +1078,8 @@
             {
               "leafIndex": "asc"
             }
-          ]
+          ],
+          "unique": true
         }
       ],
       "documentsMutable": false,
@@ -1139,7 +1142,6 @@
       "indices": [
         {
           "name": "ownerAndKeyGeneration",
-          "unique": true,
           "properties": [
             {
               "$ownerId": "asc"
@@ -1147,7 +1149,8 @@
             {
               "keyGeneration": "asc"
             }
-          ]
+          ],
+          "unique": true
         }
       ],
       "documentsMutable": false,
@@ -1201,12 +1204,12 @@
       "indices": [
         {
           "name": "owner",
-          "unique": true,
           "properties": [
             {
               "$ownerId": "asc"
             }
-          ]
+          ],
+          "unique": true
         }
       ],
       "documentsMutable": false,
@@ -1272,15 +1275,21 @@
           }
         },
         {
-          "name": "parentOwnerAndTime",
+          "name": "parentOwnerRecent",
           "properties": [
             {
-              "parentOwnerId": "asc"
+              "$createdAt": "asc"
             },
             {
-              "$createdAt": "asc"
+              "parentOwnerId": "asc"
             }
-          ]
+          ],
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 604800,
+            "step": 86400,
+            "ttl": 604800
+          }
         }
       ],
       "required": [
@@ -1456,7 +1465,6 @@
       "indices": [
         {
           "name": "ownerAndPost",
-          "unique": true,
           "properties": [
             {
               "$ownerId": "asc"
@@ -1465,11 +1473,11 @@
               "postId": "asc"
             }
           ],
+          "unique": true,
           "skipIfAbsent": true
         },
         {
           "name": "ownerAndReply",
-          "unique": true,
           "properties": [
             {
               "$ownerId": "asc"
@@ -1478,6 +1486,7 @@
               "replyId": "asc"
             }
           ],
+          "unique": true,
           "skipIfAbsent": true
         },
         {
@@ -1665,12 +1674,12 @@
       "indices": [
         {
           "name": "owner",
-          "unique": true,
           "properties": [
             {
               "$ownerId": "asc"
             }
-          ]
+          ],
+          "unique": true
         }
       ],
       "required": [
