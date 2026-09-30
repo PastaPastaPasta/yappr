@@ -7,8 +7,8 @@ import { TrophyIcon, UsersIcon } from '@heroicons/react/24/outline'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
-import { followRankingsAvailable } from '@/lib/contract-topology'
 import type { RankedGroupCount, RankingWindow } from '@/lib/services/ranked-likes'
+import { followRankingsAvailable, windowedRankingFor } from '@/lib/contract-topology'
 
 /** A ranked identity hydrated into something renderable. */
 interface RankedUser {
@@ -88,7 +88,8 @@ function RankedUserList({
 
 /**
  * The v9 creator leaderboard: top authors by likes received, from the proved
- * prefix ranked page on `like.byAuthorPost {at: [postAuthor, postId]}`, plus —
+ * prefix ranked page on `like.byAuthorPost {at: [postAuthor, postId]}` (v10:
+ * `byAuthorPostTime`, ranked at the same levels), plus —
  * when the follow ranked chain exists — most-followed users off
  * `follow.followerCount`. Both fail soft: a ranking that errors comes back
  * empty and its section hides, so a node that cannot serve the prefix form
@@ -97,6 +98,8 @@ function RankedUserList({
  * Render-gated by the caller on `prefixRankingsAvailable()`.
  */
 export function TopCreators({ window = 'all' }: { window?: RankingWindow } = {}) {
+  // v10 has no creator window: the leaderboard stays all-time whatever the toggle elsewhere says.
+  const creatorWindow = windowedRankingFor('creators')
   const [creators, setCreators] = useState<RankedUser[]>([])
   const [mostFollowed, setMostFollowed] = useState<RankedUser[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -156,7 +159,7 @@ export function TopCreators({ window = 'all' }: { window?: RankingWindow } = {})
           <div className="px-4 py-2 bg-gray-50 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
             <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-400 flex items-center gap-1.5">
               <TrophyIcon className="h-4 w-4" />
-              Top creators by likes received{window === 'today' ? ' today' : ''}
+              Top creators by likes received{window === 'today' && creatorWindow ? ` ${creatorWindow.label.toLowerCase()}` : ''}
             </h3>
           </div>
           <RankedUserList users={creators} countLabel="like" testId="explore-top-creators" />

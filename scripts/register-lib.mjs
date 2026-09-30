@@ -60,21 +60,21 @@ export async function requireModeratorsExist(sdk, moderators = []) {
  * the divergences the chain would refuse (or, worse, silently drop):
  *   - `config.moderation` declared in the file but not carried by the parse
  *     (a `$formatVersion: "1"` config drops it without a word);
- *   - a `canBeDeletedByModerators` type referenced as `permanentDocument`
- *     (40122 at registration);
+ *   - a moderator-deletable type (`moderatorAbilities.delete`) referenced as
+ *     `permanentDocument` (40122 at registration);
  *   - `actionFees.*.moderators` on an unmoderated contract (10902).
  */
 export function auditModeration(documentSchemas, dataContract) {
   const parsedModeration = dataContract.config.moderation;
   // `actionFees.pricing` sits beside the per-action entries and is not one.
   const declaredModeration = Object.values(documentSchemas).some((schema) =>
-    schema.canBeDeletedByModerators
+    schema.moderatorAbilities
     || Object.entries(schema.actionFees ?? {}).some(([action, fee]) => action !== 'pricing' && fee.moderators));
   console.log(`  moderation: ${parsedModeration ? renderModeration(parsedModeration) : 'none'}`);
   if (declaredModeration && !parsedModeration) {
-    throw new Error('document types rely on moderation (canBeDeletedByModerators / moderators fees) but the parsed config carries no `moderation` — is the config $formatVersion "2"?');
+    throw new Error('document types rely on moderation (moderatorAbilities / moderators fees) but the parsed config carries no `moderation` — is the config $formatVersion "2"?');
   }
-  const deletable = new Set(Object.entries(documentSchemas).filter(([, s]) => s.canBeDeletedByModerators).map(([name]) => name));
+  const deletable = new Set(Object.entries(documentSchemas).filter(([, s]) => s.moderatorAbilities?.delete === true).map(([name]) => name));
   if (deletable.size > 0) console.log(`  moderator delete: ${[...deletable].join(', ')}`);
   for (const name of Object.keys(documentSchemas)) {
     for (const reference of dataContract.documentTypeReferences(name)) {

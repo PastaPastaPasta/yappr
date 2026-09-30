@@ -1,6 +1,7 @@
 import type { Post } from '@/lib/types';
-import type { CompositeDocumentsQuery } from '@dashevo/wasm-sdk';
-import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, YAPPR_PROFILE_CONTRACT_ID } from '@/lib/constants';
+import type { CompositeDocumentsQuery, CompositeSubQuery } from '@dashevo/wasm-sdk';
+import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '@/lib/constants';
+import { profileBaseSource, profileExtensionSource } from '@/lib/profile/v10-profile';
 import { likesAreIndexOnly } from '@/lib/contract-topology';
 import { logger } from '@/lib/logger';
 import { loadCompositeFeedPage, usernamesByIdentity } from '@/lib/feed/composite-feed-page';
@@ -162,25 +163,40 @@ async function loadContributorIdentities(ids: readonly string[]): Promise<{
   usernames: Map<string, string | null>;
 }> {
   const sdk = await getEvoSdk();
+  const base = profileBaseSource();
+  const subQueries: CompositeSubQuery[] = [
+    {
+      dataContractId: DPNS_CONTRACT_ID,
+      documentType: DPNS_DOCUMENT_TYPE,
+      bind: { source: 'page', sourceProperty: '$ownerId', field: 'records.identity' },
+      limit: DPNS_QUERY_LIMIT,
+    },
+  ];
+  // v10: the page is the DashPay profiles; their `yapprProfile` extensions join after the names.
+  const extension = profileExtensionSource();
+  if (extension) {
+    subQueries.push({
+      dataContractId: extension.contractId,
+      documentType: extension.documentType,
+      bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' },
+    });
+  }
   const query: CompositeDocumentsQuery = {
-    dataContractId: YAPPR_PROFILE_CONTRACT_ID,
-    documentType: 'profile',
+    dataContractId: base.contractId,
+    documentType: base.documentType,
     where: [['$ownerId', 'in', [...ids]]],
     orderBy: [['$ownerId', 'asc']],
     limit: ids.length,
-    subQueries: [
-      {
-        dataContractId: DPNS_CONTRACT_ID,
-        documentType: DPNS_DOCUMENT_TYPE,
-        bind: { source: 'page', sourceProperty: '$ownerId', field: 'records.identity' },
-        limit: DPNS_QUERY_LIMIT,
-      },
-    ],
+    subQueries,
   };
   const result = await sdk.documents.composite(query);
   const names = result.subResults[0];
-  if (!names || names.kind !== 'documents') {
+  const extensions = extension ? result.subResults[1] : undefined;
+  if (!names || names.kind !== 'documents' || (extension && extensions?.kind !== 'documents')) {
     throw new Error('Homepage: incomplete contributors composite result');
+  }
+  if (extensions?.kind === 'documents') {
+    unifiedProfileService.seedProfileDocuments(extensions.documents.map((doc) => documentToPlainObject(doc)), ids, 'extension');
   }
   const profileRecords = result.pageDocuments.map((doc) => documentToPlainObject(doc));
   const profiles = unifiedProfileService.seedProfileDocuments(profileRecords, ids);

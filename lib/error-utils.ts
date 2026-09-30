@@ -2,6 +2,7 @@
  * Utility functions for error handling and message extraction.
  */
 import { paymentIsChoosable } from '@/lib/payment-preference'
+import { authorDeletesLeaveHoles, yappIsLocked } from '@/lib/contract-topology'
 
 const MAX_ERROR_DEPTH = 5
 
@@ -185,7 +186,8 @@ export function isFrozenBalanceError(error: unknown): boolean {
  * document points at does not exist (or is not usable as a reference target).
  *
  * This is the `refersTo` family introduced with protocol v14. On the yappr v9
- * contract `follow.followingId` and `postMention.mentionedUserId` declare
+ * contract `follow.followingId` and `postMention.mentionedUserId` (v10:
+ * `post.mentionedUserId`) declare
  * `refersTo: { type: 'identity' }`, so following or mentioning an identity that
  * is not on chain is rejected by consensus instead of creating a dangling
  * document. The rejection is permanent: retrying cannot make the target appear.
@@ -841,6 +843,9 @@ export type ModerationErrorKind =
   | 'INVALID_REASON_DOCUMENTS'
   | 'CHARTER_INVALID'
   | 'CONTEST_NOT_JOINABLE'
+  | 'FIELD_NOT_CHANGEABLE'
+  | 'MODERATOR_FIELD'
+  | 'NOTHING_TO_CHANGE'
 
 /** Each kind: its consensus codes and the prose Drive renders (rs-dpp `#[error]`, 4.2.0-beta.4). */
 const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly number[], RegExp]> = [
@@ -871,6 +876,13 @@ const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly n
   ['INVALID_REASON_DOCUMENTS', [10904], /invalidcontractmoderationreasondocuments|the documents a contract moderation reason cites are invalid/i],
   ['CHARTER_INVALID', [11000, 11001], /moderationchartermalformedfield|moderationcharterrewardsplitnotonehundred|of the moderation charter is malformed|reward split of .* it must sum to 100%/i],
   ['CONTEST_NOT_JOINABLE', [40111], /documentcontestnotjoinable|document contest for vote_poll .* is not joinable/i],
+  // 4.2.0-beta.7 `moderatorAbilities.changeFields` (platform#5158):
+  // 41123 a field the type does not keep for its moderators;
+  ['FIELD_NOT_CHANGEABLE', [41123], /documentfieldnotchangeablebymoderators|of documents of type .* can not be changed by moderators/i],
+  // 41124 a non-moderator writing a moderator field (a reporter pre-setting `status`);
+  ['MODERATOR_FIELD', [41124], /documentmoderatorfieldnotwritable|only the moderators of contract .* write field/i],
+  // 10905 a change naming no field, a `$` property, or only values already held.
+  ['NOTHING_TO_CHANGE', [10905], /invalidcontractmoderationdocumentfields|the fields a moderator's document change sets are invalid/i],
 ]
 
 export function classifyModerationError(error: unknown): ModerationErrorKind | null {
@@ -879,6 +891,15 @@ export function classifyModerationError(error: unknown): ModerationErrorKind | n
     if (prose.test(msg) || hasConsensusCode(error, codes)) return kind
   }
   return null
+}
+
+/**
+ * 40105 (DuplicateUniqueIndexError): a unique index already holds this value.
+ * On v10 that is a second quote or repost of the same target by one author
+ * (`post.ownerAndQuotedPost`/`ownerAndQuotedReply`).
+ */
+export function isDuplicateUniqueIndexError(error: unknown): boolean {
+  return classifyModerationError(error) === 'UNIQUE_VALUE_TAKEN'
 }
 
 /**
@@ -996,10 +1017,12 @@ export function categorizeError(error: unknown): string {
     // A document target names its type: "referenced deletable document (own
     // contract, document type post) <id> not found for path quotedPostId".
     // Posts and replies are permanent for their owners on v9, so a missing one
-    // was taken down by the contract's moderators.
+    // was taken down by the contract's moderators. On v10 authors delete too.
     const documentType = /\breferenced \w+ document \([^)]*\bdocument type (\w+)/i.exec(extractErrorMessage(error))?.[1]
     if (documentType === 'post' || documentType === 'reply') {
-      return `That ${documentType} was removed by the moderators, so this action can't be completed.`
+      return authorDeletesLeaveHoles()
+        ? `That ${documentType} was deleted, so this action can't be completed.`
+        : `That ${documentType} was removed by the moderators, so this action can't be completed.`
     }
     if (documentType) return 'What this points to no longer exists on Dash Platform, so this action can\'t be completed.'
     return 'That account no longer exists on Dash Platform, so this action can\'t be completed.'
@@ -1026,7 +1049,8 @@ export function categorizeError(error: unknown): string {
     // way to act, and a balance that went stale between planning and signing
     // lands here: offering only to sell more would hide the free option. The
     // way out is read through the topology, so the advice never names one the
-    // contract does not offer.
+    // contract does not offer. Where YAPP is locked (v10) it cannot be bought.
+    if (yappIsLocked()) return 'You don\'t have enough YAPP. Switch to paying in credits in Settings.'
     return paymentIsChoosable('post')
       ? 'You don\'t have enough YAPP. Buy more, or switch to paying in credits in Settings.'
       : 'You don\'t have enough YAPP. Buy more to keep posting.'

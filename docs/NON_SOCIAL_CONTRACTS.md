@@ -40,11 +40,15 @@ NETWORK=devnet node scripts/register-feature-contract.mjs --file yappr-blog-cont
 
 # Live batteries (each also takes --self-test, which runs offline and asserts
 # the checked-in JSON still declares every rule the battery relies on).
-NETWORK=devnet node scripts/verify-storefront.mjs
-NETWORK=devnet node scripts/verify-blog.mjs
+# --moderator names the contract's owner or an appointed moderator:
+# maker, personal (ledger persona 900) or a persona index.
+NETWORK=devnet node scripts/verify-storefront.mjs [--moderator maker]
+NETWORK=devnet node scripts/verify-blog.mjs [--moderator 260]
 NETWORK=devnet node scripts/verify-dm.mjs
 NETWORK=devnet node scripts/verify-pollr.mjs
-NETWORK=devnet node scripts/verify-tips.mjs [--tipper 240] [--creator 241] [--amount 5]
+# YAPP tips (t1-t5) where YAPP is transferable; credit tips (c1-c2) where the
+# social contract locks YAPP (v10).
+NETWORK=devnet node scripts/verify-tips.mjs [--tipper 240] [--creator 241] [--amount 5] [--credits 100000000]
 
 # Seed browsable content (deterministic and resumable; --dry-run is offline).
 NETWORK=devnet node scripts/seed/seed-non-social.mjs --which storefront|blog|dm|pollr|tips

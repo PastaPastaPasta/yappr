@@ -2,6 +2,7 @@
 
 import type { ComponentType } from 'react'
 import Link from 'next/link'
+import { contentLimits } from '@/lib/contract-topology'
 import {
   InformationCircleIcon,
   GlobeAltIcon,
@@ -28,7 +29,7 @@ interface Feature {
 }
 
 const FEATURES: Feature[] = [
-  { title: 'Posts', desc: 'Share your thoughts in up to 500 characters' },
+  { title: 'Posts', desc: `Share your thoughts in up to ${contentLimits().maxLength} characters` },
   { title: 'Profiles', desc: 'Customize your name, bio, avatar, and banner' },
   { title: 'Follow', desc: 'Build your network and see updates from people you follow' },
   { title: 'Likes & Reposts', desc: 'Engage with content you enjoy' },

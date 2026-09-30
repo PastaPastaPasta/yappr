@@ -142,3 +142,13 @@ export function extractMentions(content: string): string[] {
     matches.map(mention => normalizeDpnsUsername(mention.slice(1))) // Remove @ prefix, normalize, dedupe
   ))
 }
+
+/**
+ * The FIRST @mention in the content, normalized like {@link extractMentions}
+ * (lowercase, `.dash` removed), or `''` when there is none. The v10 contract
+ * indexes exactly one mention per post (`post.mentionedUserId`), and "first in
+ * the public text" is the rule, as for the single hashtag.
+ */
+export function firstMention(content: string): string {
+  return extractMentions(content)[0] ?? ''
+}

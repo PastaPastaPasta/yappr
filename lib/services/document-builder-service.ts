@@ -172,7 +172,7 @@ class DocumentBuilderService {
    *
    * @param createdAtMs - The like's consensus `$createdAt` (ms). Not knowable
    *   client-side at create time — recovered from a `$createdAt`-carrying index
-   *   projection (e.g. `byAuthorTimePost`).
+   *   projection (v9 `byAuthorTimePost`, v10 `byAuthorPostTime`).
    */
   async buildDocumentForValuesDelete(
     contractId: string,

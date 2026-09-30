@@ -27,6 +27,7 @@ import { privateFeedService } from './private-feed-service';
 import type { PrivateFeedRekeyDocument } from './private-feed-service';
 import type { NodeKey } from './private-feed-crypto-service';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
+import { privateFeedKeyFields } from '@/lib/contract-topology';
 import { RequestDeduplicator, queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
 import { paginateFetchAll } from './pagination-utils';
 import { requireBytes } from '@/lib/bytes';
@@ -51,7 +52,7 @@ export interface PrivateFeedGrantDocument {
   $createdAt: number;
   recipientId: string;
   leafIndex: number;
-  epoch: number;
+  keyGeneration: number;
   encryptedPayload: Uint8Array;
 }
 
@@ -69,7 +70,7 @@ export interface DecryptResult {
  */
 export interface EncryptedPostFields {
   encryptedContent: Uint8Array;
-  epoch: number;
+  keyGeneration: number;
   nonce: Uint8Array;
   $ownerId: string;
 }
@@ -346,7 +347,7 @@ class PrivateFeedFollowerService {
         // Convert recipientId from base64 bytes (SDK format) to base58 string (identity ID format)
         recipientId: identifierToBase58(doc.recipientId) || '',
         leafIndex: doc.leafIndex as number,
-        epoch: doc.epoch as number,
+        keyGeneration: doc[privateFeedKeyFields().generation] as number,
         encryptedPayload: requireBytes(doc.encryptedPayload, 'encryptedPayload'),
       };
     } catch (error) {
@@ -370,12 +371,12 @@ class PrivateFeedFollowerService {
   }
 
   /**
-   * Get the cached epoch for a feed owner
+   * Get the cached key generation for a feed owner
    *
    * @param ownerId - The feed owner's identity ID
    */
-  getCachedEpoch(ownerId: string): number | null {
-    return privateFeedKeyStore.getCachedEpoch(ownerId);
+  getCachedKeyGeneration(ownerId: string): number | null {
+    return privateFeedKeyStore.getCachedKeyGeneration(ownerId);
   }
 
   // ============================================================
@@ -391,7 +392,7 @@ class PrivateFeedFollowerService {
   async decryptPost(post: EncryptedPostFields, myId?: string): Promise<DecryptResult> {
     try {
       const ownerId = post.$ownerId;
-      const postEpoch = post.epoch;
+      const postKeyGeneration = post.keyGeneration;
 
       // 1. Check if we have keys for this owner
       if (!privateFeedKeyStore.hasPathKeys(ownerId)) {
@@ -399,13 +400,13 @@ class PrivateFeedFollowerService {
       }
 
       // 2. Check if we need to catch up on rekeys
-      const cachedEpoch = privateFeedKeyStore.getCachedEpoch(ownerId);
-      if (cachedEpoch === null) {
+      const cachedKeyGeneration = privateFeedKeyStore.getCachedKeyGeneration(ownerId);
+      if (cachedKeyGeneration === null) {
         return { success: false, error: 'No cached CEK for this feed' };
       }
 
-      // 3. If post epoch is newer than our cached epoch, catch up
-      if (postEpoch > cachedEpoch) {
+      // 3. If post key generation is newer than our cached key generation, catch up
+      if (postKeyGeneration > cachedKeyGeneration) {
         const catchUpResult = await this.catchUp(ownerId, myId);
         if (!catchUpResult.success) {
           // BUG-017 fix: If recovery is needed (missing wrapNonceSalt), propagate special error
@@ -421,20 +422,20 @@ class PrivateFeedFollowerService {
         }
       }
 
-      // 4. Derive CEK for the post's epoch
+      // 4. Derive CEK for the post's key generation
       const cached = privateFeedKeyStore.getCachedCEK(ownerId);
       if (!cached) {
         return { success: false, error: 'No cached CEK after catch-up' };
       }
 
       let cek: Uint8Array;
-      if (postEpoch === cached.epoch) {
+      if (postKeyGeneration === cached.keyGeneration) {
         cek = cached.cek;
-      } else if (postEpoch < cached.epoch) {
+      } else if (postKeyGeneration < cached.keyGeneration) {
         // Derive backwards via hash chain
-        cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, postEpoch);
+        cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, postKeyGeneration);
       } else {
-        return { success: false, error: 'Post epoch still newer than cached epoch after catch-up' };
+        return { success: false, error: 'Post key generation still newer than cached key generation after catch-up' };
       }
 
       // 5. Decrypt the content
@@ -445,7 +446,7 @@ class PrivateFeedFollowerService {
           {
             ciphertext: post.encryptedContent,
             nonce: post.nonce,
-            epoch: postEpoch,
+            keyGeneration: postKeyGeneration,
           },
           ownerIdBytes
         );
@@ -458,7 +459,7 @@ class PrivateFeedFollowerService {
           // This could be because:
           // 1. User was revoked (no grant)
           // 2. Post is from before a feed reset (encrypted with old seed)
-          // 3. Post is from after user was revoked (they can't derive new epoch keys)
+          // 3. Post is from after user was revoked (they can't derive the CEKs of newer key generations)
           //
           // NOTE: We do NOT clear local keys here because the user might still
           // be able to decrypt other posts (e.g., new posts after re-requesting access,
@@ -507,28 +508,28 @@ class PrivateFeedFollowerService {
    */
   async catchUp(ownerId: string, myId?: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const cachedEpoch = privateFeedKeyStore.getCachedEpoch(ownerId);
-      if (cachedEpoch === null) {
-        return { success: false, error: 'No cached epoch - need to recover from grant first' };
+      const cachedKeyGeneration = privateFeedKeyStore.getCachedKeyGeneration(ownerId);
+      if (cachedKeyGeneration === null) {
+        return { success: false, error: 'No cached key generation - need to recover from grant first' };
       }
 
-      // Fetch rekey documents newer than our cached epoch
-      const rekeyDocs = await this.getRekeyDocumentsAfter(ownerId, cachedEpoch);
+      // Fetch rekey documents newer than our cached key generation
+      const rekeyDocs = await this.getRekeyDocumentsAfter(ownerId, cachedKeyGeneration);
       if (rekeyDocs.length === 0) {
         // Already up to date
         return { success: true };
       }
 
-      // Sort by epoch ascending to apply in order
-      rekeyDocs.sort((a, b) => a.epoch - b.epoch);
+      // Sort by key generation ascending to apply in order
+      rekeyDocs.sort((a, b) => a.keyGeneration - b.keyGeneration);
 
-      // Verify epoch continuity
-      let expectedEpoch = cachedEpoch + 1;
+      // Verify key generation continuity
+      let expectedKeyGeneration = cachedKeyGeneration + 1;
       for (const rekey of rekeyDocs) {
-        if (rekey.epoch !== expectedEpoch) {
-          return { success: false, error: `Missing rekey for epoch ${expectedEpoch}` };
+        if (rekey.keyGeneration !== expectedKeyGeneration) {
+          return { success: false, error: `Missing rekey for key generation ${expectedKeyGeneration}` };
         }
-        expectedEpoch++;
+        expectedKeyGeneration++;
       }
 
       // Apply each rekey in order
@@ -545,7 +546,7 @@ class PrivateFeedFollowerService {
               // device was revoked rather than never approved.
               return { success: false, error: 'Access has been revoked' };
             }
-            if (grant.epoch > cachedEpoch) {
+            if (grant.keyGeneration > cachedKeyGeneration) {
               // Re-approved after a revocation: these keys belong to the
               // earlier grant and must be recovered from the current one.
               return { success: false, error: 'RECOVERY_NEEDED:Local keys predate the current grant' };
@@ -631,7 +632,7 @@ class PrivateFeedFollowerService {
           // Derive nonce using public feedOwnerId (SPEC §10)
           const nonce = privateFeedCryptoService.deriveRekeyNonce(
             ownerIdBytes,
-            rekey.epoch,
+            rekey.keyGeneration,
             packet.targetNodeId,
             packet.targetVersion,
             packet.encryptedUnderNodeId,
@@ -640,7 +641,7 @@ class PrivateFeedFollowerService {
 
           const aad = privateFeedCryptoService.buildRekeyAAD(
             ownerIdBytes,
-            rekey.epoch,
+            rekey.keyGeneration,
             packet.targetNodeId,
             packet.targetVersion,
             packet.encryptedUnderNodeId,
@@ -679,7 +680,7 @@ class PrivateFeedFollowerService {
         newRootKey.key,
         rekey.encryptedCEK,
         ownerIdBytes,
-        rekey.epoch
+        rekey.keyGeneration
       );
 
       // 8. Update path keys with new versions
@@ -690,7 +691,7 @@ class PrivateFeedFollowerService {
 
       // 9. Store updated state
       privateFeedKeyStore.storePathKeys(ownerId, updatedPathKeys);
-      privateFeedKeyStore.storeCachedCEK(ownerId, rekey.epoch, newCEK);
+      privateFeedKeyStore.storeCachedCEK(ownerId, rekey.keyGeneration, newCEK);
 
       return { success: true };
     } catch (error) {
@@ -703,13 +704,13 @@ class PrivateFeedFollowerService {
   }
 
   /**
-   * Get rekey documents with epoch greater than a given value.
+   * Get rekey documents with key generation greater than a given value.
    * Throws on a failed read: an empty result means "up to date", and a reply
-   * must never be encrypted at a stale epoch because a read failed.
+   * must never be encrypted at a stale key generation because a read failed.
    */
   private async getRekeyDocumentsAfter(
     ownerId: string,
-    afterEpoch: number
+    afterKeyGeneration: number
   ): Promise<PrivateFeedRekeyDocument[]> {
     try {
       const sdk = await getEvoSdk();
@@ -721,9 +722,9 @@ class PrivateFeedFollowerService {
           documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_REKEY,
           where: [
             ['$ownerId', '==', ownerId],
-            ['epoch', '>', afterEpoch],
+            [privateFeedKeyFields().generation, '>', afterKeyGeneration],
           ],
-          orderBy: [['epoch', 'asc']],
+          orderBy: [[privateFeedKeyFields().generation, 'asc']],
           limit: 100,
           ...(startAfter && { startAfter }),
         }),
@@ -731,12 +732,12 @@ class PrivateFeedFollowerService {
           $id: doc.$id as string,
           $ownerId: doc.$ownerId as string,
           $createdAt: doc.$createdAt as number,
-          epoch: doc.epoch as number,
+          keyGeneration: doc[privateFeedKeyFields().generation] as number,
           revokedLeaf: doc.revokedLeaf as number,
           packets: requireBytes(doc.packets, 'packets'),
           encryptedCEK: requireBytes(doc.encryptedCEK, 'encryptedCEK'),
         }),
-        { maxResults: 2000 } // SPEC allows up to 2000 epochs
+        { maxResults: 2000 } // SPEC allows up to 2000 key generations
       );
 
       return documents;
@@ -776,7 +777,7 @@ class PrivateFeedFollowerService {
         ownerIdBytes,
         myIdBytes,
         grant.leafIndex,
-        grant.epoch
+        grant.keyGeneration
       );
 
       // 3. Decrypt grant payload using ECIES
@@ -794,11 +795,11 @@ class PrivateFeedFollowerService {
       privateFeedKeyStore.initializeFollowerState(
         ownerId,
         payload.pathKeys,
-        payload.grantEpoch,
+        payload.grantKeyGeneration,
         payload.currentCEK
       );
 
-      // 6. Catch up on any rekeys since grant epoch
+      // 6. Catch up on any rekeys since grant key generation
       const catchUpResult = await this.catchUp(ownerId, myId);
       if (!catchUpResult.success) {
         // Log but don't fail - we have initial keys at least
@@ -810,7 +811,7 @@ class PrivateFeedFollowerService {
         logger.warn('Failed to cleanup stale follow request after recovery:', err);
       });
 
-      logger.debug(`Recovered follower keys for owner ${ownerId} at epoch ${payload.grantEpoch}`);
+      logger.debug(`Recovered follower keys for owner ${ownerId} at key generation ${payload.grantKeyGeneration}`);
       return { success: true };
     } catch (error) {
       logger.error('Error recovering follower keys:', error);
@@ -844,12 +845,12 @@ class PrivateFeedFollowerService {
 
       if (grant) {
         // We have a grant - check if we can still decrypt
-        // If we have keys and can decrypt current epoch, we're approved.
-        // Keys cached below the grant's epoch are left from an earlier
+        // If we have keys and can decrypt current key generation, we're approved.
+        // Keys cached below the grant's key generation are left from an earlier
         // approval that was revoked, so they need recovering from this grant.
         const canDecrypt = await this.canDecrypt(ownerId);
-        const cachedEpoch = privateFeedKeyStore.getCachedEpoch(ownerId);
-        if (canDecrypt && cachedEpoch !== null && cachedEpoch >= grant.epoch) {
+        const cachedKeyGeneration = privateFeedKeyStore.getCachedKeyGeneration(ownerId);
+        if (canDecrypt && cachedKeyGeneration !== null && cachedKeyGeneration >= grant.keyGeneration) {
           // Auto-cleanup: Delete stale FollowRequest if it exists (PRD §4.5)
           if (autoCleanup) {
             this.cleanupStaleFollowRequest(ownerId, myId).catch(err => {
@@ -862,7 +863,7 @@ class PrivateFeedFollowerService {
         // Grant exists but no local keys - distinguish from revoked
         // 'approved-no-keys' means user needs to enter encryption key to recover
         // This happens on new device or after clearing storage
-        // True 'revoked' would mean the grant is orphaned from a previous epoch
+        // True 'revoked' would mean the grant is orphaned from a previous key generation
         // We can't easily distinguish here, so we return 'approved-no-keys'
         // and let the recovery attempt determine if it's actually revoked
         return 'approved-no-keys';
@@ -953,7 +954,7 @@ class PrivateFeedFollowerService {
    * Per PRD §5.4 Key Caching:
    * "On app load:
    *  1. For each feed owner we follow privately:
-   *     - Check if cachedEpoch < latest post epoch from that author
+   *     - Check if cachedKeyGeneration < latest post key generation from that author
    *     - If stale, trigger background catch-up
    *  2. Decrypt posts using cached keys"
    *
@@ -1025,7 +1026,7 @@ class PrivateFeedFollowerService {
   /**
    * Sync keys for a single feed owner
    *
-   * Checks if the cached epoch is behind the chain epoch and
+   * Checks if the cached key generation is behind the chain key generation and
    * triggers catch-up if needed.
    *
    * @param ownerId - The feed owner's identity ID
@@ -1036,23 +1037,23 @@ class PrivateFeedFollowerService {
     error?: string;
   }> {
     try {
-      // Get cached epoch from local storage
-      const cachedEpoch = privateFeedKeyStore.getCachedEpoch(ownerId);
-      if (cachedEpoch === null) {
-        // No cached epoch means we don't have keys properly initialized
-        return { status: 'failed', error: 'No cached epoch' };
+      // Get cached key generation from local storage
+      const cachedKeyGeneration = privateFeedKeyStore.getCachedKeyGeneration(ownerId);
+      if (cachedKeyGeneration === null) {
+        // No cached key generation means we don't have keys properly initialized
+        return { status: 'failed', error: 'No cached key generation' };
       }
 
-      // Get latest epoch from chain
-      const chainEpoch = await privateFeedService.getLatestEpoch(ownerId);
+      // Get latest key generation from chain
+      const chainKeyGeneration = await privateFeedService.getLatestKeyGeneration(ownerId);
 
-      if (chainEpoch <= cachedEpoch) {
+      if (chainKeyGeneration <= cachedKeyGeneration) {
         // Already up to date
         return { status: 'up_to_date' };
       }
 
       // Need to catch up
-      logger.debug(`PrivateFeedSync: Catching up feed ${ownerId} from epoch ${cachedEpoch} to ${chainEpoch}`);
+      logger.debug(`PrivateFeedSync: Catching up feed ${ownerId} from key generation ${cachedKeyGeneration} to ${chainKeyGeneration}`);
       const catchUpResult = await this.catchUp(ownerId, myId);
 
       if (catchUpResult.success) {

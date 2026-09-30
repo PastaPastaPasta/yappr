@@ -22,7 +22,8 @@ const STORAGE_PREFIX = scopedKey('yappr:pf:');
 
 // Storage keys
 const KEY_FEED_SEED = 'feed_seed';
-const KEY_CURRENT_EPOCH = 'current_epoch';
+// Stored under its pre-v10 name so earlier builds' state still loads.
+const KEY_CURRENT_KEY_GENERATION = 'current_epoch';
 const KEY_REVOKED_LEAVES = 'revoked_leaves';
 const KEY_PATH_KEYS_PREFIX = 'path_keys:';
 const KEY_CACHED_CEK_PREFIX = 'cached_cek:';
@@ -39,7 +40,8 @@ export interface StoredPathKey {
 }
 
 /**
- * Cached CEK for a followed feed
+ * Cached CEK for a followed feed, as persisted. `epoch` is the stored name of
+ * the key generation; it stays so keys cached by earlier builds still load.
  */
 export interface CachedCEK {
   epoch: number;
@@ -134,10 +136,10 @@ class PrivateFeedKeyStore {
     this.followerKeyListeners.forEach(listener => listener());
   }
 
-  /** UI readiness for a particular post; older cached keys cannot cover a newer epoch. */
-  hasKeysForEpoch(ownerId: string, epoch: number): boolean {
-    const cachedEpoch = this.getCachedEpoch(ownerId);
-    return cachedEpoch !== null && cachedEpoch >= epoch && this.hasPathKeys(ownerId);
+  /** UI readiness for a particular post; older cached keys cannot cover a newer key generation. */
+  hasKeysForGeneration(ownerId: string, keyGeneration: number): boolean {
+    const cachedKeyGeneration = this.getCachedKeyGeneration(ownerId);
+    return cachedKeyGeneration !== null && cachedKeyGeneration >= keyGeneration && this.hasPathKeys(ownerId);
   }
 
   // ============================================================
@@ -172,20 +174,20 @@ class PrivateFeedKeyStore {
   }
 
   /**
-   * Store current epoch
+   * Store current key generation
    */
-  storeCurrentEpoch(epoch: number): void {
-    setItem(KEY_CURRENT_EPOCH, epoch.toString());
+  storeCurrentKeyGeneration(keyGeneration: number): void {
+    setItem(KEY_CURRENT_KEY_GENERATION, keyGeneration.toString());
   }
 
   /**
-   * Get current epoch (defaults to 1 if not set)
+   * Get current key generation (defaults to 1 if not set)
    */
-  getCurrentEpoch(): number {
-    const stored = getItem(KEY_CURRENT_EPOCH);
+  getCurrentKeyGeneration(): number {
+    const stored = getItem(KEY_CURRENT_KEY_GENERATION);
     if (!stored) return 1;
-    const epoch = parseInt(stored, 10);
-    return isNaN(epoch) ? 1 : epoch;
+    const keyGeneration = parseInt(stored, 10);
+    return isNaN(keyGeneration) ? 1 : keyGeneration;
   }
 
   /**
@@ -378,9 +380,9 @@ class PrivateFeedKeyStore {
   /**
    * Store cached CEK for a followed feed
    */
-  storeCachedCEK(ownerId: string, epoch: number, cek: Uint8Array): void {
+  storeCachedCEK(ownerId: string, keyGeneration: number, cek: Uint8Array): void {
     const cached: CachedCEK = {
-      epoch,
+      epoch: keyGeneration,
       cek: bytesToBase64(cek),
     };
     setItem(KEY_CACHED_CEK_PREFIX + ownerId, JSON.stringify(cached));
@@ -390,13 +392,13 @@ class PrivateFeedKeyStore {
   /**
    * Get cached CEK for a followed feed
    */
-  getCachedCEK(ownerId: string): { epoch: number; cek: Uint8Array } | null {
+  getCachedCEK(ownerId: string): { keyGeneration: number; cek: Uint8Array } | null {
     const stored = getItem(KEY_CACHED_CEK_PREFIX + ownerId);
     if (!stored) return null;
     try {
       const cached: CachedCEK = JSON.parse(stored);
       return {
-        epoch: cached.epoch,
+        keyGeneration: cached.epoch,
         cek: base64ToBytes(cached.cek),
       };
     } catch {
@@ -405,11 +407,11 @@ class PrivateFeedKeyStore {
   }
 
   /**
-   * Get cached epoch for a feed (or null if not cached)
+   * Get cached key generation for a feed (or null if not cached)
    */
-  getCachedEpoch(ownerId: string): number | null {
+  getCachedKeyGeneration(ownerId: string): number | null {
     const cached = this.getCachedCEK(ownerId);
-    return cached ? cached.epoch : null;
+    return cached ? cached.keyGeneration : null;
   }
 
   // ============================================================
@@ -430,7 +432,7 @@ class PrivateFeedKeyStore {
    */
   clearOwnerKeys(): void {
     removeItem(KEY_FEED_SEED);
-    removeItem(KEY_CURRENT_EPOCH);
+    removeItem(KEY_CURRENT_KEY_GENERATION);
     removeItem(KEY_REVOKED_LEAVES);
     removeItem(KEY_AVAILABLE_LEAVES);
     removeItem(KEY_RECIPIENT_MAP);
@@ -471,7 +473,7 @@ class PrivateFeedKeyStore {
    */
   initializeOwnerState(seed: Uint8Array, treeCapacity: number = 1024): void {
     this.storeFeedSeed(seed);
-    this.storeCurrentEpoch(1);
+    this.storeCurrentKeyGeneration(1);
     this.storeRevokedLeaves([]);
     this.storeRecipientMap({});
 
@@ -489,11 +491,11 @@ class PrivateFeedKeyStore {
   initializeFollowerState(
     ownerId: string,
     pathKeys: NodeKey[],
-    grantEpoch: number,
+    grantKeyGeneration: number,
     currentCEK: Uint8Array
   ): void {
     this.storePathKeys(ownerId, pathKeys);
-    this.storeCachedCEK(ownerId, grantEpoch, currentCEK);
+    this.storeCachedCEK(ownerId, grantKeyGeneration, currentCEK);
   }
 
   /**

@@ -6,6 +6,7 @@ import { CurrencyDollarIcon } from '@heroicons/react/24/outline'
 import { logger } from '@/lib/logger'
 import { useAuth } from '@/contexts/auth-context'
 import { tipHistoryService, totalTipped, TIP_PAGE_LIMIT, type ProvedTip } from '@/lib/services/tip-history-service'
+import { yappIsLocked } from '@/lib/contract-topology'
 
 interface PostTipsProps {
   postId: string
@@ -42,6 +43,8 @@ export function PostTips({ postId, authorId }: PostTipsProps) {
     setTips(null)
     setNames(new Map())
     setBlocked(new Set())
+    // Where YAPP is locked (v10) nothing can be transferred, so there is no tip to find.
+    if (yappIsLocked()) return
     // The proved tips are the payload; names and block status only decorate
     // them. A failed profile or block lookup must not erase tips that DID load,
     // so the decorations run in their own chains with their own catches.

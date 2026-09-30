@@ -1,10 +1,14 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { Post, Reply, ReplyThread } from '@/lib/types'
 import { postService, replyToPost } from '@/lib/services/post-service'
 import { replyService } from '@/lib/services/reply-service'
 import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
-import { hasFlatThreads, referencesMayDangle, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
+import { isBareRepost, quotedTargetIdOf } from '@/lib/feed/quote-reposts'
+import { hasFlatThreads, referencesMayDangle, authorDeletesLeaveHoles, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
+import { deletedReplyStubs, unloadedReplyParents } from '@/lib/feed/deleted-reply-stubs'
+import { provenAbsent } from '@/lib/feed/prove-absent'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
@@ -186,7 +190,8 @@ function nestUnderReply(
 }
 
 /**
- * Assemble a thread from the flat reply list a v9 `rootAndTime` query returns.
+ * Assemble a thread from the flat reply list a v9 `rootAndTime` (v10 `repliesOf`)
+ * query returns.
  *
  * Every reply in a thread names the same `rootPostId`, so one query has all of
  * them and the shape is reconstructed here rather than discovered by walking the
@@ -238,6 +243,17 @@ function assembleFlatThread(mainPost: Post, allReplies: Reply[]): ReplyThread[] 
 }
 
 /**
+ * The reply ids `replies` nest under that are proved deleted (v10, where an
+ * author's delete removes the reply and its children stay). Empty elsewhere,
+ * and when nothing is missing.
+ */
+async function deletedReplyParents(replies: Reply[]): Promise<Set<string>> {
+  if (!authorDeletesLeaveHoles()) return new Set()
+  const candidates = unloadedReplyParents(replies)
+  return candidates.length > 0 ? provenAbsent('reply', candidates) : new Set()
+}
+
+/**
  * Hook for loading and managing post detail state.
  *
  * Handles:
@@ -262,6 +278,7 @@ export function usePostDetail({
   postId,
   enabled = true
 }: UsePostDetailOptions): UsePostDetailResult {
+  const router = useRouter()
   // Get initial navigation data synchronously from store (for useState initializers)
   // This must be done outside hooks to capture the value at component mount time
   const getInitialData = () => {
@@ -359,8 +376,9 @@ export function usePostDetail({
       const rootPost = await postService.getPostById(rootId, { skipEnrichment: true })
       if (rootPost) chain.push(rootPost)
       // The reply's `rootPostId` is a deletableDocument reference on v9: a
-      // missing root is a moderator takedown, not a transport fault, and the
-      // page says so instead of showing an orphaned reply.
+      // missing root is a moderator takedown (or on v10 its author's delete),
+      // not a transport fault, and the page says so instead of showing an
+      // orphaned reply.
       else if (referencesMayDangle()) removed.push(rootId)
     } else {
       let currentParentId: string | undefined = mainPost.parentId
@@ -452,6 +470,15 @@ export function usePostDetail({
         return
       }
 
+      // v10: a bare repost has no page of its own. It renders as its target,
+      // and replies, likes and tips must act on the target, not on the repost
+      // document, so its link goes to the target (a reply opens in its thread).
+      const repostTarget = isBareRepost(loadedPost) ? quotedTargetIdOf(loadedPost) : undefined
+      if (repostTarget) {
+        router.replace(`/post?id=${repostTarget}`)
+        return
+      }
+
       threadRootIdRef.current = threadRootIdOf(loadedPost)
 
       // If the loaded item is a reply, show the context it hangs off
@@ -493,19 +520,23 @@ export function usePostDetail({
       let replyThreads: ReplyThread[]
 
       if (hasFlatThreads()) {
-        // One query for the entire thread, keyed on the root every reply shares.
-        const result = await replyService.getReplies(threadRootIdOf(loadedPost))
+        // One query for the entire thread, keyed on the root every reply shares
+        // (v9: oldest first across branches; v10: grouped by parent, direct
+        // replies first — see replyService.getReplies).
+        const rootId = threadRootIdOf(loadedPost)
+        const result = await replyService.getReplies(rootId)
         if (!isCurrent()) return
         replies = result.documents
         replyCursorRef.current = result.nextCursor
         setHasMoreReplies(Boolean(result.nextCursor))
 
         // Viewing a reply renders a slice of the thread — its own subtree — but
-        // the thread query pages oldest-first from the root, so on threads
-        // longer than one page that slice can sit entirely past the loaded
-        // page. Landing here from a "Continue thread" row would then show
+        // the thread query pages from the root (oldest first on v9, parent by
+        // parent on v10), so on threads longer than one page that slice can sit
+        // entirely past the loaded page. Landing here from a "Continue thread" row would then show
         // "No replies yet" despite the row promising more. Fetch the focused
-        // subtree level by level (targeted replyToReplyId queries) down to the
+        // subtree level by level (targeted replyToReplyId queries, pinned to
+        // the thread root on v10) down to the
         // full depth the page renders: every rendered reply then either shows
         // its children or is a nested item whose own Continue row (backed by
         // enrichment counts) leads onward.
@@ -513,7 +544,7 @@ export function usePostDetail({
           const renderedDepth = MAX_NESTED_DEPTH + 1
           let frontier = [loadedPost.id]
           for (let depth = 0; depth < renderedDepth && frontier.length > 0; depth++) {
-            const childrenMap = await replyService.getNestedReplies(frontier)
+            const childrenMap = await replyService.getNestedReplies(frontier, { rootPostId: rootId })
             if (!isCurrent()) return
             const known = new Set(replies.map((reply) => reply.id))
             const fresh = Array.from(childrenMap.values()).flat()
@@ -525,6 +556,12 @@ export function usePostDetail({
               .map((reply) => reply.id)
           }
         }
+
+        // A reply whose parent reply was deleted keeps its place under a
+        // deleted-parent stub instead of dropping out with the parent.
+        const deletedParents = await deletedReplyParents(replies)
+        if (!isCurrent()) return
+        replies = [...deletedReplyStubs(replies, deletedParents), ...replies]
 
         replyThreads = assembleFlatThread(loadedPost, replies)
       } else {
@@ -554,7 +591,7 @@ export function usePostDetail({
         setIsLoadingReplies(false)
       }
     }
-  }, [postId, enabled, enrich, fetchReplyChain])
+  }, [postId, enabled, enrich, fetchReplyChain, router])
 
   /**
    * Fetch the next page of the thread (v9 only — v2's `getReplies` covers one
@@ -571,13 +608,17 @@ export function usePostDetail({
       // Navigating away mid-flight would otherwise merge this thread's next page
       // into whatever post the page moved on to.
       if (threadRootIdRef.current !== rootId) return
+      // A parent on an earlier page is present, so only deleted ones prove absent.
+      const deletedParents = await deletedReplyParents(result.documents)
+      if (threadRootIdRef.current !== rootId) return
       replyCursorRef.current = result.nextCursor
       setHasMoreReplies(Boolean(result.nextCursor))
 
       setState(current => {
         if (!current.post) return current
         const known = new Set(current.replies.map((reply) => reply.id))
-        const merged = [...current.replies, ...result.documents.filter((reply) => !known.has(reply.id))]
+        const loaded = [...current.replies, ...result.documents.filter((reply) => !known.has(reply.id))]
+        const merged = [...deletedReplyStubs(loaded, deletedParents), ...loaded]
         return { ...current, replies: merged, replyThreads: assembleFlatThread(current.post, merged) }
       })
     } catch (err) {

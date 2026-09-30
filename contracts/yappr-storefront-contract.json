@@ -148,6 +148,9 @@
             {
               "$createdAt": "asc"
             }
+          ],
+          "skipIfAbsent": [
+            "section"
           ]
         },
         {
@@ -180,7 +183,7 @@
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "store",
-            "propertyAgreement": {
+            "where": {
               "$ownerId": "$ownerId"
             }
           }
@@ -363,7 +366,7 @@
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "store",
-            "propertyAgreement": {
+            "where": {
               "$ownerId": "$ownerId"
             }
           }
@@ -526,7 +529,8 @@
         "storeId",
         "sellerId",
         "encryptedPayload",
-        "nonce"
+        "nonce",
+        "storeStatus"
       ],
       "properties": {
         "storeId": {
@@ -536,12 +540,13 @@
           "maxItems": 32,
           "contentMediaType": "application/x.dash.dpp.identifier",
           "position": 0,
-          "description": "ID of the store; its owner is copied into sellerId",
+          "description": "ID of the store; its owner is copied into sellerId and its status into storeStatus",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "store",
-            "propertyAgreement": {
-              "sellerId": "$ownerId"
+            "where": {
+              "$ownerId": "sellerId",
+              "status": "storeStatus"
             }
           }
         },
@@ -569,12 +574,32 @@
           "position": 3,
           "byteArray": true,
           "description": "24-byte nonce for XChaCha20-Poly1305 encryption"
+        },
+        "storeStatus": {
+          "type": "string",
+          "enum": [
+            "active",
+            "paused",
+            "closed"
+          ],
+          "position": 4,
+          "description": "The store's status when the order was placed, consensus-bound to store.status; must be active"
         }
       },
       "description": "An encrypted order created by a buyer. Permanent so status updates and reviews can reference it. The buyer IS $ownerId, and `sellerId` is consensus-equal to the store's owner, so both parties are facts rather than buyer-supplied claims; reviews and status updates bind to them.",
       "additionalProperties": false,
       "documentsMutable": false,
-      "canBeDeleted": false
+      "canBeDeleted": false,
+      "propertyConstraints": {
+        "storeIsOpen": {
+          "equal": [
+            "storeStatus",
+            {
+              "const": "active"
+            }
+          ]
+        }
+      }
     },
     "orderStatusUpdate": {
       "type": "object",
@@ -631,9 +656,9 @@
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "storeOrder",
-            "propertyAgreement": {
-              "buyerId": "$ownerId",
-              "$ownerId": "sellerId"
+            "where": {
+              "$ownerId": "buyerId",
+              "sellerId": "$ownerId"
             }
           }
         },
@@ -680,7 +705,7 @@
           "description": "Optional message to buyer"
         }
       },
-      "description": "A status update for an order (append-only history). Only the order's SELLER can write one \u2014 consensus gates the writer against the order's sellerId \u2014 so there is nothing left for the app to second-guess. buyerId is bound to the order's owner so buyers keep a status feed.",
+      "description": "A status update for an order (append-only history). Only the order's SELLER can write one — consensus gates the writer against the order's sellerId — so there is nothing left for the app to second-guess. buyerId is bound to the order's owner so buyers keep a status feed.",
       "additionalProperties": false,
       "documentsMutable": false
     },
@@ -803,7 +828,7 @@
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "storeOrder",
-            "propertyAgreement": {
+            "where": {
               "storeId": "storeId",
               "sellerId": "sellerId",
               "$ownerId": "$ownerId"
@@ -850,7 +875,9 @@
           "amount": 3
         }
       },
-      "canBeDeletedByModerators": true
+      "moderatorAbilities": {
+        "delete": true
+      }
     },
     "itemReview": {
       "type": "object",
@@ -949,7 +976,7 @@
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "storeItem",
-            "propertyAgreement": {
+            "where": {
               "storeId": "storeId"
             }
           }
@@ -965,7 +992,7 @@
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "storeOrder",
-            "propertyAgreement": {
+            "where": {
               "storeId": "storeId",
               "$ownerId": "$ownerId"
             }
@@ -1000,7 +1027,9 @@
           "amount": 1
         }
       },
-      "canBeDeletedByModerators": true
+      "moderatorAbilities": {
+        "delete": true
+      }
     },
     "savedAddress": {
       "type": "object",

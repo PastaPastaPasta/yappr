@@ -8,7 +8,14 @@ const mocks = vi.hoisted(() => ({
   seedUsernames: vi.fn(),
   seedProfiles: vi.fn(() => new Map()),
   resolveAuthors: vi.fn(),
+  getOwnQuotes: vi.fn(),
+  countRepliesForPosts: vi.fn(),
+  getUserLikedPostIds: vi.fn(),
 }));
+// The v10 reads beside the composite (own quotes, multi-root reply counts).
+vi.mock('@/lib/services/post-service', () => ({ postService: { getOwnQuotes: mocks.getOwnQuotes } }));
+vi.mock('@/lib/services/reply-service', () => ({ replyService: { countRepliesForPosts: mocks.countRepliesForPosts } }));
+vi.mock('@/lib/services/like-service', () => ({ likeService: { getUserLikedPostIds: mocks.getUserLikedPostIds } }));
 vi.mock('@/lib/services/evo-sdk-service', () => ({ getEvoSdk: mocks.getEvoSdk }));
 vi.mock('@/lib/services/dpns-service', () => ({ dpnsService: { seedUsernames: mocks.seedUsernames } }));
 vi.mock('@/lib/services/unified-profile-service', () => ({
@@ -43,6 +50,7 @@ beforeEach(() => {
   vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9');
   mocks.getEvoSdk.mockResolvedValue({ documents: { composite: mocks.composite } });
   mocks.composite.mockResolvedValue(result());
+  mocks.getUserLikedPostIds.mockResolvedValue(new Set());
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -184,5 +192,131 @@ describe('composite feed page', () => {
     await expect(loadCompositeFeedPage({ language: 'en', limit: 20 })).rejects.toThrow('incomplete composite result');
     expect(mocks.seedUsernames).not.toHaveBeenCalled();
     expect(mocks.seedProfiles).not.toHaveBeenCalled();
+  });
+});
+
+describe('composite feed page on v10', () => {
+  /** Answer every sub-query with empty results of its own kind. */
+  const echo = (page: Record<string, unknown>[]) => async (query: { subQueries: { kind?: string }[] }) => ({
+    pageDocuments: page,
+    subResults: query.subQueries.map((sub) => sub.kind === 'counts'
+      ? { kind: 'counts', counts: new Map() }
+      : { kind: 'documents', documents: [] }),
+  });
+  type Sub = { documentType: string; kind?: string; where?: unknown[][]; bind?: { field: string } };
+
+  beforeEach(() => vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10'));
+
+  it('pins a single-thread reply page\'s child-count slot to its root and has no repost slot', async () => {
+    mocks.composite.mockImplementation(echo([docs[0], docs[1]]));
+    const { transformRawPost } = await import('./transform-raw-post');
+    const sources = [docs[0], docs[1]].map((doc) => ({ ...transformRawPost(doc), targetKind: 'reply' as const, rootPostId: 'rootA' }));
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    await loadCompositeFeedPage({ language: 'en', limit: 2, kind: 'reply', sourcePosts: sources, documentIds: sources.map((post) => post.id) });
+    const subs: Sub[] = mocks.composite.mock.calls[0][0].subQueries;
+    expect(subs.find((sub) => sub.documentType === 'reply' && sub.kind === 'counts'))
+      .toMatchObject({ where: [['rootPostId', '==', 'rootA']], bind: { field: 'replyToReplyId' } });
+    expect(subs.some((sub) => sub.documentType === 'repost')).toBe(false);
+    expect(mocks.countRepliesForPosts).not.toHaveBeenCalled();
+  });
+
+  it('counts a reply page spanning several threads separately, per root', async () => {
+    mocks.composite.mockImplementation(echo([docs[0], docs[1]]));
+    mocks.countRepliesForPosts.mockResolvedValue(new Map([[docs[0].$id, 4], [docs[1].$id, 1]]));
+    const { transformRawPost } = await import('./transform-raw-post');
+    const sources = [docs[0], docs[1]].map((doc, i) => ({ ...transformRawPost(doc), targetKind: 'reply' as const, rootPostId: `root${i}` }));
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const page = await loadCompositeFeedPage({ language: 'en', limit: 2, kind: 'reply', sourcePosts: sources, documentIds: sources.map((post) => post.id) });
+    const subs: Sub[] = mocks.composite.mock.calls[0][0].subQueries;
+    expect(subs.some((sub) => sub.documentType === 'reply' && sub.kind === 'counts')).toBe(false);
+    expect(mocks.countRepliesForPosts).toHaveBeenCalledWith([docs[0].$id, docs[1].$id], 'reply', new Map([[docs[0].$id, 'root0'], [docs[1].$id, 'root1']]));
+    expect(page.preloaded.stats?.get(docs[0].$id)?.replies).toBe(4);
+    expect(page.posts[1].replies).toBe(1);
+  });
+
+  it('reads the viewer\'s own quotes and reposts beside the composite, not inside it', async () => {
+    mocks.composite.mockImplementation(echo(docs));
+    mocks.getOwnQuotes.mockResolvedValue(new Map([[docs[2].$id, { id: 'myRepost', bare: true }]]));
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const page = await loadCompositeFeedPage({ language: 'en', limit: 20, currentUserId: ownerIds[0] });
+    const subs: Sub[] = mocks.composite.mock.calls[0][0].subQueries;
+    // No $ownerId-bound post sub-query: beside an ownerAndTime page it would be refused.
+    expect(subs.filter((sub) => sub.documentType === 'post').map((sub) => sub.kind ?? 'documents')).toEqual(['counts', 'documents']);
+    expect(subs.some((sub) => sub.documentType === 'repost')).toBe(false);
+    expect(mocks.getOwnQuotes).toHaveBeenCalledWith(ownerIds[0], docs.map((doc) => doc.$id), 'post');
+    expect(page.preloaded.interactions?.get(docs[2].$id)).toEqual({ liked: false, reposted: true, bookmarked: false, ownQuote: { id: 'myRepost', bare: true } });
+    expect(page.preloaded.interactions?.get(docs[0].$id)?.reposted).toBe(false);
+  });
+
+  it.each([
+    ['post', 'like'],
+    ['reply', 'likeReply'],
+  ] as const)('reads the viewer\'s %s hearts beside the composite, not inside it: byPost/byReply also carry the like counts', async (kind, docType) => {
+    mocks.composite.mockImplementation(echo(docs));
+    mocks.getUserLikedPostIds.mockResolvedValue(new Set([docs[1].$id]));
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const page = await loadCompositeFeedPage({ language: 'en', limit: 20, kind, currentUserId: ownerIds[0] });
+    const subs: Sub[] = mocks.composite.mock.calls[0][0].subQueries;
+    expect(subs.filter((sub) => sub.documentType === docType).map((sub) => sub.kind ?? 'documents')).toEqual(['counts']);
+    expect(mocks.getUserLikedPostIds).toHaveBeenCalledWith(ownerIds[0], docs.map((doc) => doc.$id), kind);
+    expect(page.preloaded.interactions?.get(docs[1].$id)?.liked).toBe(true);
+    expect(page.preloaded.interactions?.get(docs[0].$id)?.liked).toBe(false);
+  });
+});
+
+describe('composite feed page on v9', () => {
+  it('leaves the viewer-likes slot without a limit: byLiker is value-bounded and refuses one', async () => {
+    const response = result();
+    response.subResults.push({ kind: 'documents', documents: [] }, { kind: 'documents', documents: [] });
+    mocks.composite.mockResolvedValue(response);
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    await loadCompositeFeedPage({ language: 'en', limit: 20, currentUserId: ownerIds[0] });
+    const subs: { documentType: string; kind?: string; limit?: number }[] = mocks.composite.mock.calls[0][0].subQueries;
+    const myLikes = subs.find((sub) => sub.documentType === 'like' && sub.kind === undefined);
+    expect(myLikes).toBeDefined();
+    expect(myLikes).not.toHaveProperty('limit');
+  });
+});
+
+describe('composite feed page on v10 (DashPay profile + yapprProfile)', () => {
+  const answerEvery = async (query: { subQueries: Array<{ kind?: string }> }) => ({
+    pageDocuments: docs,
+    subResults: query.subQueries.map((sub) => sub.kind === 'counts'
+      ? { kind: 'counts', counts: new Map() }
+      : { kind: 'documents', documents: [] }),
+  });
+  const profileSubQueries = (query: { subQueries: Array<{ dataContractId?: string; documentType: string }> }) =>
+    query.subQueries.filter((sub) => sub.documentType === 'profile' || sub.documentType === 'yapprProfile')
+      .map((sub) => [sub.dataContractId, sub.documentType]);
+
+  it('binds the DashPay profile and, while the budget allows, the extension', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10');
+    mocks.composite.mockImplementation(answerEvery);
+    const { DASHPAY_CONTRACT_ID, YAPPR_CONTRACT_ID } = await import('@/lib/constants');
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const page = await loadCompositeFeedPage({ language: 'en', limit: 20 });
+    const query = mocks.composite.mock.calls[0][0];
+    expect(query.subQueries.length).toBeLessThanOrEqual(10);
+    expect(profileSubQueries(query)).toEqual([
+      [DASHPAY_CONTRACT_ID, 'profile'], [DASHPAY_CONTRACT_ID, 'profile'],
+      [YAPPR_CONTRACT_ID, 'yapprProfile'], [YAPPR_CONTRACT_ID, 'yapprProfile'],
+    ]);
+    expect(mocks.seedProfiles).toHaveBeenCalledWith([], ownerIds, 'extension');
+    expect(page.preloaded.avatars?.size).toBe(4);
+  });
+
+  it('binds the extension on a logged-in page too, since the viewer\'s hearts are read beside the composite', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10');
+    mocks.composite.mockImplementation(answerEvery);
+    const { DASHPAY_CONTRACT_ID, YAPPR_CONTRACT_ID } = await import('@/lib/constants');
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const page = await loadCompositeFeedPage({ language: 'en', limit: 20, currentUserId: ownerIds[0] });
+    const query = mocks.composite.mock.calls[0][0];
+    expect(query.subQueries.length).toBeLessThan(10);
+    expect(profileSubQueries(query)).toEqual([[DASHPAY_CONTRACT_ID, 'profile'], [YAPPR_CONTRACT_ID, 'yapprProfile']]);
+    expect(mocks.seedProfiles).toHaveBeenCalledWith([], ownerIds, 'extension');
+    // The extension was read, so a recipe avatar cannot be hiding in it.
+    expect(page.preloaded.avatars?.size).toBe(4);
+    expect(page.preloaded.profiles?.size).toBe(4);
   });
 });

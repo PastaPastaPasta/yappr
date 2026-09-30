@@ -3,6 +3,7 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
+import { postsHaveLanguage } from '@/lib/contract-topology';
 import { documentToPlainObject, queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 
@@ -53,6 +54,26 @@ export async function queryPostsByOwnersSince(
 }
 
 /**
+ * The newest-first post timeline after `sinceTimestamp`: the per-language
+ * `languageTimeline [language, $createdAt]` where posts carry a language (v2,
+ * v9), the one global `timeline [$createdAt]` where they do not (v10, which
+ * ignores `language`). An empty `language` drops the language pin.
+ */
+export function postTimelineClauses(
+  language: string,
+  sinceTimestamp = 0
+): { where: DocumentWhereClause[]; orderBy: DocumentOrderByClause[] } {
+  const where: DocumentWhereClause[] = [['$createdAt', '>', sinceTimestamp]];
+  const orderBy: DocumentOrderByClause[] = [['$createdAt', 'desc']];
+
+  if (language && postsHaveLanguage()) {
+    where.unshift(['language', '==', language]);
+    orderBy.unshift(['language', 'asc']);
+  }
+  return { where, orderBy };
+}
+
+/**
  * Query all posts newer than a timestamp.
  */
 export async function queryPostsSince(
@@ -61,13 +82,7 @@ export async function queryPostsSince(
   language = 'en',
   contractId = YAPPR_CONTRACT_ID
 ): Promise<Record<string, unknown>[]> {
-  const where: DocumentWhereClause[] = [['$createdAt', '>', sinceTimestamp]];
-  const orderBy: DocumentOrderByClause[] = [['$createdAt', 'desc']];
-
-  if (language) {
-    where.unshift(['language', '==', language]);
-    orderBy.unshift(['language', 'asc']);
-  }
+  const { where, orderBy } = postTimelineClauses(language, sinceTimestamp);
 
   return queryRawDocuments({
     dataContractId: contractId,

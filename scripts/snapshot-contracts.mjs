@@ -8,7 +8,9 @@
  *   NETWORK=testnet CONTRACT_IDS=<id>,<id> node scripts/snapshot-contracts.mjs
  *
  * Ids come from every `NEXT_PUBLIC_*CONTRACT_ID` in the network's env file
- * (`.env.devnet` for devnet, `.env.testing` for testnet) plus `CONTRACT_IDS`.
+ * (`.env.devnet` for devnet, `.env.testing` for testnet) plus `CONTRACT_IDS`,
+ * plus the DashPay system contract when the env file sets the v10 topology
+ * (v10's base profile, which the app preloads).
  * Entries already in the bundle are kept and refreshed, so one file per network
  * serves every deployment on it; `--prune` drops every entry this run did not
  * request, for a chain that was wiped and re-cut. Re-run after registering or
@@ -20,6 +22,7 @@ import { join } from 'node:path';
 import { PlatformVersion } from '@dashevo/evo-sdk';
 import { connectSdk, devnetName, network } from './sdk-env.mjs';
 import { readEnvFile, REPO_ROOT } from './derive-identities.mjs';
+import { DASHPAY_CONTRACT_ID } from './seed/seed-lib.mjs';
 
 const prune = process.argv.includes('--prune');
 const net = network();
@@ -28,9 +31,11 @@ const envFile = net === 'devnet' ? '.env.devnet' : net === 'testnet' ? '.env.tes
 
 const ids = new Set();
 if (envFile) {
-  for (const [name, value] of Object.entries(readEnvFile(join(REPO_ROOT, envFile)))) {
+  const env = readEnvFile(join(REPO_ROOT, envFile));
+  for (const [name, value] of Object.entries(env)) {
     if (/CONTRACT_ID$/.test(name) && value) ids.add(value);
   }
+  if (env.NEXT_PUBLIC_CONTRACT_TOPOLOGY === 'v10') ids.add(DASHPAY_CONTRACT_ID);
 }
 for (const id of (process.env.CONTRACT_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean)) {
   ids.add(id);

@@ -346,7 +346,7 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
     // Capture request ID to detect stale responses
     const currentRequestId = ++requestIdRef.current
 
-    if (!post.encryptedContent || post.epoch == null || !post.nonce) {
+    if (!post.encryptedContent || post.keyGeneration == null || !post.nonce) {
       if (currentRequestId === requestIdRef.current) {
         setState({ status: 'error' })
       }
@@ -363,7 +363,7 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
     setState({ status: 'loading' })
 
     try {
-      const { privateFeedFollowerService, privateFeedKeyStore, privateFeedCryptoService, MAX_EPOCH } = await import('@/lib/services')
+      const { privateFeedFollowerService, privateFeedKeyStore, privateFeedCryptoService, MAX_KEY_GENERATION } = await import('@/lib/services')
 
       // Check if this request is stale
       if (currentRequestId !== requestIdRef.current) return
@@ -390,19 +390,19 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
         const cached = privateFeedKeyStore.getCachedCEK(encryptionSourceOwnerId)
         let cek: Uint8Array
 
-        if (cached && cached.epoch === post.epoch) {
+        if (cached && cached.keyGeneration === post.keyGeneration) {
           cek = cached.cek
-        } else if (cached && cached.epoch > post.epoch) {
-          cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, post.epoch)
+        } else if (cached && cached.keyGeneration > post.keyGeneration) {
+          cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, post.keyGeneration)
         } else {
-          const chain = privateFeedCryptoService.generateEpochChain(feedSeed, MAX_EPOCH)
-          cek = chain[post.epoch]
+          const chain = privateFeedCryptoService.generateCekChain(feedSeed, MAX_KEY_GENERATION)
+          cek = chain[post.keyGeneration]
         }
 
         const ownerIdBytes = identifierToBytes(encryptionSourceOwnerId)
         const decryptedContent = privateFeedCryptoService.decryptPostContent(
           cek,
-          { ciphertext: post.encryptedContent, nonce: post.nonce, epoch: post.epoch },
+          { ciphertext: post.encryptedContent, nonce: post.nonce, keyGeneration: post.keyGeneration },
           ownerIdBytes
         )
 
@@ -424,7 +424,7 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
 
       const result = await privateFeedFollowerService.decryptPost({
         encryptedContent: post.encryptedContent,
-        epoch: post.epoch,
+        keyGeneration: post.keyGeneration,
         nonce: post.nonce,
         $ownerId: encryptionSourceOwnerId,
       }, user?.identityId)

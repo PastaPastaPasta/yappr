@@ -86,7 +86,7 @@ function printAudit(documentSchemas, dataContract) {
       `canBeDeleted=${schema.canBeDeleted ?? 'default'}`,
       ...(schema.indexOnly ? ['indexOnly'] : []),
       ...(schema.documentsKeepHistory ? ['keepHistory'] : []),
-      ...(schema.canBeDeletedByModerators ? ['moderatorDelete'] : []),
+      ...(schema.moderatorAbilities ? [`moderators=${JSON.stringify(schema.moderatorAbilities)}`] : []),
       ...(schema.tokenCost?.create ? [`create=${schema.tokenCost.create.amount} YAPP`] : []),
     ];
     const indices = (schema.indices ?? []).map((index) => {
@@ -100,7 +100,7 @@ function printAudit(documentSchemas, dataContract) {
     });
     const refs = Object.entries(schema.properties)
       .filter(([, property]) => property.refersTo)
-      .map(([property, { refersTo }]) => `${property}→${refersTo.documentType ?? refersTo.type}${refersTo.type === 'deletableDocument' ? '?' : ''}${refersTo.propertyAgreement ? `{${Object.keys(refersTo.propertyAgreement).join(',')}}` : ''}`);
+      .map(([property, { refersTo }]) => `${property}→${refersTo.documentType ?? refersTo.type}${refersTo.type === 'deletableDocument' ? '?' : ''}${refersTo.where ? `{${Object.values(refersTo.where).join(',')}}` : ''}`);
     console.log(`  ${name.padEnd(18)} ${flags.join(' ')}`);
     console.log(`  ${''.padEnd(18)} ${indices.join(' ')}`);
     if (refs.length > 0) console.log(`  ${''.padEnd(18)} refersTo: ${refs.join(' ')}`);

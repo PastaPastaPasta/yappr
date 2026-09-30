@@ -5,21 +5,25 @@
  * a STRANGER; reviews cost YAPP, so the buyer and stranger are topped up first.
  *
  *   NETWORK=devnet node scripts/verify-storefront.mjs --contract <id> \
- *     [--seller 200] [--buyer 201] [--stranger 202] [--moderator 203] [--yapp 60] [--only s5,s7]
+ *     [--seller 200] [--buyer 201] [--stranger 202] [--moderator maker|personal|<persona>] [--yapp 60] [--only s5,s7]
  *
- * `--moderator` is the persona the contract was published under (its owner) or
- * one appointed at publish time; v3 (beta.3) is a moderated cut, so s14/s15
+ * `--moderator` is the contract's owner or one it appointed at publish time:
+ * `maker` (the default; it publishes and is appointed), `personal` (ledger
+ * persona 900) or any seed-ledger persona index; v3 (beta.3) is a moderated cut, so s14/s15
  * ban the stranger and take reviews down. v4 (beta.4) keeps a warning list
  * (s17), stores `tags`/`imageUrls` as typed string arrays (s18) and refuses a
  * seller reviewing an order on their own store (s19, distinctFrom). The beta.5
  * re-cut adds `propertyConstraints` (s20: a price or a flat rate names its
  * currency; a tiered zone carries its tiers; each breach is refused 10422).
+ * The beta.7 cut (storefront topology v5) fixes QA D-25: an order copies its
+ * store's `status` into `storeStatus` through the storeId `where` (40127 on a
+ * stale copy) and `storeIsOpen` refuses any status but active (10422): s21.
  *   node scripts/verify-storefront.mjs --self-test   # offline: contract declares what the cases assert
  */
 import bs58 from 'bs58';
 import {
   DELETE_FORBIDDEN, DUPLICATE_UNIQUE, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND,
-  TOKEN_AGREEMENT_MISSING, decodeIntGroupKey, id32, runBattery, settle,
+  MODERATOR_FLAG, TOKEN_AGREEMENT_MISSING, decodeIntGroupKey, id32, runBattery, settle,
 } from './battery-lib.mjs';
 import { describeErr, randomEntropy } from './seed/seed-lib.mjs';
 import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, NOT_DISTINCT, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
@@ -29,8 +33,8 @@ const CONTRACT_FILE = 'yappr-storefront-contract.json';
 const REVIEW_COST = { storeReview: 3n, itemReview: 1n };
 const DEFAULT_YAPP = 60n;
 const RATINGS = [1, 2, 3, 4, 5];
-// A writer gate (`propertyAgreement` with `$ownerId` on the REFERRING side) fails
-// as the same 40127 a value pair does — the signer IS the referring side.
+// A writer gate (a `where` entry valued `$ownerId`: the signer on the REFERRING
+// side) fails as the same 40127 a value pair does.
 const WRITER_GATE = PROPERTY_MISMATCH;
 
 // ---- Document shapes --------------------------------------------------------
@@ -39,8 +43,9 @@ const storeData = ({ name, status = 'active' }) => ({ name, status, description:
 const itemData = ({ storeId, title, status = 'active', tags, imageUrls }) => ({ storeId, title, status, basePrice: 1000, currency: 'USD', ...(tags ? { tags } : {}), ...(imageUrls ? { imageUrls } : {}) });
 const zoneData = ({ storeId, name }) => ({ storeId, name, rateType: 'flat', flatRate: 500, currency: 'USD', priority: 1 });
 // No buyerId anywhere: the buyer is the order's $ownerId, and the documents that
-// need to name it bind to that through propertyAgreement.
-const orderData = ({ storeId, sellerId }) => ({ storeId, sellerId, encryptedPayload: crypto.getRandomValues(new Uint8Array(64)), nonce: crypto.getRandomValues(new Uint8Array(24)) });
+// need to name it bind to that through a `where`. `storeStatus` is the store's
+// status, which v5 requires (QA D-25) and only an active store satisfies.
+const orderData = ({ storeId, sellerId, storeStatus = 'active' }) => ({ storeId, sellerId, storeStatus, encryptedPayload: crypto.getRandomValues(new Uint8Array(64)), nonce: crypto.getRandomValues(new Uint8Array(24)) });
 const statusData = ({ orderId, buyerId, status = 'shipped', message }) => ({ orderId, buyerId, status, ...(message ? { message } : {}) });
 const storeReviewData = ({ storeId, orderId, sellerId, rating, title }) => ({ storeId, orderId, sellerId, rating, ...(title ? { title } : {}) });
 const itemReviewData = ({ storeId, itemId, orderId, rating }) => ({ storeId, itemId, orderId, rating });
@@ -406,41 +411,73 @@ async function caseS20PropertyConstraints(ctx) {
   // The accepted side: s1c/s1d (priced items) and s2c (a flat zone with rate and currency).
 }
 
+async function caseS21StoreMustBeOpen(ctx) {
+  const { battery, buyer, stranger, run } = ctx;
+  console.log('\n--- s21. QA D-25: only an active store takes orders (storeStatus bound to store.status, storeIsOpen) ---');
+  // The stranger's store (s1b) is paused and reopened by its own owner; the
+  // seller's store stays active for every other case.
+  const storeId = ctx.strangerStoreId;
+  if (!storeId) { battery.check('s21 fixture', false, 'no stranger store'); return; }
+  const place = (label, expect, storeStatus) => battery.probeCreate(label, expect, buyer, 'storeOrder', orderData({ storeId: id32(storeId), sellerId: id32(stranger.ownerId), storeStatus }));
+  const setStatus = async (status) => battery.probeReplace(`s21 the owner sets the store ${status}`, null, stranger, 'store', storeId, storeData({ name: `Cy Store ${run}`, status }), await battery.revisionOf('store', storeId));
+  try {
+    await place('s21a an order at the active store lands', null, 'active');
+    // The rule runs in the structure stage, before the `where` state read: a
+    // non-active copy is 10422 whatever the store says.
+    await place('s21b an order copying "paused" to an active store is refused (10422 storeIsOpen, before the where)', constraintViolation('storeIsOpen'), 'paused');
+    await setStatus('paused');
+    await place('s21c an order at the paused store is refused (40127: storeStatus active no longer matches)', PROPERTY_MISMATCH, 'active');
+    await place('s21d copying the true "paused" status is refused by the rule (10422 storeIsOpen)', constraintViolation('storeIsOpen'), 'paused');
+    await setStatus('closed');
+    await place('s21e an order at the closed store is refused (10422 storeIsOpen)', constraintViolation('storeIsOpen'), 'closed');
+  } finally {
+    await setStatus('active');
+  }
+  await place('s21f the reopened store takes orders again', null, 'active');
+}
+
 const CASES = new Map([
   ['s1', caseS1Fixtures], ['s2', caseS2ItemRefs], ['s3', caseS3Orders], ['s4', caseS4Status],
   ['s5', caseS5StoreReviews], ['s6', caseS6ItemReviews], ['s7', caseS7Averages], ['s8', caseS8Rankings],
   ['s9', caseS9OrderCounts], ['s10', caseS10Composite], ['s11', caseS11Permanence], ['s12', caseS12Tokens],
   ['s13', caseS13Immutable], ['s14', caseS14Ban], ['s15', caseS15ModeratorDelete],
   ['s17', caseS17Warn], ['s18', caseS18TypedArrays], ['s19', caseS19SelfReview], ['s20', caseS20PropertyConstraints],
+  ['s21', caseS21StoreMustBeOpen],
 ]);
 
 await runBattery({
   label: 'storefront',
   contract: { env: 'STOREFRONT_CONTRACT_ID' },
   cases: CASES,
-  actors: { seller: 200, buyer: 201, stranger: 202, moderator: 203 },
+  actors: { seller: 200, buyer: 201, stranger: 202 },
+  flags: { moderator: { ...MODERATOR_FLAG, default: 'maker' } },
   yapp: { default: DEFAULT_YAPP, actors: ['buyer', 'stranger'], require: true },
   banner: ({ socialId }) => `; YAPP from ${socialId}`,
   selfTest: () => {
     // s2d/s2e + s13: only the store owner may list under a store, and never move it.
-    const ownedByStoreOwner = { agreements: { storeId: { $ownerId: '$ownerId' } }, immutable: ['storeId'] };
+    const ownedByStoreOwner = { where: { storeId: { $ownerId: '$ownerId' } }, immutable: ['storeId'] };
     const constraints = DECLARED_RULES[CONTRACT_FILE];
     return selfTestModerated(CONTRACT_FILE, {
       // s18: tags and imageUrls are typed string arrays (beta.4 v4). s20: propertyConstraints (beta.5).
       storeItem: { ...ownedByStoreOwner, typedArrays: { tags: { items: 'string', maxItems: 32, maxLength: 64 }, imageUrls: { items: 'string', maxItems: 8, maxLength: 512 } }, constraints: constraints.storeItem },
       shippingZone: { ...ownedByStoreOwner, constraints: constraints.shippingZone },
-      // s3d: sellerId is the store's real owner, not a buyer's claim.
-      storeOrder: { agreements: { storeId: { sellerId: '$ownerId' } } },
+      // s3d: sellerId is the store's real owner, not a buyer's claim. s21 (QA D-25):
+      // storeStatus is the store's real status, and only an active store takes orders.
+      storeOrder: { where: { storeId: { $ownerId: 'sellerId', status: 'storeStatus' } }, constraints: constraints.storeOrder },
       // s4d/s4e: only the seller posts status updates.
-      orderStatusUpdate: { agreements: { orderId: { buyerId: '$ownerId', $ownerId: 'sellerId' } } },
+      orderStatusUpdate: { where: { orderId: { $ownerId: 'buyerId', sellerId: '$ownerId' } } },
       // s5c/s6: only the identity that placed the order may review it.
       // s15/s16: reviews are the moderator-deletable types; nothing references them.
       // s19: the seller of the order under review is never its reviewer.
-      storeReview: { agreements: { orderId: { storeId: 'storeId', sellerId: 'sellerId', $ownerId: '$ownerId' } }, moderatorDeletable: true, distinctFromOwner: ['sellerId'] },
-      itemReview: { agreements: { itemId: { storeId: 'storeId' }, orderId: { storeId: 'storeId', $ownerId: '$ownerId' } }, moderatorDeletable: true },
+      storeReview: { where: { orderId: { storeId: 'storeId', sellerId: 'sellerId', $ownerId: '$ownerId' } }, moderatorDeletable: true, distinctFromOwner: ['sellerId'] },
+      itemReview: { where: { itemId: { storeId: 'storeId' }, orderId: { storeId: 'storeId', $ownerId: '$ownerId' } }, moderatorDeletable: true },
       store: { moderatorDeletable: false },
     }, { moderation: { banlist: true, suspensions: true, warnings: true } });
   },
-  setup: async ({ battery, tokenId, buyer, moderator }) => ({ reviews: [], itemRatings: {}, zoneId: null, buyerYappBefore: await battery.yappBalance(tokenId, buyer.ownerId), moderator: { ...moderator, identity: await battery.readback(() => battery.sdk.identities.fetch(moderator.ownerId)) } }),
+  setup: async ({ battery, tokenId, buyer, args }) => {
+    const moderator = await battery.moderatorActor(args.moderator);
+    console.log(`moderator=${moderator.label}`);
+    return { reviews: [], itemRatings: {}, zoneId: null, buyerYappBefore: await battery.yappBalance(tokenId, buyer.ownerId), moderator };
+  },
   summary: (ctx) => `store=${ctx.storeId} items=${ctx.item1},${ctx.item2} orders=${ctx.orderId},${ctx.orderId2}`,
 });

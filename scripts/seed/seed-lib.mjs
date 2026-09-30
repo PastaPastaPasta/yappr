@@ -54,8 +54,28 @@ export const REPORT_FILE = join(REPO_ROOT, '.seed-report.local.json');
 // ---- Network / contract constants --------------------------------------------
 
 export const YAPP_TOKEN_POSITION = 0;
-/** YAPP create costs per doctype (contracts/yappr-social-contract-v9.json tokenCost). */
-export const TOKEN_COST = { post: 10, reply: 3, like: 1, likeReply: 1, repost: 1 };
+
+/** The social contract the seeder writes (v10), read once: every limit and cost below comes from it. */
+const SOCIAL_CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v10.json'), 'utf8'));
+const SOCIAL_DOCUMENT_SCHEMAS = SOCIAL_CONTRACT.documentSchemas;
+
+/**
+ * YAPP create costs per doctype (the v10 JSON's tokenCost; v9's are the same).
+ * v10 has no `repost` doctype: a repost is a post quoting its target with no
+ * content, so it costs a post.
+ */
+export const TOKEN_COST = Object.fromEntries(['post', 'reply', 'like', 'likeReply']
+  .map((docType) => [docType, SOCIAL_DOCUMENT_SCHEMAS[docType].tokenCost.create.amount]));
+/** The once-per-identity YAPP starter grant a persona may claim. */
+export const STARTER_GRANT = BigInt(SOCIAL_CONTRACT.tokens['0'].distributionRules.oncePerIdentityDistribution.amount);
+/** TokenOncePerIdentityDistributionAlreadyClaimedError: a second claim. */
+export const ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|already claimed/i;
+
+/** One identity's balance off a `tokens.balances` answer (0 when absent). */
+export async function tokenBalance(read, sdk, tokenId, identityId) {
+  const balances = await read(() => sdk.tokens.balances([identityId], tokenId));
+  return (balances instanceof Map ? balances.get(identityId) : undefined) ?? 0n;
+}
 /** Base URL posts are linked as in seeded content ({{link:REF}} substitution). */
 export const POST_LINK_BASE = 'https://yap.pr/devnet/post/?id=';
 /** base58 of a 32-byte id is at most 44 chars — the worst case a link expands to. */
@@ -73,34 +93,48 @@ export function socialContractId() {
   return id;
 }
 
-/** The unified profile contract the app reads profiles from. */
+/**
+ * The DashPay contract: v10's base profile (a system contract, the same id on
+ * every network). The social `yapprProfile` extension requires a DashPay
+ * `profile` owned by its writer (ownerRefersTo, 40120 otherwise).
+ */
+export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7';
+
+/**
+ * The contract profiles are read from: DashPay on v10, the unified profile
+ * contract (NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID) before it.
+ */
 export function profileContractId() {
+  if (envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') === 'v10') return DASHPAY_CONTRACT_ID;
   const id = envValue('NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID');
   if (!id) throw new Error('NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID missing from the environment and .env.devnet');
   return id;
 }
 
-// ---- Document shapes (social v9) ----------------------------------------------
+// ---- Document shapes (social v10) ---------------------------------------------
 //
-// The seeder writes to the devnet social contract, which is v9
-// (contracts/yappr-social-contract-v9.json); nothing else exists to seed. The
-// corpus format keeps `"hashtag": ""` for "untagged", and on chain that is an
-// ABSENT property: an untagged post OMITS `hashtag`, and a like of it OMITS
-// `like.hashtag` too — propertyAgreement treats both-absent as agreement,
-// while sending `''` is consensus mismatch 40127. The like's delete-by-values
-// tuple must reproduce the same absence (it is the same value tuple). A like
-// of a TAGGED post also writes a `beat` companion, which carries today's
-// trending-hashtag axis. post and reply creates agree to an action fee, and
-// their token costs are `optional` with the contract owner offering the gas —
-// see `actionFeeFor` / `paymentInfo` below.
+// The seeder writes to the devnet social contract, which is v10
+// (contracts/yappr-social-contract-v10.json, 4.2.0-beta.7); nothing else exists
+// to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
+// that is an ABSENT property: an untagged post OMITS `hashtag`, and a like of
+// it OMITS `like.hashtag` too — a `where` entry treats both-absent as
+// agreement, while sending `''` is consensus mismatch 40127. The like's
+// delete-by-values tuple must reproduce the same absence (it is the same value
+// tuple). There is no `beat` companion any more: the like itself carries
+// the rolling hashtag window (`like.byTrendHashtagPost`, skipped when untagged).
+// There is no `language` either. A post or reply naming `mediaUrl` must carry
+// `mediaHash` (sha256 of the bytes) and `mediaFingerprint` (8-byte dHash)
+// beside it (`mediaFieldsFor`). post and reply creates agree to an action fee,
+// and their token costs are `optional` with the contract owner offering the
+// gas — see `actionFeeFor` / `paymentInfo` below.
 
 /** The topology the seeded contract must have (`.env.devnet`). */
-export const SEEDED_TOPOLOGY = 'v9';
-/** v9's `post.hashtag` / `like.hashtag` maxLength (the ranked key-size ceiling). */
-export const HASHTAG_MAX = 61;
+export const SEEDED_TOPOLOGY = 'v10';
+/** `post.hashtag` / `like.hashtag` maxLength (the ranked key-size ceiling). */
+export const HASHTAG_MAX = SOCIAL_DOCUMENT_SCHEMAS.post.properties.hashtag.maxLength;
 
 /**
- * Refuses to seed a contract of another shape: every write below is a v9
+ * Refuses to seed a contract of another shape: every write below is a v10
  * document, and a stale `NEXT_PUBLIC_CONTRACT_TOPOLOGY` would otherwise spend
  * credits on writes consensus rejects.
  */
@@ -122,23 +156,10 @@ export function hashtagProps(hashtag) {
 }
 
 /**
- * The `beat` companion a like of a TAGGED post writes beside itself — the
- * tagged-only indexOnly doctype whose byDayHashtagPost serves today's
- * trending hashtags / per-tag top. `null` for an untagged target
- * (beat.hashtag is required). Its postId refersTo the post with
- * propertyAgreement on hashtag, so consensus checks the tag.
- */
-export function beatValueTuple(target) {
-  const tag = target.hashtag ?? '';
-  if (tag === '') return null;
-  return { postId: bs58.decode(target.id), hashtag: tag };
-}
-
-/**
  * The like doc's data value tuple for a target post ref record. Used for the
  * create AND for delete-by-values (indexOnly deletes carry the whole value
- * tuple) — both must mirror the post's propertyAgreement values exactly,
- * including hashtag ABSENCE. `postAuthor` binds to the post's `$ownerId`.
+ * tuple) — both must mirror the post's `where` values exactly, including
+ * hashtag ABSENCE. `postAuthor` binds to the post's `$ownerId`.
  */
 export function likeValueTuple(target) {
   return {
@@ -265,12 +286,39 @@ export function validateHandle(handle, { allowContested = false } = {}) {
   return null;
 }
 
-/** Field limits of the unified profile contract, read from the checked-in JSON. */
+/**
+ * The field limits a persona must fit: v10's DashPay profile (displayName 25,
+ * publicMessage 140 — the persona `bio`) beside the social `yapprProfile`
+ * extension (location, website, avatar recipe). DashPay's are its v2 schema,
+ * which every network carries; the extension's are read from the checked-in
+ * v10 JSON. Tighter than the retired profile contract's 50/160 everywhere, so
+ * a persona valid here is valid on either.
+ */
 export function profileLimits() {
-  const contract = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', 'yappr-profile-contract.json'), 'utf8'));
-  const schema = contract.documentSchemas?.profile ?? contract.documents?.profile ?? contract.profile;
-  if (!schema) throw new Error('contracts/yappr-profile-contract.json has no profile document schema');
-  return schema.properties;
+  const extension = SOCIAL_DOCUMENT_SCHEMAS.yapprProfile.properties;
+  return { ...extension, displayName: { maxLength: DASHPAY_PROFILE_LIMITS.displayName }, bio: { maxLength: DASHPAY_PROFILE_LIMITS.publicMessage } };
+}
+
+/** DashPay profile v2 (system contract): the field lengths a persona's name and bio must fit. */
+export const DASHPAY_PROFILE_LIMITS = { displayName: 25, publicMessage: 140 };
+
+/**
+ * A persona's v10 profile as two documents: the DashPay `profile` (name and
+ * bio; no avatarUrl, since a DiceBear recipe has no bytes to hash) and the
+ * social `yapprProfile` extension, written after it.
+ */
+export function profileDocumentsFor(persona) {
+  return {
+    dashpay: {
+      displayName: persona.displayName,
+      ...(persona.bio ? { publicMessage: persona.bio } : {}),
+    },
+    extension: {
+      ...(persona.location ? { location: persona.location } : {}),
+      ...(persona.website ? { website: persona.website } : {}),
+      avatar: avatarFieldFor(persona),
+    },
+  };
 }
 
 /** DiceBear styles the app's avatar renderer accepts (unified-profile-service.ts). */
@@ -298,10 +346,10 @@ export function validatePersona(persona, limits) {
   if (handleError) errors.push(handleError);
   if (typeof persona.displayName !== 'string' || persona.displayName.trim().length < 1) {
     errors.push('displayName is required');
-  } else if (persona.displayName.length > (limits.displayName?.maxLength ?? 50)) {
+  } else if (codePointLength(persona.displayName) > (limits.displayName?.maxLength ?? 50)) {
     errors.push(`displayName exceeds ${limits.displayName?.maxLength ?? 50} chars`);
   }
-  if (persona.bio !== undefined && (typeof persona.bio !== 'string' || persona.bio.length > (limits.bio?.maxLength ?? 160))) {
+  if (persona.bio !== undefined && (typeof persona.bio !== 'string' || codePointLength(persona.bio) > (limits.bio?.maxLength ?? 160))) {
     errors.push(`bio exceeds ${limits.bio?.maxLength ?? 160} chars`);
   }
   if (persona.location !== undefined && (typeof persona.location !== 'string' || persona.location.length > (limits.location?.maxLength ?? 50))) {
@@ -342,19 +390,31 @@ export function loadPersonas(file) {
 // ---- Corpus (JSONL) -----------------------------------------------------------
 
 export const OP_TYPES = ['post', 'quote', 'reply', 'like', 'likeReply', 'repost', 'follow', 'bookmark'];
+/** One dedupe kind for both: a v10 repost is a bare quote, and an author quotes or reposts a target once (40105). */
+const QUOTE_OR_REPOST = 'quote or repost';
 const MEDIA_URL_PATTERN = /^(https?|ipfs):\/\/.+$/;
 const LINK_PLACEHOLDER = /\{\{link:([A-Za-z0-9_-]+)\}\}/g;
-export const CONTENT_MAX = 500;
-export const MEDIA_URL_MAX = 512;
+/** `post.content` / `reply.content` maxLength, in code points (v10). */
+export const CONTENT_MAX = SOCIAL_DOCUMENT_SCHEMAS.post.properties.content.maxLength;
+/** `post.content` / `reply.content` maxBytes, in UTF-8 bytes (v10: 10421 over it). */
+export const CONTENT_MAX_BYTES = SOCIAL_DOCUMENT_SCHEMAS.post.properties.content.maxBytes;
+export const MEDIA_URL_MAX = SOCIAL_DOCUMENT_SCHEMAS.post.properties.mediaUrl.maxLength;
 
-/** Worst-case rendered length of `content` once every {{link:REF}} expands. */
-export function expandedContentLength(content) {
-  let length = content.length;
-  for (const match of content.matchAll(LINK_PLACEHOLDER)) {
-    length += POST_LINK_MAX - match[0].length;
-  }
-  return length;
+/** Code points, as `maxLength` counts them (an emoji is one, not two UTF-16 units). */
+export const codePointLength = (text) => Array.from(text).length;
+export const utf8Length = (text) => Buffer.byteLength(text, 'utf8');
+
+/** How much every {{link:REF}} can grow `content` by. The link text is ASCII, so as many bytes as characters. */
+function linkGrowth(content) {
+  let growth = 0;
+  for (const match of content.matchAll(LINK_PLACEHOLDER)) growth += POST_LINK_MAX - match[0].length;
+  return growth;
 }
+
+/** Worst-case rendered length of `content` once every {{link:REF}} expands, in code points. */
+export const expandedContentLength = (content) => codePointLength(content) + linkGrowth(content);
+/** Worst-case UTF-8 byte length of `content` once every {{link:REF}} expands. */
+export const expandedContentBytes = (content) => utf8Length(content) + linkGrowth(content);
 
 /** Replaces {{link:REF}} with the deployed post URL. `resolve(ref)` → base58 post id. */
 export function substituteLinks(content, resolve) {
@@ -366,13 +426,15 @@ export function substituteLinks(content, resolve) {
  * CORPUS_FORMAT.md. Every structural rule is enforced here so the executor can
  * assume a well-formed op stream:
  *  - refs are unique and defined before use, with the right kind
- *    (post/quote refs for likes/reposts/bookmarks/quotes, reply refs for
- *    likeReply, either for reply parents);
+ *    (post/quote refs for likes/bookmarks/quotes, reply refs for likeReply,
+ *    either for reposts and reply parents);
  *  - authors and follow targets are known persona idx values;
  *  - content fits 500 chars even after {{link}} expansion;
  *  - duplicate interactions that would die as 40105 on chain (same author
- *    liking/reposting/bookmarking/following the same target twice) are
- *    rejected up front as generator bugs.
+ *    liking/bookmarking/following the same target twice, or quoting or
+ *    reposting it more than once in all: a v10 repost IS a quote, and
+ *    ownerAndQuotedPost / ownerAndQuotedReply allow one per author and target)
+ *    are rejected up front as generator bugs.
  *
  * Hashtags are held to the contract's maxLength ({@link HASHTAG_MAX}) — an
  * over-long tag is a generator bug and is rejected, never rewritten.
@@ -425,7 +487,9 @@ export function parseCorpus(text, personas) {
         else if (target !== 'post') fail(line, `{{link:${match[1]}}} must reference a post ref, got ${target}`);
       }
       const expanded = expandedContentLength(content);
-      if (expanded > CONTENT_MAX) fail(line, `content can expand to ${expanded} chars (max ${CONTENT_MAX})`);
+      if (expanded > CONTENT_MAX) fail(line, `content can expand to ${expanded} characters (max ${CONTENT_MAX})`);
+      const bytes = expandedContentBytes(content);
+      if (bytes > CONTENT_MAX_BYTES) fail(line, `content can expand to ${bytes} UTF-8 bytes (max ${CONTENT_MAX_BYTES})`);
       return undefined;
     };
 
@@ -461,6 +525,7 @@ export function parseCorpus(text, personas) {
         break;
       case 'quote':
         requireEarlierRef(op.quotedRef, ['post'], 'quotedRef');
+        dedupeKey(QUOTE_OR_REPOST, op.quotedRef);
         defineRef(op.ref, 'post');
         checkContent(op.content);
         checkMediaUrl(op.mediaUrl);
@@ -484,8 +549,8 @@ export function parseCorpus(text, personas) {
         dedupeKey('likeReply', op.targetRef);
         break;
       case 'repost':
-        requireEarlierRef(op.targetRef, ['post'], 'targetRef');
-        dedupeKey('repost', op.targetRef);
+        requireEarlierRef(op.targetRef, ['post', 'reply'], 'targetRef');
+        dedupeKey(QUOTE_OR_REPOST, op.targetRef);
         break;
       case 'bookmark':
         requireEarlierRef(op.targetRef, ['post'], 'targetRef');
@@ -520,7 +585,7 @@ export function parseCorpus(text, personas) {
 export function corpusYappCost(ops, { paysCredits = () => false } = {}) {
   const perAuthor = new Map();
   let total = 0;
-  const costOf = { post: TOKEN_COST.post, quote: TOKEN_COST.post, reply: TOKEN_COST.reply, like: TOKEN_COST.like, likeReply: TOKEN_COST.likeReply, repost: TOKEN_COST.repost };
+  const costOf = { post: TOKEN_COST.post, quote: TOKEN_COST.post, reply: TOKEN_COST.reply, like: TOKEN_COST.like, likeReply: TOKEN_COST.likeReply, repost: TOKEN_COST.post };
   for (const op of ops) {
     const cost = costOf[op.type] ?? 0;
     if (cost === 0 || paysCredits(op.author)) continue;
@@ -751,7 +816,7 @@ export async function findRecentByValues(sdk, { contractId, docType, ownerId, da
 }
 
 /**
- * Token payment for a token-priced doctype (post/reply/like/likeReply/repost).
+ * Token payment for a token-priced doctype (post/reply/like/likeReply; a repost is a post).
  *
  * `gasFeesPaidBy: 2` (PreferContractOwner) is the offer the social types make: the
  * contract owner pays the gas of a token-paid create when it can, else the
@@ -779,10 +844,6 @@ export const PREFER_CONTRACT_OWNER = 2;
 export const FEE_MULTIPLIER_TOLERANCE_PERCENT = 20;
 /** Agreed when the epoch read fails: 40132 is certain without an agreement, 40134 unlikely at 1.0x. */
 export const DEFAULT_FEE_MULTIPLIER_PERMILLE = 1000n;
-
-const SOCIAL_DOCUMENT_SCHEMAS = JSON.parse(
-  readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v9.json'), 'utf8')
-).documentSchemas;
 
 /**
  * What `docType`'s create costs in YAPP, and how that payment may be made:
@@ -940,6 +1001,19 @@ export function createDocument(sdk, { contractId, actor, docType, document, data
 export const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
 /** Confirmation-wait shapes that do NOT mean the write was refused (readback decides). */
 export const WAIT_MAYBE_LANDED = /504|gateway|deadline|timed? ?out|timeout|wait.*state.*transition|AffectedState/i;
+
+/**
+ * After a write threw: false when the error is a refusal; otherwise (a gateway
+ * timeout on the wait, or a dead SDK, which is reconnected first) waits a beat
+ * and answers `probe()`, the chain's word on whether the write landed.
+ */
+export async function landedAfter(handle, error, probe) {
+  const text = describeErr(error);
+  if (!WAIT_MAYBE_LANDED.test(text) && !TRANSPORT_COLLAPSE.test(text)) return false;
+  if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
+  await sleep(3000);
+  return probe();
+}
 /** Retry-worthy transient transport noise. */
 /**
  * A query refused because the doctype has no index for the where clause. Unlike
@@ -956,6 +1030,30 @@ export const NONCE_DESYNC = /nonce/i;
 // (`duplicateIsSuccess`), so an unbounded `40105` matching a credit amount or a
 // document id would silently skip a write that never landed.
 export const DUPLICATE_UNIQUE = /\b40105\b|duplicate unique properties/i;
+
+/** Op kinds whose unique entry IS the end state, so their 40105 means done. */
+const DUPLICATE_MEANS_DONE = new Set(['like', 'likeReply', 'follow', 'bookmark']);
+
+/**
+ * Whether a 40105 on `op` means the write already holds. A repost's 40105 is
+ * ownerAndQuotedPost / ownerAndQuotedReply, which a quote WITH content by the
+ * same author holds just as well: it counts as done only when `ownerId`'s post
+ * holding the entry is a bare repost (an earlier attempt of this op that
+ * landed). `plan.repostTarget` is `{ field, value }` from `planOp`.
+ */
+export async function duplicateIsSuccess(handle, contractId, { op, plan, ownerId }) {
+  if (DUPLICATE_MEANS_DONE.has(op.type)) return true;
+  if (!plan.repostTarget) return false;
+  const { field, value } = plan.repostTarget;
+  const found = await readback(handle, () => handle.sdk.documents.query({
+    dataContractId: contractId, documentTypeName: 'post', where: [['$ownerId', '==', ownerId], [field, '==', value]], limit: 1,
+  }));
+  for (const doc of found.values()) {
+    const stored = doc?.toObject ? doc.toObject() : doc;
+    if (stored && asBase58(stored.$ownerId) === ownerId && !stored.content) return true;
+  }
+  return false;
+}
 
 export function createSdkHandle({ contractIds, timeoutMs = 30000, log = console.log }) {
   let activeSdk = null;

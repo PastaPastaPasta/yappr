@@ -1,6 +1,7 @@
 import { YAPPR_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID, getConfiguredNetwork } from '@/lib/constants'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
 import { queryDocuments } from '@/lib/services/sdk-helpers'
+import { profileExtensionSource } from '@/lib/profile/v10-profile'
 
 /**
  * The profile gate: a signed-in user without a profile document is sent to
@@ -36,13 +37,13 @@ export function isProfileOptionalRoute(pathname: string): boolean {
     || PROFILE_OPTIONAL_PREFIXES.some((prefix) => normalized.startsWith(prefix))
 }
 
-async function ownsProfileDocument(dataContractId: string, identityId: string): Promise<boolean> {
+async function ownsProfileDocument(dataContractId: string, identityId: string, documentTypeName = 'profile'): Promise<boolean> {
   // The gate can run before SdkProvider has configured the SDK.
   await evoSdkService.initialize({ network: getConfiguredNetwork(), contractId: YAPPR_CONTRACT_ID })
   const sdk = await evoSdkService.getSdk()
   const documents = await queryDocuments(sdk, {
     dataContractId,
-    documentTypeName: 'profile',
+    documentTypeName,
     where: [['$ownerId', '==', identityId]],
     limit: 1,
   })
@@ -50,11 +51,15 @@ async function ownsProfileDocument(dataContractId: string, identityId: string): 
 }
 
 /**
- * Whether `identityId` owns a unified profile or a legacy one. Unlike the
- * profile services, which turn a failed query into `null`, this rejects when a
- * query fails, so `false` always means both queries succeeded and found nothing.
+ * Whether `identityId` owns a unified profile or a legacy one; on v10, the
+ * `yapprProfile` extension (a DashPay profile alone is not a Yappr profile:
+ * /profile/create shows it and adds the extension). Unlike the profile
+ * services, which turn a failed query into `null`, this rejects when a query
+ * fails, so `false` always means every query succeeded and found nothing.
  */
 export async function hasYapprProfile(identityId: string): Promise<boolean> {
+  const extension = profileExtensionSource()
+  if (extension) return ownsProfileDocument(extension.contractId, identityId, extension.documentType)
   if (await ownsProfileDocument(YAPPR_PROFILE_CONTRACT_ID, identityId)) return true
   return ownsProfileDocument(YAPPR_CONTRACT_ID, identityId)
 }

@@ -336,18 +336,17 @@ export function createRecorder({ writer, state, file }) {
 }
 
 /**
- * A social `post` in the shape the deployed social contract accepts: `additionalProperties: false` and no `author`
- * (v7 dropped the owner copy — the live run rejects it with "Additional properties are not allowed"), and `hashtag`
- * omitted entirely rather than sent empty when the post is untagged.
+ * A social v10 `post` (its only caller, pollr, refuses any other topology through `requireSeededTopology`):
+ * `additionalProperties: false`, no `author`, no `language`, and `hashtag` omitted entirely rather than sent empty
+ * when the post is untagged.
  */
-export const socialPost = ({ content, hashtag, language = 'en', ...rest }) => ({
-  content, language, ...(hashtag ? { hashtag } : {}), ...rest,
-});
+export const socialPost = ({ content, hashtag, ...rest }) => ({ content, ...(hashtag ? { hashtag } : {}), ...rest });
 
 /**
- * Buys each persona the YAPP its share of the plan will spend, then RE-READS the balance: a direct purchase can report
- * an error after it landed, and `ensureYapp` swallows purchase failures, so trusting the call would send a batch of
- * doomed token-priced writes. `needs` is persona index -> tokens the plan will spend.
+ * Tops each persona up to the YAPP its share of the plan will spend (its starter claim, then an owner mint: v10's YAPP
+ * cannot be bought or transferred), then RE-READS the balance: a claim or mint can report an error after it landed,
+ * and `ensureYapp` swallows those failures, so trusting the call would send a batch of doomed token-priced writes.
+ * `needs` is persona index -> tokens the plan will spend.
  */
 export async function ensureTokens(battery, tokenId, actors, needs, { headroom = 20n } = {}) {
   const short = [];
@@ -457,6 +456,13 @@ export async function plumbingAssertions() {
     rmSync(file, { force: true });
   }
 }
+
+/**
+ * True when the target cut named by `envName` (unset = the first) is `topology`
+ * or later in `topologies`, which mirror lib/constants.ts's lists.
+ */
+export const topologyAtLeast = (topologies, envName, topology) =>
+  topologies.indexOf(envValue(envName) ?? topologies[0]) >= topologies.indexOf(topology);
 
 export const envValue = (name) => process.env[name]?.trim() || readEnvFile(join(REPO_ROOT, '.env.devnet'))[name] || undefined;
 

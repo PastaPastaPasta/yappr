@@ -9,15 +9,19 @@
  *
  * Actors are seed-ledger personas (`.seed-identities.local.json`, see
  * scripts/seed/provision-seed-identities.mjs); `personaActor` signs with the
- * persona's CRITICAL auth key, which also covers YAPP direct purchases.
+ * persona's CRITICAL auth key, which also covers the YAPP starter claim.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { IdentitySigner, TokenPaymentInfo, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID } from './derive-identities.mjs';
+import { signerFor } from './owner-keys.mjs';
+import { resolveMakerOwner } from './social-battery-lib.mjs';
 import {
+  ALREADY_CLAIMED,
   REPO_ROOT,
+  STARTER_GRANT,
   YAPP_TOKEN_POSITION,
   buildDocument,
   createSdkHandle,
@@ -30,21 +34,21 @@ import {
   readback as readbackWith,
   sleep,
   socialContractId,
+  tokenBalance,
   wifFromHex,
 } from './seed/seed-lib.mjs';
 
 export const SETTLE_MS = 3000;
 export const POLL_ATTEMPTS = 3;
-export const MIN_YAPP_PURCHASE = 100n;
 
 // ---- Expected consensus rejection shapes (matched against describeErr text) ----
 export const REFERENCE_NOT_FOUND = /\b40120\b|referenced .*not found/i;
 /**
- * ReferencedDocumentPropertyMismatchError. Covers BOTH agreement shapes: a value
- * pair that disagrees with the referenced document, and a WRITER GATE
- * (`propertyAgreement: {"$ownerId": …}`) refusing a signer who may not write the
- * document at all — the gate is an agreement pair with the signing identity on
- * the referring side, so consensus reports it the same way.
+ * ReferencedDocumentPropertyMismatchError. Covers BOTH `where` shapes: a value
+ * pair that disagrees with the referenced document, and a WRITER GATE (a
+ * `where` entry valued `"$ownerId"`) refusing a signer who may not write the
+ * document at all — the gate is an entry with the signing identity on the
+ * referring side, so consensus reports it the same way.
  */
 export const PROPERTY_MISMATCH = /\b40127\b|does not agree with the referenced document/i;
 /** DocumentImmutablePropertyChangedError: a replace touched a frozen property. */
@@ -106,6 +110,12 @@ export function decodeDriveError(text) {
   });
 }
 
+/** The personal account's slot in the private seed ledger (docs/PLATFORM_BETA4_UPGRADE.md). */
+const PERSONAL_PERSONA_IDX = 900;
+
+/** A `--moderator` value: a ledger persona index, `maker` or `personal`. */
+export const MODERATOR_FLAG = { parse: (raw) => raw };
+
 /** Creates a battery context: SDK handle, reporting state, and the helper set bound to it. */
 export function createBattery({ handle, contractId, socialId }) {
   let failures = 0;
@@ -132,13 +142,37 @@ export function createBattery({ handle, contractId, socialId }) {
     signer.addKeyFromWif(wif);
     // `wif` is what a hand-built batch signs with — the only shape that can
     // carry an `$actionFeeAgreement` (v8 post/reply); the signer covers the rest.
-    return { ownerId: entry.identityId, identityKey, signer, wif, label: `${entry.handle}(${personaIdx})` };
+    return { ownerId: entry.identityId, identityKey, signer, wif, label: `${entry.handle}(${personaIdx})`, starterClaimed: entry.starterClaimed === true };
   }
 
-  async function yappBalance(tokenId, ownerId) {
-    const balances = await readback(() => sdk.tokens.balances([ownerId], tokenId));
-    return (balances instanceof Map ? balances.get(ownerId) : undefined) ?? 0n;
+  /**
+   * The moderator a `--moderator` spec names, with the Identity the moderation
+   * calls sign as: a seed-ledger persona index; `maker`, the devnet maker
+   * (DEVNET_MAKER_IDENTITY_ID at seed index 9), which publishes and is
+   * appointed on every moderated cut; or `personal`, the personal account
+   * (ledger persona 900). A contract's appointed set is fixed at publish, so
+   * this must name one of those identities or its owner.
+   */
+  async function moderatorActor(spec) {
+    const value = String(spec).trim();
+    let actor;
+    if (value === 'maker') {
+      const owner = resolveMakerOwner();
+      actor = { ownerId: owner.ownerId, label: `maker(${owner.ownerId})`, ...(await signerFor(sdk, owner)) };
+    } else if (value === 'personal') {
+      if (!ledgerEntry(loadLedger(), PERSONAL_PERSONA_IDX)) {
+        throw new Error(`--moderator personal is seed-ledger persona ${PERSONAL_PERSONA_IDX}, which this ledger does not hold`);
+      }
+      actor = await personaActor(PERSONAL_PERSONA_IDX);
+    } else if (/^\d+$/.test(value)) {
+      actor = await personaActor(Number(value));
+    } else {
+      throw new Error(`--moderator must be a persona index, maker or personal (got "${value}")`);
+    }
+    return { ...actor, identity: await readback(() => sdk.identities.fetch(actor.ownerId)) };
   }
+
+  const yappBalance = (tokenId, ownerId) => tokenBalance(readback, sdk, tokenId, ownerId);
 
   /** An identity's CREDIT balance — what a cost measurement diffs. */
   async function balanceOf(ownerId) {
@@ -146,23 +180,55 @@ export function createBattery({ handle, contractId, socialId }) {
     return (balances instanceof Map ? balances.get(ownerId) : undefined) ?? 0n;
   }
 
-  /** Buys YAPP for an actor up to `target` (direct purchase, CRITICAL key). */
+  let minterPromise = null;
+  /**
+   * The devnet maker (seed index 9), who mints YAPP as the social contract's
+   * owner. Says so loudly when the maker does NOT own the contract: every mint
+   * would then be refused (40701), and the fix is the env, not a retry.
+   */
+  const minter = () => (minterPromise ??= (async () => {
+    const owner = resolveMakerOwner();
+    const contract = await readback(() => sdk.contracts.fetch(socialId));
+    const contractOwner = contract?.ownerId?.toBase58?.() ?? String(contract?.ownerId ?? '');
+    if (contractOwner !== owner.ownerId) {
+      console.log(`     WARNING: the maker ${owner.ownerId} (DEVNET_MAKER_IDENTITY_ID) is not the owner ${contractOwner} of social ${socialId}; YAPP mints will be refused`);
+    }
+    return { ownerId: owner.ownerId, ...(await signerFor(sdk, owner)) };
+  })());
+  /** Identities known to have claimed their starter grant (the ledger's record, or this run's claim or 40722). */
+  const claimed = new Set();
+
+  /**
+   * Tops an actor up to `target` YAPP: its own once-per-identity starter claim
+   * first (a claim is not a transfer, so the paused v10 token pays it; a second
+   * claim is 40722 and harmless), then an owner MINT of the rest straight to the
+   * actor. YAPP can no longer be bought or transferred (v10: paused, no price).
+   * Failures are reported, not thrown: the balance read back is what callers trust.
+   */
   async function ensureYapp(tokenId, actor, target) {
-    const balance = await yappBalance(tokenId, actor.ownerId);
+    let balance = await yappBalance(tokenId, actor.ownerId);
     if (balance >= target) return balance;
-    const prices = await readback(() => sdk.tokens.directPurchasePrices([tokenId]));
-    const info = prices instanceof Map ? prices.get(tokenId) : prices?.[tokenId];
-    const price = BigInt(info?.currentPrice ?? 0);
-    if (price === 0n) throw new Error(`YAPP ${tokenId} has no direct-purchase price`);
-    const amount = MIN_YAPP_PURCHASE > target - balance ? MIN_YAPP_PURCHASE : target - balance;
-    console.log(`     buying ${amount} YAPP for ${actor.label} (${amount * price} credits)`);
+    if (actor.starterClaimed) claimed.add(actor.ownerId);
+    if (!claimed.has(actor.ownerId)) {
+      try {
+        await sdk.tokens.claim({ dataContractId: socialId, tokenPosition: YAPP_TOKEN_POSITION, identityId: actor.ownerId, distributionType: 'oncePerIdentity', identityKey: actor.identityKey, signer: actor.signer });
+        console.log(`     ${actor.label} claimed its ${STARTER_GRANT} starter YAPP`);
+      } catch (e) {
+        if (!ALREADY_CLAIMED.test(describeErr(e))) console.log(`     (starter claim reported: ${describeErr(e).slice(0, 140)})`);
+      }
+      // Either way it is spent: a landed claim or 40722 both mean never again.
+      claimed.add(actor.ownerId);
+      await settle();
+      balance = await yappBalance(tokenId, actor.ownerId);
+      if (balance >= target) return balance;
+    }
+    const amount = target - balance;
+    console.log(`     minting ${amount} YAPP to ${actor.label} from the contract owner`);
     try {
-      await sdk.tokens.directPurchase({
-        dataContractId: socialId, tokenPosition: YAPP_TOKEN_POSITION, buyerId: actor.ownerId,
-        amount, maxTotalCost: amount * price, identityKey: actor.identityKey, signer: actor.signer,
-      });
+      const owner = await minter();
+      await sdk.tokens.mint({ dataContractId: socialId, tokenPosition: YAPP_TOKEN_POSITION, amount, identityId: owner.ownerId, recipientId: actor.ownerId, identityKey: owner.identityKey, signer: owner.signer });
     } catch (e) {
-      console.log(`     (purchase reported: ${describeErr(e).slice(0, 140)})`);
+      console.log(`     (mint reported: ${describeErr(e).slice(0, 140)})`);
     }
     await settle();
     return yappBalance(tokenId, actor.ownerId);
@@ -410,7 +476,7 @@ export function createBattery({ handle, contractId, socialId }) {
   }
 
   return {
-    sdk, readback, check, personaActor, yappBalance, balanceOf, ensureYapp, fetchDocument, revisionOf,
+    sdk, readback, check, personaActor, moderatorActor, yappBalance, balanceOf, ensureYapp, fetchDocument, revisionOf,
     attemptWrite, paymentInfo, attemptCreate, attemptReplace, attemptDelete, attemptDeleteByValues,
     attemptCreateByValues, entryExists, expectAccepted, expectRejected, probeCreate, probeReplace, probeDelete,
     countBy, groupedCount, averageBy, sumBy, ranked, checkRanked, queryDocs, groupValueOf, avgOf, approx, b58,
@@ -534,7 +600,8 @@ export async function runBattery(spec) {
  * `--self-test`.
  *
  * `expect` is keyed by document type:
- *   agreements: { <property>: { <referring>: <referenced>, … } }  exact match
+ *   where: { <property>: { <referenced>: <referring>, … } }  exact match, in
+ *          the beta.7 orientation (the referenced document's property is the key)
  *   immutable / immutableAllowSetting: property names, order-insensitive
  *
  * Returns a process exit code.
@@ -543,7 +610,7 @@ export function selfTest(file, expect) {
   const parsed = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', file), 'utf8'));
   const schemas = parsed.documentSchemas ?? parsed;
   const problems = [];
-  // Both comparisons are order-insensitive: a propertyAgreement is a SET of
+  // Both comparisons are order-insensitive: a `where` is a SET of
   // pairs and an immutable list a set of names, so a build script that emits
   // them in a different order has changed nothing consensus can see.
   const sortedNames = (values) => [...(values ?? [])].sort();
@@ -558,9 +625,9 @@ export function selfTest(file, expect) {
   for (const [docType, rules] of Object.entries(expect)) {
     const schema = schemas[docType];
     if (!schema) { problems.push(`${docType}: document type is missing`); continue; }
-    for (const [property, agreement] of Object.entries(rules.agreements ?? {})) {
-      compare(`${docType}.${property} propertyAgreement`,
-        sortedPairs(schema.properties?.[property]?.refersTo?.propertyAgreement), sortedPairs(agreement));
+    for (const [property, where] of Object.entries(rules.where ?? {})) {
+      compare(`${docType}.${property} where`,
+        sortedPairs(schema.properties?.[property]?.refersTo?.where), sortedPairs(where));
     }
     for (const key of ['immutable', 'immutableAllowSetting']) {
       if (rules[key] === undefined) continue;

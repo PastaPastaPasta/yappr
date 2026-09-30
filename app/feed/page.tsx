@@ -6,7 +6,7 @@ import { readScoped, writeScoped } from '@/lib/storage-scope';
 import { PageShell } from '@/components/layout/page-shell';
 import { withAuth, useAuth } from '@/contexts/auth-context';
 import { useSettingsStore } from '@/lib/store';
-import { likesAreIndexOnly } from '@/lib/contract-topology';
+import { likesAreIndexOnly, postsHaveLanguage } from '@/lib/contract-topology';
 import type { RankingWindow } from '@/lib/services/ranked-likes';
 import { FeedHeader } from '@/components/feed/feed-header';
 import { FeedComposeBox } from '@/components/feed/feed-compose-box';
@@ -28,7 +28,9 @@ function readSavedSortMode(): FeedSortMode {
 
 function FeedPage() {
   const { user } = useAuth();
-  const feedLanguage = useSettingsStore((state) => state.feedLanguage);
+  const savedFeedLanguage = useSettingsStore((state) => state.feedLanguage);
+  // v10 reads one global timeline, so there is no language to pick or cache by.
+  const feedLanguage = postsHaveLanguage() ? savedFeedLanguage : undefined;
 
   const [activeTab, setActiveTab] = useState<FeedTab>(readSavedTab);
   const [sortMode, setSortMode] = useState<FeedSortMode>(readSavedSortMode);
@@ -83,6 +85,7 @@ function FeedPage() {
               onSortModeChange={handleSortModeChange}
               rankingWindow={rankingWindow}
               onRankingWindowChange={setRankingWindow}
+              activeTab={activeTab}
             />
           )}
 

@@ -1,9 +1,10 @@
-import { YAPPR_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID } from '@/lib/constants';
+import { YAPPR_CONTRACT_ID } from '@/lib/constants';
 import { likesAreIndexOnly, likeIndexFor, quoteFieldFor, repostIndexFor, type TargetKind } from '@/lib/contract-topology';
 import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { documentToPlainObject, type DocumentWhereClause } from './sdk-helpers';
 import { unifiedProfileService } from './unified-profile-service';
+import { profileBaseSource } from '@/lib/profile/v10-profile';
 
 /** Counts must bind a real document field; the API rejects unbound counts.
  * A missing root therefore needs ordinary counts, not an assumed zero. */
@@ -31,8 +32,10 @@ async function boundCounts(root: {
 export async function loadUserStats(userId: string) {
   if (likesAreIndexOnly()) {
     try {
+      // The counts hang off the user's profile document (v10: the DashPay profile).
+      const { contractId, documentType } = profileBaseSource();
       const result = await boundCounts({
-        contractId: YAPPR_PROFILE_CONTRACT_ID, documentType: 'profile',
+        contractId, documentType,
         where: [['$ownerId', '==', userId]], sourceProperty: '$ownerId',
       }, [
         { documentType: 'post', field: '$ownerId' },
@@ -56,6 +59,8 @@ export async function loadUserStats(userId: string) {
 }
 
 export async function loadEngagementCounts(postId: string, kind: TargetKind) {
+  // Null on v10, which has no repost doctype: `quotes` there counts the bare
+  // reposts too, and `reposts` stays 0 (the engagements page splits the list).
   const repost = repostIndexFor(kind);
   if (likesAreIndexOnly()) {
     try {

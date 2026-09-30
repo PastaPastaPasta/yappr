@@ -131,7 +131,9 @@ export async function documentCount(
  * DAPI round-trip instead of one `documentCount` call per id.
  *
  * Requires the queried document type to declare a `countable` index whose sole
- * property is `groupField` (e.g. `byPost`/`byParent` in yappr-social-contract-v2).
+ * property is `groupField` (e.g. `byPost`/`byParent` in yappr-social-contract-v2),
+ * or (v10) a `rangeCountable` index `[...where fields, groupField, $createdAt]`,
+ * which Drive serves as the prefix-to-last total per group.
  * `ids` are base58 identifier strings; the returned map is keyed the same way.
  *
  * The SDK's raw grouped-count map is keyed by hex-encoded property bytes — an
@@ -142,7 +144,17 @@ export async function documentCount(
  */
 export async function groupedDocumentCount(
   sdk: SDK,
-  query: { dataContractId: unknown; documentTypeName: string; groupField: string },
+  query: {
+    dataContractId: unknown;
+    documentTypeName: string;
+    groupField: string;
+    /**
+     * Fixed equality clauses ahead of the grouped `in` — the index prefix the
+     * group field sits under (v10's per-reply counts pin `rootPostId ==`
+     * before `replyToReplyId in`). None by default.
+     */
+    where?: unknown[][];
+  },
   ids: string[],
   fallbackCount: (id: string) => Promise<number>
 ): Promise<Map<string, number>> {
@@ -165,7 +177,7 @@ export async function groupedDocumentCount(
       const raw: unknown = await sdk.documents.count({
         dataContractId: query.dataContractId,
         documentTypeName: query.documentTypeName,
-        where: [[query.groupField, 'in', batch]],
+        where: [...(query.where ?? []), [query.groupField, 'in', batch]],
         groupBy: [query.groupField],
       });
 
@@ -195,6 +207,30 @@ export async function groupedDocumentCount(
   });
 
   return result;
+}
+
+/**
+ * Split ids by the thread root each belongs to, for counts that must pin the
+ * root (v10's per-reply child counts: one grouped query per root). Ids with no
+ * known root come back in `unrooted`, in input order.
+ */
+export function groupIdsByRoot(
+  ids: readonly string[],
+  roots: ReadonlyMap<string, string>
+): { byRoot: Map<string, string[]>; unrooted: string[] } {
+  const byRoot = new Map<string, string[]>();
+  const unrooted: string[] = [];
+  for (const id of ids) {
+    const root = roots.get(id);
+    if (!root) {
+      unrooted.push(id);
+      continue;
+    }
+    const group = byRoot.get(root);
+    if (group) group.push(id);
+    else byRoot.set(root, [id]);
+  }
+  return { byRoot, unrooted };
 }
 
 /**
@@ -297,7 +333,11 @@ export async function rangeDistinctCount(
  * as a bug. Verified against both testnet and the moutai devnet: swapping the
  * target's `in` for `==` returns the document every time.
  *
- * So a target-first index is queried once per target, with bounded concurrency.
+ * So a target-first index is queried once per target, with bounded concurrency
+ * — unless `ownerIsTerminal` says `$ownerId` is the terminal of an indexOnly
+ * `[field]` index (v10's `like.byPost` / `likeReply.byReply`), where the node
+ * answers `[field in [...], $ownerId ==]` ordered `[field, $ownerId]` (proven
+ * on bonsia; the orderBy is required), one query per 100-id batch.
  *
  * `field` names the identifier property holding the target id. It defaults to
  * `postId`, which is what every v2 doctype uses; the v9 topology's `likeReply`
@@ -314,6 +354,8 @@ export async function queryOwnedPostIds(
     userId: string;
     postIds: string[];
     ownerFirst: boolean;
+    /** See `OwnedTargetIndex.ownerIsTerminal`: batch a target-first index with `in`. */
+    ownerIsTerminal?: boolean;
     /** Identifier property naming the target. Default: `postId`. */
     field?: string;
     getPostId: (doc: Record<string, unknown>) => string | undefined;
@@ -349,6 +391,12 @@ export async function queryOwnedPostIds(
       // is a shape Drive can answer.
       await mapLimit(chunk(params.postIds, MAX_IN_CLAUSE_VALUES), 2, (batch) =>
         collect([ownerClause, [field, 'in', batch]], batch.length)
+      );
+    } else if (params.ownerIsTerminal) {
+      // Target-first with the owner as the indexOnly terminal: the batch is one
+      // `in` over the target, the owner pinned below it.
+      await mapLimit(chunk(params.postIds, MAX_IN_CLAUSE_VALUES), 2, (batch) =>
+        collect([[field, 'in', batch], ownerClause], batch.length)
       );
     } else {
       // Target-first index: equality on both properties, one target at a time.

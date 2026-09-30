@@ -1,20 +1,31 @@
 /**
- * Registration-day battery for **YAPP tips** (docs/NON_SOCIAL_CONTRACTS.md).
+ * Registration-day battery for **tips** (docs/NON_SOCIAL_CONTRACTS.md).
  *
- * Tips are not a Yappr contract at all: a tip is a YAPP token transfer, and the
- * proof is the `transfer` document Platform writes into the SYSTEM token-history
- * contract because YAPP sets `keepsTransferHistory`. Actors are seed-ledger
- * personas — a TIPPER and a CREATOR; the tipper signs with its CRITICAL auth key,
- * which every batch carrying a token transition needs.
+ * Tips are not a Yappr contract at all. Which kind a chain gets follows the
+ * app's `yappIsLocked()` (lib/contract-topology.ts), read here off the DEPLOYED
+ * social contract:
+ *
+ * - YAPP transferable (v9): a tip is a YAPP token transfer, and the proof is
+ *   the `transfer` document Platform writes into the SYSTEM token-history
+ *   contract because YAPP sets `keepsTransferHistory` (cases t1–t5). The tipper
+ *   signs with its CRITICAL auth key, which every token batch needs.
+ * - YAPP locked (v10: paused for good, no price): a tip is a CREDIT transfer
+ *   signed with the tipper's TRANSFER key (cases c1–c2). It leaves no document,
+ *   so balances are the proof. That the YAPP transfer itself is refused 40711
+ *   is verify-v10's y1.
+ *
+ * Actors are seed-ledger personas: a TIPPER and a CREATOR.
  *
  *   NETWORK=devnet node scripts/verify-tips.mjs \
- *     [--tipper 240] [--creator 241] [--amount 5] [--only t2,t3]
- *   node scripts/verify-tips.mjs --self-test   # offline: the tip-note codec alone
+ *     [--tipper 240] [--creator 241] [--amount 5] [--credits 100000000] [--only c1,c2]
+ *   node scripts/verify-tips.mjs --self-test   # offline: the tip-note codec and the lock predicate
  */
-import { BatchTransition, BatchedTransition, StateTransition, TokenBaseTransition, TokenTransferTransition, TokenTransition } from '@dashevo/evo-sdk';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { BatchTransition, BatchedTransition, IdentitySigner, StateTransition, TokenBaseTransition, TokenTransferTransition, TokenTransition } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import { normalizeId, reportSelfTest, runBattery, settle } from './battery-lib.mjs';
-import { YAPP_TOKEN_POSITION, describeErr } from './seed/seed-lib.mjs';
+import { REPO_ROOT, YAPP_TOKEN_POSITION, describeErr, ledgerEntry, loadLedger, wifFromHex } from './seed/seed-lib.mjs';
 
 /** The system token-history contract — identical on every chain. */
 const HISTORY = '43gujrzZgXqcKBiScLa4T8XTDnRhenR9BLx8GWVHjPxF';
@@ -25,6 +36,13 @@ const NOTE_MAX = 2048;
 /** The app's tip message cap (lib/tip-note.ts). */
 const MESSAGE_MAX = 280;
 const CONTROL_NOTE = 'battery control transfer, not a tip';
+/**
+ * A key of the wrong purpose signing a credit transfer: refused while signing
+ * (WrongPublicKeyPurposeError 20005) or by consensus (InvalidSignaturePublicKeyPurposeError 20011).
+ */
+const WRONG_KEY_PURPOSE = /\bcode"?\s*[=:]\s*200(05|11)\b|invalid (identity |public )?key purpose/i;
+/** The app's smallest credit tip (lib/services/tip-service.ts MIN_TIP_CREDITS, 0.001 DASH). */
+const MIN_TIP_CREDITS = 100_000_000n;
 const TIP_MESSAGE = 'battery tip';
 
 /** Mirrors lib/tip-note.ts — kept literal here so the battery checks the encoding, not the app's copy of it. */
@@ -45,6 +63,55 @@ function parseTipNote(note) {
     return null;
   }
   return { kind, targetId, message: newline === -1 ? '' : note.slice(newline + 1).trim() };
+}
+
+/**
+ * lib/contract-topology.ts `yappIsLocked()`, over a contract's JSON: YAPP starts
+ * paused and nobody may ever set its direct-purchase price, so it can neither be
+ * transferred nor bought and tips must be credit tips.
+ */
+function yappIsLocked(contractJson) {
+  const token = contractJson?.tokens?.['0'];
+  return token?.startAsPaused === true
+    && token?.distributionRules?.changeDirectPurchasePricingRules?.authorizedToMakeChange?.$type === 'noOne';
+}
+
+/** Skips a case written for the other tip kind, saying why. */
+const onlyWhen = (wantLocked, key, run) => async (ctx) => {
+  if (ctx.yappLocked === wantLocked) return run(ctx);
+  console.log(`SKIP  ${key}: ${ctx.yappLocked ? 'YAPP is locked (paused, no price), so tips are credit tips (c1-c2)' : 'YAPP is transferable, so tips are YAPP tips (t1-t5)'}`);
+};
+
+/** The persona's TRANSFER key (the only purpose a credit transfer accepts), off the seed ledger. */
+async function transferSigner(battery, personaIdx) {
+  const entry = ledgerEntry(loadLedger(), personaIdx);
+  const key = entry?.identityKeys.find((candidate) => candidate.purpose === 'transfer');
+  if (!key) throw new Error(`persona ${personaIdx} has no TRANSFER key in the seed ledger`);
+  const identity = await battery.readback(() => battery.sdk.identities.fetch(entry.identityId));
+  const signingKey = identity?.getPublicKeyById(key.keyId);
+  if (!signingKey) throw new Error(`identity ${entry.identityId} has no key ${key.keyId} on chain`);
+  const signer = new IdentitySigner();
+  signer.addKeyFromWif(wifFromHex(key.privateKeyHex));
+  return { identity, signingKey, signer };
+}
+
+/** Credit balances of `ids`, read in ONE proved query so they share a block height. */
+async function balancesOf(battery, ids) {
+  const balances = await battery.readback(() => battery.sdk.identities.balances(ids));
+  return ids.map((id) => (balances instanceof Map ? balances.get(id) : undefined) ?? 0n);
+}
+
+/**
+ * Polls `ids` until every balance has moved off `before` (a confirmation 504
+ * can precede a landed transfer), or the attempts run out; returns the last read.
+ */
+async function balancesAfter(battery, ids, before) {
+  let after = before;
+  for (let attempt = 0; attempt < 5 && after.some((balance, i) => balance === before[i]); attempt++) {
+    await settle();
+    after = await balancesOf(battery, ids);
+  }
+  return after;
 }
 
 /** One page of `transfer` documents off a token-history index, newest first. */
@@ -179,20 +246,75 @@ async function caseT5UnsignedBuilder(ctx) {
   ]) battery.check(label, condition, detail);
 }
 
-const CASES = new Map([['t1', caseT1Transfer], ['t2', caseT2Proof], ['t3', caseT3Attribution], ['t4', caseT4FromIndex], ['t5', caseT5UnsignedBuilder]]);
+// ---- Credit tips (YAPP locked) -----------------------------------------------
+
+async function caseC1CreditTip(ctx) {
+  console.log('\n== c1: a credit tip, signed with the TRANSFER key ==');
+  const { battery, tipper, creator, credits } = ctx;
+  const { identity, signingKey, signer } = await transferSigner(battery, ctx.args.tipper);
+  const ids = [tipper.ownerId, creator.ownerId];
+  const [tipperBefore, creatorBefore] = await balancesOf(battery, ids);
+  const before = { tipper: tipperBefore, creator: creatorBefore };
+  console.log(`     before: tipper=${before.tipper} creator=${before.creator} credits`);
+  if (before.tipper < credits * 2n) throw new Error(`tipper holds ${before.tipper} credits, below the ${credits * 2n} a tip plus its fee needs`);
+
+  let result = null;
+  try {
+    // Exactly lib/services/tip-service.ts sendTip.
+    result = await battery.sdk.identities.creditTransfer({ identity, recipientId: creator.ownerId, amount: credits, signer, signingKey });
+  } catch (e) {
+    console.log(`     (credit transfer reported: ${describeErr(e).slice(0, 140)})`);
+  }
+  const [tipperAfter, creatorAfter] = await balancesAfter(battery, ids, [before.tipper, before.creator]);
+  const fee = before.tipper - tipperAfter - credits;
+  console.log(`     after:  tipper=${tipperAfter} creator=${creatorAfter} (fee ${fee} credits)`);
+  battery.check('c1a the creator received exactly the tip', creatorAfter === before.creator + credits, `${before.creator} -> ${creatorAfter}`);
+  battery.check('c1b the tipper paid the tip plus a processing fee', fee > 0n, `spent ${before.tipper - tipperAfter}, fee ${fee}`);
+  battery.check(`c1c the fee is below the smallest tip (${MIN_TIP_CREDITS} credits)`, fee < MIN_TIP_CREDITS, `${fee}`);
+  if (result) battery.check('c1d the SDK reports the recipient balance the chain holds', BigInt(result.recipientBalance) === creatorAfter, `${result.recipientBalance} vs ${creatorAfter}`);
+}
+
+async function caseC2AuthKeyRefused(ctx) {
+  console.log('\n== c2: an AUTHENTICATION key cannot sign a credit tip ==');
+  const { battery, tipper, creator, credits } = ctx;
+  const identity = await battery.readback(() => battery.sdk.identities.fetch(tipper.ownerId));
+  const [before] = await balancesOf(battery, [creator.ownerId]);
+  let refusal = null;
+  try {
+    await battery.sdk.identities.creditTransfer({ identity, recipientId: creator.ownerId, amount: credits, signer: tipper.signer, signingKey: tipper.identityKey });
+  } catch (e) {
+    refusal = describeErr(e);
+  }
+  // Wait as long as c1 would for a landed transfer, so a late one is seen.
+  const [after] = await balancesAfter(battery, [creator.ownerId], [before]);
+  battery.check('c2a the transfer signed with the CRITICAL auth key is refused for its purpose (20005/20011)', refusal !== null && WRONG_KEY_PURPOSE.test(refusal), (refusal ?? 'it was accepted').slice(0, 200));
+  battery.check('c2b and nothing moved', after === before, `${before} -> ${after}`);
+}
+
+const CASES = new Map([
+  ['t1', onlyWhen(false, 't1', caseT1Transfer)],
+  ['t2', onlyWhen(false, 't2', caseT2Proof)],
+  ['t3', onlyWhen(false, 't3', caseT3Attribution)],
+  ['t4', onlyWhen(false, 't4', caseT4FromIndex)],
+  ['t5', onlyWhen(false, 't5', caseT5UnsignedBuilder)],
+  ['c1', onlyWhen(true, 'c1', caseC1CreditTip)],
+  ['c2', onlyWhen(true, 'c2', caseC2AuthKeyRefused)],
+]);
 
 /**
- * Offline self-test. Tips have no contract in `contracts/` to pin, so this checks the
- * only thing that IS ours: the `yappr:tip:v1:` codec t1/t3 depend on — round-trip,
- * the 280-char message inside the 2048-char publicNote cap, and the refusals that
- * keep an ordinary transfer from being read as a tip.
+ * Offline self-test. Tips have no contract in `contracts/` to pin, so this checks
+ * what IS ours: the `yappr:tip:v1:` codec t1/t3 depend on (round-trip, the
+ * 280-char message inside the 2048-char publicNote cap, and the refusals that
+ * keep an ordinary transfer from being read as a tip), and the lock predicate
+ * that picks the tip kind, against the committed v9 and v10 social contracts.
  */
 function selfTestTipNotes() {
+  const social = (version) => JSON.parse(readFileSync(join(REPO_ROOT, `contracts/yappr-social-contract-${version}.json`), 'utf8'));
   const postId = bs58.encode(new Uint8Array(32).fill(7));
   const bare = parseTipNote(encodeTipNote('post', postId));
   const noted = parseTipNote(encodeTipNote('reply', postId, 'thanks'));
   const longest = encodeTipNote('post', postId, 'x'.repeat(MESSAGE_MAX));
-  return reportSelfTest('the yappr:tip:v1: note codec', [
+  return reportSelfTest('the yappr:tip:v1: note codec and the YAPP lock predicate', [
     ['a note with no message round-trips', bare?.kind === 'post' && bare.targetId === postId && bare.message === ''],
     ['a note with a message round-trips', noted?.kind === 'reply' && noted.targetId === postId && noted.message === 'thanks'],
     [`a ${MESSAGE_MAX}-char message fits the ${NOTE_MAX}-char publicNote cap`, longest.length <= NOTE_MAX],
@@ -203,20 +325,33 @@ function selfTestTipNotes() {
     ['a tip note with a short target id is refused', parseTipNote(`${TIP_NOTE_PREFIX}post:${bs58.encode(new Uint8Array(20))}`) === null],
     ['a tip note with no kind separator is refused', parseTipNote(`${TIP_NOTE_PREFIX}${postId}`) === null],
     ['a non-string note is refused', parseTipNote(undefined) === null],
+    ['v9 YAPP is transferable: YAPP tips', yappIsLocked(social('v9')) === false],
+    ['v10 YAPP is locked: credit tips', yappIsLocked(social('v10')) === true],
   ]);
 }
 
 await runBattery({
-  label: 'YAPP tips; history',
+  label: 'tips; token history',
   contract: { fixed: HISTORY },
   cases: CASES,
   actors: { tipper: 240, creator: 241 },
-  flags: { amount: 5n },
-  // t1 sends three: the tip, an untagged control, and one with a max-length note.
-  yapp: { actors: ['tipper'], target: (args) => args.amount * 3n },
-  banner: ({ socialId }) => `; YAPP from ${socialId}`,
+  // --amount: YAPP per YAPP tip; --credits: credits per credit tip.
+  flags: { amount: 5n, credits: MIN_TIP_CREDITS },
+  validate: (args) => {
+    if (args.credits < MIN_TIP_CREDITS) throw new Error(`--credits must be at least the app's ${MIN_TIP_CREDITS}-credit minimum tip`);
+  },
+  banner: ({ socialId }) => `; social ${socialId}`,
   selfTest: selfTestTipNotes,
-  setup: async ({ battery, args, protocolVersion }) => {
+  setup: async ({ battery, args, protocolVersion, socialId, tipper }) => {
+    const social = await battery.readback(() => battery.sdk.contracts.fetch(socialId));
+    const yappLocked = yappIsLocked(social.toJSON(protocolVersion));
+    const tokenId = await battery.readback(() => battery.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
+    console.log(`     YAPP ${yappLocked ? 'is locked (paused, no price): credit tips, c1-c2' : 'is transferable: YAPP tips, t1-t5'}`);
+    if (!yappLocked) {
+      // t1 sends three: the tip, an untagged control, and one with a max-length note.
+      const balance = await battery.ensureYapp(tokenId, tipper, args.amount * 3n);
+      console.log(`     ${tipper.label}: ${balance} YAPP`);
+    }
     const contract = await battery.readback(() => battery.sdk.contracts.fetch(HISTORY));
     const json = contract.toJSON(protocolVersion);
     const noteMaxLength = (json.documentSchemas ?? json.documents)?.transfer?.properties?.publicNote?.maxLength;
@@ -224,7 +359,7 @@ await runBattery({
     // The tipped "post" only has to be a 32-byte identifier — consensus never resolves
     // it, which is exactly the limit this feature documents. A fresh random id keeps
     // the attribution check from colliding with earlier runs.
-    return { amount: args.amount, noteMaxLength, note: null, longNote: null, postId: bs58.encode(crypto.getRandomValues(new Uint8Array(32))) };
+    return { yappLocked, tokenId, amount: args.amount, credits: args.credits, noteMaxLength, note: null, longNote: null, postId: bs58.encode(crypto.getRandomValues(new Uint8Array(32))) };
   },
-  summary: (ctx) => `post=${ctx.postId} note=${JSON.stringify(ctx.note)}`,
+  summary: (ctx) => (ctx.yappLocked ? `credit tips of ${ctx.credits} credits` : `post=${ctx.postId} note=${JSON.stringify(ctx.note)}`),
 });

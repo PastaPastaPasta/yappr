@@ -45,7 +45,7 @@ function HashtagPageContent() {
   // Latest|Top sort (v9 only — Top is a proved ranked page on the tag-pinned
   // `like.byHashtagPost` axis). Latest stays the existing tagAndTime path.
   const [sortMode, setSortMode] = useState<'latest' | 'top'>('latest')
-  /** v9: Top can show today's ranking (beat.byDayHashtagPost) or all-time. */
+  /** Top can show the tag's recent window (v9 today, v10 the rolling 24h) or all-time. */
   const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
   const [topPosts, setTopPosts] = useState<Post[]>([])
   const [topLoading, setTopLoading] = useState(false)
@@ -314,7 +314,7 @@ function HashtagPageContent() {
             </div>
           )}
           {sortMode === 'top' && (
-            <RankingWindowToggle value={rankingWindow} onChange={setRankingWindow} testIdPrefix="hashtag-top" />
+            <RankingWindowToggle axis="hashtags" value={rankingWindow} onChange={setRankingWindow} testIdPrefix="hashtag-top" />
           )}
 
           {/* Content */}

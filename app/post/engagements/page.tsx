@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback, Suspense } from 'react'
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
@@ -19,7 +19,9 @@ import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
 import { loadIdentityBatch } from '@/lib/services/identity-batch'
 import { loadEngagementCounts } from '@/lib/services/social-stats-service'
-import { canRepost, type TargetKind } from '@/lib/contract-topology'
+import { canRepost, repostsAreQuotes, type TargetKind } from '@/lib/contract-topology'
+import { splitRepostsAndQuotes } from '@/lib/feed/quote-reposts'
+import type { Post } from '@/lib/types'
 
 type TabType = 'quotes' | 'reposts' | 'likes'
 
@@ -70,6 +72,33 @@ async function resolveEngagementUsers(
   })
 }
 
+/** v10 reads the whole quote list once to split it into reposts and quotes: the query's page cap. */
+const QUOTE_LIST_LIMIT = 100
+
+/** One quote post's author, with the quote itself for the Quotes tab. */
+async function quoteUsersOf(quotePosts: Post[], currentUserId: string | undefined): Promise<EngagementUser[]> {
+  if (quotePosts.length === 0) return []
+  const ownerIds = quotePosts.map(p => p.author.id).filter(Boolean)
+  const baseUsers = await resolveEngagementUsers(ownerIds, currentUserId)
+
+  // Create Map for O(1) lookups - avoids index mismatch when filter(Boolean) removes IDs
+  const baseUsersMap = new Map(baseUsers.map(u => [u.id, u]))
+
+  // Add quote-specific fields by joining with quotePosts data using ID-based lookup
+  return quotePosts.map((post) => ({
+    ...(baseUsersMap.get(post.author.id) || {
+      id: post.author.id,
+      username: post.author.id?.slice(-8) || 'unknown',
+      displayName: 'User ' + (post.author.id?.slice(-8) || 'unknown'),
+      hasDpnsName: false,
+      hasProfile: false,
+      isFollowing: false
+    }),
+    quoteContent: post.content,
+    quotePostId: post.id
+  }))
+}
+
 function EngagementsPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -81,6 +110,9 @@ function EngagementsPageContent() {
   // not say which — so PostCard puts the kind in the link.
   const targetKind: TargetKind = searchParams.get('kind') === 'reply' ? 'reply' : 'post'
   const repostable = canRepost(targetKind)
+  // v10: no repost doctype. The target's quote list holds its bare reposts and
+  // its quotes with text, so one read fills both tabs (and their counts).
+  const repostsFromQuotes = repostsAreQuotes()
   const tabs: TabType[] = repostable ? ['quotes', 'reposts', 'likes'] : ['quotes', 'likes']
 
   const [activeTab, setActiveTab] = useState<TabType>('likes')
@@ -93,6 +125,9 @@ function EngagementsPageContent() {
   // O(1) count-tree tab counts, loaded once independent of which tab's full
   // list is active - avoids paginating a full list just to show a number.
   const [tabCounts, setTabCounts] = useState<Record<TabType, number> | null>(null)
+  // v10: the Reposts/Quotes split read off a quote list that filled its page,
+  // so each is a floor ("100+"), not an exact count.
+  const [splitTruncated, setSplitTruncated] = useState(false)
 
   const [actionInProgress, setActionInProgress] = useState<Set<string>>(new Set())
 
@@ -123,9 +158,50 @@ function EngagementsPageContent() {
     }
   }, [postId, targetKind, user?.identityId, likesState])
 
+  // v10: load the quote list once and split it between the two tabs. Only the
+  // (stable) setters are used, so the loader keeps its identity across renders.
+  const { setLoading: setRepostsLoading, setError: setRepostsError, setData: setRepostsData } = repostsState
+  const { setLoading: setQuotesLoading, setError: setQuotesError, setData: setQuotesData } = quotesState
+  const loadQuoteList = useCallback(async () => {
+    if (!postId) return
+
+    setRepostsLoading(true)
+    setQuotesLoading(true)
+
+    try {
+      const { reposts, quotes } = splitRepostsAndQuotes(await postService.getQuotePosts(postId, targetKind, { limit: QUOTE_LIST_LIMIT }))
+      const [repostUsers, quoteUsers] = await Promise.all([
+        quoteUsersOf(reposts, user?.identityId),
+        quoteUsersOf(quotes, user?.identityId),
+      ])
+      setRepostsData(repostUsers)
+      setQuotesData(quoteUsers)
+      // The split is exact only while the list is complete; off a full page
+      // the badges read as floors ("12+"), and a zero shows no badge at all.
+      setSplitTruncated(reposts.length + quotes.length >= QUOTE_LIST_LIMIT)
+      setTabCounts((counts) => counts && { ...counts, reposts: reposts.length, quotes: quotes.length })
+    } catch (error) {
+      logger.error('Failed to load quotes and reposts:', error)
+      const message = error instanceof Error ? error.message : 'Failed to load quotes and reposts'
+      setRepostsError(message)
+      setQuotesError(message)
+    } finally {
+      setRepostsLoading(false)
+      setQuotesLoading(false)
+    }
+  }, [postId, targetKind, user?.identityId, setRepostsLoading, setRepostsError, setRepostsData, setQuotesLoading, setQuotesError, setQuotesData])
+
+  // The counts effect below runs once per target; it reaches the current
+  // loader through this ref rather than re-running when the loader changes.
+  const loadQuoteListRef = useRef(loadQuoteList)
+  useEffect(() => {
+    loadQuoteListRef.current = loadQuoteList
+  })
+
   // Load reposts
   const loadReposts = useCallback(async () => {
     if (!postId) return
+    if (repostsFromQuotes) return loadQuoteList()
 
     const { setLoading, setError, setData } = repostsState
     setLoading(true)
@@ -148,11 +224,12 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, user?.identityId, repostsState])
+  }, [postId, user?.identityId, repostsState, repostsFromQuotes, loadQuoteList])
 
   // Load quotes
   const loadQuotes = useCallback(async () => {
     if (!postId) return
+    if (repostsFromQuotes) return loadQuoteList()
 
     const { setLoading, setError, setData } = quotesState
     setLoading(true)
@@ -160,40 +237,14 @@ function EngagementsPageContent() {
 
     try {
       const quotePosts = await postService.getQuotePosts(postId, targetKind)
-
-      if (quotePosts.length === 0) {
-        setData([])
-        return
-      }
-
-      const ownerIds = quotePosts.map(p => p.author.id).filter(Boolean)
-      const baseUsers = await resolveEngagementUsers(ownerIds, user?.identityId)
-
-      // Create Map for O(1) lookups - avoids index mismatch when filter(Boolean) removes IDs
-      const baseUsersMap = new Map(baseUsers.map(u => [u.id, u]))
-
-      // Add quote-specific fields by joining with quotePosts data using ID-based lookup
-      const users: EngagementUser[] = quotePosts.map((post) => ({
-        ...(baseUsersMap.get(post.author.id) || {
-          id: post.author.id,
-          username: post.author.id?.slice(-8) || 'unknown',
-          displayName: 'User ' + (post.author.id?.slice(-8) || 'unknown'),
-          hasDpnsName: false,
-          hasProfile: false,
-          isFollowing: false
-        }),
-        quoteContent: post.content,
-        quotePostId: post.id
-      }))
-
-      setData(users)
+      setData(await quoteUsersOf(quotePosts, user?.identityId))
     } catch (error) {
       logger.error('Failed to load quotes:', error)
       setError(error instanceof Error ? error.message : 'Failed to load quotes')
     } finally {
       setLoading(false)
     }
-  }, [postId, targetKind, user?.identityId, quotesState])
+  }, [postId, targetKind, user?.identityId, quotesState, repostsFromQuotes, loadQuoteList])
 
   // Load data for active tab (only if not yet loaded)
   useEffect(() => {
@@ -227,13 +278,16 @@ function EngagementsPageContent() {
 
     loadEngagementCounts(postId, targetKind).then(({ quotes, reposts, likes }) => {
       if (cancelled) return
-      setTabCounts({ quotes, reposts, likes })
+      // v10: `quotes` counts bare reposts too; the split comes from the list,
+      // which this also loads (the tabs' counts follow it).
+      setTabCounts((counts) => repostsFromQuotes && counts ? { ...counts, likes } : { quotes, reposts, likes })
+      if (repostsFromQuotes && quotes > 0) loadQuoteListRef.current().catch(err => logger.error('Failed to load quotes and reposts:', err))
     }).catch(err => logger.error('Failed to load engagement tab counts:', err))
 
     return () => {
       cancelled = true
     }
-  }, [postId, targetKind, repostable])
+  }, [postId, targetKind, repostable, repostsFromQuotes])
 
   const handleFollow = async (userId: string) => {
     const authedUser = requireAuth()
@@ -374,7 +428,7 @@ function EngagementsPageContent() {
                   {tab.charAt(0).toUpperCase() + tab.slice(1)}
                   {tabCounts !== null && tabCounts[tab] > 0 && (
                     <span className="ml-1 text-gray-500 dark:text-gray-400 font-normal">
-                      {tabCounts[tab]}
+                      {tabCounts[tab]}{splitTruncated && tab !== 'likes' ? '+' : ''}
                     </span>
                   )}
                   {activeTab === tab && (

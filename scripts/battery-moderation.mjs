@@ -1,8 +1,8 @@
 /**
  * Contract-moderation cases shared by the battery-lib batteries (blog v3,
  * storefront v3): a ban refuses a persona's writes (41107) until an unban, and
- * a moderator deletes a document of a `canBeDeletedByModerators` type, leaving
- * a removal record. The moderator is a seed persona holding the contract
+ * a moderator deletes a document of a type whose `moderatorAbilities.delete` is
+ * set, leaving a removal record. The moderator is a seed persona holding the contract
  * owner's CRITICAL key (the persona the contract was published under), or an
  * appointed one; both sign the same transitions.
  *
@@ -12,6 +12,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { selfTest } from './battery-lib.mjs';
+import { moderatorsMayDelete } from './contract-probes.mjs';
 import { REPO_ROOT, describeErr, sleep } from './seed/seed-lib.mjs';
 
 /**
@@ -24,10 +25,10 @@ const describeValue = (value) => JSON.stringify(value, (_k, v) => (typeof v === 
 
 
 /**
- * battery-lib's offline `selfTest`, extended with the beta.3 declarations a
- * moderated battery is written against. Per document type, on top of
- * `agreements`/`immutable`/`immutableAllowSetting`:
- *   moderatorDeletable: whether the type carries `canBeDeletedByModerators`
+ * battery-lib's offline `selfTest`, extended with the declarations a moderated
+ * battery is written against. Per document type, on top of
+ * `where`/`immutable`/`immutableAllowSetting`:
+ *   moderatorDeletable: whether the type's `moderatorAbilities.delete` is set
  *   keepsHistory:       whether it carries `documentsKeepHistory` (a
  *                       moderator-deletable type cannot)
  *   typedArrays:        { <property>: { items, maxItems, maxLength? } } —
@@ -47,8 +48,8 @@ export function selfTestModerated(file, expect, contract = {}) {
     base[docType] = rest;
     const schema = schemas[docType];
     if (!schema) continue; // battery-lib reports the missing type
-    if (moderatorDeletable !== undefined && (schema.canBeDeletedByModerators === true) !== moderatorDeletable) {
-      problems.push(`${docType} canBeDeletedByModerators is ${schema.canBeDeletedByModerators ?? false}, expected ${moderatorDeletable}`);
+    if (moderatorDeletable !== undefined && moderatorsMayDelete(schema) !== moderatorDeletable) {
+      problems.push(`${docType} moderatorAbilities.delete is ${moderatorsMayDelete(schema)}, expected ${moderatorDeletable}`);
     }
     if (keepsHistory !== undefined && (schema.documentsKeepHistory === true) !== keepsHistory) {
       problems.push(`${docType} documentsKeepHistory is ${schema.documentsKeepHistory ?? false}, expected ${keepsHistory}`);
@@ -64,7 +65,7 @@ export function selfTestModerated(file, expect, contract = {}) {
       if (schema.properties?.[property]?.distinctFrom !== '$ownerId') problems.push(`${docType}.${property} is not distinctFrom $ownerId`);
     }
   }
-  const deletable = new Set(Object.entries(schemas).filter(([, s]) => s.canBeDeletedByModerators).map(([n]) => n));
+  const deletable = new Set(Object.entries(schemas).filter(([, s]) => moderatorsMayDelete(s)).map(([n]) => n));
   for (const [name, schema] of Object.entries(schemas)) {
     for (const [property, definition] of Object.entries(schema.properties ?? {})) {
       const ref = definition.refersTo;

@@ -3,15 +3,42 @@ import type { TtlMap } from '@/lib/caches/ttl-map';
 import {
   bookmarkIndexFor,
   groupByInteractionSurface,
+  ownQuoteIndexFor,
   repostIndexFor,
   type KindedTarget,
+  type TargetKind,
 } from '@/lib/contract-topology';
+import type { OwnQuote } from '@/lib/feed/quote-reposts';
 import type { PostStats } from './post-service';
 
 export interface PostInteractionState {
   liked: boolean;
+  /** v10: true when the viewer has quoted OR reposted it (one slot per target). */
   reposted: boolean;
   bookmarked: boolean;
+  /** v10: the viewer's quote or bare repost of it, when `reposted`. */
+  ownQuote?: OwnQuote;
+}
+
+/**
+ * The viewer's reposts among `ids`: `repost` documents (v2, v9 posts) or, on
+ * v10, their own quote posts via `ownerAndQuotedPost`/`ownerAndQuotedReply`.
+ * Empty where the kind has neither (v9 replies).
+ */
+async function viewerReposts(currentUserId: string, ids: string[], kind: TargetKind): Promise<Map<string, OwnQuote | null>> {
+  if (ownQuoteIndexFor(kind)) {
+    const { postService } = await import('./post-service');
+    return postService.getOwnQuotes(currentUserId, ids, kind);
+  }
+  if (!repostIndexFor(kind)) return new Map();
+  const { repostService } = await import('./repost-service');
+  const reposted = await repostService.getUserRepostedPostIds(currentUserId, ids);
+  return new Map(Array.from(reposted, (id) => [id, null]));
+}
+
+/** Reply-count roots of the reply targets that carry one (v10 pins them). */
+function rootsOf(targets: readonly KindedTarget[]): Map<string, string> {
+  return new Map(targets.flatMap((target) => (target.rootPostId ? [[target.id, target.rootPostId] as const] : [])));
 }
 
 /**
@@ -42,11 +69,14 @@ export async function fetchPostStats(
 
     const [likes, reposts, replies, quotes] = await Promise.all([
       likeService.countLikes(postId, kind),
-      // A kind the topology forbids reposting has no repost doctype to count.
+      // No repost doctype to count: a v9 reply, and everything on v10, where a
+      // repost is a quote and the quote count below already holds it.
       repostIndexFor(kind) ? repostService.countReposts(postId) : Promise.resolve(0),
       // Polymorphic on v2 (one `parentId` count tree serves both kinds); on v9 a
-      // post counts its whole thread and a reply its direct children.
-      replyService.countReplies(postId, kind),
+      // post counts its whole thread and a reply its direct children (v10 pins
+      // the reply's root). v9 counts include tombstones; v10 deletes leave the
+      // tree, so it is exact.
+      replyService.countReplies(postId, kind, target.rootPostId),
       postService.countQuotes(postId, kind),
     ]);
 
@@ -79,21 +109,21 @@ export async function fetchUserInteractions(
   const { id: postId, kind } = target;
 
   try {
-    const [{ likeService }, { repostService }, { bookmarkService }] = await Promise.all([
+    const [{ likeService }, { bookmarkService }] = await Promise.all([
       import('./like-service'),
-      import('./repost-service'),
       import('./bookmark-service'),
     ]);
 
     // Kinds the topology forbids reposting/bookmarking have no document to look
     // for, so those queries are skipped rather than pointed at the wrong doctype.
-    const [liked, reposted, bookmarked] = await Promise.all([
+    const [liked, reposts, bookmarked] = await Promise.all([
       likeService.isLiked(postId, currentUserId, kind),
-      repostIndexFor(kind) ? repostService.isReposted(postId, currentUserId) : Promise.resolve(false),
+      viewerReposts(currentUserId, [postId], kind),
       bookmarkIndexFor(kind) ? bookmarkService.isBookmarked(postId, currentUserId) : Promise.resolve(false),
     ]);
 
-    return { liked, reposted, bookmarked };
+    const ownQuote = reposts.get(postId);
+    return { liked, reposted: reposts.has(postId), bookmarked, ...(ownQuote ? { ownQuote } : {}) };
   } catch (error) {
     logger.error('Error getting user interactions:', error);
     return { liked: false, reposted: false, bookmarked: false };
@@ -115,9 +145,8 @@ export async function fetchBatchUserInteractions(
   }
 
   try {
-    const [{ likeService }, { repostService }, { bookmarkService }] = await Promise.all([
+    const [{ likeService }, { bookmarkService }] = await Promise.all([
       import('./like-service'),
-      import('./repost-service'),
       import('./bookmark-service'),
     ]);
 
@@ -130,11 +159,9 @@ export async function fetchBatchUserInteractions(
         // via the composite indexes) instead of fetching all users' likes capped
         // at 100 and filtering client-side — which could miss the user's own on
         // busy pages.
-        const [likedPostIds, repostedPostIds, userBookmarks] = await Promise.all([
+        const [likedPostIds, reposts, userBookmarks] = await Promise.all([
           likeService.getUserLikedPostIds(currentUserId, ids, kind),
-          repostIndexFor(kind)
-            ? repostService.getUserRepostedPostIds(currentUserId, ids)
-            : Promise.resolve(new Set<string>()),
+          viewerReposts(currentUserId, ids, kind),
           bookmarkIndexFor(kind)
             ? bookmarkService.getUserBookmarksForPosts(currentUserId, ids)
             : Promise.resolve([]),
@@ -143,10 +170,12 @@ export async function fetchBatchUserInteractions(
         const bookmarkedPostIds = new Set(userBookmarks.map((bookmark) => bookmark.postId));
 
         ids.forEach((postId) => {
+          const ownQuote = reposts.get(postId);
           result.set(postId, {
             liked: likedPostIds.has(postId),
-            reposted: repostedPostIds.has(postId),
+            reposted: reposts.has(postId),
             bookmarked: bookmarkedPostIds.has(postId),
+            ...(ownQuote ? { ownQuote } : {}),
           });
         });
       })
@@ -192,7 +221,7 @@ export async function fetchBatchPostStats(targets: readonly KindedTarget[]): Pro
             ? repostService.countRepostsForPosts(ids)
             : Promise.resolve(new Map<string, number>()),
           // Per-kind count tree — see fetchPostStats.
-          replyService.countRepliesForPosts(ids, kind),
+          replyService.countRepliesForPosts(ids, kind, rootsOf(targets)),
           postService.countQuotesForPosts(ids, kind),
         ]);
 

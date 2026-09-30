@@ -1,11 +1,11 @@
 /**
- * Manual registration of a yappr social contract on a devnet (moutai by
- * default).
+ * Manual registration of a yappr social contract on a devnet (the one
+ * `.env.devnet` names, or DEVNET_NAME / DAPI_ADDRESSES / QUORUM_URL).
  *
  * The name is historical — the script is file-agnostic. It publishes any
  * contract JSON from `contracts/` as a brand-new contract; pick the file with
- * `--contract-file` (default `yappr-social-contract-v9.json`, the shape the
- * /devnet build runs). Superseded social cuts are not kept in the repo; see
+ * `--contract-file` (default `yappr-social-contract-v10.json`, the 4.2.0-beta.7
+ * cut the /devnet build moves to). Superseded social cuts are not kept in the repo; see
  * git history if an old shape is ever needed.
  *
  * ## Registered devnet contracts
@@ -36,8 +36,8 @@
  * v13. Configured from the environment so this script needs no edit when the
  * devnet is re-genesised:
  *
- *   DEVNET_NAME     devnet name           (default: moutai)
- *   DAPI_ADDRESSES  comma-separated DAPI  (default: https://seed-{1..5}.<devnet>.networks.dash.org:1443)
+ *   DEVNET_NAME     devnet name           (else NEXT_PUBLIC_DEVNET_NAME in .env.devnet)
+ *   DAPI_ADDRESSES  comma-separated DAPI  (else NEXT_PUBLIC_DAPI_ADDRESSES in .env.devnet)
  *
  * Non-trusted, proofs off: a devnet has no published quorum info to verify
  * against, so every query is served in trusted mode against the seeds above.
@@ -69,9 +69,11 @@
  *
  * A fresh contract mints its whole YAPP `baseSupply` to the contract owner, so
  * every other identity starts at zero and its first token-priced write (a post
- * costs 10 YAPP) is refused. `--fund <id>[,<id>…]` transfers `--fund-amount`
- * YAPP from the freshly-registered contract's owner to each id, which is what
- * makes the verification battery able to write posts/replies/likes at all.
+ * costs 10 YAPP) is refused. `--fund <id>[,<id>…]` gives `--fund-amount` YAPP to
+ * each id, which is what makes the verification battery able to write
+ * posts/replies/likes at all. The owner MINTS it to each id
+ * (`mintingAllowChoosingDestination`): v10's YAPP starts paused and can never
+ * be unpaused, so a transfer is refused; on v9 a mint works the same.
  * `--fund-only <contractId>` performs just that step against a contract that
  * already exists, for topping a bot up without republishing anything.
  *
@@ -93,55 +95,27 @@
 import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DataContract, EvoSDK, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
+import { DataContract, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
+import { devnetConfig, devnetSdk as buildDevnetSdk } from './sdk-env.mjs';
 import { auditModeration, requireModeratorsExist, withModerators } from './register-lib.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONTRACTS_DIR = join(REPO_ROOT, 'contracts');
-const DEFAULT_CONTRACT_FILE = 'yappr-social-contract-v9.json';
+const DEFAULT_CONTRACT_FILE = 'yappr-social-contract-v10.json';
 /** YAPP is defined at token position 0 of every yappr social contract. */
 const YAPP_TOKEN_POSITION = 0;
 /** Enough YAPP for a battery run: posts cost 10, replies 3, likes/reposts 1. */
 const DEFAULT_FUND_AMOUNT = 1000n;
 const SDK_TIMEOUT_MS = 30000;
-const DEFAULT_DEVNET_NAME = 'moutai';
-const DEFAULT_SEED_COUNT = 5;
 /** Placeholder owner for `--dry-run`, so the contract can be assembled without an identity. */
 const DRY_RUN_OWNER = '11111111111111111111111111111111';
 
-// ---- Devnet SDK (inline on purpose: this script owns its network config) ----
+// ---- Devnet SDK: sdk-env's config (env, then `.env.devnet`) ----------------
 
-/** `seed-1..5.<devnet>.networks.dash.org:1443` — the standard devnet seed layout. */
-function defaultDevnetAddresses(devnetName) {
-  return Array.from(
-    { length: DEFAULT_SEED_COUNT },
-    (_, i) => `https://seed-${i + 1}.${devnetName}.networks.dash.org:1443`
-  );
-}
-
-/** Reads `DEVNET_NAME` / `DAPI_ADDRESSES` and builds a non-trusted devnet SDK. */
 function devnetSdk() {
-  const devnetName = process.env.DEVNET_NAME?.trim() || DEFAULT_DEVNET_NAME;
-  const configured = (process.env.DAPI_ADDRESSES ?? '')
-    .split(',')
-    .map((address) => address.trim())
-    .filter(Boolean)
-    .map((address) => (address.includes('://') ? address : `https://${address}`));
-  const addresses = configured.length > 0 ? configured : defaultDevnetAddresses(devnetName);
-  const sdk = new EvoSDK({
-    network: 'devnet',
-    devnetName,
-    addresses,
-    // trusted mode is mandatory: wasm-sdk panics on `proofs: false` ("queries
-    // without proofs are not supported yet") and refuses non-trusted proofs.
-    // The trusted context prefetches quorum keys from
-    // https://quorums.<devnetName>.networks.dash.org (or QUORUM_URL).
-    trusted: true,
-    ...(process.env.QUORUM_URL ? { quorumUrl: process.env.QUORUM_URL } : {}),
-    settings: { timeoutMs: SDK_TIMEOUT_MS },
-  });
-  return { sdk, devnetName, addresses };
+  const config = devnetConfig();
+  return { sdk: buildDevnetSdk({ timeoutMs: SDK_TIMEOUT_MS, config }), devnetName: config.devnetName, addresses: config.addresses };
 }
 
 // ---- Contract assembly ------------------------------------------------------
@@ -198,7 +172,7 @@ function printSchemaAudit(documentSchemas) {
       `mutable=${schema.documentsMutable ?? 'default'}`,
       `canBeDeleted=${schema.canBeDeleted ?? 'default'}`,
       ...(schema.documentsCountable ? ['countable'] : []),
-      ...(schema.canBeDeletedByModerators ? ['moderatorDelete'] : []),
+      ...(schema.moderatorAbilities ? [`moderators=${JSON.stringify(schema.moderatorAbilities)}`] : []),
     ];
     const cost = schema.tokenCost?.create;
     if (cost) flags.push(`create=${cost.amount} token@${cost.tokenPosition}${cost.optional ? ' (optional)' : ''}${cost.gasFeesPaidBy ? ` gas=${cost.gasFeesPaidBy}` : ''}`);
@@ -232,7 +206,7 @@ function printSchemaAudit(documentSchemas) {
   for (const [target, references] of targets) {
     const schema = documentSchemas[target];
     if (!schema) throw new Error(`refersTo names document type "${target}", which this contract does not define`);
-    const deletable = schema.canBeDeleted !== false || schema.canBeDeletedByModerators === true;
+    const deletable = schema.canBeDeleted !== false || schema.moderatorAbilities?.delete === true || schema.ttl !== undefined;
     for (const { from, type } of references) {
       if (type === 'permanentDocument' && deletable) {
         throw new Error(`${from}: "${target}" is a permanentDocument target but can be deleted (by its owner or by moderators)`);
@@ -246,9 +220,10 @@ function printSchemaAudit(documentSchemas) {
 }
 
 /**
- * Transfers YAPP from the contract owner (who holds the whole freshly-minted
- * `baseSupply`) to each recipient, so their first token-priced document write is
- * not refused for an empty balance.
+ * Mints YAPP from the contract owner straight to each recipient, so their first
+ * token-priced document write is not refused for an empty balance. A mint, not
+ * a transfer: v10's YAPP is paused for good, and a paused token refuses every
+ * transfer while token costs, the starter grant and owner mints still work.
  */
 async function fundRecipients(sdk, { contractId, owner, identityKey, signer, recipients, amount }) {
   // The trusted SDK needs the contract cached before it can verify a token
@@ -259,19 +234,19 @@ async function fundRecipients(sdk, { contractId, owner, identityKey, signer, rec
 
   for (const recipientId of recipients) {
     try {
-      await sdk.tokens.transfer({
+      await sdk.tokens.mint({
         dataContractId: contractId,
         tokenPosition: YAPP_TOKEN_POSITION,
-        senderId: owner.ownerId,
+        identityId: owner.ownerId,
         recipientId,
         amount,
         identityKey,
         signer,
       });
     } catch (e) {
-      // A gateway timeout on a transfer that landed must not look like a
+      // A gateway timeout on a mint that landed must not look like a
       // failure, so the balance read below is what decides.
-      console.log(`  transfer to ${recipientId} reported: ${describeErr(e).slice(0, 160)}`);
+      console.log(`  mint to ${recipientId} reported: ${describeErr(e).slice(0, 160)}`);
     }
   }
 
@@ -431,7 +406,7 @@ try {
 
   console.log('');
   console.log(`.env.devnet → NEXT_PUBLIC_YAPPR_CONTRACT_ID=${contractId}`);
-  console.log(`battery     → NETWORK=devnet node scripts/verify-v9.mjs --contract ${contractId} …`);
+  console.log(`battery     → NETWORK=devnet node scripts/verify-v10.mjs --contract ${contractId} …`);
 } catch (e) {
   console.error('ERROR:', describeErr(e));
   process.exit(1);

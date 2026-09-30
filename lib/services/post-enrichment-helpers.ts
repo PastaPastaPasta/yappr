@@ -52,6 +52,7 @@ export async function enrichPostFull(
       liked: interactions.liked,
       reposted: interactions.reposted,
       bookmarked: interactions.bookmarked,
+      ownQuote: interactions.ownQuote,
       author: {
         ...authorToUse,
         hasDpns,
@@ -129,6 +130,7 @@ export async function enrichPostsBatch(
         liked: interactions?.liked ?? post.liked,
         reposted: interactions?.reposted ?? post.reposted,
         bookmarked: interactions?.bookmarked ?? post.bookmarked,
+        ownQuote: interactions ? interactions.ownQuote : post.ownQuote,
         author: {
           ...post.author,
           username: username || post.author.username,

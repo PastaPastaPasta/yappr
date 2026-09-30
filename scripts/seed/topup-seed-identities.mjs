@@ -24,11 +24,10 @@ import {
   LEDGER_FILE,
   REPO_ROOT,
   TREASURY_KEY_FILE,
-  TRANSPORT_COLLAPSE,
-  WAIT_MAYBE_LANDED,
   createSdkHandle,
   describeErr,
   generateKeypairHex,
+  landedAfter,
   loadLedger,
   readback,
   sleep,
@@ -203,12 +202,8 @@ async function phaseTopUp(handle, jobs) {
       });
     } catch (e) {
       // The gateway 504s the confirmation wait routinely; the balance decides.
-      const text = describeErr(e);
-      if (!WAIT_MAYBE_LANDED.test(text) && !TRANSPORT_COLLAPSE.test(text)) throw e;
-      if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
-      await sleep(3000);
-      const after = await readback(handle, () => sdk.identities.balance(job.identityId));
-      if ((after ?? 0n) <= (before ?? 0n)) throw e;
+      const grew = async () => ((await readback(handle, () => sdk.identities.balance(job.identityId))) ?? 0n) > (before ?? 0n);
+      if (!(await landedAfter(handle, e, grew))) throw e;
     }
     job.state = 'done';
     saveJobs(jobs);

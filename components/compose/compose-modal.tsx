@@ -20,8 +20,9 @@ import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
 import { PaymentHint } from './payment-hint'
 import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { planPosts, publishThread } from '@/lib/compose/publish-thread'
-import { CHARACTER_LIMIT, characterCount, hasVisibleContent } from '@/lib/compose/limits'
+import { characterCount, contentOverage, hasVisibleContent, isOverContentLimit } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
+import type { UploadResult } from '@/lib/upload'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -150,12 +151,13 @@ export function ComposeModal() {
   // Encrypted posts keep the URL inside the content, so only they pay for it.
   const imageUrlExtraLength = imageUrl && willBeEncrypted ? imageUrl.length + 2 : 0
   const firstUnposted = unpostedWithContent[0]
-  const firstUnpostedLength = firstUnposted ? characterCount(firstUnposted.content) : 0
   const hasTeaserOverLimit = visibility === 'private-with-teaser' && !!firstPost?.teaser && characterCount(firstPost.teaser) > TEASER_LIMIT
-  const hasOverLimit = unpostedWithContent.some((p, i) => characterCount(p.content) + (i === 0 ? imageUrlExtraLength : 0) > CHARACTER_LIMIT) || hasTeaserOverLimit
+  // Characters, and on v10 UTF-8 bytes too: the contract refuses either overage.
+  const hasOverLimit = unpostedWithContent.some((p, i) => isOverContentLimit(p.content, i === 0 ? imageUrlExtraLength : 0)) || hasTeaserOverLimit
   const isOverLimitDueToImage =
-    !!firstUnposted && imageUrlExtraLength > 0 && firstUnpostedLength <= CHARACTER_LIMIT && firstUnpostedLength + imageUrlExtraLength > CHARACTER_LIMIT
-  const imageOverage = isOverLimitDueToImage ? firstUnpostedLength + imageUrlExtraLength - CHARACTER_LIMIT : 0
+    !!firstUnposted && imageUrlExtraLength > 0 && !isOverContentLimit(firstUnposted.content) && isOverContentLimit(firstUnposted.content, imageUrlExtraLength)
+  const imageOverageBy = isOverLimitDueToImage ? contentOverage(firstUnposted.content, imageUrlExtraLength) : null
+  const imageOverage = imageOverageBy ? Math.max(imageOverageBy.charactersOver, imageOverageBy.bytesOver) : 0
 
   const isValidEncryptedPost = !willBeEncrypted || threadPosts.length <= 1
   const isInheritedEncryptionReady = !replyingTo || !isPrivatePost(replyingTo) || (!inherited.loading && !inherited.error)
@@ -195,10 +197,10 @@ export function ComposeModal() {
     // An earlier attempt's poll, so a retry never creates a second one.
     let pollId: string | null = poll.createdPollId
 
-    let uploadedUrl: string | undefined
+    let uploaded: UploadResult | null = null
     try {
       if (image.attached && !image.attached.uploadResult) setPostingProgress({ current: 0, total: 1, status: 'Uploading image...' })
-      uploadedUrl = (await image.ensureUploaded()) ?? undefined
+      uploaded = await image.ensureUploaded()
     } catch (err) {
       logger.error('Failed to upload image:', err)
       toast.error('Failed to upload image')
@@ -206,15 +208,17 @@ export function ComposeModal() {
       return
     }
 
+    const uploadedUrl = uploaded?.url
     try {
       const isPrivate = isPrivateVisibility
       const mediaInEncryptedContent = !!uploadedUrl && (isPrivate || inherited.source !== null)
       const mediaUrlField = uploadedUrl && !mediaInEncryptedContent ? mediaUrlForContract(uploadedUrl) : undefined
       const posts = planPosts(threadPosts, uploadedUrl, mediaInEncryptedContent)
 
-      const firstLength = posts.length > 0 ? characterCount(posts[0].content) : 0
-      if (firstLength > CHARACTER_LIMIT) {
-        toast.error(`Post is ${firstLength - CHARACTER_LIMIT} characters over the limit once the image URL is included. Trim your text.`)
+      const firstOverage = posts.length > 0 ? contentOverage(posts[0].content) : { charactersOver: 0, bytesOver: 0 }
+      if (firstOverage.charactersOver > 0 || firstOverage.bytesOver > 0) {
+        const over = firstOverage.charactersOver > 0 ? `${firstOverage.charactersOver} characters` : `${firstOverage.bytesOver} bytes`
+        toast.error(`Post is ${over} over the limit once the image URL is included. Trim your text.`)
         return
       }
       if (willBeEncrypted && posts.length > 1) {
@@ -272,6 +276,9 @@ export function ComposeModal() {
         inheritedEncryption: inherited.source,
         pollEmbed: pollId ? buildPollEmbed(pollId) : undefined,
         mediaUrlField,
+        // v10 only (set by the upload where the contract requires them); they
+        // travel with mediaUrl and never with URL-in-content private media.
+        mediaHashes: mediaUrlField ? uploaded?.hashes : undefined,
         markSensitive,
         onProgress: setPostingProgress,
       })

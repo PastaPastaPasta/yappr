@@ -172,6 +172,33 @@ describe('getStatus reports failed reads instead of passing them off as empty', 
   });
 });
 
+describe('the end-date bound follows the configured cut', () => {
+  it('reads the join and vote windows of the v10 contract when the topology is v10', async () => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10');
+    const { moderationElectionService: service } = await import('./moderation-election-service');
+    const { electedModeration } = await import('@/lib/contract-topology');
+    const v10 = (await import('@/contracts/yappr-social-contract-v10.json')).default.config.moderation.moderators;
+    const now = 1_790_000_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      for (const fn of [sdk.voting.contestedResourceVoteState, sdk.voting.votePollsByEndDate, sdk.moderationCharters.submittedCharters, sdk.moderationCharters.team]) fn.mockReset();
+      sdk.voting.contestedResourceVoteState.mockResolvedValue({ contenders: [{ identityId: leader, voteTally: 0 }], abstainVoteTally: 0, lockVoteTally: 0, winner: undefined, free: vi.fn() });
+      sdk.voting.votePollsByEndDate.mockResolvedValue([]);
+      sdk.moderationCharters.submittedCharters.mockResolvedValue(new Map());
+      sdk.moderationCharters.team.mockResolvedValue(undefined);
+      await service.getStatus(target);
+      expect(electedModeration()?.joinWindowSeconds).toBe(v10.joinWindow);
+      expect(electedModeration()?.voteWindowSeconds).toBe(v10.voteWindow);
+      expect(sdk.voting.votePollsByEndDate.mock.calls[0][0]).toMatchObject({ endTimeMs: now + (v10.joinWindow + v10.voteWindow) * 1000 + 600_000 });
+    } finally {
+      clock.mockRestore();
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+});
+
 describe('electionView', () => {
   const base = { declaration: {} as never, targetContractId: target, proposals: [], contest: null, seated: null, seatedReasons: [], failures: [] as never[] };
   it('states "No election yet" only when every read succeeded', async () => {

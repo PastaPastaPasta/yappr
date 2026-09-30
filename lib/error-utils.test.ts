@@ -248,6 +248,14 @@ describe('protocol-14 rejections', () => {
     const v2 = await import('./error-utils')
     expect(v2.categorizeError(shortOfYapp)).not.toMatch(/credits/i)
     expect(v2.categorizeError(shortOfYapp)).toMatch(/enough YAPP/i)
+    expect(v2.categorizeError(shortOfYapp)).toMatch(/buy more/i)
+    expect(v9.categorizeError(shortOfYapp)).toMatch(/buy more/i)
+    // v10's YAPP is locked: it cannot be bought, so credits are the only way out.
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    const v10 = await import('./error-utils')
+    expect(v10.categorizeError(shortOfYapp)).toMatch(/credits/i)
+    expect(v10.categorizeError(shortOfYapp)).not.toMatch(/buy/i)
   })
 
   it('keeps the frozen-account message for a frozen token account, not the moderation one', () => {
@@ -340,11 +348,27 @@ describe('4.2.0-beta.4 rejections', () => {
     ['rootPostId', 'post', /post was removed by the moderators/],
     ['replyToReplyId', 'reply', /reply was removed by the moderators/],
     ['blogPostId', 'blogPost', /no longer exists/],
-  ])('names the removed document for a 40120 on %s, not a missing account (QA D-20)', (path, documentType, message) => {
+  ])('names the removed document for a 40120 on %s, not a missing account (QA D-20)', async (path, documentType, message) => {
+    // Pinned to v9, where only moderators remove posts and replies; the message
+    // depends on the topology, and earlier tests leave other topologies stubbed.
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9')
+    const v9 = await import('./error-utils')
     const error = new Error(`referenced deletable document (own contract, document type ${documentType}) 9BN7B3vnAAAA not found for path ${path}`)
-    expect(isReferenceNotFoundError(error)).toBe(true)
-    expect(categorizeError(error)).toMatch(message)
-    expect(categorizeError(error)).not.toMatch(/account/)
+    expect(v9.isReferenceNotFoundError(error)).toBe(true)
+    expect(v9.categorizeError(error)).toMatch(message)
+    expect(v9.categorizeError(error)).not.toMatch(/account/)
+  })
+
+  it('says a 40120 post or reply was deleted, not removed by the moderators, where authors delete too (v10)', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    const v10 = await import('./error-utils')
+    for (const documentType of ['post', 'reply']) {
+      const error = new Error(`referenced deletable document (own contract, document type ${documentType}) 9BN7B3vnAAAA not found for path postId`)
+      expect(v10.categorizeError(error)).toMatch(new RegExp(`${documentType} was deleted`))
+      expect(v10.categorizeError(error)).not.toMatch(/moderators|account/)
+    }
   })
 
   it('keeps the account message for an identity reference', () => {
@@ -382,6 +406,25 @@ describe('4.2.0-beta.4 rejections', () => {
   ])('classifies %s as no moderation refusal', (message) => {
     expect(classifyModerationError(new Error(message))).toBeNull()
     expect(isPermanentProtocol14Error(new Error(message))).toBe(false)
+  })
+})
+
+describe('4.2.0-beta.7 moderator field-change rejections', () => {
+  // Messages transcribed from the rs-dpp `#[error(...)]` formats at tag v4.2.0-beta.7 (50d12037).
+  it.each([
+    ['FIELD_NOT_CHANGEABLE', 'Field note of documents of type report on contract 8Xv3 can not be changed by moderators'],
+    ['MODERATOR_FIELD', 'Only the moderators of contract 8Xv3 write field status of documents of type report, and 9t2e does not moderate it (document D1)'],
+    ['NOTHING_TO_CHANGE', "The fields a moderator's document change sets are invalid: every field already holds the value the change names, so nothing would change"],
+    ['FIELD_NOT_CHANGEABLE', 'consensus error code=41123'],
+    ['MODERATOR_FIELD', '{"code":41124}'],
+    ['NOTHING_TO_CHANGE', 'refused (code=10905)'],
+  ])('classifies a moderator field-change refusal as %s', (kind, message) => {
+    expect(classifyModerationError(new Error(message))).toBe(kind)
+  })
+
+  it('does not read the new codes inside ids or amounts', () => {
+    expect(classifyModerationError(new Error('insufficient balance: 41123000 credits'))).toBeNull()
+    expect(classifyModerationError(new Error('document 8Xv109051 not found'))).toBeNull()
   })
 })
 
@@ -625,7 +668,7 @@ describe('every consensus code against every matcher', () => {
     // Matched only by private helpers or by classifyModerationError, or by nothing:
     // key expiry, vote choice, moderation-only codes, already-present, nonce,
     // generatedFrom, and the generic broadcast codes.
-    20016: [], 40219: [], 40307: [], 41101: [], 41111: [], 41112: [],
+    20016: [], 40219: [], 40307: [], 41101: [], 41111: [], 41112: [], 41123: [], 41124: [], 10905: [],
     40100: [], 40204: [], 10424: [], 10002: [], 20000: [], 1: [],
   }
 

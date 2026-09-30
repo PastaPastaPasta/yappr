@@ -12,14 +12,14 @@ import {
   CheckCircleIcon,
   XCircleIcon,
 } from '@heroicons/react/24/outline'
-import { TREE_CAPACITY, MAX_EPOCH } from '@/lib/services'
+import { TREE_CAPACITY, MAX_KEY_GENERATION } from '@/lib/services'
 import { formatTime } from '@/lib/utils'
 import Link from 'next/link'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
 import { withoutRevokedGrants } from '@/lib/utils/revoked-grants'
 import { resolveUserDetailsBatch } from '@/lib/utils/resolve-user-details'
 
-function getEpochProgressColor(isWarning: boolean, percent: number): string {
+function getKeyGenerationProgressColor(isWarning: boolean, percent: number): string {
   if (isWarning) return 'bg-gradient-to-r from-red-500 to-red-600'
   if (percent > 50) return 'bg-gradient-to-r from-amber-400 to-amber-500'
   return 'bg-gradient-to-r from-green-400 to-green-500'
@@ -37,7 +37,7 @@ interface ActivityItem {
 /**
  * PrivateFeedDashboard Component
  *
- * Dashboard showing private feed stats, epoch usage, and recent activity.
+ * Dashboard showing private feed stats, key generation usage, and recent activity.
  * Implements PRD §4.10 - Private Feed Owner Dashboard
  */
 export function PrivateFeedDashboard() {
@@ -47,7 +47,7 @@ export function PrivateFeedDashboard() {
   const [followerCount, setFollowerCount] = useState(0)
   const [pendingRequestCount, setPendingRequestCount] = useState(0)
   const [privatePostCount, setPrivatePostCount] = useState(0)
-  const [currentEpoch, setCurrentEpoch] = useState(1)
+  const [currentKeyGeneration, setCurrentKeyGeneration] = useState(1)
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
   const requestIdRef = useRef(0)
   const refreshKey = usePrivateFeedRefreshStore((s) => s.refreshKey)
@@ -105,23 +105,23 @@ export function PrivateFeedDashboard() {
 
       setPendingRequestCount(requests.length)
 
-      // Get current epoch
+      // Get current key generation
       const rekeyDocs = await privateFeedService.getRekeyDocuments(user.identityId)
-      const epoch = rekeyDocs.length < 2000
-        ? Math.max(1, ...rekeyDocs.map(doc => doc.epoch))
-        : await privateFeedService.getLatestEpoch(user.identityId)
+      const keyGeneration = rekeyDocs.length < 2000
+        ? Math.max(1, ...rekeyDocs.map(doc => doc.keyGeneration))
+        : await privateFeedService.getLatestKeyGeneration(user.identityId)
 
       // Bail out if a newer request has started
       if (currentRequestId !== requestIdRef.current) return
 
-      setCurrentEpoch(epoch)
+      setCurrentKeyGeneration(keyGeneration)
 
       // Count private posts by querying user's posts and filtering for those with encryptedContent
       // We'll do this by checking recent posts from the user
       try {
         const userPostsResult = await postService.getUserPosts(user.identityId, { limit: 100 })
         const privatePosts = userPostsResult.documents.filter(
-          post => post.encryptedContent || post.epoch !== undefined
+          post => post.encryptedContent || post.keyGeneration !== undefined
         )
 
         // Bail out if a newer request has started
@@ -164,7 +164,7 @@ export function PrivateFeedDashboard() {
       // We can only show "Follower revoked" without the user details since grant is deleted
       for (const rekey of rekeyDocs.slice(-5).reverse()) {
         activity.push({
-          id: `rekey-${rekey.epoch}`,
+          id: `rekey-${rekey.keyGeneration}`,
           type: 'revoked',
           userId: '',
           displayName: `Leaf ${rekey.revokedLeaf}`,
@@ -194,10 +194,10 @@ export function PrivateFeedDashboard() {
     loadDashboardData().catch(err => logger.error('Failed to load dashboard:', err))
   }, [loadDashboardData, refreshKey])
 
-  // Calculate epoch usage percentage with clamping to avoid NaN/overflow
-  const rawEpochPercent = MAX_EPOCH > 1 ? ((currentEpoch - 1) / (MAX_EPOCH - 1)) * 100 : 0
-  const epochUsagePercent = Math.max(0, Math.min(100, rawEpochPercent))
-  const isEpochWarning = epochUsagePercent > 90
+  // Calculate key generation usage percentage with clamping to avoid NaN/overflow
+  const rawKeyGenerationPercent = MAX_KEY_GENERATION > 1 ? ((currentKeyGeneration - 1) / (MAX_KEY_GENERATION - 1)) * 100 : 0
+  const keyGenerationUsagePercent = Math.max(0, Math.min(100, rawKeyGenerationPercent))
+  const isKeyGenerationWarning = keyGenerationUsagePercent > 90
 
   // Don't render anything if private feed is not enabled
   if (!isLoading && !isEnabled) {
@@ -266,28 +266,28 @@ export function PrivateFeedDashboard() {
           </div>
         </div>
 
-        {/* Epoch Usage */}
-        <div data-testid="epoch-progress" className="space-y-2">
+        {/* Key generation usage */}
+        <div data-testid="key-generation-progress" className="space-y-2">
           <div className="flex justify-between items-center text-sm">
-            <span className="font-medium">Epoch Usage</span>
-            <span className={`text-sm ${isEpochWarning ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-500'}`}>
-              {currentEpoch - 1}/{MAX_EPOCH - 1} revocations
+            <span className="font-medium">Key Generation Usage</span>
+            <span className={`text-sm ${isKeyGenerationWarning ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-500'}`}>
+              {currentKeyGeneration - 1}/{MAX_KEY_GENERATION - 1} revocations
             </span>
           </div>
           <div className="h-2.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
             <div
-              className={`h-full rounded-full transition-all duration-500 ${getEpochProgressColor(isEpochWarning, epochUsagePercent)}`}
-              style={{ width: `${Math.max(epochUsagePercent, 1)}%` }}
+              className={`h-full rounded-full transition-all duration-500 ${getKeyGenerationProgressColor(isKeyGenerationWarning, keyGenerationUsagePercent)}`}
+              style={{ width: `${Math.max(keyGenerationUsagePercent, 1)}%` }}
             />
           </div>
-          {isEpochWarning && (
+          {isKeyGenerationWarning && (
             <p className="text-xs text-red-600 dark:text-red-400">
               Your private feed is approaching its revocation limit. Contact support for migration options.
             </p>
           )}
-          {!isEpochWarning && epochUsagePercent > 50 && (
+          {!isKeyGenerationWarning && keyGenerationUsagePercent > 50 && (
             <p className="text-xs text-amber-600 dark:text-amber-400">
-              {Math.round(100 - epochUsagePercent)}% of revocation capacity remaining
+              {Math.round(100 - keyGenerationUsagePercent)}% of revocation capacity remaining
             </p>
           )}
         </div>

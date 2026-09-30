@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * Harvests the moutai faucet into the seed treasury.
+ * Harvests a devnet faucet into the seed treasury. The faucet is FAUCET_URL
+ * (env, else .env.devnet); there is no default.
  *
- * The faucet (MultiFaucet) pays 10 DASH per request but rate-limits PER
+ * The faucet (a MultiFaucet form, as moutai's was) pays 10 DASH per request but rate-limits PER
  * ADDRESS, not per IP (verified 2026-09-03: twelve repeat POSTs to the
  * treasury paid nothing; a fresh address paid immediately). So each drip goes
  * to a fresh one-shot key, and once the drips confirm they are swept into the
@@ -20,9 +21,11 @@ import dashcore from '@dashevo/dashcore-lib';
 const { PrivateKey, Transaction } = dashcore;
 import { fetchUtxos, fetchTx, broadcastTx, SPLIT_FEE_PER_KB } from './asset-lock-lib.mjs';
 import { REPO_ROOT } from '../derive-identities.mjs';
+import { envValue } from '../sdk-env.mjs';
 import { join } from 'node:path';
 
-const FAUCET = 'https://faucet.moutai.networks.dash.org/';
+const FAUCET = envValue('FAUCET_URL') ?? envValue('NEXT_PUBLIC_FAUCET_URL');
+if (!FAUCET) throw new Error('faucet-harvest needs FAUCET_URL (env or .env.devnet)');
 const LEDGER = join(REPO_ROOT, '.seed-faucet.local.json');
 const TREASURY_KEY_FILE = join(REPO_ROOT, '.seed-treasury.local.key');
 const DRIP_DUFFS = 10n * 100_000_000n;
