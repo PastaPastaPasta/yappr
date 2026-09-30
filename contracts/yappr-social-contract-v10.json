@@ -386,13 +386,16 @@
           "skipIfAbsent": true
         },
         {
-          "name": "byAuthorPost",
+          "name": "byAuthorPostTime",
           "properties": [
             {
               "postAuthor": "asc"
             },
             {
               "postId": "asc"
+            },
+            {
+              "$createdAt": "asc"
             }
           ],
           "terminal": "$ownerId",
@@ -403,30 +406,6 @@
               "postId"
             ]
           }
-        },
-        {
-          "name": "byAuthorTimePost",
-          "properties": [
-            {
-              "postAuthor": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            },
-            {
-              "postId": "asc"
-            }
-          ],
-          "terminal": "$ownerId"
-        },
-        {
-          "name": "byLiker",
-          "properties": [
-            {
-              "$ownerId": "asc"
-            }
-          ],
-          "terminal": "postId"
         },
         {
           "name": "byTrendPost",
@@ -543,28 +522,19 @@
           "countable": "countable"
         },
         {
-          "name": "byAuthorTimeReply",
+          "name": "byAuthorReplyTime",
           "properties": [
             {
               "replyAuthor": "asc"
             },
             {
-              "$createdAt": "asc"
+              "replyId": "asc"
             },
             {
-              "replyId": "asc"
+              "$createdAt": "asc"
             }
           ],
           "terminal": "$ownerId"
-        },
-        {
-          "name": "byLiker",
-          "properties": [
-            {
-              "$ownerId": "asc"
-            }
-          ],
-          "terminal": "replyId"
         }
       ],
       "required": [
