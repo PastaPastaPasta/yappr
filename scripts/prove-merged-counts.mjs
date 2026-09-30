@@ -35,22 +35,29 @@
  *          a by-id reply page with slots pinned to its root)
  *   w1-w2  bare reposts of a post and of a reply, read back
  *   o1-o2  the viewer's own quote/repost per target (ownerAndQuoted…, `in`)
- *   n1-n8  notifications: replies and quotes/reposts on the 7-day windows
- *          (timeRange `oldest`, recipient pinned); mentions on the permanent
- *          mentionedUserAndTime (n3); likes on the permanent byAuthorTimePost
- *          / byAuthorTimeReply (n4, n5); n6x/n7x a windowed source cannot
- *          ride a composite; n8 the permanent sources (mentions and likes
- *          included) bundle
+ *   n1-n8  notifications: replies and quotes/reposts on 3.5-day windows
+ *          (timeRange `newest` + `oldest`, recipient pinned, deduped);
+ *          mentions on the permanent mentionedUserAndTime (n3); n6x/n7x a
+ *          windowed source cannot ride a composite; n8 the permanent sources
+ *          (mentions included) bundle
  *   t1-t2  the whole thread at the app's page size, and paged with startAfter
  *   l1-l2  the quote lists at limit 100, of a post and of a reply
  *   c5     the For You page exactly as composite-feed-page builds it (timeline
- *          page; like, reply and quote counts; the quoted-post join; the
- *          viewer's likes; DPNS names), minus the profile slot (v10's profile
- *          is DashPay's, #602)
+ *          page; like, reply and quote counts; the quoted-post join; DPNS
+ *          names; the viewer's hearts as one byPost read beside it), minus
+ *          the profile slot (v10's profile is DashPay's, #602); c5x the
+ *          combined count + hearts form is refused
  *   c6     a profile page (ownerAndTime) with the quoted-post join and counts
  *   g1     the following feed: `$ownerId in` + `$createdAt >` on ranked ownerAndTime
  *   c2x/c3x  a bound slot extending the page's own index path is refused
  *          ("lands at the merged root"): such counts are separate queries
+ *   dc-*   likes (no byLiker; byAuthorPostTime / byAuthorReplyTime [author,
+ *          target, $createdAt]): heart state on byPost/byReply, top creators
+ *          and a profile's top posts, per-post like reads with keyset paging,
+ *          recent posts and replies that gained likes, counts, unlike end to
+ *          end, one `target in` read across targets (dc-k, dc-k2), the
+ *          composite cap (dc-j2); dc-i and dc-j1 are reported, never failed
+ *   rm1    a reply mention: reply.mentionedUserAndTime, alone and bundled
  *
  * Usage (NETWORK=devnet; the devnet from the env or `.env.devnet`):
  *   node scripts/prove-merged-counts.mjs --bot 1 --bot 2 --bot 3
@@ -468,11 +475,18 @@ async function main() {
   // the recipient. No `$createdAt >` clause (a raw clause cannot bind bucket
   // keys) and no time order inside a window: the client filters and sorts.
   console.log('\n--- n. notifications on the 7-day windows ---');
-  const WEEK = { range: 604800, step: 86400 };
-  const windowed = (field, recipient) => ({ where: [[field, '==', recipient]], timeRange: [{ field: '$createdAt', selector: 'oldest', grid: WEEK }], limit: 100 });
+  // 3.5-day windows written once, ttl a week: the current window (`newest`)
+  // and the previous one (`oldest` still open) hold the last 3.5-7 days.
+  const WEEK = { range: 302400, step: 302400 };
+  const windowed = (field, recipient, selector = 'oldest') => ({ where: [[field, '==', recipient]], timeRange: [{ field: '$createdAt', selector, grid: WEEK }], limit: 100 });
+  const bothWindows = async (docType, field, recipient) => {
+    const [current, previous] = await Promise.all(['newest', 'oldest'].map((selector) => sdk.documents.query(q(docType, windowed(field, recipient, selector)))));
+    const byId = new Map([...docsOf(current), ...docsOf(previous)].map((d) => [idOf(d), d]));
+    return { docs: [...byId.values()], current: docsOf(current).length, previous: docsOf(previous).length };
+  };
   const sameSet = (got, expected) => got.length === expected.length && expected.every((x) => got.includes(x));
-  await attempt('n1', () => sdk.documents.query(q('reply', windowed('parentOwnerId', A.ownerId))), (r) => check('n1 replies to A this week (parentOwnerRecent): r1, r2, r5, r6, each with its exact $createdAt', sameSet(ids(r), [r1, r2, r5, r6]) && docsOf(r).every((d) => createdAtOf(d) > 0), JSON.stringify(ids(r))));
-  await attempt('n2', () => sdk.documents.query(q('post', windowed('quotedPostOwnerId', A.ownerId))), (r) => check('n2 quotes/reposts of A this week (quotedPostOwnerRecent): q1, q2, q3', sameSet(ids(r), [q1, q2, q3]), JSON.stringify(ids(r))));
+  await attempt('n1', () => bothWindows('reply', 'parentOwnerId', A.ownerId), ({ docs, current, previous }) => check('n1 replies to A in the last two 3.5-day windows (parentOwnerRecent, `newest` + `oldest`, deduped): r1, r2, r5, r6, each with its exact $createdAt', sameSet(docs.map(idOf), [r1, r2, r5, r6]) && docs.every((d) => createdAtOf(d) > 0), `${JSON.stringify(docs.map(idOf))} (current window ${current}, oldest open ${previous})`));
+  await attempt('n2', () => bothWindows('post', 'quotedPostOwnerId', A.ownerId), ({ docs, current, previous }) => check('n2 quotes/reposts of A in the last two windows (quotedPostOwnerRecent): q1, q2, q3', sameSet(docs.map(idOf), [q1, q2, q3]), `${JSON.stringify(docs.map(idOf))} (current window ${current}, oldest open ${previous})`));
   // Mentions stay permanent: the mentioning post's own [mentionedUserId, $createdAt].
   const mentionsOfB = { where: [['mentionedUserId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
   await attempt('n3', () => sdk.documents.query(q('post', mentionsOfB)), (r) => check('n3 mentions of B (permanent mentionedUserAndTime, `$createdAt >`, newest first): m1', same(ids(r), [m1]) && docsOf(r).every((d) => createdAtOf(d) > 0), JSON.stringify(ids(r))));
@@ -538,17 +552,28 @@ async function main() {
       { documentType: 'post', kind: 'counts', bind: fromPage('$id', 'quotedPostId') },
       { documentType: 'post', bind: fromPage('quotedPostId', '$id') },
       { dataContractId: dpnsId, documentType: 'domain', bind: fromPage('$ownerId', 'records.identity'), limit: 100 },
-      // byPost is not value-bounded under a bound postId: the lookup takes a limit (the page size).
-      { documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId'), limit: 20 },
     ],
-  }), (result) => {
+  }).then(async (result) => {
+    // The viewer's hearts sit on the like-count index (byPost, `$ownerId` its
+    // terminal), which the composite cannot also walk as documents: they are
+    // one plain read beside it (c5x pins the refusal of the combined form).
+    const hearts = await sdk.documents.query(q('like', { where: [['postId', 'in', result.pageDocuments.map(idOf)], ['$ownerId', '==', B.ownerId]], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 20 }));
+    return { result, hearts };
+  }), ({ result, hearts }) => {
     const [likes, replies, quotes] = result.subResults.slice(0, 3).map((sub) => countEntries(sub.counts));
     const quoted = new Set(result.subResults[3].documents.map(idOf));
-    const myLikes = result.subResults[5].documents.length;
-    check('c5 the For You page: likes T1 2 / T2 1, replies T1 5 / T2 1, quotes T1 2 / T2 1, quoted posts T1+T2 joined, B\'s likes 2',
+    const myLikes = docsOf(hearts).length;
+    check('c5 the For You page: likes T1 2 / T2 1, replies T1 5 / T2 1, quotes T1 2 / T2 1, quoted posts T1+T2 joined; B\'s hearts 2 (a separate byPost read)',
       likes[T1] === 2 && likes[T2] === 1 && replies[T1] === 5 && replies[T2] === 1 && quotes[T1] === 2 && quotes[T2] === 1 && quoted.has(T1) && quoted.has(T2) && myLikes === 2,
       `likes ${JSON.stringify(likes)} replies ${JSON.stringify(replies)} quotes ${JSON.stringify(quotes)} quoted ${JSON.stringify([...quoted])} myLikes ${myLikes}`);
   });
+  await expectRefusal('c5x a like-count slot and a viewer-likes slot on byPost in one composite are refused (a count shares the documents lookup\'s index path)', () => sdk.documents.composite({
+    dataContractId: contractId, documentType: 'post', where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20,
+    subQueries: [
+      { documentType: 'like', kind: 'counts', bind: fromPage('$id', 'postId') },
+      { documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId'), limit: 20 },
+    ],
+  }));
   await attempt('c6', () => sdk.documents.composite({
     dataContractId: contractId,
     documentType: 'post',
@@ -659,7 +684,14 @@ async function main() {
     const followsPage = { dataContractId: contractId, documentType: 'follow', where: [['followingId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
     // Per-post like reads share one index path, which a composite cannot tell
     // apart: the notification fan-out is plain queries (or dc-k's one `in`).
-    await expectRefusal('dc-j1 per-post like reads as composite siblings are refused (same index path)', () => sdk.documents.composite({ ...followsPage, subQueries: siblings(3) }));
+    // Per-post siblings in one composite: refused in one run, accepted in the
+    // next; the client reads one `postId in` instead (dc-k). Reported only.
+    try {
+      await sdk.documents.composite({ ...followsPage, subQueries: siblings(3) });
+      console.log('INFO  dc-j1 per-post like reads as composite siblings: ACCEPTED');
+    } catch (e) {
+      console.log(`INFO  dc-j1 per-post like reads as composite siblings: refused — ${describeErr(e).slice(0, 160)}`);
+    }
     await attempt('dc-k', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2]], ['$createdAt', '>', 0]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc'], ['$createdAt', 'desc']], limit: 100 })), (r) => {
       const pairs = pairsOf(r, 'postId');
       check('dc-k ONE read for several posts (`postId in` + `$createdAt >`): B→T1, C→T1, B→T2', sameSet(pairs, [`${B.ownerId}>${T1}`, `${C.ownerId}>${T1}`, `${B.ownerId}>${T2}`]), JSON.stringify(pairs));
@@ -714,6 +746,20 @@ async function main() {
   }
 
   await proveDesignC();
+
+  // ---- rm: reply mentions (written last, so no earlier count moves) ----
+  console.log('\n--- rm. a reply names one mentioned identity ---');
+  await attempt('rm1', async () => {
+    const rm1 = await mustCreate('rm1 (C replies to T3 mentioning B)', C, 'reply', { content: 'reply @b', rootPostId: id(T3), parentOwnerId: id(A.ownerId), mentionedUserId: id(B.ownerId) });
+    await sleep(SETTLE_MS);
+    const mentions = { where: [['mentionedUserId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
+    const [replies, bundle] = await Promise.all([
+      sdk.documents.query(q('reply', mentions)),
+      sdk.documents.composite({ dataContractId: contractId, documentType: 'follow', where: [['followingId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']], limit: 100,
+        subQueries: [{ documentType: 'post', ...mentions }, { documentType: 'reply', ...mentions }] }),
+    ]);
+    return { rm1, replies: ids(replies), posts: bundle.subResults[0].documents.map(idOf), bundled: bundle.subResults[1].documents.map(idOf) };
+  }, ({ rm1, replies, posts, bundled }) => check('rm1 B\'s mentions: the reply (reply.mentionedUserAndTime) and the post m1, alone and as siblings of the permanent bundle', same(replies, [rm1]) && same(bundled, [rm1]) && same(posts, [m1]), `replies ${JSON.stringify(replies)} bundled ${JSON.stringify(bundled)} posts ${JSON.stringify(posts)}`));
 
   console.log(`\nthrowaway contract ${contractId}`);
   console.log(failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`);

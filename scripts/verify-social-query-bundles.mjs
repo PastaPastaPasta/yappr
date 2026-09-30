@@ -9,14 +9,16 @@
  * author's own post pages, and the quote count is the repost count. Per-reply
  * counts pin the root (repliesOf [rootPostId, replyToReplyId, $createdAt]).
  *
- * Notification sources: follows, mentions (post.mentionedUserAndTime) and
- * follow requests are permanent and bundle; replies (reply.parentOwnerRecent)
- * and quotes/reposts (post.quotedPostOwnerRecent) are 7-day windows read
- * through the `timeRange` option, which a composite refuses, so each stays one
- * plain query. Likes are permanent but per target: byAuthorPostTime /
- * byAuthorReplyTime pin the liked post or reply before `$createdAt`, so "who
- * liked it since" is one plain read per recent post or reply. There is no
- * postMention: a post names at most one mentionedUserId. */
+ * Notification sources: follows, mentions (post.mentionedUserAndTime and
+ * reply.mentionedUserAndTime) and follow requests are permanent and bundle;
+ * replies (reply.parentOwnerRecent) and quotes/reposts
+ * (post.quotedPostOwnerRecent) sit on non-overlapping 3.5-day windows kept a
+ * week, read through the `timeRange` option (the newest and the oldest open
+ * window), which a composite refuses, so each window stays one plain query.
+ * Likes are permanent but keyed by target: byAuthorPostTime /
+ * byAuthorReplyTime put the liked post or reply before `$createdAt`, so "who
+ * liked it since" is one `target in [recent]` read per kind. There is no
+ * postMention: a post or reply names at most one mentionedUserId. */
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import bs58 from 'bs58';
@@ -101,18 +103,22 @@ await verify('profiles and DPNS including profile-less identity', [
   { dataContractId: profile, documentTypeName: 'profile', where: [['$ownerId', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['$ownerId', 'asc']], limit: owners.length + 1 },
   { dataContractId: dpns, documentTypeName: 'domain', where: [['records.identity', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['records.identity', 'asc']], limit: 100 },
 ]);
-// Mentions stay permanent (the mentioning post's own mentionedUserAndTime).
-await verify('permanent notification sources', [['follow', 'followingId'], ['post', 'mentionedUserId'], ['followRequest', 'targetId']].map(([documentTypeName, field]) => ({
+// Mentions stay permanent (the mentioning post's and reply's own mentionedUserAndTime).
+await verify('permanent notification sources', [['follow', 'followingId'], ['post', 'mentionedUserId'], ['reply', 'mentionedUserId'], ['followRequest', 'targetId']].map(([documentTypeName, field]) => ({
   dataContractId: social, documentTypeName,
   where: [[field, '==', owner], ['$createdAt', '>', 0]],
   orderBy: [[field, 'asc'], ['$createdAt', 'asc']], limit: 100,
 })));
 
 const V10 = JSON.parse(readFileSync(new URL('../contracts/yappr-social-contract-v10.json', import.meta.url), 'utf8'));
-/** The oldest open window of `documentTypeName`'s windowed index, the grid named (like and post bucket $createdAt on several). */
-function windowOf(documentTypeName, indexName) {
+/**
+ * The two open windows of `documentTypeName`'s windowed notification index,
+ * the grid named (like and post bucket $createdAt on several): the current one
+ * and the oldest still open (they may coincide right after a boundary).
+ */
+function windowsOf(documentTypeName, indexName) {
   const { range, step } = V10.documentSchemas[documentTypeName].indices.find(index => index.name === indexName).timeRange;
-  return [{ field: '$createdAt', selector: 'oldest', grid: { range, step } }];
+  return ['newest', 'oldest'].map(selector => [{ field: '$createdAt', selector, grid: { range, step } }]);
 }
 /** Sources that do not ride a composite (windowed, or one read per target): each is read alone, and only its success is asserted. */
 async function verifyAlone(name, queries) {
@@ -127,26 +133,27 @@ async function verifyAlone(name, queries) {
     console.error(`FAIL ${name}: ${message}`);
   }
 }
-await verifyAlone('7-day notification windows', [
+await verifyAlone('notification windows (newest and oldest open)', [
   ['reply', 'parentOwnerRecent', 'parentOwnerId'], ['post', 'quotedPostOwnerRecent', 'quotedPostOwnerId'],
-].map(([documentTypeName, indexName, field]) => ({
+].flatMap(([documentTypeName, indexName, field]) => windowsOf(documentTypeName, indexName).map(timeRange => ({
   dataContractId: social, documentTypeName,
-  where: [[field, '==', owner]], timeRange: windowOf(documentTypeName, indexName), limit: 100,
-})));
-// "Liked your post / reply": the likes of each of the owner's two most recent
-// posts and replies since the start, newest first, one plain read per target.
+  where: [[field, '==', owner]], timeRange, limit: 100,
+}))));
+// "Liked your post / reply": the likes of the owner's twenty most recent posts
+// and replies since the start, newest first, one `target in` read per kind.
 const recentOwn = async (documentTypeName) => records(await sdk.documents.query({
   dataContractId: social, documentTypeName, where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]],
-  orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 2,
+  orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
 }));
-const likesSince = (documentTypeName, author, target) => doc => ({
+const likesSince = (documentTypeName, author, target, docs) => ({
   dataContractId: social, documentTypeName,
-  where: [[author, '==', owner], [target, '==', id(doc.$id)], ['$createdAt', '>', 0]],
+  where: [[author, '==', owner], [target, 'in', docs.map(doc => id(doc.$id))], ['$createdAt', '>', 0]],
   orderBy: [[author, 'asc'], [target, 'asc'], ['$createdAt', 'desc']], limit: 100,
 });
-await verifyAlone('per-target like notifications', [
-  ...(await recentOwn('post')).map(likesSince('like', 'postAuthor', 'postId')),
-  ...(await recentOwn('reply')).map(likesSince('likeReply', 'replyAuthor', 'replyId')),
+const [ownPosts, ownReplies] = [await recentOwn('post'), await recentOwn('reply')];
+await verifyAlone('like notifications (one target-in read per kind)', [
+  ...(ownPosts.length ? [likesSince('like', 'postAuthor', 'postId', ownPosts)] : []),
+  ...(ownReplies.length ? [likesSince('likeReply', 'replyAuthor', 'replyId', ownReplies)] : []),
 ]);
 // A followed author's reposts are posts: their own post pages carry them.
 await verify('following post pages (reposts included)', owners.map(ownerId => ({
