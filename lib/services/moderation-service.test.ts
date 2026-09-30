@@ -450,7 +450,7 @@ describe('resolving reports (v10: moderatorAbilities.changeFields)', () => {
   it('refuses locally on a contract whose moderators dismiss reports instead (v9)', async () => {
     topology.resolvesReports = false
     const result = await moderationService.resolveReports(MODERATOR, [open('R1')], { status: 1 }, reason)
-    expect(result).toMatchObject({ success: false, errorCode: 'NOT_MODERATED', resolved: [], gone: [] })
+    expect(result).toMatchObject({ success: false, errorCode: 'NOT_MODERATED', resolved: [], alreadyResolved: [], gone: [] })
     expect(sdk.contracts.moderatorChangeDocumentFields).not.toHaveBeenCalled()
   })
 
@@ -458,7 +458,7 @@ describe('resolving reports (v10: moderatorAbilities.changeFields)', () => {
     sdk.contracts.moderatorChangeDocumentFields.mockResolvedValue({})
     const seen: string[] = []
     const result = await moderationService.resolveReports(MODERATOR, [open('R1'), open('R2')], { status: 2, note: '  Taken down  ' }, reason, (id) => seen.push(id))
-    expect(result).toMatchObject({ success: true, resolved: ['R1', 'R2'], gone: [] })
+    expect(result).toMatchObject({ success: true, resolved: ['R1', 'R2'], alreadyResolved: [], gone: [] })
     expect(seen).toEqual(['R1', 'R2'])
     expect(sdk.contracts.moderatorChangeDocumentFields.mock.calls.map(([args]) => [args.documentTypeName, args.documentId, args.fields, args.reason])).toEqual([
       ['report', 'R1', { status: 2, resolution: 'Taken down' }, reason],
@@ -485,14 +485,14 @@ describe('resolving reports (v10: moderatorAbilities.changeFields)', () => {
     expect(sdk.contracts.moderatorChangeDocumentFields).toHaveBeenCalledTimes(1)
   })
 
-  it('counts a report another moderator resolved the same way meanwhile, and sets aside withdrawn or expired ones', async () => {
+  it('counts a report another moderator resolved the same way meanwhile, says it was not this write, and sets aside withdrawn or expired ones', async () => {
     sdk.contracts.moderatorChangeDocumentFields
       .mockRejectedValueOnce(new Error("The fields a moderator's document change sets are invalid: every field already holds the value the change names, so nothing would change"))
       .mockRejectedValueOnce({ code: 40101, message: 'refused' })
       .mockRejectedValueOnce({ code: 40140, message: 'refused' })
       .mockResolvedValueOnce({})
     const result = await moderationService.resolveReports(MODERATOR, ['R1', 'R2', 'R3', 'R4'].map(open), { status: 1 }, reason)
-    expect(result).toMatchObject({ success: true, resolved: ['R1', 'R4'], gone: ['R2', 'R3'] })
+    expect(result).toMatchObject({ success: true, resolved: ['R1', 'R4'], alreadyResolved: ['R1'], gone: ['R2', 'R3'] })
   })
 
   it('stops at the first refusal and says which reports were resolved', async () => {

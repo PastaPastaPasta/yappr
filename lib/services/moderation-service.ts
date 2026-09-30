@@ -716,7 +716,8 @@ class ModerationService {
    * changes nothing is refused, 10905), and a note the report carries that the
    * resolution leaves out is removed. A report withdrawn meanwhile (40101) or
    * past its ttl (40140) is reported in `gone`; one another moderator resolved
-   * the same way meanwhile (10905) counts as resolved.
+   * the same way meanwhile (10905) counts as resolved, and is also listed in
+   * `alreadyResolved`: its `$moderatedBy`/`$moderatedAt` are that moderator's.
    *
    * `resolved` lists the reports confirmed resolved, also on a failure part-way.
    */
@@ -726,11 +727,12 @@ class ModerationService {
     resolution: { status: ReportStatus; note?: string },
     reason: string | ModerationReasonInput,
     onResolved?: (reportId: string) => void
-  ): Promise<ModerationResult & { resolved: string[]; gone: string[] }> {
+  ): Promise<ModerationResult & { resolved: string[]; alreadyResolved: string[]; gone: string[] }> {
     const resolved: string[] = [];
+    const alreadyResolved: string[] = [];
     const gone: string[] = [];
     if (!this.canResolveReports()) {
-      return { success: false, error: 'Moderators cannot resolve reports on this contract', errorCode: 'NOT_MODERATED', resolved, gone };
+      return { success: false, error: 'Moderators cannot resolve reports on this contract', errorCode: 'NOT_MODERATED', resolved, alreadyResolved, gone };
     }
     const note = resolution.note?.trim() || null;
     const result = await this.moderate(moderatorId, async (sdk, auth) => {
@@ -751,7 +753,10 @@ class ModerationService {
         } catch (error) {
           if (isReportGoneError(error) || isDocumentExpiredError(error)) return false;
           // Another moderator wrote exactly these values since the queue read it.
-          if (classifyModerationError(error) === 'NOTHING_TO_CHANGE') return true;
+          if (classifyModerationError(error) === 'NOTHING_TO_CHANGE') {
+            alreadyResolved.push(report.id);
+            return true;
+          }
           throw error;
         }
       };
@@ -764,7 +769,7 @@ class ModerationService {
         onResolved?.(report.id);
       }
     });
-    return { ...result, resolved, gone };
+    return { ...result, resolved, alreadyResolved, gone };
   }
 
   /** Pays the moderators pot out to the whole team (any member may claim). */

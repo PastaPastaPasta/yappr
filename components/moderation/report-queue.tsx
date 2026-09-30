@@ -392,12 +392,15 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     }, step)
     setDismissing(null)
     const resolvedIds = new Set(result.resolved)
+    const byOthers = new Set(result.alreadyResolved)
     const goneIds = new Set(result.gone)
     const now = Date.now()
+    // Another moderator wrote the ones refused as unchanged: who and when is
+    // theirs, unknown until the queue is read again.
     setReports((previous) => previous
       .filter((report) => !goneIds.has(report.id))
       .map((report) => (resolvedIds.has(report.id)
-        ? { ...report, status, resolution: note, moderatedBy: user.identityId, moderatedAt: now }
+        ? { ...report, status, resolution: note, ...(byOthers.has(report.id) ? { moderatedBy: null, moderatedAt: null } : { moderatedBy: user.identityId, moderatedAt: now }) }
         : report)))
     const count = result.resolved.length
     if (result.errorCode === 'MAYBE_APPLIED') {
@@ -410,7 +413,8 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     }
     setResolveForm(null)
     const goneNote = result.gone.length > 0 ? ` ${reportsNoun(result.gone.length)} had been withdrawn or had expired.` : ''
-    toast.success(`${reportsNoun(count)} resolved: ${reportStatusLabel(status).toLowerCase()}.${goneNote}`)
+    const othersNote = byOthers.size > 0 ? ` ${reportsNoun(byOthers.size)} had already been resolved this way by another moderator.` : ''
+    toast.success(`${reportsNoun(count)} resolved: ${reportStatusLabel(status).toLowerCase()}.${othersNote}${goneNote}`)
   }
 
   const remove = (group: ReportedTarget, post: Post) => {
