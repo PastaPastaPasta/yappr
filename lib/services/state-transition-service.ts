@@ -11,14 +11,16 @@ import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT
 import { declaredActionFee, tokenCostFor, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
 import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, tokenPaymentOptions } from '../transition-agreements';
-import { extractErrorMessage, messageWithConsensusCode, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isAffectedStateSnapshotError } from '../error-utils';
+import { CREATE_NOT_RECORDED_ERROR, PENDING_WRITE_ERROR, extractErrorMessage, messageWithConsensusCode, isConsensusRefusal, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isAffectedStateSnapshotError, isIdentityNonceConflictError, isNonceSpentRefusal } from '../error-utils';
 import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
 import { identityService } from './identity-service';
 import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
-import { documentIdForCreate, nextIdentityContractNonce } from '@/lib/document-id';
+import { documentIdForCreate, identityContractNonceConsumed } from '@/lib/document-id';
 import { buildSignedCreateTransition } from '@/lib/manual-batch';
+import { withIdentityWriteLock } from '@/lib/identity-write-lock';
+import { allocateNonce, loadReservation, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce';
 import {
   DocumentActionFeeAgreement,
   StateTransition,
@@ -411,6 +413,48 @@ class StateTransitionService {
   }
 
   /**
+   * The outcome of a create whose broadcast or wait gave no verdict, or null
+   * when it is still unknown. Its nonce consumed means it can no longer
+   * execute later: either it did, and its document is there, or something
+   * else took the nonce. Only a proof settles it, and both reads are proved,
+   * so absence counts only when the document proof is from a block at least
+   * as high as the one that showed the nonce consumed: a node a block behind
+   * cannot report it missing. Anything short of that (the nonce still free, a
+   * read failing, a proof from lower down) leaves it unknown, and the caller
+   * reports "may have landed" rather than building another create.
+   */
+  private async settleUnconfirmedCreate(
+    sdk: ConnectedSdk,
+    contractId: string,
+    documentType: string,
+    ownerId: string,
+    documentId: string,
+    nonce: bigint
+  ): Promise<StateTransitionResult | null> {
+    try {
+      const consumedAt = await sdk.identities.contractNonceWithProof(ownerId, contractId);
+      if (!identityContractNonceConsumed(consumedAt.data, nonce)) return null;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 3_000));
+        const probe = await sdk.documents.getWithProof(contractId, documentType, documentId);
+        if (probe.data) {
+          clearPendingSTBytes(documentId);
+          return { success: true, transactionHash: documentId, document: documentToPlainObject(probe.data), confirmed: true };
+        }
+        if (probe.metadata.height >= consumedAt.metadata.height) {
+          logger.warn(`Nonce ${nonce} is consumed and ${documentType} ${documentId} is proved absent at height ${probe.metadata.height}`);
+          clearPendingSTBytes(documentId);
+          return { success: false, error: CREATE_NOT_RECORDED_ERROR };
+        }
+      }
+      return null;
+    } catch (error) {
+      logger.warn(`Could not settle unconfirmed ${documentType} ${documentId}:`, extractErrorMessage(error));
+      return null;
+    }
+  }
+
+  /**
    * Create a document with idempotent retry via ST byte caching.
    *
    * This is the typed write path: `documentData` should already use `Uint8Array` for binary
@@ -420,10 +464,19 @@ class StateTransitionService {
    * with the id the create transition WILL carry, and the same nonce is then used for the
    * broadcast, so the id the data was built against is the id Platform stores.
    *
+   * Writes by one identity to one contract run one at a time, across tabs
+   * (`withIdentityWriteLock`), and each create takes a nonce past every one
+   * this browser signed (`lib/services/identity-nonce.ts`), so two never share
+   * one (QA D-01). A create whose outcome is unknown is never rebuilt: it is
+   * reported unconfirmed ("may have landed") unless a proof settles it, and
+   * reported failed only when Platform proves its nonce consumed and its
+   * document absent at that height or later.
+   *
    * Instead of using sdk.documents.create() (which atomically builds,
    * signs, broadcasts, and waits — bumping the nonce each time), we:
    *
    * 1. Fetch the identity contract nonce from Platform and pick the next one
+   *    past every nonce this browser signed
    * 2. Derive the document id from that nonce (protocol 14; wasm-dpp2's
    *    `Document.generateId` via `lib/document-id.ts`) and build the Document
    *    with it, wrapped in a DocumentCreateTransition
@@ -488,6 +541,16 @@ class StateTransitionService {
       confirmation?: 'strict' | 'affectedState';
     }
   ): Promise<StateTransitionResult> {
+    return withIdentityWriteLock(ownerId, contractId, () => this.createDocumentLocked(contractId, documentType, ownerId, documentData, options));
+  }
+
+  private async createDocumentLocked(
+    contractId: string,
+    documentType: string,
+    ownerId: string,
+    documentData: Parameters<StateTransitionService['createDocument']>[3],
+    options: Parameters<StateTransitionService['createDocument']>[4]
+  ): Promise<StateTransitionResult> {
     const affectedStateMode = options?.confirmation === 'affectedState';
     try {
       const sdk = await getEvoSdk();
@@ -510,10 +573,35 @@ class StateTransitionService {
 
       // --- The nonce comes first: the document id is derived from it ---
       // DIP-30: nonce is u64 where lower 40 bits = sequence number,
-      // upper 24 bits = missing revision bitset. Only increment the sequence part.
+      // upper 24 bits = missing revision bitset. Only increment the sequence part,
+      // and go past every nonce this browser signed, executed or not.
       const currentNonce = await sdk.identities.contractNonce(ownerId, contractId);
-      const newNonce = nextIdentityContractNonce(currentNonce);
-      logger.debug(`Nonce: current=${currentNonce}, using=${newNonce}`);
+      const reservation = loadReservation(ownerId, contractId);
+      const newNonce = allocateNonce(currentNonce, reservation);
+      logger.debug(`Nonce: current=${currentNonce}, reserved=${reservation?.mark ?? 'none'}, using=${newNonce ?? 'none (pending)'}`);
+      if (newNonce === null) return { success: false, error: PENDING_WRITE_ERROR };
+      let pendingEntry: PendingTransition | null = null;
+      // A verdict on this transition (confirmed, refused, or settled by proof): it will not execute later.
+      const decided = (result: StateTransitionResult): StateTransitionResult => {
+        if (pendingEntry) releaseNonce(ownerId, contractId, pendingEntry);
+        return result;
+      };
+      // Platform refused it for its nonce: taken by another write, or by this
+      // very transition executing before an SDK retry of its broadcast. Only a
+      // proof tells which, so it is never rebuilt. indexOnly callers read the
+      // write back by value on a failure; a strict create is settled by proof,
+      // or else reported unconfirmed. It stays pending unless the refusal shows
+      // the nonce spent: "too far in future" comes from a node behind one that
+      // may have admitted it.
+      const nonceRefused = async (refusal: unknown): Promise<StateTransitionResult> => {
+        if (isNonceSpentRefusal(refusal)) decided({ success: false });
+        try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
+        if (affectedStateMode) return { success: false, error: messageWithConsensusCode(refusal) };
+        const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
+        if (settled) return decided(settled);
+        logger.warn(`${documentType} ${documentId} refused for its nonce with its outcome unproven — reporting it unconfirmed:`, extractErrorMessage(refusal));
+        return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
+      };
 
       const entropy = crypto.getRandomValues(new Uint8Array(32));
       const documentId = documentIdForCreate({ contractId, ownerId, documentTypeName: documentType, entropy, identityContractNonce: newNonce });
@@ -631,19 +719,31 @@ class StateTransitionService {
         logger.debug(`Cached ${stBytes.byteLength ?? stBytes.length} ST bytes for ${documentId}`);
       }
 
+      // Reserved before the broadcast: a broadcast that errors may still have
+      // gone out, and skipping a nonce that did not only leaves a gap Drive fills.
+      pendingEntry = reserveNonce(ownerId, contractId, newNonce, currentNonce);
       try {
         await sdk.stateTransitions.broadcastStateTransition(stateTransition);
         logger.debug('Broadcast succeeded, waiting for confirmation...');
       } catch (broadcastErr) {
-        if (!affectedStateMode && isAlreadyExistsError(broadcastErr)) {
-          // Race condition: another broadcast landed first
-          const doc = await this.checkDocumentExists(contractId, documentType, documentId);
-          if (doc) {
-            clearPendingSTBytes(documentId);
-            return { success: true, transactionHash: documentId, document: doc, confirmed: true };
-          }
+        if (isIdentityNonceConflictError(broadcastErr)) return await nonceRefused(broadcastErr);
+        // Refused: it never executes, and nothing was written.
+        if (isConsensusRefusal(broadcastErr)) {
+          decided({ success: false });
+          throw broadcastErr;
         }
-        throw broadcastErr;
+        // "Already in mempool/chain": these very bytes went out on an earlier
+        // try, so wait for them below. Any other failure carries no verdict (a
+        // node may have taken the broadcast before the connection failed), so
+        // the create is not reported failed, which would invite a rebuild.
+        if (!isAlreadyExistsError(broadcastErr)) {
+          logger.warn(`Broadcast of ${documentId} failed without a verdict — reporting it unconfirmed:`, extractErrorMessage(broadcastErr));
+          if (affectedStateMode) return { success: false, error: messageWithConsensusCode(broadcastErr) };
+          const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
+          if (settled) return decided(settled);
+          return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
+        }
+        logger.debug(`Broadcast of ${documentId} already in flight, waiting for it:`, extractErrorMessage(broadcastErr));
       }
 
       // The SDK auto-retries the wait on deadline exceeded.
@@ -657,6 +757,7 @@ class StateTransitionService {
         logger.debug(`Document ${documentId} confirmed`);
         recordOwnerBalance(ownerId, waited);
         clearPendingSTBytes(documentId);
+        decided({ success: true });
         // Refresh the SDK's internal nonce cache since we manually managed the nonce.
         // Without this, subsequent operations using the high-level API (e.g. delete)
         // would use a stale cached nonce.
@@ -666,6 +767,9 @@ class StateTransitionService {
           logger.warn('Failed to refresh nonce cache:', refreshErr);
         }
       } catch (waitErr) {
+        // Checked before the duplicate family below, which skips anything with
+        // a numeric consensus code, 40204 included.
+        if (isIdentityNonceConflictError(waitErr)) return await nonceRefused(waitErr);
         if (isTimeoutError(waitErr)) {
           logger.warn(`waitForResponse timed out for ${documentId} — ST bytes cached for retry`);
           // Check Platform in case it landed despite timeout
@@ -675,8 +779,12 @@ class StateTransitionService {
           }
           if (doc) {
             clearPendingSTBytes(documentId);
-            return { success: true, transactionHash: documentId, document: doc, confirmed: true };
+            return decided({ success: true, transactionHash: documentId, document: doc, confirmed: true });
           }
+          // A duplicate nonce is accepted at broadcast and then dropped with no
+          // result, which also reads as a timeout (QA S1-02).
+          const settled = affectedStateMode ? null : await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
+          if (settled) return decided(settled);
           // Leave ST bytes cached for next retry — don't throw yet, return optimistic success
           // since broadcast succeeded and the ST is valid
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
@@ -687,6 +795,7 @@ class StateTransitionService {
           try { doc = await this.checkDocumentExists(contractId, documentType, documentId); } catch (checkErr) {
             logger.warn(`checkDocumentExists failed for ${documentId}:`, extractErrorMessage(checkErr));
           }
+          if (doc) decided({ success: true });
           clearPendingSTBytes(documentId);
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return {
@@ -706,12 +815,29 @@ class StateTransitionService {
           }
           if (doc) {
             clearPendingSTBytes(documentId);
-            return { success: true, transactionHash: documentId, document: doc, confirmed: true };
+            return decided({ success: true, transactionHash: documentId, document: doc, confirmed: true });
           }
+          const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
+          if (settled) return decided(settled);
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
           return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
         }
-        throw waitErr;
+        // Refused: it never executes, and nothing was written.
+        if (isConsensusRefusal(waitErr)) {
+          decided({ success: false });
+          throw waitErr;
+        }
+        // Any other wait failure (transport, "rate limited" on a dropped
+        // duplicate as in QA S1-02, a malformed response) carries no verdict:
+        // the broadcast went out and may have executed. Unconfirmed unless a
+        // proof settles it, never a failure a caller would rebuild. (indexOnly
+        // callers read a failure back by value instead.)
+        if (affectedStateMode) throw waitErr;
+        logger.warn(`Wait on ${documentId} failed without a verdict — reporting it unconfirmed:`, extractErrorMessage(waitErr));
+        const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
+        if (settled) return decided(settled);
+        try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
+        return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
       }
 
       // Cleanup old entries periodically
@@ -779,7 +905,7 @@ class StateTransitionService {
         identityKey
       );
 
-      await sdk.documents.replace({ document, identityKey: signingKey, signer });
+      await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.replace({ document, identityKey: signingKey, signer }));
       logger.debug('Document update submitted successfully');
 
       return {
@@ -844,7 +970,7 @@ class StateTransitionService {
         identityKey
       );
 
-      await sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer });
+      await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer }));
       logger.debug('Document deletion submitted successfully');
 
       return {
@@ -922,7 +1048,7 @@ class StateTransitionService {
       );
 
       try {
-        await sdk.documents.delete({ document, identityKey: signingKey, signer });
+        await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.delete({ document, identityKey: signingKey, signer }));
         logger.debug(`indexOnly delete ${documentId} confirmed`);
       } catch (waitErr) {
         // Not a rejection, but not proof either: `documents.delete` waits

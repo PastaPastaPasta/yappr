@@ -8,7 +8,7 @@
  */
 
 import { TokenTransferTransition } from '@dashevo/evo-sdk';
-import { buildUnsignedTokenBatch } from './token-transition-builder';
+import { buildUnsignedTokenBatch, type WalletTransitionRequest } from './token-transition-builder';
 
 /**
  * Build the unsigned state transition bytes for a YAPP transfer (a tip).
@@ -17,14 +17,15 @@ import { buildUnsignedTokenBatch } from './token-transition-builder';
  * @param recipientId - Identity ID (Base58) receiving the tokens
  * @param amount - Whole YAPP tokens to transfer
  * @param publicNote - The tip note (see lib/tip-note.ts); signed with the transfer
- * @returns Serialized unsigned StateTransition bytes for the dash-st: URI
+ * @returns Serialized unsigned StateTransition bytes for the dash-st: URI, and
+ *   `discard` for a request abandoned before it was shown
  */
 export function buildUnsignedYappTipTransition(
   senderId: string,
   recipientId: string,
   amount: bigint,
   publicNote?: string
-): Promise<Uint8Array> {
+): Promise<WalletTransitionRequest> {
   return buildUnsignedTokenBatch('TokenTransferBuilder', senderId, (base) =>
     new TokenTransferTransition({
       base,

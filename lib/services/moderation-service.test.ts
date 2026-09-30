@@ -26,6 +26,8 @@ const topology = vi.hoisted(() => ({ moderated: true, lists: ['banlist', 'suspen
 const fromBytes = vi.hoisted(() => vi.fn(() => ({ restored: true })))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
+// The nonce lock reads Platform's nonce; these tests are about moderation, so it just runs the write.
+vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (...args: [string, string, () => Promise<unknown>]) => args[2]() }))
 vi.mock('./sdk-helpers', () => ({ identifierToBase58: (value: unknown) => String(value) }))
 vi.mock('./signer-service', () => ({ signerService: { createSigner: async () => ({ signer: true }) } }))
 vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif' }))

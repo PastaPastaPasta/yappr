@@ -8,6 +8,7 @@ import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-s
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
 import { starterGrantAmount } from '../contract-topology';
 import { extractErrorMessage, isOncePerIdentityAlreadyClaimedError } from '../error-utils';
+import { withSdkSignedWrite } from './identity-nonce';
 
 export interface TokenResult {
   success: boolean;
@@ -105,7 +106,7 @@ class TokenService {
         overrideWif: criticalKeyWif,
       });
 
-      await sdk.tokens.directPurchase({
+      await withSdkSignedWrite(buyerId, YAPPR_CONTRACT_ID, () => sdk.tokens.directPurchase({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
         tokenPosition: YAPP_TOKEN_POSITION,
         buyerId: new Identifier(buyerId),
@@ -113,7 +114,7 @@ class TokenService {
         maxTotalCost,
         identityKey,
         signer,
-      } as Parameters<typeof sdk.tokens.directPurchase>[0]);
+      } as Parameters<typeof sdk.tokens.directPurchase>[0]));
 
       return { success: true };
     } catch (error) {
@@ -146,7 +147,7 @@ class TokenService {
         overrideWif: criticalKeyWif,
       });
 
-      await sdk.tokens.transfer({
+      await withSdkSignedWrite(senderId, YAPPR_CONTRACT_ID, () => sdk.tokens.transfer({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
         tokenPosition: YAPP_TOKEN_POSITION,
         senderId: new Identifier(senderId),
@@ -155,7 +156,7 @@ class TokenService {
         publicNote,
         identityKey,
         signer,
-      } as Parameters<typeof sdk.tokens.transfer>[0]);
+      } as Parameters<typeof sdk.tokens.transfer>[0]));
 
       return { success: true };
     } catch (error) {
@@ -203,14 +204,14 @@ class TokenService {
         requireCritical: true,
         overrideWif: criticalKeyWif,
       });
-      await sdk.tokens.claim({
+      await withSdkSignedWrite(identityId, YAPPR_CONTRACT_ID, () => sdk.tokens.claim({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
         tokenPosition: YAPP_TOKEN_POSITION,
         identityId: new Identifier(identityId),
         distributionType: 'oncePerIdentity',
         identityKey,
         signer,
-      } as Parameters<typeof sdk.tokens.claim>[0]);
+      } as Parameters<typeof sdk.tokens.claim>[0]));
       return { success: true };
     } catch (error) {
       return this.toResult(error, 'Claim failed');
@@ -255,13 +256,15 @@ class TokenService {
         signer,
       };
 
-      if (action === 'freeze') {
-        await sdk.tokens.freeze(options as Parameters<typeof sdk.tokens.freeze>[0]);
-      } else if (action === 'unfreeze') {
-        await sdk.tokens.unfreeze(options as Parameters<typeof sdk.tokens.unfreeze>[0]);
-      } else {
-        await sdk.tokens.destroyFrozen(options as Parameters<typeof sdk.tokens.destroyFrozen>[0]);
-      }
+      await withSdkSignedWrite(authorityId, YAPPR_CONTRACT_ID, async () => {
+        if (action === 'freeze') {
+          await sdk.tokens.freeze(options as Parameters<typeof sdk.tokens.freeze>[0]);
+        } else if (action === 'unfreeze') {
+          await sdk.tokens.unfreeze(options as Parameters<typeof sdk.tokens.unfreeze>[0]);
+        } else {
+          await sdk.tokens.destroyFrozen(options as Parameters<typeof sdk.tokens.destroyFrozen>[0]);
+        }
+      });
       return { success: true };
     } catch (error) {
       return this.toResult(error, `${action} failed`);
