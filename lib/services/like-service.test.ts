@@ -156,3 +156,83 @@ describe('v9 unlike of an untagged post', () => {
     expect(beatDeletes()).toHaveLength(0)
   })
 })
+
+// A chain that answers like Drive does for an indexOnly doctype: synthesized ids
+// address nothing, so a startAfter cursor is refused outright (the live message
+// on bonsia), and the only way past page one is a range clause on the terminal.
+describe('v9 unlike when the like is not among the newest 100 on the author', () => {
+  const PAGE = 100
+  const BOUNDARY_AT = 1_790_000_000_000
+  const REFUSED = 'startAt/startAfter cursors cannot address an indexOnly position (the synthesized document id is a one-way hash of it); paginate with a range clause on the terminal property instead'
+
+  const likeAt = (n: number, createdAt: number, owner: string, postId: string): Row => ({
+    $id: `like-${String(n).padStart(4, '0')}`, $ownerId: owner, $createdAt: createdAt, postId, postAuthor: AUTHOR, hashtag: undefined,
+  })
+
+  function driveLike({ documentTypeName, where, limit, startAfter }: {
+    documentTypeName: string; where: Where; limit: number; startAfter?: string
+  }): Row[] {
+    if (startAfter) throw new Error(REFUSED)
+    return (chain.rows[documentTypeName] ?? [])
+      .filter((row) => where.every(([field, op, value]) => {
+        if (op === '==') return row[field] === value
+        if (op === '<=') return (row[field] as number) <= (value as number)
+        if (op === '<') return (row[field] as number) < (value as number)
+        throw new Error(`unexpected operator ${op}`)
+      }))
+      .sort((a, b) => (b.$createdAt as number) - (a.$createdAt as number) || String(a.$id).localeCompare(String(b.$id)))
+      .slice(0, limit)
+  }
+
+  const likeQueries = () => mocks.query.mock.calls.map(([query]) => query).filter((query) => query.documentTypeName === 'like')
+  const likeDeleteTuple = () => mocks.deleteDocumentByValues.mock.calls.find(([, docType]) => docType === 'like')?.[3]
+
+  beforeEach(() => {
+    mocks.query.mockImplementation(async (query) => driveLike(query))
+    chain.deletes = { like: { lands: true, report: 'confirmed' }, beat: { lands: true, report: 'confirmed' } }
+  })
+
+  it('pages with a $createdAt range and no startAfter, and finds a like on page two', async () => {
+    // 100 newer likes by other people fill page one; the viewer's is the 101st.
+    const others = Array.from({ length: PAGE }, (_, i) => likeAt(i + 1, BOUNDARY_AT + 1_000 - i, id(100 + (i % 100)), OTHER))
+    const mine = likeAt(500, BOUNDARY_AT - 500, VIEWER, POST)
+    chain.rows.like = [...others, mine]
+
+    await expect(unlike('')).resolves.toBe(true)
+
+    const queries = likeQueries()
+    expect(queries).toHaveLength(2)
+    expect(queries[0].where).toEqual([['postAuthor', '==', AUTHOR]])
+    expect(queries[1].where).toEqual([['postAuthor', '==', AUTHOR], ['$createdAt', '<=', others[PAGE - 1].$createdAt]])
+    expect(queries[1].orderBy).toEqual([['postAuthor', 'asc'], ['$createdAt', 'desc']])
+    for (const query of queries) expect(query).not.toHaveProperty('startAfter')
+    expect(likeDeleteTuple()).toMatchObject({ documentId: mine.$id, createdAtMs: mine.$createdAt })
+    expect(chain.rows.like).not.toContainEqual(mine)
+  })
+
+  it('does not skip a like that shares a timestamp with the last row of the previous page', async () => {
+    // Row 100 of page one and the viewer's like land on the same millisecond;
+    // a strict `<` bound would drop the viewer's like between the pages.
+    const others = Array.from({ length: PAGE - 1 }, (_, i) => likeAt(i + 1, BOUNDARY_AT + 1_000 - i, id(100 + (i % 100)), OTHER))
+    const tieOther = likeAt(200, BOUNDARY_AT, id(201), OTHER)
+    const mine = likeAt(300, BOUNDARY_AT, VIEWER, POST)
+    chain.rows.like = [...others, tieOther, mine, likeAt(400, BOUNDARY_AT - 1, id(202), OTHER)]
+
+    await expect(unlike('')).resolves.toBe(true)
+
+    expect(likeQueries()[1].where).toContainEqual(['$createdAt', '<=', BOUNDARY_AT])
+    expect(likeDeleteTuple()).toMatchObject({ documentId: mine.$id, createdAtMs: BOUNDARY_AT })
+  })
+
+  it('stops instead of looping when a page adds nothing new', async () => {
+    // More than a page of likes on one timestamp: the inclusive bound can only
+    // ever re-serve the same rows, so the walk must end rather than spin.
+    chain.rows.like = Array.from({ length: PAGE + 20 }, (_, i) => likeAt(i + 1, BOUNDARY_AT, id(100 + (i % 100)), OTHER))
+    chain.rows.like.push(likeAt(999, BOUNDARY_AT - 10, VIEWER, POST))
+
+    await unlike('')
+
+    expect(likeQueries().length).toBeLessThanOrEqual(3)
+    expect(mocks.deleteDocumentByValues).not.toHaveBeenCalled()
+  })
+})
