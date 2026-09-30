@@ -72,15 +72,26 @@
  *       post in `like.byTrendPost` (72h every 24h): the tag window groups the
  *       run's tag with the right count and ranks the post within it, an
  *       untagged like leaves it alone, the 3-day window counts both; unliking
- *       drops the counts again
+ *       (the delete tuple read off `byAuthorTimePost`) drops the counts again
+ *   n1  one mention per post: a post naming `mentionedUserId` lands and reads
+ *       back with it; the permanent `post.mentionedUserAndTime` lists it for
+ *       the mentioned identity (`$createdAt >`, newest first); a mention of an identity that does not
+ *       exist is refused 40120 (refersTo identity). There is no postMention.
+ *   n2  the reply notification window (a plain query, oldest window of the
+ *       7d/1d grid, no composite): `reply.parentOwnerRecent` lists A's reply
+ *       for B. Likes stay permanent: `byAuthorTimePost`/`byAuthorTimeReply`
+ *       list A's likes of B's post and reply with their exact time (the
+ *       unlike tuple), `byLiker` answers "did A like X", and an unlike by
+ *       values lands for both types
  *   q1  a repost is a post: a bare repost without the post agreement is 40132;
  *       with it and a YAPP payment it lands, costing exactly the post's token
  *       cost and growing the moderators pot by the post fee; it reads back with
  *       no content; a second repost, or a quote, of the same post by the same
  *       author is 40105 (ownerAndQuotedPost); another author's repost lands and
- *       the quote count is exactly the two reposts; quotedPostOwnerAndTime lists
- *       it for the post's author; the same for a reply target (quotedReplyId,
- *       ownerAndQuotedReply 40105, its quote count 1); a post with only a
+ *       the quote count is exactly the two reposts; quotedPostOwnerRecent's
+ *       7-day window lists it for the post's author; the same for a reply
+ *       target (quotedReplyId, ownerAndQuotedReply 40105, its quote count 1);
+ *       a post with only a
  *       hashtag and `sensitive` is 10422 notEmpty, a media-only post lands
  *   q2  merged counts on the list indexes, exact on fresh targets: quotes
  *       (`==`, batched `in` + groupBy), replies per thread (`==`, batched),
@@ -237,10 +248,14 @@ async function mediaFields(url = 'ipfs://bafyv10batterymedia') {
   return { mediaUrl: url, mediaHash: await sha256(new TextEncoder().encode(url)), mediaFingerprint: crypto.getRandomValues(new Uint8Array(8)) };
 }
 
-/** Untagged means `hashtag` is ABSENT; every optional property is omitted unless given. There is no `language`. */
-const postData = ({ content = 'v10 battery post', hashtag, sensitive, quotedPostId, quotedPostOwnerId, media } = {}) => ({
+/**
+ * Untagged means `hashtag` is ABSENT; every optional property is omitted unless
+ * given. There is no `language`. A post names at most one `mentionedUserId`.
+ */
+const postData = ({ content = 'v10 battery post', hashtag, sensitive, quotedPostId, quotedPostOwnerId, mentionedUserId, media } = {}) => ({
   content,
   ...(hashtag === undefined ? {} : { hashtag }),
+  ...(mentionedUserId ? { mentionedUserId } : {}),
   ...(sensitive === undefined ? {} : { sensitive }),
   ...(quotedPostId ? { quotedPostId } : {}),
   ...(quotedPostOwnerId ? { quotedPostOwnerId } : {}),
@@ -630,7 +645,7 @@ async function caseO3RepostOwnerAgreement(ctx) {
   const postId = await ensurePost(ctx, 'reposted');
   if (!postId) { check('o3 fixture', false, 'no post to repost'); return; }
   const repostWith = (ownerId) => repostOf({ postId: bs58.decode(postId), ownerId });
-  // Without the agreement a repost could name any identity in quotedPostOwnerAndTime
+  // Without the agreement a repost could name any identity in quotedPostOwnerRecent
   // and show it "X reposted your post" for a post that is not theirs. The
   // refusals come first: once A's repost lands, another is the 40105 of
   // ownerAndQuotedPost, which would mask the agreement.
@@ -937,35 +952,75 @@ async function caseR2SeatedResolution(ctx) {
 
 // ---- v10: trending without beat ------------------------------------------------------
 
-/** The rolling windows the client reads (lib/contract-topology windowedRankingFor), grids off the committed JSON. */
-const gridOf = (name) => {
-  const { range, step } = V10.documentSchemas.like.indices.find((index) => index.name === name).timeRange;
+/**
+ * The DocumentsQuery `timeRange` option reading `docType`'s windowed index
+ * `name` through its oldest open window, the grid off the committed JSON. The
+ * grid is named because like and post bucket $createdAt on several grids.
+ */
+const gridOf = (docType, name) => {
+  const { range, step } = V10.documentSchemas[docType].indices.find((index) => index.name === name).timeRange;
   return { timeRange: [{ field: '$createdAt', selector: 'oldest', grid: { range, step } }] };
 };
-const TRENDING_TAGS = gridOf('byTrendHashtagPost');
-const TOP_POSTS = gridOf('byTrendPost');
+const TRENDING_TAGS = gridOf('like', 'byTrendHashtagPost');
+const TOP_POSTS = gridOf('like', 'byTrendPost');
+
+const WINDOW_PAGE = 100;
+const WINDOW_PAGES = 10;
+
+/**
+ * Whether `docType`'s windowed index `indexName`, read through its oldest open
+ * window with `where`, lists a document matching `predicate`. A windowed read
+ * takes no `$createdAt` clause and no `$createdAt` orderBy (the window is the
+ * time bound), so it pages by id while pages come back full.
+ */
+async function windowLists(ctx, docType, indexName, where, predicate) {
+  let startAfter;
+  let scanned = 0;
+  for (let page = 0; page < WINDOW_PAGES; page++) {
+    const result = await readback(() => ctx.sdk.documents.query({
+      dataContractId: ctx.contractId, documentTypeName: docType, where, ...gridOf(docType, indexName),
+      limit: WINDOW_PAGE, ...(startAfter ? { startAfter } : {}),
+    }));
+    let last = null;
+    for (const document of result.values()) {
+      if (!document) continue;
+      last = document;
+      scanned++;
+      if (predicate(document)) return { found: true, scanned };
+    }
+    if (result.size < WINDOW_PAGE || !last) break;
+    startAfter = idOf(last.id);
+  }
+  return { found: false, scanned };
+}
 
 async function rankedWindow(ctx, window, extra) {
   return readback(() => ctx.sdk.documents.ranked({ dataContractId: ctx.contractId, documentTypeName: 'like', aggregate: { type: 'count' }, direction: 'desc', limit: 100, ...window, ...extra }));
 }
 
+/** Per like type: the liked target's field, and the author field of the permanent notification index. */
+const LIKE_FIELDS = { like: { target: 'postId', author: 'postAuthor' }, likeReply: { target: 'replyId', author: 'replyAuthor' } };
+
 /**
- * `{ id, createdAt }` of `likerId`'s like of `postId` by `postAuthor`, read off
- * `byAuthorTimePost` (which carries $createdAt) newest first, or null.
+ * `{ id, createdAt }` of `likerId`'s like of `targetId` by `authorId`, or null:
+ * the delete-by-values tuple, read newest first off the permanent notification
+ * index that carries `$createdAt` (`byAuthorTimePost [postAuthor, $createdAt,
+ * postId]`, `byAuthorTimeReply` for reply likes). `byLiker` holds no time.
  */
-async function likeWithCreatedAt(ctx, postAuthor, postId, likerId) {
+async function likeTuple(ctx, docType, authorId, targetId, likerId) {
+  const { target, author } = LIKE_FIELDS[docType];
   let startAfter;
   for (let page = 0; page < 5; page++) {
     const result = await readback(() => ctx.sdk.documents.query({
-      dataContractId: ctx.contractId, documentTypeName: 'like', where: [['postAuthor', '==', postAuthor]],
-      orderBy: [['postAuthor', 'asc'], ['$createdAt', 'desc']], limit: 100, ...(startAfter ? { startAfter } : {}),
+      dataContractId: ctx.contractId, documentTypeName: docType, where: [[author, '==', authorId]],
+      orderBy: [[author, 'asc'], ['$createdAt', 'desc']], limit: 100, ...(startAfter ? { startAfter } : {}),
     }));
     let last = null;
     for (const document of result.values()) {
       if (!document) continue;
       last = document;
       const data = document.toJSON?.() ?? {};
-      if (data.postId === postId && idOf(document.ownerId) === likerId && document.createdAt !== undefined) {
+      if (data[target] === targetId && idOf(document.ownerId) === likerId && document.createdAt !== undefined) {
         return { id: document.id.toBytes?.() ?? bs58.decode(idOf(document.id)), createdAt: Number(document.createdAt) };
       }
     }
@@ -1005,11 +1060,10 @@ async function caseT2TrendingOnLike(ctx) {
     [tagged, untagged].every((id) => Number(topPosts.entries.find((e) => e.groupValue === id)?.value ?? -1) === 1), `groups=${topPosts.entries.length}`);
   check('t2g the all-time per-tag ranking (byHashtagPost) agrees', Number(allTime.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1);
 
-  // A delete by values needs the like's $createdAt. byLiker and byPost do not carry
-  // it (an indexOnly document is synthesized from the index it is read through),
-  // so read it the way like-service's recoverLikeTuple does: through
+  // A delete by values needs the like's $createdAt. An indexOnly document is
+  // synthesized from the index it is read through, so read it back through
   // byAuthorTimePost [postAuthor, $createdAt, postId], newest first.
-  const stored = await likeWithCreatedAt(ctx, botB.ownerId, tagged, botA.ownerId);
+  const stored = await likeTuple(ctx, 'like', botB.ownerId, tagged, botA.ownerId);
   if (!stored) { check('t2 unlike fixture', false, 'A\'s like was not found on byAuthorTimePost with its $createdAt'); return; }
   const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, id: stored.id,
     createdAt: stored.createdAt, data: likeData({ postId: bs58.decode(tagged), hashtag: tag, postAuthor: owner }) });
@@ -1024,6 +1078,69 @@ async function caseT2TrendingOnLike(ctx) {
     // A window bucket that drained to nothing can fail proof generation instead of proving empty (platform#4592).
     const cold = /single-path axis read must produce exactly one axis descent/i.test(describeErr(e));
     check('t2i the tag\'s window no longer counts the post', cold, cold ? 'cold bucket (the empty answer)' : describeErr(e).slice(0, 200));
+  }
+}
+
+// ---- v10: one mention per post, 7-day notification windows ---------------------------
+
+async function caseN1Mention(ctx) {
+  const { sdk, contractId, botA, botB } = ctx;
+  console.log('\n--- n1. one mention per post: post.mentionedUserId (refersTo identity), listed by the permanent mentionedUserAndTime ---');
+  const post = await createFeedOutcome(ctx, botA, 'post', postData({ content: `n1 hello B ${Date.now()}`, mentionedUserId: bs58.decode(botB.ownerId) }));
+  expectAccepted('n1a A\'s post naming B in mentionedUserId lands', post);
+  if (post.ok) {
+    await settle();
+    const stored = (await fetchDocument(sdk, contractId, 'post', post.id))?.toJSON?.() ?? {};
+    check('n1b it reads back naming B', stored.mentionedUserId === botB.ownerId, describeValue({ mentionedUserId: stored.mentionedUserId }));
+    const mentions = await readback(() => sdk.documents.query({
+      dataContractId: contractId, documentTypeName: 'post',
+      where: [['mentionedUserId', '==', botB.ownerId], ['$createdAt', '>', Date.now() - 3_600_000]],
+      orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']], limit: 100,
+    }));
+    const listedIds = [...(mentions instanceof Map ? mentions.values() : Object.values(mentions ?? {}))].filter(Boolean).map((document) => idOf(document.id));
+    check('n1c the permanent mentionedUserAndTime lists it for B, newest first since an hour ago (the "mentioned you" source and the Mentions tab)', listedIds.includes(post.id), `${listedIds.length} post(s)`);
+  }
+  await expectFeedRefused(ctx, 'n1d a mention of an identity that does not exist is refused (40120)', botA, 'post', postData({ content: 'n1 ghost mention', mentionedUserId: randomIdBytes() }), REFERENCE_NOT_FOUND);
+}
+
+async function caseN2NotificationWindows(ctx) {
+  const { sdk, contractId, botA, botB } = ctx;
+  console.log('\n--- n2. the reply notification window; like notifications, the heart state and unlikes on the permanent like indexes ---');
+  const target = await createFeed(ctx, botB, 'post', postData({ content: `n2 target ${Date.now()}` }), 'n2 target');
+  if (!target) { check('n2 fixtures', false, 'no target post'); return; }
+  const [targetBytes, owner] = [target, botB.ownerId].map((id) => bs58.decode(id));
+  const onTarget = (who, content) => createFeed(ctx, who, 'reply', replyData({ content, rootPostId: targetBytes, parentOwnerId: owner }), content);
+  const bReply = await onTarget(botB, 'n2 B reply');
+  const aReply = await onTarget(botA, 'n2 A reply');
+  if (!bReply || !aReply) { check('n2 fixtures', false, 'a reply did not land'); return; }
+  // [docType, target id, like data, what is liked, the case ids of its notification / heart / unlike checks]
+  const likes = [
+    ['like', target, likeData({ postId: targetBytes, postAuthor: owner }), 'post', ['n2b', 'n2c', 'n2d']],
+    ['likeReply', bReply, likeReplyData({ replyId: bs58.decode(bReply), replyAuthor: owner }), 'reply', ['n2e', 'n2f', 'n2g']],
+  ];
+  const liked = (docType, targetId) => entryExists(sdk, contractId, docType, LIKE_FIELDS[docType].target, targetId, botA.ownerId);
+  for (const [docType, targetId, data, what] of likes) {
+    expectAccepted(`n2 fixture: A likes B's ${what}`, await attemptCreateIndexOnly(sdk, botA, { contractId, docType, data, accepted: () => liked(docType, targetId) }));
+  }
+  await settle();
+
+  const replies = await windowLists(ctx, 'reply', 'parentOwnerRecent', [['parentOwnerId', '==', botB.ownerId]], (document) => idOf(document.id) === aReply);
+  check('n2a reply.parentOwnerRecent\'s 7-day window lists A\'s reply for B (the "replied to you" source)', replies.found, `${replies.scanned} reply(ies) scanned`);
+  for (const [docType, targetId, data, what, [windowCase, tupleCase, unlikeCase]] of likes) {
+    const { target: field } = LIKE_FIELDS[docType];
+    // "Liked your post": the permanent author index, newest first, exact times.
+    const tuple = await likeTuple(ctx, docType, botB.ownerId, targetId, botA.ownerId);
+    const recent = tuple !== null && Math.abs(Date.now() - tuple.createdAt) < 3_600_000;
+    check(`${windowCase} ${docType === 'like' ? 'byAuthorTimePost' : 'byAuthorTimeReply'} lists A's like of B's ${what} with its exact $createdAt (the "liked your ${what}" source)`, recent,
+      describeValue(tuple && { createdAt: tuple.createdAt }));
+    // The heart state: byLiker [$ownerId] terminal target, the owner-pinned `in` batch.
+    const hearts = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: docType,
+      where: [['$ownerId', '==', botA.ownerId], [field, 'in', [targetId]]], limit: 1 }));
+    check(`${tupleCase} ${docType}.byLiker answers "did A like it" (\`$ownerId ==\`, \`${field} in\`)`, [...hearts.values()].filter(Boolean).length === 1);
+    if (!tuple) continue;
+    const { document } = buildDocument({ contractId, docType, ownerId: botA.ownerId, id: tuple.id, createdAt: tuple.createdAt, data });
+    expectAccepted(`${unlikeCase} A unlikes B's ${what} by values, the tuple read off the author index`,
+      await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await liked(docType, targetId)) }));
   }
 }
 
@@ -1279,8 +1396,8 @@ async function caseQ1RepostIsAQuote(ctx) {
   await settle();
   const quotes = await countBy(sdk, contractId, 'post', 'quotedPostId', target);
   check('q1i the quote count is the repost count: exactly 2', quotes === 2, `quotes=${quotes}`);
-  const notified = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: 'post', where: [['quotedPostOwnerId', '==', botB.ownerId]], orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'desc']], limit: 20 }));
-  check('q1j quotedPostOwnerAndTime lists A\'s repost for B (the "reposted your post" source)', [...notified.keys()].map(idOf).includes(repost.id), `${notified.size} post(s)`);
+  const notified = await windowLists(ctx, 'post', 'quotedPostOwnerRecent', [['quotedPostOwnerId', '==', botB.ownerId]], (document) => idOf(document.id) === repost.id);
+  check('q1j quotedPostOwnerRecent\'s 7-day window lists A\'s repost for B (the "reposted your post" source)', notified.found, `${notified.scanned} post(s) scanned`);
 
   const replyRepost = repostOf({ replyId: replyBytes, ownerId: owner });
   expectAccepted('q1k A\'s bare repost of B\'s reply (quotedReplyId) lands', await createFeedOutcome(ctx, botA, 'post', replyRepost));
@@ -1430,6 +1547,8 @@ const CASES = new Map([
   ['r1', prepared(caseR1Reports)],
   ['r2', prepared(caseR2SeatedResolution)],
   ['t2', caseT2TrendingOnLike],
+  ['n1', caseN1Mention],
+  ['n2', caseN2NotificationWindows],
   ['y1', caseY1YappLocked],
   ['a1', prepared(caseA1NoAgreement)],
   ['a2', prepared(caseA2MismatchedAgreement)],
@@ -1480,7 +1599,28 @@ function selfTest() {
   expect('one quote or repost per author and target: unique ownerAndQuotedPost / ownerAndQuotedReply, skipped when absent (q1f, q1g, q1l)',
     shape('post', 'ownerAndQuotedPost') === '$ownerId,quotedPostId' && shape('post', 'ownerAndQuotedReply') === '$ownerId,quotedReplyId'
       && ['ownerAndQuotedPost', 'ownerAndQuotedReply'].every((n) => index('post', n).unique === true && index('post', n).skipIfAbsent === true));
-  expect('quotedPostOwnerAndTime lists quotes and reposts for the target\'s owner (q1j)', shape('post', 'quotedPostOwnerAndTime') === 'quotedPostOwnerId,$createdAt');
+  // The notification-only indexes: 7-day windows on one 7d/1d grid, $createdAt first, expiring with the window.
+  const WEEK_WINDOW = JSON.stringify({ on: '$createdAt', range: 604_800, step: 86_400, ttl: 604_800 });
+  const weekly = (type, name, properties) => shape(type, name) === properties && JSON.stringify(index(type, name).timeRange) === WEEK_WINDOW;
+  expect('quotedPostOwnerRecent [$createdAt, quotedPostOwnerId] is a 7-day window, skipped when absent (q1j)', weekly('post', 'quotedPostOwnerRecent', '$createdAt,quotedPostOwnerId') && index('post', 'quotedPostOwnerRecent').skipIfAbsent === true);
+  expect('mentionedUserAndTime [mentionedUserId, $createdAt] is permanent (no window), skipped when absent, like tagAndTime (n1c)', shape('post', 'mentionedUserAndTime') === 'mentionedUserId,$createdAt' && index('post', 'mentionedUserAndTime').skipIfAbsent === true && index('post', 'mentionedUserAndTime').timeRange === undefined);
+  expect('reply parentOwnerRecent [$createdAt, parentOwnerId] is a 7-day window (n2a)', weekly('reply', 'parentOwnerRecent', '$createdAt,parentOwnerId'));
+  // Likes keep their permanent indexes: a windowed indexOnly index cannot be
+  // read as documents (the node refuses it), and byAuthorTime* carry the unlike's $createdAt.
+  expect('like / likeReply byAuthorTimePost/Reply [author, $createdAt, target] terminal $ownerId are permanent (n2b, n2e, t2h)',
+    shape('like', 'byAuthorTimePost') === 'postAuthor,$createdAt,postId' && index('like', 'byAuthorTimePost').terminal === '$ownerId' && index('like', 'byAuthorTimePost').timeRange === undefined
+      && shape('likeReply', 'byAuthorTimeReply') === 'replyAuthor,$createdAt,replyId' && index('likeReply', 'byAuthorTimeReply').terminal === '$ownerId' && index('likeReply', 'byAuthorTimeReply').timeRange === undefined);
+  expect('byLiker [$ownerId] terminal the target: the heart state (n2c, n2f)',
+    shape('like', 'byLiker') === '$ownerId' && index('like', 'byLiker').terminal === 'postId'
+      && shape('likeReply', 'byLiker') === '$ownerId' && index('likeReply', 'byLiker').terminal === 'replyId'
+      && !index('like', 'byAuthorRecent') && !index('likeReply', 'byAuthorRecent'));
+  expect('follow.followers and followRequest.target stay permanent (no window)', index('follow', 'followers')?.timeRange === undefined && index('followRequest', 'target')?.timeRange === undefined);
+  const retired = { post: ['quotedPostOwnerAndTime'], reply: ['parentOwnerAndTime'] };
+  expect('the permanent notification indexes are gone (replaced by the windows)', Object.entries(retired).every(([type, names]) => names.every((n) => !index(type, n))));
+  const mention = schemas.post.properties.mentionedUserId;
+  expect('there is no postMention: a post names one optional mentionedUserId, an identifier that refersTo an identity (n1)',
+    !schemas.postMention && mention?.contentMediaType === 'application/x.dash.dpp.identifier' && mention.byteArray === true && mention.minItems === 32 && mention.maxItems === 32
+      && mention.refersTo?.type === 'identity' && !schemas.post.required?.includes('mentionedUserId'));
   expect('reply repliesOf [rootPostId, replyToReplyId, $createdAt] is rangeCountable, ranked at rootPostId, and keeps direct replies (nullable replyToReplyId, no skipIfAbsent) (x1b, x1e, x1f, q2c–q2g, q2p)',
     shape('reply', 'repliesOf') === 'rootPostId,replyToReplyId,$createdAt' && countsAt('reply', 'repliesOf', 'rootPostId')
       && index('reply', 'repliesOf').skipIfAbsent === undefined && !schemas.reply.required.includes('replyToReplyId'));
@@ -1546,6 +1686,7 @@ const SHAPES = [
   ['post (tagged, quote + owner denorm)', 'post', postData({ hashtag: 'v10tag', quotedPostId: someId(), quotedPostOwnerId: someId() })],
   ['post (media triple + sensitive)', 'post', postData({ media: SHAPE_MEDIA, sensitive: true })],
   ['post (1000 characters)', 'post', postData({ content: 'x'.repeat(1000) })],
+  ['post (one mention)', 'post', postData({ content: 'hi', mentionedUserId: someId() })],
   ['reply', 'reply', replyData({ rootPostId: someId(), parentOwnerId: someId() })],
   ['like (tagged)', 'like', likeData({ postId: someId(), hashtag: 'v10tag', postAuthor: someId() })],
   ['like (hashtag absent)', 'like', likeData({ postId: someId(), postAuthor: someId() })],

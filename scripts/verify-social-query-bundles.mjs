@@ -5,11 +5,18 @@
  * retries, subqueries, quorum reads, or complete rendered-screen traffic.
  *
  * Social v10 has no repost type: a repost is a post quoting its target with no
- * content, so it notifies through post.quotedPostOwnerAndTime, sits in its
+ * content, so it notifies through post.quotedPostOwnerRecent, sits in its
  * author's own post pages, and the quote count is the repost count. Per-reply
- * counts pin the root (repliesOf [rootPostId, replyToReplyId, $createdAt]). */
+ * counts pin the root (repliesOf [rootPostId, replyToReplyId, $createdAt]).
+ *
+ * Notification sources: follows, mentions (post.mentionedUserAndTime), follow
+ * requests and likes (byAuthorTimePost / byAuthorTimeReply) are permanent and
+ * bundle; replies (reply.parentOwnerRecent) and quotes/reposts
+ * (post.quotedPostOwnerRecent) are 7-day windows read through the `timeRange`
+ * option, which a composite refuses, so each stays one plain query. There is
+ * no postMention: a post names at most one mentionedUserId. */
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import bs58 from 'bs58';
 import { connectSdk, devnetName, envValue } from './sdk-env.mjs';
 
@@ -92,13 +99,37 @@ await verify('profiles and DPNS including profile-less identity', [
   { dataContractId: profile, documentTypeName: 'profile', where: [['$ownerId', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['$ownerId', 'asc']], limit: owners.length + 1 },
   { dataContractId: dpns, documentTypeName: 'domain', where: [['records.identity', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['records.identity', 'asc']], limit: 100 },
 ]);
-await verify('notification sources', [
-  ['follow', 'followingId'], ['postMention', 'mentionedUserId'], ['followRequest', 'targetId'],
-  ['like', 'postAuthor'], ['likeReply', 'replyAuthor'], ['post', 'quotedPostOwnerId'], ['reply', 'parentOwnerId'],
-].map(([documentTypeName, field]) => ({
+// Mentions stay permanent (the mentioning post's own mentionedUserAndTime).
+await verify('permanent notification sources', [['follow', 'followingId'], ['post', 'mentionedUserId'], ['followRequest', 'targetId'], ['like', 'postAuthor'], ['likeReply', 'replyAuthor']].map(([documentTypeName, field]) => ({
   dataContractId: social, documentTypeName,
   where: [[field, '==', owner], ['$createdAt', '>', 0]],
   orderBy: [[field, 'asc'], ['$createdAt', 'asc']], limit: 100,
+})));
+
+const V10 = JSON.parse(readFileSync(new URL('../contracts/yappr-social-contract-v10.json', import.meta.url), 'utf8'));
+/** The oldest open window of `documentTypeName`'s windowed index, the grid named (like and post bucket $createdAt on several). */
+function windowOf(documentTypeName, indexName) {
+  const { range, step } = V10.documentSchemas[documentTypeName].indices.find(index => index.name === indexName).timeRange;
+  return [{ field: '$createdAt', selector: 'oldest', grid: { range, step } }];
+}
+/** Windowed sources cannot ride a composite: each is read alone, and only its success is asserted. */
+async function verifyWindowed(name, queries) {
+  try {
+    const rows = [];
+    for (const query of queries) rows.push(records(await sdk.documents.query(query)).length);
+    reports.push({ name, before: queries.length, after: queries.length, rows, equivalent: true });
+    console.log(`PASS ${name}: ${queries.length} plain windowed queries; rows ${rows.join(',')}`);
+  } catch (error) {
+    const message = String(error.message || error.reason || error.toJSON?.() || JSON.stringify(error));
+    reports.push({ name, equivalent: false, error: message });
+    console.error(`FAIL ${name}: ${message}`);
+  }
+}
+await verifyWindowed('7-day notification windows', [
+  ['reply', 'parentOwnerRecent', 'parentOwnerId'], ['post', 'quotedPostOwnerRecent', 'quotedPostOwnerId'],
+].map(([documentTypeName, indexName, field]) => ({
+  dataContractId: social, documentTypeName,
+  where: [[field, '==', owner]], timeRange: windowOf(documentTypeName, indexName), limit: 100,
 })));
 // A followed author's reposts are posts: their own post pages carry them.
 await verify('following post pages (reposts included)', owners.map(ownerId => ({
