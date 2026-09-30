@@ -16,6 +16,7 @@ import {
   dashpayKeyBoundsRefusal,
   profileExtensionSource,
   profileSources,
+  profileTextLimits,
   type ProfileRole,
   type ImageDigest,
   type ProfileSource,
@@ -827,7 +828,9 @@ class UnifiedProfileService extends BaseDocumentService<User> {
 
       const rawProfile = await this.getRawProfile(ownerId);
       if (!rawProfile) {
-        throw new Error('Profile not found');
+        // A profile is optional, so the first edit creates it.
+        const displayName = updates.displayName?.trim() || await this.defaultDisplayName(ownerId);
+        return await this.createProfile(ownerId, { ...updates, displayName });
       }
 
       const docId = rawProfile.$id;
@@ -918,30 +921,42 @@ class UnifiedProfileService extends BaseDocumentService<User> {
 
   /**
    * Get raw profile document (not transformed to User type)
-   * Used internally to preserve field values during updates
+   * Used internally to preserve field values during updates. Rejects when the
+   * query fails, so an outage is never mistaken for a missing profile.
    */
   private async getRawProfile(ownerId: string): Promise<UnifiedProfileDocument | null> {
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
+    const { getEvoSdk } = await import('./evo-sdk-service');
+    const sdk = await getEvoSdk();
 
-      const response = await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: 'profile',
-        where: [['$ownerId', '==', ownerId]],
-        limit: 1
-      });
+    const response = await sdk.documents.query({
+      dataContractId: this.contractId,
+      documentTypeName: 'profile',
+      where: [['$ownerId', '==', ownerId]],
+      limit: 1
+    });
 
-      const documents = this.normalizeDocumentResponse(response);
-      if (documents.length === 0) {
-        return null;
-      }
+    const documents = this.normalizeDocumentResponse(response);
+    return documents.length === 0 ? null : this.extractDocumentData(documents[0]);
+  }
 
-      return this.extractDocumentData(documents[0]);
-    } catch (error) {
-      logger.error('UnifiedProfileService: Error getting raw profile:', error);
-      return null;
+  /**
+   * Whether `ownerId` has any profile document, read fresh. Unlike getProfile,
+   * which answers a failed query with null, this rejects, so a caller can tell
+   * a missing profile from an unreachable one.
+   */
+  async profileExists(ownerId: string): Promise<boolean> {
+    if (profileExtensionSource()) {
+      const { base, extension } = await this.getV10ProfileDocuments(ownerId);
+      return base !== null || extension !== null;
     }
+    return (await this.getRawProfile(ownerId)) !== null;
+  }
+
+  /** The name a first save gives a profile the user did not name: the DPNS label, else the identity. */
+  private async defaultDisplayName(ownerId: string): Promise<string> {
+    const username = await this.getUsername(ownerId);
+    const name = username?.replace(/\.dash$/, '') || `User ${ownerId.slice(-6)}`;
+    return name.slice(0, profileTextLimits().displayName);
   }
 
   // ==================== v10: DashPay profile + extension ====================
@@ -969,21 +984,6 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   }
 
   /**
-   * v10: the user's DashPay profile in the profile shape (name, bio and image
-   * avatar; null when they have none) and whether they have the Yappr
-   * extension. A user with a DashPay profile keeps it and adds the extension.
-   * Null off v10. Read fresh rather than through the batch, which answers a
-   * failed query with null: this rejects instead, so an outage never reads as
-   * "no profile" to the login gate or /profile/create.
-   */
-  async getV10ProfileStatus(ownerId: string): Promise<{ dashpay: UnifiedProfileDocument | null; hasExtension: boolean } | null> {
-    if (!profileExtensionSource()) return null;
-    const { base, extension } = await this.getV10ProfileDocuments(ownerId);
-    const dashpay = base ? mergeV10ProfileRecords(base, null) : null;
-    return { dashpay: dashpay ? this.extractDocumentData(dashpay) : null, hasExtension: extension !== null };
-  }
-
-  /**
    * Write a v10 profile edit: the DashPay profile first (the extension's
    * `ownerRefersTo` finds it, 40120 without), then the extension, each only
    * when it is missing or changes. An image avatar DashPay does not already
@@ -999,6 +999,8 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     const patch: V10ProfilePatch = { ...data, paymentUris, socialLinks };
 
     const stored = await this.getV10ProfileDocuments(ownerId);
+    // A first save of only an avatar or a banner still has to name the new DashPay profile.
+    if (!stored.base && !patch.displayName?.trim()) patch.displayName = await this.defaultDisplayName(ownerId);
     const digestUrl = avatarNeedingDigest(stored.base, patch);
     const plan = planV10ProfileWrite({
       ...stored,

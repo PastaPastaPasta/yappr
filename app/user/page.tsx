@@ -16,7 +16,6 @@ import { repostsAreQuotes } from '@/lib/contract-topology'
 import { paymentUriScheme } from '@/lib/services/unified-profile-service'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
-import { profileCreateHref } from '@/lib/auth/return-to'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useBlockProvenance } from '@/hooks/use-block'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
@@ -38,6 +37,7 @@ import { ImageCustomizationModal } from '@/components/profile/image-customizatio
 import { EMPTY_DRAFT, type ProfileDraft } from '@/components/profile/profile-edit-form'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import { isPublishedBlogPost } from '@/lib/blog/content-utils'
+import { profileTextLimits } from '@/lib/profile/v10-profile'
 
 const PAGE_SIZE = 50
 
@@ -122,7 +122,8 @@ function UserProfileContent() {
   const published = useProfileCreatedPosts(userId, posts, enrichProgressively)
   const displayedPostCount = published.count === null ? postCount : Math.max(postCount ?? 0, published.count)
 
-  const displayName = profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
+  const dpnsLabel = username?.replace(/\.dash$/, '')
+  const displayName = (profileDocumentMissing && dpnsLabel) || profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
   const isDisplayNameLoading = isLoading || !profile?.displayName
 
   useEffect(() => {
@@ -144,18 +145,14 @@ function UserProfileContent() {
         const { unifiedProfileService, postService, followService } = await import('@/lib/services')
         const { loadUserStats } = await import('@/lib/services/social-stats-service')
 
-        let profileFetchErrored = false
         const [statsResult, postsResult] = await Promise.all([
           loadUserStats(userId),
           postService.getUserPosts(userId, { limit: PAGE_SIZE, forDisplay: true }).catch(() => ({ documents: [] as Post[], preloaded: undefined })),
         ])
-        const profileResult = await unifiedProfileService.getProfile(userId).catch(() => {
-          profileFetchErrored = true
-          return null
-        })
+        const profileResult = await unifiedProfileService.getProfile(userId).catch(() => null)
         setPostCount(statsResult.posts)
-        // Genuinely absent, as opposed to a failed fetch.
-        setProfileDocumentMissing(!profileResult && !profileFetchErrored)
+        // Also null when the read failed; startEdit asks strictly before an owner edits from it.
+        setProfileDocumentMissing(!profileResult)
 
         const { followers: followersCount, following: followingCount } = statsResult
         const profileDisplayName = profileResult?.displayName || `User ${userId.slice(-6)}`
@@ -280,8 +277,8 @@ function UserProfileContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, enrichProgressively])
 
-  // An owner whose profile document is missing is sent to create one, unless
-  // the identity itself is gone, in which case the session is stale.
+  // A profile is optional, so an owner without one simply edits theirs into
+  // existence; only a missing identity means the session is stale.
   useEffect(() => {
     if (!profileDocumentMissing || !isOwnProfile || !viewerId || isLoading) return
     const check = async () => {
@@ -290,19 +287,28 @@ function UserProfileContent() {
         if (!(await identityService.getIdentity(viewerId))) {
           toast.error('Your identity was not found on the network. Please log in again.')
           await logout()
-          return
         }
-        router.push(profileCreateHref(`/user/?id=${encodeURIComponent(viewerId)}`))
       } catch (error) {
         logger.error('Failed to verify identity for profile check:', error)
       }
     }
     check().catch((err) => logger.error('Identity check failed:', err))
-  }, [profileDocumentMissing, isOwnProfile, viewerId, isLoading, logout, router])
+  }, [profileDocumentMissing, isOwnProfile, viewerId, isLoading, logout])
 
-  const startEdit = useCallback(() => {
+  const startEdit = useCallback(async () => {
+    // A profile that failed to load reads as missing, and an edit from its blank
+    // draft would erase every field of the real one. Only a strict "none" counts.
+    if (profileDocumentMissing && viewerId) {
+      const { unifiedProfileService } = await import('@/lib/services')
+      const exists = await unifiedProfileService.profileExists(viewerId).catch(() => null)
+      if (exists !== false) {
+        toast.error('Your profile could not be loaded. Reload the page to edit it.')
+        return
+      }
+    }
     setDraft({
-      displayName: profile?.displayName || '',
+      // Without a profile the name shown is a stand-in; start from the DPNS label.
+      displayName: (profileDocumentMissing ? dpnsLabel?.slice(0, profileTextLimits().displayName) : profile?.displayName) || '',
       bio: profile?.bio || '',
       location: profile?.location || '',
       website: profile?.website || '',
@@ -312,7 +318,7 @@ function UserProfileContent() {
       socialLinks: profile?.socialLinks || [],
     })
     setIsEditing(true)
-  }, [profile])
+  }, [profile, profileDocumentMissing, viewerId, dpnsLabel])
 
   const cancelEdit = () => {
     setIsEditing(false)
@@ -323,7 +329,7 @@ function UserProfileContent() {
   useEffect(() => {
     if (!isOwnProfile || isLoading) return
     if (searchParams.get('edit') === 'true' && !isEditing) {
-      startEdit()
+      startEdit().catch((err) => logger.error('Failed to start editing:', err))
       replaceQueryParam('edit', null)
     }
   }, [isOwnProfile, isLoading, searchParams, isEditing, startEdit])
@@ -420,16 +426,19 @@ function UserProfileContent() {
     setIsSaving(true)
     try {
       const { unifiedProfileService } = await import('@/lib/services')
-      await unifiedProfileService.updateProfile(viewerId, draft)
+      const saved = await unifiedProfileService.updateProfile(viewerId, draft)
       setProfile((prev) =>
         prev
           ? {
               ...prev,
               ...draft,
+              // A blank name was filled in by the service on a first save.
+              displayName: saved?.displayName || draft.displayName || prev.displayName,
               paymentUris: draft.paymentUris.map((uri) => ({ scheme: paymentUriScheme(uri), uri })),
             }
           : null
       )
+      setProfileDocumentMissing(false)
       setIsEditing(false)
       toast.success('Profile updated!')
     } catch (error) {
@@ -514,6 +523,7 @@ function UserProfileContent() {
               profile={profile}
               displayName={displayName}
               isDisplayNameLoading={isDisplayNameLoading}
+              profileMissing={profileDocumentMissing}
               username={username}
               allUsernames={allUsernames}
               viewerId={viewerId || null}
@@ -537,7 +547,9 @@ function UserProfileContent() {
                 draft,
                 onChange: setDraft,
                 isSaving,
-                onStart: startEdit,
+                onStart: () => {
+                  startEdit().catch((err) => logger.error('Failed to start editing:', err))
+                },
                 onCancel: cancelEdit,
                 onSave: handleSaveProfile,
                 onEditAvatar: () => setIsEditingAvatar(true),

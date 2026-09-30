@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { query, get, updateDocument } = vi.hoisted(() => ({
-  query: vi.fn(), get: vi.fn(), updateDocument: vi.fn(),
+const { query, get, createDocument, updateDocument, resolveUsername } = vi.hoisted(() => ({
+  query: vi.fn(), get: vi.fn(), createDocument: vi.fn(), updateDocument: vi.fn(), resolveUsername: vi.fn(),
 }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query, get } }) }));
-vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument } }));
-vi.mock('./dpns-service', () => ({ dpnsService: { resolveUsername: async () => null } }));
+vi.mock('./state-transition-service', () => ({ stateTransitionService: { createDocument, updateDocument } }));
+vi.mock('./dpns-service', () => ({ dpnsService: { resolveUsername } }));
 vi.mock('./avatar-generator', () => ({ generateAvatarDataUri: () => 'data:image/svg+xml,avatar' }));
 import { unifiedProfileService } from './unified-profile-service';
 import { cacheManager } from '../cache-manager';
@@ -31,6 +31,11 @@ beforeEach(() => {
   cacheManager.invalidateByTag(`user:${ownerId}`);
   query.mockReset().mockResolvedValue([raw]);
   get.mockReset().mockResolvedValue(raw);
+  resolveUsername.mockReset().mockResolvedValue(null);
+  createDocument.mockReset().mockImplementation(async (_contract, _type, owner, data) => ({
+    success: true,
+    document: { $id: documentId, $ownerId: owner, $revision: 1, ...data },
+  }));
   updateDocument.mockReset().mockImplementation(async (_contract, _type, id, owner, data, revision) => ({
     success: true,
     document: { $id: id, $ownerId: owner, $revision: revision + 1, ...data },
@@ -94,6 +99,51 @@ describe('profile replacements', () => {
     expect(cacheManager.get('unified_profiles', ownerId)).toBeNull();
     get.mockResolvedValueOnce({ ...raw, bio: 'New bio', $revision: 8 });
     expect((await unifiedProfileService.get(documentId))?.bio).toBe('New bio');
+  });
+});
+
+describe('a first edit without a profile', () => {
+  beforeEach(() => {
+    query.mockResolvedValue([]);
+  });
+
+  it('creates the profile, named after the DPNS label', async () => {
+    resolveUsername.mockResolvedValue('ava.dash');
+    const result = await unifiedProfileService.updateProfile(ownerId, { bannerUri: 'ipfs://banner' });
+
+    expect(updateDocument).not.toHaveBeenCalled();
+    expect(createDocument).toHaveBeenCalledExactlyOnceWith(
+      YAPPR_PROFILE_CONTRACT_ID, 'profile', ownerId,
+      { displayName: 'ava', bannerUri: 'ipfs://banner' }, undefined
+    );
+    expect(result).toMatchObject({ displayName: 'ava', bannerUri: 'ipfs://banner' });
+  });
+
+  it('keeps a name the edit sets, and falls back to the identity without a username', async () => {
+    await unifiedProfileService.updateProfile(ownerId, { displayName: '  Ava  ', bio: 'hi' });
+    expect(createDocument).toHaveBeenLastCalledWith(
+      YAPPR_PROFILE_CONTRACT_ID, 'profile', ownerId, { displayName: 'Ava', bio: 'hi' }, undefined
+    );
+
+    await unifiedProfileService.updateProfile(ownerId, { displayName: ' ' });
+    expect(createDocument).toHaveBeenLastCalledWith(
+      YAPPR_PROFILE_CONTRACT_ID, 'profile', ownerId, { displayName: `User ${ownerId.slice(-6)}` }, undefined
+    );
+  });
+
+  it('cuts a long DPNS label to the display name limit', async () => {
+    resolveUsername.mockResolvedValue(`${'a'.repeat(60)}.dash`);
+    await unifiedProfileService.updateProfile(ownerId, { bio: 'hi' });
+    expect(createDocument).toHaveBeenLastCalledWith(
+      YAPPR_PROFILE_CONTRACT_ID, 'profile', ownerId, { displayName: 'a'.repeat(50), bio: 'hi' }, undefined
+    );
+  });
+
+  it('rejects, and creates nothing, when the profile read fails', async () => {
+    query.mockRejectedValue(new Error('DAPI timeout'));
+    await expect(unifiedProfileService.updateProfile(ownerId, { bio: 'hi' })).rejects.toThrow('DAPI timeout');
+    await expect(unifiedProfileService.profileExists(ownerId)).rejects.toThrow('DAPI timeout');
+    expect(createDocument).not.toHaveBeenCalled();
   });
 });
 

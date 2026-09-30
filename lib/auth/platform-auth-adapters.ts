@@ -42,8 +42,6 @@ import {
 import { identityService } from '@/lib/services/identity-service'
 import { storedKeyBelongsToIdentity } from '@/lib/auth/session-key'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { unifiedProfileService } from '@/lib/services/unified-profile-service'
-import { profileService } from '@/lib/services/profile-service'
 import { authVaultService } from '@/lib/services/auth-vault-service'
 import { authVaultAccessService } from '@/lib/services/auth-vault-access-service'
 import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
@@ -277,6 +275,8 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
   return {
     // platform-auth uses this only for address/WIF encoding, so devnet maps to testnet.
     network: keyNetwork(),
+    // A profile is optional: the DPNS name stands in until the user edits one.
+    features: { profileGate: false },
     sessionStore: {
       getSession: readStoredSession,
       setSession(snapshot) {
@@ -346,27 +346,6 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       },
       clearCache(username, identityId) {
         dpnsService.clearCache(username, identityId)
-      },
-    },
-    profiles: {
-      async hasProfile(identityId, username) {
-        await ensureSdk()
-        // v10: the Yappr profile is the `yapprProfile` extension; the legacy
-        // social `profile` is retired with the profile contract.
-        let v10: Awaited<ReturnType<typeof unifiedProfileService.getV10ProfileStatus>>
-        try {
-          v10 = await unifiedProfileService.getV10ProfileStatus(identityId)
-        } catch (error) {
-          // Fail open, like the AuthProvider gate: a lookup that cannot reach
-          // Platform must never send a user who has a profile to /profile/create.
-          logger.error('Auth: v10 profile lookup failed at login; not requiring a profile:', error)
-          return true
-        }
-        if (v10) return v10.hasExtension
-        const unifiedProfile = await unifiedProfileService.getProfile(identityId, username)
-        if (unifiedProfile) return true
-        const legacyProfile = await profileService.getProfile(identityId, username)
-        return Boolean(legacyProfile)
       },
     },
     sideEffects: {

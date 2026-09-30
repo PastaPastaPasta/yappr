@@ -142,7 +142,7 @@ Singleton service classes handle all Dash Platform operations:
 - `document-service.ts` - Query operations for reading documents
 - `identity-service.ts` - Identity lookup and balance queries
 - `dpns-service.ts` - Username resolution via DPNS
-- Domain services: `post-service.ts`, `profile-service.ts`, `like-service.ts`, `follow-service.ts`, etc.
+- Domain services: `post-service.ts`, `unified-profile-service.ts`, `like-service.ts`, `follow-service.ts`, etc.
 
 ### Authentication System
 - `contexts/auth-context.tsx` manages user sessions and exposes the `withAuth` HOC

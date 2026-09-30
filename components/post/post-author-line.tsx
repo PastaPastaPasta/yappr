@@ -77,7 +77,8 @@ export function PostAuthorLine({ author, usernameState, displayName, avatarUrl, 
       ) : (
         <ProfileHoverCard {...hover} username={usernameState}>
           <Link href={`/user?id=${author.id}`} onClick={stopPropagation} className="font-semibold hover:underline truncate">
-            {hasProfile ? displayName : 'Unknown User'}
+            {/* A profile is optional: without one the DPNS label is the name. */}
+            {hasProfile ? displayName : usernameState?.replace(/\.dash$/, '') || 'Unknown User'}
           </Link>
         </ProfileHoverCard>
       )}

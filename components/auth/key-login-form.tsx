@@ -335,7 +335,7 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
               : (encryptedKeyService.isConfigured() ? await encryptedKeyService.hasBackup(identityId) : false)
           if (!authVaultUnavailable && !hasBackup) {
             sessionStorage.setItem(scopedKey('yappr_backup_prompt_shown'), 'true')
-            openBackupModal(identityId, target.dpnsUsername || '', false)
+            openBackupModal(identityId, target.dpnsUsername || '')
           }
         }
       } else {

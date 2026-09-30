@@ -389,9 +389,8 @@ export async function createDoc(bot: DmBot, contractId: string, docType: string,
 const profiles = new Map<number, Promise<void>>()
 
 /**
- * The app sends a signed-in identity without a profile to /profile/create from
- * every page but a few, so every DM actor needs one. Created once per pool slot,
- * from Node, named like the DPNS label so the UI shows the same name either way.
+ * Gives every DM actor a profile, created once per pool slot from Node and
+ * named like the DPNS label, so the UI shows the same name either way.
  * On v10 that is a DashPay profile, then the `yapprProfile` extension (which
  * consensus refuses without the DashPay profile, 40120).
  */
