@@ -629,7 +629,8 @@ describe('contract topology', () => {
       expect(V10.postMention).toBeUndefined()
       expect(V10.post.properties.mentionedUserId).toMatchObject({ contentMediaType: 'application/x.dash.dpp.identifier', refersTo: { type: 'identity' } })
       expect(V10.post.required).not.toContain('mentionedUserId')
-      expect(V10.reply.properties.mentionedUserId).toBeUndefined()
+      expect(V10.reply.properties.mentionedUserId).toMatchObject({ contentMediaType: 'application/x.dash.dpp.identifier', refersTo: { type: 'identity' } })
+      expect(V10.reply.required).not.toContain('mentionedUserId')
       // A descriptor resolves on first use, so each module is read before the next loads.
       const inline: boolean[] = []
       for (const topology of ['v2', 'v9', 'v10']) inline.push((await topologyModule(topology)).mentionsAreInline())
@@ -637,8 +638,8 @@ describe('contract topology', () => {
       expect(V9.postMention).toBeDefined()
     })
 
-    it('reads every notification-only source off one 7-day rolling window grid', async () => {
-      const week = { range: 604_800, step: 86_400 }
+    it('reads every notification-only source off two open 3.5-day windows of one grid', async () => {
+      const halfWeek = { range: 302_400, step: 302_400 }
       const index = (docType: string, name: string) => V10[docType].indices?.find((entry) => entry.name === name) as
         ({ properties: Array<Record<string, string>>; skipIfAbsent?: boolean; timeRange?: Record<string, unknown> } | undefined)
       const keys = (docType: string, name: string) => index(docType, name)?.properties.map((entry) => Object.keys(entry)[0])
@@ -648,19 +649,23 @@ describe('contract topology', () => {
         quote: { docType: 'post', index: 'quotedPostOwnerRecent', recipientField: 'quotedPostOwnerId' },
       } as const
       for (const [source, shape] of Object.entries(expected) as [keyof typeof expected, (typeof expected)[keyof typeof expected]][]) {
-        expect(v10.notificationWindowFor(source), source).toEqual({ ...shape, grid: week, selector: 'oldest' })
-        expect(index(shape.docType, shape.index)?.timeRange, source).toEqual({ on: '$createdAt', ...week, ttl: 604_800 })
+        expect(v10.notificationWindowFor(source), source).toEqual({ ...shape, grid: halfWeek, selectors: ['newest', 'oldest'] })
+        // Non-overlapping windows, each written once, kept for two windows: a week.
+        expect(index(shape.docType, shape.index)?.timeRange, source).toEqual({ on: '$createdAt', ...halfWeek, ttl: 604_800 })
         expect(keys(shape.docType, shape.index)?.slice(0, 2), source).toEqual(['$createdAt', shape.recipientField])
       }
       expect(index('post', 'quotedPostOwnerRecent')?.skipIfAbsent).toBe(true)
       // Mentions stay permanent (the Mentions tab keeps its history): the
       // mentioning post's own [mentionedUserId, $createdAt], like tagAndTime.
-      const mentions = index('post', 'mentionedUserAndTime')
-      expect(keys('post', 'mentionedUserAndTime')).toEqual(['mentionedUserId', '$createdAt'])
-      expect(mentions?.skipIfAbsent).toBe(true)
-      expect(mentions?.timeRange).toBeUndefined()
-      expect(v10.mentionDocType()).toBe('post')
-      expect((await topologyModule('v9')).mentionDocType()).toBe('postMention')
+      // A reply carries one too, on the same shape.
+      for (const docType of ['post', 'reply']) {
+        const mentions = index(docType, 'mentionedUserAndTime')
+        expect(keys(docType, 'mentionedUserAndTime'), docType).toEqual(['mentionedUserId', '$createdAt'])
+        expect(mentions?.skipIfAbsent, docType).toBe(true)
+        expect(mentions?.timeRange, docType).toBeUndefined()
+      }
+      expect(v10.mentionDocTypes()).toEqual(['post', 'reply'])
+      expect((await topologyModule('v9')).mentionDocTypes()).toEqual(['postMention'])
       // The old permanent notification indexes are gone; follows stay permanent.
       // (Likes are not a windowed source: the node refuses a windowed read of
       // an indexOnly type, so like notifications keep a permanent author index.)

@@ -162,18 +162,19 @@ async function fetchBlogPostsAsQuotes(blogPostIds: string[]): Promise<Post[]> {
 /**
  * The identity behind the first @mention of `content`, or null when there is
  * none or its name does not resolve. DPNS names are owned by identities, so
- * the id satisfies `post.mentionedUserId`'s `refersTo: identity`.
+ * the id satisfies `post.mentionedUserId`'s (and v10 `reply.mentionedUserId`'s)
+ * `refersTo: identity`.
  */
-async function resolveMentionedIdentity(content: string): Promise<string | null> {
+export async function resolveMentionedIdentity(content: string): Promise<string | null> {
   const username = firstMention(content);
   if (!username) return null;
   try {
     const { dpnsService } = await import('./dpns-service');
     const identityId = await dpnsService.resolveIdentity(username);
-    if (!identityId) logger.warn('Post mention not indexed: could not resolve username', username);
+    if (!identityId) logger.warn('Mention not indexed: could not resolve username', username);
     return identityId;
   } catch (error) {
-    logger.warn('Post mention not indexed: username lookup failed', username, error);
+    logger.warn('Mention not indexed: username lookup failed', username, error);
     return null;
   }
 }

@@ -5,14 +5,19 @@ import { stateTransitionService } from './state-transition-service';
 import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes } from './sdk-helpers';
 import { dpnsService } from './dpns-service';
 import { paginateFetchAll } from './pagination-utils';
-import { mentionsAreInline } from '../contract-topology';
+import { mentionDocTypes, mentionsAreInline, type TargetKind } from '../contract-topology';
+import type { Post } from '../../types';
+import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 
 export interface PostMentionDocument {
   $id: string;
   $ownerId: string;
   $createdAt: number;
+  /** The mentioning post, or on v10 the mentioning reply (see `targetKind`). */
   postId: string;
   mentionedUserId: string;
+  /** v10: `reply` when the mention is a reply's own `mentionedUserId`; a post otherwise. */
+  targetKind?: TargetKind;
 }
 
 /**
@@ -40,10 +45,13 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    * System identifier fields arrive as base58, while identifier-like document fields may
    * arrive as base64 or raw bytes in query results.
    */
-  /** v10: a post naming the user in `mentionedUserId`, as a mention record (the post IS the mention). */
-  private mentionFromPost(doc: Record<string, unknown>, userId: string): PostMentionDocument {
+  /** v10: a post or reply naming the user in `mentionedUserId`, as a mention record (the document IS the mention). */
+  private mentionFromDocument(doc: Record<string, unknown>, userId: string, targetKind: TargetKind): PostMentionDocument {
     const $id = doc.$id as string;
-    return { $id, $ownerId: doc.$ownerId as string, $createdAt: Number(doc.$createdAt), postId: $id, mentionedUserId: userId };
+    return {
+      $id, $ownerId: doc.$ownerId as string, $createdAt: Number(doc.$createdAt), postId: $id, mentionedUserId: userId,
+      ...(targetKind === 'reply' ? { targetKind } : {}),
+    };
   }
 
   protected transformDocument(doc: Record<string, unknown>): PostMentionDocument {
@@ -240,12 +248,14 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
   /**
    * Get posts that mention a specific user.
    * Paginates through all results to return complete list.
-   * Returns mention documents - caller should fetch actual posts and filter by ownership.
+   * Returns mention documents - caller should fetch actual posts and filter by
+   * ownership ({@link loadMentioningPosts}).
    *
-   * v10: the mentioning posts themselves, off the permanent
-   * `post.mentionedUserAndTime [mentionedUserId, $createdAt]` (the same walk
-   * as `postMention`'s), mapped onto the mention shape with `postId` = the
-   * post's id and `$ownerId` its author.
+   * v10: the mentioning posts AND replies themselves, off their permanent
+   * `mentionedUserAndTime [mentionedUserId, $createdAt]` (the same walk as
+   * `postMention`'s), read in parallel and merged newest first, mapped onto
+   * the mention shape with `postId` = the document's id, `$ownerId` its
+   * author and `targetKind` its kind.
    */
   async getPostsMentioningUser(userId: string): Promise<PostMentionDocument[]> {
     const inline = mentionsAreInline();
@@ -253,25 +263,50 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
       // Use strings for identifiers in queries - SDK handles conversion
-      const { documents } = await paginateFetchAll(
+      const perType = await Promise.all(mentionDocTypes().map(async (documentTypeName) => (await paginateFetchAll(
         sdk,
         () => ({
           dataContractId: this.contractId,
-          documentTypeName: inline ? 'post' : this.documentType,
+          documentTypeName,
           where: [
             ['mentionedUserId', '==', userId],
             ['$createdAt', '>', 0]
           ],
           orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']]
         }),
-        (doc) => inline ? this.mentionFromPost(doc, userId) : this.transformDocument(doc)
-      );
+        (doc) => inline ? this.mentionFromDocument(doc, userId, documentTypeName === 'reply' ? 'reply' : 'post') : this.transformDocument(doc)
+      )).documents));
 
-      return documents;
+      return perType.length === 1 ? perType[0] : perType.flat().sort((a, b) => b.$createdAt - a.$createdAt);
     } catch (error) {
       logger.error('Error getting posts mentioning user:', error);
       return [];
     }
+  }
+
+  /**
+   * The posts (and v10 replies, rendered through the Post shape) behind
+   * `mentions`, newest first, for display: one `$id in` batch per kind. A
+   * mention only counts when its document's author is the one who made it
+   * (on v10 that holds by construction; on v2/v9 it drops forged
+   * `postMention` records).
+   */
+  async loadMentioningPosts(mentions: PostMentionDocument[]): Promise<{ posts: Post[]; preloaded: PreloadedEnrichment }> {
+    const { postService, replyToPost } = await import('./post-service');
+    const idsOf = (kind: TargetKind) => Array.from(new Set(
+      mentions.filter((mention) => (mention.targetKind ?? 'post') === kind).map((mention) => mention.postId)
+    ));
+    const replyIds = idsOf('reply');
+    const [{ posts, preloaded }, replies] = await Promise.all([
+      postService.getPostsByIdsForDisplay(idsOf('post')),
+      replyIds.length > 0
+        ? import('./reply-service').then(({ replyService }) => replyService.getRepliesByIds(replyIds))
+        : [],
+    ]);
+    const authentic = new Set(mentions.map((mention) => `${mention.postId}:${mention.$ownerId}`));
+    const found = [...posts, ...replies.map(replyToPost)].filter((post) => authentic.has(`${post.id}:${post.author.id}`));
+    found.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return { posts: found, preloaded };
   }
 
 }

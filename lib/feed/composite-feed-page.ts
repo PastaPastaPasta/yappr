@@ -58,8 +58,6 @@ import type { OwnQuote } from './quote-reposts';
 
 /** At most this many sub-queries per request (the platform's `MAX_SUB_QUERIES`). */
 const MAX_SUB_QUERIES = 10;
-/** The most rows a bound documents lookup may be capped at. */
-const MAX_LOOKUP_LIMIT = 100;
 /** Total DPNS document budget across ALL page authors, not per identity. */
 const DPNS_QUERY_LIMIT = 100;
 export interface CompositeFeedPageOptions {
@@ -96,12 +94,14 @@ export async function loadCompositeFeedPage(
   const sdk = await getEvoSdk();
 
   const { query, slots } = buildFeedPageQuery(options);
-  // v10: with the page's ids known up front, the viewer's own quotes load
-  // alongside the composite instead of after it.
-  const ownQuotes = options.documentIds ? loadOwnQuotes(options.documentIds, options) : null;
+  // v10: with the page's ids known up front, the viewer's own quotes and
+  // hearts load alongside the composite instead of after it.
+  const early = options.documentIds
+    ? { ownQuotes: loadOwnQuotes(options.documentIds, options), liked: loadViewerLikes(options.documentIds, options) }
+    : null;
   const result = await sdk.documents.composite(query);
   validateCompositeResult(result, query);
-  return decodeFeedPage(result, slots, options, ownQuotes);
+  return decodeFeedPage(result, slots, options, early);
 }
 
 /** Validate the response shape before decode can seed any derived caches. */
@@ -221,12 +221,13 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
     // page on `ownerAndTime` would refuse as a merged root: it is read
     // separately.)
     const mine = [['$ownerId', '==', options.currentUserId]];
-    myLikes = slot({
-      documentType: like.docType,
-      where: mine,
-      bind: fromPage('$id', like.field),
-      ...(like.ownerIsTerminal ? { limit: Math.min(options.limit, MAX_LOOKUP_LIMIT) } : {}),
-    });
+    // v10's hearts sit on the like-count index itself (`byPost`/`byReply`,
+    // `$ownerId` its terminal), and a composite refuses a documents lookup on
+    // the index path a count reads: they are read separately
+    // ({@link loadViewerLikes}), one request beside the composite.
+    if (!like.ownerIsTerminal) {
+      myLikes = slot({ documentType: like.docType, where: mine, bind: fromPage('$id', like.field) });
+    }
     if (repost) {
       myReposts = slot({ documentType: repost.docType, where: mine, bind: fromPage('$id', repost.field) });
     }
@@ -310,23 +311,36 @@ function loadOwnQuotes(ids: string[], options: CompositeFeedPageOptions): Promis
  * reply page whose replies span several roots (one grouped count per root).
  * Both are ordinary requests next to the composite; nothing here runs on v2/v9.
  */
+/**
+ * v10: the viewer's hearts on the page, read beside the composite on the
+ * like-count index (`target in [ids] && $ownerId == me`); null when logged
+ * out or where the composite carries them (v2, v9).
+ */
+function loadViewerLikes(ids: string[], options: CompositeFeedPageOptions): Promise<Set<string>> | null {
+  const kind = options.kind ?? 'post';
+  const viewer = options.currentUserId;
+  if (!viewer || !likeIndexFor(kind).ownerIsTerminal || ids.length === 0) return null;
+  return import('@/lib/services/like-service').then(({ likeService }) => likeService.getUserLikedPostIds(viewer, ids, kind));
+}
+
 async function loadSeparateReads(
   pageIds: string[],
   sourcePosts: Post[],
   slots: SubQuerySlots,
   options: CompositeFeedPageOptions,
-  earlyOwnQuotes: Promise<Map<string, OwnQuote> | null> | null
-): Promise<{ ownQuotes: Map<string, OwnQuote> | null; replyCounts: Map<string, number> | null }> {
+  early: { ownQuotes: Promise<Map<string, OwnQuote> | null> | null; liked: Promise<Set<string>> | null } | null
+): Promise<{ ownQuotes: Map<string, OwnQuote> | null; replyCounts: Map<string, number> | null; liked: Set<string> | null }> {
   const kind = options.kind ?? 'post';
-  const [ownQuotes, replyCounts] = await Promise.all([
-    earlyOwnQuotes ?? loadOwnQuotes(pageIds, options),
+  const [ownQuotes, replyCounts, liked] = await Promise.all([
+    early?.ownQuotes ?? loadOwnQuotes(pageIds, options),
     slots.replyCounts < 0 && pageIds.length > 0
       ? import('@/lib/services/reply-service').then(({ replyService }) => replyService.countRepliesForPosts(
         pageIds, kind, new Map(sourcePosts.flatMap((post) => (post.rootPostId ? [[post.id, post.rootPostId] as const] : [])))
       ))
       : null,
+    early?.liked ?? loadViewerLikes(pageIds, options),
   ]);
-  return { ownQuotes, replyCounts };
+  return { ownQuotes, replyCounts, liked };
 }
 
 function documentsAt(result: CompositeDocumentsResult, index: number): Record<string, unknown>[] {
@@ -404,7 +418,7 @@ async function decodeFeedPage(
   result: CompositeDocumentsResult,
   slots: SubQuerySlots,
   options: CompositeFeedPageOptions,
-  earlyOwnQuotes: Promise<Map<string, OwnQuote> | null> | null
+  early: { ownQuotes: Promise<Map<string, OwnQuote> | null> | null; liked: Promise<Set<string>> | null } | null
 ): Promise<CompositeFeedPage> {
   let rawPosts = result.pageDocuments.map((doc) => documentToPlainObject(doc));
   if (options.documentIds) {
@@ -429,7 +443,7 @@ async function decodeFeedPage(
 
   // Stats, seeded to zero for every page id: a value without a count entry
   // is a proven zero.
-  const separate = await loadSeparateReads(pageIds, posts, slots, options, earlyOwnQuotes);
+  const separate = await loadSeparateReads(pageIds, posts, slots, options, early);
   const likes = countsAt(result, slots.likeCounts);
   const reposts = countsAt(result, slots.repostCounts);
   const replies = separate.replyCounts ?? countsAt(result, slots.replyCounts);
@@ -464,7 +478,7 @@ async function decodeFeedPage(
   // The viewer's marks; only meaningful when logged in.
   const preloaded: PreloadedEnrichment = { usernames, profiles, avatars, stats };
   if (options.currentUserId) {
-    const liked = targetIdsOf(documentsAt(result, slots.myLikes), likeIndexFor(options.kind ?? 'post').field);
+    const liked = separate.liked ?? targetIdsOf(documentsAt(result, slots.myLikes), likeIndexFor(options.kind ?? 'post').field);
     const reposted = targetIdsOf(documentsAt(result, slots.myReposts), repostIndexFor(options.kind ?? 'post')?.field ?? 'postId');
     const bookmarked = targetIdsOf(documentsAt(result, slots.myBookmarks), bookmarkIndexFor(options.kind ?? 'post')?.field ?? 'postId');
     const interactions = new Map<string, UserInteractions>();

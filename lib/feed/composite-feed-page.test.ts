@@ -10,10 +10,12 @@ const mocks = vi.hoisted(() => ({
   resolveAuthors: vi.fn(),
   getOwnQuotes: vi.fn(),
   countRepliesForPosts: vi.fn(),
+  getUserLikedPostIds: vi.fn(),
 }));
 // The v10 reads beside the composite (own quotes, multi-root reply counts).
 vi.mock('@/lib/services/post-service', () => ({ postService: { getOwnQuotes: mocks.getOwnQuotes } }));
 vi.mock('@/lib/services/reply-service', () => ({ replyService: { countRepliesForPosts: mocks.countRepliesForPosts } }));
+vi.mock('@/lib/services/like-service', () => ({ likeService: { getUserLikedPostIds: mocks.getUserLikedPostIds } }));
 vi.mock('@/lib/services/evo-sdk-service', () => ({ getEvoSdk: mocks.getEvoSdk }));
 vi.mock('@/lib/services/dpns-service', () => ({ dpnsService: { seedUsernames: mocks.seedUsernames } }));
 vi.mock('@/lib/services/unified-profile-service', () => ({
@@ -48,6 +50,7 @@ beforeEach(() => {
   vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9');
   mocks.getEvoSdk.mockResolvedValue({ documents: { composite: mocks.composite } });
   mocks.composite.mockResolvedValue(result());
+  mocks.getUserLikedPostIds.mockResolvedValue(new Set());
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -246,16 +249,18 @@ describe('composite feed page on v10', () => {
   });
 
   it.each([
-    ['post', 'like', 'postId'],
-    ['reply', 'likeReply', 'replyId'],
-  ] as const)('caps the viewer-likes %s slot at the page size: byPost/byReply are not value-bounded', async (kind, docType, field) => {
+    ['post', 'like'],
+    ['reply', 'likeReply'],
+  ] as const)('reads the viewer\'s %s hearts beside the composite, not inside it: byPost/byReply also carry the like counts', async (kind, docType) => {
     mocks.composite.mockImplementation(echo(docs));
+    mocks.getUserLikedPostIds.mockResolvedValue(new Set([docs[1].$id]));
     const { loadCompositeFeedPage } = await import('./composite-feed-page');
-    await loadCompositeFeedPage({ language: 'en', limit: 20, kind, currentUserId: ownerIds[0] });
-    const subs: (Sub & { limit?: number })[] = mocks.composite.mock.calls[0][0].subQueries;
-    expect(subs.find((sub) => sub.documentType === docType && sub.kind === undefined)).toEqual({
-      documentType: docType, where: [['$ownerId', '==', ownerIds[0]]], bind: { source: 'page', sourceProperty: '$id', field }, limit: 20,
-    });
+    const page = await loadCompositeFeedPage({ language: 'en', limit: 20, kind, currentUserId: ownerIds[0] });
+    const subs: Sub[] = mocks.composite.mock.calls[0][0].subQueries;
+    expect(subs.filter((sub) => sub.documentType === docType).map((sub) => sub.kind ?? 'documents')).toEqual(['counts']);
+    expect(mocks.getUserLikedPostIds).toHaveBeenCalledWith(ownerIds[0], docs.map((doc) => doc.$id), kind);
+    expect(page.preloaded.interactions?.get(docs[1].$id)?.liked).toBe(true);
+    expect(page.preloaded.interactions?.get(docs[0].$id)?.liked).toBe(false);
   });
 });
 

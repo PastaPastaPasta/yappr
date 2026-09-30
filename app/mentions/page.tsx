@@ -60,19 +60,12 @@ function MentionsPageContent() {
           return
         }
 
-        // Fetch the actual posts using postService
         const { postService } = await import('@/lib/services/post-service')
 
-        const postIds = Array.from(new Set(mentionDocs.map(m => m.postId)))
-
-        // Fetch referenced posts in bounded `$id in [...]` batches, then keep
-        // the ownership check that prevents forged mention records surfacing.
-        const { posts, preloaded } = await postService.getPostsByIdsForDisplay(postIds)
-        const authenticMentions = new Set(mentionDocs.map(mention => `${mention.postId}:${mention.$ownerId}`))
-        const fetchedPosts: Post[] = posts.filter((post) => authenticMentions.has(`${post.id}:${post.author.id}`))
-
-        // Sort by creation date (newest first)
-        fetchedPosts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        // Fetch the mentioning posts (and v10 replies) in bounded `$id in [...]`
+        // batches, keeping the ownership check that prevents forged mention
+        // records surfacing; newest first.
+        const { posts: fetchedPosts, preloaded } = await mentionService.loadMentioningPosts(mentionDocs)
 
         // Enrich posts with author data (DPNS names, displayNames, stats)
         let enrichedPosts = await postService.enrichPostsBatch(fetchedPosts, preloaded)

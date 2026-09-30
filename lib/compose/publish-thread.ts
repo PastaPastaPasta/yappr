@@ -268,7 +268,7 @@ function registerIndexes(postId: string, authorId: string, content: string, inde
       .catch((err) => logger.error(`Post ${index + 1}: Failed to create hashtag documents:`, err))
   }
   // The inline-mention topology (v10) carries the first mention on the post
-  // itself; replies there index none.
+  // or reply itself.
   const mentions = mentionsAreInline() ? [] : extractMentions(content)
   if (mentions.length > 0) {
     mentionService

@@ -322,7 +322,7 @@ describe('liked state ("did I like these?")', () => {
   })
 })
 
-describe('v10 like notifications: recent content → like counts → per-target reads', () => {
+describe('v10 like notifications: recent content → like counts → one read per kind', () => {
   const ME = AUTHOR
   const SINCE = 1_790_000_000_000
   // My 12 newest posts, newest first; the 5th has no likes.
@@ -337,12 +337,16 @@ describe('v10 like notifications: recent content → like counts → per-target 
   it.each([
     ['post', 'like', 'postId', 'postAuthor'],
     ['reply', 'likeReply', 'replyId', 'replyAuthor'],
-  ] as const)('reads likes of my recent %s documents since the watermark, capped at the ten newest with a like', async (kind, docType, field, author) => {
+  ] as const)('reads likes of every liked recent %s since the watermark in one `in` read', async (kind, docType, field, author) => {
     chain.rows = {
       [docType]: [
         { $id: 'old', $ownerId: OTHER, $createdAt: SINCE - 5, [field]: mine[0].$id, [author]: ME },
         { $id: 'new', $ownerId: OTHER, $createdAt: SINCE + 5, [field]: mine[0].$id, [author]: ME },
         { $id: 'newer', $ownerId: VIEWER, $createdAt: SINCE + 9, [field]: mine[2].$id, [author]: ME },
+        // The 12th (oldest) recent target is still read: no ten-target cap.
+        { $id: 'late', $ownerId: VIEWER, $createdAt: SINCE + 7, [field]: mine[11].$id, [author]: ME },
+        // Not one of my recent targets: never asked for.
+        { $id: 'stray', $ownerId: VIEWER, $createdAt: SINCE + 8, [field]: POST, [author]: ME },
       ],
     }
     const likeService = await likeServiceOn('v10')
@@ -358,19 +362,37 @@ describe('v10 like notifications: recent content → like counts → per-target 
       limit: 20,
       subQueries: [{ documentType: docType, kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field } }],
     })
-    // Ten plain reads: newest first, skipping the unliked 5th, since-filtered.
+    // One plain read over every liked target (the unliked 5th skipped), since-filtered.
     const reads = queriesOf(docType)
-    const expected = mine.filter((_, i) => i !== 4).slice(0, 10).map((doc) => doc.$id)
-    expect(reads.map((query) => query.where[1][2])).toEqual(expected)
-    for (const [index, query] of reads.entries()) {
-      expect(query.where).toEqual([[author, '==', ME], [field, '==', expected[index]], ['$createdAt', '>', SINCE]])
-      expect(query.orderBy).toEqual([[author, 'asc'], [field, 'asc'], ['$createdAt', 'desc']])
-      expect(query.limit).toBe(100)
-    }
+    expect(reads).toHaveLength(1)
+    expect(reads[0].where).toEqual([[author, '==', ME], [field, 'in', mine.filter((_, i) => i !== 4).map((doc) => doc.$id)], ['$createdAt', '>', SINCE]])
+    expect(reads[0].orderBy).toEqual([[author, 'asc'], [field, 'asc'], ['$createdAt', 'desc']])
+    expect(reads[0].limit).toBe(100)
+    // Each row's target is read off the row itself.
     expect(likes.map(({ $ownerId, $createdAt, postId, targetKind }) => ({ $ownerId, $createdAt, postId, targetKind }))).toEqual([
-      { $ownerId: OTHER, $createdAt: SINCE + 5, postId: mine[0].$id, targetKind: kind },
       { $ownerId: VIEWER, $createdAt: SINCE + 9, postId: mine[2].$id, targetKind: kind },
+      { $ownerId: VIEWER, $createdAt: SINCE + 7, postId: mine[11].$id, targetKind: kind },
+      { $ownerId: OTHER, $createdAt: SINCE + 5, postId: mine[0].$id, targetKind: kind },
     ])
+  })
+
+  it('falls back to per-target keyset reads when the one `in` read comes back full, so no like is passed over', async () => {
+    const crowd = Array.from({ length: 100 }, (_, i) => ({ $id: `crowd-${i}`, $ownerId: id(300 + i), $createdAt: SINCE + 100 + i, postId: mine[0].$id, postAuthor: ME }))
+    const quiet = { $id: 'quiet', $ownerId: VIEWER, $createdAt: SINCE + 1, postId: mine[2].$id, postAuthor: ME }
+    chain.rows = { like: [...crowd, quiet] }
+    const likeService = await likeServiceOn('v10')
+
+    const likes = await likeService.getLikesOnMyPosts(ME, new Date(SINCE), 'post')
+
+    // Every like since the watermark, the quiet target's included.
+    expect(likes).toHaveLength(101)
+    expect(likes.some((like) => like.postId === mine[2].$id && like.$ownerId === VIEWER)).toBe(true)
+    const reads = queriesOf('like')
+    // The `in` read, then one read per liked target; the crowded one is paged
+    // on an inclusive $createdAt keyset, never an id cursor.
+    expect(reads[0].where).toContainEqual(['postId', 'in', mine.filter((_, i) => i !== 4).map((doc) => doc.$id)])
+    expect(reads.some((read) => read.where.some(([field, op]) => field === '$createdAt' && op === '<='))).toBe(true)
+    for (const read of reads) expect(read).not.toHaveProperty('startAfter')
   })
 
   it('reads nothing more when no recent post has a like', async () => {
@@ -381,7 +403,7 @@ describe('v10 like notifications: recent content → like counts → per-target 
     expect(mocks.query).not.toHaveBeenCalled()
   })
 
-  it('returns nothing rather than a partial answer when a per-target read fails', async () => {
+  it('returns nothing rather than a partial answer when the read fails', async () => {
     mocks.query.mockRejectedValueOnce(new Error('DAPI unavailable'))
     const likeService = await likeServiceOn('v10')
 

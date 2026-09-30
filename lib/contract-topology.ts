@@ -108,9 +108,10 @@ export interface IndexOnlyLikeShape {
   authorTimeIndex: string
   /**
    * True when that index keys the target BEFORE `$createdAt` (v10): every read
-   * of it pins the target too (`author == A && target == T`, ordered
-   * `[author, target, $createdAt desc]`), so "likes of anything of mine since
-   * T" cannot be one query ({@link likeNotificationsPinTarget}).
+   * of it pins the target too (`author == A && target == T`, or `target in
+   * [...]`, ordered `[author, target, $createdAt desc]`), so "likes of
+   * anything of mine since T" needs the targets first
+   * ({@link likeNotificationsPinTarget}).
    */
   authorTimeKeysTarget: boolean
 }
@@ -577,9 +578,9 @@ export function likesAreIndexOnly(): boolean {
 /**
  * True when "likes of my content since T" cannot be read off one author-pinned
  * index (v10, like design C): the author-time index keys the target before
- * `$createdAt`, so like notifications are a fan-out over the recipient's
- * recent posts and replies (their like counts, then one read per liked
- * target) instead of a `[author ==, $createdAt >]` source in the permanent
+ * `$createdAt`, so like notifications go through the recipient's recent posts
+ * and replies (their like counts, then one `target in [liked]` read per kind)
+ * instead of a `[author ==, $createdAt >]` source in the permanent
  * notification bundle.
  */
 export function likeNotificationsPinTarget(): boolean {
@@ -712,33 +713,35 @@ export function windowedRankingsAvailable(): boolean {
 }
 
 /**
- * True when a post names at most one mentioned identity inline, in
- * `post.mentionedUserId` (optional, `refersTo` identity), and the
+ * True when a post or reply names at most one mentioned identity inline, in
+ * its own `mentionedUserId` (optional, `refersTo` identity), and the
  * `postMention` doctype does not exist (v10). The compose flow indexes only
  * the first @mention of the public content, like the single inline hashtag;
  * the rest stay plain text. Mentions are read off the permanent
- * `post.mentionedUserAndTime [mentionedUserId, $createdAt]` (shaped like
- * `tagAndTime`), so the Mentions tab keeps its full history.
+ * `post.mentionedUserAndTime` / `reply.mentionedUserAndTime [mentionedUserId,
+ * $createdAt]` (shaped like `tagAndTime`), so the Mentions tab keeps its full
+ * history.
  */
 export function mentionsAreInline(): boolean {
   return isV10()
 }
 
 /**
- * The doctype mentions are read from, pinned on `mentionedUserId` and walked
- * by `$createdAt`: the mentioning `post` itself on v10, a `postMention`
- * document elsewhere. Same field, same index order on both.
+ * The doctypes mentions are read from, each pinned on `mentionedUserId` and
+ * walked by `$createdAt`: the mentioning `post` and `reply` themselves on
+ * v10, a `postMention` document elsewhere. Same field, same index order on
+ * all of them.
  */
-export function mentionDocType(): 'post' | 'postMention' {
-  return mentionsAreInline() ? 'post' : 'postMention'
+export function mentionDocTypes(): readonly ('post' | 'reply' | 'postMention')[] {
+  return mentionsAreInline() ? ['post', 'reply'] : ['postMention']
 }
 
 /**
- * The notification sources that v10 keeps on a rolling window: replies and
- * quotes/reposts (stored doctypes). Mentions stay permanent (the Mentions tab
- * keeps its history), and likes are not windowed: the node refuses a windowed
- * document read of an indexOnly type, so like notifications are read per
- * recent target off the permanent `byAuthorPostTime`/`byAuthorReplyTime`
+ * The notification sources that v10 keeps on windows: replies and
+ * quotes/reposts (stored doctypes). Mentions (post and reply) stay permanent
+ * (the Mentions tab keeps its history), and likes are not windowed: the node
+ * refuses a windowed document read of an indexOnly type, so like
+ * notifications are read over the recent targets off the permanent `byAuthorPostTime`/`byAuthorReplyTime`
  * ({@link likeNotificationsPinTarget}).
  */
 export type WindowedNotificationSource = 'reply' | 'quote'
@@ -752,8 +755,14 @@ export interface NotificationWindow {
   readonly recipientField: string
   /** The window grid in seconds, as the contract declares it. */
   readonly grid: { readonly range: number; readonly step: number }
-  /** The oldest window still open: nearly the full `range` (6-7 days). */
-  readonly selector: 'oldest'
+  /**
+   * The windows a read covers, each resolved by the node from block time: the
+   * current one (`newest`) and the oldest still open. The grid is
+   * non-overlapping (`step == range`) with `ttl` twice the range, so at most
+   * two windows are open and together they hold the last week; right after a
+   * boundary both selectors may name the same window.
+   */
+  readonly selectors: readonly ['newest', 'oldest']
 }
 
 type IndexJson = { name: string; properties: Array<Record<string, string>>; timeRange?: { range: number; step: number } }
@@ -769,24 +778,25 @@ function notificationWindowOf(docType: string, index: string): NotificationWindo
     index,
     recipientField,
     grid: { range: declared.timeRange.range, step: declared.timeRange.step },
-    selector: 'oldest',
+    selectors: ['newest', 'oldest'],
   }
 }
 
 let notificationWindows: Readonly<Record<WindowedNotificationSource, NotificationWindow>> | null = null
 
 /**
- * The rolling 7-day window a notification source is read from (v10), or null
+ * The rolling windows a notification source is read from (v10), or null
  * where the source is a permanent `[recipient, $createdAt]` index read with
  * `$createdAt >` (v2, v9). Follows, follow requests and likes stay on
  * permanent indexes on every topology (v10 likes per target, see
  * {@link likeNotificationsPinTarget}).
  *
- * A window is read as `where [[recipientField, '==', me]]` plus
- * `timeRange: [{ field: '$createdAt', selector: 'oldest', grid }]`, with no
- * `$createdAt` clause and no orderBy: entries come back in index order, not
- * time order, so the since-filter and the newest-first sort are client-side.
- * `timeRange` is refused in composite queries, so each source is its own query.
+ * A source is read as `where [[recipientField, '==', me]]` plus
+ * `timeRange: [{ field: '$createdAt', selector, grid }]` once per selector
+ * (`newest`, `oldest`: the two open 3.5-day windows), with no `$createdAt`
+ * clause and no orderBy: entries come back in index order, not time order, so
+ * the dedupe, the since-filter and the newest-first sort are client-side.
+ * `timeRange` is refused in composite queries, so each read is its own query.
  */
 export function notificationWindowFor(source: WindowedNotificationSource): NotificationWindow | null {
   if (!isV10()) return null

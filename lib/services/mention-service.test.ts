@@ -4,6 +4,7 @@ const { query, createDocument } = vi.hoisted(() => ({ query: vi.fn(), createDocu
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }))
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { createDocument } }))
 vi.mock('./dpns-service', () => ({ dpnsService: {} }))
+vi.mock('./unified-profile-service', () => ({ unifiedProfileService: {} }))
 
 beforeEach(() => {
   vi.resetModules()
@@ -13,26 +14,56 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.unstubAllEnvs()
+  vi.restoreAllMocks()
 })
 
-describe('v10 mentions (post.mentionedUserId)', () => {
-  it('lists the mentioning posts off the permanent mentionedUserAndTime index, as mention records', async () => {
-    query.mockResolvedValueOnce([
-      { $id: 'post-a', $ownerId: 'alice', $createdAt: 10, mentionedUserId: 'me' },
-      { $id: 'post-b', $ownerId: 'bob', $createdAt: 20, mentionedUserId: 'me' },
-    ])
+describe('v10 mentions (post and reply mentionedUserId)', () => {
+  it('lists the mentioning posts and replies off their permanent mentionedUserAndTime indexes, merged newest first', async () => {
+    query.mockImplementation(async ({ documentTypeName }: { documentTypeName: string }) => documentTypeName === 'post'
+      ? [
+        { $id: 'post-a', $ownerId: 'alice', $createdAt: 10, mentionedUserId: 'me' },
+        { $id: 'post-b', $ownerId: 'bob', $createdAt: 30, mentionedUserId: 'me' },
+      ]
+      : [{ $id: 'reply-c', $ownerId: 'carol', $createdAt: 20, mentionedUserId: 'me' }])
     const { mentionService } = await import('./mention-service')
     expect(await mentionService.getPostsMentioningUser('me')).toEqual([
+      { $id: 'post-b', $ownerId: 'bob', $createdAt: 30, postId: 'post-b', mentionedUserId: 'me' },
+      { $id: 'reply-c', $ownerId: 'carol', $createdAt: 20, postId: 'reply-c', mentionedUserId: 'me', targetKind: 'reply' },
       { $id: 'post-a', $ownerId: 'alice', $createdAt: 10, postId: 'post-a', mentionedUserId: 'me' },
-      { $id: 'post-b', $ownerId: 'bob', $createdAt: 20, postId: 'post-b', mentionedUserId: 'me' },
     ])
-    expect(query).toHaveBeenCalledTimes(1)
-    expect(query.mock.calls[0][0]).toMatchObject({
-      documentTypeName: 'post',
-      where: [['mentionedUserId', '==', 'me'], ['$createdAt', '>', 0]],
-      orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']],
+    expect(query).toHaveBeenCalledTimes(2)
+    expect(query.mock.calls.map(([q]) => q.documentTypeName).sort()).toEqual(['post', 'reply'])
+    for (const [q] of query.mock.calls) {
+      expect(q).toMatchObject({
+        where: [['mentionedUserId', '==', 'me'], ['$createdAt', '>', 0]],
+        orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']],
+      })
+      expect(q).not.toHaveProperty('timeRange')
+    }
+  })
+
+  it('loads the Mentions tab from both kinds: posts by id, replies by id, authentic only, newest first', async () => {
+    const { mentionService } = await import('./mention-service')
+    const { postService } = await import('./post-service')
+    const { replyService } = await import('./reply-service')
+    const author = (id: string) => ({ id, username: '', displayName: id, avatar: '', followers: 0, following: 0, joinedAt: new Date(0) })
+    const post = (id: string, owner: string, at: number) => ({ id, author: author(owner), content: id, createdAt: new Date(at), likes: 0, reposts: 0, replies: 0, quotes: 0, views: 0, liked: false, reposted: false, bookmarked: false })
+    const byIds = vi.spyOn(postService, 'getPostsByIdsForDisplay').mockResolvedValue({
+      posts: [post('post-a', 'alice', 10), post('forged', 'mallory', 40)],
+      preloaded: {},
     })
-    expect(query.mock.calls[0][0]).not.toHaveProperty('timeRange')
+    const replies = vi.spyOn(replyService, 'getRepliesByIds').mockResolvedValue([
+      { ...post('reply-c', 'carol', 20), parentId: 'post-a', parentOwnerId: 'alice', rootPostId: 'post-a' },
+    ])
+    const { posts } = await mentionService.loadMentioningPosts([
+      { $id: 'post-a', $ownerId: 'alice', $createdAt: 10, postId: 'post-a', mentionedUserId: 'me' },
+      { $id: 'reply-c', $ownerId: 'carol', $createdAt: 20, postId: 'reply-c', mentionedUserId: 'me', targetKind: 'reply' },
+      // A record whose document belongs to someone else is dropped.
+      { $id: 'x', $ownerId: 'alice', $createdAt: 40, postId: 'forged', mentionedUserId: 'me' },
+    ])
+    expect(byIds).toHaveBeenCalledWith(['post-a', 'forged'])
+    expect(replies).toHaveBeenCalledWith(['reply-c'])
+    expect(posts.map((p) => [p.id, p.targetKind])).toEqual([['reply-c', 'reply'], ['post-a', undefined]])
   })
 
   it('writes no postMention document: the doctype is gone', async () => {

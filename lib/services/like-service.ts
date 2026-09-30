@@ -53,8 +53,9 @@ const LIKE_RECOVERY_MAX_PAGES = 5;
  * notify — the accepted compromise of dropping `byAuthorTimePost`.
  */
 const LIKE_NOTIFICATION_RECENT_TARGETS = 20;
-const LIKE_NOTIFICATION_MAX_TARGETS = 10;
 const LIKE_NOTIFICATION_PAGE_SIZE = 100;
+/** Keyset pages per target when the one `in` read comes back full (1,000 likes of one target since the last poll). */
+const LIKE_NOTIFICATION_MAX_PAGES = 10;
 
 /**
  * Likes of posts and likes of replies share this service, but not necessarily a
@@ -873,14 +874,14 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * 1. ONE composite: the user's newest {@link LIKE_NOTIFICATION_RECENT_TARGETS}
    *    posts on `ownerAndTime [$ownerId, $createdAt]` with a like-count slot
    *    bound page `$id` → `postId` (grouped on the countable `byPost`/`byReply`).
-   * 2. For up to {@link LIKE_NOTIFICATION_MAX_TARGETS} of them with a count > 0,
-   *    newest first, one plain read each, in parallel: `author == me && target
-   *    == T && $createdAt > since` ordered `[author, target, $createdAt desc]`
-   *    on `byAuthorPostTime`/`byAuthorReplyTime`. These cannot be composite
-   *    siblings (two components on one index path are refused), and each row
-   *    carries the liker (`$ownerId`) and the exact `$createdAt`.
+   * 2. ONE plain read over every one of them with a count > 0: `author == me
+   *    && target in [liked] && $createdAt > since` ordered `[author, target,
+   *    $createdAt desc]` on `byAuthorPostTime`/`byAuthorReplyTime` (the `in`
+   *    fans out per target under the author, each branch walking `$createdAt`
+   *    newest first). Each row carries the liker (`$ownerId`), the exact
+   *    `$createdAt` and its target, read off the row itself.
    *
-   * Worst case 1 + 10 requests per kind. Throws on any failed read, so a
+   * Worst case 1 + 1 requests per kind. Throws on any failed read, so a
    * partial answer never advances the notification watermark.
    */
   private async getLikesOnMyRecentContent(userId: string, sinceTimestamp: number, kind: TargetKind, shape: IndexOnlyLikeShape): Promise<LikeDocument[]> {
@@ -905,21 +906,43 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       .map((doc) => documentToPlainObject(doc))
       .sort((a, b) => Number(b.$createdAt) - Number(a.$createdAt))
       .flatMap((doc) => (typeof doc.$id === 'string' ? [doc.$id] : []))
-      .filter((targetId) => Number(counts.get(targetId) ?? 0) > 0)
-      .slice(0, LIKE_NOTIFICATION_MAX_TARGETS);
+      .filter((targetId) => Number(counts.get(targetId) ?? 0) > 0);
+    if (liked.length === 0) return [];
 
-    const perTarget = await Promise.all(liked.map((targetId) => sdk.documents.query({
+    const read = (targets: string[], extra: DocumentWhereClause[] = []) => sdk.documents.query({
       dataContractId: this.contractId,
       documentTypeName: docType,
-      where: [[shape.authorField, '==', userId], [field, '==', targetId], ['$createdAt', '>', sinceTimestamp]],
+      where: [[shape.authorField, '==', userId], [field, 'in', targets], ['$createdAt', '>', sinceTimestamp], ...extra],
       orderBy: [[shape.authorField, 'asc'], [field, 'asc'], ['$createdAt', 'desc']],
       limit: LIKE_NOTIFICATION_PAGE_SIZE,
-    })));
+    }).then((response) => normalizeSDKResponse(response)
+      // Each row names its own target; one whose target did not come back cannot be linked.
+      .map((doc) => this.transformDocumentFor(doc, kind))
+      .filter((like) => like.postId !== ''));
 
-    // The target is pinned by the query, so it names the row even if the
-    // synthesized document leaves the property out.
-    return perTarget.flatMap((response, index) => normalizeSDKResponse(response)
-      .map((doc) => ({ ...this.transformDocumentFor(doc, kind), postId: liked[index] })));
+    const rows = await read(liked);
+    if (rows.length < LIKE_NOTIFICATION_PAGE_SIZE) return rows;
+    // A full page: the `in` read walks target by target, so it may have cut a
+    // target short or left later ones out, and the watermark would then pass
+    // them for good. Read every target on its own, keyset-paged on
+    // `$createdAt` (`<=` plus a dedupe; an indexOnly type takes no id cursor),
+    // until a short page.
+    const perTarget = await Promise.all(liked.map(async (targetId) => {
+      const seen = new Map<string, LikeDocument>();
+      let cursor: number | null = null;
+      for (let page = 0; page < LIKE_NOTIFICATION_MAX_PAGES; page++) {
+        const likes = await read([targetId], cursor === null ? [] : [['$createdAt', '<=', cursor]]);
+        let added = 0;
+        for (const like of likes) {
+          const key = `${like.$ownerId}|${like.$createdAt}`;
+          if (!seen.has(key)) { seen.set(key, like); added++; }
+        }
+        if (likes.length < LIKE_NOTIFICATION_PAGE_SIZE || added === 0) break;
+        cursor = Math.min(...likes.map((like) => Number(like.$createdAt)));
+      }
+      return [...seen.values()];
+    }));
+    return perTarget.flat();
   }
 }
 

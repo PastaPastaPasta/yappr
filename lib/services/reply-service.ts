@@ -14,6 +14,7 @@ import { tombstoneDocument } from './tombstone-helpers';
 import { readNotificationWindow } from './notification-windows';
 import {
   hasFlatThreads,
+  mentionsAreInline,
   notificationWindowFor,
   replyCountFieldFor,
   replyCountNeedsRoot,
@@ -258,6 +259,16 @@ class ReplyService extends BaseDocumentService<Reply> {
     if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
+    // v10: the one indexed mention, by the rule posts use — the first
+    // @mention of the PUBLIC content (a private reply's teaser or placeholder,
+    // never its ciphertext), resolved through DPNS; omitted when there is none
+    // or it does not resolve.
+    if (mentionsAreInline()) {
+      const { resolveMentionedIdentity } = await import('./post-service');
+      const mentionedUserId = await resolveMentionedIdentity(data.content as string);
+      if (mentionedUserId) data.mentionedUserId = identifierStringToDocumentBytes(mentionedUserId);
+    }
+
     return this.create(ownerId, data);
   }
 
@@ -358,8 +369,8 @@ class ReplyService extends BaseDocumentService<Reply> {
   /**
    * Get replies where user's content was replied to - for notifications.
    * Uses the parentOwnerAndTime index: [parentOwnerId, $createdAt], limited
-   * to the 100 most recent replies. On v10 it is the rolling
-   * `parentOwnerRecent [$createdAt, parentOwnerId]` window, read whole (paged)
+   * to the 100 most recent replies. On v10 it is the two open
+   * `parentOwnerRecent [$createdAt, parentOwnerId]` windows, read whole (paged)
    * and since-filtered client-side (see readNotificationWindow).
    *
    * @param userId - Identity ID of the content owner
