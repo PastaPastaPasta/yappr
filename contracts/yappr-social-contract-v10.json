@@ -405,40 +405,28 @@
           }
         },
         {
-          "name": "byAuthorRecent",
+          "name": "byAuthorTimePost",
           "properties": [
             {
-              "$createdAt": "asc"
+              "postAuthor": "asc"
             },
             {
-              "postAuthor": "asc"
+              "$createdAt": "asc"
             },
             {
               "postId": "asc"
             }
           ],
-          "terminal": "$ownerId",
-          "timeRange": {
-            "on": "$createdAt",
-            "range": 604800,
-            "step": 86400,
-            "ttl": 604800
-          }
+          "terminal": "$ownerId"
         },
         {
           "name": "byLiker",
           "properties": [
             {
               "$ownerId": "asc"
-            },
-            {
-              "postId": "asc"
-            },
-            {
-              "$createdAt": "asc"
             }
           ],
-          "terminal": "postAuthor"
+          "terminal": "postId"
         },
         {
           "name": "byTrendPost",
@@ -555,40 +543,28 @@
           "countable": "countable"
         },
         {
-          "name": "byAuthorRecent",
+          "name": "byAuthorTimeReply",
           "properties": [
             {
-              "$createdAt": "asc"
+              "replyAuthor": "asc"
             },
             {
-              "replyAuthor": "asc"
+              "$createdAt": "asc"
             },
             {
               "replyId": "asc"
             }
           ],
-          "terminal": "$ownerId",
-          "timeRange": {
-            "on": "$createdAt",
-            "range": 604800,
-            "step": 86400,
-            "ttl": 604800
-          }
+          "terminal": "$ownerId"
         },
         {
           "name": "byLiker",
           "properties": [
             {
               "$ownerId": "asc"
-            },
-            {
-              "replyId": "asc"
-            },
-            {
-              "$createdAt": "asc"
             }
           ],
-          "terminal": "replyAuthor"
+          "terminal": "replyId"
         }
       ],
       "required": [
