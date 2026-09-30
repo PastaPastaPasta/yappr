@@ -37,7 +37,7 @@ describe('notification sources', () => {
 })
 
 describe('v10 windowed notification sources', () => {
-  it('bundles the permanent sources (mentions included) and reads replies and quotes as separate windowed queries', async () => {
+  it('bundles the permanent sources (mentions included), reads likes per recent target, and replies and quotes as separate windowed queries', async () => {
     vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
     const query = vi.fn().mockResolvedValue([])
     const { getEvoSdk } = await import('./evo-sdk-service')
@@ -48,14 +48,15 @@ describe('v10 windowed notification sources', () => {
     const likes = vi.spyOn(notificationService, 'getLikeNotifications').mockResolvedValue([])
 
     await notificationService.pollNewNotifications('viewer', 1000)
-    // The like readers get the bundle's like and likeReply results.
-    expect(likes).toHaveBeenCalledWith('viewer', 1000, [[], []])
+    // Like design C: no author-wide like index, so the like reader runs its own
+    // per-target fan-out instead of reading bundle results.
+    expect(likes).toHaveBeenCalledWith('viewer', 1000)
 
-    // Follows, mentions (the mentioning post's own permanent index), follow
-    // requests and likes keep the $createdAt > since shape; no windowed source
-    // rides the composite.
+    // Follows, mentions (the mentioning post's own permanent index) and follow
+    // requests keep the $createdAt > since shape; no windowed source and no
+    // like source rides the composite.
     const queries: QueryDocumentsOptions[] = bundle.mock.calls[0][0]
-    expect(queries.map(query => query.documentTypeName)).toEqual(['follow', 'post', 'followRequest', 'like', 'likeReply'])
+    expect(queries.map(query => query.documentTypeName)).toEqual(['follow', 'post', 'followRequest'])
     expect(queries[1].where).toEqual([['mentionedUserId', '==', 'viewer'], ['$createdAt', '>', 1000]])
     expect(queries.every(query => query.where?.[1]?.[1] === '>' && !('timeRange' in query))).toBe(true)
 

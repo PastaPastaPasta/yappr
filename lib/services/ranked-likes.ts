@@ -8,6 +8,8 @@
  * - global:          `byPost [postId]`                 — no pins
  * - per-hashtag:     `byHashtagPost [hashtag, postId]` — pin `['hashtag','==',tag]`
  * - per-author:      `byAuthorPost [postAuthor, postId]` — pin `['postAuthor','==',id]`
+ *                    (v10: `byAuthorPostTime [postAuthor, postId, $createdAt]`,
+ *                    ranked at `[postAuthor, postId]` — the same query shape)
  *
  * Server-side `SELECT count(*) GROUP BY postId ORDER BY count DESC LIMIT n`,
  * O(log n + k) with a proof — no scan, no client-side sorting.
@@ -81,7 +83,7 @@ export interface RankedLikedPost {
 export interface TopLikedPostsOptions {
   /** Pin the per-hashtag axis (`byHashtagPost`). Lowercase, no '#'. */
   hashtag?: string;
-  /** Pin the per-author axis (`byAuthorPost`). Base58 identity id. */
+  /** Pin the per-author axis (`byAuthorPost`, v10 `byAuthorPostTime`). Base58 identity id. */
   postAuthor?: string;
   /** 1..100, default 10. */
   limit?: number;
@@ -217,7 +219,8 @@ export async function topHashtagsByLikes(limit: number = 12, window: RankingWind
 /**
  * The top authors by likes RECEIVED — the v9 creator leaderboard: prefix
  * groupBy at `postAuthor` on `like.byAuthorPost {at: [postAuthor, postId]}`
- * (the same index whose terminal level serves the profile Top tab). Keys are
+ * (v10: `byAuthorPostTime`, ranked at the same levels; the same index whose
+ * `postId` level serves the profile Top tab). Keys are
  * base58 identity ids.
  */
 export async function topCreatorsByLikes(limit: number = 10, window: RankingWindow = 'all'): Promise<RankedGroupCount[]> {
@@ -310,7 +313,8 @@ const TOP_BY_AUTHORS_CONCURRENCY = 8;
 
 /**
  * The most-liked posts across a set of authors (the Following feed's Top
- * view): one proved `byAuthorPost` ranked read per author, merged and sorted
+ * view): one proved per-author ranked read (`byAuthorPost`, v10
+ * `byAuthorPostTime`) per author, merged and sorted
  * by proved like count, then hydrated like {@link topLikedPostsHydrated}.
  * Each author contributes at most `limit` candidates, so the merged page is
  * exact for the authors that were read. Authors beyond

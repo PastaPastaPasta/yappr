@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
+import { documentToPlainObject, identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
 import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
 import { indexOnlyLikeShapeFor, likeIndexFor, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor } from '../contract-topology';
@@ -47,6 +47,16 @@ const LIKE_RECOVERY_PAGE_SIZE = 100;
 const LIKE_RECOVERY_MAX_PAGES = 5;
 
 /**
+ * v10 like notifications (design C): how many of the recipient's newest posts
+ * (and, separately, replies) are checked for likes, how many of those with a
+ * like are read per poll, and each read's page. Likes of older content do not
+ * notify — the accepted compromise of dropping `byAuthorTimePost`.
+ */
+const LIKE_NOTIFICATION_RECENT_TARGETS = 20;
+const LIKE_NOTIFICATION_MAX_TARGETS = 10;
+const LIKE_NOTIFICATION_PAGE_SIZE = 100;
+
+/**
  * Likes of posts and likes of replies share this service, but not necessarily a
  * document type: the v9 topology routes reply likes to `likeReply` with
  * `replyId`/`replyOwnerId` in place of `postId`/`postOwnerId`. Every method that
@@ -55,10 +65,13 @@ const LIKE_RECOVERY_MAX_PAGES = 5;
  * which on v2 is the same surface a reply resolves to — so v2 queries are
  * unchanged whichever kind is passed.
  *
- * On the v9 topology likes are **indexOnly** — see `likeIndexOnly`/
- * `unlikeIndexOnly`. The read surfaces are shape-compatible (owner-first liked
- * state lowers onto `byLiker`, counts onto the countable `byPost`/`byReply`),
- * so every query method below serves all three topologies unchanged.
+ * On the v9 and v10 topologies likes are **indexOnly** — see `likeIndexOnly`/
+ * `unlikeIndexOnly`. The read surfaces are shape-compatible (v9's owner-first
+ * liked state lowers onto `byLiker`, v10's target-first one onto `byPost`/
+ * `byReply` with `$ownerId` as the terminal, counts onto the countable
+ * `byPost`/`byReply`), so the query methods below serve every topology; the
+ * author-time reads (unlike tuple, notifications) pin the target too on v10
+ * (`IndexOnlyLikeShape.authorTimeKeysTarget`).
  */
 class LikeService extends BaseDocumentService<LikeDocument> {
   /**
@@ -291,7 +304,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * affected-state (indexOnly never yields ExecutionProved). KNOWN SDK QUIRK:
    * the js create path can fail *after* a successful broadcast without ever
    * returning a usable confirmed Document — so a reported failure is
-   * re-checked against the chain (the byLiker readback) before being believed,
+   * re-checked against the chain (the liked-state readback) before being believed,
    * and nothing here relies on the returned document or its `$id`.
    */
   private async likeIndexOnly(
@@ -405,15 +418,14 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * v9 unlike: delete-by-values.
+   * indexOnly unlike (v9, v10): delete-by-values.
    *
    * The delete transition must carry the like's FULL tuple — every content
    * property plus the consensus `$createdAt`, which only Platform knows.
-   * Recovery (validated live on moutai): walk `byAuthorTimePost` /
-   * `byAuthorTimeReply` pinned on the target's author, newest first — its
-   * projection is the only one carrying `$createdAt` — and match the entry
-   * whose target id and `$ownerId` are ours. The remaining values (hashtag,
-   * author) come from the target document, exactly as the create wrote them.
+   * Recovery ({@link recoverLikeTuple}): walk the author-time index — the only
+   * projection carrying `$createdAt` — newest first, and match the entry whose
+   * target id and `$ownerId` are ours. The remaining values (hashtag, author)
+   * come from the target document, exactly as the create wrote them.
    */
   private async unlikeIndexOnly(
     targetId: string,
@@ -495,13 +507,6 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * Recover an indexOnly like's delete tuple from the notification index
-   * (`byAuthorTimePost [postAuthor, $createdAt, postId]` terminal `$ownerId`,
-   * and the `byAuthorTimeReply` mirror) — the only projection that carries the
-   * consensus `$createdAt`. Pinned on the target's author, newest first, so a
-   * recent like is on the first page; bounded rather than exhaustive.
-   */
-  /**
    * v9: delete the `beat` written after a like of a tagged post.
    *
    * The delete-by-values tuple needs the beat's `$id` AND its own
@@ -582,6 +587,27 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     return false;
   }
 
+  /**
+   * Recover an indexOnly like's delete tuple from the author-time index — the
+   * only projection that carries the consensus `$createdAt`:
+   *
+   * - v9 `byAuthorTimePost [postAuthor, $createdAt, postId]` (and the
+   *   `byAuthorTimeReply` mirror), pinned on the target's author: every like
+   *   of any of their posts, newest first.
+   * - v10 `byAuthorPostTime [postAuthor, postId, $createdAt]` (and
+   *   `byAuthorReplyTime`), pinned on the author AND the target: only this
+   *   target's likes, newest first.
+   *
+   * Both terminate in `$ownerId`; the viewer's row is the one owned by them.
+   * indexOnly rows carry synthesized ids (a one-way hash of the index
+   * position), which Drive refuses as startAfter cursors, so later pages are a
+   * keyset on the `$createdAt` level with the same orderBy. The bound is
+   * inclusive (`<=`) because likes sharing a millisecond or block share a
+   * `$createdAt`, and `<` would skip the ones the previous page cut off; the
+   * rows that boundary re-serves are dropped by `seen`. A run of more than one
+   * page of likes at a single timestamp cannot be walked past — the page then
+   * adds nothing new and the walk stops. Bounded, not exhaustive.
+   */
   private async recoverLikeTuple(
     targetId: string,
     ownerId: string,
@@ -591,31 +617,41 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   ): Promise<LikeTuple | null> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
-      const { docType } = likeIndexFor(kind);
+      const { docType, field } = likeIndexFor(kind);
+      const prefix: DocumentWhereClause[] = shape.authorTimeKeysTarget
+        ? [[shape.authorField, '==', targetAuthor], [field, '==', targetId]]
+        : [[shape.authorField, '==', targetAuthor]];
+      const orderBy: DocumentOrderByClause[] = [...prefix.map(([property]) => [property, 'asc'] as DocumentOrderByClause), ['$createdAt', 'desc']];
 
-      let startAfter: string | undefined;
+      const seen = new Set<string>();
+      let before: number | null = null;
       for (let page = 0; page < LIKE_RECOVERY_MAX_PAGES; page++) {
+        const where: DocumentWhereClause[] = before === null ? prefix : [...prefix, ['$createdAt', '<=', before]];
         const response = await sdk.documents.query({
           dataContractId: this.contractId,
           documentTypeName: docType,
-          where: [[shape.authorField, '==', targetAuthor]],
-          orderBy: [[shape.authorField, 'asc'], ['$createdAt', 'desc']],
+          where,
+          orderBy,
           limit: LIKE_RECOVERY_PAGE_SIZE,
-          ...(startAfter ? { startAfter } : {}),
         });
 
         const documents = normalizeSDKResponse(response);
+        let added = 0;
         for (const doc of documents) {
           const like = this.transformDocumentFor(doc, kind);
+          const key = `${like.$ownerId}|${like.postId}|${like.$createdAt}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          added++;
           if (like.postId === targetId && like.$ownerId === ownerId && like.$createdAt) {
             return { documentId: like.$id, createdAt: Number(like.$createdAt) };
           }
         }
 
-        if (documents.length < LIKE_RECOVERY_PAGE_SIZE) break;
-        const lastId = documents[documents.length - 1]?.$id;
-        if (typeof lastId !== 'string' || !lastId) break;
-        startAfter = lastId;
+        if (documents.length < LIKE_RECOVERY_PAGE_SIZE || added === 0) break;
+        const last = Number(this.transformDocumentFor(documents[documents.length - 1], kind).$createdAt);
+        if (!Number.isFinite(last) || last <= 0) break;
+        before = last;
       }
       return null;
     } catch (error) {
@@ -736,8 +772,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * bounded by the number of targets (not total likes) and never undercounts.
    */
   async getUserLikedPostIds(userId: string, postIds: string[], kind: TargetKind = 'post'): Promise<Set<string>> {
-    // v2 `like.postAndOwner` is [postId, $ownerId] → ownerFirst: false.
-    const { docType, field, ownerFirst } = likeIndexFor(kind);
+    // v2 `like.postAndOwner` is [postId, $ownerId] → ownerFirst: false; v10
+    // `like.byPost [postId]` terminal `$ownerId` → batched target `in`.
+    const { docType, field, ownerFirst, ownerIsTerminal } = likeIndexFor(kind);
     return queryOwnedPostIds({
       getSdk: () => import('../services/evo-sdk-service').then(m => m.getEvoSdk()),
       dataContractId: this.contractId,
@@ -745,6 +782,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       userId,
       postIds,
       ownerFirst,
+      ownerIsTerminal,
       field,
       getPostId: (doc) => this.transformDocumentFor(doc, kind)?.postId,
       errorLabel: 'Error fetching user liked post ids:',
@@ -787,7 +825,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * $createdAt, postId]` / `likeReply.byAuthorTimeReply [replyAuthor,
    * $createdAt, replyId]`. The two are separate doctypes there, so a caller
    * wanting both has to ask twice (see `notification-service`); on v2 they are
-   * the same query and asking twice would double-count.
+   * the same query and asking twice would double-count. On v10 the author-time
+   * index keys the target first, so this is a fan-out over the user's recent
+   * content instead ({@link getLikesOnMyRecentContent}; `preloaded` unused).
    *
    * @param userId - Identity ID of the content owner
    * @param since - Only return likes created after this timestamp (optional)
@@ -801,6 +841,10 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
       const sinceTimestamp = since?.getTime() || 0;
+      const shape = indexOnlyLikeShapeFor(kind);
+      if (shape?.authorTimeKeysTarget) {
+        return await this.getLikesOnMyRecentContent(userId, sinceTimestamp, kind, shape);
+      }
 
       const response = preloaded ?? await sdk.documents.query({
         dataContractId: this.contractId,
@@ -819,6 +863,63 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       logger.error('Error getting likes on my posts:', error);
       return [];
     }
+  }
+
+  /**
+   * v10 (like design C): likes of the user's RECENT posts (or replies) since
+   * `sinceTimestamp`, newest content first. Likes of older content do not
+   * notify — the accepted cost of dropping the author-wide time index.
+   *
+   * 1. ONE composite: the user's newest {@link LIKE_NOTIFICATION_RECENT_TARGETS}
+   *    posts on `ownerAndTime [$ownerId, $createdAt]` with a like-count slot
+   *    bound page `$id` → `postId` (grouped on the countable `byPost`/`byReply`).
+   * 2. For up to {@link LIKE_NOTIFICATION_MAX_TARGETS} of them with a count > 0,
+   *    newest first, one plain read each, in parallel: `author == me && target
+   *    == T && $createdAt > since` ordered `[author, target, $createdAt desc]`
+   *    on `byAuthorPostTime`/`byAuthorReplyTime`. These cannot be composite
+   *    siblings (two components on one index path are refused), and each row
+   *    carries the liker (`$ownerId`) and the exact `$createdAt`.
+   *
+   * Worst case 1 + 10 requests per kind. Throws on any failed read, so a
+   * partial answer never advances the notification watermark.
+   */
+  private async getLikesOnMyRecentContent(userId: string, sinceTimestamp: number, kind: TargetKind, shape: IndexOnlyLikeShape): Promise<LikeDocument[]> {
+    const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+    const { docType, field } = likeIndexFor(kind);
+
+    const result = await sdk.documents.composite({
+      dataContractId: this.contractId,
+      documentType: kind,
+      where: [['$ownerId', '==', userId]],
+      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+      limit: LIKE_NOTIFICATION_RECENT_TARGETS,
+      subQueries: [{ documentType: docType, kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field } }],
+    });
+    const countsResult = result.subResults?.[0];
+    if (!Array.isArray(result.pageDocuments) || result.subResults.length !== 1 || countsResult?.kind !== 'counts' || !(countsResult.counts instanceof Map)) {
+      throw new Error('Incomplete like counts of recent content');
+    }
+    const counts = countsResult.counts;
+
+    const liked = result.pageDocuments
+      .map((doc) => documentToPlainObject(doc))
+      .sort((a, b) => Number(b.$createdAt) - Number(a.$createdAt))
+      .flatMap((doc) => (typeof doc.$id === 'string' ? [doc.$id] : []))
+      .filter((targetId) => Number(counts.get(targetId) ?? 0) > 0)
+      .slice(0, LIKE_NOTIFICATION_MAX_TARGETS);
+
+    const perTarget = await Promise.all(liked.map((targetId) => sdk.documents.query({
+      dataContractId: this.contractId,
+      documentTypeName: docType,
+      where: [[shape.authorField, '==', userId], [field, '==', targetId], ['$createdAt', '>', sinceTimestamp]],
+      orderBy: [[shape.authorField, 'asc'], [field, 'asc'], ['$createdAt', 'desc']],
+      limit: LIKE_NOTIFICATION_PAGE_SIZE,
+    })));
+
+    // The target is pinned by the query, so it names the row even if the
+    // synthesized document leaves the property out.
+    return perTarget.flatMap((response, index) => normalizeSDKResponse(response)
+      .map((doc) => ({ ...this.transformDocumentFor(doc, kind), postId: liked[index] })));
   }
 }
 

@@ -297,7 +297,7 @@ export default function ExplorePage() {
                   </button>
                 )}
                 {/* The creator leaderboard needs the v9 prefix ranked axes
-                    (byAuthorPost at-form) — no earlier contract can serve it. */}
+                    (byAuthorPost / v10 byAuthorPostTime at-form) — no earlier contract can serve it. */}
                 {prefixRankingsAvailable() && (
                   <button
                     onClick={() => setActiveTab('creators')}

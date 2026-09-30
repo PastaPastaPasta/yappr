@@ -65,7 +65,8 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
   }, [userId, mentionsLoaded])
 
   /**
-   * One proved server-side ranked query on `like.byAuthorPost` pinned to this
+   * One proved server-side ranked query on `like.byAuthorPost` (v10
+   * `byAuthorPostTime`) pinned to this
    * profile; the order and counts come from the count trees, not from a
    * client-side sort.
    */

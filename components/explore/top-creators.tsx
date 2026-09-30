@@ -88,7 +88,8 @@ function RankedUserList({
 
 /**
  * The v9 creator leaderboard: top authors by likes received, from the proved
- * prefix ranked page on `like.byAuthorPost {at: [postAuthor, postId]}`, plus —
+ * prefix ranked page on `like.byAuthorPost {at: [postAuthor, postId]}` (v10:
+ * `byAuthorPostTime`, ranked at the same levels), plus —
  * when the follow ranked chain exists — most-followed users off
  * `follow.followerCount`. Both fail soft: a ranking that errors comes back
  * empty and its section hides, so a node that cannot serve the prefix form

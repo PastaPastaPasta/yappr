@@ -58,6 +58,8 @@ import type { OwnQuote } from './quote-reposts';
 
 /** At most this many sub-queries per request (the platform's `MAX_SUB_QUERIES`). */
 const MAX_SUB_QUERIES = 10;
+/** The most rows a bound documents lookup may be capped at. */
+const MAX_LOOKUP_LIMIT = 100;
 /** Total DPNS document budget across ALL page authors, not per identity. */
 const DPNS_QUERY_LIMIT = 100;
 export interface CompositeFeedPageOptions {
@@ -211,11 +213,20 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
   let myBookmarks = -1;
   if (options.currentUserId) {
     // The viewer's marks on the page: `$ownerId == me` pins the owner-first
-    // index, the bound post id is its terminal, so these are value-bounded.
-    // (v10's own quote/repost is a `post` lookup on `$ownerId`, which a page on
-    // `ownerAndTime` would refuse as a merged root: it is read separately.)
+    // index, the bound post id is its terminal, so these are value-bounded and
+    // a limit is refused. v10's likes have no owner-first index: the bound id
+    // leads `byPost`/`byReply` and `$ownerId` is its terminal, which is not
+    // value-bounded, so the node requires a limit — one like per page id at
+    // most. (v10's own quote/repost is a `post` lookup on `$ownerId`, which a
+    // page on `ownerAndTime` would refuse as a merged root: it is read
+    // separately.)
     const mine = [['$ownerId', '==', options.currentUserId]];
-    myLikes = slot({ documentType: like.docType, where: mine, bind: fromPage('$id', like.field) });
+    myLikes = slot({
+      documentType: like.docType,
+      where: mine,
+      bind: fromPage('$id', like.field),
+      ...(like.ownerIsTerminal ? { limit: Math.min(options.limit, MAX_LOOKUP_LIMIT) } : {}),
+    });
     if (repost) {
       myReposts = slot({ documentType: repost.docType, where: mine, bind: fromPage('$id', repost.field) });
     }

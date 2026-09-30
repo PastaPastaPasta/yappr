@@ -69,6 +69,16 @@ export interface OwnedTargetIndex {
    * or null when the doctype carries none.
    */
   ownerField: string | null
+  /**
+   * True when `$ownerId` is the non-unique TERMINAL of an indexOnly `[field]`
+   * index (v10's `like.byPost` / `likeReply.byReply`) rather than a property of
+   * a unique (owner, target) index. Two things follow, both proven live on
+   * bonsia: the liked state of a batch is ONE `[field in [...], $ownerId ==]`
+   * read ordered `[field asc, $ownerId asc]` (an `in` on an indexOnly terminal
+   * needs that orderBy), and a lookup bound to page ids is not value-bounded,
+   * so a composite slot must carry a `limit`. Absent everywhere else.
+   */
+  ownerIsTerminal?: boolean
 }
 
 /**
@@ -88,6 +98,21 @@ export interface IndexOnlyLikeShape {
    * `post.hashtag` would be a 40127 mismatch.
    */
   hashtagField: string | null
+  /**
+   * The index pinned on {@link authorField} whose projection carries the
+   * consensus `$createdAt` (the delete tuple's timestamp and the like
+   * notification's time): v9 `byAuthorTimePost [postAuthor, $createdAt, postId]`
+   * / `byAuthorTimeReply`, v10 `byAuthorPostTime [postAuthor, postId,
+   * $createdAt]` / `byAuthorReplyTime`.
+   */
+  authorTimeIndex: string
+  /**
+   * True when that index keys the target BEFORE `$createdAt` (v10): every read
+   * of it pins the target too (`author == A && target == T`, ordered
+   * `[author, target, $createdAt desc]`), so "likes of anything of mine since
+   * T" cannot be one query ({@link likeNotificationsPinTarget}).
+   */
+  authorTimeKeysTarget: boolean
 }
 
 /** The doctypes and fields one target kind's engagements live in. */
@@ -230,7 +255,9 @@ const V2_DESCRIPTOR: ContractTopologyDescriptor = {
  * - **indexOnly likes.** `like`/`likeReply` have no stored body: structural
  *   one-like-per-(target, owner) uniqueness, delete-by-values with refund. The
  *   liked-state reads are owner-first — `[$ownerId ==, target ==]` and the
- *   batched `[$ownerId ==, target in [...]]` — lowering onto `byLiker`.
+ *   batched `[$ownerId ==, target in [...]]` — lowering onto `byLiker`. The
+ *   delete tuple and like notifications come off `byAuthorTimePost
+ *   [postAuthor, $createdAt, postId]` / `byAuthorTimeReply`.
  *   `postAuthor`/`replyAuthor` are bound to the target's `$ownerId` by a
  *   system-field `propertyAgreement`, and `like.hashtag` to `post.hashtag`.
  * - **Tombstones.** `post` and `reply` are permanent and declare `immutable`
@@ -240,13 +267,13 @@ const V2_DESCRIPTOR: ContractTopologyDescriptor = {
 const V9_POST_INTERACTIONS: InteractionSurface = {
   ...V2_INTERACTIONS,
   like: { docType: 'like', field: 'postId', ownerFirst: true, ownerField: 'postAuthor' },
-  indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag' },
+  indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorTimePost', authorTimeKeysTarget: false },
   replyCountField: 'rootPostId',
 }
 
 const V9_REPLY_INTERACTIONS: InteractionSurface = {
   like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyAuthor' },
-  indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null },
+  indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorTimeReply', authorTimeKeysTarget: false },
   repost: null,
   bookmark: null,
   quoteField: 'quotedReplyId',
@@ -296,14 +323,31 @@ const V9_DESCRIPTOR: ContractTopologyDescriptor = {
  *   `like.byTrendHashtagPost` (24h windows every 6h, `skipIfAbsent`) and top
  *   posts `like.byTrendPost` (72h windows every 24h); there is no windowed
  *   creator axis ({@link windowedRankingFor}).
+ * - **No `byLiker` (like design C).** The liked state reads the target-first
+ *   `byPost [postId]` / `byReply [replyId]` with `$ownerId` as their terminal
+ *   ({@link OwnedTargetIndex.ownerIsTerminal}). `byAuthorPostTime [postAuthor,
+ *   postId, $createdAt]` replaces both `byAuthorPost` (same ranked chain at
+ *   `[postAuthor, postId]`) and `byAuthorTimePost`, and `byAuthorReplyTime
+ *   [replyAuthor, replyId, $createdAt]` replaces `byAuthorTimeReply`: the
+ *   target sits before the time, so the unlike tuple and like notifications
+ *   are read per target ({@link likeNotificationsPinTarget}).
  */
 const V10_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v10',
   replyLinkage: { ...V9_DESCRIPTOR.replyLinkage, nestedUnderRoot: true },
   tombstonePreserves: { post: NOTHING_PRESERVED, reply: NOTHING_PRESERVED },
   interactions: {
-    post: { ...V9_POST_INTERACTIONS, repost: null },
-    reply: V9_REPLY_INTERACTIONS,
+    post: {
+      ...V9_POST_INTERACTIONS,
+      like: { docType: 'like', field: 'postId', ownerFirst: false, ownerField: 'postAuthor', ownerIsTerminal: true },
+      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorPostTime', authorTimeKeysTarget: true },
+      repost: null,
+    },
+    reply: {
+      ...V9_REPLY_INTERACTIONS,
+      like: { docType: 'likeReply', field: 'replyId', ownerFirst: false, ownerField: 'replyAuthor', ownerIsTerminal: true },
+      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorReplyTime', authorTimeKeysTarget: true },
+    },
   },
 }
 
@@ -531,6 +575,18 @@ export function likesAreIndexOnly(): boolean {
 }
 
 /**
+ * True when "likes of my content since T" cannot be read off one author-pinned
+ * index (v10, like design C): the author-time index keys the target before
+ * `$createdAt`, so like notifications are a fan-out over the recipient's
+ * recent posts and replies (their like counts, then one read per liked
+ * target) instead of a `[author ==, $createdAt >]` source in the permanent
+ * notification bundle.
+ */
+export function likeNotificationsPinTarget(): boolean {
+  return indexOnlyLikeShapeFor('post')?.authorTimeKeysTarget === true
+}
+
+/**
  * True when a post carries its (single) hashtag inline in `post.hashtag` and
  * the `postHashtag` doctype does not exist (v9). Tag listings then query
  * `post.tagAndTime` directly, the compose flow writes no secondary hashtag
@@ -563,7 +619,8 @@ export const HASHTAG_MAX_LENGTH = 61
  * True when the like doctype's at-form `rankedCountable` chains can answer
  * proved PREFIX-level ranked groupBy queries (v9): trending hashtags off
  * `byHashtagPost {at: hashtag}` and the creator leaderboard off
- * `byAuthorPost {at: [postAuthor, postId]}`.
+ * `byAuthorPost {at: [postAuthor, postId]}` (v10: `byAuthorPostTime`, the
+ * same chain at `[postAuthor, postId]`).
  */
 export function prefixRankingsAvailable(): boolean {
   return isDevnetCut()
@@ -680,8 +737,9 @@ export function mentionDocType(): 'post' | 'postMention' {
  * The notification sources that v10 keeps on a rolling window: replies and
  * quotes/reposts (stored doctypes). Mentions stay permanent (the Mentions tab
  * keeps its history), and likes are not windowed: the node refuses a windowed
- * document read of an indexOnly type, so like notifications keep their
- * permanent author index.
+ * document read of an indexOnly type, so like notifications are read per
+ * recent target off the permanent `byAuthorPostTime`/`byAuthorReplyTime`
+ * ({@link likeNotificationsPinTarget}).
  */
 export type WindowedNotificationSource = 'reply' | 'quote'
 
@@ -721,7 +779,8 @@ let notificationWindows: Readonly<Record<WindowedNotificationSource, Notificatio
  * The rolling 7-day window a notification source is read from (v10), or null
  * where the source is a permanent `[recipient, $createdAt]` index read with
  * `$createdAt >` (v2, v9). Follows, follow requests and likes stay on
- * permanent indexes on every topology.
+ * permanent indexes on every topology (v10 likes per target, see
+ * {@link likeNotificationsPinTarget}).
  *
  * A window is read as `where [[recipientField, '==', me]]` plus
  * `timeRange: [{ field: '$createdAt', selector: 'oldest', grid }]`, with no

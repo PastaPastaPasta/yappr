@@ -7,7 +7,7 @@ import { YAPPR_CONTRACT_ID, blogIsV2 } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
 import { isPublishedBlogPost } from '../blog/content-utils';
-import { likesAreIndexOnly, likeSurfacesAreSplit, likeIndexFor, mentionDocType, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
+import { likesAreIndexOnly, likeNotificationsPinTarget, likeSurfacesAreSplit, likeIndexFor, mentionDocType, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
 import { quoteNotificationType, quotedTargetIdOf } from '../feed/quote-reposts';
 import { readNotificationWindow } from './notification-windows';
 
@@ -177,7 +177,9 @@ class NotificationService {
    * On v2 one `like` doctype holds likes of posts AND of replies, so one query is
    * the complete answer. The v9 topology splits reply likes off into `likeReply`,
    * which is a second owner-index to read and merge — and the merge must NOT run
-   * on v2, where it would return the same documents twice.
+   * on v2, where it would return the same documents twice. On v10 neither kind
+   * rides the bundle: each is a fan-out over the user's recent posts or replies
+   * (see `likeService.getLikesOnMyPosts`), so `preloaded` is absent.
    */
   async getLikeNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[][]): Promise<RawNotification[]> {
     try {
@@ -768,8 +770,9 @@ class NotificationService {
   /**
    * The permanent `[recipient, $createdAt]` notification sources, read
    * `$createdAt > since` newest first: follows, mentions, follow requests and
-   * likes (`like`, plus `likeReply` where reply likes are split off). Their
-   * order is fixed: callers index the bundle's results by position.
+   * the likes of `kinds` (`like`, plus `likeReply` where reply likes are split
+   * off; none on v10). Their order is fixed: callers index the bundle's
+   * results by position.
    */
   private permanentSources(userId: string, sinceTimestamp: number, kinds: TargetKind[]): QueryDocumentsOptions[] {
     return [
@@ -805,19 +808,25 @@ class NotificationService {
   }
 
   /**
-   * v10: follows, mentions, follow requests and likes stay permanent and ride
-   * one bundle. Replies and quotes/reposts are rolling windows, and
-   * `timeRange` is refused in a composite, so each of those is its own plain
-   * query, all in parallel: three requests a poll, plus a page per full window.
+   * v10: follows, mentions and follow requests stay permanent and ride one
+   * bundle. Replies and quotes/reposts are rolling windows, and `timeRange` is
+   * refused in a composite, so each of those is its own plain query, all in
+   * parallel: three requests a poll, plus a page per full window. Likes (like
+   * design C) are per recent target, outside the bundle
+   * ({@link likeNotificationsPinTarget}): per kind one composite plus up to ten
+   * reads.
    */
   private async fetchWindowedSources(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
     const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
-    const permanent = queryDocumentBundle(this.permanentSources(userId, sinceTimestamp, kinds), true);
+    const bundledLikeKinds = likeNotificationsPinTarget() ? [] : kinds;
+    const permanent = queryDocumentBundle(this.permanentSources(userId, sinceTimestamp, bundledLikeKinds), true);
     const perSource = await Promise.all([
       permanent.then(documents => this.getNewFollowers(userId, sinceTimestamp, documents[0])),
       permanent.then(documents => this.getNewMentions(userId, sinceTimestamp, documents[1])),
       permanent.then(documents => this.getPrivateFeedNotifications(userId, sinceTimestamp, documents[2])),
-      permanent.then(documents => this.getLikeNotifications(userId, sinceTimestamp, documents.slice(3, 3 + kinds.length))),
+      bundledLikeKinds.length > 0
+        ? permanent.then(documents => this.getLikeNotifications(userId, sinceTimestamp, documents.slice(3, 3 + bundledLikeKinds.length)))
+        : this.getLikeNotifications(userId, sinceTimestamp),
       this.getRepostNotifications(userId, sinceTimestamp),
       this.getReplyNotifications(userId, sinceTimestamp),
     ]);

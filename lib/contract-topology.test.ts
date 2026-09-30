@@ -131,6 +131,52 @@ describe('contract topology', () => {
     }
   })
 
+  it('pins the like read indexes against each contract: liked state, author-time, design C', async () => {
+    type Index = { name: string; properties: Array<Record<string, string>>; terminal?: string; unique?: boolean; rangeCountable?: boolean; rankedCountable?: unknown }
+    const indexOf = (schemas: Schemas, docType: string, name: string) =>
+      (schemas[docType].indices as Index[] | undefined)?.find((index) => index.name === name)
+    const keys = (index: Index | undefined) => index?.properties.map((entry) => Object.keys(entry)[0])
+
+    for (const [topology, schemas] of [['v9', V9], ['v10', V10]] as const) {
+      const m = await topologyModule(topology)
+      for (const kind of ['post', 'reply'] as const) {
+        const like = m.likeIndexFor(kind)
+        const shape = m.indexOnlyLikeShapeFor(kind)
+        if (!shape) throw new Error(`${topology} ${kind} likes must be indexOnly`)
+        // The author-time index: author, then (v10) the target, and $createdAt,
+        // with the liker as the terminal.
+        const authorTime = indexOf(schemas, like.docType, shape.authorTimeIndex)
+        expect(keys(authorTime), `${topology} ${shape.authorTimeIndex}`).toEqual(shape.authorTimeKeysTarget
+          ? [shape.authorField, like.field, '$createdAt']
+          : [shape.authorField, '$createdAt', like.field])
+        expect(authorTime?.terminal).toBe('$ownerId')
+        // The liked-state index: v9 owner-first byLiker, v10 the target-first
+        // count index with $ownerId as its terminal.
+        const names = (schemas[like.docType].indices as Index[]).map((index) => index.name)
+        if (like.ownerIsTerminal) {
+          expect(names, `${topology} ${like.docType}`).not.toContain('byLiker')
+          const target = (schemas[like.docType].indices as Index[]).find((index) => keys(index)?.join() === like.field)
+          expect(target?.terminal, `${topology} ${like.docType} [${like.field}]`).toBe('$ownerId')
+          expect(like.ownerFirst).toBe(false)
+        } else {
+          expect(keys(indexOf(schemas, like.docType, 'byLiker'))).toEqual(['$ownerId'])
+          expect(indexOf(schemas, like.docType, 'byLiker')?.terminal).toBe(like.field)
+          expect(like.ownerFirst).toBe(true)
+        }
+      }
+      expect(m.likeNotificationsPinTarget()).toBe(topology === 'v10')
+    }
+
+    // v10: byAuthorPostTime replaces byAuthorPost and byAuthorTimePost, keeping
+    // the ranked chain at [postAuthor, postId] (creators and a profile's top).
+    const authorPostTime = indexOf(V10, 'like', 'byAuthorPostTime')
+    expect(authorPostTime?.rangeCountable).toBe(true)
+    expect(authorPostTime?.rankedCountable).toEqual({ at: ['postAuthor', 'postId'] })
+    expect(V10.likeReply.indices?.map((index) => index.name)).toEqual(['byReply', 'byAuthorReplyTime'])
+    const v2 = await topologyModule('v2')
+    expect([v2.likeNotificationsPinTarget(), v2.likeIndexFor('post').ownerIsTerminal]).toEqual([false, undefined])
+  })
+
   it.each(['post', 'reply'] as const)(
     'preserves exactly the v9 contract\'s immutable properties when tombstoning a %s',
     async (kind) => {
@@ -352,12 +398,22 @@ describe('contract topology', () => {
         return { surfaces: surfaces(m), shared: shared(m), only10: only10(m) }
       }
       const [v2, v9, v10] = [await read('v2'), await read('v9'), await read('v10')]
-      // v9's surfaces but two: no repost doctype (a repost is a quote), and the
-      // reply indexes all start at the root.
+      // v9's surfaces but three: no repost doctype (a repost is a quote), the
+      // reply indexes all start at the root, and likes are design C (no
+      // byLiker: target-first liked state, target-pinned author-time index).
       const [v9Post, v9Reply] = v9.surfaces.kinds
+      const designC = (like: unknown, shape: unknown, authorTimeIndex: string) => [
+        { ...(like as object), ownerFirst: false, ownerIsTerminal: true },
+        { ...(shape as object), authorTimeIndex, authorTimeKeysTarget: true },
+      ]
+      const [postLike, postShape] = designC(v9Post[0], v9Post[5], 'byAuthorPostTime')
+      const [replyLike, replyShape] = designC(v9Reply[0], v9Reply[5], 'byAuthorReplyTime')
       expect(v10.surfaces).toEqual({
         linkage: { ...v9.surfaces.linkage, nestedUnderRoot: true },
-        kinds: [[v9Post[0], null, ...v9Post.slice(2)], v9Reply],
+        kinds: [
+          [postLike, null, ...v9Post.slice(2, 5), postShape],
+          [replyLike, ...v9Reply.slice(1, 5), replyShape],
+        ],
       })
       expect(v9.surfaces.linkage.nestedUnderRoot).toBe(false)
       expect(v10.shared.every(Boolean)).toBe(true)
@@ -385,7 +441,7 @@ describe('contract topology', () => {
     it('pins the rolling like windows: 72h/24h top posts, 24h/6h trending tags, no creator window', async () => {
       const likeIndex = (name: string) => V10.like.indices?.find((index) => index.name === name) as
         ({ properties: Array<Record<string, string>>; skipIfAbsent?: boolean; timeRange?: Record<string, unknown> } | undefined)
-      expect(V10.like.indices?.map((index) => index.name)).toEqual(['byPost', 'byHashtagPost', 'byAuthorPost', 'byAuthorTimePost', 'byLiker', 'byTrendPost', 'byTrendHashtagPost'])
+      expect(V10.like.indices?.map((index) => index.name)).toEqual(['byPost', 'byHashtagPost', 'byAuthorPostTime', 'byTrendPost', 'byTrendHashtagPost'])
       const posts = likeIndex('byTrendPost')
       expect(posts?.properties.map((entry) => Object.keys(entry)[0])).toEqual(['$createdAt', 'postId'])
       expect(posts?.timeRange).toEqual({ on: '$createdAt', range: 259_200, step: 86_400, ttl: 604_800 })
@@ -396,8 +452,9 @@ describe('contract topology', () => {
       // The all-time twin must stay (and skip too): #5162 refuses an indexOnly optional
       // property without an untimed single-skip index.
       expect(likeIndex('byHashtagPost')?.skipIfAbsent).toBe(true)
-      // Like notifications stay permanent: the node cannot rebuild indexOnly
-      // documents from a windowed entry, so likeReply has no window at all.
+      // Like notifications stay permanent (per target on v10): the node cannot
+      // rebuild indexOnly documents from a windowed entry, so likeReply has no
+      // window at all.
       expect(V10.likeReply.indices?.some((index) => (index as { timeRange?: unknown }).timeRange)).toBe(false)
 
       const v10 = await topologyModule('v10')

@@ -244,4 +244,31 @@ describe('composite feed page on v10', () => {
     expect(page.preloaded.interactions?.get(docs[2].$id)).toEqual({ liked: false, reposted: true, bookmarked: false, ownQuote: { id: 'myRepost', bare: true } });
     expect(page.preloaded.interactions?.get(docs[0].$id)?.reposted).toBe(false);
   });
+
+  it.each([
+    ['post', 'like', 'postId'],
+    ['reply', 'likeReply', 'replyId'],
+  ] as const)('caps the viewer-likes %s slot at the page size: byPost/byReply are not value-bounded', async (kind, docType, field) => {
+    mocks.composite.mockImplementation(echo(docs));
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    await loadCompositeFeedPage({ language: 'en', limit: 20, kind, currentUserId: ownerIds[0] });
+    const subs: (Sub & { limit?: number })[] = mocks.composite.mock.calls[0][0].subQueries;
+    expect(subs.find((sub) => sub.documentType === docType && sub.kind === undefined)).toEqual({
+      documentType: docType, where: [['$ownerId', '==', ownerIds[0]]], bind: { source: 'page', sourceProperty: '$id', field }, limit: 20,
+    });
+  });
+});
+
+describe('composite feed page on v9', () => {
+  it('leaves the viewer-likes slot without a limit: byLiker is value-bounded and refuses one', async () => {
+    const response = result();
+    response.subResults.push({ kind: 'documents', documents: [] }, { kind: 'documents', documents: [] });
+    mocks.composite.mockResolvedValue(response);
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    await loadCompositeFeedPage({ language: 'en', limit: 20, currentUserId: ownerIds[0] });
+    const subs: { documentType: string; kind?: string; limit?: number }[] = mocks.composite.mock.calls[0][0].subQueries;
+    const myLikes = subs.find((sub) => sub.documentType === 'like' && sub.kind === undefined);
+    expect(myLikes).toBeDefined();
+    expect(myLikes).not.toHaveProperty('limit');
+  });
 });

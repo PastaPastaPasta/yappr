@@ -333,7 +333,11 @@ export async function rangeDistinctCount(
  * as a bug. Verified against both testnet and the moutai devnet: swapping the
  * target's `in` for `==` returns the document every time.
  *
- * So a target-first index is queried once per target, with bounded concurrency.
+ * So a target-first index is queried once per target, with bounded concurrency
+ * — unless `ownerIsTerminal` says `$ownerId` is the terminal of an indexOnly
+ * `[field]` index (v10's `like.byPost` / `likeReply.byReply`), where the node
+ * answers `[field in [...], $ownerId ==]` ordered `[field, $ownerId]` (proven
+ * on bonsia; the orderBy is required), one query per 100-id batch.
  *
  * `field` names the identifier property holding the target id. It defaults to
  * `postId`, which is what every v2 doctype uses; the v9 topology's `likeReply`
@@ -350,6 +354,8 @@ export async function queryOwnedPostIds(
     userId: string;
     postIds: string[];
     ownerFirst: boolean;
+    /** See `OwnedTargetIndex.ownerIsTerminal`: batch a target-first index with `in`. */
+    ownerIsTerminal?: boolean;
     /** Identifier property naming the target. Default: `postId`. */
     field?: string;
     getPostId: (doc: Record<string, unknown>) => string | undefined;
@@ -385,6 +391,12 @@ export async function queryOwnedPostIds(
       // is a shape Drive can answer.
       await mapLimit(chunk(params.postIds, MAX_IN_CLAUSE_VALUES), 2, (batch) =>
         collect([ownerClause, [field, 'in', batch]], batch.length)
+      );
+    } else if (params.ownerIsTerminal) {
+      // Target-first with the owner as the indexOnly terminal: the batch is one
+      // `in` over the target, the owner pinned below it.
+      await mapLimit(chunk(params.postIds, MAX_IN_CLAUSE_VALUES), 2, (batch) =>
+        collect([[field, 'in', batch], ownerClause], batch.length)
       );
     } else {
       // Target-first index: equality on both properties, one target at a time.

@@ -406,13 +406,14 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
  *   `''` sentinel outright (`minLength: 1`), so the post existing at all is
  *   the assertion;
  * - a like is an indexOnly create whose agreement-bound values matched (40127
- *   rejects otherwise), read back through `byLiker` after reload; the rendered
+ *   rejects otherwise), read back through the liked-state index after reload
+ *   (v9 `byLiker`, v10 `byPost` with `$ownerId` as its terminal); the rendered
  *   count comes from the countable `byPost` axis, and the profile feed's
  *   pressed state from the batched `in`-membership query;
  * - a like of the untagged post MIRRORS the absence: the absence-aware
  *   propertyAgreement only accepts both-absent (a client still writing `''`
  *   would get 40127), and `skipIfAbsent` keeps the like out of byHashtagPost
- *   entirely; the persisted toggle after reload is the byLiker readback;
+ *   entirely; the persisted toggle after reload is the liked-state readback;
  * - unlike of the untagged post is a delete-by-values whose tuple reproduces
  *   the same absence (a tuple carrying `''` would name a different — absent —
  *   document and fail); re-like proves the entries really left the trees;
@@ -422,7 +423,7 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
  *   `byHashtagPost {at: hashtag}`) counting likes per tag — so the liked tag
  *   must appear WITH its count;
  * - the Creators tab renders the proved leaderboard (groupBy at `postAuthor`
- *   on `byAuthorPost {at: [postAuthor, postId]}`) and must list the bot, who
+ *   on `byAuthorPost {at: [postAuthor, postId]}`, v10 `byAuthorPostTime`) and must list the bot, who
  *   just received a like;
  * - the profile Top tab still rides the same index's TERMINAL ranking, proving
  *   the at-form serves both levels at once.
@@ -537,7 +538,8 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
     test.setTimeout(180_000)
 
     // The profile feed resolves liked-state for the whole page in ONE
-    // owner-pinned `in` query — the batch shape that lowers onto byLiker.
+    // `in` query — owner-pinned onto byLiker on v9, target `in` + `$ownerId ==`
+    // onto byPost's terminal on v10.
     await reloadUntilVisible(page, appUrl(`/user?id=${bot.identityId}`), (p) =>
       p.getByTestId(`like-btn-${taggedPostId}`).and(p.locator('[aria-pressed="true"]'))
     )
@@ -591,7 +593,7 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
   test('the Creators tab renders the proved leaderboard', async ({ page }) => {
     test.setTimeout(180_000)
 
-    // The leaderboard (byAuthorPost {at: [postAuthor, postId]}, grouped at
+    // The leaderboard (byAuthorPost / v10 byAuthorPostTime {at: [postAuthor, postId]}, grouped at
     // postAuthor) is an ALL-TIME top-10: on a populated network the run's bot
     // (a handful of likes received) cannot assert its own inclusion against
     // seeded creators carrying dozens. Assert the surface structurally: the
