@@ -2,7 +2,6 @@
 
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { X, Eye, EyeOff, Shield, AlertTriangle, Key, Check, KeyRound } from 'lucide-react'
@@ -17,9 +16,8 @@ import { useSettingsStore } from '@/lib/store'
 import { getPasskeyPrfSupport } from '@/lib/webauthn/passkey-support'
 
 export function KeyBackupModal() {
-  const router = useRouter()
   const { addPasswordWrapper, addPasskeyWrapper } = useAuth()
-  const { isOpen, identityId, username, redirectOnClose, close } = useKeyBackupModal()
+  const { isOpen, identityId, username, close } = useKeyBackupModal()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const returnFocusRef = useRef<HTMLElement | null>(null)
 
@@ -180,12 +178,7 @@ export function KeyBackupModal() {
     setTargetTime(2)
     setIterationsPerMs(null) // Reset so we re-benchmark next time
     setIsBenchmarking(true)
-    const shouldRedirect = redirectOnClose
     close()
-    // Redirect to profile creation after closing (only during registration flow)
-    if (shouldRedirect) {
-      router.push('/profile/create')
-    }
   }
 
   const formatIterations = (n: number): string => {

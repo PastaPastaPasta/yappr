@@ -53,6 +53,8 @@ interface ProfileHeaderProps {
   profile: ProfileData | null
   displayName: string
   isDisplayNameLoading: boolean
+  /** No profile document exists, so `displayName` is a stand-in (the DPNS label or the identity). */
+  profileMissing: boolean
   username: string | null
   allUsernames: string[]
   viewerId: string | null
@@ -89,6 +91,7 @@ export function ProfileHeader({
   profile,
   displayName,
   isDisplayNameLoading,
+  profileMissing,
   username,
   allUsernames,
   viewerId,
@@ -199,7 +202,7 @@ export function ProfileHeader({
               {isDisplayNameLoading ? (
                 <div className="h-7 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-1" />
               ) : (
-                <h2 className="text-xl font-extrabold">{displayName}</h2>
+                <h2 data-testid="profile-display-name" data-profile-missing={profileMissing || undefined} className="text-xl font-extrabold">{displayName}</h2>
               )}
               <div className="flex items-center gap-2 flex-wrap">
                 {hasDpns && username ? (

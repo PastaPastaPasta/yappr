@@ -1,9 +1,9 @@
 /**
- * Where a user goes back to after the profile gate (or the DPNS username gate)
- * detoured them through /dpns/register and /profile/create.
+ * Where a user goes back to after the DPNS username gate detoured them through
+ * /dpns/register.
  *
  * The route travels as the `next` query parameter. It is attacker-controllable
- * (anyone can link to `/profile/create?next=...`), so it is only ever followed
+ * (anyone can link to `/dpns/register?next=...`), so it is only ever followed
  * after `sanitizeReturnTo` accepts it as an app-relative path.
  *
  * Paths are kept WITHOUT the deployment's `basePath` (/testing, /devnet):
@@ -13,11 +13,10 @@
 export const RETURN_TO_PARAM = 'next'
 export const DEFAULT_RETURN_TO = '/feed'
 
-const PROFILE_CREATE_ROUTE = '/profile/create'
 const DPNS_REGISTER_ROUTE = '/dpns/register'
 
 /** The detour itself and the login page: returning to them would loop or strand the user. */
-const NEVER_RETURN_TO = [PROFILE_CREATE_ROUTE, DPNS_REGISTER_ROUTE, '/login']
+const NEVER_RETURN_TO = [DPNS_REGISTER_ROUTE, '/login']
 
 const MAX_RETURN_TO_LENGTH = 2048
 // Any whitespace or control character. The URL parser silently drops tabs and
@@ -79,20 +78,14 @@ function withReturnTo(route: string, next: string | null | undefined): string {
   return safe ? `${route}?${RETURN_TO_PARAM}=${encodeURIComponent(safe)}` : route
 }
 
-/** /profile/create, carrying `next` when it is a route worth returning to. */
-export function profileCreateHref(next?: string | null): string {
-  return withReturnTo(PROFILE_CREATE_ROUTE, next)
-}
-
 /**
- * Where the DPNS wizard's Continue goes: /profile/create, carrying `next` only
- * when the user now has a username. After a failed registration they still have
- * none, and `next` is usually a username-gated page, so returning there would
- * send them straight back to /dpns/register. Without `next` the profile step
- * falls back to /feed.
+ * Where the DPNS wizard's Continue goes: back to `next` only when the user now
+ * has a username. After a failed registration they still have none, and `next`
+ * is usually a username-gated page, so returning there would send them straight
+ * back to /dpns/register; they go to /feed instead.
  */
-export function profileCreateAfterRegistrationHref(hasUsername: boolean, next?: string | null): string {
-  return profileCreateHref(hasUsername ? next : null)
+export function afterRegistrationRoute(hasUsername: boolean, next?: string | null): string {
+  return hasUsername ? returnToOrDefault(next) : DEFAULT_RETURN_TO
 }
 
 /** /dpns/register, carrying `next` when it is a route worth returning to. */

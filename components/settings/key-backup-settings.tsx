@@ -203,7 +203,7 @@ export function KeyBackupSettings({ onEncryptionKeyChanged }: KeyBackupSettingsP
 
     // Open the unified password wrapper modal
     const username = user.dpnsUsername || user.identityId
-    useKeyBackupModal.getState().open(user.identityId, username, false)
+    useKeyBackupModal.getState().open(user.identityId, username)
   }
 
   const handleDeleteBackup = async () => {

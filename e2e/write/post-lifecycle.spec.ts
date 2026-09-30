@@ -55,40 +55,29 @@ test.describe('post lifecycle on the real testnet', () => {
   })
 
   test('the bot identity has a profile', async ({ page, bot }) => {
-    // Budget: the two polls below (90s + 90s) plus navigation, with headroom —
-    // a test-level timeout firing mid-poll would report a misleading failure and
-    // cost a full serial-group retry.
-    test.setTimeout(240_000)
+    // Budget: the 90s page load, the 90s save wait and the 5x15s reloading
+    // read-back poll below, with headroom — a test-level timeout firing mid-poll
+    // would report a misleading failure and cost a full serial-group retry.
+    test.setTimeout(300_000)
 
-    // The page self-redirects to /user?id=... when a profile already exists, so
-    // this is idempotent: create on the first ever run, pass on every later one.
-    await page.goto(appUrl('/profile/create/'))
+    // A profile is optional, so the owner edits one into existence on their own
+    // page. Idempotent: create on the first ever run, pass on every later one.
+    const profileUrl = appUrl(`/user/?id=${bot.identityId}`)
+    const name = `yappr-e2e-${bot.index}`
+    await page.goto(profileUrl)
 
-    const submit = page.getByRole('button', { name: 'Create Profile' })
-    await expect
-      .poll(
-        async () => {
-          if (!page.url().includes('/profile/create')) return 'redirected'
-          if ((await submit.count()) > 0) return 'form'
-          return 'checking'
-        },
-        { timeout: 90_000, intervals: [1_000] }
-      )
-      .not.toBe('checking')
+    const heading = page.getByTestId('profile-display-name')
+    await expect(heading).toBeVisible({ timeout: 90_000 })
+    if ((await heading.getAttribute('data-profile-missing')) !== null) {
+      await page.getByRole('button', { name: 'Edit profile', exact: true }).click()
+      await page.getByLabel('Name', { exact: true }).fill(name)
+      await page.getByRole('button', { name: 'Save', exact: true }).click()
+      await expect(page.getByText('Profile updated!')).toBeVisible({ timeout: 90_000 })
 
-    if (page.url().includes('/profile/create')) {
-      await page.locator('#displayName').fill(`yappr-e2e-${bot.index}`)
-      await page.locator('#bio').fill('Automated end-to-end test identity for the /testing deployment.')
-      await submit.click()
-
-      await expect
-        .poll(() => page.url(), { timeout: 90_000, intervals: [2_000] })
-        .not.toContain('/profile/create')
+      await reloadUntilVisible(page, profileUrl, (p) => p.getByTestId('profile-display-name').filter({ hasText: name }))
     }
 
-    // Landing anywhere else (notably /login, if the session was dropped) would
-    // make this test pass without a profile ever existing.
-    expect(page.url()).toMatch(/\/(feed|user)\b/)
+    await expect(page.getByTestId('profile-display-name')).not.toHaveAttribute('data-profile-missing')
   })
 
   test('a post carrying the run tag is composed', async ({ page, bot }) => {

@@ -48,22 +48,20 @@ describe('v10 profile reads', () => {
     expect(query).toHaveBeenCalledWith(expect.objectContaining({ dataContractId: YAPPR_CONTRACT_ID, documentTypeName: 'yapprProfile', where: [['$ownerId', 'in', [ownerId]]] }));
   });
 
-  it('shows a DashPay-only user by name, but not as having a Yappr profile', async () => {
+  it('shows a DashPay-only user by name', async () => {
     stored[YAPPR_CONTRACT_ID] = [];
     const profiles = await service();
     expect((await profiles.getProfile(ownerId))?.displayName).toBe('Ava');
-    expect(await profiles.getV10ProfileStatus(ownerId)).toMatchObject({ dashpay: { displayName: 'Ava', bio: 'hi' }, hasExtension: false });
   });
 
-  it('rejects the profile status when either document query fails, rather than reporting no profile', async () => {
-    for (const failing of [YAPPR_CONTRACT_ID, DASHPAY_CONTRACT_ID]) {
-      query.mockImplementation(async ({ dataContractId }: { dataContractId: string }) => {
-        if (dataContractId === failing) throw new Error('DAPI timeout');
-        return stored[dataContractId] ?? [];
-      });
-      const profiles = await service();
-      await expect(profiles.getV10ProfileStatus(ownerId)).rejects.toThrow('DAPI timeout');
-    }
+  it('counts either document as an existing profile, and rejects rather than reporting none', async () => {
+    const profiles = await service();
+    stored[YAPPR_CONTRACT_ID] = [];
+    await expect(profiles.profileExists(ownerId)).resolves.toBe(true);
+    stored = {};
+    await expect(profiles.profileExists(ownerId)).resolves.toBe(false);
+    query.mockRejectedValue(new Error('DAPI timeout'));
+    await expect(profiles.profileExists(ownerId)).rejects.toThrow('DAPI timeout');
   });
 
   it('knows a profile only once both documents are seeded, then answers from cache', async () => {
@@ -96,6 +94,13 @@ describe('v10 profile writes', () => {
     await profiles.createProfile(ownerId, { displayName: 'Ava', bio: 'hi', pronouns: 'she/her' });
     expect(createDocument).toHaveBeenCalledExactlyOnceWith(YAPPR_CONTRACT_ID, 'yapprProfile', ownerId, { pronouns: 'she/her' });
     expect(updateDocument).not.toHaveBeenCalled();
+  });
+
+  it('names the DashPay profile a first banner-only save creates', async () => {
+    stored = {};
+    const profiles = await service();
+    await profiles.updateProfile(ownerId, { bannerUri: 'ipfs://banner' });
+    expect(createDocument).toHaveBeenCalledWith(DASHPAY_CONTRACT_ID, 'profile', ownerId, { displayName: `User ${ownerId.slice(-6)}` });
   });
 
   it('replaces only the document an edit touches, at its own revision', async () => {

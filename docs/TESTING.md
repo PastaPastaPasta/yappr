@@ -227,11 +227,10 @@ Rare, manual, never from CI. Everything below runs from the repo root.
    which is why they are recorded in `.env.testing`. The script prints the ID to
    append to `E2E_IDENTITY_IDS`.
 
-   Then **create the identity's profile**: seed the session per §3 and complete
-   `/profile/create`. The app sends a signed-in identity without a profile to
-   `/profile/create` from almost every page (see §7), so the write suite cannot
-   get past its first navigation on a profile-less slot. The same applies after
-   a chain rollback that wipes documents but keeps identities.
+   A profile is optional (see §7): `post-lifecycle.spec.ts` creates one on its
+   first run by editing the bot's own `/user` page, and the DM specs create one
+   from Node. The same applies after a chain rollback that wipes documents but
+   keeps identities.
 
 3. **Register the test contracts** (owner defaults to identity index 0):
 
@@ -338,49 +337,26 @@ Register test copies first (`scripts/register-test-contracts.mjs` is the
 pattern — extend it), fill in the corresponding `NEXT_PUBLIC_*_CONTRACT_ID` in
 `.env.testing`, and only then write the specs.
 
-### Every signed-in page runs the profile gate
+### A profile is optional
 
-`AuthProvider` (`contexts/auth-context.tsx`, logic in `lib/auth/profile-gate.ts`)
-checks for a profile document whenever the signed-in identity or the route
-changes, including right after a session is restored from storage. An identity
-without one is sent to `/profile/create`. What this means for tests:
+No route requires a profile document. A signed-in identity without one sees
+its DPNS label as its name (or `User <last 6 of id>` without a username), and
+the first save from its own `/user` page (the in-place editor, the avatar or
+the banner) creates the profile.
 
-- **Every seeded identity needs a profile.** The testnet pool has them; the DM
-  specs create one per devnet slot from Node before opening a device
-  (`ensureProfile` in `e2e/fixtures/dm.ts`). `post-lifecycle.spec.ts` is not
-  self-bootstrapping: its profile-creating test is third, and the second visits
-  `/feed/`, which redirects on a profile-less slot. (The first reads `/about/`,
-  which is exempt, and must stay first: it proves the bundle targets the test
-  contracts before anything is written.) Create the profile during provisioning
-  (§4).
-- The gate is skipped on `/profile/create`, `/dpns/register`, `/login`,
-  `/welcome` and `/embed`, and on the legal and informational pages (the
-  `InfoPage` layout): `/terms`, `/privacy`, `/cookies`, `/contract`, `/about`
-  and everything under `/about/` (e.g. `/about/private-feeds`). A profile-less
-  slot can therefore load `/about/` to read the topology; `/user`, `/post` and
-  every other route still redirect. It ignores the DPNS username: an identity
-  with neither a username nor a profile goes straight to `/profile/create`, and
-  the `withAuth` DPNS redirect waits until this gate has cleared the identity
-  on the current route, so it never gets there first.
-- The redirect carries the requested route (pathname plus query, without the
-  base path) as `?next=`, e.g. `/profile/create?next=%2Fpost%2F%3Fid%3D…`. The
-  `withAuth` redirect to `/dpns/register` carries it too, and the DPNS flow
-  passes it on to `/profile/create` when the user registers or skips (merely
-  dismissing the modal drops it, since `next` is then usually a page that needs
-  a username and would reopen the modal). After the profile is created (or found),
-  the user returns to `next`, or to `/feed` when it is missing or rejected.
-  `lib/auth/return-to.ts` accepts only an app-relative path starting with a
-  single `/` (no `//`, scheme, backslash, whitespace or control characters),
-  strips a leading base path (`/testing`, `/devnet`), and never returns to
-  `/profile/create`, `/dpns/register` or `/login`. A test that creates a
-  profile after being redirected should expect to land back on the page it
-  asked for, not on `/feed`.
-- It fails **open**: the lookup queries the unified and legacy profile
-  contracts directly and rejects on a query failure, so a DAPI outage means no
-  redirect rather than a spurious one.
-- The redirect lands after one or two network round trips, so a page may render
-  first. Assert on a stable URL, not on the first paint. Staying on a page does
-  not prove the gate ran; it may still be in flight.
+- `post-lifecycle.spec.ts` gives its slot a named profile that way on the
+  first run, so a later test can assert the reply's parent author by name.
+  The DM specs create one per devnet slot from Node before opening a device
+  (`ensureProfile` in `e2e/fixtures/dm.ts`).
+- The `withAuth` redirect to `/dpns/register` carries the requested route
+  (pathname plus query, without the base path) as `?next=`, e.g.
+  `/dpns/register?next=%2Fsettings%2F`. Registering or skipping returns the
+  user there; merely dismissing the modal, or a registration that failed
+  everywhere, goes to `/feed` instead, since `next` is then usually a page that
+  needs a username and would reopen the modal. `lib/auth/return-to.ts` accepts
+  only an app-relative path starting with a single `/` (no `//`, scheme,
+  backslash, whitespace or control characters), strips a leading base path
+  (`/testing`, `/devnet`), and never returns to `/dpns/register` or `/login`.
 
 ### The DPNS gate respects `optional`
 
@@ -390,11 +366,9 @@ was set, so a user object without a DPNS username got pushed to
 `/followers`, `/following`). That is fixed: the gate no longer fires when
 `options.optional` is true.
 
-Non-optional pages still redirect once the profile gate has cleared the
-identity (it has a profile, or the lookup failed open), so keep seeding
+Non-optional pages still redirect, so keep seeding
 `testing:yappr_skip_dpns = "true"` for identities without a DPNS name whenever a
-test touches one of those pages. Until the profile gate answers, those pages
-show the auth spinner.
+test touches one of those pages.
 
 ### Playwright `baseURL` drops the base path
 

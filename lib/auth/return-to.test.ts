@@ -2,9 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_RETURN_TO,
   RETURN_TO_PARAM,
+  afterRegistrationRoute,
   dpnsRegisterHref,
-  profileCreateAfterRegistrationHref,
-  profileCreateHref,
   returnToOrDefault,
   sanitizeReturnTo,
 } from './return-to'
@@ -53,10 +52,9 @@ describe('sanitizeReturnTo', () => {
 
   it('never returns to the detour routes or /login', () => {
     for (const value of [
-      '/profile/create', '/profile/create/', '/profile/create/?next=%2Ffeed',
-      '/dpns/register/', '/dpns/register?next=%2Ffeed',
+      '/dpns/register', '/dpns/register/', '/dpns/register?next=%2Ffeed',
       '/login', '/login/?x=1',
-      '/./profile/create/', '/feed/../profile/create/',
+      '/./dpns/register/', '/feed/../dpns/register/',
     ]) {
       expect(sanitizeReturnTo(value, '')).toBeNull()
     }
@@ -73,7 +71,7 @@ describe('sanitizeReturnTo', () => {
   })
 
   it('still refuses a blocked route or a protocol-relative path behind the basePath', () => {
-    expect(sanitizeReturnTo('/testing/profile/create/', '/testing')).toBeNull()
+    expect(sanitizeReturnTo('/testing/dpns/register/', '/testing')).toBeNull()
     expect(sanitizeReturnTo('/testing/login/', '/testing')).toBeNull()
     expect(sanitizeReturnTo('/testing//evil.example', '/testing')).toBeNull()
   })
@@ -85,7 +83,7 @@ describe('returnToOrDefault', () => {
     expect(returnToOrDefault(null, '')).toBe('/feed')
     expect(returnToOrDefault('//evil.example', '')).toBe('/feed')
     expect(returnToOrDefault('https://evil.example', '')).toBe('/feed')
-    expect(returnToOrDefault('/profile/create/', '')).toBe('/feed')
+    expect(returnToOrDefault('/dpns/register/', '')).toBe('/feed')
   })
 
   it('returns a safe value as is', () => {
@@ -93,56 +91,43 @@ describe('returnToOrDefault', () => {
   })
 })
 
-describe('profileCreateHref and dpnsRegisterHref', () => {
+describe('dpnsRegisterHref', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
   })
 
-  it('encode the route into the next parameter so it round-trips', () => {
+  it('encodes the route into the next parameter so it round-trips', () => {
     const route = '/post/?id=abc&reply=1#r'
-    const href = profileCreateHref(route)
-    expect(href).toBe(`/profile/create?${RETURN_TO_PARAM}=${encodeURIComponent(route)}`)
+    const href = dpnsRegisterHref(route)
+    expect(href).toBe(`/dpns/register?${RETURN_TO_PARAM}=${encodeURIComponent(route)}`)
     const next = new URL(href, 'https://app.example').searchParams.get(RETURN_TO_PARAM)
     expect(next).toBe(route)
     expect(returnToOrDefault(next, '')).toBe(route)
-
-    expect(dpnsRegisterHref('/settings/?section=keys')).toBe('/dpns/register?next=%2Fsettings%2F%3Fsection%3Dkeys')
   })
 
-  it('drop an unsafe or missing next instead of carrying it', () => {
-    expect(profileCreateHref(undefined)).toBe('/profile/create')
-    expect(profileCreateHref('//evil.example')).toBe('/profile/create')
-    expect(profileCreateHref('/profile/create/')).toBe('/profile/create')
+  it('drops an unsafe or missing next instead of carrying it', () => {
+    expect(dpnsRegisterHref(undefined)).toBe('/dpns/register')
+    expect(dpnsRegisterHref('//evil.example')).toBe('/dpns/register')
     expect(dpnsRegisterHref('/login/')).toBe('/dpns/register')
   })
 
-  it('carry next through the DPNS step unchanged', () => {
-    const route = '/user/?id=abc'
-    const dpnsNext = new URL(dpnsRegisterHref(route), 'https://app.example').searchParams.get(RETURN_TO_PARAM)
-    const profileNext = new URL(profileCreateHref(dpnsNext), 'https://app.example').searchParams.get(RETURN_TO_PARAM)
-    expect(profileNext).toBe(route)
-  })
-
-  it('respect the deployment basePath', () => {
+  it('respects the deployment basePath', () => {
     vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/testing')
-    expect(profileCreateHref('/testing/post/?id=1')).toBe('/profile/create?next=%2Fpost%2F%3Fid%3D1')
+    expect(dpnsRegisterHref('/testing/post/?id=1')).toBe('/dpns/register?next=%2Fpost%2F%3Fid%3D1')
     expect(returnToOrDefault('/testing/feed/')).toBe('/feed/')
   })
 })
 
-describe('profileCreateAfterRegistrationHref', () => {
-  it('carries next once a username was registered', () => {
-    expect(profileCreateAfterRegistrationHref(true, '/settings')).toBe('/profile/create?next=%2Fsettings')
+describe('afterRegistrationRoute', () => {
+  it('returns to next once a username was registered', () => {
+    expect(afterRegistrationRoute(true, '/settings')).toBe('/settings')
   })
 
-  it('drops next when every registration failed, so a username-gated page is not revisited', () => {
-    const href = profileCreateAfterRegistrationHref(false, '/settings')
-    expect(href).toBe('/profile/create')
-    const next = new URL(href, 'https://app.example').searchParams.get(RETURN_TO_PARAM)
-    expect(returnToOrDefault(next, '')).toBe(DEFAULT_RETURN_TO)
+  it('goes to the feed when every registration failed, so a username-gated page is not revisited', () => {
+    expect(afterRegistrationRoute(false, '/settings')).toBe(DEFAULT_RETURN_TO)
   })
 
   it('still refuses an unsafe next after a success', () => {
-    expect(profileCreateAfterRegistrationHref(true, '//evil.example')).toBe('/profile/create')
+    expect(afterRegistrationRoute(true, '//evil.example')).toBe(DEFAULT_RETURN_TO)
   })
 })
