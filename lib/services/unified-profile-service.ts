@@ -972,14 +972,13 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * v10: the user's DashPay profile in the profile shape (name, bio and image
    * avatar; null when they have none) and whether they have the Yappr
    * extension. A user with a DashPay profile keeps it and adds the extension.
-   * Null off v10.
+   * Null off v10. Read fresh rather than through the batch, which answers a
+   * failed query with null: this rejects instead, so an outage never reads as
+   * "no profile" to the login gate or /profile/create.
    */
   async getV10ProfileStatus(ownerId: string): Promise<{ dashpay: UnifiedProfileDocument | null; hasExtension: boolean } | null> {
     if (!profileExtensionSource()) return null;
-    const [base, extension] = await Promise.all([
-      this.loadRoleRecord('base', ownerId),
-      this.loadRoleRecord('extension', ownerId),
-    ]);
+    const { base, extension } = await this.getV10ProfileDocuments(ownerId);
     const dashpay = base ? mergeV10ProfileRecords(base, null) : null;
     return { dashpay: dashpay ? this.extractDocumentData(dashpay) : null, hasExtension: extension !== null };
   }

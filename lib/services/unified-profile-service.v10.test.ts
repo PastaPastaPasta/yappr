@@ -55,6 +55,17 @@ describe('v10 profile reads', () => {
     expect(await profiles.getV10ProfileStatus(ownerId)).toMatchObject({ dashpay: { displayName: 'Ava', bio: 'hi' }, hasExtension: false });
   });
 
+  it('rejects the profile status when either document query fails, rather than reporting no profile', async () => {
+    for (const failing of [YAPPR_CONTRACT_ID, DASHPAY_CONTRACT_ID]) {
+      query.mockImplementation(async ({ dataContractId }: { dataContractId: string }) => {
+        if (dataContractId === failing) throw new Error('DAPI timeout');
+        return stored[dataContractId] ?? [];
+      });
+      const profiles = await service();
+      await expect(profiles.getV10ProfileStatus(ownerId)).rejects.toThrow('DAPI timeout');
+    }
+  });
+
   it('knows a profile only once both documents are seeded, then answers from cache', async () => {
     const profiles = await service();
     const found = profiles.seedProfileDocuments([dashpay], [ownerId]);
