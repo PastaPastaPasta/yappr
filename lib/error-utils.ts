@@ -2,6 +2,7 @@
  * Utility functions for error handling and message extraction.
  */
 import { paymentIsChoosable } from '@/lib/payment-preference'
+import { yappIsLocked } from '@/lib/contract-topology'
 
 const MAX_ERROR_DEPTH = 5
 
@@ -1036,7 +1037,8 @@ export function categorizeError(error: unknown): string {
     // way to act, and a balance that went stale between planning and signing
     // lands here: offering only to sell more would hide the free option. The
     // way out is read through the topology, so the advice never names one the
-    // contract does not offer.
+    // contract does not offer. Where YAPP is locked (v10) it cannot be bought.
+    if (yappIsLocked()) return 'You don\'t have enough YAPP. Switch to paying in credits in Settings.'
     return paymentIsChoosable('post')
       ? 'You don\'t have enough YAPP. Buy more, or switch to paying in credits in Settings.'
       : 'You don\'t have enough YAPP. Buy more to keep posting.'
