@@ -417,6 +417,20 @@ function ensureProfile(bot: DmBot): Promise<void> {
   return found
 }
 
+/**
+ * The display name the app shows for `bot`: its profile's `displayName` (the
+ * DashPay profile on v10), or null without one. ensureProfile names a NEW
+ * profile after the DPNS label, but a bot provisioned by the devnet ops scripts
+ * already carries its own name ("DM E2E Bot 1"), which the app prefers to the
+ * DPNS label.
+ */
+export async function profileDisplayName(bot: DmBot): Promise<string | null> {
+  const contractId = PROFILE_IS_V10 ? DASHPAY_CONTRACT_ID : PROFILE_CONTRACT_ID
+  const [profile] = await queryDocs(contractId, 'profile', { where: [['$ownerId', '==', bot.identityId]], limit: 1 })
+  const name = profile?.displayName
+  return typeof name === 'string' && name.trim() !== '' ? name : null
+}
+
 export async function deleteDoc(bot: DmBot, contractId: string, docType: string, id: string, gone: () => Promise<boolean>): Promise<void> {
   const sdk = await nodeSdk()
   const who = await signingFor(bot)

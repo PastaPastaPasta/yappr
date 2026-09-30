@@ -48,6 +48,7 @@ import {
   ownerRoster,
   pickUser,
   poolTooSmall,
+  profileDisplayName,
   row,
   rowNamed,
   send,
@@ -164,13 +165,15 @@ test.describe('DM v5: groups', () => {
       await openGroup(d.page)
       await send(d.page, `${tag} from ${label}`)
     }
+    const senderName = (await profileDisplayName(A)) ?? username(A)
     for (const [bot, label] of all) {
       const d = await dev(browser, bot, label)
       for (const [, other] of all) {
         await expect(bubbles(d.page, `${tag} from ${other}`)).toBeVisible({ timeout: DELIVERY_MS })
       }
-      // Group threads name the sender of others' messages.
-      if (label !== 'A') await expect(thread(d.page).getByText(username(A)).first()).toBeVisible()
+      // Group threads name the sender of others' messages: by the sender's
+      // profile display name when it has one, else by its DPNS label.
+      if (label !== 'A') await expect(thread(d.page).getByText(senderName).first()).toBeVisible()
     }
   })
 
