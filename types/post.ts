@@ -1,10 +1,17 @@
 import type { TargetKind } from '@/lib/contract-topology'
+import type { OwnQuote } from '@/lib/feed/quote-reposts'
 import type { User } from './user'
 
 export interface Media {
   id: string
   type: 'image' | 'video' | 'gif'
   url: string
+  /**
+   * v10: the posted image's sha256 (`mediaHash`) and dHash
+   * (`mediaFingerprint`), so a reader can tell when the URL now serves a
+   * different picture. Absent on v2/v9 documents.
+   */
+  hashes?: { mediaHash: Uint8Array; mediaFingerprint: Uint8Array }
   thumbnail?: string
   alt?: string
   width?: number
@@ -37,8 +44,11 @@ export interface Post {
   quotes: number
   views: number
   liked?: boolean
+  /** v10: the viewer has quoted OR reposted it (one slot per author and target). */
   reposted?: boolean
   bookmarked?: boolean
+  /** v10: the viewer's own quote or bare repost of this post/reply, when `reposted`. */
+  ownQuote?: OwnQuote
   media?: Media[]
   quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
   quotedPostOwnerId?: string // ID of quoted post owner (for notification queries)
@@ -53,7 +63,8 @@ export interface Post {
    * True when the quoted post/reply is PROVEN ABSENT: a composite by-id join
    * listed its id in `missingIds`, which on a v9 contract means the contract's
    * moderators removed it (every reference at post/reply is a deletableDocument
-   * reference). The card renders the removed stub and fetches nothing.
+   * reference), and on v10 that they or its author deleted it. The card
+   * renders the removed stub and fetches nothing.
    */
   quotedPostRemoved?: boolean
   // Cross-contract embed (e.g. a Pollr poll). All three are set together.
@@ -63,6 +74,7 @@ export interface Post {
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
   repostedBy?: { id: string; username?: string; displayName?: string }  // If this is a repost, who reposted it
   repostTimestamp?: Date  // When the repost was created (for timeline sorting)
+  repostedByOthers?: number  // v10 feed: further reposters of the same target collapsed into this card
   // Reply fields (present when this Post object represents a Reply for display)
   parentId?: string        // ID of post or reply being replied to (only on replies)
   parentOwnerId?: string   // Owner of parent (only on replies)
@@ -101,7 +113,7 @@ export interface Post {
   blogContent?: unknown
   // Private feed fields (present when post is encrypted)
   encryptedContent?: Uint8Array  // XChaCha20-Poly1305 ciphertext
-  epoch?: number                 // Revocation epoch at post creation
+  keyGeneration?: number         // Revocation key generation at post creation
   nonce?: Uint8Array             // Random nonce for encryption
 }
 
@@ -124,12 +136,14 @@ export interface Reply {
   rootPostId?: string     // v9: the post the whole thread hangs off (required on chain)
   replyToReplyId?: string // v9: the reply this one is nested under, if any
   deleted?: boolean       // v9 tombstone marker (see Post.deleted)
+  /** v10: a stand-in for a reply proved deleted, holding its children's place in the thread; never a real document. */
+  deletedStub?: boolean
   sensitive?: boolean     // author-declared NSFW flag (see Post.sensitive)
   parentContent?: Post | Reply  // Lazy-loaded parent
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
   // Private feed fields (present when reply is encrypted)
   encryptedContent?: Uint8Array
-  epoch?: number
+  keyGeneration?: number
   nonce?: Uint8Array
 }
 

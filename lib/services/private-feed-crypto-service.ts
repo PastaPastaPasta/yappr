@@ -19,7 +19,7 @@ import { ecdhSharedX } from '@/lib/crypto/ecdh';
 
 // Constants from SPEC
 export const TREE_CAPACITY = 1024;
-export const MAX_EPOCH = 2000;
+export const MAX_KEY_GENERATION = 2000;
 export const LEAF_START_INDEX = 1024;
 export const ROOT_NODE_ID = 1;
 
@@ -32,6 +32,8 @@ const EMPTY_SALT = new Uint8Array(0);
 
 // HKDF info strings for key separation (SPEC §5.4)
 const INFO_NODE = 'node';
+// The CEK chain's label predates the v10 `keyGeneration` rename; changing it
+// would change every derived key, so it keeps the SPEC's name.
 const INFO_EPOCH_CHAIN = 'epoch-chain';
 const INFO_CEK = 'cek';
 const INFO_CEK_WRAP = 'cek-wrap';
@@ -65,7 +67,7 @@ export interface NodeKey {
 export interface EncryptedPost {
   ciphertext: Uint8Array;
   nonce: Uint8Array;
-  epoch: number;
+  keyGeneration: number;
 }
 
 /**
@@ -84,7 +86,7 @@ export interface RekeyPacket {
  */
 export interface GrantPayload {
   version: number;
-  grantEpoch: number;
+  grantKeyGeneration: number;
   leafIndex: number;
   pathKeys: NodeKey[];
   currentCEK: Uint8Array;
@@ -161,26 +163,26 @@ class PrivateFeedCryptoService {
   }
 
   /**
-   * Generate the full epoch chain from seed (SPEC §5.2)
+   * Generate the full CEK chain (one CEK per key generation) from seed (SPEC §5.2)
    *
-   * CEK[maxEpoch] = HKDF(epochChainRoot, "cek" || maxEpoch)
+   * CEK[maxKeyGeneration] = HKDF(cekChainRoot, "cek" || maxKeyGeneration)
    * CEK[n-1] = SHA256(CEK[n])  (hash chain, computed backwards)
    *
-   * Returns array indexed by epoch (1 to maxEpoch)
+   * Returns array indexed by key generation (1 to maxKeyGeneration)
    */
-  generateEpochChain(seed: Uint8Array, maxEpoch: number = MAX_EPOCH): Uint8Array[] {
-    const epochChainRoot = hkdf(sha256, seed, EMPTY_SALT, utf8Encode(INFO_EPOCH_CHAIN), KEY_SIZE);
+  generateCekChain(seed: Uint8Array, maxKeyGeneration: number = MAX_KEY_GENERATION): Uint8Array[] {
+    const cekChainRoot = hkdf(sha256, seed, EMPTY_SALT, utf8Encode(INFO_EPOCH_CHAIN), KEY_SIZE);
 
-    // Generate CEK[maxEpoch]
-    const cekMaxInfo = concat(utf8Encode(INFO_CEK), encodeUint32BE(maxEpoch));
-    const cekMax = hkdf(sha256, epochChainRoot, EMPTY_SALT, cekMaxInfo, KEY_SIZE);
+    // Generate CEK[maxKeyGeneration]
+    const cekMaxInfo = concat(utf8Encode(INFO_CEK), encodeUint32BE(maxKeyGeneration));
+    const cekMax = hkdf(sha256, cekChainRoot, EMPTY_SALT, cekMaxInfo, KEY_SIZE);
 
-    // Pre-allocate array (index 0 unused, epochs 1 to maxEpoch)
-    const chain: Uint8Array[] = new Array(maxEpoch + 1);
-    chain[maxEpoch] = cekMax;
+    // Pre-allocate array (index 0 unused, key generations 1 to maxKeyGeneration)
+    const chain: Uint8Array[] = new Array(maxKeyGeneration + 1);
+    chain[maxKeyGeneration] = cekMax;
 
     // Compute backwards: CEK[n-1] = SHA256(CEK[n])
-    for (let i = maxEpoch - 1; i >= 1; i--) {
+    for (let i = maxKeyGeneration - 1; i >= 1; i--) {
       chain[i] = sha256(chain[i + 1]);
     }
 
@@ -188,19 +190,19 @@ class PrivateFeedCryptoService {
   }
 
   /**
-   * Derive CEK for a specific epoch from a known CEK at higher epoch
+   * Derive CEK for a specific key generation from a known CEK at a higher key generation
    * Uses hash chain: CEK[n-1] = SHA256(CEK[n])
    */
-  deriveCEK(cek: Uint8Array, fromEpoch: number, toEpoch: number): Uint8Array {
-    if (toEpoch > fromEpoch) {
-      throw new Error('Cannot derive forward in epoch chain');
+  deriveCEK(cek: Uint8Array, fromGeneration: number, toGeneration: number): Uint8Array {
+    if (toGeneration > fromGeneration) {
+      throw new Error('Cannot derive forward in the CEK chain');
     }
-    if (toEpoch < 1) {
-      throw new Error('Epoch must be >= 1');
+    if (toGeneration < 1) {
+      throw new Error('Key generation must be >= 1');
     }
 
     let result = cek;
-    for (let i = fromEpoch; i > toEpoch; i--) {
+    for (let i = fromGeneration; i > toGeneration; i--) {
       result = sha256(result);
     }
     return result;
@@ -478,8 +480,8 @@ class PrivateFeedCryptoService {
   /**
    * Encrypt post content (SPEC §8.2)
    *
-   * postKey = HKDF(CEK[epoch], "post" || nonce || ownerId)
-   * AAD = "yappr/post/v1" || ownerId || epoch || nonce
+   * postKey = HKDF(CEK[key generation], "post" || nonce || ownerId)
+   * AAD = "yappr/post/v1" || ownerId || key generation || nonce
    * versionedContent = 0x01 || plaintext
    * ciphertext = XChaCha20-Poly1305-Encrypt(postKey, nonce, versionedContent, AAD)
    */
@@ -487,7 +489,7 @@ class PrivateFeedCryptoService {
     cek: Uint8Array,
     plaintext: string,
     ownerId: Uint8Array,
-    epoch: number
+    keyGeneration: number
   ): EncryptedPost {
     // Generate random nonce
     const nonce = randomBytes(NONCE_SIZE);
@@ -497,7 +499,7 @@ class PrivateFeedCryptoService {
     const postKey = hkdf(sha256, cek, EMPTY_SALT, postKeyInfo, KEY_SIZE);
 
     // Build AAD
-    const aad = concat(utf8Encode(AAD_POST), ownerId, encodeUint32BE(epoch), nonce);
+    const aad = concat(utf8Encode(AAD_POST), ownerId, encodeUint32BE(keyGeneration), nonce);
 
     // Version prefix + plaintext
     const versionedContent = concat(encodeUint8(PROTOCOL_VERSION), utf8Encode(plaintext));
@@ -506,7 +508,7 @@ class PrivateFeedCryptoService {
     const cipher = xchacha20poly1305(postKey, nonce, aad);
     const ciphertext = cipher.encrypt(versionedContent);
 
-    return { ciphertext, nonce, epoch };
+    return { ciphertext, nonce, keyGeneration };
   }
 
   /**
@@ -517,14 +519,14 @@ class PrivateFeedCryptoService {
     encrypted: EncryptedPost,
     ownerId: Uint8Array
   ): string {
-    const { ciphertext, nonce, epoch } = encrypted;
+    const { ciphertext, nonce, keyGeneration } = encrypted;
 
     // Derive post key
     const postKeyInfo = concat(utf8Encode(INFO_POST), nonce, ownerId);
     const postKey = hkdf(sha256, cek, EMPTY_SALT, postKeyInfo, KEY_SIZE);
 
     // Build AAD
-    const aad = concat(utf8Encode(AAD_POST), ownerId, encodeUint32BE(epoch), nonce);
+    const aad = concat(utf8Encode(AAD_POST), ownerId, encodeUint32BE(keyGeneration), nonce);
 
     // Decrypt
     const cipher = xchacha20poly1305(postKey, nonce, aad);
@@ -548,14 +550,14 @@ class PrivateFeedCryptoService {
    */
   deriveRekeyNonce(
     feedOwnerId: Uint8Array,
-    epoch: number,
+    keyGeneration: number,
     targetNodeId: number,
     targetVersion: number,
     encryptedUnderNodeId: number,
     encryptedUnderVersion: number
   ): Uint8Array {
     const info = concat(
-      encodeUint32BE(epoch),
+      encodeUint32BE(keyGeneration),
       encodeUint16BE(targetNodeId),
       encodeUint16BE(targetVersion),
       encodeUint16BE(encryptedUnderNodeId),
@@ -602,7 +604,7 @@ class PrivateFeedCryptoService {
    */
   buildRekeyAAD(
     ownerId: Uint8Array,
-    epoch: number,
+    keyGeneration: number,
     targetNodeId: number,
     targetVersion: number,
     encryptedUnderNodeId: number,
@@ -611,7 +613,7 @@ class PrivateFeedCryptoService {
     return concat(
       utf8Encode(AAD_REKEY),
       ownerId,
-      encodeUint32BE(epoch),
+      encodeUint32BE(keyGeneration),
       encodeUint16BE(targetNodeId),
       encodeUint16BE(targetVersion),
       encodeUint16BE(encryptedUnderNodeId),
@@ -626,12 +628,12 @@ class PrivateFeedCryptoService {
     rootKey: Uint8Array,
     cek: Uint8Array,
     ownerId: Uint8Array,
-    epoch: number
+    keyGeneration: number
   ): Uint8Array {
     const cekWrapKey = hkdf(sha256, rootKey, EMPTY_SALT, utf8Encode(INFO_CEK_WRAP), KEY_SIZE);
-    const cekNonceInfo = concat(utf8Encode(INFO_CEK_NONCE), encodeUint32BE(epoch));
+    const cekNonceInfo = concat(utf8Encode(INFO_CEK_NONCE), encodeUint32BE(keyGeneration));
     const cekNonce = hkdf(sha256, rootKey, EMPTY_SALT, cekNonceInfo, NONCE_SIZE);
-    const cekAAD = concat(utf8Encode(AAD_CEK), ownerId, encodeUint32BE(epoch));
+    const cekAAD = concat(utf8Encode(AAD_CEK), ownerId, encodeUint32BE(keyGeneration));
 
     const cipher = xchacha20poly1305(cekWrapKey, cekNonce, cekAAD);
     return cipher.encrypt(cek);
@@ -644,12 +646,12 @@ class PrivateFeedCryptoService {
     rootKey: Uint8Array,
     encryptedCEK: Uint8Array,
     ownerId: Uint8Array,
-    epoch: number
+    keyGeneration: number
   ): Uint8Array {
     const cekWrapKey = hkdf(sha256, rootKey, EMPTY_SALT, utf8Encode(INFO_CEK_WRAP), KEY_SIZE);
-    const cekNonceInfo = concat(utf8Encode(INFO_CEK_NONCE), encodeUint32BE(epoch));
+    const cekNonceInfo = concat(utf8Encode(INFO_CEK_NONCE), encodeUint32BE(keyGeneration));
     const cekNonce = hkdf(sha256, rootKey, EMPTY_SALT, cekNonceInfo, NONCE_SIZE);
-    const cekAAD = concat(utf8Encode(AAD_CEK), ownerId, encodeUint32BE(epoch));
+    const cekAAD = concat(utf8Encode(AAD_CEK), ownerId, encodeUint32BE(keyGeneration));
 
     const cipher = xchacha20poly1305(cekWrapKey, cekNonce, cekAAD);
     return cipher.decrypt(encryptedCEK);
@@ -665,7 +667,7 @@ class PrivateFeedCryptoService {
   encodeGrantPayload(payload: GrantPayload): Uint8Array {
     const parts: Uint8Array[] = [
       encodeUint8(payload.version),
-      encodeUint32BE(payload.grantEpoch),
+      encodeUint32BE(payload.grantKeyGeneration),
       encodeUint16BE(payload.leafIndex),
       encodeUint8(payload.pathKeys.length)
     ];
@@ -685,7 +687,7 @@ class PrivateFeedCryptoService {
    * Decode grant payload from bytes (SPEC §9.3.1)
    */
   decodeGrantPayload(data: Uint8Array): GrantPayload {
-    // Minimum header size: version(1) + grantEpoch(4) + leafIndex(2) + pathKeyCount(1) = 8 bytes
+    // Minimum header size: version(1) + grantKeyGeneration(4) + leafIndex(2) + pathKeyCount(1) = 8 bytes
     const MIN_HEADER_SIZE = 8;
     if (data.length < MIN_HEADER_SIZE) {
       throw new Error(`Invalid grant payload: expected at least ${MIN_HEADER_SIZE} bytes, got ${data.length}`);
@@ -694,7 +696,7 @@ class PrivateFeedCryptoService {
     let offset = 0;
 
     const version = data[offset++];
-    const grantEpoch = decodeUint32BE(data, offset);
+    const grantKeyGeneration = decodeUint32BE(data, offset);
     offset += 4;
     const leafIndex = decodeUint16BE(data, offset);
     offset += 2;
@@ -724,7 +726,7 @@ class PrivateFeedCryptoService {
 
     const currentCEK = data.slice(offset, offset + KEY_SIZE);
 
-    return { version, grantEpoch, leafIndex, pathKeys, currentCEK };
+    return { version, grantKeyGeneration, leafIndex, pathKeys, currentCEK };
   }
 
   /**
@@ -734,14 +736,14 @@ class PrivateFeedCryptoService {
     ownerId: Uint8Array,
     recipientId: Uint8Array,
     leafIndex: number,
-    epoch: number
+    keyGeneration: number
   ): Uint8Array {
     return concat(
       utf8Encode(AAD_GRANT),
       ownerId,
       recipientId,
       encodeUint16BE(leafIndex),
-      encodeUint32BE(epoch)
+      encodeUint32BE(keyGeneration)
     );
   }
 

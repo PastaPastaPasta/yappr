@@ -9,6 +9,7 @@ import { enrichPostsWithRepostsAndQuotes } from '@/lib/feed/enrich-posts';
 import { loadFollowingFeed, type FollowingFeedWindow } from '@/lib/feed/load-following-feed';
 import { loadForYouFeed } from '@/lib/feed/load-for-you-feed';
 import { getFeedItemTimestamp, sortFeedByTimestamp, transformRawPost } from '@/lib/feed/transform-raw-post';
+import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts';
 import { followService, postService } from '@/lib/services';
 import { queryPostsByOwnersSince, queryPostsSince } from '@/lib/services/document-service';
 
@@ -595,6 +596,11 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
     return posts.filter((post) => {
       if (enrichmentState.blockStatus.size > 0 && enrichmentState.blockStatus.get(post.author.id)) {
+        return false;
+      }
+      // v10: a bare repost is shown as its target's author's post.
+      const repostedAuthorId = repostedAuthorIdOf(post);
+      if (repostedAuthorId && enrichmentState.blockStatus.get(repostedAuthorId)) {
         return false;
       }
       return true;

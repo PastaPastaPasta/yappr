@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import bs58 from 'bs58'
 
-const query = vi.hoisted(() => vi.fn())
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }))
+const { query, count } = vi.hoisted(() => ({ query: vi.fn(), count: vi.fn() }))
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query, count } }) }))
 vi.mock('./state-transition-service', () => ({ stateTransitionService: {} }))
 vi.mock('./dpns-service', () => ({ dpnsService: {} }))
 vi.mock('./unified-profile-service', () => ({ unifiedProfileService: {} }))
@@ -10,7 +10,10 @@ import { replyService } from './reply-service'
 import { replyToPost } from './post-service'
 import { shouldGateSensitive } from '@/lib/sensitive-content'
 
-beforeEach(() => query.mockReset())
+beforeEach(() => {
+  query.mockReset()
+  count.mockReset()
+})
 
 describe('profile reply pagination', () => {
   it('reaches the oldest reply after a full page without repeating the cursor', async () => {
@@ -76,6 +79,86 @@ describe('reply notifications on v9', () => {
     ])
     expect(replies.map((r) => r.id).sort()).toEqual(['direct-mine', 'nested'])
     expect(getMany).toHaveBeenCalledWith([ROOT_MINE, ROOT_THEIRS])
+    vi.unstubAllEnvs()
+  })
+})
+
+describe('v10 repliesOf reads', () => {
+  const idOf = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
+  const hexOf = (id: string) => Array.from(bs58.decode(id), (byte) => byte.toString(16).padStart(2, '0')).join('')
+  const [ROOT_A, ROOT_B, R1, R2, R3, LOOSE] = [1, 2, 3, 4, 5, 6].map(idOf)
+
+  async function v10Replies() {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    return (await import('./reply-service')).replyService
+  }
+
+  it('pins every per-reply child count to the reply\'s root, one grouped query per root', async () => {
+    const replies = await v10Replies()
+    count.mockImplementation(async ({ where }: { where: unknown[][] }) => where[0][2] === ROOT_A
+      ? new Map([[hexOf(R1), 2n]])
+      : new Map([[hexOf(R3), 5n]]))
+    // A reply with no known root is read to learn it; unreadable, it counts 0.
+    const get = vi.spyOn(replies, 'get').mockResolvedValue(null)
+
+    const counts = await replies.countRepliesForPosts([R1, R2, R3, LOOSE], 'reply', new Map([[R1, ROOT_A], [R2, ROOT_A], [R3, ROOT_B]]))
+
+    expect(Object.fromEntries(counts)).toEqual({ [R1]: 2, [R2]: 0, [R3]: 5, [LOOSE]: 0 })
+    expect(count.mock.calls.map(([q]) => [q.where, q.groupBy])).toEqual([
+      [[['rootPostId', '==', ROOT_A], ['replyToReplyId', 'in', [R1, R2]]], ['replyToReplyId']],
+      [[['rootPostId', '==', ROOT_B], ['replyToReplyId', 'in', [R3]]], ['replyToReplyId']],
+    ])
+    expect(get).toHaveBeenCalledWith(LOOSE)
+    vi.unstubAllEnvs()
+  })
+
+  it('counts a post\'s whole thread by root alone and a reply\'s children under its root', async () => {
+    const replies = await v10Replies()
+    count.mockResolvedValue(new Map([['', 3n]]))
+    expect(await replies.countReplies(ROOT_A, 'post')).toBe(3)
+    expect(await replies.countReplies(R1, 'reply', ROOT_A)).toBe(3)
+    expect(count.mock.calls.map(([q]) => q.where)).toEqual([
+      [['rootPostId', '==', ROOT_A]],
+      [['rootPostId', '==', ROOT_A], ['replyToReplyId', '==', R1]],
+    ])
+    vi.unstubAllEnvs()
+  })
+
+  it('lists the whole thread grouped by parent, and a reply\'s children pinned to the root', async () => {
+    const replies = await v10Replies()
+    query.mockResolvedValue([])
+    await replies.getReplies(ROOT_A, { skipEnrichment: true })
+    expect(query.mock.calls[0][0]).toMatchObject({
+      where: [['rootPostId', '==', ROOT_A]],
+      orderBy: [['replyToReplyId', 'asc'], ['$createdAt', 'asc']],
+      limit: 50,
+    })
+
+    await replies.getNestedReplies([R1], { rootPostId: ROOT_A, skipEnrichment: true })
+    expect(query.mock.calls[1][0]).toMatchObject({
+      where: [['rootPostId', '==', ROOT_A], ['replyToReplyId', '==', R1]],
+      orderBy: [['$createdAt', 'asc']],
+    })
+    // Without the root there is no servable shape: nothing is queried.
+    expect(await replies.getNestedReplies([R1], { skipEnrichment: true })).toEqual(new Map([[R1, []]]))
+    expect(query).toHaveBeenCalledTimes(2)
+    vi.unstubAllEnvs()
+  })
+
+  it('keeps v9\'s unpinned per-reply counts and rootAndTime listing', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9')
+    const { replyService: v9Replies } = await import('./reply-service')
+    count.mockResolvedValue(new Map())
+    query.mockResolvedValue([])
+    await v9Replies.countRepliesForPosts([R1], 'reply', new Map([[R1, ROOT_A]]))
+    expect(count.mock.calls[0][0].where).toEqual([['replyToReplyId', 'in', [R1]]])
+    await v9Replies.getReplies(ROOT_A, { skipEnrichment: true })
+    expect(query.mock.calls[0][0]).toMatchObject({
+      where: [['rootPostId', '==', ROOT_A], ['$createdAt', '>', 0]],
+      orderBy: [['rootPostId', 'asc'], ['$createdAt', 'asc']],
+    })
     vi.unstubAllEnvs()
   })
 })

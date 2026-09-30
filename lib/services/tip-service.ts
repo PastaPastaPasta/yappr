@@ -7,6 +7,7 @@ import { KeyPurpose } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { CREDITS_PER_DASH, keyNetwork, MIN_YAPP_TIP } from '@/lib/constants'
 import { encodeTipNote, type TipTargetKind } from '@/lib/tip-note'
+import { yappIsLocked } from '@/lib/contract-topology'
 import { isAlreadyExistsError, isNonFatalWaitError, isTimeoutError } from '@/lib/error-utils'
 import { tokenService } from './token-service'
 import { tipHistoryService, type SentTipMatch } from './tip-history-service'
@@ -364,8 +365,15 @@ class TipService {
     return trimmed ? trimmed : undefined;
   }
 
-  /** Shared pre-flight for both YAPP tip paths (local signing and wallet signing). */
+  /**
+   * Shared pre-flight for both YAPP tip paths (local signing and wallet
+   * signing). Where YAPP is locked (v10) nothing can be transferred, so every
+   * YAPP tip is refused here and tips go out as credit transfers.
+   */
   validateYappTip(senderId: string, recipientId: string, amount: bigint): TipResult | null {
+    if (yappIsLocked()) {
+      return { success: false, error: 'YAPP cannot be transferred on this network. Tip in DASH instead.', errorCode: 'NOT_AUTHORIZED' };
+    }
     if (senderId === recipientId) {
       return { success: false, error: 'Cannot tip yourself', errorCode: 'SELF_TIP' };
     }

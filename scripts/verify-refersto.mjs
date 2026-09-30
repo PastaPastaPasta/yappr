@@ -3,7 +3,7 @@
  *
  * `refersTo` makes consensus check that a referenced entity exists before a
  * document write is accepted. It needs protocol v14, so this runs on a devnet
- * (moutai by default) — testnet is still on v13 and would reject the contract.
+ * (the one `.env.devnet` names) — testnet is still on v13 and would reject the contract.
  *
  * Two contracts are exercised:
  *   - the yappr social **v3-draft** (`scripts/register-social-v3-draft.mjs`):
@@ -35,8 +35,8 @@
  *
  * ## Environment
  *
- *   DEVNET_NAME           devnet name           (default: moutai)
- *   DAPI_ADDRESSES        comma-separated DAPI  (default: https://seed-{1..5}.<devnet>.networks.dash.org:1443)
+ *   DEVNET_NAME           devnet name           (else NEXT_PUBLIC_DEVNET_NAME in .env.devnet)
+ *   DAPI_ADDRESSES        comma-separated DAPI  (else NEXT_PUBLIC_DAPI_ADDRESSES in .env.devnet)
  *   DEVNET_IDENTITY_IDS   comma-separated devnet identity ids for the bot pool
  *                         (falls back to E2E_IDENTITY_IDS / .env.testing)
  *   E2E_SEED_PHRASE       the BIP39 seed the bot keys derive from
@@ -60,7 +60,6 @@
 import {
   DataContract,
   Document,
-  EvoSDK,
   IdentitySigner,
   PlatformVersion,
   ensureInitialized,
@@ -69,10 +68,9 @@ import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
 import { createdId, deriveDocumentIdBytes, findRecentByValues } from './seed/seed-lib.mjs';
+import { devnetConfig, devnetSdk as buildDevnetSdk } from './sdk-env.mjs';
 
 const SDK_TIMEOUT_MS = 30000;
-const DEFAULT_DEVNET_NAME = 'moutai';
-const DEFAULT_SEED_COUNT = 5;
 /** Reads settle behind the write quorum; give the chain a beat before asserting. */
 const SETTLE_MS = 3000;
 /** How many settle intervals to wait before calling a write absent (~9s). */
@@ -80,38 +78,11 @@ const POLL_ATTEMPTS = 3;
 /** Placeholder ids for `--dry-run`, where nothing is fetched or signed. */
 const DRY_RUN_ID = '11111111111111111111111111111111';
 
-// ---- Devnet SDK (inline on purpose: this script owns its network config) ----
+// ---- Devnet SDK: sdk-env's config (env, then `.env.devnet`) ----------------
 
-/** `seed-1..5.<devnet>.networks.dash.org:1443` — the standard devnet seed layout. */
-function defaultDevnetAddresses(devnetName) {
-  return Array.from(
-    { length: DEFAULT_SEED_COUNT },
-    (_, i) => `https://seed-${i + 1}.${devnetName}.networks.dash.org:1443`
-  );
-}
-
-/** Reads `DEVNET_NAME` / `DAPI_ADDRESSES` and builds a non-trusted devnet SDK. */
 function devnetSdk() {
-  const devnetName = process.env.DEVNET_NAME?.trim() || DEFAULT_DEVNET_NAME;
-  const configured = (process.env.DAPI_ADDRESSES ?? '')
-    .split(',')
-    .map((address) => address.trim())
-    .filter(Boolean)
-    .map((address) => (address.includes('://') ? address : `https://${address}`));
-  const addresses = configured.length > 0 ? configured : defaultDevnetAddresses(devnetName);
-  const sdk = new EvoSDK({
-    network: 'devnet',
-    devnetName,
-    addresses,
-    // trusted mode is mandatory: wasm-sdk panics on `proofs: false` ("queries
-    // without proofs are not supported yet") and refuses non-trusted proofs.
-    // The trusted context prefetches quorum keys from
-    // https://quorums.<devnetName>.networks.dash.org (or QUORUM_URL).
-    trusted: true,
-    ...(process.env.QUORUM_URL ? { quorumUrl: process.env.QUORUM_URL } : {}),
-    settings: { timeoutMs: SDK_TIMEOUT_MS },
-  });
-  return { sdk, devnetName, addresses };
+  const config = devnetConfig();
+  return { sdk: buildDevnetSdk({ timeoutMs: SDK_TIMEOUT_MS, config }), devnetName: config.devnetName, addresses: config.addresses };
 }
 
 // ---- The scratch lab contract ----------------------------------------------

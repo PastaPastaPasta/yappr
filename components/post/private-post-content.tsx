@@ -238,8 +238,8 @@ export function PrivatePostContent({
   // Attempt follower key recovery using encryption key
   const attemptRecovery = useCallback(async () => {
     if (!user) return
-    const { encryptedContent, epoch, nonce } = post
-    if (!encryptedContent || epoch == null || !nonce) {
+    const { encryptedContent, keyGeneration, nonce } = post
+    if (!encryptedContent || keyGeneration == null || !nonce) {
       setState({ status: 'error', message: 'Invalid private post data' })
       return
     }
@@ -267,7 +267,7 @@ export function PrivatePostContent({
         // Recovery successful - now try to decrypt the post
         const decryptResult = await privateFeedFollowerService.decryptPost({
           encryptedContent,
-          epoch,
+          keyGeneration,
           nonce,
           $ownerId: encryptionSourceOwnerId,
         }, user.identityId)
@@ -311,8 +311,8 @@ export function PrivatePostContent({
 
   const attemptDecryption = useCallback(async () => {
     // Safety check: ensure this is a private post
-    const { encryptedContent, epoch, nonce } = post
-    if (!encryptedContent || epoch == null || !nonce) {
+    const { encryptedContent, keyGeneration, nonce } = post
+    if (!encryptedContent || keyGeneration == null || !nonce) {
       setState({ status: 'error', message: 'Invalid private post data' })
       return
     }
@@ -374,20 +374,20 @@ export function PrivatePostContent({
         }
 
         // Owner decrypts using their own keys
-        const { privateFeedCryptoService, MAX_EPOCH } = await import('@/lib/services')
+        const { privateFeedCryptoService, MAX_KEY_GENERATION } = await import('@/lib/services')
 
-        // Get CEK for the post's epoch
+        // Get CEK for the post's key generation
         const cached = privateFeedKeyStore.getCachedCEK(encryptionSourceOwnerId)
         let cek: Uint8Array
 
-        if (cached && cached.epoch === epoch) {
+        if (cached && cached.keyGeneration === keyGeneration) {
           cek = cached.cek
-        } else if (cached && cached.epoch > epoch) {
-          cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, epoch)
+        } else if (cached && cached.keyGeneration > keyGeneration) {
+          cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, keyGeneration)
         } else {
           // Generate from chain
-          const chain = privateFeedCryptoService.generateEpochChain(feedSeed, MAX_EPOCH)
-          cek = chain[epoch]
+          const chain = privateFeedCryptoService.generateCekChain(feedSeed, MAX_KEY_GENERATION)
+          cek = chain[keyGeneration]
         }
 
         // Convert encryption source owner ID to bytes for AAD
@@ -398,7 +398,7 @@ export function PrivatePostContent({
           {
             ciphertext: encryptedContent,
             nonce,
-            epoch,
+            keyGeneration,
           },
           ownerIdBytes
         )
@@ -458,7 +458,7 @@ export function PrivatePostContent({
       // Attempt to decrypt using encryption source owner's keys
       const result = await privateFeedFollowerService.decryptPost({
         encryptedContent,
-        epoch,
+        keyGeneration,
         nonce,
         $ownerId: encryptionSourceOwnerId,
       }, user.identityId)
@@ -792,5 +792,5 @@ export function PrivatePostContent({
  * Check if a post is a private post (has encrypted content)
  */
 export function isPrivatePost(post: Post): boolean {
-  return !!(post.encryptedContent && post.epoch !== undefined && post.nonce)
+  return !!(post.encryptedContent && post.keyGeneration !== undefined && post.nonce)
 }

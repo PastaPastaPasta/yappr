@@ -2,6 +2,7 @@
  * Utility functions for error handling and message extraction.
  */
 import { paymentIsChoosable } from '@/lib/payment-preference'
+import { authorDeletesLeaveHoles, yappIsLocked } from '@/lib/contract-topology'
 
 const MAX_ERROR_DEPTH = 5
 
@@ -209,20 +210,6 @@ export function isNonFatalWaitError(error: unknown): boolean {
 }
 
 /**
- * Checks if an error is the SDK refusing an affected-state proof on a strict
- * wait: "received a verified VerifiedDocuments snapshot for this transition
- * family; use the *_affected_state wait APIs…" (evo-sdk 4.2.0-beta.5). It is
- * thrown AFTER the node answered with a verified snapshot, and the indexOnly
- * deletes that raise it (`documents.delete` has no affected-state variant)
- * usually landed — but a snapshot is not proof that this transition executed,
- * so it means "outcome unproven": the caller must read the state back.
- */
-export function isAffectedStateSnapshotError(error: unknown): boolean {
-  const msg = extractErrorMessage(error).toLowerCase()
-  return msg.includes('affected_state wait api') || /verified \w+ snapshot/.test(msg)
-}
-
-/**
  * Checks if an error indicates the signer lacks enough YAPP tokens to pay a
  * document's tokenCost (post/reply/like/repost). When true, the UI should
  * prompt the user to buy YAPP rather than show a generic failure.
@@ -266,7 +253,8 @@ export function isFrozenBalanceError(error: unknown): boolean {
  * document points at does not exist (or is not usable as a reference target).
  *
  * This is the `refersTo` family introduced with protocol v14. On the yappr v9
- * contract `follow.followingId` and `postMention.mentionedUserId` declare
+ * contract `follow.followingId` and `postMention.mentionedUserId` (v10:
+ * `post.mentionedUserId`) declare
  * `refersTo: { type: 'identity' }`, so following or mentioning an identity that
  * is not on chain is rejected by consensus instead of creating a dangling
  * document. The rejection is permanent: retrying cannot make the target appear.
@@ -290,7 +278,7 @@ export function isReferenceNotFoundError(error: unknown): boolean {
   // "referenced contract <c> for path <p> does not meet ...") shares the
   // "referenced ... for path" phrasing below; it is not a dead target, and
   // treating it as one would have tombstone repair drop a live reference.
-  if (isReferenceRequirementError(error)) return false
+  if (isReferenceRequirementError(error) || isReferencedDocumentTooYoungError(error)) return false
   const msg = extractErrorMessage(error).toLowerCase()
   return (
     msg.includes('referencedentitynotfound') ||
@@ -333,9 +321,11 @@ export function referencedPathFromError(error: unknown): string | null {
 }
 
 /**
- * Checks whether Platform refused a write because a `propertyAgreement` pair
- * disagreed with the referenced document (ReferencedDocumentPropertyMismatch,
- * state code 40127).
+ * Checks whether Platform refused a write because a `refersTo` agreement pair
+ * (`where` from 4.2.0-beta.7, `propertyAgreement` before it) disagreed with the
+ * referenced document (ReferencedDocumentPropertyMismatch, state code 40127).
+ * Only the trailing "(where on <path>)" / "(propertyAgreement on <path>)"
+ * differs between the two, so the prose match below covers both.
  *
  * Two shapes reach here and they mean different things to a user:
  *
@@ -362,12 +352,13 @@ export function isPropertyAgreementError(error: unknown): boolean {
 
 /**
  * Checks whether the 40127 above is a WRITER GATE rather than a value
- * disagreement: the contract declares `propertyAgreement: {"$ownerId": …}` on
- * the reference, so only one identity may write the document at all.
+ * disagreement: the contract binds the writer's `$ownerId` to a property of the
+ * referenced document (`where: {"<its>": "$ownerId"}` from 4.2.0-beta.7), so
+ * only one identity may write the document at all.
  *
  * Drive names the referring property in the message — "the document's $ownerId
- * does not agree with the referenced document's sellerId (propertyAgreement on
- * orderId)" — and `$ownerId` on the LEFT is what makes it a gate. Yappr uses
+ * does not agree with the referenced document's sellerId (where on orderId)" —
+ * and `$ownerId` on the LEFT is what makes it a gate. Yappr uses
  * these for "only the store owner lists items in a store", "only the seller
  * posts order status updates" and "only the buyer reviews their own order".
  */
@@ -688,10 +679,14 @@ function isPropertyNotDistinctError(error: unknown): boolean {
  *   <c> for path <p> does not meet the reference's requirement <f> <v>";
  * - **40136** `ReferencedIdentityKeyRequirementNotMetError` — "referenced public
  *   key <k> of identity <i> for <t>.<p> has <f> <v>, the reference requires <w>";
- * - **40137** `ReferencedDocumentLookupInvalidError` — "invalid refersTo lookup
- *   through index <i> declared at <p>: ...";
- * - **40138** `ReferencedDocumentListInvalidError` — "invalid refersTo
- *   listElement into inList <l> declared at <p>: ...".
+ * - **40137** `ReferencedDocumentLookupInvalidError` — "invalid refersTo findBy
+ *   (<keys>) declared at <p>: ..." from 4.2.0-beta.7; "invalid refersTo lookup
+ *   through index <i> declared at <p>: ..." before it;
+ * - **40138** `ReferencedDocumentListInvalidError` — "invalid refersTo inList
+ *   <l> declared at <p>: ..." from 4.2.0-beta.7; "invalid refersTo listElement
+ *   into inList <l> ..." before it;
+ *
+ * Both phrasings are matched: testnet nodes still render the older ones.
  */
 export function isReferenceRequirementError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
@@ -699,8 +694,27 @@ export function isReferenceRequirementError(error: unknown): boolean {
     /referencedcontractrequirementnotmet|referencedidentitykeyrequirementnotmet|referenceddocumentlookupinvalid|referenceddocumentlistinvalid/i.test(msg) ||
     /referenced contract .* does not meet the reference's requirement/i.test(msg) ||
     /referenced public key .* the reference requires/i.test(msg) ||
-    /invalid refersto (lookup through index|listelement into inlist)/i.test(msg) ||
+    /invalid refersto (findby \(|inlist |lookup through index|listelement into inlist)/i.test(msg) ||
     hasConsensusCode(error, [40135, 40136, 40137, 40138])
+  )
+}
+
+/**
+ * **40142** `ReferencedDocumentRequirementNotMetError` (4.2.0-beta.7, #5041):
+ * "referenced document <d> for path <p> does not meet the reference's
+ * requirement <f> <v>". Today the only requirement is `minimumAgeBlocks`: the
+ * commitment a create reveals is too young. That is transient, since a few
+ * blocks later the same write passes, so it is kept out of the permanent
+ * {@link isReferenceRequirementError}. It shares the "referenced … for path"
+ * phrasing of a dead target, so {@link isReferenceNotFoundError} excludes it.
+ * No Yappr contract declares such a reference yet.
+ */
+function isReferencedDocumentTooYoungError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /referenceddocumentrequirementnotmet/i.test(msg) ||
+    /referenced document .* does not meet the reference's requirement/i.test(msg) ||
+    hasConsensusCode(error, [40142])
   )
 }
 
@@ -896,6 +910,9 @@ export type ModerationErrorKind =
   | 'INVALID_REASON_DOCUMENTS'
   | 'CHARTER_INVALID'
   | 'CONTEST_NOT_JOINABLE'
+  | 'FIELD_NOT_CHANGEABLE'
+  | 'MODERATOR_FIELD'
+  | 'NOTHING_TO_CHANGE'
 
 /** Each kind: its consensus codes and the prose Drive renders (rs-dpp `#[error]`, 4.2.0-beta.4). */
 const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly number[], RegExp]> = [
@@ -926,6 +943,13 @@ const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly n
   ['INVALID_REASON_DOCUMENTS', [10904], /invalidcontractmoderationreasondocuments|the documents a contract moderation reason cites are invalid/i],
   ['CHARTER_INVALID', [11000, 11001], /moderationchartermalformedfield|moderationcharterrewardsplitnotonehundred|of the moderation charter is malformed|reward split of .* it must sum to 100%/i],
   ['CONTEST_NOT_JOINABLE', [40111], /documentcontestnotjoinable|document contest for vote_poll .* is not joinable/i],
+  // 4.2.0-beta.7 `moderatorAbilities.changeFields` (platform#5158):
+  // 41123 a field the type does not keep for its moderators;
+  ['FIELD_NOT_CHANGEABLE', [41123], /documentfieldnotchangeablebymoderators|of documents of type .* can not be changed by moderators/i],
+  // 41124 a non-moderator writing a moderator field (a reporter pre-setting `status`);
+  ['MODERATOR_FIELD', [41124], /documentmoderatorfieldnotwritable|only the moderators of contract .* write field/i],
+  // 10905 a change naming no field, a `$` property, or only values already held.
+  ['NOTHING_TO_CHANGE', [10905], /invalidcontractmoderationdocumentfields|the fields a moderator's document change sets are invalid/i],
 ]
 
 export function classifyModerationError(error: unknown): ModerationErrorKind | null {
@@ -934,6 +958,15 @@ export function classifyModerationError(error: unknown): ModerationErrorKind | n
     if (prose.test(msg) || hasConsensusCode(error, codes)) return kind
   }
   return null
+}
+
+/**
+ * 40105 (DuplicateUniqueIndexError): a unique index already holds this value.
+ * On v10 that is a second quote or repost of the same target by one author
+ * (`post.ownerAndQuotedPost`/`ownerAndQuotedReply`).
+ */
+export function isDuplicateUniqueIndexError(error: unknown): boolean {
+  return classifyModerationError(error) === 'UNIQUE_VALUE_TAKEN'
 }
 
 /**
@@ -991,6 +1024,9 @@ export function categorizeError(error: unknown): string {
   }
   if (isOncePerIdentityAlreadyClaimedError(error)) {
     return 'You\'ve already claimed this — it can only be claimed once per account.'
+  }
+  if (isReferencedDocumentTooYoungError(error)) {
+    return 'What this depends on was only just published. Wait a minute and try again.'
   }
   if (isGasSponsorShortError(error)) {
     // Only reachable for a transition that INSISTS on the contract owner; Yappr
@@ -1054,10 +1090,12 @@ export function categorizeError(error: unknown): string {
     // A document target names its type: "referenced deletable document (own
     // contract, document type post) <id> not found for path quotedPostId".
     // Posts and replies are permanent for their owners on v9, so a missing one
-    // was taken down by the contract's moderators.
+    // was taken down by the contract's moderators. On v10 authors delete too.
     const documentType = /\breferenced \w+ document \([^)]*\bdocument type (\w+)/i.exec(extractErrorMessage(error))?.[1]
     if (documentType === 'post' || documentType === 'reply') {
-      return `That ${documentType} was removed by the moderators, so this action can't be completed.`
+      return authorDeletesLeaveHoles()
+        ? `That ${documentType} was deleted, so this action can't be completed.`
+        : `That ${documentType} was removed by the moderators, so this action can't be completed.`
     }
     if (documentType) return 'What this points to no longer exists on Dash Platform, so this action can\'t be completed.'
     return 'That account no longer exists on Dash Platform, so this action can\'t be completed.'
@@ -1084,7 +1122,8 @@ export function categorizeError(error: unknown): string {
     // way to act, and a balance that went stale between planning and signing
     // lands here: offering only to sell more would hide the free option. The
     // way out is read through the topology, so the advice never names one the
-    // contract does not offer.
+    // contract does not offer. Where YAPP is locked (v10) it cannot be bought.
+    if (yappIsLocked()) return 'You don\'t have enough YAPP. Switch to paying in credits in Settings.'
     return paymentIsChoosable('post')
       ? 'You don\'t have enough YAPP. Buy more, or switch to paying in credits in Settings.'
       : 'You don\'t have enough YAPP. Buy more to keep posting.'

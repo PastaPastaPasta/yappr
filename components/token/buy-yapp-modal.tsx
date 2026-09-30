@@ -17,6 +17,7 @@ import { buildUnsignedDirectPurchaseTransition } from '@/lib/services/token-purc
 import { identityService } from '@/lib/services/identity-service'
 import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
 import { YAPP_TOKEN_COSTS, getConfiguredNetwork } from '@/lib/constants'
+import { repostsAreQuotes } from '@/lib/contract-topology'
 
 // Preset purchase amounts in whole YAPP (must be >= the on-chain minimum of 100).
 const PRESETS = [100, 500, 1000, 5000]
@@ -325,7 +326,8 @@ export function BuyYappModal() {
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600 dark:text-gray-400">Repost</span>
-                              <span className="font-medium">{YAPP_TOKEN_COSTS.repost} YAPP</span>
+                              {/* v10: a repost is a (content-less quote) post, priced as one. */}
+                              <span className="font-medium">{repostsAreQuotes() ? YAPP_TOKEN_COSTS.post : YAPP_TOKEN_COSTS.repost} YAPP</span>
                             </div>
                             <p className="text-xs text-gray-500 pt-1">
                               Costs are fixed in the contract and can&apos;t change under you. Following, bookmarking, and browsing are free.

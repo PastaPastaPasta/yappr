@@ -11,10 +11,28 @@
 
 import type { Post } from '@/lib/types';
 import { postService } from '@/lib/services/post-service';
-import { hasFlatThreads } from '@/lib/contract-topology';
+import { hasFlatThreads, authorDeletesLeaveHoles, type TargetKind } from '@/lib/contract-topology';
+import { provenAbsent } from './prove-absent';
 
 /** Which doctype a parent id names — `unknown` only on v2's polymorphic field. */
 type ParentTarget = { id: string; where: 'post' | 'reply' | 'unknown' };
+
+/** A parent the chain proved absent: deleted by its author (v10) or removed by the moderators. */
+export interface MissingReplyParent {
+  id: string;
+  kind: TargetKind;
+}
+
+export interface ReplyParents {
+  /** The resolved parent of each reply, keyed by the reply's own id. */
+  parents: Map<string, Post>;
+  /**
+   * Parents proved absent, keyed by the reply's own id. Only where a reply
+   * outlives its author-deleted parent (`authorDeletesLeaveHoles()`, v10);
+   * always empty on v2 and v9.
+   */
+  missing: Map<string, MissingReplyParent>;
+}
 
 /**
  * The document a reply is a direct answer to. On v9 that is the reply it nests
@@ -31,16 +49,19 @@ function parentTargetOf(reply: Post): ParentTarget | null {
 }
 
 /**
- * Resolve the parent of every reply in `replies`, keyed by the reply's own id.
+ * Resolve the parent of every reply in `replies`.
  *
- * Replies whose parent cannot be found are simply absent from the result. A
- * failed lookup rejects; the caller logs it and leaves those cards rendering
- * without their context rather than failing the whole tab.
+ * A parent that cannot be found is absent from `parents`; where replies can
+ * outlive their parents and the absence is proved, it is listed in `missing`
+ * so the card can say the parent was deleted instead of silently losing its
+ * context. A failed lookup rejects; the caller logs it and leaves those cards
+ * rendering without their context rather than failing the whole tab.
  */
-export async function fetchReplyParents(replies: Post[]): Promise<Map<string, Post>> {
+export async function fetchReplyParents(replies: Post[]): Promise<ReplyParents> {
   const parents = new Map<string, Post>();
+  const missing = new Map<string, MissingReplyParent>();
 
-  const parentIdByReply = new Map<string, string>();
+  const targetByReply = new Map<string, ParentTarget>();
   const ids: Record<ParentTarget['where'], Set<string>> = {
     post: new Set(),
     reply: new Set(),
@@ -50,10 +71,10 @@ export async function fetchReplyParents(replies: Post[]): Promise<Map<string, Po
   replies.forEach((reply) => {
     const target = parentTargetOf(reply);
     if (!target) return;
-    parentIdByReply.set(reply.id, target.id);
+    targetByReply.set(reply.id, target);
     ids[target.where].add(target.id);
   });
-  if (parentIdByReply.size === 0) return parents;
+  if (targetByReply.size === 0) return { parents, missing };
 
   const resolved = hasFlatThreads()
     ? await postService.fetchQuotedTargets({
@@ -64,10 +85,22 @@ export async function fetchReplyParents(replies: Post[]): Promise<Map<string, Po
     : await postService.fetchPostsOrReplies(Array.from(ids.unknown));
 
   const byId = new Map(resolved.map((post) => [post.id, post]));
-  parentIdByReply.forEach((parentId, replyId) => {
-    const found = byId.get(parentId);
+  targetByReply.forEach((target, replyId) => {
+    const found = byId.get(target.id);
     if (found) parents.set(replyId, found);
   });
 
-  return parents;
+  if (authorDeletesLeaveHoles()) {
+    const unresolved = (where: TargetKind) => Array.from(ids[where]).filter((id) => !byId.has(id));
+    const [absentPosts, absentReplies] = await Promise.all([
+      provenAbsent('post', unresolved('post')),
+      provenAbsent('reply', unresolved('reply')),
+    ]);
+    targetByReply.forEach((target, replyId) => {
+      if (target.where === 'post' && absentPosts.has(target.id)) missing.set(replyId, { id: target.id, kind: 'post' });
+      if (target.where === 'reply' && absentReplies.has(target.id)) missing.set(replyId, { id: target.id, kind: 'reply' });
+    });
+  }
+
+  return { parents, missing };
 }

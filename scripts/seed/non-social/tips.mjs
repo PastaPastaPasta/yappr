@@ -5,12 +5,16 @@
  * on the recipient's `to` index, never by trusting the SDK's throw/no-throw. Senders are seed-ledger personas holding
  * YAPP (transfers need their CRITICAL auth key), never spent below MIN_SENDER_BALANCE, and never a recipient — the
  * app refuses self-tips.
+ *
+ * Social v10 (4.2.0-beta.7) starts YAPP paused with no way to unpause it, so no transfer can land and there is nothing
+ * to seed: the run refuses on a v10 contract before signing anything (tips become credit tips, a client follow-up).
+ * The plan, --dry-run and --self-test still work, for the v9 devnet and review.
  */
 import bs58 from 'bs58';
 import { normalizeId, reportSelfTest } from '../../battery-lib.mjs';
 import { POST_LINK_BASE, WAIT_MAYBE_LANDED, YAPP_TOKEN_POSITION, describeErr, profileContractId, readback, sleep } from '../seed-lib.mjs';
 import {
-  actorsFor, counts, ensureTokens, fakeId, loadCheckpoint, network, pick, printTable, rngFrom, saveCheckpoint,
+  actorsFor, counts, ensureTokens, envValue, fakeId, loadCheckpoint, network, pick, printTable, rngFrom, saveCheckpoint,
   shuffled, weightedPick,
 } from '../feature-seed-lib.mjs';
 
@@ -185,6 +189,9 @@ const planToJson = (tips) => tips.map((tip) => ({ ...tip, amount: tip.amount.toS
 const planFromJson = (tips) => tips.map((tip) => ({ ...tip, amount: BigInt(tip.amount) }));
 
 async function run({ args, handle, battery, socialId }) {
+  if (envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') === 'v10') {
+    throw new Error('tips: social v10 pauses YAPP for good, so a YAPP tip (a token transfer) is refused 40711. Nothing to seed; tips on v10 are credit tips (client follow-up).');
+  }
   /** One page of `transfer` rows off a token-history index, newest first — the shape tip-history-service.ts reads with. */
   const transfers = async (tokenId, where, orderBy) => (await battery.queryDocs('transfer', {
     where: [['tokenId', '==', tokenId], ...where], orderBy: [['tokenId', 'asc'], ...orderBy, ['$createdAt', 'desc']], limit: TIP_PAGE_LIMIT,
@@ -213,7 +220,8 @@ async function run({ args, handle, battery, socialId }) {
   if (!state.plan) {
     // No "posts per author" aggregate exists, so walk the languageTimeline index
     // forward in time — the only index that pages the whole corpus — and tally
-    // owners. Ties break on the identity id, so the ranking is stable.
+    // owners. Ties break on the identity id, so the ranking is stable. (v9 only:
+    // run() refuses v10 above.)
     const tally = new Map();
     let cursor = 0;
     for (let page = 0; page < args.scanPages; page++) {
@@ -237,7 +245,7 @@ async function run({ args, handle, battery, socialId }) {
         where: [['$ownerId', '==', id], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
       }, socialId).then((rows) => rows.map((row) => normalizeId(row.$id)));
       const [posts, replies] = await Promise.all([byOwner('post'), byOwner('reply')]);
-      if (posts.length === 0) { console.log(`  skipping ${id} — no posts on the byOwner index`); continue; }
+      if (posts.length === 0) { console.log(`  skipping ${id} — no posts on ownerAndTime`); continue; }
       authors.push({ id, label: profile?.displayName || id.slice(0, 8), posts, replies });
     }
 

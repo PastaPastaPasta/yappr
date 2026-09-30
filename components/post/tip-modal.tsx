@@ -19,7 +19,7 @@ import { buildUnsignedYappTipTransition } from '@/lib/services/token-transfer-bu
 import { identityService } from '@/lib/services/identity-service'
 import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
-import { targetKindOf } from '@/lib/contract-topology'
+import { targetKindOf, yappIsLocked } from '@/lib/contract-topology'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import type { ParsedPaymentUri } from '@/lib/types'
@@ -53,6 +53,14 @@ type ModalState =
   | 'error'
 type PaymentTab = 'yapp' | 'credits' | 'crypto'
 type KeySource = 'prefilled' | 'manual' | null
+
+/**
+ * The tab the modal opens on: YAPP, the provable path, wherever YAPP can move.
+ * Where it is locked (v10) there is no YAPP tab at all; tips are credit tips.
+ */
+function defaultTab(): PaymentTab {
+  return yappIsLocked() ? 'credits' : 'yapp'
+}
 
 /** The tip flow's primary-action styling, on every step that has one. */
 const AMBER_BUTTON = 'flex-1 bg-amber-500 hover:bg-amber-600 text-white'
@@ -137,7 +145,7 @@ export function TipModal() {
 
   // Payment URI support
   const [paymentUris, setPaymentUris] = useState<ParsedPaymentUri[]>([])
-  const [activeTab, setActiveTab] = useState<PaymentTab>('yapp')
+  const [activeTab, setActiveTab] = useState<PaymentTab>(defaultTab)
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
   const [showQrDialog, setShowQrDialog] = useState(false)
 
@@ -160,7 +168,9 @@ export function TipModal() {
       const identityId = user.identityId
       void Promise.all([
         identityService.getBalance(identityId).then(b => setBalance(b.confirmed)).catch(() => setBalance(null)),
-        tokenService.getBalance(identityId).then(setYappBalance).catch(() => setYappBalance(null)),
+        yappIsLocked()
+          ? Promise.resolve()
+          : tokenService.getBalance(identityId).then(setYappBalance).catch(() => setYappBalance(null)),
       ]).finally(() => setLoadingBalance(false))
     }
   }, [isOpen, user])
@@ -197,7 +207,7 @@ export function TipModal() {
       setTransferKey('')
       setState('input')
       setError(null)
-      setActiveTab('yapp')
+      setActiveTab(defaultTab())
       setPaymentUris([])
       setSelectedQrPayment(null)
       setShowQrDialog(false)
@@ -563,6 +573,7 @@ export function TipModal() {
   if (!recipientInfo) return null
 
   const isYapp = activeTab === 'yapp'
+  const yappTips = !yappIsLocked()
   const dashAmount = parseFloat(amount) || 0
   const recipientName = recipientInfo.displayName || recipientInfo.username || 'this user'
   const amountLabel = isYapp ? `${yappAmountBig.toString()} YAPP` : `${dashAmount} DASH`
@@ -619,10 +630,12 @@ export function TipModal() {
                     </p>
 
                     <div className="flex rounded-lg bg-gray-100 dark:bg-neutral-800 p-1">
-                      <button type="button" onClick={() => { setActiveTab('yapp'); setError(null) }} className={tabClass('yapp')}>
-                        <SparklesIcon className="w-4 h-4" />
-                        YAPP
-                      </button>
+                      {yappTips && (
+                        <button type="button" onClick={() => { setActiveTab('yapp'); setError(null) }} className={tabClass('yapp')}>
+                          <SparklesIcon className="w-4 h-4" />
+                          YAPP
+                        </button>
+                      )}
                       <button type="button" onClick={() => { setActiveTab('credits'); setError(null) }} className={tabClass('credits')}>
                         <CurrencyDollarIcon className="w-4 h-4" />
                         DASH
@@ -779,7 +792,7 @@ export function TipModal() {
 
                         <p className="text-xs text-gray-500">
                           A DASH credit transfer leaves nothing readable on chain, so Yappr cannot show this tip on the
-                          post. Tip in YAPP if you want it to be verifiable.
+                          post.{yappTips && ' Tip in YAPP if you want it to be verifiable.'}
                         </p>
 
                         {/* Error message */}

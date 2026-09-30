@@ -1,0 +1,1932 @@
+{
+  "$formatVersion": "1",
+  "version": 1,
+  "config": {
+    "$formatVersion": "2",
+    "canBeDeleted": false,
+    "readonly": false,
+    "keepsHistory": false,
+    "documentsKeepHistoryContractDefault": false,
+    "documentsMutableContractDefault": true,
+    "documentsCanBeDeletedContractDefault": true,
+    "requiresIdentityEncryptionBoundedKey": null,
+    "requiresIdentityDecryptionBoundedKey": null,
+    "sizedIntegerTypes": true,
+    "moderation": {
+      "banlist": true,
+      "suspensions": true,
+      "warnings": true,
+      "moderators": {
+        "$type": "elected",
+        "joinWindow": 3600,
+        "voteWindow": 3600,
+        "seatContestable": false,
+        "maxAddedModerators": 10,
+        "moderatedDocumentTypes": {
+          "post": [
+            "deleteDocuments",
+            "ban",
+            "suspend",
+            "warn"
+          ],
+          "reply": [
+            "deleteDocuments",
+            "ban",
+            "suspend",
+            "warn"
+          ],
+          "report": [
+            "deleteDocuments",
+            "changeDocumentFields"
+          ],
+          "yapprProfile": [
+            "deleteDocuments"
+          ]
+        },
+        "interim": {
+          "$type": "contractOwner"
+        },
+        "ownerProtected": true
+      }
+    }
+  },
+  "documentSchemas": {
+    "block": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerAndBlocked",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "blockedId": "asc"
+            }
+          ],
+          "unique": true
+        },
+        {
+          "name": "ownerBlocks",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "documentsMutable": false,
+      "required": [
+        "$createdAt",
+        "blockedId"
+      ],
+      "properties": {
+        "blockedId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 0,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "distinctFrom": "$ownerId"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 280,
+          "position": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "blockFilter": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "owner",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "$updatedAt",
+        "filterData"
+      ],
+      "properties": {
+        "filterData": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5000,
+          "position": 0
+        },
+        "itemCount": {
+          "type": "integer",
+          "minimum": 0,
+          "position": 1
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 255,
+          "position": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "blockFollow": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "owner",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "$updatedAt",
+        "followedBlockers"
+      ],
+      "properties": {
+        "followedBlockers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "position": 0,
+          "items": {
+            "type": "array",
+            "byteArray": true,
+            "minItems": 32,
+            "maxItems": 32,
+            "contentMediaType": "application/x.dash.dpp.identifier",
+            "distinctFrom": "$ownerId",
+            "refersTo": {
+              "type": "identity"
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "bookmark": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerAndPost",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ],
+          "unique": true
+        },
+        {
+          "name": "ownerBookmarks",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "documentsMutable": false,
+      "required": [
+        "$createdAt",
+        "postId"
+      ],
+      "properties": {
+        "postId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 0,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "post"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "follow": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerAndFollowing",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "followingId": "asc"
+            }
+          ],
+          "unique": true
+        },
+        {
+          "name": "following",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true
+        },
+        {
+          "name": "followers",
+          "properties": [
+            {
+              "followingId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": "followingId"
+          }
+        }
+      ],
+      "documentsMutable": false,
+      "required": [
+        "$createdAt",
+        "followingId"
+      ],
+      "properties": {
+        "followingId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 0,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "identity"
+          },
+          "distinctFrom": "$ownerId"
+        }
+      },
+      "additionalProperties": false
+    },
+    "followRequest": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "targetAndRequester",
+          "properties": [
+            {
+              "targetId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true
+        },
+        {
+          "name": "target",
+          "properties": [
+            {
+              "targetId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "targetId"
+      ],
+      "properties": {
+        "targetId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 0,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "distinctFrom": "$ownerId"
+        },
+        "publicKey": {
+          "type": "array",
+          "maxItems": 33,
+          "minItems": 33,
+          "position": 1,
+          "byteArray": true
+        }
+      },
+      "additionalProperties": false,
+      "immutable": [
+        "targetId"
+      ]
+    },
+    "like": {
+      "type": "object",
+      "indexOnly": true,
+      "documentsMutable": false,
+      "canBeDeleted": true,
+      "indices": [
+        {
+          "name": "byPost",
+          "properties": [
+            {
+              "postId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "rangeCountable": true,
+          "rankedCountable": true
+        },
+        {
+          "name": "byHashtagPost",
+          "properties": [
+            {
+              "hashtag": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": [
+              "hashtag",
+              "postId"
+            ]
+          },
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byAuthorPostTime",
+          "properties": [
+            {
+              "postAuthor": "asc"
+            },
+            {
+              "postId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": [
+              "postAuthor",
+              "postId"
+            ]
+          }
+        },
+        {
+          "name": "byTrendPost",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "rangeCountable": true,
+          "rankedCountable": true,
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 259200,
+            "step": 86400,
+            "ttl": 604800
+          }
+        },
+        {
+          "name": "byTrendHashtagPost",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "hashtag": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": [
+              "hashtag",
+              "postId"
+            ]
+          },
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 86400,
+            "step": 21600,
+            "ttl": 604800
+          },
+          "skipIfAbsent": true
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "postId",
+        "postAuthor"
+      ],
+      "properties": {
+        "postId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 0,
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "post",
+            "where": {
+              "hashtag": "hashtag",
+              "$ownerId": "postAuthor"
+            }
+          }
+        },
+        "hashtag": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,61}$",
+          "minLength": 1,
+          "maxLength": 61,
+          "position": 1
+        },
+        "postAuthor": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 2
+        }
+      },
+      "tokenCost": {
+        "create": {
+          "tokenPosition": 0,
+          "amount": 1,
+          "optional": true,
+          "gasFeesPaidBy": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "likeReply": {
+      "type": "object",
+      "indexOnly": true,
+      "documentsMutable": false,
+      "canBeDeleted": true,
+      "indices": [
+        {
+          "name": "byReply",
+          "properties": [
+            {
+              "replyId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "countable": "countable"
+        },
+        {
+          "name": "byAuthorReplyTime",
+          "properties": [
+            {
+              "replyAuthor": "asc"
+            },
+            {
+              "replyId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "terminal": "$ownerId"
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "replyId",
+        "replyAuthor"
+      ],
+      "properties": {
+        "replyId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 0,
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "reply",
+            "where": {
+              "$ownerId": "replyAuthor"
+            }
+          }
+        },
+        "replyAuthor": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 1
+        }
+      },
+      "tokenCost": {
+        "create": {
+          "tokenPosition": 0,
+          "amount": 1,
+          "optional": true,
+          "gasFeesPaidBy": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "post": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": "$ownerId"
+          }
+        },
+        {
+          "name": "timeline",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "quotesOfPost",
+          "properties": [
+            {
+              "quotedPostId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "quotesOfReply",
+          "properties": [
+            {
+              "quotedReplyId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "quotedPostOwnerRecent",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "quotedPostOwnerId": "asc"
+            }
+          ],
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 302400,
+            "step": 302400,
+            "ttl": 604800
+          },
+          "skipIfAbsent": true
+        },
+        {
+          "name": "tagAndTime",
+          "properties": [
+            {
+              "hashtag": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "skipIfAbsent": true
+        },
+        {
+          "name": "ownerAndQuotedPost",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "quotedPostId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "ownerAndQuotedReply",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "quotedReplyId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "mentionedUserAndTime",
+          "properties": [
+            {
+              "mentionedUserId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "skipIfAbsent": true
+        }
+      ],
+      "documentsCountable": true,
+      "required": [
+        "$createdAt"
+      ],
+      "properties": {
+        "content": {
+          "type": "string",
+          "position": 0,
+          "maxLength": 1000,
+          "maxBytes": 2000
+        },
+        "mediaUrl": {
+          "type": "string",
+          "pattern": "^(https?|ipfs)://.+$",
+          "position": 1,
+          "maxLength": 512
+        },
+        "quotedPostId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 2,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "post",
+            "where": {
+              "$ownerId": "quotedPostOwnerId"
+            }
+          }
+        },
+        "sensitive": {
+          "type": "boolean",
+          "position": 3
+        },
+        "encryptedContent": {
+          "type": "array",
+          "maxItems": 2048,
+          "minItems": 1,
+          "position": 4,
+          "byteArray": true
+        },
+        "keyGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295,
+          "position": 5
+        },
+        "nonce": {
+          "type": "array",
+          "maxItems": 24,
+          "minItems": 24,
+          "position": 6,
+          "byteArray": true
+        },
+        "quotedPostOwnerId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 7,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier"
+        },
+        "embedContractId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 8
+        },
+        "embedDocType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "position": 9
+        },
+        "embedId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 10
+        },
+        "quotedReplyId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 11,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "reply",
+            "where": {
+              "$ownerId": "quotedPostOwnerId"
+            }
+          }
+        },
+        "hashtag": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,61}$",
+          "minLength": 1,
+          "maxLength": 61,
+          "position": 12
+        },
+        "mediaHash": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "position": 13
+        },
+        "mediaFingerprint": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 8,
+          "maxItems": 8,
+          "position": 14
+        },
+        "mentionedUserId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 15,
+          "refersTo": {
+            "type": "identity"
+          }
+        }
+      },
+      "tokenCost": {
+        "create": {
+          "tokenPosition": 0,
+          "amount": 10,
+          "optional": true,
+          "gasFeesPaidBy": 2
+        }
+      },
+      "additionalProperties": false,
+      "documentsMutable": false,
+      "moderatorAbilities": {
+        "delete": true
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 80000000
+        }
+      },
+      "propertyConstraints": {
+        "embedAllOrNone": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "present": "embedContractId"
+                },
+                {
+                  "present": "embedDocType"
+                },
+                {
+                  "present": "embedId"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "absent": "embedContractId"
+                },
+                {
+                  "absent": "embedDocType"
+                },
+                {
+                  "absent": "embedId"
+                }
+              ]
+            }
+          ]
+        },
+        "oneQuoteTarget": {
+          "not": {
+            "allOf": [
+              {
+                "present": "quotedPostId"
+              },
+              {
+                "present": "quotedReplyId"
+              }
+            ]
+          }
+        },
+        "privateAllOrNone": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "present": "encryptedContent"
+                },
+                {
+                  "present": "keyGeneration"
+                },
+                {
+                  "present": "nonce"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "absent": "encryptedContent"
+                },
+                {
+                  "absent": "keyGeneration"
+                },
+                {
+                  "absent": "nonce"
+                }
+              ]
+            }
+          ]
+        },
+        "privateHasNoMedia": {
+          "not": {
+            "allOf": [
+              {
+                "present": "encryptedContent"
+              },
+              {
+                "present": "mediaUrl"
+              }
+            ]
+          }
+        },
+        "quoteNamesOwner": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "absent": "quotedPostId"
+                },
+                {
+                  "absent": "quotedReplyId"
+                }
+              ]
+            },
+            {
+              "present": "quotedPostOwnerId"
+            }
+          ]
+        },
+        "notEmpty": {
+          "anyOf": [
+            {
+              "greaterThan": [
+                {
+                  "length": "content"
+                },
+                0
+              ]
+            },
+            {
+              "present": "encryptedContent"
+            },
+            {
+              "present": "mediaUrl"
+            },
+            {
+              "present": "embedId"
+            },
+            {
+              "present": "quotedPostId"
+            },
+            {
+              "present": "quotedReplyId"
+            }
+          ]
+        }
+      },
+      "dependentRequired": {
+        "mediaUrl": [
+          "mediaHash",
+          "mediaFingerprint"
+        ],
+        "mediaHash": [
+          "mediaUrl"
+        ],
+        "mediaFingerprint": [
+          "mediaUrl"
+        ]
+      }
+    },
+    "privateFeedGrant": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerAndRecipient",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "recipientId": "asc"
+            }
+          ],
+          "unique": true
+        },
+        {
+          "name": "ownerAndLeaf",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "leafIndex": "asc"
+            }
+          ],
+          "unique": true
+        }
+      ],
+      "documentsMutable": false,
+      "required": [
+        "$createdAt",
+        "recipientId",
+        "leafIndex",
+        "keyGeneration",
+        "encryptedPayload"
+      ],
+      "properties": {
+        "recipientId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 0,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "distinctFrom": "$ownerId",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "followRequest",
+            "findBy": {
+              "targetId": "$ownerId",
+              "$ownerId": "."
+            }
+          }
+        },
+        "leafIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "position": 1
+        },
+        "keyGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295,
+          "position": 2
+        },
+        "encryptedPayload": {
+          "type": "array",
+          "maxItems": 600,
+          "minItems": 1,
+          "position": 3,
+          "byteArray": true
+        }
+      },
+      "additionalProperties": false,
+      "ownerRefersTo": {
+        "type": "permanentDocument",
+        "documentType": "privateFeedState",
+        "findBy": {
+          "$ownerId": "."
+        }
+      }
+    },
+    "privateFeedRekey": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerAndKeyGeneration",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "keyGeneration": "asc"
+            }
+          ],
+          "unique": true
+        }
+      ],
+      "documentsMutable": false,
+      "required": [
+        "$createdAt",
+        "keyGeneration",
+        "revokedLeaf",
+        "packets",
+        "encryptedCEK"
+      ],
+      "properties": {
+        "keyGeneration": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 4294967295,
+          "position": 0
+        },
+        "revokedLeaf": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "position": 1
+        },
+        "packets": {
+          "type": "array",
+          "maxItems": 2048,
+          "minItems": 1,
+          "position": 2,
+          "byteArray": true
+        },
+        "encryptedCEK": {
+          "type": "array",
+          "maxItems": 48,
+          "minItems": 48,
+          "position": 3,
+          "byteArray": true
+        }
+      },
+      "additionalProperties": false,
+      "ownerRefersTo": {
+        "type": "permanentDocument",
+        "documentType": "privateFeedState",
+        "findBy": {
+          "$ownerId": "."
+        }
+      }
+    },
+    "privateFeedState": {
+      "type": "object",
+      "canBeDeleted": false,
+      "indices": [
+        {
+          "name": "owner",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true
+        }
+      ],
+      "documentsMutable": false,
+      "required": [
+        "$createdAt",
+        "treeCapacity",
+        "maxKeyGeneration",
+        "encryptedSeed"
+      ],
+      "properties": {
+        "treeCapacity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "position": 0
+        },
+        "maxKeyGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295,
+          "position": 1
+        },
+        "encryptedSeed": {
+          "type": "array",
+          "maxItems": 256,
+          "minItems": 1,
+          "position": 2,
+          "byteArray": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "reply": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "repliesOf",
+          "properties": [
+            {
+              "rootPostId": "asc"
+            },
+            {
+              "replyToReplyId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": "rootPostId"
+          }
+        },
+        {
+          "name": "parentOwnerRecent",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "parentOwnerId": "asc"
+            }
+          ],
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 302400,
+            "step": 302400,
+            "ttl": 604800
+          }
+        },
+        {
+          "name": "mentionedUserAndTime",
+          "properties": [
+            {
+              "mentionedUserId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "skipIfAbsent": true
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "rootPostId",
+        "parentOwnerId"
+      ],
+      "properties": {
+        "content": {
+          "type": "string",
+          "position": 0,
+          "maxLength": 1000,
+          "maxBytes": 2000
+        },
+        "mediaUrl": {
+          "type": "string",
+          "pattern": "^(https?|ipfs)://.+$",
+          "position": 1,
+          "maxLength": 512
+        },
+        "rootPostId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 2,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "post"
+          }
+        },
+        "replyToReplyId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 3,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "reply",
+            "where": {
+              "$ownerId": "parentOwnerId"
+            }
+          }
+        },
+        "parentOwnerId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 4,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier"
+        },
+        "sensitive": {
+          "type": "boolean",
+          "position": 5
+        },
+        "encryptedContent": {
+          "type": "array",
+          "maxItems": 2048,
+          "minItems": 1,
+          "position": 6,
+          "byteArray": true
+        },
+        "keyGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295,
+          "position": 7
+        },
+        "nonce": {
+          "type": "array",
+          "maxItems": 24,
+          "minItems": 24,
+          "position": 8,
+          "byteArray": true
+        },
+        "mediaHash": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "position": 9
+        },
+        "mediaFingerprint": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 8,
+          "maxItems": 8,
+          "position": 10
+        },
+        "mentionedUserId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "identity"
+          },
+          "position": 11
+        }
+      },
+      "tokenCost": {
+        "create": {
+          "tokenPosition": 0,
+          "amount": 3,
+          "optional": true,
+          "gasFeesPaidBy": 2
+        }
+      },
+      "additionalProperties": false,
+      "documentsMutable": false,
+      "moderatorAbilities": {
+        "delete": true
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 16000000
+        }
+      },
+      "propertyConstraints": {
+        "privateAllOrNone": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "present": "encryptedContent"
+                },
+                {
+                  "present": "keyGeneration"
+                },
+                {
+                  "present": "nonce"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "absent": "encryptedContent"
+                },
+                {
+                  "absent": "keyGeneration"
+                },
+                {
+                  "absent": "nonce"
+                }
+              ]
+            }
+          ]
+        },
+        "privateHasNoMedia": {
+          "not": {
+            "allOf": [
+              {
+                "present": "encryptedContent"
+              },
+              {
+                "present": "mediaUrl"
+              }
+            ]
+          }
+        }
+      },
+      "dependentRequired": {
+        "mediaUrl": [
+          "mediaHash",
+          "mediaFingerprint"
+        ],
+        "mediaHash": [
+          "mediaUrl"
+        ],
+        "mediaFingerprint": [
+          "mediaUrl"
+        ]
+      }
+    },
+    "report": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerAndPost",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "ownerAndReply",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "replyId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byPost",
+          "properties": [
+            {
+              "postId": "asc"
+            }
+          ],
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byReply",
+          "properties": [
+            {
+              "replyId": "asc"
+            }
+          ],
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byTime",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byStatus",
+          "properties": [
+            {
+              "status": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byModerator",
+          "properties": [
+            {
+              "$moderatedBy": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ]
+        }
+      ],
+      "documentsMutable": false,
+      "moderatorAbilities": {
+        "delete": true,
+        "deleteKeepsRecord": false,
+        "changeFields": [
+          "status",
+          "resolution"
+        ]
+      },
+      "required": [
+        "$createdAt",
+        "targetOwnerId",
+        "reason"
+      ],
+      "properties": {
+        "postId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 0,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "post",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "replyId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 1,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "reply",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "targetOwnerId": {
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 32,
+          "position": 2,
+          "byteArray": true,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "distinctFrom": "$ownerId"
+        },
+        "reason": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8,
+          "position": 3
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "position": 4
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "position": 5
+        },
+        "resolution": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "position": 6
+        }
+      },
+      "propertyConstraints": {
+        "oneTarget": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "present": "postId"
+                },
+                {
+                  "absent": "replyId"
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "absent": "postId"
+                },
+                {
+                  "present": "replyId"
+                }
+              ]
+            }
+          ]
+        },
+        "otherHasNote": {
+          "anyOf": [
+            {
+              "notEqual": [
+                "reason",
+                8
+              ]
+            },
+            {
+              "present": "note"
+            }
+          ]
+        },
+        "resolvedHasStatus": {
+          "anyOf": [
+            {
+              "absent": "resolution"
+            },
+            {
+              "present": "status"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "ttl": 7776000
+    },
+    "yapprProfile": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "owner",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "$updatedAt"
+      ],
+      "properties": {
+        "location": {
+          "type": "string",
+          "maxLength": 50,
+          "position": 0
+        },
+        "website": {
+          "type": "string",
+          "pattern": "^https?://.+$",
+          "maxLength": 200,
+          "position": 1
+        },
+        "bannerUri": {
+          "type": "string",
+          "pattern": "^(https?|ipfs)://.+$",
+          "maxLength": 512,
+          "position": 2
+        },
+        "pronouns": {
+          "type": "string",
+          "maxLength": 20,
+          "position": 3
+        },
+        "nsfw": {
+          "type": "boolean",
+          "position": 4
+        },
+        "paymentUris": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "position": 5,
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 512,
+            "maxBytes": 512,
+            "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:.+$"
+          }
+        },
+        "socialLinks": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "position": 6,
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 256,
+            "maxBytes": 256,
+            "pattern": "^[a-z]{1,16}:.+$"
+          }
+        },
+        "avatar": {
+          "type": "string",
+          "maxLength": 128,
+          "position": 7
+        }
+      },
+      "minProperties": 1,
+      "additionalProperties": false,
+      "ownerRefersTo": {
+        "type": "deletableDocument",
+        "contractId": "Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7",
+        "documentType": "profile",
+        "findBy": {
+          "$ownerId": "."
+        }
+      },
+      "moderatorAbilities": {
+        "delete": true
+      }
+    }
+  },
+  "tokens": {
+    "0": {
+      "$formatVersion": "0",
+      "conventions": {
+        "$formatVersion": "0",
+        "localizations": {
+          "en": {
+            "$formatVersion": "0",
+            "shouldCapitalize": true,
+            "singularForm": "yapp",
+            "pluralForm": "yapps"
+          }
+        },
+        "decimals": 0
+      },
+      "conventionsChangeRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "noOne"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "baseSupply": 1000000,
+      "maxSupply": null,
+      "keepsHistory": {
+        "$formatVersion": "0",
+        "keepsTransferHistory": true,
+        "keepsFreezingHistory": true,
+        "keepsMintingHistory": true,
+        "keepsBurningHistory": true,
+        "keepsDirectPricingHistory": true,
+        "keepsDirectPurchaseHistory": true
+      },
+      "startAsPaused": true,
+      "allowTransferToFrozenBalance": false,
+      "maxSupplyChangeRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "noOne"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "distributionRules": {
+        "$formatVersion": "1",
+        "perpetualDistribution": null,
+        "perpetualDistributionRules": {
+          "$formatVersion": "0",
+          "authorizedToMakeChange": {
+            "$type": "noOne"
+          },
+          "adminActionTakers": {
+            "$type": "noOne"
+          },
+          "changingAuthorizedActionTakersToNoOneAllowed": false,
+          "changingAdminActionTakersToNoOneAllowed": false,
+          "selfChangingAdminActionTakersAllowed": false
+        },
+        "preProgrammedDistribution": null,
+        "newTokensDestinationIdentity": null,
+        "newTokensDestinationIdentityRules": {
+          "$formatVersion": "0",
+          "authorizedToMakeChange": {
+            "$type": "noOne"
+          },
+          "adminActionTakers": {
+            "$type": "noOne"
+          },
+          "changingAuthorizedActionTakersToNoOneAllowed": false,
+          "changingAdminActionTakersToNoOneAllowed": false,
+          "selfChangingAdminActionTakersAllowed": false
+        },
+        "mintingAllowChoosingDestination": true,
+        "mintingAllowChoosingDestinationRules": {
+          "$formatVersion": "0",
+          "authorizedToMakeChange": {
+            "$type": "noOne"
+          },
+          "adminActionTakers": {
+            "$type": "noOne"
+          },
+          "changingAuthorizedActionTakersToNoOneAllowed": false,
+          "changingAdminActionTakersToNoOneAllowed": false,
+          "selfChangingAdminActionTakersAllowed": false
+        },
+        "changeDirectPurchasePricingRules": {
+          "$formatVersion": "0",
+          "authorizedToMakeChange": {
+            "$type": "noOne"
+          },
+          "adminActionTakers": {
+            "$type": "noOne"
+          },
+          "changingAuthorizedActionTakersToNoOneAllowed": false,
+          "changingAdminActionTakersToNoOneAllowed": false,
+          "selfChangingAdminActionTakersAllowed": false
+        },
+        "oncePerIdentityDistribution": {
+          "$formatVersion": "0",
+          "amount": 100
+        }
+      },
+      "marketplaceRules": {
+        "$formatVersion": "0",
+        "tradeMode": "NotTradeable",
+        "tradeModeChangeRules": {
+          "$formatVersion": "0",
+          "authorizedToMakeChange": {
+            "$type": "noOne"
+          },
+          "adminActionTakers": {
+            "$type": "noOne"
+          },
+          "changingAuthorizedActionTakersToNoOneAllowed": false,
+          "changingAdminActionTakersToNoOneAllowed": false,
+          "selfChangingAdminActionTakersAllowed": false
+        }
+      },
+      "manualMintingRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "contractOwner"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "manualBurningRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "contractOwner"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "freezeRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "contractOwner"
+        },
+        "adminActionTakers": {
+          "$type": "contractOwner"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "unfreezeRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "contractOwner"
+        },
+        "adminActionTakers": {
+          "$type": "contractOwner"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "destroyFrozenFundsRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "contractOwner"
+        },
+        "adminActionTakers": {
+          "$type": "contractOwner"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "emergencyActionRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "noOne"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "mainControlGroup": null,
+      "mainControlGroupCanBeModified": {
+        "$type": "noOne"
+      },
+      "description": null
+    }
+  }
+}

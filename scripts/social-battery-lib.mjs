@@ -42,6 +42,9 @@ export async function errorOf(action) {
   }
 }
 
+/** An `errorOf` answer as the outcome `expectRejected` scores: landed when there is no error. */
+export const asOutcome = (error) => ({ ok: error === null, error });
+
 /**
  * `JSON.stringify` that survives BigInt. `moderationStatus.suspendedUntil` and
  * a warning's `warnedAt` are u64 and reach JS as BigInt, so stringifying a
@@ -82,7 +85,7 @@ const DEVNET_MAKER_SEED_INDEX = 9;
  * index 9. The key file is a different identity that does not exist on the
  * devnet, and verify-v9 accepts only `maker`, so it could not run there at all.
  */
-function resolveMakerOwner() {
+export function resolveMakerOwner() {
   if (network() !== 'devnet') return resolveOwner({ maker: true });
   const ownerId = process.env.DEVNET_MAKER_IDENTITY_ID
     || readEnvFile(join(REPO_ROOT, '.env.devnet')).DEVNET_MAKER_IDENTITY_ID;

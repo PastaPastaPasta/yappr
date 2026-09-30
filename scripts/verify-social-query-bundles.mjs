@@ -1,18 +1,50 @@
 #!/usr/bin/env node
 /** Read-only equivalence probes against the deployed devnet. No signing keys.
- * NETWORK=devnet node scripts/verify-social-query-bundles.mjs [report.json]
+ * NETWORK=devnet V10_CONTRACT_ID=<social v10 id> node scripts/verify-social-query-bundles.mjs [report.json]
  * Counts document facade requests after connection/contract warm-up, not HTTP
- * retries, subqueries, quorum reads, or complete rendered-screen traffic. */
+ * retries, subqueries, quorum reads, or complete rendered-screen traffic.
+ *
+ * Social v10 has no repost type: a repost is a post quoting its target with no
+ * content, so it notifies through post.quotedPostOwnerRecent, sits in its
+ * author's own post pages, and the quote count is the repost count. Per-reply
+ * counts pin the root (repliesOf [rootPostId, replyToReplyId, $createdAt]).
+ *
+ * Notification sources: follows, mentions (post.mentionedUserAndTime and
+ * reply.mentionedUserAndTime) and follow requests are permanent and bundle;
+ * replies (reply.parentOwnerRecent) and quotes/reposts
+ * (post.quotedPostOwnerRecent) sit on non-overlapping 3.5-day windows kept a
+ * week, read through the `timeRange` option (the current window, `newest`, and
+ * the previous one by its start, `byStart`), which a composite refuses, so each
+ * window stays one plain query.
+ * Likes are permanent but keyed by target: byAuthorPostTime /
+ * byAuthorReplyTime put the liked post or reply before `$createdAt`, so "who
+ * liked it since" is one `target in [recent]` read per kind. There is no
+ * postMention: a post or reply names at most one mentionedUserId. */
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import bs58 from 'bs58';
-import { connectSdk } from './sdk-env.mjs';
+import { connectSdk, devnetName, envValue } from './sdk-env.mjs';
 
-const social = 'CdUkSHkQwGXXAkzKqrcrjUWLsj7qErK9XAZmLzJEhirU';
-const profile = '6cyzfCVkov5RqJzRpXTmCAjYWBGqB1SzsBxrsnd8AUyb';
-const dpns = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec';
-const dm = 'ACggUAB9rYpZUTBggrgx54R43iSprQztyuwYx16Y25xC';
-const blog = '3XiMRzaPPjknf2fYtz6oGob4G5D69A9MLu4x58A8WZiF';
+const social = process.env.V10_CONTRACT_ID;
+if (!social) {
+  console.error('Set V10_CONTRACT_ID to the social v10 contract under test (there is no default).');
+  process.exit(1);
+}
+/** A contract id from the environment or `.env.devnet`; the devnet's own, never a baked-in chain's. */
+function contractId(name) {
+  const value = envValue(name);
+  if (!value) {
+    console.error(`Set ${name} (environment or .env.devnet) to the devnet's contract id.`);
+    process.exit(1);
+  }
+  return value;
+}
+// v10 retires the profile contract: the base profile is DashPay's `profile`
+// (a system contract, the same id on every chain), keyed by its owner.
+const profile = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7';
+const dpns = envValue('NEXT_PUBLIC_DPNS_CONTRACT_ID') || 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec';
+const dm = contractId('NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID');
+const blog = contractId('NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID');
 const sdk = await connectSdk({ net: 'devnet', timeoutMs: 20000 });
 await sdk.contracts.fetch(dpns);
 await sdk.contracts.getMany([social, profile, dm, blog]);
@@ -25,8 +57,8 @@ const canonical = docs => JSON.stringify(docs.map(doc => Object.fromEntries(
 )), (_, value) => typeof value === 'bigint' ? value.toString() : value);
 const timeline = records(await sdk.documents.query({
   dataContractId: social, documentTypeName: 'post',
-  where: [['language', '==', 'en'], ['$createdAt', '>', 0]],
-  orderBy: [['language', 'asc'], ['$createdAt', 'desc']], limit: 20,
+  where: [['$createdAt', '>', 0]],
+  orderBy: [['$createdAt', 'desc']], limit: 20,
 }));
 assert(timeline.length, 'Need public posts to exercise nonempty queries');
 const owner = id(timeline[0].$ownerId);
@@ -72,16 +104,65 @@ await verify('profiles and DPNS including profile-less identity', [
   { dataContractId: profile, documentTypeName: 'profile', where: [['$ownerId', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['$ownerId', 'asc']], limit: owners.length + 1 },
   { dataContractId: dpns, documentTypeName: 'domain', where: [['records.identity', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['records.identity', 'asc']], limit: 100 },
 ]);
-await verify('notification sources', [
-  ['follow', 'followingId'], ['postMention', 'mentionedUserId'], ['followRequest', 'targetId'],
-  ['like', 'postAuthor'], ['likeReply', 'replyAuthor'], ['repost', 'postOwnerId'], ['reply', 'parentOwnerId'],
-].map(([documentTypeName, field]) => ({
+// Mentions stay permanent (the mentioning post's and reply's own mentionedUserAndTime).
+await verify('permanent notification sources', [['follow', 'followingId'], ['post', 'mentionedUserId'], ['reply', 'mentionedUserId'], ['followRequest', 'targetId']].map(([documentTypeName, field]) => ({
   dataContractId: social, documentTypeName,
   where: [[field, '==', owner], ['$createdAt', '>', 0]],
-  orderBy: [[field, 'asc'], ['$createdAt', 'asc']], limit: 100,
+  orderBy: [[field, 'asc'], ['$createdAt', 'desc']], limit: 100,
 })));
-await verify('following repost pages', owners.map(ownerId => ({
-  dataContractId: social, documentTypeName: 'repost',
+
+const V10 = JSON.parse(readFileSync(new URL('../contracts/yappr-social-contract-v10.json', import.meta.url), 'utf8'));
+/**
+ * The current and the previous window of `documentTypeName`'s windowed
+ * notification index, the grid named (like and post bucket $createdAt on
+ * several). The node's `oldest` is the oldest window still containing now,
+ * the current one on this non-overlapping grid, so the previous window is
+ * named by its start.
+ */
+function windowsOf(documentTypeName, indexName) {
+  const { range, step } = V10.documentSchemas[documentTypeName].indices.find(index => index.name === indexName).timeRange;
+  const stepMs = step * 1000;
+  const previousStart = (Math.floor(Date.now() / stepMs) - 1) * stepMs;
+  return [{ selector: 'newest' }, { selector: 'byStart', startMs: previousStart }].map(pick => [{ field: '$createdAt', ...pick, grid: { range, step } }]);
+}
+/** Sources that do not ride a composite (windowed, or one read per target): each is read alone, and only its success is asserted. */
+async function verifyAlone(name, queries) {
+  try {
+    const rows = [];
+    for (const query of queries) rows.push(records(await sdk.documents.query(query)).length);
+    reports.push({ name, before: queries.length, after: queries.length, rows, equivalent: true });
+    console.log(`PASS ${name}: ${queries.length} plain queries; rows ${rows.join(',')}`);
+  } catch (error) {
+    const message = String(error.message || error.reason || error.toJSON?.() || JSON.stringify(error));
+    reports.push({ name, equivalent: false, error: message });
+    console.error(`FAIL ${name}: ${message}`);
+  }
+}
+await verifyAlone('notification windows (current and previous)', [
+  ['reply', 'parentOwnerRecent', 'parentOwnerId'], ['post', 'quotedPostOwnerRecent', 'quotedPostOwnerId'],
+].flatMap(([documentTypeName, indexName, field]) => windowsOf(documentTypeName, indexName).map(timeRange => ({
+  dataContractId: social, documentTypeName,
+  where: [[field, '==', owner]], timeRange, limit: 100,
+}))));
+// "Liked your post / reply": the likes of the owner's twenty most recent posts
+// and replies since the start, newest first, one `target in` read per kind.
+const recentOwn = async (documentTypeName) => records(await sdk.documents.query({
+  dataContractId: social, documentTypeName, where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]],
+  orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
+}));
+const likesSince = (documentTypeName, author, target, docs) => ({
+  dataContractId: social, documentTypeName,
+  where: [[author, '==', owner], [target, 'in', docs.map(doc => id(doc.$id))], ['$createdAt', '>', 0]],
+  orderBy: [[author, 'asc'], [target, 'asc'], ['$createdAt', 'desc']], limit: 100,
+});
+const [ownPosts, ownReplies] = [await recentOwn('post'), await recentOwn('reply')];
+await verifyAlone('like notifications (one target-in read per kind)', [
+  ...(ownPosts.length ? [likesSince('like', 'postAuthor', 'postId', ownPosts)] : []),
+  ...(ownReplies.length ? [likesSince('likeReply', 'replyAuthor', 'replyId', ownReplies)] : []),
+]);
+// A followed author's reposts are posts: their own post pages carry them.
+await verify('following post pages (reposts included)', owners.map(ownerId => ({
+  dataContractId: social, documentTypeName: 'post',
   where: [['$ownerId', '==', ownerId], ['$createdAt', '>', 0]],
   orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100,
 })));
@@ -111,43 +192,71 @@ await verify('blog comment count pages', timeline.slice(0, 2).map(doc => ({
   orderBy: [['blogPostId', 'asc'], ['$createdAt', 'asc']], limit: 100,
 })));
 
+/** The root of a thread with direct replies, for the reply page (per-reply counts pin the root). */
+async function threadRoot() {
+  for (const doc of timeline) {
+    const rootPostId = id(doc.$id);
+    const direct = await sdk.documents.count({ dataContractId: social, documentTypeName: 'reply',
+      where: [['rootPostId', '==', rootPostId], ['replyToReplyId', '==', null]] });
+    if (Number(direct.get('') ?? 0) > 0) return rootPostId;
+  }
+  return id(timeline[0].$id);
+}
+
 async function verifyEnrichment(kind) {
   const name = `${kind} composite enrichment counts and viewer marks`;
   try {
-    const pageQuery = { dataContractId: social, documentTypeName: kind,
-      where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 };
+    // A post page is an author's posts; a reply page is a thread's direct replies
+    // (the page the thread view counts children on, under its root). The reply
+    // composite is by id, as load-post-enrichment sends it: a repliesOf page with
+    // a repliesOf count slot is refused ("lands at the merged root").
+    const root = kind === 'reply' ? await threadRoot() : null;
+    const pageQuery = kind === 'post'
+      ? { dataContractId: social, documentTypeName: kind,
+        where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]],
+        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 }
+      : { dataContractId: social, documentTypeName: kind,
+        where: [['rootPostId', '==', root], ['replyToReplyId', '==', null]],
+        orderBy: [['$createdAt', 'asc']], limit: 20 };
     const page = records(await sdk.documents.query(pageQuery));
     const ids = page.map(doc => id(doc.$id));
     const targetField = kind === 'post' ? 'postId' : 'replyId';
     const likeType = kind === 'post' ? 'like' : 'likeReply';
-    const countSources = [[likeType, targetField],
-      ...(kind === 'post' ? [['repost', 'postId']] : []),
-      ['reply', kind === 'post' ? 'rootPostId' : 'replyToReplyId'],
-      ['post', kind === 'post' ? 'quotedPostId' : 'quotedReplyId']];
-    const subQueries = countSources.map(([documentType, field]) => ({
-      documentType, kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field },
+    // [documentType, bound field, fixed where]; the quote count is the repost count.
+    const countSources = [[likeType, targetField, []],
+      kind === 'post' ? ['reply', 'rootPostId', []] : ['reply', 'replyToReplyId', [['rootPostId', '==', root]]],
+      ['post', kind === 'post' ? 'quotedPostId' : 'quotedReplyId', []]];
+    const subQueries = countSources.map(([documentType, field, where]) => ({
+      documentType, kind: 'counts', ...(where.length ? { where } : {}), bind: { source: 'page', sourceProperty: '$id', field },
     }));
+    // The viewer marks ride byPost / byReply ([target] terminal $ownerId), the slot's limit the page size.
     subQueries.push({ documentType: likeType, where: [['$ownerId', '==', owner]],
-      bind: { source: 'page', sourceProperty: '$id', field: targetField } });
-    const result = await sdk.documents.composite({
-      dataContractId: social, documentType: kind, where: pageQuery.where,
-      orderBy: pageQuery.orderBy, limit: 20, subQueries,
-    });
-    assert.equal(canonical(result.pageDocuments.map(doc => doc.toObject())), canonical(page));
+      bind: { source: 'page', sourceProperty: '$id', field: targetField }, limit: 20 });
+    if (kind === 'reply' && ids.length === 0) throw new Error('the thread root has no direct replies to page');
+    const byId = (docs) => [...docs].sort((a, b) => id(a.$id).localeCompare(id(b.$id)));
+    const result = kind === 'post'
+      ? await sdk.documents.composite({
+        dataContractId: social, documentType: kind, where: pageQuery.where,
+        orderBy: pageQuery.orderBy, limit: 20, subQueries,
+      })
+      : await sdk.documents.composite({
+        dataContractId: social, documentType: kind, where: [['$id', 'in', ids]], limit: ids.length, subQueries,
+      });
+    assert.equal(canonical(byId(result.pageDocuments.map(doc => doc.toObject()))), canonical(byId(page)));
     for (let i = 0; i < countSources.length; i++) {
-      const [documentTypeName, field] = countSources[i];
+      const [documentTypeName, field, where] = countSources[i];
       const counts = ids.length ? await sdk.documents.count({ dataContractId: social,
-        documentTypeName, where: [[field, 'in', ids]], groupBy: [field] }) : new Map();
+        documentTypeName, where: [...where, [field, 'in', ids]], groupBy: [field] }) : new Map();
       for (const postId of ids) {
         const hex = Buffer.from(bs58.decode(postId)).toString('hex');
         assert.equal(Number(result.subResults[i].counts.get(postId) ?? 0), Number(counts.get(hex) ?? 0));
       }
     }
     const marks = ids.length ? records(await sdk.documents.query({ dataContractId: social,
-      documentTypeName: likeType, where: [['$ownerId', '==', owner], [targetField, 'in', ids]],
-      orderBy: [[targetField, 'desc']], limit: ids.length })) : [];
-    assert.equal(canonical(result.subResults.at(-1).documents.map(doc => doc.toObject())), canonical(marks));
+      documentTypeName: likeType, where: [[targetField, 'in', ids], ['$ownerId', '==', owner]],
+      orderBy: [[targetField, 'asc'], ['$ownerId', 'asc']], limit: ids.length })) : [];
+    const byTarget = docs => [...docs].sort((a, b) => id(a[targetField]).localeCompare(id(b[targetField])));
+    assert.equal(canonical(byTarget(result.subResults.at(-1).documents.map(doc => doc.toObject()))), canonical(byTarget(marks)));
     reports.push({ name, before: 2 + countSources.length, after: 1, rows: page.length, equivalent: true });
     console.log(`PASS ${name}; ${page.length} page rows`);
   } catch (error) {
@@ -159,6 +268,6 @@ async function verifyEnrichment(kind) {
 await verifyEnrichment('post');
 await verifyEnrichment('reply');
 
-const report = { at: new Date().toISOString(), network: 'moutai', baseline: '4105c5d1', reports };
+const report = { at: new Date().toISOString(), network: devnetName(), baseline: '4105c5d1', reports };
 if (process.argv[2]) writeFileSync(process.argv[2], JSON.stringify(report, null, 2) + '\n');
 process.exit(reports.every(result => result.equivalent) ? 0 : 1);

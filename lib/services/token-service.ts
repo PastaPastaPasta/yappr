@@ -6,7 +6,7 @@ import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
-import { starterGrantAmount } from '../contract-topology';
+import { starterGrantAmount, yappIsLocked } from '../contract-topology';
 import { extractErrorMessage, isOncePerIdentityAlreadyClaimedError } from '../error-utils';
 import { withSdkSignedWrite } from './identity-nonce';
 
@@ -93,8 +93,14 @@ class TokenService {
    * credits). If the stored login key is HIGH, this returns
    * NEEDS_CRITICAL_KEY without broadcasting; the UI should prompt for the
    * CRITICAL key and retry with `criticalKeyWif` (used to sign, never stored).
+   *
+   * Refused without a broadcast where YAPP is locked (v10): the token has no
+   * purchase price and no one can ever set one, so Drive would refuse it.
    */
   async buyYapp(buyerId: string, amount: bigint, maxTotalCost: bigint, criticalKeyWif?: string): Promise<TokenResult> {
+    if (yappIsLocked()) {
+      return { success: false, error: 'YAPP cannot be bought on this network', errorCode: 'NOT_AUTHORIZED' };
+    }
     if (amount < MIN_YAPP_PURCHASE) {
       return { success: false, error: `Minimum purchase is ${MIN_YAPP_PURCHASE} YAPP`, errorCode: 'BELOW_MINIMUM' };
     }
@@ -132,6 +138,9 @@ class TokenService {
    *
    * `publicNote` is written verbatim into the token-history `transfer`
    * document and signed along with the amount and the recipient.
+   *
+   * Refused without a broadcast where YAPP is locked (v10): the token is
+   * paused for good, and a transfer is the one transition the pause stops.
    */
   async transfer(
     senderId: string,
@@ -140,6 +149,9 @@ class TokenService {
     publicNote?: string,
     criticalKeyWif?: string
   ): Promise<TokenResult> {
+    if (yappIsLocked()) {
+      return { success: false, error: 'YAPP cannot be transferred on this network', errorCode: 'NOT_AUTHORIZED' };
+    }
     try {
       const sdk = await getEvoSdk();
       const { signer, identityKey } = await this.getAuthSigner(senderId, {

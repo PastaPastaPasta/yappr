@@ -251,7 +251,8 @@ class FollowService extends BaseDocumentService<FollowDocument> {
       try {
         const sdk = await getEvoSdk();
 
-        // O(1) count tree on the `followerCount` index [followingId].
+        // O(1) count tree on the `followerCount` index [followingId] (v10: the
+        // rangeCountable `followers [followingId, $createdAt]`).
         return await documentCount(sdk, {
           dataContractId: this.contractId,
           documentTypeName: 'follow',
@@ -275,7 +276,8 @@ class FollowService extends BaseDocumentService<FollowDocument> {
       try {
         const sdk = await getEvoSdk();
 
-        // O(1) count tree on the `followingCount` index [$ownerId].
+        // O(1) count tree on the `followingCount` index [$ownerId] (v10: the
+        // rangeCountable `following [$ownerId, $createdAt]`).
         return await documentCount(sdk, {
           dataContractId: this.contractId,
           documentTypeName: 'follow',

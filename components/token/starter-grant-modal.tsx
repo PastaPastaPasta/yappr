@@ -8,31 +8,20 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useStarterGrantModal } from '@/hooks/use-starter-grant-modal'
-import { starterGrantAmount } from '@/lib/contract-topology'
+import { starterGrantAmount, yappIsLocked } from '@/lib/contract-topology'
 import { logger } from '@/lib/logger'
-import { readScoped, writeScoped } from '@/lib/storage-scope'
+import { isStarterGrantSettled, markStarterGrantSettled } from '@/lib/starter-grant'
 import { tokenService } from '@/lib/services/token-service'
 
-const SETTLED_KEY = 'yappr_starter_grant_settled'
-
-/** Identities whose grant is claimed (or was already claimed): never prompt again. */
-function settledIdentities(): Set<string> {
-  try {
-    return new Set(JSON.parse(readScoped(SETTLED_KEY) ?? '[]') as string[])
-  } catch {
-    return new Set()
-  }
-}
-
-function markSettled(identityId: string): void {
-  writeScoped(SETTLED_KEY, JSON.stringify([...settledIdentities(), identityId]))
-}
-
 /**
- * On a contract whose token declares a once-per-identity grant (v9: 100
+ * On a contract whose token declares a once-per-identity grant (v9, v10: 100
  * YAPP), a signed-in identity with NO YAPP is offered its grant once. A
  * successful claim, or a 40722 "already claimed", settles the identity so the
  * prompt never returns; declining only postpones it to the next session.
+ *
+ * Where YAPP is locked (v10) this modal also stands in for Buy YAPP: running
+ * out of YAPP opens it, offering the grant while it is unclaimed and otherwise
+ * explaining that YAPP cannot be topped up.
  */
 export function StarterGrantModal() {
   const { user } = useAuth()
@@ -44,7 +33,7 @@ export function StarterGrantModal() {
   const amount = starterGrantAmount()
 
   useEffect(() => {
-    if (!identityId || amount === null || settledIdentities().has(identityId)) return
+    if (!identityId || amount === null || isStarterGrantSettled(identityId)) return
     let cancelled = false
     tokenService.getBalance(identityId)
       .then((balance) => {
@@ -64,7 +53,7 @@ export function StarterGrantModal() {
     const result = await tokenService.claimStarterGrant(identityId, needsCritical ? wif : undefined)
     setBusy(false)
     if (result.success || result.errorCode === 'ALREADY_CLAIMED') {
-      markSettled(identityId)
+      markStarterGrantSettled(identityId)
       if (result.success) {
         toast.success(`${amount} YAPP claimed`)
         if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
@@ -83,6 +72,27 @@ export function StarterGrantModal() {
     toast.error(result.error ?? 'Claim failed')
   }
 
+  const locked = yappIsLocked()
+
+  if (locked && isStarterGrantSettled(identityId)) {
+    return (
+      <Modal open={isOpen} onOpenChange={(next) => !next && close()} className="w-[420px] max-w-[90vw]">
+        <ModalTitle>
+          <GiftIcon className="h-6 w-6 text-yappr-500" />
+          Out of YAPP
+        </ModalTitle>
+        <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
+          You don&apos;t have enough YAPP for this, and your starter YAPP is already claimed. YAPP can&apos;t be bought
+          or transferred on this network. Posts, replies, likes and reposts can be paid in credits instead: switch in
+          Settings.
+        </Dialog.Description>
+        <Button data-testid="starter-grant-dismiss" onClick={close} className="w-full bg-yappr-500 hover:bg-yappr-600 text-white">
+          OK
+        </Button>
+      </Modal>
+    )
+  }
+
   return (
     <Modal open={isOpen} onOpenChange={(next) => !next && !busy && close()} className="w-[420px] max-w-[90vw]">
       <ModalTitle>
@@ -91,7 +101,8 @@ export function StarterGrantModal() {
       </ModalTitle>
       <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
         Every identity may claim {amount.toString()} YAPP once. Posts, replies, likes and reposts paid in YAPP have their
-        network fee covered by Yappr while the grant lasts; after that you can keep posting on credits or buy more YAPP.
+        network fee covered by Yappr while the grant lasts; after that you can keep posting on credits
+        {locked ? '. YAPP can\'t be bought or transferred on this network.' : ' or buy more YAPP.'}
       </Dialog.Description>
       {needsCritical && (
         <div className="mb-4">

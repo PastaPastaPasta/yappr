@@ -24,7 +24,7 @@
 import { Identifier } from '@dashevo/evo-sdk';
 import { logger } from '@/lib/logger';
 import { scopedKey } from '@/lib/storage-scope';
-import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isAffectedStateSnapshotError, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal } from '@/lib/error-utils';
+import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal } from '@/lib/error-utils';
 import { allocateIdentityContractNonce, identityContractNonceConsumed } from '@/lib/document-id';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { getEvoSdk } from './evo-sdk-service';
@@ -180,7 +180,7 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
 /** Whether `error` shows the transition will not execute later (see {@link withSdkSignedWrite}). */
 function isVerdict(error: unknown): boolean {
   if (isIdentityNonceConflictError(error)) return isNonceSpentRefusal(error);
-  return isConsensusRefusal(error) || isAffectedStateSnapshotError(error);
+  return isConsensusRefusal(error);
 }
 
 /**
@@ -194,11 +194,10 @@ function isVerdict(error: unknown): boolean {
  * later write starts until it expires. A consensus refusal is a verdict, but
  * a nonce refusal only when it shows the nonce spent ("already present", "too
  * far in past"): "too far in future" can come from a node behind one that
- * admitted the same transition. So, for its nonce, is the affected-state
- * snapshot a strict wait refuses: DAPI answers with a proof only for a
- * transition that executed (rs-dapi `wait_for_state_transition_result`); what
- * the snapshot leaves unproven is only the write's effect, which the caller
- * reads back.
+ * admitted the same transition. (Before evo-sdk 4.2.0-beta.7 the strict wait's
+ * affected-state snapshot error was a verdict too; from beta.7, platform#5136,
+ * the SDK writes wrapped here wait for the affected state and no longer raise
+ * it.)
  *
  * While a pending transition may still execute this waits briefly, then fails
  * without sending anything.

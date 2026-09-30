@@ -14,8 +14,8 @@ import { getPublicKey, getSharedSecret } from '@noble/secp256k1';
 import { decodeIntGroupKey, id32, normalizeId, reportSelfTest } from '../../battery-lib.mjs';
 import { YAPP_TOKEN_POSITION, addressFor, ledgerEntry } from '../seed-lib.mjs';
 import {
-  actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, envValue, fakeId, loadCheckpoint,
-  loadLedger, network, personaKeys, phaseRunner, pick, printTable, rngFrom, utf8,
+  actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, fakeId, loadCheckpoint,
+  loadLedger, network, personaKeys, phaseRunner, pick, printTable, rngFrom, topologyAtLeast, utf8,
 } from '../feature-seed-lib.mjs';
 
 /**
@@ -23,7 +23,11 @@ import {
  * storefront v4 (4.2.0-beta.4) a typed list, v1-v3 a JSON string. Chosen by
  * NEXT_PUBLIC_STOREFRONT_TOPOLOGY, like the app.
  */
-const listsTyped = () => envValue('NEXT_PUBLIC_STOREFRONT_TOPOLOGY') === 'v4';
+const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5'];
+const storefrontAtLeast = (topology) => topologyAtLeast(STOREFRONT_TOPOLOGIES, 'NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
+const listsTyped = () => storefrontAtLeast('v4');
+/** v5 (QA D-25): an order copies its store's status into `storeStatus`. */
+const ordersCarryStoreStatus = () => storefrontAtLeast('v5');
 const storedList = (values) => (listsTyped() ? [...new Set(values)] : JSON.stringify(values));
 
 const REVIEW_COST = { storeReview: 3n, itemReview: 1n };
@@ -515,9 +519,11 @@ async function run({ args, handle, battery, socialId, contractId }) {
         (itemKey) => itemIds.get(`${store.key}/${itemKey}`) ?? '');
       const { encryptedPayload, nonce } = sealOrder(order, payload, orderKeys(ledger, order, false), storeId);
       sealed += 1;
-      // `sellerId` must equal the store's own $ownerId or consensus rejects (40127).
+      // `sellerId` must equal the store's own $ownerId or consensus rejects (40127). On storefront v5
+      // (QA D-25) `storeStatus` must equal the store's status, and only an active store takes orders;
+      // every seeded store is active.
       const id = await createDoc(actors.get(BUYERS[order.buyer].persona), 'storeOrder', `order/${order.key}`,
-        { storeId: id32(storeId), sellerId: id32(actors.get(store.persona).ownerId), encryptedPayload, nonce });
+        { storeId: id32(storeId), sellerId: id32(actors.get(store.persona).ownerId), encryptedPayload, nonce, ...(ordersCarryStoreStatus() ? { storeStatus: 'active' } : {}) });
       if (id) orderIds.set(order.key, id);
     });
     console.log(`  ${sealed} order payloads encrypted and round-tripped (seller ECIES + buyer re-derived ephemeral)`);

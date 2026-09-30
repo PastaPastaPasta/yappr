@@ -1,8 +1,8 @@
 import { Post } from '@/lib/types';
 import { identifierToBase58, normalizeBytes } from '@/lib/services/sdk-helpers';
 import { extractPostEmbedFields } from '@/lib/poll-embed';
-import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
-import { hashtagsAreInline } from '@/lib/contract-topology';
+import { mediaFromDocument } from '@/lib/media/media-fields';
+import { hashtagsAreInline, privateFeedKeyFields } from '@/lib/contract-topology';
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
@@ -86,11 +86,17 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
   // v9 only: quotes of replies live in their own field. Absent on v2 documents.
   const rawQuotedReplyId = data.quotedReplyId || doc.quotedReplyId;
   const quotedReplyId = rawQuotedReplyId ? identifierToBase58(rawQuotedReplyId) || undefined : undefined;
+  // The quoted document's author (consensus-bound on v9/v10). A v10 bare
+  // repost is shown as that author's post, so block filtering reads it.
+  const rawQuotedPostOwnerId = data.quotedPostOwnerId || doc.quotedPostOwnerId;
+  const quotedPostOwnerId = rawQuotedPostOwnerId ? identifierToBase58(rawQuotedPostOwnerId) || undefined : undefined;
   const rawHashtag = data.hashtag ?? doc.hashtag;
 
   const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
   const rawNonce = data.nonce || doc.nonce;
-  const epoch = (data.epoch ?? doc.epoch) as number | undefined;
+  // Also takes an already-built Post (optimistic feed cards), which names it keyGeneration.
+  const { generation } = privateFeedKeyFields();
+  const keyGeneration = (data[generation] ?? doc[generation] ?? doc.keyGeneration) as number | undefined;
 
   const username = (existingAuthor.username as string | undefined) || '';
   const hasResolvedUsername = Boolean(username && !username.startsWith('user_'));
@@ -107,7 +113,6 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
   // cards render without the post's image while the detail page shows it.
   // normalizeMediaUrl restores ipfs:// from stored gateway URLs so IpfsImage
   // gets multi-gateway failover instead of being pinned to one host.
-  const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
   return {
     id,
@@ -134,13 +139,10 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     liked: (doc.liked as boolean | undefined) || false,
     reposted: (doc.reposted as boolean | undefined) || false,
     bookmarked: (doc.bookmarked as boolean | undefined) || false,
-    media: mediaUrl ? [{
-      id: id + '-media',
-      type: 'image',
-      url: normalizeMediaUrl(mediaUrl),
-    }] : undefined,
+    media: mediaFromDocument(id, data, doc),
     quotedPostId,
     quotedReplyId,
+    quotedPostOwnerId,
     deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
     sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
     // v9 omits the untagged property on chain; normalize that absence to the
@@ -151,7 +153,7 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
       : hashtagsAreInline() ? '' : undefined,
     ...extractPostEmbedFields(data, doc),
     encryptedContent: rawEncryptedContent ? normalizeBytes(rawEncryptedContent) ?? undefined : undefined,
-    epoch,
+    keyGeneration,
     nonce: rawNonce ? normalizeBytes(rawNonce) ?? undefined : undefined,
   };
 }

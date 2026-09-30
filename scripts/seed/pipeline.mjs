@@ -20,7 +20,6 @@
  * and throws on permanent failure. Per-actor sequencing is preserved by the
  * scheduler; this module adds a per-actor in-flight window on top.
  */
-import bs58 from 'bs58';
 import {
   BatchTransition,
   BatchedTransition,
@@ -35,6 +34,7 @@ import {
   TRANSPORT_COLLAPSE,
   buildDocument,
   describeErr,
+  duplicateIsSuccess,
   feeAgreementFor,
   forgetFeeMultiplier,
   randomEntropy,
@@ -96,7 +96,7 @@ function buildSignedCreate({ contractId, actor, docType, data, nonce, payment, a
   return { st, id };
 }
 
-export function buildPipelinedExecutor({ handle, contractId, actors, ledger, progressRefs, planOp, entryExists, paymentFor, window = DEFAULT_WINDOW, log = () => {} }) {
+export function buildPipelinedExecutor({ handle, contractId, actors, ledger, progressRefs, planOp, mediaFor, entryExists, paymentFor, window = DEFAULT_WINDOW }) {
   const resolveRef = (ref) => {
     const record = progressRefs.get(ref);
     if (!record) throw new Error(`ref "${ref}" not materialized (checkpoint out of sync)`);
@@ -122,7 +122,7 @@ export function buildPipelinedExecutor({ handle, contractId, actors, ledger, pro
     : async () => (await readback(handle, () => handle.sdk.documents.get(contractId, plan.docType, id))) != null;
 
   /** Broadcast one prepared create; returns once the chain shows it (or throws). */
-  async function submit({ actor, docType, data, tokenCost, existenceKeyPlan, duplicateIsSuccess }) {
+  async function submit({ actor, docType, data, tokenCost, existenceKeyPlan, duplicateHolds }) {
     const track = trackFor(actor);
     const payment = paymentFor(actor, docType, tokenCost);
     let lastError = null;
@@ -138,7 +138,7 @@ export function buildPipelinedExecutor({ handle, contractId, actors, ledger, pro
       } catch (e) {
         lastError = e;
         const text = describeErr(e);
-        if (DUPLICATE_UNIQUE.test(text) && duplicateIsSuccess) return { id, duplicate: true };
+        if (DUPLICATE_UNIQUE.test(text) && await duplicateHolds().catch(() => false)) return { id, duplicate: true };
         if (NONCE_DESYNC.test(text)) { await track.sync(); continue; }
         if (TRANSPORT_COLLAPSE.test(text)) { try { await handle.reconnect(text); } catch { /* retry rebuilds */ } await track.sync(); continue; }
         if (FEE_MULTIPLIER_NOT_TOLERATED.test(text)) { forgetFeeMultiplier(); await track.sync(); continue; }
@@ -160,18 +160,11 @@ export function buildPipelinedExecutor({ handle, contractId, actors, ledger, pro
 
   return async function executeOp(op) {
     const actor = actors.get(op.author);
-    const plan = planOp(op, { actors, resolveRef });
+    const plan = planOp(op, { actors, resolveRef, mediaFor });
     await waitWindow(actor.personaIdx);
     try {
-      const { id } = await submit({ actor, docType: plan.docType, data: plan.data, tokenCost: plan.tokenCost, existenceKeyPlan: plan, duplicateIsSuccess: ['like', 'likeReply', 'follow', 'bookmark', 'repost'].includes(op.type) });
-      if (plan.companion) {
-        // The beat: a second transition after the like is on chain (batch cap is 1).
-        try {
-          await submit({ actor, docType: plan.companion.docType, data: plan.companion.data, tokenCost: undefined, existenceKeyPlan: plan.companion, duplicateIsSuccess: true });
-        } catch (e) {
-          log(`line ${op.line}: beat companion failed (${describeErr(e).slice(0, 120)}) — like stands, tag under-counts today`);
-        }
-      }
+      const duplicateHolds = () => duplicateIsSuccess(handle, contractId, { op, plan, ownerId: actor.ownerId });
+      const { id } = await submit({ actor, docType: plan.docType, data: plan.data, tokenCost: plan.tokenCost, existenceKeyPlan: plan, duplicateHolds });
       return plan.refRecord ? plan.refRecord(id) : null;
     } finally {
       releaseWindow(actor.personaIdx);

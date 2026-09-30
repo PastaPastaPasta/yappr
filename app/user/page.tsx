@@ -11,6 +11,8 @@ import { useSettingsStore } from '@/lib/store'
 import { followStatusCache } from '@/lib/caches/user-status-cache'
 import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { byNewestActivity, resolveUserReposts } from '@/lib/feed/resolve-user-reposts'
+import { isBareRepost } from '@/lib/feed/quote-reposts'
+import { repostsAreQuotes } from '@/lib/contract-topology'
 import { paymentUriScheme } from '@/lib/services/unified-profile-service'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
@@ -231,13 +233,17 @@ function UserProfileContent() {
         const merged: Post[] = (postsResult.documents || []).map((post) =>
           withAuthor(post, { username: '', displayName: '', avatar: '', hasDpns: undefined })
         )
-        try {
-          const { repostService } = await import('@/lib/services/repost-service')
-          const reposts = await repostService.getUserReposts(userId)
-          merged.push(...(await resolveUserReposts(userId, reposts, profileDisplayName)))
-          merged.sort(byNewestActivity)
-        } catch (repostError) {
-          logger.error('Failed to fetch user reposts:', repostError)
+        // v10 has no repost documents: the user's reposts are bare quote
+        // posts, already in their posts above.
+        if (!repostsAreQuotes()) {
+          try {
+            const { repostService } = await import('@/lib/services/repost-service')
+            const reposts = await repostService.getUserReposts(userId)
+            merged.push(...(await resolveUserReposts(userId, reposts, profileDisplayName)))
+            merged.sort(byNewestActivity)
+          } catch (repostError) {
+            logger.error('Failed to fetch user reposts:', repostError)
+          }
         }
 
         await attachQuotedPosts(merged)
@@ -580,7 +586,7 @@ function UserProfileContent() {
               onTabChange={tabs.setActiveTab}
               viewerId={viewerId}
               getPostEnrichment={getPostEnrichment}
-              posts={published.posts.filter((p) => !p.repostedBy)}
+              posts={published.posts.filter((p) => !p.repostedBy && !isBareRepost(p))}
               replies={tabs.replies}
               top={tabs.top}
               mentions={tabs.mentions}

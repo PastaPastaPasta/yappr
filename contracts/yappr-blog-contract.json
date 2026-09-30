@@ -95,8 +95,10 @@
         }
       },
       "additionalProperties": false,
-      "description": "A blog (many per user). Permanent so posts and follows can reference it; there is no tombstone flag \u2014 an abandoned blog is simply empty.",
-      "canBeDeletedByModerators": true
+      "description": "A blog (many per user). Permanent so posts and follows can reference it; there is no tombstone flag — an abandoned blog is simply empty.",
+      "moderatorAbilities": {
+        "delete": true
+      }
     },
     "blogPost": {
       "type": "object",
@@ -157,7 +159,7 @@
           "refersTo": {
             "type": "deletableDocument",
             "documentType": "blog",
-            "propertyAgreement": {
+            "where": {
               "$ownerId": "$ownerId"
             }
           }
@@ -251,7 +253,9 @@
       "immutableAllowSetting": [
         "publishedAt"
       ],
-      "canBeDeletedByModerators": true,
+      "moderatorAbilities": {
+        "delete": true
+      },
       "propertyConstraints": {
         "chunksContiguous": {
           "allOf": [
@@ -345,9 +349,9 @@
           "refersTo": {
             "type": "deletableDocument",
             "documentType": "blogPost",
-            "propertyAgreement": {
-              "blogPostOwnerId": "$ownerId",
-              "postCommentsEnabled": "commentsEnabled"
+            "where": {
+              "$ownerId": "blogPostOwnerId",
+              "commentsEnabled": "postCommentsEnabled"
             }
           }
         },
@@ -381,7 +385,9 @@
           "amount": 1
         }
       },
-      "canBeDeletedByModerators": true,
+      "moderatorAbilities": {
+        "delete": true
+      },
       "propertyConstraints": {
         "commentsOpen": {
           "notEqual": [

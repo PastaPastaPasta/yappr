@@ -3,10 +3,16 @@
  * CORPUS_FORMAT.md) against the devnet social contract as the seed
  * identities provisioned by provision-seed-identities.mjs.
  *
- * The target is the v9 social contract (`.env.devnet`; the run refuses any
+ * The target is the v10 social contract (`.env.devnet`; the run refuses any
  * other NEXT_PUBLIC_CONTRACT_TOPOLOGY). The corpus `''` convention means
  * "untagged", and an untagged post/quote/like OMITS the hashtag property
- * (writing `''` is propertyAgreement consensus error 40127).
+ * (writing `''` is `where` consensus error 40127). A post or reply with a
+ * `mediaUrl` carries the sha256 and dHash of the bytes at that URL
+ * (media-hash.mjs), fetched once per URL before the run starts. A like is one
+ * transition: v10 has no `beat` companion. A `repost` op is written as a post
+ * quoting its target with no content (v10 has no repost type), through the
+ * same path as a quote; its 40105 is success only when our bare repost is
+ * already there.
  *
  * Two things shape what a create CARRIES: `post` and `reply` must agree to the
  * action fee their type declares (`$actionFeeAgreement`, 40132 without), which
@@ -55,7 +61,7 @@
  * Use a high --concurrency (hundreds) with it; throughput scales with the
  * number of distinct authors, not with concurrency on one.
  */
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DocumentActionFeeAgreement, IdentitySigner, ensureInitialized } from '@dashevo/evo-sdk';
@@ -63,6 +69,7 @@ import bs58 from 'bs58';
 import {
   CRITICAL_AUTH_KEY_ID,
   DUPLICATE_UNIQUE,
+  duplicateIsSuccess,
   FEE_MULTIPLIER_NOT_TOLERATED,
   NONCE_DESYNC,
   PROGRESS_FILE,
@@ -85,12 +92,15 @@ import {
   createdId,
   deriveDocumentIdBytes,
   describeErr,
+  CONTENT_MAX,
+  CONTENT_MAX_BYTES,
+  codePointLength,
   expandedContentLength,
+  utf8Length,
   findRecentByValues,
   hashtagProps,
   ledgerEntry,
   likeValueTuple,
-  beatValueTuple,
   loadLedger,
   loadPersonas,
   loadProgress,
@@ -109,6 +119,7 @@ import {
   substituteLinks,
   wifFromHex,
 } from './seed-lib.mjs';
+import { dHashFromLuma, mediaFieldsFor } from './media-hash.mjs';
 
 const SDK_TIMEOUT_MS = 30_000;
 /**
@@ -129,7 +140,7 @@ const ACTOR_FETCH_CONCURRENCY = 16;
 // ---- CLI ------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { personas: null, corpus: null, concurrency: 10, maxOps: Infinity, selfTest: false, pipeline: false, window: 8, creditsFraction: null };
+  const args = { personas: null, corpus: null, concurrency: 10, maxOps: Infinity, selfTest: false, pipeline: false, window: 8, creditsFraction: null, requireDhash: false };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--personas': args.personas = argv[++i]; break;
@@ -137,6 +148,7 @@ function parseArgs(argv) {
       case '--concurrency': args.concurrency = Number(argv[++i]); break;
       case '--max-ops': args.maxOps = Number(argv[++i]); break;
       case '--pipeline': args.pipeline = true; break;
+      case '--require-dhash': args.requireDhash = true; break;
       case '--window': args.window = Number(argv[++i]); break;
       case '--credits-fraction': args.creditsFraction = Number(argv[++i]); break;
       case '--self-test': args.selfTest = true; break;
@@ -322,26 +334,26 @@ async function entryExists(handle, contractId, docType, keyField, keyValue, owne
   });
 }
 
-/** Duplicate-tolerant op kinds: a 40105 means the end state already holds. */
-const DUPLICATE_IS_SUCCESS = new Set(['like', 'likeReply', 'follow', 'bookmark', 'repost']);
-
 /**
  * Maps one corpus op to {docType, data, tokenCost, indexOnly, refRecord,
  * existenceKey}. Pure (exported for the self-test): the acceptance query for
  * indexOnly types is described by `existenceKey` and bound to the network in
  * buildExecutor. An untagged post/quote/like OMITS the hashtag property (the
  * corpus '' convention and an absent checkpoint hashtag are equivalent).
+ * `mediaFor(url)` answers the `{ mediaHash, mediaFingerprint }` of a URL,
+ * computed before the run (`resolveCorpusMedia`).
  */
-export function planOp(op, { actors, resolveRef }) {
+export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
   const bytes = (base58) => bs58.decode(base58);
   const actor = actors.get(op.author);
   if (!actor) throw new Error(`author ${op.author} has no provisioned identity`);
   const finalContent = typeof op.content === 'string'
     ? substituteLinks(op.content, (ref) => resolveRef(ref).id)
     : undefined;
-  if (finalContent !== undefined && finalContent.length > 500) {
-    throw new Error(`line ${op.line}: content is ${finalContent.length} chars after link substitution (max 500)`);
+  if (finalContent !== undefined && (codePointLength(finalContent) > CONTENT_MAX || utf8Length(finalContent) > CONTENT_MAX_BYTES)) {
+    throw new Error(`line ${op.line}: content is ${codePointLength(finalContent)} characters / ${utf8Length(finalContent)} bytes after link substitution (max ${CONTENT_MAX} / ${CONTENT_MAX_BYTES})`);
   }
+  const media = op.mediaUrl ? { mediaUrl: op.mediaUrl, ...mediaFor(op.mediaUrl) } : {};
 
   switch (op.type) {
     case 'post':
@@ -352,9 +364,8 @@ export function planOp(op, { actors, resolveRef }) {
         tokenCost: TOKEN_COST.post,
         data: {
           content: finalContent ?? '',
-          language: 'en',
           ...hashtagProps(op.hashtag),
-          ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
+          ...media,
           ...(op.sensitive !== undefined ? { sensitive: op.sensitive } : {}),
           ...(quoted ? { quotedPostId: bytes(quoted.id), quotedPostOwnerId: bytes(quoted.ownerId) } : {}),
         },
@@ -372,29 +383,24 @@ export function planOp(op, { actors, resolveRef }) {
           rootPostId: bytes(root.id),
           parentOwnerId: bytes(parent.ownerId),
           ...(parent.kind === 'reply' ? { replyToReplyId: bytes(parent.id) } : {}),
-          ...(op.mediaUrl ? { mediaUrl: op.mediaUrl } : {}),
+          ...media,
         },
         refRecord: (id) => ({ kind: 'reply', id, ownerId: actor.ownerId, hashtag: '' }),
       };
     }
     case 'like': {
       const target = resolveRef(op.targetRef);
-      const beat = beatValueTuple(target);
       return {
         docType: 'like',
         tokenCost: TOKEN_COST.like,
         indexOnly: true,
-        // propertyAgreement: hashtag and postAuthor MUST mirror the post —
-        // including hashtag ABSENCE (both-absent = agreement; '' on a like of
-        // an untagged post is consensus error 40127). `postAuthor` binds to
+        // where: hashtag and postAuthor MUST mirror the post — including
+        // hashtag ABSENCE (both-absent = agreement; '' on a like of an
+        // untagged post is consensus error 40127). `postAuthor` binds to
         // `post.$ownerId`. The same tuple is what a delete-by-values carries.
+        // The like itself feeds the rolling trending windows (byTrendPost, byTrendHashtagPost).
         data: likeValueTuple(target),
         existenceKey: { keyField: 'postId', keyValue: target.id },
-        // A like of a tagged post carries a `beat` companion (today's
-        // trending rides beat.byDayHashtagPost). Written as a second
-        // indexOnly create after the like lands; its own existence read is
-        // the acceptance probe, and a duplicate (resume) is success.
-        ...(beat ? { companion: { docType: 'beat', data: beat, existenceKey: { keyField: 'postId', keyValue: target.id } } } : {}),
       };
     }
     case 'likeReply': {
@@ -408,11 +414,16 @@ export function planOp(op, { actors, resolveRef }) {
       };
     }
     case 'repost': {
+      // v10 has no repost type: a repost is a post quoting its target (a post or
+      // a reply) with no content, written like a quote — the post price and the
+      // post action fee agreement. It defines no ref.
       const target = resolveRef(op.targetRef);
+      const field = target.kind === 'reply' ? 'quotedReplyId' : 'quotedPostId';
       return {
-        docType: 'repost',
-        tokenCost: TOKEN_COST.repost,
-        data: { postId: bytes(target.id), postOwnerId: bytes(target.ownerId) },
+        docType: 'post',
+        tokenCost: TOKEN_COST.post,
+        data: { [field]: bytes(target.id), quotedPostOwnerId: bytes(target.ownerId) },
+        repostTarget: { field, value: target.id },
       };
     }
     case 'follow': {
@@ -465,7 +476,7 @@ function writeShapeFor({ handle }) {
   };
 }
 
-function buildExecutor({ handle, contractId, actors, progressRefs }) {
+function buildExecutor({ handle, contractId, actors, progressRefs, mediaFor }) {
   const writeShape = writeShapeFor({ handle });
   const resolveRef = (ref) => {
     const record = progressRefs.get(ref);
@@ -483,7 +494,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs }) {
    */
   return async function executeOp(op) {
     const actor = actors.get(op.author);
-    const plan = planOp(op, { actors, resolveRef });
+    const plan = planOp(op, { actors, resolveRef, mediaFor });
     // One draw per op, reused by every attempt. Under protocol 14 that does NOT
     // make the id stable across a retry — the id commits to the nonce too — so
     // what recognises a broadcast that landed is the by-value `accepted` probe
@@ -510,51 +521,6 @@ function buildExecutor({ handle, contractId, actors, progressRefs }) {
         return id != null;
       };
 
-    // A like of a tagged post carries a `beat` companion. It is written
-    // AFTER the like is confirmed on chain (a beat without its like would be a
-    // phantom trending vote), through the same indexOnly acceptance loop: the
-    // chain decides, a duplicate on resume is success, transport collapse
-    // reconnects. A companion failure fails the op so a retry re-runs the
-    // (duplicate-tolerant) like and then the beat again.
-    const writeCompanion = async () => {
-      if (!plan.companion) return;
-      const companion = plan.companion;
-      const { document: companionDoc } = buildDocument({
-        contractId,
-        docType: companion.docType,
-        ownerId: actor.ownerId,
-        data: companion.data,
-        entropy: randomEntropy(),
-      });
-      const companionAccepted = () =>
-        entryExists(handle, contractId, companion.docType, companion.existenceKey.keyField, companion.existenceKey.keyValue, actor.ownerId);
-      if (await companionAccepted()) return; // resumed after a landed beat
-      let companionError = null;
-      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        try {
-          // A beat is unpriced and unagreed: the plain facade create.
-          await handle.sdk.documents.create({ document: companionDoc, identityKey: actor.identityKey, signer: actor.signer });
-          if (await companionAccepted()) return;
-          companionError = new Error(`${companion.docType} create returned but the entry is not on chain`);
-        } catch (e) {
-          companionError = e;
-          const text = describeErr(e);
-          if (DUPLICATE_UNIQUE.test(text)) return;
-          if (TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text)) {
-            try { await handle.reconnect(text); } catch { /* next attempt retries */ }
-          }
-          for (let poll = 0; poll < SETTLE_POLLS; poll++) {
-            await sleep(SETTLE_MS);
-            try { if (await companionAccepted()) return; } catch (readError) { companionError = readError; }
-          }
-          const isConsensus = /code=4\d{4}/.test(text) || /consensus/i.test(text);
-          if (isConsensus) throw e;
-        }
-        await sleep(2_000 * attempt);
-      }
-      throw companionError ?? new Error(`${companion.docType} companion failed after retries`);
-    };
-
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
@@ -568,13 +534,12 @@ function buildExecutor({ handle, contractId, actors, progressRefs }) {
         }
         // indexOnly: a clean return still gets one confirming read (cheap, and
         // the SDK's post-broadcast behavior for these types is unreliable).
-        if (await accepted()) { await writeCompanion(); return plan.refRecord ? plan.refRecord(id) : null; }
+        if (await accepted()) return plan.refRecord ? plan.refRecord(id) : null;
         lastError = new Error('create returned but the entry is not on chain');
       } catch (e) {
         lastError = e;
         const text = describeErr(e);
-        if (DUPLICATE_UNIQUE.test(text) && DUPLICATE_IS_SUCCESS.has(op.type)) {
-          await writeCompanion(); // end state already holds; the beat may still be missing (resume)
+        if (DUPLICATE_UNIQUE.test(text) && await duplicateIsSuccess(handle, contractId, { op, plan, ownerId: actor.ownerId }).catch(() => false)) {
           return plan.refRecord ? plan.refRecord(id) : null;
         }
         if (TRANSPORT_COLLAPSE.test(text)) {
@@ -589,7 +554,7 @@ function buildExecutor({ handle, contractId, actors, progressRefs }) {
         for (let poll = 0; poll < settlePolls; poll++) {
           await sleep(SETTLE_MS);
           try {
-            if (await accepted()) { await writeCompanion(); return plan.refRecord ? plan.refRecord(id) : null; }
+            if (await accepted()) return plan.refRecord ? plan.refRecord(id) : null;
           } catch (readError) {
             lastError = readError;
           }
@@ -609,6 +574,78 @@ function buildExecutor({ handle, contractId, actors, progressRefs }) {
       await sleep(2_000 * attempt);
     }
     throw lastError ?? new Error('op failed after retries');
+  };
+}
+
+// ---- Media -----------------------------------------------------------------------------
+
+function missingMedia(url) {
+  throw new Error(`media ${url} was not resolved before the run (resolveCorpusMedia)`);
+}
+
+const MEDIA_FETCH_CONCURRENCY = 4;
+const MEDIA_FETCH_ATTEMPTS = 3;
+const hexOf = (bytes) => Buffer.from(bytes).toString('hex');
+const bytesOf = (hex) => Uint8Array.from(Buffer.from(hex, 'hex'));
+
+/** The media cache beside the progress journal (`.seed-progress.local.media.json`, gitignored with it). */
+export const mediaCacheFile = (progressFile = PROGRESS_FILE) => `${progressFile.replace(/\.json$/, '')}.media.json`;
+
+function loadMediaCache(file) {
+  if (!file || !existsSync(file)) return {};
+  return JSON.parse(readFileSync(file, 'utf8'));
+}
+
+/**
+ * The `{ mediaHash, mediaFingerprint }` of every distinct `mediaUrl` in the
+ * corpus, resolved before any write so a media op never waits on (or fails
+ * over) an image download mid-run. Returns the sync lookup planOp takes.
+ *
+ * Each URL is fetched at most once per ledger: results are cached in
+ * `cacheFile` (url → hex hash, fingerprint, decoded), so a resumed run writes
+ * the hashes the first run computed even if the bytes behind a URL drift.
+ * Fetches run `MEDIA_FETCH_CONCURRENCY` at a time with `MEDIA_FETCH_ATTEMPTS`
+ * tries each. A fingerprint that is a stand-in (no local decoder) is counted
+ * loudly, and `requireDhash` refuses the run instead (a cached stand-in is
+ * then fetched again, in case a decoder is now available).
+ */
+export async function resolveCorpusMedia(ops, { fetchBytes, log = () => {}, cacheFile = null, requireDhash = false } = {}) {
+  const urls = [...new Set(ops.map((op) => op.mediaUrl).filter(Boolean))];
+  const cache = loadMediaCache(cacheFile);
+  const todo = urls.filter((url) => !cache[url] || (requireDhash && !cache[url].decoded));
+  const failed = [];
+  const queue = [...todo];
+  await Promise.all(Array.from({ length: Math.min(MEDIA_FETCH_CONCURRENCY, queue.length) }, async () => {
+    while (queue.length > 0) {
+      const url = queue.shift();
+      let lastError = null;
+      for (let attempt = 1; attempt <= MEDIA_FETCH_ATTEMPTS; attempt++) {
+        try {
+          const fields = await mediaFieldsFor(url, { fetchBytes });
+          cache[url] = { mediaHash: hexOf(fields.mediaHash), mediaFingerprint: hexOf(fields.mediaFingerprint), decoded: fields.decoded };
+          lastError = null;
+          break;
+        } catch (e) {
+          lastError = e;
+          if (attempt < MEDIA_FETCH_ATTEMPTS) await sleep(1_000 * attempt);
+        }
+      }
+      if (lastError) failed.push(`${url}: ${describeErr(lastError).slice(0, 120)}`);
+    }
+  }));
+  if (cacheFile && todo.length > 0) writeFileSync(cacheFile, JSON.stringify(cache, null, 2) + '\n', { mode: 0o600 });
+  if (failed.length > 0) throw new Error(`could not fetch ${failed.length} media URL(s) after ${MEDIA_FETCH_ATTEMPTS} tries:\n  ${failed.join('\n  ')}`);
+  const standIns = urls.filter((url) => !cache[url].decoded);
+  if (urls.length > 0) log(`media: ${urls.length} URL(s), ${todo.length} fetched, ${urls.length - todo.length} from the cache`);
+  if (standIns.length > 0) {
+    const warning = `${standIns.length} of ${urls.length} media fingerprint(s) are STAND-INS (no local image decoder: macOS sips); the client's near-duplicate check cannot match them`;
+    if (requireDhash) throw new Error(`--require-dhash: ${warning}`);
+    log(`WARNING: ${warning}. Re-run with --require-dhash on a machine with sips to refuse this.`);
+  }
+  return (url) => {
+    const entry = cache[url];
+    if (!entry) return missingMedia(url);
+    return { mediaHash: bytesOf(entry.mediaHash), mediaFingerprint: bytesOf(entry.mediaFingerprint) };
   };
 }
 
@@ -780,9 +817,9 @@ async function selfTest() {
   check('parse: stats per type', stats.post === 2 && stats.quote === 1 && stats.reply === 2 && stats.like === 1);
   check('parse: line numbers carried', ops[3].line === 4);
 
-  // YAPP cost model: 2 posts + 1 quote = 30, 2 replies = 6, like+likeReply+repost = 3
+  // YAPP cost model: 2 posts + 1 quote = 30, 2 replies = 6, like+likeReply = 2, and the repost is a post = 10
   const { total } = corpusYappCost(ops);
-  check('yapp cost: 39 for the sample corpus', total === 39, `total=${total}`);
+  check('yapp cost: 48 for the sample corpus (a repost costs a post)', total === 48, `total=${total}`);
 
   // Structural rejections
   const rejects = (line, why) => {
@@ -802,12 +839,27 @@ async function selfTest() {
     '{"type":"post","ref":"p1","author":0,"content":"x","hashtag":""}\n{"type":"like","author":1,"targetRef":"p1"}\n{"type":"like","author":1,"targetRef":"p1"}',
     '40105'
   ));
+  // One quote or repost per author and target (ownerAndQuotedPost / ownerAndQuotedReply, 40105).
+  const target = '{"type":"post","ref":"p1","author":0,"content":"x","hashtag":""}\n';
+  check('parse: a second repost of the same post by the same author rejected', rejects(
+    `${target}{"type":"repost","author":1,"targetRef":"p1"}\n{"type":"repost","author":1,"targetRef":"p1"}`, '40105'));
+  check('parse: a repost after a quote of the same post by the same author rejected', rejects(
+    `${target}{"type":"quote","ref":"p2","author":1,"content":"q","quotedRef":"p1","hashtag":""}\n{"type":"repost","author":1,"targetRef":"p1"}`, '40105'));
+  check('parse: a quote after a repost of the same post by the same author rejected', rejects(
+    `${target}{"type":"repost","author":1,"targetRef":"p1"}\n{"type":"quote","ref":"p2","author":1,"content":"q","quotedRef":"p1","hashtag":""}`, '40105'));
+  check('parse: another author\'s repost, and a repost of a reply, are accepted', parseCorpus(
+    `${target}{"type":"repost","author":1,"targetRef":"p1"}\n{"type":"repost","author":2,"targetRef":"p1"}\n` +
+    '{"type":"reply","ref":"r1","author":2,"rootRef":"p1","parentRef":"p1","content":"r"}\n{"type":"repost","author":1,"targetRef":"r1"}', personas).ops.length === 5);
   check('parse: bad hashtag rejected', rejects('{"type":"post","ref":"p1","author":0,"content":"x","hashtag":"UPPER"}', 'hashtag'));
   check('parse: self-follow rejected', rejects('{"type":"follow","author":0,"target":0}', 'follow itself'));
   check('parse: oversize expanded content rejected', rejects(
     '{"type":"post","ref":"p1","author":0,"content":"x","hashtag":""}\n' +
-    JSON.stringify({ type: 'post', ref: 'p2', author: 0, content: 'y'.repeat(440) + '{{link:p1}}', hashtag: '' }),
+    JSON.stringify({ type: 'post', ref: 'p2', author: 0, content: 'y'.repeat(940) + '{{link:p1}}', hashtag: '' }),
     'can expand'
+  ));
+  check('parse: content over 2000 UTF-8 bytes rejected though under 1000 characters', rejects(
+    JSON.stringify({ type: 'post', ref: 'p1', author: 0, content: '€'.repeat(667), hashtag: '' }),
+    'UTF-8 bytes'
   ));
 
   // Link substitution
@@ -895,7 +947,7 @@ async function selfTest() {
   });
   check('max-ops: executes exactly the cap', results4.done === 3 && journal4.length === 3, `done=${results4.done}`);
 
-  // ---- Document shapes: hashtag ABSENCE, no attested author, beat companions ----
+  // ---- Document shapes: hashtag ABSENCE, no attested author, no language, media hashes ----
   const owner = bs58.encode(new Uint8Array(32).fill(1));
   const targetId = bs58.encode(new Uint8Array(32).fill(2));
   const planCtx = (refHashtag) => ({
@@ -909,17 +961,77 @@ async function selfTest() {
 
   const plannedPost = planOp(postOp, planCtx('')).data;
   const plannedReply = planOp(replyOp, planCtx('')).data;
-  check('post OMITS the attested author column (additionalProperties would reject it)',
-    !('author' in plannedPost) && plannedPost.language === 'en');
+  check('post OMITS the attested author column and `language` (v10 has neither)',
+    !('author' in plannedPost) && !('language' in plannedPost));
   check('reply OMITS the attested author column, keeping its parent linkage',
     !('author' in plannedReply) && plannedReply.rootPostId instanceof Uint8Array && plannedReply.parentOwnerId instanceof Uint8Array);
-  check('tagged like plans a beat companion { postId, hashtag }', (() => {
-    const plan = planOp(likeOp, planCtx('dash'));
-    return plan.companion?.docType === 'beat' && plan.companion.data.hashtag === 'dash' && plan.companion.data.postId instanceof Uint8Array && plan.companion.existenceKey.keyField === 'postId';
+  check('a like is ONE document: tagged or not, no beat companion', planOp(likeOp, planCtx('dash')).companion === undefined && planOp(likeOp, planCtx('')).companion === undefined);
+  const media = { mediaHash: new Uint8Array(32).fill(3), mediaFingerprint: new Uint8Array(8).fill(4) };
+  const withMedia = planOp({ ...postOp, mediaUrl: 'https://example.com/a.png' }, { ...planCtx(''), mediaFor: () => media }).data;
+  check('a post with mediaUrl carries its hash and fingerprint (dependentRequired)',
+    withMedia.mediaUrl === 'https://example.com/a.png' && withMedia.mediaHash === media.mediaHash && withMedia.mediaFingerprint === media.mediaFingerprint);
+  const replyWithMedia = planOp({ ...replyOp, mediaUrl: 'ipfs://bafy' }, { ...planCtx(''), mediaFor: () => media }).data;
+  check('a reply with mediaUrl carries them too', replyWithMedia.mediaHash === media.mediaHash && replyWithMedia.mediaFingerprint === media.mediaFingerprint);
+  check('a post without media carries neither', !('mediaHash' in plannedPost) && !('mediaFingerprint' in plannedPost));
+  check('an unresolved media URL fails the plan instead of writing a 10101', (() => {
+    try { planOp({ ...postOp, mediaUrl: 'https://example.com/b.png' }, planCtx('')); return false; } catch (e) { return /not resolved/.test(e.message); }
   })());
-  check('untagged like plans NO companion', planOp(likeOp, planCtx('')).companion === undefined);
+  // The pinned dHash: bit = right pixel brighter, row-major, most significant bit first.
+  const hex = (grid) => Buffer.from(dHashFromLuma(grid)).toString('hex');
+  check('dHash: a left-to-right ramp sets every bit, a flat or right-to-left grid none',
+    hex(Array.from({ length: 72 }, (_, i) => i % 9)) === 'ffffffffffffffff' &&
+      hex(new Array(72).fill(7)) === '0000000000000000' && hex(Array.from({ length: 72 }, (_, i) => 9 - (i % 9))) === '0000000000000000');
+  check('dHash: row r is byte r, its first pair the most significant bit',
+    hex(Array.from({ length: 72 }, (_, i) => (i === 1 ? 1 : 0))) === '8000000000000000' &&
+      hex(Array.from({ length: 72 }, (_, i) => (i === 7 * 9 + 8 ? 1 : 0))) === '0000000000000001');
+  // Media: fetched once, retried, cached beside the journal, stand-ins counted.
+  {
+    const cacheFile = join(mkdtempSync(join(tmpdir(), 'seed-media-')), 'progress.media.json');
+    const mediaOps = [{ mediaUrl: 'https://example.com/a' }, { mediaUrl: 'https://example.com/a' }, { mediaUrl: 'https://example.com/b' }, {}];
+    let fetches = 0;
+    let flaky = 1;
+    const fetchBytes = async (url) => {
+      fetches += 1;
+      if (url.endsWith('/b') && flaky-- > 0) throw new Error('503');
+      return new TextEncoder().encode(url);
+    };
+    const logs = [];
+    const first = await resolveCorpusMedia(mediaOps, { fetchBytes, cacheFile, log: (m) => logs.push(m) });
+    check('media: each distinct URL resolves, a failed fetch is retried', fetches === 3 && first('https://example.com/a').mediaHash.length === 32 && first('https://example.com/b').mediaFingerprint.length === 8, `fetches=${fetches}`);
+    const again = await resolveCorpusMedia(mediaOps, { fetchBytes: async () => { throw new Error('must not refetch'); }, cacheFile });
+    check('media: a resume reads the cache, the same bytes out', Buffer.from(again('https://example.com/a').mediaHash).equals(Buffer.from(first('https://example.com/a').mediaHash)));
+    check('media: stand-in fingerprints are counted loudly', logs.some((m) => /WARNING: 2 of 2 media fingerprint\(s\) are STAND-INS/.test(m)), logs.join(' | '));
+    const refused = await resolveCorpusMedia(mediaOps, { fetchBytes, cacheFile, requireDhash: true }).then(() => false, (e) => /--require-dhash/.test(e.message));
+    check('media: --require-dhash refuses stand-ins', refused);
+    check('media: the cache sits beside the progress journal (gitignored with it)', mediaCacheFile('/x/.seed-progress.local.json') === '/x/.seed-progress.local.media.json');
+  }
+  check('content: 1000 characters plan; 1001, or 2001 bytes in fewer characters, refuse', (() => {
+    const plan = (content) => { try { planOp({ ...postOp, content }, planCtx('')); return true; } catch { return false; } };
+    return plan('x'.repeat(1000)) && !plan('x'.repeat(1001)) && !plan('€'.repeat(667)) && plan('😀'.repeat(500));
+  })());
   check('untagged post OMITS hashtag', !('hashtag' in plannedPost));
   check('tagged post keeps its hashtag', planOp({ ...postOp, hashtag: 'dash' }, planCtx('')).data.hashtag === 'dash');
+  const repostOp = { type: 'repost', author: 1, targetRef: 'p1', line: 5 };
+  const plannedRepost = planOp(repostOp, planCtx('dash'));
+  check('a repost is a POST quoting its target with no content (no hashtag), at the post price',
+    plannedRepost.docType === 'post' && plannedRepost.tokenCost === TOKEN_COST.post && plannedRepost.refRecord === undefined &&
+      JSON.stringify(Object.keys(plannedRepost.data)) === JSON.stringify(['quotedPostId', 'quotedPostOwnerId']) &&
+      bs58.encode(plannedRepost.data.quotedPostId) === targetId && bs58.encode(plannedRepost.data.quotedPostOwnerId) === owner &&
+      plannedRepost.repostTarget.field === 'quotedPostId' && plannedRepost.repostTarget.value === targetId,
+    JSON.stringify(Object.keys(plannedRepost.data)));
+  const replyRepost = planOp(repostOp, { ...planCtx(''), resolveRef: () => ({ kind: 'reply', id: targetId, ownerId: owner }) });
+  check('a repost of a reply quotes it through quotedReplyId',
+    JSON.stringify(Object.keys(replyRepost.data)) === JSON.stringify(['quotedReplyId', 'quotedPostOwnerId']) && replyRepost.repostTarget.field === 'quotedReplyId');
+  // A repost's 40105 counts as done only when the post holding the entry is our bare repost.
+  const holding = (stored) => ({ sdk: { documents: { query: async () => new Map([['x', { toObject: () => stored }]]) } } });
+  const ours = { $ownerId: bs58.decode(owner), quotedPostId: bs58.decode(targetId), quotedPostOwnerId: bs58.decode(owner) };
+  const duplicate = (handle, op, plan) => duplicateIsSuccess(handle, targetId, { op, plan, ownerId: owner });
+  check('a 40105 is done for a like; for a repost only when our bare repost holds the entry, never for a quote',
+    await duplicate(holding(null), likeOp, planOp(likeOp, planCtx(''))) &&
+      await duplicate(holding(ours), repostOp, plannedRepost) &&
+      !(await duplicate(holding({ ...ours, content: 'a quote with text' }), repostOp, plannedRepost)) &&
+      !(await duplicate(holding({ ...ours, $ownerId: bs58.decode(targetId) }), repostOp, plannedRepost)) &&
+      !(await duplicate(holding(ours), quoteOp, planOp(quoteOp, planCtx('')))));
   const plannedQuote = planOp(quoteOp, planCtx('')).data;
   check('untagged quote OMITS hashtag (quote fields intact)', !('hashtag' in plannedQuote) && plannedQuote.quotedPostId instanceof Uint8Array);
   const plannedLike = planOp(likeOp, planCtx(''));
@@ -966,7 +1078,7 @@ async function selfTest() {
       replyFee?.moderators === 16_000_000n && replyFee.owner === 0n,
     `post=${postFee?.moderators} reply=${replyFee?.moderators}`);
   check('nothing but post and reply charges an action fee',
-    ['like', 'likeReply', 'repost', 'follow', 'bookmark', 'beat'].every((docType) => actionFeeFor(docType) === null));
+    ['like', 'likeReply', 'follow', 'bookmark', 'yapprProfile'].every((docType) => actionFeeFor(docType) === null));
 
   const agreed = actionFeeAgreementOptions(postFee, 1000n);
   check('the agreement names the exact declared amounts, each pot on its own, plus the known multiplier',
@@ -1040,7 +1152,7 @@ async function selfTest() {
   const creditsAuthors = new Set([0, 1, 2].filter((idx) => paysInCredits(idx, 1)));
   check('credits actors are excluded from the YAPP estimate (counting them over-funds the run)',
     corpusYappCost(ops, { paysCredits: (idx) => creditsAuthors.has(idx) }).total === 0 &&
-      corpusYappCost(ops).total === 39);
+      corpusYappCost(ops).total === 48);
 
   // Protocol 14 document id: the derivation is consensus (wasm-dpp2's
   // `Document.generateId` from beta.4), pinned to rs-dpp's `PINNED_V1_ID`
@@ -1071,7 +1183,7 @@ try {
 } catch (e) {
   console.error(e.message);
   console.error('Usage: NETWORK=devnet node scripts/seed/run-seeder.mjs --personas <file> --corpus <file>');
-  console.error('         [--concurrency 10] [--max-ops N] [--credits-fraction 0.25]');
+  console.error('         [--concurrency 10] [--max-ops N] [--credits-fraction 0.25] [--require-dhash]');
   console.error('       node scripts/seed/run-seeder.mjs --self-test');
   process.exit(1);
 }
@@ -1108,6 +1220,17 @@ try {
   }
 
   const contractId = socialContractId();
+  // The journal keys records by corpus LINE and names documents of one
+  // contract: resumed against another contract (or a corpus with lines added
+  // or removed) it would skip the wrong lines and bind refs to foreign ids.
+  // Records carry the contract they were written to; refuse a mismatch.
+  const journaledContracts = new Set([...progress.completed.values()].map((record) => record.contractId).filter(Boolean));
+  if ([...journaledContracts].some((id) => id !== contractId)) {
+    throw new Error(`${PROGRESS_FILE} was written against ${[...journaledContracts].join(', ')}, not ${contractId}: move it aside to seed this contract from scratch`);
+  }
+  if (progress.completed.size > 0 && journaledContracts.size === 0) {
+    console.log(`WARNING: ${PROGRESS_FILE} predates contract stamping; resume only if it was written against ${contractId} and this exact corpus`);
+  }
   const handle = createSdkHandle({ contractIds: [contractId], timeoutMs: SDK_TIMEOUT_MS, log: (msg) => console.log(`  ${msg}`) });
   const { protocolVersion } = await handle.connect();
   console.log(`connected to devnet (PV${protocolVersion ?? '?'}), contract ${contractId}`);
@@ -1116,19 +1239,22 @@ try {
   console.log(`actors: ${actors.size} identities loaded from the ledger`);
   const tokenId = await readback(handle, () => handle.sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
   const before = await snapshotBalances(handle, actors, tokenId);
+  const mediaFor = await resolveCorpusMedia(ops.filter((op) => !progress.completed.has(op.line)), {
+    log: (m) => console.log(`  ${m}`), cacheFile: mediaCacheFile(), requireDhash: args.requireDhash,
+  });
 
   const executor = args.pipeline
     ? (await import('./pipeline.mjs')).buildPipelinedExecutor({
         handle, contractId, actors, ledger, progressRefs: progress.refs,
-        planOp, entryExists, paymentFor: writeShapeFor({ handle }).paymentFor,
-        window: args.window, log: (m) => console.log(`  ${m}`),
+        planOp, mediaFor, entryExists, paymentFor: writeShapeFor({ handle }).paymentFor,
+        window: args.window,
       })
-    : buildExecutor({ handle, contractId, actors, progressRefs: progress.refs });
+    : buildExecutor({ handle, contractId, actors, progressRefs: progress.refs, mediaFor });
   if (args.pipeline) console.log(`executor: PIPELINED (window ${args.window} in flight per identity, concurrency ${args.concurrency})`);
   // The engine publishes refs through deferreds; the executor reads settled
   // records from progress.refs, so keep the two in sync as records land.
   const journal = (record) => {
-    appendProgress(record);
+    appendProgress({ ...record, contractId });
     if (record.status === 'done' && record.ref) {
       progress.refs.set(record.ref, { kind: record.kind, id: record.id, ownerId: record.ownerId, hashtag: record.hashtag ?? '' });
     }

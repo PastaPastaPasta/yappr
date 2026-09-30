@@ -3,8 +3,10 @@ import { DataContract, EvoSDK, PlatformVersion } from '@dashevo/evo-sdk';
 import { bundleKey, bundledContractsFor, staleContractIds } from '@/lib/contracts/bundled-contracts';
 import { instrumentSdk } from '@/lib/query-inspector/capture';
 import { YAPPR_DM_CONTRACT_ID, YAPPR_DM_V5_CONTRACT_ID, dmIsV5, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, TOKEN_HISTORY_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
+import { profileBaseSource, profileExtensionSource } from '../profile/v10-profile';
 import type { AppNetwork } from '../constants';
 import { SDK_FACADES } from './sdk-facades';
+import { installDapiPathShim } from './dapi-path-shim';
 import { observeSdkFailures } from './sdk-failure-observer';
 
 export interface EvoSdkConfig {
@@ -127,6 +129,9 @@ class EvoSdkService {
           );
         }
         logger.debug(`EvoSdkService: Building devnet (${devnetName}) SDK with ${addresses.length} addresses...`);
+        // The wasm transport requests `<address>//org.dash.platform…`, which a
+        // gateway without merge_slashes refuses; see dapi-path-shim.ts.
+        installDapiPathShim(addresses);
         this.sdk = new EvoSDK({
           network: 'devnet',
           devnetName,
@@ -210,7 +215,10 @@ class EvoSdkService {
     // Build list of contracts to fetch
     const contractsToFetch: Array<{ id: string; name: string }> = [
       { id: this.config.contractId, name: 'Yappr' },
-      { id: YAPPR_PROFILE_CONTRACT_ID, name: 'Profile' },
+      // v10 retires the profile contract: a profile is the DashPay profile plus the social extension.
+      profileExtensionSource()
+        ? { id: profileBaseSource().contractId, name: 'DashPay' }
+        : { id: YAPPR_PROFILE_CONTRACT_ID, name: 'Profile' },
     ];
 
     // Add optional contracts if configured

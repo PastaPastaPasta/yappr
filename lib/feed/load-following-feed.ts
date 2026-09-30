@@ -3,6 +3,7 @@ import { Post } from '@/lib/types';
 import { followService, postService } from '@/lib/services';
 import { loadIdentityBatch } from '@/lib/services/identity-batch';
 import { repostService } from '@/lib/services/repost-service';
+import { repostsAreQuotes } from '@/lib/contract-topology';
 import { attachQuotedPosts } from './resolve-quoted-posts';
 import { sortFeedByTimestamp } from './transform-raw-post';
 
@@ -74,7 +75,9 @@ export async function loadFollowingFeed(options: {
     await attachQuotedPosts(posts);
 
     try {
-      if (followedIds.length > 0) {
+      // v10 has no repost documents: a followed user's reposts are bare quote
+      // posts, which the timeline query above already returned.
+      if (followedIds.length > 0 && !repostsAreQuotes()) {
         const allReposts = (await repostService.getUserRepostsBatch(followedIds))
           .map(repost => ({ ...repost, reposterId: repost.$ownerId }));
 

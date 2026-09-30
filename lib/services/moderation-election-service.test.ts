@@ -57,6 +57,8 @@ describe('moderation election mappers', () => {
 
 describe('reading the contest', () => {
   beforeEach(() => {
+    // The topology is resolved once per module, by whichever read comes first.
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9');
     sdk.voting.contestedResourceVoteState.mockReset();
     sdk.voting.votePollsByEndDate.mockReset();
   });
@@ -82,22 +84,35 @@ describe('reading the contest', () => {
     expect(contest).toMatchObject({ contenders: [{ identityId: leader, votes: 3 }], endsAtMs: 5000 });
     expect(endTimeFailed).toBe(false);
     expect(sdk.voting.votePollsByEndDate).toHaveBeenCalledTimes(2);
-    expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).toMatchObject({ startTimeMs: 1099, startTimeIncluded: false });
+    // The next page re-reads the last timestamp, whose group the limit may have
+    // cut short, passing its bigint back as is (wasm-sdk beta.7, platform#5139).
+    expect(sdk.voting.votePollsByEndDate.mock.calls[0][0]).not.toHaveProperty('startTimeMs');
+    expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).toMatchObject({ startTimeMs: 1099n, startTimeIncluded: true });
   });
 
-  it('reads the first end-date page without a time bound (wasm-sdk beta.5 refuses every startTimeMs)', async () => {
-    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([{ identityId: leader, voteTally: 0 }]));
-    // Mirrors wasm-sdk 4.2.0-beta.5 (platform P-02): any time bound is rejected.
-    sdk.voting.votePollsByEndDate.mockImplementation(async (query: Record<string, unknown>) => {
-      if ('startTimeMs' in query || 'endTimeMs' in query) {
-        throw new Error('Invalid vote polls by end date query: fromObject: serde deserialization error: invalid type: integer, expected f64');
-      }
-      return [entry(1790643047008, target)];
-    });
-    const { contest, endTimeFailed } = await moderationElectionService.getContest(target);
-    expect(contest?.endsAtMs).toBe(1790643047008);
-    expect(endTimeFailed).toBe(false);
-    expect(sdk.voting.votePollsByEndDate).toHaveBeenCalledTimes(1);
+  it('counts polls, not timestamp groups, when deciding a page was full', async () => {
+    // 100 polls in 50 timestamps: a full page, though it holds only 50 entries.
+    const pair = (timestampMs: number) => {
+      const one = entry(timestampMs, other);
+      return { ...one, votePolls: [...one.votePolls, ...one.votePolls] };
+    };
+    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([{ identityId: leader, voteTally: 1 }]));
+    sdk.voting.votePollsByEndDate
+      .mockResolvedValueOnce(Array.from({ length: 50 }, (_, i) => pair(2000 + i)))
+      .mockResolvedValueOnce([entry(2049, target)]);
+    const { contest } = await moderationElectionService.getContest(target);
+    expect(contest?.endsAtMs).toBe(2049);
+    expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).toMatchObject({ startTimeMs: 2049n, startTimeIncluded: true });
+  });
+
+  it('moves past a timestamp that fills a whole page on its own', async () => {
+    const crowded = entry(3000, other);
+    const full = { ...crowded, votePolls: Array.from({ length: 100 }, () => crowded.votePolls[0]) };
+    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([{ identityId: leader, voteTally: 1 }]));
+    sdk.voting.votePollsByEndDate.mockResolvedValueOnce([full]).mockResolvedValueOnce([entry(3001, target)]);
+    const { contest } = await moderationElectionService.getContest(target);
+    expect(contest?.endsAtMs).toBe(3001);
+    expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).toMatchObject({ startTimeMs: 3000n, startTimeIncluded: false });
   });
 });
 
@@ -139,6 +154,48 @@ describe('getStatus reports failed reads instead of passing them off as empty', 
     const status = await moderationElectionService.getStatus(target);
     expect(status?.contest?.contenders).toHaveLength(1);
     expect(status?.failures).toEqual(['contestEnd']);
+  });
+
+  it('stops the end-date walk at the latest end a live contest can have', async () => {
+    const now = 1_790_000_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      sdk.voting.contestedResourceVoteState.mockResolvedValue({ ...noContest(), contenders: [{ identityId: leader, voteTally: 0 }] });
+      await moderationElectionService.getStatus(target);
+      const query = sdk.voting.votePollsByEndDate.mock.calls[0][0];
+      // v9 declares 3600 s join and vote windows; 10 minutes of slack on top.
+      expect(query).toMatchObject({ endTimeMs: now + 7_200_000 + 600_000, endTimeIncluded: true, orderAscending: true });
+      expect(query).not.toHaveProperty('startTimeMs');
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});
+
+describe('the end-date bound follows the configured cut', () => {
+  it('reads the join and vote windows of the v10 contract when the topology is v10', async () => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10');
+    const { moderationElectionService: service } = await import('./moderation-election-service');
+    const { electedModeration } = await import('@/lib/contract-topology');
+    const v10 = (await import('@/contracts/yappr-social-contract-v10.json')).default.config.moderation.moderators;
+    const now = 1_790_000_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      for (const fn of [sdk.voting.contestedResourceVoteState, sdk.voting.votePollsByEndDate, sdk.moderationCharters.submittedCharters, sdk.moderationCharters.team]) fn.mockReset();
+      sdk.voting.contestedResourceVoteState.mockResolvedValue({ contenders: [{ identityId: leader, voteTally: 0 }], abstainVoteTally: 0, lockVoteTally: 0, winner: undefined, free: vi.fn() });
+      sdk.voting.votePollsByEndDate.mockResolvedValue([]);
+      sdk.moderationCharters.submittedCharters.mockResolvedValue(new Map());
+      sdk.moderationCharters.team.mockResolvedValue(undefined);
+      await service.getStatus(target);
+      expect(electedModeration()?.joinWindowSeconds).toBe(v10.joinWindow);
+      expect(electedModeration()?.voteWindowSeconds).toBe(v10.voteWindow);
+      expect(sdk.voting.votePollsByEndDate.mock.calls[0][0]).toMatchObject({ endTimeMs: now + (v10.joinWindow + v10.voteWindow) * 1000 + 600_000 });
+    } finally {
+      clock.mockRestore();
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 });
 

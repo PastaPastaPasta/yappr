@@ -299,6 +299,8 @@ export interface QueryDocumentsOptions {
   limit?: number;
   startAfter?: string;
   startAt?: string;
+  /** Rolling-window bucket selection on a `timeRange` index (see `DocumentsQuery.timeRange`). */
+  timeRange?: DocumentsQuery['timeRange'];
 }
 
 /**
@@ -330,6 +332,9 @@ export async function queryDocuments(
   }
   if (options.startAt) {
     query.startAt = options.startAt;
+  }
+  if (options.timeRange) {
+    query.timeRange = options.timeRange;
   }
 
   const response = await sdk.documents.query(query);

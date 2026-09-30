@@ -7,7 +7,7 @@ import { logger } from '@/lib/logger';
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontOrdersCarryStoreStatus } from '../constants';
 import { identifierToBase58, identifierStringToDocumentBytes, normalizeBytes } from './sdk-helpers';
 import { privateFeedCryptoService } from './private-feed-crypto-service';
 import type {
@@ -121,7 +121,12 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
       // its reviews and status updates bind to.
       sellerId: identifierStringToDocumentBytes(data.sellerId),
       encryptedPayload: data.encryptedPayload,
-      nonce: data.nonce
+      nonce: data.nonce,
+      // v5 (QA D-25): the order copies its store's status, which consensus
+      // checks against the store (40127) and requires to be active (10422), so
+      // an order to a paused or closed store is refused on chain, not only in
+      // the checkout. Only an active store reaches this write.
+      ...(storefrontOrdersCarryStoreStatus() ? { storeStatus: 'active' } : {})
     };
 
     return this.create(buyerId, documentData);

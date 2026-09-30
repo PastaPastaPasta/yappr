@@ -597,7 +597,6 @@
 {"type":"like","author":6,"targetRef":"p090"}
 {"type":"like","author":2,"targetRef":"p090"}
 {"type":"post","ref":"p126","author":8,"content":"'petra is wrong (tape mix)' is real and it slaps. she consulted on the track description as 'technical advisor (hostile)'... friday","hashtag":"synthwave"}
-{"type":"repost","author":8,"targetRef":"p064"}
 {"type":"repost","author":0,"targetRef":"p097"}
 {"type":"like","author":9,"targetRef":"p104"}
 {"type":"reply","ref":"r118","author":0,"rootRef":"p126","parentRef":"p126","content":"'technical advisor (hostile)' is going on my resume above the degree"}
@@ -615,7 +614,6 @@
 {"type":"reply","ref":"r120","author":6,"rootRef":"p127","parentRef":"r119","content":"apologized to the bird. he accepted. we're good now. birding might be real"}
 {"type":"like","author":1,"targetRef":"p110"}
 {"type":"post","ref":"p128","author":6,"content":"me returning to the gym after gary said the nod is a covenant","hashtag":"","mediaUrl":"https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif"}
-{"type":"repost","author":1,"targetRef":"p064"}
 {"type":"likeReply","author":4,"targetRef":"r115"}
 {"type":"post","ref":"p129","author":0,"content":"CI is red. the failing test is called test_should_never_fail. whoever named it summoned this","hashtag":""}
 {"type":"like","author":6,"targetRef":"p099"}
@@ -782,7 +780,6 @@
 {"type":"like","author":6,"targetRef":"p176"}
 {"type":"like","author":6,"targetRef":"p180"}
 {"type":"post","ref":"p187","author":8,"content":"2026 in sound: one dead juno resurrected, one EP, 50 records, singing ice, a trailer, and a track named after losing an argument... wouldn't change a thing (petra is still wrong)","hashtag":""}
-{"type":"repost","author":0,"targetRef":"p113"}
 {"type":"post","ref":"p188","author":9,"content":"MY 2026 IN HEADLINES: the raccoon (legend), the lot saga (11 weeks), the hot plate incident, the vending machine powerpoint. journalism school says find your beat. my beat found ME","hashtag":""}
 {"type":"like","author":9,"targetRef":"p177"}
 {"type":"like","author":9,"targetRef":"p182"}

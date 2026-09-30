@@ -1,20 +1,23 @@
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
-import { BaseDocumentService, QueryOptions, DocumentResult } from './document-service';
+import { BaseDocumentService, QueryOptions, DocumentResult, postTimelineClauses, queryRawDocuments } from './document-service';
 import { Post, PostQueryOptions, Reply } from '../../types';
 import type { BlogPost } from '@/lib/types';
 import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
-import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions } from './post-stats-helpers';
-import { HASHTAG_MAX_LENGTH, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, quoteFieldFor, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
-import { firstIndexedTag } from '@/lib/post-helpers';
+import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions, type PostInteractionState } from './post-stats-helpers';
+import { HASHTAG_MAX_LENGTH, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, mentionsAreInline, ownQuoteIndexFor, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
+import { firstIndexedTag, firstMention } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
-import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway';
+import { privateFeedKeyFields } from '@/lib/contract-topology';
+import { mediaDocumentFields, mediaFromDocument } from '@/lib/media/media-fields';
+import type { MediaHashes } from '@/lib/media/media-fingerprint';
 
 /**
  * Encryption options for creating private posts
@@ -27,7 +30,7 @@ export interface EncryptionOptions {
   /** Feed owner's encryption private key for automatic sync/recovery (own posts, and the owner's replies in their own threads) */
   encryptionPrivateKey?: Uint8Array;
   /** Encryption source for inherited encryption (only for 'inherited' type) */
-  source?: { ownerId: string; epoch: number };
+  source?: { ownerId: string; keyGeneration: number };
 }
 
 export interface PostStats {
@@ -73,7 +76,7 @@ export function replyToPost(reply: Reply): Post {
     bookmarked: reply.bookmarked,
     media: reply.media,
     encryptedContent: reply.encryptedContent,
-    epoch: reply.epoch,
+    keyGeneration: reply.keyGeneration,
     nonce: reply.nonce,
     parentId: reply.parentId,
     parentOwnerId: reply.parentOwnerId,
@@ -158,12 +161,32 @@ async function fetchBlogPostsAsQuotes(blogPostIds: string[]): Promise<Post[]> {
   );
 }
 
+/**
+ * The identity behind the first @mention of `content`, or null when there is
+ * none or its name does not resolve. DPNS names are owned by identities, so
+ * the id satisfies `post.mentionedUserId`'s (and v10 `reply.mentionedUserId`'s)
+ * `refersTo: identity`.
+ */
+export async function resolveMentionedIdentity(content: string): Promise<string | null> {
+  const username = firstMention(content);
+  if (!username) return null;
+  try {
+    const { dpnsService } = await import('./dpns-service');
+    const identityId = await dpnsService.resolveIdentity(username);
+    if (!identityId) logger.warn('Mention not indexed: could not resolve username', username);
+    return identityId;
+  } catch (error) {
+    logger.warn('Mention not indexed: username lookup failed', username, error);
+    return null;
+  }
+}
+
 class PostService extends BaseDocumentService<Post> {
   private statsCache = new TtlMap<string, PostStats>(60_000);
 
   // Request deduplicators for batch/count operations
   private statsDeduplicator = new RequestDeduplicator<string, Map<string, PostStats>>();
-  private interactionsDeduplicator = new RequestDeduplicator<string, Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>>();
+  private interactionsDeduplicator = new RequestDeduplicator<string, Map<string, PostInteractionState>>();
   private countUserPostsDeduplicator = new RequestDeduplicator<string, number>();
   private countAllPostsDeduplicator = new RequestDeduplicator<string, number>();
 
@@ -190,7 +213,6 @@ class PostService extends BaseDocumentService<Post> {
 
     // Content and other fields may be in data or at root level
     const content = (data.content || doc.content || '') as string;
-    const mediaUrl = (data.mediaUrl || doc.mediaUrl) as string | undefined;
 
     // Normalize identifier-like fields to base58 for consistent storage.
     const rawQuotedPostId = data.quotedPostId || doc.quotedPostId;
@@ -209,7 +231,8 @@ class PostService extends BaseDocumentService<Post> {
 
     // Extract private feed fields if present
     const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
-    const epoch = (data.epoch ?? doc.epoch) as number | undefined;
+    const { generation } = privateFeedKeyFields();
+    const keyGeneration = (data[generation] ?? doc[generation]) as number | undefined;
     const rawNonce = data.nonce || doc.nonce;
 
     // Normalize byte arrays (SDK may return as base64 string, Uint8Array, or regular array)
@@ -233,11 +256,7 @@ class PostService extends BaseDocumentService<Post> {
       liked: false,
       reposted: false,
       bookmarked: false,
-      media: mediaUrl ? [{
-        id: id + '-media',
-        type: 'image',
-        url: normalizeMediaUrl(mediaUrl)
-      }] : undefined,
+      media: mediaFromDocument(id, data, doc),
       // Expose IDs for lazy loading at component level
       quotedPostId: quotedPostId || undefined,
       quotedPostOwnerId: quotedPostOwnerId || undefined,
@@ -256,7 +275,7 @@ class PostService extends BaseDocumentService<Post> {
       ...embed,
       // Private feed fields
       encryptedContent,
-      epoch,
+      keyGeneration,
       nonce,
     };
 
@@ -369,6 +388,8 @@ class PostService extends BaseDocumentService<Post> {
     content: string,
     options: {
       mediaUrl?: string;
+      /** v10: required with `mediaUrl` (see `mediaCarriesHashes()`). */
+      mediaHashes?: MediaHashes;
       quotedPostId?: string;
       quotedPostOwnerId?: string;
       /** v9 only: quoting a reply instead of a post (mutually exclusive with quotedPostId). */
@@ -416,25 +437,28 @@ class PostService extends BaseDocumentService<Post> {
 
       // Set encrypted fields
       data.encryptedContent = encryptionResult.data.encryptedContent;
-      data.epoch = encryptionResult.data.epoch;
+      data[privateFeedKeyFields().generation] = encryptionResult.data.keyGeneration;
       data.nonce = encryptionResult.data.nonce;
 
       // Use teaser or placeholder as public content
       data.content = encryptionResult.data.teaser || PRIVATE_POST_PLACEHOLDER;
-    } else {
-      // Public post - use content directly
+    } else if (content || !repostsAreQuotes()) {
+      // Public post - use content directly. A v10 repost is a quote with no
+      // content at all (the contract's `notEmpty` rule accepts it because it
+      // quotes something), so an empty body is omitted there.
       data.content = content;
     }
 
-    // Language is required - default to 'en' if not provided
-    data.language = options.language || 'en';
+    // Language is required where posts carry one - default to 'en' if not
+    // provided. v10 has no `language` property at all (one global timeline).
+    if (postsHaveLanguage()) data.language = options.language || 'en';
 
     // The single indexed tag — first hashtag, or first cashtag when no hashtag
     // exists, from the PUBLIC content only (`data.content` is already the
     // teaser/placeholder for private posts, so encrypted text never leaks into
     // the index); '' when untagged.
     if (hashtagsAreInline()) {
-      const tag = firstIndexedTag(data.content as string, HASHTAG_MAX_LENGTH);
+      const tag = firstIndexedTag((data.content as string | undefined) ?? '', HASHTAG_MAX_LENGTH);
       // An untagged post OMITS the optional property — likes mirror the
       // absence under the absence-aware propertyAgreement, and `skipIfAbsent`
       // keeps untagged likes out of byHashtagPost entirely.
@@ -443,13 +467,22 @@ class PostService extends BaseDocumentService<Post> {
       }
     }
 
+    // v10: the one indexed mention — the first @mention of the same PUBLIC
+    // content (a private post's teaser, never its ciphertext), resolved
+    // through DPNS. Every other @mention stays plain text, and a name that
+    // does not resolve is not indexed: the optional property is omitted.
+    if (mentionsAreInline()) {
+      const mentionedUserId = await resolveMentionedIdentity((data.content as string | undefined) ?? '');
+      if (mentionedUserId) data.mentionedUserId = identifierStringToDocumentBytes(mentionedUserId);
+    }
+
     // Add optional fields (use contract field names)
     if (options.mediaUrl && options.encryption) {
       // A plaintext mediaUrl on an encrypted post would leak the private media
       // reference; callers must keep it inside the encrypted content instead.
       throw new Error('mediaUrl cannot be combined with encryption');
     }
-    if (options.mediaUrl) data.mediaUrl = options.mediaUrl;
+    Object.assign(data, mediaDocumentFields(options.mediaUrl, options.mediaHashes));
     if (options.quotedPostId) data.quotedPostId = identifierStringToDocumentBytes(options.quotedPostId);
     if (options.quotedReplyId) data.quotedReplyId = identifierStringToDocumentBytes(options.quotedReplyId);
     if (options.quotedPostOwnerId) data.quotedPostOwnerId = identifierStringToDocumentBytes(options.quotedPostOwnerId);
@@ -465,20 +498,16 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * Get timeline posts.
-   * Uses the languageTimeline index: [language, $createdAt].
-   * @param language - Language code to filter by (defaults to 'en')
+   * Uses the languageTimeline index [language, $createdAt], or v10's global
+   * timeline [$createdAt] (see {@link postTimelineClauses}).
+   * @param language - Language code to filter by (defaults to 'en'; ignored on v10)
    * @param options - Query options
    */
   async getTimeline(options: QueryOptions & { language?: string } = {}): Promise<DocumentResult<Post>> {
     const { language = 'en', ...queryOptions } = options;
 
     const defaultOptions: QueryOptions = {
-      // Use languageTimeline index: [language, $createdAt]
-      where: [
-        ['language', '==', language],
-        ['$createdAt', '>', 0]
-      ],
-      orderBy: [['language', 'asc'], ['$createdAt', 'desc']],
+      ...postTimelineClauses(language),
       limit: 20,
       ...queryOptions
     };
@@ -590,7 +619,9 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Count posts by user via the `byOwner` count tree (O(1)).
+   * Count posts by user via the `byOwner` count tree (O(1)); on v10
+   * `$ownerId ==` is served by the rangeCountable `ownerAndTime`. v10 counts
+   * the author's bare reposts too: they are posts.
    * Deduplicates in-flight requests.
    */
   async countUserPosts(userId: string): Promise<number> {
@@ -644,11 +675,7 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get user interactions with a post or reply
    */
-  private async getUserInteractions(target: KindedTarget): Promise<{
-    liked: boolean;
-    reposted: boolean;
-    bookmarked: boolean;
-  }> {
+  private async getUserInteractions(target: KindedTarget): Promise<PostInteractionState> {
     return fetchUserInteractions(target, this.getCurrentUserId());
   }
 
@@ -663,14 +690,10 @@ class PostService extends BaseDocumentService<Post> {
    * Batch get user interactions for multiple posts/replies.
    * Deduplicates in-flight requests.
    */
-  async getBatchUserInteractions(targets: readonly KindedTarget[]): Promise<Map<string, {
-    liked: boolean;
-    reposted: boolean;
-    bookmarked: boolean;
-  }>> {
+  async getBatchUserInteractions(targets: readonly KindedTarget[]): Promise<Map<string, PostInteractionState>> {
     const currentUserId = this.getCurrentUserId();
     if (!currentUserId || targets.length === 0) {
-      const result = new Map<string, { liked: boolean; reposted: boolean; bookmarked: boolean }>();
+      const result = new Map<string, PostInteractionState>();
       targets.forEach(({ id }) => result.set(id, { liked: false, reposted: false, bookmarked: false }));
       return result;
     }
@@ -710,8 +733,8 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Get post counts per author
    * Returns a Map of authorId -> post count
-   * Uses the languageTimeline index [language, $createdAt] to scan posts.
-   * Note: Currently only counts English posts (language='en').
+   * Falls back to scanning the timeline (see {@link postTimelineClauses}),
+   * which on v2/v9 only sees English posts (language='en').
    */
   async getAuthorPostCounts(): Promise<Map<string, number>> {
     return fetchAuthorPostCounts(this.contractId);
@@ -738,7 +761,9 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * Count quotes of a post or reply — O(1) count tree on the quote field for
-   * that kind (`quoteCount` on v2, plus `quoteReplyCount` on v9).
+   * that kind (`quoteCount` on v2, plus `quoteReplyCount` on v9; v10 serves
+   * `==` off the rangeCountable `quotesOfPost`/`quotesOfReply`). On v10 bare
+   * reposts are quotes, so this is the repost count too.
    */
   async countQuotes(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
     const quoteField = quoteFieldFor(kind);
@@ -769,6 +794,40 @@ class PostService extends BaseDocumentService<Post> {
       quotedPostIds,
       (id) => this.countQuotes(id, kind)
     );
+  }
+
+  /**
+   * v10: the author's own quote or bare repost of each target, through the
+   * unique `ownerAndQuotedPost`/`ownerAndQuotedReply [$ownerId, field]` index
+   * (`$ownerId == author && field in [...]`, one query per 100 targets). A
+   * target has at most one. Empty where the topology has no such index, and
+   * on error (fails closed: nothing reads as reposted).
+   */
+  async getOwnQuotes(ownerId: string, targetIds: string[], kind: TargetKind = 'post'): Promise<Map<string, OwnQuote>> {
+    const index = ownQuoteIndexFor(kind);
+    const ids = Array.from(new Set(targetIds.filter(Boolean)));
+    const result = new Map<string, OwnQuote>();
+    if (!index || ids.length === 0) return result;
+    try {
+      await mapLimit(chunk(ids, 100), 2, async (batch) => {
+        const documents = await queryRawDocuments({
+          dataContractId: this.contractId,
+          documentTypeName: index.docType,
+          where: [['$ownerId', '==', ownerId], [index.field, 'in', batch]],
+          orderBy: [['$ownerId', 'asc'], [index.field, 'asc']],
+          limit: batch.length,
+        });
+        for (const doc of documents) {
+          const post = this.transformDocument(doc);
+          const target = index.field === 'quotedReplyId' ? post.quotedReplyId : post.quotedPostId;
+          if (target && post.author.id === ownerId) result.set(target, ownQuoteOf(post));
+        }
+      });
+      return result;
+    } catch (error) {
+      logger.error('Error fetching own quotes:', error);
+      return new Map();
+    }
   }
 
   /**

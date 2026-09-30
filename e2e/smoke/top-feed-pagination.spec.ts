@@ -35,7 +35,8 @@ test('Top pagination preserves the loaded cards and reading position', async ({ 
 
   // Changing the ranking window starts a fresh first page, not the expanded
   // limit from the previous view.
-  await page.getByRole('button', { name: 'Today', exact: true }).click()
+  // By test id: the label is the topology's window ("Today" on v9, "3 days" on v10).
+  await page.getByTestId('feed-top-today').click()
   await expect(list.or(page.getByTestId('feed-top-empty'))).toBeVisible()
   expect((await ids()).length).toBeLessThanOrEqual(20)
 })

@@ -47,14 +47,9 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
         setMentions([])
         return
       }
-      const postIds = Array.from(new Set(mentionDocs.map((m) => m.postId)))
-      const { posts, preloaded } = await postService.getPostsByIdsForDisplay(postIds)
-      // Only the post's own author may register a mention on it.
-      const fetched = posts.filter(post => mentionDocs.some(
-        mention => mention.postId === post.id && mention.$ownerId === post.author.id
-      ))
-      fetched.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      setMentions(await postService.enrichPostsBatch(fetched, preloaded))
+      // The mentioning posts (and v10 replies), authentic only, newest first.
+      const { posts, preloaded } = await mentionService.loadMentioningPosts(mentionDocs)
+      setMentions(await postService.enrichPostsBatch(posts, preloaded))
     } catch (error) {
       logger.error('Failed to load mentions:', error)
       setMentions([])
@@ -65,7 +60,8 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
   }, [userId, mentionsLoaded])
 
   /**
-   * One proved server-side ranked query on `like.byAuthorPost` pinned to this
+   * One proved server-side ranked query on `like.byAuthorPost` (v10
+   * `byAuthorPostTime`) pinned to this
    * profile; the order and counts come from the count trees, not from a
    * client-side sort.
    */

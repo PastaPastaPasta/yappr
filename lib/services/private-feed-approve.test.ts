@@ -29,14 +29,14 @@ async function load(topology: string) {
   const { privateFeedKeyStore: keyStore } = await import('./private-feed-key-store');
   const { privateFeedCryptoService: crypto } = await import('./private-feed-crypto-service');
   vi.spyOn(keyStore, 'getFeedSeed').mockReturnValue(new Uint8Array(32).fill(7));
-  vi.spyOn(keyStore, 'getCurrentEpoch').mockReturnValue(1);
+  vi.spyOn(keyStore, 'getCurrentKeyGeneration').mockReturnValue(1);
   vi.spyOn(keyStore, 'getAvailableLeaves').mockReturnValue([0, 1]);
   vi.spyOn(keyStore, 'getRevokedLeaves').mockReturnValue([]);
-  vi.spyOn(keyStore, 'getCachedCEK').mockReturnValue({ epoch: 1, cek: new Uint8Array(32).fill(3) });
+  vi.spyOn(keyStore, 'getCachedCEK').mockReturnValue({ keyGeneration: 1, cek: new Uint8Array(32).fill(3) });
   vi.spyOn(keyStore, 'storeAvailableLeaves').mockImplementation(() => undefined);
   vi.spyOn(keyStore, 'getRecipientMap').mockReturnValue({});
   vi.spyOn(keyStore, 'storeRecipientMap').mockImplementation(() => undefined);
-  vi.spyOn(service.privateFeedService, 'getLatestEpoch').mockResolvedValue(1);
+  vi.spyOn(service.privateFeedService, 'getLatestKeyGeneration').mockResolvedValue(1);
   vi.spyOn(service.privateFeedService, 'getPrivateFollowers').mockResolvedValue([]);
   vi.spyOn(crypto, 'eciesEncrypt').mockResolvedValue(new Uint8Array(96));
   return service;
@@ -90,6 +90,18 @@ describe('approving a follower on the v9 gated contract', () => {
     expect(mocks.createDocument).toHaveBeenCalledOnce();
     expect(mocks.createDocument.mock.calls[0][1]).toBe('privateFeedGrant');
     expect(result).toEqual({ success: true });
+  });
+});
+
+describe('the grant\'s key generation property', () => {
+  it.each([['v9', 'epoch'], ['v10', 'keyGeneration']])('writes it as %s names it (%s)', async (topology, field) => {
+    const { privateFeedService } = await load(topology);
+    requestOnChain(true);
+    mocks.createDocument.mockResolvedValue({ success: true });
+    await privateFeedService.approveFollower(ownerId, requesterId, requesterKey);
+    const grant = mocks.createDocument.mock.calls[0][3] as Record<string, unknown>;
+    expect(grant[field]).toBe(1);
+    expect(Object.keys(grant).sort()).toEqual(['encryptedPayload', field, 'leafIndex', 'recipientId'].sort());
   });
 });
 

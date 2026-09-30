@@ -4,12 +4,13 @@ import type { Post } from '@/lib/types'
 import type { PostVisibility, ThreadPost } from '@/lib/store'
 import type { EncryptionOptions, EncryptionSource } from '@/lib/services/post-service'
 import type { PostEmbed } from '@/lib/poll-embed'
+import type { MediaHashes } from '@/lib/media/media-fingerprint'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
 import { hasVisibleContent } from '@/lib/compose/limits'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
-import { hashtagsAreInline, replyLinkageTo, threadRootIdOf } from '@/lib/contract-topology'
+import { hashtagsAreInline, mentionsAreInline, replyLinkageTo, threadRootIdOf } from '@/lib/contract-topology'
 import { resolveQuoteReference } from '@/lib/feed/resolve-quoted-posts'
 import { isUnconfirmed, markUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { dispatchFieldRegistered } from '@/lib/services/post-field-validation'
@@ -66,6 +67,8 @@ export interface PublishInput {
   inheritedEncryption: EncryptionSource | null
   pollEmbed: PostEmbed | undefined
   mediaUrlField: string | undefined
+  /** v10: the image's sha256 and dHash, written with `mediaUrlField` (see `mediaCarriesHashes()`). */
+  mediaHashes?: MediaHashes
   /**
    * The NSFW choice for the author's own thread. It follows the thread, so it
    * never applies when the composer is replying to someone else's post.
@@ -104,7 +107,7 @@ interface CreatedDocument {
  * is deliberately not chained to, so what follows stays public and top-level.
  */
 export async function publishThread(input: PublishInput): Promise<PublishOutcome> {
-  const { authorId, posts, replyingTo, quotingPost, knownThreadRootId, isPrivate, inheritedEncryption, pollEmbed, mediaUrlField, markSensitive, onProgress } = input
+  const { authorId, posts, replyingTo, quotingPost, knownThreadRootId, isPrivate, inheritedEncryption, pollEmbed, mediaUrlField, mediaHashes, markSensitive, onProgress } = input
   const { retryPostCreation } = await import('@/lib/retry-utils')
   const outcome: PublishOutcome = { successful: [], timedOut: [], failedAtIndex: null, failureError: null, syncRequired: false }
   const { fields: quoteFields, embed: quoteEmbed } = resolveQuoteReference(quotingPost)
@@ -131,7 +134,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
       const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
       encryption = {
         type: 'inherited',
-        source: { ownerId: inheritedEncryption.ownerId, epoch: inheritedEncryption.epoch },
+        source: { ownerId: inheritedEncryption.ownerId, keyGeneration: inheritedEncryption.keyGeneration },
         encryptionPrivateKey: authorId === inheritedEncryption.ownerId ? getEncryptionKeyBytes(authorId) ?? undefined : undefined,
       }
     } else if (isThisPostPrivate) {
@@ -173,6 +176,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
             encryption,
             sensitive,
             mediaUrl: i === 0 ? mediaUrlField : undefined,
+            ...(i === 0 && mediaHashes ? { mediaHashes } : {}),
           })
           return { postId: reply.id, document: reply, isReply: true, confirmed: wasConfirmed(reply) }
         }
@@ -183,6 +187,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
           encryption,
           sensitive,
           mediaUrl: i === 0 ? mediaUrlField : undefined,
+          ...(i === 0 && mediaHashes ? { mediaHashes } : {}),
         })
         return { postId: post.id, document: post, isReply: false, confirmed: wasConfirmed(post) }
       } catch (error) {
@@ -267,7 +272,9 @@ function registerIndexes(postId: string, authorId: string, content: string, inde
       })
       .catch((err) => logger.error(`Post ${index + 1}: Failed to create hashtag documents:`, err))
   }
-  const mentions = extractMentions(content)
+  // The inline-mention topology (v10) carries the first mention on the post
+  // or reply itself.
+  const mentions = mentionsAreInline() ? [] : extractMentions(content)
   if (mentions.length > 0) {
     mentionService
       .createPostMentionsFromUsernames(postId, authorId, mentions)

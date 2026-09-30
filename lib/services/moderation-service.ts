@@ -3,11 +3,11 @@ import { Document, PlatformVersion } from '@dashevo/evo-sdk';
 import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
 import type { ContractModerationReason, ContractModerationStatus, ContractWarning } from '@dashevo/wasm-sdk';
 import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants';
-import { contractIsModerated, contractKeepsWarnings, electedModeration, moderationListsKept, moderatorDeletableTypes, type TargetKind } from '@/lib/contract-topology';
+import { authorDeletesLeaveHoles, contractIsModerated, contractKeepsWarnings, electedModeration, moderationListsKept, moderatorDeletableTypes, moderatorDeletionKeepsRecord, reportsAreResolved, type TargetKind } from '@/lib/contract-topology';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
-import { classifyModerationError, extractErrorMessage, hasConsensusCode, isTimeoutError, type ModerationErrorKind } from '@/lib/error-utils';
-import { isReportGoneError } from '@/lib/reports';
+import { classifyModerationError, extractErrorMessage, hasConsensusCode, isDocumentExpiredError, isTimeoutError, type ModerationErrorKind } from '@/lib/error-utils';
+import { isReportGoneError, type ReportRecord, type ReportStatus } from '@/lib/reports';
 import { RESTORE_WINDOW_MS, dropSnapshot, loadSnapshot, removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots';
 import { getEvoSdk } from './evo-sdk-service';
 import { withSdkSignedWrite } from './identity-nonce';
@@ -48,10 +48,17 @@ import { signerService } from './signer-service';
  *   those bytes, so `removeDocument` snapshots the document locally first
  *   (`lib/moderation-snapshots.ts`) and `restoreDocument` replays it.
  *
+ * Platform 4.2.0-beta.7 (social v10) replaces `canBeDeletedByModerators`
+ * with `moderatorAbilities`: `report` declares `changeFields: [status,
+ * resolution]`, so the moderators resolve a report in place
+ * (`moderatorChangeDocumentFields`) instead of deleting it, and a deleted
+ * report keeps no removal record (`deleteKeepsRecord: false`), so
+ * `documentRemovals` is never asked about one.
+ *
  * Wraps `sdk.contracts.{banUser, unbanUser, suspendUser, unsuspendUser,
  * warnUser, clearUserWarnings, moderatorDeleteDocument,
- * moderatorRestoreDocument, moderationStatus, moderationEntries,
- * documentRemovals, feePots, claimFees}`. Off a moderated topology every
+ * moderatorRestoreDocument, moderatorChangeDocumentFields, moderationStatus,
+ * moderationEntries, documentRemovals, feePots, claimFees}`. Off a moderated topology every
  * write refuses locally and every read answers "nothing"; the warning list is
  * read and written only when the contract keeps one.
  *
@@ -270,14 +277,29 @@ export const toRemoval = (entry: RemovalEntry): DocumentRemoval => ({
 
 /**
  * What the hole a missing post or reply leaves may claim. A takedown needs a
- * standing removal record, or proof of absence with no record saying
- * otherwise. A RESTORED record means the document is live again, so its
- * absence here is a failed read, not a takedown, and the old reason no longer
- * applies. With neither record nor proof, the stub says "unavailable".
+ * standing removal record. A RESTORED record means the document came back,
+ * so the old reason no longer applies: its absence here is a failed read,
+ * unless authors delete for real (v10) and absence is proved, which is the
+ * author's delete after the restore (a moderator deleting it again would have
+ * left a fresh, standing record). Proof of absence with no record is a takedown
+ * where only moderators can remove posts (v9), and the author's own delete
+ * where authors can too (`authorsDelete`, v10: every moderator deletion of a
+ * post or reply leaves a record). That reading needs the record lookup to
+ * have ANSWERED with nothing (`recordsRead`): while it is pending, or when it
+ * failed, a takedown is indistinguishable from the author's delete, so the
+ * hole claims neither. With neither record nor proof, the stub says
+ * "unavailable".
  */
-export function missingDocumentState(removal: DocumentRemoval | null, proven: boolean): 'removed' | 'loadFailed' | 'unavailable' {
-  if (removal) return removal.restoredAt === null ? 'removed' : 'loadFailed';
-  return proven ? 'removed' : 'unavailable';
+export function missingDocumentState(
+  removal: DocumentRemoval | null,
+  proven: boolean,
+  { recordsRead = false, authorsDelete = authorDeletesLeaveHoles() }: { recordsRead?: boolean; authorsDelete?: boolean } = {}
+): 'removed' | 'deleted' | 'loadFailed' | 'unavailable' {
+  if (removal?.restoredAt === null) return 'removed';
+  if (removal) return proven && authorsDelete && recordsRead ? 'deleted' : 'loadFailed';
+  if (!proven) return 'unavailable';
+  if (!authorsDelete) return 'removed';
+  return recordsRead ? 'deleted' : 'unavailable';
 }
 
 class ModerationService {
@@ -359,6 +381,15 @@ class ModerationService {
   }
 
   /**
+   * True when a moderator's deletion of `kind` leaves a removal record that
+   * `documentRemovals` can answer for. Asking it about a type that keeps none
+   * (v10's `report`) is refused, so the reads below never do.
+   */
+  private keepsRemovals(kind: TargetKind): boolean {
+    return this.canRemove(kind) && moderatorDeletionKeepsRecord(kind);
+  }
+
+  /**
    * True when this client can undo `removal`: the restore window is open, the
    * document is not live again, and a snapshot taken before the deletion is
    * still kept here and hashes to what the record holds (anything else is a
@@ -436,28 +467,41 @@ class ModerationService {
    * The removal records of specific documents (at most 100 ids). A document
    * with no record — never removed — is simply absent from the answer, so a
    * caller resolving "why is this post missing?" gets a record or nothing.
-   * Failures answer an empty map: the stub renders without a reason.
+   * Failures answer an empty map: the report queue renders without a reason.
+   * Where "no record" is itself a claim (the author's delete), use the strict
+   * {@link readRemovals}.
    */
   async getRemovals(kind: TargetKind, documentIds: readonly string[]): Promise<Map<string, DocumentRemoval>> {
-    const removals = new Map<string, DocumentRemoval>();
-    if (!this.canRemove(kind) || documentIds.length === 0) return removals;
     try {
-      const sdk = await getEvoSdk();
-      const page = await sdk.contracts.documentRemovals({
-        contractId: YAPPR_CONTRACT_ID,
-        documentTypeName: kind,
-        documentIds: Array.from(new Set(documentIds)).slice(0, 100),
-      });
-      for (const entry of page.removals) removals.set(entry.documentId, toRemoval(entry));
+      return await this.readRemovals(kind, documentIds);
     } catch (error) {
       logger.warn('moderationService: document removals read failed', error);
+      return new Map();
     }
+  }
+
+  /**
+   * The removal records of specific documents, THROWING when the read fails,
+   * so an empty answer means the chain has no record. A type moderators
+   * cannot delete, or whose moderator deletions keep no record, has none to
+   * find.
+   */
+  async readRemovals(kind: TargetKind, documentIds: readonly string[]): Promise<Map<string, DocumentRemoval>> {
+    const removals = new Map<string, DocumentRemoval>();
+    if (!this.keepsRemovals(kind) || documentIds.length === 0) return removals;
+    const sdk = await getEvoSdk();
+    const page = await sdk.contracts.documentRemovals({
+      contractId: YAPPR_CONTRACT_ID,
+      documentTypeName: kind,
+      documentIds: Array.from(new Set(documentIds)).slice(0, 100),
+    });
+    for (const entry of page.removals) removals.set(entry.documentId, toRemoval(entry));
     return removals;
   }
 
   /** One page of every removal record of a type, in document id order. */
   async listRemovals(kind: TargetKind, startAfter?: string): Promise<{ removals: DocumentRemoval[]; nextStartAfter?: string }> {
-    if (!this.canRemove(kind)) return { removals: [] };
+    if (!this.keepsRemovals(kind)) return { removals: [] };
     const sdk = await getEvoSdk();
     const page = await sdk.contracts.documentRemovals({ contractId: YAPPR_CONTRACT_ID, documentTypeName: kind, startAfter, limit: 100 });
     return { removals: page.removals.map(toRemoval), nextStartAfter: page.nextStartAfter };
@@ -627,20 +671,30 @@ class ModerationService {
     return protectedIdentities(team, electedModeration()?.ownerProtected === true);
   }
 
-  /** True when the contract's moderators may dismiss reports (v9: `report` is moderator-deletable). */
+  /**
+   * True when the contract's moderators may delete reports: v9 dismisses a
+   * report this way, and v10 keeps it for purging spam reports outright (no
+   * removal record) beside {@link resolveReports}.
+   */
   canDismissReports(): boolean {
     return moderatorDeletableTypes().includes('report');
   }
 
+  /** True when the moderators mark reports handled instead of deleting them (v10: `changeFields` on `report`). */
+  canResolveReports(): boolean {
+    return reportsAreResolved();
+  }
+
   /**
-   * Dismisses reports by deleting them as a moderator, one moderation
-   * transition each, in order, stopping at the first refusal. Each leaves a
-   * removal record carrying `reason` (cite the reported post in
-   * `reason.documents`, so the record says what was reviewed); a seated
+   * Deletes reports as a moderator, one moderation transition each, in order,
+   * stopping at the first refusal. On v9 each deletion leaves a removal record
+   * carrying `reason` (cite the reported post in `reason.documents`, so the
+   * record says what was reviewed); on v10 a report keeps no record
+   * (`deleteKeepsRecord: false`) and the SDK resolves to nothing. A seated
    * elected team must also cite a charter reason (41203). The reporter gets no
    * refund. No copy is kept: a dismissed report is not restored from here.
    * A report filed by a {@link protectedIdentities protected} identity cannot
-   * be dismissed (41102); leave those out.
+   * be deleted (41102); leave those out.
    *
    * `dismissed` lists the reports confirmed gone, also on a failure part-way.
    */
@@ -675,6 +729,76 @@ class ModerationService {
       }
     });
     return { ...result, dismissed };
+  }
+
+  /**
+   * Resolves reports (v10): writes `status` and, when given, a `resolution`
+   * note on each with `moderatorChangeDocumentFields`, one moderation
+   * transition each, in order, stopping at the first refusal. The report stays
+   * (its reporter sees how it was handled), stamped with `$moderatedBy` and
+   * `$moderatedAt`, and still expires with its 90-day ttl. A field change is
+   * not refused for a protected reporter, so every report on the target can be
+   * resolved, the moderator's own included. A seated elected team must cite a
+   * charter reason (41203); cite the reported post in `reason.documents`.
+   *
+   * A report already reading exactly this way is skipped (a change that
+   * changes nothing is refused, 10905), and a note the report carries that the
+   * resolution leaves out is removed. A report withdrawn meanwhile (40101) or
+   * past its ttl (40140) is reported in `gone`; one another moderator resolved
+   * the same way meanwhile (10905) counts as resolved, and is also listed in
+   * `alreadyResolved`: its `$moderatedBy`/`$moderatedAt` are that moderator's.
+   *
+   * `resolved` lists the reports confirmed resolved, also on a failure part-way.
+   */
+  async resolveReports(
+    moderatorId: string,
+    reports: ReadonlyArray<Pick<ReportRecord, 'id' | 'status' | 'resolution'>>,
+    resolution: { status: ReportStatus; note?: string },
+    reason: string | ModerationReasonInput,
+    onResolved?: (reportId: string) => void
+  ): Promise<ModerationResult & { resolved: string[]; alreadyResolved: string[]; gone: string[] }> {
+    const resolved: string[] = [];
+    const alreadyResolved: string[] = [];
+    const gone: string[] = [];
+    if (!this.canResolveReports()) {
+      return { success: false, error: 'Moderators cannot resolve reports on this contract', errorCode: 'NOT_MODERATED', resolved, alreadyResolved, gone };
+    }
+    const note = resolution.note?.trim() || null;
+    const result = await this.moderate(moderatorId, async (sdk, auth) => {
+      /** Writes one report's resolution; false when the report is gone. */
+      const write = async (report: (typeof reports)[number]): Promise<boolean> => {
+        if (report.status === resolution.status && report.resolution === note) return true;
+        try {
+          await sdk.contracts.moderatorChangeDocumentFields({
+            ...auth,
+            contractId: YAPPR_CONTRACT_ID,
+            documentTypeName: 'report',
+            documentId: report.id,
+            // `null` removes a note the report carries; an absent one is not named.
+            fields: { status: resolution.status, ...(note !== null || report.resolution !== null ? { resolution: note } : {}) },
+            reason: reasonOf(reason),
+          });
+          return true;
+        } catch (error) {
+          if (isReportGoneError(error) || isDocumentExpiredError(error)) return false;
+          // Another moderator wrote exactly these values since the queue read it.
+          if (classifyModerationError(error) === 'NOTHING_TO_CHANGE') {
+            alreadyResolved.push(report.id);
+            return true;
+          }
+          throw error;
+        }
+      };
+      for (const report of reports) {
+        if (!(await write(report))) {
+          gone.push(report.id);
+          continue;
+        }
+        resolved.push(report.id);
+        onResolved?.(report.id);
+      }
+    });
+    return { ...result, resolved, alreadyResolved, gone };
   }
 
   /** Pays the moderators pot out to the whole team (any member may claim). */
@@ -796,6 +920,9 @@ const MODERATION_ERROR_MESSAGES: Record<ModerationErrorKind, string> = {
   INVALID_REASON_DOCUMENTS: 'A reason may cite at most 16 documents, each once',
   CHARTER_INVALID: 'The moderation charter is malformed',
   CONTEST_NOT_JOINABLE: 'That election is not open to join',
+  FIELD_NOT_CHANGEABLE: 'Moderators cannot change that field on documents of this type',
+  MODERATOR_FIELD: 'Only the moderators may set that field',
+  NOTHING_TO_CHANGE: 'The document already reads that way, so there is nothing to change',
 };
 
 export const moderationService = new ModerationService();

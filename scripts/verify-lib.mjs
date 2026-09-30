@@ -13,7 +13,6 @@
  */
 import {
   Document,
-  EvoSDK,
   IdentitySigner,
   PlatformVersion,
   TokenPaymentInfo,
@@ -23,9 +22,9 @@ import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
 import { createdId, deriveDocumentIdBytes, findRecentByValues } from './seed/seed-lib.mjs';
+import { devnetConfig, devnetSdk } from './sdk-env.mjs';
+export { TOKEN_COST } from './seed/seed-lib.mjs';
 const SDK_TIMEOUT_MS = 30000;
-const DEFAULT_DEVNET_NAME = 'moutai';
-const DEFAULT_SEED_COUNT = 5;
 /** Reads settle behind the write quorum; give the chain a beat before asserting. */
 const SETTLE_MS = 3000;
 /** How many settle intervals to wait before calling a write absent (~9s). */
@@ -38,33 +37,10 @@ const YAPP_TOKEN_POSITION = 0;
 const MIN_YAPP_BALANCE = 150n;
 // ---- Devnet SDK -------------------------------------------------------------
 
-function defaultDevnetAddresses(devnetName) {
-  return Array.from(
-    { length: DEFAULT_SEED_COUNT },
-    (_, i) => `https://seed-${i + 1}.${devnetName}.networks.dash.org:1443`
-  );
-}
-
-function devnetSdk() {
-  const devnetName = process.env.DEVNET_NAME?.trim() || DEFAULT_DEVNET_NAME;
-  const configured = (process.env.DAPI_ADDRESSES ?? '')
-    .split(',')
-    .map((address) => address.trim())
-    .filter(Boolean)
-    .map((address) => (address.includes('://') ? address : `https://${address}`));
-  const addresses = configured.length > 0 ? configured : defaultDevnetAddresses(devnetName);
-  const sdk = new EvoSDK({
-    network: 'devnet',
-    devnetName,
-    addresses,
-    // trusted mode is mandatory: wasm-sdk panics on `proofs: false` and refuses
-    // non-trusted proof verification; quorum keys are prefetched from
-    // https://quorums.<devnetName>.networks.dash.org (or QUORUM_URL).
-    trusted: true,
-    ...(process.env.QUORUM_URL ? { quorumUrl: process.env.QUORUM_URL } : {}),
-    settings: { timeoutMs: SDK_TIMEOUT_MS },
-  });
-  return { sdk, devnetName, addresses };
+/** The devnet SDK the batteries run on: sdk-env's config (env, then `.env.devnet`). */
+function batterySdk() {
+  const config = devnetConfig();
+  return { sdk: devnetSdk({ timeoutMs: SDK_TIMEOUT_MS, config }), devnetName: config.devnetName, addresses: config.addresses };
 }
 
 // ---- Resilient connection ---------------------------------------------------
@@ -96,9 +72,12 @@ const sdkHandle = new Proxy(
   }
 );
 
+/** Builds an unconnected `{ sdk, devnetName, addresses }`; the self-test swaps in a fake. */
+let sdkFactory = batterySdk;
+
 /** Connect + protocol-version ratchet + contract cache: everything a fresh instance needs. */
 async function buildConnectedSdk(contractId) {
-  const { sdk, devnetName, addresses } = devnetSdk();
+  const { sdk, devnetName, addresses } = sdkFactory();
   await sdk.connect();
   // PROTOCOL-VERSION RATCHET (load-bearing): rs-sdk starts every devnet at
   // protocol version 12 and only ratchets upward from *verified* response
@@ -128,6 +107,63 @@ async function reconnectSdk(reason) {
     });
   }
   return reconnectPromise;
+}
+
+/** Connects the run's first instance and returns `sdkHandle` in place of it. */
+async function connectBattery(contractId, makeSdk = batterySdk) {
+  sdkFactory = makeSdk;
+  reconnectContractId = contractId;
+  const first = await buildConnectedSdk(contractId);
+  activeSdk = first.sdk;
+  return { ...first, sdk: sdkHandle };
+}
+
+/**
+ * Offline proof that the connection path runs (every `--dry-run`/`--self-test`
+ * calls it): connect through a fake SDK, collapse its transport, and check that
+ * `readback` rebuilds a fresh, ratcheted, contract-cached instance behind the
+ * same handle. Throws on any failure, including a ReferenceError in the
+ * connection state itself.
+ */
+async function selfTestConnection() {
+  const contractId = 'self-test-contract';
+  const built = [];
+  const fakeSdk = () => {
+    const sdk = {
+      generation: built.length + 1,
+      connected: false,
+      cachedContract: null,
+      async connect() { this.connected = true; },
+      epoch: { current: async () => ({ toJSON: () => ({ protocolVersion: 14 }) }) },
+      contracts: { fetch: async (id) => { sdk.cachedContract = id; } },
+      probe() {
+        if (this.generation === 1) throw new Error('no available addresses to retry');
+        return this.generation;
+      },
+    };
+    built.push(sdk);
+    return { sdk, devnetName: 'self-test', addresses: ['https://self-test.invalid:1443'] };
+  };
+  try {
+    const { sdk, protocolVersion } = await connectBattery(contractId, fakeSdk);
+    const failures = [];
+    if (protocolVersion !== 14) failures.push(`connect ratchet read PV${protocolVersion}, expected PV14`);
+    const answer = await readback(() => sdk.probe());
+    if (answer !== 2) failures.push(`readback answered from generation ${answer}, expected the reconnected 2`);
+    if (built.length !== 2) failures.push(`${built.length} instances built, expected 2 (connect + one reconnect)`);
+    for (const instance of built) {
+      if (!instance.connected || instance.cachedContract !== contractId) {
+        failures.push(`instance ${instance.generation} was not connected with the contract cached`);
+      }
+    }
+    if (sdk.generation !== 2) failures.push('sdkHandle does not forward to the reconnected instance');
+    if (failures.length > 0) throw new Error(`connection self-test failed: ${failures.join('; ')}`);
+    console.log('connection ok: connect, ratchet, contract cache, transport-collapse reconnect behind sdkHandle');
+  } finally {
+    activeSdk = null;
+    reconnectContractId = null;
+    sdkFactory = batterySdk;
+  }
 }
 
 // ---- Reporting --------------------------------------------------------------
@@ -237,16 +273,35 @@ export async function entryExists(sdk, contractId, docType, keyField, keyValue, 
   });
 }
 
-/** Reads one countable index's total for a single key (0 when unmaterialized). */
-export async function countBy(sdk, contractId, docType, field, value) {
+/** The total of a count query (0 when unmaterialized). */
+export async function countWhere(sdk, contractId, docType, where) {
   return readback(async () => {
-    const raw = await sdk.documents.count({
-      dataContractId: contractId,
-      documentTypeName: docType,
-      where: [[field, '==', value]],
-    });
+    const raw = await sdk.documents.count({ dataContractId: contractId, documentTypeName: docType, where });
     const total = raw instanceof Map ? raw.get('') : raw?.[''];
     return total === undefined || total === null ? 0 : Number(total);
+  });
+}
+
+/** Reads one countable index's total for a single key (0 when unmaterialized). */
+export const countBy = (sdk, contractId, docType, field, value) => countWhere(sdk, contractId, docType, [[field, '==', value]]);
+
+/**
+ * A group key as base58 when it is an identifier: count answers key groups by
+ * the value's hex, ranked pages by base58 or bytes, depending on the surface.
+ */
+export function groupKeyOf(value) {
+  if (typeof value === 'string') return /^[0-9a-f]{64}$/i.test(value) ? bs58.encode(Buffer.from(value, 'hex')) : value;
+  if (typeof value?.toBase58 === 'function') return value.toBase58();
+  return bs58.encode(Uint8Array.from(value));
+}
+
+/** A grouped count as a Map of group key (base58 for identifiers) → count; absent groups are absent. */
+export async function groupedCountBy(sdk, contractId, docType, where, groupBy) {
+  return readback(async () => {
+    const raw = await sdk.documents.count({ dataContractId: contractId, documentTypeName: docType, where, groupBy });
+    const grouped = new Map();
+    for (const [key, value] of raw.entries()) if (key !== '') grouped.set(groupKeyOf(key), Number(value));
+    return grouped;
   });
 }
 
@@ -423,9 +478,9 @@ export function expectAccepted(label, outcome) {
 // exists to prevent. The optional quote covers the `"code":40127` rendering.
 
 /**
- * propertyAgreement violation (ReferencedDocumentPropertyMismatchError,
- * 40127). Live message: "the document's <p> does not agree with the referenced
- * document's <q> (propertyAgreement on <field>)".
+ * `where` violation (ReferencedDocumentPropertyMismatchError, 40127). Live
+ * message: "the document's <p> does not agree with the referenced document's
+ * <q> (where on <field>)" — "propertyAgreement on" before 4.2.0-beta.7.
  */
 export const PROPERTY_MISMATCH = /\bcode"?\s*[=:]\s*40127\b|does not agree with the referenced document/i;
 /** Structural uniqueness / unique index (DuplicateUniqueIndexError family, 40105). */
@@ -456,14 +511,12 @@ export function expectRejected(label, outcome, pattern) {
 }
 // ---- Topology-independent document shapes ----------------------------------
 
-export const TOKEN_COST = { post: 10, reply: 3, like: 1, likeReply: 1, repost: 1 };
 export const likeData = ({ postId, hashtag, postAuthor }) => ({
   postId,
   ...(hashtag === undefined ? {} : { hashtag }),
   postAuthor,
 });
 export const likeReplyData = ({ replyId, replyAuthor }) => ({ replyId, replyAuthor });
-export const repostData = ({ postId, postOwnerId }) => ({ postId, postOwnerId });
 export const followData = ({ followingId }) => ({ followingId });
 // ---- Identities -------------------------------------------------------------
 
@@ -590,7 +643,7 @@ function dryRun(args, { cases, shapes, replaceShapes = [] }) {
     console.log(`document shape ok: ${label.padEnd(34)} (${docType}, replace at revision 2)`);
   }
 
-  const { devnetName, addresses } = devnetSdk();
+  const { devnetName, addresses } = devnetConfig();
   console.log(
     `would run cases ${selectedCases(args, cases).join(', ')} on devnet "${devnetName}" ` +
     `via ${addresses[0]} (+${addresses.length - 1} more)`
@@ -630,14 +683,12 @@ export async function runBattery({
     await ensureInitialized();
 
     if (args.dryRun) {
+      await selfTestConnection();
       dryRun(args, { cases, shapes, replaceShapes });
       process.exit(0);
     }
 
-    reconnectContractId = args.contract;
-    const { sdk: firstSdk, devnetName, addresses, protocolVersion } = await buildConnectedSdk(args.contract);
-    activeSdk = firstSdk;
-    const sdk = sdkHandle;
+    const { sdk, devnetName, addresses, protocolVersion } = await connectBattery(args.contract);
     console.log(`protocol version ratcheted via epoch query: PV${protocolVersion ?? '?'}`);
     const botA = await botSigner(sdk, args.botIndex, args.ownerId);
     const botB = await botSigner(sdk, args.bot2Index, args.owner2Id);

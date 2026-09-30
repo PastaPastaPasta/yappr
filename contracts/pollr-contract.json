@@ -275,8 +275,8 @@
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "poll",
-            "propertyAgreement": {
-              "pollOwnerId": "$ownerId"
+            "where": {
+              "$ownerId": "pollOwnerId"
             }
           }
         },
@@ -297,7 +297,7 @@
           "description": "Index of the selected option (0-9)"
         }
       },
-      "description": "A single-choice poll's ballot, indexOnly: the index entries ARE the ballot, so there is no stored body and nothing to fetch by id. byPoll admits one entry per (poll, voter), so Platform itself rejects a second selection \u2014 single-choice is structural, not a client convention (indexOnly types cannot declare `unique`; this is the same one-per-owner shape, used on purpose). Read only for polls whose multiChoice is false/absent; byPollChoice gives O(1) per-option tallies whose sum is the voter count",
+      "description": "A single-choice poll's ballot, indexOnly: the index entries ARE the ballot, so there is no stored body and nothing to fetch by id. byPoll admits one entry per (poll, voter), so Platform itself rejects a second selection — single-choice is structural, not a client convention (indexOnly types cannot declare `unique`; this is the same one-per-owner shape, used on purpose). Read only for polls whose multiChoice is false/absent; byPollChoice gives O(1) per-option tallies whose sum is the voter count",
       "additionalProperties": false
     },
     "multiVote": {
@@ -365,8 +365,8 @@
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "poll",
-            "propertyAgreement": {
-              "pollOwnerId": "$ownerId"
+            "where": {
+              "$ownerId": "pollOwnerId"
             }
           }
         },
@@ -387,7 +387,7 @@
           "description": "Index of one selected option (0-9). A multi-choice ballot writes one document per selection"
         }
       },
-      "description": "A multi-choice poll's ballot, indexOnly: one entry per selection, structurally unique per (poll, voter, choice) so repeating a choice is rejected while a different one is accepted. Read only for polls whose multiChoice is true; byPollChoice tallies selections, not voters (no index counts distinct voters \u2014 one that did would cap a voter at a single selection)",
+      "description": "A multi-choice poll's ballot, indexOnly: one entry per selection, structurally unique per (poll, voter, choice) so repeating a choice is rejected while a different one is accepted. Read only for polls whose multiChoice is true; byPollChoice tallies selections, not voters (no index counts distinct voters — one that did would cap a voter at a single selection)",
       "additionalProperties": false
     }
   }

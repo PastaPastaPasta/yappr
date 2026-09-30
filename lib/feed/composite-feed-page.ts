@@ -9,13 +9,15 @@ import {
   DPNS_CONTRACT_ID,
   DPNS_DOCUMENT_TYPE,
   YAPPR_CONTRACT_ID,
-  YAPPR_PROFILE_CONTRACT_ID,
 } from '@/lib/constants';
 import {
   bookmarkIndexFor,
   likeIndexFor,
+  ownQuoteIndexFor,
   quoteFieldFor,
   replyCountFieldFor,
+  replyCountNeedsRoot,
+  replyLinkage,
   repostIndexFor,
   type TargetKind,
 } from '@/lib/contract-topology';
@@ -31,9 +33,11 @@ import { dpnsService } from '@/lib/services/dpns-service';
 import { resolvePostAuthorsBatch } from '@/lib/services/post-enrichment-helpers';
 import { documentToPlainObject, identifierToBase58 } from '@/lib/services/sdk-helpers';
 import { unifiedProfileService } from '@/lib/services/unified-profile-service';
+import { profileBaseSource, profileExtensionSource } from '@/lib/profile/v10-profile';
 import { getPrimaryUsername } from '@/lib/utils/username';
-import type { QueryOptions } from '@/lib/services/document-service';
+import { postTimelineClauses, type QueryOptions } from '@/lib/services/document-service';
 import { transformRawPost } from './transform-raw-post';
+import type { OwnQuote } from './quote-reposts';
 
 /**
  * Batch a feed page, engagement counts, quoted posts, author profiles/names
@@ -44,6 +48,10 @@ import { transformRawPost } from './transform-raw-post';
  * Requires the dev.10 SDK and a dev.10 node exposing documents.composite.
  * Repost attribution, block/follow status and unseeded quoted authors still
  * need separate lookups; this is not a fixed total request count for the UI.
+ *
+ * v10 adds two reads that cannot ride the composite (see
+ * {@link loadSeparateReads}): the viewer's own quote/repost of each page item,
+ * and the child counts of a reply page whose replies span several threads.
  */
 
 // ---- Query limits ----
@@ -53,6 +61,7 @@ const MAX_SUB_QUERIES = 10;
 /** Total DPNS document budget across ALL page authors, not per identity. */
 const DPNS_QUERY_LIMIT = 100;
 export interface CompositeFeedPageOptions {
+  /** The timeline's language; ignored where posts carry none (v10). */
   language: string;
   limit: number;
   /** Exact next-page ids selected by a timeline query using startAfter. */
@@ -86,9 +95,14 @@ export async function loadCompositeFeedPage(
   const sdk = await getEvoSdk();
 
   const { query, slots } = buildFeedPageQuery(options);
+  // v10: with the page's ids known up front, the viewer's own quotes and
+  // hearts load alongside the composite instead of after it.
+  const early = options.documentIds
+    ? { ownQuotes: loadOwnQuotes(options.documentIds, options), liked: loadViewerLikes(options.documentIds, options) }
+    : null;
   const result = await sdk.documents.composite(query);
   validateCompositeResult(result, query);
-  return decodeFeedPage(result, slots, options);
+  return decodeFeedPage(result, slots, options, early);
 }
 
 /** Validate the response shape before decode can seed any derived caches. */
@@ -120,6 +134,7 @@ function validateCompositeResult(
 interface SubQuerySlots {
   likeCounts: number;
   repostCounts: number;
+  /** -1 on a v10 reply page spanning several roots: counted separately. */
   replyCounts: number;
   quoteCounts: number;
   quotedPosts: number;
@@ -127,6 +142,9 @@ interface SubQuerySlots {
   usernames: number;
   /** Anonymous only: the quoted posts' authors' profiles (bound to the join). */
   quotedAuthorProfiles: number;
+  /** v10, when the budget allows: the `yapprProfile` extensions of the authors and quoted authors. */
+  profileExtensions: number;
+  quotedAuthorExtensions: number;
   /** Logged in only. */
   myLikes: number;
   myReposts: number;
@@ -147,18 +165,30 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
 
   const kind = options.kind ?? 'post';
   const like = likeIndexFor(kind);
+  // v10 has no repost doctype: reposts are quotes, counted by the quote slot.
   const repost = repostIndexFor(kind);
   const bookmark = bookmarkIndexFor(kind);
   const quoteField = quoteFieldFor(kind);
   const replyCountField = replyCountFieldFor(kind);
 
   // Engagement counts: one grouped count per page id, each from the
-  // `countable` index keyed by the target id alone.
+  // `countable` index keyed by the target id (v10: the rangeCountable list
+  // index it leads, served as the prefix-to-last total).
   const likeCounts = slot({ documentType: like.docType, kind: 'counts', bind: fromPage('$id', like.field) });
   const repostCounts = repost
     ? slot({ documentType: repost.docType, kind: 'counts', bind: fromPage('$id', repost.field) })
     : -1;
-  const replyCounts = slot({ documentType: 'reply', kind: 'counts', bind: fromPage('$id', replyCountField) });
+  // v9 tombstones stay in the reply and quote count trees; on v10 a deleted
+  // reply or quote leaves them, so those counts are exact.
+  // A v10 reply's children sit under its root in `repliesOf`, so the slot
+  // pins `rootPostId ==` and binds `replyToReplyId`: one root per request.
+  // A page spanning several threads is counted separately instead.
+  const replyRoot = replyCountNeedsRoot(kind) ? sharedRootOf(options.sourcePosts) : null;
+  const replyCounts = !replyCountNeedsRoot(kind)
+    ? slot({ documentType: 'reply', kind: 'counts', bind: fromPage('$id', replyCountField) })
+    : replyRoot
+      ? slot({ documentType: 'reply', kind: 'counts', where: [[replyLinkage().root, '==', replyRoot]], bind: fromPage('$id', replyCountField) })
+      : -1;
   const quoteCounts = quoteField
     ? slot({ documentType: 'post', kind: 'counts', bind: fromPage('$id', quoteField) })
     : -1;
@@ -171,9 +201,10 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
 
   // Author identity, cross-contract: profiles sit on a unique `$ownerId`
   // index (value-bounded, no limit), DPNS names on a non-unique one.
+  const profileBase = profileBaseSource();
   const profiles = slot({
-    dataContractId: YAPPR_PROFILE_CONTRACT_ID,
-    documentType: 'profile',
+    dataContractId: profileBase.contractId,
+    documentType: profileBase.documentType,
     bind: fromPage('$ownerId', '$ownerId'),
   });
   const usernames = slot({
@@ -189,9 +220,18 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
   let myBookmarks = -1;
   if (options.currentUserId) {
     // The viewer's marks on the page: `$ownerId == me` pins the owner-first
-    // index, the bound post id is its terminal, so these are value-bounded.
+    // index and the bound post id is its terminal, so these are value-bounded
+    // and a limit is refused. (v10's own quote/repost is a `post` lookup on
+    // `$ownerId`, which a page on `ownerAndTime` would refuse as a merged
+    // root: it is read separately.)
     const mine = [['$ownerId', '==', options.currentUserId]];
-    myLikes = slot({ documentType: like.docType, where: mine, bind: fromPage('$id', like.field) });
+    // v10's hearts sit on the like-count index itself (`byPost`/`byReply`,
+    // `$ownerId` its terminal), and a composite refuses a documents lookup on
+    // the index path a count reads: they are read separately
+    // ({@link loadViewerLikes}), one request beside the composite.
+    if (!like.ownerIsTerminal) {
+      myLikes = slot({ documentType: like.docType, where: mine, bind: fromPage('$id', like.field) });
+    }
     if (repost) {
       myReposts = slot({ documentType: repost.docType, where: mine, bind: fromPage('$id', repost.field) });
     }
@@ -202,23 +242,40 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
     // With the request budget free, chain the quoted posts' authors'
     // profiles off the join so embedded cards need no straggler hop.
     quotedAuthorProfiles = slot({
-      dataContractId: YAPPR_PROFILE_CONTRACT_ID,
-      documentType: 'profile',
+      dataContractId: profileBase.contractId,
+      documentType: profileBase.documentType,
       bind: { source: quotedPosts, sourceProperty: '$ownerId', field: '$ownerId' },
     });
   }
+
+  // v10 splits a profile in two: the slots above bind the DashPay profile,
+  // and the `yapprProfile` extensions join only while the budget allows (a
+  // logged-in page has none left); otherwise the profile loader fetches them.
+  const extension = profileExtensionSource();
+  const profileExtensions = extension && subQueries.length < MAX_SUB_QUERIES
+    ? slot({ dataContractId: extension.contractId, documentType: extension.documentType, bind: fromPage('$ownerId', '$ownerId') })
+    : -1;
+  const quotedAuthorExtensions = extension && quotedAuthorProfiles >= 0 && subQueries.length < MAX_SUB_QUERIES
+    ? slot({
+      dataContractId: extension.contractId,
+      documentType: extension.documentType,
+      bind: { source: quotedPosts, sourceProperty: '$ownerId', field: '$ownerId' },
+    })
+    : -1;
 
   if (subQueries.length > MAX_SUB_QUERIES) {
     throw new Error(`Feed: composite page needs ${subQueries.length} sub-queries, the limit is ${MAX_SUB_QUERIES}`);
   }
 
+  // The language timeline, or v10's global one (the language is ignored there).
+  const timeline = postTimelineClauses(options.language);
   const query: CompositeDocumentsQuery = {
     dataContractId: YAPPR_CONTRACT_ID,
     documentType: kind,
     where: options.documentIds
       ? [['$id', 'in', options.documentIds]]
-      : options.pageQuery ? options.pageQuery.where : [['language', '==', options.language], ['$createdAt', '>', 0]],
-    orderBy: options.documentIds ? undefined : options.pageQuery ? options.pageQuery.orderBy : [['language', 'asc'], ['$createdAt', 'desc']],
+      : options.pageQuery ? options.pageQuery.where : timeline.where,
+    orderBy: options.documentIds ? undefined : options.pageQuery ? options.pageQuery.orderBy : timeline.orderBy,
     limit: options.limit,
     subQueries,
   };
@@ -234,6 +291,8 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
       profiles,
       usernames,
       quotedAuthorProfiles,
+      profileExtensions,
+      quotedAuthorExtensions,
       myLikes,
       myReposts,
       myBookmarks,
@@ -241,7 +300,71 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
   };
 }
 
+/** The one thread root every source reply shares, or null when they span several (or none is known). */
+function sharedRootOf(sourcePosts: Post[] | undefined): string | null {
+  const roots = new Set((sourcePosts ?? []).map((post) => post.rootPostId));
+  const [root] = Array.from(roots);
+  return roots.size === 1 && root ? root : null;
+}
+
+/**
+ * v10: the viewer's own quote or repost of each id (null when logged out, off
+ * v10, or when the read fails; `getOwnQuotes` itself fails closed).
+ */
+function loadOwnQuotes(ids: string[], options: CompositeFeedPageOptions): Promise<Map<string, OwnQuote> | null> {
+  const kind = options.kind ?? 'post';
+  const viewer = options.currentUserId;
+  if (!viewer || !ownQuoteIndexFor(kind) || ids.length === 0) return Promise.resolve(null);
+  return import('@/lib/services/post-service')
+    .then(({ postService }) => postService.getOwnQuotes(viewer, ids, kind))
+    .catch((error) => {
+      logger.warn('Feed: own quote lookup failed', error);
+      return null;
+    });
+}
+
 // ---- Result ----
+
+/**
+ * v10: the viewer's hearts on the page, read beside the composite on the
+ * like-count index (`target in [ids] && $ownerId == me`); null when logged
+ * out or where the composite carries them (v2, v9).
+ */
+function loadViewerLikes(ids: string[], options: CompositeFeedPageOptions): Promise<Set<string>> | null {
+  const kind = options.kind ?? 'post';
+  const viewer = options.currentUserId;
+  if (!viewer || !likeIndexFor(kind).ownerIsTerminal || ids.length === 0) return null;
+  return import('@/lib/services/like-service').then(({ likeService }) => likeService.getUserLikedPostIds(viewer, ids, kind));
+}
+
+/**
+ * The v10 reads a composite page cannot carry: the viewer's own quote/repost
+ * of each page item (a `post` lookup on `ownerAndQuotedPost`/
+ * `ownerAndQuotedReply`, which shares the `$ownerId` level with an
+ * `ownerAndTime` page and is refused beside it), and the child counts of a
+ * reply page whose replies span several roots (one grouped count per root),
+ * and the viewer's hearts ({@link loadViewerLikes}). All are ordinary
+ * requests next to the composite; nothing here runs on v2/v9.
+ */
+async function loadSeparateReads(
+  pageIds: string[],
+  sourcePosts: Post[],
+  slots: SubQuerySlots,
+  options: CompositeFeedPageOptions,
+  early: { ownQuotes: Promise<Map<string, OwnQuote> | null> | null; liked: Promise<Set<string>> | null } | null
+): Promise<{ ownQuotes: Map<string, OwnQuote> | null; replyCounts: Map<string, number> | null; liked: Set<string> | null }> {
+  const kind = options.kind ?? 'post';
+  const [ownQuotes, replyCounts, liked] = await Promise.all([
+    early?.ownQuotes ?? loadOwnQuotes(pageIds, options),
+    slots.replyCounts < 0 && pageIds.length > 0
+      ? import('@/lib/services/reply-service').then(({ replyService }) => replyService.countRepliesForPosts(
+        pageIds, kind, new Map(sourcePosts.flatMap((post) => (post.rootPostId ? [[post.id, post.rootPostId] as const] : [])))
+      ))
+      : null,
+    early?.liked ?? loadViewerLikes(pageIds, options),
+  ]);
+  return { ownQuotes, replyCounts, liked };
+}
 
 function documentsAt(result: CompositeDocumentsResult, index: number): Record<string, unknown>[] {
   if (index < 0) return [];
@@ -317,7 +440,8 @@ export function usernamesByIdentity(records: Record<string, unknown>[], identity
 async function decodeFeedPage(
   result: CompositeDocumentsResult,
   slots: SubQuerySlots,
-  options: CompositeFeedPageOptions
+  options: CompositeFeedPageOptions,
+  early: { ownQuotes: Promise<Map<string, OwnQuote> | null> | null; liked: Promise<Set<string>> | null } | null
 ): Promise<CompositeFeedPage> {
   let rawPosts = result.pageDocuments.map((doc) => documentToPlainObject(doc));
   if (options.documentIds) {
@@ -342,9 +466,10 @@ async function decodeFeedPage(
 
   // Stats, seeded to zero for every page id: a value without a count entry
   // is a proven zero.
+  const separate = await loadSeparateReads(pageIds, posts, slots, options, early);
   const likes = countsAt(result, slots.likeCounts);
   const reposts = countsAt(result, slots.repostCounts);
-  const replies = countsAt(result, slots.replyCounts);
+  const replies = separate.replyCounts ?? countsAt(result, slots.replyCounts);
   const quotes = countsAt(result, slots.quoteCounts);
   const stats = new Map<string, PostStats>();
   for (const id of pageIds) {
@@ -359,13 +484,20 @@ async function decodeFeedPage(
 
   // Author identity, and seed the service caches so any later lookup for
   // these authors (reposter names, quoted authors, profile pages) is a hit.
+  // A v10 extension is seeded first, so the profiles returned carry it.
+  if (slots.profileExtensions >= 0) {
+    unifiedProfileService.seedProfileDocuments(documentsAt(result, slots.profileExtensions), authorIds, 'extension');
+  }
   const foundProfiles = unifiedProfileService.seedProfileDocuments(documentsAt(result, slots.profiles), authorIds);
+  // Without its extension a v10 avatar may still be a recipe the page did not
+  // fetch, so the avatars are left to the progressive enrichment.
+  const avatarsKnown = !profileExtensionSource() || slots.profileExtensions >= 0;
   const profiles = new Map<string, ProfileData>();
   const avatars = new Map<string, string>();
   for (const id of authorIds) {
     const doc = foundProfiles.get(id);
     profiles.set(id, doc ? { displayName: doc.displayName, bio: doc.bio } : {});
-    avatars.set(
+    if (avatarsKnown) avatars.set(
       id,
       doc ? unifiedProfileService.parseAvatarField(doc.avatar, id) : unifiedProfileService.getDefaultAvatarUrl(id)
     );
@@ -376,12 +508,18 @@ async function decodeFeedPage(
   // The viewer's marks; only meaningful when logged in.
   const preloaded: PreloadedEnrichment = { usernames, profiles, avatars, stats };
   if (options.currentUserId) {
-    const liked = targetIdsOf(documentsAt(result, slots.myLikes), likeIndexFor(options.kind ?? 'post').field);
+    const liked = separate.liked ?? targetIdsOf(documentsAt(result, slots.myLikes), likeIndexFor(options.kind ?? 'post').field);
     const reposted = targetIdsOf(documentsAt(result, slots.myReposts), repostIndexFor(options.kind ?? 'post')?.field ?? 'postId');
     const bookmarked = targetIdsOf(documentsAt(result, slots.myBookmarks), bookmarkIndexFor(options.kind ?? 'post')?.field ?? 'postId');
     const interactions = new Map<string, UserInteractions>();
     for (const id of pageIds) {
-      interactions.set(id, { liked: liked.has(id), reposted: reposted.has(id), bookmarked: bookmarked.has(id) });
+      const ownQuote = separate.ownQuotes?.get(id);
+      interactions.set(id, {
+        liked: liked.has(id),
+        reposted: ownQuote ? true : reposted.has(id),
+        bookmarked: bookmarked.has(id),
+        ...(ownQuote ? { ownQuote } : {}),
+      });
     }
     preloaded.interactions = interactions;
   }
@@ -394,6 +532,9 @@ async function decodeFeedPage(
     .filter((post) => !post.deleted);
   if (quotedPosts.length > 0) {
     const quotedAuthorIds = Array.from(new Set(quotedPosts.map((post) => post.author.id).filter(Boolean)));
+    if (slots.quotedAuthorExtensions >= 0) {
+      unifiedProfileService.seedProfileDocuments(documentsAt(result, slots.quotedAuthorExtensions), quotedAuthorIds, 'extension');
+    }
     if (slots.quotedAuthorProfiles >= 0) {
       unifiedProfileService.seedProfileDocuments(documentsAt(result, slots.quotedAuthorProfiles), quotedAuthorIds);
     }

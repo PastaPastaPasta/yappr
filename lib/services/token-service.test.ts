@@ -6,16 +6,21 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const claim = vi.hoisted(() => vi.fn())
+const { claim, directPurchase, transfer, topology } = vi.hoisted(() => ({
+  claim: vi.fn(),
+  directPurchase: vi.fn(),
+  transfer: vi.fn(),
+  topology: { locked: false },
+}))
 
 vi.mock('./evo-sdk-service', () => ({
-  getEvoSdk: async () => ({ tokens: { claim }, identities: { fetch: async () => ({ publicKeys: [] }) } }),
+  getEvoSdk: async () => ({ tokens: { claim, directPurchase, transfer }, identities: { fetch: async () => ({ publicKeys: [] }) } }),
 }))
 // The nonce lock reads Platform's nonce; these tests are about the claim, so it just runs the write.
 vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (...args: [string, string, () => Promise<unknown>]) => args[2]() }))
 vi.mock('./signer-service', () => ({ signerService: { createSignerFromWasmKey: () => ({ signer: true, identityKey: true }) } }))
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: true, key: {} }) }))
-vi.mock('../contract-topology', () => ({ starterGrantAmount: () => BigInt(100) }))
+vi.mock('../contract-topology', () => ({ starterGrantAmount: () => BigInt(100), yappIsLocked: () => topology.locked }))
 vi.mock('@dashevo/evo-sdk', () => ({ Identifier: class { constructor(readonly value: string) {} } }))
 
 import { tokenService } from './token-service'
@@ -25,6 +30,9 @@ const PROSE = "Failed to claim tokens: Protocol error: Token claim error: identi
 
 beforeEach(() => {
   claim.mockReset()
+  directPurchase.mockReset()
+  transfer.mockReset()
+  topology.locked = false
 })
 
 describe('claimStarterGrant: an identity that already claimed', () => {
@@ -41,5 +49,28 @@ describe('claimStarterGrant: an identity that already claimed', () => {
     claim.mockRejectedValue({ code: 1, message: 'rejected', name: 'Protocol' })
     const result = await tokenService.claimStarterGrant(CLAIMANT, 'wif')
     expect(result.errorCode).not.toBe('ALREADY_CLAIMED')
+  })
+})
+
+describe('a locked YAPP (v10)', () => {
+  it('refuses purchases and transfers without broadcasting', async () => {
+    topology.locked = true
+    expect(await tokenService.buyYapp(CLAIMANT, BigInt(100), BigInt(1), 'wif')).toMatchObject({ success: false, errorCode: 'NOT_AUTHORIZED' })
+    expect(await tokenService.transfer(CLAIMANT, 'Rcp1', BigInt(5), undefined, 'wif')).toMatchObject({ success: false, errorCode: 'NOT_AUTHORIZED' })
+    expect(directPurchase).not.toHaveBeenCalled()
+    expect(transfer).not.toHaveBeenCalled()
+  })
+
+  it('still pays out the starter grant', async () => {
+    topology.locked = true
+    claim.mockResolvedValue(undefined)
+    expect(await tokenService.claimStarterGrant(CLAIMANT, 'wif')).toEqual({ success: true })
+  })
+
+  it('leaves purchases and transfers alone where YAPP is not locked', async () => {
+    directPurchase.mockResolvedValue(undefined)
+    transfer.mockResolvedValue(undefined)
+    expect(await tokenService.buyYapp(CLAIMANT, BigInt(100), BigInt(1), 'wif')).toEqual({ success: true })
+    expect(await tokenService.transfer(CLAIMANT, 'Rcp1', BigInt(5), undefined, 'wif')).toEqual({ success: true })
   })
 })

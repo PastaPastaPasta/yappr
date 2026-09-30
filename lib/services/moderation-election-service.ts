@@ -29,8 +29,12 @@ import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
 /** The moderation charters system contract (SystemDataContract::ModerationCharters). */
 export const MODERATION_CHARTERS_CONTRACT_ID = 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88';
 const ELECTED_CHARTER = 'electedCharter';
-/** How many pages of 100 vote polls to walk looking for the contest's end. */
+/** How many pages of vote polls to walk looking for the contest's end. */
 const MAX_END_DATE_PAGES = 10;
+/** Vote polls per end-date page: the node's limit counts polls, not timestamps. */
+const END_DATE_PAGE_POLLS = 100;
+/** Clock skew allowed past the latest end a live contest can have. */
+const END_DATE_SLACK_MS = 10 * 60 * 1000;
 const CONTEST_INDEX = 'byTargetContract';
 
 /** A `reason` a seated team may cite: the proposal lists them by document id. */
@@ -289,35 +293,57 @@ class ModerationElectionService {
 
   /**
    * The contest's end, from the vote-poll end-date index: pages forward in end
-   * time (100 entries a page, at most {@link MAX_END_DATE_PAGES}) from the
+   * time (100 polls a page, at most {@link MAX_END_DATE_PAGES}) from the
    * earliest open poll, so a busy network with more than 100 open polls still
-   * finds it. The first page is unbounded: wasm-sdk 4.2.0-beta.5 refuses every
-   * `startTimeMs` (an integer is "expected f64", a float "must be an integer"),
-   * so only a later page, needed past 100 open polls, can hit that and fail.
+   * finds it. Each later page starts at the previous page's last timestamp,
+   * passing its `timestampMs` bigint back as is (wasm-sdk 4.2.0-beta.7,
+   * platform#5139; beta.5 and beta.6 refused every time bound).
+   *
+   * The walk stops at the latest time a live contest can end: the join and
+   * vote windows from now, plus {@link END_DATE_SLACK_MS} for clock skew. So
+   * polls that end later, such as DPNS name contests weeks out, are not paged
+   * through when this contract has no contest. The lower end stays open: a
+   * poll whose end has passed but that a stalled chain has not yet closed is
+   * still this contract's contest.
    */
   private async contestEnd(sdk: EvoSDK, targetContractId: string): Promise<number | null> {
-    {
-      let bound: { startTimeMs: number; startTimeIncluded: boolean } | null = null;
-      for (let page = 0; page < MAX_END_DATE_PAGES; page++) {
-        const entries = await sdk.voting.votePollsByEndDate({ ...bound, orderAscending: true, limit: 100 });
-        let last: number | null = null;
-        let found: number | null = null;
-        try {
-          const plain = entries.map((entry) => ({
-            timestampMs: entry.timestampMs,
-            votePolls: entry.votePolls.map((poll: { toJSON?: () => unknown }) => poll.toJSON?.() ?? poll),
-          }));
-          found = contestEndFromPolls(plain, targetContractId);
-          if (plain.length > 0) last = Number(plain[plain.length - 1].timestampMs);
-        } finally {
-          for (const entry of entries) entry.free();
-        }
-        if (found !== null) return found;
-        if (entries.length < 100 || last === null) return null;
-        bound = { startTimeMs: last, startTimeIncluded: false };
+    const declaration = electedModeration();
+    const upper = declaration
+      ? {
+        endTimeMs: Date.now() + (declaration.joinWindowSeconds + declaration.voteWindowSeconds) * 1000 + END_DATE_SLACK_MS,
+        endTimeIncluded: true,
       }
-      return null;
+      : {};
+    let lower: { startTimeMs: bigint; startTimeIncluded: boolean } | null = null;
+    for (let page = 0; page < MAX_END_DATE_PAGES; page++) {
+      const entries = await sdk.voting.votePollsByEndDate({ ...lower, ...upper, orderAscending: true, limit: END_DATE_PAGE_POLLS });
+      let first: bigint | null = null;
+      let last: bigint | null = null;
+      let polls = 0;
+      let found: number | null = null;
+      try {
+        const plain = entries.map((entry) => ({
+          timestampMs: entry.timestampMs,
+          votePolls: entry.votePolls.map((poll: { toJSON?: () => unknown }) => poll.toJSON?.() ?? poll),
+        }));
+        found = contestEndFromPolls(plain, targetContractId);
+        polls = plain.reduce((sum, entry) => sum + entry.votePolls.length, 0);
+        if (plain.length > 0) {
+          first = BigInt(plain[0].timestampMs);
+          last = BigInt(plain[plain.length - 1].timestampMs);
+        }
+      } finally {
+        for (const entry of entries) entry.free();
+      }
+      if (found !== null) return found;
+      // The limit counts polls, not the timestamp groups they come back in.
+      if (polls < END_DATE_PAGE_POLLS || first === null || last === null) return null;
+      // A full page may have cut its last timestamp's group short, so the next
+      // page reads that timestamp again. A page that is all one timestamp
+      // cannot be advanced that way, so the walk then moves past it.
+      lower = { startTimeMs: last, startTimeIncluded: first !== last };
     }
+    return null;
   }
 
   /** Everything the election status view shows, or null when the contract is not elected. */

@@ -1,5 +1,6 @@
 import type { Post } from '@/lib/types'
 import type { SensitiveContentMode } from '@/lib/store'
+import { isBareRepost } from '@/lib/feed/quote-reposts'
 
 /**
  * Whether a post should be treated as author-flagged sensitive content.
@@ -27,5 +28,9 @@ export function filterHiddenSensitive(
   currentUserId?: string | null
 ): Post[] {
   if (mode !== 'hide') return posts
-  return posts.filter((post) => !isSensitivePost(post) || post.author.id === currentUserId)
+  return posts.filter((post) => {
+    // A v10 bare repost is shown as its target, so the target's flag decides.
+    const shown = isBareRepost(post) && post.quotedPost ? post.quotedPost : post
+    return !(isSensitivePost(post) || isSensitivePost(shown)) || shown.author.id === currentUserId
+  })
 }

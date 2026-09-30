@@ -5,6 +5,7 @@ import { ChevronRightIcon } from '@heroicons/react/24/outline'
 import { ReplyThread, Post } from '@/lib/types'
 import { replyToPost } from '@/lib/services/post-service'
 import { PostCard, ProgressiveEnrichment } from './post-card'
+import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
 
 interface ReplyThreadItemProps {
   thread: ReplyThread
@@ -51,11 +52,16 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment }: 
         </div>
       )}
 
-      <PostCard
-        post={postLike}
-        enrichment={getPostEnrichment?.(postLike)}
-        rootPostOwnerId={rootPostOwnerId}
-      />
+      {/* A reply proved deleted (v10) holds its place so its replies stay in the thread. */}
+      {content.deletedStub ? (
+        <RemovedPostStub documentId={content.id} kind="reply" variant="card" proven />
+      ) : (
+        <PostCard
+          post={postLike}
+          enrichment={getPostEnrichment?.(postLike)}
+          rootPostOwnerId={rootPostOwnerId}
+        />
+      )}
 
       {/* Nested replies - flattened to a single indent level */}
       {nestedReplies.length > 0 && (

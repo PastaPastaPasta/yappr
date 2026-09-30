@@ -109,14 +109,22 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // `storeItem.tags`/`imageUrls` as typed string ARRAYS (v1–v3 store JSON
 // strings; each cut refuses the other's encoding) and `storeReview.sellerId`
 // distinct from the reviewer.
-export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4'] as const
+// `v5` (4.2.0-beta.7, docs/SOCIAL_V10.md) is v4 in the beta.7 grammar plus
+// QA D-25: an order carries `storeStatus`, consensus-bound to its store's
+// `status` and required to be `active`, so a paused or closed store cannot be
+// ordered from (10422 `storeIsOpen`; 40127 if the copy is stale).
+export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5'] as const
 export type StorefrontTopology = (typeof STOREFRONT_TOPOLOGIES)[number]
 export const STOREFRONT_TOPOLOGY: StorefrontTopology =
   STOREFRONT_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY) ?? 'v1'
 /** True on v2 and every later cut (the v2 write surface). */
 export const storefrontIsV2 = () => STOREFRONT_TOPOLOGY !== 'v1'
+const storefrontTopologyAtLeast = (topology: StorefrontTopology) =>
+  STOREFRONT_TOPOLOGIES.indexOf(STOREFRONT_TOPOLOGY) >= STOREFRONT_TOPOLOGIES.indexOf(topology)
 /** True on v4 and later: `storeItem.tags`/`imageUrls` are written as lists, not JSON strings. */
-export const storefrontArraysAreTyped = () => STOREFRONT_TOPOLOGY === 'v4'
+export const storefrontArraysAreTyped = () => storefrontTopologyAtLeast('v4')
+/** True on v5 and later: an order must copy its store's `status` into `storeStatus`, and only an active store takes orders. */
+export const storefrontOrdersCarryStoreStatus = () => storefrontTopologyAtLeast('v5')
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID ?? '7UaqHGBJBbRLJ4fUWS45cnud8PPUugJWoGTt1SKwHJ2P' // Key exchange protocol contract
@@ -277,7 +285,7 @@ export function keyNetwork(): KeyNetwork {
 
 // Contract interaction topology.
 //
-// Two social contracts exist on chain, so two topologies do:
+// Three social contract shapes exist, so three topologies do:
 //
 // `v2` — testnet (staging, production, /testing),
 // `contracts/yappr-social-contract-v2.json`. Replies chain through a single
@@ -300,6 +308,18 @@ export function keyNetwork(): KeyNetwork {
 // private-feed writer gates; and `blockFollow.followedBlockers` as a typed
 // identifier array.
 //
+// `v10` — the 4.2.0-beta.7 devnet, `contracts/yappr-social-contract-v10.json`
+// (docs/SOCIAL_V10.md). v9's interaction surfaces in the beta.7 grammar
+// (`moderatorAbilities`, `refersTo.where`/`findBy`), with real deletes of
+// immutable posts and replies instead of tombstones, content up to 1000
+// characters / 2000 bytes, no `language` (one global `timeline`), media
+// sha256 + dHash beside `mediaUrl`, `keyGeneration` for the private-feed
+// epoch, no `beat` (rolling trending on `like.byTrendHashtagPost`/`byTrendPost`), reports the
+// moderators resolve with `status`/`resolution`, the `yapprProfile` extension
+// of the DashPay profile, and a YAPP that can be neither transferred nor bought.
+// The v9 JSON stays in the tree while the client learns v10: moutai (v9) is
+// retired, but nothing may read a topology whose contract file is gone.
+//
 // The intermediate cuts (v3–v8) are gone: none exists on any chain any more,
 // and the repo does not keep contracts, generators or batteries that cannot be
 // registered. Recover them from git history.
@@ -307,7 +327,7 @@ export function keyNetwork(): KeyNetwork {
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v9'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 

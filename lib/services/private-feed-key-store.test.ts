@@ -22,22 +22,22 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('private reply key readiness', () => {
-  it('requires both path keys and a CEK covering the requested post epoch', () => {
-    expect(store.hasKeysForEpoch('owner', 2)).toBe(false);
+  it('requires both path keys and a CEK covering the requested post key generation', () => {
+    expect(store.hasKeysForGeneration('owner', 2)).toBe(false);
     store.storePathKeys('owner', pathKeys);
-    expect(store.hasKeysForEpoch('owner', 2)).toBe(false);
+    expect(store.hasKeysForGeneration('owner', 2)).toBe(false);
     store.storeCachedCEK('owner', 1, cek);
-    expect(store.hasKeysForEpoch('owner', 2)).toBe(false);
-    expect(store.hasKeysForEpoch('owner', 1)).toBe(true);
-    expect(store.hasKeysForEpoch('different-owner', 1)).toBe(false);
+    expect(store.hasKeysForGeneration('owner', 2)).toBe(false);
+    expect(store.hasKeysForGeneration('owner', 1)).toBe(true);
+    expect(store.hasKeysForGeneration('different-owner', 1)).toBe(false);
     store.storeCachedCEK('owner', 2, cek);
-    expect(store.hasKeysForEpoch('owner', 2)).toBe(true);
-    expect(store.hasKeysForEpoch('owner', 1)).toBe(true);
+    expect(store.hasKeysForGeneration('owner', 2)).toBe(true);
+    expect(store.hasKeysForGeneration('owner', 1)).toBe(true);
   });
 
   it('notifies subscribers when normal recovery and catch-up change readiness', () => {
     const readiness: boolean[] = [];
-    const unsubscribe = store.subscribeFollowerKeys(() => readiness.push(store.hasKeysForEpoch('owner', 2)));
+    const unsubscribe = store.subscribeFollowerKeys(() => readiness.push(store.hasKeysForGeneration('owner', 2)));
     store.initializeFollowerState('owner', pathKeys, 1, cek);
     expect(readiness.at(-1)).toBe(false);
     store.storeCachedCEK('owner', 2, cek);
@@ -56,7 +56,7 @@ describe('private reply key readiness', () => {
     const unsubscribe = store.subscribeFollowerKeys(listener);
     store.clearAllKeys();
     expect(listener).toHaveBeenCalledOnce();
-    expect(store.hasKeysForEpoch('owner', 2)).toBe(false);
+    expect(store.hasKeysForGeneration('owner', 2)).toBe(false);
     unsubscribe();
   });
 

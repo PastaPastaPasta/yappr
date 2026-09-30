@@ -8,7 +8,7 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useReportPostModal } from '@/hooks/use-report-post-modal'
-import { targetKindOf } from '@/lib/contract-topology'
+import { reportsAreResolved, targetKindOf } from '@/lib/contract-topology'
 import { logger } from '@/lib/logger'
 import {
   OTHER_REASON_CODE,
@@ -19,6 +19,7 @@ import {
   reportFailureMessage,
   reportInputProblem,
   reportReasonLabel,
+  reportStatusLabel,
   withdrawFailureMessage,
   type ReportRecord,
 } from '@/lib/reports'
@@ -44,6 +45,8 @@ export function ReportPostModal() {
   const kind = post ? targetKindOf(post) : 'post'
   const noun = kind === 'reply' ? 'reply' : 'post'
   const identityId = user?.identityId
+  /** v10: the moderators mark a report handled (and the reporter sees how) instead of deleting it. */
+  const resolving = reportsAreResolved()
 
   useEffect(() => {
     if (!isOpen || !post || !identityId) return
@@ -99,7 +102,9 @@ export function ReportPostModal() {
     }
     toast.success(result.confirmed === false
       ? 'Report sent. The network has not confirmed it yet; it reaches the moderators once it does.'
-      : `Reported. The moderators will review this ${noun}.`)
+      : resolving
+        ? `Reported. The moderators will review this ${noun} and mark your report handled.`
+        : `Reported. The moderators will review this ${noun}.`)
     finish()
   }
 
@@ -147,10 +152,21 @@ export function ReportPostModal() {
         <div className="flex flex-col gap-3">
           <Dialog.Description className="text-gray-600 dark:text-gray-400">
             On {new Date(filed.createdAt).toLocaleDateString()} you reported it for <strong>{reportReasonLabel(filed.reason)}</strong>.
-            The moderators review it and may remove the {noun} or dismiss the report.
+            {resolving
+              ? filed.status === null ? ` The moderators haven't resolved it yet; they'll mark it handled here once they review the ${noun}.` : ''
+              : ` The moderators review it and may remove the ${noun} or dismiss the report.`}
           </Dialog.Description>
           {filed.note && (
             <p className="text-sm p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 whitespace-pre-wrap break-words">{filed.note}</p>
+          )}
+          {filed.status !== null && (
+            <div data-testid="own-report-resolution" className="text-sm p-3 rounded-lg border border-green-200 dark:border-green-900 bg-green-50 dark:bg-green-950">
+              <p>
+                Resolved by the moderators: <strong>{reportStatusLabel(filed.status)}</strong>
+                {filed.moderatedAt ? ` on ${new Date(filed.moderatedAt).toLocaleDateString()}` : ''}.
+              </p>
+              {filed.resolution && <p className="mt-1 whitespace-pre-wrap break-words">{filed.resolution}</p>}
+            </div>
           )}
           <Button onClick={() => handleWithdraw(filed)} variant="outline" disabled={busy} className="w-full text-red-500">
             {busy ? 'Withdrawing…' : 'Withdraw report'}
@@ -164,7 +180,7 @@ export function ReportPostModal() {
           <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
             Your report goes to this community&apos;s moderators. Reports are public on Dash Platform: anyone, including
             the {noun}&apos;s author, can see that you reported it, the reason you pick and anything you write in the details.
-            A report expires after 90 days.
+            {resolving && ' You can come back here to see how the moderators resolved it.'} A report expires after 90 days.
           </Dialog.Description>
           <fieldset className="mb-4" disabled={busy}>
             <legend className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">What is wrong with it?</legend>

@@ -10,7 +10,6 @@ import {
   CREATE_NOT_RECORDED_ERROR,
   isConsensusRefusal,
   categorizeError,
-  isAffectedStateSnapshotError,
   classifyModerationError,
   consensusCodeOf,
   messageWithConsensusCode,
@@ -102,6 +101,16 @@ describe('propertyAgreement rejections (40127)', () => {
   it('recognises a writer gate by $ownerId on the REFERRING side', () => {
     expect(isPropertyAgreementError(new Error(WRITER_GATE))).toBe(true)
     expect(isWriteGateError(new Error(WRITER_GATE))).toBe(true)
+  })
+
+  it('recognises the 4.2.0-beta.7 phrasing, which names the rule "where"', () => {
+    // rs-dpp v4.2.0-beta.7 referenced_document_property_mismatch_error.rs.
+    const value = VALUE_MISMATCH.replace('(propertyAgreement on', '(where on')
+    const gate = WRITER_GATE.replace('(propertyAgreement on', '(where on')
+    expect(value).toContain('(where on orderId)')
+    expect(isPropertyAgreementError(new Error(value))).toBe(true)
+    expect(isWriteGateError(new Error(value))).toBe(false)
+    expect(isWriteGateError(new Error(gate))).toBe(true)
   })
 
   it('does not treat an unrelated failure as an agreement rejection', () => {
@@ -242,6 +251,14 @@ describe('protocol-14 rejections', () => {
     const v2 = await import('./error-utils')
     expect(v2.categorizeError(shortOfYapp)).not.toMatch(/credits/i)
     expect(v2.categorizeError(shortOfYapp)).toMatch(/enough YAPP/i)
+    expect(v2.categorizeError(shortOfYapp)).toMatch(/buy more/i)
+    expect(v9.categorizeError(shortOfYapp)).toMatch(/buy more/i)
+    // v10's YAPP is locked: it cannot be bought, so credits are the only way out.
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    const v10 = await import('./error-utils')
+    expect(v10.categorizeError(shortOfYapp)).toMatch(/credits/i)
+    expect(v10.categorizeError(shortOfYapp)).not.toMatch(/buy/i)
   })
 
   it('keeps the frozen-account message for a frozen token account, not the moderation one', () => {
@@ -267,6 +284,11 @@ describe('4.2.0-beta.4 rejections', () => {
       'invalid refersTo lookup through index byName declared at storeName: the index is not unique', /report this/i],
     ['40138 ReferencedDocumentListInvalidError', isReferenceRequirementError,
       'invalid refersTo listElement into inList tags declared at tag: not a list', /report this/i],
+    // The 4.2.0-beta.7 phrasings, transcribed from rs-dpp at tag v4.2.0-beta.7.
+    ['40137 ReferencedDocumentLookupInvalidError (beta.7)', isReferenceRequirementError,
+      'invalid refersTo findBy ($ownerId) declared at privateFeedGrant.$ownerId: no unique index of privateFeedState is over exactly these properties', /report this/i],
+    ['40138 ReferencedDocumentListInvalidError (beta.7)', isReferenceRequirementError,
+      'invalid refersTo inList tags declared at storeItem.tag: not a list', /report this/i],
     ['40139 DocumentActionFeeModeratorsShareMismatchError', isActionFeeAgreementError,
       "Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 40000000, which is not the seated moderation charter's 60% share of it", /moderator fee share didn't match .*seated moderation charter/i],
     ['40307 by labelled code', isPermanentProtocol14Error, 'rejected: code=40307', /report this/i],
@@ -304,7 +326,23 @@ describe('4.2.0-beta.4 rejections', () => {
     // and tombstone repair drops the reference it names.
     const requirement = new Error("referenced contract 8Xv3 for path storeContractId does not meet the reference's requirement moderation elected")
     expect(isReferenceNotFoundError(requirement)).toBe(false)
+    // 4.2.0-beta.7's 40142 says the same of a referenced DOCUMENT.
+    const documentRequirement = new Error("referenced document 8Xv3 for path offer.commitmentId does not meet the reference's requirement minimumAgeBlocks 10")
+    expect(isReferenceNotFoundError(documentRequirement)).toBe(false)
     expect(isReferenceNotFoundError(new Error('referenced identity 9t2e not found for path followingId'))).toBe(true)
+  })
+
+  it('treats a 40142 (a revealed commitment too young, beta.7) as transient, not a defect', () => {
+    // rs-dpp v4.2.0-beta.7 referenced_document_requirement_not_met_error.rs; only minimumAgeBlocks raises it.
+    for (const error of [
+      new Error("referenced document 8Xv3 for path offer.commitmentId does not meet the reference's requirement minimumAgeBlocks 10"),
+      { code: 40142, message: 'Failed to broadcast: Protocol error: consensus refusal' },
+    ]) {
+      expect(isReferenceNotFoundError(error)).toBe(false)
+      expect(isReferenceRequirementError(error)).toBe(false)
+      expect(isPermanentProtocol14Error(error)).toBe(false)
+      expect(categorizeError(error)).toMatch(/only just published/i)
+    }
   })
 
   it.each([
@@ -313,11 +351,27 @@ describe('4.2.0-beta.4 rejections', () => {
     ['rootPostId', 'post', /post was removed by the moderators/],
     ['replyToReplyId', 'reply', /reply was removed by the moderators/],
     ['blogPostId', 'blogPost', /no longer exists/],
-  ])('names the removed document for a 40120 on %s, not a missing account (QA D-20)', (path, documentType, message) => {
+  ])('names the removed document for a 40120 on %s, not a missing account (QA D-20)', async (path, documentType, message) => {
+    // Pinned to v9, where only moderators remove posts and replies; the message
+    // depends on the topology, and earlier tests leave other topologies stubbed.
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9')
+    const v9 = await import('./error-utils')
     const error = new Error(`referenced deletable document (own contract, document type ${documentType}) 9BN7B3vnAAAA not found for path ${path}`)
-    expect(isReferenceNotFoundError(error)).toBe(true)
-    expect(categorizeError(error)).toMatch(message)
-    expect(categorizeError(error)).not.toMatch(/account/)
+    expect(v9.isReferenceNotFoundError(error)).toBe(true)
+    expect(v9.categorizeError(error)).toMatch(message)
+    expect(v9.categorizeError(error)).not.toMatch(/account/)
+  })
+
+  it('says a 40120 post or reply was deleted, not removed by the moderators, where authors delete too (v10)', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    const v10 = await import('./error-utils')
+    for (const documentType of ['post', 'reply']) {
+      const error = new Error(`referenced deletable document (own contract, document type ${documentType}) 9BN7B3vnAAAA not found for path postId`)
+      expect(v10.categorizeError(error)).toMatch(new RegExp(`${documentType} was deleted`))
+      expect(v10.categorizeError(error)).not.toMatch(/moderators|account/)
+    }
   })
 
   it('keeps the account message for an identity reference', () => {
@@ -355,6 +409,25 @@ describe('4.2.0-beta.4 rejections', () => {
   ])('classifies %s as no moderation refusal', (message) => {
     expect(classifyModerationError(new Error(message))).toBeNull()
     expect(isPermanentProtocol14Error(new Error(message))).toBe(false)
+  })
+})
+
+describe('4.2.0-beta.7 moderator field-change rejections', () => {
+  // Messages transcribed from the rs-dpp `#[error(...)]` formats at tag v4.2.0-beta.7 (50d12037).
+  it.each([
+    ['FIELD_NOT_CHANGEABLE', 'Field note of documents of type report on contract 8Xv3 can not be changed by moderators'],
+    ['MODERATOR_FIELD', 'Only the moderators of contract 8Xv3 write field status of documents of type report, and 9t2e does not moderate it (document D1)'],
+    ['NOTHING_TO_CHANGE', "The fields a moderator's document change sets are invalid: every field already holds the value the change names, so nothing would change"],
+    ['FIELD_NOT_CHANGEABLE', 'consensus error code=41123'],
+    ['MODERATOR_FIELD', '{"code":41124}'],
+    ['NOTHING_TO_CHANGE', 'refused (code=10905)'],
+  ])('classifies a moderator field-change refusal as %s', (kind, message) => {
+    expect(classifyModerationError(new Error(message))).toBe(kind)
+  })
+
+  it('does not read the new codes inside ids or amounts', () => {
+    expect(classifyModerationError(new Error('insufficient balance: 41123000 credits'))).toBeNull()
+    expect(classifyModerationError(new Error('document 8Xv109051 not found'))).toBeNull()
   })
 })
 
@@ -416,19 +489,14 @@ describe('4.2.0-beta.5 rejections', () => {
   })
 })
 
-describe('isAffectedStateSnapshotError', () => {
-  // evo-sdk 4.2.0-beta.5, thrown by documents.create/delete on indexOnly types (QA D-05, platform P-03).
-  const SNAPSHOT = '[WASM] received a verified VerifiedDocuments snapshot for this transition family; use the *_affected_state wait APIs and treat the result as a height-pinned snapshot'
+describe('the strict wait refusing an affected-state proof', () => {
+  // rs-sdk v4.2.0-beta.7 broadcast.rs. Since #5136 documents.create/delete no
+  // longer raise it for indexOnly types; a hand-built strict wait still can.
+  const SNAPSHOT = '[WASM] received a verified VerifiedDocuments snapshot for this transition family; wait with the affected-state APIs instead (wait_for_affected_state in Rust, waitForAffectedState or broadcastAndWaitForAffectedState in JavaScript) and treat the result as a height-pinned snapshot'
 
-  it('recognises the strict wait refusing an affected-state proof', () => {
-    expect(isAffectedStateSnapshotError(new Error(SNAPSHOT))).toBe(true)
-    expect(isAffectedStateSnapshotError({ message: SNAPSHOT, code: -1 })).toBe(true)
-  })
-
-  it('is not a timeout, a duplicate, or any other error', () => {
+  it('is never read as a timeout, so no caller assumes the write landed', () => {
     expect(isTimeoutError(new Error(SNAPSHOT))).toBe(false)
-    expect(isAffectedStateSnapshotError(new Error('deadline expired before operation could complete'))).toBe(false)
-    expect(isAffectedStateSnapshotError(new Error('Document not found'))).toBe(false)
+    expect(isAlreadyExistsError(new Error(SNAPSHOT))).toBe(false)
   })
 })
 
@@ -550,7 +618,7 @@ describe('every consensus code against every matcher', () => {
   const sdkError = (code: number) => ({ code, message: 'Failed to broadcast: Protocol error: consensus refusal', name: 'Protocol', isRetriable: false })
 
   const matchers: Record<string, (error: unknown) => boolean> = {
-    isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isAffectedStateSnapshotError,
+    isTimeoutError, isAlreadyExistsError, isNonFatalWaitError,
     isInsufficientTokenError, isFrozenBalanceError, isReferenceNotFoundError, isPropertyAgreementError,
     isWriteGateError, isImmutablePropertyChangedError, isInvalidDocumentIdError, isModerationBarredError,
     isBarredFromContractError, isGasPayerError, isActionFeeAgreementError, isModeratorsShareMismatchError,
@@ -603,7 +671,7 @@ describe('every consensus code against every matcher', () => {
     // Matched only by private helpers or by classifyModerationError, or by nothing:
     // key expiry, vote choice, moderation-only codes, already-present, nonce,
     // generatedFrom, and the generic broadcast codes.
-    20016: [], 40219: [], 40307: [], 41101: [], 41111: [], 41112: [],
+    20016: [], 40219: [], 40307: [], 41101: [], 41111: [], 41112: [], 41123: [], 41124: [], 10905: [],
     40100: [], 40204: [], 10424: [], 10002: [], 20000: [], 1: [],
   }
 

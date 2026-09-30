@@ -12,8 +12,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { COLD_BUCKET, id32, normalizeId, reportSelfTest } from '../../battery-lib.mjs';
 import { YAPP_TOKEN_POSITION, describeErr } from '../seed-lib.mjs';
 import {
-  actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, envValue, groupTasks, loadCheckpoint,
-  network, phaseRunner, pick, printTable, rngFrom, runByActor, shuffled, utf8,
+  actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, groupTasks, loadCheckpoint,
+  network, phaseRunner, pick, printTable, rngFrom, runByActor, shuffled, topologyAtLeast, utf8,
 } from '../feature-seed-lib.mjs';
 
 /**
@@ -23,7 +23,7 @@ import {
  */
 const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5'];
 /** The target cut is \`topology\` or later (lib/constants.ts blogTopologyAtLeast; unset is v1). */
-const blogAtLeast = (topology) => BLOG_TOPOLOGIES.indexOf(envValue('NEXT_PUBLIC_BLOG_TOPOLOGY') ?? 'v1') >= BLOG_TOPOLOGIES.indexOf(topology);
+const blogAtLeast = (topology) => topologyAtLeast(BLOG_TOPOLOGIES, 'NEXT_PUBLIC_BLOG_TOPOLOGY', topology);
 const labelsTyped = () => blogAtLeast('v4');
 /**
  * Blog v5 (4.2.0-beta.6) makes a comment copy its post's `commentsEnabled`

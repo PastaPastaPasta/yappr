@@ -4,7 +4,7 @@ import { hashtagService } from './hashtag-service'
 import { mentionService } from './mention-service'
 import { dpnsService } from './dpns-service'
 import { extractAllTags, extractMentions, normalizeDpnsUsername } from '../post-helpers'
-import { hashtagsAreInline } from '../contract-topology'
+import { hashtagsAreInline, mentionsAreInline } from '../contract-topology'
 
 export type FieldValidationStatus = 'pending' | 'valid' | 'invalid'
 
@@ -30,7 +30,8 @@ const IN_FLIGHT_LINGER_MS = 100
 
 /**
  * Validates that a post's secondary index documents (postHashtag, postMention)
- * were actually written. Content is the source of truth for what SHOULD exist;
+ * were actually written (v2, and postMention on v9; v10 has neither).
+ * Content is the source of truth for what SHOULD exist;
  * the chain says what DOES. Fails open: when the registered set cannot be
  * fetched, every value reports as valid and nothing is cached, so a healthy
  * post is never flagged and the next look retries.
@@ -143,6 +144,9 @@ export const hashtagValidation = new PostFieldValidator({
 export const mentionValidation = new PostFieldValidator({
   kind: 'mention',
   extract: extractMentions,
+  // v10: the post's one indexed mention is written with the post and the
+  // rest are plain text by design, so nothing can have failed to register.
+  isInline: mentionsAreInline,
   // Mention documents carry identity ids; content carries usernames, so the
   // registered set is resolved back to normalized usernames for comparison.
   fetchRegistered: async (postId) => {

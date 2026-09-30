@@ -1,35 +1,36 @@
 /**
- * The registration rules the wasm DPP parse does NOT run, re-checked offline,
+ * The registration rules the local parses do NOT run, re-checked offline,
  * and the negative probes that record which refusals are local and which only
  * a node makes. Used by `validate-contract-offline.mjs`.
  *
- * Measured on @dashevo/wasm-sdk 4.2.0-beta.6 (first on beta.4) with `DataContract.fromJSON(json,
- * true, latest)`: the structural parser runs (lookups, distinctFrom targets,
- * contested + moderator delete, immutable deletable lookups, serde shape of
- * the moderation declaration), but the rules behind rs-dpp's `validation`
- * feature and the create transition's basic structure do not:
+ * Three layers, measured on 4.2.0-beta.7 with `DataContract.fromJSON(json,
+ * true, latest)`:
  *
- *   - `ContractModerationConfig::validate` (10900): election windows, the
- *     cool-down, maxAddedModerators, the moderated set and the list each
- *     ability needs. A 3600 s join window parses locally; the node refuses it.
- *   - `max_typed_array_items` (1024) and `max_references_per_document` (256).
- *   - The deletability of a reference's target (40122 permanentDocument at a
- *     deletable type, 40131 deletableDocument at a permanent one): those are
- *     judged against the whole contract at registration.
- *   - `validate_no_immutable_deletable_element_references`: a deletableDocument
- *     lookup held by an `immutable` property.
- *   - The JSON meta-schema (an unknown keyword parses).
+ *   - **wasm-sdk** (`@dashevo/evo-sdk`): the structural parser (findBy/where,
+ *     distinctFrom targets, moderatorAbilities, skipIfAbsent, ttl, …). It is
+ *     built WITHOUT rs-dpp's `validation` feature, so it skips the JSON
+ *     meta-schema and the index shape checks, and it silently DROPS a doctype
+ *     key the meta-schema refuses: `canBeDeletedByModerators`, removed in
+ *     beta.7, parses there and would be refused at registration (10101).
+ *   - **wasm-dpp2** (`@dashevo/wasm-dpp2`, a devDependency): the same parser
+ *     WITH `validation`, so the meta-schema and `validate_index_properties`
+ *     (an index on a missing property, on `$id`, on a typed array, over a
+ *     string longer than 63 characters; more than 10 indexes), the typed-array
+ *     ceiling and the reference budget.
+ *   - **auditNodeRules** (below): what neither parse runs, because the create
+ *     transition's basic-structure validation and the registration-time
+ *     reference checks run them on the node: `ContractModerationConfig::validate`
+ *     (10900: election windows, the moderated set and the abilities each list
+ *     or type backs), the deletability of a reference's target (40122/40131),
+ *     the immutable-deletable-reference rules, and the 20,480-byte transition
+ *     cap, and that both sides of every same-contract `where` entry exist
+ *     (40126). It also re-checks the index shapes wasm-dpp2 checks
+ *     (`auditIndexShapes`, ported from the v10 study's index-audit.py), so the
+ *     rules Yappr relies on do not depend on one package alone.
  *
- * 4.2.0-beta.5 adds two the parse also skips (both behind the `validation`
- * feature): `immutableAllowSetting` on a deletableDocument reference (#4983)
- * and an immutable contract reference with an `owner` requirement on a
- * transferable type (#4982). The document `ttl` rules (#5007) ARE in the parse,
- * but a `ttl` also makes its type deletable for the 40122/40131 checks
- * (`documents_can_disappear`), which is registration-time.
- *
- * `auditNodeRules` re-implements the ones Yappr's cuts rely on, from the rs-dpp
- * source at v4.2.0-beta.5 (config/moderation/{mod,elected}.rs,
- * try_from_schema/v3/mod.rs, create_document_types_from_document_schemas/v1).
+ * The rs-dpp sources are at v4.2.0-beta.7: config/moderation/{mod,elected}.rs,
+ * try_from_schema/common/mod.rs (validate_index_properties,
+ * check_indexable_property_shape), system_limits/v4.rs.
  */
 
 import { createHash } from 'node:crypto';
@@ -59,23 +60,24 @@ const LIMITS = {
  * (rs-dapi refuses a larger broadcast; Drive decodes it as 10602).
  */
 export const CREATE_TRANSITION_BUDGET = 20_000;
-const STATE_TRANSITION_CAP = LIMITS.maxStateTransitionSize;
-export const SIGNATURE_ALLOWANCE = 100;
+/** The state transition cap every broadcast must fit (rs-dapi refuses a larger one; Drive decodes it as 10602). */
+export const STATE_TRANSITION_CAP = LIMITS.maxStateTransitionSize;
+const SIGNATURE_ALLOWANCE = 100;
 
 // ---- JSON meta-schema --------------------------------------------------------
 
 /**
- * rs-dpp's document meta-schema v3 at v4.2.0-beta.6 (beta.5 added `ttl` and
- * the anyOf/allOf/not/in/present/absent/const propertyConstraints grammar;
- * beta.6 added `generatedFrom`, ifThen/ifThenElse/notIn/min/max/abs,
- * contains/startsWith/endsWith, length/byteLength/count, system times,
- * identifier and string comparisons, and countOf/sumOf), vendored byte for byte
+ * rs-dpp's document meta-schema v3 at v4.2.0-beta.7 (beta.7 replaced
+ * `canBeDeletedByModerators`/`...For` with `moderatorAbilities`,
+ * `propertyAgreement`/`lookup`/`listElement` with `where`/`findBy`/`inList`,
+ * and let `skipIfAbsent` sit on any index; earlier betas added `ttl`,
+ * `generatedFrom` and the propertyConstraints grammar), vendored byte for byte
  * (`packages/rs-dpp/schema/meta_schemas/document/v3/document-meta.json`) and
- * pinned by hash. The wasm parse does not run it, so a keyword typo or a
- * keyword in the wrong place parses locally and is refused by the node.
+ * pinned by hash. The wasm-sdk parse does not run it; wasm-dpp2 does, and this
+ * ajv pass names the failing path more precisely.
  */
 const META_SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'meta-schema', 'document-meta-v3.json');
-const META_SCHEMA_SHA256 = '88083a21d9c428c87d05cbf29f6814e674df9e596b63bc960057892c7664589f';
+const META_SCHEMA_SHA256 = 'd1dbfeb17481f408cf362fb4bcbc730d2f452963d84fb879b73ab8496fadb924';
 
 let metaValidator;
 /**
@@ -88,7 +90,7 @@ function metaSchemaValidator() {
   if (metaValidator !== undefined) return metaValidator;
   const text = readFileSync(META_SCHEMA_PATH);
   const digest = createHash('sha256').update(text).digest('hex');
-  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v4.2.0-beta.6 meta-schema (sha256 ${digest})`);
+  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v4.2.0-beta.7 meta-schema (sha256 ${digest})`);
   try {
     const require = createRequire(import.meta.url);
     const Ajv2020 = require('ajv/dist/2020').default;
@@ -128,14 +130,18 @@ const INTERIM_KINDS = ['contractOwner', 'appointedModerators', 'notYetUsable', '
 
 const within = (value, [min, max]) => Number.isInteger(value) && value >= min && value <= max;
 
+/** `moderatorAbilities.delete: true` (rs-dpp `document_schema_lets_moderators_delete`). */
+export const moderatorsMayDelete = (schema) => schema.moderatorAbilities?.delete === true;
+/** A non-empty `moderatorAbilities.changeFields` (rs-dpp `document_schema_lets_moderators_change_fields`). */
+const moderatorsMayChangeFields = (schema) => (schema.moderatorAbilities?.changeFields?.length ?? 0) > 0;
+
 /**
  * Can a document of `schema` disappear — deleted by its owner, a moderator, or
- * (4.2.0-beta.5, #5007) the platform once its `ttl` passes? rs-dpp
- * `documents_can_disappear`.
+ * the platform once its `ttl` passes? rs-dpp `documents_can_disappear`.
  */
 function deletable(schema, config) {
   const ownerMay = schema.canBeDeleted ?? config.documentsCanBeDeletedContractDefault ?? true;
-  return ownerMay === true || schema.canBeDeletedByModerators === true || schema.ttl !== undefined;
+  return ownerMay === true || moderatorsMayDelete(schema) || schema.ttl !== undefined;
 }
 
 /** Can a document of `schema` change owner (transfer or trade)? rs-dpp `owner_can_change`. */
@@ -192,19 +198,29 @@ function auditElected(elected, moderation, schemas, { network }) {
   }
   if (elected.seatContestable === false && elected.challengeCoolDown !== undefined) problems.push('a seat that cannot be contested declares no challengeCoolDown');
   if ((elected.maxAddedModerators ?? 0) > LIMITS.maxAddedModerators) problems.push(`maxAddedModerators ${elected.maxAddedModerators} exceeds ${LIMITS.maxAddedModerators} (10900)`);
-  const moderated = Object.entries(elected.moderatedDocumentTypes ?? {});
-  if (moderated.length === 0) problems.push('the elected moderated document type set is empty (10900)');
-  for (const [docType, abilities] of moderated) {
-    if (!schemas[docType]) { problems.push(`moderated document type "${docType}" is not a document type of the contract (10900)`); continue; }
+  const moderated = elected.moderatedDocumentTypes ?? {};
+  if (Object.keys(moderated).length === 0) problems.push('the elected moderated document type set is empty (10900)');
+  for (const [docType, abilities] of Object.entries(moderated)) {
+    const schema = schemas[docType];
+    if (!schema) { problems.push(`moderated document type "${docType}" is not a document type of the contract (10900)`); continue; }
     if (!Array.isArray(abilities) || abilities.length === 0) problems.push(`"${docType}" has an empty ability set (10900)`);
     for (const ability of abilities ?? []) {
       if (ability === 'deleteDocuments') {
-        if (schemas[docType].canBeDeletedByModerators !== true) problems.push(`"${docType}" allows deleteDocuments but is not canBeDeletedByModerators (10900)`);
+        if (!moderatorsMayDelete(schema)) problems.push(`"${docType}" allows deleteDocuments but its moderatorAbilities has no delete (10900)`);
+      } else if (ability === 'changeDocumentFields') {
+        if (!moderatorsMayChangeFields(schema)) problems.push(`"${docType}" allows changeDocumentFields but lists no moderatorAbilities.changeFields (10900)`);
       } else if (ABILITY_LIST[ability]) {
         if (moderation[ABILITY_LIST[ability]] !== true) problems.push(`"${docType}" allows ${ability} but the contract keeps no ${ABILITY_LIST[ability]} list (10900)`);
       } else {
         problems.push(`"${docType}" names an unknown ability "${ability}"`);
       }
+    }
+  }
+  // #5158: a type whose fields only moderators write must give a seated team
+  // the ability, or nobody could write them once a team is seated.
+  for (const [docType, schema] of Object.entries(schemas)) {
+    if (moderatorsMayChangeFields(schema) && !(moderated[docType] ?? []).includes('changeDocumentFields')) {
+      problems.push(`"${docType}" lists moderatorAbilities.changeFields but the moderated set does not give the team changeDocumentFields on it (10900)`);
     }
   }
   const interim = elected.interim?.$type;
@@ -216,11 +232,68 @@ function auditElected(elected, moderation, schemas, { network }) {
   return problems;
 }
 
+// ---- Index shapes (rs-dpp validate_index_properties, `validation` feature) ----
+
+/** System properties an index may name (`$id` is refused: it is indexed already, 10208). */
+const INDEXABLE_SYSTEM_PROPERTIES = new Set(['$ownerId', '$creatorId', '$createdAt', '$updatedAt', '$transferredAt',
+  '$createdAtBlockHeight', '$updatedAtBlockHeight', '$transferredAtBlockHeight', '$createdAtCoreBlockHeight',
+  '$updatedAtCoreBlockHeight', '$transferredAtCoreBlockHeight', '$moderatedBy', '$moderatedAt']);
+const MAX_INDEXES = 10;
+const MAX_INDEXED_STRING_LENGTH = 63;
+const MAX_INDEXED_BYTE_ARRAY_LENGTH = 255;
+
+/** A property definition by its (possibly dotted) path, as rs-dpp's flattened properties hold it. */
+function propertyAt(schema, path) {
+  let properties = schema.properties;
+  let definition;
+  for (const part of path.split('.')) {
+    definition = properties?.[part];
+    if (!definition) return undefined;
+    properties = definition.properties;
+  }
+  return definition;
+}
+
 /**
- * The node-side registration rules Yappr's cuts depend on and the wasm parse
- * skips. Returns a list of problems (empty = the node would accept on these
- * counts). `network` picks the election-window floor: one day on mainnet,
- * 0 elsewhere (#5108). Yappr's cuts register on moutai, so devnet is the default.
+ * The index shape rules (V10-DESIGN §0, ported from index-audit.py): every
+ * property exists or is a system property other than `$id`; none is an
+ * object, a plain array or a typed array (10206); indexed strings are at most
+ * 63 characters and byte arrays at most 255 bytes (10205); at most 10 indexes
+ * with distinct names. wasm-dpp2 refuses the same shapes; the wasm-sdk parse
+ * accepts every one of them.
+ */
+function auditIndexShapes(schemas) {
+  const problems = [];
+  for (const [name, schema] of Object.entries(schemas)) {
+    const indices = schema.indices ?? [];
+    if (indices.length > MAX_INDEXES) problems.push(`${name}: ${indices.length} indexes, above ${MAX_INDEXES} (10101)`);
+    const names = indices.map((index) => index.name);
+    if (new Set(names).size !== names.length) problems.push(`${name}: duplicate index names`);
+    for (const index of indices) {
+      for (const entry of index.properties ?? []) {
+        const [property] = Object.keys(entry);
+        if (property === '$id') { problems.push(`${name}.${index.name}: $id is indexed already (10208)`); continue; }
+        if (INDEXABLE_SYSTEM_PROPERTIES.has(property)) continue;
+        const definition = propertyAt(schema, property);
+        if (!definition) { problems.push(`${name}.${index.name}: "${property}" is not a property of the type (10209)`); continue; }
+        if (definition.type === 'object' || (definition.type === 'array' && definition.byteArray !== true)) {
+          problems.push(`${name}.${index.name}: "${property}" is ${definition.items ? 'a typed array' : `an ${definition.type}`} and cannot be indexed (10206)`);
+        } else if (definition.type === 'string' && !(definition.maxLength <= MAX_INDEXED_STRING_LENGTH)) {
+          problems.push(`${name}.${index.name}: indexed string "${property}" has maxLength ${definition.maxLength ?? 'unbounded'}, above ${MAX_INDEXED_STRING_LENGTH} (10205)`);
+        } else if (definition.byteArray === true && !(definition.maxItems <= MAX_INDEXED_BYTE_ARRAY_LENGTH)) {
+          problems.push(`${name}.${index.name}: indexed byte array "${property}" has maxItems ${definition.maxItems ?? 'unbounded'}, above ${MAX_INDEXED_BYTE_ARRAY_LENGTH} (10205)`);
+        }
+      }
+    }
+  }
+  return problems;
+}
+
+/**
+ * The node-side registration rules Yappr's cuts depend on. Returns a list of
+ * problems (empty = the node would accept on these counts). `network` picks
+ * the election-window floor: one day on mainnet, 0 elsewhere (#5108). Yappr's
+ * cuts register on a devnet, so devnet is the default.
  */
 export function auditNodeRules(source, { network = 'devnet' } = {}) {
   const problems = [];
@@ -231,8 +304,8 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
   if (moderation) {
     if (config.$formatVersion !== '2') problems.push('config.moderation needs config.$formatVersion "2" (a "1" config drops it)');
     const anyList = moderation.banlist || moderation.suspensions || moderation.warnings;
-    const anyDeletable = Object.values(schemas).some((s) => s.canBeDeletedByModerators === true);
-    if (!anyList && !anyDeletable) problems.push('moderation keeps no list and no type is moderator-deletable (10900)');
+    const anyAbility = Object.values(schemas).some((s) => moderatorsMayDelete(s) || moderatorsMayChangeFields(s));
+    if (!anyList && !anyAbility) problems.push('moderation keeps no list and no type gives its moderators an ability (10900)');
     const moderators = moderation.moderators ?? {};
     if (moderators.$type === 'appointedModerators') {
       const ids = moderators.identities ?? [];
@@ -242,10 +315,8 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
     }
   }
 
+  problems.push(...auditIndexShapes(schemas));
   for (const [name, schema] of Object.entries(schemas)) {
-    if (schema.canBeDeletedByModerators && (schema.indices ?? []).some((index) => index.contested)) {
-      problems.push(`${name}: canBeDeletedByModerators on a type with a contested index`);
-    }
     for (const [path, definition] of Object.entries(schema.properties ?? {})) {
       if (definition.items && definition.maxItems > LIMITS.maxTypedArrayItems) {
         problems.push(`${name}.${path}: typed array maxItems ${definition.maxItems} exceeds ${LIMITS.maxTypedArrayItems}`);
@@ -253,32 +324,32 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
     }
     const budget = referenceBudget(schema);
     if (budget > LIMITS.maxReferencesPerDocument) problems.push(`${name}: up to ${budget} references per document, above ${LIMITS.maxReferencesPerDocument}`);
-    // #4983 (beta.5): a single deletableDocument reference by id, declared as the
-    // whole refersTo (not inside anyOf/allOf, not a lookup), may be cleared once its
+    // #4983: a single deletableDocument reference by id, declared as the whole
+    // refersTo (not inside anyOf/allOf, not found by findBy), may be cleared once its
     // target is gone, so it may not also be settable while absent. rs-dpp matches the
     // whole target, not its leaves (validate_no_immutable_deletable_element_references).
     for (const path of schema.immutableAllowSetting ?? []) {
       const ref = schema.properties?.[path]?.refersTo;
-      if (ref?.type === 'deletableDocument' && !ref.lookup) {
+      if (ref?.type === 'deletableDocument' && !ref.findBy) {
         problems.push(`${name}.${path}: immutableAllowSetting on a deletableDocument reference (#4983)`);
       }
     }
     for (const [path, ref, inExpression] of referenceDeclarations(schema)) {
-      // validate_no_immutable_deletable_element_references: a deletable lookup, a
-      // typed array of deletable refs, or a by-id deletable ref inside an object,
-      // held under an `immutable` top-level property, could never be re-validated
-      // once its target is gone, so the type could never be replaced.
+      // validate_no_immutable_deletable_element_references: a deletableDocument found by
+      // findBy, a typed array of deletable refs, or a by-id deletable ref inside an object,
+      // held under an `immutable` top-level property, could never be re-validated once its
+      // target is gone, so the type could never be replaced.
       const topLevel = path.split('.')[0].replace(/\[\]$/, '');
       const heldImmutably = (schema.immutable ?? []).includes(topLevel);
       const isList = path.endsWith('[]');
       const nested = path.replace(/\[\]$/, '') !== topLevel;
-      if (heldImmutably && ref.type === 'deletableDocument' && (ref.lookup || isList || (nested && !inExpression))) {
-        const heldAs = ref.lookup ? 'lookup' : isList ? 'typed array' : 'reference inside an object';
+      if (heldImmutably && ref.type === 'deletableDocument' && (ref.findBy || isList || (nested && !inExpression))) {
+        const heldAs = ref.findBy ? 'findBy reference' : isList ? 'typed array' : 'reference inside an object';
         problems.push(`${name}.${path}: a deletableDocument ${heldAs} under \`immutable\``);
       }
-      // #4982 (beta.5): an immutable contract reference with an owner requirement on a
-      // type whose documents can change owner could never be replaced by the new owner.
-      // rs-dpp reads `owner` as present only when it names a relation (a JSON null is none).
+      // #4982: an immutable contract reference with an owner requirement on a type whose
+      // documents can change owner could never be replaced by the new owner. rs-dpp reads
+      // `owner` as present only when it names a relation (a JSON null is none).
       const ownerRequirement = ref.contractRequirements?.owner;
       if (heldImmutably && ref.type === 'contract' && ownerRequirement !== undefined && ownerRequirement !== null && ownerCanChange(schema)) {
         problems.push(`${name}.${path}: immutable contract reference with an owner requirement on a transferable type (#4982)`);
@@ -286,6 +357,17 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
       if (ref.contractId || !ref.documentType || !['permanentDocument', 'deletableDocument'].includes(ref.type)) continue;
       const target = schemas[ref.documentType];
       if (!target) { problems.push(`${name}.${path}: refersTo unknown document type "${ref.documentType}"`); continue; }
+      // 40126, judged against the whole contract at registration: both sides of a
+      // `where` entry must exist and hold the same type of value.
+      for (const [referenced, referring] of Object.entries(ref.where ?? {})) {
+        const theirs = referenced.startsWith('$') ? { system: referenced } : propertyAt(target, referenced);
+        const mine = referring.startsWith('$') ? { system: referring } : propertyAt(schema, referring);
+        if (!theirs) problems.push(`${name}.${path}: where names "${referenced}", which "${ref.documentType}" does not have (40126)`);
+        if (!mine) problems.push(`${name}.${path}: where reads "${referring}", which "${name}" does not have (40126)`);
+        if (theirs?.type && mine?.type && (theirs.type !== mine.type || (theirs.byteArray === true) !== (mine.byteArray === true))) {
+          problems.push(`${name}.${path}: where compares "${referenced}" (${theirs.type}) with "${referring}" (${mine.type}) (40126)`);
+        }
+      }
       const targetDeletable = deletable(target, config);
       if (ref.type === 'permanentDocument' && targetDeletable) problems.push(`${name}.${path}: permanentDocument at deletable "${ref.documentType}" (40122)`);
       if (ref.type === 'deletableDocument' && !targetDeletable) problems.push(`${name}.${path}: deletableDocument at permanent "${ref.documentType}" (40131)`);
@@ -296,146 +378,181 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
 
 // ---- Negative probes ---------------------------------------------------------
 
+const SOCIAL_V10 = 'contracts/yappr-social-contract-v10.json';
 const SOCIAL_V9 = 'contracts/yappr-social-contract-v9.json';
 const STOREFRONT = 'contracts/yappr-storefront-contract.json';
 const PROFILE = 'contracts/yappr-profile-contract.json';
 
 const elected = (source) => source.config.moderation.moderators;
+const types = (source) => source.documentSchemas;
+const identifier = (position, refersTo) => ({ type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position, ...(refersTo ? { refersTo } : {}) });
 
 /**
- * Each probe mutates a committed cut and records where it is refused:
- * `wasm` = by the local full-validation parse, `audit` = by `auditNodeRules`
- * only (the node refuses it; the SDK does not check it before signing), or
- * `accepted` for a control that must pass both.
+ * Each probe mutates a committed cut and records the first layer that refuses
+ * it: `wasm` = the wasm-sdk parse, `dpp2` = parses in the wasm-sdk but the
+ * wasm-dpp2 parse (meta-schema + `validation`) refuses it, `audit` = both
+ * parse and only `auditNodeRules` (or the size cap) refuses it — the node
+ * does, and the SDK signs it — or `accepted` for a control. `auditToo` also
+ * requires the audit to flag a `dpp2` probe, pinning the ported index checks.
  */
 const PROBES = [
-  { label: 'control: social v9 as committed', file: SOCIAL_V9, mutate: () => {}, expect: 'accepted' },
+  { label: 'control: social v10 as committed', file: SOCIAL_V10, mutate: () => {}, expect: 'accepted' },
   { label: 'control: storefront as committed', file: STOREFRONT, mutate: () => {}, expect: 'accepted' },
-  { label: 'control: profile as committed', file: PROFILE, mutate: () => {}, expect: 'accepted' },
+  { label: 'control: blog as committed', file: 'contracts/yappr-blog-contract.json', mutate: () => {}, expect: 'accepted' },
+  { label: 'control: pollr as committed', file: 'contracts/pollr-contract.json', mutate: () => {}, expect: 'accepted' },
+  { label: 'control: profile (testnet profile topology v2) as committed', file: PROFILE, mutate: () => {}, expect: 'accepted' },
+  // The beta.6 grammar no longer parses anywhere on beta.7 (#5197): social v9 is readable
+  // by a beta.6 SDK only, and a beta.7 node would not load it.
+  { label: 'social v9 (beta.6 propertyAgreement/lookup grammar) is refused on beta.7', file: SOCIAL_V9, mutate: () => {}, expect: 'wasm' },
 
-  // Elected declaration (config/moderation/elected.rs). The windows are
-  // basic-structure rules of the create transition: the node refuses 10900.
-  // Since 4.2.0-beta.6 (#5108) the one-day floor is mainnet's only: v9 as cut
-  // declares 3600 s windows for moutai, and a window of 0 is legal off mainnet.
-  { label: 'elected windows of 0 s off mainnet (control)', file: SOCIAL_V9, expect: 'accepted', mutate: (s) => { elected(s).joinWindow = 0; elected(s).voteWindow = 0; } },
-  { label: 'elected joinWindow of 3600 s on mainnet', file: SOCIAL_V9, network: 'mainnet', expect: 'audit', node: '10900', mutate: () => {} },
-  { label: 'elected voteWindow over four weeks', file: SOCIAL_V9, expect: 'audit', node: '10900', mutate: (s) => { elected(s).voteWindow = 2_419_201; } },
-  { label: 'elected maxAddedModerators 16', file: SOCIAL_V9, expect: 'audit', node: '10900', mutate: (s) => { elected(s).maxAddedModerators = 16; } },
-  { label: 'elected warn ability without a warning list', file: SOCIAL_V9, expect: 'audit', node: '10900', mutate: (s) => { s.config.moderation.warnings = false; } },
-  { label: 'elected deleteDocuments on a type moderators cannot delete', file: SOCIAL_V9, expect: 'audit', node: '10900', mutate: (s) => { elected(s).moderatedDocumentTypes.follow = ['deleteDocuments']; } },
-  { label: 'elected moderated type the contract does not have', file: SOCIAL_V9, expect: 'audit', node: '10900', mutate: (s) => { elected(s).moderatedDocumentTypes.nope = ['ban']; } },
-  { label: 'elected seat contestable without challengeCoolDown', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { elected(s).seatContestable = true; } },
-  { label: 'elected declaration without seatContestable', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { delete elected(s).seatContestable; } },
-  { label: 'elected unknown ability', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { elected(s).moderatedDocumentTypes.post = ['nuke']; } },
-  { label: 'config $formatVersion "1" drops moderation (post then cannot be moderator-deletable)', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.config.$formatVersion = '1'; } },
+  // Elected declaration (config/moderation/elected.rs): basic-structure rules of the
+  // create transition, refused by the node with 10900. The one-day floor is mainnet's only
+  // (#5108), so v10's 3600 s windows are legal on a devnet.
+  { label: 'elected windows of 0 s off mainnet (control)', file: SOCIAL_V10, expect: 'accepted', mutate: (s) => { elected(s).joinWindow = 0; elected(s).voteWindow = 0; } },
+  { label: 'elected joinWindow of 3600 s on mainnet', file: SOCIAL_V10, network: 'mainnet', expect: 'audit', node: '10900', mutate: () => {} },
+  { label: 'elected voteWindow over four weeks', file: SOCIAL_V10, expect: 'audit', node: '10900', mutate: (s) => { elected(s).voteWindow = 2_419_201; } },
+  { label: 'elected maxAddedModerators 16', file: SOCIAL_V10, expect: 'audit', node: '10900', mutate: (s) => { elected(s).maxAddedModerators = 16; } },
+  { label: 'elected warn ability without a warning list', file: SOCIAL_V10, expect: 'audit', node: '10900', mutate: (s) => { s.config.moderation.warnings = false; } },
+  { label: 'elected deleteDocuments on a type moderators cannot delete', file: SOCIAL_V10, expect: 'audit', node: '10900', mutate: (s) => { elected(s).moderatedDocumentTypes.follow = ['deleteDocuments']; } },
+  { label: 'elected moderated type the contract does not have', file: SOCIAL_V10, expect: 'audit', node: '10900', mutate: (s) => { elected(s).moderatedDocumentTypes.nope = ['ban']; } },
+  { label: 'elected changeDocumentFields on a type that lists no changeFields', file: SOCIAL_V10, expect: 'audit', node: '10900', mutate: (s) => { elected(s).moderatedDocumentTypes.post.push('changeDocumentFields'); } },
+  { label: 'report changeFields without changeDocumentFields in the moderated set', file: SOCIAL_V10, expect: 'audit', node: '10900', mutate: (s) => { elected(s).moderatedDocumentTypes.report = ['deleteDocuments']; } },
+  { label: 'elected seat contestable without challengeCoolDown', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { elected(s).seatContestable = true; } },
+  { label: 'elected declaration without seatContestable', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { delete elected(s).seatContestable; } },
+  { label: 'elected unknown ability', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { elected(s).moderatedDocumentTypes.post = ['nuke']; } },
+  { label: 'config $formatVersion "1" drops moderation (moderatorAbilities then has no moderators)', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { s.config.$formatVersion = '1'; } },
+
+  // moderatorAbilities (#5158). The removed keyword is the trap: the wasm-sdk drops it
+  // without a word, so post would register with no moderator delete at all.
+  { label: 'the removed canBeDeletedByModerators on post (silently dropped by the wasm-sdk)', file: SOCIAL_V10, expect: 'dpp2', node: '10101', mutate: (s) => { const p = types(s).post; delete p.moderatorAbilities; p.canBeDeletedByModerators = true; } },
+  { label: 'changeFields naming the required report reason', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).report.moderatorAbilities.changeFields.push('reason'); } },
+  { label: 'changeFields naming a property a where reads (targetOwnerId)', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { const r = types(s).report; r.moderatorAbilities.changeFields.push('targetOwnerId'); r.required = r.required.filter((p) => p !== 'targetOwnerId'); } },
+  { label: 'changeFields on the indexOnly like', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).like.moderatorAbilities = { changeFields: ['hashtag'] }; } },
+  { label: 'deleteKeepsRecord without delete', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).report.moderatorAbilities = { deleteKeepsRecord: false, changeFields: ['status', 'resolution'] }; } },
+  { label: 'a [$moderatedBy, $moderatedAt] index on a type without changeFields', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).post.indices.push({ name: 'byModerator', properties: [{ $moderatedBy: 'asc' }, { $moderatedAt: 'asc' }] }); } },
+  { label: 'moderatorAbilities.delete on a type with a contested index', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => {
+    types(s).post.indices.push({ name: 'contestedProbe', unique: true, properties: [{ hashtag: 'asc' }], contested: { resolution: 0, fieldMatches: [{ field: 'hashtag', regexPattern: '^[a-z]{2}$' }], description: 'probe' } });
+  } },
+
+  // findBy / where (#5197).
+  { label: 'the removed propertyAgreement on like.postId', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { const r = types(s).like.properties.postId.refersTo; delete r.where; r.propertyAgreement = { postAuthor: '$ownerId' }; } },
+  { label: 'the removed lookup on privateFeedGrant.recipientId', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { const r = types(s).privateFeedGrant.properties.recipientId.refersTo; delete r.findBy; r.lookup = { index: 'targetAndRequester', keys: { targetId: '$ownerId', $ownerId: '.' } }; } },
+  { label: 'findBy naming only part of a unique index', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).privateFeedGrant.properties.recipientId.refersTo.findBy = { $ownerId: '.' }; } },
+  { label: 'yapprProfile ownerRefersTo findBy over a non-unique index (post byOwner)', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).yapprProfile.ownerRefersTo = { type: 'deletableDocument', documentType: 'post', findBy: { $ownerId: '.' } }; } },
+  { label: 'grant findBy into followRequest whose targetId is not immutable', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { delete types(s).followRequest.immutable; } },
+  { label: 'an immutable list holding the deletable followRequest findBy', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: 'registration', mutate: (s) => { const g = types(s).privateFeedGrant; g.documentsMutable = true; g.immutable = ['recipientId']; } },
+  { label: 'permanentDocument owner gate at a deletable privateFeedState', file: SOCIAL_V10, expect: 'audit', node: '40122', mutate: (s) => { types(s).privateFeedState.canBeDeleted = true; } },
+  { label: 'permanentDocument reference at the deletable post (bookmark)', file: SOCIAL_V10, expect: 'audit', node: '40122', mutate: (s) => { types(s).bookmark.properties.postId.refersTo.type = 'permanentDocument'; } },
+  { label: 'D-25: the order storeStatus agreement against a property the store lacks', file: STOREFRONT, expect: 'audit', node: '40126', mutate: (s) => { types(s).storeOrder.properties.storeId.refersTo.where = { $ownerId: 'sellerId', state: 'storeStatus' }; } },
+
+  // skipIfAbsent (#5162).
+  { label: 'like without the all-time byHashtagPost (the "lean" variant)', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).like.indices = types(s).like.indices.filter((i) => i.name !== 'byHashtagPost'); } },
+  { label: 'like.byHashtagPost without its own skipIfAbsent', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { delete types(s).like.indices.find((i) => i.name === 'byHashtagPost').skipIfAbsent; } },
+  { label: 'skipIfAbsent on an index of required properties only', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).post.indices[0].skipIfAbsent = true; } },
+
+  // Index shapes (V10-DESIGN §0): the wasm-sdk accepts every one; wasm-dpp2 and the audit refuse.
+  { label: 'an index on a property the type does not have', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10209', mutate: (s) => { types(s).follow.indices.push({ name: 'probe', properties: [{ nope: 'asc' }] }); } },
+  { label: 'an index on $id', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10208', mutate: (s) => { types(s).follow.indices.push({ name: 'probe', properties: [{ $id: 'asc' }] }); } },
+  { label: 'an index on a typed array (hashtag arrays, V10-DESIGN §6)', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10206', mutate: (s) => { types(s).yapprProfile.indices.push({ name: 'probe', properties: [{ socialLinks: 'asc' }] }); } },
+  { label: 'an indexed string of maxLength 64', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10205', mutate: (s) => { const p = types(s).post; p.properties.embedDocType.maxLength = 64; p.indices.push({ name: 'probe', properties: [{ embedDocType: 'asc' }] }); } },
+  // Pads post to exactly 11 indexes whatever the cut declares (8 at the beta.7 re-cut).
+  { label: 'an 11th index on post', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10101', mutate: (s) => {
+    const { indices } = types(s).post;
+    const spare = ['sensitive', 'keyGeneration', 'mediaUrl', 'embedDocType', 'nonce'];
+    for (let n = 0; indices.length < 11; n++) indices.push({ name: `probe${n}`, properties: [{ [spare[n]]: 'asc' }] });
+  } },
 
   // distinctFrom (#4917).
-  { label: 'distinctFrom naming a property the type does not have', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.follow.properties.followingId.distinctFrom = 'nope'; } },
-  { label: 'distinctFrom naming itself', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.follow.properties.followingId.distinctFrom = 'followingId'; } },
-  { label: 'distinctFrom on a string property', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.block.properties.message.distinctFrom = '$ownerId'; } },
-  { label: 'distinctFrom on a typed array instead of its items', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { const p = s.documentSchemas.blockFollow.properties.followedBlockers; delete p.items.distinctFrom; p.distinctFrom = '$ownerId'; } },
+  { label: 'distinctFrom naming a property the type does not have', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).follow.properties.followingId.distinctFrom = 'nope'; } },
+  { label: 'distinctFrom naming itself', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).follow.properties.followingId.distinctFrom = 'followingId'; } },
+  { label: 'distinctFrom on a string property', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).block.properties.message.distinctFrom = '$ownerId'; } },
+  { label: 'distinctFrom on a typed array instead of its items', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { const p = types(s).blockFollow.properties.followedBlockers; delete p.items.distinctFrom; p.distinctFrom = '$ownerId'; } },
+  { label: 'storefront distinctFrom on a byte array that is not an identifier', file: STOREFRONT, expect: 'wasm', mutate: (s) => { types(s).storeOrder.properties.nonce.distinctFrom = '$ownerId'; } },
 
-  // canBeDeletedByModerators is refused on a type with a contested index.
-  { label: 'canBeDeletedByModerators on a type with a contested index', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => {
-    s.documentSchemas.post.indices.push({ name: 'contestedProbe', unique: true, properties: [{ language: 'asc' }], contested: { resolution: 0, fieldMatches: [{ field: 'language', regexPattern: '^[a-z]{2}$' }], description: 'probe' } });
+  // Typed arrays (#4922 #4923 #4928 #4924) and the size cap.
+  { label: 'blockFollow typed array of 300 identity references (budget 256)', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: 'registration', mutate: (s) => { types(s).blockFollow.properties.followedBlockers.maxItems = 300; } },
+  { label: 'typed array maxItems 1025', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: 'registration', mutate: (s) => { types(s).yapprProfile.properties.paymentUris.maxItems = 1025; } },
+  { label: 'typed array without maxItems', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { delete types(s).yapprProfile.properties.paymentUris.maxItems; } },
+  { label: 'typed string items with maxBytes below minLength', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).yapprProfile.properties.socialLinks.items.maxBytes = 2; } },
+  { label: 'an unknown keyword on a property (meta-schema)', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10101', mutate: (s) => { types(s).follow.properties.followingId.distinctFromm = '$ownerId'; } },
+  { label: 'content maxBytes above 65535', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).post.properties.content.maxBytes = 70_000; } },
+  { label: 'v10 plus a 60-character description on every property (over the 20480-byte transition cap)', file: SOCIAL_V10, expect: 'audit', node: '10602 / rs-dapi size refusal', mutate: (s) => {
+    for (const schema of Object.values(types(s))) for (const d of Object.values(schema.properties)) d.description = 'x'.repeat(60);
   } },
 
-  // Private-feed gates (#4930 #4941).
-  { label: 'grant lookup into followRequest whose targetId is not immutable', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { delete s.documentSchemas.followRequest.immutable; } },
-  { label: 'an immutable list holding the deletable followRequest lookup', file: SOCIAL_V9, expect: 'audit', node: 'registration', mutate: (s) => { const g = s.documentSchemas.privateFeedGrant; g.documentsMutable = true; g.immutable = ['recipientId']; } },
-  { label: 'permanentDocument owner gate at a deletable privateFeedState', file: SOCIAL_V9, expect: 'audit', node: '40122', mutate: (s) => { s.documentSchemas.privateFeedState.canBeDeleted = true; } },
-
-  // Typed arrays (#4922 #4923 #4928 #4924).
-  { label: 'blockFollow typed array of 300 identity references (budget 256)', file: SOCIAL_V9, expect: 'audit', node: 'registration', mutate: (s) => { s.documentSchemas.blockFollow.properties.followedBlockers.maxItems = 300; } },
-  { label: 'typed array maxItems 1025', file: PROFILE, expect: 'audit', node: 'registration', mutate: (s) => { s.documentSchemas.profile.properties.paymentUris.maxItems = 1025; } },
-  { label: 'typed array without maxItems', file: PROFILE, expect: 'wasm', mutate: (s) => { delete s.documentSchemas.profile.properties.paymentUris.maxItems; } },
-  { label: 'typed string items with maxBytes below minLength', file: PROFILE, expect: 'wasm', mutate: (s) => { s.documentSchemas.profile.properties.socialLinks.items.maxBytes = 2; } },
-  { label: 'an unknown keyword on a property (meta-schema)', file: SOCIAL_V9, expect: 'audit', node: '10101', mutate: (s) => { s.documentSchemas.follow.properties.followingId.distinctFromm = '$ownerId'; } },
-  { label: 'v8 plus every property description back (over the 20480-byte transition cap)', file: SOCIAL_V9, expect: 'audit', node: '10602 / rs-dapi size refusal', mutate: (s) => {
-    for (const schema of Object.values(s.documentSchemas)) for (const d of Object.values(schema.properties)) d.description = 'x'.repeat(60);
+  // #4982/#4983 (beta.5) on a mutable storefront type.
+  { label: 'immutableAllowSetting on a deletableDocument reference (#4983)', file: STOREFRONT, expect: 'dpp2', auditToo: true, node: 'registration', mutate: (s) => {
+    const t = types(s).savedAddress;
+    t.documentsMutable = true; t.immutable = ['zoneId']; t.immutableAllowSetting = ['zoneId'];
+    t.properties.zoneId = identifier(99, { type: 'deletableDocument', documentType: 'shippingZone' });
   } },
-  { label: 'storefront distinctFrom on a byte array that is not an identifier', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.storeOrder.properties.nonce.distinctFrom = '$ownerId'; } },
-
-  // 4.2.0-beta.5 registration refusals (docs/PLATFORM_BETA5_UPGRADE.md).
-  { label: 'immutableAllowSetting on a deletableDocument reference (#4983)', file: SOCIAL_V9, expect: 'audit', node: 'registration', mutate: (s) => { s.documentSchemas.post.immutableAllowSetting.push('quotedPostId'); } },
-  // A by-id deletableDocument cannot be an expression leaf at all (the parse refuses
-  // it), so #4983 only ever concerns a whole-target reference, which is what the audit reads.
-  { label: 'a by-id deletableDocument inside anyOf (refused by the parse, not #4983)', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => {
-    const p = s.documentSchemas.post;
-    p.properties.quotedPostId.refersTo = { anyOf: [{ type: 'deletableDocument', documentType: 'post' }, { type: 'identity' }] };
-    p.immutableAllowSetting.push('quotedPostId');
-  } },
-  // Document TTL (#5007): the parse refuses the structural pairings and the
-  // one-hour floor; the deletability a ttl gives its type (40122) is judged at registration.
-  { label: 'ttl of one day on savedAddress (control)', file: STOREFRONT, expect: 'accepted', mutate: (s) => { s.documentSchemas.savedAddress.ttl = 86_400; } },
-  { label: 'ttl on a type without $createdAt in required', file: STOREFRONT, expect: 'wasm', mutate: (s) => { const t = s.documentSchemas.savedAddress; t.ttl = 86_400; t.required = t.required.filter((p) => p !== '$createdAt'); } },
-  { label: 'ttl on an indexOnly type', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.like.ttl = 86_400; } },
-  { label: 'ttl of 0', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.savedAddress.ttl = 0; } },
-  { label: 'ttl of 60 s (under the one-hour floor)', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.savedAddress.ttl = 60; } },
-  { label: 'ttl with documentsKeepHistory', file: STOREFRONT, expect: 'wasm', mutate: (s) => { const t = s.documentSchemas.savedAddress; t.ttl = 86_400; t.documentsKeepHistory = true; } },
-  { label: 'ttl on the target of a permanentDocument owner gate (privateFeedState)', file: SOCIAL_V9, expect: 'audit', node: '40122', mutate: (s) => { s.documentSchemas.privateFeedState.ttl = 86_400; } },
-  // beta.6 v9: report carries a 90-day ttl (the one-hour floor and a one-year ceiling).
-  { label: 'report ttl without $createdAt in required', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { const t = s.documentSchemas.report; t.required = t.required.filter((p) => p !== '$createdAt'); } },
-  { label: 'report ttl over one year', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.report.ttl = 31_536_001; } },
-  { label: 'immutable contract reference with an owner requirement on a transferable type (#4982)', file: STOREFRONT, expect: 'audit', node: 'registration', mutate: (s) => {
-    const t = s.documentSchemas.savedAddress;
+  { label: 'immutable contract reference with an owner requirement on a transferable type (#4982)', file: STOREFRONT, expect: 'dpp2', auditToo: true, node: 'registration', mutate: (s) => {
+    const t = types(s).savedAddress;
     t.transferable = 1; t.documentsMutable = true; t.immutable = ['appContractId'];
-    t.properties.appContractId = { type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position: 99, refersTo: { type: 'contract', contractRequirements: { owner: 'self' } } };
+    t.properties.appContractId = identifier(99, { type: 'contract', contractRequirements: { owner: 'self' } });
   } },
-  { label: 'immutable object holding a by-id deletableDocument reference (nested path)', file: STOREFRONT, expect: 'audit', node: 'registration', mutate: (s) => {
-    const t = s.documentSchemas.savedAddress;
+  { label: 'immutable object holding a by-id deletableDocument reference (nested path)', file: STOREFRONT, expect: 'dpp2', auditToo: true, node: 'registration', mutate: (s) => {
+    const t = types(s).savedAddress;
     t.documentsMutable = true; t.immutable = ['link'];
-    t.properties.link = { type: 'object', position: 98, additionalProperties: false, properties: { storeId: { type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position: 0, refersTo: { type: 'deletableDocument', documentType: 'shippingZone' } } } };
+    t.properties.link = { type: 'object', position: 98, additionalProperties: false, properties: { storeId: identifier(0, { type: 'deletableDocument', documentType: 'shippingZone' }) } };
   } },
-  { label: 'immutable object holding a contract reference with an owner requirement on a transferable type (#4982, nested path)', file: STOREFRONT, expect: 'audit', node: 'registration', mutate: (s) => {
-    const t = s.documentSchemas.savedAddress;
-    t.transferable = 1; t.documentsMutable = true; t.immutable = ['app'];
-    t.properties.app = { type: 'object', position: 97, additionalProperties: false, properties: { contractId: { type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position: 0, refersTo: { type: 'contract', contractRequirements: { owner: 'other' } } } } };
-  } },
-  // propertyConstraints grammar (#5036-#5042).
-  { label: 'propertyConstraints enum const + absent (control)', file: STOREFRONT, expect: 'accepted', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { soldOutHasNoStock: { anyOf: [{ notEqual: ['status', { const: 'sold_out' }] }, { absent: 'stockQuantity' }, { equal: ['stockQuantity', 0] }] } }; } },
-  { label: 'propertyConstraints const outside the enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { r: { equal: ['status', { const: 'gone' }] } }; } },
-  { label: 'propertyConstraints anyOf directly inside anyOf', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.storeItem.propertyConstraints = { r: { anyOf: [{ anyOf: [{ equal: ['weight', 0] }, { equal: ['weight', 1] }] }, { equal: ['weight', 2] }] } }; } },
-  // The rules the beta.5 cuts declare (property-constraint-cases.mjs): each
-  // leans on a parse rule a slip would trip, and on the node-only limits.
-  { label: 'tombstoneIsBlank reading a property post does not have', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.post.propertyConstraints.tombstoneIsBlank.ifThen[1].allOf[1] = { absent: 'mediaUrls' }; } },
-  { label: 'tieredHasTiers comparing rateType with a value outside its enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { s.documentSchemas.shippingZone.propertyConstraints.tieredHasTiers.anyOf[0] = { equal: ['rateType', { const: 'flat_rate' }] }; } },
-  { label: 'privateAllOrNone reading a string property as an integer operand', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => { s.documentSchemas.post.propertyConstraints.privateAllOrNone = { greaterThan: ['language', 0] }; } },
-  { label: 'a 17th propertyConstraints rule on post (16 max)', file: SOCIAL_V9, expect: 'wasm', mutate: (s) => {
-    for (let n = 0; n < 11; n++) s.documentSchemas.post.propertyConstraints[`extra${n}`] = { absent: `content` };
+
+  // Document TTL (#5007).
+  { label: 'ttl of one day on savedAddress (control)', file: STOREFRONT, expect: 'accepted', mutate: (s) => { types(s).savedAddress.ttl = 86_400; } },
+  { label: 'ttl on a type without $createdAt in required', file: STOREFRONT, expect: 'wasm', mutate: (s) => { const t = types(s).savedAddress; t.ttl = 86_400; t.required = t.required.filter((p) => p !== '$createdAt'); } },
+  { label: 'ttl on an indexOnly type', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).like.ttl = 86_400; } },
+  { label: 'ttl of 60 s (under the one-hour floor)', file: STOREFRONT, expect: 'wasm', mutate: (s) => { types(s).savedAddress.ttl = 60; } },
+  { label: 'ttl on the target of a permanentDocument owner gate (privateFeedState)', file: SOCIAL_V10, expect: 'audit', node: '40122', mutate: (s) => { types(s).privateFeedState.ttl = 86_400; } },
+  { label: 'report ttl without $createdAt in required', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { const t = types(s).report; t.required = t.required.filter((p) => p !== '$createdAt'); } },
+  { label: 'report ttl over one year', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).report.ttl = 31_536_001; } },
+
+  // propertyConstraints grammar (#5036-#5042) and the rules the cuts declare.
+  { label: 'propertyConstraints enum const + absent (control)', file: STOREFRONT, expect: 'accepted', mutate: (s) => { types(s).storeItem.propertyConstraints = { soldOutHasNoStock: { anyOf: [{ notEqual: ['status', { const: 'sold_out' }] }, { absent: 'stockQuantity' }, { equal: ['stockQuantity', 0] }] } }; } },
+  { label: 'propertyConstraints const outside the enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { types(s).storeItem.propertyConstraints = { r: { equal: ['status', { const: 'gone' }] } }; } },
+  { label: 'storeIsOpen comparing storeStatus with a value outside its enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { types(s).storeOrder.propertyConstraints.storeIsOpen = { equal: ['storeStatus', { const: 'open' }] }; } },
+  { label: 'propertyConstraints anyOf directly inside anyOf', file: STOREFRONT, expect: 'wasm', mutate: (s) => { types(s).storeItem.propertyConstraints = { r: { anyOf: [{ anyOf: [{ equal: ['weight', 0] }, { equal: ['weight', 1] }] }, { equal: ['weight', 2] }] } }; } },
+  { label: 'tieredHasTiers comparing rateType with a value outside its enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { types(s).shippingZone.propertyConstraints.tieredHasTiers.anyOf[0] = { equal: ['rateType', { const: 'flat_rate' }] }; } },
+  { label: 'resolvedHasStatus reading a property report does not have', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).report.propertyConstraints.resolvedHasStatus.anyOf[1] = { present: 'state' }; } },
+  { label: 'privateAllOrNone reading a string property as an integer operand', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).post.propertyConstraints.privateAllOrNone = { greaterThan: ['content', 0] }; } },
+  { label: 'a 17th propertyConstraints rule on post (16 max)', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => {
+    const rules = types(s).post.propertyConstraints;
+    for (let n = 0; Object.keys(rules).length < 17; n++) rules[`extra${n}`] = { absent: 'content' };
   } },
   // rs-dpp node_count: allOf 1 + each `anyOf [absent, present]` 3; 22 as cut, so 4 more make 34.
   { label: 'a 34-node optionsContiguous rule (32 max)', file: 'contracts/pollr-contract.json', expect: 'wasm', mutate: (s) => {
-    const rule = s.documentSchemas.poll.propertyConstraints.optionsContiguous.allOf;
+    const rule = types(s).poll.propertyConstraints.optionsContiguous.allOf;
     for (const property of ['question', 'option0', 'option1', 'multiChoice']) rule.push({ anyOf: [{ absent: 'endsAt' }, { present: property }] });
   } },
 ];
 
-/** Runs every probe; returns the number whose outcome differs from the recorded one. */
-export function runContractProbes({ loadContractSource, parseContract, sizeOf }) {
+/**
+ * Runs every probe; returns the number whose outcome differs from the recorded
+ * one. `parseContract` is the wasm-sdk parse, `parseWithNodeRules` the
+ * wasm-dpp2 one.
+ */
+export function runContractProbes({ loadContractSource, parseContract, parseWithNodeRules, sizeOf }) {
   let failures = 0;
-  console.log('\nnegative probes (wasm = refused by the local parse; audit = parses locally, refused by the node):');
+  console.log('\nnegative probes (wasm = refused by the wasm-sdk parse; dpp2 = only by the wasm-dpp2 parse; audit = both parse, the node refuses):');
   for (const probe of PROBES) {
     const source = structuredClone(loadContractSource(probe.file));
     probe.mutate(source);
-    let wasmError = null;
-    try {
-      parseContract(source);
-    } catch (e) {
-      wasmError = String(e?.message ?? e);
-    }
+    const refusal = (parse) => { try { parse(source); return null; } catch (e) { return String(e?.message ?? e); } };
+    const wasmError = refusal(parseContract);
+    const dpp2Error = wasmError ? null : refusal(parseWithNodeRules);
     const audit = [];
     if (!wasmError) {
       audit.push(...auditNodeRules(source, { network: probe.network ?? 'devnet' }), ...metaSchemaProblems(source));
       const size = sizeOf(parseContract(source));
-      if (size.overCap) audit.push(`create transition ~${size.bytes} B, over the 20480 B cap`);
+      if (size.overCap) audit.push(`create transition ~${size.bytes} B, over the ${STATE_TRANSITION_CAP} B cap`);
     }
-    const outcome = wasmError ? 'wasm' : audit.length > 0 ? 'audit' : 'accepted';
-    const ok = outcome === probe.expect;
+    const outcome = wasmError ? 'wasm' : dpp2Error ? 'dpp2' : audit.length > 0 ? 'audit' : 'accepted';
+    const auditMissed = probe.auditToo && audit.length === 0;
+    const ok = outcome === probe.expect && !auditMissed;
     if (!ok) failures += 1;
-    const detail = wasmError ?? audit[0] ?? '';
-    const where = outcome === 'audit' ? ` (node: ${probe.node ?? '?'}; the SDK signs it)` : '';
-    console.log(`${ok ? 'PASS' : 'FAIL'}  [${outcome.padEnd(8)}] ${probe.label}${where}${detail ? ` — ${detail.slice(0, 150)}` : ''}${ok ? '' : ` (expected ${probe.expect})`}`);
+    const detail = wasmError ?? dpp2Error ?? audit[0] ?? '';
+    const where = outcome === 'audit' || outcome === 'dpp2' ? ` (node: ${probe.node ?? '?'}; the SDK signs it)` : '';
+    const note = auditMissed ? ' (auditNodeRules did not flag it)' : '';
+    console.log(`${ok ? 'PASS' : 'FAIL'}  [${outcome.padEnd(8)}] ${probe.label}${where}${detail ? ` — ${detail.replace(/\s+/g, ' ').slice(0, 150)}` : ''}${note}${outcome === probe.expect ? '' : ` (expected ${probe.expect})`}`);
   }
   return failures;
 }

@@ -8,6 +8,8 @@
  * - global:          `byPost [postId]`                 — no pins
  * - per-hashtag:     `byHashtagPost [hashtag, postId]` — pin `['hashtag','==',tag]`
  * - per-author:      `byAuthorPost [postAuthor, postId]` — pin `['postAuthor','==',id]`
+ *                    (v10: `byAuthorPostTime [postAuthor, postId, $createdAt]`,
+ *                    ranked at `[postAuthor, postId]` — the same query shape)
  *
  * Server-side `SELECT count(*) GROUP BY postId ORDER BY count DESC LIMIT n`,
  * O(log n + k) with a proof — no scan, no client-side sorting.
@@ -29,25 +31,34 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import { getEvoSdk } from './evo-sdk-service';
-import { WINDOWED_DAY_GRID, referencesMayDangle, windowedRankingsAvailable } from '../contract-topology';
+import { referencesMayDangle, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
 
 /**
  * Which slice of time a ranking covers. `'all'` is the all-time axis;
- * `'today'` pins the current UTC-day bucket of the windowed twin ({@link windowedRankingsAvailable}) — the node resolves the
- * bucket from block time and the proof verifier re-derives it, so nothing
- * client-side chooses the window.
+ * `'today'` is the axis's recent window ({@link windowedRankingFor}): the
+ * current UTC day on v9, the rolling 24h (tags) or 3-day (posts) window on
+ * v10. The node resolves the window from block time and the proof verifier
+ * re-derives it, so nothing client-side chooses it. (The token keeps its v9
+ * name so the surfaces and their test ids do not move.)
  */
 export type RankingWindow = 'all' | 'today';
 
 /**
- * The `timeRange` member for a windowed ranked query, or nothing for
- * all-time. Every v9 windowed index buckets `$createdAt` on the same daily
- * grid; naming it explicitly keeps the query unambiguous on doctypes that
- * carry more than one grid (`beat` also declares the k=4 rolling grid).
+ * The window a read of `axis` uses: null for all-time, including `'today'` on
+ * an axis with no window (v10's creators), which falls back to all-time.
  */
-function windowClause(window: RankingWindow): { timeRange: { field: string; selector: 'newest'; grid: { range: number; step: number } }[] } | Record<string, never> {
-  if (window !== 'today') return {};
-  return { timeRange: [{ field: '$createdAt', selector: 'newest', grid: { ...WINDOWED_DAY_GRID } }] };
+function windowFor(axis: RankingAxis, window: RankingWindow): WindowedRanking | null {
+  return window === 'today' ? windowedRankingFor(axis) : null;
+}
+
+/**
+ * The `timeRange` member for a windowed ranked query, or nothing for
+ * all-time. The grid is named explicitly, which keeps the query unambiguous on
+ * a doctype that buckets `$createdAt` by more than one grid.
+ */
+function windowClause(windowed: WindowedRanking | null): { timeRange: { field: string; selector: WindowedRanking['selector']; grid: { range: number; step: number } }[] } | Record<string, never> {
+  if (!windowed) return {};
+  return { timeRange: [{ field: '$createdAt', selector: windowed.selector, grid: { ...windowed.grid } }] };
 }
 
 /**
@@ -72,11 +83,11 @@ export interface RankedLikedPost {
 export interface TopLikedPostsOptions {
   /** Pin the per-hashtag axis (`byHashtagPost`). Lowercase, no '#'. */
   hashtag?: string;
-  /** Pin the per-author axis (`byAuthorPost`). Base58 identity id. */
+  /** Pin the per-author axis (`byAuthorPost`, v10 `byAuthorPostTime`). Base58 identity id. */
   postAuthor?: string;
   /** 1..100, default 10. */
   limit?: number;
-  /** `'today'` reads the v9 daily-windowed twin of the pinned axis; default `'all'`. */
+  /** `'today'` reads the pinned axis's recent window (all-time where it has none); default `'all'`. */
   window?: RankingWindow;
   /** Reject failed reads so callers can retain an existing page and retry. */
   throwOnError?: boolean;
@@ -94,6 +105,7 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
     throw new Error('topLikedPosts: hashtag and postAuthor pin different indexes — pass at most one');
   }
   if (window === 'today' && !windowedRankingsAvailable()) return [];
+  const windowed = windowFor(hashtag !== undefined ? 'hashtags' : postAuthor !== undefined ? 'creators' : 'posts', window);
 
   try {
     const sdk = await getEvoSdk();
@@ -104,10 +116,9 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
           ? [['postAuthor', '==', postAuthor] as [string, '==', unknown]]
           : undefined;
 
-    // Today's per-tag top lives on `beat.byDayHashtagPost` (like.hashtag is
-    // optional and cannot sit below a bucket); every other axis has its
-    // windowed twin on `like` itself.
-    const documentTypeName = window === 'today' && hashtag !== undefined ? 'beat' : 'like';
+    // The windowed per-tag top lives on the `beat` companion on v9; every
+    // other window, and all of v10's, is on `like` itself.
+    const documentTypeName = windowed?.docType ?? 'like';
 
     const result = await sdk.documents.ranked({
       dataContractId: YAPPR_CONTRACT_ID,
@@ -117,7 +128,7 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
       direction: 'desc',
       limit,
       ...(where ? { where } : {}),
-      ...windowClause(window),
+      ...windowClause(windowed),
     });
 
     return result.entries
@@ -128,7 +139,7 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
       }))
       .filter((entry) => entry.postId !== '');
   } catch (error) {
-    if (window === 'today' && isColdBucketError(error)) return [];
+    if (windowed && isColdBucketError(error)) return [];
     logger.error('topLikedPosts: ranked query failed:', error);
     if (options.throwOnError) throw error;
     return [];
@@ -161,10 +172,9 @@ async function rankedGroupCounts(
   documentTypeName: string,
   groupBy: string,
   limit: number,
-  window: RankingWindow = 'all',
+  windowed: WindowedRanking | null = null,
   throwOnError = false
 ): Promise<RankedGroupCount[]> {
-  if (window === 'today' && !windowedRankingsAvailable()) return [];
   try {
     const sdk = await getEvoSdk();
     const result = await sdk.documents.ranked({
@@ -174,7 +184,7 @@ async function rankedGroupCounts(
       aggregate: { type: 'count' },
       direction: 'desc',
       limit,
-      ...windowClause(window),
+      ...windowClause(windowed),
     });
 
     return result.entries
@@ -185,7 +195,7 @@ async function rankedGroupCounts(
       }))
       .filter((entry) => entry.key !== '');
   } catch (error) {
-    if (window === 'today' && isColdBucketError(error)) return [];
+    if (windowed && isColdBucketError(error)) return [];
     if (throwOnError) throw error;
     logger.error(`rankedGroupCounts(${documentTypeName}.${groupBy}): ranked query failed:`, error);
     return [];
@@ -199,27 +209,43 @@ async function rankedGroupCounts(
  * "untagged bucket" group can appear.
  */
 export async function topHashtagsByLikes(limit: number = 12, window: RankingWindow = 'all'): Promise<RankedGroupCount[]> {
-  // Today's trending rides the tagged-only `beat` doctype (see topLikedPosts).
+  if (window === 'today' && !windowedRankingsAvailable()) return [];
+  // Windowed trending: `beat.byDayHashtagPost` on v9, `like.byTrendHashtagPost` on v10.
   // A failed read rejects, so the trending cache never holds it as "no tags".
-  return rankedGroupCounts(window === 'today' ? 'beat' : 'like', 'hashtag', limit, window, true);
+  const windowed = windowFor('hashtags', window);
+  return rankedGroupCounts(windowed?.docType ?? 'like', 'hashtag', limit, windowed, true);
 }
 
 /**
  * The top authors by likes RECEIVED — the v9 creator leaderboard: prefix
  * groupBy at `postAuthor` on `like.byAuthorPost {at: [postAuthor, postId]}`
- * (the same index whose terminal level serves the profile Top tab). Keys are
+ * (v10: `byAuthorPostTime`, ranked at the same levels; the same index whose
+ * `postId` level serves the profile Top tab). Keys are
  * base58 identity ids.
  */
 export async function topCreatorsByLikes(limit: number = 10, window: RankingWindow = 'all'): Promise<RankedGroupCount[]> {
-  return rankedGroupCounts('like', 'postAuthor', limit, window);
+  if (window === 'today' && !windowedRankingsAvailable()) return [];
+  // v9 reads `like.byDayAuthorPost`; v10 has no creator window, so this is all-time there.
+  return rankedGroupCounts('like', 'postAuthor', limit, windowFor('creators', window));
 }
 
 /**
- * The most-followed identities — the v9 ranked chain on
- * `follow.followerCount [followingId]`. Keys are base58 identity ids.
+ * The most-followed identities — the ranked chain at `followingId` (v9
+ * `follow.followerCount [followingId]`, v10 `follow.followers [followingId,
+ * $createdAt]` ranked at `followingId`). Keys are base58 identity ids.
  */
 export async function mostFollowedUsers(limit: number = 10): Promise<RankedGroupCount[]> {
   return rankedGroupCounts('follow', 'followingId', limit);
+}
+
+/**
+ * The authors with the most posts — v10's ranked chain on `post.ownerAndTime
+ * [$ownerId, $createdAt]` (`rankedCountable {at: $ownerId}`), which counts
+ * bare reposts too (they are posts). Keys are base58 identity ids. Rejects on
+ * failure so the caller can fall back to its scan.
+ */
+export async function topAuthorsByPostCount(limit: number = 100): Promise<RankedGroupCount[]> {
+  return rankedGroupCounts('post', '$ownerId', limit, null, true);
 }
 
 export interface HydratedTopPostsOptions {
@@ -228,7 +254,7 @@ export interface HydratedTopPostsOptions {
   hashtag?: string;
   /** 1..100, default 20. */
   limit?: number;
-  /** `'today'` reads the v9 daily-windowed twin; default `'all'`. */
+  /** `'today'` reads the axis's recent window (all-time where it has none); default `'all'`. */
   window?: RankingWindow;
   /** Skip the 60-second hydrated cache (an explicit user refresh). */
   force?: boolean;
@@ -287,7 +313,8 @@ const TOP_BY_AUTHORS_CONCURRENCY = 8;
 
 /**
  * The most-liked posts across a set of authors (the Following feed's Top
- * view): one proved `byAuthorPost` ranked read per author, merged and sorted
+ * view): one proved per-author ranked read (`byAuthorPost`, v10
+ * `byAuthorPostTime`) per author, merged and sorted
  * by proved like count, then hydrated like {@link topLikedPostsHydrated}.
  * Each author contributes at most `limit` candidates, so the merged page is
  * exact for the authors that were read. Authors beyond

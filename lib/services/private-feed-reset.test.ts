@@ -12,7 +12,7 @@ import { privateFeedKeyStore } from './private-feed-key-store';
 const ownerId = '9NFhqxW8upkFMVTE5h5VmYWLdSEJ26B2iMKdhCFgsWkd';
 const state = {
   $id: 'state', $ownerId: ownerId, $createdAt: 1,
-  treeCapacity: 1024, maxEpoch: 2000, encryptedSeed: new Uint8Array(1),
+  treeCapacity: 1024, maxKeyGeneration: 2000, encryptedSeed: new Uint8Array(1),
 };
 
 beforeEach(() => {

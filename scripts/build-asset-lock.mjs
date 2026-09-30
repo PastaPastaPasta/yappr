@@ -24,6 +24,7 @@
  */
 import { readFileSync } from 'node:fs';
 import dashcore from '@dashevo/dashcore-lib';
+import { insightUrl } from './sdk-env.mjs';
 
 const { PrivateKey, Transaction, Script, Address, Opcode } = dashcore;
 const FEE_DUFFS = 500;
@@ -34,7 +35,7 @@ function arg(name) {
 }
 
 function insightBase() {
-  return process.env.INSIGHT_API_URL || 'https://insight.moutai.networks.dash.org/insight-api';
+  return process.env.INSIGHT_API_URL || insightUrl();
 }
 
 const keyFile = arg('--key-file');

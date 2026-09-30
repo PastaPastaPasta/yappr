@@ -50,7 +50,7 @@ export function PrivateQuotedPostContent({
 
   const attemptDecryption = useCallback(async () => {
     // Safety check: ensure this is a private post
-    if (!quotedPost.encryptedContent || quotedPost.epoch == null || !quotedPost.nonce) {
+    if (!quotedPost.encryptedContent || quotedPost.keyGeneration == null || !quotedPost.nonce) {
       setState({ status: 'error' })
       return
     }
@@ -81,18 +81,18 @@ export function PrivateQuotedPostContent({
           return
         }
 
-        const { privateFeedCryptoService, MAX_EPOCH } = await import('@/lib/services')
+        const { privateFeedCryptoService, MAX_KEY_GENERATION } = await import('@/lib/services')
 
         const cached = privateFeedKeyStore.getCachedCEK(encryptionSourceOwnerId)
         let cek: Uint8Array
 
-        if (cached && cached.epoch === quotedPost.epoch) {
+        if (cached && cached.keyGeneration === quotedPost.keyGeneration) {
           cek = cached.cek
-        } else if (cached && cached.epoch > quotedPost.epoch) {
-          cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.epoch, quotedPost.epoch)
+        } else if (cached && cached.keyGeneration > quotedPost.keyGeneration) {
+          cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, quotedPost.keyGeneration)
         } else {
-          const chain = privateFeedCryptoService.generateEpochChain(feedSeed, MAX_EPOCH)
-          cek = chain[quotedPost.epoch]
+          const chain = privateFeedCryptoService.generateCekChain(feedSeed, MAX_KEY_GENERATION)
+          cek = chain[quotedPost.keyGeneration]
         }
 
         const ownerIdBytes = identifierToBytes(encryptionSourceOwnerId)
@@ -102,7 +102,7 @@ export function PrivateQuotedPostContent({
           {
             ciphertext: quotedPost.encryptedContent,
             nonce: quotedPost.nonce,
-            epoch: quotedPost.epoch,
+            keyGeneration: quotedPost.keyGeneration,
           },
           ownerIdBytes
         )
@@ -122,7 +122,7 @@ export function PrivateQuotedPostContent({
       // Attempt to decrypt using encryption source owner's keys
       const result = await privateFeedFollowerService.decryptPost({
         encryptedContent: quotedPost.encryptedContent,
-        epoch: quotedPost.epoch,
+        keyGeneration: quotedPost.keyGeneration,
         nonce: quotedPost.nonce,
         $ownerId: encryptionSourceOwnerId,
       }, user?.identityId)
@@ -142,7 +142,7 @@ export function PrivateQuotedPostContent({
   // Must watch all encryption-relevant fields to avoid stale decryption data
   useEffect(() => {
     setState({ status: 'idle' })
-  }, [quotedPost.id, quotedPost.encryptedContent, quotedPost.epoch, quotedPost.nonce, user?.identityId])
+  }, [quotedPost.id, quotedPost.encryptedContent, quotedPost.keyGeneration, quotedPost.nonce, user?.identityId])
 
   // Attempt decryption on mount
   useEffect(() => {
@@ -263,5 +263,5 @@ function getAuthorDisplay(author: Post['author']): string {
  * Check if a post is a private post
  */
 export function isQuotedPostPrivate(post: Post): boolean {
-  return !!(post.encryptedContent && post.epoch !== undefined && post.nonce)
+  return !!(post.encryptedContent && post.keyGeneration !== undefined && post.nonce)
 }
