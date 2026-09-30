@@ -178,7 +178,7 @@ Additional contracts back specific features: storefront (7 types), DM, blog, vau
 1. **State Management**: Zustand store in `lib/store.ts`
 2. **Styling**: Tailwind CSS with custom design system in `tailwind.config.js`
 3. **UI Components**: Radix UI primitives in `components/ui/`
-4. **Default avatars**: `lib/mock-data.ts` generates the DiceBear placeholder used when a profile has no avatar
+4. **Default avatars**: `unifiedProfileService.getDefaultAvatarUrl` (`lib/services/unified-profile-service.ts`) generates the DiceBear placeholder used when a profile has no avatar
 
 ### Known Issues
 
