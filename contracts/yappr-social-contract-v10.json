@@ -740,21 +740,15 @@
           "skipIfAbsent": true
         },
         {
-          "name": "mentionedUserRecent",
+          "name": "mentionedUserAndTime",
           "properties": [
             {
-              "$createdAt": "asc"
+              "mentionedUserId": "asc"
             },
             {
-              "mentionedUserId": "asc"
+              "$createdAt": "asc"
             }
           ],
-          "timeRange": {
-            "on": "$createdAt",
-            "range": 604800,
-            "step": 86400,
-            "ttl": 604800
-          },
           "skipIfAbsent": true
         }
       ],
