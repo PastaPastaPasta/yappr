@@ -41,16 +41,6 @@
  *          / byAuthorTimeReply (n4, n5); n6x/n7x a windowed source cannot
  *          ride a composite; n8 the permanent sources (mentions and likes
  *          included) bundle
- *   k1-k4  byLiker: did I like these (posts, replies), the Likes tab; an
- *          unlike whose delete tuple comes from byAuthorTimePost
- *   dc-*   `--design C`: like design C (no byLiker; byAuthorPostTime /
- *          byAuthorReplyTime [author, target, $createdAt]): heart state on
- *          byPost/byReply, the feed's viewer-likes slot, top creators and a
- *          profile's top posts, per-post notifications with keyset paging,
- *          recent posts that gained likes, counts, unlike end to end, and
- *          the composite sibling cap; replaces n4/n5/n8's like sibling/k*
- *   k6     a question: can byPost ([postId] terminal $ownerId) answer "did I
- *          like these" (batched and single), so byLiker could go?
  *   t1-t2  the whole thread at the app's page size, and paged with startAfter
  *   l1-l2  the quote lists at limit 100, of a post and of a reply
  *   c5     the For You page exactly as composite-feed-page builds it (timeline
@@ -99,35 +89,13 @@ const CONSENSUS_CODE = /\bcode"?\s*[=:]\s*\d{4,5}\b/;
  * feed's by-id quote join needs `refersTo`), minus what needs the contract's
  * token or moderation (token costs, action fees, moderator abilities).
  */
-/**
- * Like design C (under evaluation, not in the contract file): no byLiker; one
- * time-last author index per like type replaces byAuthorPost + byAuthorTimePost.
- * The heart state reads byPost / byReply with `$ownerId ==` on the terminal.
- */
-const DESIGN_C = {
-  like: [
-    { name: 'byPost', properties: [{ postId: 'asc' }], terminal: '$ownerId', rangeCountable: true, rankedCountable: true },
-    { name: 'byHashtagPost', properties: [{ hashtag: 'asc' }, { postId: 'asc' }], terminal: '$ownerId', rangeCountable: true, rankedCountable: { at: ['hashtag', 'postId'] }, skipIfAbsent: true },
-    { name: 'byAuthorPostTime', properties: [{ postAuthor: 'asc' }, { postId: 'asc' }, { $createdAt: 'asc' }], terminal: '$ownerId', rangeCountable: true, rankedCountable: { at: ['postAuthor', 'postId'] } },
-    { name: 'byTrendPost', properties: [{ $createdAt: 'asc' }, { postId: 'asc' }], terminal: '$ownerId', rangeCountable: true, rankedCountable: true, timeRange: { on: '$createdAt', range: 259200, step: 86400, ttl: 604800 } },
-    { name: 'byTrendHashtagPost', properties: [{ $createdAt: 'asc' }, { hashtag: 'asc' }, { postId: 'asc' }], terminal: '$ownerId', rangeCountable: true, rankedCountable: { at: ['hashtag', 'postId'] }, timeRange: { on: '$createdAt', range: 86400, step: 21600, ttl: 604800 }, skipIfAbsent: true },
-  ],
-  likeReply: [
-    { name: 'byReply', properties: [{ replyId: 'asc' }], terminal: '$ownerId', countable: 'countable' },
-    { name: 'byAuthorReplyTime', properties: [{ replyAuthor: 'asc' }, { replyId: 'asc' }, { $createdAt: 'asc' }], terminal: '$ownerId' },
-  ],
-};
-
-function proofContractSource(design = null) {
+function proofContractSource() {
   const social = JSON.parse(readFileSync(SOCIAL_V10, 'utf8'));
   const documentSchemas = {};
   for (const type of ['post', 'reply', 'follow', 'like', 'likeReply']) {
     const schema = structuredClone(social.documentSchemas[type]);
     for (const key of ['actionFees', 'tokenCost', 'moderatorAbilities']) delete schema[key];
     documentSchemas[type] = schema;
-  }
-  if (design === 'C') {
-    for (const [type, indices] of Object.entries(DESIGN_C)) documentSchemas[type].indices = structuredClone(indices);
   }
   const config = { ...social.config };
   delete config.moderation;
@@ -141,7 +109,7 @@ function contractJson(source, { id, ownerId }) {
 // ---- Arguments --------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { actors: [], dryRun: false, design: null };
+  const args = { actors: [], dryRun: false };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--bot': {
@@ -157,8 +125,6 @@ function parseArgs(argv) {
         break;
       }
       case '--dry-run': args.dryRun = true; break;
-      // Prove a like design that is not in the contract file yet (C: no byLiker).
-      case '--design': args.design = argv[++i]; break;
       default: throw new Error(`Unknown argument: ${argv[i]}`);
     }
   }
@@ -246,10 +212,7 @@ const newestFirst = (docs, expected) => {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
-  if (args.design && args.design !== 'C') throw new Error('--design takes C');
-  const designC = args.design === 'C';
-  const source = proofContractSource(args.design);
-  if (designC) console.log('like design C: the throwaway contract\'s like/likeReply indexes differ from the contract file');
+  const source = proofContractSource();
 
   // Offline: both parsers accept the throwaway contract, and every fixture document builds.
   DataContract.fromJSON(contractJson(source, { id: DRY_RUN_OWNER, ownerId: DRY_RUN_OWNER }), true, PlatformVersion.latest());
@@ -521,21 +484,6 @@ async function main() {
       check(label, true, describeErr(e).slice(0, 160));
     }
   };
-  // Likes stay on their permanent author indexes (a windowed indexOnly index
-  // cannot be read as documents): exact times, newest first, `$createdAt >`.
-  const likesOf = (author, recipient) => ({ where: [[author, '==', recipient], ['$createdAt', '>', 0]], orderBy: [[author, 'asc'], ['$createdAt', 'desc']], limit: 100 });
-  if (!designC) {
-    await attempt('n4', () => sdk.documents.query(q('like', likesOf('postAuthor', A.ownerId))), (r) => {
-      const likes = docsOf(r).map((d) => d.toObject?.() ?? d);
-      const pairs = likes.map((l) => `${toBase58(l.$ownerId)}>${toBase58(l.postId)}`).sort();
-      const expected = [`${B.ownerId}>${T1}`, `${C.ownerId}>${T1}`, `${B.ownerId}>${T2}`].sort();
-      check('n4 likes of A\'s posts (permanent byAuthorTimePost), newest first with exact $createdAt: B→T1, C→T1, B→T2', same(pairs, expected) && newestFirst(docsOf(r), docsOf(r).map(idOf)) && likes.every((l) => Number(l.$createdAt) > 0), JSON.stringify(pairs));
-    });
-    await attempt('n5', () => sdk.documents.query(q('likeReply', likesOf('replyAuthor', B.ownerId))), (r) => {
-      const likes = docsOf(r).map((d) => d.toObject?.() ?? d);
-      check('n5 likes of B\'s replies (permanent byAuthorTimeReply): A→r1', likes.length === 1 && toBase58(likes[0].$ownerId) === A.ownerId && toBase58(likes[0].replyId) === r1, JSON.stringify(likes.map((l) => [toBase58(l.$ownerId), toBase58(l.replyId)])));
-    });
-  }
   // A windowed source cannot ride the notification bundle: composites take no
   // timeRange, and without one the windowed index is not admissible.
   const bundlePage = { dataContractId: contractId, documentType: 'follow', where: [['followingId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
@@ -543,12 +491,10 @@ async function main() {
   await expectRefusal('n7x a windowed index read WITHOUT a window (composite sibling or plain) is refused', () => sdk.documents.composite({ ...bundlePage, subQueries: [{ documentType: 'reply', where: [['parentOwnerId', '==', A.ownerId]], limit: 100 }] }));
   await attempt('n8', () => sdk.documents.composite({ ...bundlePage, subQueries: [
     { documentType: 'post', ...mentionsOfB },
-    ...(designC ? [] : [{ documentType: 'like', ...likesOf('postAuthor', A.ownerId) }]),
     { documentType: 'follow', where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100 },
   ] }), (result) => {
-    const subs = result.subResults.map((sub) => sub.documents);
-    const [mentions, likes, follows] = designC ? [subs[0], null, subs[1]] : subs;
-    check(`n8 the permanent sources bundle: follows of A, the mention of B${designC ? '' : ' and the likes of A\'s posts'} (as siblings), B's follows`, result.pageDocuments.length === 1 && same(mentions.map(idOf), [m1]) && (designC || likes.length === 3) && follows.length === 1, `page ${result.pageDocuments.length} mentions ${JSON.stringify(mentions.map(idOf))} likes ${likes ? likes.length : '-'} follows ${follows.length}`);
+    const [mentions, follows] = result.subResults.map((sub) => sub.documents);
+    check('n8 the permanent sources bundle: follows of A, the mention of B (as a sibling), B\'s follows', result.pageDocuments.length === 1 && same(mentions.map(idOf), [m1]) && follows.length === 1, `page ${result.pageDocuments.length} mentions ${JSON.stringify(mentions.map(idOf))} follows ${follows.length}`);
   });
 
   // ---- t: the whole thread (reply-service getReplies on repliesOf) ----
@@ -592,7 +538,8 @@ async function main() {
       { documentType: 'post', kind: 'counts', bind: fromPage('$id', 'quotedPostId') },
       { documentType: 'post', bind: fromPage('quotedPostId', '$id') },
       { dataContractId: dpnsId, documentType: 'domain', bind: fromPage('$ownerId', 'records.identity'), limit: 100 },
-      { documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId') },
+      // byPost is not value-bounded under a bound postId: the lookup takes a limit (the page size).
+      { documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId'), limit: 20 },
     ],
   }), (result) => {
     const [likes, replies, quotes] = result.subResults.slice(0, 3).map((sub) => countEntries(sub.counts));
@@ -622,49 +569,6 @@ async function main() {
     check('g1 the following feed (`$ownerId in` + `$createdAt >`, ranked ownerAndTime): q1, q2, q3, m1', got.size === 4 && [q1, q2, q3, m1].every((x) => got.has(x)), JSON.stringify([...got]));
   });
 
-  if (!designC) {
-    // ---- k: the heart state (byLiker) and an unlike (tuple from byAuthorTimePost) ----
-    console.log('\n--- k. byLiker: did I like these; the unlike tuple from byAuthorTimePost ---');
-    const likeOf = (d) => d.toObject?.() ?? d;
-    // An `in` on an indexOnly terminal needs an orderBy on it (the app's queryOwnedPostIds sends this).
-    const ownedBy = (field) => [['$ownerId', 'asc'], [field, 'asc']];
-    await attempt('k1', () => sdk.documents.query(q('like', { where: [['$ownerId', '==', B.ownerId], ['postId', 'in', [T1, T2, T3]]], orderBy: ownedBy('postId'), limit: 3 })), (r) => {
-      const liked = docsOf(r).map(likeOf).map((l) => toBase58(l.postId));
-      check('k1 "did B like these" (byLiker [$ownerId] terminal postId, `postId in`): T1 and T2', sameSet(liked, [T1, T2]), JSON.stringify(liked));
-    });
-    await attempt('k2', () => sdk.documents.query(q('like', { where: [['$ownerId', '==', B.ownerId]], limit: 100 })), (r) => check('k2 B\'s likes (the Likes tab, byLiker): 2', docsOf(r).length === 2, `${docsOf(r).length}`));
-    await attempt('k3', () => sdk.documents.query(q('likeReply', { where: [['$ownerId', '==', A.ownerId], ['replyId', 'in', [r1, r2]]], orderBy: ownedBy('replyId'), limit: 2 })), (r) => {
-      const liked = docsOf(r).map(likeOf).map((l) => toBase58(l.replyId));
-      check('k3 "did A like these replies" (likeReply.byLiker): r1', same(liked, [r1]), JSON.stringify(liked));
-    });
-    // k6 (a question, not an app shape): can byPost [postId] terminal $ownerId
-    // answer "did I like these posts", so that byLiker could go? Before k4's unlike.
-    await attempt('k6', () => sdk.documents.query(q('like', { where: [['postId', 'in', [T1, T2, T3]], ['$ownerId', '==', B.ownerId]], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 3 })), (r) => {
-      const likes = docsOf(r).map(likeOf);
-      const pairs = likes.map((l) => `${toBase58(l.$ownerId)}>${toBase58(l.postId)}`);
-      check('k6 byPost answers "did B like these" (`postId in`, `$ownerId ==`): accepted, B\'s likes of T1 and T2 only', sameSet(pairs, [`${B.ownerId}>${T1}`, `${B.ownerId}>${T2}`]), JSON.stringify(pairs));
-    });
-    await attempt('k6b', () => sdk.documents.query(q('like', { where: [['postId', '==', T2], ['$ownerId', '==', B.ownerId]], limit: 1 })), (r) => {
-      const likes = docsOf(r).map(likeOf);
-      check('k6b byPost, the single form (`postId ==`, `$ownerId ==`): accepted, B\'s like of T2', likes.length === 1 && toBase58(likes[0].$ownerId) === B.ownerId && toBase58(likes[0].postId) === T2, JSON.stringify(likes.map((l) => [toBase58(l.$ownerId), toBase58(l.postId)])));
-    });
-    let recovered = null;
-    await attempt('k4', async () => {
-      // The unlike's $createdAt: B's like of T2 on byAuthorTimePost (A's posts), newest first.
-      const likes = docsOf(await sdk.documents.query(q('like', likesOf('postAuthor', A.ownerId)))).map(likeOf);
-      recovered = likes.find((l) => toBase58(l.postId) === T2 && toBase58(l.$ownerId) === B.ownerId) ?? null;
-      if (!recovered) throw new Error('B\'s like of T2 is not on byAuthorTimePost');
-      const { document } = buildDocument({ contractId, docType: 'like', ownerId: B.ownerId, data: { postId: id(T2), postAuthor: id(A.ownerId) }, createdAt: Number(recovered.$createdAt) });
-      await sdk.documents.delete({ document, identityKey: B.identityKey, signer: B.signer }).catch((e) => console.log(`     (unlike reported: ${describeErr(e).slice(0, 140)})`));
-      await sleep(SETTLE_MS);
-      const [hearts, likeCount] = await Promise.all([
-        sdk.documents.query(q('like', { where: [['$ownerId', '==', B.ownerId], ['postId', 'in', [T2]]], orderBy: ownedBy('postId'), limit: 1 })),
-        count('like', [['postId', '==', T2]]),
-      ]);
-      return { left: docsOf(hearts).length, likes: total(likeCount) };
-    }, ({ left, likes }) => check(`k4 B unlikes T2 with the tuple from byAuthorTimePost ($createdAt ${recovered?.$createdAt}): gone from byLiker, T2 likes 0`, left === 0 && likes === 0, `byLiker ${left}, count ${likes}`));
-  }
-
   // ---- dc: like design C (no byLiker; byAuthorPostTime / byAuthorReplyTime) ----
   async function proveDesignC() {
     console.log('\n--- dc. like design C: heart state on byPost/byReply, rankings, per-post notifications, unlike ---');
@@ -681,17 +585,17 @@ async function main() {
     // (b) the feed page's viewer-likes slot, bound on the page's ids against byPost.
     await attempt('dc-b1', () => sdk.documents.composite({
       dataContractId: contractId, documentType: 'post', where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20,
-      subQueries: [{ documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId') }],
+      subQueries: [{ documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId'), limit: 20 }],
     }), (result) => {
       const liked = result.subResults[0].documents.map(likeOf).map((l) => toBase58(l.postId));
-      check('dc-b1 the feed composite\'s viewer-likes slot on byPost (no limit): B liked T1 and T2', sameSet(liked, [T1, T2]), JSON.stringify(liked));
+      check('dc-b1 the feed composite\'s viewer-likes slot on byPost (limit = page size): B liked T1 and T2', sameSet(liked, [T1, T2]), JSON.stringify(liked));
     });
     await attempt('dc-b2', () => sdk.documents.composite({
       dataContractId: contractId, documentType: 'reply', where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
-      subQueries: [{ documentType: 'likeReply', where: [['$ownerId', '==', A.ownerId]], bind: fromPage('$id', 'replyId') }],
+      subQueries: [{ documentType: 'likeReply', where: [['$ownerId', '==', A.ownerId]], bind: fromPage('$id', 'replyId'), limit: 20 }],
     }), (result) => {
       const liked = result.subResults[0].documents.map(likeOf).map((l) => toBase58(l.replyId));
-      check('dc-b2 a replies page\'s viewer-likes slot on byReply: A liked r1', same(liked, [r1]), JSON.stringify(liked));
+      check('dc-b2 a replies page\'s viewer-likes slot on byReply (limit = page size): A liked r1', same(liked, [r1]), JSON.stringify(liked));
     });
     // (c) top creators and (d) a profile's top posts: rankings at [postAuthor, postId].
     await attempt('dc-c', () => sdk.documents.ranked(q('like', { groupBy: 'postAuthor', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })), (r) => {
@@ -753,8 +657,27 @@ async function main() {
     // (j) how many siblings a composite carries (the notification fan-out).
     const siblings = (n) => Array.from({ length: n }, (_, k) => ({ documentType: 'like', where: [['postAuthor', '==', A.ownerId], ['postId', '==', [T1, T2, T3][k % 3]], ['$createdAt', '>', k]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc'], ['$createdAt', 'desc']], limit: 100 }));
     const followsPage = { dataContractId: contractId, documentType: 'follow', where: [['followingId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
-    await attempt('dc-j1', () => sdk.documents.composite({ ...followsPage, subQueries: siblings(10) }), (result) => check('dc-j1 a composite carries 10 per-post like siblings beside the follows page', result.subResults.length === 10, `${result.subResults.length} sub-results; first ${result.subResults[0].documents.length} likes`));
+    // Per-post like reads share one index path, which a composite cannot tell
+    // apart: the notification fan-out is plain queries (or dc-k's one `in`).
+    await expectRefusal('dc-j1 per-post like reads as composite siblings are refused (same index path)', () => sdk.documents.composite({ ...followsPage, subQueries: siblings(3) }));
+    await attempt('dc-k', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2]], ['$createdAt', '>', 0]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc'], ['$createdAt', 'desc']], limit: 100 })), (r) => {
+      const pairs = pairsOf(r, 'postId');
+      check('dc-k ONE read for several posts (`postId in` + `$createdAt >`): B→T1, C→T1, B→T2', sameSet(pairs, [`${B.ownerId}>${T1}`, `${C.ownerId}>${T1}`, `${B.ownerId}>${T2}`]), JSON.stringify(pairs));
+    });
     await expectRefusal('dc-j2 an 11th sibling is refused (10 sub-queries at most)', () => sdk.documents.composite({ ...followsPage, subQueries: siblings(11) }));
+    // Reply likes, the same fan-out: the per-reply read since a watermark, the
+    // replies-page composite count slot on byReply, one `replyId in` read.
+    await attempt('dc-e3', () => sdk.documents.query(q('likeReply', { where: [['replyAuthor', '==', B.ownerId], ['replyId', '==', r1], ['$createdAt', '>', 0]], orderBy: [['replyAuthor', 'asc'], ['replyId', 'asc'], ['$createdAt', 'desc']], limit: 100 })),
+      (r) => check('dc-e3 likes of B\'s reply r1 since a watermark (byAuthorReplyTime, newest first): A', same(pairsOf(r, 'replyId'), [`${A.ownerId}>${r1}`]) && docsOf(r).map(likeOf).every((l) => Number(l.$createdAt) > 0), JSON.stringify(pairsOf(r, 'replyId'))));
+    await attempt('dc-f3', () => sdk.documents.composite({
+      dataContractId: contractId, documentType: 'reply', where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
+      subQueries: [{ documentType: 'likeReply', kind: 'counts', bind: fromPage('$id', 'replyId') }],
+    }), (result) => {
+      const m = countEntries(result.subResults[0].counts);
+      check('dc-f3 B\'s recent replies with their like counts (replies page + byReply count slot): r1 1', sameCounts(m, { [r1]: 1 }), JSON.stringify(m));
+    });
+    await attempt('dc-k2', () => sdk.documents.query(q('likeReply', { where: [['replyAuthor', '==', B.ownerId], ['replyId', 'in', [r1, r5]], ['$createdAt', '>', 0]], orderBy: [['replyAuthor', 'asc'], ['replyId', 'asc'], ['$createdAt', 'desc']], limit: 100 })),
+      (r) => check('dc-k2 ONE read for several replies (`replyId in` + `$createdAt >`): A→r1', same(pairsOf(r, 'replyId'), [`${A.ownerId}>${r1}`]), JSON.stringify(pairsOf(r, 'replyId'))));
     // (h) unlike end to end: the time from (postAuthor, postId), newest first; delete; gone.
     const recoverTime = async (docType, author, authorId, target, targetId, likerId) => {
       let cursor = null;
@@ -790,7 +713,7 @@ async function main() {
     }, ({ at, likes, heart }) => check(`dc-h2 A unlikes reply r1 (time ${at} from byAuthorReplyTime): count 0, heart off`, likes === 0 && heart === 0, `count ${likes}, heart ${heart}`));
   }
 
-  if (designC) await proveDesignC();
+  await proveDesignC();
 
   console.log(`\nthrowaway contract ${contractId}`);
   console.log(failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`);

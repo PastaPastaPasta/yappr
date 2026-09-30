@@ -9,12 +9,14 @@
  * author's own post pages, and the quote count is the repost count. Per-reply
  * counts pin the root (repliesOf [rootPostId, replyToReplyId, $createdAt]).
  *
- * Notification sources: follows, mentions (post.mentionedUserAndTime), follow
- * requests and likes (byAuthorTimePost / byAuthorTimeReply) are permanent and
- * bundle; replies (reply.parentOwnerRecent) and quotes/reposts
- * (post.quotedPostOwnerRecent) are 7-day windows read through the `timeRange`
- * option, which a composite refuses, so each stays one plain query. There is
- * no postMention: a post names at most one mentionedUserId. */
+ * Notification sources: follows, mentions (post.mentionedUserAndTime) and
+ * follow requests are permanent and bundle; replies (reply.parentOwnerRecent)
+ * and quotes/reposts (post.quotedPostOwnerRecent) are 7-day windows read
+ * through the `timeRange` option, which a composite refuses, so each stays one
+ * plain query. Likes are permanent but per target: byAuthorPostTime /
+ * byAuthorReplyTime pin the liked post or reply before `$createdAt`, so "who
+ * liked it since" is one plain read per recent post or reply. There is no
+ * postMention: a post names at most one mentionedUserId. */
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import bs58 from 'bs58';
@@ -100,7 +102,7 @@ await verify('profiles and DPNS including profile-less identity', [
   { dataContractId: dpns, documentTypeName: 'domain', where: [['records.identity', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['records.identity', 'asc']], limit: 100 },
 ]);
 // Mentions stay permanent (the mentioning post's own mentionedUserAndTime).
-await verify('permanent notification sources', [['follow', 'followingId'], ['post', 'mentionedUserId'], ['followRequest', 'targetId'], ['like', 'postAuthor'], ['likeReply', 'replyAuthor']].map(([documentTypeName, field]) => ({
+await verify('permanent notification sources', [['follow', 'followingId'], ['post', 'mentionedUserId'], ['followRequest', 'targetId']].map(([documentTypeName, field]) => ({
   dataContractId: social, documentTypeName,
   where: [[field, '==', owner], ['$createdAt', '>', 0]],
   orderBy: [[field, 'asc'], ['$createdAt', 'asc']], limit: 100,
@@ -112,25 +114,40 @@ function windowOf(documentTypeName, indexName) {
   const { range, step } = V10.documentSchemas[documentTypeName].indices.find(index => index.name === indexName).timeRange;
   return [{ field: '$createdAt', selector: 'oldest', grid: { range, step } }];
 }
-/** Windowed sources cannot ride a composite: each is read alone, and only its success is asserted. */
-async function verifyWindowed(name, queries) {
+/** Sources that do not ride a composite (windowed, or one read per target): each is read alone, and only its success is asserted. */
+async function verifyAlone(name, queries) {
   try {
     const rows = [];
     for (const query of queries) rows.push(records(await sdk.documents.query(query)).length);
     reports.push({ name, before: queries.length, after: queries.length, rows, equivalent: true });
-    console.log(`PASS ${name}: ${queries.length} plain windowed queries; rows ${rows.join(',')}`);
+    console.log(`PASS ${name}: ${queries.length} plain queries; rows ${rows.join(',')}`);
   } catch (error) {
     const message = String(error.message || error.reason || error.toJSON?.() || JSON.stringify(error));
     reports.push({ name, equivalent: false, error: message });
     console.error(`FAIL ${name}: ${message}`);
   }
 }
-await verifyWindowed('7-day notification windows', [
+await verifyAlone('7-day notification windows', [
   ['reply', 'parentOwnerRecent', 'parentOwnerId'], ['post', 'quotedPostOwnerRecent', 'quotedPostOwnerId'],
 ].map(([documentTypeName, indexName, field]) => ({
   dataContractId: social, documentTypeName,
   where: [[field, '==', owner]], timeRange: windowOf(documentTypeName, indexName), limit: 100,
 })));
+// "Liked your post / reply": the likes of each of the owner's two most recent
+// posts and replies since the start, newest first, one plain read per target.
+const recentOwn = async (documentTypeName) => records(await sdk.documents.query({
+  dataContractId: social, documentTypeName, where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]],
+  orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 2,
+}));
+const likesSince = (documentTypeName, author, target) => doc => ({
+  dataContractId: social, documentTypeName,
+  where: [[author, '==', owner], [target, '==', id(doc.$id)], ['$createdAt', '>', 0]],
+  orderBy: [[author, 'asc'], [target, 'asc'], ['$createdAt', 'desc']], limit: 100,
+});
+await verifyAlone('per-target like notifications', [
+  ...(await recentOwn('post')).map(likesSince('like', 'postAuthor', 'postId')),
+  ...(await recentOwn('reply')).map(likesSince('likeReply', 'replyAuthor', 'replyId')),
+]);
 // A followed author's reposts are posts: their own post pages carry them.
 await verify('following post pages (reposts included)', owners.map(ownerId => ({
   dataContractId: social, documentTypeName: 'post',
@@ -200,8 +217,9 @@ async function verifyEnrichment(kind) {
     const subQueries = countSources.map(([documentType, field, where]) => ({
       documentType, kind: 'counts', ...(where.length ? { where } : {}), bind: { source: 'page', sourceProperty: '$id', field },
     }));
+    // The viewer marks ride byPost / byReply ([target] terminal $ownerId), the slot's limit the page size.
     subQueries.push({ documentType: likeType, where: [['$ownerId', '==', owner]],
-      bind: { source: 'page', sourceProperty: '$id', field: targetField } });
+      bind: { source: 'page', sourceProperty: '$id', field: targetField }, limit: 20 });
     if (kind === 'reply' && ids.length === 0) throw new Error('the thread root has no direct replies to page');
     const byId = (docs) => [...docs].sort((a, b) => id(a.$id).localeCompare(id(b.$id)));
     const result = kind === 'post'
@@ -223,9 +241,10 @@ async function verifyEnrichment(kind) {
       }
     }
     const marks = ids.length ? records(await sdk.documents.query({ dataContractId: social,
-      documentTypeName: likeType, where: [['$ownerId', '==', owner], [targetField, 'in', ids]],
-      orderBy: [[targetField, 'desc']], limit: ids.length })) : [];
-    assert.equal(canonical(result.subResults.at(-1).documents.map(doc => doc.toObject())), canonical(marks));
+      documentTypeName: likeType, where: [[targetField, 'in', ids], ['$ownerId', '==', owner]],
+      orderBy: [[targetField, 'asc'], ['$ownerId', 'asc']], limit: ids.length })) : [];
+    const byTarget = docs => [...docs].sort((a, b) => id(a[targetField]).localeCompare(id(b[targetField])));
+    assert.equal(canonical(byTarget(result.subResults.at(-1).documents.map(doc => doc.toObject()))), canonical(byTarget(marks)));
     reports.push({ name, before: 2 + countSources.length, after: 1, rows: page.length, equivalent: true });
     console.log(`PASS ${name}; ${page.length} page rows`);
   } catch (error) {

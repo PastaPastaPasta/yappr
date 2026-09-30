@@ -72,17 +72,21 @@
  *       post in `like.byTrendPost` (72h every 24h): the tag window groups the
  *       run's tag with the right count and ranks the post within it, an
  *       untagged like leaves it alone, the 3-day window counts both; unliking
- *       (the delete tuple read off `byAuthorTimePost`) drops the counts again
+ *       (the delete tuple read off `byAuthorPostTime` with the post pinned,
+ *       keyset on `$createdAt <=`) drops the counts again
  *   n1  one mention per post: a post naming `mentionedUserId` lands and reads
  *       back with it; the permanent `post.mentionedUserAndTime` lists it for
  *       the mentioned identity (`$createdAt >`, newest first); a mention of an identity that does not
  *       exist is refused 40120 (refersTo identity). There is no postMention.
  *   n2  the reply notification window (a plain query, oldest window of the
  *       7d/1d grid, no composite): `reply.parentOwnerRecent` lists A's reply
- *       for B. Likes stay permanent: `byAuthorTimePost`/`byAuthorTimeReply`
- *       list A's likes of B's post and reply with their exact time (the
- *       unlike tuple), `byLiker` answers "did A like X", and an unlike by
- *       values lands for both types
+ *       for B. Likes stay permanent: the per-target read on
+ *       `byAuthorPostTime`/`byAuthorReplyTime` (`author ==`, `target ==`,
+ *       `$createdAt >`) lists A's likes of B's post and reply; `byPost` /
+ *       `byReply` (`target in`, `$ownerId ==`) answer "did A like X"; the
+ *       unlike tuple is recovered off the same author index (`$createdAt <=`
+ *       keyset + dedupe, never an id cursor) and an unlike by values lands for
+ *       both types
  *   q1  a repost is a post: a bare repost without the post agreement is 40132;
  *       with it and a YAPP payment it lands, costing exactly the post's token
  *       cost and growing the moderators pot by the post fee; it reads back with
@@ -998,34 +1002,49 @@ async function rankedWindow(ctx, window, extra) {
   return readback(() => ctx.sdk.documents.ranked({ dataContractId: ctx.contractId, documentTypeName: 'like', aggregate: { type: 'count' }, direction: 'desc', limit: 100, ...window, ...extra }));
 }
 
-/** Per like type: the liked target's field, and the author field of the permanent notification index. */
+/** Per like type: the liked target's field and its author field, the lead of byAuthorPostTime / byAuthorReplyTime. */
 const LIKE_FIELDS = { like: { target: 'postId', author: 'postAuthor' }, likeReply: { target: 'replyId', author: 'replyAuthor' } };
+const LIKE_PAGE = 100;
+
+/**
+ * One page of the likes of `authorId`'s `targetId`, newest first, off the
+ * author index that carries `$createdAt` after the pinned target
+ * (`byAuthorPostTime [postAuthor, postId, $createdAt]`, `byAuthorReplyTime`
+ * for reply likes). `timeClause` is the page's `$createdAt` bound, if any.
+ */
+function likesOfTarget(ctx, docType, authorId, targetId, timeClause) {
+  const { target, author } = LIKE_FIELDS[docType];
+  return readback(() => ctx.sdk.documents.query({
+    dataContractId: ctx.contractId, documentTypeName: docType,
+    where: [[author, '==', authorId], [target, '==', targetId], ...(timeClause ? [timeClause] : [])],
+    orderBy: [[author, 'asc'], [target, 'asc'], ['$createdAt', 'desc']], limit: LIKE_PAGE,
+  }));
+}
 
 /**
  * `{ id, createdAt }` of `likerId`'s like of `targetId` by `authorId`, or null:
- * the delete-by-values tuple, read newest first off the permanent notification
- * index that carries `$createdAt` (`byAuthorTimePost [postAuthor, $createdAt,
- * postId]`, `byAuthorTimeReply` for reply likes). `byLiker` holds no time.
+ * the delete-by-values tuple. Pages the per-target likes newest first with a
+ * `$createdAt <=` keyset and dedupes by liker (a page boundary can split one
+ * millisecond); an id `startAfter` cursor is never used, the node refuses it
+ * on an indexOnly type.
  */
 async function likeTuple(ctx, docType, authorId, targetId, likerId) {
-  const { target, author } = LIKE_FIELDS[docType];
-  let startAfter;
+  const seen = new Set();
+  let cursor = null;
   for (let page = 0; page < 5; page++) {
-    const result = await readback(() => ctx.sdk.documents.query({
-      dataContractId: ctx.contractId, documentTypeName: docType, where: [[author, '==', authorId]],
-      orderBy: [[author, 'asc'], ['$createdAt', 'desc']], limit: 100, ...(startAfter ? { startAfter } : {}),
-    }));
-    let last = null;
+    const result = await likesOfTarget(ctx, docType, authorId, targetId, cursor === null ? null : ['$createdAt', '<=', cursor]);
+    let fresh = 0;
     for (const document of result.values()) {
-      if (!document) continue;
-      last = document;
-      const data = document.toJSON?.() ?? {};
-      if (data[target] === targetId && idOf(document.ownerId) === likerId && document.createdAt !== undefined) {
-        return { id: document.id.toBytes?.() ?? bs58.decode(idOf(document.id)), createdAt: Number(document.createdAt) };
-      }
+      if (!document || document.createdAt === undefined) continue;
+      const liker = idOf(document.ownerId);
+      const createdAt = Number(document.createdAt);
+      cursor = cursor === null ? createdAt : Math.min(cursor, createdAt);
+      if (seen.has(liker)) continue;
+      seen.add(liker);
+      fresh++;
+      if (liker === likerId) return { id: document.id.toBytes?.() ?? bs58.decode(idOf(document.id)), createdAt };
     }
-    if (result.size < 100 || !last) return null;
-    startAfter = idOf(last.id);
+    if (result.size < LIKE_PAGE || fresh === 0) return null;
   }
   return null;
 }
@@ -1062,9 +1081,9 @@ async function caseT2TrendingOnLike(ctx) {
 
   // A delete by values needs the like's $createdAt. An indexOnly document is
   // synthesized from the index it is read through, so read it back through
-  // byAuthorTimePost [postAuthor, $createdAt, postId], newest first.
+  // byAuthorPostTime [postAuthor, postId, $createdAt], the post pinned, newest first.
   const stored = await likeTuple(ctx, 'like', botB.ownerId, tagged, botA.ownerId);
-  if (!stored) { check('t2 unlike fixture', false, 'A\'s like was not found on byAuthorTimePost with its $createdAt'); return; }
+  if (!stored) { check('t2 unlike fixture', false, 'A\'s like was not found on byAuthorPostTime with its $createdAt'); return; }
   const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, id: stored.id,
     createdAt: stored.createdAt, data: likeData({ postId: bs58.decode(tagged), hashtag: tag, postAuthor: owner }) });
   expectAccepted('t2h A unlikes the tagged post (delete by values)', await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await entryExists(sdk, contractId, 'like', 'postId', tagged, botA.ownerId)) }));
@@ -1126,20 +1145,23 @@ async function caseN2NotificationWindows(ctx) {
 
   const replies = await windowLists(ctx, 'reply', 'parentOwnerRecent', [['parentOwnerId', '==', botB.ownerId]], (document) => idOf(document.id) === aReply);
   check('n2a reply.parentOwnerRecent\'s 7-day window lists A\'s reply for B (the "replied to you" source)', replies.found, `${replies.scanned} reply(ies) scanned`);
-  for (const [docType, targetId, data, what, [windowCase, tupleCase, unlikeCase]] of likes) {
-    const { target: field } = LIKE_FIELDS[docType];
-    // "Liked your post": the permanent author index, newest first, exact times.
-    const tuple = await likeTuple(ctx, docType, botB.ownerId, targetId, botA.ownerId);
-    const recent = tuple !== null && Math.abs(Date.now() - tuple.createdAt) < 3_600_000;
-    check(`${windowCase} ${docType === 'like' ? 'byAuthorTimePost' : 'byAuthorTimeReply'} lists A's like of B's ${what} with its exact $createdAt (the "liked your ${what}" source)`, recent,
-      describeValue(tuple && { createdAt: tuple.createdAt }));
-    // The heart state: byLiker [$ownerId] terminal target, the owner-pinned `in` batch.
+  const since = Date.now() - 3_600_000;
+  for (const [docType, targetId, data, what, [notifyCase, heartCase, unlikeCase]] of likes) {
+    const { target: field, author } = LIKE_FIELDS[docType];
+    const [authorIndex, targetIndex] = docType === 'like' ? ['byAuthorPostTime', 'byPost'] : ['byAuthorReplyTime', 'byReply'];
+    // "Liked your post": the per-target read since a watermark, newest first.
+    const notified = await likesOfTarget(ctx, docType, botB.ownerId, targetId, ['$createdAt', '>', since]);
+    const mine = [...notified.values()].find((document) => document && idOf(document.ownerId) === botA.ownerId);
+    check(`${notifyCase} ${authorIndex} lists A's like of B's ${what} since an hour ago (\`${author} ==\`, \`${field} ==\`, \`$createdAt >\`; the "liked your ${what}" source)`,
+      mine !== undefined && Number(mine.createdAt) > since, describeValue(mine && { createdAt: mine.createdAt }));
+    // The heart state: byPost / byReply [target] terminal $ownerId, the target `in` batch pinned to the viewer.
     const hearts = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: docType,
-      where: [['$ownerId', '==', botA.ownerId], [field, 'in', [targetId]]], orderBy: [['$ownerId', 'asc'], [field, 'asc']], limit: 1 }));
-    check(`${tupleCase} ${docType}.byLiker answers "did A like it" (\`$ownerId ==\`, \`${field} in\`)`, [...hearts.values()].filter(Boolean).length === 1);
-    if (!tuple) continue;
+      where: [[field, 'in', [targetId]], ['$ownerId', '==', botA.ownerId]], orderBy: [[field, 'asc'], ['$ownerId', 'asc']], limit: 1 }));
+    check(`${heartCase} ${docType}.${targetIndex} answers "did A like it" (\`${field} in\`, \`$ownerId ==\`)`, [...hearts.values()].filter(Boolean).length === 1);
+    const tuple = await likeTuple(ctx, docType, botB.ownerId, targetId, botA.ownerId);
+    if (!tuple) { check(`${unlikeCase} unlike fixture`, false, `A's like was not found on ${authorIndex} with its $createdAt`); continue; }
     const { document } = buildDocument({ contractId, docType, ownerId: botA.ownerId, id: tuple.id, createdAt: tuple.createdAt, data });
-    expectAccepted(`${unlikeCase} A unlikes B's ${what} by values, the tuple read off the author index`,
+    expectAccepted(`${unlikeCase} A unlikes B's ${what} by values, the tuple read off ${authorIndex} (\`$createdAt <=\` keyset)`,
       await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await liked(docType, targetId)) }));
   }
 }
@@ -1606,14 +1628,25 @@ function selfTest() {
   expect('mentionedUserAndTime [mentionedUserId, $createdAt] is permanent (no window), skipped when absent, like tagAndTime (n1c)', shape('post', 'mentionedUserAndTime') === 'mentionedUserId,$createdAt' && index('post', 'mentionedUserAndTime').skipIfAbsent === true && index('post', 'mentionedUserAndTime').timeRange === undefined);
   expect('reply parentOwnerRecent [$createdAt, parentOwnerId] is a 7-day window (n2a)', weekly('reply', 'parentOwnerRecent', '$createdAt,parentOwnerId'));
   // Likes keep their permanent indexes: a windowed indexOnly index cannot be
-  // read as documents (the node refuses it), and byAuthorTime* carry the unlike's $createdAt.
-  expect('like / likeReply byAuthorTimePost/Reply [author, $createdAt, target] terminal $ownerId are permanent (n2b, n2e, t2h)',
-    shape('like', 'byAuthorTimePost') === 'postAuthor,$createdAt,postId' && index('like', 'byAuthorTimePost').terminal === '$ownerId' && index('like', 'byAuthorTimePost').timeRange === undefined
-      && shape('likeReply', 'byAuthorTimeReply') === 'replyAuthor,$createdAt,replyId' && index('likeReply', 'byAuthorTimeReply').terminal === '$ownerId' && index('likeReply', 'byAuthorTimeReply').timeRange === undefined);
-  expect('byLiker [$ownerId] terminal the target: the heart state (n2c, n2f)',
-    shape('like', 'byLiker') === '$ownerId' && index('like', 'byLiker').terminal === 'postId'
-      && shape('likeReply', 'byLiker') === '$ownerId' && index('likeReply', 'byLiker').terminal === 'replyId'
-      && !index('like', 'byAuthorRecent') && !index('likeReply', 'byAuthorRecent'));
+  // read as documents (the node refuses it). Design C: the heart state reads
+  // the target index (terminal $ownerId), and the author index pins the target
+  // before $createdAt, so it serves the per-post notification read, the
+  // unlike tuple and the author's rankings. There is no byLiker.
+  const names = (type) => schemas[type].indices.map((i) => i.name).join(',');
+  const byAuthor = index('like', 'byAuthorPostTime');
+  expect('like indexes are exactly byPost, byHashtagPost, byAuthorPostTime, byTrendPost, byTrendHashtagPost; likeReply exactly byReply, byAuthorReplyTime',
+    names('like') === 'byPost,byHashtagPost,byAuthorPostTime,byTrendPost,byTrendHashtagPost' && names('likeReply') === 'byReply,byAuthorReplyTime');
+  expect('like / likeReply byPost / byReply [target] terminal $ownerId: the heart state (n2c, n2f)',
+    shape('like', 'byPost') === 'postId' && index('like', 'byPost').terminal === '$ownerId' && index('like', 'byPost').rangeCountable === true
+      && shape('likeReply', 'byReply') === 'replyId' && index('likeReply', 'byReply').terminal === '$ownerId');
+  expect('like byAuthorPostTime [postAuthor, postId, $createdAt] terminal $ownerId, rangeCountable, ranked at [postAuthor, postId], permanent (n2b, n2d, t2h)',
+    shape('like', 'byAuthorPostTime') === 'postAuthor,postId,$createdAt' && byAuthor.terminal === '$ownerId' && byAuthor.rangeCountable === true
+      && JSON.stringify(byAuthor.rankedCountable?.at) === JSON.stringify(['postAuthor', 'postId']) && byAuthor.timeRange === undefined);
+  expect('likeReply byAuthorReplyTime [replyAuthor, replyId, $createdAt] terminal $ownerId, permanent (n2e, n2g)',
+    shape('likeReply', 'byAuthorReplyTime') === 'replyAuthor,replyId,$createdAt' && index('likeReply', 'byAuthorReplyTime').terminal === '$ownerId'
+      && index('likeReply', 'byAuthorReplyTime').timeRange === undefined);
+  expect('no byLiker, byAuthorPost, byAuthorTimePost, byAuthorTimeReply or byAuthorRecent on like / likeReply',
+    ['like', 'likeReply'].every((t) => ['byLiker', 'byAuthorPost', 'byAuthorTimePost', 'byAuthorTimeReply', 'byAuthorRecent'].every((n) => !index(t, n))));
   expect('follow.followers and followRequest.target stay permanent (no window)', index('follow', 'followers')?.timeRange === undefined && index('followRequest', 'target')?.timeRange === undefined);
   const retired = { post: ['quotedPostOwnerAndTime'], reply: ['parentOwnerAndTime'] };
   expect('the permanent notification indexes are gone (replaced by the windows)', Object.entries(retired).every(([type, names]) => names.every((n) => !index(type, n))));
