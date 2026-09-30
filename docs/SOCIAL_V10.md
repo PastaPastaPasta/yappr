@@ -38,7 +38,7 @@ All sizes are the signed create measured with the beta.7 SDK. The cap is 20,480 
 
 | Contract | Topology | Change | Signed create |
 | --- | --- | --- | ---: |
-| social v10 | `v10` | new cut (below), re-cut for merged count indexes and reposts-as-quotes | **17,284 B** (2,716 B under budget; 18,178 B before the re-cut) |
+| social v10 | `v10` | new cut (below), re-cut for merged count indexes and reposts-as-quotes, then for single mentions and 7-day notification windows | **17,068 B** (2,932 B under budget; 18,178 B before the re-cuts) |
 | storefront | `v5` | beta.7 grammar; QA D-25 (an order needs an open store); `categoryAndTime` skips items with no section | 14,861 B (was 14,588 on beta.6) |
 | blog | `v5` | beta.7 grammar only; keeps the beta.6 comments-off rule and owner gate | 6,489 B |
 | pollr | `v4` | beta.7 grammar only | 6,004 B |
@@ -63,7 +63,7 @@ node scripts/validate-contract-offline.mjs --constraints
 ### sha256 of each file the publisher pins
 
 ```
-d9318f6dd9cc74d6afaaa9b9611db30966ed3feb0b0294541fd194ac2a09b429  yappr-social-contract-v10.json   (new; e29f77f6… before the re-cut)
+7830ed5585ca1966ea61fcd1353bcf514dd80542d0c7ff7bbe3ad9c2cf114f75  yappr-social-contract-v10.json   (new; e29f77f6… first cut, d9318f6d… after the count re-cut)
 ecd08e7676c88cf8e623cce82ddfe614d96444f487f1d2cf43411fe4762d0735  yappr-storefront-contract.json   (changed)
 464b605e652d6dac031fee9576d9573bf25b5fe6dda530b7f8330da78d915dbe  yappr-blog-contract.json        (changed)
 dbc8006389b4caf421b1379de2a76bbf105182d10c76e614c8ba16a8f13113d5  pollr-contract.json             (changed)
@@ -106,14 +106,17 @@ The translation is mechanical, and `lib/contract-topology.test.ts` pins every v1
 | 6 | **One hashtag** (`post.hashtag`) | An array cannot be indexed (10206). The validator now proves that offline |
 | 7 | **The DashPay profile is the base profile; `yapprProfile` is the extension**, in social. `ownerRefersTo` requires a DashPay `profile` owned by the writer (`findBy { $ownerId: "." }` into DashPay's unique `ownerId` index; 40120 without one), moderator-deletable. The legacy social `profile` doctype and the profile contract are retired on v10 | Users with a DashPay profile show their name and avatar at once; one registration. DashPay caps the name at 25 and the bio (`publicMessage`) at 140. Payment addresses stay in `yapprProfile.paymentUris` |
 | 8 | **No doctype descriptions** | Kept here instead; they would cost about 1,183 B of the headroom |
-| 9 | **`beat` removed; trending is ROLLING, on `like` itself.** `like` keeps 7 indexes: byPost, byHashtagPost (`skipIfAbsent`), byAuthorPost, byAuthorTimePost, byLiker, plus **`byTrendPost`** `[$createdAt, postId]` (72h windows every 24h, ranked) for top posts and **`byTrendHashtagPost`** `[$createdAt, hashtag, postId]` (24h windows every 6h, `skipIfAbsent`, ranked at `[hashtag, postId]`) for trending tags and a tag's top posts. `byDayPost`, `byDayAuthorPost` and `byDayHashtagPost` are gone: there is no windowed creator axis, so the creator leaderboard and a profile's top are all-time on v10. All windows expire after a week (`ttl` 604800) | One transition per like instead of two. The client reads each rolling grid through its **oldest** open window, which always spans ~18-24h (tags) or ~48-72h (posts), where a daily grid restarts empty at midnight UTC. The two grids stay distinct, so neither shares the other's storage or `ttl`. The all-time `byHashtagPost` must stay, with its own skip (#5162 refuses an indexOnly optional property without an untimed single-skip index). **Decision:** BETA7-PLAN's D-3 proposed the daily grid (cheaper by ~11.9M per tagged like); the user reversed it on 2026-09-28 in favour of this rolling design, measured then through drive-abci at 77.5M untagged / 91.3M tagged steady, against 76.7M / 117.5M for v9's like + beat |
-| 10 | **`skipIfAbsent` on every stored index over an optional property**: post `quotesOfPost`, `quotesOfReply`, `quotedPostOwnerAndTime`, `tagAndTime`, `ownerAndQuotedPost`, `ownerAndQuotedReply`; report `ownerAndPost`, `ownerAndReply`, `byPost`, `byReply`. Not `repliesOf`: its `replyToReplyId` must stay nullable, since direct replies live under the null branch (#16) | No null-key entries. A plain post is 167.5M / 135.8M against v9's 323.5M / 189.9M. Every client read of these indexes binds the property with `==`, which a skip index serves |
+| 9 | **`beat` removed; trending is ROLLING, on `like` itself.** `like` keeps 7 indexes: byPost, byHashtagPost (`skipIfAbsent`), byAuthorPost, byAuthorTimePost, byLiker (#19), plus **`byTrendPost`** `[$createdAt, postId]` (72h windows every 24h, ranked) for top posts and **`byTrendHashtagPost`** `[$createdAt, hashtag, postId]` (24h windows every 6h, `skipIfAbsent`, ranked at `[hashtag, postId]`) for trending tags and a tag's top posts. `byDayPost`, `byDayAuthorPost` and `byDayHashtagPost` are gone: there is no windowed creator axis, so the creator leaderboard and a profile's top are all-time on v10. All windows expire after a week (`ttl` 604800) | One transition per like instead of two. The client reads each rolling grid through its **oldest** open window, which always spans ~18-24h (tags) or ~48-72h (posts), where a daily grid restarts empty at midnight UTC. The two grids stay distinct, so neither shares the other's storage or `ttl`. The all-time `byHashtagPost` must stay, with its own skip (#5162 refuses an indexOnly optional property without an untimed single-skip index). **Decision:** BETA7-PLAN's D-3 proposed the daily grid (cheaper by ~11.9M per tagged like); the user reversed it on 2026-09-28 in favour of this rolling design, measured then through drive-abci at 77.5M untagged / 91.3M tagged steady, against 76.7M / 117.5M for v9's like + beat |
+| 10 | **`skipIfAbsent` on every stored index over an optional property**: post `quotesOfPost`, `quotesOfReply`, `quotedPostOwnerRecent`, `mentionedUserAndTime`, `tagAndTime`, `ownerAndQuotedPost`, `ownerAndQuotedReply`; report `ownerAndPost`, `ownerAndReply`, `byPost`, `byReply`. Not `repliesOf`: its `replyToReplyId` must stay nullable, since direct replies live under the null branch (#16) | No null-key entries. A plain post is 167.5M / 135.8M against v9's 323.5M / 189.9M. Every client read of these indexes binds the property with `==`, which a skip index serves |
 | 11 | **Reports are resolved, not deleted.** `status` (1 no action, 2 content removed, 3 user actioned) and `resolution` (1–200 characters) are `moderatorAbilities.changeFields`, written with `moderatorChangeDocumentFields`; `byStatus [status, $createdAt]` and `byModerator [$moderatedBy, $moderatedAt]`; the 90-day `ttl` stays; `resolvedHasStatus` refuses a resolution without a status; moderators may still delete a report, with `deleteKeepsRecord: false` (spam purge, no removal record); the elected set gives `report` `["deleteDocuments", "changeDocumentFields"]` | The report stays visible with its outcome, stamped with who handled it and when. A field change does not count toward the team's action share. A reporter who sets `status` is refused 41124. `byStatus` does not skip, because an open report has no status |
 | 12 | **YAPP cannot be transferred or bought.** `startAsPaused: true`; `changeDirectPurchasePricingRules` authorized and admin `noOne`; `emergencyActionRules` already `noOne`, so nobody can unpause | Only transfers read the pause in drive-abci, so the token costs on post (10, a repost included), reply (3), like (1) and likeReply (1), the 100 once-per-identity grant, and owner mint and burn keep working. Seeders and batteries mint or claim; tips on v10 are credit tips |
 | 13 | **Election windows 3600 / 3600 s**, elected with the owner as interim and `ownerProtected`; `yapprProfile` moderated for `deleteDocuments` | Devnet only (the mainnet floor is one day; `--network mainnet` fails the audit on purpose) |
 | 14 | **Merged count indexes.** Every count-only index whose list twin can carry the count is dropped, and the twin is made `rangeCountable` (ranked where a leaderboard reads it). See [Merged count indexes](#merged-count-indexes) | One tree per relationship instead of two: follow −20.6M, a nested reply −25.8M, a plain post −9.7M per create. The counts read the same way |
-| 15 | **Reposts are quotes.** The `repost` doctype is gone. A repost is a `post` with `quotedPostId` (or `quotedReplyId`) and `quotedPostOwnerId` and no content. The unique `ownerAndQuotedPost` / `ownerAndQuotedReply` (`skipIfAbsent`) allow one quote **or** repost per author per target (**40105** on a second). A new rule, `notEmpty`, requires text, ciphertext, media, an embed or a quote (**10422**); ciphertext counts, so a private post with no teaser is valid | The user's design (2026-09-29). Reposts arrive through the post queries, so the feed's separate repost merge goes away; the quote count is the repost count; replies can be reposted (`quotedReplyId`). `quotedPostOwnerId` stays where-bound, and `quotedPostOwnerAndTime` drives "X reposted / quoted you". Pricing stays per doctype: a repost pays the post price (10 YAPP and the 80M action fee), accepted by the user |
+| 15 | **Reposts are quotes.** The `repost` doctype is gone. A repost is a `post` with `quotedPostId` (or `quotedReplyId`) and `quotedPostOwnerId` and no content. The unique `ownerAndQuotedPost` / `ownerAndQuotedReply` (`skipIfAbsent`) allow one quote **or** repost per author per target (**40105** on a second). A new rule, `notEmpty`, requires text, ciphertext, media, an embed or a quote (**10422**); ciphertext counts, so a private post with no teaser is valid | The user's design (2026-09-29). Reposts arrive through the post queries, so the feed's separate repost merge goes away; the quote count is the repost count; replies can be reposted (`quotedReplyId`). `quotedPostOwnerId` stays where-bound, and `quotedPostOwnerId` drives "X reposted / quoted you" (through `quotedPostOwnerRecent`, #18). Pricing stays per doctype: a repost pays the post price (10 YAPP and the 80M action fee), accepted by the user |
 | 16 | **One reply index for threads.** `repliesOf [rootPostId, replyToReplyId, $createdAt]`, `rangeCountable`, ranked at `rootPostId`, replaces `rootAndTime`, `byRoot`, `replyToReplyAndTime` and `byReplyToReply`. `replyToReplyId` is nullable, not skipped: a reply to the root sits under the null branch | The ranking at `rootPostId` makes every level below it a count tree, so the thread total (`rootPostId ==`), a reply's count (`+ replyToReplyId ==`) and the direct-reply count (`replyToReplyId == null`) are each one read. A reply to a reply costs 25.8M less. The thread's global newest-first order across branches is lost (see below) |
+| 17 | **One mention per post, on the post.** `postMention` is gone; `post.mentionedUserId` (identifier, `refersTo: identity`, optional) is the first @mention of the public text, shaped exactly like the single `hashtag`, and indexed permanently like it: `mentionedUserAndTime [mentionedUserId, $createdAt]`, `skipIfAbsent` (as `tagAndTime`). Further @mentions stay plain text | The user's call (2026-09-29): hashtags and mentions have the same shape, and a mention costs no second document (a post with a mention 170.4M against 201.7M for post + `postMention`). The Mentions tab keeps its full history, and mention notifications read `$createdAt > since`, so they ride the permanent notification bundle. **Upgrade path:** when Platform can index array elements, both become arrays in one re-cut (`hashtags`, `mentionedUserIds`) with the same index shapes over each element; nothing else about the post changes |
+| 18 | **The reply and quote notification indexes are 7-day windows.** `[$createdAt, recipient, …]` with `timeRange { range: 604800, step: 86400, ttl: 604800 }`: reply `parentOwnerRecent` and post `quotedPostOwnerRecent` (skip). `follow.followers` (the list, its counts, "most followed"), `followRequest.target` (pending requests persist), the mentions (#17) and the likes (#19) stay permanent | "Nobody needs week-old notifications" (the user). A TTL'd window is billed as processing, never as storage: a reply −18.4M and a quote −18.4M per create. Grid choice below (the grid is still under review) |
+| 19 | **Likes keep their permanent notification index** (`byAuthorTimePost`, `byAuthorTimeReply`: author, `$createdAt`, target, terminal `$ownerId`) and `byLiker [$ownerId]` terminal the target, as before the re-cut | The TTL attempt was reverted (user's decision, option C). The node refuses document reads through a windowed index of an indexOnly type ("IN_TIME_RANGE document queries are not supported on an indexOnly type": a bucketed entry holds only its window's start), so a windowed like index cannot list likers. The unlike's `$createdAt` would also have had to move into `byLiker` (`[$ownerId, postId, $createdAt]`), which costs +18.2M per like at steady state (945 B against 271 B) and cancels the saving: 65.2M per steady like permanent against 64.3M windowed. So like notifications keep exact times, and unlike keeps its tuple from `byAuthorTimePost` |
 
 Two changes on top of the `V10B7-FINAL` prototype:
 
@@ -130,7 +133,7 @@ Two changes on top of the `V10B7-FINAL` prototype:
 | post | `quotesOfPost [quotedPostId, $createdAt]` + `quoteCount [quotedPostId]` | `quotesOfPost`, `rangeCountable` | The quote (= repost) count from the list |
 | post | `quotesOfReply [quotedReplyId, $createdAt]` + `quoteReplyCount [quotedReplyId]` | `quotesOfReply`, `rangeCountable` | Same, for replies |
 | post | — | `ownerAndQuotedPost [$ownerId, quotedPostId]`, `ownerAndQuotedReply [$ownerId, quotedReplyId]`, unique, `skipIfAbsent` | One quote or repost per author per target; also "view your repost" |
-| post | `timeline`, `quotedPostOwnerAndTime`, `tagAndTime` | unchanged | 8 indexes (was 9) |
+| post | `timeline`, `quotedPostOwnerAndTime`, `tagAndTime` | unchanged here (`quotedPostOwnerAndTime` became the 7-day `quotedPostOwnerRecent` in the next re-cut) | 8 indexes (was 9) |
 | reply | `rootAndTime [rootPostId, $createdAt]` + `byRoot [rootPostId]`, `replyToReplyAndTime [replyToReplyId, $createdAt]` + `byReplyToReply [replyToReplyId]` | `repliesOf [rootPostId, replyToReplyId, $createdAt]`, `rangeCountable`, `rankedCountable { at: "rootPostId" }` | One index for the thread, its counts at two levels and the most-replied ranking. 3 indexes (was 6) |
 | follow | `following [$ownerId, $createdAt]` + `followingCount [$ownerId]` | `following`, `rangeCountable` | The following count from the list |
 | follow | `followers [followingId, $createdAt]` + `followerCount [followingId]` (rangeCountable, ranked) | `followers`, `rangeCountable`, `rankedCountable { at: "followingId" }` | The follower count and "most followed" from the list |
@@ -184,6 +187,41 @@ Earlier runs:
 - `ErQcL7YL…`: 4 grouped-count assertions compared in the wrong order (the data was right), and the two composites were refused by the path rule. Both fixed in `7a55a051`.
 - `EaxoC5My…`: 32/32 before the client shapes were added.
 - `BrQyHojS…`: 43/43 before c5/c6/g1.
+
+### Mentions and 7-day notification windows
+
+**Before (d9318f6d) and after (7830ed55):**
+
+| Type | Before | After |
+| --- | --- | --- |
+| postMention | `mentionedUserAndTime [mentionedUserId, $createdAt]`, `postAndMentioned` unique | removed |
+| post | — | `mentionedUserId` + `mentionedUserAndTime [mentionedUserId, $createdAt]`, permanent, skip, as `tagAndTime` (9 indexes) |
+| post | `quotedPostOwnerAndTime [quotedPostOwnerId, $createdAt]` | `quotedPostOwnerRecent [$createdAt, quotedPostOwnerId]`, 7-day window, skip |
+| reply | `parentOwnerAndTime [parentOwnerId, $createdAt]` | `parentOwnerRecent [$createdAt, parentOwnerId]`, 7-day window |
+| like, likeReply | `byAuthorTimePost` / `byAuthorTimeReply`; `byLiker` | unchanged (a windowed version was tried and reverted, #19) |
+
+**The grid.** Every window is 7 days long, a new one starts each day (UTC midnight), and entries live a week (`ttl` may not be under `range` and is capped at a week). A query reads the **oldest** open window, which holds the last six to seven days.
+
+The alternative was daily windows (1d/1d, ttl 7d). It is cheaper per write, by 3.3–4.6M, because a document sits in one window instead of seven. But reading a week then takes eight windows per source.
+
+The deciding fact is the request count per poll. beta.7 refuses `timeRange` in composite queries (`wasm-sdk` `composite_document.rs`), and a raw `$createdAt` clause may not bind bucket keys. So each windowed source is its own request:
+- weekly windows: **2 per poll** (replies, quotes and reposts);
+- daily windows: about **40 per poll**.
+
+The notifications poll runs often, so the weekly grid was adopted (still under review with the user). Follows, mentions, follow requests and likes stay permanent and still ride one composite.
+
+**What a window returns.**
+- **No time order inside a window.** Entries order by recipient, then by document id (stored types) or by the remaining properties and terminal (likes).
+- **No `since` clause.** A poll reads the whole window and the client filters and sorts by `$createdAt`. A full page (100) is continued with `startAfter`, up to a cap.
+- **Stored notifications carry the exact time.** Replies, quotes and reposts come back as the documents themselves.
+- **Likes are not windowed.** The node refuses to rebuild indexOnly documents from a windowed entry, which holds only its window's start (#19).
+
+**Proven live.** `prove-merged-counts` n1–n8 and k1–k4:
+- the reply and quote windows, and the composite refusals;
+- mentions and likes on their permanent indexes, alone and in the permanent bundle;
+- the heart state on `byLiker`, the Likes tab, and an unlike whose delete tuple came from `byAuthorTimePost`.
+
+Run 5 on bonsia refused the windowed like reads; that is what reverted #19's first design.
 
 ### The DashPay profile and the extension
 
@@ -239,6 +277,20 @@ These are `documentCreateCost` figures in credits, as new / known index values. 
 
 A reply to the root costs more the first time a thread gets one (the null branch and the ranking row) and less after that. A repost costs what a post costs; the user accepted that, rather than pricing a content-less post separately.
 
+**The mentions and notification-window re-cut** (same method):
+
+| Document | Before (d9318f6d) | Daily windows (1d/1d) | **Adopted: weekly windows (7d/1d)** |
+| --- | ---: | ---: | ---: |
+| post, plain | 146.2M / 116.5M | 146.2M / 116.5M | 146.2M / 116.5M |
+| quote | 210.7M / 148.2M | 189.0M / 140.6M | 192.3M / 144.2M |
+| repost | 206.1M / 143.6M | 184.3M / 136.0M | 187.7M / 139.6M |
+| post with a mention (before: post + `postMention`) | 201.7M / 150.1M | (mention indexed permanently: 170.4M / 127.0M) | (mention indexed permanently: 170.4M / 127.0M) |
+| reply to the root | 122.8M / 63.6M | 101.0M / 55.9M | 104.4M / 59.5M |
+| reply to a reply | 125.6M / 64.6M | 103.8M / 57.0M | 107.1M / 60.6M |
+| like, untagged | 133.6M / 47.2M | unchanged (#19) | unchanged (#19) |
+| like, tagged | 191.8M / 71.3M | unchanged | unchanged |
+| likeReply | 75.0M / 28.2M | unchanged | unchanged |
+
 `node scripts/validate-contract-offline.mjs <file> --cost` prints the defaults for every type.
 
 ### Considered and not adopted
@@ -246,6 +298,9 @@ A reply to the root costs more the first time a thread gets one (the null branch
 | Candidate | Why not |
 | --- | --- |
 | Doctype descriptions back (19,512 B) | 488 B of headroom is too thin for the next beta |
+| Daily notification windows (1d/1d, ttl 7d) | 3.3–4.6M cheaper per write, but eight windowed requests per source per poll (about 40), since composites take no `timeRange`; the weekly grid needs five |
+| Windowed like notifications (`byAuthorRecent`), with the unlike tuple in `byLiker` | Refused as documents by the node on an indexOnly type, and the `byLiker` tuple (+18.2M per steady like) cancels the TTL saving (#19). Also measured: counts only (option A, 64.7M; "N likes this week"); no author index at all (option B, 57.8M; likers per post without time, diffed on the device) |
+| A mention array or several mention fields | Platform cannot index array elements yet, and a second field could not share the index; one field mirrors `hashtag` and upgrades with it |
 | Keeping the count-only indexes beside their list twins | Every count they served reads from the twin (prefix-to-last, at-chain), proven live; each cost one more tree per write |
 | `repliesOf` ranked at both `rootPostId` and `replyToReplyId` | 189.4M / 120.7M per reply against 180.4M / 119.5M; the ranking at `rootPostId` already makes the deeper level a count tree, and nothing ranks replies per parent |
 | Keeping `rootAndTime` + `replyToReplyAndTime` (both made `rangeCountable`) | 185.4M / 127.7M per reply against 180.4M / 119.5M, and two indexes where one serves every thread read; the price is the whole-thread newest-first order |
@@ -310,7 +365,9 @@ The election ops script files reasons with `--reasons SPM:Spam,ABU:Abuse,REP:Rep
   - Reposts: a repost creates a bare quote, and un-reposting deletes it; a quote with text is never deleted without a confirm. While a bare repost stands, the menu offers Undo Repost; a quote offers "View your quote". A 40105 on your own bare repost (a double click, a lost acknowledgement) counts as done.
   - Display: a bare repost renders as "X reposted" over its target, and the feed collapses several reposts of one target into one card ("X and N others reposted"). A bare repost opened directly redirects to its target. Blocked or hidden-sensitive targets stay hidden when reposted. A repost of a deleted post shows its owner a Remove button.
   - The separate repost feed merge is gone, and the engagements page splits the quote list into Reposts and Quotes.
-  - Notifications: "reposted / quoted your post" come from `quotedPostOwnerAndTime`.
+  - Notifications: replies and quotes/reposts read the 7-day windows (one request each, filtered and sorted by the client); follows, mentions, follow requests and likes ride one permanent bundle (`$createdAt > since`). "reposted / quoted your post" come from `quotedPostOwnerRecent`, mentions from the permanent `mentionedUserAndTime`.
+  - Mentions: compose indexes only the first @mention of the public text as `mentionedUserId`, and the Mentions tab reads the permanent `mentionedUserAndTime` (full history).
+  - Likes are unchanged: permanent like notifications with exact times, and unlike recovers its tuple from `byAuthorTimePost`.
   - Threads read `repliesOf`: direct replies under the null branch, and children per parent.
   - `createPost` writes `language` only where posts carry one, and timeline reads use `postTimelineClauses` (both from #600).
 - **Storefront topology.** `lib/constants.ts` adds `v5` (`storefrontOrdersCarryStoreStatus`).
