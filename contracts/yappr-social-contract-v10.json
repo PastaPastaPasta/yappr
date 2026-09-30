@@ -641,8 +641,8 @@
           ],
           "timeRange": {
             "on": "$createdAt",
-            "range": 604800,
-            "step": 86400,
+            "range": 302400,
+            "step": 302400,
             "ttl": 604800
           },
           "skipIfAbsent": true
@@ -1226,10 +1226,22 @@
           ],
           "timeRange": {
             "on": "$createdAt",
-            "range": 604800,
-            "step": 86400,
+            "range": 302400,
+            "step": 302400,
             "ttl": 604800
           }
+        },
+        {
+          "name": "mentionedUserAndTime",
+          "properties": [
+            {
+              "mentionedUserId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "skipIfAbsent": true
         }
       ],
       "required": [
@@ -1322,6 +1334,17 @@
           "minItems": 8,
           "maxItems": 8,
           "position": 10
+        },
+        "mentionedUserId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "refersTo": {
+            "type": "identity"
+          },
+          "position": 11
         }
       },
       "tokenCost": {
