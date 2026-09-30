@@ -43,6 +43,8 @@
  *          included) bundle
  *   k1-k4  byLiker: did I like these (posts, replies), the Likes tab; an
  *          unlike whose delete tuple comes from byAuthorTimePost
+ *   k6     a question: can byPost ([postId] terminal $ownerId) answer "did I
+ *          like these" (batched and single), so byLiker could go?
  *   t1-t2  the whole thread at the app's page size, and paged with startAfter
  *   l1-l2  the quote lists at limit 100, of a post and of a reply
  *   c5     the For You page exactly as composite-feed-page builds it (timeline
@@ -587,14 +589,27 @@ async function main() {
   // ---- k: the heart state (byLiker) and an unlike (tuple from byAuthorTimePost) ----
   console.log('\n--- k. byLiker: did I like these; the unlike tuple from byAuthorTimePost ---');
   const likeOf = (d) => d.toObject?.() ?? d;
-  await attempt('k1', () => sdk.documents.query(q('like', { where: [['$ownerId', '==', B.ownerId], ['postId', 'in', [T1, T2, T3]]], limit: 3 })), (r) => {
+  // An `in` on an indexOnly terminal needs an orderBy on it (the app's queryOwnedPostIds sends this).
+  const ownedBy = (field) => [['$ownerId', 'asc'], [field, 'asc']];
+  await attempt('k1', () => sdk.documents.query(q('like', { where: [['$ownerId', '==', B.ownerId], ['postId', 'in', [T1, T2, T3]]], orderBy: ownedBy('postId'), limit: 3 })), (r) => {
     const liked = docsOf(r).map(likeOf).map((l) => toBase58(l.postId));
     check('k1 "did B like these" (byLiker [$ownerId] terminal postId, `postId in`): T1 and T2', sameSet(liked, [T1, T2]), JSON.stringify(liked));
   });
   await attempt('k2', () => sdk.documents.query(q('like', { where: [['$ownerId', '==', B.ownerId]], limit: 100 })), (r) => check('k2 B\'s likes (the Likes tab, byLiker): 2', docsOf(r).length === 2, `${docsOf(r).length}`));
-  await attempt('k3', () => sdk.documents.query(q('likeReply', { where: [['$ownerId', '==', A.ownerId], ['replyId', 'in', [r1, r2]]], limit: 2 })), (r) => {
+  await attempt('k3', () => sdk.documents.query(q('likeReply', { where: [['$ownerId', '==', A.ownerId], ['replyId', 'in', [r1, r2]]], orderBy: ownedBy('replyId'), limit: 2 })), (r) => {
     const liked = docsOf(r).map(likeOf).map((l) => toBase58(l.replyId));
     check('k3 "did A like these replies" (likeReply.byLiker): r1', same(liked, [r1]), JSON.stringify(liked));
+  });
+  // k6 (a question, not an app shape): can byPost [postId] terminal $ownerId
+  // answer "did I like these posts", so that byLiker could go? Before k4's unlike.
+  await attempt('k6', () => sdk.documents.query(q('like', { where: [['postId', 'in', [T1, T2, T3]], ['$ownerId', '==', B.ownerId]], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 3 })), (r) => {
+    const likes = docsOf(r).map(likeOf);
+    const pairs = likes.map((l) => `${toBase58(l.$ownerId)}>${toBase58(l.postId)}`);
+    check('k6 byPost answers "did B like these" (`postId in`, `$ownerId ==`): accepted, B\'s likes of T1 and T2 only', sameSet(pairs, [`${B.ownerId}>${T1}`, `${B.ownerId}>${T2}`]), JSON.stringify(pairs));
+  });
+  await attempt('k6b', () => sdk.documents.query(q('like', { where: [['postId', '==', T2], ['$ownerId', '==', B.ownerId]], limit: 1 })), (r) => {
+    const likes = docsOf(r).map(likeOf);
+    check('k6b byPost, the single form (`postId ==`, `$ownerId ==`): accepted, B\'s like of T2', likes.length === 1 && toBase58(likes[0].$ownerId) === B.ownerId && toBase58(likes[0].postId) === T2, JSON.stringify(likes.map((l) => [toBase58(l.$ownerId), toBase58(l.postId)])));
   });
   let recovered = null;
   await attempt('k4', async () => {
@@ -606,7 +621,7 @@ async function main() {
     await sdk.documents.delete({ document, identityKey: B.identityKey, signer: B.signer }).catch((e) => console.log(`     (unlike reported: ${describeErr(e).slice(0, 140)})`));
     await sleep(SETTLE_MS);
     const [hearts, likeCount] = await Promise.all([
-      sdk.documents.query(q('like', { where: [['$ownerId', '==', B.ownerId], ['postId', 'in', [T2]]], limit: 1 })),
+      sdk.documents.query(q('like', { where: [['$ownerId', '==', B.ownerId], ['postId', 'in', [T2]]], orderBy: ownedBy('postId'), limit: 1 })),
       count('like', [['postId', '==', T2]]),
     ]);
     return { left: docsOf(hearts).length, likes: total(likeCount) };

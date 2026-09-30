@@ -1135,7 +1135,7 @@ async function caseN2NotificationWindows(ctx) {
       describeValue(tuple && { createdAt: tuple.createdAt }));
     // The heart state: byLiker [$ownerId] terminal target, the owner-pinned `in` batch.
     const hearts = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: docType,
-      where: [['$ownerId', '==', botA.ownerId], [field, 'in', [targetId]]], limit: 1 }));
+      where: [['$ownerId', '==', botA.ownerId], [field, 'in', [targetId]]], orderBy: [['$ownerId', 'asc'], [field, 'asc']], limit: 1 }));
     check(`${tupleCase} ${docType}.byLiker answers "did A like it" (\`$ownerId ==\`, \`${field} in\`)`, [...hearts.values()].filter(Boolean).length === 1);
     if (!tuple) continue;
     const { document } = buildDocument({ contractId, docType, ownerId: botA.ownerId, id: tuple.id, createdAt: tuple.createdAt, data });
