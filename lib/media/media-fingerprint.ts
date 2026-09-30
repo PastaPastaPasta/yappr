@@ -62,22 +62,39 @@ export async function computeMediaHashes(file: Blob): Promise<MediaHashes> {
  * so nothing is claimed.
  */
 export function checkServedMedia(url: string, posted: MediaHashes): Promise<boolean | null> {
-  // One check per served URL and posted hash: a card that remounts (feed
-  // scroll, navigation) must not download the image again to re-check it.
+  // One check per served URL and posted hash at a time: a card that remounts
+  // (feed scroll, navigation) reuses a pending or recent check rather than
+  // downloading the image again. A verdict is only trusted for
+  // SERVED_CHECK_TTL_MS, since the bytes behind a URL can change; a check that
+  // could not run is dropped as soon as it settles, so the next load retries.
   const key = `${url}#${bytesToHex(posted.mediaHash)}`
   const cached = servedChecks.get(key)
-  if (cached) return cached
+  if (cached && (cached.expiresAt === undefined || Date.now() < cached.expiresAt)) return cached.check
+  servedChecks.delete(key)
   if (servedChecks.size >= MAX_SERVED_CHECKS) {
     const oldest = servedChecks.keys().next()
     if (!oldest.done) servedChecks.delete(oldest.value)
   }
-  const check = runServedCheck(url, posted)
-  servedChecks.set(key, check)
-  return check
+  const entry: ServedCheck = { check: runServedCheck(url, posted) }
+  servedChecks.set(key, entry)
+  entry.check.then((result) => {
+    if (servedChecks.get(key) !== entry) return
+    if (result === null) servedChecks.delete(key)
+    else entry.expiresAt = Date.now() + SERVED_CHECK_TTL_MS
+  }, () => servedChecks.delete(key))
+  return entry.check
+}
+
+interface ServedCheck {
+  check: Promise<boolean | null>
+  /** Unset while the check is in flight. */
+  expiresAt?: number
 }
 
 const MAX_SERVED_CHECKS = 200
-const servedChecks = new Map<string, Promise<boolean | null>>()
+/** How long a completed verdict for a served URL is reused before re-fetching. */
+const SERVED_CHECK_TTL_MS = 5 * 60 * 1000
+const servedChecks = new Map<string, ServedCheck>()
 
 async function runServedCheck(url: string, posted: MediaHashes): Promise<boolean | null> {
   try {
