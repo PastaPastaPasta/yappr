@@ -129,6 +129,73 @@ export function isAlreadyExistsError(error: unknown): boolean {
 }
 
 /**
+ * Checks if Platform refused a transition for its identity contract nonce —
+ * `InvalidIdentityNonceError`, state code **40204**: "Identity <id> is trying
+ * to set an invalid identity nonce. … error is nonce already present at tip"
+ * (or "in past", "too far in future", "too far in past"). Nothing executed and
+ * nothing was charged; the same write under a fresh nonce goes through. The
+ * usual cause is another write by the same identity, from another device,
+ * that took the nonce first.
+ */
+export function isIdentityNonceConflictError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /invalididentitynonce|invalid identity nonce/i.test(msg) ||
+    /nonce (already present|too far) /i.test(msg) ||
+    hasConsensusCode(error, [40204])
+  )
+}
+
+/**
+ * Whether a 40204 refusal proves the refused nonce can never execute: it is
+ * already present (at the tip or filled in behind it) or too far behind the
+ * tip. "Too far in future" proves nothing of the kind: it comes from a node
+ * behind the one that may already have admitted the same transition.
+ */
+export function isNonceSpentRefusal(error: unknown): boolean {
+  return /nonce (already present|too far in past)/i.test(extractErrorMessage(error))
+}
+
+/**
+ * Whether Platform gave a verdict on a transition: refused it (a consensus
+ * error, at broadcast or as a paid error at execution) rather than leaving its
+ * outcome unknown. A refused transition does not execute later.
+ */
+export function isConsensusRefusal(error: unknown): boolean {
+  if (consensusCodeOf(error) !== null) return true
+  const msg = extractErrorMessage(error)
+  return (
+    /state transition broadcast error/i.test(msg) ||
+    /\bcode"?\s*[=:]\s*[1-4]\d{4}\b/.test(msg) ||
+    isIdentityNonceConflictError(error)
+  )
+}
+
+/**
+ * What `stateTransitionService.createDocument` reports for a create whose
+ * identity contract nonce Platform shows consumed while its document is proved
+ * absent at the same height or later (QA D-01). It can never execute, so
+ * nothing was written; but what consumed the nonce is unknown (another write by
+ * the same identity, or this create refused as a paid error whose answer was
+ * lost), so it is not a nonce clash to retry blindly.
+ */
+export const CREATE_NOT_RECORDED_ERROR = 'This was not saved: the network used its place without recording it. Check, then try again.'
+
+/**
+ * Why a write was not sent at all: a transition this browser signed earlier
+ * has not been confirmed or refused, and could still take the nonce this one
+ * would carry (QA D-01, `lib/services/identity-nonce.ts`).
+ */
+export const PENDING_WRITE_ERROR = 'An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again.'
+
+/**
+ * Why a write was not sent at all: this browser's storage would not record
+ * its nonce as pending, so the next write (in this tab or another) could not
+ * see it and might sign the same one (QA D-01, `lib/services/identity-nonce.ts`).
+ */
+export const NONCE_STORE_ERROR = 'This browser\'s storage is full or blocked, so this was not sent. Free up site storage, then try again.'
+
+/**
  * Checks if an error from waitForResponse is a non-fatal verification
  * issue that should not fail an operation whose broadcast succeeded.
  * These are typically transient network/propagation issues (e.g. a newly
@@ -989,6 +1056,12 @@ export function categorizeError(error: unknown): string {
   }
   if (isFeeMultiplierNotToleratedError(error)) {
     return 'The network\'s fee level changed while this was being sent. Nothing was posted — try again.'
+  }
+  if (isIdentityNonceConflictError(error)) {
+    return 'Another write from your account went out at the same moment, so this one was not saved. Try again.'
+  }
+  if ([CREATE_NOT_RECORDED_ERROR, PENDING_WRITE_ERROR, NONCE_STORE_ERROR].includes(extractErrorMessage(error))) {
+    return extractErrorMessage(error)
   }
   if (isActionFeeAgreementError(error)) {
     return 'This app is out of date with the network\'s fee rules. Reload to get the latest version.'

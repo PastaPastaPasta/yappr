@@ -10,6 +10,7 @@ import { classifyModerationError, extractErrorMessage, hasConsensusCode, isDocum
 import { isReportGoneError, type ReportRecord, type ReportStatus } from '@/lib/reports';
 import { RESTORE_WINDOW_MS, dropSnapshot, loadSnapshot, removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots';
 import { getEvoSdk } from './evo-sdk-service';
+import { withSdkSignedWrite } from './identity-nonce';
 import { identifierToBase58 } from './sdk-helpers';
 import { signerService } from './signer-service';
 
@@ -821,7 +822,7 @@ class ModerationService {
     try {
       const sdk = await getEvoSdk();
       const { identity, signer } = await this.getCriticalSigner(moderatorId);
-      await action(sdk, { identity, signer });
+      await withSdkSignedWrite(moderatorId, YAPPR_CONTRACT_ID, () => action(sdk, { identity, signer }));
       if (moderatedIdentityId) this.standingCache.delete(moderatedIdentityId);
       return { success: true };
     } catch (error) {

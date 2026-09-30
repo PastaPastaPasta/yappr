@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { bytesEqual } from '@/lib/bytes'
+import { CREATE_NOT_RECORDED_ERROR } from '@/lib/error-utils'
 import { weekOf, weekStart } from '@/lib/dm/kdf'
 import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, CAROL_ID, CAROL_PRIV } from '@/lib/dm/test-fixtures'
 import { encryptMessage } from '@/lib/dm/stream'
@@ -339,6 +340,9 @@ describe('sender', () => {
     expect(classifyWriteFailure('Document X has duplicate unique properties ["tag"] with other documents')).toBe('duplicate')
     expect(classifyWriteFailure('Document X has invalid revision Some(2). The desired revision is 2 | code=40106')).toBe('stale')
     expect(classifyWriteFailure('Protocol error: Identity Y is trying to set an invalid identity nonce. The current identity nonce is 764, we are setting 764, error is nonce already present at tip')).toBe('nonce')
+    // A create whose nonce was consumed without it (QA D-01) is no nonce clash: it may have been
+    // refused as a paid error whose answer was lost, so an automatic rebuild could pay twice.
+    expect(classifyWriteFailure(CREATE_NOT_RECORDED_ERROR)).toBe('other')
     expect(classifyWriteFailure('insufficient balance')).toBe('other')
     // Never reached a verdict: retryable, unlike a real refusal.
     expect(classifyWriteFailure('context provider error: invalid quorum: Quorum not found in cache for hash: 00ab')).toBe('transport')

@@ -41,6 +41,47 @@ export function nextIdentityContractNonce(current: bigint | undefined | null): b
   return ((current ?? BigInt(0)) & NONCE_SEQUENCE_MASK) + BigInt(1)
 }
 
+/**
+ * How far from the tip Drive accepts a nonce, either way (rs-dpp
+ * `MISSING_IDENTITY_REVISIONS_MAX_BYTES`): ahead of it for a new transition,
+ * behind it for one filling a gap.
+ */
+const MAX_NONCE_DISTANCE = BigInt(24)
+
+/**
+ * The nonce the next transition should carry, given the value
+ * `identities.contractNonce` returned and the last nonce this browser
+ * broadcast against the same contract (null when none): one past whichever is
+ * further along, so a write never takes the nonce of one that has not executed
+ * yet. A reservation too far ahead for Drive to accept belongs to transitions
+ * that were dropped, and is ignored.
+ */
+export function allocateIdentityContractNonce(current: bigint | undefined | null, reserved: bigint | null): bigint {
+  const next = nextIdentityContractNonce(current)
+  if (reserved === null || reserved < next) return next
+  const tip = next - BigInt(1)
+  return reserved + BigInt(1) - tip > MAX_NONCE_DISTANCE ? next : reserved + BigInt(1)
+}
+
+/**
+ * Whether `nonce` can no longer be used, given the raw value
+ * `identities.contractNonce` returned: it is the tip, it was filled in behind
+ * the tip, or it has fallen out of the window behind the tip. Mirrors Drive's
+ * `validate_identity_nonce_update`. A transition carrying a consumed nonce can
+ * never execute, so when its document is not on Platform either, it was lost
+ * to another write that took the same nonce.
+ */
+export function identityContractNonceConsumed(current: bigint | undefined | null, nonce: bigint): boolean {
+  const raw = current ?? BigInt(0)
+  const tip = raw & NONCE_SEQUENCE_MASK
+  if (nonce > tip) return false
+  const behind = tip - nonce
+  if (behind === BigInt(0) || behind > MAX_NONCE_DISTANCE) return true
+  // Bit 40 + (behind - 1) is set while that nonce is still missing.
+  const missingBit = BigInt(1) << (BigInt(40) + behind - BigInt(1))
+  return (raw & missingBit) === BigInt(0)
+}
+
 export interface DocumentIdInputs {
   /** Data contract id, base58 or 32 raw bytes. */
   contractId: string | Uint8Array

@@ -429,14 +429,18 @@ export function TipModal() {
         noteMessage,
         Date.now() - CLOCK_SKEW_MARGIN_MS
       )
-      const bytes = await buildUnsignedYappTipTransition(
+      const request = await buildUnsignedYappTipTransition(
         user.identityId,
         recipientInfo.id,
         yappAmountBig,
         tipService.tipNoteFor(tipTarget, noteMessage)
       )
-      if (walletSessionRef.current !== session) return
-      setWalletUri(buildYapprStateTransitionUri(bytes, getConfiguredNetwork()))
+      // Abandoned before its QR went up: no wallet has it, so free its nonce.
+      if (walletSessionRef.current !== session) {
+        await request.discard()
+        return
+      }
+      setWalletUri(buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return
       logger.error('Failed to build wallet tip request:', err)
