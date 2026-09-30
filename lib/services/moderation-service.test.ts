@@ -210,7 +210,15 @@ describe('what a missing post or reply may claim', () => {
     expect(missingDocumentState(null, false, v10)).toBe('unavailable')
     // A record still outranks the author reading.
     expect(missingDocumentState(record(null), true, v10)).toBe('removed')
-    expect(missingDocumentState(record(20), true, v10)).toBe('loadFailed')
+  })
+
+  it('on v10, a proven absence after a restore is the author\'s delete, not a failed read', () => {
+    // The author deleted it after a moderator restored it: the restored record stays, and no new one is left.
+    expect(missingDocumentState(record(20), true, { authorsDelete: true, recordsRead: true })).toBe('deleted')
+    // Without a proof of absence it is still a failed read of a live document.
+    expect(missingDocumentState(record(20), false, { authorsDelete: true, recordsRead: true })).toBe('loadFailed')
+    // v9 keeps the restored record over a proof of absence.
+    expect(missingDocumentState(record(20), true, { authorsDelete: false, recordsRead: true })).toBe('loadFailed')
   })
 
   it('on v10, never claims the author\'s delete while the record lookup is pending or failed', () => {

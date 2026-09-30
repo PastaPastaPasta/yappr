@@ -276,9 +276,11 @@ export const toRemoval = (entry: RemovalEntry): DocumentRemoval => ({
 
 /**
  * What the hole a missing post or reply leaves may claim. A takedown needs a
- * standing removal record. A RESTORED record means the document is live
- * again, so its absence here is a failed read, not a takedown, and the old
- * reason no longer applies. Proof of absence with no record is a takedown
+ * standing removal record. A RESTORED record means the document came back,
+ * so the old reason no longer applies: its absence here is a failed read,
+ * unless authors delete for real (v10) and absence is proved, which is the
+ * author's delete after the restore (a moderator deleting it again would have
+ * left a fresh, standing record). Proof of absence with no record is a takedown
  * where only moderators can remove posts (v9), and the author's own delete
  * where authors can too (`authorsDelete`, v10: every moderator deletion of a
  * post or reply leaves a record). That reading needs the record lookup to
@@ -292,7 +294,8 @@ export function missingDocumentState(
   proven: boolean,
   { recordsRead = false, authorsDelete = authorDeletesLeaveHoles() }: { recordsRead?: boolean; authorsDelete?: boolean } = {}
 ): 'removed' | 'deleted' | 'loadFailed' | 'unavailable' {
-  if (removal) return removal.restoredAt === null ? 'removed' : 'loadFailed';
+  if (removal?.restoredAt === null) return 'removed';
+  if (removal) return proven && authorsDelete && recordsRead ? 'deleted' : 'loadFailed';
   if (!proven) return 'unavailable';
   if (!authorsDelete) return 'removed';
   return recordsRead ? 'deleted' : 'unavailable';

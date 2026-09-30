@@ -63,9 +63,11 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
         if (cancelled) return
         setRemoval(found)
         setRecordsRead(true)
-        // Only once no record claims it, so a takedown never reads as the
-        // author's delete while its record is still loading.
-        if (found || proven || removedByModerator || !kind || !authorDeletesLeaveHoles()) return
+        // Only once no standing record claims it, so a takedown never reads
+        // as the author's delete while its record is still loading. A
+        // restored record still needs the proof: the author may have deleted
+        // the document after it came back.
+        if (found?.restoredAt === null || proven || removedByModerator || !kind || !authorDeletesLeaveHoles()) return
         const absent = await provenAbsent(kind, [documentId])
         if (!cancelled) setProvedHere(absent.has(documentId))
       })
