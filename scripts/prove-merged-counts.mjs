@@ -35,7 +35,12 @@
  *          a by-id reply page with slots pinned to its root)
  *   w1-w2  bare reposts of a post and of a reply, read back
  *   o1-o2  the viewer's own quote/repost per target (ownerAndQuoted…, `in`)
- *   n1-n2  quote/repost notifications, alone and as a composite sibling
+ *   n1-n8  notifications on the 7-day windows: replies, quotes/reposts,
+ *          mentions, likes, reply likes (timeRange `oldest`, recipient
+ *          pinned); n6x/n7x a windowed source cannot ride a composite;
+ *          n8 the permanent sources still bundle
+ *   k1-k5  byLiker: did I like X (single, batched), the Likes tab, a reply
+ *          like, and an unlike whose delete tuple comes from byLiker
  *   t1-t2  the whole thread at the app's page size, and paged with startAfter
  *   l1-l2  the quote lists at limit 100, of a post and of a reply
  *   c5     the For You page exactly as composite-feed-page builds it (timeline
@@ -79,7 +84,7 @@ const CONSENSUS_CODE = /\bcode"?\s*[=:]\s*\d{4,5}\b/;
 // ---- The throwaway contract -------------------------------------------------
 
 /**
- * post, reply, follow and like exactly as social v10 declares them (indexes,
+ * post, reply, follow, like and likeReply exactly as social v10 declares them (indexes,
  * properties, rules, references: the fixture satisfies every `where`, and the
  * feed's by-id quote join needs `refersTo`), minus what needs the contract's
  * token or moderation (token costs, action fees, moderator abilities).
@@ -87,7 +92,7 @@ const CONSENSUS_CODE = /\bcode"?\s*[=:]\s*\d{4,5}\b/;
 function proofContractSource() {
   const social = JSON.parse(readFileSync(SOCIAL_V10, 'utf8'));
   const documentSchemas = {};
-  for (const type of ['post', 'reply', 'follow', 'like']) {
+  for (const type of ['post', 'reply', 'follow', 'like', 'likeReply']) {
     const schema = structuredClone(social.documentSchemas[type]);
     for (const key of ['actionFees', 'tokenCost', 'moderatorAbilities']) delete schema[key];
     documentSchemas[type] = schema;
@@ -283,15 +288,18 @@ async function main() {
   await sleep(1100);
   const r4 = await mustCreate('r4 (C → r1)', C, 'reply', { content: 'r4', rootPostId: id(T1), replyToReplyId: id(r1), parentOwnerId: id(B.ownerId) });
   const r5 = await mustCreate('r5 (B → r3)', B, 'reply', { content: 'r5', rootPostId: id(T1), replyToReplyId: id(r3), parentOwnerId: id(A.ownerId) });
-  await mustCreate('r6 (A → T2)', A, 'reply', { content: 'r6', rootPostId: id(T2), parentOwnerId: id(A.ownerId) });
+  const r6 = await mustCreate('r6 (A → T2)', A, 'reply', { content: 'r6', rootPostId: id(T2), parentOwnerId: id(A.ownerId) });
   const qr = await mustCreate('qr (A reposts r1)', A, 'post', { quotedReplyId: id(r1), quotedPostOwnerId: id(B.ownerId) });
   for (const [who, whom] of [[A, B], [C, B], [A, C], [B, A]]) await mustCreate(`${who.label} follows ${whom.label}`, who, 'follow', { followingId: id(whom.ownerId) });
+  const m1 = await mustCreate('m1 (C mentions B)', C, 'post', { content: 'hello @b', mentionedUserId: id(B.ownerId) });
   // Likes are indexOnly: the create may report a fault after the broadcast, so
-  // the like count below decides (c5 checks it).
-  for (const [who, target] of [[B, T1], [C, T1], [B, T2]]) {
-    const { document } = buildDocument({ contractId, docType: 'like', ownerId: who.ownerId, data: { postId: id(target), postAuthor: id(A.ownerId) }, entropy: randomIdBytes() });
-    await sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer }).catch((e) => console.log(`     (like by ${who.label} reported: ${describeErr(e).slice(0, 120)})`));
-  }
+  // the like counts below decide (c5 and k check them).
+  const likeWrite = (who, docType, data) => {
+    const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, entropy: randomIdBytes() });
+    return sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer }).catch((e) => console.log(`     (${docType} by ${who.label} reported: ${describeErr(e).slice(0, 120)})`));
+  };
+  for (const [who, target] of [[B, T1], [C, T1], [B, T2]]) await likeWrite(who, 'like', { postId: id(target), postAuthor: id(A.ownerId) });
+  await likeWrite(A, 'likeReply', { replyId: id(r1), replyAuthor: id(B.ownerId) });
   await sleep(SETTLE_MS);
 
   const q = (documentTypeName, rest) => ({ dataContractId: contractId, documentTypeName, ...rest });
@@ -453,26 +461,42 @@ async function main() {
   });
   await attempt('o2', () => sdk.documents.query(q('post', { where: [['$ownerId', '==', A.ownerId], ['quotedReplyId', 'in', [r1, r2]]], orderBy: [['$ownerId', 'asc'], ['quotedReplyId', 'asc']], limit: 2 })), (r) => check('o2 A\'s own reposts of r1/r2 (ownerAndQuotedReply): qr', same(ids(r), [qr]), JSON.stringify(ids(r))));
 
-  // ---- n: notifications (notification-service fetchNotifications) ----
-  console.log('\n--- n. "X reposted / quoted you" ---');
-  const quotedA = { where: [['quotedPostOwnerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['quotedPostOwnerId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
-  await attempt('n1', () => sdk.documents.query(q('post', quotedA)), (r) => {
-    check('n1 posts quoting A (quotedPostOwnerAndTime), newest first: q1, q2, q3', newestFirst(docsOf(r), [q1, q2, q3]), JSON.stringify(ids(r)));
+  // ---- n: notifications on the 7-day windows (notification-service) ----
+  // Every notification index is [$createdAt, recipient, …] on one grid (7-day
+  // windows every day, ttl a week): read with the `oldest` window, pinned on
+  // the recipient. No `$createdAt >` clause (a raw clause cannot bind bucket
+  // keys) and no time order inside a window: the client filters and sorts.
+  console.log('\n--- n. notifications on the 7-day windows ---');
+  const WEEK = { range: 604800, step: 86400 };
+  const windowed = (field, recipient) => ({ where: [[field, '==', recipient]], timeRange: [{ field: '$createdAt', selector: 'oldest', grid: WEEK }], limit: 100 });
+  const sameSet = (got, expected) => got.length === expected.length && expected.every((x) => got.includes(x));
+  await attempt('n1', () => sdk.documents.query(q('reply', windowed('parentOwnerId', A.ownerId))), (r) => check('n1 replies to A this week (parentOwnerRecent): r1, r2, r5, r6, each with its exact $createdAt', sameSet(ids(r), [r1, r2, r5, r6]) && docsOf(r).every((d) => createdAtOf(d) > 0), JSON.stringify(ids(r))));
+  await attempt('n2', () => sdk.documents.query(q('post', windowed('quotedPostOwnerId', A.ownerId))), (r) => check('n2 quotes/reposts of A this week (quotedPostOwnerRecent): q1, q2, q3', sameSet(ids(r), [q1, q2, q3]), JSON.stringify(ids(r))));
+  await attempt('n3', () => sdk.documents.query(q('post', windowed('mentionedUserId', B.ownerId))), (r) => check('n3 mentions of B this week (mentionedUserRecent): m1', same(ids(r), [m1]), JSON.stringify(ids(r))));
+  await attempt('n4', () => sdk.documents.query(q('like', windowed('postAuthor', A.ownerId))), (r) => {
+    const likes = docsOf(r).map((d) => d.toObject?.() ?? d);
+    const pairs = likes.map((l) => `${toBase58(l.$ownerId)}>${toBase58(l.postId)}`).sort();
+    const expected = [`${B.ownerId}>${T1}`, `${C.ownerId}>${T1}`, `${B.ownerId}>${T2}`].sort();
+    check('n4 likes of A\'s posts this week (like.byAuthorRecent): B→T1, C→T1, B→T2 (rebuilt; $createdAt is the window start)', same(pairs, expected), `${JSON.stringify(pairs)} $createdAt ${JSON.stringify([...new Set(likes.map((l) => String(l.$createdAt)))])}`);
   });
-  await attempt('n2', () => sdk.documents.composite({
-    dataContractId: contractId,
-    documentType: 'follow',
-    where: [['followingId', '==', A.ownerId], ['$createdAt', '>', 0]],
-    orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']],
-    limit: 100,
-    subQueries: [
-      { documentType: 'post', ...quotedA },
-      { documentType: 'reply', where: [['parentOwnerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['parentOwnerId', 'asc'], ['$createdAt', 'desc']], limit: 100 },
-    ],
-  }), (result) => {
-    const [quotes, replies] = result.subResults.map((sub) => sub.documents);
-    check('n2 the same as a composite sibling beside follows and replies: 1 follower, 3 quotes/reposts, 4 replies', result.pageDocuments.length === 1 && newestFirst(quotes, [q1, q2, q3]) && replies.length === 4, `follows ${result.pageDocuments.length} quotes ${JSON.stringify(quotes.map(idOf))} replies ${replies.length}`);
+  await attempt('n5', () => sdk.documents.query(q('likeReply', windowed('replyAuthor', B.ownerId))), (r) => {
+    const likes = docsOf(r).map((d) => d.toObject?.() ?? d);
+    check('n5 likes of B\'s replies this week (likeReply.byAuthorRecent): A→r1', likes.length === 1 && toBase58(likes[0].$ownerId) === A.ownerId && toBase58(likes[0].replyId) === r1, JSON.stringify(likes.map((l) => [toBase58(l.$ownerId), toBase58(l.replyId)])));
   });
+  // A windowed source cannot ride the notification bundle: composites take no
+  // timeRange, and without one the windowed index is not admissible.
+  const expectRefusal = async (label, run) => {
+    try {
+      await run();
+      check(label, false, 'accepted');
+    } catch (e) {
+      check(label, true, describeErr(e).slice(0, 160));
+    }
+  };
+  const bundlePage = { dataContractId: contractId, documentType: 'follow', where: [['followingId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
+  await expectRefusal('n6x a windowed source as a composite sibling WITH timeRange is refused', () => sdk.documents.composite({ ...bundlePage, subQueries: [{ documentType: 'reply', ...windowed('parentOwnerId', A.ownerId) }] }));
+  await expectRefusal('n7x a windowed index read WITHOUT a window (composite sibling or plain) is refused', () => sdk.documents.composite({ ...bundlePage, subQueries: [{ documentType: 'reply', where: [['parentOwnerId', '==', A.ownerId]], limit: 100 }] }));
+  await attempt('n8', () => sdk.documents.composite({ ...bundlePage, subQueries: [{ documentType: 'follow', where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100 }] }), (result) => check('n8 the permanent sources still bundle (follows of A beside B\'s follows)', result.pageDocuments.length === 1 && result.subResults[0].documents.length === 1, `page ${result.pageDocuments.length} sibling ${result.subResults[0].documents.length}`));
 
   // ---- t: the whole thread (reply-service getReplies on repliesOf) ----
   console.log('\n--- t. the whole thread, grouped by parent ---');
@@ -544,6 +568,36 @@ async function main() {
     const got = new Set(ids(r));
     check('g1 the following feed (`$ownerId in` + `$createdAt >`, ranked ownerAndTime): q1, q2, q3', got.size === 3 && got.has(q1) && got.has(q2) && got.has(q3), JSON.stringify([...got]));
   });
+
+  // ---- k: likes by liker (byLiker): "did I like X" and the unlike tuple ----
+  console.log('\n--- k. byLiker: did I like X, and the unlike delete tuple ---');
+  const likeOf = (d) => d.toObject?.() ?? d;
+  let recovered = null;
+  await attempt('k1', () => sdk.documents.query(q('like', { where: [['$ownerId', '==', B.ownerId], ['postId', '==', T2]], limit: 1 })), (r) => {
+    const likes = docsOf(r).map(likeOf);
+    recovered = likes[0] ?? null;
+    check('k1 B\'s like of T2 by liker and post: one entry carrying $createdAt and postAuthor', likes.length === 1 && Number(recovered.$createdAt) > 0 && toBase58(recovered.postAuthor) === A.ownerId, recovered ? `$createdAt ${recovered.$createdAt} postAuthor ${toBase58(recovered.postAuthor)}` : 'none');
+  });
+  await attempt('k2', () => sdk.documents.query(q('like', { where: [['$ownerId', '==', B.ownerId], ['postId', 'in', [T1, T2, T3]]], orderBy: [['$ownerId', 'asc'], ['postId', 'asc']], limit: 3 })), (r) => {
+    const liked = docsOf(r).map(likeOf).map((l) => toBase58(l.postId));
+    check('k2 "did B like these" batched (`postId in`): T1 and T2', sameSet(liked, [T1, T2]), JSON.stringify(liked));
+  });
+  await attempt('k3', () => sdk.documents.query(q('like', { where: [['$ownerId', '==', B.ownerId]], orderBy: [['$ownerId', 'asc'], ['postId', 'asc']], limit: 100 })), (r) => check('k3 B\'s likes listed by post (the Likes tab): 2', docsOf(r).length === 2, `${docsOf(r).length}`));
+  await attempt('k4', () => sdk.documents.query(q('likeReply', { where: [['$ownerId', '==', A.ownerId], ['replyId', '==', r1]], limit: 1 })), (r) => {
+    const likes = docsOf(r).map(likeOf);
+    check('k4 A\'s like of reply r1 by liker: $createdAt and replyAuthor', likes.length === 1 && Number(likes[0].$createdAt) > 0 && toBase58(likes[0].replyAuthor) === B.ownerId, likes[0] ? `$createdAt ${likes[0].$createdAt}` : 'none');
+  });
+  await attempt('k5', async () => {
+    if (!recovered) throw new Error('k1 recovered no tuple');
+    const { document } = buildDocument({ contractId, docType: 'like', ownerId: B.ownerId, data: { postId: id(T2), postAuthor: id(A.ownerId) }, createdAt: Number(recovered.$createdAt) });
+    await sdk.documents.delete({ document, identityKey: B.identityKey, signer: B.signer }).catch((e) => console.log(`     (unlike reported: ${describeErr(e).slice(0, 140)})`));
+    await sleep(SETTLE_MS);
+    const [remaining, likeCount] = await Promise.all([
+      sdk.documents.query(q('like', { where: [['$ownerId', '==', B.ownerId], ['postId', '==', T2]], limit: 1 })),
+      count('like', [['postId', '==', T2]]),
+    ]);
+    return { left: docsOf(remaining).length, likes: total(likeCount) };
+  }, ({ left, likes }) => check('k5 B unlikes T2 with the tuple recovered from byLiker: the like is gone (byLiker empty, T2 likes 0)', left === 0 && likes === 0, `byLiker ${left}, count ${likes}`));
 
   console.log(`\nthrowaway contract ${contractId}`);
   console.log(failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`);
