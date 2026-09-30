@@ -62,6 +62,8 @@ describe('contract topology', () => {
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
     const devnetTopology = devnetEnv.match(/^NEXT_PUBLIC_CONTRACT_TOPOLOGY=(\S+)/m)?.[1]
     expect(CONTRACT_TOPOLOGIES.filter((topology) => topology !== 'v2')).toContain(devnetTopology)
+    // /devnet runs bonsia, the v10 cut.
+    expect(devnetTopology).toBe('v10')
   })
 
   it('resolves every declared topology to its own descriptor, and v2 when unset', async () => {

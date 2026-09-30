@@ -316,8 +316,11 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     )
 
     // The slot is held: no second repost and no quote beside it, only the undo.
+    // v10 allows one quote OR repost per author per target (ownerAndQuotedReply
+    // is unique), so offering Quote here would offer a write consensus refuses.
     await page.getByTestId(`repost-menu-btn-${firstReplyId}`).click()
     await expect(page.getByRole('menuitem', { name: 'Undo Repost' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Quote' }), 'a repost holds the one quote-or-repost slot').toHaveCount(0)
     await expect(page.getByRole('menuitem', { name: /Quote|View your/ })).toHaveCount(0)
 
     // Undo deletes the bare quote post: the count and the slot come back.
@@ -332,15 +335,30 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     // Written to post.quotedReplyId (refersTo reply) and read back through
     // field-directed resolution — a v2 client would have written the reply id to
     // quotedPostId, which consensus now rejects.
+    //
+    // It quotes a reply of its own that nothing has reposted or quoted: on v10
+    // one author holds one quote-or-repost slot per target (ownerAndQuotedReply,
+    // unique), so reusing the repost test's reply would tie this test to that
+    // test's undo having landed.
     test.setTimeout(420_000)
 
+    const quotedText = `${runTag} reply to quote`
     const quoteText = `${runTag} quote of a reply`
 
     await page.goto(appUrl(`/post?id=${rootPostId}`))
-    const replyCard = page.getByTestId(`post-card-${firstReplyId}`)
-    await expect(replyCard).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByTestId(`post-card-${rootPostId}`)).toBeVisible({ timeout: 60_000 })
+    await page.getByRole('button', { name: 'Post your reply' }).click()
+    const replyDialog = page.getByRole('dialog', { name: 'Reply to post' })
+    await expect(replyDialog).toBeVisible()
+    await submitCompose(replyDialog, quotedText)
 
-    await replyCard.locator('button[aria-haspopup="menu"]').last().click()
+    const replyCard = await reloadUntilVisible(page, appUrl(`/post?id=${rootPostId}`), (p) =>
+      p.locator('[data-testid^="post-card-"]').filter({ hasText: quotedText })
+    )
+    const quotedReplyId = ((await replyCard.getAttribute('data-testid')) ?? '').replace('post-card-', '')
+    expect(quotedReplyId, 'the reply card should expose the document id').not.toBe('')
+
+    await page.getByTestId(`repost-menu-btn-${quotedReplyId}`).click()
     await page.getByRole('menuitem', { name: 'Quote' }).click()
 
     const dialog = page.getByRole('dialog', { name: 'Quote post' })
@@ -353,7 +371,7 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
       p
         .locator('[data-testid^="post-card-"]')
         .filter({ hasText: quoteText })
-        .filter({ hasText: firstReplyText })
+        .filter({ hasText: quotedText })
     )
   })
 
