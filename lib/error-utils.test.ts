@@ -348,11 +348,27 @@ describe('4.2.0-beta.4 rejections', () => {
     ['rootPostId', 'post', /post was removed by the moderators/],
     ['replyToReplyId', 'reply', /reply was removed by the moderators/],
     ['blogPostId', 'blogPost', /no longer exists/],
-  ])('names the removed document for a 40120 on %s, not a missing account (QA D-20)', (path, documentType, message) => {
+  ])('names the removed document for a 40120 on %s, not a missing account (QA D-20)', async (path, documentType, message) => {
+    // Pinned to v9, where only moderators remove posts and replies; the message
+    // depends on the topology, and earlier tests leave other topologies stubbed.
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9')
+    const v9 = await import('./error-utils')
     const error = new Error(`referenced deletable document (own contract, document type ${documentType}) 9BN7B3vnAAAA not found for path ${path}`)
-    expect(isReferenceNotFoundError(error)).toBe(true)
-    expect(categorizeError(error)).toMatch(message)
-    expect(categorizeError(error)).not.toMatch(/account/)
+    expect(v9.isReferenceNotFoundError(error)).toBe(true)
+    expect(v9.categorizeError(error)).toMatch(message)
+    expect(v9.categorizeError(error)).not.toMatch(/account/)
+  })
+
+  it('says a 40120 post or reply was deleted, not removed by the moderators, where authors delete too (v10)', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    const v10 = await import('./error-utils')
+    for (const documentType of ['post', 'reply']) {
+      const error = new Error(`referenced deletable document (own contract, document type ${documentType}) 9BN7B3vnAAAA not found for path postId`)
+      expect(v10.categorizeError(error)).toMatch(new RegExp(`${documentType} was deleted`))
+      expect(v10.categorizeError(error)).not.toMatch(/moderators|account/)
+    }
   })
 
   it('keeps the account message for an identity reference', () => {
