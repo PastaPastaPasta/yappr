@@ -63,8 +63,6 @@ interface ResolveForm {
   /** Null until chosen, where the row's reports were resolved differently. */
   status: ReportStatus | null
   note: string
-  /** The row's reports carry different notes: the one written here replaces them all. */
-  notesDiffer: boolean
 }
 
 /** A row being worked on, and how far along. */
@@ -349,8 +347,8 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
   }
 
   const openResolveForm = (group: ReportedTarget) => {
-    const { status, note, notesDiffer } = resolutionFormStart(group.reports, targets.get(keyOf(group))?.state === 'removed')
-    setResolveForm({ key: keyOf(group), status, note, notesDiffer })
+    const { status, note } = resolutionFormStart(group.reports, targets.get(keyOf(group))?.state === 'removed')
+    setResolveForm({ key: keyOf(group), status, note })
   }
 
   /**
@@ -395,8 +393,8 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     const byOthers = new Set(result.alreadyResolved)
     const goneIds = new Set(result.gone)
     const now = Date.now()
-    // Another moderator wrote the ones refused as unchanged: who and when is
-    // theirs, unknown until the queue is read again.
+    // The ones refused as unchanged were written meanwhile, most likely by
+    // another moderator: who and when is unknown until the queue is read again.
     setReports((previous) => previous
       .filter((report) => !goneIds.has(report.id))
       .map((report) => (resolvedIds.has(report.id)
@@ -413,7 +411,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     }
     setResolveForm(null)
     const goneNote = result.gone.length > 0 ? ` ${reportsNoun(result.gone.length)} had been withdrawn or had expired.` : ''
-    const othersNote = byOthers.size > 0 ? ` ${reportsNoun(byOthers.size)} had already been resolved this way by another moderator.` : ''
+    const othersNote = byOthers.size > 0 ? ` ${reportsNoun(byOthers.size)} had already been resolved this way meanwhile.` : ''
     toast.success(`${reportsNoun(count)} resolved: ${reportStatusLabel(status).toLowerCase()}.${othersNote}${goneNote}`)
   }
 
@@ -493,6 +491,8 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
             const busy = dismissing?.key === key
             const count = group.reports.length
             const form = resolveForm?.key === key ? resolveForm : null
+            // From the row as it is now: a reread can add reports while the form is open.
+            const differ = form ? resolutionFormStart(group.reports, false) : null
             return (
               <li key={key} data-testid={`report-row-${group.targetId}`} className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -562,8 +562,8 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                   <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-2" data-testid={`report-resolve-form-${group.targetId}`}>
                     <fieldset disabled={dismissing !== null}>
                       <legend className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">How were these reports resolved?</legend>
-                      {form.status === null && (
-                        <p className="text-xs text-amber-700 dark:text-amber-400 mb-1">These reports were resolved differently. Choose the outcome for all of them.</p>
+                      {differ?.statusesDiffer && (
+                        <p className="text-xs text-amber-700 dark:text-amber-400 mb-1">These reports were resolved differently. The outcome chosen here applies to all of them.</p>
                       )}
                       {REPORT_STATUSES.map((option) => (
                         <label key={option.code} className="flex items-start gap-2 py-1 text-sm cursor-pointer">
@@ -594,7 +594,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                       onChange={(e) => setResolveForm({ ...form, note: e.target.value })}
                       className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-yappr-500"
                     />
-                    {form.notesDiffer && (
+                    {differ?.notesDiffer && (
                       <p className="text-xs text-amber-700 dark:text-amber-400">
                         These reports carry different notes. The note written here replaces all of them; left empty, it removes them.
                       </p>
