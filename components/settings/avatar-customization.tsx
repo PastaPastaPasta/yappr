@@ -12,6 +12,7 @@ import {
   type DiceBearStyle,
 } from '@/lib/services/unified-profile-service'
 import { Button } from '@/components/ui/button'
+import { avatarSeedMaxLength } from '@/lib/profile/v10-profile'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { isIpfsProtocol, ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { ArrowPathIcon, SparklesIcon, PhotoIcon } from '@heroicons/react/24/outline'
@@ -279,7 +280,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
                 onChange={(e) => setSeed(e.target.value)}
                 placeholder="Enter custom seed..."
                 className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                maxLength={100}
+                maxLength={avatarSeedMaxLength()}
               />
               <Button
                 variant="outline"

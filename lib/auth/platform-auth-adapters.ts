@@ -351,6 +351,18 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     profiles: {
       async hasProfile(identityId, username) {
         await ensureSdk()
+        // v10: the Yappr profile is the `yapprProfile` extension; the legacy
+        // social `profile` is retired with the profile contract.
+        let v10: Awaited<ReturnType<typeof unifiedProfileService.getV10ProfileStatus>>
+        try {
+          v10 = await unifiedProfileService.getV10ProfileStatus(identityId)
+        } catch (error) {
+          // Fail open, like the AuthProvider gate: a lookup that cannot reach
+          // Platform must never send a user who has a profile to /profile/create.
+          logger.error('Auth: v10 profile lookup failed at login; not requiring a profile:', error)
+          return true
+        }
+        if (v10) return v10.hasExtension
         const unifiedProfile = await unifiedProfileService.getProfile(identityId, username)
         if (unifiedProfile) return true
         const legacyProfile = await profileService.getProfile(identityId, username)

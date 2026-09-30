@@ -241,7 +241,7 @@ Run 5 on bonsia refused the windowed like reads; that is what reverted #19's fir
 
 - The DashPay profile is written first. A write of the extension then costs one billed read of DashPay.
 - A user who deletes their DashPay profile can no longer edit the extension (it is a `deletableDocument` found by `findBy`, re-checked on every replace), but can still delete it.
-- An app-connect key bound to the social contract cannot sign a DashPay write, so the login request must also ask for a `DashPay/profile` binding.
+- An app-connect key bound to the social contract cannot sign a DashPay write, so the login request must also ask for a `DashPay/profile` binding. **Deferred** until Yappr adopts the app-connect login (the system contract of platform#4869): today's QR login (`dash-key:`/`dash-st:`) registers an unbound HIGH authentication key, which signs DashPay. Until then, a DashPay write refused because the key is bound elsewhere (20014) tells the user to sign in with their identity's authentication key (`dashpayKeyBoundsRefusal`).
 
 ### The media fingerprint (pinned)
 

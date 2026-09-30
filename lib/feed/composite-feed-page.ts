@@ -9,7 +9,6 @@ import {
   DPNS_CONTRACT_ID,
   DPNS_DOCUMENT_TYPE,
   YAPPR_CONTRACT_ID,
-  YAPPR_PROFILE_CONTRACT_ID,
 } from '@/lib/constants';
 import {
   bookmarkIndexFor,
@@ -34,6 +33,7 @@ import { dpnsService } from '@/lib/services/dpns-service';
 import { resolvePostAuthorsBatch } from '@/lib/services/post-enrichment-helpers';
 import { documentToPlainObject, identifierToBase58 } from '@/lib/services/sdk-helpers';
 import { unifiedProfileService } from '@/lib/services/unified-profile-service';
+import { profileBaseSource, profileExtensionSource } from '@/lib/profile/v10-profile';
 import { getPrimaryUsername } from '@/lib/utils/username';
 import { postTimelineClauses, type QueryOptions } from '@/lib/services/document-service';
 import { transformRawPost } from './transform-raw-post';
@@ -141,6 +141,9 @@ interface SubQuerySlots {
   usernames: number;
   /** Anonymous only: the quoted posts' authors' profiles (bound to the join). */
   quotedAuthorProfiles: number;
+  /** v10, when the budget allows: the `yapprProfile` extensions of the authors and quoted authors. */
+  profileExtensions: number;
+  quotedAuthorExtensions: number;
   /** Logged in only. */
   myLikes: number;
   myReposts: number;
@@ -195,9 +198,10 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
 
   // Author identity, cross-contract: profiles sit on a unique `$ownerId`
   // index (value-bounded, no limit), DPNS names on a non-unique one.
+  const profileBase = profileBaseSource();
   const profiles = slot({
-    dataContractId: YAPPR_PROFILE_CONTRACT_ID,
-    documentType: 'profile',
+    dataContractId: profileBase.contractId,
+    documentType: profileBase.documentType,
     bind: fromPage('$ownerId', '$ownerId'),
   });
   const usernames = slot({
@@ -235,11 +239,26 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
     // With the request budget free, chain the quoted posts' authors'
     // profiles off the join so embedded cards need no straggler hop.
     quotedAuthorProfiles = slot({
-      dataContractId: YAPPR_PROFILE_CONTRACT_ID,
-      documentType: 'profile',
+      dataContractId: profileBase.contractId,
+      documentType: profileBase.documentType,
       bind: { source: quotedPosts, sourceProperty: '$ownerId', field: '$ownerId' },
     });
   }
+
+  // v10 splits a profile in two: the slots above bind the DashPay profile,
+  // and the `yapprProfile` extensions join only while the budget allows (a
+  // logged-in page has none left); otherwise the profile loader fetches them.
+  const extension = profileExtensionSource();
+  const profileExtensions = extension && subQueries.length < MAX_SUB_QUERIES
+    ? slot({ dataContractId: extension.contractId, documentType: extension.documentType, bind: fromPage('$ownerId', '$ownerId') })
+    : -1;
+  const quotedAuthorExtensions = extension && quotedAuthorProfiles >= 0 && subQueries.length < MAX_SUB_QUERIES
+    ? slot({
+      dataContractId: extension.contractId,
+      documentType: extension.documentType,
+      bind: { source: quotedPosts, sourceProperty: '$ownerId', field: '$ownerId' },
+    })
+    : -1;
 
   if (subQueries.length > MAX_SUB_QUERIES) {
     throw new Error(`Feed: composite page needs ${subQueries.length} sub-queries, the limit is ${MAX_SUB_QUERIES}`);
@@ -268,6 +287,8 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
       profiles,
       usernames,
       quotedAuthorProfiles,
+      profileExtensions,
+      quotedAuthorExtensions,
       myLikes,
       myReposts,
       myBookmarks,
@@ -459,13 +480,20 @@ async function decodeFeedPage(
 
   // Author identity, and seed the service caches so any later lookup for
   // these authors (reposter names, quoted authors, profile pages) is a hit.
+  // A v10 extension is seeded first, so the profiles returned carry it.
+  if (slots.profileExtensions >= 0) {
+    unifiedProfileService.seedProfileDocuments(documentsAt(result, slots.profileExtensions), authorIds, 'extension');
+  }
   const foundProfiles = unifiedProfileService.seedProfileDocuments(documentsAt(result, slots.profiles), authorIds);
+  // Without its extension a v10 avatar may still be a recipe the page did not
+  // fetch, so the avatars are left to the progressive enrichment.
+  const avatarsKnown = !profileExtensionSource() || slots.profileExtensions >= 0;
   const profiles = new Map<string, ProfileData>();
   const avatars = new Map<string, string>();
   for (const id of authorIds) {
     const doc = foundProfiles.get(id);
     profiles.set(id, doc ? { displayName: doc.displayName, bio: doc.bio } : {});
-    avatars.set(
+    if (avatarsKnown) avatars.set(
       id,
       doc ? unifiedProfileService.parseAvatarField(doc.avatar, id) : unifiedProfileService.getDefaultAvatarUrl(id)
     );
@@ -500,6 +528,9 @@ async function decodeFeedPage(
     .filter((post) => !post.deleted);
   if (quotedPosts.length > 0) {
     const quotedAuthorIds = Array.from(new Set(quotedPosts.map((post) => post.author.id).filter(Boolean)));
+    if (slots.quotedAuthorExtensions >= 0) {
+      unifiedProfileService.seedProfileDocuments(documentsAt(result, slots.quotedAuthorExtensions), quotedAuthorIds, 'extension');
+    }
     if (slots.quotedAuthorProfiles >= 0) {
       unifiedProfileService.seedProfileDocuments(documentsAt(result, slots.quotedAuthorProfiles), quotedAuthorIds);
     }
