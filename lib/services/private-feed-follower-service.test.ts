@@ -11,7 +11,7 @@ let service: PrivateFeedFollowerService;
 const request = { $id: 'request', $ownerId: 'requester', targetId: 'owner', $createdAt: 100 };
 const grant = {
   $id: 'grant', $ownerId: 'owner', recipientId: 'requester', $createdAt: 150,
-  leafIndex: 0, epoch: 1, encryptedPayload: new Uint8Array(),
+  leafIndex: 0, keyGeneration: 1, encryptedPayload: new Uint8Array(),
 };
 
 beforeEach(() => {
@@ -24,11 +24,11 @@ afterEach(() => vi.restoreAllMocks());
 describe('private feed request status', () => {
   it('keeps an ungranted request pending after a feed-wide revocation', async () => {
     const rekeyReader = service as unknown as {
-      getRekeyDocumentsAfter: (ownerId: string, epoch: number) => Promise<unknown[]>;
+      getRekeyDocumentsAfter: (ownerId: string, keyGeneration: number) => Promise<unknown[]>;
     };
     vi.spyOn(rekeyReader, 'getRekeyDocumentsAfter').mockResolvedValue([{
       $id: 'rekey', $ownerId: 'owner', $createdAt: 200,
-      epoch: 2, revokedLeaf: 0, rekeyPayload: new Uint8Array(),
+      keyGeneration: 2, revokedLeaf: 0, rekeyPayload: new Uint8Array(),
     }]);
 
     // This also covers a request left behind when approval was revoked before recovery.
@@ -55,9 +55,9 @@ describe('private feed request status', () => {
   });
 
   it('asks for key recovery when the local keys predate a re-approval grant (QA D-17)', async () => {
-    vi.mocked(service.getGrant).mockResolvedValue({ ...grant, epoch: 3 });
+    vi.mocked(service.getGrant).mockResolvedValue({ ...grant, keyGeneration: 3 });
     vi.spyOn(service, 'canDecrypt').mockResolvedValue(true);
-    vi.spyOn(privateFeedKeyStore, 'getCachedEpoch').mockReturnValue(2);
+    vi.spyOn(privateFeedKeyStore, 'getCachedKeyGeneration').mockReturnValue(2);
     await expect(service.getAccessStatus('owner', 'requester')).resolves.toBe('approved-no-keys');
   });
 
@@ -69,7 +69,7 @@ describe('private feed request status', () => {
     expect(cleanup).not.toHaveBeenCalled();
 
     canDecrypt.mockResolvedValue(true);
-    vi.spyOn(privateFeedKeyStore, 'getCachedEpoch').mockReturnValue(1);
+    vi.spyOn(privateFeedKeyStore, 'getCachedKeyGeneration').mockReturnValue(1);
     await expect(service.getAccessStatus('owner', 'requester')).resolves.toBe('approved');
     expect(cleanup).toHaveBeenCalledWith('owner', 'requester');
   });
@@ -94,14 +94,14 @@ describe('private feed access reads', () => {
 });
 
 describe('catching up after a revocation (QA D-17)', () => {
-  const rekey = { $id: 'rekey', $ownerId: 'owner', $createdAt: 200, epoch: 2, revokedLeaf: 0, packets: new Uint8Array(), encryptedCEK: new Uint8Array() };
+  const rekey = { $id: 'rekey', $ownerId: 'owner', $createdAt: 200, keyGeneration: 2, revokedLeaf: 0, packets: new Uint8Array(), encryptedCEK: new Uint8Array() };
   const internals = () => service as unknown as {
-    getRekeyDocumentsAfter: (ownerId: string, epoch: number) => Promise<unknown[]>;
+    getRekeyDocumentsAfter: (ownerId: string, keyGeneration: number) => Promise<unknown[]>;
     applyRekey: (ownerId: string, rekey: unknown) => Promise<{ success: boolean; error?: string }>;
   };
 
   beforeEach(() => {
-    vi.spyOn(privateFeedKeyStore, 'getCachedEpoch').mockReturnValue(1);
+    vi.spyOn(privateFeedKeyStore, 'getCachedKeyGeneration').mockReturnValue(1);
     vi.spyOn(internals(), 'getRekeyDocumentsAfter').mockResolvedValue([rekey]);
     vi.spyOn(internals(), 'applyRekey').mockResolvedValue({ success: false, error: 'Failed to derive new root key - may be revoked' });
   });
@@ -120,7 +120,7 @@ describe('catching up after a revocation (QA D-17)', () => {
   });
 
   it('asks for recovery when a newer grant replaced the revoked one', async () => {
-    vi.mocked(service.getGrant).mockResolvedValue({ ...grant, epoch: 2 });
+    vi.mocked(service.getGrant).mockResolvedValue({ ...grant, keyGeneration: 2 });
     const result = await service.catchUp('owner', 'requester');
     expect(result.error).toMatch(/^RECOVERY_NEEDED:/);
   });

@@ -70,7 +70,7 @@ export function useAuth() {
 }
 
 export const TREE_CAPACITY = 65536
-export const MAX_EPOCH = 65535
+export const MAX_KEY_GENERATION = 65535
 export const privateFeedService = {
   getPrivateFeedState: async () => {
     state.statusReads += 1
@@ -81,7 +81,7 @@ export const privateFeedService = {
     state.enabled = true
     return { success: true }
   },
-  getLatestEpoch: async () => 1,
+  getLatestKeyGeneration: async () => 1,
   getPrivateFollowers: async () => [],
 }
 export const privateFeedKeyStore = { hasFeedSeed: () => false, getRecipientMap: () => ({}) }

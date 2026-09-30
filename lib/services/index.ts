@@ -47,7 +47,7 @@ export type {
   RekeyPacket,
   GrantPayload,
 } from './private-feed-crypto-service';
-export { TREE_CAPACITY, MAX_EPOCH } from './private-feed-crypto-service';
+export { TREE_CAPACITY, MAX_KEY_GENERATION } from './private-feed-crypto-service';
 
 // Private feed key store
 export { privateFeedKeyStore } from './private-feed-key-store';

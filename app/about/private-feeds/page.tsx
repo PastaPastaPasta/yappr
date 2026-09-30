@@ -2,6 +2,7 @@
 
 import { LockClosedIcon, KeyIcon, ShieldCheckIcon, QuestionMarkCircleIcon, CpuChipIcon, ArrowPathIcon, ExclamationTriangleIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline'
 import { InfoPage } from '@/components/layout/info-page'
+import { privateFeedKeyFields } from '@/lib/contract-topology'
 
 // Reusable Components
 function CalloutBox({
@@ -114,6 +115,7 @@ function SubSection({ title, children }: { title: string; children: React.ReactN
 }
 
 export default function PrivateFeedsPage() {
+  const keyField = privateFeedKeyFields().generation
   return (
     <InfoPage
       icon={LockClosedIcon}
@@ -462,12 +464,12 @@ export default function PrivateFeedsPage() {
               </p>
             </Section>
 
-            {/* Section 5: The Epoch System */}
-            <Section icon={ArrowPathIcon} title="Epochs: Forward Secrecy Through Time">
+            {/* Section 5: Key Generations */}
+            <Section icon={ArrowPathIcon} title="Key Generations: Forward Secrecy Through Time">
               <p>
                 The root key doesn&apos;t directly encrypt posts. Instead, it unlocks a{' '}
-                <strong>Content Encryption Key (CEK)</strong> for the current &quot;epoch.&quot; Each
-                time you revoke someone, the epoch advances, and a new CEK is used for future posts.
+                <strong>Content Encryption Key (CEK)</strong> for the current &quot;key generation.&quot; Each
+                time you revoke someone, the key generation advances, and a new CEK is used for future posts.
               </p>
               <p>
                 CEKs are connected in a clever way called a hash chain:
@@ -535,13 +537,13 @@ export default function PrivateFeedsPage() {
                     <div className="px-4 py-2 bg-yappr-500 text-white rounded-lg font-mono text-sm font-semibold shadow-sm">
                       CEK[1]
                     </div>
-                    <span className="text-xs text-yappr-600 dark:text-yappr-400 font-medium">Initial epoch (feed starts here)</span>
+                    <span className="text-xs text-yappr-600 dark:text-yappr-400 font-medium">Initial key generation (feed starts here)</span>
                   </div>
                 </div>
 
                 <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-3">
                   <p className="text-sm text-gray-600 dark:text-gray-400">
-                    <strong className="text-gray-700 dark:text-gray-300">Epoch numbers increase over time:</strong> 1 → 2 → 3 → ... (higher = newer content)
+                    <strong className="text-gray-700 dark:text-gray-300">Key generations increase over time:</strong> 1 → 2 → 3 → ... (higher = newer content)
                   </p>
                   <div className="flex flex-col sm:flex-row gap-3 text-sm">
                     <div className="flex items-center gap-2 px-3 py-2 bg-green-50 dark:bg-green-950/30 rounded-lg border border-green-200 dark:border-green-800">
@@ -559,14 +561,14 @@ export default function PrivateFeedsPage() {
               </div>
 
               <p>
-                Epoch numbers increase over time (1 → 2 → 3 ...). Higher epochs correspond to newer
+                Key generations increase over time (1 → 2 → 3 ...). Higher generations correspond to newer
                 content. The chain has a crucial property:
               </p>
               <ul className="list-disc list-inside space-y-2 pl-4">
                 <li>
                   <strong>Backward derivation works:</strong> If you learn CEK[5], you can compute
                   CEK[4] by hashing. You can keep going back to derive CEK[3], CEK[2], CEK[1]—all
-                  the older epochs.
+                  the older key generations.
                 </li>
                 <li>
                   <strong>Forward derivation is impossible:</strong> If you only have CEK[3], you cannot
@@ -574,7 +576,7 @@ export default function PrivateFeedsPage() {
                 </li>
               </ul>
               <p>
-                Why does this matter? When we revoke someone at epoch 3, we advance to epoch 4. The revoked
+                Why does this matter? When we revoke someone at key generation 3, we advance to key generation 4. The revoked
                 user has CEK[3], so they can still derive older keys (CEK[2], CEK[1]) and read historical
                 posts. But they can&apos;t derive CEK[4]—they&apos;re locked out of all future content.
               </p>
@@ -591,7 +593,7 @@ export default function PrivateFeedsPage() {
                 Now for the clever bit. When you revoke Alice, you need to:
               </p>
               <ol className="list-decimal list-inside space-y-2 pl-4">
-                <li>Advance to a new epoch (so Alice can&apos;t derive the new CEK)</li>
+                <li>Advance to a new key generation (so Alice can&apos;t derive the new CEK)</li>
                 <li>Share the new CEK with remaining followers (without telling Alice)</li>
               </ol>
               <p>
@@ -608,7 +610,7 @@ export default function PrivateFeedsPage() {
                 <div className="p-5 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-200 dark:border-gray-800">
                   <div className="text-center mb-4">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Before Revocation</h4>
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">(Epoch 1)</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">(Key generation 1)</p>
                   </div>
                   <svg viewBox="0 0 280 180" className="w-full" style={{ maxHeight: '180px' }}>
                     {/* Lines */}
@@ -663,7 +665,7 @@ export default function PrivateFeedsPage() {
                 <div className="p-5 bg-green-50 dark:bg-green-950/30 rounded-xl border border-green-200 dark:border-green-800">
                   <div className="text-center mb-4">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-green-700 dark:text-green-300">After Revoking Alice</h4>
-                    <p className="text-xs text-green-600/70 dark:text-green-400/70 mt-1">(Epoch 2)</p>
+                    <p className="text-xs text-green-600/70 dark:text-green-400/70 mt-1">(Key generation 2)</p>
                   </div>
                   <svg viewBox="0 0 280 180" className="w-full" style={{ maxHeight: '180px' }}>
                     {/* Lines */}
@@ -739,7 +741,7 @@ export default function PrivateFeedsPage() {
                     Alice doesn&apos;t have access to either of these keys.
                   </li>
                   <li>
-                    <strong>Encrypt new CEK under new Root:</strong> Finally, encrypt CEK[epoch 2] under Root v2.
+                    <strong>Encrypt new CEK under new Root:</strong> Finally, encrypt CEK[generation 2] under Root v2.
                   </li>
                 </ol>
               </SubSection>
@@ -771,7 +773,7 @@ export default function PrivateFeedsPage() {
                     },
                     {
                       packet: 4,
-                      content: <><code className="text-xs bg-yappr-100 dark:bg-yappr-900 px-1 rounded">CEK[epoch2]</code> encrypted under <code className="text-xs bg-green-100 dark:bg-green-900 px-1 rounded">new_Root_v2</code></>,
+                      content: <><code className="text-xs bg-yappr-100 dark:bg-yappr-900 px-1 rounded">CEK[gen2]</code> encrypted under <code className="text-xs bg-green-100 dark:bg-green-900 px-1 rounded">new_Root_v2</code></>,
                       who: 'Anyone with Root v2',
                       why: null,
                     },
@@ -827,7 +829,7 @@ export default function PrivateFeedsPage() {
                   'Pre-compute hash chain: CEK[2000] → CEK[1]',
                   'Encrypt seed to your own public key (for recovery)',
                   'Store encrypted seed on blockchain',
-                  'Local state: epoch=1, all 1024 slots available',
+                  'Local state: key generation 1, all 1024 slots available',
                 ]}
               />
 
@@ -836,7 +838,7 @@ export default function PrivateFeedsPage() {
                 steps={[
                   'Pick available leaf slot (say, slot 2)',
                   'Compute path keys: slot → intermediate nodes → root',
-                  'Bundle: path keys + current CEK + current epoch',
+                  'Bundle: path keys + current CEK + current key generation',
                   'Encrypt bundle to Bob\'s public key (ECIES)',
                   'Store grant document on blockchain',
                   'Mark slot 2 as assigned to Bob',
@@ -847,20 +849,20 @@ export default function PrivateFeedsPage() {
               <FlowBox
                 title="Create Private Post"
                 steps={[
-                  'Get CEK for current epoch',
+                  'Get CEK for current key generation',
                   'Generate random nonce (prevents duplicate keys)',
                   { text: 'Derive post key:', sub: ['HKDF(CEK, "post" || nonce || authorId)'] },
                   { text: 'Encrypt with XChaCha20-Poly1305' },
-                  { text: 'Store on blockchain:', sub: ['encryptedContent (ciphertext)', 'epoch (which CEK version)', 'nonce (for key derivation)', 'teaser (optional public preview)'] },
+                  { text: 'Store on blockchain:', sub: ['encryptedContent (ciphertext)', `${keyField} (which CEK version)`, 'nonce (for key derivation)', 'teaser (optional public preview)'] },
                 ]}
               />
 
               <FlowBox
                 title="Decrypt Post (Bob reading Alice's post)"
                 steps={[
-                  'Check post\'s epoch vs Bob\'s cached epoch',
+                  'Check post\'s key generation vs Bob\'s cached key generation',
                   'If behind: fetch rekey documents, apply them',
-                  { text: 'Derive CEK for post\'s epoch:', sub: ['If same as cached: use cached CEK', 'If older: hash backward from cached CEK'] },
+                  { text: 'Derive CEK for post\'s key generation:', sub: ['If same as cached: use cached CEK', 'If older: hash backward from cached CEK'] },
                   { text: 'Derive post key:', sub: ['HKDF(CEK, "post" || nonce || ownerId)'] },
                   'Decrypt with XChaCha20-Poly1305',
                   'If decryption fails: show teaser or "locked" icon',
@@ -871,7 +873,7 @@ export default function PrivateFeedsPage() {
                 title="Revoke Access (Alice revokes Bob)"
                 steps={[
                   'Look up Bob\'s leaf slot (slot 2)',
-                  'Increment epoch: 1 → 2',
+                  'Increment key generation: 1 → 2',
                   'Compute Bob\'s path to root',
                   'Generate new versions for each node on path',
                   { text: 'Create rekey packets (~20 packets):', sub: ['Each new key encrypted under sibling subtree keys'] },
@@ -979,7 +981,7 @@ export default function PrivateFeedsPage() {
                     <strong className="text-gray-900 dark:text-gray-100">PrivateFeedRekey</strong>
                     <p className="text-sm mt-1">
                       Created on each revocation. Contains rekey packets (new keys encrypted for sibling subtrees),
-                      the new epoch number, and a state snapshot for recovery. ~1-2 KB.
+                      the new key generation, and a state snapshot for recovery. ~1-2 KB.
                     </p>
                   </li>
                   <li className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
@@ -987,7 +989,7 @@ export default function PrivateFeedsPage() {
                     <span className="text-xs ml-2 text-gray-500">(extended)</span>
                     <p className="text-sm mt-1">
                       Private posts add fields to the standard post document: <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">encryptedContent</code>,{' '}
-                      <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">epoch</code>,{' '}
+                      <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">{keyField}</code>,{' '}
                       <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">nonce</code>, and optional public{' '}
                       <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">teaser</code>.
                     </p>
@@ -1020,10 +1022,10 @@ export default function PrivateFeedsPage() {
                         </td>
                       </tr>
                       <tr>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 align-top">Epoch chain</td>
+                        <td className="p-3 border border-gray-200 dark:border-gray-700 align-top">CEK chain</td>
                         <td className="p-3 border border-gray-200 dark:border-gray-700">
                           <div className="font-mono text-sm">SHA256 hash chain</div>
-                          <div className="text-xs text-gray-500 mt-1">2000 epochs pre-generated</div>
+                          <div className="text-xs text-gray-500 mt-1">2000 key generations pre-generated</div>
                         </td>
                       </tr>
                       <tr className="bg-gray-50 dark:bg-gray-900">
@@ -1053,7 +1055,7 @@ export default function PrivateFeedsPage() {
                         <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">1,024</td>
                       </tr>
                       <tr className="bg-gray-50 dark:bg-gray-900">
-                        <td className="p-3 border border-gray-200 dark:border-gray-700">Maximum epochs (revocations)</td>
+                        <td className="p-3 border border-gray-200 dark:border-gray-700">Maximum key generations (revocations)</td>
                         <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">2,000</td>
                       </tr>
                       <tr>

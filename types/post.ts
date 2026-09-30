@@ -106,7 +106,7 @@ export interface Post {
   blogContent?: unknown
   // Private feed fields (present when post is encrypted)
   encryptedContent?: Uint8Array  // XChaCha20-Poly1305 ciphertext
-  epoch?: number                 // Revocation epoch at post creation
+  keyGeneration?: number         // Revocation key generation at post creation
   nonce?: Uint8Array             // Random nonce for encryption
 }
 
@@ -134,7 +134,7 @@ export interface Reply {
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
   // Private feed fields (present when reply is encrypted)
   encryptedContent?: Uint8Array
-  epoch?: number
+  keyGeneration?: number
   nonce?: Uint8Array
 }
 

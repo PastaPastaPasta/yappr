@@ -131,7 +131,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
       const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
       encryption = {
         type: 'inherited',
-        source: { ownerId: inheritedEncryption.ownerId, epoch: inheritedEncryption.epoch },
+        source: { ownerId: inheritedEncryption.ownerId, keyGeneration: inheritedEncryption.keyGeneration },
         encryptionPrivateKey: authorId === inheritedEncryption.ownerId ? getEncryptionKeyBytes(authorId) ?? undefined : undefined,
       }
     } else if (isThisPostPrivate) {

@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input'
 import { LockClosedIcon, CheckCircleIcon, UserGroupIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { TREE_CAPACITY, MAX_EPOCH } from '@/lib/services'
+import { TREE_CAPACITY, MAX_KEY_GENERATION } from '@/lib/services'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import { ResetPrivateFeedDialog } from './reset-private-feed-dialog'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
@@ -40,7 +40,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
   const [isEnabling, setIsEnabling] = useState(false)
   const [enabledDate, setEnabledDate] = useState<Date | null>(null)
   const [followerCount, setFollowerCount] = useState(0)
-  const [currentEpoch, setCurrentEpoch] = useState(1)
+  const [currentKeyGeneration, setCurrentKeyGeneration] = useState(1)
   const [hasEncryptionKeyStored, setHasEncryptionKeyStored] = useState(false)
 
   // Encryption key input state
@@ -86,9 +86,9 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
           setEnabledDate(new Date(state.$createdAt))
         }
 
-        // Get current epoch
-        const epoch = await privateFeedService.getLatestEpoch(user.identityId)
-        setCurrentEpoch(epoch)
+        // Get current key generation
+        const keyGeneration = await privateFeedService.getLatestKeyGeneration(user.identityId)
+        setCurrentKeyGeneration(keyGeneration)
 
         // Get follower count from on-chain grants (authoritative source)
         // Falls back to local recipientMap if on-chain query fails
@@ -299,9 +299,9 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                 <p className="text-xs text-gray-500">Followers</p>
               </div>
               <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
-                <p className="text-lg font-semibold">{currentEpoch}</p>
-                <p className="text-xs text-gray-500">/ {MAX_EPOCH}</p>
-                <p className="text-xs text-gray-500">Epoch</p>
+                <p className="text-lg font-semibold">{currentKeyGeneration}</p>
+                <p className="text-xs text-gray-500">/ {MAX_KEY_GENERATION}</p>
+                <p className="text-xs text-gray-500">Key Generation</p>
               </div>
               <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
                 <p className="text-lg font-semibold">{TREE_CAPACITY - followerCount}</p>
@@ -310,8 +310,8 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
               </div>
             </div>
 
-            {/* Epoch usage warning */}
-            {currentEpoch > MAX_EPOCH * 0.9 && (
+            {/* Key generation usage warning */}
+            {currentKeyGeneration > MAX_KEY_GENERATION * 0.9 && (
               <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
                 <div className="flex gap-3">
                   <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
@@ -381,7 +381,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                 </li>
                 <li className="flex gap-2">
                   <span className="text-yappr-500">•</span>
-                  Up to {(MAX_EPOCH - 1).toLocaleString()} revocations before migration needed
+                  Up to {(MAX_KEY_GENERATION - 1).toLocaleString()} revocations before migration needed
                 </li>
               </ul>
             </div>

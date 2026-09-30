@@ -16,6 +16,7 @@ import {
   hasFlatThreads,
   mentionsAreInline,
   notificationWindowFor,
+  privateFeedKeyFields,
   replyCountFieldFor,
   replyCountNeedsRoot,
   replyLinkage,
@@ -46,9 +47,9 @@ export interface ReplyTarget {
  * Encryption source result for replies to private posts
  */
 export interface EncryptionSource {
-  ownerId: string;     // The feed owner whose CEK should be used
-  epoch: number;       // The epoch at which the root private post was created
-  inherited: boolean;  // True if encryption is inherited from parent
+  ownerId: string;        // The feed owner whose CEK should be used
+  keyGeneration: number;  // The key generation at which the root private post was created
+  inherited: boolean;     // True if encryption is inherited from parent
 }
 
 class ReplyService extends BaseDocumentService<Reply> {
@@ -98,7 +99,8 @@ class ReplyService extends BaseDocumentService<Reply> {
 
     // Extract private feed fields if present
     const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
-    const epoch = (data.epoch ?? doc.epoch) as number | undefined;
+    const { generation } = privateFeedKeyFields();
+    const keyGeneration = (data[generation] ?? doc[generation]) as number | undefined;
     const rawNonce = data.nonce || doc.nonce;
 
     // Normalize byte arrays
@@ -130,7 +132,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
       // Private feed fields
       encryptedContent,
-      epoch,
+      keyGeneration,
       nonce,
     };
 
@@ -244,7 +246,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       }
 
       data.encryptedContent = encryptionResult.data.encryptedContent;
-      data.epoch = encryptionResult.data.epoch;
+      data[privateFeedKeyFields().generation] = encryptionResult.data.keyGeneration;
       data.nonce = encryptionResult.data.nonce;
       data.content = encryptionResult.data.teaser || PRIVATE_REPLY_PLACEHOLDER;
     } else {
@@ -684,10 +686,10 @@ export async function getEncryptionSource(
   try {
     const { postService } = await import('./post-service');
     const rootPost = await postService.getPostById(threadRootIdOf(target), { skipEnrichment: true });
-    if (!rootPost?.encryptedContent || rootPost.epoch === undefined || !rootPost.nonce) {
+    if (!rootPost?.encryptedContent || rootPost.keyGeneration === undefined || !rootPost.nonce) {
       return null;
     }
-    return { ownerId: rootPost.author.id, epoch: rootPost.epoch, inherited: true };
+    return { ownerId: rootPost.author.id, keyGeneration: rootPost.keyGeneration, inherited: true };
   } catch (error) {
     logger.error('Error getting encryption source:', error);
     return null;
@@ -712,11 +714,11 @@ async function walkEncryptionSource(
 
     if (parentPost) {
       // Check if parent post is encrypted
-      if (parentPost.encryptedContent && parentPost.epoch !== undefined && parentPost.nonce) {
+      if (parentPost.encryptedContent && parentPost.keyGeneration !== undefined && parentPost.nonce) {
         // This is the root private post - use its encryption
         return {
           ownerId: parentPost.author.id,
-          epoch: parentPost.epoch,
+          keyGeneration: parentPost.keyGeneration,
           inherited: true
         };
       }
@@ -733,7 +735,7 @@ async function walkEncryptionSource(
     }
 
     // Check if parent reply is encrypted
-    if (parentReply.encryptedContent && parentReply.epoch !== undefined && parentReply.nonce) {
+    if (parentReply.encryptedContent && parentReply.keyGeneration !== undefined && parentReply.nonce) {
       // This reply is encrypted - recurse to find the root
       const rootSource = await walkEncryptionSource(parentReply.parentId, depth + 1);
       if (rootSource) {
@@ -742,7 +744,7 @@ async function walkEncryptionSource(
       // No root found - use this reply's author as encryption source
       return {
         ownerId: parentReply.author.id,
-        epoch: parentReply.epoch,
+        keyGeneration: parentReply.keyGeneration,
         inherited: true
       };
     }
