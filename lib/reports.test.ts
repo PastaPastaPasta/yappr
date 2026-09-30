@@ -3,15 +3,23 @@ import { describe, expect, it } from 'vitest'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 import {
+  OPEN_REPORTS,
   OTHER_REASON_CODE,
   REPORT_NOTE_MAX_LENGTH,
   REPORT_REASONS,
+  REPORT_RESOLUTION_MAX_LENGTH,
+  REPORT_STATUSES,
   groupReports,
   isAlreadyReportedError,
   isReportGoneError,
   reportFailureMessage,
   reportInputProblem,
+  reportMatchesView,
   reportReasonLabel,
+  reportStatusLabel,
+  reportsNeedingResolution,
+  resolutionFormStart,
+  resolutionInputProblem,
   toReportRecord,
   withdrawFailureMessage,
   type ReportRecord,
@@ -48,6 +56,10 @@ const record = (overrides: Partial<ReportRecord>): ReportRecord => ({
   reason: 0,
   note: null,
   createdAt: 1_000,
+  status: null,
+  resolution: null,
+  moderatedBy: null,
+  moderatedAt: null,
   ...overrides,
 })
 
@@ -103,7 +115,21 @@ describe('toReportRecord', () => {
     }
     expect(toReportRecord(doc)).toEqual({
       id: idOf(9), reporterId: idOf(8), kind: 'post', targetId: idOf(7), targetOwnerId: idOf(6), reason: 2, note: null, createdAt: 5_000,
+      status: null, resolution: null, moderatedBy: null, moderatedAt: null,
     })
+  })
+
+  it('should read a v10 resolution and the moderator stamp', () => {
+    const doc = {
+      $id: idOf(9), $ownerId: idOf(8), $createdAt: 5_000, postId: idOf(7), targetOwnerId: idOf(6), reason: 0,
+      status: 2, resolution: 'Taken down', $moderatedBy: new Uint8Array(32).fill(5), $moderatedAt: 9_000,
+    }
+    expect(toReportRecord(doc)).toMatchObject({ status: 2, resolution: 'Taken down', moderatedBy: idOf(5), moderatedAt: 9_000 })
+  })
+
+  it('should treat a status outside 1..3 as open rather than invent a label', () => {
+    const doc = { $id: idOf(9), $ownerId: idOf(8), postId: idOf(7), targetOwnerId: idOf(6), reason: 0, status: 7, resolution: '' }
+    expect(toReportRecord(doc)).toMatchObject({ status: null, resolution: null, moderatedBy: null, moderatedAt: null })
   })
 
   it('should read a reply report and its note', () => {
@@ -192,5 +218,71 @@ describe('withdrawFailureMessage', () => {
 
   it('should not read a query cursor that went missing as a withdrawn report', () => {
     expect(isReportGoneError('startAfter document not found')).toBe(false)
+  })
+})
+
+describe('report resolution (v10)', () => {
+  const v10Report = (socialContractV10.documentSchemas as unknown as Record<string, {
+    properties: Record<string, { minimum?: number; maximum?: number; minLength?: number; maxLength?: number }>
+    moderatorAbilities: { changeFields: string[] }
+  }>).report
+
+  it('offers exactly the statuses the v10 contract accepts, and its note limit', () => {
+    const { minimum, maximum } = v10Report.properties.status
+    expect(REPORT_STATUSES.map((status) => status.code)).toEqual(Array.from({ length: (maximum ?? 0) - (minimum ?? 0) + 1 }, (_, i) => (minimum ?? 0) + i))
+    expect(REPORT_RESOLUTION_MAX_LENGTH).toBe(v10Report.properties.resolution.maxLength)
+    expect(v10Report.properties.resolution.minLength).toBe(1)
+    expect(v10Report.moderatorAbilities.changeFields).toEqual(['status', 'resolution'])
+  })
+
+  it('labels each status, and an unknown one without failing', () => {
+    expect(reportStatusLabel(1)).toBe('No action taken')
+    expect(reportStatusLabel(2)).toBe('Content removed')
+    expect(reportStatusLabel(3)).toBe('Author actioned')
+    expect(reportStatusLabel(9)).toBe('Status 9')
+  })
+
+  it('refuses a missing status or an overlong note before anything is signed', () => {
+    expect(resolutionInputProblem(null, '')).toMatch(/choose/i)
+    expect(resolutionInputProblem(4, '')).toMatch(/choose/i)
+    expect(resolutionInputProblem(2, '')).toBeNull()
+    expect(resolutionInputProblem(2, `  ${'x'.repeat(REPORT_RESOLUTION_MAX_LENGTH)}  `)).toBeNull()
+    expect(resolutionInputProblem(2, 'x'.repeat(REPORT_RESOLUTION_MAX_LENGTH + 1))).toMatch(/200 characters/)
+  })
+
+  it('places a report in the view whose query would return it', () => {
+    const open = record({ status: null })
+    const removed = record({ status: 2, moderatedBy: idOf(5) })
+    expect(reportMatchesView(open, OPEN_REPORTS)).toBe(true)
+    expect(reportMatchesView(removed, OPEN_REPORTS)).toBe(false)
+    expect(reportMatchesView(removed, { kind: 'status', status: 2 })).toBe(true)
+    expect(reportMatchesView(removed, { kind: 'status', status: 1 })).toBe(false)
+    expect(reportMatchesView(removed, { kind: 'moderatedBy', moderatorId: idOf(5) })).toBe(true)
+    expect(reportMatchesView(open, { kind: 'moderatedBy', moderatorId: idOf(5) })).toBe(false)
+  })
+
+  it('leaves out reports that already read that way (a no-op change is refused, 10905)', () => {
+    const reports = [
+      record({ id: idOf(10) }),
+      record({ id: idOf(11), status: 2, resolution: null }),
+      record({ id: idOf(12), status: 2, resolution: 'gone' }),
+      record({ id: idOf(13), status: 1, resolution: null }),
+    ]
+    expect(reportsNeedingResolution(reports, 2, null).map((report) => report.id)).toEqual([idOf(10), idOf(12), idOf(13)])
+    expect(reportsNeedingResolution(reports, 2, 'gone').map((report) => report.id)).toEqual([idOf(10), idOf(11), idOf(13)])
+  })
+
+  it('starts a changed resolution from the values its reports share, and picks nothing where they differ', () => {
+    const open = { status: null, resolution: null }
+    // Open reports: a default, since there is nothing to keep.
+    expect(resolutionFormStart([open, open], false)).toEqual({ status: 1, note: '', statusesDiffer: false, notesDiffer: false })
+    expect(resolutionFormStart([open], true)).toEqual({ status: 2, note: '', statusesDiffer: false, notesDiffer: false })
+    // Resolved alike: keep both, even on a removed target.
+    const actioned = { status: 3 as const, resolution: 'Banned for spam' }
+    expect(resolutionFormStart([actioned, actioned], true)).toEqual({ status: 3, note: 'Banned for spam', statusesDiffer: false, notesDiffer: false })
+    // Differing notes: none is chosen for the others to be overwritten with.
+    expect(resolutionFormStart([actioned, { status: 3, resolution: null }], false)).toEqual({ status: 3, note: '', statusesDiffer: false, notesDiffer: true })
+    // Differing statuses: the moderator must choose one.
+    expect(resolutionFormStart([actioned, { status: 1, resolution: 'Banned for spam' }], false)).toEqual({ status: null, note: 'Banned for spam', statusesDiffer: true, notesDiffer: false })
   })
 })

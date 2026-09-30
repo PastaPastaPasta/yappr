@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { useSdk } from '@/contexts/sdk-context'
 import { logger } from '@/lib/logger'
-import { electedModeration } from '@/lib/contract-topology'
+import { electedModeration, isV10 } from '@/lib/contract-topology'
 import { createElectionStatusLoader } from '@/lib/election-status-loader'
 import { electionView, moderationElectionService, type ElectionStatus } from '@/lib/services/moderation-election-service'
 
@@ -107,7 +107,14 @@ export function ElectionStatusPanel() {
         {contest && (
           <section data-testid="election-contest">
             <h4 className="font-semibold mb-1">Contest for the seat</h4>
-            <p>Voting ends: <span data-testid="election-ends">{when(contest.endsAtMs)}</span></p>
+            <p>
+              Voting ends: <span data-testid="election-ends">{when(contest.endsAtMs)}</span>
+              {contest.endsAtMs === null && !contest.winner && isV10() && (
+                <span className="text-gray-500">
+                  {' '}(at most {hours(declaration.joinWindowSeconds + declaration.voteWindowSeconds)} after the first charter entered)
+                </span>
+              )}
+            </p>
             {contest.winner && (
               <p>Outcome: {contest.winner.kind}{contest.winner.identityId ? ` — ${contest.winner.identityId}` : ''} ({when(contest.winner.decidedAtMs)})</p>
             )}

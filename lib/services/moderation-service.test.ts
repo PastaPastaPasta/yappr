@@ -17,12 +17,18 @@ const sdk = vi.hoisted(() => ({
     moderatorRestoreDocument: vi.fn(),
     moderationStatus: vi.fn(),
     moderationEntries: vi.fn(),
+    moderatorChangeDocumentFields: vi.fn(),
+    documentRemovals: vi.fn(),
   },
   documents: { get: vi.fn() },
   identities: { fetch: vi.fn() },
   moderationCharters: { team: vi.fn() },
 }))
-const topology = vi.hoisted(() => ({ moderated: true, lists: ['banlist', 'suspensions'] as string[], deletable: ['post', 'reply'], ownerProtected: true }))
+const topology = vi.hoisted(() => ({
+  moderated: true, lists: ['banlist', 'suspensions'] as string[], deletable: ['post', 'reply'], ownerProtected: true,
+  /** v10: reports are resolved (changeFields) and a deleted one keeps no removal record. */
+  resolvesReports: false, recordless: [] as string[],
+}))
 const fromBytes = vi.hoisted(() => vi.fn(() => ({ restored: true })))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
@@ -40,6 +46,8 @@ vi.mock('@/lib/contract-topology', () => ({
   contractKeepsWarnings: () => topology.moderated && topology.lists.includes('warnings'),
   moderatorDeletableTypes: () => (topology.moderated ? topology.deletable : []),
   electedModeration: () => (topology.moderated ? { ownerProtected: topology.ownerProtected } : null),
+  moderatorDeletionKeepsRecord: (type: string) => topology.moderated && topology.deletable.includes(type) && !topology.recordless.includes(type),
+  reportsAreResolved: () => topology.moderated && topology.resolvesReports,
 }))
 
 const storage = new Map<string, string>()
@@ -61,6 +69,8 @@ beforeEach(() => {
   storage.clear()
   topology.moderated = true
   topology.lists = ['banlist', 'suspensions']
+  topology.resolvesReports = false
+  topology.recordless = []
   for (const group of [sdk.contracts, sdk.documents, sdk.identities, sdk.moderationCharters]) {
     for (const fn of Object.values(group)) fn.mockReset()
   }
@@ -424,5 +434,91 @@ describe('dismissing reports', () => {
       .mockResolvedValueOnce({})
     const result = await moderationService.dismissReports(MODERATOR, ['R1', 'R2', 'R3'], reason)
     expect(result).toMatchObject({ success: true, dismissed: ['R1', 'R2', 'R3'] })
+  })
+})
+
+describe('resolving reports (v10: moderatorAbilities.changeFields)', () => {
+  const reason = { text: 'Report resolved: content removed', documents: [{ documentTypeName: 'post', documentId: 'P1' }] }
+  const open = (id: string) => ({ id, status: null, resolution: null })
+
+  beforeEach(() => {
+    topology.deletable = ['post', 'reply', 'report']
+    topology.resolvesReports = true
+    topology.recordless = ['report']
+  })
+
+  it('refuses locally on a contract whose moderators dismiss reports instead (v9)', async () => {
+    topology.resolvesReports = false
+    const result = await moderationService.resolveReports(MODERATOR, [open('R1')], { status: 1 }, reason)
+    expect(result).toMatchObject({ success: false, errorCode: 'NOT_MODERATED', resolved: [], alreadyResolved: [], gone: [] })
+    expect(sdk.contracts.moderatorChangeDocumentFields).not.toHaveBeenCalled()
+  })
+
+  it('writes status and the note on each report, in order, citing the reported post', async () => {
+    sdk.contracts.moderatorChangeDocumentFields.mockResolvedValue({})
+    const seen: string[] = []
+    const result = await moderationService.resolveReports(MODERATOR, [open('R1'), open('R2')], { status: 2, note: '  Taken down  ' }, reason, (id) => seen.push(id))
+    expect(result).toMatchObject({ success: true, resolved: ['R1', 'R2'], alreadyResolved: [], gone: [] })
+    expect(seen).toEqual(['R1', 'R2'])
+    expect(sdk.contracts.moderatorChangeDocumentFields.mock.calls.map(([args]) => [args.documentTypeName, args.documentId, args.fields, args.reason])).toEqual([
+      ['report', 'R1', { status: 2, resolution: 'Taken down' }, reason],
+      ['report', 'R2', { status: 2, resolution: 'Taken down' }, reason],
+    ])
+    // A resolution is not a deletion: nothing is removed, nothing snapshotted.
+    expect(sdk.contracts.moderatorDeleteDocument).not.toHaveBeenCalled()
+    expect(storage.size).toBe(0)
+  })
+
+  it('sends no resolution field without a note, and removes a stale note with null', async () => {
+    sdk.contracts.moderatorChangeDocumentFields.mockResolvedValue({})
+    await moderationService.resolveReports(MODERATOR, [open('R1'), { id: 'R2', status: 2, resolution: 'old' }], { status: 1, note: '   ' }, reason)
+    expect(sdk.contracts.moderatorChangeDocumentFields.mock.calls.map(([args]) => args.fields)).toEqual([
+      { status: 1 },
+      { status: 1, resolution: null },
+    ])
+  })
+
+  it('skips a report already reading that way, since a change that changes nothing is refused (10905)', async () => {
+    sdk.contracts.moderatorChangeDocumentFields.mockResolvedValue({})
+    const result = await moderationService.resolveReports(MODERATOR, [{ id: 'R1', status: 3, resolution: 'Banned' }, open('R2')], { status: 3, note: 'Banned' }, reason)
+    expect(result.resolved).toEqual(['R1', 'R2'])
+    expect(sdk.contracts.moderatorChangeDocumentFields).toHaveBeenCalledTimes(1)
+  })
+
+  it('counts a report another moderator resolved the same way meanwhile, says it was not this write, and sets aside withdrawn or expired ones', async () => {
+    sdk.contracts.moderatorChangeDocumentFields
+      .mockRejectedValueOnce(new Error("The fields a moderator's document change sets are invalid: every field already holds the value the change names, so nothing would change"))
+      .mockRejectedValueOnce({ code: 40101, message: 'refused' })
+      .mockRejectedValueOnce({ code: 40140, message: 'refused' })
+      .mockResolvedValueOnce({})
+    const result = await moderationService.resolveReports(MODERATOR, ['R1', 'R2', 'R3', 'R4'].map(open), { status: 1 }, reason)
+    expect(result).toMatchObject({ success: true, resolved: ['R1', 'R4'], alreadyResolved: ['R1'], gone: ['R2', 'R3'] })
+  })
+
+  it('stops at the first refusal and says which reports were resolved', async () => {
+    sdk.contracts.moderatorChangeDocumentFields
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error('The moderation of contract 8Xv3 names no reason document, which the proposal S1 of its seated team does not list'))
+    const result = await moderationService.resolveReports(MODERATOR, ['R1', 'R2', 'R3'].map(open), { status: 1 }, reason)
+    expect(result).toMatchObject({ success: false, errorCode: 'REASON_NOT_LISTED', resolved: ['R1'] })
+    expect(sdk.contracts.moderatorChangeDocumentFields).toHaveBeenCalledTimes(2)
+  })
+
+  it('still purges reports by deleting them, which on v10 resolves to nothing', async () => {
+    sdk.contracts.moderatorDeleteDocument.mockResolvedValue(undefined)
+    const result = await moderationService.dismissReports(MODERATOR, ['R1'], 'Report purged')
+    expect(result).toMatchObject({ success: true, dismissed: ['R1'] })
+  })
+})
+
+describe('removal records are read only for types that keep them', () => {
+  it('never asks documentRemovals about a type whose deletion keeps no record (it would be refused)', async () => {
+    topology.recordless = ['reply']
+    sdk.contracts.documentRemovals.mockResolvedValue({ removals: [] })
+    await expect(moderationService.listRemovals('reply')).resolves.toEqual({ removals: [] })
+    await expect(moderationService.getRemovals('reply', ['R1'])).resolves.toEqual(new Map())
+    expect(sdk.contracts.documentRemovals).not.toHaveBeenCalled()
+    await moderationService.getRemovals('post', ['P1'])
+    expect(sdk.contracts.documentRemovals).toHaveBeenCalledTimes(1)
   })
 })
