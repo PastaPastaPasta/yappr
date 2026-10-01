@@ -6,6 +6,7 @@ describe('resolveAppConfig', () => {
       variant: 'testnet',
       network: 'testnet',
       scheme: 'yappr-beta',
+      webBasePath: '',
       applicationId: 'pr.yap.app.beta',
       appVersion: '1.2.3',
     });

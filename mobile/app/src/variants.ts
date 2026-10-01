@@ -3,25 +3,30 @@
  * src/config.ts (run time), so it must stay free of React Native imports.
  *
  * Each variant registers only its own URL scheme, so side-by-side installs
- * never compete for a link (or a wallet's sign-in callback).
+ * never compete for a link (or a wallet's sign-in callback). `webBasePath` is
+ * the yap.pr prefix whose links (universal links / App Links) the variant
+ * claims (UX_SPEC §3.5).
  */
 export const VARIANTS = {
   devnet: {
     name: 'Yappr Dev',
     applicationId: 'pr.yap.app.dev',
     scheme: 'yappr-dev',
+    webBasePath: '/devnet',
     network: 'devnet',
   },
   testnet: {
     name: 'Yappr Beta',
     applicationId: 'pr.yap.app.beta',
     scheme: 'yappr-beta',
+    webBasePath: '',
     network: 'testnet',
   },
   production: {
     name: 'Yappr',
     applicationId: 'pr.yap.app',
     scheme: 'yappr',
+    webBasePath: '',
     network: 'mainnet',
   },
 } as const;
