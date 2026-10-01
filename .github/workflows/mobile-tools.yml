@@ -1,0 +1,53 @@
+name: Mobile tools
+
+# The test-wallet responder reuses vendor/platform-auth's key-exchange code, so
+# a change there must keep the offline wallet round trip green.
+on:
+  push:
+    branches: [master, staging]
+    paths:
+      - 'mobile/tools/**'
+      - 'vendor/platform-auth/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/mobile-tools.yml'
+  pull_request:
+    paths:
+      - 'mobile/tools/**'
+      - 'vendor/platform-auth/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/mobile-tools.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-tools-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tools:
+    name: Tools (typecheck, unit tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile/tools
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            mobile/tools/package-lock.json
+      - name: Install root dependencies
+        working-directory: .
+        run: npm ci
+      - name: Install tools dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests (offline)
+        run: npm test
