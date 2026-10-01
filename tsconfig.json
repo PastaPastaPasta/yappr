@@ -42,6 +42,7 @@
     "worktrees",
     "vendor/platform-auth",
     "e2e",
-    "playwright.config.ts"
+    "playwright.config.ts",
+    "mobile"
   ]
 }
