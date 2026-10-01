@@ -9,7 +9,14 @@ import boundaries from '../../eslint/import-boundaries';
 const file = (rel: string) => `${boundaries.APP_ROOT}/${rel}`;
 const ROUTE = file('src/app/(tabs)/(home)/index.tsx');
 const ALLOWLIST_FILE = file('src/lib-allowlist.ts');
-const options = [{ libAllowlist: ['lib/pure'], libTypeAllowlist: ['lib/types'], allowlistFile: 'src/lib-allowlist.ts' }];
+const options = [
+  {
+    libAllowlist: ['lib/pure'],
+    libTypeAllowlist: ['lib/types'],
+    allowlistFile: 'src/lib-allowlist.ts',
+    engineRuntimeAllowlist: ['protocol/', 'rpc/client'],
+  },
+];
 
 const tester = new RuleTester({
   languageOptions: { parser: tsParser, ecmaVersion: 'latest', sourceType: 'module' },
@@ -33,6 +40,10 @@ tester.run('import-boundaries', boundaries.rules['import-boundaries'], {
     { code: "import { type EngineApi } from '@engine/api';", filename: ROUTE, options },
     { code: "export type { Post } from '@/lib/types';", filename: ALLOWLIST_FILE, options },
     { code: "export { x } from '@/lib/pure';", filename: ALLOWLIST_FILE, options },
+    // The engine's wire modules, at run time.
+    { code: "import { createEngineClient } from '@engine/rpc/client';", filename: ROUTE, options },
+    { code: "import { decode } from '@engine/protocol/codec';", filename: ROUTE, options },
+    { code: "import { decode } from '../../../../../engine/src/protocol/codec.ts';", filename: ROUTE, options },
   ],
   invalid: [
     invalid("import { EvoSDK } from '@dashevo/evo-sdk';", 'sdk'),
@@ -58,6 +69,9 @@ tester.run('import-boundaries', boundaries.rules['import-boundaries'], {
     // Engine: types only.
     invalid("import { engine } from '@engine/api';", 'engineTypeOnly'),
     invalid("import '@engine/api';", 'engineTypeOnly'),
+    invalid("import { createDispatcher } from '@engine/rpc/dispatcher';", 'engineTypeOnly'),
+    invalid("import x from '@engine/rpc/client/../dispatcher';", 'engineTypeOnly'),
+    invalid("import x from '@engine/protocol/../api';", 'engineTypeOnly'),
     // Metro's require.context bundles a whole directory.
     invalid("const lib = require.context('../../../../../../lib');", 'libDirect'),
     invalid("const lib = require.context('@/lib', true);", 'libDirect'),

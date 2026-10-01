@@ -9,6 +9,7 @@ describe('resolveAppConfig', () => {
       webBasePath: '',
       applicationId: 'pr.yap.app.beta',
       appVersion: '1.2.3',
+      engine: null,
     });
   });
 

@@ -157,6 +157,15 @@ export function ModeratorRemoveModal() {
       loadRoute(Number.POSITIVE_INFINITY)
       return
     }
+    if (result.errorCode === 'DOCUMENT_GONE') {
+      // Already removed (by another moderator, or an earlier attempt whose
+      // answer was lost): what was asked for holds.
+      toast(result.error ?? `This ${noun} is already gone`, { duration: 6000 })
+      onRemoved?.()
+      reset()
+      close()
+      return
+    }
     if (!result.success) {
       toast.error(result.error || 'Removal failed')
       return

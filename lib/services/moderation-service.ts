@@ -6,7 +6,7 @@ import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants';
 import { authorDeletesLeaveHoles, contractIsModerated, contractKeepsWarnings, electedModeration, isV11, moderationListsKept, moderatorDeletableTypes, moderatorDeleteWindowSeconds, moderatorDeletionKeepsRecord, reportsAreResolved, settledDeletionFor, type SettledDeletionRule, type TargetKind } from '@/lib/contract-topology';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
-import { classifyModerationError, extractErrorMessage, hasConsensusCode, isDocumentExpiredError, isTimeoutError, type ModerationErrorKind } from '@/lib/error-utils';
+import { classifyModerationError, extractErrorMessage, hasConsensusCode, isDocumentExpiredError, isTimeoutError, isUnverifiedOutcomeError, type ModerationErrorKind } from '@/lib/error-utils';
 import { isReportGoneError, type ReportRecord, type ReportStatus } from '@/lib/reports';
 import { RESTORE_WINDOW_MS, dropSnapshot, loadSnapshot, removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots';
 import { getEvoSdk } from './evo-sdk-service';
@@ -413,6 +413,8 @@ const reasonText = (reason: ContractModerationReason | undefined): string | null
 
 /** At most 16 cited documents, none twice (10904 otherwise). */
 const MAX_REASON_DOCUMENTS = 16;
+/** A reason's text is at most 1024 BYTES of UTF-8 (10903 otherwise); a text box's `maxLength` counts characters. */
+const MAX_REASON_TEXT_BYTES = 1024;
 
 /**
  * The SDK shape of a reason. `documents` and `reasonDocumentId` are only sent
@@ -429,6 +431,11 @@ export function toModerationReason(input: ModerationReasonInput): ContractModera
   });
   if (documents.length > MAX_REASON_DOCUMENTS) {
     throw new Error(`A moderation reason may cite at most ${MAX_REASON_DOCUMENTS} documents`);
+  }
+  const textBytes = new TextEncoder().encode(input.text).length;
+  if (textBytes > MAX_REASON_TEXT_BYTES) {
+    // Drive's own wording (10903), so the refusal classifies the same either way.
+    throw new Error(`The text of a contract moderation reason is ${textBytes} bytes long, the maximum is ${MAX_REASON_TEXT_BYTES}`);
   }
   return {
     text: input.text,
@@ -870,7 +877,7 @@ class ModerationService {
   async ban(moderatorId: string, identityId: string, reason: string | ModerationReasonInput): Promise<ModerationResult> {
     return this.moderate(moderatorId, async (sdk, auth) => {
       await sdk.contracts.banUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, reason: reasonOf(reason) });
-    }, identityId);
+    }, identityId, reason);
   }
 
   async unban(moderatorId: string, identityId: string): Promise<ModerationResult> {
@@ -881,9 +888,22 @@ class ModerationService {
 
   /** `until` is the block time, in ms, at which the suspension lapses; it must be in the future (41106). */
   async suspend(moderatorId: string, identityId: string, until: number, reason: string | ModerationReasonInput): Promise<ModerationResult> {
-    return this.moderate(moderatorId, async (sdk, auth) => {
-      await sdk.contracts.suspendUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, until: BigInt(until), reason: reasonOf(reason) });
-    }, identityId);
+    let targetBanned = false;
+    const result = await this.moderate(moderatorId, async (sdk, auth) => {
+      try {
+        await sdk.contracts.suspendUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, until: BigInt(until), reason: reasonOf(reason) });
+      } catch (error) {
+        // Drive answers a suspension of a BANNED identity with 41107, whose
+        // prose ("... is banned ... and can not act on its documents") reads
+        // like the moderator's own ban; here it is the target's.
+        targetBanned = hasConsensusCode(error, [41107]) || /is banned on contract .* and can not act on its documents/i.test(extractErrorMessage(error));
+        throw error;
+      }
+    }, identityId, reason);
+    if (targetBanned) {
+      return { success: false, error: 'That identity is banned, which already bars its writes: unban it first to suspend it instead', errorCode: 'ALREADY_BANNED' };
+    }
+    return result;
   }
 
   async unsuspend(moderatorId: string, identityId: string): Promise<ModerationResult> {
@@ -904,7 +924,7 @@ class ModerationService {
     }
     return this.moderate(moderatorId, async (sdk, auth) => {
       await sdk.contracts.warnUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, reason: reasonOf(reason) });
-    }, identityId);
+    }, identityId, reason);
   }
 
   /** Clears every warning an identity carries (41117 when it carries none). */
@@ -932,21 +952,39 @@ class ModerationService {
       return { success: false, error: `Moderators cannot remove a ${kind} on this contract`, errorCode: 'NOT_MODERATED' };
     }
     let snapshotSaved = false;
-    const result = await this.moderate(moderatorId, async (sdk, auth) => {
+    let documentGone = false;
+    const moderated = await this.moderate(moderatorId, async (sdk, auth) => {
       snapshotSaved = await this.snapshotForRestore(sdk, kind, documentId);
-      await sdk.contracts.moderatorDeleteDocument({
-        ...auth,
-        contractId: YAPPR_CONTRACT_ID,
-        documentTypeName: kind,
-        documentId,
-        reason: reasonOf(reason),
-      });
-    });
+      try {
+        await sdk.contracts.moderatorDeleteDocument({
+          ...auth,
+          contractId: YAPPR_CONTRACT_ID,
+          documentTypeName: kind,
+          documentId,
+          reason: reasonOf(reason),
+        });
+      } catch (error) {
+        // 40101: another moderator removed it first (or its author deleted it,
+        // where authors can): the goal is met, and nothing was deleted here.
+        documentGone = isReportGoneError(error);
+        throw error;
+      }
+    }, undefined, reason);
+    const result: ModerationResult = documentGone
+      ? {
+        success: false,
+        error: `This ${kind} is already gone (removed by a moderator, perhaps by an earlier attempt of yours${authorDeletesLeaveHoles() ? ', or deleted by its author' : ''})`,
+        errorCode: 'DOCUMENT_GONE',
+      }
+      : moderated;
     // The copy is the only way back, so it goes only when the network
     // DEFINITIVELY refused the delete (a classified consensus refusal, or a
     // local refusal before signing). A timeout or an unrecognised failure may
-    // hide a delete that landed; the one-week expiry cleans those up.
-    if (!result.success && snapshotSaved && isDefinitiveRefusal(result)) {
+    // hide a delete that landed; the one-week expiry cleans those up. A
+    // document already gone was removed after this copy was taken (by another
+    // moderator, or by an earlier attempt whose answer was lost), and any
+    // moderator may restore it from these bytes, so the copy stays too.
+    if (!result.success && snapshotSaved && isDefinitiveRefusal(result) && result.errorCode !== 'DOCUMENT_GONE') {
       dropSnapshot(kind, documentId);
       snapshotSaved = false;
     }
@@ -1025,7 +1063,7 @@ class ModerationService {
         reason: reasonOf(reason),
       });
       signed = { actionId: proposal.actionId.toBase58(), status: proposal.status };
-    });
+    }, undefined, reason);
     if (result.errorCode === 'MAYBE_APPLIED') {
       return { ...result, error: 'The network did not confirm in time: the team removal may have been proposed. Check the team actions before proposing again.' };
     }
@@ -1144,7 +1182,7 @@ class ModerationService {
         dismissed.push(documentId);
         onDismissed?.(documentId);
       }
-    });
+    }, undefined, reason);
     return { ...result, dismissed };
   }
 
@@ -1214,7 +1252,7 @@ class ModerationService {
         resolved.push(report.id);
         onResolved?.(report.id);
       }
-    });
+    }, undefined, reason);
     return { ...result, resolved, alreadyResolved, gone };
   }
 
@@ -1228,22 +1266,45 @@ class ModerationService {
     return remainingCredits === undefined ? result : { ...result, remainingCredits };
   }
 
+  /**
+   * Runs one moderation write under the moderator's write lock. `reason`, when
+   * the write carries one, is checked BEFORE the lock: a reason refused locally
+   * (over 16 documents, over 1024 bytes) thrown inside it would carry no
+   * verdict, and the lock would then hold every later write back for 15 minutes.
+   */
   private async moderate(
     moderatorId: string,
     action: (sdk: EvoSDK, auth: ModeratorAuth) => Promise<void>,
-    moderatedIdentityId?: string
+    moderatedIdentityId?: string,
+    reason?: string | ModerationReasonInput
   ): Promise<ModerationResult> {
     if (!contractIsModerated()) {
       return { success: false, error: 'This contract declares no moderation', errorCode: 'NOT_MODERATED' };
     }
+    if (reason !== undefined) {
+      try {
+        reasonOf(reason);
+      } catch (error) {
+        return this.toResult(error);
+      }
+    }
+    // Set once the write lock is held and the action runs: from there on a
+    // failure whose answer could not be verified may hide a landed transition.
+    let started = false;
     try {
       const sdk = await getEvoSdk();
       const { identity, signer } = await this.getCriticalSigner(moderatorId);
-      await withSdkSignedWrite(moderatorId, YAPPR_CONTRACT_ID, () => action(sdk, { identity, signer }));
+      await withSdkSignedWrite(moderatorId, YAPPR_CONTRACT_ID, () => {
+        started = true;
+        return action(sdk, { identity, signer });
+      });
       if (moderatedIdentityId) this.standingCache.delete(moderatedIdentityId);
       return { success: true };
     } catch (error) {
-      return this.toResult(error);
+      const result = this.toResult(error, started);
+      // The target's standing is not what the cache says (or may have changed).
+      if (moderatedIdentityId && STANDING_STALE.has(result.errorCode)) this.standingCache.delete(moderatedIdentityId);
+      return result;
     } finally {
       // Succeeded or refused, the team may have moved (a 41101 usually means a
       // team was seated since it was read): the next check reads it again.
@@ -1277,7 +1338,7 @@ class ModerationService {
     return { identity, signer };
   }
 
-  private toResult(error: unknown): ModerationResult {
+  private toResult(error: unknown, started = false): ModerationResult {
     const msg = extractErrorMessage(error);
     logger.error('Moderation failed:', msg);
     const lower = msg.toLowerCase();
@@ -1288,7 +1349,12 @@ class ModerationService {
     if (kind) {
       return { success: false, error: MODERATION_ERROR_MESSAGES[kind], errorCode: kind };
     }
-    if (isTimeoutError(error)) {
+    // A proof that failed to verify (sakura's "Quorum not found in cache"
+    // while the quorum service lags a rotation) once the write started is no
+    // verdict either (it may also come from a read the SDK makes before the
+    // broadcast; "check again" is right for both): such a ban and such a proposal had landed. Retried
+    // blind, a ban is a 41103 and a proposal a second, approval-splitting one.
+    if (isTimeoutError(error) || (started && isUnverifiedOutcomeError(error))) {
       return { success: false, error: 'The network did not confirm in time: this may have been applied. Check again before retrying.', errorCode: 'MAYBE_APPLIED' };
     }
     if (hasConsensusCode(error, [41111]) || /already.{0,30}claimed.{0,30}epoch|alreadyclaimedthisepoch/.test(lower)) {
@@ -1304,6 +1370,9 @@ class ModerationService {
     return { success: false, error: msg, errorCode: 'NETWORK_ERROR' };
   }
 }
+
+/** Refusals that prove the cached standing of their target stale, or may have changed it. */
+const STANDING_STALE = new Set<ModerationResult['errorCode']>(['ALREADY_BANNED', 'NOT_BANNED', 'NOT_SUSPENDED', 'MAYBE_APPLIED']);
 
 /** Team actions per page, and how many the queue reads at most. */
 const TEAM_ACTIONS_PAGE = 100;
@@ -1352,6 +1421,13 @@ const MODERATION_ERROR_MESSAGES: Record<ModerationErrorKind, string> = {
   SETTLED_DELETION_NOT_RESTORABLE: 'The seated team removed this together, and a team removal can never be undone',
   TEAM_ACTION_COMPLETED: 'That team action already ran',
   TEAM_ACTION_DOCUMENT_CHANGED: 'The document changed since the removal was proposed, so it can no longer be approved: propose it again',
+  ALREADY_BANNED: 'That identity is already banned',
+  NOT_BANNED: 'That identity is not banned',
+  NOT_SUSPENDED: 'That identity is not suspended (a suspension that ran out is cleared by its next write)',
+  SUSPENSION_NOT_IN_FUTURE: 'A suspension must end after the current block time: pick a later end',
+  TARGET_NOT_FOUND: 'That identity does not exist',
+  SELF_TARGET: 'A moderator cannot moderate itself',
+  REASON_TOO_LONG: 'The reason is too long: at most 1024 bytes (characters outside ASCII take more than one)',
 };
 
 export const moderationService = new ModerationService();

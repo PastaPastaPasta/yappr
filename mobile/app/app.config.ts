@@ -1,5 +1,6 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
+import { engineExtra } from './plugins/engine-assets';
 import { isVariant, VARIANTS, type Variant } from './src/variants.ts';
 
 /**
@@ -55,6 +56,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     plugins: [
       'expo-router',
       'expo-secure-store',
+      'expo-web-browser',
+      [
+        'expo-local-authentication',
+        { faceIDPermission: 'Allow Yappr to use Face ID to unlock your accounts.' },
+      ],
+      ['./plugins/engine-assets', { variant }],
       [
         'expo-splash-screen',
         {
@@ -71,6 +78,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     extra: {
       variant,
       network: v.network,
+      engine: engineExtra(variant),
     },
   };
 };

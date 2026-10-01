@@ -12,6 +12,9 @@ const sdk = vi.hoisted(() => ({
     warnUser: vi.fn(),
     clearUserWarnings: vi.fn(),
     banUser: vi.fn(),
+    unbanUser: vi.fn(),
+    suspendUser: vi.fn(),
+    unsuspendUser: vi.fn(),
     moderatorDeleteDocument: vi.fn(),
     claimFees: vi.fn(),
     moderatorRestoreDocument: vi.fn(),
@@ -177,6 +180,12 @@ describe('toModerationReason', () => {
   it('refuses more than 16 cited documents before anything is signed (10904 on chain)', () => {
     const documents = Array.from({ length: 17 }, (_, i) => ({ documentTypeName: 'post', documentId: `P${i}` }))
     expect(() => toModerationReason({ text: 'x', documents })).toThrow(/16/)
+  })
+
+  it('refuses a text over 1024 BYTES before anything is signed (10903 on chain), though it is under 1024 characters', () => {
+    const text = '\u00e9'.repeat(600) // 600 characters, 1200 bytes of UTF-8
+    expect(() => toModerationReason({ text })).toThrow(/1200 bytes long, the maximum is 1024/)
+    expect(toModerationReason({ text: 'a'.repeat(1024) })).toEqual({ text: 'a'.repeat(1024) })
   })
 })
 
@@ -825,5 +834,69 @@ describe('the team\'s settled-deletion writes and reads', () => {
     sdk.contracts.moderationActionCounts.mockClear()
     await expect(moderationService.getActionCounts()).resolves.toBeNull()
     expect(sdk.contracts.moderationActionCounts).not.toHaveBeenCalled()
+  })
+})
+
+describe('refusals and unverified answers seen live on sakura (QA 2026-10-01)', () => {
+  it.each([
+    ['ban', 41103, 'Identity T is already banned on contract C', 'ALREADY_BANNED', () => moderationService.ban(MODERATOR, TARGET, 'spam'), 'banUser'],
+    ['unban', 41104, 'Identity T is not banned on contract C', 'NOT_BANNED', () => moderationService.unban(MODERATOR, TARGET), 'unbanUser'],
+    ['unsuspend', 41105, 'Identity T is not suspended on contract C', 'NOT_SUSPENDED', () => moderationService.unsuspend(MODERATOR, TARGET), 'unsuspendUser'],
+    ['suspend', 41106, 'Suspension of identity T on contract C ends at 1 which is not after the block time 2', 'SUSPENSION_NOT_IN_FUTURE', () => moderationService.suspend(MODERATOR, TARGET, 1, 'spam'), 'suspendUser'],
+    ['ban', 10901, 'Identity M can not moderate itself', 'SELF_TARGET', () => moderationService.ban(MODERATOR, MODERATOR, 'spam'), 'banUser'],
+  ] as const)('classifies a %s refused %i', async (_label, code, message, errorCode, run, method) => {
+    sdk.contracts[method].mockRejectedValue({ code, message, name: 'Protocol' })
+    expect(await run()).toMatchObject({ success: false, errorCode })
+  })
+
+  it('reads a 41107 on a suspension as the TARGET being banned, not the moderator', async () => {
+    sdk.contracts.suspendUser.mockRejectedValue({ code: 41107, message: 'Identity T is banned on contract C and can not act on its documents', name: 'Protocol' })
+    const result = await moderationService.suspend(MODERATOR, TARGET, Date.now() + 60_000, 'spam')
+    expect(result).toMatchObject({ success: false, errorCode: 'ALREADY_BANNED' })
+    expect(result.error).toMatch(/unban it first/)
+  })
+
+  it('reports a ban whose proof failed to verify after it was sent as MAYBE_APPLIED, never a plain failure', async () => {
+    sdk.contracts.banUser.mockRejectedValue({ code: -1, name: 'Proof', message: 'context provider error: invalid quorum: Quorum not found in cache for hash: 1855' })
+    expect(await moderationService.ban(MODERATOR, TARGET, 'spam')).toMatchObject({ success: false, errorCode: 'MAYBE_APPLIED' })
+  })
+
+  it('reports a proposal whose answer was lost after it was sent as MAYBE_APPLIED, so nobody proposes it twice', async () => {
+    topology.v11 = true
+    sdk.contracts.moderatorDeleteSettledDocument.mockRejectedValue({ code: -1, name: 'Proof', message: 'proof verification failed: invalid quorum' })
+    const result = await moderationService.proposeSettledDeletion(MODERATOR, 'post', 'D1', { text: 'spam', reasonDocumentId: 'RD1' })
+    expect(result).toMatchObject({ success: false, errorCode: 'MAYBE_APPLIED' })
+    expect(result.error).toMatch(/check the team actions/i)
+  })
+
+  it('keeps a proof failure BEFORE anything was sent a plain failure', async () => {
+    sdk.identities.fetch.mockRejectedValue({ code: -1, name: 'Proof', message: 'context provider error: invalid quorum: Quorum not found in cache' })
+    const result = await moderationService.ban(MODERATOR, TARGET, 'spam')
+    expect(result).toMatchObject({ success: false, errorCode: 'NETWORK_ERROR' })
+    expect(sdk.contracts.banUser).not.toHaveBeenCalled()
+  })
+
+  it('says a post another moderator already removed (40101) is gone, and keeps the copy any moderator may restore from', async () => {
+    const bytes = new Uint8Array([1, 2, 3])
+    sdk.contracts.fetch.mockResolvedValue({})
+    sdk.documents.get.mockResolvedValue({ toBytes: () => bytes })
+    sdk.contracts.moderatorDeleteDocument.mockRejectedValue({ code: 40101, name: 'Protocol', message: '6FLRRz7QLnTb4UzEz5UrSqSBRTU2w2THHwLEgKNaUQ2Q document not found' })
+    const result = await moderationService.removeDocument(MODERATOR, 'post', 'D9', 'spam')
+    expect(result).toMatchObject({ success: false, errorCode: 'DOCUMENT_GONE', snapshotSaved: true })
+    expect(result.error).toMatch(/already gone/)
+    expect(result.error).not.toMatch(/deleted by its author/)
+    expect(storage.size).toBe(1)
+  })
+
+  it.each([
+    ['ban', () => moderationService.ban(MODERATOR, TARGET, '\u00e9'.repeat(600))],
+    ['remove', () => moderationService.removeDocument(MODERATOR, 'post', 'D1', '\u00e9'.repeat(600))],
+  ] as const)('refuses a %s reason over 1024 bytes before taking the write lock or a signer', async (_label, run) => {
+    // Inside the lock, a local refusal carries no verdict and would hold every later write back for 15 minutes.
+    const result = await run()
+    expect(result).toMatchObject({ success: false, errorCode: 'REASON_TOO_LONG' })
+    expect(sdk.identities.fetch).not.toHaveBeenCalled()
+    expect(sdk.contracts.banUser).not.toHaveBeenCalled()
+    expect(sdk.contracts.moderatorDeleteDocument).not.toHaveBeenCalled()
   })
 })

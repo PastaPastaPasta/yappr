@@ -15,9 +15,15 @@ interface ModerationRole {
    * never be dismissed.
    */
   isProtected: boolean
+  /**
+   * Every identity protected from moderation right now (same rule as
+   * `isProtected`): a moderator's removal of a document one of them owns is a
+   * paid 41102, so no Remove is offered on it.
+   */
+  protectedIds: ReadonlySet<string>
 }
 
-const NONE: ModerationRole = { isModerator: false, isProtected: false }
+const NONE: ModerationRole = { isModerator: false, isProtected: false, protectedIds: new Set() }
 
 /**
  * The signed-in identity's standing on the social contract's moderation, read
@@ -36,7 +42,7 @@ export function useModerationRole(): ModerationRole {
     }
     let cancelled = false
     Promise.all([moderationService.isModerator(identityId), moderationService.getProtectedIdentities()]).then(([isModerator, protectedIds]) => {
-      if (!cancelled) setRole({ isModerator, isProtected: isModerator || protectedIds.has(identityId) })
+      if (!cancelled) setRole({ isModerator, isProtected: isModerator || protectedIds.has(identityId), protectedIds })
     }).catch(() => {
       if (!cancelled) setRole(NONE)
     })

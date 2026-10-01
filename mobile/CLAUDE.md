@@ -37,7 +37,11 @@ before you change anything here.
     - `~/` for `src/`;
     - `@assets/` for `assets/`;
     - `@engine/` for `mobile/engine/src`, `import type` only. Call the engine
-      through `~/engine`.
+      through `~/engine`. The one exception is `ENGINE_RUNTIME_ALLOWLIST`
+      (`eslint.config.js`): the wire modules `protocol/*`, `rpc/client` and
+      `rpc/transport`, which the host must share with the engine exactly.
+      They stay dependency-free, which
+      `src/__tests__/engine-runtime-imports.test.ts` enforces.
   - Module specifiers must be string literals.
   - Web `lib/` comes in only through `src/lib-allowlist.ts`:
     - `@/` points at the repo root, as on web;
@@ -72,7 +76,7 @@ before you change anything here.
 | `src/variants.ts` | The variant table, shared with `app.config.ts`. |
 | `src/ui/` | Tokens (`tokens.ts`), `Screen`, `Text`, `Placeholder`, `ComposeFab` and `stackScreenOptions`. The design-system PR adds the primitives. |
 | `src/state/` | MMKV `syncStorage`, the TanStack Query client and its persister, the appearance store, `useTabBadges`. |
-| `src/engine/` | The engine proxy (placeholder) and `ENGINE_BUNDLE_HASH`. |
+| `src/engine/` | The engine host (below). |
 | `src/lib-allowlist.ts` | The only door into web `lib/`. |
 | `tailwind.config.js` | NativeWind. It uses the root `tailwind.config.js` as a preset, so `yappr-*`, `neutral-750/850` and `shadow-yappr*` are the web's tokens. The gradients are tokens only, because NativeWind can't render `background-image`. |
 
@@ -129,6 +133,54 @@ side-by-side installs never compete for a link or a wallet callback.
 Switching variants changes the bundle id, so prebuild again with
 `APP_VARIANT=testnet npm run prebuild`. Metro must then be started with the
 same `APP_VARIANT`, or the app refuses to start (`src/config.ts`).
+
+**Engine host** (`src/engine/`, ENGINE.md §1, §3, §9, §11).
+
+- `engine.api.<module>.<method>()` (`~/engine`) calls the engine; in screens use
+  `useQuery(engineQuery(key, (api) => api.feed.forYou({})))` from
+  `~/engine/hooks`, plus `useEngineStatus()` and `useEngineEvent()`.
+- `EngineHost` (mounted by the root layout) renders the one hidden WebView.
+  The supervisor (`supervisor.ts`) boots it, queues calls until boot, pings it,
+  restarts it on a crash or hang with backoff, and replays an interrupted
+  **read** once. Writes and session calls are never replayed (`methods.ts`
+  classifies paths; unknown paths count as writes).
+- The engine's `localStorage` lives in an encrypted MMKV instance per network
+  (`yappr.engine.<networkKey>`; its key is in the Keychain/Keystore), and its
+  secrets (`yappr_secure_*`, `yappr:pf:*`, upload credentials) in
+  expo-secure-store (`storage/`).
+- Without WebAssembly (iOS Lockdown Mode) the app routes to `/lockdown`; an
+  Android WebView older than the bundle's Chrome 110 target to
+  `/webview-update`. Diagnostics (`/settings/diagnostics`) shows state,
+  versions, timings and the redacted log ring buffer.
+- The config plugin `plugins/engine-assets` builds `mobile/engine` for the
+  variant at prebuild (root `npm ci` first; `YAPPR_ENGINE_SKIP_BUILD=1` to
+  reuse `dist/`) and ships it: `engine.inline.html` on iOS (loaded with an
+  https base URL), `engine.js` behind a small loader page on Android, whose
+  WebView silently loads nothing for inline HTML over about 15 MB.
+- Dev builds of the devnet variant have a quick sign-in on the diagnostics
+  screen (paste a WIF or hex key), for testing signed-in screens.
+- **Engine changes without a native rebuild (dev):** rebuild the engine, run
+  `APP_VARIANT=testnet npm run engine:serve` (serves `dist/<variant>` on
+  127.0.0.1:8092; `adb reverse tcp:8092 tcp:8092` on Android), start Metro with
+  `YAPPR_ENGINE_DEV_URL=http://127.0.0.1:8092`, then "Restart engine" in
+  diagnostics.
+
+**Native modules in the dev client: adding one requires a lead-approved
+rebuild.** Screen PRs share one dev-client build, so they use only these:
+`expo` and its modules (`expo-application`, `expo-clipboard`,
+`expo-constants`, `expo-crypto`, `expo-dev-client`, `expo-file-system`,
+`expo-haptics`, `expo-image`, `expo-linking`, `expo-local-authentication`,
+`expo-router`, `expo-secure-store`, `expo-sharing`, `expo-splash-screen`,
+`expo-status-bar`, `expo-system-ui`, `expo-web-browser`),
+`@react-native-community/netinfo`, `@react-native-menu/menu` (native
+long-press and dropdown menus; zeego 3 cannot build on RN 0.86),
+`@react-native-segmented-control/segmented-control`,
+`react-native-gesture-handler`, `react-native-mmkv` (+
+`react-native-nitro-modules`), `react-native-reanimated` (+
+`react-native-worklets`), `react-native-safe-area-context`,
+`react-native-screens`, `react-native-svg`, `react-native-webview`, and the
+local `modules/background-flush`. JS-only packages (for example
+`react-native-qrcode-svg`) need no rebuild.
 
 ## Run
 

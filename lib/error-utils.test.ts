@@ -11,6 +11,7 @@ import {
   isConsensusRefusal,
   categorizeError,
   classifyModerationError,
+  isUnverifiedOutcomeError,
   consensusCodeOf,
   messageWithConsensusCode,
   isActionFeeAgreementError,
@@ -451,6 +452,16 @@ describe('5.0.0-beta.1 settled-deletion rejections', () => {
     ['SETTLED_DELETION_NOT_RESTORABLE', 'refused (code=41209)'],
     ['TEAM_ACTION_COMPLETED', 'refused (code=41210)'],
     ['TEAM_ACTION_DOCUMENT_CHANGED', 'refused (code=41211)'],
+    ['ALREADY_BANNED', 'Identity 9t2e is already banned on contract 8Xv3'],
+    ['NOT_BANNED', 'Identity 9t2e is not banned on contract 8Xv3'],
+    ['NOT_SUSPENDED', 'Identity 9t2e is not suspended on contract 8Xv3'],
+    ['SUSPENSION_NOT_IN_FUTURE', 'Suspension of identity 9t2e on contract 8Xv3 ends at 1790888796682 which is not after the block time 1790888855419'],
+    ['TARGET_NOT_FOUND', 'Identity 9t2e moderated on contract 8Xv3 does not exist'],
+    ['SELF_TARGET', 'Identity 9t2e can not moderate itself'],
+    ['REASON_TOO_LONG', 'The text of a contract moderation reason is 1200 bytes long, the maximum is 1024'],
+    ['ALREADY_BANNED', 'refused (code=41103)'],
+    ['NOT_BANNED', '{"code":41104}'],
+    ['SELF_TARGET', 'refused (code=10901)'],
   ])('classifies a settled-deletion refusal as %s', (kind, message) => {
     expect(classifyModerationError(new Error(message))).toBe(kind)
   })
@@ -786,5 +797,24 @@ describe('isConsensusRefusal', () => {
     expect(isConsensusRefusal(new Error('transport error: rate limited'))).toBe(false)
     expect(isConsensusRefusal(new Error('received a verified VerifiedDocuments snapshot for this transition family'))).toBe(false)
     expect(isConsensusRefusal(new Error('balance 1790294020400 too low'))).toBe(false)
+  })
+})
+
+describe('isUnverifiedOutcomeError', () => {
+  it.each([
+    [{ code: -1, name: 'Proof', message: 'context provider error: invalid quorum: Quorum not found in cache for hash: 1855' }],
+    [{ code: -1, name: 'DapiClientError', message: 'no available addresses to retry' }],
+    [new Error('proof verification failed')],
+  ])('reads %o as an answer that could not be verified', (error) => {
+    expect(isUnverifiedOutcomeError(error)).toBe(true)
+  })
+
+  it.each([
+    [{ code: 41116, name: 'Protocol', message: 'Document D1 ... is past' }],
+    [new Error('state transition broadcast error: referenced moderated document not found')],
+    [new Error('Identity 9t2e is banned on contract 8Xv3 (code=41107)')],
+    [new Error('offline')],
+  ])('never reads a verdict or an unrelated failure %o as unverified', (error) => {
+    expect(isUnverifiedOutcomeError(error)).toBe(false)
   })
 })
