@@ -57,7 +57,16 @@ class MemoryStorage implements Storage {
   /** `key(i)` loops in lib are O(n) per call without this; dropped on every add or delete. */
   private keyCache: string[] | null = null
 
-  constructor(private readonly onWrite?: (key: string, value: string | null) => void) {}
+  /**
+   * @param forwardMissingDeletes report a delete even for a key this map does
+   *   not hold. The secure area needs it: the engine holds only the active
+   *   account's secrets, and signing another account out deletes that
+   *   account's keys by name, which the host must still remove.
+   */
+  constructor(
+    private readonly onWrite?: (key: string, value: string | null) => void,
+    private readonly forwardMissingDeletes = false
+  ) {}
 
   get length(): number {
     return this.items.size
@@ -82,8 +91,8 @@ class MemoryStorage implements Storage {
 
   removeItem(key: string): void {
     const k = String(key)
-    if (!this.items.delete(k)) return
-    this.keyCache = null
+    if (this.items.delete(k)) this.keyCache = null
+    else if (!this.forwardMissingDeletes) return
     this.onWrite?.(k, null)
   }
 
@@ -172,7 +181,7 @@ export function createEngineStorage(isSecureKey: (key: string) => boolean = isSe
   }
 
   const plain = new MemoryStorage((key, value) => notify({ area: 'local', key, value }))
-  const secure = new MemoryStorage((key, value) => notify({ area: 'secure', key, value }))
+  const secure = new MemoryStorage((key, value) => notify({ area: 'secure', key, value }), true)
 
   return {
     localStorage: new RoutedStorage(plain, secure, isSecureKey),

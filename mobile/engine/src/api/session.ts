@@ -1,0 +1,312 @@
+import { PlatformAuthController, type AuthUser } from 'platform-auth'
+import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
+import { useLoginModal } from '@/hooks/use-login-modal'
+import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
+import { getConfiguredNetwork, type AppNetwork } from '@/lib/constants'
+import {
+  clearAuthVaultDek,
+  clearEncryptionKey,
+  clearEncryptionKeyType,
+  clearLoginKey,
+  clearPrivateKey,
+  clearTransferKey,
+  hasEncryptionKey,
+} from '@/lib/secure-storage'
+import { stopDmEngine } from '@/lib/services/dm-v5'
+import { dpnsService } from '@/lib/services/dpns-service'
+import { RpcError } from '../protocol/envelope'
+import { createAccountRegistry, type SignInMethod } from '../session/accounts'
+import { createKeyExchange, type KeyExchangeRequestDTO, type KeyExchangeStep } from '../session/key-exchange'
+import { verifySignInKey } from '../session/keys'
+import type { TicketStore } from '../writes/tickets'
+
+export type { KeyExchangeRequestDTO, KeyToRegister } from '../session/key-exchange'
+export type { SignInMethod } from '../session/accounts'
+
+export interface SessionDTO {
+  identityId: string
+  network: AppNetwork
+  username: string | null
+  /** Credits (AuthUser.balance). */
+  credits: bigint
+  /** An encryption key is stored for this identity (needed for DMs and private feeds). */
+  hasEncryptionKey: boolean
+  method: SignInMethod
+}
+
+export interface AccountDTO {
+  identityId: string
+  username: string | null
+  method: SignInMethod
+  lastUsedAt: Date
+  active: boolean
+}
+
+/** What a typed key resolves to, before signing in (PRD AUTH-08 "Identity found"). */
+export interface KeyCheckDTO {
+  identityId: string
+  username: string | null
+  keyId: number
+  securityLevel: number
+}
+
+export type KeyExchangeResultDTO = KeyExchangeStep<SessionDTO>
+
+export type SessionChangeReason = 'restored' | 'signed-in' | 'switched' | 'signed-out' | 'key-invalid' | 'balance'
+
+export interface SessionEvents {
+  'session.changed': { session: SessionDTO | null; reason: SessionChangeReason }
+  'session.keyRequired': { identityId: string | null; purpose: 'auth' | 'encryption' }
+}
+
+export interface SessionModuleOptions {
+  emit<E extends keyof SessionEvents>(event: E, payload: SessionEvents[E]): void
+  tickets?: TicketStore
+  storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+  /** Tests inject a controller with stubbed dependencies. */
+  controller?: PlatformAuthController
+}
+
+/**
+ * Mobile 1.0 signs in with a wallet (key exchange) or a private key only
+ * (ADR-001 E5): no vaults, passwords or passkeys, no username or profile
+ * gate (DPNS registration links out to web). Post-login tasks (block data,
+ * private-feed key sync), the encryption-key auto-derive and the balance
+ * refresh stay on, as on web.
+ */
+export function createMobileAuthController(): PlatformAuthController {
+  const deps = createYapprPlatformAuthDependencies()
+  return new PlatformAuthController({
+    ...deps,
+    features: {
+      ...deps.features,
+      usernameGate: false,
+      profileGate: false,
+      passwordLogin: false,
+      passkeyLogin: false,
+      authVault: false,
+      legacyPasswordLogin: false,
+    },
+    vault: undefined,
+    passkeys: undefined,
+    legacyPasswordLogins: undefined,
+  })
+}
+
+/**
+ * `session.*` (ENGINE.md §6.3). lib has one session slot, so one account is
+ * active in the engine at a time; switching accounts or adding one is a
+ * controlled engine restart: `switchAccount`/`prepareAddAccount` rearrange
+ * storage, then the host restarts the engine with the next account's secrets.
+ */
+export function createSessionModule(options: SessionModuleOptions) {
+  const storage = options.storage ?? localStorage
+  const controller = options.controller ?? createMobileAuthController()
+  const registry = createAccountRegistry(storage)
+
+  function toDTO(user: AuthUser | null): SessionDTO | null {
+    if (!user) return null
+    return {
+      identityId: user.identityId,
+      network: getConfiguredNetwork(),
+      username: user.username ?? null,
+      credits: BigInt(Math.trunc(user.balance)),
+      hasEncryptionKey: hasEncryptionKey(user.identityId),
+      method: registry.get(user.identityId)?.method ?? 'key',
+    }
+  }
+
+  function announce(reason: SessionChangeReason): SessionDTO | null {
+    const session = toDTO(controller.getState().user)
+    options.emit('session.changed', { session, reason })
+    return session
+  }
+
+  let restoring: Promise<SessionDTO | null> | null = null
+  /** Restores lib's saved session once per engine boot; every session call waits for it. */
+  function restored(): Promise<SessionDTO | null> {
+    restoring ??= (async () => {
+      const switched = registry.takeSwitchMarker()
+      const hadSession = registry.activeIdentityId() !== null
+      const user = await controller.restoreSession()
+      if (!user) {
+        if (hadSession) announce('key-invalid')
+        return null
+      }
+      if (!registry.get(user.identityId)) registry.upsert(user.identityId, { username: user.username ?? null })
+      return announce(switched ? 'switched' : 'restored')
+    })()
+    return restoring
+  }
+
+  /** One account at a time: a different identity is added through `prepareAddAccount`. */
+  function assertSlotFor(identityId: string): void {
+    const active = registry.activeIdentityId()
+    if (active && active !== identityId) {
+      throw new RpcError('Another account is signed in. Add the account (session.prepareAddAccount) and restart the engine first.', 'BAD_REQUEST')
+    }
+  }
+
+  async function signedIn(identityId: string, method: SignInMethod): Promise<SessionDTO> {
+    const user = controller.getState().user
+    registry.upsert(identityId, { username: user?.username ?? null, method })
+    const session = announce('signed-in')
+    if (!session) throw new RpcError('Sign-in did not establish a session', 'NOT_SIGNED_IN')
+    return session
+  }
+
+  const keyExchange = createKeyExchange<SessionDTO>({
+    controller,
+    storage,
+    async complete(identityId, loginKey, keyIndex) {
+      assertSlotFor(identityId)
+      await controller.completeYapprKeyExchangeLogin({ identityId, loginKey, keyIndex })
+      return signedIn(identityId, 'key-exchange')
+    },
+  })
+
+  // lib asks for a key by opening web modals; the engine turns that into an event.
+  const keyPrompts = [[useLoginModal, 'auth'], [useEncryptionKeyModal, 'encryption']] as const
+  for (const [modal, purpose] of keyPrompts) {
+    modal.subscribe(state => {
+      if (!state.isOpen) return
+      state.close()
+      options.emit('session.keyRequired', { identityId: registry.activeIdentityId(), purpose })
+    })
+  }
+
+  // The controller refreshes the balance every 5 minutes; report changes for the active identity.
+  let lastUser: AuthUser | null = null
+  controller.subscribe(state => {
+    const previous = lastUser
+    lastUser = state.user
+    if (previous && state.user && previous.identityId === state.user.identityId &&
+      (previous.balance !== state.user.balance || previous.username !== state.user.username)) {
+      announce('balance')
+    }
+  })
+
+  return {
+    /** The active session, after the boot restore. */
+    current(): Promise<SessionDTO | null> {
+      return restored().then(() => toDTO(controller.getState().user))
+    },
+
+    /**
+     * Restore the saved session (run at boot). The stored key must still
+     * sign for the identity (`storedKeyBelongsToIdentity`); otherwise the
+     * session is dropped and `session.changed {reason: 'key-invalid'}` fires.
+     */
+    restore(): Promise<SessionDTO | null> {
+      return restored()
+    },
+
+    /** Resolve a typed key (WIF or hex) to its identity without signing in. */
+    async checkKey(input: { key: string }): Promise<KeyCheckDTO> {
+      const verified = await verifySignInKey(input.key)
+      const username = await dpnsService.resolveUsername(verified.identityId).catch(() => null)
+      return { identityId: verified.identityId, username: username ?? null, keyId: verified.keyId, securityLevel: verified.securityLevel }
+    },
+
+    /** Sign in with a private key (WIF or hex). Arguments are sensitive: never logged. */
+    async signInWithKey(input: { key: string }): Promise<SessionDTO> {
+      await restored()
+      const verified = await verifySignInKey(input.key)
+      assertSlotFor(verified.identityId)
+      await controller.loginWithAuthKey(verified.identityId, verified.wif, { skipUsernameCheck: true })
+      return signedIn(verified.identityId, 'key')
+    },
+
+    async startKeyExchange(): Promise<KeyExchangeRequestDTO> {
+      await restored()
+      return keyExchange.start()
+    },
+
+    /** A wallet request that is still waiting (resume it after an app restart). */
+    async pendingKeyExchange(): Promise<KeyExchangeRequestDTO | null> {
+      return keyExchange.pending()
+    },
+
+    /** Wait up to `waitMs` (default 45 s, at most 120 s) for the wallet; `pending` means call again. */
+    awaitKeyExchange(requestId: string, opts: { waitMs?: number } = {}): Promise<KeyExchangeResultDTO> {
+      return keyExchange.await(requestId, opts.waitMs)
+    },
+
+    /** After the wallet broadcast the key registration: wait up to `waitMs` for the keys, then sign in. */
+    awaitKeyRegistration(requestId: string, opts: { waitMs?: number } = {}): Promise<KeyExchangeResultDTO> {
+      return keyExchange.awaitRegistration(requestId, opts.waitMs)
+    },
+
+    async cancelKeyExchange(requestId: string): Promise<void> {
+      keyExchange.cancel(requestId)
+    },
+
+    async accounts(): Promise<AccountDTO[]> {
+      await restored()
+      const active = registry.activeIdentityId()
+      return registry.list()
+        .map(account => ({
+          identityId: account.identityId,
+          username: account.username,
+          method: account.method,
+          lastUsedAt: new Date(account.lastUsedAt),
+          active: account.identityId === active,
+        }))
+        .sort((a, b) => b.lastUsedAt.getTime() - a.lastUsedAt.getTime())
+    },
+
+    /**
+     * Switch to another signed-in account: a controlled engine restart, so
+     * nothing of the current account survives in the engine's memory. This
+     * saves the current account's session and stashes, puts the target's in
+     * place, and resolves; the host then records the target as active and
+     * restarts the engine with the target's secrets. The next boot's restore
+     * reports `session.changed {reason: 'switched'}`.
+     */
+    async switchAccount(identityId: string): Promise<void> {
+      await restored()
+      if (!registry.get(identityId)) throw new RpcError('That account is not signed in on this device', 'BAD_REQUEST')
+      if (registry.activeIdentityId() === identityId) return
+      stopDmEngine()
+      registry.switchTo(identityId)
+    },
+
+    /** Park the active account so another can sign in; the host restarts the engine with no secrets next. */
+    async prepareAddAccount(): Promise<void> {
+      await restored()
+      stopDmEngine()
+      registry.switchTo(null)
+    },
+
+    /**
+     * Sign an account out and delete its keys, offline. The active account
+     * goes through lib's logout (secrets, session, logout cleanup); another
+     * account's secrets are cleared by id (the storage shim forwards deletes
+     * of keys it does not hold, so the host removes them from the Keychain).
+     */
+    async signOut(opts: { identityId?: string } = {}): Promise<void> {
+      await restored()
+      const active = registry.activeIdentityId()
+      const identityId = opts.identityId ?? active
+      if (!identityId) return
+      options.tickets?.forgetIdentity(identityId)
+      registry.remove(identityId)
+      if (identityId === active) {
+        stopDmEngine()
+        await controller.logout()
+        announce('signed-out')
+        return
+      }
+      for (const clear of [clearPrivateKey, clearEncryptionKey, clearEncryptionKeyType, clearTransferKey, clearLoginKey, clearAuthVaultDek]) {
+        clear(identityId)
+      }
+    },
+
+    async refreshBalance(): Promise<{ credits: bigint }> {
+      const session = await restored().then(() => controller.getState().user)
+      if (!session) throw new RpcError('Not signed in', 'NOT_SIGNED_IN')
+      await controller.refreshBalance()
+      return { credits: BigInt(Math.trunc(controller.getState().user?.balance ?? 0)) }
+    },
+  }
+}
