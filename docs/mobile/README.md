@@ -1,5 +1,22 @@
 # Yappr Mobile: product roadmap
 
+> **Status, 2026-10-01: partly superseded by [ADR-001](ADR-001-mobile-1.0.md).**
+> For how 1.0 is built, read these three first:
+>
+> - [ADR-001-mobile-1.0.md](ADR-001-mobile-1.0.md): the binding decisions (E1–E9).
+> - [ENGINE.md](ENGINE.md): the engine, its RPC protocol and the `EngineApi`.
+> - [EXECUTION.md](EXECUTION.md): the waves, the PR map, and the 1.0 exit criteria.
+>
+> They replace the following parts of this README and of [ARCHITECTURE.md](ARCHITECTURE.md):
+> - the engine choice: 1.0 runs a hidden-WebView engine, and Rust moves to a post-1.0 track;
+> - the Phase 0 spikes and gate G0;
+> - the phases, milestones and calendar;
+> - the staffing table;
+> - the Y5 `lib/` seams as a 1.0 dependency;
+> - the network: bonsia is abandoned, and development runs on **sakura**.
+>
+> Everything else here still stands unless [Decisions](#decisions) D16–D24 say otherwise.
+
 Status: **plan of record** (written 2026-09-27; revised and finalized
 2026-09-30 for the bonsia devnet, social v10 and the decisions below). This
 folder holds the full plan for native Yappr apps on iOS and Android, from the
@@ -8,6 +25,9 @@ things the apps need from the wallets, Dash Platform and the Yappr web app.
 
 | Doc | What it covers |
 | --- | --- |
+| [ADR-001-mobile-1.0.md](ADR-001-mobile-1.0.md) | **Binding for 1.0.** Engine, domain layer, UI stack, navigation, sign-in, variants, scope, testing, delivery (E1–E9) |
+| [ENGINE.md](ENGINE.md) | The 1.0 engine: process model, boot, supervisor, RPC wire protocol and codec, the `EngineApi` surface and DTOs, the write lifecycle, events, storage shims, browser-dependency inventory, security, testing, the post-1.0 Rust track |
+| [EXECUTION.md](EXECUTION.md) | Delivery plan: waves, PR map with owners, dependencies and exit checks, the review and merge protocol, definition of done, 1.0 release exit criteria |
 | [PRODUCT_UX.md](PRODUCT_UX.md) | Principles, personas, information architecture, key flows with wireframes, feature scope per release |
 | [WALLET_INTEGRATION.md](WALLET_INTEGRATION.md) | Sign-in by DashPay handoff (App Connect), key custody, payments, contacts, and what we ask the wallet teams for |
 | [NOTIFICATIONS.md](NOTIFICATIONS.md) | Background polling (default) and the opt-in wake-up relay; the NSE, Android workers, preferences, privacy |
@@ -19,24 +39,35 @@ things the apps need from the wallets, Dash Platform and the Yappr web app.
 
 These hold throughout the plan. D1–D3 came from the planning kickoff
 (2026-09-27); D4–D15 were settled by the product owner on 2026-09-30.
+D16–D24 summarize ADR-001 (2026-10-01). Where they conflict with an earlier
+decision, they win; the earlier decision says so.
 
 | # | Decision |
 | --- | --- |
-| D1 | **Only a DashPay wallet can sign you in.** The Yappr apps never import a mnemonic, WIF, password-vault or passkey-vault key. Sign-in, key provisioning, credit top-ups, DASH payments and any CRITICAL or MASTER signature go to the user's DashPay wallet (iOS `org.dashfoundation.dash`, Android `hashengineering.darkcoin.wallet`) by app-to-app handoff. |
-| D2 | **Notifications come two ways, and the relay is opt-in.** By default the device polls on its own schedule (BGAppRefresh / WorkManager) and posts local notifications, with no server involved. Users can switch on a stateless wake-up relay for timely notifications. The relay never sees notification content. |
+| D1 | *(Relaxed for non-production builds by D20.)* **Only a DashPay wallet can sign you in.** The Yappr apps never import a mnemonic, WIF, password-vault or passkey-vault key. Sign-in, key provisioning, credit top-ups, DASH payments and any CRITICAL or MASTER signature go to the user's DashPay wallet (iOS `org.dashfoundation.dash`, Android `hashengineering.darkcoin.wallet`) by app-to-app handoff. |
+| D2 | *(Moved to 1.1 by D22; 1.0 is in-app only.)* **Notifications come two ways, and the relay is opt-in.** By default the device polls on its own schedule (BGAppRefresh / WorkManager) and posts local notifications, with no server involved. Users can switch on a stateless wake-up relay for timely notifications. The relay never sees notification content. |
 | D3 | **Everything lives in this repo for now.** The apps go under `mobile/`, and the shared TypeScript in `lib/` is consumed in place rather than extracted. |
-| D4 | **Networks: bonsia now, testnet later, then mainnet.** Development, internal alpha and Beta 1 run on the bonsia devnet (the `/devnet` staging deploy), the only chain with the v10 contract set. We move to testnet once it runs protocol 14 with the Yappr contract set deployed. See [Networks](#networks-and-environments). |
+| D4 | *(Bonsia is abandoned; read "sakura" for "bonsia" throughout, per D21.)* **Networks: bonsia now, testnet later, then mainnet.** Development, internal alpha and Beta 1 run on the bonsia devnet (the `/devnet` staging deploy), the only chain with the v10 contract set. We move to testnet once it runs protocol 14 with the Yappr contract set deployed. See [Networks](#networks-and-environments). |
 | D5 | **No owner-claimable fees.** On testnet and mainnet, the social cut declares elected moderation with `interim: {"$type": "notYetUsable"}`. Posts, replies, reports and `yapprProfile` are refused (41200) until an elected charter is seated; nobody, the contract owner included, can claim the moderators pot, which accumulates for the seated team. The post and reply action fees stay and go to elected moderators only. **Yappr staff do not stand for the charter**, so no fee reaches the developer. Bonsia keeps the owner as interim (as v10 does today) so development is never blocked; the interim is the only difference between the bonsia and the testnet/mainnet files. See [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tipping). |
-| D6 | **Sign-in uses App Connect with per-device, multi-bound keys.** One wallet handoff grants a per-device auth key bound to each contract Yappr writes (social, DM v5, `yappr-push`, DashPay `profile`) plus one encryption key shared by the user's devices. A new contract id (a re-cut, a devnet wipe, or a new 1.x feature contract) needs a re-grant of that binding. See [WALLET_INTEGRATION.md](WALLET_INTEGRATION.md#key-model-per-device-auth-shared-encryption). |
+| D6 | *(Behind `FEATURE_APP_CONNECT` and off in 1.0, per D20.)* **Sign-in uses App Connect with per-device, multi-bound keys.** One wallet handoff grants a per-device auth key bound to each contract Yappr writes (social, DM v5, `yappr-push`, DashPay `profile`) plus one encryption key shared by the user's devices. A new contract id (a re-cut, a devnet wipe, or a new 1.x feature contract) needs a re-grant of that binding. See [WALLET_INTEGRATION.md](WALLET_INTEGRATION.md#key-model-per-device-auth-shared-encryption). |
 | D7 | **Reports cover posts, replies, profiles and DMs, on chain.** The next social cut extends the v10 `report` doctype with an identity target (a profile and a user are the same target). A DM report carries the reported conversation's key, encrypted to the moderation team, so moderators can read that conversation. See [COMPLIANCE.md](COMPLIANCE.md#reports). |
-| D8 | **Media become arrays in the next social cut.** A post or reply carries a list of media items (several images, or a video, or a GIF), each with its own hash. Until that cut is live, compose supports one image. |
-| D9 | **No migration for non-wallet web keys.** Mainnet users all sign in from a wallet, so passkey, password-vault and pasted-key identities are a devnet/testnet artefact. Mobile does not handle them. |
+| D8 | *(Image upload is deferred from 1.0 by D22; 1.0 displays media only.)* **Media become arrays in the next social cut.** A post or reply carries a list of media items (several images, or a video, or a GIF), each with its own hash. Until that cut is live, compose supports one image. |
+| D9 | *(Pasted keys are allowed on non-production builds by D20.)* **No migration for non-wallet web keys.** Mainnet users all sign in from a wallet, so passkey, password-vault and pasted-key identities are a devnet/testnet artefact. Mobile does not handle them. |
 | D10 | **Notification gaps are accepted.** On v10, reply and quote notifications live in 3.5-day windows, and likes notify only for recent posts. A device that has not synced for longer simply misses the older items. No recovery pass. |
 | D11 | **Likes are out of the account-deletion scope.** v10 has no index by liker, and we do not add one. |
 | D12 | **A Dash-affiliated organization publishes the apps** under its Apple and Google organization developer accounts. |
-| D13 | **The Yappr team hosts the default relay.** It is open source and self-hostable; Android users can use UnifiedPush and skip it. |
+| D13 | *(The relay moves to 1.1 with push, per D22.)* **The Yappr team hosts the default relay.** It is open source and self-hostable; Android users can use UnifiedPush and skip it. |
 | D14 | **No crash-reporting SDK.** We rely on the OS and store vitals (Xcode Organizer, Play Console) only. |
 | D15 | **No profile step.** Profiles are optional (#605). On v10 the DashPay `profile` is the base profile and `yapprProfile` is the extension, so a DashPay user already has a name and avatar in Yappr. |
+| D16 | **1.0 runs on a hidden-WebView engine** (ADR E1). One never-rendered WebView runs an esbuild bundle of the pinned `@dashevo/evo-sdk`, unmodified `lib/` and `vendor/platform-auth`, and `mobile/engine/src/api`. React Native calls it through a typed, domain-level RPC (`EngineApi`, one call per user operation) and never touches the SDK. The Rust `yappr-platform` engine becomes a post-1.0 track, required before mainnet, behind the same `EngineApi`. Accepted 1.0 costs: keys in the WebView heap while signing, iOS Lockdown Mode (detected and explained), foreground only, about 25 MB of WASM compiled at boot. See [ENGINE.md](ENGINE.md). |
+| D17 | **No web `lib/` changes for 1.0** (ADR E2). Browser-bound modules are swapped by esbuild aliases inside `mobile/engine`. React Native imports only types and an allow-listed set of pure modules from `lib/`. The only root edits are the `mobile` excludes (tsconfig, eslint, knip) and a path-filtered CI workflow. The Y5 seams move to the Rust track. |
+| D18 | **UI stack** (ADR E3): Expo SDK 57 (RN 0.87, New Architecture, dev client), expo-router, FlashList 2, expo-image, Reanimated, TanStack Query persisted to MMKV, Zustand, NativeWind 4 with the root `tailwind.config.js` as a preset, Heroicons. Components are ported class-for-class from web; purple is reserved for private and encrypted content. |
+| D19 | **Navigation** (ADR E4): five tabs (Home, Explore, Notifications, Messages, Profile) and a floating compose button; For You / Following with Recent / Top where the topology supports it; native pull-to-refresh; the 15 s new-posts pill; persisted compose drafts; a compact network chip instead of the web banner. |
+| D20 | **Sign-in for 1.0** (ADR E5): wallet key exchange (`dash-key:` / `dash-st:`) is the default; private-key entry (WIF or hex) sits under "Other ways to sign in"; App Connect is built behind `FEATURE_APP_CONNECT` and stays off until a wallet ships it. A Node test-wallet responder replaces the test-wallet app. Multiple accounts, scoped by network and identity. No passkey or password vaults on mobile. |
+| D21 | **Networks and variants** (ADR E6): `devnet` (`pr.yap.app.dev`, **sakura**), `testnet` (`pr.yap.app.beta`, the production yap.pr contracts, topology v2), `production` (`pr.yap.app`, mainnet, later). The engine bundle is built per variant from its env file and never hard-codes contract ids or topology. Automated writes go only to sakura pool identities. |
+| D22 | **1.0 scope** (ADR E7): onboarding, home, post detail, compose, engagement, profiles, explore, in-app notifications, DM v5 (plus legacy 1:1 on testnet), safety, settings, read-only display of media, link previews and polls. Deferred: push, relay, NSE and background sync; private feeds; tips; storefront; blog; poll voting; DPNS registration; image upload; profile and DM reports; account deletion (a store blocker); moderator tools; iPad; localization; the Rust engine. |
+| D23 | **Testing** (ADR E8): root Vitest unchanged; jest-expo and RNTL in `mobile/app`; Vitest in `mobile/engine`; engine contract tests in Node against the live network (reads on every engine PR, writes serially with sakura pool identities); Maestro on the iOS simulator and the Android emulator; screenshots in light and dark on both platforms for every UI PR. |
+| D24 | **Delivery** (ADR E9): waves of parallel PRs, each owned by one agent in its own worktree off `staging`, under about 2.5k lines, reviewed locally and then by thepastaclaw. See [EXECUTION.md](EXECUTION.md). |
 
 ## Product principles
 
@@ -57,6 +88,21 @@ These hold throughout the plan. D1–D3 came from the planning kickoff
 
 ## Where things stand (facts the plan rests on, 2026-09-30)
 
+**Update, 2026-10-01.** Bonsia is abandoned. Development moves to the
+**sakura** devnet (Core `devnet-sakura`, Platform chain id
+`dash-devnet-sakura`, Platform **5.0.0-beta.1**, protocol 14; 13 evonodes
+serving DAPI on `https://<ip>:1443`; quorum service
+`https://quorums.sakura.networks.dash.org`). `@dashevo/evo-sdk` and
+`@dashevo/wasm-sdk` 5.0.0-beta.1 are on npm (dist-tag `5.0-beta`). The web
+moves in two stacked PRs that are still open:
+- **#606**: blog v6, the contract tooling, and the SDK pin for 5.0.0-beta.1 (base `staging`).
+- **#607**: social **v11**, stacked on #606: cheaper likes, moderation teams, and kept removal fields.
+
+A further "full M" re-cut of social follows #607. Until these merge, `staging`
+pins evo-sdk 4.2.0-beta.7 and `.env.devnet` still names bonsia, and sakura has
+identities but no published Yappr contracts. The rows below that mention
+bonsia, 4.2.0-beta.7 or v10 describe the state on 2026-09-30.
+
 | Area | Fact | Source |
 | --- | --- | --- |
 | Yappr prod | Runs on **testnet** with social contract v2, where YAPP token costs are *required* for post/reply/like/repost. DM v3. No mainnet contracts exist. | `lib/constants.ts`, `contracts/*.json` |
@@ -70,6 +116,10 @@ These hold throughout the plan. D1–D3 came from the planning kickoff
 | App Connect | A system contract `H8F9mP1BM55TE1ShsxPZHzhyinaMdY9bMmP85mkDhcJJ` (platform #4869, in releases since beta.4) gives wallet→app login responses a fixed home on every protocol-14 network. Responses are `indexOnly`; re-login is delete plus create, never replace. Neither wallet uses it yet. | dashpay/platform `docs/protocol/app-connect.md` |
 
 ## Milestones (single source of truth)
+
+> **Superseded for 1.0** by the waves in [EXECUTION.md](EXECUTION.md). The
+> gates below assumed a human team and the Rust-first engine. They stay here
+> for the dependency map (PL/W/Y/M rows) and for the post-1.0 store path.
 
 Every "needed by" date in these docs refers to this table. The weeks are
 indicative, count from the day the team in [Staffing](#staffing) starts, and
@@ -103,7 +153,13 @@ hardening starts before Beta 1 closes.
 Today no network has both the v10 contract set and a store wallet that can
 sign users in:
 
-- **Bonsia** (devnet; Platform 4.2.0-beta.7, protocol 14): the full v10 set is
+- **Sakura** (devnet; Platform 5.0.0-beta.1, protocol 14) replaces bonsia,
+  which was abandoned on 2026-10-01. Its Yappr contracts (social v11, then
+  "full M") are published after #606/#607 merge. A 100-identity corpus pool
+  already exists in the sakura ops directory; the mobile suites draw their
+  write identities from it (see [ENGINE.md › Testing](ENGINE.md#12-testing)).
+  The bonsia note that follows is kept for history.
+- **Bonsia** (devnet; Platform 4.2.0-beta.7, protocol 14; abandoned): the full v10 set was
   live, with a 9-slot CI/DM bot pool (`docs/TESTING.md` §1). Store wallets
   cannot reach a devnet; internal wallet builds can (`n=d`, `DASH_DEVNET`).
   There is no seed DNS, so clients take the explicit DAPI list, the devnet name
@@ -115,11 +171,11 @@ sign users in:
 
 | Environment | Used for | Needs |
 | --- | --- | --- |
-| **Bonsia (now)** | Dev, spikes, all automated E2E, internal alpha, Beta 1 | **Y0:** `yappr-push` deployed and mobile pool slots provisioned; **Y1** (the next social cut, owner interim) deployed by week 14. Wallets: the test-wallet harness for automation; **W8** devnet-capable internal/TestFlight wallet builds for human testers. |
+| **Bonsia (now)** *(read: sakura, see the update above)* | Dev, spikes, all automated E2E, internal alpha, Beta 1 | **Y0:** `yappr-push` deployed and mobile pool slots provisioned; **Y1** (the next social cut, owner interim) deployed by week 14. Wallets: the test-wallet harness for automation; **W8** devnet-capable internal/TestFlight wallet builds for human testers. |
 | **Testnet (later)** | Store-wallet interop; Beta 2 if mainnet is not ready; the testnet public beta fallback | **PL0** protocol 14 on testnet; the Yappr contract set (Y1 cut with `notYetUsable`, DM v5, `yappr-push`, `key-exchange-v2` while W2 is pending, plus `/testing` copies for E2E) and a **seated testnet charter** (M1). Wallets: DashConnect on testnet (in the stores today); App Connect (W2). |
 | **Mainnet (launch)** | Beta 2 / RC and GA | **PL1** protocol 14 on mainnet; **Y2** contract set on mainnet; a **seated charter** (M1); **W1/W2** DashConnect/App Connect on mainnet in store wallet builds |
 
-**Keeping bonsia usable.** The mobile build reads contract ids and the network
+**Keeping bonsia usable** (now sakura)**.** The mobile build reads contract ids and the network
 config at build time from the same `.env.*` files as web, and the pool and
 fixture setup is scripted, so a devnet wipe costs a rebuild and a re-seed,
 not code changes.
@@ -284,11 +340,15 @@ Details and fallbacks are in the linked docs.
 | M1 | Dash community, masternodes | Charter candidates stand and masternodes vote, so a charter is **seated before App Review** on mainnet (and on testnet for a testnet public beta). Yappr recruits candidates and staff do not stand (D5). At protocol 14 a seat is never replaced, so the first charter is long-lived. | G3 | None. Nobody can post until a charter is seated. |
 | Y3 | Yappr | App Connect login support in `vendor/platform-auth`, shared with web | With W2 | Keep the `key-exchange-v2` path |
 | Y4 | Yappr | ENCRYPTION key selection rule in `lib/crypto/encryption-key-lookup.ts` (still returns the first active key): prefer the key bound to the contract in use, then an unbound key, then the newest | G1 | None. Without it, DMs break once identities carry bound keys. |
-| Y5 | Yappr | `lib/` platform seams (see [ARCHITECTURE.md](ARCHITECTURE.md#platform-seams-in-lib-the-minimal-yappr-change)) | Seams 1–2 by G0, 3–5 by G1 | None. Mobile cannot share `lib/` without them. |
+| Y5 | Yappr | *(Not a 1.0 dependency per D17; step R3 of the post-1.0 Rust track.)* `lib/` platform seams (see [ARCHITECTURE.md](ARCHITECTURE.md#platform-seams-in-lib-the-minimal-yappr-change)) | Seams 1–2 by G0, 3–5 by G1 | None. Mobile cannot share `lib/` without them. |
 | Y6 | Yappr | DM v5 encryption-key rotation (DM_V5 Appendix A), which enables "Reset messaging keys" after a lost device | 1.x | 1.0 documents the lost-device DM exposure |
 | Y7 | Yappr web | **Y7a:** moderation denylist (hides DashPay profile content, media and identities); zero-tolerance terms and community guidelines. **Y7b:** `/delete-account` page; `.well-known` app-site association; `/app/connect` page; `lib/push/ping.ts`; profile and DM report UI | Y7a by G1, Y7b by G2 | None. These are store blockers. |
 
 ## Staffing
+
+> **Superseded for 1.0.** 1.0 is built by AI agents in parallel worktrees
+> (ADR E9); see [EXECUTION.md](EXECUTION.md). The table below is kept for
+> the post-1.0 store path and as a sizing reference.
 
 Suggested team, for sizing:
 
@@ -310,9 +370,9 @@ Suggested team, for sizing:
 Everything that changes the plan's shape is decided (see [Decisions](#decisions)).
 What remains is either owned by someone else or settled by data at a gate:
 
-1. **Architecture pick** (G0, from spike data). *Current recommendation:*
-   React Native (Expo) with a native Rust SDK module
-   ([ARCHITECTURE.md](ARCHITECTURE.md)).
+1. ~~**Architecture pick** (G0, from spike data).~~ **Decided** by ADR-001:
+   React Native (Expo) on a hidden-WebView engine for 1.0, with the Rust
+   module as a post-1.0 track ([ENGINE.md](ENGINE.md)).
 2. **Launch network** (G2 go/no-go), per [Networks](#networks-and-environments).
 3. **Which Dash-affiliated organization** enrolls the developer accounts (D12),
    by the end of week 2.

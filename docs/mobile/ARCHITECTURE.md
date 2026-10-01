@@ -1,6 +1,16 @@
 # Mobile architecture
 
-## Decision (to confirm at gate G0)
+> **Status, 2026-10-01: the engine decision here is superseded by [ADR-001](ADR-001-mobile-1.0.md).**
+> - **1.0 engine.** 1.0 runs on the **hidden-WebView engine** (the "fallback engine" row below), behind a domain-level RPC. It is specified in [ENGINE.md](ENGINE.md).
+> - **Rust.** The Rust `yappr-platform` module described in this document becomes the **post-1.0 track**, required before mainnet, behind the same `EngineApi` ([ENGINE.md › The post-1.0 Rust engine](ENGINE.md#13-the-post-10-rust-engine)).
+> - **Gone from the 1.0 plan:** the Phase 0 spike plan (S1–S6) and gate G0. They are replaced by the day-1 checks in the M2 and M4 PRs ([EXECUTION.md](EXECUTION.md)).
+> - **Seams.** The `lib/` platform seams (Y5) are no longer a 1.0 dependency; they are step R3 of the Rust track.
+> - **Background execution and push** move to 1.1. 1.0 is foreground only.
+> - **Network.** Bonsia is abandoned. The devnet is **sakura** (Platform 5.0.0-beta.1, protocol 14). The web pin moves to evo-sdk 5.0.0-beta.1 in #606, and social v11 follows in #607, then a "full M" re-cut. Read "sakura" for "bonsia" below, and `v5.0.0-beta.1` for `v4.2.0-beta.7`.
+>
+> The rest of this document stays as the design reference for the Rust track: the signer and key store, data and caching, media, background execution, and variants.
+
+## Decision (to confirm at gate G0; superseded by ADR-001 for 1.0)
 
 **React Native (Expo, prebuild / dev client), with the shared TypeScript in
 `lib/`, and a native Rust Platform module (`yappr-platform`) in place of the
@@ -30,8 +40,8 @@ WASM SDK.**
 
 | Option | Reuse of `lib/` (~48k lines) | Platform SDK | Background sync | Store risk | Verdict |
 | --- | --- | --- | --- | --- | --- |
-| **RN + native Rust module** | High, through seams | rs-sdk natively, the same Rust as wasm-sdk | Headless JS or Rust | Low: native UI | **Chosen** |
-| RN + hidden WebView running evo-sdk | High | Unchanged evo-sdk | Poor. A WebView is unreliable in background tasks, and each launch must compile a 24.6 MB WASM module | Medium | **Fallback engine** if the Rust module slips; foreground only |
+| **RN + native Rust module** | High, through seams | rs-sdk natively, the same Rust as wasm-sdk | Headless JS or Rust | Low: native UI | ~~Chosen~~ **Post-1.0 track** (ADR-001 E1) |
+| RN + hidden WebView running evo-sdk | High | Unchanged evo-sdk | Poor. A WebView is unreliable in background tasks, and each launch must compile a 24.6 MB WASM module | Medium | ~~Fallback engine~~ **Chosen for 1.0** (ADR-001 E1; [ENGINE.md](ENGINE.md)); foreground only |
 | Capacitor around the static export | Total | Unchanged | No SDK in `background-runner` | **High** (4.2 thin wrapper) | Rejected |
 | Swift + Kotlin on `swift-sdk` / `kotlin-sdk` | None: all domain logic rewritten twice | Dash-maintained | Native | Low | Rejected: roughly 3× the cost for a 2–3 engineer team |
 | Kotlin Multiplatform | None: domain logic rewritten once in Kotlin | cinterop over `rs-sdk-ffi` (unproven) | Native | Low | Rejected. The uniffi-KMP tooling (Gobley) lags. |
@@ -100,6 +110,8 @@ confirm that `rs-sdk` exposes them at the pinned tag. If they are only in
 
 ## Phase 0 spike plan
 
+> **Superseded** by ADR-001. No spikes or G0 gate; the questions S1, S2 and S5 asked are answered by the M2/M4 day-1 checks and the engine contract suites ([ENGINE.md › Open items](ENGINE.md#14-open-items-the-implementing-prs-must-settle)). S3, S4 and S6 move to the Rust and push tracks.
+
 Each spike is timeboxed, runs against bonsia (the only chain with the v10
 contract set), and has exit criteria measured on a 2021-generation mid-range
 device: an iPhone 12 and a Pixel 6a.
@@ -158,6 +170,8 @@ or the release cadences diverge. At that point, extract `lib/` into a
 `packages/core` workspace.
 
 ## Platform seams in `lib/` (the minimal Yappr change)
+
+> **Not part of 1.0** (ADR-001 E2): 1.0 makes no `lib/` changes, and swaps browser-bound modules with esbuild aliases inside `mobile/engine` ([ENGINE.md › Dependency inventory](ENGINE.md#10-browser--and-next-only-dependency-inventory)). These seams are step R3 of the post-1.0 Rust track.
 
 These are the changes Yappr needs so its shared code runs outside a browser.
 Each is a small interface, the web default keeps today's behavior, and mobile
@@ -268,6 +282,8 @@ PR 5, which moves every write.
 
 ## Background execution
 
+> **1.1.** 1.0 is foreground only (ADR-001 E1, E7). The table describes the post-1.0 design.
+
 | Trigger | iOS | Android | Runs |
 | --- | --- | --- | --- |
 | Periodic | `BGAppRefreshTask` via `expo-background-task` | WorkManager periodic, 15 min | `SyncCore` (headless JS, S3) |
@@ -277,6 +293,16 @@ PR 5, which moves every write.
 | Large uploads | Background URLSession; `BGContinuedProcessingTask` on iOS 26+ with a progress UI | WorkManager foreground `dataSync`, short-lived | Media upload |
 
 ## Build variants and configuration
+
+> **For 1.0, ADR-001 E6 sets the variants:**
+>
+> | Variant | Bundle id | Network |
+> | --- | --- | --- |
+> | `devnet` | `pr.yap.app.dev` | sakura, `.env.devnet` |
+> | `testnet` | `pr.yap.app.beta` | testnet with the production yap.pr contracts, topology v2 |
+> | `production` | `pr.yap.app` | mainnet, later |
+>
+> The engine bundle is built per variant from the matching env file ([ENGINE.md › Configuration](ENGINE.md#31-configuration)). OTA updates (`expo-updates`) are **off** for 1.0. The table below is the earlier plan.
 
 | Variant | Network / contracts | Bundle / app ID | Distribution |
 | --- | --- | --- | --- |
