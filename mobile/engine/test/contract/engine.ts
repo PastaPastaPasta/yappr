@@ -16,7 +16,7 @@ export function connectEngine({ timeoutMs = 120_000 }: { timeoutMs?: number } = 
     transport: engineSide,
   })
   const client = createEngineClient<EngineApi>(hostSide, { timeoutMs })
-  for (const event of ['session.changed', 'session.keyRequired', 'write.status', 'engine.notice']) {
+  for (const event of ['session.changed', 'session.keyRequired', 'write.status', 'engine.notice', 'dm.changed', 'dm.message']) {
     client.on(event, payload => events.push({ event, payload }))
   }
   dispatcher.hello({ bundleHash: 'node' })

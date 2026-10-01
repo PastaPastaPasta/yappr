@@ -1,0 +1,137 @@
+/**
+ * dm.* on sakura's DM v5 contract with pool personas (ENGINE.md §12.3): a
+ * 1:1 round trip between two slots, then a group created, renamed, grown and
+ * left. lib has one session slot, so each side takes its turn through the
+ * account switch (an engine restart, as on the phone), which also exercises
+ * the DM stop-and-flush on switch. Encryption keys are keyId 4, entered
+ * through `dm.unlock`. Serial; only identity ids are logged, never text.
+ *
+ * DM v5 has no cheap delete: the messages and the group stay on chain (the
+ * retention sweep would reclaim them; it is off for test runs).
+ */
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { loadPoolPersonas, type PoolPersona } from '../../../harness/pool'
+import type { ConversationDTO, DmEvents, WriteTicket } from '../../../src/api'
+import { connectEngine } from '../engine'
+import { devnetEnv, writeSuiteSkipReason } from './env'
+
+function skipReason(): string | null {
+  const reason = writeSuiteSkipReason()
+  if (reason) return reason
+  const env = devnetEnv()
+  return env.NEXT_PUBLIC_DM_TOPOLOGY === 'v5' && env.NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID ? null : '.env.devnet does not configure DM v5'
+}
+
+const skip = skipReason()
+const RUN = Date.now().toString(36)
+const POLL_MS = 5_000
+const WAIT_MS = 180_000
+
+describe.skipIf(skip !== null)(`dm on sakura${skip ? ` (skipped: ${skip})` : ''}`, () => {
+  let alice: PoolPersona
+  let bob: PoolPersona
+  let carol: PoolPersona
+  let engine: ReturnType<typeof connectEngine>
+  const signedIn = new Set<string>()
+  let addedDocument = false
+
+  /** Make `persona` the active account (sign in on first use, else switch), restarting the engine, and unlock DMs. */
+  async function become(persona: PoolPersona): Promise<void> {
+    const active = await engine.api.session.current()
+    if (active?.identityId === persona.identityId) return
+    if (signedIn.has(persona.identityId)) {
+      await engine.api.session.switchAccount(persona.identityId)
+      engine = connectEngine({ timeoutMs: 300_000 })
+      expect((await engine.api.session.restore())?.identityId).toBe(persona.identityId)
+    } else {
+      if (active) {
+        await engine.api.session.prepareAddAccount()
+        engine = connectEngine({ timeoutMs: 300_000 })
+        await engine.api.session.restore()
+      }
+      await engine.api.session.signInWithKey({ key: persona.keyHex('high') })
+      signedIn.add(persona.identityId)
+    }
+    const status = await engine.api.dm.status()
+    if (status.locked) expect(await engine.api.dm.unlock({ key: persona.keyHex('encryption') })).toMatchObject({ unlocked: true })
+  }
+
+  async function settled(ticket: WriteTicket): Promise<WriteTicket> {
+    for (let waited = 0; waited < WAIT_MS; waited += 500) {
+      const current = await engine.api.writes.get(ticket.id)
+      if (current && current.state !== 'pending') return current
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+    throw new Error(`ticket ${ticket.id} (${ticket.op}) still pending after ${WAIT_MS / 1000} s`)
+  }
+
+  /** Poll (as the foreground app does) until a conversation matches. */
+  async function conversation(match: (conversation: ConversationDTO) => boolean): Promise<ConversationDTO> {
+    for (let waited = 0; waited < WAIT_MS; waited += POLL_MS) {
+      await engine.api.engine.lifecycle('active')
+      const found = (await engine.api.dm.conversations()).find(match)
+      if (found) return found
+      await new Promise(resolve => setTimeout(resolve, POLL_MS))
+    }
+    throw new Error(`no matching conversation after ${WAIT_MS / 1000} s`)
+  }
+
+  const messageEvents = () => engine.events.filter(e => e.event === 'dm.message').map(e => e.payload as DmEvents['dm.message'])
+
+  beforeAll(async () => {
+    const personas = loadPoolPersonas()
+    ;[alice, bob, carol] = [personas[4], personas[5], personas[6]]
+    // lib's DM v5 flush listens on `document` (the WebView's); Node has none.
+    if (typeof document === 'undefined') {
+      Object.assign(globalThis, { document: Object.assign(new EventTarget(), { visibilityState: 'visible' }) })
+      addedDocument = true
+    }
+    engine = connectEngine({ timeoutMs: 300_000 })
+    await engine.api.engine.boot()
+    await engine.api.session.signOut()
+    expect((await engine.api.engine.info()).capabilities.dm).toBe('v5')
+  })
+
+  afterAll(async () => {
+    for (const identityId of signedIn) await engine.api.session.signOut({ identityId }).catch(() => undefined)
+    if (addedDocument) Reflect.deleteProperty(globalThis, 'document')
+  })
+
+  it('1:1 round trip between two pool slots', async () => {
+    await become(alice)
+    const key = await engine.api.dm.startDirect(bob.identityId)
+    const sent = await settled(await engine.api.dm.send(key, `hello from the mobile engine ${RUN}`))
+    expect(sent).toMatchObject({ op: 'dm.send', state: 'confirmed' })
+
+    await become(bob)
+    const inbox = await conversation(c => c.peer?.id === alice.identityId && c.lastMessage?.text === `hello from the mobile engine ${RUN}`)
+    expect(inbox).toMatchObject({ backend: 'v5', kind: 'direct', lastMessage: { own: false } })
+    expect(inbox.unread).toBeGreaterThan(0)
+    expect(messageEvents().some(e => e.key === inbox.key && e.message.text.endsWith(RUN))).toBe(true)
+    await engine.api.dm.markRead(inbox.key)
+    expect((await engine.api.dm.conversations()).find(c => c.key === inbox.key)?.unread).toBe(0)
+    expect(await settled(await engine.api.dm.send(inbox.key, `reply ${RUN}`))).toMatchObject({ state: 'confirmed' })
+
+    await become(alice)
+    await conversation(c => c.key === key && c.lastMessage?.text === `reply ${RUN}`)
+    const page = await engine.api.dm.messages(key)
+    expect(page.items.slice(0, 2).map(m => [m.text, m.own])).toEqual([[`reply ${RUN}`, false], [`hello from the mobile engine ${RUN}`, true]])
+  })
+
+  it('group: create, rename, add a member, a member leaves', async () => {
+    await become(alice)
+    const { key, failed } = await engine.api.dm.createGroup(`Mobile engine ${RUN}`, [bob.identityId])
+    expect(failed).toEqual([])
+    expect(await settled(await engine.api.dm.renameGroup(key, `Renamed ${RUN}`))).toMatchObject({ state: 'confirmed' })
+    expect(await settled(await engine.api.dm.addMember(key, carol.identityId))).toMatchObject({ state: 'confirmed' })
+    const owned = (await engine.api.dm.conversations()).find(c => c.key === key)
+    expect(owned).toMatchObject({ kind: 'group', isOwner: true, name: `Renamed ${RUN}` })
+    expect([...(owned?.members ?? [])].sort()).toEqual([alice.identityId, bob.identityId, carol.identityId].sort())
+
+    await become(bob)
+    const group = await conversation(c => c.key === key && c.name === `Renamed ${RUN}`)
+    expect(group).toMatchObject({ ownerId: alice.identityId, isOwner: false })
+    expect(await settled(await engine.api.dm.leaveGroup(key))).toMatchObject({ state: 'confirmed' })
+    expect((await engine.api.dm.conversations()).find(c => c.key === key)?.flags.hidden).toBe(true)
+  })
+})
