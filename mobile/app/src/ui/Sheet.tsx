@@ -55,6 +55,14 @@ export function Sheet({ open, onClose, title, children, dismissible = true, test
     return () => sub.remove();
   }, [open, dismissible]);
 
+  // A close the user starts (swipe, scrim, back, escape) ends here too. Clear
+  // the flag first, so the parent's `open=false` doesn't dismiss() again: that
+  // leaves gorhom DISMISSING, and the next present() would never render.
+  const handleDismiss = useCallback(() => {
+    presented.current = false;
+    onClose();
+  }, [onClose]);
+
   const backdrop = useCallback(
     (props: BottomSheetBackdropProps) => (
       <BottomSheetBackdrop
@@ -71,7 +79,7 @@ export function Sheet({ open, onClose, title, children, dismissible = true, test
   return (
     <BottomSheetModal
       ref={ref}
-      onDismiss={onClose}
+      onDismiss={handleDismiss}
       enablePanDownToClose={dismissible}
       backdropComponent={backdrop}
       backgroundStyle={{
