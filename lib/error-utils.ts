@@ -913,6 +913,14 @@ export type ModerationErrorKind =
   | 'FIELD_NOT_CHANGEABLE'
   | 'MODERATOR_FIELD'
   | 'NOTHING_TO_CHANGE'
+  | 'NOT_SETTLED_DELETABLE'
+  | 'TEAM_NOT_SEATED'
+  | 'NOT_SETTLED'
+  | 'TEAM_ACTION_NOT_FOUND'
+  | 'TEAM_ACTION_ALREADY_SIGNED'
+  | 'SETTLED_DELETION_NOT_RESTORABLE'
+  | 'TEAM_ACTION_COMPLETED'
+  | 'TEAM_ACTION_DOCUMENT_CHANGED'
 
 /** Each kind: its consensus codes and the prose Drive renders (rs-dpp `#[error]`, 4.2.0-beta.4). */
 const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly number[], RegExp]> = [
@@ -950,6 +958,22 @@ const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly n
   ['MODERATOR_FIELD', [41124], /documentmoderatorfieldnotwritable|only the moderators of contract .* write field/i],
   // 10905 a change naming no field, a `$` property, or only values already held.
   ['NOTHING_TO_CHANGE', [10905], /invalidcontractmoderationdocumentfields|the fields a moderator's document change sets are invalid/i],
+  // 5.0.0-beta.1 settled deletion (`deleteWithin` + `deleteSettled`): past a
+  // type's window (41116 above) only the seated team deletes, by proposal and
+  // approvals. 41204 the type sets no `deleteSettled`;
+  ['NOT_SETTLED_DELETABLE', [41204], /documenttypenotdeletableoncesettled|does not let the moderators delete a settled document/i],
+  // 41205 no team is seated (the interim never deletes a settled document);
+  ['TEAM_NOT_SEATED', [41205], /contractmoderationteamnotseated|has no seated moderation team/i],
+  // 41206 a proposal for a document still within its window;
+  ['NOT_SETTLED', [41206], /documentnotsettled|which block time .* is within: it is not settled/i],
+  // 41207-41211 an approval of an action never proposed, one the signer
+  // already approved, a team deletion a restore tries to undo, an action that
+  // already ran, and one whose document changed since the proposal.
+  ['TEAM_ACTION_NOT_FOUND', [41207], /contractteamactiondoesnotexist|no team action .* was proposed on contract/i],
+  ['TEAM_ACTION_ALREADY_SIGNED', [41208], /contractteamactionalreadysigned|already approved team action/i],
+  ['SETTLED_DELETION_NOT_RESTORABLE', [41209], /settleddeletionnotrestorable|a deletion the team agreed on is not restored/i],
+  ['TEAM_ACTION_COMPLETED', [41210], /contractteamactionalreadycompleted|team action .* on contract .* already ran/i],
+  ['TEAM_ACTION_DOCUMENT_CHANGED', [41211], /contractteamactiondocumentchanged|changed since team action .* proposed its deletion/i],
 ]
 
 export function classifyModerationError(error: unknown): ModerationErrorKind | null {

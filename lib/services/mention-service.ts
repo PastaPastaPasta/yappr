@@ -6,6 +6,7 @@ import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentByt
 import { dpnsService } from './dpns-service';
 import { paginateFetchAll } from './pagination-utils';
 import { mentionDocTypes, mentionsAreInline, type TargetKind } from '../contract-topology';
+import { withoutHiddenTombstones } from '../feed/hidden-tombstones';
 import type { Post } from '../../types';
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 
@@ -304,7 +305,9 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
         : [],
     ]);
     const authentic = new Set(mentions.map((mention) => `${mention.postId}:${mention.$ownerId}`));
-    const found = [...posts, ...replies.map(replyToPost)].filter((post) => authentic.has(`${post.id}:${post.author.id}`));
+    // v11 tombstones clear `mentionedUserId` and leave the index anyway; this
+    // covers a node a block behind.
+    const found = withoutHiddenTombstones([...posts, ...replies.map(replyToPost)]).filter((post) => authentic.has(`${post.id}:${post.author.id}`));
     found.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     return { posts: found, preloaded };
   }

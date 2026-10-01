@@ -10,15 +10,18 @@ import { logger } from '@/lib/logger'
 import { CharterReasonPicker, useSeatedReasons } from '@/components/moderation/charter-reason-picker'
 import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
 import { ReportQueue } from '@/components/moderation/report-queue'
+import { TeamActionsPanel } from '@/components/moderation/team-actions-panel'
 import { contractTakesReports, type TargetKind } from '@/lib/contract-topology'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
 import {
   moderationService,
+  postedOnLabel,
   type DocumentRemoval,
   type FeePotState,
   type ModerationEntry,
   type ModerationResult,
   type ModerationStanding,
+  type SeatedTeamSeats,
 } from '@/lib/services/moderation-service'
 
 const INPUT = 'w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500'
@@ -66,6 +69,10 @@ export function ContractModerationSettings() {
   const seatedReasons = useSeatedReasons(true)
   const [reasonDocumentId, setReasonDocumentId] = useState('')
   const [pot, setPot] = useState<FeePotState | null>(null)
+  /** v11: counted actions per seated member since the last payout (what the action share splits by); null when not kept or unread. */
+  const [actionCounts, setActionCounts] = useState<ReadonlyMap<string, number> | null>(null)
+  /** v11: the seated team and its seats, for the pot panel; null while none is seated. */
+  const [seatedTeam, setSeatedTeam] = useState<SeatedTeamSeats | null>(null)
   /** The last status check: the proved standing, or the read failure (never a clean record in its place). */
   const [standing, setStanding] = useState<{ identityId: string; standing: ModerationStanding | null; error: string | null } | null>(null)
 
@@ -93,6 +100,18 @@ export function ContractModerationSettings() {
       logger.error('ContractModerationSettings: refresh failed', error)
       toast.error('Could not load the moderation lists')
     }
+    // The team's seats and per-member counts (v11) are extras of the pot
+    // panel: a failure leaves them out, never the lists above.
+    if (!moderationService.teamDeletesSettled()) return
+    const [counts, seated] = await Promise.all([
+      moderationService.getActionCounts(),
+      moderationService.getSeatedTeam().catch((error: unknown) => {
+        logger.warn('ContractModerationSettings: seated team read failed', error)
+        return null
+      }),
+    ])
+    setActionCounts(counts)
+    setSeatedTeam(seated)
   }, [])
 
   useEffect(() => {
@@ -221,6 +240,7 @@ export function ContractModerationSettings() {
     <div className="space-y-4">
       <ElectionStatusPanel />
       {contractTakesReports() && <ReportQueue seatedReasons={seatedReasons} onModerateAuthor={moderateAuthor} />}
+      <TeamActionsPanel seatedReasons={seatedReasons} onChanged={() => { refresh().catch(() => { /* reported inside */ }) }} />
       <Card>
         <CardHeader>
           <CardTitle>Contract Moderation</CardTitle>
@@ -323,6 +343,7 @@ export function ContractModerationSettings() {
           <Button variant="outline" disabled={busy !== null || !pot || pot.credits === BigInt(0)} onClick={() => run('claim')} className="gap-2">
             <BanknotesIcon className="h-4 w-4" /> {busy?.action === 'claim' ? 'Claiming…' : 'Claim for the team'}
           </Button>
+          {seatedTeam && <TeamCounts team={seatedTeam} counts={actionCounts} />}
         </CardContent>
       </Card>
 
@@ -338,13 +359,50 @@ export function ContractModerationSettings() {
           onPick={(entry) => setTargetId(entry.identityId)} />
       )}
       <EntryList title="Removed posts and replies" empty="Nothing has been removed." entries={removals}
-        render={(removal) => <>{removal.documentId} by {removal.moderatorId.slice(0, 8)}… on {new Date(removal.removedAt).toLocaleDateString()}{removal.reason ? ` — ${removal.reason}` : ''}{removal.restoredAt !== null ? ' (restored)' : ''}</>}
+        render={(removal) => (
+          <>
+            {removal.documentId} by {removal.moderatorId.slice(0, 8)}… on {new Date(removal.removedAt).toLocaleDateString()}
+            {removal.kept.hashtag ? ` · #${removal.kept.hashtag}` : ''}
+            {removal.kept.createdAt !== undefined ? ` · posted ${postedOnLabel(removal.kept.createdAt)}` : ''}
+            {removal.reason ? ` — ${removal.reason}` : ''}{removal.restoredAt !== null ? ' (restored)' : ''}
+          </>
+        )}
         onPick={(removal) => setTargetId(removal.documentOwnerId)}
         action={(removal) => restorable.has(removalKey(removal)) && (
           <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => restore(removal)} className="shrink-0">
             {busy?.action === 'restore' && busy.id === removalKey(removal) ? 'Restoring…' : 'Restore'}
           </Button>
         )} />
+    </div>
+  )
+}
+
+/**
+ * The seated team beside its pot (v11): its seats, and the counted actions
+ * (bans, suspensions, warnings, deletions) each member signed since the pot
+ * was last paid out, which the action share of a claim splits by. Counts are
+ * left out when the node keeps or serves none.
+ */
+function TeamCounts({ team, counts }: { team: SeatedTeamSeats; counts: ReadonlyMap<string, number> | null }) {
+  const members = [team.leaderId, ...team.members]
+  return (
+    <div data-testid="moderators-pot-counts" className="w-full text-sm border-t border-gray-200 dark:border-gray-800 pt-3">
+      <p className="text-gray-500 dark:text-gray-400">
+        The seated team is {members.length} {members.length === 1 ? 'person' : 'people'}
+        {team.electedMembers.length > 0 ? ` (${team.electedMembers.length} elected)` : ''}
+        {team.seats !== null ? `, with ${team.seats} seat${team.seats === 1 ? '' : 's'}` : ''}.
+        {counts && ' Actions each member signed since the last payout:'}
+      </p>
+      {counts && (
+        <ul className="mt-1 font-mono text-xs space-y-0.5">
+          {members.map((id) => (
+            <li key={id} className="flex justify-between gap-2">
+              <span className="break-all">{id}{id === team.leaderId ? ' (leader)' : ''}</span>
+              <span>{counts.get(id) ?? 0}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

@@ -11,6 +11,7 @@ overrides).
 |------|--------|
 | `yappr-social-contract-v2.json` | **Deployed** on testnet (`9oDC6xdg…`, staging/prod). 16 document types + the YAPP token. Topology `v2`: replies chain through a polymorphic `parentId`; like/repost/bookmark/quote share one `postId` keyspace. The on-chain copy has since gained the optional `post.embedContractId`/`embedDocType`/`embedId` fields via `scripts/update-social-contract.mjs`, and its YAPP token carries `keepsHistory` (transfer/freeze/mint/burn/pricing/purchase, all true — verified on chain 2026-09-18) which this file predates; `lib/contracts/bundled/testnet.json` is the faithful snapshot. |
 | `yappr-social-contract-v10.json` | **The 4.2.0-beta.7 cut** for the bonsia devnet (topology `v10`, not yet registered). v9's interaction surfaces in the beta.7 grammar (`moderatorAbilities`, `refersTo.where`/`findBy`), with real deletes of immutable posts and replies instead of tombstones, content up to 1000 characters / 2000 bytes, no `language` (one global `timeline`), `mediaHash` + `mediaFingerprint` required with `mediaUrl`, `keyGeneration` for the private feed, no `beat` (rolling trending on `like.byTrendHashtagPost` 24h/6h and `like.byTrendPost` 72h/24h), `skipIfAbsent` on every stored index over an optional property, reports the moderators resolve (`status`/`resolution` through `changeFields`), the `yapprProfile` extension of the DashPay profile (the profile contract is retired on v10), and a YAPP that starts paused with no price or unpause authority. Counts read from the list indexes (made `rangeCountable`; no count-only twins), one `repliesOf` index carries threads and their counts, and reposts are content-less quotes (no `repost` doctype; one quote or repost per author per target; a post must have a body). A post or reply carries at most one mention (`mentionedUserId`, shaped like `hashtag`; no `postMention` doctype), the reply and quote notification indexes are 3.5-day windows written once and kept a week (processing only); mentions and likes keep permanent indexes; likes have no `byLiker` (the heart state reads `byPost`, and one time-last author index serves counts, rankings, notifications and the unlike). 17,110 B signed. See [docs/SOCIAL_V10.md](../docs/SOCIAL_V10.md). |
+| `yappr-social-contract-v11.json` | **The 5.0.0-beta.1 cut** for the sakura devnet (topology `v11`, not yet published). v10 plus D1: the like trend windows `outlivesDelete`, and the author indexes drop `$createdAt`, so an unlike names no time. D3: past 7 days only the seated team (the leader plus two members) deletes a post or reply. D4: removal records keep hashtag or root and `$createdAt`. Then **design M**: post and reply are moderated (`canBeDeleted: false`); every reference at them is `moderatedDocument`; the like trees are `preallocated` by the post's creator; and an author deletes with a tombstone (`deleted`, every content field cleared, conditional `immutable`). About 19,639 B signed, sha256 `374745b4…`. See [docs/SOCIAL_V11.md](../docs/SOCIAL_V11.md). |
 | `yappr-social-contract-v9.json` | Was **deployed** on the moutai devnet (retired; topology `v9`), and cannot be read by a beta.7 SDK (it uses the removed beta.6 grammar). Kept while the client still has a `v9` topology. The 4.2.0-beta.4 cut: flat threads with `likeReply`, posts-only repost/bookmark and dual quote fields, all `refersTo`-checked; indexOnly `like`/`likeReply`/`beat` with ranked, count and daily-windowed axes; an optional inline `post.hashtag`; permanent post/reply with consensus `immutable` lists (tombstone deletes); contract moderation with an elected team (the owner moderates until one is seated) and a warning list; optional YAPP costs with contract-owner gas sponsorship, a 100 YAPP once-per-identity starter grant and credit action fees on post/reply; `distinctFrom: $ownerId` on relationship identifiers; private-feed writer gates; and `blockFollow.followedBlockers` as a typed identifier array. Needs protocol v14 on **4.2.0-beta.4**. See [docs/SOCIAL_V9.md](../docs/SOCIAL_V9.md). |
 
 **The 4.2.0-beta.5 re-cut** (moutai was wiped) edits v9, storefront, blog and
@@ -49,7 +50,7 @@ The beta.7 blog loads on neither a 5.0 SDK nor a 5.0 node,
 and the beta.7 SDK cannot read v6. Every other file is byte-identical. See
 [docs/PLATFORM_V5_BETA1_UPGRADE.md](../docs/PLATFORM_V5_BETA1_UPGRADE.md).
 
-These are the social contract shapes the client knows (`v2`, `v9`, `v10`). The differences are wired into the app
+These are the social contract shapes the client knows (`v2`, `v9`, `v10`, `v11`). The differences are wired into the app
 through `lib/contract-topology.ts` and selected per deployment with
 `NEXT_PUBLIC_CONTRACT_TOPOLOGY` (unset = `v2`; any other value fails the
 build). `scripts/validate-contract-offline.mjs` parses a contract through full
@@ -63,7 +64,8 @@ and their batteries are not kept in the tree; recover them from git history.
 A new cut is edited in place as a new `yappr-social-contract-vN.json`, checked
 with the offline validator, registered with
 `scripts/register-social-v3-draft.mjs`, and proven live with the
-`verify-v10.mjs` battery (`verify-v8.mjs` covers the moderation grammar on a
+`verify-v10.mjs` battery (`--contract-file` selects v10 or v11) and
+`prove-merged-counts.mjs` (`verify-v8.mjs` covers the moderation grammar on a
 v9 chain).
 
 ## Feature contracts

@@ -431,6 +431,36 @@ describe('4.2.0-beta.7 moderator field-change rejections', () => {
   })
 })
 
+describe('5.0.0-beta.1 settled-deletion rejections', () => {
+  // Messages transcribed from the rs-dpp `#[error(...)]` formats at tag v5.0.0-beta.1.
+  it.each([
+    ['DELETE_WINDOW_ELAPSED', 'Document D1 on contract 8Xv3 was last modified at 1759100000000 and could be deleted by moderators for 604800 seconds after that, which block time 1759800000000 is past'],
+    ['NOT_SETTLED_DELETABLE', 'Document type report of contract 8Xv3 does not let the moderators delete a settled document: it sets no moderatorAbilities.deleteSettled'],
+    ['TEAM_NOT_SEATED', 'Contract 8Xv3 has no seated moderation team, and only the members of one approve the deletion of a settled document'],
+    ['NOT_SETTLED', 'Document D1 on contract 8Xv3 was last modified at 1759100000000 and moderators delete it alone for 604800 seconds after that, which block time 1759200000000 is within: it is not settled'],
+    ['TEAM_ACTION_NOT_FOUND', 'No team action A1 was proposed on contract 8Xv3'],
+    ['TEAM_ACTION_ALREADY_SIGNED', 'Moderator 9t2e already approved team action A1 on contract 8Xv3'],
+    ['SETTLED_DELETION_NOT_RESTORABLE', 'Document D1 on contract 8Xv3 was deleted at 1759800000000 by the approvals of the seated moderation team, and a deletion the team agreed on is not restored'],
+    ['TEAM_ACTION_COMPLETED', 'Team action A1 on contract 8Xv3 already ran'],
+    ['TEAM_ACTION_DOCUMENT_CHANGED', 'Document D1 changed since team action A1 on contract 8Xv3 proposed its deletion'],
+    ['NOT_SETTLED_DELETABLE', 'consensus error code=41204'],
+    ['TEAM_NOT_SEATED', '{"code":41205}'],
+    ['NOT_SETTLED', 'refused (code=41206)'],
+    ['TEAM_ACTION_NOT_FOUND', 'refused (code=41207)'],
+    ['TEAM_ACTION_ALREADY_SIGNED', 'refused (code=41208)'],
+    ['SETTLED_DELETION_NOT_RESTORABLE', 'refused (code=41209)'],
+    ['TEAM_ACTION_COMPLETED', 'refused (code=41210)'],
+    ['TEAM_ACTION_DOCUMENT_CHANGED', 'refused (code=41211)'],
+  ])('classifies a settled-deletion refusal as %s', (kind, message) => {
+    expect(classifyModerationError(new Error(message))).toBe(kind)
+  })
+
+  it('does not read the new codes inside ids or amounts', () => {
+    expect(classifyModerationError(new Error('insufficient balance: 41208000 credits'))).toBeNull()
+    expect(classifyModerationError(new Error('document 8Xv141211 not found'))).toBeNull()
+  })
+})
+
 describe('4.2.0-beta.5 rejections', () => {
   // Messages transcribed from the rs-dpp `#[error(...)]` formats at tag v4.2.0-beta.5
   // (5c79d12d). Most reach JS as prose with code = -1, so each is matched by its words.
@@ -672,6 +702,7 @@ describe('every consensus code against every matcher', () => {
     // key expiry, vote choice, moderation-only codes, already-present, nonce,
     // generatedFrom, and the generic broadcast codes.
     20016: [], 40219: [], 40307: [], 41101: [], 41111: [], 41112: [], 41123: [], 41124: [], 10905: [],
+    41204: [], 41205: [], 41206: [], 41207: [], 41208: [], 41209: [], 41210: [], 41211: [],
     40100: [], 40204: [], 10424: [], 10002: [], 20000: [], 1: [],
   }
 

@@ -145,6 +145,27 @@ export const CONSTRAINT_CASES = {
   ],
 };
 
+// Social v11 (5.0.0-beta.1, design M) keeps every v10 rule and adds `tombstoneIsBlank` to post and
+// reply: an author's tombstone sets `deleted` (exactly true) and leaves out every content field;
+// `notEmpty` admits it. Its cases are v10's plus the tombstones, run against its own file.
+DECLARED_RULES['yappr-social-contract-v11.json'] = {
+  ...DECLARED_RULES['yappr-social-contract-v10.json'],
+  post: [...DECLARED_RULES['yappr-social-contract-v10.json'].post, 'tombstoneIsBlank'],
+  reply: [...DECLARED_RULES['yappr-social-contract-v10.json'].reply, 'tombstoneIsBlank'],
+};
+CONSTRAINT_CASES['yappr-social-contract-v11.json'] = [
+  ...CONSTRAINT_CASES['yappr-social-contract-v10.json'],
+  ['post: a tombstone (deleted, nothing else)', 'post', { deleted: true }, null],
+  ['post: a tombstone keeping its hashtag', 'post', { deleted: true, hashtag: 'kept' }, null],
+  ['post: a tombstone keeping its text', 'post', { deleted: true, content: 'still here' }, 'tombstoneIsBlank'],
+  ['post: a tombstone keeping its media', 'post', { deleted: true, ...media('https://example.com/a.png') }, 'tombstoneIsBlank'],
+  ['post: a tombstone keeping its quote', 'post', { deleted: true, quotedPostId: id(), quotedPostOwnerId: id() }, 'tombstoneIsBlank'],
+  ['post: a tombstone keeping its mention', 'post', { deleted: true, mentionedUserId: id() }, 'tombstoneIsBlank'],
+  ['post: `deleted: false` alone', 'post', { deleted: false }, 'tombstoneIsBlank'],
+  ['reply: a tombstone (deleted, the linkage kept)', 'reply', { deleted: true, rootPostId: id(), parentOwnerId: id() }, null],
+  ['reply: a tombstone keeping its text', 'reply', { ...baseReply(), deleted: true }, 'tombstoneIsBlank'],
+];
+
 /**
  * The rejection a live write breaking `rule` must produce: the node's 10422
  * `DocumentPropertyConstraintViolatedError` message naming exactly this rule

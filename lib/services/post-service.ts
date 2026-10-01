@@ -8,7 +8,7 @@ import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions, type PostInteractionState } from './post-stats-helpers';
-import { HASHTAG_MAX_LENGTH, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, mentionsAreInline, ownQuoteIndexFor, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { HASHTAG_MAX_LENGTH, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, mentionsAreInline, ownQuoteIndexFor, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
 import { firstIndexedTag, firstMention } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
@@ -340,8 +340,8 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Blank a post in place, leaving a tombstone.
    *
-   * The v9 `post` doctype is `canBeDeleted: false`, so this is what "delete"
-   * means there. The body, media and every encrypted field are dropped; what
+   * The v9 and v11 `post` doctypes are `canBeDeleted: false`, so this is what
+   * "delete" means there. The body, media and every encrypted field are dropped; what
    * survives is {@link tombstonePreservationFor}('post'), carried over VERBATIM.
    *
    * That set is the doctype's `immutable` list. `hashtag` is in it because
@@ -358,6 +358,10 @@ class PostService extends BaseDocumentService<Post> {
    * `tombstoneDocument` skips absent fields, so the tombstone reproduces the
    * absence verbatim (writing `''` instead would both fail the pattern and
    * break the likes' absence agreement).
+   *
+   * v11 keeps only `hashtag` and clears everything else, the quote and the
+   * embed included (`tombstoneIsBlank` requires them absent): the replacement
+   * is `{ deleted: true }` plus the tag when the post has one.
    */
   async tombstonePost(postId: string, ownerId: string): Promise<boolean> {
     const ok = await tombstoneDocument({
@@ -371,6 +375,18 @@ class PostService extends BaseDocumentService<Post> {
     // pre-tombstone plaintext to a detail view reached via SPA navigation.
     if (ok) this.cache.delete(postId);
     return ok;
+  }
+
+  /**
+   * The author's delete, whatever it means on this topology: a tombstone where
+   * posts are permanent ({@link deletesAreTombstones}: v9, v11), a document
+   * delete elsewhere. On v11 this is also how a repost is undone: the
+   * tombstone clears the bare repost's quote, which frees the author's
+   * one-quote-per-target slot (`ownerAndQuotedPost`), so reposting again is a
+   * new bare repost.
+   */
+  async deleteOwnPost(postId: string, ownerId: string): Promise<boolean> {
+    return deletesAreTombstones() ? this.tombstonePost(postId, ownerId) : this.deletePost(postId, ownerId);
   }
 
   /**

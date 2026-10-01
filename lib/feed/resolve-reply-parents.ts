@@ -11,13 +11,13 @@
 
 import type { Post } from '@/lib/types';
 import { postService } from '@/lib/services/post-service';
-import { hasFlatThreads, authorDeletesLeaveHoles, type TargetKind } from '@/lib/contract-topology';
+import { hasFlatThreads, repliesOutliveTheirParent, type TargetKind } from '@/lib/contract-topology';
 import { provenAbsent } from './prove-absent';
 
 /** Which doctype a parent id names — `unknown` only on v2's polymorphic field. */
 type ParentTarget = { id: string; where: 'post' | 'reply' | 'unknown' };
 
-/** A parent the chain proved absent: deleted by its author (v10) or removed by the moderators. */
+/** A parent the chain proved absent: deleted by its author (v10) or removed by the moderators (v10, v11). */
 export interface MissingReplyParent {
   id: string;
   kind: TargetKind;
@@ -28,8 +28,9 @@ export interface ReplyParents {
   parents: Map<string, Post>;
   /**
    * Parents proved absent, keyed by the reply's own id. Only where a reply
-   * outlives its author-deleted parent (`authorDeletesLeaveHoles()`, v10);
-   * always empty on v2 and v9.
+   * outlives its parent (`repliesOutliveTheirParent()`: v10, where the hole is
+   * an author's delete or a moderator removal, and v11, where it is a
+   * moderator removal); always empty on v2 and v9.
    */
   missing: Map<string, MissingReplyParent>;
 }
@@ -90,7 +91,7 @@ export async function fetchReplyParents(replies: Post[]): Promise<ReplyParents> 
     if (found) parents.set(replyId, found);
   });
 
-  if (authorDeletesLeaveHoles()) {
+  if (repliesOutliveTheirParent()) {
     const unresolved = (where: TargetKind) => Array.from(ids[where]).filter((id) => !byId.has(id));
     const [absentPosts, absentReplies] = await Promise.all([
       provenAbsent('post', unresolved('post')),

@@ -25,12 +25,18 @@ export function readScoped(key: string): string | null {
   }
 }
 
-/** Write a scoped localStorage value, ignoring failures (privacy mode / blocked storage). */
-export function writeScoped(key: string, value: string): void {
+/**
+ * Write a scoped localStorage value. Failures (privacy mode, blocked storage,
+ * quota) are swallowed; the result says whether the value persisted, for the
+ * callers that must not act as if it had.
+ */
+export function writeScoped(key: string, value: string): boolean {
   try {
     localStorage.setItem(scopedKey(key), value)
+    return true
   } catch {
-    // Storage unavailable — the preference simply does not persist.
+    // Storage unavailable — the value simply does not persist.
+    return false
   }
 }
 

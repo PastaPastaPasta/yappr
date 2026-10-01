@@ -79,3 +79,19 @@ it('reads the Following Top all-time on v10 (per-author has no window there)', a
   await topLikedPostsByAuthorsHydrated({ authorIds: ['authorA', 'authorB'], window: 'today' });
   expect(mocks.ranked.mock.calls.map(([query]) => ('timeRange' in query ? 'windowed' : query.documentTypeName))).toEqual(['like', 'like']);
 });
+
+it('drops the zero-count groups of v11\'s preallocated like trees, which rank last', async () => {
+  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v11');
+  const { topLikedPosts, topCreatorsByLikes } = await import('./ranked-likes');
+  mocks.ranked.mockResolvedValue({ entries: [
+    { groupValue: 'liked1', value: BigInt(3) },
+    { groupValue: 'liked2', value: BigInt(1) },
+    { groupValue: 'never1', value: BigInt(0) },
+    { groupValue: 'never2', value: BigInt(0) },
+  ] });
+  expect(await topLikedPosts({ postAuthor: 'author123', limit: 4 })).toEqual([
+    { postId: 'liked1', likes: 3 },
+    { postId: 'liked2', likes: 1 },
+  ]);
+  expect((await topCreatorsByLikes(4)).map((entry) => entry.key)).toEqual(['liked1', 'liked2']);
+});

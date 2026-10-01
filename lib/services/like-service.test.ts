@@ -438,3 +438,126 @@ describe('v10 like notifications: recent content → like counts → one read pe
     })])
   })
 })
+
+describe('v11 unlike (outlivesDelete): content values only, no $createdAt', () => {
+  const run = (kind: 'post' | 'reply' = 'post') => unlike('dash', { topology: 'v11', kind })
+
+  beforeEach(() => {
+    mocks.query.mockImplementation(async (query) => driveLike(query))
+    chain.deletes = { like: { lands: true, report: 'confirmed' }, likeReply: { lands: true, report: 'confirmed' } }
+  })
+
+  it.each([
+    ['post', 'like', { postId: POST, postAuthor: AUTHOR, hashtag: 'dash' }, 'postId'],
+    ['reply', 'likeReply', { replyId: POST, replyAuthor: AUTHOR }, 'replyId'],
+  ] as const)('deletes a %s like by its content values after one liked-state read, with no tuple walk', async (kind, docType, values, field) => {
+    chain.rows = { [docType]: [{ $id: id(10), $ownerId: VIEWER, ...values }] }
+
+    await expect(run(kind)).resolves.toBe(true)
+
+    // The only read is the liked-state readback (target, owner) — no author-time walk.
+    expect(queriesOf(docType).map((query) => query.where)).toEqual([[[field, '==', POST], ['$ownerId', '==', VIEWER]]])
+    const tuple = deleteTupleOf(docType)
+    expect(tuple).not.toHaveProperty('createdAtMs')
+    expect(tuple?.documentId).toBe(id(10))
+    const data = tuple?.data as Record<string, unknown>
+    expect(Object.keys(data).sort()).toEqual(Object.keys(values).sort())
+    expect(bs58.encode(data[field] as Uint8Array)).toBe(POST)
+    expect(chain.rows[docType]).toEqual([])
+  })
+
+  it('is a no-op success when there is no like to remove', async () => {
+    chain.rows = { like: [] }
+
+    await expect(run()).resolves.toBe(true)
+
+    expect(mocks.deleteDocumentByValues).not.toHaveBeenCalled()
+  })
+
+  it('fails rather than passing a failed liked-state read off as "not liked"', async () => {
+    mocks.query.mockRejectedValue(new Error('DAPI unavailable'))
+
+    await expect(run()).resolves.toBe(false)
+
+    expect(mocks.deleteDocumentByValues).not.toHaveBeenCalled()
+  })
+
+  it('believes the chain when the delete is reported unproven', async () => {
+    chain.rows = { like: [likeRow()] }
+    chain.deletes.like = { lands: true, report: 'unproven' }
+
+    await expect(run()).resolves.toBe(true)
+  })
+})
+
+describe('v11 timeless like notification reads', () => {
+  const ME = AUTHOR
+  const [P1, P2] = [id(60), id(61)]
+  const likeOf = (owner: string, target: string, docType = 'like'): Row => docType === 'like'
+    ? { $id: `${owner}-${target}`, $ownerId: owner, postId: target, postAuthor: ME }
+    : { $id: `${owner}-${target}`, $ownerId: owner, replyId: target, replyAuthor: ME }
+
+  // Answers in index key order: by target, then by liker.
+  const keyOrder = (field: string) => async (query: Query) => {
+    if (query.startAfter) throw new Error(REFUSED)
+    return (chain.rows[query.documentTypeName] ?? []).filter((row) => query.where.every(([property, op, value]) => {
+      if (op === '==') return row[property] === value
+      if (op === 'in') return (value as unknown[]).includes(row[property])
+      if (op === '>') return String(row[property]) > String(value)
+      throw new Error(`unexpected operator ${op}`)
+    })).sort((a, b) => String(a[field]).localeCompare(String(b[field])) || String(a.$ownerId).localeCompare(String(b.$ownerId)))
+      .slice(0, query.limit)
+  }
+
+  it.each([
+    ['post', 'like', 'postId', 'postAuthor'],
+    ['reply', 'likeReply', 'replyId', 'replyAuthor'],
+  ] as const)('reads the likers of every moved %s in one author-pinned `in` read on the author index', async (kind, docType, field, author) => {
+    chain.rows = { [docType]: [likeOf(VIEWER, P1, docType), likeOf(OTHER, P1, docType), likeOf(OTHER, P2, docType)] }
+    mocks.query.mockImplementation(keyOrder(field))
+    const likeService = await likeServiceOn('v11')
+
+    const likers = await likeService.getLikersOf(ME, [P1, P2], kind)
+
+    expect(queriesOf(docType)).toEqual([{
+      dataContractId: expect.any(String),
+      documentTypeName: docType,
+      where: [[author, '==', ME], [field, 'in', [P1, P2]]],
+      orderBy: [[author, 'asc'], [field, 'asc']],
+      limit: 100,
+    }])
+    expect(likers.get(P1)).toEqual({ likers: [VIEWER, OTHER].sort(), complete: true })
+    expect(likers.get(P2)).toEqual({ likers: [OTHER], complete: true })
+  })
+
+  it('when the `in` read comes back full, re-reads from the last row\'s target on, paged on byPost with an `$ownerId >` keyset, capped at three pages', async () => {
+    // P1 sorts before P2: its one like is complete in the full page; P2's crowd fills the rest.
+    const crowd = Array.from({ length: 650 }, (_, i) => likeOf(`liker-${String(i).padStart(4, '0')}`, P2))
+    chain.rows = { like: [likeOf(VIEWER, P1), ...crowd] }
+    mocks.query.mockImplementation(keyOrder('postId'))
+    const likeService = await likeServiceOn('v11')
+
+    const likers = await likeService.getLikersOf(ME, [P1, P2], 'post')
+
+    expect(likers.get(P1)).toEqual({ likers: [VIEWER], complete: true })
+    expect(likers.get(P2)?.complete).toBe(false)
+    expect(likers.get(P2)?.likers).toHaveLength(300)
+    const perTarget = queriesOf('like').slice(1)
+    expect(perTarget.map((query) => query.where)).toEqual([
+      [['postId', '==', P2]],
+      [['postId', '==', P2], ['$ownerId', '>', 'liker-0099']],
+      [['postId', '==', P2], ['$ownerId', '>', 'liker-0199']],
+    ])
+    for (const query of perTarget) expect(query).toMatchObject({ orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 100 })
+    for (const query of queriesOf('like')) expect(query).not.toHaveProperty('startAfter')
+  })
+
+  it('never asks the author index for likes since a time', async () => {
+    const likeService = await likeServiceOn('v11')
+
+    expect(await likeService.getLikesOnMyPosts(ME, new Date(1_000), 'post')).toEqual([])
+
+    expect(mocks.query).not.toHaveBeenCalled()
+    expect(mocks.composite).not.toHaveBeenCalled()
+  })
+})

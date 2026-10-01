@@ -176,3 +176,82 @@ describe('tombstoning a quote of a removed post', () => {
     expect(attempt(0).quotedPostId).toBeInstanceOf(Uint8Array)
   })
 })
+
+/** A stored v11 post carrying every kind of content a tombstone must clear. */
+function storedFullV11Post(extra: Record<string, unknown> = {}) {
+  return {
+    toObject: () => ({
+      $id: postId, $ownerId: ownerId, $revision: 1,
+      content: 'look at #dash', hashtag: 'dash', mentionedUserId: quotedOwnerId,
+      mediaUrl: 'ipfs://media', mediaHash: new Uint8Array(32), mediaFingerprint: new Uint8Array(8), sensitive: true,
+      quotedPostId, quotedPostOwnerId: quotedOwnerId,
+      ...extra,
+    }),
+  }
+}
+
+describe('the v11 tombstone (design M)', () => {
+  beforeEach(() => updateDocument.mockResolvedValue({ success: true }))
+
+  it('writes deleted alone plus the frozen hashtag, with no content key', async () => {
+    get.mockResolvedValue(storedFullV11Post())
+    await expect(tombstone('v11')).resolves.toBe(true)
+    // tombstoneIsBlank: every clearable field ABSENT, the quote included.
+    expect(attempt(0)).toEqual({ deleted: true, hashtag: 'dash' })
+  })
+
+  it('writes deleted alone for an untagged post', async () => {
+    get.mockResolvedValue(storedFullV11Post({ hashtag: undefined }))
+    await tombstone('v11')
+    expect(attempt(0)).toEqual({ deleted: true })
+  })
+
+  it('undoes a bare repost by clearing its quote, which frees the one-quote slot', async () => {
+    get.mockResolvedValue({
+      toObject: () => ({ $id: postId, $ownerId: ownerId, $revision: 1, quotedPostId, quotedPostOwnerId: quotedOwnerId }),
+    })
+    await tombstone('v11')
+    expect(attempt(0)).toEqual({ deleted: true })
+  })
+
+  it('keeps a reply\'s linkage and clears the rest', async () => {
+    get.mockResolvedValue({
+      toObject: () => ({
+        $id: postId, $ownerId: ownerId, $revision: 1, content: 'nested reply', mentionedUserId: quotedOwnerId,
+        rootPostId: quotedPostId, replyToReplyId: quotedOwnerId, parentOwnerId: quotedOwnerId,
+      }),
+    })
+    await tombstone('v11', 'reply')
+    const data = attempt(0)
+    expect(Object.keys(data).sort()).toEqual(['deleted', 'parentOwnerId', 'replyToReplyId', 'rootPostId'])
+    expect(data.deleted).toBe(true)
+    expect(data.rootPostId).toBeInstanceOf(Uint8Array)
+  })
+
+  it('leaves out replyToReplyId for a direct reply', async () => {
+    get.mockResolvedValue({
+      toObject: () => ({ $id: postId, $ownerId: ownerId, $revision: 1, content: 'direct', rootPostId: quotedPostId, parentOwnerId: quotedOwnerId }),
+    })
+    await tombstone('v11', 'reply')
+    expect(Object.keys(attempt(0)).sort()).toEqual(['deleted', 'parentOwnerId', 'rootPostId'])
+  })
+
+  it('never retries a 40120: references are moderatedDocument and nothing is clearable', async () => {
+    get.mockResolvedValue(storedFullV11Post())
+    updateDocument.mockReset().mockResolvedValue({ success: false, error: REFERENCE_NOT_FOUND })
+    await expect(tombstone('v11')).resolves.toBe(false)
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not write again over a document that is already a tombstone', async () => {
+    get.mockResolvedValue({ toObject: () => ({ $id: postId, $ownerId: ownerId, $revision: 2, deleted: true }) })
+    await expect(tombstone('v11')).resolves.toBe(true)
+    expect(updateDocument).not.toHaveBeenCalled()
+  })
+
+  it('still writes v9\'s empty content beside deleted', async () => {
+    get.mockResolvedValue({ toObject: () => ({ $id: postId, $ownerId: ownerId, $revision: 1, content: 'plain', language: 'en' }) })
+    await tombstone('v9')
+    expect(attempt(0)).toEqual({ content: '', deleted: true, language: 'en' })
+  })
+})
