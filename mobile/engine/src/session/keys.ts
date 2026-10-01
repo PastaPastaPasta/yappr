@@ -1,8 +1,8 @@
 import { keyNetwork } from '@/lib/constants'
-import { publicKeyHashFromWif } from '@/lib/crypto/keys'
+import { matchIdentityKey, publicKeyHashFromWif, type IdentityKeyLike, type KeyMatchResult } from '@/lib/crypto/keys'
+import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { identityService } from '@/lib/services/identity-service'
-import { keyValidationService } from '@/lib/services/key-validation-service'
 import { RpcError } from '../protocol/envelope'
 
 /**
@@ -40,19 +40,40 @@ export interface VerifiedKey {
   securityLevel: number
 }
 
+/** lib's wording for a key that matches the identity but may not sign in (key-validation-service). */
+function rejectionMessage(match: KeyMatchResult): string {
+  if (match.purpose !== KeyPurpose.AUTHENTICATION) {
+    return `This key cannot be used for authentication (it's a ${getPurposeName(match.purpose)} key)`
+  }
+  return match.securityLevel === SecurityLevel.MASTER
+    ? 'This is your MASTER key - keep it safe! Use a HIGH or CRITICAL authentication key instead.'
+    : `This key's security level is too low (${getSecurityLevelName(match.securityLevel)}) - need HIGH or CRITICAL`
+}
+
 /**
- * Find the identity for a typed key and check the key may sign in for it.
- * Throws KEY_INVALID, KEY_WRONG_NETWORK, IDENTITY_NOT_FOUND ("No identity uses
- * this key") or KEY_NOT_ON_IDENTITY (with lib's reason, e.g. a MASTER key).
+ * Find the identity for a typed key and check the key may sign in for it:
+ * one of the identity's ENABLED AUTHENTICATION keys at CRITICAL or HIGH,
+ * matched with `matchIdentityKey`, the matcher session restore uses. (lib's
+ * `keyValidationService.validatePrivateKey` ignores `disabledAt`; web bug
+ * #616.) Throws KEY_INVALID, KEY_WRONG_NETWORK, IDENTITY_NOT_FOUND ("No
+ * identity uses this key") or KEY_NOT_ON_IDENTITY (with lib's reason).
  */
 export async function verifySignInKey(input: string): Promise<VerifiedKey> {
   const wif = toNetworkWif(input)
+  const network = keyNetwork()
   const identityId = await identityService.getIdentityIdByPublicKeyHash(publicKeyHashFromWif(wif))
   if (!identityId) throw new RpcError('No identity uses this key', 'IDENTITY_NOT_FOUND')
-  const result = await keyValidationService.validatePrivateKey(wif, identityId, keyNetwork())
-  if (!result.isValid || result.keyId === undefined || result.securityLevel === undefined) {
-    const code = result.errorType === 'IDENTITY_NOT_FOUND' ? 'IDENTITY_NOT_FOUND' : 'KEY_NOT_ON_IDENTITY'
-    throw new RpcError(result.error ?? 'Private key does not match this identity', code)
-  }
-  return { identityId, wif, keyId: result.keyId, securityLevel: result.securityLevel }
+  const identity = await identityService.getIdentity(identityId)
+  if (!identity) throw new RpcError('Identity not found', 'IDENTITY_NOT_FOUND')
+  const keys = identity.publicKeys as IdentityKeyLike[]
+  const result = matchIdentityKey(wif, keys, {
+    network,
+    purpose: KeyPurpose.AUTHENTICATION,
+    allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
+  })
+  if (result.ok) return { identityId, wif, keyId: result.match.keyId, securityLevel: result.match.securityLevel }
+  if (result.reason === 'rejected') throw new RpcError(rejectionMessage(result.match), 'KEY_NOT_ON_IDENTITY')
+  // Found by its hash, yet no enabled key matches: the key was disabled.
+  const disabled = matchIdentityKey(wif, keys.map(key => ({ ...key, disabledAt: undefined })), { network, purpose: KeyPurpose.AUTHENTICATION })
+  throw new RpcError(disabled.ok ? 'This key has been disabled on this identity' : 'Private key does not match this identity', 'KEY_NOT_ON_IDENTITY')
 }
