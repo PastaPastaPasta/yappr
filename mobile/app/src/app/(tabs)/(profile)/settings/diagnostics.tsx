@@ -190,11 +190,11 @@ export default function DiagnosticsScreen() {
             />
             <ActionButton
               kind="outline"
-              label="feed.forYou()"
-              testID="debug-feed-for-you"
+              label="feed.home(forYou)"
+              testID="debug-feed-home"
               onPress={() =>
-                debugCall('feed.forYou()', async () => {
-                  const page = await engine.api.feed.forYou({});
+                debugCall('feed.home({ tab: forYou })', async () => {
+                  const page = await engine.api.feed.home({ tab: 'forYou' });
                   return [
                     `${page.items.length} posts, more: ${page.hasMore ? "yes" : "no"}`,
                     ...page.items

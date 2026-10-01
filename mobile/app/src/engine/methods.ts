@@ -29,6 +29,9 @@ const READS = new Set([
   'graph.following',
   'graph.status',
   'engage.stats',
+  'writes.list',
+  'writes.get',
+  'settings.get',
 ]);
 const READ_MODULES = new Set(['feed', 'explore']);
 

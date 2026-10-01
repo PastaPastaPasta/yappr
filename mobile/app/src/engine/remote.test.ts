@@ -24,7 +24,9 @@ describe('engine.api proxy', () => {
 
 describe('method kinds', () => {
   it.each([
-    ['feed.forYou', 'read', 30_000],
+    ['feed.home', 'read', 30_000],
+    ['writes.get', 'read', 30_000],
+    ['settings.set', 'write', 15_000],
     ['posts.get', 'read', 30_000],
     ['engine.info', 'read', 30_000],
     ['engine.lifecycle', 'control', 5_000],
