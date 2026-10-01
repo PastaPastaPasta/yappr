@@ -22,6 +22,8 @@ export interface EngineRuntime {
   lifecycle?: (state: AppLifecycleState) => void
   connectivity?: (online: boolean) => void
   setLogLevel?: (level: LogLevel) => void
+  /** Send an event to the host (`write.status`, `session.changed`, ...). */
+  emit?: (event: string, payload: unknown) => void
 }
 
 export interface EngineInfo {

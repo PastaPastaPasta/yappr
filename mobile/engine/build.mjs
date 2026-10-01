@@ -127,6 +127,12 @@ async function main() {
     legalComments: 'none',
     metafile: true,
     define,
+    alias: {
+      // lib's toasts become engine.notice events.
+      'react-hot-toast': path.join(here, 'src/shims/toast.ts'),
+      // One WASM instance: the key-registration builder shares evo-sdk's.
+      '@dashevo/wasm-sdk/compressed': path.join(here, 'src/shims/wasm-sdk-compressed.ts'),
+    },
     plugins: [rootAliasPlugin],
   })
   const buildMs = Date.now() - started

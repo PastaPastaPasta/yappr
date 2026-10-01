@@ -27,6 +27,7 @@ Run `npm ci` at the repo root first: the bundle resolves `lib/`'s dependencies f
 | `npm run lint` | ESLint with the engine's own config (`.eslintrc.cjs`; the root config ignores `mobile/**`) |
 | `npm test` | Unit tests (offline) |
 | `npm run test:contract` | Engine API in Node against **testnet** (read only, unauthenticated) |
+| `npm run test:contract:write` | Writes on **sakura** with pool personas 90–99 (`YAPPR_SAKURA_IDENTITIES`), serial. Skips with the reason until W-SAKURA lands |
 | `npm run test:browser` | Needs `build:testnet`. Boots the bundle in WebKit and Chromium; writes timings to `$EVIDENCE_DIR` (default `test-results/`, gitignored; `RUNS=n` per configuration) |
 
 CI: `.github/workflows/mobile-engine.yml` runs typecheck, lint, unit tests and both bundle builds on changes to `mobile/engine/**`, `lib/**`, `types/**`, `vendor/platform-auth/**`, `contracts/**`, the root manifests and `.env.devnet`, so a web change that breaks the engine fails on the web PR. The contract and browser suites need the live network and run locally for now.
@@ -78,6 +79,9 @@ No `next/*` module is reached. If a future lib change pulls in something browser
   - **`sessionStorage`:** memory only.
 - **Lifecycle:** `engine.lifecycle('active'|'background'|'inactive')` replays React Native `AppState` as `visibilitychange` + `pagehide`/`pageshow`. `document.visibilityState` follows the app, not the always-hidden WebView. `engine.connectivity(online)` fires `online`/`offline` and asks the SDK to rebuild a dead instance.
 - **Console:** forwarded to the host as `log` envelopes at or above a level (default `info`; `engine.setLogLevel('debug')` for diagnostics), filtered before formatting because devnet builds log at debug. tslog's `%c` styling is stripped.
+- **`react-hot-toast`** (esbuild alias): lib's toasts become `engine.notice {level, message}` events.
+- **`@dashevo/wasm-sdk/compressed`** (esbuild alias, same in vitest): re-exports evo-sdk's own copy, so the first-login key-registration builder (`lib/services/identity-update-builder.ts`, reached through `lib/auth/platform-auth-adapters`) shares evo-sdk's WASM instance. Without it the bundle carries a second 11.2 MB WASM payload (26.3 MB instead of 15.0 MB).
+- **Secure deletes are always forwarded**, even for keys the engine does not hold: signing out a non-active account clears its secrets by name, and the host must delete them from the Keychain/Keystore.
 - **Early error reporter:** `install-shims.ts` posts uncaught errors and unhandled rejections straight to the bridge. If a lib module throws while loading, the bundle stops before the dispatcher exists, and that log line plus the client's hello timeout are what the host sees.
 
 ## RPC
@@ -126,6 +130,35 @@ DTOs live in `src/api/dto.ts`. `boot()` fails with code `NO_WEBASSEMBLY` when We
 - **Authors:** `author.displayName` and `author.avatarUrl` are never empty. They fall back to the DPNS label, then `User <last 6>`, and to the default DiceBear avatar. `author.resolved` is false when lib's enrichment failed (it swallows the error), so the host knows the fallbacks are placeholders.
 - **Viewer state:** signed in only. Covers `liked`, `reposted`, `bookmarked`, `authorBlocked` and `followsAuthor`.
 - **`ProfileDTO.hasProfile`:** false means either no profile document or a failed read (lib's `getProfile` returns null for both). Re-check strictly before an owner edit, as web's `/user` page does.
+
+## Session, writes and settings (M7a)
+
+**`session.*`** (`src/api/session.ts`, `src/session/`). A `PlatformAuthController` built from web's `createYapprPlatformAuthDependencies()`, with vaults, passwords, passkeys and the username and profile gates turned off (ADR-001 E5). Post-login tasks, the encryption-key auto-derive and the 5-minute balance refresh stay on, as on web.
+
+| Method | What it does |
+| --- | --- |
+| `restore()` / `current()` | `controller.restoreSession()`, once per boot; every session call waits for it. A stored key that no longer signs for the identity drops the session (`session.changed {reason: 'key-invalid'}`) |
+| `checkKey({key})` | WIF or hex → `identities.byPublicKeyHash` (then the non-unique index) → `keyValidationService.validatePrivateKey` (enabled AUTH key, CRITICAL or HIGH). For "Identity found" before signing in. Errors: `KEY_INVALID`, `KEY_WRONG_NETWORK`, `IDENTITY_NOT_FOUND`, `KEY_NOT_ON_IDENTITY` (lib's reason, e.g. a MASTER key) |
+| `signInWithKey({key})` | `checkKey`, then `controller.loginWithAuthKey(id, wif, {skipUsernameCheck: true})`. Hex is stored as a WIF for this network. Arguments are sensitive: never log them |
+| `startKeyExchange()` | `dash-key:` request (`buildYapprKeyExchangeUri`, the configured network and label). One request at a time; it lives 10 minutes, and until the wallet answers it (ephemeral key included) is also kept under `yappr_secure_kx_request`, so a killed app resumes it (`pendingKeyExchange()`) |
+| `awaitKeyExchange(id, {waitMs?})` | Polls for the wallet's answer for up to `waitMs` (default 45 s, at most 120 s), so one call fits the client deadline. `pending` → call again ("Check again"). Then `signed-in` if the identity has Yappr's keys, else `needs-registration` with the `dash-st:` URI (`buildUnsignedKeyRegistrationTransition`) and the keys it adds. A wallet approval is kept for retries; nothing derived from it is persisted |
+| `awaitKeyRegistration(id, {waitMs?})` | Checks every 5 s for the registered keys for up to `waitMs`, then signs in (`completeYapprKeyExchangeLogin`) |
+| `cancelKeyExchange(id)` | Aborts the poll and zeroes the keys (`KEY_EXCHANGE_CANCELLED` for the waiting call) |
+| `accounts()` | The engine's registry, `yappr_engine_accounts` in kv |
+| `switchAccount(id)` / `prepareAddAccount()` | lib has one session slot, so both are a controlled engine restart: they stop DM v5, save the active account's `yappr_session` and stash its `yappr-notifications`, put the target's in place (none for "add"), and resolve. The host must then restart the engine with the target's secrets; the next restore reports `switched`. A second identity cannot sign in while one is active (`BAD_REQUEST`) |
+| `signOut({identityId?})` | Offline. Active account: `controller.logout()` (secrets, session, logout cleanup). Another account: lib's secure-storage clear functions by id. Either way its registry entry, stash and write tickets go |
+| `refreshBalance()` | `controller.refreshBalance()` → `{credits: bigint}` |
+
+Events: `session.changed {session, reason}` (`restored`, `signed-in`, `switched`, `signed-out`, `key-invalid`, `balance`), and `session.keyRequired {identityId, purpose}` when lib opens its login or encryption-key modal (the engine closes it and asks the host).
+
+**`writes.*`** (`src/api/writes.ts`, `src/writes/`). Every write gets a `WriteTicket` (`pending` → `confirmed` | `unconfirmed` | `failed`), emitted as `write.status` on each transition and persisted under `yappr_engine_writes` (at most 100; confirmed ones pruned after 24 h). A ticket still `pending` at load was interrupted: it becomes `unconfirmed` with `ENGINE_RESTARTED` and is never re-sent.
+
+- Domain writes (M7b) register a `WriteHandler` per op with `tickets.register(op, {run, probe?, persistArgs?})` and call `tickets.submit({op, args, target, documents})`. `fromTransitionResult` and `fromBoolean` map lib's results. `persistArgs: false` keeps arguments (DM plaintext) off disk.
+- `check(id)`, for an `unconfirmed` ticket: proves each named document present (create) or absent (delete) with one proved `documents.get`, or runs the handler's `probe`. Applied → `confirmed`; proved not applied → still `unconfirmed`, now `retryable`; unprovable → unchanged, with the probe's error.
+- `retry(id)`: only a `failed` ticket whose error is retryable (refused retryably, or never sent), or an `unconfirmed` one a check proved not applied. Otherwise `NOT_RETRYABLE`. Nothing is ever retried automatically.
+- `classify(err)` (`src/writes/classify.ts`) walks `categorizeError`'s predicates in its order, then the cases it leaves generic (duplicate, already exists, rate limit, timeout, network, missing key). `userMessage` is always `categorizeError`'s text. lib's three module-private predicates are recognised by the string `categorizeError` produces for them. `test/fixtures/error-vectors.json` pins 49 real messages (code, outcome, retryable, ticket state, user message); add one with every new web predicate.
+
+**`settings.get()` / `settings.set(patch)`** (`src/api/settings.ts`): link previews, media gate, read receipts, NSFW mode, notification toggles, `payWith` and feed language, through lib's own `useSettingsStore` setters (persisted by its `persist`). A patch is validated whole before any of it applies (`BAD_REQUEST`).
 
 ## Measurements (2026-10-01, testnet, evo-sdk 4.2.0-beta.7, Apple Silicon Mac)
 
