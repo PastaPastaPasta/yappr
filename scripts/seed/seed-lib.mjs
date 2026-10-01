@@ -63,7 +63,7 @@ export const YAPP_TOKEN_POSITION = 0;
 export const SEEDED_TOPOLOGIES = ['v10', 'v11'];
 /** The social contract the seeder writes (the configured topology's file), read once: every limit and cost below comes from it. */
 const SOCIAL_CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT,
-  `contracts/yappr-social-contract-${envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') === 'v11' ? 'v11' : 'v10'}.json`), 'utf8'));
+  `contracts/yappr-social-contract-${SEEDED_TOPOLOGIES.includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY')) ? envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') : 'v10'}.json`), 'utf8'));
 const SOCIAL_DOCUMENT_SCHEMAS = SOCIAL_CONTRACT.documentSchemas;
 
 /**
@@ -118,11 +118,11 @@ export function profileContractId() {
   return id;
 }
 
-// ---- Document shapes (social v10) ---------------------------------------------
+// ---- Document shapes (social v10/v11) -----------------------------------------
 //
-// The seeder writes to the devnet social contract, which is v10
-// (contracts/yappr-social-contract-v10.json, 4.2.0-beta.7); nothing else exists
-// to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
+// The seeder writes to the devnet social contract, v10
+// (contracts/yappr-social-contract-v10.json) or v11 (-v11.json, the same create
+// shapes); nothing else exists to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
 // that is an ABSENT property: an untagged post OMITS `hashtag`, and a like of
 // it OMITS `like.hashtag` too — a `where` entry treats both-absent as
 // agreement, while sending `''` is consensus mismatch 40127. The like's

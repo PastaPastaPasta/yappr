@@ -185,7 +185,7 @@ document, since the SDK still emits `//`.
 
 ### Contracts on sakura
 
-Published 2026-10-01 by the maker `HduDV8Ru5ABpSssDaAiJeEGa7L4JanbvHGBz7Q16MucE` (E2E deployment seed index 9),
+Published 2026-10-01 by the maker `HduDV8Ru5ABpSssDaAiJeEGa7L4JanbvHGBz7Q16MucE` (index 9 of the privately retained deployment seed, not the CI seed),
 nonces 1-10, all in contract group `7ZXmLYbq614VzFMpiPFCRhRYKAJhCg3zfGvEGy9RQVEY` (registered on the social create).
 
 | nonce | contract | id | source sha256 |
