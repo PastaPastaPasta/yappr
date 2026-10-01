@@ -1,4 +1,23 @@
 /**
+ * Registration-day battery for **contract v10** and its 5.0.0-beta.1 successor
+ * **v11** (`--contract-file contracts/yappr-social-contract-v11.json`,
+ * docs/SOCIAL_V11.md). v11 keeps every v10 case; where it differs the case
+ * switches on the file:
+ *
+ *   - likes are timeless (`outlivesDelete` trend windows, byAuthorPost /
+ *     byAuthorReply without `$createdAt`): t2 and n2 unlike by values WITHOUT
+ *     a `$createdAt`; the trend windows keep the unliked entry (t2i, t2k)
+ *     while the all-time byHashtagPost drops it (t2m), and a re-like counts
+ *     once (t2n); n2's "liked your post" source is the author-pinned liker
+ *     read (`author ==`, `target in`), with no time;
+ *   - m1's removal record keeps the post's `$createdAt` (m1k, D4);
+ *   - the self-test pins v11's like indexes and the post/reply settled
+ *     deletion rule (the team flow itself is proved by
+ *     `prove-merged-counts --team-proof` on a contract whose window is
+ *     minutes, since a week cannot pass in a battery).
+ *
+ * The rest of this header describes v10.
+ *
  * Registration-day battery for **contract v10**
  * (`contracts/yappr-social-contract-v10.json`, docs/SOCIAL_V10.md): the
  * 4.2.0-beta.7 cut, exercised against a freshly registered contract on a
@@ -183,8 +202,13 @@ import {
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 
-const CONTRACT_FILE = 'contracts/yappr-social-contract-v10.json';
+const CONTRACT_FILE = takeFlag('--contract-file', 'contracts/yappr-social-contract-v10.json');
 const V10 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
+const CONTRACT_NAME = CONTRACT_FILE.replace(/^.*\//, '');
+/** v11: every like index on `$createdAt` outlives deletes, so no like keeps its time and an unlike names none. */
+const TIMELESS_LIKES = V10.documentSchemas.like.indices.some((index) => index.outlivesDelete === true);
+/** v11: removal records keep fields (D4). */
+const KEPT_POST_FIELDS = V10.documentSchemas.post.moderatorAbilities?.deleteKeepsFields ?? [];
 const POST_ACTION_FEE = actionFeeFor('post');
 const REPLY_ACTION_FEE = actionFeeFor('reply');
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
@@ -198,8 +222,11 @@ const FRESH_OWNER = takeFlag('--fresh-owner', null);
 const POOR_BOT_INDEX = Number(takeFlag('--poor', '2'));
 /** Long enough for the refused write to run, short enough to wait out. */
 const SUSPENSION_MS = 25_000;
-if (MODERATOR_SPEC !== 'maker') {
-  console.error(`--moderator ${MODERATOR_SPEC}: v10's interim moderator is the contract owner alone (interim: contractOwner appoints nobody); run with --moderator maker (the default)`);
+// The interim moderator is the contract owner alone (interim: contractOwner appoints nobody):
+// the maker on the published contract, or the bot that registered a throwaway draft
+// (`--moderator bot:<n>`, checked against the contract's owner before any case runs).
+if (MODERATOR_SPEC !== 'maker' && !/^bot:\d+$/.test(MODERATOR_SPEC)) {
+  console.error(`--moderator ${MODERATOR_SPEC}: name the contract owner, \`maker\` (the default) or the \`bot:<n>\` that registered a draft`);
   process.exit(1);
 }
 
@@ -527,6 +554,11 @@ async function caseM1DeleteRestore(ctx) {
   try {
     const removal = await sdk.contracts.moderatorDeleteDocument({ identity: moderator.identity, contractId, documentTypeName: 'post', documentId: postId, reason: { text: 'v10 battery takedown' }, signer: moderator.signer });
     check('m1a the interim owner deletes B\'s post', idOf(removal.documentOwnerId) === botB.ownerId, `hash=${removal.documentHash}`);
+    if (KEPT_POST_FIELDS.length > 0) {
+      const kept = removal.keptFields ?? {};
+      const createdAt = Number(before?.createdAt ?? before?.toJSON?.().$createdAt);
+      check('m1k (v11) the record keeps the untagged post\'s $createdAt and nothing it does not hold (no hashtag)', Number(kept.$createdAt) === createdAt && !('hashtag' in kept), describeValue(kept));
+    }
   } catch (e) {
     check('m1a the interim owner deletes B\'s post', false, describeErr(e).slice(0, 220));
     return;
@@ -818,7 +850,7 @@ async function caseC1PropertyConstraints(ctx) {
   const fields = (data) => ({ ...data, ...(data.rootPostId ? { rootPostId: bs58.decode(anchor), parentOwnerId: bs58.decode(ctx.botB.ownerId) } : {}) });
   for (const docType of ['post', 'reply']) {
     if (docType === 'reply' && !anchor) { check('c1 reply fixture', false, 'no anchor post'); continue; }
-    for (const [label, data, rule] of refusedCreates(CONTRACT_FILE.replace('contracts/', ''), docType)) {
+    for (const [label, data, rule] of refusedCreates(CONTRACT_NAME, docType)) {
       await expectFeedRefused(ctx, `c1 ${label} is refused (10422 ${rule})`, botA, docType, fields(data), constraintViolation(rule));
     }
   }
@@ -850,7 +882,7 @@ async function caseR1Reports(ctx) {
   await expectCreateRefused(ctx, 'r1d a report naming someone other than the author is refused (40127)', botA, 'report', reportData({ postId: other, targetOwnerId: randomIdBytes(), reason: 0 }), PROPERTY_MISMATCH);
   await expectCreateRefused(ctx, 'r1e B reporting its own post is refused (10419)', botB, 'report', reportData({ postId: post, targetOwnerId: author, reason: 0 }), NOT_DISTINCT);
   await expectCreateRefused(ctx, 'r1f a report of a post that does not exist is refused (40120)', botA, 'report', reportData({ postId: randomIdBytes(), targetOwnerId: author, reason: 0 }), REFERENCE_NOT_FOUND);
-  for (const [label, data, rule] of refusedCreates(CONTRACT_FILE.replace('contracts/', ''), 'report')) {
+  for (const [label, data, rule] of refusedCreates(CONTRACT_NAME, 'report')) {
     const fields = { ...data, ...(data.postId ? { postId: other } : {}), ...(data.replyId ? { replyId: reply } : {}), targetOwnerId: author };
     await expectCreateRefused(ctx, `r1g ${label} is refused (10422 ${rule})`, botA, 'report', fields, constraintViolation(rule));
   }
@@ -1101,6 +1133,7 @@ async function caseT2TrendingOnLike(ctx) {
     [tagged, untagged].every((id) => Number(topPosts.entries.find((e) => e.groupValue === id)?.value ?? -1) === 1), `groups=${topPosts.entries.length}`);
   check('t2g the all-time per-tag ranking (byHashtagPost) agrees', Number(allTime.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1);
 
+  if (TIMELESS_LIKES) { await timelessUnlike(ctx, { tagged, untagged, tag, owner, like }); return; }
   // A delete by values needs the like's $createdAt. An indexOnly document is
   // synthesized from the index it is read through, so read it back through
   // byAuthorPostTime [postAuthor, postId, $createdAt], the post pinned, newest first.
@@ -1120,6 +1153,29 @@ async function caseT2TrendingOnLike(ctx) {
     const cold = /single-path axis read must produce exactly one axis descent/i.test(describeErr(e));
     check('t2i the tag\'s window no longer counts the post', cold, cold ? 'cold bucket (the empty answer)' : describeErr(e).slice(0, 200));
   }
+}
+
+/**
+ * v11's t2 tail: the unlike names no `$createdAt` (and no id the node checks),
+ * the windows keep the entry until they pass (`outlivesDelete`), the all-time
+ * ranking drops it, and a re-like writes over the kept entry (counted once).
+ */
+async function timelessUnlike(ctx, { tagged, untagged, tag, owner, like }) {
+  const { sdk, contractId, botA } = ctx;
+  const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, data: likeData({ postId: bs58.decode(tagged), hashtag: tag, postAuthor: owner }) });
+  expectAccepted('t2h A unlikes the tagged post by values, with no $createdAt (v11)', await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await entryExists(sdk, contractId, 'like', 'postId', tagged, botA.ownerId)) }));
+  await settle();
+  const valueOf = (entries, id) => Number(entries.find((e) => e.groupValue === id)?.value ?? 0);
+  const allTime = () => readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, where: [['hashtag', '==', tag]], limit: 10 }));
+  const perTag = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
+  check('t2i the tag\'s 24h window still counts the unliked post (outlivesDelete keeps the entry until the window passes)', valueOf(perTag.entries, tagged) === 1, `groups=${perTag.entries.length}`);
+  const top = await rankedWindow(ctx, TOP_POSTS, { groupBy: 'postId' });
+  check('t2k …and so does the 3-day window, beside the untagged like', valueOf(top.entries, tagged) === 1 && valueOf(top.entries, untagged) === 1, `groups=${top.entries.length}`);
+  check('t2m the all-time per-tag ranking (byHashtagPost) drops it at once', valueOf((await allTime()).entries, tagged) === 0);
+  expectAccepted('t2n A likes it again while the kept entry stands', await like(tagged, tag));
+  await settle();
+  const again = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
+  check('t2o the re-like writes over the kept entry: the window counts A once (1), the all-time ranking 1 again', valueOf(again.entries, tagged) === 1 && valueOf((await allTime()).entries, tagged) === 1, `window=${valueOf(again.entries, tagged)}`);
 }
 
 // ---- v10: one mention per post or reply, the notification windows ---------------------
@@ -1188,7 +1244,25 @@ async function caseN2NotificationWindows(ctx) {
   const since = Date.now() - 3_600_000;
   for (const [docType, targetId, data, what, [notifyCase, heartCase, unlikeCase]] of likes) {
     const { target: field, author } = LIKE_FIELDS[docType];
-    const [authorIndex, targetIndex] = docType === 'like' ? ['byAuthorPostTime', 'byPost'] : ['byAuthorReplyTime', 'byReply'];
+    const [authorIndex, targetIndex] = docType === 'like'
+      ? [TIMELESS_LIKES ? 'byAuthorPost' : 'byAuthorPostTime', 'byPost']
+      : [TIMELESS_LIKES ? 'byAuthorReply' : 'byAuthorReplyTime', 'byReply'];
+    if (TIMELESS_LIKES) {
+      // v11: no like keeps its time. "Liked your post" is the author-pinned liker read
+      // across the recipient's targets, diffed on the device; the unlike names no time.
+      const likers = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: docType,
+        where: [[author, '==', botB.ownerId], [field, 'in', [targetId]]], orderBy: [[author, 'asc'], [field, 'asc']], limit: 100 }));
+      const rows = [...likers.values()].filter(Boolean);
+      check(`${notifyCase} ${authorIndex} lists A as a liker of B's ${what} (\`${author} ==\`, \`${field} in\`; no time: the timeless "liked your ${what}" source)`,
+        rows.some((document) => idOf(document.ownerId) === botA.ownerId) && rows.every((document) => document.createdAt === undefined), describeValue(rows.map((document) => idOf(document.ownerId))));
+      const hearts = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: docType,
+        where: [[field, 'in', [targetId]], ['$ownerId', '==', botA.ownerId]], orderBy: [[field, 'asc'], ['$ownerId', 'asc']], limit: 1 }));
+      check(`${heartCase} ${docType}.${targetIndex} answers "did A like it" (\`${field} in\`, \`$ownerId ==\`)`, [...hearts.values()].filter(Boolean).length === 1);
+      const { document } = buildDocument({ contractId, docType, ownerId: botA.ownerId, data });
+      expectAccepted(`${unlikeCase} A unlikes B's ${what} by values with no $createdAt (v11)`,
+        await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await liked(docType, targetId)) }));
+      continue;
+    }
     // "Liked your post": the per-target read since a watermark, newest first.
     const notified = await likesOfTarget(ctx, docType, botB.ownerId, targetId, ['$createdAt', '>', since]);
     const mine = [...notified.values()].find((document) => document && idOf(document.ownerId) === botA.ownerId);
@@ -1578,6 +1652,7 @@ async function ensurePrepared(ctx) {
     ctx.ownerId = ctx.contract.ownerId.toBase58();
     ctx.moderator = await resolveModerator(ctx.sdk, MODERATOR_SPEC);
     console.log(`contract owner: ${ctx.ownerId}; moderator: ${ctx.moderator.label}`);
+    if (ctx.moderator.ownerId !== ctx.ownerId) throw new Error(`--moderator ${MODERATOR_SPEC} is ${ctx.moderator.ownerId}, not the contract owner ${ctx.ownerId}: the interim moderator is the owner alone`);
     if (ctx.seated === null) ctx.seated = (await readback(() => ctx.sdk.moderationCharters.seatedCharter(ctx.contractId))) != null;
     ctx.prepared = true;
   } catch (e) {
@@ -1624,6 +1699,26 @@ const CASES = new Map([
 // ---- Self-test ------------------------------------------------------------------
 
 /** Offline: the committed JSON declares every rule a case asserts. */
+/** v11's like and moderation pins (the v10 branch of selfTest asserts the v10 shapes). */
+function selfTestTimeless(schemas, { expect, index, shape, names }) {
+  expect('v11 like indexes are byPost, byHashtagPost, byAuthorPost, byTrendPost, byTrendHashtagPost; likeReply byReply, byAuthorReply',
+    names('like') === 'byPost,byHashtagPost,byAuthorPost,byTrendPost,byTrendHashtagPost' && names('likeReply') === 'byReply,byAuthorReply');
+  const byAuthor = index('like', 'byAuthorPost');
+  expect('like byAuthorPost [postAuthor, postId] terminal $ownerId, rangeCountable, ranked at [postAuthor, postId] (creators, profile Top, n2b)',
+    shape('like', 'byAuthorPost') === 'postAuthor,postId' && byAuthor.terminal === '$ownerId' && byAuthor.rangeCountable === true
+      && JSON.stringify(byAuthor.rankedCountable?.at) === JSON.stringify(['postAuthor', 'postId']));
+  expect('likeReply byAuthorReply [replyAuthor, replyId] terminal $ownerId (n2e)', shape('likeReply', 'byAuthorReply') === 'replyAuthor,replyId' && index('likeReply', 'byAuthorReply').terminal === '$ownerId');
+  expect('every like index on $createdAt outlives deletes, so an unlike carries no time (t2h, n2d, n2g)',
+    ['like', 'likeReply'].every((t) => schemas[t].indices.filter((i) => shape(t, i.name).split(',').includes('$createdAt')).every((i) => i.outlivesDelete === true && i.timeRange?.ttl)));
+  expect('likeReply requires no $createdAt (it indexes it nowhere)', !schemas.likeReply.required.includes('$createdAt'));
+  expect('like / likeReply byPost / byReply [target] terminal $ownerId: the heart state (n2c, n2f)',
+    shape('like', 'byPost') === 'postId' && index('like', 'byPost').terminal === '$ownerId' && shape('likeReply', 'byReply') === 'replyId' && index('likeReply', 'byReply').terminal === '$ownerId');
+  for (const [type, kept] of [['post', ['hashtag', '$createdAt']], ['reply', ['rootPostId', '$createdAt']]]) {
+    expect(`${type}: one moderator deletes for a week, then the leader plus two members (deleteWithin 604800, deleteSettled), and the record keeps ${kept.join(' + ')} (m1k)`,
+      JSON.stringify(schemas[type].moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsFields: kept, deleteWithin: 604_800, deleteSettled: { leader: true, approvals: 3 } }));
+  }
+}
+
 function selfTest() {
   const schemas = V10.documentSchemas;
   const problems = [];
@@ -1680,6 +1775,9 @@ function selfTest() {
   // before $createdAt, so it serves the per-post notification read, the
   // unlike tuple and the author's rankings. There is no byLiker.
   const names = (type) => schemas[type].indices.map((i) => i.name).join(',');
+  if (TIMELESS_LIKES) {
+    selfTestTimeless(schemas, { expect, index, shape, names });
+  } else {
   const byAuthor = index('like', 'byAuthorPostTime');
   expect('like indexes are exactly byPost, byHashtagPost, byAuthorPostTime, byTrendPost, byTrendHashtagPost; likeReply exactly byReply, byAuthorReplyTime',
     names('like') === 'byPost,byHashtagPost,byAuthorPostTime,byTrendPost,byTrendHashtagPost' && names('likeReply') === 'byReply,byAuthorReplyTime');
@@ -1694,6 +1792,8 @@ function selfTest() {
       && index('likeReply', 'byAuthorReplyTime').timeRange === undefined);
   expect('no byLiker, byAuthorPost, byAuthorTimePost, byAuthorTimeReply or byAuthorRecent on like / likeReply',
     ['like', 'likeReply'].every((t) => ['byLiker', 'byAuthorPost', 'byAuthorTimePost', 'byAuthorTimeReply', 'byAuthorRecent'].every((n) => !index(t, n))));
+  expect('post and reply moderator deletes have no window and keep no fields (v10)', ['post', 'reply'].every((t) => JSON.stringify(schemas[t].moderatorAbilities) === '{"delete":true}'));
+  }
   expect('follow.followers and followRequest.target stay permanent (no window)', index('follow', 'followers')?.timeRange === undefined && index('followRequest', 'target')?.timeRange === undefined);
   const retired = { post: ['quotedPostOwnerAndTime'], reply: ['parentOwnerAndTime'] };
   expect('the permanent notification indexes are gone (replaced by the windows)', Object.entries(retired).every(([type, names]) => names.every((n) => !index(type, n))));
@@ -1737,7 +1837,7 @@ function selfTest() {
   expect('YAPP starts paused, nobody can unpause it or price it, and the owner may mint to anyone (y1)', token.startAsPaused === true && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne' && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne' && token.manualMintingRules.authorizedToMakeChange.$type === 'contractOwner' && token.distributionRules.mintingAllowChoosingDestination === true);
   expect('the starter grant is 100 once per identity (y1f)', token.distributionRules.oncePerIdentityDistribution?.amount === 100);
   expect('the election windows are one hour each on this devnet cut (e0c)', moderators.joinWindow === 3600 && moderators.voteWindow === 3600);
-  for (const [type, rules] of Object.entries(DECLARED_RULES['yappr-social-contract-v10.json'])) {
+  for (const [type, rules] of Object.entries(DECLARED_RULES[CONTRACT_NAME])) {
     expect(`${type} declares exactly the propertyConstraints rules c1 and r1 assert`, JSON.stringify(Object.keys(schemas[type].propertyConstraints ?? {}).sort()) === JSON.stringify([...rules].sort()));
   }
   for (const problem of problems) console.error(`FAIL  ${problem}`);
@@ -1792,7 +1892,7 @@ if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) 
   for (const [label, docType, data] of SHAPES) {
     try {
       documentOf(docType, data).toBytes(contract, platformVersion);
-      console.log(`serializes under v10: ${label}`);
+      console.log(`serializes under ${CONTRACT_NAME}: ${label}`);
     } catch (e) {
       console.error(`FAIL  ${label} does not serialize under the v10 contract: ${String(e?.message ?? e).slice(0, 200)}`);
       process.exit(1);
