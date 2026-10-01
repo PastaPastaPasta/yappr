@@ -356,6 +356,7 @@ The core list cell. Web source: `components/post/post-card.tsx`. One component w
 - IPFS URLs load through the gateway list the engine reports (`lib/utils/ipfs-gateway` order) with fallback to the next gateway on error or 8 s timeout. Final failure: a `PhotoIcon` placeholder with "Image unavailable".
 - Media gate: when gated, the whole grid is one placeholder (2.7). `mediaHashes`: the "Media changed since posting" badge bottom-left (`caption`, white on `rgba(0,0,0,0.6)`, `radius.full`).
 - Tap → image viewer (4.35). Double-tap → like (PRD ENG-01).
+- Video and GIF: 1.0 shows the thumbnail only, never plays inline. Video and GIF cells carry a centered play badge (GIF: a "GIF" chip instead), and their label says "Video" or "GIF". A video with no thumbnail shows the play badge on `bg.muted` ("Video"); nothing remote is loaded for it.
 
 #### 2.4.7 Link preview
 

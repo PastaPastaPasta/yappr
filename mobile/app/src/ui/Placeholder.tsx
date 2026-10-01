@@ -19,9 +19,17 @@ export function Placeholder({ title, comingIn, detail }: PlaceholderProps) {
     <Screen>
       <Stack.Screen options={{ title }} />
       <View className="flex-1 items-center justify-center gap-2 px-8">
-        <Text variant="title">{title}</Text>
-        {detail ? <Text variant="muted">{detail}</Text> : null}
-        <Text variant="muted">Coming in {comingIn}</Text>
+        <Text variant="titleLarge" tone="emphasis">
+          {title}
+        </Text>
+        {detail ? (
+          <Text variant="subhead" tone="secondary">
+            {detail}
+          </Text>
+        ) : null}
+        <Text variant="subhead" tone="secondary">
+          Coming in {comingIn}
+        </Text>
       </View>
     </Screen>
   );
