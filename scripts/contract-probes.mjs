@@ -454,16 +454,24 @@ const PROBES = [
   { label: 'blog in its beta.7 shape (immutableAllowSetting publishedAt) is refused on 5.0', file: BLOG, expect: 'wasm', mutate: (s) => {
     const t = types(s).blogPost;
     t.immutable = ['blogId', 'publishedAt']; t.immutableAllowSetting = ['publishedAt'];
-    for (const [type, property] of [['blogPost', 'blogId'], ['blogComment', 'blogPostId'], ['blogFollow', 'blogId']]) types(s)[type].properties[property].refersTo.type = 'deletableDocument';
+    // Not blogComment.blogPostId: postOwnerAndTime derives through it, and a deletable
+    // reference there is refused for that first (pinned below).
+    for (const [type, property] of [['blogPost', 'blogId'], ['blogFollow', 'blogId']]) types(s)[type].properties[property].refersTo.type = 'deletableDocument';
   } },
   // #5214: blog and blogPost are moderated-kind (canBeDeleted false, no ttl, a moderator
   // delete keeping records). Both parses accept the beta.7 `deletableDocument` references at
-  // them; registration refuses each one with 40144.
-  { label: 'blog with its beta.7 deletableDocument references at moderated blog/blogPost', file: BLOG, expect: 'audit', node: '40144', mutate: (s) => {
-    for (const [type, property] of [['blogPost', 'blogId'], ['blogComment', 'blogPostId'], ['blogFollow', 'blogId']]) types(s)[type].properties[property].refersTo.type = 'deletableDocument';
+  // blog; registration refuses each one with 40144. (blogComment's reference at blogPost is
+  // refused by the parse itself: postOwnerAndTime derives through it, below.)
+  { label: 'blog with its beta.7 deletableDocument references at the moderated blog', file: BLOG, expect: 'audit', node: '40144', mutate: (s) => {
+    for (const [type, property] of [['blogPost', 'blogId'], ['blogFollow', 'blogId']]) types(s)[type].properties[property].refersTo.type = 'deletableDocument';
   } },
   { label: 'blog moderatedDocument reference at a blogPost its owner may delete', file: BLOG, expect: 'audit', node: '40143', mutate: (s) => { types(s).blogPost.canBeDeleted = true; } },
   { label: 'blog moderatedDocument reference at a blogPost whose removals keep no record', file: BLOG, expect: 'audit', node: '40143', mutate: (s) => { types(s).blogPost.moderatorAbilities.deleteKeepsRecord = false; } },
+  // #5216: blog v6's postOwnerAndTime reads `blogPostId.$ownerId` through the reference, and a
+  // derived property needs a permanent or moderated reference.
+  { label: 'blog postOwnerAndTime deriving through a deletableDocument reference', file: BLOG, expect: 'wasm', mutate: (s) => {
+    types(s).blogPost.canBeDeleted = true; types(s).blogComment.properties.blogPostId.refersTo.type = 'deletableDocument';
+  } },
 
   // Elected declaration (config/moderation/elected.rs): basic-structure rules of the
   // create transition, refused by the node with 10900. The one-day floor is mainnet's only

@@ -1,7 +1,7 @@
 import { queryDocumentBundle } from './document-query-bundle'
 import { documentCount, groupedDocumentCount, mapLimit, paginateCount } from './pagination-utils'
 import { BaseDocumentService, type QueryOptions } from './document-service'
-import { YAPPR_BLOG_CONTRACT_ID, blogCommentsCopyPostFlag, blogIsV2 } from '@/lib/constants'
+import { YAPPR_BLOG_CONTRACT_ID, blogCommentsCopyPostFlag, blogCommentsDerivePostOwner, blogIsV2 } from '@/lib/constants'
 import type { BlogComment } from '@/lib/types'
 import { identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { isPropertyAgreementError } from '@/lib/error-utils'
@@ -37,7 +37,9 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
    * `blogPostId`), so a caller's idea of who owns the post is not good enough —
    * the post is fetched and its real owner used verbatim. On v1 nothing is
    * checked and the caller's value stands. On v5 the same read also supplies
-   * the post's `commentsEnabled`, which the comment must copy.
+   * the post's `commentsEnabled`, which the comment must copy. On v6 the owner
+   * is derived through `blogPostId` and not written, but the read is still the
+   * one that supplies `commentsEnabled`.
    */
   private async resolvePostLinkage(blogPostId: string, fallback: string, fresh = false): Promise<{ ownerId: string; postFields: Record<string, boolean> }> {
     if (!blogIsV2()) return { ownerId: fallback, postFields: {} }
@@ -79,7 +81,7 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
       const { ownerId: postOwnerId, postFields } = await this.resolvePostLinkage(blogPostId, blogPostOwnerId, fresh)
       return this.create(ownerId, {
         blogPostId: requireDocumentIdentifierBytes(blogPostId, 'blogPostId'),
-        blogPostOwnerId: requireDocumentIdentifierBytes(postOwnerId, 'blogPostOwnerId'),
+        ...(blogCommentsDerivePostOwner() ? {} : { blogPostOwnerId: requireDocumentIdentifierBytes(postOwnerId, 'blogPostOwnerId') }),
         content: trimmedContent,
         ...postFields,
       })
@@ -88,8 +90,8 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
     try {
       comment = await write(false)
     } catch (error) {
-      // 40127: the copied owner or commentsEnabled no longer agrees with the
-      // post, most likely because a cached read went stale (the author just
+      // 40127: the copied owner (up to v5) or commentsEnabled no longer agrees
+      // with the post, most likely because a cached read went stale (the author just
       // turned comments off, say). A refused create charges nothing: re-read the
       // post past the cache and try once more; a post now closed stops there.
       if (!blogCommentsCopyPostFlag() || !isPropertyAgreementError(error)) throw error
@@ -185,13 +187,16 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
   /**
    * Comments other people left on MY posts since `since` (ms) — the v2
    * `postOwnerAndTime` index. One page, newest-relevant first by index order;
-   * v1 has no such index and returns nothing.
+   * v1 has no such index and returns nothing. From v6 the index's first
+   * property is the derived `blogPostId.$ownerId`; a query paging with a
+   * cursor must pin it with `==`, and this one pins it anyway.
    */
   async getCommentsOnMyPosts(ownerId: string, since: number, limit = 50): Promise<BlogComment[]> {
     if (!blogIsV2() || !ownerId) return []
+    const postOwner = blogCommentsDerivePostOwner() ? 'blogPostId.$ownerId' : 'blogPostOwnerId'
     const result = await this.query({
-      where: [['blogPostOwnerId', '==', ownerId], ['$createdAt', '>', since]],
-      orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'desc']],
+      where: [[postOwner, '==', ownerId], ['$createdAt', '>', since]],
+      orderBy: [[postOwner, 'asc'], ['$createdAt', 'desc']],
       limit,
     })
     return result.documents.filter((comment) => comment.ownerId !== ownerId)

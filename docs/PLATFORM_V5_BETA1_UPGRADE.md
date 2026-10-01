@@ -3,13 +3,15 @@
 Investigation date: 2026-09-30. This document covers the beta.7 → 5.0.0-beta.1
 range only. Everything earlier is in [`PLATFORM_BETA7_UPGRADE.md`](./PLATFORM_BETA7_UPGRADE.md).
 
-This PR (`v5b1/blog-v6-tooling`) contains only what 5.0 makes mandatory:
+This branch contains what 5.0 makes mandatory, plus decision D5:
 - the blog contract re-cut, **blog v6**;
 - the contract tooling, which now validates against the 5.0 rules;
-- the SDK pin, **5.0.0-beta.1** for all three `@dashevo` packages.
+- the SDK pin, **5.0.0-beta.1** for all three `@dashevo` packages;
+- D5: blog comments derive their post's owner (client topology `v6`).
 
-**No client behaviour change, nothing published.** The devnet cut-over to sakura
-(network wiring, new contract ids, bundle snapshot, `.env.devnet`) is a separate PR.
+**Nothing published.** The devnet cut-over to sakura (network wiring, new
+contract ids, bundle snapshot, `.env.devnet` with `NEXT_PUBLIC_BLOG_TOPOLOGY=v6`)
+is a separate PR.
 
 ## Versions and scope
 
@@ -75,7 +77,7 @@ So the tooling in this PR is 5.0 tooling.
 
 ### Blog v6 (`contracts/yappr-blog-contract.json`, edited in place)
 
-Two changes, both required to load on 5.0:
+The first two changes are required to load on 5.0. The third (D5) is optional, and is taken at the same re-cut because it is free only then:
 
 1. `blogPost.publishedAt` was listed in `immutable` and in `immutableAllowSetting` ("frozen, but a draft may set it once"). It becomes a conditional entry with the same meaning:
 
@@ -88,13 +90,27 @@ Two changes, both required to load on 5.0:
    - A new comment, follow or post naming a removed target is still refused: a write must name a document in state.
    - What changes is a **replace**. A post whose blog was taken down can still be edited: the `blogId` owner gate compares `$ownerId`, which the removal record keeps. Under beta.7, such a post's required `blogId` could no longer be re-validated. No battery case covers this yet; the cut-over PR should add one to `verify-blog.mjs`.
 
-Nothing else changes: no index, no property, no position and no description. The write surface is v5's, so **the client topology stays `NEXT_PUBLIC_BLOG_TOPOLOGY=v5`**, as with the beta.7 translation. `blogTopology()`, the services and the seeder need no change.
+3. **D5: a comment derives its post's owner** (#5216). `blogComment.blogPostOwnerId` is dropped. `postOwnerAndTime` indexes `blogPostId.$ownerId`, a derived index property read through the moderated reference, instead of the copied value, and the `$ownerId` entry leaves the `blogPostId` `where`.
+   - `content` and `postCommentsEnabled` move up to positions 1 and 2.
+   - The `blogComment` and `blogPost` descriptions now say what the index reads, not the dropped field.
+   - It qualifies because `blogPost` is moderated-kind and comments are immutable. A derived property needs a permanent or moderated reference, and the probes pin the refusal through a `deletableDocument` one.
+   - A comment costs **111.1M / 57.6M** credits (new / known index values) against 111.8M / 58.4M without D5. The document is 362 B against 394 B.
 
-| | Before (beta.7, topology v5) | Blog v6 (5.0.0-beta.1) |
+This changes the comment write surface, so the cut is **topology `v6`** (`blogCommentsDerivePostOwner()`):
+- `blog-comment-service` stops writing `blogPostOwnerId` on v6.
+- "Comments on my posts" pins `blogPostId.$ownerId ==` and orders on it. A query that pages with a `startAt`/`startAfter` cursor must pin every derived property with `==`, and this one pins it anyway.
+- The seeder leaves the field out on v6.
+- `verify-blog.mjs` drops b3a (a forged owner): there is no copied owner left to forge. b4d queries the derived name.
+- **Not verified live:** a proved query on a derived index property. No 5.0 node was available.
+- **Battery gap for the cut-over PR:** no case removes a comment after its post was taken down, which makes Drive read the post's `$ownerId` from the removal record. No case checks that `postOwnerAndTime` still lists such a comment either. Add both to b15 in `verify-blog.mjs`.
+
+Set `NEXT_PUBLIC_BLOG_TOPOLOGY=v6` in the cut-over PR, together with the new blog id. Until then the devnet bundle stays on `v5`.
+
+| | Before (beta.7, topology v5) | Blog v6 (5.0.0-beta.1, topology v6) |
 | --- | --- | --- |
-| sha256 | `464b605e652d6dac031fee9576d9573bf25b5fe6dda530b7f8330da78d915dbe` | `e09e3a279ea5ea1d47bd14540d2e94ab4f425dc256bb25b337d1edb7112abb41` |
-| File | 12,771 B | 12,816 B |
-| Signed create transition | ~6,489 B | ~6,498 B |
+| sha256 | `464b605e652d6dac031fee9576d9573bf25b5fe6dda530b7f8330da78d915dbe` | `c5a2c9cd422c2508b32868250460fe37b1c1377d4ece5869c3a0395d9f86a9e2` |
+| File | 12,771 B | 12,417 B |
+| Signed create transition | ~6,489 B | ~6,244 B |
 
 Every other contract file is byte-identical.
 
@@ -115,7 +131,8 @@ Every other contract file is byte-identical.
 - **Probes** (`validate-contract-offline.mjs --probes`) pin both sides:
   - `control: blog as committed` is accepted;
   - the blog in its beta.7 shape (`immutableAllowSetting`) is refused by the wasm-sdk parse;
-  - the blog with its beta.7 `deletableDocument` references passes both parses and is refused by the audit (node: 40144);
+  - the blog with its beta.7 `deletableDocument` references at `blog` passes both parses and is refused by the audit (node: 40144);
+  - `postOwnerAndTime` deriving through a `deletableDocument` reference is refused by the wasm-sdk parse;
   - a `moderatedDocument` reference at a `blogPost` its owner may delete, or whose removals keep no record, is refused by the audit (node: 40143);
   - the #4983 probe uses a conditional entry.
 - **A probe fix.** Three storefront probes (#4982, #4983 and the nested deletable reference) gave their new property position 98 or 99 on a type whose only property is at 0. wasm-dpp2 refused them for the position gap, so the probes passed without ever reaching the rule they name. They now use position 1, and each is refused by the rule it names.
@@ -127,7 +144,7 @@ The contract checks ran with the scripts from this branch, first against the loc
 - `validate-contract-offline.mjs` on every file in `contracts/`:
   - blog v6, social v10, storefront, pollr, profile, DM, DM v5 and key exchange pass;
   - the legacy files fail exactly as they do on beta.7 at `HEAD`: `mutable` in the vault, auth-vault, key-backup, hashtag, mention and block files; v2's token shape; v9's beta.6 grammar; and `yappr-minimal.json`'s shape.
-- `--probes`: 79 of 79 pass. `--constraints` passes.
+- `--probes`: 80 of 80 pass. `--constraints` passes.
 - `register-feature-contract.mjs --dry-run` passes for blog, storefront, pollr, DM, DM v5 and key exchange. It refuses the blog with `deletableDocument` references before broadcast ("admits only moderatedDocument, not deletableDocument (40144)"). `register-social-v3-draft.mjs --dry-run` passes its audit for social v10.
 - These `--self-test` runs pass:
   - `verify-{blog,dm,dm-v5,pollr,storefront,tips,v8,v10}.mjs`;
@@ -138,15 +155,10 @@ The contract checks ran with the scripts from this branch, first against the loc
 - **Testnet still reads on 5.0.** A 5.0 SDK fetched every testnet contract the staging and `/testing` builds use: social v2 (`9oDC6xdg…`, and `/testing`'s `2qvaZNJJ…`), profile, DM, storefront, blog, pollr, key backup, key exchange, vault and auth vault.
 - **Against a 5.0 node** (the new devnet sakura, read-only): the 5.0 SDK connects with `devnetName` `sakura`, reports dapi and drive 5.0.0-beta.1 at protocol 14, and fetches the DashPay and DPNS system contracts. Nothing was broadcast from this PR.
 
-## Pending decisions
+## Decisions (2026-10-01)
 
-- **Bonsia: wiped or upgraded in place?** Ask infra. In place, only blog must be republished, because every other contract still loads. After a wipe, everything is republished.
-- **D5: blog comments derive the post owner.** Drop the copied `blogComment.blogPostOwnerId` and index `postOwnerAndTime` on `blogPostId.$ownerId`, read through the moderated reference.
-  - A comment costs 0.8M credits less, 111.1M against 111.8M with new index values.
-  - The client stops writing the field, and the notification read pins `blogPostId.$ownerId ==`.
-  - It is free only at this re-cut. It is prepared as a separate change, and adopting it would make the cut topology `v6`.
-- **D1: social v11 with `outlivesDelete` likes.** A like drops from 40.2M to 30.4M credits, and unlike no longer needs the like's `$createdAt`. The price is that like notifications lose the time of each like.
-- **D2: moderated posts and preallocated like trees.** Not recommended: authors could no longer delete a post or undo a repost, and every post would cost 19-40M more.
-- **D3: a team-approval deletion window** (`deleteWithin` plus `deleteSettled`) on posts and replies. Needs a social re-cut and a new election.
-- **D4: removal records that keep `hashtag`/`$createdAt`.** Costs users nothing; worth it only if social is re-cut anyway.
-- **D6: if bonsia is not wiped, re-cut social now or only blog?** Only blog unless D1, D3 or D4 is taken.
+- **Bonsia is abandoned.** The devnet moves to **sakura**, a fresh 5.0.0-beta.1 chain, so every contract is published anew there.
+- **D5 is taken here:** blog comments derive the post owner (above, topology `v6`).
+- **D1, D3 and D4 are taken in social v11**, a separate PR: `outlivesDelete` likes (a like drops from 40.2M to 30.4M credits, and like notifications lose the time of each like), a team-approval deletion window on posts and replies (`deleteWithin` plus `deleteSettled`, with a new election), and removal records that keep `hashtag`/`$createdAt`.
+- **D2 is not taken:** posts stay author-deletable, with no preallocated like trees.
+- D6 no longer applies.

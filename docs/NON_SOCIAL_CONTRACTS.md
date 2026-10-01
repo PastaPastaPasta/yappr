@@ -141,11 +141,13 @@ gated the other way rather than a loosened gate; `immutable` on
 | --- | --- | --- |
 | `blog` | `canBeDeleted: false`, `moderatorAbilities.delete` | moderatedDocument target (its owner can never delete it; a moderator can, keeping a removal record) |
 | `blogPost` | `blogId`→blog (moderatedDocument); `immutable [blogId, {publishedAt when present: $old.publishedAt}]`; `moderatorAbilities.delete` | ghost-blog rejection; a post cannot change blogs or be re-dated |
-| `blogComment` | `blogPostId`→blogPost (moderatedDocument) with `where {$ownerId: blogPostOwnerId}`; ranked `commentCount [blogPostId]`; `postOwnerAndTime`; 1 YAPP; `moderatorAbilities.delete` | exact counts, "most discussed", unforgeable "comments on my posts" |
+| `blogComment` | `blogPostId`→blogPost (moderatedDocument); ranked `commentCount [blogPostId]`; `postOwnerAndTime [blogPostId.$ownerId, $createdAt]` (derived through the reference); 1 YAPP; `moderatorAbilities.delete` | exact counts, "most discussed", unforgeable "comments on my posts" |
 | `blogFollow` | `blogId`→blog (moderatedDocument); ranked `followerCount [blogId]`; `followersByDay [$createdAt, blogId]` on the daily grid with a 7-day ttl | exact follower counts, "most followed", "trending today" |
 
-The table is the 5.0.0-beta.1 re-cut (blog v6): until beta.7 the references
-were `deletableDocument` and `publishedAt` sat under `immutableAllowSetting`;
+The table is the 5.0.0-beta.1 re-cut (blog v6, topology v6): until beta.7 the
+references were `deletableDocument`, `publishedAt` sat under
+`immutableAllowSetting`, and a comment copied its post's owner into
+`blogPostOwnerId` (bound by `where {$ownerId: blogPostOwnerId}`);
 see [PLATFORM_V5_BETA1_UPGRADE.md](./PLATFORM_V5_BETA1_UPGRADE.md).
 
 **v3 (4.2.0-beta.3) is the moderated cut.** The contract config declares
@@ -162,10 +164,11 @@ refuses moderator deletes on a history-keeping type. `blogPost.$revision > 1`
 still marks an edited post, but the previous revisions are no longer stored
 and `documents.history` has nothing to return.
 
-`blogPost` carries no `author`: the author IS `$ownerId`, which the comment
-agreement binds to directly and which `ownerAndTime` already indexes. Because
-`blogPostOwnerId` must agree with the referenced post's `$ownerId` (40127),
-`postOwnerAndTime` is safe to read as a notification source — nobody can inject
+`blogPost` carries no `author`: the author IS `$ownerId`, which `ownerAndTime`
+already indexes. Up to v5 a comment copied it into `blogPostOwnerId`, bound to
+the referenced post's `$ownerId` (40127); v6 indexes `blogPostId.$ownerId`, read
+from the post itself. Either way `postOwnerAndTime` is safe to read as a
+notification source — nobody can inject
 a row into someone else's feed — and a comment on a post that does not exist is
 impossible (40120). `blog-comment-service.ts` still fetches the post before
 commenting, not to decide whom to trust but because the write must carry that id
@@ -183,10 +186,11 @@ sdk.documents.count({ dataContractId, documentTypeName: 'blogComment',
 sdk.documents.ranked({ dataContractId, documentTypeName: 'blogFollow',
   groupBy: 'blogId', aggregate: { type: 'count' }, direction: 'desc', limit: 20,
   timeRange: [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 86400 } }] })
-// Comments on my posts since last seen (notification source).
+// Comments on my posts since last seen (notification source; v2-v5 name the
+// copied 'blogPostOwnerId' instead of the derived 'blogPostId.$ownerId').
 sdk.documents.query({ dataContractId, documentTypeName: 'blogComment',
-  where: [['blogPostOwnerId', '==', me], ['$createdAt', '>', lastSeen]],
-  orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'desc']], limit: 100 })
+  where: [['blogPostId.$ownerId', '==', me], ['$createdAt', '>', lastSeen]],
+  orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100 })
 ```
 
 Cold-load budgets: blog home goes from 1 posts page + a full cursor scan per
