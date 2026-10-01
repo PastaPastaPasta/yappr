@@ -615,14 +615,17 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                   </div>
                 )}
                 <div className="flex flex-wrap gap-2">
-                  {target?.state === 'live' && (
+                  {target?.state === 'live' && !protectedIds.has(group.targetOwnerId) && (
                     <Button variant="destructive" size="sm" disabled={dismissing !== null} onClick={() => remove(group, target.post)} className="gap-1">
                       <ShieldExclamationIcon className="h-4 w-4" /> Remove {noun}
                     </Button>
                   )}
-                  <Button variant="outline" size="sm" disabled={dismissing !== null} onClick={() => onModerateAuthor(group.targetOwnerId, group.kind, group.targetId)} className="gap-1">
-                    <UserIcon className="h-4 w-4" /> Warn, suspend or ban the author
-                  </Button>
+                  {/* A protected author (a moderator, or an ownerProtected owner) is moderated by nobody: 41102, paid. */}
+                  {!protectedIds.has(group.targetOwnerId) && (
+                    <Button variant="outline" size="sm" disabled={dismissing !== null} onClick={() => onModerateAuthor(group.targetOwnerId, group.kind, group.targetId)} className="gap-1">
+                      <UserIcon className="h-4 w-4" /> Warn, suspend or ban the author
+                    </Button>
+                  )}
                   {resolving ? (
                     <>
                       {!form && (
