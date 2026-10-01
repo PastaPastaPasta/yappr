@@ -37,8 +37,10 @@ const DEFAULT_YAPP = 20n;
 const TODAY = [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 86400 } }];
 
 const blogData = (run, labels) => ({ name: `Battery ${run}`, description: 'blog battery', ...(labels ? { labels } : {}) });
-// `publishedAt` is `immutable` + `immutableAllowSetting`: a replace must resend the
-// stored value byte-identically, so it is a parameter, not a fresh `Date.now()`.
+// `publishedAt` is frozen once stored (5.0.0-beta.1: the conditional `immutable`
+// entry `{ present: "$old.publishedAt" }`; beta.7 said it with
+// `immutableAllowSetting`): a replace must resend the stored value
+// byte-identically, so it is a parameter, not a fresh `Date.now()`.
 // Passing `null` omits it, which is how a DRAFT is written.
 const postData = ({ blogId, title, slug, publishedAt = Date.now() }) => ({ blogId, title, slug, data0: crypto.getRandomValues(new Uint8Array(64)), ...(publishedAt === null ? {} : { publishedAt }) });
 // v5 (beta.6): `postCommentsEnabled` must equal the post's `commentsEnabled`,
@@ -222,8 +224,8 @@ async function caseB12Immutable(ctx) {
   if (!ctx.draftId) { battery.check('b12d draft publish', false, 'no draft fixture'); return; }
   const draftBase = { blogId: id32(ctx.blogId), title: `Draft ${run}`, slug: `draft-${run}` };
   const firstPublish = Date.now();
-  await edit('b12d publishing a DRAFT sets publishedAt for the first time (immutableAllowSetting)', null, ctx.draftId, postData({ ...draftBase, publishedAt: firstPublish }), await battery.revisionOf('blogPost', ctx.draftId));
-  await edit('b12e re-dating the now-published draft is rejected (40128) — allow-setting is once only', IMMUTABLE_CHANGED, ctx.draftId, postData({ ...draftBase, publishedAt: firstPublish + 1000 }), await battery.revisionOf('blogPost', ctx.draftId));
+  await edit('b12d publishing a DRAFT sets publishedAt for the first time (frozen only once stored)', null, ctx.draftId, postData({ ...draftBase, publishedAt: firstPublish }), await battery.revisionOf('blogPost', ctx.draftId));
+  await edit('b12e re-dating the now-published draft is rejected (40128) — publishedAt is set once only', IMMUTABLE_CHANGED, ctx.draftId, postData({ ...draftBase, publishedAt: firstPublish + 1000 }), await battery.revisionOf('blogPost', ctx.draftId));
 }
 
 async function caseB13Ban(ctx) {
@@ -235,7 +237,8 @@ async function caseB13Ban(ctx) {
 async function caseB14ModeratorDelete(ctx) {
   const { battery, author, reader, run } = ctx;
   // A fresh comment by the reader, then the post it hangs off: the takedown of
-  // the post must leave the comment's `blogPostId` dangling (deletableDocument).
+  // the post leaves the comment's `blogPostId` resolving to the removal record
+  // (a `moderatedDocument` reference from 5.0.0-beta.1).
   const post = await battery.attemptCreate(author, 'blogPost', postData({ blogId: id32(ctx.blogId), title: `Doomed ${run}`, slug: `doomed-${run}`, publishedAt: ctx.publishedAt }));
   if (!post.ok) { battery.check('b14 fixture', false, 'no post to take down'); return; }
   const comment = await battery.attemptCreate(reader, 'blogComment', commentData({ blogPostId: id32(post.id), blogPostOwnerId: id32(author.ownerId), content: `on the doomed post ${run}` }), { tokenCost: COMMENT_COST });
@@ -244,7 +247,8 @@ async function caseB14ModeratorDelete(ctx) {
   await caseModeratorDelete(ctx, {
     prefix: 'b15', docType: 'blogPost', documentId: post.id, ownerId: author.ownerId,
     afterwards: async () => {
-      // A comment on the removed post: the reference no longer resolves.
+      // A comment on the removed post: a write must name a document in state,
+      // even through a moderatedDocument reference.
       await battery.probeCreate('b15d a comment on the removed post is refused (40120)', REFERENCE_NOT_FOUND_DELETABLE, reader, 'blogComment', commentData({ blogPostId: id32(post.id), blogPostOwnerId: id32(author.ownerId), content: `too late ${run}` }), { tokenCost: COMMENT_COST });
       // blog is moderator-deletable too, but the fixture blog carries every
       // other case's documents, so a THROWAWAY blog is what goes.
@@ -357,7 +361,7 @@ await runBattery({
     // b18: labels are typed string arrays (beta.4 v4).
     // b19: content chunks are contiguous (beta.5).
     // b21: only the blog's owner posts to it (beta.6 v5).
-    blogPost: { where: { blogId: { $ownerId: '$ownerId' } }, immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'], moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
+    blogPost: { where: { blogId: { $ownerId: '$ownerId' } }, immutable: ['blogId'], immutableWhen: { publishedAt: { present: '$old.publishedAt' } }, moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
     blog: { moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 64, maxLength: 40 } } },
   }, { moderation: { banlist: true, suspensions: true, warnings: true } }),
   setup: async ({ battery, tokenId, reader, args }) => {

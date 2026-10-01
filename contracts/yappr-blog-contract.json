@@ -157,7 +157,7 @@
           "position": 0,
           "description": "Reference to parent blog document",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "blog",
             "where": {
               "$ownerId": "$ownerId"
@@ -248,10 +248,12 @@
       "description": "A published post. Permanent for its owner (blog v3 keeps no revision history; the contract's moderators may remove it). The author IS $ownerId: a comment binds its blogPostOwnerId to the post's $ownerId through a system-field propertyAgreement, so no attested copy is carried.",
       "immutable": [
         "blogId",
-        "publishedAt"
-      ],
-      "immutableAllowSetting": [
-        "publishedAt"
+        {
+          "property": "publishedAt",
+          "when": {
+            "present": "$old.publishedAt"
+          }
+        }
       ],
       "moderatorAbilities": {
         "delete": true
@@ -347,7 +349,7 @@
           "position": 0,
           "description": "Reference to parent blog post document",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "blogPost",
             "where": {
               "$ownerId": "blogPostOwnerId",
@@ -484,7 +486,7 @@
           "position": 0,
           "description": "Reference to the blog being followed",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "blog"
           }
         }

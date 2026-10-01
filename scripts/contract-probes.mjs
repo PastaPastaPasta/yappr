@@ -449,6 +449,21 @@ const PROBES = [
   // The beta.6 grammar no longer parses anywhere from beta.7 on (#5197): social v9 is readable
   // by a beta.6 SDK only, and a beta.7 or later node would not load it.
   { label: 'social v9 (beta.6 propertyAgreement/lookup grammar) is refused', file: SOCIAL_V9, mutate: () => {}, expect: 'wasm' },
+  // 5.0.0-beta.1 (#5217) refuses `immutableAllowSetting` on every parse, so the beta.7 blog
+  // (topology v5, live on bonsia) loads nowhere on 5.0: not in the SDK, not on a node.
+  { label: 'blog in its beta.7 shape (immutableAllowSetting publishedAt) is refused on 5.0', file: BLOG, expect: 'wasm', mutate: (s) => {
+    const t = types(s).blogPost;
+    t.immutable = ['blogId', 'publishedAt']; t.immutableAllowSetting = ['publishedAt'];
+    for (const [type, property] of [['blogPost', 'blogId'], ['blogComment', 'blogPostId'], ['blogFollow', 'blogId']]) types(s)[type].properties[property].refersTo.type = 'deletableDocument';
+  } },
+  // #5214: blog and blogPost are moderated-kind (canBeDeleted false, no ttl, a moderator
+  // delete keeping records). Both parses accept the beta.7 `deletableDocument` references at
+  // them; registration refuses each one with 40144.
+  { label: 'blog with its beta.7 deletableDocument references at moderated blog/blogPost', file: BLOG, expect: 'audit', node: '40144', mutate: (s) => {
+    for (const [type, property] of [['blogPost', 'blogId'], ['blogComment', 'blogPostId'], ['blogFollow', 'blogId']]) types(s)[type].properties[property].refersTo.type = 'deletableDocument';
+  } },
+  { label: 'blog moderatedDocument reference at a blogPost its owner may delete', file: BLOG, expect: 'audit', node: '40143', mutate: (s) => { types(s).blogPost.canBeDeleted = true; } },
+  { label: 'blog moderatedDocument reference at a blogPost whose removals keep no record', file: BLOG, expect: 'audit', node: '40143', mutate: (s) => { types(s).blogPost.moderatorAbilities.deleteKeepsRecord = false; } },
 
   // Elected declaration (config/moderation/elected.rs): basic-structure rules of the
   // create transition, refused by the node with 10900. The one-day floor is mainnet's only

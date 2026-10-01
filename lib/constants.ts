@@ -162,6 +162,12 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // and only a blog's owner may post to it. v4 has no `postCommentsEnabled`, so
 // a v5 comment would be refused there (and a v4 comment on a v5 contract is
 // refused whenever the post stores the flag).
+//
+// The 5.0.0-beta.1 re-cut (the blog v6 contract, docs/PLATFORM_V5_BETA1_UPGRADE.md)
+// keeps v5's write surface, so it stays topology `v5`. Its references at
+// `blog`/`blogPost` are `moderatedDocument` references (after a takedown they
+// resolve to the removal record), and `publishedAt` is frozen by a conditional
+// `immutable` entry instead of `immutableAllowSetting`, which 5.0 refuses.
 export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5'] as const
 export type BlogTopology = (typeof BLOG_TOPOLOGIES)[number]
 export const blogTopology = (): BlogTopology =>
