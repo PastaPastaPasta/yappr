@@ -19,8 +19,8 @@ export function isStaleQuorumError(error: unknown): boolean {
 /**
  * `module` with each method run once more after a stale-quorum failure, on
  * the SDK that lib rebuilds for it. `getSdk()` waits for that rebuild, which
- * the failure observer started before the error reached this point. If the
- * rebuild fails, the caller gets the original error.
+ * the failure observer started before the error reached this point. If no
+ * SDK can be rebuilt, the caller gets the original error.
  *
  * Reads only: a failed write may already have been broadcast, so writes are
  * never repeated here (ENGINE.md §7.3).
