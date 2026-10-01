@@ -2,7 +2,8 @@
  * The read API's topology branches with lib's services mocked: the paths
  * testnet (topology v2, two posts) cannot exercise live (v9/v10 tags,
  * flat-thread paging and stubs, rankings, the v10 quote split, polls), and
- * the review regressions (stale thread refresh, tag authenticity).
+ * the review regressions (shared list caches, stale thread refresh, tag
+ * authenticity, repost ordering).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Post, Reply, User } from '@/lib/types'
@@ -59,6 +60,8 @@ vi.mock('@/lib/services/dpns-service', async (load) => ({
 
 const { feed } = await import('../../src/api/feed')
 const { posts } = await import('../../src/api/posts')
+const { profiles } = await import('../../src/api/profiles')
+const { graph } = await import('../../src/api/graph')
 const { validate, engagementPage, page, postDTO, threadDTO, pollDTO } = await import('../../src/dto/validate')
 
 /** A 44-character base58 id. */
@@ -81,6 +84,20 @@ beforeEach(() => {
   // Enrichment resolves every author.
   m.postService.enrichPostsBatch.mockImplementation(async (list: Post[]) =>
     list.map(item => ({ ...item, author: { ...item.author, username: 'alice.dash', hasDpns: true } })))
+})
+
+describe('graph', () => {
+  it('pages followers and following independently when interleaved', async () => {
+    const people = (prefix: string) => Array.from({ length: 40 }, (_, n) => id(`${prefix}${n + 1}`))
+    m.followService.getFollowers.mockResolvedValue(people('Fan').map($ownerId => ({ $ownerId })))
+    m.followService.getFollowing.mockResolvedValue(people('Idol').map(followingId => ({ followingId })))
+    m.followService.countFollowersBatch.mockResolvedValue(new Map())
+    m.followService.countFollowingBatch.mockResolvedValue(new Map())
+    const followers = await graph.followers(AUTHOR)
+    await graph.following(AUTHOR)
+    const more = await graph.followers(AUTHOR, followers.cursor)
+    expect(ids(more.items)).toEqual(people('Fan').slice(30))
+  })
 })
 
 describe('posts.thread on flat threads (v9/v10)', () => {
@@ -210,5 +227,21 @@ describe('posts.poll', () => {
     m.getTally.mockResolvedValue({ counts: [2, 1], total: 3 })
     m.getMyVotes.mockResolvedValue([0])
     expect(await posts.poll({ id: id('Poll') })).toMatchObject({ totalVotes: 3, myVotes: [0], options: [{ votes: 2 }, { votes: 1 }] })
+  })
+})
+
+describe('profiles.posts Posts tab (v2/v9 reposts)', () => {
+  it('places each repost on the page its time falls in, flushing the rest on the last page', async () => {
+    const own = Array.from({ length: 60 }, (_, n) => post(`Own${n + 1}`, 1000 - n * 10))
+    m.postService.getUserPosts.mockResolvedValueOnce({ documents: own.slice(0, 50) }).mockResolvedValueOnce({ documents: own.slice(50) })
+    const repost = (key: string, at: number) => ({ ...post(key, 0), author: user(id('Other')), repostedBy: { id: AUTHOR }, repostTimestamp: new Date(at) })
+    m.getUserReposts.mockResolvedValue([{}])
+    m.resolveUserReposts.mockResolvedValue([repost('New', 995), repost('Old', 455), repost('Ancient', 1)])
+    const first = await profiles.posts({ id: AUTHOR, tab: 'posts' })
+    expect(ids(first.items).slice(0, 2)).toEqual([own[0].id, id('New')])
+    expect(ids(first.items)).not.toContain(id('Old'))
+    const second = await profiles.posts({ id: AUTHOR, tab: 'posts', cursor: first.cursor })
+    expect(ids(second.items)).toEqual([...ids(own.slice(50, 55)), id('Old'), ...ids(own.slice(55)), id('Ancient')])
+    expect(second.cursor).toBeNull()
   })
 })

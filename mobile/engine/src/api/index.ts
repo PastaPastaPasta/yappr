@@ -1,6 +1,8 @@
 import { createEngineModule, type EngineRuntime } from './engine'
 import { engage } from './engage'
+import { explore } from './explore'
 import { feed } from './feed'
+import { graph } from './graph'
 import { posts } from './posts'
 import { profiles } from './profiles'
 
@@ -16,6 +18,8 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     posts,
     engage,
     profiles,
+    graph,
+    explore,
   }
 }
 
