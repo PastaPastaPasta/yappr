@@ -1163,3 +1163,19 @@ As a user who turns on Bold Text or Increase Contrast, I want the app to honour 
 | OQ-9 | Link previews fetched directly from the device (PD-9) reveal the user's IP to the linked site. Keep, or route through the same proxies as web? | Direct, with the disclosure |
 | OQ-10 | Should the engagements screen stay readable signed out (PD-16)? | Yes |
 | OQ-11 | Can a wallet response published after the 120 s poll still be read when the user taps "Check again" within 10 minutes (AUTH-03)? Confirm against `vendor/platform-auth` and the wallets. | Yes; if not, "Check again" always creates a fresh request |
+
+### 11.1 Lead decisions (2026-10-01)
+
+| OQ | Decision |
+| --- | --- |
+| 1 | Support address: `support@yap.pr`, already used on web. About → Support links to it. "Report by email" on testnet also uses it. |
+| 2 | **Darken.** In light mode, every `accent` fill that carries white text or icons uses `yappr-600` (`#0284c7`): primary buttons, the FAB, count badges, the new-posts pill and own DM bubbles. White on `#0284c7` passes AA for large or bold text and for icons, at 3:1 or better. Dark mode keeps `yappr-500`. Links and other text accents use the darker shades UX_SPEC already lists. |
+| 3 | No forced username. An identity without one uses the app normally and gets the dismissible "Get a username" card, in line with #605 (the profile is optional). |
+| 4 | Accepted. The testnet build is for dogfooding real data with mostly reading. A YAPP shortfall links to yap.pr. |
+| 5 | Mobile drafts the community-rules text from COMPLIANCE.md in the onboarding PR. The terms version is a constant in the app; bumping it re-shows the gate. |
+| 6 | No app decision is needed. The engine takes the topology from the variant env (`.env.devnet`), so mobile follows whatever cut `/devnet` runs. |
+| 7 | Mobile lands the two app-link files under `public/.well-known/` in a separate small web PR (ADR E2 amended). |
+| 8 | Keep web behavior. The engine runs `lib/link-preview` unchanged, including its proxy rules, so mobile and web disclose the same thing. Update the privacy note to match. |
+| 9 | The sign-in PR (S1) verifies this against the key-exchange contract and documents the result. |
+| 10 | `lib/utils/common.ts` is env-free and goes on the allowlist. |
+

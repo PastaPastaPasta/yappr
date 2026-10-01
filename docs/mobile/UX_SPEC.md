@@ -78,7 +78,7 @@ Contrast ratios are against the token's usual background (`bg`). PD-15 in the PR
 
 Notification type icon colors are decorative (the phrase carries the meaning): follow purple-500, mention yellow-500, like red-500, repost and quote green-500, reply blue-500.
 
-**AA exception [OQ-2]:** white on `accent` (`#0ea5e9`) is 2.77:1. Every `accent` fill that carries white text or icons keeps it for brand fidelity until OQ-2 is answered: primary buttons, the FAB, count badges, the new-posts pill and own DM bubbles. If OQ-2 is answered "darken", all five move together to the chosen shade. Every other text pair above passes AA.
+**OQ-2 decided (darken):** in light mode, `accent` fills that carry white text or icons use `yappr-600` `#0284c7`; dark mode keeps `yappr-500`. See PRD §11.1. The original note follows. White on `accent` (`#0ea5e9`) is 2.77:1. Every `accent` fill that carries white text or icons keeps it for brand fidelity until OQ-2 is answered: primary buttons, the FAB, count badges, the new-posts pill and own DM bubbles. If OQ-2 is answered "darken", all five move together to the chosen shade. Every other text pair above passes AA.
 
 ### 1.3 Gradients
 

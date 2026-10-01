@@ -47,21 +47,23 @@ Errors keep **verbatim evo-sdk messages**, so `lib/error-utils.ts` classificatio
 **Storage inside the engine:**
 - `localStorage` is replaced by a synchronous in-memory map. It is hydrated from MMKV at boot, written through over the bridge, and namespaced per network.
 - Keys starting `yappr_secure_` go to the Keychain / Keystore (`expo-secure-store`) instead of MMKV, so `lib/secure-storage.ts` works unchanged.
+- Amended 2026-10-01: all plain engine storage lives in an **encrypted MMKV instance**. Its 32-byte key is generated on first launch and held in the Keychain / Keystore, device-only. Besides `yappr_secure_`, the private-feed keys (`yappr:pf:`) and upload credentials (`yappr_pinata_`, `yappr_storacha_`) also go through the secure channel.
 - App lifecycle: RN `AppState` dispatches synthetic `visibilitychange` / `pagehide` events into the engine, so DM v5 flushes still happen.
 
 ### E2: Domain layer. No changes to web `lib/` for 1.0.
 
 - The engine uses `lib/` as-is. Anything browser-bound that does not work headless is swapped with an esbuild alias **inside `mobile/engine`**.
-- The RN app imports from `lib/` only **types**, plus an allow-listed set of pure modules for formatting and validation, for example `lib/compose/limits`, `lib/post-helpers`, `lib/sensitive-content`, `lib/utils/format` and `lib/contract-topology` predicates. A lint rule in `mobile/` fails on anything else, and on anything that reaches `@dashevo/*`.
+- The RN app imports from `lib/` only **types**, plus an allow-listed set of **env-free** pure modules: no dependency on `lib/constants`, `lib/contract-topology` or `process.env`. The first is `lib/utils/common` (format helpers). Each new allowlist entry must show it meets that rule. `lib/compose/limits` is not allowed because it reads the topology; the UI counts with the same rules, pinned by a shared-fixture test. Topology-dependent behavior comes from the capabilities in `engine.info()` (amended 2026-10-01, ENGINE.md O9); the `lib/contract-topology.ts` predicates are used in RN unit tests only, so the RN bundle never inlines the variant env. A lint rule in `mobile/` fails on anything else, and on anything that reaches `@dashevo/*`.
 - Web edits are limited to:
   - root `tsconfig.json` `exclude: ["mobile"]`;
   - `eslint` and `knip` ignores for `mobile/**`;
   - a path-filtered CI workflow;
+  - static app-link files under `public/.well-known/` (`apple-app-site-association`, `assetlinks.json`), in a separate small web PR;
   - small additive, behavior-neutral exports if an engine API truly needs one. Any such export follows the full web checklist (lint, unit, build, and e2e where relevant).
 
 ### E3: UI stack. Expo, native screens, and the web's own design tokens.
 
-- **Framework:** Expo SDK 57 (React Native 0.87, New Architecture), prebuild with a dev client (no Expo Go), and `expo-router`.
+- **Framework:** Expo SDK 57 (React Native 0.86.3, New Architecture), prebuild with a dev client (no Expo Go), and `expo-router`.
 - **Lists and media:** FlashList 2 for lists, `expo-image` for images.
 - **Gestures, motion and feedback:** Reanimated, Gesture Handler, `expo-haptics`.
 - **Sheets:** `@gorhom/bottom-sheet` or native sheets for bottom sheets.
