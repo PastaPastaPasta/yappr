@@ -1,0 +1,75 @@
+name: Mobile
+
+# The Expo app in mobile/app has its own package.json and lockfile, so it is
+# checked here instead of in ci.yml. Web paths are included because the app
+# imports allow-listed lib/ modules and types (lib/types re-exports types/), and
+# uses the web theme as its Tailwind preset.
+on:
+  push:
+    branches: [master, staging]
+    paths:
+      - 'mobile/**'
+      - 'lib/**'
+      - 'types/**'
+      - 'vendor/platform-auth/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.env.*'
+      - 'tailwind.config.js'
+      - '.github/workflows/mobile.yml'
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - 'lib/**'
+      - 'types/**'
+      - 'vendor/platform-auth/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.env.*'
+      - 'tailwind.config.js'
+      - '.github/workflows/mobile.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: App (typecheck, lint, test, bundle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mobile/app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: mobile/app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Generates the typed-routes declarations first, so an href to a route
+      # that doesn't exist fails the build.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test -- --ci
+
+      # Bundles both platforms through the real Metro config: the repo-root
+      # watchFolders, the node_modules blockList, the @/ alias and NativeWind.
+      - name: Bundle (Metro)
+        run: npm run bundle -- --output-dir "$RUNNER_TEMP/expo-export"

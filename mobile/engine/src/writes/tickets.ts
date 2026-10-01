@@ -230,24 +230,33 @@ export function createTicketStore(options: TicketStoreOptions) {
   function fail(id: string, error: unknown, documents?: TicketDocument[]): void {
     const notSent = error instanceof NotSentError
     const classified = classify(notSent ? error.cause : error)
+    const merged = withDocuments(id, documents)
     // A transport failure during run() may come after the broadcast: lib signs, broadcasts and
     // waits in one call. Only a handler's NotSentError, or a failure while it still reported
-    // 'waiting-parent' (before any lib write call), proves nothing went out.
-    const provedNotSent = notSent || recordOf(id).ticket.stage === 'waiting-parent'
+    // 'waiting-parent' (before any lib write call), proves nothing went out, and only while the
+    // ticket names no unconfirmed document: an earlier part (a thread's) may already be out.
+    const claimedNotSent = notSent || recordOf(id).ticket.stage === 'waiting-parent'
+    const partlySent = merged.some(doc => !doc.confirmed)
     const transient = ['NETWORK', 'RATE_LIMITED', 'TIMEOUT'].includes(classified.code)
-    const data: EngineErrorData = notSent && classified.outcome === 'unknown'
+    let data: EngineErrorData = classified
+    let state = ticketStateFor(classified)
+    if (claimedNotSent && partlySent) {
+      data = { ...classified, outcome: 'unknown', retryable: false }
+      state = 'unconfirmed'
+    } else if (notSent && classified.outcome === 'unknown') {
       // Proved never sent: a would-be "maybe landed" is plainly failed, and a transient one may be retried.
-      ? { ...classified, outcome: 'not-sent', retryable: transient }
-      : !provedNotSent && (classified.code === 'NETWORK' || classified.code === 'RATE_LIMITED')
-        ? { ...classified, outcome: 'unknown', retryable: false }
-        : classified
-    const state = ticketStateFor(data)
+      data = { ...classified, outcome: 'not-sent', retryable: transient }
+      state = 'failed'
+    } else if (!claimedNotSent && (classified.code === 'NETWORK' || classified.code === 'RATE_LIMITED')) {
+      data = { ...classified, outcome: 'unknown', retryable: false }
+      state = ticketStateFor(data)
+    }
     const ticket = update(id, {
       state,
       stage: null,
       error: data,
       retryable: state === 'failed' && data.retryable,
-      documents: withDocuments(id, documents),
+      documents: merged,
     })
     if (data.code === 'NO_KEY') options.onKeyRequired?.(ticket.identityId)
   }

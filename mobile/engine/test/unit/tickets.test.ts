@@ -191,6 +191,31 @@ describe('safety', () => {
     expect(store.get('t5')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'TIMEOUT', outcome: 'not-sent' } })
   })
 
+  it('does not honour a not-sent claim once the ticket names an unconfirmed document', async () => {
+    const { store } = setup()
+    store.register('post.publish', {
+      async run(_args, ctx) {
+        // Part 1 of a thread went out unconfirmed; part 2 then waits for its parent.
+        ctx.documents([POST])
+        ctx.stage('waiting-parent')
+        throw new Error('no available addresses for retry')
+      },
+    })
+    store.register('like', {
+      async run(_args, ctx) {
+        ctx.documents([POST])
+        throw new NotSentError(new Error('no available addresses for retry'))
+      },
+    })
+    store.submit({ op: 'post.publish', args: {} })
+    store.submit({ op: 'like', args: null })
+    await settle()
+    for (const id of ['t1', 't2']) {
+      expect(store.get(id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'NETWORK', outcome: 'unknown', retryable: false } })
+      await expect(store.retry(id)).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+    }
+  })
+
   it('acts only on the active account\'s tickets', async () => {
     let identity = 'alice'
     const { store } = setup({ currentIdentity: () => identity, documentExists: async () => false })
