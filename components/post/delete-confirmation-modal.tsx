@@ -6,13 +6,13 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { XMarkIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
-import { authorDeletesLeaveHoles, deletesAreTombstones, targetKindOf } from '@/lib/contract-topology'
+import { authorDeletesLeaveHoles, deletesAreTombstones, targetKindOf, tombstonesAreHidden } from '@/lib/contract-topology'
 
 export function DeleteConfirmationModal() {
   const { isOpen, post, isDeleting, onConfirm, close, setDeleting } = useDeleteConfirmationModal()
 
-  // On the v9 topology `post` and `reply` are `canBeDeleted: false`, so this
-  // action blanks the document rather than removing it. Promising the user a
+  // On the v9 and v11 topologies `post` and `reply` are `canBeDeleted: false`,
+  // so this action blanks the document rather than removing it. Promising the user a
   // permanent removal there would be a lie, and the difference is exactly the
   // thing they might care about.
   const isTombstone = deletesAreTombstones()
@@ -20,6 +20,14 @@ export function DeleteConfirmationModal() {
   // and show where it was.
   const leavesHole = authorDeletesLeaveHoles()
   const noun = post && targetKindOf(post) === 'reply' ? 'reply' : 'post'
+  // v11 hides the tombstone from lists and shows a stub where something still names it.
+  const description = isTombstone && tombstonesAreHidden()
+    ? `This can't be undone. The text and media are erased; the ${noun} is hidden from feeds and shows as 'deleted by its author' in threads and quotes, and its likes and replies stay.`
+    : isTombstone
+      ? `This action cannot be undone. The ${noun}'s content is erased and it stops appearing in feeds, but a tombstone remains on-chain forever — anything that referenced it keeps resolving.`
+      : leavesHole
+        ? `This action cannot be undone. The ${noun} will be permanently removed from the platform. Replies and quotes stay, and show that it was deleted.`
+        : `This action cannot be undone. The ${noun} will be permanently removed from the platform.`
 
   const handleConfirm = async () => {
     if (!onConfirm || isDeleting) return
@@ -42,11 +50,7 @@ export function DeleteConfirmationModal() {
                     </ModalTitle>
 
                     <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-6">
-                      {isTombstone
-                        ? `This action cannot be undone. The ${noun}'s content is erased and it stops appearing in feeds, but a tombstone remains on-chain forever — anything that referenced it keeps resolving.`
-                        : leavesHole
-                          ? `This action cannot be undone. The ${noun} will be permanently removed from the platform. Replies and quotes stay, and show that it was deleted.`
-                          : `This action cannot be undone. The ${noun} will be permanently removed from the platform.`}
+                      {description}
                     </Dialog.Description>
 
                     {!isDeleting && (

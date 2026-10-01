@@ -172,7 +172,9 @@ class DocumentBuilderService {
    *
    * @param createdAtMs - The like's consensus `$createdAt` (ms). Not knowable
    *   client-side at create time — recovered from a `$createdAt`-carrying index
-   *   projection (v9 `byAuthorTimePost`, v10 `byAuthorPostTime`).
+   *   projection (v9 `byAuthorTimePost`, v10 `byAuthorPostTime`). Omitted (and
+   *   left off the document) where the row does not commit to it: v11 likes,
+   *   whose `$createdAt` indexes all outlive deletes.
    */
   async buildDocumentForValuesDelete(
     contractId: string,
@@ -180,7 +182,7 @@ class DocumentBuilderService {
     documentId: string,
     ownerId: string,
     data: Record<string, unknown>,
-    createdAtMs: number
+    createdAtMs?: number
   ): Promise<InstanceType<typeof Document>> {
     await ensureWasmReady();
 

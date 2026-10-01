@@ -55,8 +55,9 @@ before you change anything here.
   - **Both allowlists and `src/lib-allowlist.ts` are append-only.** Add your
     line at the end and don't reorder, so parallel PRs only ever conflict
     mechanically.
-  - Tooling files (`*.config.*`, `eslint/`, `jest.setup.js`) are exempt. Tests
-    may read repo files, but never the SDK or engine values.
+  - Tooling files (`*.config.*`, `eslint/`, `jest.setup.js`) are exempt. Test
+    files (`*.test.*`, not helpers beside them) may read repo files, but
+    never the SDK or engine values.
 - **Dependencies** come from `mobile/app/node_modules` only. Metro watches the
   repo root but blocks every other `node_modules`. Add native packages with
   `npx expo install <pkg>`, so they get SDK-compatible versions.
@@ -70,7 +71,7 @@ before you change anything here.
 | Path | What |
 | --- | --- |
 | `src/app/` | expo-router routes (below). Every 1.0 screen exists as a stub. Fill it in; don't add a parallel route. |
-| `src/app/+native-intent.tsx` | Every inbound link goes through `src/navigation/deep-links.ts` (UX_SPEC §3.5). It maps web URLs and `yappr://` links onto app routes and is unit-tested. |
+| `src/app/+native-intent.tsx` | Every inbound link goes through `src/navigation/deep-links.ts` (UX_SPEC §3.5). Links are untrusted. Only known web routes (`/post?id=`, ...) and validated path-form detail routes (`/post/:id`, `/user/:id...`, `/hashtag/:tag`, `/messages/:id`) are accepted; anything else goes home. Dev builds also pass other app routes through, but never `sign-in/*`, `compose`, `lockdown`, `terms-gate`, `media` or `settings/app-lock\|accounts`. Each variant claims its own yap.pr prefix (`/devnet` for devnet, the root otherwise). |
 | `src/config.ts` | `config.variant`, `config.network`, `config.scheme` and `config.appVersion`. They're derived from the native application id, and the app refuses to start if the JS bundle was built for another variant. Never read `Constants.expoConfig.extra` directly. |
 | `src/variants.ts` | The variant table, shared with `app.config.ts`. |
 | `src/ui/` | Tokens (`tokens.ts`), `Screen`, `Text`, `Placeholder`, `ComposeFab` and `stackScreenOptions`. The design-system PR adds the primitives. |
@@ -81,17 +82,23 @@ before you change anything here.
 
 **Routes.** Each tab has its own stack (UX_SPEC §3.1/§3.2).
 
-- `src/app/(tabs)/(home,explore,notifications,profile)/` holds the detail
-  screens every tab can push: `post/[id]`, `post/[id]/engagements`, `user/[id]`
-  and its `followers` / `following`, and `hashtag/[tag]`. They open on the
-  current tab's stack, and `+native-intent` pins cold links to `(home)`.
+- **Tab bar (lead decision, overriding UX_SPEC §3.1's native tabs):** the JS
+  `Tabs` navigator with Heroicons (outline, solid when active), web-matching
+  colors, and labels shown on both platforms.
+- `src/app/(tabs)/(home,explore,notifications,messages,profile)/` holds the
+  detail screens every tab can push: `post/[id]`, `post/[id]/engagements`,
+  `user/[id]` and its `followers` / `following`, and `hashtag/[tag]`. They open
+  on the current tab's stack, so Back returns to where the user came from (a
+  profile opened from a conversation goes back to it).
+- `+native-intent` pins only the launch link to `(home)`. Links that arrive
+  while the app is open push onto the current tab.
 - Each tab's own screens live in its group:
   - `(home)/index`;
   - `(explore)/explore/` (with `search` and `search/[kind]`);
   - `(notifications)/notifications`;
+  - `(messages)/messages/` (the inbox, `settings`, `[conversationId]` and
+    `[conversationId]/info`);
   - `(profile)/profile`, `bookmarks` and `settings/*`.
-- Messages is `(tabs)/messages/`, its own stack: the inbox, `settings`,
-  `[conversationId]` and `[conversationId]/info`.
 - Root modals: `compose`, `sign-in/*`, `welcome`, `terms-gate`, `lockdown`,
   `media`, `profile/edit`, `messages/new` and `messages/new-group`.
 - Stubs set their header title with `<Stack.Screen options={{ title }} />`
@@ -224,7 +231,9 @@ adb exec-out screencap -p > android-light-home.png
 Open a route with a deep link through `+native-intent`, for example
 `xcrun simctl openurl booted "yappr-dev:///__gallery"` or
 `adb shell am start -a android.intent.action.VIEW -d "yappr-dev:///__gallery" pr.yap.app.dev`.
-Web-form links work too, such as `yappr-dev://post?id=<id>`.
+Arbitrary app routes like this work in dev builds only. Web-form links such as
+`yappr-dev://post?id=<id>` work in every build. Links can't open sign-in,
+compose, media or the gates; reach those by navigating in the app.
 
 `/__gallery` is dev-only. It renders the shared tokens and has a
 Light/Dark/System switch for testing the override.

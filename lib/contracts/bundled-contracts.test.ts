@@ -3,15 +3,15 @@ import { bundleKey, bundledContractsFor, staleContractIds } from './bundled-cont
 
 describe('bundleKey', () => {
   it('names devnets by their devnet name and other networks by network', () => {
-    expect(bundleKey('devnet', 'bonsia-g1')).toBe('devnet-bonsia-g1');
+    expect(bundleKey('devnet', 'sakura')).toBe('devnet-sakura');
     expect(bundleKey('testnet')).toBe('testnet');
     expect(bundleKey('mainnet')).toBe('mainnet');
   });
 });
 
 describe('bundledContractsFor', () => {
-  it('has a bonsia and a testnet bundle with serialized contracts', async () => {
-    for (const key of ['devnet-bonsia-g1', 'testnet']) {
+  it('has a sakura and a testnet bundle with serialized contracts', async () => {
+    for (const key of ['devnet-sakura', 'testnet']) {
       const bundle = await bundledContractsFor(key);
       expect(bundle?.network).toBe(key);
       const entries = Object.values(bundle?.contracts ?? {});

@@ -60,10 +60,53 @@
  *          composite cap (dc-j2); dc-i and dc-j1 are reported, never failed
  *   rm1    a reply mention: reply.mentionedUserAndTime, alone and bundled
  *
+ * ## Social v11 (`--contract-file contracts/yappr-social-contract-v11.json`)
+ *
+ * v11 (docs/SOCIAL_V11.md) keeps every v10 index but the like author index,
+ * which drops `$createdAt` (byAuthorPost / byAuthorReply), and marks the two
+ * trend windows `outlivesDelete`. The proof contract then also keeps the
+ * post/reply moderator abilities (deleteKeepsFields, deleteWithin,
+ * deleteSettled) and an elected declaration over post and reply, with
+ * minutes-long stand-ins for the week-long values so expiry and settling are
+ * observable in one sitting: `deleteWithin` PROOF_DELETE_WITHIN s, election
+ * windows PROOF_ELECTION_WINDOW s, the trend grids PROOF_TREND_GRIDS, and no
+ * owner protection. A fourth identity D (never on the team) authors what the
+ * moderators remove. The dc-e/dc-h/dc-k like reads, which read `$createdAt`
+ * off the author index, become:
+ *   ol-*   timeless likes: likers per target on byPost (keyset on the
+ *          `$ownerId` terminal), several targets in one author-pinned read
+ *          on byAuthorPost/byAuthorReply (the target-only `in` is refused,
+ *          ol-e3x/e5x), rankings,
+ *          trending windows, recent posts that gained likes; unlike WITHOUT
+ *          `$createdAt` (count and heart drop, the trend windows keep the
+ *          entry), a re-like counts once, and the kept entries expire with
+ *          their window (ol-x*)
+ *   kf-*   removal records keep the post's hashtag and $createdAt and the
+ *          reply's rootPostId and $createdAt (D4), read from the deletion and
+ *          from documentRemovals
+ *   tm-0*  before a team is seated: past the window even the interim owner's
+ *          delete is refused (41116), and a team proposal is 41205
+ * Then seat a team on the throwaway contract (the ops election tooling: a
+ * charter by the leader, join requests, the apply; the windows are
+ * PROOF_ELECTION_WINDOW s) and run the second phase:
+ *   tm-*   (`--team-proof <contractId> --reason-doc <id>`) the team: seats and
+ *          elected members; D writes fresh targets and they settle (so the
+ *          phase can run again); a member's lone delete of a settled post 41116; a
+ *          proposal (active, 1 approval), its signers, a second approval by the
+ *          proposer 41208, a member's approval (2 of 3, still active), the
+ *          leader's (closed: the post is gone); the record keeps its fields;
+ *          a restore is 41209; per-member action counts; a proposal for an
+ *          unsettled post 41206 while a lone member still deletes it; the same
+ *          flow for a settled reply
+ *
  * Usage (NETWORK=devnet; the devnet from the env or `.env.devnet`):
  *   node scripts/prove-merged-counts.mjs --bot 1 --bot 2 --bot 3
  *   node scripts/prove-merged-counts.mjs --identity-id <id> --key-wif-file <file> (×3, in order)
  *   node scripts/prove-merged-counts.mjs --dry-run      # offline: build + validate the contract and fixture
+ *   node scripts/prove-merged-counts.mjs --contract-file contracts/yappr-social-contract-v11.json \
+ *        --bot 0 --bot 1 --bot 2 --identity-id <D> --key-wif-file <file> [--state-file <json>]
+ *   node scripts/prove-merged-counts.mjs --contract-file contracts/yappr-social-contract-v11.json \
+ *        --team-proof <contractId> --reason-doc <reasonId> --bot 0 --bot 1 --bot 2 --identity-id <D> --key-wif-file <file>
  *
  * The first identity (A) registers the throwaway contract, which costs about
  * 40 × 10⁹ credits; B and C need only a few document writes' worth.
@@ -72,8 +115,9 @@
  * it). A `--key-wif-file` holds one WIF of a HIGH or CRITICAL authentication
  * key of the identity before it. Never the maker: the contract is throwaway.
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import { DataContract, PlatformVersion, PrivateKey, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, { DataContract as NodeRulesDataContract, PlatformVersion as NodeRulesPlatformVersion } from '@dashevo/wasm-dpp2';
 import bs58 from 'bs58';
@@ -83,6 +127,11 @@ import { REPO_ROOT, createdId, findRecentByValues } from './seed/seed-lib.mjs';
 import { buildDocument, randomIdBytes } from './verify-lib.mjs';
 
 const SOCIAL_V10 = join(REPO_ROOT, 'contracts/yappr-social-contract-v10.json');
+/** v11 stand-ins for week-long values, so settling and expiry happen within one run (see the header). */
+const PROOF_DELETE_WITHIN = 90;
+const PROOF_ELECTION_WINDOW = 60;
+/** The trend grids at the real contract's ratios: posts 3 windows of 3 steps (72h/24h), tags 4 (24h/6h). */
+const PROOF_TREND_GRIDS = { byTrendPost: { range: 360, step: 120 }, byTrendHashtagPost: { range: 240, step: 60 } };
 const DRY_RUN_OWNER = '11111111111111111111111111111111';
 const SETTLE_MS = 3000;
 const DUPLICATE_UNIQUE = /\bcode"?\s*[=:]\s*40105\b|duplicate unique properties/i;
@@ -97,17 +146,49 @@ const CONSENSUS_CODE = /\bcode"?\s*[=:]\s*\d{4,5}\b/;
  * feed's by-id quote join needs `refersTo`), minus what needs the contract's
  * token or moderation (token costs, action fees, moderator abilities).
  */
-function proofContractSource() {
-  const social = JSON.parse(readFileSync(SOCIAL_V10, 'utf8'));
+function proofContractSource(file) {
+  const social = JSON.parse(readFileSync(file, 'utf8'));
+  const v11 = likesOutliveDelete(social);
   const documentSchemas = {};
   for (const type of ['post', 'reply', 'follow', 'followRequest', 'like', 'likeReply']) {
     const schema = structuredClone(social.documentSchemas[type]);
-    for (const key of ['actionFees', 'tokenCost', 'moderatorAbilities']) delete schema[key];
+    for (const key of ['actionFees', 'tokenCost']) delete schema[key];
+    if (v11 && schema.moderatorAbilities?.deleteWithin) schema.moderatorAbilities.deleteWithin = PROOF_DELETE_WITHIN;
+    else if (!v11) delete schema.moderatorAbilities;
+    if (type === 'like' && v11) {
+      for (const index of schema.indices) {
+        const grid = PROOF_TREND_GRIDS[index.name];
+        if (grid) index.timeRange = { ...index.timeRange, ...grid, ttl: grid.range };
+      }
+    }
     documentSchemas[type] = schema;
   }
+  if (v11) {
+    for (const type of ['report', 'yapprProfile']) if (documentSchemas[type]) throw new Error(`${type} is not in the proof contract`);
+    for (const type of ['post', 'reply']) if (!documentSchemas[type].moderatorAbilities) throw new Error(`v11 ${type} declares no moderatorAbilities`);
+  }
   const config = { ...social.config };
-  delete config.moderation;
+  if (v11) {
+    const { moderators } = config.moderation;
+    config.moderation = {
+      ...config.moderation,
+      moderators: {
+        ...moderators,
+        joinWindow: PROOF_ELECTION_WINDOW,
+        voteWindow: PROOF_ELECTION_WINDOW,
+        ownerProtected: false,
+        moderatedDocumentTypes: { post: moderators.moderatedDocumentTypes.post, reply: moderators.moderatedDocumentTypes.reply },
+      },
+    };
+  } else {
+    delete config.moderation;
+  }
   return { $formatVersion: social.$formatVersion, version: 1, config, documentSchemas };
+}
+
+/** True for a cut whose like trend windows outlive deletes (v11): no like index keeps `$createdAt`. */
+function likesOutliveDelete(social) {
+  return social.documentSchemas.like.indices.some((index) => index.outlivesDelete === true);
 }
 
 function contractJson(source, { id, ownerId }) {
@@ -117,9 +198,13 @@ function contractJson(source, { id, ownerId }) {
 // ---- Arguments --------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { actors: [], dryRun: false };
+  const args = { actors: [], dryRun: false, contractFile: SOCIAL_V10, teamProof: null, reasonDoc: null, stateFile: null };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
+      case '--contract-file': args.contractFile = isAbsolute(argv[i + 1]) ? argv[++i] : join(REPO_ROOT, argv[++i]); break;
+      case '--team-proof': args.teamProof = argv[++i]; break;
+      case '--reason-doc': args.reasonDoc = argv[++i]; break;
+      case '--state-file': args.stateFile = argv[++i]; break;
       case '--bot': {
         const [index, id] = argv[++i].split(':');
         args.actors.push({ kind: 'bot', index: Number(index), id: id || null });
@@ -136,7 +221,11 @@ function parseArgs(argv) {
       default: throw new Error(`Unknown argument: ${argv[i]}`);
     }
   }
-  if (!args.dryRun && args.actors.length !== 3) throw new Error('name exactly three identities (--bot <n> or --identity-id <id> --key-wif-file <file>), in the order A B C');
+  const v11 = likesOutliveDelete(JSON.parse(readFileSync(args.contractFile, 'utf8')));
+  if (!args.dryRun && args.actors.length !== (v11 ? 4 : 3)) {
+    throw new Error(`name exactly ${v11 ? 'four' : 'three'} identities (--bot <n> or --identity-id <id> --key-wif-file <file>), in the order A B C${v11 ? ' D (D never on the team)' : ''}`);
+  }
+  if (args.teamProof && (!v11 || !args.reasonDoc)) throw new Error('--team-proof needs a v11 --contract-file and the charter\'s --reason-doc');
   for (const actor of args.actors) {
     if (actor.kind === 'bot' && !Number.isInteger(actor.index)) throw new Error('--bot takes a seed index (optionally <n>:<identityId>)');
     if (actor.kind === 'wif' && !actor.wifFile) throw new Error(`--identity-id ${actor.id} needs its --key-wif-file`);
@@ -184,14 +273,99 @@ const sameCounts = (actual, expected) => {
 const COMPOSITE_MERGED_ROOT = /lands at the merged root/i;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Runs one query, recording a thrown refusal as that query's FAIL instead of aborting the run. */
-async function attempt(label, fn, verdict) {
+// ---- The SDK session ----------------------------------------------------------
+
+/**
+ * A quorum rotation can leave the trusted context without the quorum a proof
+ * names ("Quorum not found in cache"), which no retry on the same instance
+ * cures. The run therefore talks to `sdk`, a handle onto the session's current
+ * instance, and a collapsed transport rebuilds the instance (connect, the
+ * protocol-version ratchet, the contracts it reads) and runs the read again,
+ * as verify-lib's battery handle does.
+ */
+const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
+const session = { sdk: null, config: null, contracts: new Set() };
+const sdk = new Proxy({}, {
+  get(_, property) {
+    const value = session.sdk[property];
+    return typeof value === 'function' ? value.bind(session.sdk) : value;
+  },
+});
+
+async function connectSession(config) {
+  const fresh = devnetSdk({ timeoutMs: 30000, config });
+  await fresh.connect();
+  await fresh.epoch.current(); // protocol-version ratchet (see verify-lib buildConnectedSdk)
+  for (const contractId of session.contracts) await fresh.contracts.fetch(contractId);
+  session.sdk = fresh;
+  session.config = config;
+}
+
+/**
+ * Runs `fn`, again on a fresh instance when the transport collapsed under it. The quorum
+ * service can trail a rotation by a minute or two, so a missing quorum is waited out
+ * (up to 6 tries, 15 s apart) rather than failed at once.
+ */
+async function withReconnect(fn) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const reason = describeErr(e);
+      if (attempt >= 6 || !TRANSPORT_COLLAPSE.test(reason)) throw e;
+      console.log(`     (transport collapsed, reconnecting: ${reason.slice(0, 120)})`);
+      if (attempt > 0) await sleep(15_000);
+      await connectSession(session.config).catch(() => {});
+    }
+  }
+}
+
+/**
+ * Runs one query, recording a thrown refusal as that query's FAIL instead of
+ * aborting the run. A collapsed transport is retried once on a fresh instance;
+ * `idempotent: false` (a write that must not be sent twice) is not.
+ */
+async function attempt(label, fn, verdict, { idempotent = true } = {}) {
   try {
-    const value = await fn();
+    const value = idempotent ? await withReconnect(fn) : await fn();
     verdict(value);
   } catch (e) {
     check(label, false, `refused: ${describeErr(e).slice(0, 300)}`);
+    // A write is never resent, but the next check must not inherit a dead instance.
+    if (!idempotent && TRANSPORT_COLLAPSE.test(describeErr(e))) await connectSession(session.config).catch(() => {});
   }
+}
+
+/** One document create; a confirmation-wait fault is not a verdict, so the chain decides. */
+async function createDocument(contractId, who, docType, data, retried = false) {
+  const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, entropy: randomIdBytes() });
+  const since = Date.now();
+  let error = null;
+  try {
+    const created = await sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer });
+    const createdAs = createdId(created);
+    if (createdAs) return { ok: true, id: createdAs };
+  } catch (e) {
+    error = describeErr(e);
+    if (CONSENSUS_CODE.test(error)) return { ok: false, error };
+    // A quorum rotation can fault the proof of a write that landed: rebuild the instance and let the chain decide.
+    if (TRANSPORT_COLLAPSE.test(error)) await connectSession(session.config).catch((reconnectError) => console.log(`     (reconnect failed: ${describeErr(reconnectError).slice(0, 120)})`));
+  }
+  for (let tries = 0; tries < 5; tries++) {
+    await sleep(SETTLE_MS);
+    const found = await findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data, since }).catch(() => null);
+    if (found) return { ok: true, id: found };
+  }
+  // Resend at most once, after a last readback, and never a quote or repost (one per author
+  // per target: a late-landing original would turn the resend into a 40105). A post or reply
+  // whose original lands later still could be counted twice; the readback makes that rare.
+  const unique = docType === 'post' && (data.quotedPostId || data.quotedReplyId);
+  if (error && TRANSPORT_COLLAPSE.test(error) && !retried && !unique) {
+    const late = await findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data, since }).catch(() => null);
+    if (late) return { ok: true, id: late };
+    return createDocument(contractId, who, docType, data, true);
+  }
+  return { ok: false, error: error ?? 'no document after the write' };
 }
 
 // ---- Result decoding --------------------------------------------------------
@@ -220,7 +394,8 @@ const newestFirst = (docs, expected) => {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
-  const source = proofContractSource();
+  const source = proofContractSource(args.contractFile);
+  const v11 = likesOutliveDelete(source);
 
   // Offline: both parsers accept the throwaway contract, and every fixture document builds.
   DataContract.fromJSON(contractJson(source, { id: DRY_RUN_OWNER, ownerId: DRY_RUN_OWNER }), true, PlatformVersion.latest());
@@ -238,43 +413,29 @@ async function main() {
   }
 
   const config = devnetConfig();
-  const sdk = devnetSdk({ timeoutMs: 30000, config });
-  await sdk.connect();
-  await sdk.epoch.current(); // protocol-version ratchet (see verify-lib buildConnectedSdk)
-  const [A, B, C] = await Promise.all(args.actors.map((actor, i) => resolveActor(sdk, actor, 'ABC'[i])));
-  console.log(`devnet "${config.devnetName}"; A=${A.ownerId} B=${B.ownerId} C=${C.ownerId}`);
-  if (new Set([A.ownerId, B.ownerId, C.ownerId]).size !== 3) throw new Error('A, B and C must be three different identities');
+  await connectSession(config);
+  const actors = await Promise.all(args.actors.map((actor, i) => resolveActor(sdk, actor, 'ABCD'[i])));
+  const [A, B, C, D] = actors;
+  console.log(`devnet "${config.devnetName}"; ${actors.map((who) => `${who.label}=${who.ownerId}`).join(' ')}`);
+  if (new Set(actors.map((who) => who.ownerId)).size !== actors.length) throw new Error('the identities must all differ');
+  if (args.teamProof) {
+    await proveTeam(sdk, args, actors, source);
+    console.log(failures === 0 ? 'ALL TEAM CHECKS PASSED' : `${failures} CHECK(S) FAILED`);
+    return failures === 0 ? 0 : 1;
+  }
 
   // Register.
   const nonce = ((await sdk.identities.nonce(A.ownerId)) ?? 0n) + 1n;
   const draft = DataContract.fromJSON(contractJson(source, { id: DataContract.generateId(A.ownerId, nonce).toBase58(), ownerId: A.ownerId }), true, PlatformVersion.latest());
   const published = await sdk.contracts.publish({ dataContract: draft, identityKey: A.identityKey, signer: A.signer });
   const contractId = published.id.toBase58();
+  session.contracts.add(contractId);
   console.log(`throwaway contract registered by A: ${contractId}`);
   await sleep(SETTLE_MS);
   await sdk.contracts.fetch(contractId);
 
   const id = (value) => bs58.decode(value);
-  async function create(who, docType, data) {
-    const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, entropy: randomIdBytes() });
-    const since = Date.now();
-    let error = null;
-    try {
-      const created = await sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer });
-      const createdAs = createdId(created);
-      if (createdAs) return { ok: true, id: createdAs };
-    } catch (e) {
-      error = describeErr(e);
-      if (CONSENSUS_CODE.test(error)) return { ok: false, error };
-    }
-    // A confirmation-wait fault is not a verdict: the chain decides.
-    for (let tries = 0; tries < 5; tries++) {
-      await sleep(SETTLE_MS);
-      const found = await findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data, since }).catch(() => null);
-      if (found) return { ok: true, id: found };
-    }
-    return { ok: false, error: error ?? 'no document after the write' };
-  }
+  const create = (who, docType, data) => createDocument(contractId, who, docType, data);
   async function mustCreate(label, who, docType, data) {
     const outcome = await create(who, docType, data);
     if (!outcome.ok) throw new Error(`fixture write ${label} failed: ${(outcome.error ?? '').slice(0, 300)}`);
@@ -753,7 +914,308 @@ async function main() {
     }, ({ at, likes, heart }) => check(`dc-h2 A unlikes reply r1 (time ${at} from byAuthorReplyTime): count 0, heart off`, likes === 0 && heart === 0, `count ${likes}, heart ${heart}`));
   }
 
-  await proveDesignC();
+  // ---- ol: timeless likes (v11: outlivesDelete trend windows, no `$createdAt` on any like index) ----
+  async function proveOutlives() {
+    console.log('\n--- ol. v11 likes: hearts, likers without time, rankings, trending windows, unlike without $createdAt, kept window entries ---');
+    const likeOf = (d) => d.toObject?.() ?? d;
+    const pairsOf = (r, target) => docsOf(r).map(likeOf).map((l) => `${toBase58(l.$ownerId)}>${toBase58(l[target])}`);
+    const fromPage = (sourceProperty, field) => ({ source: 'page', sourceProperty, field });
+    const ranked = (where, groupBy, extra = {}) => sdk.documents.ranked(q('like', { ...(where ? { where } : {}), groupBy, aggregate: { type: 'count' }, direction: 'desc', limit: 10, ...extra }));
+    // Preallocated trees (design M) rank every post, liked or not: a zero is no like, so leaderboards drop it.
+    const rankedPairs = (r) => r.entries.map((e) => [toBase58(e.groupValue), Number(e.value)]).filter(([, value]) => value !== 0);
+    const grid = (name) => source.documentSchemas.like.indices.find((index) => index.name === name).timeRange;
+    const oldestOf = (name) => ({ timeRange: [{ field: '$createdAt', selector: 'oldest', grid: { range: grid(name).range, step: grid(name).step } }] });
+    const trendPosts = () => ranked(null, 'postId', oldestOf('byTrendPost'));
+    const trendTags = () => ranked(null, 'hashtag', oldestOf('byTrendHashtagPost'));
+    const tagValue = (e) => (typeof e.groupValue === 'string' ? e.groupValue : Buffer.from(e.groupValue).toString('utf8'));
+    const tagPairs = (r) => r.entries.map((e) => [tagValue(e), Number(e.value)]);
+    const likeCount = async (docType, field, target) => total(await count(docType, [[field, '==', target]]));
+    const heartOf = async (docType, field, target, ownerId) => docsOf(await sdk.documents.query(q(docType, { where: [[field, 'in', [target]], ['$ownerId', '==', ownerId]], orderBy: [[field, 'asc'], ['$ownerId', 'asc']], limit: 1 }))).length;
+    /** An unlike by values, carrying NO `$createdAt` (the row commits to none); the id is not checked. */
+    const unlike = async (who, docType, data, extra = {}) => {
+      const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, ...extra });
+      await sdk.documents.delete({ document, identityKey: who.identityKey, signer: who.signer });
+    };
+    const reported = (label) => (e) => console.log(`     (${label} reported: ${describeErr(e).slice(0, 140)})`);
+    // Expiry is measured from a like's own time: write the ones that will expire first. C's
+    // like of T3 is unliked at once; C's tagged like of Th is unliked later (h3), and B likes
+    // Th more than one tag-window step after C, so B's entry outlives C's (x1).
+    const tag = 'olproof';
+    const Th = await mustCreate('Th (A, #olproof)', A, 'post', { content: 'tagged target', hashtag: tag });
+    const expiringAt = Date.now();
+    await likeWrite(C, 'like', { postId: id(T3), postAuthor: id(A.ownerId) });
+    const taggedAt = Date.now();
+    await likeWrite(C, 'like', { postId: id(Th), postAuthor: id(A.ownerId), hashtag: tag });
+    await sleep(SETTLE_MS);
+    await unlike(C, 'like', { postId: id(T3), postAuthor: id(A.ownerId) }).catch(reported('C\'s unlike of T3'));
+    await sleep(SETTLE_MS);
+
+    // (a) hearts and (b) the feed slots: unchanged from v10 (byPost / byReply, `$ownerId` terminal).
+    await attempt('dc-a1', () => sdk.documents.query(q('like', { where: [['postId', 'in', [T1, T2, T3]], ['$ownerId', '==', B.ownerId]], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 3 })),
+      (r) => check('dc-a1 "did B like these" on byPost (`postId in`, `$ownerId ==`): T1, T2', sameSet(pairsOf(r, 'postId'), [`${B.ownerId}>${T1}`, `${B.ownerId}>${T2}`]), JSON.stringify(pairsOf(r, 'postId'))));
+    await attempt('dc-a3', () => sdk.documents.query(q('likeReply', { where: [['replyId', 'in', [r1, r2]], ['$ownerId', '==', A.ownerId]], orderBy: [['replyId', 'asc'], ['$ownerId', 'asc']], limit: 2 })),
+      (r) => check('dc-a3 "did A like these replies" on byReply: r1', same(pairsOf(r, 'replyId'), [`${A.ownerId}>${r1}`]), JSON.stringify(pairsOf(r, 'replyId'))));
+    await attempt('dc-b1', () => sdk.documents.composite({
+      dataContractId: contractId, documentType: 'post', where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20,
+      subQueries: [{ documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId'), limit: 20 }],
+    }), (result) => {
+      const liked = result.subResults[0].documents.map(likeOf).map((l) => toBase58(l.postId));
+      check('dc-b1 the feed composite\'s viewer-likes slot on byPost: B liked T1 and T2', sameSet(liked, [T1, T2]), JSON.stringify(liked));
+    });
+    // (c)/(d) top creators and a profile's top posts, now off byAuthorPost [postAuthor, postId].
+    await attempt('ol-c', () => ranked(null, 'postAuthor'), (r) => check('ol-c top creators (ranked groupBy postAuthor on byAuthorPost): A 4 (T1 2, T2 1, Th 1; C\'s unliked T3 is gone)', same(rankedPairs(r), [[A.ownerId, 4]]), JSON.stringify(rankedPairs(r))));
+    await attempt('ol-d', () => ranked([['postAuthor', '==', A.ownerId]], 'postId'), (r) => check('ol-d a profile\'s top posts (ranked `postAuthor ==` groupBy postId): T1 2, T2 1, Th 1', sameSet(rankedPairs(r).map(String), [[T1, 2], [T2, 1], [Th, 1]].map(String)) && rankedPairs(r)[0][0] === T1, JSON.stringify(rankedPairs(r))));
+    // (e) likers without time: the timeless like notifications diff these against what a device saw.
+    await attempt('ol-e1', () => sdk.documents.query(q('like', { where: [['postId', '==', T1]], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 100 })),
+      (r) => check('ol-e1 likers of T1 on byPost (`postId ==`, ordered by the `$ownerId` terminal): B and C, no time', sameSet(docsOf(r).map(likeOf).map((l) => toBase58(l.$ownerId)), [B.ownerId, C.ownerId]), JSON.stringify(pairsOf(r, 'postId'))));
+    await attempt('ol-e2', async () => {
+      const seen = [];
+      for (let page = 0; page < 5; page++) {
+        const after = seen.length === 0 ? [] : [['$ownerId', '>', seen.at(-1)]];
+        const likers = docsOf(await sdk.documents.query(q('like', { where: [['postId', '==', T1], ...after], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 1 }))).map(likeOf).map((l) => toBase58(l.$ownerId));
+        if (likers.length === 0) break;
+        seen.push(...likers);
+      }
+      return seen;
+    }, (got) => check('ol-e2 keyset paging 1 at a time on the terminal (`$ownerId >` the last seen, no id cursor) walks both likers of T1 once', sameSet(got, [B.ownerId, C.ownerId]), JSON.stringify(got)));
+    // Several targets in one read need the author pinned (ol-e4): on byPost the `in` sits on the
+    // only property while the terminal ranges, which the node refuses.
+    await expectRefusal('ol-e3x ONE liker read across posts on byPost (`postId in`, no `$ownerId ==`) is refused; the author-pinned byAuthorPost form serves it', () => sdk.documents.query(q('like', { where: [['postId', 'in', [T1, T2]]], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 100 })));
+    await attempt('ol-e4', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2]]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc']], limit: 100 })),
+      (r) => check('ol-e4 the same off byAuthorPost (`postAuthor ==`, `postId in`): B→T1, C→T1, B→T2', sameSet(pairsOf(r, 'postId'), [`${B.ownerId}>${T1}`, `${C.ownerId}>${T1}`, `${B.ownerId}>${T2}`]), JSON.stringify(pairsOf(r, 'postId'))));
+    await expectRefusal('ol-e5x the same across replies on byReply (`replyId in`, no `$ownerId ==`) is refused', () => sdk.documents.query(q('likeReply', { where: [['replyId', 'in', [r1, r5]]], orderBy: [['replyId', 'asc'], ['$ownerId', 'asc']], limit: 100 })));
+    await attempt('ol-e6', () => sdk.documents.query(q('likeReply', { where: [['replyAuthor', '==', B.ownerId], ['replyId', 'in', [r1, r5]]], orderBy: [['replyAuthor', 'asc'], ['replyId', 'asc']], limit: 100 })),
+      (r) => check('ol-e6 the same off byAuthorReply (`replyAuthor ==`, `replyId in`): A→r1', same(pairsOf(r, 'replyId'), [`${A.ownerId}>${r1}`]), JSON.stringify(pairsOf(r, 'replyId'))));
+    // (f) which recent posts gained likes, (g) batched counts: unchanged from v10, plus the byAuthorPost form.
+    await attempt('dc-f1', async () => {
+      const posts = ids(await sdk.documents.query(q('post', { where: [['$ownerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 })));
+      return countEntries(await count('like', [['postId', 'in', posts]], ['postId']));
+    }, (m) => check('dc-f1 A\'s latest 20 posts, liked ones by one grouped byPost count: T1 2, T2 1, Th 1', sameCounts(m, { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(m)));
+    await attempt('ol-f4', () => count('like', [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2, T3, Th]]], ['postId']),
+      (m) => check('ol-f4 the same off byAuthorPost (`postAuthor ==`, `postId in`, groupBy postId): T1 2, T2 1, Th 1', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(countEntries(m))));
+    await attempt('dc-f2', () => sdk.documents.composite({
+      dataContractId: contractId, documentType: 'post', where: [['$ownerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
+      subQueries: [{ documentType: 'like', kind: 'counts', bind: fromPage('$id', 'postId') }],
+    }), (result) => {
+      const m = countEntries(result.subResults[0].counts);
+      check('dc-f2 the profile-page composite count slot: T1 2, T2 1, Th 1', sameCounts(m, { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(m));
+    });
+    await attempt('dc-f3', () => sdk.documents.composite({
+      dataContractId: contractId, documentType: 'reply', where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
+      subQueries: [{ documentType: 'likeReply', kind: 'counts', bind: fromPage('$id', 'replyId') }],
+    }), (result) => {
+      const m = countEntries(result.subResults[0].counts);
+      check('dc-f3 B\'s recent replies with their like counts (byReply count slot): r1 1', sameCounts(m, { [r1]: 1 }), JSON.stringify(m));
+    });
+    await attempt('dc-g2', () => count('likeReply', [['replyId', 'in', [r1, r2]]], ['replyId']), (m) => check('dc-g2 reply like counts (byReply, `in` + groupBy): r1 1', sameCounts(countEntries(m), { [r1]: 1 }), JSON.stringify(countEntries(m))));
+    // (t) trending: the windows still hold C's unliked T3 (kept until its window passes).
+    await attempt('ol-t1', trendPosts, (r) => check('ol-t1 top posts in the oldest open byTrendPost window: T1 2, T2 1, Th 1, and T3 1 though C unliked it (outlivesDelete keeps the entry)', sameSet(rankedPairs(r).map(String), [[T1, 2], [T2, 1], [Th, 1], [T3, 1]].map(String)), JSON.stringify(rankedPairs(r))));
+    await attempt('ol-u0', () => Promise.all([likeCount('like', 'postId', T3), heartOf('like', 'postId', T3, C.ownerId)]),
+      ([n, heart]) => check('ol-u0 C\'s unlike of T3 without $createdAt: count 0 and heart off on byPost', n === 0 && heart === 0, `count ${n}, heart ${heart}`));
+
+    // B's tagged like, in a later tag-window step than C's, then the unlikes.
+    const stepAfter = taggedAt + (2 * grid('byTrendHashtagPost').step + 5) * 1000 - Date.now();
+    if (stepAfter > 0) { console.log(`     waiting ${Math.ceil(stepAfter / 1000)} s so B's tagged like lands two tag-window steps after C's`); await sleep(stepAfter); }
+    await likeWrite(B, 'like', { postId: id(Th), postAuthor: id(A.ownerId), hashtag: tag });
+    await sleep(SETTLE_MS);
+    await attempt('ol-t2', trendTags, (r) => check(`ol-t2 trending tags in the oldest open byTrendHashtagPost window: ${tag} 2`, same(tagPairs(r), [[tag, 2]]), JSON.stringify(tagPairs(r))));
+    await attempt('ol-t3', () => ranked([['hashtag', '==', tag]], 'postId', oldestOf('byTrendHashtagPost')), (r) => check('ol-t3 the tag\'s top posts in its window: Th 2', same(rankedPairs(r), [[Th, 2]]), JSON.stringify(rankedPairs(r))));
+    await attempt('ol-t4', () => ranked([['hashtag', '==', tag]], 'postId'), (r) => check('ol-t4 hashtag Top all-time (byHashtagPost ranked `hashtag ==` groupBy postId): Th 2', same(rankedPairs(r), [[Th, 2]]), JSON.stringify(rankedPairs(r))));
+
+    // (h) unlikes WITHOUT $createdAt. h0 first offers the time anyway: the SDK drops it on a
+    // type whose rows commit to none, so it is reported, never failed.
+    try {
+      await unlike(B, 'like', { postId: id(T2), postAuthor: id(A.ownerId) }, { createdAt: Date.now() });
+      await sleep(SETTLE_MS);
+      const n = await likeCount('like', 'postId', T2);
+      console.log(`INFO  ol-h0 an unlike carrying $createdAt was ACCEPTED (the SDK builder drops the time on this type); T2 count now ${n}`);
+    } catch (e) {
+      console.log(`INFO  ol-h0 an unlike carrying $createdAt is refused — ${describeErr(e).slice(0, 200)}`);
+    }
+    await attempt('ol-h1', async () => {
+      if (await likeCount('like', 'postId', T2) > 0) await unlike(B, 'like', { postId: id(T2), postAuthor: id(A.ownerId) }).catch(reported('unlike'));
+      await sleep(SETTLE_MS);
+      const [n, heart, top, trend] = await Promise.all([likeCount('like', 'postId', T2), heartOf('like', 'postId', T2, B.ownerId), ranked([['postAuthor', '==', A.ownerId]], 'postId'), trendPosts()]);
+      return { n, heart, top: rankedPairs(top), trend: rankedPairs(trend) };
+    }, ({ n, heart, top, trend }) => check('ol-h1 B unlikes T2 with no $createdAt: count 0, heart off, gone from the profile Top; the 3-day trend window still counts it (T2 1)',
+      n === 0 && heart === 0 && !top.some(([k]) => k === T2) && trend.some(([k, v]) => k === T2 && v === 1), `count ${n}, heart ${heart}, top ${JSON.stringify(top)}, trend ${JSON.stringify(trend)}`));
+    await attempt('ol-h2', async () => {
+      await unlike(A, 'likeReply', { replyId: id(r1), replyAuthor: id(B.ownerId) }).catch(reported('unlike'));
+      await sleep(SETTLE_MS);
+      return Promise.all([likeCount('likeReply', 'replyId', r1), heartOf('likeReply', 'replyId', r1, A.ownerId)]);
+    }, ([n, heart]) => check('ol-h2 A unlikes reply r1 with no $createdAt (likeReply requires none): count 0, heart off', n === 0 && heart === 0, `count ${n}, heart ${heart}`));
+    await attempt('ol-h3', async () => {
+      await unlike(C, 'like', { postId: id(Th), postAuthor: id(A.ownerId), hashtag: tag }).catch(reported('unlike'));
+      await sleep(SETTLE_MS);
+      const [n, top, window] = await Promise.all([likeCount('like', 'postId', Th), ranked([['hashtag', '==', tag]], 'postId'), trendTags()]);
+      return { n, top: rankedPairs(top), window: tagPairs(window) };
+    }, ({ n, top, window }) => check(`ol-h3 C unlikes the tagged Th: count 1, hashtag Top all-time Th 1, the 24h tag window still ${tag} 2`, n === 1 && same(top, [[Th, 1]]) && same(window, [[tag, 2]]), `count ${n}, top ${JSON.stringify(top)}, window ${JSON.stringify(window)}`));
+    await attempt('ol-h4', async () => {
+      await likeWrite(B, 'like', { postId: id(T2), postAuthor: id(A.ownerId) });
+      await sleep(SETTLE_MS);
+      const [n, heart, trend] = await Promise.all([likeCount('like', 'postId', T2), heartOf('like', 'postId', T2, B.ownerId), trendPosts()]);
+      return { n, heart, trend: rankedPairs(trend) };
+    }, ({ n, heart, trend }) => check('ol-h4 B re-likes T2 while its kept entry stands: count 1, heart on, and the trend window still counts B once (T2 1: the create writes over the kept entry)',
+      n === 1 && heart === 1 && trend.some(([k, v]) => k === T2 && v === 1), `count ${n}, heart ${heart}, trend ${JSON.stringify(trend)}`), { idempotent: false });
+
+    // (x) the kept entries expire with their windows. A like at t leaves the oldest open window
+    // once that window starts after t: at floor(t/step)·step + range. Block time trails the
+    // local clock by up to a block or two, so each check polls from then until the expected
+    // state shows, within a deadline.
+    const leavesOldestAt = (t, name) => Math.floor(t / 1000 / grid(name).step) * grid(name).step * 1000 + grid(name).range * 1000;
+    const pollUntil = async (from, deadline, read, done) => {
+      if (from > Date.now()) { console.log(`     waiting ${Math.ceil((from - Date.now()) / 1000)} s for a window to pass`); await sleep(from - Date.now()); }
+      let value = await withReconnect(read);
+      while (!done(value) && Date.now() < deadline) { await sleep(10_000); value = await withReconnect(read); }
+      return value;
+    };
+    await attempt('ol-x1', () => pollUntil(leavesOldestAt(taggedAt, 'byTrendHashtagPost'), leavesOldestAt(taggedAt, 'byTrendHashtagPost') + 100_000,
+      async () => ({ tags: tagPairs(await trendTags()), posts: rankedPairs(await ranked([['hashtag', '==', tag]], 'postId', oldestOf('byTrendHashtagPost'))) }),
+      ({ tags }) => !same(tags, [[tag, 2]])), ({ tags, posts }) => check(`ol-x1 once its window passed, C's unliked tag entry has expired while B's later live like stays: ${tag} 1, Th 1 in the oldest open window`,
+      same(tags, [[tag, 1]]) && same(posts, [[Th, 1]]), `${JSON.stringify(tags)} posts ${JSON.stringify(posts)}`));
+    await attempt('ol-x2', () => pollUntil(leavesOldestAt(expiringAt, 'byTrendPost'), leavesOldestAt(expiringAt, 'byTrendPost') + 100_000,
+      async () => rankedPairs(await trendPosts()), (got) => !got.some(([k]) => k === T3)),
+    (got) => check('ol-x2 once its window passed, C\'s unliked T3 is gone from the 3-day trend window (never re-counted)', !got.some(([k]) => k === T3), JSON.stringify(got)));
+    await attempt('ol-x3', () => Promise.all([likeCount('like', 'postId', Th), likeCount('like', 'postId', T1), ranked([['postAuthor', '==', A.ownerId]], 'postId')]),
+      ([th, t1, top]) => check('ol-x3 the permanent indexes are untouched by the expiry: Th 1, T1 2, profile Top T1 2 / T2 1 / Th 1', th === 1 && t1 === 2 && sameSet(rankedPairs(top).map(String), [[T1, 2], [T2, 1], [Th, 1]].map(String)), `Th ${th}, T1 ${t1}, top ${JSON.stringify(rankedPairs(top))}`));
+  }
+
+  // ---- kf / tm-0: v11 moderation before a team is seated (the interim owner A moderates) ----
+  async function proveRemovalRecordsAndWindow() {
+    console.log('\n--- kf. removal records keep fields; tm-0. the delete window before a team is seated ---');
+    const S1 = await mustCreate('S1 (D, #settle: the team deletes it once settled)', D, 'post', { content: 'settle one', hashtag: 'settle' });
+    const S2 = await mustCreate('S2 (D, #settle: spare)', D, 'post', { content: 'settle two', hashtag: 'settle' });
+    const SR = await mustCreate('SR (D, a thread root)', D, 'post', { content: 'thread root' });
+    const S3 = await mustCreate('S3 (D replies to its SR: the team deletes it once settled)', D, 'reply', { content: 'settle reply', rootPostId: id(SR), parentOwnerId: id(D.ownerId) });
+    const settledFrom = Date.now();
+    const Pk = await mustCreate('Pk (D, #kept)', D, 'post', { content: 'kept fields', hashtag: 'kept' });
+    const Rk = await mustCreate('Rk (D replies to SR)', D, 'reply', { content: 'kept reply', rootPostId: id(SR), parentOwnerId: id(D.ownerId) });
+    const created = async (docType, docId) => createdAtOf(await sdk.documents.get(contractId, docType, docId));
+    const [pkAt, rkAt] = await Promise.all([created('post', Pk), created('reply', Rk)]);
+    const moderatorA = { identity: await sdk.identities.fetch(A.ownerId), signer: A.signer };
+    await attempt('kf-1', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'post', documentId: Pk, reason: { text: 'kf-1 proof' } }), (record) => {
+      const kept = record?.keptFields ?? {};
+      check('kf-1 the interim owner removes D\'s post Pk within the window: the record keeps hashtag "kept" and its $createdAt',
+        kept.hashtag === 'kept' && Number(kept.$createdAt) === pkAt && Object.keys(kept).length === 2, JSON.stringify(kept, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+    }, { idempotent: false });
+    await attempt('kf-2', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'reply', documentId: Rk, reason: { text: 'kf-2 proof' } }), (record) => {
+      const kept = record?.keptFields ?? {};
+      check('kf-2 the same for D\'s reply Rk: the record keeps rootPostId SR and its $createdAt', toBase58(kept.rootPostId) === SR && Number(kept.$createdAt) === rkAt, JSON.stringify({ rootPostId: toBase58(kept.rootPostId), $createdAt: String(kept.$createdAt) }));
+    }, { idempotent: false });
+    await attempt('kf-3', () => sdk.contracts.documentRemovals({ contractId, documentTypeName: 'post', documentIds: [Pk] }), (page) => {
+      const kept = page.removals[0]?.keptFields ?? {};
+      check('kf-3 documentRemovals by id returns the kept fields too (hashtag, $createdAt), and the post is gone', page.removals.length === 1 && kept.hashtag === 'kept' && Number(kept.$createdAt) === pkAt, JSON.stringify(kept, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+    });
+    const settledAt = settledFrom + (PROOF_DELETE_WITHIN + 20) * 1000;
+    if (settledAt > Date.now()) { console.log(`     waiting ${Math.ceil((settledAt - Date.now()) / 1000)} s for S1-S3 to settle (deleteWithin ${PROOF_DELETE_WITHIN} s)`); await sleep(settledAt - Date.now()); }
+    await expectCode('tm-0a past the window even the interim owner\'s lone delete of S1 is refused', '41116', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'post', documentId: S1, reason: { text: 'tm-0a' } }));
+    await expectCode('tm-0b a settled-deletion proposal before any team is seated is refused', '41205', () => sdk.contracts.moderatorDeleteSettledDocument({ ...moderatorA, contractId, documentTypeName: 'post', documentId: S1, reason: { text: 'tm-0b' } }));
+    return { contractId, D: D.ownerId, S1, S2, SR, S3 };
+  }
+
+  if (v11) await proveOutlives();
+  else await proveDesignC();
+
+  // ---- M: design M (moderated posts and replies, tombstones, preallocated like trees) ----
+  async function proveDesignM() {
+    console.log('\n--- M. design M: preallocated trees, tombstones, undo/redo repost, references that outlive a removal ---');
+    const balanceOf = async (who) => BigInt((await sdk.identities.fetch(who.ownerId))?.balance ?? 0);
+    const rankedRaw = (where, groupBy) => sdk.documents.ranked(q('like', { ...(where ? { where } : {}), groupBy, aggregate: { type: 'count' }, direction: 'desc', limit: 100 }));
+    const entriesOf = (r) => r.entries.map((e) => [toBase58(e.groupValue), Number(e.value)]);
+    const replaceDoc = async (who, docType, docId, data) => {
+      const stored = await withReconnect(() => sdk.documents.get(contractId, docType, docId));
+      const revision = BigInt(stored?.revision ?? stored?.toObject?.().$revision ?? 1) + 1n;
+      const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, revision, id: bs58.decode(docId) });
+      try {
+        await sdk.documents.replace({ document, identityKey: who.identityKey, signer: who.signer });
+      } catch (e) {
+        const error = describeErr(e);
+        if (CONSENSUS_CODE.test(error)) return { ok: false, error };
+      }
+      await sleep(SETTLE_MS);
+      const after = await sdk.documents.get(contractId, docType, docId);
+      const landed = BigInt(after?.revision ?? after?.toObject?.().$revision ?? 0) >= revision;
+      return landed ? { ok: true } : { ok: false, error: 'the replace did not land' };
+    };
+    const refusedWith = (label, outcome, pattern) => check(label, !outcome.ok && pattern.test(outcome.error ?? ''), (outcome.error ?? 'ACCEPTED').slice(0, 200));
+    const IMMUTABLE = /\bcode"?\s*[=:]\s*40128\b|immutable/i;
+    const BLANK = /\bcode"?\s*[=:]\s*10422\b.{0,400}tombstoneIsBlank|tombstoneIsBlank/i;
+    const plain = (doc) => doc?.toJSON?.() ?? doc?.toObject?.() ?? {};
+
+    // (pa) preallocated: a fresh post sits in its trees with zero likes; the first like costs what a later one does.
+    const createdBefore = await balanceOf(D);
+    const Pf = await mustCreate('Pf (D, #mproof, fresh)', D, 'post', { content: 'fresh post', hashtag: 'mproof' });
+    console.log(`INFO  M-pa0 a tagged post with its preallocated like trees cost D ${createdBefore - (await balanceOf(D))} credits`);
+    await sleep(SETTLE_MS);
+    await attempt('M-pa1', () => Promise.all([rankedRaw([['postAuthor', '==', D.ownerId]], 'postId'), rankedRaw([['hashtag', '==', 'mproof']], 'postId'), count('like', [['postId', '==', Pf]])]), ([top, tag, n]) =>
+      check('M-pa1 a fresh, unliked post is already in its preallocated trees: profile Top and hashtag Top list it at 0; its like count is 0', entriesOf(top).some(([k, v]) => k === Pf && v === 0) && entriesOf(tag).some(([k, v]) => k === Pf && v === 0) && total(n) === 0, `top ${JSON.stringify(entriesOf(top))} tag ${JSON.stringify(entriesOf(tag))} count ${JSON.stringify(countEntries(n))}`));
+    await attempt('M-pa2', () => count('like', [['postId', 'in', [Pf]]], ['postId']), (m) => console.log(`INFO  M-pa2 grouped count of the fresh post (\`postId in\` + groupBy): ${JSON.stringify(countEntries(m))}`));
+    const costOf = async (who, data) => { const before = await balanceOf(who); await likeWrite(who, 'like', data); await sleep(SETTLE_MS); return before - (await balanceOf(who)); };
+    const firstLike = await costOf(B, { postId: id(Pf), postAuthor: id(D.ownerId), hashtag: 'mproof' });
+    const secondLike = await costOf(C, { postId: id(Pf), postAuthor: id(D.ownerId), hashtag: 'mproof' });
+    check(`M-pa3 the FIRST tagged like of a post costs about what the second does (the post paid the trees; only the trend windows, never preallocated, are new): ${firstLike} vs ${secondLike} credits`, firstLike > 0n && secondLike > 0n && Number(firstLike) <= Number(secondLike) * 1.3);
+
+    // (tb) tombstones: the allowed and the refused cases, on D's post Pt and reply Rt.
+    const Pt = await mustCreate('Pt (D, #mproof, to tombstone)', D, 'post', { content: 'to tombstone', hashtag: 'mproof' });
+    const Rt = await mustCreate('Rt (D replies to Pt)', D, 'reply', { content: 'reply to tombstone', rootPostId: id(Pt), parentOwnerId: id(D.ownerId) });
+    const del = await sdk.documents.delete({ document: { id: Pt, ownerId: D.ownerId, dataContractId: contractId, documentTypeName: 'post' }, identityKey: D.identityKey, signer: D.signer }).then(() => null, (e) => describeErr(e));
+    check('M-tb1 an author cannot delete its post (canBeDeleted false)', del !== null && (await sdk.documents.get(contractId, 'post', Pt)) !== null, (del ?? 'ACCEPTED').slice(0, 200));
+    refusedWith('M-tb2 an edit of the text without the flag is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'edited', hashtag: 'mproof' }), IMMUTABLE);
+    refusedWith('M-tb3 a tombstone keeping the text is refused (10422 tombstoneIsBlank)', await replaceDoc(D, 'post', Pt, { deleted: true, content: 'kept', hashtag: 'mproof' }), BLANK);
+    refusedWith('M-tb4 a tombstone changing the hashtag is refused (40128)', await replaceDoc(D, 'post', Pt, { deleted: true, hashtag: 'other' }), IMMUTABLE);
+    // Adding a field the post never had counts as a change too ("differs" covers a value the stored document lacked).
+    refusedWith('M-tb4b adding a mention the post never had, without the flag, is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'to tombstone', hashtag: 'mproof', mentionedUserId: id(B.ownerId) }), IMMUTABLE);
+    refusedWith('M-tb4c marking it sensitive afterwards is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'to tombstone', hashtag: 'mproof', sensitive: true }), IMMUTABLE);
+    const untagged = await mustCreate('Pu (D, untagged)', D, 'post', { content: 'untagged' });
+    refusedWith('M-tb4d adding a hashtag to an untagged post is refused (40128: frozen by name)', await replaceDoc(D, 'post', untagged, { content: 'untagged', hashtag: 'late' }), IMMUTABLE);
+    const tombBefore = await balanceOf(D);
+    const tombstoned = await replaceDoc(D, 'post', Pt, { deleted: true, hashtag: 'mproof' });
+    const tombCost = tombBefore - (await balanceOf(D));
+    const tomb = plain(await sdk.documents.get(contractId, 'post', Pt));
+    check(`M-tb5 the tombstone lands (deleted, hashtag kept, no content; cost ${tombCost} credits)`, tombstoned.ok && tomb.deleted === true && tomb.hashtag === 'mproof' && tomb.content === undefined, `${tombstoned.error ?? ''} ${JSON.stringify({ deleted: tomb.deleted, hashtag: tomb.hashtag, content: tomb.content ?? null })}`);
+    refusedWith('M-tb6 a tombstone cannot be undone (40128: deleted frozen once set)', await replaceDoc(D, 'post', Pt, { content: 'back', hashtag: 'mproof' }), IMMUTABLE);
+    refusedWith('M-tb7 nor refilled while flagged (10422)', await replaceDoc(D, 'post', Pt, { deleted: true, content: 'back', hashtag: 'mproof' }), BLANK);
+    await attempt('M-tb8', () => Promise.all([sdk.documents.get(contractId, 'reply', Rt), count('reply', [['rootPostId', '==', Pt]])]), ([reply, n]) => check('M-tb8 the reply under the tombstoned post stays, counted', reply !== null && total(n) === 1, JSON.stringify(countEntries(n))));
+    refusedWith('M-tb9 a reply edit without the flag is refused (40128)', await replaceDoc(D, 'reply', Rt, { content: 'edited', rootPostId: id(Pt), parentOwnerId: id(D.ownerId) }), IMMUTABLE);
+    refusedWith('M-tb10 a reply tombstone that drops its thread root is refused (40128: the linkage is frozen)', await replaceDoc(D, 'reply', Rt, { deleted: true, parentOwnerId: id(D.ownerId) }), /\bcode"?\s*[=:]\s*(40128|10101)\b|immutable|required/i);
+    const replyTomb = await replaceDoc(D, 'reply', Rt, { deleted: true, rootPostId: id(Pt), parentOwnerId: id(D.ownerId) });
+    const rt = plain(await sdk.documents.get(contractId, 'reply', Rt));
+    check('M-tb11 the reply tombstone lands, its linkage kept (the thread keeps its shape)', replyTomb.ok && rt.deleted === true && rt.content === undefined && toBase58(rt.rootPostId) === Pt, `${replyTomb.error ?? ''}`);
+
+    // (rp) undo and redo a repost: B's bare repost q2 of T2.
+    const repostsOfT2 = async () => total(await count('post', [['quotedPostId', '==', T2]]));
+    const before = await repostsOfT2();
+    const undo = await replaceDoc(B, 'post', q2, { deleted: true });
+    await attempt('M-rp1', async () => ({ n: await repostsOfT2(), own: ids(await sdk.documents.query(q('post', { where: [['$ownerId', '==', B.ownerId], ['quotedPostId', 'in', [T2]]], orderBy: [['$ownerId', 'asc'], ['quotedPostId', 'asc']], limit: 1 }))) }),
+      ({ n, own }) => check('M-rp1 B undoes its repost of T2 with a tombstone: the quote is cleared, the count drops by one and B\'s own-repost read finds nothing', undo.ok && n === before - 1 && own.length === 0, `${undo.error ?? ''} count ${before} → ${n}, own ${JSON.stringify(own)}`));
+    const redo = await create(B, 'post', { quotedPostId: id(T2), quotedPostOwnerId: id(A.ownerId) });
+    await sleep(SETTLE_MS);
+    await attempt('M-rp2', repostsOfT2, (n) => check('M-rp2 …and reposts T2 again: the one-repost slot is free (no 40105), the count is back', redo.ok && n === before, `${redo.error ?? ''} count ${n}`));
+    const third = await create(B, 'post', { quotedPostId: id(T2), quotedPostOwnerId: id(A.ownerId) });
+    check('M-rp3 a second live repost is still refused (40105)', !third.ok && DUPLICATE_UNIQUE.test(third.error ?? ''), (third.error ?? 'ACCEPTED').slice(0, 160));
+
+    // (mr) a moderator-removed post: its like, reply and quote stay valid and counted; the hashtag ranking keeps it.
+    const Pm = await mustCreate('Pm (D, #mremoved)', D, 'post', { content: 'to be removed', hashtag: 'mremoved' });
+    await likeWrite(B, 'like', { postId: id(Pm), postAuthor: id(D.ownerId), hashtag: 'mremoved' });
+    const Rm = await mustCreate('Rm (C replies to Pm)', C, 'reply', { content: 'reply to removed', rootPostId: id(Pm), parentOwnerId: id(D.ownerId) });
+    const Qm = await mustCreate('Qm (C quotes Pm)', C, 'post', { content: 'quote of removed', quotedPostId: id(Pm), quotedPostOwnerId: id(D.ownerId) });
+    await sleep(SETTLE_MS);
+    const moderatorA = { identity: await sdk.identities.fetch(A.ownerId), signer: A.signer };
+    await attempt('M-mr1', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'post', documentId: Pm, reason: { text: 'M-mr proof' } }), (record) => check('M-mr1 the interim owner removes Pm; the record keeps its hashtag', record?.keptFields?.hashtag === 'mremoved', JSON.stringify(record?.keptFields ?? null, (k, v) => (typeof v === 'bigint' ? String(v) : v))), { idempotent: false });
+    await sleep(SETTLE_MS);
+    await attempt('M-mr2', () => Promise.all([sdk.documents.get(contractId, 'post', Pm), count('like', [['postId', '==', Pm]]), sdk.documents.get(contractId, 'reply', Rm), count('reply', [['rootPostId', '==', Pm]]), sdk.documents.get(contractId, 'post', Qm), count('post', [['quotedPostId', '==', Pm]])]),
+      ([post, likes, reply, replies, quote, quotes]) => check('M-mr2 Pm is gone, but its like (1), its reply (1) and its quote (1) stay, readable and counted', !post && total(likes) === 1 && reply !== null && total(replies) === 1 && quote !== null && total(quotes) === 1, `post ${post ? 'still fetches' : 'gone'}, likes ${total(likes)} replies ${total(replies)} quotes ${total(quotes)}`));
+    await attempt('M-mr3', () => rankedRaw([['hashtag', '==', 'mremoved']], 'postId'), (r) => check('M-mr3 the hashtag ranking (byHashtagPost, keyed by the kept hashtag) still lists the removed post at 1', entriesOf(r).some(([k, v]) => k === Pm && v === 1), JSON.stringify(entriesOf(r))));
+    await likeWrite(C, 'like', { postId: id(Pm), postAuthor: id(D.ownerId), hashtag: 'mremoved' });
+    await sleep(SETTLE_MS);
+    const lateReply = await create(C, 'reply', { content: 'late reply', rootPostId: id(Pm), parentOwnerId: id(D.ownerId) });
+    const likesNow = total(await withReconnect(() => count('like', [['postId', '==', Pm]])));
+    check('M-mr4 after the removal a new like of the post does not land, and a new reply to it is refused', likesNow === 1 && !lateReply.ok, `likes ${likesNow}; reply ${lateReply.ok ? 'ACCEPTED' : (lateReply.error ?? '').slice(0, 140)}`);
+    const qTomb = await replaceDoc(C, 'post', Qm, { deleted: true });
+    const rTomb = await replaceDoc(C, 'reply', Rm, { deleted: true, rootPostId: id(Pm), parentOwnerId: id(D.ownerId) });
+    check('M-mr5 a quote of the removed post and a reply under it can still be tombstoned by their authors (the references resolve to the removal record)', qTomb.ok && rTomb.ok, `${qTomb.error ?? ''} ${rTomb.error ?? ''}`.slice(0, 200));
+  }
+  if (v11) await proveDesignM();
 
   // ---- rm: reply mentions (written last, so no earlier count moves) ----
   console.log('\n--- rm. a reply names one mentioned identity ---');
@@ -770,9 +1232,140 @@ async function main() {
     return { rm1, replies: ids(replies), posts: bundle.subResults[0].documents.map(idOf), bundled: bundle.subResults[1].documents.map(idOf) };
   }, ({ rm1, replies, posts, bundled }) => check('rm1 B\'s mentions: the reply (reply.mentionedUserAndTime) and the post m1, alone and as siblings of the full permanent bundle (follows page, post and reply mentions, follow requests)', same(replies, [rm1]) && same(bundled, [rm1]) && same(posts, [m1]), `replies ${JSON.stringify(replies)} bundled ${JSON.stringify(bundled)} posts ${JSON.stringify(posts)}`));
 
+  if (v11) {
+    const state = await proveRemovalRecordsAndWindow();
+    const stateFile = args.stateFile ?? defaultStateFile(contractId);
+    writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+    console.log(`\nsettled targets for --team-proof written to ${stateFile}`);
+  }
+
   console.log(`\nthrowaway contract ${contractId}`);
   console.log(failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`);
   return failures === 0 ? 0 : 1;
+}
+
+// ---- Phase 2: the seated team (v11 deleteWithin + deleteSettled) -------------
+
+async function proveTeam(sdk, args, actors, source) {
+  const contractId = args.teamProof;
+  const [A, B, C, D] = actors;
+  session.contracts.add(contractId);
+  await sdk.contracts.fetch(contractId);
+  const reason = (text) => ({ text, reasonDocumentId: args.reasonDoc });
+  const asModerator = async (who) => ({ identity: await sdk.identities.fetch(who.ownerId), signer: who.signer });
+  const sameSet = (got, expected) => got.length === expected.length && expected.every((x) => got.includes(x));
+  const bigintSafe = (value) => JSON.stringify(value, (k, v) => (typeof v === 'bigint' ? String(v) : v));
+  const rule = source.documentSchemas.post.moderatorAbilities.deleteSettled;
+  const maxAdded = source.config.moderation.moderators.maxAddedModerators ?? 0;
+
+  console.log('\n--- tm. the seated team deletes settled documents together ---');
+  const team = await sdk.moderationCharters.team(contractId);
+  if (!team) throw new Error('no seated team on the throwaway contract: run the election first');
+  const leaderId = toBase58(team.leaderId);
+  const memberIds = team.members.map(toBase58);
+  const byId = new Map([A, B, C, D].map((who) => [who.ownerId, who]));
+  const L = byId.get(leaderId);
+  const [M1, M2] = memberIds.map((member) => byId.get(member)).filter(Boolean);
+  if (!L || !M1 || !M2) throw new Error(`the team (leader ${leaderId}, members ${memberIds.join(', ')}) must be three of A, B, C`);
+  const seats = team.seats(maxAdded);
+  const needed = Math.min(rule.approvals, seats);
+  check(`tm-1 a seated team: leader ${L.label}, members ${M1.label} and ${M2.label}; seats(${maxAdded}) = ${seats}, so a settled deletion needs min(${rule.approvals}, ${seats}) = ${needed} approvals, the leader's among them; D is not on it`,
+    memberIds.length === 2 && team.electedMembers.length === 2 && needed === 3 && rule.leader === true && !team.contains(D.ownerId), `elected ${bigintSafe(team.electedMembers.map(toBase58))}`);
+
+  // Fresh targets by D, so this phase can run again: a tagged post, a thread root and a reply to it, left to settle.
+  const fixture = async (label, docType, data) => {
+    const outcome = await createDocument(contractId, D, docType, data);
+    if (!outcome.ok) throw new Error(`fixture write ${label} failed: ${(outcome.error ?? '').slice(0, 300)}`);
+    return outcome.id;
+  };
+  const writtenAt = Date.now();
+  const state = { S1: await fixture('S1', 'post', { content: 'settle one', hashtag: 'settle' }), SR: await fixture('SR', 'post', { content: 'thread root' }) };
+  state.S3 = await fixture('S3', 'reply', { content: 'settle reply', rootPostId: bs58.decode(state.SR), parentOwnerId: bs58.decode(D.ownerId) });
+  const windowSeconds = source.documentSchemas.post.moderatorAbilities.deleteWithin;
+  const settledAt = writtenAt + (windowSeconds + 30) * 1000;
+  console.log(`     D wrote S1 ${state.S1}, SR ${state.SR}, S3 ${state.S3}; waiting ${Math.ceil((settledAt - Date.now()) / 1000)} s for them to settle (deleteWithin ${windowSeconds} s)`);
+  await sleep(Math.max(0, settledAt - Date.now()));
+
+  // Action counts reset only when the moderators pot pays out, so they are compared as deltas from here.
+  const actionCounts = async () => Object.fromEntries((await sdk.contracts.moderationActionCounts(contractId)).counts.map((c) => [toBase58(c.identityId), Number(c.count)]));
+  const countsBefore = await withReconnect(actionCounts);
+  const countDeltas = async () => {
+    const now = await actionCounts();
+    return Object.fromEntries([L, M1, M2].map((who) => [who.label, (now[who.ownerId] ?? 0) - (countsBefore[who.ownerId] ?? 0)]));
+  };
+  const S1doc = await sdk.documents.get(contractId, 'post', state.S1);
+  await expectCode('tm-2 a member\'s lone delete of the settled S1 is refused', '41116', async () => sdk.contracts.moderatorDeleteDocument({ ...(await asModerator(M1)), contractId, documentTypeName: 'post', documentId: state.S1, reason: reason('tm-2') }));
+  let actionId = null;
+  await attempt('tm-3', async () => sdk.contracts.moderatorDeleteSettledDocument({ ...(await asModerator(M1)), contractId, documentTypeName: 'post', documentId: state.S1, reason: reason('tm-3 proof: settled post') }), (result) => {
+    actionId = toBase58(result.actionId);
+    check(`tm-3 ${M1.label} proposes deleting S1: an active action (its own approval)`, result.status === 'active', `${actionId} ${result.status}`);
+  }, { idempotent: false });
+  if (!actionId) return;
+  // A read right after a write can reach a node a block behind: retry briefly before calling it absent.
+  const settled = async (read, ok) => {
+    let value = await withReconnect(read);
+    for (let tries = 0; !ok(value) && tries < 4; tries++) { await sleep(SETTLE_MS); value = await withReconnect(read); }
+    return value;
+  };
+  const findAction = async (status, until = (action) => action !== null) => settled(async () => (await sdk.contracts.teamActions({ contractId, status, limit: 100 })).actions.find((a) => a.actionId === actionId) ?? null, until);
+  const signersOf = async (status, count) => settled(async () => (await sdk.contracts.teamActionSigners({ contractId, status, actionId })).signerIds.map(toBase58), (signers) => signers.length === count);
+  await attempt('tm-4', () => Promise.all([findAction('active'), signersOf('active', 1)]), ([action, signers]) => check('tm-4 teamActions(active) lists it with approvalCount 1 and its proposer; teamActionSigners = the proposer',
+    action?.approvalCount === 1 && action.proposerId === M1.ownerId && same(signers, [M1.ownerId]), `${bigintSafe(action)} signers ${JSON.stringify(signers)}`));
+  await expectCode('tm-5 the proposer approving its own action again is refused', '41208', async () => sdk.contracts.moderatorApproveTeamAction({ ...(await asModerator(M1)), contractId, actionId }));
+  await attempt('tm-6', async () => {
+    const result = await sdk.contracts.moderatorApproveTeamAction({ ...(await asModerator(M2)), contractId, actionId });
+    return { result, action: await findAction('active', (action) => action?.approvalCount === 2), exists: Boolean(await sdk.documents.get(contractId, 'post', state.S1)) };
+  }, ({ result, action, exists }) => check(`tm-6 ${M2.label} approves: 2 of 3, still active (the leader has not approved), S1 still there`, result.status === 'active' && action?.approvalCount === 2 && exists, `${result.status} ${bigintSafe(action)} exists ${exists}`), { idempotent: false });
+  await attempt('tm-7', async () => {
+    const result = await sdk.contracts.moderatorApproveTeamAction({ ...(await asModerator(L)), contractId, actionId });
+    await sleep(SETTLE_MS);
+    return { result, closed: await findAction('closed'), active: await findAction('active', (action) => action === null), signers: await signersOf('closed', 3), exists: Boolean(await sdk.documents.get(contractId, 'post', state.S1)) };
+  }, ({ result, closed, active, signers, exists }) => check('tm-7 the leader approves: the action runs and closes with 3 approvals, all three signers listed, and S1 is deleted',
+    result.status === 'closed' && closed?.approvalCount === 3 && active === null && sameSet(signers, [L.ownerId, M1.ownerId, M2.ownerId]) && !exists, `${result.status} ${bigintSafe(closed)} signers ${JSON.stringify(signers)} exists ${exists}`), { idempotent: false });
+  await attempt('tm-8', () => sdk.contracts.documentRemovals({ contractId, documentTypeName: 'post', documentIds: [state.S1] }), (page) => {
+    const entry = page.removals[0];
+    check('tm-8 S1\'s removal record: deleted by the approval that met the rule (the leader), with the proposal\'s reason, keeping hashtag "settle" and $createdAt',
+      entry?.moderatorId === L.ownerId && entry.reason?.reasonDocumentId === args.reasonDoc && entry.keptFields?.hashtag === 'settle' && Number(entry.keptFields?.$createdAt) === createdAtOf(S1doc), bigintSafe(entry));
+  });
+  await expectCode('tm-9 a team deletion cannot be restored, not even by the leader', '41209', async () => sdk.contracts.moderatorRestoreDocument({ ...(await asModerator(L)), contractId, documentTypeName: 'post', document: S1doc }));
+  await attempt('tm-10', countDeltas, (delta) => check('tm-10 moderationActionCounts: the deletion counts once for each of the three approvers (+1 each since this phase began)', delta[L.label] === 1 && delta[M1.label] === 1 && delta[M2.label] === 1, JSON.stringify(delta)));
+
+  const F1 = await (async () => {
+    const { document } = buildDocument({ contractId, docType: 'post', ownerId: D.ownerId, data: { content: 'fresh', hashtag: 'fresh' }, entropy: randomIdBytes() });
+    return createdId(await sdk.documents.create({ document, identityKey: D.identityKey, signer: D.signer }));
+  })();
+  await expectCode('tm-11a a proposal for D\'s fresh F1 (inside the window) is refused: use a lone delete', '41206', async () => sdk.contracts.moderatorDeleteSettledDocument({ ...(await asModerator(L)), contractId, documentTypeName: 'post', documentId: F1, reason: reason('tm-11a') }));
+  await attempt('tm-11b', async () => sdk.contracts.moderatorDeleteDocument({ ...(await asModerator(M2)), contractId, documentTypeName: 'post', documentId: F1, reason: reason('tm-11b proof') }), (record) => check(`tm-11b inside the window ${M2.label} deletes F1 alone; the record keeps hashtag "fresh"`, record?.keptFields?.hashtag === 'fresh', bigintSafe(record?.keptFields)), { idempotent: false });
+
+  let replyAction = null;
+  await attempt('tm-12', async () => {
+    const proposal = await sdk.contracts.moderatorDeleteSettledDocument({ ...(await asModerator(L)), contractId, documentTypeName: 'reply', documentId: state.S3, reason: reason('tm-12 proof: settled reply') });
+    replyAction = toBase58(proposal.actionId);
+    const first = await sdk.contracts.moderatorApproveTeamAction({ ...(await asModerator(M1)), contractId, actionId: replyAction });
+    const last = await sdk.contracts.moderatorApproveTeamAction({ ...(await asModerator(M2)), contractId, actionId: replyAction });
+    await sleep(SETTLE_MS);
+    const page = await sdk.contracts.documentRemovals({ contractId, documentTypeName: 'reply', documentIds: [state.S3] });
+    return { statuses: [proposal.status, first.status, last.status], entry: page.removals[0] };
+  }, ({ statuses, entry }) => check('tm-12 a settled reply: the leader proposes, two members approve (active, active, closed); the record keeps rootPostId SR and $createdAt',
+    same(statuses, ['active', 'active', 'closed']) && toBase58(entry?.keptFields?.rootPostId) === state.SR && Number(entry?.keptFields?.$createdAt) > 0 && entry?.moderatorId === M2.ownerId, `${JSON.stringify(statuses)} ${bigintSafe(entry?.keptFields)}`), { idempotent: false });
+  await attempt('tm-13', countDeltas, (delta) => check('tm-13 the counts since this phase began: the leader +2, the first member +2, the second member +3 (two approvals and a lone delete)',
+    delta[L.label] === 2 && delta[M1.label] === 2 && delta[M2.label] === 3, JSON.stringify(delta)));
+  await expectCode('tm-14 approving a closed action is refused', '41210', async () => sdk.contracts.moderatorApproveTeamAction({ ...(await asModerator(M2)), contractId, actionId }));
+}
+
+function defaultStateFile(contractId) {
+  return join(tmpdir(), `prove-social-v11-${contractId}.json`);
+}
+
+/** A write expected to be refused with consensus `code`; any other outcome FAILs. */
+async function expectCode(label, code, run) {
+  try {
+    await withReconnect(run);
+    check(`${label} (${code})`, false, 'accepted');
+  } catch (e) {
+    const detail = describeErr(e);
+    check(`${label} (${code})`, new RegExp(`\\b${code}\\b`).test(detail), detail.slice(0, 200));
+  }
 }
 
 main().then((code) => process.exit(code), (e) => {

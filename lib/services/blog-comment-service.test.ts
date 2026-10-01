@@ -81,6 +81,26 @@ describe('comments on my posts', () => {
     expect(await blogCommentService.getCommentsOnMyPosts(postA, 0)).toEqual([]);
     expect(sdk.documents.query).not.toHaveBeenCalled();
   });
+
+  it('pins the copied blogPostOwnerId up to v5', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v5');
+    const query = vi.spyOn(blogCommentService, 'query').mockResolvedValue({ documents: [] } as never);
+    await blogCommentService.getCommentsOnMyPosts(postA, 5);
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({
+      where: [['blogPostOwnerId', '==', postA], ['$createdAt', '>', 5]],
+      orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'desc']],
+    }));
+  });
+
+  it('pins the derived blogPostId.$ownerId on v6', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v6');
+    const query = vi.spyOn(blogCommentService, 'query').mockResolvedValue({ documents: [] } as never);
+    await blogCommentService.getCommentsOnMyPosts(postA, 5);
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({
+      where: [['blogPostId.$ownerId', '==', postA], ['$createdAt', '>', 5]],
+      orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'desc']],
+    }));
+  });
 });
 
 describe('creating a comment', () => {
@@ -149,6 +169,21 @@ describe('creating a comment', () => {
     const create = await withPost({ ownerId: author, commentsEnabled: null });
     await blogCommentService.createComment(reader, postA, author, 'hi');
     expect(create.mock.calls[0][1]).not.toHaveProperty('postCommentsEnabled');
+  });
+
+  it('on v5 copies the post owner into blogPostOwnerId', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v5');
+    const create = await withPost({ ownerId: author, commentsEnabled: true });
+    await blogCommentService.createComment(reader, postA, reader, 'hi');
+    expect(create.mock.calls[0][1]).toHaveProperty('blogPostOwnerId', bs58.decode(author));
+  });
+
+  it('on v6 leaves blogPostOwnerId out (derived through blogPostId) and still copies commentsEnabled', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v6');
+    const create = await withPost({ ownerId: author, commentsEnabled: true });
+    await blogCommentService.createComment(reader, postA, author, 'hi');
+    expect(create.mock.calls[0][1]).not.toHaveProperty('blogPostOwnerId');
+    expect(create.mock.calls[0][1]).toMatchObject({ content: 'hi', postCommentsEnabled: true });
   });
 
   it('on v4 never sends postCommentsEnabled, which that contract does not have', async () => {

@@ -13,6 +13,7 @@ import { evoSdkService } from '@/lib/services/evo-sdk-service'
 import { PROTOCOL_VERSION, RpcError, type LogLevel } from '../protocol/envelope'
 import { ENGINE_BUILD, bundleHash } from '../build-info'
 import type { AppLifecycleState } from '../shims/lifecycle'
+import { platformInfo, type PlatformInfoDTO } from '../dto/capabilities'
 
 /**
  * Host-specific hooks the API needs. The WebView entry wires the real shims;
@@ -22,9 +23,13 @@ export interface EngineRuntime {
   lifecycle?: (state: AppLifecycleState) => void
   connectivity?: (online: boolean) => void
   setLogLevel?: (level: LogLevel) => void
+  /** Send an event to the host (`write.status`, `session.changed`, ...). */
+  emit?: (event: string, payload: unknown) => void
+  /** Resolves once the host has acknowledged every secure-storage batch so far (ENGINE.md §9.1). */
+  secureDurable?: () => Promise<void>
 }
 
-export interface EngineInfo {
+export interface EngineInfo extends PlatformInfoDTO {
   protocol: number
   variant: string
   bundleHash: string
@@ -70,6 +75,7 @@ export function createEngineModule(runtime: EngineRuntime) {
     ready: evoSdkService.isReady(),
     webAssembly: typeof WebAssembly !== 'undefined',
     ...(bootMs !== undefined ? { bootMs } : {}),
+    ...platformInfo(),
   })
 
   return {

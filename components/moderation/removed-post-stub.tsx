@@ -1,11 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { ExclamationTriangleIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { cn } from '@/lib/utils'
 import { authorDeletesLeaveHoles, type TargetKind } from '@/lib/contract-topology'
 import { provenAbsent } from '@/lib/feed/prove-absent'
-import { missingDocumentState, moderationService, type DocumentRemoval } from '@/lib/services/moderation-service'
+import { missingDocumentState, moderationService, postedOnLabel, type DocumentRemoval } from '@/lib/services/moderation-service'
 
 interface RemovedPostStubProps {
   /** The id the reader expected and the chain no longer has. */
@@ -29,12 +30,27 @@ interface RemovedPostStubProps {
   removedByModerator?: boolean
 }
 
+/** A stub's frame: a feed item (`card`) or an inline quote box (`embed`). */
+function stubFrameClass(variant: 'card' | 'embed', className?: string): string {
+  return cn(
+    'text-sm text-gray-500 dark:text-gray-400',
+    variant === 'embed'
+      ? 'mt-3 border border-gray-200 dark:border-gray-700 rounded-xl p-3'
+      : 'px-4 py-3 border-b border-gray-200 dark:border-gray-800',
+    className
+  )
+}
+
 /**
  * The hole a moderator-removed post or reply leaves: the document is gone
  * (a fetch returns nothing and by-id joins list it in `missingIds`), and the
  * only trace is the removal record, which this resolves lazily so a page of
  * intact posts pays nothing for it. On v10 authors delete for real too, so a
  * proven absence with no record reads as the author's own delete.
+ *
+ * On v11 a removal record keeps a post's hashtag and a post's or reply's
+ * `$createdAt` (and a reply's `rootPostId`), so a takedown's hole still says
+ * where it was and when it was written: "#dash · posted Sep 30".
  */
 export function RemovedPostStub({ documentId, kind, className, variant = 'embed', proven = false, removedByModerator = false }: RemovedPostStubProps) {
   // Null until (and unless) a record is found.
@@ -86,13 +102,7 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
   return (
     <div
       data-testid={`removed-${noun}-${documentId}`}
-      className={cn(
-        'text-sm text-gray-500 dark:text-gray-400',
-        variant === 'embed'
-          ? 'mt-3 border border-gray-200 dark:border-gray-700 rounded-xl p-3'
-          : 'px-4 py-3 border-b border-gray-200 dark:border-gray-800',
-        className
-      )}
+      className={stubFrameClass(variant, className)}
     >
       <p className="flex items-center gap-2 italic">
         <Icon className="h-4 w-4 shrink-0" />
@@ -105,6 +115,65 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
             : `This ${noun} is unavailable.`}
       </p>
       {state === 'removed' && removal?.reason && <p className="mt-1 not-italic">Reason: {removal.reason}</p>}
+      {state === 'removed' && removal && <KeptFieldsLine removal={removal} showThread={variant === 'embed'} />}
     </div>
+  )
+}
+
+/**
+ * A post or reply its author tombstoned (v11, {@link tombstonesAreHidden}):
+ * the document still exists, `deleted` and blank, so unlike
+ * {@link RemovedPostStub} there is no record to look up and no doubt about
+ * who removed it. Holds the place of a thread parent with live replies, a
+ * quote's target or a direct link, and offers nothing to interact with.
+ */
+export function AuthorDeletedStub({ documentId, kind, className, variant = 'embed' }: Pick<RemovedPostStubProps, 'documentId' | 'kind' | 'className' | 'variant'>) {
+  const noun = kind === 'reply' ? 'reply' : 'post'
+  return (
+    <div
+      data-testid={`tombstoned-${noun}-${documentId}`}
+      className={stubFrameClass(variant, className)}
+    >
+      <p className="flex items-center gap-2 italic">
+        <TrashIcon className="h-4 w-4 shrink-0" />
+        {`This ${noun} was deleted by its author.`}
+      </p>
+    </div>
+  )
+}
+
+/**
+ * What the removal record kept of the document (v11): the hashtag it was in,
+ * when it was written and, for a quoted reply, a link to its thread. Nothing
+ * when the record keeps none.
+ */
+function KeptFieldsLine({ removal, showThread }: { removal: DocumentRemoval; showThread: boolean }) {
+  const { hashtag, createdAt, rootPostId } = removal.kept
+  const thread = showThread ? rootPostId : undefined
+  if (!hashtag && createdAt === undefined && !thread) return null
+  // The stub can sit inside a clickable card: a link here must not also open the card.
+  const stop = (e: React.MouseEvent) => e.stopPropagation()
+  const parts: React.ReactNode[] = []
+  if (hashtag) {
+    parts.push(
+      <Link key="tag" href={`/hashtag?tag=${encodeURIComponent(hashtag)}`} onClick={stop} className="text-yappr-500 hover:underline">
+        #{hashtag}
+      </Link>
+    )
+  }
+  if (createdAt !== undefined) parts.push(<span key="posted">posted {postedOnLabel(createdAt)}</span>)
+  if (thread) {
+    parts.push(
+      <Link key="thread" href={`/post?id=${encodeURIComponent(thread)}`} onClick={stop} className="text-yappr-500 hover:underline">
+        view thread
+      </Link>
+    )
+  }
+  return (
+    <p data-testid={`removed-kept-${removal.documentId}`} className="mt-1 not-italic">
+      {parts.map((part, index) => (
+        <span key={index}>{index > 0 && ' · '}{part}</span>
+      ))}
+    </p>
   )
 }

@@ -21,6 +21,9 @@ const dispatcher = createDispatcher({
     lifecycle: dispatchLifecycle,
     connectivity: dispatchConnectivity,
     setLogLevel: level => { forwardFrom = level },
+    // Called only after construction (nothing emits while the API is built).
+    emit: (event, payload) => dispatcher.emit(event, payload),
+    secureDurable: () => engineStorage.secureDurable(),
   }),
   transport: createWebViewTransport(),
   onStorageAck: seq => engineStorage.ack(seq),

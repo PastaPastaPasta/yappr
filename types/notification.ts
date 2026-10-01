@@ -18,4 +18,14 @@ export interface Notification {
    * ("liked your reply") and the link target.
    */
   targetKind?: 'post' | 'reply'
+  /**
+   * v11 aggregated like: how many new likers this notification stands for
+   * (`from` is the first of them) — "Alice and 3 others liked your post".
+   */
+  likerCount?: number
+  /**
+   * v11 like: no like index keeps a like's time, so `createdAt` is when this
+   * device noticed it — used for ordering only, never shown as a time.
+   */
+  timeless?: boolean
 }

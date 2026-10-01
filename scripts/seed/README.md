@@ -1,7 +1,7 @@
 # Devnet content seeding — ops runbook
 
-Seeds the devnet (bonsia on 4.2.0-beta.7: social contract
-`NEXT_PUBLIC_YAPPR_CONTRACT_ID` in `.env.devnet`, topology v10) with synthetic
+Seeds the devnet (sakura on 5.0.0-beta.1: social contract
+`NEXT_PUBLIC_YAPPR_CONTRACT_ID` in `.env.devnet`, topology v11) with synthetic
 users and content. Built for a 10-user /
 ~1100-op pilot first, but resumable and parallel from the start so the same
 scripts scale to 500 users / 50k posts.
@@ -46,7 +46,7 @@ NETWORK=devnet node scripts/seed/provision-seed-identities.mjs --treasury-addres
 
 Generates `.seed-treasury.local.key` (64-hex, chmod 600) on first run and
 prints the P2PKH address (devnets use testnet prefixes). Send devnet DASH to it
-from the devnet faucet (bonsia: <https://faucet.bonsia.networks.dash.org/>;
+from the devnet faucet (sakura: <https://faucet.sakura.networks.dash.org/>;
 faucet etiquette: one request at a time, honour rate limits).
 
 ### Funding math (pilot: 10 identities, ~1100 ops)
@@ -128,8 +128,9 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
   resumed run never moves an author between funding models. Every
   post/reply create is also a hand-built batch carrying the contract's action
   fee agreement (`sdk.documents.create` cannot express one; 40132 without).
-- The seeder writes v10 documents only, and refuses to run unless
-  `NEXT_PUBLIC_CONTRACT_TOPOLOGY` (env / `.env.devnet`) is `v10`. The corpus
+- The seeder writes v10/v11 documents only (v11 keeps every create shape it
+  writes), and refuses to run unless `NEXT_PUBLIC_CONTRACT_TOPOLOGY` (env /
+  `.env.devnet`) is `v10` or `v11`. The corpus
   `"hashtag": ""` convention means "untagged", and the seeder **omits the
   hashtag property** on untagged posts and on their likes (a `where` entry's
   both-absent; `''` is consensus error 40127). Tags longer than 61 characters

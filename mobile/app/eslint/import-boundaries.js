@@ -113,7 +113,7 @@ const rule = {
       if (options.allowRepoFiles && isInside(resolved, REPO_ROOT)) return;
 
       const repoPath = path.relative(REPO_ROOT, resolved).split(path.sep).join('/');
-      if (!isInside(resolved, REPO_ROOT) || !repoPath.startsWith('lib/')) {
+      if (!isInside(resolved, REPO_ROOT) || !(repoPath === 'lib' || repoPath.startsWith('lib/'))) {
         context.report({ node, messageId: 'outside', data: { spec } });
       } else if (filename !== allowlistFile) {
         context.report({ node, messageId: 'libDirect', data: { spec } });
@@ -143,12 +143,16 @@ const rule = {
     const allType = (/** @type {any[]} */ specifiers, /** @type {string} */ key) =>
       specifiers.length > 0 && specifiers.every((s) => s[key] === 'type');
 
-    /** `require(x)`, `require.resolve(x)`, `jest.requireActual(x)`, `jest.mock(x)`, ... */
+    /**
+     * `require(x)`, `require.resolve(x)`, `require.resolveWeak(x)`, `require.context(dir)`
+     * (Metro bundles the whole directory), `jest.requireActual(x)`, `jest.mock(x)`, ...
+     */
     const isModuleCall = (/** @type {any} */ callee) =>
       (callee.type === 'Identifier' && callee.name === 'require') ||
       (callee.type === 'MemberExpression' &&
         callee.object.type === 'Identifier' &&
-        ((callee.object.name === 'require' && callee.property.name === 'resolve') ||
+        ((callee.object.name === 'require' &&
+          ['resolve', 'resolveWeak', 'context'].includes(callee.property.name)) ||
           (callee.object.name === 'jest' &&
             ['requireActual', 'requireMock', 'mock', 'doMock', 'unmock', 'createMockFromModule'].includes(
               callee.property.name,
@@ -186,8 +190,10 @@ const rule = {
       /** `typeof import('x')` in a type position. */
       /** @param {any} node */
       TSImportType(node) {
-        const literal = node.argument?.literal ?? node.argument;
-        checkSource(literal, true);
+        // typescript-eslint is moving the specifier from `argument` (a TSLiteralType) to `source`.
+        const source = node.source ?? node.argument?.literal;
+        if (source) checkSource(source, true);
+        else context.report({ node, messageId: 'computed' });
       },
     };
   },

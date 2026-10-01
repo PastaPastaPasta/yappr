@@ -8,11 +8,12 @@ mobile/engine/
   src/protocol/          envelope types + JSON codec (dependency-free; the RN app imports these at runtime)
   src/rpc/               transport, dispatcher (engine side), client proxy (host side)
   src/shims/             storage (sync Web Storage, write-through, secure routing), lifecycle events
-  src/api/               engine.*, feed.*, posts.*, profiles.*: thin calls into lib/, mapped to DTOs
+  src/api/               engine, feed, posts, engage, profiles, graph, explore: thin calls into lib/; dto.ts
+  src/dto/               cursors, paging, enrichment pipeline, thread port, capabilities, DTO validators
   src/entry.webview.ts   the WebView entry; src/install-shims.ts runs before lib loads
   src/selftest.ts        selftest.html: engine + in-page host, for browsers nothing can drive
   test/unit/             codec, RPC, shims, DTO mappers (offline)
-  test/contract/         the API in Node against testnet, read only
+  test/contract/read/    the read API in Node against testnet, one file per module (ENGINE_VARIANT=devnet: sakura)
   test/browser/          the built bundle in Playwright WebKit + Chromium, file:// and https origins
 ```
 
@@ -26,7 +27,8 @@ Run `npm ci` at the repo root first: the bundle resolves `lib/`'s dependencies f
 | `npm run typecheck` | `tsc` over src, tests and the lib files they reach |
 | `npm run lint` | ESLint with the engine's own config (`.eslintrc.cjs`; the root config ignores `mobile/**`) |
 | `npm test` | Unit tests (offline) |
-| `npm run test:contract` | Engine API in Node against **testnet** (read only, unauthenticated) |
+| `npm run test:contract` | Engine read API in Node against **testnet** (read only, unauthenticated). `ENGINE_VARIANT=devnet` runs the same suite on `.env.devnet`; it skips with a reason until `ENGINE_DEVNET_READY=1`. Per-call timings go to `$EVIDENCE_DIR/contract-read-<variant>/` |
+| `npm run test:contract:write` | Writes on **sakura** with pool personas 90–99 (`YAPPR_SAKURA_IDENTITIES`), serial. Skips with the reason until W-SAKURA lands |
 | `npm run test:browser` | Needs `build:testnet`. Boots the bundle in WebKit and Chromium; writes timings to `$EVIDENCE_DIR` (default `test-results/`, gitignored; `RUNS=n` per configuration) |
 
 CI: `.github/workflows/mobile-engine.yml` (read-only token) runs typecheck, lint, unit tests and both bundle builds on changes to `mobile/engine/**`, `lib/**`, `types/**`, `hooks/**`, `vendor/platform-auth/**`, `contracts/**`, the root manifests, `tsconfig.json` and `.env.devnet`, so a web change that breaks the engine fails on the web PR. `build.mjs` fails if the bundle ever reads a file outside those directories (`WATCHED_INPUT_DIRS`), so the filter cannot silently fall behind. The contract and browser suites need the live network and run locally for now.
@@ -84,6 +86,8 @@ No `next/*` module is reached. If a future lib change pulls in something browser
 - **Lifecycle:** `engine.lifecycle('active'|'background'|'inactive')` replays React Native `AppState` as `visibilitychange` + `pagehide`/`pageshow`. `document.visibilityState` follows the app, not the always-hidden WebView. `engine.connectivity(online)` fires `online`/`offline` and asks the SDK to rebuild a dead instance.
 - **Console:** forwarded to the host as `log` envelopes at or above a level (default `info`; `engine.setLogLevel('debug')` for diagnostics), filtered before formatting because devnet builds log at debug. tslog's `%c` styling is stripped.
 - **IndexedDB:** `window.indexedDB` is set to `undefined` (ENGINE.md §9.1). Nothing in lib uses it and nothing on the host backs it up, so an unexpected user fails loudly.
+- **`react-hot-toast`** (esbuild alias): lib's toasts become `engine.notice {level, message}` events.
+- **`@dashevo/wasm-sdk/compressed`** (esbuild alias, same in vitest): re-exports evo-sdk's own copy, so the first-login key-registration builder (`lib/services/identity-update-builder.ts`, reached through `lib/auth/platform-auth-adapters`) shares evo-sdk's WASM instance. Without it the bundle carries a second 11.2 MB WASM payload (26.3 MB instead of 15.0 MB).
 - **Early error reporter:** `install-shims.ts` posts uncaught errors and unhandled rejections straight to the bridge. If a lib module throws while loading, the bundle stops before the dispatcher exists, and that log line plus the client's hello timeout are what the host sees.
 
 ## RPC
@@ -116,28 +120,80 @@ No `next/*` module is reached. If a future lib change pulls in something browser
   - engine → host: `window.ReactNativeWebView.postMessage(json)`;
   - host → engine: `webview.injectJavaScript("window.__yapprEngineReceive(" + JSON.stringify(json) + ")")`.
   - In Node tests an in-process pair stands in.
-- **Host client:** `createEngineClient<EngineApi>(transport, {timeoutMs, helloTimeoutMs, onLog})` gives a Proxy. `client.api.feed.forYou({cursor})` sends path `feed.forYou`. Coercing or inspecting the proxy (`then`, `toString`, `toJSON`, `$$typeof`, …) sends nothing. `close(reason)` rejects in-flight calls (for the supervisor on WebContent death), and `ping()` asks for a fresh hello.
+- **Host client:** `createEngineClient<EngineApi>(transport, {timeoutMs, helloTimeoutMs, onLog})` gives a Proxy. `client.api.feed.home({tab, cursor})` sends path `feed.home`. Coercing or inspecting the proxy (`then`, `toString`, `toJSON`, `$$typeof`, …) sends nothing. `close(reason)` rejects in-flight calls (for the supervisor on WebContent death), and `ping()` asks for a fresh hello.
 
-## API (initial)
+## API
 
-| Method | Calls into lib | Returns |
+Each method re-expresses a web hook or page flow as a plain function over the same `lib/` calls; the table names the flow it mirrors. Signed-out callers get everything except what needs a viewer (`NOT_SIGNED_IN`).
+
+| Method | Mirrors | Returns |
 | --- | --- | --- |
-| `engine.boot()` | `evoSdkService.initialize({network, contractId})`, as web's `SdkProvider` does | `EngineInfo` |
-| `engine.info()` | — | `EngineInfo`: protocol, variant, bundle sha256, evo-sdk version, network, topology, contract ids, ready, webAssembly, bootMs |
-| `feed.forYou({cursor?})` | As web's `useFeedData`: `loadForYouFeed` with the persisted `feedLanguage` (where `postsHaveLanguage()`), `sortFeedByTimestamp`, then `postService.enrichPostsBatch` (authors, stats, viewer marks, block and follow status, quotes) and `enrichPostsWithRepostsAndQuotes` (repost attribution, drops tombstones). Web's page cache and new-post polling are the host's job. | `Page<PostDTO>` |
-| `posts.get(id)` | As web's `usePostDetail`: `postService.getPostById`, falling back to `replyService.getReplyById` + `replyToPost`; a v10 bare repost resolves to its target; then `enrichPostsBatch` | `PostDTO \| null` |
-| `profiles.get(idOrName)` | `dpnsService.resolveIdentity` (for names), `loadUserStats`, `unifiedProfileService.getProfile`, `dpnsService.getAllUsernamesSorted`, as web's `/user` does | `ProfileDTO \| null` |
-| `engine.lifecycle(state)` | lifecycle shim | — |
-| `engine.connectivity(online)` | `online`/`offline` events, then `evoSdkService.restoreConnection()` once a boot was attempted (rebuilds a dead instance or finishes a failed boot, as web's `SdkProvider`) | — |
-| `engine.setLogLevel(level)` | console forwarding threshold | — |
+| `engine.boot()` | `SdkProvider`: `evoSdkService.initialize({network, contractId})` | `EngineInfo` |
+| `engine.info()` | — | `EngineInfo`: protocol, variant, bundle sha256, evo-sdk version, network, topology, contract ids, ready, webAssembly, bootMs, plus `capabilities`, `ipfsGateways`, `avatarStyles` (below) |
+| `engine.lifecycle(state)` / `connectivity(online)` / `setLogLevel(level)` | lifecycle shim; `restoreConnection()` once a boot was attempted; console threshold | — |
+| `feed.home({tab, sort?, window?, cursor?})` | `hooks/use-feed-data.ts`, `use-top-feed.ts`. **For You:** `loadForYouFeed` with the persisted `feedLanguage` (where posts carry one), `sortFeedByTimestamp`, `enrichPostsWithRepostsAndQuotes` (drops tombstones). **Following:** `loadFollowingFeed`'s time windows; a load lib swallowed rejects (`NETWORK`) instead of reading as the end. **Top:** `topLikedPostsHydrated` / `…ByAuthorsHydrated`, K widened by 20 per page up to 100, only unseen ids returned. | `Page<PostDTO>` |
+| `feed.checkNew({tab, since, knownIds?})` | `checkForNewPosts`: `queryPostsSince` / `queryPostsByOwnersSince` from `since − 2 s`, 50 | `{count, posts}` |
+| `feed.hashtag({tag, sort?, window?, cursor?})` | `app/hashtag/page.tsx`: v9/v10 `queryForDisplay` on `tagAndTime` (50/page); v2 `getPostIdsByHashtag` paged in memory with the tagger check; Top: tag-pinned ranking. Tags are normalised to storage form (`#Dash` → `dash`, `$DASH` → `dash_cashtag`) | `Page<PostDTO>` |
+| `posts.get(id)` | `usePostDetail`: post, else reply; a v10 bare repost resolves to its target | `PostDTO \| null` |
+| `posts.thread(id, cursor?)` | `usePostDetail` + its module-private tree builders (ported to `src/dto/thread.ts`): ancestors (root on flat threads, the parent walk on v2), replies with the author's thread first, frontier expansion under a focused reply, deleted-parent stubs (v10, `deletedStub: true`, blank author). Pages are **cumulative** (a later page can nest under an earlier one); a call without a cursor re-reads everything. | `ThreadDTO` |
+| `posts.engagements({id, kind}, tab, cursor?)` | `app/post/engagements/page.tsx`: `getPostLikes` / `getPostReposts` / `getQuotePosts` (v10: one list split by `splitRepostsAndQuotes`, `truncated` at 100), 30 users a page | `EngagementPage` |
+| `posts.engagementCounts({id, kind})` | `loadEngagementCounts`; v10 splits the quote list as the engagements page does | `{likes, reposts, quotes, truncated}` |
+| `posts.poll({contractId?, id})` | `components/poll/poll-card.tsx`: `getPoll`, `getTally` (`totalVotes: null` when unreadable), `getMyVotes` (`myVotes: null` when unreadable); each degrades alone | `PollDTO \| null` |
+| `posts.mentionCandidates(prefix)` | `mention-autocomplete.tsx`: ≥3 chars, `searchUsernamesWithDetails(…, 5)`, one row per identity | `UserSummaryDTO[]` |
+| `engage.stats(targets)` | `getBatchPostStats` + (signed in) `getBatchUserInteractions`, ≤100. lib reports a failed read as zeros, so the counts are advisory | `Record<id, EngageStatsDTO>` |
+| `profiles.get(idOrName)` | `app/user/page.tsx`: `loadUserStats`, `getProfile`, `getAllUsernamesSorted`, viewer `isFollowing` / `isBlocked` (`blocks: null` when unreadable). A failed profile read rejects (checked with `profileExists`), never "no profile"; `null` for an unknown identity, or a name DPNS did not resolve (lib reports unreachable as not found, so that `null` may be transient). | `ProfileDTO \| null` |
+| `profiles.posts({id, tab, window?, cursor?})` | `posts`: `getUserPosts` (+ reposts off v10, each placed on the page its time falls in); `replies`: `getUserReplies` + `fetchReplyParents` (`ProfileReplyDTO`); `top`: author ranking; `mentions`: `getPostsMentioningUser` → `loadMentioningPosts`, paged in memory | `Page<PostDTO \| ProfileReplyDTO>` |
+| `profiles.batch(ids)` | `loadIdentityBatch`, ≤100, in order | `UserSummaryDTO[]` |
+| `profiles.avatarSvg(id, style?, seed?)` | `generateAvatarSvg`: the recipe given, or the identity's own (`null` for an image avatar) | `string \| null` |
+| `graph.followers(id, cursor?)` / `following` | `connection-list-page.tsx`: whole list once, 30 a page with names, profiles, counts, viewer follow | `Page<UserSummaryDTO>` |
+| `graph.status(ids)` | `getFollowStatusBatch` (signed in), ≤100 | `Record<id, boolean>` |
+| `explore.trending({window?})` | `getTrendingHashtags({168 h, 12})`; cashtags flagged; `countKind` likes on v9/v10 | `TagDTO[]` |
+| `explore.topPosts({window?})` / `topCreators({window?})` | `app/explore/page.tsx`, `top-creators.tsx` | `PostDTO[]` / `RankedUserDTO[]` |
+| `explore.searchUsers(q)` / `searchHashtags(q)` / `searchPosts(q)` | `app/search/page.tsx` (≥3 chars; exact-name fallback; trending + exact tag count); `app/explore/page.tsx` (substring over the newest 100 posts) | `UserSummaryDTO[]` / `TagDTO[]` / `PostDTO[]` |
 
-DTOs live in `src/api/dto.ts`. `boot()` fails with code `NO_WEBASSEMBLY` when WebAssembly is missing (iOS Lockdown Mode).
+DTO types and mappers live in `src/api/dto.ts`; `src/dto/` holds the cursor codec, paging, the enrichment-and-filter pipeline (`hydrate.ts`), the thread port, capabilities and the runtime validators (`validate.ts`, used by every contract test). `boot()` fails with code `NO_WEBASSEMBLY` when WebAssembly is missing (iOS Lockdown Mode).
 
-- **Authors:** `author.displayName` and `author.avatarUrl` are never empty. They fall back to the DPNS label, then `User <last 6>`, and to the default DiceBear avatar.
-  - `author.resolved` is false when lib's lookup failed (it swallows the error), so the host knows the fallbacks are placeholders.
-  - That covers a feed author left in the loading shape and a quoted post's author left as lib's `Unknown User` placeholder, whose name is then dropped in favour of the fallbacks.
-- **Viewer state:** signed in only. Covers `liked`, `reposted`, `bookmarked`, `authorBlocked` and `followsAuthor`.
-- **`ProfileDTO.hasProfile`:** false means either no profile document or a failed read (lib's `getProfile` returns null for both). Re-check strictly before an owner edit, as web's `/user` page does.
+- **Browsing lists** (feeds, tags, explore, search) drop blocked authors, including the author behind a v10 bare repost, and apply the NSFW `hide` preference (`filterHiddenSensitive`), as web does. Profile tabs keep a blocked author's own posts; threads and single posts never filter (the host renders the gate).
+- **Cursors** are opaque base64url JSON tied to the engine build, and to the list they page (tag, thread, profile, feed language, viewer for Following and Top); a foreign, stale or malformed one rejects with `BAD_CURSOR`. Lists lib reads whole are kept for 60 s per scroll (pruned as new ones load).
+- **dashpay/platform#5244:** on testnet, paging past the last document of a mixed-direction query (`x asc, $createdAt desc`) throws a proof error instead of proving an empty page. A continuation that hits it ends the list (`src/dto/paging.ts`).
+- **Topology:** a method the active contract cannot serve rejects with `NOT_SUPPORTED`; RN reads `engine.info().capabilities` (rankings, windows, quote-slot rules, reposts/bookmarks per kind, flat threads, tombstones, reports, content limits in chars and bytes, profile limits) instead of evaluating `lib/contract-topology.ts`.
+- **Authors:** `displayName` is never empty (profile name, DPNS label, `User <last 6>`). `avatar` is `{uri}` for an image or `{dicebear: {style, seed}}` for a generated one, read from the stored profile field; render the latter with `profiles.avatarSvg` and cache it under `style:seed` (RN never bundles DiceBear). `resolved` is false when lib's lookup failed (it swallows the error): a feed author left in the loading shape, or a quoted post's author left as lib's `Unknown User` placeholder, whose name is then dropped for the fallbacks.
+- **Viewer state:** signed in only: `liked`, `reposted`, `bookmarked`, `ownQuoteId` (v10's one quote-or-repost slot), `authorBlocked`, `followsAuthor`.
+- **Polls:** `PostDTO.poll` is set for a native embed on the configured Pollr contract or a legacy Pollr link (`linkUrl`, which web hides from the text), exactly as `post-card.tsx` decides.
+
+## Session, writes and settings (M7a)
+
+**`session.*`** (`src/api/session.ts`, `src/session/`). A `PlatformAuthController` built from web's `createYapprPlatformAuthDependencies()`, with vaults, passwords, passkeys and the username and profile gates turned off (ADR-001 E5). Post-login tasks, the encryption-key auto-derive and the 5-minute balance refresh stay on, as on web.
+
+| Method | What it does |
+| --- | --- |
+| `restore()` / `current()` | `controller.restoreSession()`, once per boot; every session call waits for it. A stored key that no longer signs for the identity drops the session (`session.changed {reason: 'key-invalid'}`) |
+| `checkKey({key})` | WIF or hex → `identities.byPublicKeyHash` (then the non-unique index) → `matchIdentityKey` against the identity's keys (an enabled AUTH key, CRITICAL or HIGH; lib's `validatePrivateKey` ignores `disabledAt`, web bug #616). For "Identity found" before signing in. Errors: `KEY_INVALID`, `KEY_WRONG_NETWORK`, `IDENTITY_NOT_FOUND`, `KEY_NOT_ON_IDENTITY` (lib's reason, e.g. a MASTER key) |
+| `signInWithKey({key})` | `checkKey`, then `controller.loginWithAuthKey(id, wif, {skipUsernameCheck: true})`. Hex is stored as a WIF for this network. Resolves only after `secureDurable()` (the host acknowledged the key batch). Arguments are sensitive: never log them |
+| `startKeyExchange()` | `dash-key:` request (`buildYapprKeyExchangeUri`, the configured network and label). One request at a time; it lives 10 minutes, and until the wallet answers it (ephemeral key included) is also kept under `yappr_secure_kx_request`, so a killed app resumes it (`pendingKeyExchange()`) |
+| `awaitKeyExchange(id, {waitMs?})` | Polls for the wallet's answer for up to `waitMs` (default 45 s, at most 120 s), so one call fits the client deadline. `pending` → call again ("Check again"). Then `signed-in` if the identity has Yappr's keys, else `needs-registration` with the `dash-st:` URI (`buildUnsignedKeyRegistrationTransition`) and the keys it adds. A wallet approval is kept for retries; nothing derived from it is persisted |
+| `awaitKeyRegistration(id, {waitMs?})` | Checks every 5 s for the registered keys for up to `waitMs`, then signs in (`completeYapprKeyExchangeLogin`) |
+| `cancelKeyExchange(id)` | Aborts the poll and zeroes the keys (`KEY_EXCHANGE_CANCELLED` for the waiting call). The keys are also wiped when the request expires, even if the host never calls back. Overlapping calls that complete the same approval share one sign-in |
+| `accounts()` | The engine's registry, `yappr_engine_accounts` in kv |
+| `switchAccount(id)` / `prepareAddAccount()` | lib has one session slot, so both are a controlled engine restart: they stop DM v5, save the active account's `yappr_session` and stash its `yappr-notifications`, put the target's in place (none for "add"), and resolve. The host must then restart the engine with the target's secrets; the next restore reports `switched`. Until that restart, session and write calls reject with `RESTART_REQUIRED`. Sign-ins run one at a time; one is refused (`BAD_REQUEST`) while any identity is active, including the same one (a failed wallet re-login would clear its keys): sign out first to re-enter a key |
+| `signOut({identityId?})` | Offline. Active account: `controller.logout()` (secrets, session, logout cleanup). Another account: lib's secure-storage clear functions by id (forwarded as deletes even though the engine does not hold them). Either way its registry entry, stash and write tickets go, and it resolves after `secureDurable()`. **Host:** the `yappr:pf:*` private-feed keys carry no identity in their names, so the host must file every secure write under the account active at the time, and purge that account's secure index when it signs out while not active |
+| `refreshBalance()` | `controller.refreshBalance()` → `{credits: bigint}` |
+
+Events: `session.changed {session, reason}` (`restored`, `signed-in`, `switched`, `signed-out`, `key-invalid`, `balance`), and `session.keyRequired {identityId, purpose}` when lib opens its login or encryption-key modal (the engine closes it and asks the host).
+
+**`writes.*`** (`src/api/writes.ts`, `src/writes/`). Every write gets a `WriteTicket` (`pending` → `confirmed` | `unconfirmed` | `failed`), emitted as `write.status` on each transition and persisted under `yappr_engine_writes` (at most 100; confirmed ones pruned after 24 h). A ticket still `pending` at load was interrupted: it becomes `unconfirmed` with `ENGINE_RESTARTED` and is never re-sent.
+
+- **Handler contract** (M7b, M-DM). Register one `WriteHandler` per op with `tickets.register(op, {run, probe?, persistArgs?})` and call `tickets.submit({op, args, target, documents})`. `fromTransitionResult` and `fromBoolean` map lib's results.
+  - **Once `run()` has started, a `NETWORK` or `RATE_LIMITED` failure counts as "may have landed"** (`unconfirmed`, outcome `unknown`, not retryable until a check proves it absent), because lib signs, broadcasts and waits in one call. To report a failure that provably happened before any lib write call (the handler's own validation, a read, a `settleUnconfirmed` probe), throw `new NotSentError(cause)` (exported from `src/writes/tickets.ts`): the cause is classified with outcome `not-sent`, and a transient one (network, rate limit, timeout) becomes retryable. A failure while the handler's last reported stage is `waiting-parent` counts the same; report `signing` (or later) before calling lib. Neither proof counts once the ticket names an unconfirmed document (an earlier thread part may be out): the ticket is then `unconfirmed`, outcome `unknown`, and needs a check before any retry.
+  - `persistArgs` is **off by default**: arguments live in memory only, so after an engine restart that ticket cannot be retried. Opt in only for arguments that may sit in plain kv (MMKV): never DM plaintext or private-feed content.
+  - Report document ids (`ctx.documents`, or the result's `documents`) as soon as they are known: `check` can prove only what the ticket names, unless the handler has a `probe`.
+- `check(id)`, for an `unconfirmed` ticket: proves each named document present (create) or absent (delete) with proved `documents.get` reads (a create's absence needs two reads 2 s apart), or runs the handler's `probe`. Applied → `confirmed`; proved not applied → still `unconfirmed`, now `retryable`; unprovable → unchanged, with the probe's error. An answer a retry overtook is dropped.
+- `retry(id)`: only a `failed` ticket whose error is retryable (refused retryably, or never sent), or an `unconfirmed` one a check proved not applied. Otherwise `NOT_RETRYABLE`. The earlier attempt's unproven documents are dropped (a fresh nonce gives fresh ids). Nothing is ever retried automatically.
+- `get`, `check`, `retry` and `dismiss` act only on the active account's tickets (a retry signs with the active account's key), and the restart replay reports only the active account's reconciled tickets.
+- **Deviation from ENGINE.md §7.3 row 12:** `NONCE_CONFLICT` (40204) is outcome `unknown` and `unconfirmed`, not "refused, retryable": the refusal can be this very transition executing before an SDK re-broadcast, and lib itself never rebuilds it (`state-transition-service.ts` `nonceRefused`). `NETWORK` and `NO_KEY` substring matches apply only to errors without a consensus code.
+- `classify(err)` (`src/writes/classify.ts`) walks `categorizeError`'s predicates in its order, then the cases it leaves generic (duplicate, already exists, rate limit, timeout, network, missing key). `userMessage` is always `categorizeError`'s text. lib's three module-private predicates are recognised by the string `categorizeError` produces for them. `test/fixtures/error-vectors.json` pins 49 real messages (code, outcome, retryable, ticket state, user message); add one with every new web predicate.
+
+**`settings.get()` / `settings.set(patch)`** (`src/api/settings.ts`): link previews, media gate, read receipts, NSFW mode, notification toggles, `payWith` and feed language, through lib's own `useSettingsStore` setters (persisted by its `persist`). A patch is validated whole before any of it applies (`BAD_REQUEST`).
 
 ## Measurements (2026-10-01, testnet, evo-sdk 4.2.0-beta.7, Apple Silicon Mac)
 
@@ -146,7 +202,7 @@ DTOs live in `src/api/dto.ts`. `boot()` fails with code `NO_WEBASSEMBLY` when We
 - The rest is wasm-sdk glue (0.5 MB), `lib/` (0.48 MB) and `@dicebear` avatar styles (about 2 MB).
 - The build takes about 0.4 s.
 
-**Browser boot proof:** `npm run test:browser`, 3 cold runs per configuration, each in a fresh browser context. Two more WebKit runs check the injected snapshot: a session read at call time (the feed comes back with viewer marks), and a persisted `yappr-settings` `feedLanguage: 'zz'` read by zustand `persist` when `lib/store.ts` loads (the v2 For You page comes back empty). Raw data is in `browser-boot-*.{json,tsv}`; the files for these numbers, the simulator screenshot and the reproducer below were saved **locally** on the build machine under `/tmp/claude/yappr-mobile/evidence/m2-engine/` and are not in the repo. "Boot" is the `engine.boot()` round trip (wasm decompress + compile, SDK connect, contract preload; testnet contracts are seeded from `lib/contracts/bundled`). "Feed" is the first `feed.forYou()` page, enriched.
+**Browser boot proof:** `npm run test:browser`, 3 cold runs per configuration, each in a fresh browser context. Two more WebKit runs check the injected snapshot: a session read at call time (the feed comes back with viewer marks), and a persisted `yappr-settings` `feedLanguage: 'zz'` read by zustand `persist` when `lib/store.ts` loads (the v2 For You page comes back empty). Raw data is in `browser-boot-*.{json,tsv}`; the files for these numbers, the simulator screenshot and the reproducer below were saved **locally** on the build machine under `/tmp/claude/yappr-mobile/evidence/m2-engine/` and are not in the repo. "Boot" is the `engine.boot()` round trip (wasm decompress + compile, SDK connect, contract preload; testnet contracts are seeded from `lib/contracts/bundled`). "Feed" is the first For You page (`feed.home`), enriched.
 
 | Engine (version) | Origin | hello (parse + eval) | boot | first feed | cold start → feed |
 | --- | --- | --- | --- | --- | --- |
@@ -166,6 +222,8 @@ DTOs live in `src/api/dto.ts`. `boot()` fails with code `NO_WEBASSEMBLY` when We
 
 **Node harness** (`npm run test:contract`): boot is about 450–520 ms, and the first For You page about 0.6–1.2 s.
 
+**Read API, cold** (first call after boot in a fresh Node engine, testnet, 3 runs, p50): `feed.home` 1.55 s, `feed.checkNew` 1.29 s, `feed.hashtag` 0.20 s, `posts.get` 1.48 s, `posts.thread` 1.36 s, `posts.engagements` 0.70–0.81 s, `posts.engagementCounts` 0.47 s, `posts.poll` 0.21 s, `posts.mentionCandidates` 1.11 s, `engage.stats` 0.60 s, `profiles.get` 0.85 s, `profiles.posts` 0.51 s (posts), `graph.followers`/`following` 0.14–0.18 s, `explore.trending` 0.20 s, `explore.searchUsers` 0.61 s, `explore.searchHashtags` 0.41 s, `explore.searchPosts` 0.94 s. Warm calls after the first page are mostly 60–250 ms. The raw numbers are in the local evidence directory (`/tmp/claude/yappr-mobile/evidence/m6-engine-reads/`).
+
 ## Origin and CORS finding
 
 - **CORS works from `file://`:** testnet DAPI nodes (`https://<ip>:1443`, grpc-web) **echo the request origin** in `Access-Control-Allow-Origin`. That is `null` for `file://` and `https://engine.yap.pr` for the custom base, so `fetch` from a `file://` page works in both WebKit and Chromium.
@@ -182,7 +240,7 @@ DTOs live in `src/api/dto.ts`. `boot()` fails with code `NO_WEBASSEMBLY` when We
    - On testnet's `post.languageTimeline`, the query is `where language == 'en' and $createdAt > 0`, `orderBy language asc, $createdAt desc`, `limit 20`, `startAfter <last id>`.
    - When there are no more documents, it throws `grovedb: invalid proof: Invalid V1 proof verification parameters: invalid proof error Proof op family does not match the query direction: upright op in a right-to-left walk; a layer proof is emitted entirely in the family of its own direction`. `startAt` fails the same way.
    - The ascending equivalent returns an empty page.
-   - Web's For You infinite scroll on testnet hits this too.
+   - Web's For You infinite scroll on testnet hits this too. Filed as dashpay/platform#5244; the engine reads it as the end of the list.
    - Reproducer: `node --input-type=module < repro-startafter-proof.mjs`, run from a checkout with the root deps. The script is in the local evidence directory (not in the repo); it pages the query above with `startAfter` and `startAt`, and then without the range clause.
 2. **The same index ignores `desc` without a range clause** (same reproducer script, last line). `where language == 'en'`, `orderBy language asc, $createdAt desc` returns the documents in ascending `$createdAt`. Adding `$createdAt > 0` gives the expected descending order.
 3. **Web bug (lib, not fixed here): `isUsernameContested()` always returns false.**
@@ -194,6 +252,8 @@ DTOs live in `src/api/dto.ts`. `boot()` fails with code `NO_WEBASSEMBLY` when We
 ## Known gaps
 
 - `posts.get` returns `null` for a failed read as well as for a missing post. That's lib's single-document `get()`, kept as is.
+- Not in the read API yet: `explore.welcome` (signed-out homepage) and blog results in search (blogs are not in 1.0).
+- Testnet holds 2 `en` posts since the August rollback, so the contract suite cannot exercise a second page, rankings (v2 has none), trending or a native poll there; those paths run live only once sakura's contracts are published (the thread builders and cursors have unit tests).
 - The devnet variant can't boot until `.env.devnet` moves to sakura.
 - The bundle carries all 30 `@dicebear` styles (about 2 MB) because `unified-profile-service` imports the collection. Trimming it would need an alias.
 - **Not yet done** (they belong to M4, the EngineHost): the encrypted-MMKV and Keychain/Keystore write-through on the host side, the supervisor and replay of reads, and memory numbers on devices.

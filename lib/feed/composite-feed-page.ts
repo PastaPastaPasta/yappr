@@ -19,6 +19,7 @@ import {
   replyCountNeedsRoot,
   replyLinkage,
   repostIndexFor,
+  tombstonesAreHidden,
   type TargetKind,
 } from '@/lib/contract-topology';
 import type {
@@ -527,9 +528,11 @@ async function decodeFeedPage(
   // Quoted posts, attached in place; their authors resolve through the
   // (now seeded) batch resolvers. Distinct quoted authors still need DPNS
   // lookups, and logged-in pages also need their profiles.
+  // v11 keeps a tombstoned target: the quote then says its author deleted it
+  // (and a bare repost of it hides) without a per-card fetch of the same.
   const quotedPosts = documentsAt(result, slots.quotedPosts)
     .map((doc) => transformRawPost(doc))
-    .filter((post) => !post.deleted);
+    .filter((post) => !post.deleted || tombstonesAreHidden());
   if (quotedPosts.length > 0) {
     const quotedAuthorIds = Array.from(new Set(quotedPosts.map((post) => post.author.id).filter(Boolean)));
     if (slots.quotedAuthorExtensions >= 0) {

@@ -4,6 +4,7 @@
  * declarations off the PARSED contract.
  */
 import bs58 from 'bs58';
+import { referenceKindMismatch } from './contract-probes.mjs';
 import { describeErr } from './owner-keys.mjs';
 
 /** The parsed config hands appointed identities back as bytes; print them as ids. */
@@ -60,8 +61,9 @@ export async function requireModeratorsExist(sdk, moderators = []) {
  * the divergences the chain would refuse (or, worse, silently drop):
  *   - `config.moderation` declared in the file but not carried by the parse
  *     (a `$formatVersion: "1"` config drops it without a word);
- *   - a moderator-deletable type (`moderatorAbilities.delete`) referenced as
- *     `permanentDocument` (40122 at registration);
+ *   - a same-contract reference whose kind its target does not admit
+ *     (40122/40131/40143/40144 at registration; on 5.0.0-beta.1 both wasm
+ *     parses accept a `deletableDocument` reference at a moderated-kind type);
  *   - `actionFees.*.moderators` on an unmoderated contract (10902).
  */
 export function auditModeration(documentSchemas, dataContract) {
@@ -76,11 +78,13 @@ export function auditModeration(documentSchemas, dataContract) {
   }
   const deletable = new Set(Object.entries(documentSchemas).filter(([, s]) => s.moderatorAbilities?.delete === true).map(([name]) => name));
   if (deletable.size > 0) console.log(`  moderator delete: ${[...deletable].join(', ')}`);
+  const ownId = String(dataContract.id);
   for (const name of Object.keys(documentSchemas)) {
     for (const reference of dataContract.documentTypeReferences(name)) {
-      if (deletable.has(reference.documentType) && reference.type !== 'deletableDocument') {
-        throw new Error(`${name}.${reference.path} references moderator-deletable "${reference.documentType}" as ${reference.type} (40122)`);
-      }
+      const target = documentSchemas[reference.documentType];
+      if (!target || String(reference.contractId) !== ownId) continue;
+      const mismatch = referenceKindMismatch(reference.type, target, dataContract.config);
+      if (mismatch) throw new Error(`${name}.${reference.path} references "${reference.documentType}", which ${mismatch}`);
     }
   }
   const fees = Object.entries(documentSchemas).filter(([, s]) => s.actionFees).map(([n, s]) => `${n}=${JSON.stringify(s.actionFees)}`);

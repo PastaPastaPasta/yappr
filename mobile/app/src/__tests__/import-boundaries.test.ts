@@ -35,6 +35,7 @@ tester.run('import-boundaries', boundaries.rules['import-boundaries'], {
     { code: "import { Screen } from '~/ui/Screen';", filename: ROUTE, options },
     { code: "import x from '../../../ui/Text';", filename: ROUTE, options },
     { code: "const icon = require('@assets/images/icon.png');", filename: ROUTE, options },
+    { code: "const ctx = require.context('~/app');", filename: ROUTE, options },
     { code: "import type { EngineApi } from '@engine/api';", filename: ROUTE, options },
     { code: "import { type EngineApi } from '@engine/api';", filename: ROUTE, options },
     { code: "export type { Post } from '@/lib/types';", filename: ALLOWLIST_FILE, options },
@@ -71,6 +72,11 @@ tester.run('import-boundaries', boundaries.rules['import-boundaries'], {
     invalid("import { createDispatcher } from '@engine/rpc/dispatcher';", 'engineTypeOnly'),
     invalid("import x from '@engine/rpc/client/../dispatcher';", 'engineTypeOnly'),
     invalid("import x from '@engine/protocol/../api';", 'engineTypeOnly'),
+    // Metro's require.context bundles a whole directory.
+    invalid("const lib = require.context('../../../../../../lib');", 'libDirect'),
+    invalid("const lib = require.context('@/lib', true);", 'libDirect'),
+    invalid("const m = require.resolveWeak('@/lib/constants');", 'libDirect'),
+    invalid("const m = require.resolveWeak('@dashevo/evo-sdk');", 'sdk'),
     // Specifiers that can't be checked.
     invalid('const m = import(name);', 'computed'),
     invalid('const m = require(`@dashevo/${x}`);', 'computed'),

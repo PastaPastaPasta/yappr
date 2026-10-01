@@ -190,11 +190,10 @@ function printSchemaAudit(documentSchemas) {
     if (refs.length > 0) console.log(`  ${continuation} refersTo: ${refs.join(' ')}`);
   }
 
-  // A permanentDocument target that stays deletable — by its owner OR by a
-  // moderator — is refused at registration (40122), so surface the mismatch
-  // here where the fix is obvious.
-  // Every reference type seen per target, so a half-converted cut (one
-  // permanentDocument left beside eight deletableDocument) cannot hide.
+  // Every reference kind seen per target, so a half-converted cut (one
+  // permanentDocument left beside eight deletableDocument) cannot hide. Whether
+  // each target admits the kind (40122/40131/40143/40144) is checked by
+  // `auditModeration`, which runs right after this.
   const targets = new Map();
   for (const [name, schema] of Object.entries(documentSchemas)) {
     for (const [property, { refersTo }] of Object.entries(schema.properties ?? {})) {
@@ -204,17 +203,7 @@ function printSchemaAudit(documentSchemas) {
     }
   }
   for (const [target, references] of targets) {
-    const schema = documentSchemas[target];
-    if (!schema) throw new Error(`refersTo names document type "${target}", which this contract does not define`);
-    const deletable = schema.canBeDeleted !== false || schema.moderatorAbilities?.delete === true || schema.ttl !== undefined;
-    for (const { from, type } of references) {
-      if (type === 'permanentDocument' && deletable) {
-        throw new Error(`${from}: "${target}" is a permanentDocument target but can be deleted (by its owner or by moderators)`);
-      }
-      if (type === 'deletableDocument' && !deletable) {
-        throw new Error(`${from}: "${target}" is a deletableDocument target but nothing can delete it (40131)`);
-      }
-    }
+    if (!documentSchemas[target]) throw new Error(`refersTo names document type "${target}", which this contract does not define (${references[0].from})`);
   }
   console.log(`  reference targets: ${[...targets].map(([t, refs]) => `${t}(${[...new Set(refs.map((r) => r.type))].join('|')})`).join(', ') || 'none'}`);
 }

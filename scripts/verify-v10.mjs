@@ -1,4 +1,31 @@
 /**
+ * Registration-day battery for **contract v10** and its 5.0.0-beta.1 successor
+ * **v11** (`--contract-file contracts/yappr-social-contract-v11.json`,
+ * docs/SOCIAL_V11.md). v11 keeps every v10 case; where it differs the case
+ * switches on the file:
+ *
+ *   - likes are timeless (`outlivesDelete` trend windows, byAuthorPost /
+ *     byAuthorReply without `$createdAt`): t2 and n2 unlike by values WITHOUT
+ *     a `$createdAt`; the trend windows keep the unliked entry (t2i, t2k)
+ *     while the all-time byHashtagPost drops it (t2m), and a re-like counts
+ *     once (t2n); n2's "liked your post" source is the author-pinned liker
+ *     read (`author ==`, `target in`), with no time;
+ *   - m1's removal record keeps the post's `$createdAt` (m1k, D4);
+ *   - design M: x1 becomes the tombstone case (x1t*): an author cannot delete
+ *     a post; a tombstone (`deleted`, every content field left out) lands and
+ *     is final; editing, un-deleting, keeping content or changing the
+ *     hashtag is refused; the quote and reply counts and the replies stay;
+ *     tombstoning a bare repost clears its quote, so the repost count drops
+ *     and a redo lands; a like, reply or quote of a moderator-removed post
+ *     stays readable and counted. Fixture cleanups tombstone instead of
+ *     deleting, and r1's "gone" post is a moderator removal;
+ *   - the self-test pins v11's like indexes and the post/reply settled
+ *     deletion rule (the team flow itself is proved by
+ *     `prove-merged-counts --team-proof` on a contract whose window is
+ *     minutes, since a week cannot pass in a battery).
+ *
+ * The rest of this header describes v10.
+ *
  * Registration-day battery for **contract v10**
  * (`contracts/yappr-social-contract-v10.json`, docs/SOCIAL_V10.md): the
  * 4.2.0-beta.7 cut, exercised against a freshly registered contract on a
@@ -183,8 +210,18 @@ import {
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 
-const CONTRACT_FILE = 'contracts/yappr-social-contract-v10.json';
+const CONTRACT_FILE = takeFlag('--contract-file', 'contracts/yappr-social-contract-v10.json');
 const V10 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
+const CONTRACT_NAME = CONTRACT_FILE.replace(/^.*\//, '');
+/** v11: every like index on `$createdAt` outlives deletes, so no like keeps its time and an unlike names none. */
+const TIMELESS_LIKES = V10.documentSchemas.like.indices.some((index) => index.outlivesDelete === true);
+/**
+ * v11 (design M): posts and replies are moderated (`canBeDeleted: false`) and an author's
+ * delete is a tombstone: a replace setting `deleted` that clears every content field.
+ */
+const TOMBSTONES = V10.documentSchemas.post.canBeDeleted === false && V10.documentSchemas.post.properties.deleted !== undefined;
+/** v11: removal records keep fields (D4). */
+const KEPT_POST_FIELDS = V10.documentSchemas.post.moderatorAbilities?.deleteKeepsFields ?? [];
 const POST_ACTION_FEE = actionFeeFor('post');
 const REPLY_ACTION_FEE = actionFeeFor('reply');
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
@@ -198,8 +235,11 @@ const FRESH_OWNER = takeFlag('--fresh-owner', null);
 const POOR_BOT_INDEX = Number(takeFlag('--poor', '2'));
 /** Long enough for the refused write to run, short enough to wait out. */
 const SUSPENSION_MS = 25_000;
-if (MODERATOR_SPEC !== 'maker') {
-  console.error(`--moderator ${MODERATOR_SPEC}: v10's interim moderator is the contract owner alone (interim: contractOwner appoints nobody); run with --moderator maker (the default)`);
+// The interim moderator is the contract owner alone (interim: contractOwner appoints nobody):
+// the maker on the published contract, or the bot that registered a throwaway draft
+// (`--moderator bot:<n>`, checked against the contract's owner before any case runs).
+if (MODERATOR_SPEC !== 'maker' && !/^bot:\d+$/.test(MODERATOR_SPEC)) {
+  console.error(`--moderator ${MODERATOR_SPEC}: name the contract owner, \`maker\` (the default) or the \`bot:<n>\` that registered a draft`);
   process.exit(1);
 }
 
@@ -305,10 +345,25 @@ async function queryOne(ctx, docType, where, contractId = ctx.contractId) {
 }
 
 /** Deletes `who`'s document `id` of `docType`; answers the error or null. */
-const deleteOwn = (ctx, who, docType, id, contractId = ctx.contractId) => errorOf(() => ctx.sdk.documents.delete({
+/** An author's tombstone of its post or reply (design M): `deleted`, plus the fields the contract freezes. */
+async function tombstoneOwn(ctx, who, docType, id) {
+  const stored = await fetchDocument(ctx.sdk, ctx.contractId, docType, id);
+  if (!stored) return 'no document to tombstone';
+  const raw = stored.toObject?.() ?? {};
+  const frozen = (V10.documentSchemas[docType].immutable ?? []).filter((entry) => typeof entry === 'string');
+  const data = { deleted: true, ...Object.fromEntries(frozen.filter((field) => raw[field] !== undefined && raw[field] !== null).map((field) => [field, raw[field]])) };
+  const outcome = await attemptReplace(ctx.sdk, who, { contractId: ctx.contractId, docType, id, revision: BigInt(stored.revision ?? 1), data });
+  return outcome.ok ? null : (outcome.error ?? 'tombstone refused');
+}
+
+const deleteOwnDocument = (ctx, who, docType, id, contractId = ctx.contractId) => errorOf(() => ctx.sdk.documents.delete({
   document: { id, ownerId: who.ownerId, dataContractId: contractId, documentTypeName: docType },
   identityKey: who.identityKey, signer: who.signer, settings: { identityNonceStaleTimeS: 0 },
 }));
+/** An author's delete; on design M a post or reply can only be tombstoned. */
+const deleteOwn = (ctx, who, docType, id, contractId = ctx.contractId) => (TOMBSTONES && (docType === 'post' || docType === 'reply')
+  ? tombstoneOwn(ctx, who, docType, id)
+  : deleteOwnDocument(ctx, who, docType, id, contractId));
 
 /** A create that must be refused, scored by `expectRejected`; a create that lands is deleted again. */
 async function expectCreateRefused(ctx, label, who, docType, data, pattern, detailPattern) {
@@ -527,6 +582,11 @@ async function caseM1DeleteRestore(ctx) {
   try {
     const removal = await sdk.contracts.moderatorDeleteDocument({ identity: moderator.identity, contractId, documentTypeName: 'post', documentId: postId, reason: { text: 'v10 battery takedown' }, signer: moderator.signer });
     check('m1a the interim owner deletes B\'s post', idOf(removal.documentOwnerId) === botB.ownerId, `hash=${removal.documentHash}`);
+    if (KEPT_POST_FIELDS.length > 0) {
+      const kept = removal.keptFields ?? {};
+      const createdAt = Number(before?.createdAt ?? before?.toJSON?.().$createdAt);
+      check('m1k (v11) the record keeps the untagged post\'s $createdAt and nothing it does not hold (no hashtag)', Number(kept.$createdAt) === createdAt && !('hashtag' in kept), describeValue(kept));
+    }
   } catch (e) {
     check('m1a the interim owner deletes B\'s post', false, describeErr(e).slice(0, 220));
     return;
@@ -731,6 +791,78 @@ async function caseX1RealDeletes(ctx) {
   expectRejected('x1m a moderator cannot restore an author\'s own delete (41119: no removal record)', asOutcome(restore), NO_REMOVAL_RECORD);
 }
 
+// ---- v11 design M: tombstones, moderated references -------------------------------
+
+const IMMUTABLE_CHANGED = /\bcode"?\s*[=:]\s*40128\b|immutable propert|documentimmutablepropertychanged/i;
+const NOT_DELETABLE = /\bcode"?\s*[=:]\s*10404\b|can not be deleted is not supported/i;
+const balanceOf = async (ctx, who) => BigInt((await readback(() => ctx.sdk.identities.fetch(who.ownerId)))?.balance ?? 0);
+
+async function caseX1Tombstones(ctx) {
+  const { sdk, contractId, botA, botB, moderator } = ctx;
+  console.log('\n--- x1t. design M: an author tombstones (never deletes); references outlive a moderator removal ---');
+  const targetText = `x1t target ${Date.now()}`;
+  const target = await createFeed(ctx, botB, 'post', postData({ content: targetText, hashtag: ctx.tag }), 'x1t target');
+  if (!target) { check('x1t fixture', false, 'no target post'); return; }
+  const [targetBytes, owner] = [target, botB.ownerId].map((id) => bs58.decode(id));
+  // One quote or repost per author per target: B quotes its own post, A reposts it.
+  const quote = await createFeed(ctx, botB, 'post', postData({ content: 'x1t quote', quotedPostId: targetBytes, quotedPostOwnerId: owner }), 'x1t quote');
+  const reply = await createFeed(ctx, botA, 'reply', replyData({ content: 'x1t reply', rootPostId: targetBytes, parentOwnerId: owner }), 'x1t reply');
+  const repost = await createFeed(ctx, botA, 'post', repostOf({ postId: targetBytes, ownerId: owner }), 'x1t repost');
+  if (!quote || !reply || !repost) { check('x1t fixtures', false, 'the quote, reply or repost did not land'); return; }
+  await settle();
+  const stored = await fetchDocument(sdk, contractId, 'post', target);
+  const revision = BigInt(stored?.revision ?? 1);
+  const replace = (data) => attemptReplace(sdk, botB, { contractId, docType: 'post', id: target, revision, data });
+
+  expectRejected('x1ta an author cannot delete its post (canBeDeleted false)', asOutcome(await deleteOwnDocument(ctx, botB, 'post', target)), NOT_DELETABLE);
+  expectRejected('x1tb an edit of the text without the tombstone flag is refused (40128)', await replace(postData({ content: 'x1t edited', hashtag: ctx.tag })), IMMUTABLE_CHANGED);
+  expectRejected('x1tb2 adding a mention the post never had is refused (40128: a value the stored post lacked counts as a change)', await replace(postData({ content: targetText, hashtag: ctx.tag, mentionedUserId: bs58.decode(botA.ownerId) })), IMMUTABLE_CHANGED);
+  expectRejected('x1tc a tombstone that keeps the text is refused (10422 tombstoneIsBlank)', await replace({ deleted: true, content: 'still here', hashtag: ctx.tag }), constraintViolation('tombstoneIsBlank'));
+  expectRejected('x1td a tombstone that changes the hashtag is refused (40128: frozen by name)', await replace({ deleted: true, hashtag: `${ctx.tag}x` }), IMMUTABLE_CHANGED);
+  expectRejected('x1te a tombstone that drops the hashtag is refused (40128)', await replace({ deleted: true }), IMMUTABLE_CHANGED);
+  const quotesBefore = await countBy(sdk, contractId, 'post', 'quotedPostId', target);
+  const balanceBefore = await balanceOf(ctx, botB);
+  expectAccepted('x1tf B tombstones its post: `deleted`, the hashtag kept, every content field left out', await replace({ deleted: true, hashtag: ctx.tag }));
+  await settle();
+  const balanceAfter = await balanceOf(ctx, botB);
+  console.log(`INFO  x1t the tombstone replace cost B ${balanceBefore - balanceAfter} credits`);
+  const tomb = (await fetchDocument(sdk, contractId, 'post', target))?.toJSON?.() ?? {};
+  check('x1tg it reads back as a tombstone: deleted, the hashtag, no content', tomb.deleted === true && tomb.hashtag === ctx.tag && tomb.content === undefined, describeValue({ deleted: tomb.deleted, hashtag: tomb.hashtag, content: tomb.content }));
+  check('x1th the quotes and the reply of a tombstoned post stay, counted', (await countBy(sdk, contractId, 'post', 'quotedPostId', target)) === quotesBefore && (await countBy(sdk, contractId, 'reply', 'rootPostId', target)) === 1 && (await fetchDocument(sdk, contractId, 'reply', reply)) !== null, `quotes ${quotesBefore}`);
+  const tombRevision = BigInt((await fetchDocument(sdk, contractId, 'post', target))?.revision ?? 2);
+  const again = (data) => attemptReplace(sdk, botB, { contractId, docType: 'post', id: target, revision: tombRevision, data });
+  expectRejected('x1ti a tombstone cannot be undone (40128: deleted frozen once set)', await again({ hashtag: ctx.tag, content: 'back' }), IMMUTABLE_CHANGED);
+  expectRejected('x1tj nor refilled while flagged (10422 tombstoneIsBlank)', await again({ deleted: true, hashtag: ctx.tag, content: 'back' }), constraintViolation('tombstoneIsBlank'));
+
+  // Undo and redo a repost: the tombstone clears the quote, which frees ownerAndQuotedPost.
+  const repostsBefore = await countBy(sdk, contractId, 'post', 'quotedPostId', target);
+  const undone = await tombstoneOwn(ctx, botA, 'post', repost);
+  await settle();
+  check('x1tk A undoes its repost: a tombstone that clears the quote, so the count drops by one', undone === null && (await countBy(sdk, contractId, 'post', 'quotedPostId', target)) === repostsBefore - 1, `${undone ?? ''} before ${repostsBefore}`);
+  const redo = await createFeedOutcome(ctx, botA, 'post', repostOf({ postId: targetBytes, ownerId: owner }));
+  expectAccepted('x1tl …and reposts again: the one-repost slot is free (no 40105)', redo);
+  await settle();
+  check('x1tm the repost count is back', (await countBy(sdk, contractId, 'post', 'quotedPostId', target)) === repostsBefore);
+
+  // References outlive a moderator's removal: they resolve to the removal record.
+  if (interimOnly(ctx, 'x1tn')) return;
+  const removed = await createFeed(ctx, botB, 'post', postData({ content: `x1t removed ${Date.now()}`, hashtag: ctx.tag }), 'x1t removed');
+  if (!removed) { check('x1tn fixture', false, 'no post to remove'); return; }
+  const removedBytes = bs58.decode(removed);
+  const liked = await attemptCreateIndexOnly(sdk, botA, { contractId, docType: 'like', data: likeData({ postId: removedBytes, hashtag: ctx.tag, postAuthor: owner }), accepted: () => entryExists(sdk, contractId, 'like', 'postId', removed, botA.ownerId) });
+  const removedReply = await createFeed(ctx, botA, 'reply', replyData({ content: 'x1t reply to removed', rootPostId: removedBytes, parentOwnerId: owner }), 'x1t reply to removed');
+  await settle();
+  const removal = await errorOf(() => sdk.contracts.moderatorDeleteDocument({ identity: moderator.identity, contractId, documentTypeName: 'post', documentId: removed, reason: { text: 'x1t removal' }, signer: moderator.signer }));
+  await settle();
+  check('x1tn the moderator removes the liked, replied post', liked.ok && removal === null && (await fetchDocument(sdk, contractId, 'post', removed)) === null, (removal ?? liked.error ?? '').slice(0, 200));
+  check('x1to its like stays counted and its reply stays, under the removed root', (await countBy(sdk, contractId, 'like', 'postId', removed)) === 1 && removedReply !== null && (await fetchDocument(sdk, contractId, 'reply', removedReply)) !== null);
+  const ranked = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, where: [['hashtag', '==', ctx.tag]], direction: 'desc', limit: 100 }));
+  check('x1tp the hashtag ranking (byHashtagPost, kept by the record) still lists the removed post with its like', Number(ranked.entries.find((e) => e.groupValue === removed)?.value ?? -1) === 1, `groups ${ranked.entries.length}`);
+  const lateLike = await attemptCreateIndexOnly(sdk, botB, { contractId, docType: 'like', data: likeData({ postId: removedBytes, hashtag: ctx.tag, postAuthor: owner }), accepted: () => entryExists(sdk, contractId, 'like', 'postId', removed, botB.ownerId) });
+  const lateReply = await createFeedOutcome(ctx, botB, 'reply', replyData({ content: 'x1t late reply', rootPostId: removedBytes, parentOwnerId: owner }));
+  check('x1tq after the removal a new like does not land and a new reply is refused (the reference resolves to a removal record)', !lateLike.ok && !lateReply.ok && (await countBy(sdk, contractId, 'like', 'postId', removed)) === 1, `like ${lateLike.ok ? 'ACCEPTED' : (lateLike.error ?? '').slice(0, 100)}; reply ${lateReply.ok ? 'ACCEPTED' : (lateReply.error ?? '').slice(0, 100)}`);
+}
+
 // ---- v10: media hashes and content limits ----------------------------------------
 
 async function caseX2MediaAndLimits(ctx) {
@@ -818,7 +950,7 @@ async function caseC1PropertyConstraints(ctx) {
   const fields = (data) => ({ ...data, ...(data.rootPostId ? { rootPostId: bs58.decode(anchor), parentOwnerId: bs58.decode(ctx.botB.ownerId) } : {}) });
   for (const docType of ['post', 'reply']) {
     if (docType === 'reply' && !anchor) { check('c1 reply fixture', false, 'no anchor post'); continue; }
-    for (const [label, data, rule] of refusedCreates(CONTRACT_FILE.replace('contracts/', ''), docType)) {
+    for (const [label, data, rule] of refusedCreates(CONTRACT_NAME, docType)) {
       await expectFeedRefused(ctx, `c1 ${label} is refused (10422 ${rule})`, botA, docType, fields(data), constraintViolation(rule));
     }
   }
@@ -850,7 +982,7 @@ async function caseR1Reports(ctx) {
   await expectCreateRefused(ctx, 'r1d a report naming someone other than the author is refused (40127)', botA, 'report', reportData({ postId: other, targetOwnerId: randomIdBytes(), reason: 0 }), PROPERTY_MISMATCH);
   await expectCreateRefused(ctx, 'r1e B reporting its own post is refused (10419)', botB, 'report', reportData({ postId: post, targetOwnerId: author, reason: 0 }), NOT_DISTINCT);
   await expectCreateRefused(ctx, 'r1f a report of a post that does not exist is refused (40120)', botA, 'report', reportData({ postId: randomIdBytes(), targetOwnerId: author, reason: 0 }), REFERENCE_NOT_FOUND);
-  for (const [label, data, rule] of refusedCreates(CONTRACT_FILE.replace('contracts/', ''), 'report')) {
+  for (const [label, data, rule] of refusedCreates(CONTRACT_NAME, 'report')) {
     const fields = { ...data, ...(data.postId ? { postId: other } : {}), ...(data.replyId ? { replyId: reply } : {}), targetOwnerId: author };
     await expectCreateRefused(ctx, `r1g ${label} is refused (10422 ${rule})`, botA, 'report', fields, constraintViolation(rule));
   }
@@ -889,7 +1021,13 @@ async function caseR1Reports(ctx) {
   const gonePost = await createFeed(ctx, botB, 'post', postData({ content: `r1 gone ${Date.now()}` }), 'r1 gone post');
   const goneReport = gonePost ? await report({ postId: bs58.decode(gonePost), targetOwnerId: author, reason: 1 }) : { ok: false };
   if (goneReport.ok) {
-    await deleteOwn(ctx, botB, 'post', gonePost);
+    // Design M: an author can only tombstone; "gone" is a moderator's removal.
+    if (TOMBSTONES) {
+      const removal = await errorOf(() => sdk.contracts.moderatorDeleteDocument({ identity: moderator.identity, contractId, documentTypeName: 'post', documentId: gonePost, reason: { text: 'r1 gone post' }, signer: moderator.signer }));
+      await settle();
+      check('r1r0 (design M) the moderator removes the reported post', removal === null && (await fetchDocument(sdk, contractId, 'post', gonePost)) === null, (removal ?? '').slice(0, 160));
+    }
+    else await deleteOwn(ctx, botB, 'post', gonePost);
     await settle();
     const late = await changeReport(ctx, moderator, goneReport.id, { status: 1 });
     check('r1r a report whose post was deleted can still be resolved', late === null, (late ?? '').slice(0, 200));
@@ -1101,6 +1239,7 @@ async function caseT2TrendingOnLike(ctx) {
     [tagged, untagged].every((id) => Number(topPosts.entries.find((e) => e.groupValue === id)?.value ?? -1) === 1), `groups=${topPosts.entries.length}`);
   check('t2g the all-time per-tag ranking (byHashtagPost) agrees', Number(allTime.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1);
 
+  if (TIMELESS_LIKES) { await timelessUnlike(ctx, { tagged, untagged, tag, owner, like }); return; }
   // A delete by values needs the like's $createdAt. An indexOnly document is
   // synthesized from the index it is read through, so read it back through
   // byAuthorPostTime [postAuthor, postId, $createdAt], the post pinned, newest first.
@@ -1120,6 +1259,29 @@ async function caseT2TrendingOnLike(ctx) {
     const cold = /single-path axis read must produce exactly one axis descent/i.test(describeErr(e));
     check('t2i the tag\'s window no longer counts the post', cold, cold ? 'cold bucket (the empty answer)' : describeErr(e).slice(0, 200));
   }
+}
+
+/**
+ * v11's t2 tail: the unlike names no `$createdAt` (and no id the node checks),
+ * the windows keep the entry until they pass (`outlivesDelete`), the all-time
+ * ranking drops it, and a re-like writes over the kept entry (counted once).
+ */
+async function timelessUnlike(ctx, { tagged, untagged, tag, owner, like }) {
+  const { sdk, contractId, botA } = ctx;
+  const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, data: likeData({ postId: bs58.decode(tagged), hashtag: tag, postAuthor: owner }) });
+  expectAccepted('t2h A unlikes the tagged post by values, with no $createdAt (v11)', await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await entryExists(sdk, contractId, 'like', 'postId', tagged, botA.ownerId)) }));
+  await settle();
+  const valueOf = (entries, id) => Number(entries.find((e) => e.groupValue === id)?.value ?? 0);
+  const allTime = () => readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, where: [['hashtag', '==', tag]], limit: 10 }));
+  const perTag = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
+  check('t2i the tag\'s 24h window still counts the unliked post (outlivesDelete keeps the entry until the window passes)', valueOf(perTag.entries, tagged) === 1, `groups=${perTag.entries.length}`);
+  const top = await rankedWindow(ctx, TOP_POSTS, { groupBy: 'postId' });
+  check('t2k …and so does the 3-day window, beside the untagged like', valueOf(top.entries, tagged) === 1 && valueOf(top.entries, untagged) === 1, `groups=${top.entries.length}`);
+  check('t2m the all-time per-tag ranking (byHashtagPost) drops it at once', valueOf((await allTime()).entries, tagged) === 0);
+  expectAccepted('t2n A likes it again while the kept entry stands', await like(tagged, tag));
+  await settle();
+  const again = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
+  check('t2o the re-like writes over the kept entry: the window counts A once (1), the all-time ranking 1 again', valueOf(again.entries, tagged) === 1 && valueOf((await allTime()).entries, tagged) === 1, `window=${valueOf(again.entries, tagged)}`);
 }
 
 // ---- v10: one mention per post or reply, the notification windows ---------------------
@@ -1188,7 +1350,25 @@ async function caseN2NotificationWindows(ctx) {
   const since = Date.now() - 3_600_000;
   for (const [docType, targetId, data, what, [notifyCase, heartCase, unlikeCase]] of likes) {
     const { target: field, author } = LIKE_FIELDS[docType];
-    const [authorIndex, targetIndex] = docType === 'like' ? ['byAuthorPostTime', 'byPost'] : ['byAuthorReplyTime', 'byReply'];
+    const [authorIndex, targetIndex] = docType === 'like'
+      ? [TIMELESS_LIKES ? 'byAuthorPost' : 'byAuthorPostTime', 'byPost']
+      : [TIMELESS_LIKES ? 'byAuthorReply' : 'byAuthorReplyTime', 'byReply'];
+    if (TIMELESS_LIKES) {
+      // v11: no like keeps its time. "Liked your post" is the author-pinned liker read
+      // across the recipient's targets, diffed on the device; the unlike names no time.
+      const likers = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: docType,
+        where: [[author, '==', botB.ownerId], [field, 'in', [targetId]]], orderBy: [[author, 'asc'], [field, 'asc']], limit: 100 }));
+      const rows = [...likers.values()].filter(Boolean);
+      check(`${notifyCase} ${authorIndex} lists A as a liker of B's ${what} (\`${author} ==\`, \`${field} in\`; no time: the timeless "liked your ${what}" source)`,
+        rows.some((document) => idOf(document.ownerId) === botA.ownerId) && rows.every((document) => document.createdAt === undefined), describeValue(rows.map((document) => idOf(document.ownerId))));
+      const hearts = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: docType,
+        where: [[field, 'in', [targetId]], ['$ownerId', '==', botA.ownerId]], orderBy: [[field, 'asc'], ['$ownerId', 'asc']], limit: 1 }));
+      check(`${heartCase} ${docType}.${targetIndex} answers "did A like it" (\`${field} in\`, \`$ownerId ==\`)`, [...hearts.values()].filter(Boolean).length === 1);
+      const { document } = buildDocument({ contractId, docType, ownerId: botA.ownerId, data });
+      expectAccepted(`${unlikeCase} A unlikes B's ${what} by values with no $createdAt (v11)`,
+        await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await liked(docType, targetId)) }));
+      continue;
+    }
     // "Liked your post": the per-target read since a watermark, newest first.
     const notified = await likesOfTarget(ctx, docType, botB.ownerId, targetId, ['$createdAt', '>', since]);
     const mine = [...notified.values()].find((document) => document && idOf(document.ownerId) === botA.ownerId);
@@ -1578,6 +1758,7 @@ async function ensurePrepared(ctx) {
     ctx.ownerId = ctx.contract.ownerId.toBase58();
     ctx.moderator = await resolveModerator(ctx.sdk, MODERATOR_SPEC);
     console.log(`contract owner: ${ctx.ownerId}; moderator: ${ctx.moderator.label}`);
+    if (ctx.moderator.ownerId !== ctx.ownerId) throw new Error(`--moderator ${MODERATOR_SPEC} is ${ctx.moderator.ownerId}, not the contract owner ${ctx.ownerId}: the interim moderator is the owner alone`);
     if (ctx.seated === null) ctx.seated = (await readback(() => ctx.sdk.moderationCharters.seatedCharter(ctx.contractId))) != null;
     ctx.prepared = true;
   } catch (e) {
@@ -1602,7 +1783,7 @@ const CASES = new Map([
   ['o4', caseO4QuoteAndParentOwner],
   ['q1', caseQ1RepostIsAQuote],
   ['q2', caseQ2MergedCounts],
-  ['x1', prepared(caseX1RealDeletes)],
+  ['x1', prepared((ctx) => (TOMBSTONES ? caseX1Tombstones(ctx) : caseX1RealDeletes(ctx)))],
   ['x2', caseX2MediaAndLimits],
   ['x3', prepared(caseX3ProfileExtension)],
   ['c1', caseC1PropertyConstraints],
@@ -1624,6 +1805,26 @@ const CASES = new Map([
 // ---- Self-test ------------------------------------------------------------------
 
 /** Offline: the committed JSON declares every rule a case asserts. */
+/** v11's like and moderation pins (the v10 branch of selfTest asserts the v10 shapes). */
+function selfTestTimeless(schemas, { expect, index, shape, names }) {
+  expect('v11 like indexes are byPost, byHashtagPost, byAuthorPost, byTrendPost, byTrendHashtagPost; likeReply byReply, byAuthorReply',
+    names('like') === 'byPost,byHashtagPost,byAuthorPost,byTrendPost,byTrendHashtagPost' && names('likeReply') === 'byReply,byAuthorReply');
+  const byAuthor = index('like', 'byAuthorPost');
+  expect('like byAuthorPost [postAuthor, postId] terminal $ownerId, rangeCountable, ranked at [postAuthor, postId] (creators, profile Top, n2b)',
+    shape('like', 'byAuthorPost') === 'postAuthor,postId' && byAuthor.terminal === '$ownerId' && byAuthor.rangeCountable === true
+      && JSON.stringify(byAuthor.rankedCountable?.at) === JSON.stringify(['postAuthor', 'postId']));
+  expect('likeReply byAuthorReply [replyAuthor, replyId] terminal $ownerId (n2e)', shape('likeReply', 'byAuthorReply') === 'replyAuthor,replyId' && index('likeReply', 'byAuthorReply').terminal === '$ownerId');
+  expect('every like index on $createdAt outlives deletes, so an unlike carries no time (t2h, n2d, n2g)',
+    ['like', 'likeReply'].every((t) => schemas[t].indices.filter((i) => shape(t, i.name).split(',').includes('$createdAt')).every((i) => i.outlivesDelete === true && i.timeRange?.ttl)));
+  expect('likeReply requires no $createdAt (it indexes it nowhere)', !schemas.likeReply.required.includes('$createdAt'));
+  expect('like / likeReply byPost / byReply [target] terminal $ownerId: the heart state (n2c, n2f)',
+    shape('like', 'byPost') === 'postId' && index('like', 'byPost').terminal === '$ownerId' && shape('likeReply', 'byReply') === 'replyId' && index('likeReply', 'byReply').terminal === '$ownerId');
+  for (const [type, kept] of [['post', ['hashtag', '$createdAt']], ['reply', ['rootPostId', '$createdAt']]]) {
+    expect(`${type}: one moderator deletes for a week, then the leader plus two members (deleteWithin 604800, deleteSettled), and the record keeps ${kept.join(' + ')} (m1k)`,
+      JSON.stringify(schemas[type].moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsFields: kept, deleteWithin: 604_800, deleteSettled: { leader: true, approvals: 3 } }));
+  }
+}
+
 function selfTest() {
   const schemas = V10.documentSchemas;
   const problems = [];
@@ -1648,8 +1849,14 @@ function selfTest() {
   expect('there is no repost type: a repost is a post (o3, q1)', !schemas.repost);
   expect('a quote or bare repost binds quotedPostOwnerId (o3, o4a, o4b)', where('post', 'quotedPostId').$ownerId === 'quotedPostOwnerId' && where('post', 'quotedReplyId').$ownerId === 'quotedPostOwnerId');
   expect('a nested reply binds parentOwnerId (o4d)', where('reply', 'replyToReplyId').$ownerId === 'parentOwnerId');
+  if (TOMBSTONES) {
+    expect('design M: post and reply are moderated (canBeDeleted false), replaceable only to tombstone, requiring $updatedAt (x1t)', ['post', 'reply'].every((t) => schemas[t].documentsMutable === true && schemas[t].canBeDeleted === false && schemas[t].properties.deleted?.type === 'boolean' && schemas[t].required.includes('$updatedAt') && schemas[t].propertyConstraints?.tombstoneIsBlank));
+    expect('design M: every reference at post or reply is moderatedDocument, so it outlives a removal (x1tn–x1tq)', Object.values(schemas).every((s) => Object.values(s.properties).every((p) => !['post', 'reply'].includes(p.refersTo?.documentType) || p.refersTo.type === 'moderatedDocument')));
+    expect('design M: the untimed like indexes are preallocated by the post or reply', ['like', 'likeReply'].every((t) => schemas[t].indices.every((i) => (i.preallocated === true) === !i.timeRange)));
+  } else {
   expect('post and reply are immutable and owner-deletable, with no tombstone field (x1)', ['post', 'reply'].every((t) => schemas[t].documentsMutable === false && schemas[t].canBeDeleted === undefined && !schemas[t].properties.deleted) && V10.config.documentsCanBeDeletedContractDefault === true);
   expect('every reference at post or reply is deletable, so a deleted target is 40120 (x1g–x1l)', Object.values(schemas).every((s) => Object.values(s.properties).every((p) => !['post', 'reply'].includes(p.refersTo?.documentType) || p.refersTo.type === 'deletableDocument')));
+  }
   // The merged count indexes: every count the battery reads goes through a list index.
   const index = (type, name) => schemas[type].indices.find((i) => i.name === name);
   const shape = (type, name) => (index(type, name)?.properties ?? []).map((p) => Object.keys(p)[0]).join(',');
@@ -1680,6 +1887,9 @@ function selfTest() {
   // before $createdAt, so it serves the per-post notification read, the
   // unlike tuple and the author's rankings. There is no byLiker.
   const names = (type) => schemas[type].indices.map((i) => i.name).join(',');
+  if (TIMELESS_LIKES) {
+    selfTestTimeless(schemas, { expect, index, shape, names });
+  } else {
   const byAuthor = index('like', 'byAuthorPostTime');
   expect('like indexes are exactly byPost, byHashtagPost, byAuthorPostTime, byTrendPost, byTrendHashtagPost; likeReply exactly byReply, byAuthorReplyTime',
     names('like') === 'byPost,byHashtagPost,byAuthorPostTime,byTrendPost,byTrendHashtagPost' && names('likeReply') === 'byReply,byAuthorReplyTime');
@@ -1694,6 +1904,8 @@ function selfTest() {
       && index('likeReply', 'byAuthorReplyTime').timeRange === undefined);
   expect('no byLiker, byAuthorPost, byAuthorTimePost, byAuthorTimeReply or byAuthorRecent on like / likeReply',
     ['like', 'likeReply'].every((t) => ['byLiker', 'byAuthorPost', 'byAuthorTimePost', 'byAuthorTimeReply', 'byAuthorRecent'].every((n) => !index(t, n))));
+  expect('post and reply moderator deletes have no window and keep no fields (v10)', ['post', 'reply'].every((t) => JSON.stringify(schemas[t].moderatorAbilities) === '{"delete":true}'));
+  }
   expect('follow.followers and followRequest.target stay permanent (no window)', index('follow', 'followers')?.timeRange === undefined && index('followRequest', 'target')?.timeRange === undefined);
   const retired = { post: ['quotedPostOwnerAndTime'], reply: ['parentOwnerAndTime'] };
   expect('the permanent notification indexes are gone (replaced by the windows)', Object.entries(retired).every(([type, names]) => names.every((n) => !index(type, n))));
@@ -1711,8 +1923,8 @@ function selfTest() {
   expect('the count-only indexes are gone (merged into their list twins)', Object.entries(removed).every(([type, names]) => names.every((n) => !index(type, n))));
   expect('post keeps at most 10 indexes', schemas.post.indices.length <= 10);
   const notEmpty = schemas.post.propertyConstraints?.notEmpty?.anyOf ?? [];
-  expect('post notEmpty: content, ciphertext, media, an embed or a quote (q1n, q1o; a bare repost passes through its quote)',
-    notEmpty.length === 6 && ['encryptedContent', 'mediaUrl', 'embedId', 'quotedPostId', 'quotedReplyId'].every((p) => notEmpty.some((alt) => alt.present === p))
+  expect('post notEmpty: content, ciphertext, media, an embed or a quote (q1n, q1o; a bare repost passes through its quote; design M: or a tombstone)',
+    notEmpty.length === (TOMBSTONES ? 7 : 6) && (!TOMBSTONES || notEmpty.some((alt) => alt.present === 'deleted')) && ['encryptedContent', 'mediaUrl', 'embedId', 'quotedPostId', 'quotedReplyId'].every((p) => notEmpty.some((alt) => alt.present === p))
       && notEmpty.some((alt) => alt.greaterThan?.[0]?.length === 'content' && alt.greaterThan[1] === 0));
   expect('a repost costs the post price: 10 YAPP, optional, gas offered to the owner (q1c)', schemas.post.tokenCost?.create?.amount === TOKEN_COST.post && TOKEN_COST.post === 10 && schemas.post.tokenCost.create.optional === true);
   for (const type of ['post', 'reply']) {
@@ -1737,7 +1949,7 @@ function selfTest() {
   expect('YAPP starts paused, nobody can unpause it or price it, and the owner may mint to anyone (y1)', token.startAsPaused === true && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne' && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne' && token.manualMintingRules.authorizedToMakeChange.$type === 'contractOwner' && token.distributionRules.mintingAllowChoosingDestination === true);
   expect('the starter grant is 100 once per identity (y1f)', token.distributionRules.oncePerIdentityDistribution?.amount === 100);
   expect('the election windows are one hour each on this devnet cut (e0c)', moderators.joinWindow === 3600 && moderators.voteWindow === 3600);
-  for (const [type, rules] of Object.entries(DECLARED_RULES['yappr-social-contract-v10.json'])) {
+  for (const [type, rules] of Object.entries(DECLARED_RULES[CONTRACT_NAME])) {
     expect(`${type} declares exactly the propertyConstraints rules c1 and r1 assert`, JSON.stringify(Object.keys(schemas[type].propertyConstraints ?? {}).sort()) === JSON.stringify([...rules].sort()));
   }
   for (const problem of problems) console.error(`FAIL  ${problem}`);
@@ -1792,7 +2004,7 @@ if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) 
   for (const [label, docType, data] of SHAPES) {
     try {
       documentOf(docType, data).toBytes(contract, platformVersion);
-      console.log(`serializes under v10: ${label}`);
+      console.log(`serializes under ${CONTRACT_NAME}: ${label}`);
     } catch (e) {
       console.error(`FAIL  ${label} does not serialize under the v10 contract: ${String(e?.message ?? e).slice(0, 200)}`);
       process.exit(1);

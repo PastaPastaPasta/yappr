@@ -40,6 +40,7 @@
   "exclude": [
     "node_modules",
     "worktrees",
+    "mobile",
     "vendor/platform-auth",
     "e2e",
     "playwright.config.ts",

@@ -14,7 +14,7 @@
  * an error, never a silent fallback to a retired network. `devnetConfig()` is
  * the one reader every script's devnet SDK goes through.
  *
- * Devnet notes (first verified against moutai on 2026-08-27; bonsia since 4.2.0-beta.7):
+ * Devnet notes (first verified against moutai on 2026-08-27; bonsia on 4.2.0-beta.7; sakura since 5.0.0-beta.1):
  *
  * - Addresses must be given explicitly. A devnet publishes no masternode list to
  *   discover them from, and `EvoSDK.devnetTrusted()` takes no `addresses`, so the
@@ -78,7 +78,7 @@ export function insightUrl() {
   return url.replace(/\/$/, '');
 }
 
-/** The devnet's name as the SDK needs it (bonsia: `bonsia-g1`). Only meaningful when NETWORK=devnet. */
+/** The devnet's name as the SDK needs it (sakura: `sakura`; bonsia was `bonsia-g1`). Only meaningful when NETWORK=devnet. */
 export function devnetName() {
   const name = envValue('DEVNET_NAME') ?? envValue('NEXT_PUBLIC_DEVNET_NAME');
   if (!name) throw new Error('NETWORK=devnet needs DEVNET_NAME or NEXT_PUBLIC_DEVNET_NAME (env or .env.devnet)');
@@ -97,9 +97,9 @@ export function dapiAddresses() {
  * the environment or `.env.devnet`. Throws when the name or the address pool
  * is missing (a devnet publishes no masternode list to discover them from).
  * `quorumUrl` is null when unset: the SDK then prefetches quorum keys from
- * `https://quorums.<devnetName>.networks.dash.org`, which is WRONG for bonsia
- * (its devnetName is `bonsia-g1`, its quorum host `quorums.bonsia…`), so
- * bonsia sets it.
+ * `https://quorums.<devnetName>.networks.dash.org`. That default is right for
+ * sakura (`quorums.sakura…`), which sets it anyway; it was WRONG for bonsia
+ * (devnetName `bonsia-g1`, quorum host `quorums.bonsia…`).
  */
 export function devnetConfig() {
   const addresses = dapiAddresses();

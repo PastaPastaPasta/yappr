@@ -1,9 +1,11 @@
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 
 // Resolved against Jest's cwd, mobile/app.
 const APP_DIR = './src/app';
 const TABS = ['Home', 'Explore', 'Notifications', 'Messages', 'Profile'];
+/** A valid identity id: links are validated before they reach a route. */
+const ID = '4EfA9Jrvv3nnCFdSf7fad59851iiTRZ6Wcu6YVJ4iSeF';
 
 /** Renders the real route tree, then lets the persisted query cache finish restoring. */
 async function renderApp(initialUrl: string) {
@@ -56,20 +58,33 @@ describe('app shell', () => {
     expect(app.getPathname()).toBe('/explore');
   });
 
+  it('opens a profile from a conversation and goes back to the conversation', async () => {
+    const app = await renderApp('/');
+
+    fireEvent.press(tab('Messages'));
+    act(() => router.push('/messages/c1'));
+    act(() => router.push('/user/abc123'));
+    expect(app.getSegments()).toEqual(['(tabs)', '(messages)', 'user', '[id]']);
+
+    act(() => router.back());
+    expect(app.getPathname()).toBe('/messages/c1');
+    act(() => router.back());
+    expect(app.getPathname()).toBe('/messages');
+  });
+
   it('opens cold links to shared screens in Home, with Home underneath', async () => {
-    const app = await renderApp('/user/abc123/followers');
+    const app = await renderApp(`/user/${ID}/followers`);
 
     expect(app.getSegments()).toEqual(['(tabs)', '(home)', 'user', '[id]', 'followers']);
     act(() => router.back());
     expect(app.getPathname()).toBe('/');
   });
 
-  it('opens onboarding in-app (web’s /welcome link means Home)', async () => {
-    const app = await renderApp('/');
-
-    act(() => router.push('/welcome'));
-    expect(app.getPathname()).toBe('/welcome');
-    expect(screen.getByText('Coming in the sign-in PR')).toBeTruthy();
+  it('keeps links from opening sensitive screens', async () => {
+    for (const url of ['/compose?text=hi', '/sign-in/key', '/settings/app-lock', '/lockdown']) {
+      const app = await renderApp(url);
+      expect(app.getPathname()).toBe('/');
+    }
   });
 
   it('sends unknown routes home', async () => {
@@ -78,7 +93,8 @@ describe('app shell', () => {
     expect(app.getPathname()).toBe('/');
   });
 
-  // Every 1.0 screen has a reachable stub (EXECUTION M1 exit check).
+  // Every 1.0 screen has a reachable stub (EXECUTION M1 exit check). Reached
+  // in-app, since links may not open some of them (+native-intent).
   it.each([
     ['/', 'feed'],
     ['/explore', 'explore and search'],
@@ -120,9 +136,11 @@ describe('app shell', () => {
     ['/sign-in/qr', 'sign-in'],
     ['/sign-in/register', 'sign-in'],
     ['/sign-in/key', 'sign-in'],
+    ['/welcome', 'sign-in'],
     ['/__gallery', null],
   ])('%s has a stub', async (url, pr) => {
-    const app = await renderApp(url);
+    const app = await renderApp('/');
+    act(() => router.push(url as Href));
 
     expect(app.getPathname()).toBe(url.split('?')[0]);
     if (pr) expect(screen.getByText(`Coming in the ${pr} PR`)).toBeTruthy();

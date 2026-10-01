@@ -1,0 +1,33 @@
+/**
+ * Where the write suite runs, and why it skips. Writes go to sakura pool
+ * identities only (ADR-001 E6); never testnet.
+ */
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { poolUnavailableReason } from '../../../harness/pool'
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..')
+
+/** `.env.devnet`'s NEXT_PUBLIC_* values (KEY=VALUE lines, `#` comments, optional quotes), as build.mjs reads them. */
+export function devnetEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const raw of readFileSync(path.join(root, '.env.devnet'), 'utf8').split('\n')) {
+    const line = raw.trim()
+    const eq = line.indexOf('=')
+    if (!line || line.startsWith('#') || eq <= 0) continue
+    const key = line.slice(0, eq).trim()
+    const value = line.slice(eq + 1).trim().replace(/^(['"])(.*)\1$/, '$2')
+    if (key.startsWith('NEXT_PUBLIC_')) env[key] = value
+  }
+  return env
+}
+
+/** Why the sakura write suite cannot run here, or null when it can. */
+export function writeSuiteSkipReason(): string | null {
+  const devnet = devnetEnv().NEXT_PUBLIC_DEVNET_NAME ?? '(none)'
+  if (!devnet.startsWith('sakura')) {
+    return `W-SAKURA has not landed: .env.devnet names devnet ${devnet}, and sakura has no Yappr contracts yet`
+  }
+  return poolUnavailableReason()
+}

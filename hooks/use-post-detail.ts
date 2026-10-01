@@ -6,8 +6,9 @@ import { postService, replyToPost } from '@/lib/services/post-service'
 import { replyService } from '@/lib/services/reply-service'
 import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { isBareRepost, quotedTargetIdOf } from '@/lib/feed/quote-reposts'
-import { hasFlatThreads, referencesMayDangle, authorDeletesLeaveHoles, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
+import { hasFlatThreads, referencesMayDangle, repliesOutliveTheirParent, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
 import { deletedReplyStubs, unloadedReplyParents } from '@/lib/feed/deleted-reply-stubs'
+import { pruneHiddenTombstones } from '@/lib/feed/hidden-tombstones'
 import { provenAbsent } from '@/lib/feed/prove-absent'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
@@ -202,7 +203,8 @@ function assembleFlatThread(mainPost: Post, allReplies: Reply[]): ReplyThread[] 
   const childrenOf = new Map<string, Reply[]>()
   const topOfThread: Reply[] = []
 
-  for (const reply of [...allReplies].sort(byCreatedAtAsc)) {
+  // v11: a tombstoned reply goes unless a reply still nests under it.
+  for (const reply of pruneHiddenTombstones(allReplies).sort(byCreatedAtAsc)) {
     const parentId = reply.replyToReplyId
     if (!parentId) {
       topOfThread.push(reply)
@@ -243,12 +245,13 @@ function assembleFlatThread(mainPost: Post, allReplies: Reply[]): ReplyThread[] 
 }
 
 /**
- * The reply ids `replies` nest under that are proved deleted (v10, where an
- * author's delete removes the reply and its children stay). Empty elsewhere,
- * and when nothing is missing.
+ * The reply ids `replies` nest under that are proved gone, where a reply
+ * outlives its parent (v10: an author's delete or a moderator removal; v11: a
+ * moderator removal, since authors tombstone). Empty elsewhere, and when
+ * nothing is missing.
  */
 async function deletedReplyParents(replies: Reply[]): Promise<Set<string>> {
-  if (!authorDeletesLeaveHoles()) return new Set()
+  if (!repliesOutliveTheirParent()) return new Set()
   const candidates = unloadedReplyParents(replies)
   return candidates.length > 0 ? provenAbsent('reply', candidates) : new Set()
 }
