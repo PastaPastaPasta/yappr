@@ -1,13 +1,15 @@
 import { Image } from 'expo-image';
 import { useState } from 'react';
 import { Pressable, View } from 'react-native';
-import { PhotoIcon } from 'react-native-heroicons/outline';
+import { PhotoIcon, PlayIcon } from 'react-native-heroicons/outline';
+import { PlayIcon as PlaySolid } from 'react-native-heroicons/solid';
 
 import { cn } from '~/lib-allowlist';
 
 import { Button } from '../Button';
 import { Text } from '../Text';
-import { motion, tw, useColors } from '../tokens';
+import { useMediaUrls } from '../media-url';
+import { colors, motion, tw, useColors } from '../tokens';
 import type { CardMedia } from './types';
 
 const VIDEO = 16 / 9;
@@ -49,6 +51,25 @@ export function MediaGatePlaceholder({ onReveal, className }: { onReveal?: () =>
   );
 }
 
+/** A centered badge on video and GIF thumbnails: a play circle, or a "GIF" chip. */
+function PlayBadge({ gif }: { gif: boolean }) {
+  return (
+    <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
+      {gif ? (
+        <View className="rounded bg-black/60 px-1.5 py-0.5">
+          <Text variant="captionStrong" style={{ color: colors.white }}>
+            GIF
+          </Text>
+        </View>
+      ) : (
+        <View className="h-12 w-12 items-center justify-center rounded-full bg-black/60">
+          <PlaySolid size={24} color={colors.white} style={{ marginLeft: 3 }} />
+        </View>
+      )}
+    </View>
+  );
+}
+
 function MediaCell({
   media,
   onPress,
@@ -59,26 +80,35 @@ function MediaCell({
   className?: string;
 }) {
   const c = useColors();
+  const urls = useMediaUrls();
   const [failedUrl, setFailedUrl] = useState<string>();
-  const failed = failedUrl === media.url;
+  // 1.0 never plays video or GIF inline: thumbnails only (UX_SPEC 2.4.6).
+  const video = media.type === 'video';
+  const source = urls.media(video ? media.thumbnail : (media.thumbnail ?? media.url));
+  const failed = !source || failedUrl === media.url;
+  const kind = video ? 'Video' : media.type === 'gif' ? 'GIF' : 'Image';
   return (
     <Pressable
       accessibilityRole="imagebutton"
-      accessibilityLabel={media.alt || 'Image'}
+      accessibilityLabel={media.alt ? `${kind}: ${media.alt}` : kind}
       disabled={!onPress}
       onPress={onPress}
       className={cn('overflow-hidden', tw.bgSkeleton, className)}
     >
       {failed ? (
         <View className={cn('flex-1 items-center justify-center gap-1', tw.bgMuted)}>
-          <PhotoIcon size={32} color={c.textSecondary} />
+          {video ? (
+            <PlayIcon size={32} color={c.textSecondary} />
+          ) : (
+            <PhotoIcon size={32} color={c.textSecondary} />
+          )}
           <Text variant="caption" tone="secondary">
-            Image unavailable
+            {video ? 'Video' : 'Image unavailable'}
           </Text>
         </View>
       ) : (
         <Image
-          source={{ uri: media.thumbnail ?? media.url }}
+          source={{ uri: source }}
           style={{ flex: 1 }}
           contentFit="cover"
           transition={motion.fast}
@@ -87,6 +117,7 @@ function MediaCell({
           accessible={false}
         />
       )}
+      {!failed && kind !== 'Image' ? <PlayBadge gif={kind === 'GIF'} /> : null}
     </Pressable>
   );
 }

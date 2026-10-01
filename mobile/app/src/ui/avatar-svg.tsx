@@ -5,7 +5,11 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
  * the engine renders a recipe to markup (`profiles.avatarSvg`). The engine
  * host provides that; the gallery and tests provide fixtures.
  */
-export type AvatarSvgResolver = (identityId: string, style: string, seed: string) => Promise<string | null>;
+export type AvatarSvgResolver = (
+  identityId: string,
+  style: string,
+  seed: string,
+) => string | null | Promise<string | null>;
 
 const ResolverContext = createContext<AvatarSvgResolver | null>(null);
 
@@ -39,13 +43,16 @@ export function useDicebearSvg(
   useEffect(() => {
     if (!key || !style || !seed || !identityId || !resolve || cache.has(key)) return undefined;
     let current = true;
-    resolve(identityId, style, seed)
-      .then((svg) => {
-        if (!svg) return;
-        cache.set(key, svg);
-        if (current) setLoaded({ key, svg });
-      })
-      .catch(() => {
+    const apply = (svg: string | null) => {
+      if (!svg) return;
+      cache.set(key, svg);
+      if (current) setLoaded({ key, svg });
+    };
+    // A synchronous resolver (fixtures) applies inside this effect, with no extra tick.
+    const out = resolve(identityId, style, seed);
+    if (typeof out === 'string' || out === null) apply(out);
+    else
+      out.then(apply).catch(() => {
         // The avatar stays the placeholder circle; nothing to surface.
       });
     return () => {

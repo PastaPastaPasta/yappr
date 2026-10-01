@@ -15,6 +15,8 @@ export type WriteState =
 
 export interface WriteStatusProps {
   status: WriteState;
+  /** Whose status: a recycled cell showing another post must not announce. */
+  postId?: string;
   onCheckAgain?: () => void;
   onRetry?: () => void;
   onEdit?: () => void;
@@ -78,12 +80,12 @@ export function WriteStatus(props: WriteStatusProps) {
 
   // Announce changes only (A11Y-06): not on mount, so scrolling past pending
   // posts stays quiet.
-  const announced = useRef(text);
+  const announced = useRef({ postId: props.postId, text });
   useEffect(() => {
-    if (announced.current === text) return;
-    announced.current = text;
-    AccessibilityInfo.announceForAccessibility(text);
-  }, [text]);
+    const last = announced.current;
+    announced.current = { postId: props.postId, text };
+    if (last.postId === props.postId && last.text !== text) AccessibilityInfo.announceForAccessibility(text);
+  }, [props.postId, text]);
 
   const links = writeStatusLinks(props);
   const busy = status.state === 'posting' || status.state === 'threadProgress';

@@ -6,10 +6,11 @@ import { cn } from '~/lib-allowlist';
 import { Avatar } from '../Avatar';
 import { RichText } from '../rich-text/RichText';
 import { handleOf } from '../handle';
+import { useMediaUrls } from '../media-url';
 import { Skeleton, SkeletonGroup } from '../Skeleton';
 import { Text } from '../Text';
 import { tw } from '../tokens';
-import { useRelativeTime } from '../use-relative-time';
+import { RelativeTime } from '../RelativeTime';
 import { PrivatePostPlaceholder } from './PrivatePostPlaceholder';
 import { SensitiveGate, useSensitiveReveal } from './SensitiveGate';
 import { EMBED_FRAME } from './embed-frame';
@@ -33,15 +34,20 @@ export interface QuoteEmbedProps {
  * thumbnail. The whole frame opens the quoted post.
  */
 export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onPress }: QuoteEmbedProps) {
-  const time = useRelativeTime(post.createdAt);
   const [revealed, reveal] = useSensitiveReveal(post.id);
   const handle = handleOf(post.author);
-  const thumb = !mediaGated ? post.media[0] : undefined;
+  const urls = useMediaUrls();
+  const first = mediaGated ? undefined : post.media[0];
+  const thumb = first
+    ? urls.media(first.thumbnail ?? (first.type === 'video' ? undefined : first.url))
+    : undefined;
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Quote: ${post.author.displayName}, ${post.encrypted ? 'private post' : post.content}`}
+      accessibilityLabel={`Quote: ${post.author.displayName}, ${
+        post.encrypted ? 'private post' : nsfwGated && !revealed ? 'NSFW post, hidden' : post.content
+      }`}
       onPress={onPress}
       testID="quote-embed"
       className={cn(FRAME, tw.pressed)}
@@ -54,9 +60,7 @@ export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onPres
         <Text variant="subhead" tone="secondary" numberOfLines={1} className="shrink">
           {handle}
         </Text>
-        <Text variant="subhead" tone="secondary">
-          · {time}
-        </Text>
+        <RelativeTime date={post.createdAt} prefix="· " variant="subhead" tone="secondary" />
       </View>
       {post.deleted ? (
         <DeletedLine kind={post.kind} />
@@ -70,10 +74,10 @@ export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onPres
             </View>
             {thumb ? (
               <Image
-                source={{ uri: thumb.thumbnail ?? thumb.url }}
+                source={{ uri: thumb }}
                 style={{ width: 64, height: 64, borderRadius: 8 }}
                 contentFit="cover"
-                recyclingKey={thumb.url}
+                recyclingKey={thumb}
                 accessible={false}
               />
             ) : null}

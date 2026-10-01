@@ -41,4 +41,16 @@ describe('RichText', () => {
     expect(screen.queryByText('https://dash.org/platform')).toBeNull();
     expect(screen.getByText('Read .')).toBeTruthy();
   });
+
+  it('sizes emoji-only text after the previewed link is gone, as web does', () => {
+    render(<RichText text="🔥 https://x.com" hideFirstUrl />);
+    expect(screen.getByText('🔥').props.className).toContain('text-4xl');
+  });
+
+  it('hands out only safe link targets', () => {
+    const onLinkPress = jest.fn();
+    render(<RichText text="ipfs://bafyabc/pic.png" onLinkPress={onLinkPress} />);
+    fireEvent.press(screen.getByText('ipfs://bafyabc/pic.png'));
+    expect(onLinkPress).toHaveBeenCalledWith('https://ipfs.io/ipfs/bafyabc/pic.png');
+  });
 });

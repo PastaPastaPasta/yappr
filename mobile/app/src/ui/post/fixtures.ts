@@ -23,7 +23,7 @@ function author(key: keyof typeof FIXTURE_AVATARS, displayName: string, username
 }
 
 /** Stands in for the engine's `profiles.avatarSvg`: each fixture author's DiceBear markup, by seed. */
-export const fixtureAvatarSvg: AvatarSvgResolver = async (_identityId, _style, seed) => {
+export const fixtureAvatarSvg: AvatarSvgResolver = (_identityId, _style, seed) => {
   const entry = Object.values(FIXTURE_AVATARS).find((a) => a.id === seed);
   return entry ? svgFromDataUri(entry.uri) : null;
 };

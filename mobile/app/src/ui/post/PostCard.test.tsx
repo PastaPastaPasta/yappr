@@ -302,6 +302,94 @@ describe('PostCard variants', () => {
   });
 });
 
+describe('review fixes', () => {
+  it('hides a legacy poll link from the text', () => {
+    const post = fixturePost({
+      id: 'legacy-poll',
+      content: 'Vote here https://pollr.app/poll?id=abc',
+      poll: { id: 'abc', linkUrl: 'https://pollr.app/poll?id=abc' },
+    });
+    render(<PostCard post={post} poll={SAMPLE_POLL} />);
+    expect(screen.getByText('Vote here')).toBeTruthy();
+    expect(screen.queryByText(/pollr\.app/)).toBeNull();
+  });
+
+  it('offers the quote, links, mentions, tags and images as screen-reader actions', () => {
+    const actions = {
+      onQuotePress: jest.fn(),
+      onMentionPress: jest.fn(),
+      onHashtagPress: jest.fn(),
+      onLinkPress: jest.fn(),
+      onMediaPress: jest.fn(),
+    };
+    const post = fixturePost({
+      id: 'a11y-targets',
+      content: 'Hi @Carol #Dash https://dash.org',
+      media: [POSTS.oneImage.media[0]],
+      quotedPostId: 'q',
+      quoted: POSTS.quote.quoted,
+    });
+    render(<PostCard post={post} actions={actions} />);
+    const card = screen.getByTestId('post-card-a11y-targets');
+    const labels = card.props.accessibilityActions.map((a: { label: string }) => a.label);
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        'Open @Carol',
+        'Open #Dash',
+        'Open https://dash.org',
+        'Open quoted post',
+        'Open image 1',
+      ]),
+    );
+    const run = (actionName: string) =>
+      fireEvent(card, 'accessibilityAction', { nativeEvent: { actionName } });
+    run('Open @Carol');
+    run('Open #Dash');
+    run('Open https://dash.org');
+    run('quote');
+    run('media-0');
+    expect(actions.onMentionPress).toHaveBeenCalledWith('carol');
+    expect(actions.onHashtagPress).toHaveBeenCalledWith('dash');
+    expect(actions.onLinkPress).toHaveBeenCalledWith('https://dash.org');
+    expect(actions.onQuotePress).toHaveBeenCalled();
+    expect(actions.onMediaPress).toHaveBeenCalledWith(0);
+  });
+
+  it('keeps a covered quote’s text out of its label', () => {
+    render(<PostCard post={{ ...POSTS.quote, id: 'quote-nsfw-label' }} quoteNsfwGated />);
+    expect(screen.getByTestId('quote-embed').props.accessibilityLabel).toBe(
+      'Quote: Carol, NSFW post, hidden',
+    );
+  });
+
+  it('labels video and GIF thumbnails, and never loads a video URL as an image', () => {
+    const post = fixturePost({
+      id: 'video-gif',
+      media: [
+        { type: 'video', url: 'https://x.org/v.mp4' },
+        { type: 'gif', url: 'https://x.org/a.gif', alt: 'dance' },
+      ],
+    });
+    render(<PostCard post={post} />);
+    expect(screen.getByLabelText('Video')).toBeTruthy();
+    expect(screen.getByLabelText('GIF: dance')).toBeTruthy();
+    expect(screen.getByText('GIF')).toBeTruthy();
+  });
+
+  it('never hands out an unsafe link-preview target', () => {
+    const onLinkPreviewPress = jest.fn();
+    render(
+      <PostCard
+        post={POSTS.linkPreview}
+        linkPreview={{ ...SAMPLE_PREVIEW, url: 'javascript:alert(1)' }}
+        actions={{ onLinkPreviewPress }}
+      />,
+    );
+    fireEvent.press(screen.getByTestId('link-preview'));
+    expect(onLinkPreviewPress).not.toHaveBeenCalled();
+  });
+});
+
 describe('stubs', () => {
   it.each([
     ['removed', 'post', "This post was removed by the contract's moderators."],

@@ -9,9 +9,10 @@ import {
   normalizeDpnsUsername,
 } from '~/lib-allowlist';
 
+import { useMediaUrls } from '../media-url';
 import { Text } from '../Text';
 import { monoFont, tones } from '../tokens';
-import { parseContent, splitUrl, type ContentPart, type InlinePart } from './parse';
+import { displayText, parseContent, splitUrl, type InlinePart } from './parse';
 
 export interface RichTextHandlers {
   /** The DPNS label, normalized (lowercase, no `.dash`). */
@@ -56,21 +57,6 @@ function LinkSpan({ children, onPress }: { children: ReactNode; onPress?: () => 
   );
 }
 
-/** Drops the first URL part, keeping its trailing punctuation. */
-function withoutFirstUrl(parts: ContentPart[]): ContentPart[] {
-  const index = parts.findIndex((p) => p.type === 'url');
-  if (index < 0) return parts;
-  const { trailing } = splitUrl(parts[index].value);
-  const next = [...parts];
-  next.splice(index, 1, ...(trailing ? [{ type: 'text' as const, value: trailing }] : []));
-  // Trim the whitespace the URL leaves at either end of the post, as web's stripFirstUrlAndTrim.
-  const last = next[next.length - 1];
-  if (last?.type === 'text') next[next.length - 1] = { ...last, value: last.value.trimEnd() };
-  const first = next[0];
-  if (first?.type === 'text') next[0] = { ...first, value: first.value.trimStart() };
-  return next.filter((p) => p.type !== 'text' || p.value !== '');
-}
-
 /**
  * Post text with web's highlighting (components/post/post-content.tsx):
  * mentions, hashtags, cashtags and links in `link` color and tappable,
@@ -90,18 +76,20 @@ export const RichText = memo(function RichText({
   onTextLayout,
   testID,
 }: RichTextProps) {
-  const parts = useMemo(() => {
-    const parsed = parseContent(text);
-    return hideFirstUrl ? withoutFirstUrl(parsed) : parsed;
-  }, [text, hideFirstUrl]);
-  const emojiOnly = useMemo(() => isEmojiOnly(text), [text]);
+  const urls = useMediaUrls();
+  // As web: strip the previewed URL from the raw text, then parse and size what is left.
+  const shown = useMemo(() => displayText(text, hideFirstUrl), [text, hideFirstUrl]);
+  const parts = useMemo(() => parseContent(shown), [shown]);
+  const emojiOnly = useMemo(() => isEmojiOnly(shown), [shown]);
 
   const inline = (part: InlinePart, key: string | number): ReactNode => {
     switch (part.type) {
       case 'url': {
         const { href, display, trailing } = splitUrl(part.value);
+        // Only http(s) leaves the app; ipfs:// opens through the gateway.
+        const target = urls.external(href);
         return [
-          <LinkSpan key={key} onPress={onLinkPress && (() => onLinkPress(href))}>
+          <LinkSpan key={key} onPress={onLinkPress && target ? () => onLinkPress(target) : undefined}>
             {display}
           </LinkSpan>,
           trailing,

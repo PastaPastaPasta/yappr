@@ -6,6 +6,7 @@ import { SvgXml } from 'react-native-svg';
 import { cn } from '~/lib-allowlist';
 
 import { useDicebearSvg } from './avatar-svg';
+import { useMediaUrls } from './media-url';
 import type { CardAvatar } from './post/types';
 import { hitSlopFor, motion, tw } from './tokens';
 
@@ -78,14 +79,16 @@ export const Avatar = memo(function Avatar({
   className,
 }: AvatarProps) {
   const recipeSvg = useDicebearSvg(identityId, avatar?.dicebear);
-  const uri = avatar?.uri ?? uriProp ?? undefined;
+  const urls = useMediaUrls();
+  const storedUri = avatar?.uri ?? uriProp ?? undefined;
   const svg = svgProp ?? recipeSvg;
   const diameter = AVATAR_SIZES[size];
   // The profile avatar's 4 pt ring sits inside its diameter; the picture fills the rest.
   const inner = size === 'profile' ? diameter - 8 : diameter;
   // Keyed by URL, so a recycled cell showing someone else retries.
   const [failedUri, setFailedUri] = useState<string>();
-  const markup = useMemo(() => svgMarkup(svg ?? uri), [svg, uri]);
+  const markup = useMemo(() => svgMarkup(svg ?? storedUri), [svg, storedUri]);
+  const uri = urls.media(storedUri);
   const fallbackMarkup = useMemo(() => svgMarkup(fallback), [fallback]);
 
   let content = null;

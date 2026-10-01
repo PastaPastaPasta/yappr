@@ -123,3 +123,54 @@ export function splitUrl(value: string): { href: string; display: string; traili
   const prefixed = value.toLowerCase().startsWith('www.') ? `https://${value}` : value;
   return { href: stripTrailingPunctuation(prefixed), display, trailing: value.slice(display.length) };
 }
+
+const FIRST_URL = /(https?:\/\/[^\s<>"']+|ipfs:\/\/[^\s<>"']+|www\.[^\s<>"']+)/i;
+
+/** Web `extractFirstUrl`: the first URL in the raw text, `www.` prefixed and cleaned, or null. */
+export function extractFirstUrl(content: string): string | null {
+  const match = FIRST_URL.exec(content);
+  if (!match) return null;
+  const url = match[0].toLowerCase().startsWith('www.') ? `https://${match[0]}` : match[0];
+  return stripTrailingPunctuation(url);
+}
+
+/**
+ * Web `stripFirstUrlAndTrim` (lib/link-preview/urls): drops the first URL of
+ * the raw text, when it is `firstUrl`, keeping its trailing punctuation, then
+ * trims. Works on the raw text, so a URL inside bold or code counts too.
+ */
+export function stripFirstUrlAndTrim(content: string, firstUrl: string | null): string {
+  if (!firstUrl) return content;
+  const match = FIRST_URL.exec(content);
+  if (!match) return content;
+  const raw = match[0];
+  const normalized = raw.toLowerCase().startsWith('www.') ? `https://${raw}` : raw;
+  const clean = stripTrailingPunctuation(normalized);
+  if (clean !== firstUrl) return content;
+  const trailingLength = Math.min(normalized.length - clean.length, raw.length);
+  const trailing = trailingLength > 0 ? raw.slice(raw.length - trailingLength) : '';
+  return `${content.slice(0, match.index)}${trailing}${content.slice(match.index + raw.length)}`.trim();
+}
+
+/** Web `stripPollrPollLink`: a legacy poll post shows the poll, not its link. */
+export function stripLink(content: string, url: string): string {
+  return content
+    .split(url)
+    .join('')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
+}
+
+/** The text a post shows: without the previewed first URL, as web renders it. */
+export function displayText(content: string, hideFirstUrl: boolean): string {
+  return hideFirstUrl ? stripFirstUrlAndTrim(content, extractFirstUrl(content)) : content;
+}
+
+/** Every tappable span (mentions, tags, links) in reading order, for screen-reader actions. */
+export function inlineTargets(content: string): InlinePart[] {
+  return parseContent(content).flatMap((part): InlinePart[] => {
+    if ('children' in part) return part.children.filter((c) => c.type !== 'text');
+    if (part.type === 'code' || part.type === 'text') return [];
+    return [part];
+  });
+}

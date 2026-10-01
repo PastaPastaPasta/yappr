@@ -1,4 +1,13 @@
-import { parseContent, splitUrl, stripTrailingPunctuation } from './parse';
+import {
+  displayText,
+  extractFirstUrl,
+  inlineTargets,
+  parseContent,
+  splitUrl,
+  stripFirstUrlAndTrim,
+  stripLink,
+  stripTrailingPunctuation,
+} from './parse';
 
 describe('parseContent (web PostContent parity)', () => {
   it('splits mentions, hashtags, cashtags and links out of plain text', () => {
@@ -61,5 +70,30 @@ describe('splitUrl', () => {
       'https://en.wikipedia.org/wiki/Dash_(cryptocurrency)',
     );
     expect(stripTrailingPunctuation('https://x.org/a)')).toBe('https://x.org/a');
+  });
+});
+
+describe('web text stripping parity', () => {
+  it('drops the previewed first URL from the raw text, even inside bold', () => {
+    const text = '**see https://a.com now** https://b.com';
+    expect(extractFirstUrl(text)).toBe('https://a.com');
+    expect(displayText(text, true)).toBe('**see  now** https://b.com');
+  });
+
+  it('keeps trailing punctuation and trims', () => {
+    expect(stripFirstUrlAndTrim('Read www.dash.org.', 'https://www.dash.org')).toBe('Read .');
+    expect(stripFirstUrlAndTrim('Read https://x.org', 'https://other.org')).toBe('Read https://x.org');
+  });
+
+  it('removes a legacy poll link everywhere it appears', () => {
+    expect(stripLink('Vote! https://pollr.app/p/1 \nthanks', 'https://pollr.app/p/1')).toBe('Vote!\nthanks');
+  });
+
+  it('lists the tappable spans in reading order, bold included', () => {
+    expect(inlineTargets('hi @bob **#tag** `@code` https://x.org').map((t) => t.value)).toEqual([
+      '@bob',
+      '#tag',
+      'https://x.org',
+    ]);
   });
 });

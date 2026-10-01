@@ -8,6 +8,7 @@ import { cn } from '~/lib-allowlist';
 import { Skeleton, SkeletonGroup } from '../Skeleton';
 import { Text } from '../Text';
 import { colors, tw } from '../tokens';
+import { useMediaUrls } from '../media-url';
 import { EMBED_FRAME } from './embed-frame';
 import { MediaGatePlaceholder } from './MediaGrid';
 import type { CardLinkPreview, Loadable } from './types';
@@ -45,6 +46,7 @@ export function LinkPreviewCard({
 }: LinkPreviewCardProps) {
   // Keyed by URL, so a recycled cell retries.
   const [failedImage, setFailedImage] = useState<string>();
+  const urls = useMediaUrls();
 
   if (preview === 'error') return null;
   if (preview === 'loading') {
@@ -61,7 +63,9 @@ export function LinkPreviewCard({
 
   const host = displayHost(preview.url);
   const youtube = preview.youtubeVideoId;
-  const image = youtube ? `https://img.youtube.com/vi/${youtube}/hqdefault.jpg` : preview.image;
+  const image = youtube ? `https://img.youtube.com/vi/${youtube}/hqdefault.jpg` : urls.media(preview.image);
+  // Fetched metadata is untrusted: only a safe target is ever handed out.
+  const target = urls.external(preview.url);
   const label = [youtube ? 'YouTube video' : host, preview.title].filter(Boolean).join(', ');
 
   let imageBox = null;
@@ -93,7 +97,8 @@ export function LinkPreviewCard({
     <Pressable
       accessibilityRole="link"
       accessibilityLabel={label}
-      onPress={onPress && (() => onPress(preview.url))}
+      onPress={onPress && target ? () => onPress(target) : undefined}
+      disabled={!target}
       testID="link-preview"
       className={cn(FRAME, tw.pressed)}
     >

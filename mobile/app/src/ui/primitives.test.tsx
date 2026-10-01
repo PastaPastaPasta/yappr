@@ -239,6 +239,18 @@ describe('WriteStatus', () => {
     announce.mockRestore();
   });
 
+  it('stays quiet when a recycled cell shows another post', () => {
+    const announce = jest
+      .spyOn(AccessibilityInfo, 'announceForAccessibility')
+      .mockImplementation(() => undefined);
+    const { rerender } = render(<WriteStatus postId="a" status={{ state: 'posting' }} />);
+    rerender(<WriteStatus postId="b" status={{ state: 'failed' }} />);
+    expect(announce).not.toHaveBeenCalled();
+    rerender(<WriteStatus postId="b" status={{ state: 'unconfirmed' }} />);
+    expect(announce).toHaveBeenCalledWith('Not confirmed yet');
+    announce.mockRestore();
+  });
+
   it('runs the retry action', () => {
     const onRetry = jest.fn();
     render(<WriteStatus status={{ state: 'failed' }} onRetry={onRetry} />);

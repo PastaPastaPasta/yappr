@@ -1,9 +1,17 @@
-import { memo, useState, type ReactNode } from 'react';
-import { Pressable, View, type AccessibilityActionEvent } from 'react-native';
+import { memo, useCallback, useMemo, useState, type ReactNode } from 'react';
+import { Pressable, View, type AccessibilityActionEvent, type TextLayoutEvent } from 'react-native';
 import { ArrowPathIcon, EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 import { LockClosedIcon } from 'react-native-heroicons/solid';
 
-import { cn, formatNumber, formatTime, truncateId } from '~/lib-allowlist';
+import {
+  cashtagDisplayToStorage,
+  cn,
+  formatNumber,
+  formatTime,
+  hashtagDisplayToStorage,
+  normalizeDpnsUsername,
+  truncateId,
+} from '~/lib-allowlist';
 
 import { Avatar } from '../Avatar';
 import { handleOf } from '../handle';
@@ -13,7 +21,9 @@ import { RichText, type RichTextHandlers } from '../rich-text/RichText';
 import { Skeleton } from '../Skeleton';
 import { Text } from '../Text';
 import { monoFont, tw, useColors, useLargeText } from '../tokens';
-import { useRelativeTime } from '../use-relative-time';
+import { safeExternalUrl } from '../media-url';
+import { RelativeTime } from '../RelativeTime';
+import { displayText, inlineTargets, splitUrl, stripLink, type InlinePart } from '../rich-text/parse';
 import { WriteStatus, writeStatusLinks, type WriteStatusProps } from '../WriteStatus';
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { MediaGrid } from './MediaGrid';
@@ -119,13 +129,11 @@ function RepostBanner({
 
 function Header({
   post,
-  time,
   pending,
   showMore,
   actions,
 }: {
   post: CardPost;
-  time: string;
   pending: boolean;
   showMore: boolean;
   actions: PostCardActions;
@@ -163,9 +171,7 @@ function Header({
     </Text>
   );
   const timeText = (
-    <Text variant="subhead" tone="secondary" className="shrink-0">
-      · {time}
-    </Text>
+    <RelativeTime date={post.createdAt} prefix="· " variant="subhead" tone="secondary" className="shrink-0" />
   );
 
   return (
@@ -203,10 +209,26 @@ function Header({
   );
 }
 
+/** Runs the handler a tap on that span would, normalized as RichText does. */
+function pressInline(target: InlinePart, actions: PostCardActions, tagMaxLength?: number) {
+  switch (target.type) {
+    case 'mention':
+      return actions.onMentionPress?.(normalizeDpnsUsername(target.value.slice(1)));
+    case 'hashtag':
+      return actions.onHashtagPress?.(hashtagDisplayToStorage(target.value, tagMaxLength));
+    case 'cashtag':
+      return actions.onCashtagPress?.(cashtagDisplayToStorage(target.value, tagMaxLength));
+    case 'url': {
+      const url = safeExternalUrl(splitUrl(target.value).href);
+      return url ? actions.onLinkPress?.(url) : undefined;
+    }
+  }
+}
+
 /** The screen-reader summary of a card (UX_SPEC §6.2). */
 function postAccessibilityLabel(
   post: CardPost,
-  extras: { repostedBy?: string; replyingTo?: string; quoteCovered: boolean },
+  extras: { content: string; repostedBy?: string; replyingTo?: string; quoteCovered: boolean },
 ): string {
   // The spoken form ("5 minutes ago"): "5m" reads as "5 meters".
   const parts = [`${post.author.displayName}, ${handleOf(post.author)}, ${formatTime(post.createdAt)}.`];
@@ -214,7 +236,7 @@ function postAccessibilityLabel(
   if (extras.replyingTo) parts.push(`Replying to @${extras.replyingTo}.`);
   if (post.deleted) parts.push(stubText('deleted', post.kind));
   else if (post.encrypted) parts.push('Private post.');
-  else if (post.content) parts.push(`${post.content}.`);
+  else if (extras.content) parts.push(`${extras.content}.`);
   const { quoted } = post;
   if (quoted) {
     const hidden = extras.quoteCovered || quoted.encrypted || quoted.deleted;
@@ -232,6 +254,10 @@ function postAccessibilityLabel(
  * `detail` (full text, larger type, absolute time and counts), `compact`
  * (no action bar; thread parents, compose preview) and `optimistic` (the
  * write-status line instead of the action bar).
+ *
+ * It is memoized: lists must pass stable props, above all a memoized
+ * `actions` object (`useMemo` keyed by the post), or every card re-renders
+ * on every list render. The live time is its own leaf (`RelativeTime`).
  */
 export const PostCard = memo(function PostCard({
   post,
@@ -253,11 +279,25 @@ export const PostCard = memo(function PostCard({
   tagMaxLength,
   actions = {},
 }: PostCardProps) {
-  const time = useRelativeTime(post.createdAt);
   const [revealed, reveal] = useSensitiveReveal(post.id);
   // Whether the feed text overflowed, keyed by post so a recycled cell re-measures.
   const [clampedId, setClampedId] = useState<string>();
   const clamped = clampedId === post.id;
+  const postId = post.id;
+  // Stable, so RichText's memo holds across renders.
+  const measureClamp = useCallback(
+    (e: TextLayoutEvent) => {
+      if (e.nativeEvent.lines.length > FEED_MAX_LINES) setClampedId(postId);
+    },
+    [postId],
+  );
+  // A legacy poll post shows the poll, not its link (web stripPollrPollLink).
+  const pollLink = post.poll?.linkUrl;
+  const content = useMemo(
+    () => (pollLink ? stripLink(post.content, pollLink) : post.content),
+    [post.content, pollLink],
+  );
+  const previewShown = linkPreview !== undefined && linkPreview !== 'error';
 
   if (post.viewer?.authorBlocked) return <PostStub state="blocked" kind={post.kind} />;
 
@@ -299,21 +339,15 @@ export const PostCard = memo(function PostCard({
     }
     body = (
       <>
-        {post.content ? (
+        {content ? (
           <View className="mt-0.5">
             <RichText
-              text={post.content}
+              text={content}
               variant={detail ? 'bodyLarge' : 'body'}
               numberOfLines={clamped ? FEED_MAX_LINES : undefined}
-              hideFirstUrl={linkPreview !== undefined && linkPreview !== 'error'}
+              hideFirstUrl={previewShown}
               tagMaxLength={tagMaxLength}
-              onTextLayout={
-                variant === 'feed' && !clamped
-                  ? (e) => {
-                      if (e.nativeEvent.lines.length > FEED_MAX_LINES) setClampedId(post.id);
-                    }
-                  : undefined
-              }
+              onTextLayout={variant === 'feed' && !clamped ? measureClamp : undefined}
               onMentionPress={actions.onMentionPress}
               onHashtagPress={actions.onHashtagPress}
               onCashtagPress={actions.onCashtagPress}
@@ -370,6 +404,28 @@ export const PostCard = memo(function PostCard({
     }
     if (mediaGated && post.media.length > 0)
       a11yActions.push({ name: 'showMedia', label: 'Show media', run: onRevealMedia });
+    // Everything tappable inside the card, which VoiceOver can't reach on its own.
+    if (!post.deleted && !post.encrypted) {
+      for (const target of inlineTargets(displayText(content, previewShown))) {
+        const label = `Open ${target.type === 'url' ? splitUrl(target.value).display : target.value}`;
+        if (!a11yActions.some((a) => a.name === label)) {
+          a11yActions.push({ name: label, label, run: () => pressInline(target, actions, tagMaxLength) });
+        }
+      }
+      if (post.quoted)
+        a11yActions.push({ name: 'quote', label: 'Open quoted post', run: actions.onQuotePress });
+      const openPreview = actions.onLinkPreviewPress;
+      const previewUrl = typeof linkPreview === 'object' ? safeExternalUrl(linkPreview.url) : null;
+      if (openPreview && previewUrl) {
+        a11yActions.push({ name: 'preview', label: 'Open link preview', run: () => openPreview(previewUrl) });
+      }
+      const openMedia = actions.onMediaPress;
+      if (!mediaGated && openMedia) {
+        post.media.forEach((_, i) =>
+          a11yActions.push({ name: `media-${i}`, label: `Open image ${i + 1}`, run: () => openMedia(i) }),
+        );
+      }
+    }
   }
   a11yActions.push(
     { name: 'profile', label: 'Open profile', run: actions.onAuthorPress },
@@ -388,6 +444,7 @@ export const PostCard = memo(function PostCard({
         covered
           ? 'NSFW post, hidden'
           : postAccessibilityLabel(post, {
+              content,
               repostedBy: reposter,
               replyingTo,
               quoteCovered: (quoteNsfwGated ?? post.quoted?.sensitive) === true,
@@ -415,7 +472,6 @@ export const PostCard = memo(function PostCard({
         <View className="min-w-0 flex-1">
           <Header
             post={post}
-            time={time}
             pending={authorPending}
             showMore={variant !== 'compact' && !!actions.onMore}
             actions={actions}
@@ -452,7 +508,7 @@ export const PostCard = memo(function PostCard({
               onShare={actions.onShare}
             />
           ) : null}
-          {variant === 'optimistic' && writeStatus ? <WriteStatus {...writeStatus} /> : null}
+          {variant === 'optimistic' && writeStatus ? <WriteStatus {...writeStatus} postId={post.id} /> : null}
         </View>
       </View>
     </Pressable>
