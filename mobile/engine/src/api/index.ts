@@ -1,4 +1,5 @@
 import { createEngineModule, type EngineRuntime } from './engine'
+import { engage } from './engage'
 import { feed } from './feed'
 import { posts } from './posts'
 import { profiles } from './profiles'
@@ -13,6 +14,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     engine: createEngineModule(runtime),
     feed,
     posts,
+    engage,
     profiles,
   }
 }
@@ -21,3 +23,4 @@ export type EngineApi = ReturnType<typeof createEngineApi>
 
 export type { EngineInfo, EngineRuntime } from './engine'
 export type * from './dto'
+export type { PlatformInfoDTO } from '../dto/capabilities'

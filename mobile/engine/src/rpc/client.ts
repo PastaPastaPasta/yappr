@@ -56,8 +56,8 @@ const NOT_METHODS = new Set([
 ])
 
 /**
- * The host side of the RPC. `api` is a Proxy: `client.api.feed.forYou(x)`
- * sends `{ path: 'feed.forYou', args: [x] }`, so adding an engine method
+ * The host side of the RPC. `api` is a Proxy: `client.api.feed.home(x)`
+ * sends `{ path: 'feed.home', args: [x] }`, so adding an engine method
  * needs no change here.
  *
  * Handshake: calls wait for `engine.hello` (the client pings on creation in

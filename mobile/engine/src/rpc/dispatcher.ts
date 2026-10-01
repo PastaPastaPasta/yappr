@@ -9,7 +9,7 @@ import {
 } from '../protocol/envelope'
 import type { Transport } from './transport'
 
-/** A tree of async methods, addressed by dotted path (`feed.forYou`). */
+/** A tree of async methods, addressed by dotted path (`feed.home`). */
 export interface ApiTree {
   [key: string]: ((...args: never[]) => unknown) | ApiTree
 }

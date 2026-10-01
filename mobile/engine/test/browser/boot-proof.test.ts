@@ -188,7 +188,7 @@ async function runOnce(browser: Browser, browserName: string, mode: Mode, run: n
       return { ...w.__probe, jsHeapMB: memory ? Math.round(memory.usedJSHeapSize / 1e6) : undefined }
     })
 
-    const [first, firstFeedMs] = await timed(() => client.api.feed.forYou())
+    const [first, firstFeedMs] = await timed(() => client.api.feed.home({ tab: 'forYou' }))
     result.firstFeedMs = firstFeedMs
     result.coldToFeedMs = Math.round(performance.now() - t0)
     result.firstFeedItems = first.items.length
@@ -196,9 +196,9 @@ async function runOnce(browser: Browser, browserName: string, mode: Mode, run: n
     // lib reads the session from localStorage: viewer marks appear only if the injected snapshot was seen.
     expect(first.items[0].viewer !== undefined).toBe(snapshot !== undefined)
 
-    if (first.hasMore) [, result.secondFeedMs] = await timed(() => client.api.feed.forYou({ cursor: first.cursor }))
+    if (first.hasMore) [, result.secondFeedMs] = await timed(() => client.api.feed.home({ tab: 'forYou', cursor: first.cursor }))
     // Warm re-read of the first page: the steady-state cost of a refresh.
-    ;[, result.refreshFeedMs] = await timed(() => client.api.feed.forYou())
+    ;[, result.refreshFeedMs] = await timed(() => client.api.feed.home({ tab: 'forYou' }))
 
     const sample = first.items[0]
     const [post, postGetMs] = await timed(() => client.api.posts.get(sample.id))
