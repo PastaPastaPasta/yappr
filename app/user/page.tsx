@@ -13,6 +13,7 @@ import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { byNewestActivity, resolveUserReposts } from '@/lib/feed/resolve-user-reposts'
 import { isBareRepost } from '@/lib/feed/quote-reposts'
 import { repostsAreQuotes } from '@/lib/contract-topology'
+import { withoutHiddenTombstones } from '@/lib/feed/hidden-tombstones'
 import { paymentUriScheme } from '@/lib/services/unified-profile-service'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
@@ -598,7 +599,7 @@ function UserProfileContent() {
               onTabChange={tabs.setActiveTab}
               viewerId={viewerId}
               getPostEnrichment={getPostEnrichment}
-              posts={published.posts.filter((p) => !p.repostedBy && !isBareRepost(p))}
+              posts={withoutHiddenTombstones(published.posts).filter((p) => !p.repostedBy && !isBareRepost(p))}
               replies={tabs.replies}
               top={tabs.top}
               mentions={tabs.mentions}

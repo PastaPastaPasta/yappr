@@ -176,8 +176,14 @@ export interface RemovalKeptFields {
 
 /**
  * Where a document stands against its type's moderator deletion window
- * (`deleteWithin`, measured by Drive from `$updatedAt`, or `$createdAt` on an
- * immutable type such as v11's post and reply):
+ * (`deleteWithin`, measured by Drive from `$updatedAt` on a mutable type and
+ * from `$createdAt` on an immutable one). v11's post and reply are mutable, so
+ * the window runs from `$updatedAt`, and an author's tombstone reopens it.
+ * The client measures from `$createdAt` (the `Post` model carries no
+ * `$updatedAt`). That is exact for every live post and reply, since the
+ * tombstone is the only edit consensus allows, and a tombstone shows no
+ * moderator menu on v11 (`tombstonesAreHidden()`); were one offered, a
+ * settled-looking tombstone would really be open, and the node decides.
  *
  * - `open`: one moderator deletes it alone;
  * - `closing`: within {@link SETTLE_MARGIN_MS} of the window's end either
@@ -491,7 +497,8 @@ export function toKeptFields(keptFields: Readonly<Record<string, unknown>> | und
  * unless authors delete for real (v10) and absence is proved, which is the
  * author's delete after the restore (a moderator deleting it again would have
  * left a fresh, standing record). Proof of absence with no record is a takedown
- * where only moderators can remove posts (v9), and the author's own delete
+ * where only moderators can remove posts (v9, and v11, where an author's
+ * delete is a tombstone that stays), and the author's own delete
  * where authors can too (`authorsDelete`, v10: every moderator deletion of a
  * post or reply leaves a record). That reading needs the record lookup to
  * have ANSWERED with nothing (`recordsRead`): while it is pending, or when it

@@ -1042,7 +1042,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * first, zero counts included: ONE
    * composite reading the user's newest {@link LIKE_NOTIFICATION_RECENT_SCAN}
    * on `ownerAndTime [$ownerId, $createdAt]` (bare reposts never gain likes
-   * and are skipped) with a like-count slot bound page `$id` → target, grouped
+   * and tombstones are deleted, so both are skipped) with a like-count slot bound page `$id` → target, grouped
    * on the countable `byPost`/`byReply`. Throws on a failed or incomplete read.
    */
   async getRecentTargetLikeCounts(userId: string, kind: TargetKind): Promise<Map<string, RecentTarget>> {
@@ -1066,7 +1066,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     return new Map(result.pageDocuments
       .map((doc) => documentToPlainObject(doc))
       .sort((a, b) => Number(b.$createdAt) - Number(a.$createdAt))
-      .filter((doc) => !isRawBareRepost(doc))
+      // A v11 tombstone (an author's delete, or an undone repost) is not a
+      // target to announce likes of either.
+      .filter((doc) => !isRawBareRepost(doc) && doc.deleted !== true)
       .slice(0, LIKE_NOTIFICATION_RECENT_TARGETS)
       .flatMap((doc): [string, RecentTarget][] => (typeof doc.$id === 'string' && Number.isFinite(Number(doc.$createdAt))
         ? [[doc.$id, { count: Number(counts.get(doc.$id) ?? 0), createdAtMs: Number(doc.$createdAt) }]]

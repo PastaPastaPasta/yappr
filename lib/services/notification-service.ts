@@ -8,6 +8,7 @@ import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
 import { isPublishedBlogPost } from '../blog/content-utils';
 import { likesAreIndexOnly, likeNotificationsAreTimeless, likeNotificationsPinTarget, likeSurfacesAreSplit, likeIndexFor, mentionDocTypes, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
+import { withoutHiddenTombstones } from '../feed/hidden-tombstones';
 import { quoteNotificationType, quotedTargetIdOf } from '../feed/quote-reposts';
 import { readNotificationWindow } from './notification-windows';
 import { readScoped, scopedKey, writeScoped } from '../storage-scope';
@@ -404,7 +405,9 @@ class NotificationService {
       const { replyService } = await import('./reply-service');
       const replies = await replyService.getRepliesToMyContent(userId, new Date(sinceTimestamp), preloaded);
 
-      return replies
+      // v11: a tombstoned reply keeps its parent linkage, so it stays in the
+      // window; its author deleted it, and there is nothing to announce.
+      return withoutHiddenTombstones(replies)
         .map(reply => ({
           id: `reply-${reply.id}`,
           type: 'reply' as const,

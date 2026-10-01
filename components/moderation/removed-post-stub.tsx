@@ -30,6 +30,17 @@ interface RemovedPostStubProps {
   removedByModerator?: boolean
 }
 
+/** A stub's frame: a feed item (`card`) or an inline quote box (`embed`). */
+function stubFrameClass(variant: 'card' | 'embed', className?: string): string {
+  return cn(
+    'text-sm text-gray-500 dark:text-gray-400',
+    variant === 'embed'
+      ? 'mt-3 border border-gray-200 dark:border-gray-700 rounded-xl p-3'
+      : 'px-4 py-3 border-b border-gray-200 dark:border-gray-800',
+    className
+  )
+}
+
 /**
  * The hole a moderator-removed post or reply leaves: the document is gone
  * (a fetch returns nothing and by-id joins list it in `missingIds`), and the
@@ -91,13 +102,7 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
   return (
     <div
       data-testid={`removed-${noun}-${documentId}`}
-      className={cn(
-        'text-sm text-gray-500 dark:text-gray-400',
-        variant === 'embed'
-          ? 'mt-3 border border-gray-200 dark:border-gray-700 rounded-xl p-3'
-          : 'px-4 py-3 border-b border-gray-200 dark:border-gray-800',
-        className
-      )}
+      className={stubFrameClass(variant, className)}
     >
       <p className="flex items-center gap-2 italic">
         <Icon className="h-4 w-4 shrink-0" />
@@ -111,6 +116,28 @@ export function RemovedPostStub({ documentId, kind, className, variant = 'embed'
       </p>
       {state === 'removed' && removal?.reason && <p className="mt-1 not-italic">Reason: {removal.reason}</p>}
       {state === 'removed' && removal && <KeptFieldsLine removal={removal} showThread={variant === 'embed'} />}
+    </div>
+  )
+}
+
+/**
+ * A post or reply its author tombstoned (v11, {@link tombstonesAreHidden}):
+ * the document still exists, `deleted` and blank, so unlike
+ * {@link RemovedPostStub} there is no record to look up and no doubt about
+ * who removed it. Holds the place of a thread parent with live replies, a
+ * quote's target or a direct link, and offers nothing to interact with.
+ */
+export function AuthorDeletedStub({ documentId, kind, className, variant = 'embed' }: Pick<RemovedPostStubProps, 'documentId' | 'kind' | 'className' | 'variant'>) {
+  const noun = kind === 'reply' ? 'reply' : 'post'
+  return (
+    <div
+      data-testid={`tombstoned-${noun}-${documentId}`}
+      className={stubFrameClass(variant, className)}
+    >
+      <p className="flex items-center gap-2 italic">
+        <TrashIcon className="h-4 w-4 shrink-0" />
+        {`This ${noun} was deleted by its author.`}
+      </p>
     </div>
   )
 }

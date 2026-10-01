@@ -29,9 +29,10 @@ import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { usePostEngagement } from '@/hooks/use-post-engagement'
 import { isSensitivePost, shouldGateSensitive } from '@/lib/sensitive-content'
 import { findPollrPollLink, getEmbeddedPollId, stripPollrPollLink } from '@/lib/poll-embed'
-import { authorDeletesLeaveHoles, contractTakesReports, deletesAreTombstones, moderatorDeletableTypes, referencesMayDangle, repostsAreQuotes, targetKindOf, type TargetKind } from '@/lib/contract-topology'
+import { authorDeletesLeaveHoles, contractTakesReports, deletesAreTombstones, moderatorDeletableTypes, referencesMayDangle, repostsAreQuotes, targetKindOf, tombstonesAreHidden, type TargetKind } from '@/lib/contract-topology'
 import { quoteTargetOf } from '@/lib/feed/resolve-quoted-posts'
 import { isBareRepost, type OwnQuote } from '@/lib/feed/quote-reposts'
+import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
 import { logger } from '@/lib/logger'
 import { stopPropagation } from '@/lib/utils/events'
 import { IconButton } from '@/components/ui/icon-button'
@@ -44,7 +45,7 @@ import { PostContent } from './post-content'
 import { PrivatePostContent, isPrivatePost } from './private-post-content'
 import { SensitiveContentGate } from './sensitive-content-gate'
 import { EmbeddedPostCard, EmbeddedPostSkeleton, EmbeddedPostUnavailable } from './embedded-post-card'
-import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
+import { AuthorDeletedStub, RemovedPostStub } from '@/components/moderation/removed-post-stub'
 import { moderationService } from '@/lib/services/moderation-service'
 import { GatedPostMedia } from './gated-media'
 import { PostActionBar, stopAndRun } from './post-action-bar'
@@ -130,7 +131,8 @@ function BareRepostCard({ post, enrichment, onDelete }: PostCardProps) {
   const quotedId = quotedPost?.id
   useEffect(() => {
     const target = quotedRef.current
-    if (!quotedId || !target) return
+    // A v11 tombstone renders as a stub (or not at all): no counts to read.
+    if (!quotedId || !target || isHiddenTombstone(target)) return
     let current = true
     import('@/lib/services/post-service')
       .then(({ postService }) => postService.enrichPostsBatch([target]))
@@ -160,7 +162,10 @@ function BareRepostCard({ post, enrichment, onDelete }: PostCardProps) {
   const targetHidden = target !== null && sensitiveContentMode === 'hide' && isSensitivePost(target) && target.author.id !== viewerId
   // A target proved removed leaves nothing to browse: only the reposter sees
   // the stub, to remove the repost.
-  const targetGone = post.quotedPostRemoved === true && !isOwnRepost
+  // v11: a target its author tombstoned is hidden like any tombstone; its
+  // reposter still sees the stub, to undo the repost.
+  const targetTombstoned = target !== null && isHiddenTombstone(target)
+  const targetGone = (post.quotedPostRemoved === true || targetTombstoned) && !isOwnRepost
   if (removed || targetBlocked || targetHidden || targetGone) return null
 
   const removeRepost = async () => {
@@ -168,7 +173,8 @@ function BareRepostCard({ post, enrichment, onDelete }: PostCardProps) {
     setRemoving(true)
     try {
       const { postService } = await import('@/lib/services/post-service')
-      if (!(await postService.deletePost(post.id, viewerId))) throw new Error('Delete failed')
+      // v11: a tombstone, which frees the slot for a later repost.
+      if (!(await postService.deleteOwnPost(post.id, viewerId))) throw new Error('Delete failed')
       toast.success('Removed repost')
       setRemoved(true)
       onDelete?.(post.id)
@@ -180,7 +186,7 @@ function BareRepostCard({ post, enrichment, onDelete }: PostCardProps) {
     }
   }
 
-  if (target) {
+  if (target && !targetTombstoned) {
     return (
       <PostCardView
         post={{ ...target, repostedBy: reposter, repostTimestamp: post.createdAt, repostedByOthers: post.repostedByOthers }}
@@ -197,13 +203,15 @@ function BareRepostCard({ post, enrichment, onDelete }: PostCardProps) {
         <ArrowPathIcon className="h-4 w-4" />
         <span>{repostBanner(reposter, post.repostedByOthers)}</span>
       </Link>
-      {unavailable && !loading
+      {target && targetTombstoned
+        ? <AuthorDeletedStub documentId={target.id} kind={targetKindOf(target)} className="ml-9" />
+        : unavailable && !loading
         ? quotedTarget && quotedTarget.where !== 'blogPost'
           ? <RemovedPostStub documentId={quotedTarget.id} kind={quotedTarget.where} proven={post.quotedPostRemoved === true} className="ml-9" />
           : <EmbeddedPostUnavailable className="ml-9" />
         : <EmbeddedPostSkeleton className="ml-9" />}
       {/* The reposted post is gone; its reposter can still delete the repost. */}
-      {unavailable && !loading && isOwnRepost && (
+      {(targetTombstoned || (unavailable && !loading)) && isOwnRepost && (
         <button
           type="button"
           data-testid={`remove-repost-${post.id}`}
@@ -439,10 +447,10 @@ function PostCardView({
       let ok: boolean
       if (isReply) {
         const { replyService } = await import('@/lib/services/reply-service')
-        ok = tombstones ? await replyService.tombstoneReply(post.id, authedUser.identityId) : await replyService.deleteReply(post.id, authedUser.identityId)
+        ok = await replyService.deleteOwnReply(post.id, authedUser.identityId)
       } else {
         const { postService } = await import('@/lib/services/post-service')
-        ok = tombstones ? await postService.tombstonePost(post.id, authedUser.identityId) : await postService.deletePost(post.id, authedUser.identityId)
+        ok = await postService.deleteOwnPost(post.id, authedUser.identityId)
       }
       if (!ok) throw new Error('Delete operation failed')
       toast.success(isReply ? 'Reply deleted' : 'Post deleted')
@@ -483,6 +491,11 @@ function PostCardView({
       </p>
     )
   }
+  // v11: a tombstone is the author's delete. Lists drop it; where one still
+  // renders (a thread parent with live replies, a direct link, a card the
+  // author just deleted) it is a stub with nothing to like, reply to, quote,
+  // repost or bookmark: consensus would accept all of those.
+  if (isTombstoned && tombstonesAreHidden()) return <AuthorDeletedStub documentId={post.id} kind={targetKind} variant="card" />
 
   return (
     <article

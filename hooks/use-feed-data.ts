@@ -10,6 +10,7 @@ import { loadFollowingFeed, type FollowingFeedWindow } from '@/lib/feed/load-fol
 import { loadForYouFeed } from '@/lib/feed/load-for-you-feed';
 import { getFeedItemTimestamp, sortFeedByTimestamp, transformRawPost } from '@/lib/feed/transform-raw-post';
 import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts';
+import { withoutHiddenTombstones } from '@/lib/feed/hidden-tombstones';
 import { followService, postService } from '@/lib/services';
 import { queryPostsByOwnersSince, queryPostsSince } from '@/lib/services/document-service';
 
@@ -471,7 +472,8 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
       logger.debug(`Feed: Found ${newPosts.length} new posts`);
 
-      const transformedPosts = newPosts.map((doc) => transformRawPost(doc));
+      // v11: a post deleted since it was written is still listed, blank.
+      const transformedPosts = withoutHiddenTombstones(newPosts.map((doc) => transformRawPost(doc)));
       sortFeedByTimestamp(transformedPosts);
 
       const existingIds = new Set([

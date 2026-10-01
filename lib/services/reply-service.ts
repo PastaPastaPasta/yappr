@@ -14,6 +14,7 @@ import { profileDataByOwnerId } from './post-enrichment-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { readNotificationWindow } from './notification-windows';
 import {
+  deletesAreTombstones,
   hasFlatThreads,
   mentionsAreInline,
   notificationWindowFor,
@@ -179,6 +180,15 @@ class ReplyService extends BaseDocumentService<Reply> {
     // Mirror tombstonePost: drop the cached pre-tombstone document.
     if (ok) this.cache.delete(replyId);
     return ok;
+  }
+
+  /**
+   * The author's delete, whatever it means on this topology: a tombstone where
+   * replies are permanent ({@link deletesAreTombstones}: v9, v11), a document
+   * delete elsewhere.
+   */
+  async deleteOwnReply(replyId: string, ownerId: string): Promise<boolean> {
+    return deletesAreTombstones() ? this.tombstoneReply(replyId, ownerId) : this.deleteReply(replyId, ownerId);
   }
 
   /**
