@@ -48,11 +48,26 @@ export interface WriteHandler<A = unknown> {
   /** Default: prove each unconfirmed document in `ticket.documents` (see `createTicketStore`'s `probeDocument`). */
   probe?(ticket: WriteTicket, args: A | undefined): Promise<ProbeResult>
   /**
-   * Whether the arguments may be persisted with the ticket (default true), so
-   * a retry still works after an engine restart. False for anything that must
-   * never reach disk, such as DM plaintext.
+   * Persist the arguments with the ticket (plain engine kv, MMKV on the
+   * host), so a retry still works after an engine restart. Off by default:
+   * opt in only for arguments that may sit on disk (never DM plaintext or
+   * private-feed content).
    */
   persistArgs?: boolean
+}
+
+/**
+ * Thrown by a handler for a failure it knows happened before anything was
+ * broadcast (for example its own validation, or a read before lib's write
+ * call). Without it, a network or rate-limit failure during `run()` counts as
+ * "may have landed" (`unconfirmed`), because lib signs, broadcasts and waits
+ * inside one call. `cause` is what gets classified.
+ */
+export class NotSentError extends Error {
+  constructor(readonly cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause))
+    this.name = 'NotSentError'
+  }
 }
 
 export interface WriteRequest<A> {
@@ -145,7 +160,7 @@ export function createTicketStore(options: TicketStoreOptions) {
         updatedAt: ticket.updatedAt.getTime(),
         lastCheckedAt: ticket.lastCheckedAt?.getTime() ?? null,
       },
-      ...(args !== undefined && handlers.get(ticket.op)?.persistArgs !== false ? { args } : {}),
+      ...(args !== undefined && handlers.get(ticket.op)?.persistArgs === true ? { args } : {}),
     }))
     options.storage.setItem(WRITES_STORAGE_KEY, JSON.stringify(stored))
   }
@@ -213,12 +228,19 @@ export function createTicketStore(options: TicketStoreOptions) {
   }
 
   function fail(id: string, error: unknown, documents?: TicketDocument[]): void {
-    const classified = classify(error)
-    // A transport failure once the transition left the device says nothing about whether it landed.
-    const sent = ['broadcasting', 'confirming'].includes(recordOf(id).ticket.stage ?? '')
-    const data: EngineErrorData = sent && (classified.code === 'NETWORK' || classified.code === 'RATE_LIMITED')
-      ? { ...classified, outcome: 'unknown', retryable: false }
-      : classified
+    const notSent = error instanceof NotSentError
+    const classified = classify(notSent ? error.cause : error)
+    // A transport failure during run() may come after the broadcast: lib signs, broadcasts and
+    // waits in one call. Only a handler's NotSentError, or a failure while it still reported
+    // 'waiting-parent' (before any lib write call), proves nothing went out.
+    const provedNotSent = notSent || recordOf(id).ticket.stage === 'waiting-parent'
+    const transient = ['NETWORK', 'RATE_LIMITED', 'TIMEOUT'].includes(classified.code)
+    const data: EngineErrorData = notSent && classified.outcome === 'unknown'
+      // Proved never sent: a would-be "maybe landed" is plainly failed, and a transient one may be retried.
+      ? { ...classified, outcome: 'not-sent', retryable: transient }
+      : !provedNotSent && (classified.code === 'NETWORK' || classified.code === 'RATE_LIMITED')
+        ? { ...classified, outcome: 'unknown', retryable: false }
+        : classified
     const state = ticketStateFor(data)
     const ticket = update(id, {
       state,
@@ -288,9 +310,15 @@ export function createTicketStore(options: TicketStoreOptions) {
   queueMicrotask(() => {
     for (const id of reconciled) {
       const record = records.get(id)
-      if (record) options.emit('write.status', clone(record.ticket))
+      if (record?.ticket.identityId === options.currentIdentity()) options.emit('write.status', clone(record.ticket))
     }
   })
+
+  /** Set once an account switch is under way: nothing more until the engine restarts. */
+  let restartRequired = false
+  function assertUsable(): void {
+    if (restartRequired) throw new RpcError('The engine must restart to finish switching accounts', 'RESTART_REQUIRED')
+  }
 
   return {
     /** Register how `op` runs; M7b's write methods each register one. */
@@ -303,6 +331,7 @@ export function createTicketStore(options: TicketStoreOptions) {
      * ticket is `pending`; every later transition is a `write.status` event.
      */
     submit<A>(request: WriteRequest<A>): WriteTicket {
+      assertUsable()
       const handler = handlers.get(request.op)
       if (!handler) throw new RpcError(`No write handler for ${request.op}`, 'NOT_SUPPORTED')
       const at = new Date(now())
@@ -332,6 +361,7 @@ export function createTicketStore(options: TicketStoreOptions) {
 
     /** The active account's tickets: pending, unconfirmed and failed ones, and those confirmed in the last 10 minutes. */
     list(): WriteTicket[] {
+      assertUsable()
       const identityId = options.currentIdentity()
       const recent = now() - CONFIRMED_LISTED_MS
       return [...records.values()]
@@ -354,6 +384,7 @@ export function createTicketStore(options: TicketStoreOptions) {
      * probe's error. Any other state is returned unchanged.
      */
     async check(id: string): Promise<WriteTicket> {
+      assertUsable()
       const { ticket, args } = ownRecord(id)
       if (ticket.state !== 'unconfirmed') return clone(ticket)
       const result = await probe(ticket, args)
@@ -378,6 +409,7 @@ export function createTicketStore(options: TicketStoreOptions) {
      * unconfirmed one a check proved absent. Otherwise `NOT_RETRYABLE`.
      */
     async retry(id: string): Promise<WriteTicket> {
+      assertUsable()
       const { ticket, args } = ownRecord(id)
       const handler = handlers.get(ticket.op)
       if (ticket.state === 'pending' || !ticket.retryable) {
@@ -396,11 +428,17 @@ export function createTicketStore(options: TicketStoreOptions) {
 
     /** Forget a settled ticket. A pending one cannot be dismissed. */
     async dismiss(id: string): Promise<void> {
+      assertUsable()
       if (!records.has(id)) return
       const record = ownRecord(id)
       if (record.ticket.state === 'pending') throw new RpcError('A pending write cannot be dismissed', 'BAD_REQUEST')
       records.delete(id)
       persist()
+    },
+
+    /** An account switch is under way (session.switchAccount): refuse everything until the engine restarts. */
+    requireRestart(): void {
+      restartRequired = true
     },
 
     /** Drop every ticket of an identity (sign-out). */

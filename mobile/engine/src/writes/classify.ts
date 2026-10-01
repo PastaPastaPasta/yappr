@@ -100,10 +100,12 @@ const RULES: readonly Rule[] = [
   ['DUPLICATE', 'unknown', false, isAlreadyExistsError],
   ['RATE_LIMITED', 'not-sent', true, isRateLimitedError],
   ['TIMEOUT', 'unknown', false, isTimeoutError],
-  ['NETWORK', 'not-sent', true, (error, message) =>
+  // Substring rules: a refusal that carries a consensus code is Platform's verdict, whatever its prose says.
+  ['NETWORK', 'not-sent', true, (error, message) => consensusCodeOf(error) === null && (
     evoSdkService.isConnectionError(error) ||
-    ['no available addresses', 'Missing response message', 'Network', 'connection'].some(marker => message.includes(marker))],
-  ['NO_KEY', 'not-sent', true, (_error, message) => message.includes('Private key not found') || message.includes('Not logged in')],
+    ['no available addresses', 'Missing response message', 'Network', 'connection'].some(marker => message.includes(marker)))],
+  ['NO_KEY', 'not-sent', true, (error, message) => consensusCodeOf(error) === null &&
+    (message.includes('Private key not found') || message.includes('Not logged in'))],
 ]
 
 /**
@@ -111,7 +113,7 @@ const RULES: readonly Rule[] = [
  * they pass through with their own message, outcome `local`.
  */
 const ENGINE_CODES: ReadonlySet<string> = new Set<EngineErrorCode>([
-  'ABORTED', 'BAD_REQUEST', 'NOT_SUPPORTED', 'NOT_SIGNED_IN', 'NOT_RETRYABLE', 'ENGINE_RESTARTED',
+  'ABORTED', 'BAD_REQUEST', 'NOT_SUPPORTED', 'NOT_SIGNED_IN', 'NOT_RETRYABLE', 'ENGINE_RESTARTED', 'RESTART_REQUIRED',
   'PARENT_UNCONFIRMED', 'QUOTE_HAS_TEXT', 'PRIVATE_FEED_SYNC_REQUIRED',
 ])
 

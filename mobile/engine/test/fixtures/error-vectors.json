@@ -682,6 +682,22 @@
       }
     },
     {
+      "name": "coded refusal whose text mentions a connection is not a network failure",
+      "error": {
+        "message": "Failed to broadcast: Protocol error: invalid revision on connection document",
+        "name": "Protocol",
+        "code": 40106
+      },
+      "expect": {
+        "code": "UNKNOWN",
+        "consensusCode": 40106,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Network error. Please check your connection and try again."
+      }
+    },
+    {
       "name": "anything else",
       "error": {
         "message": "something unexpected happened"
