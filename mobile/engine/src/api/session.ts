@@ -77,6 +77,8 @@ export interface SessionModuleOptions {
    * `stopDmEngine`, which does not wait for the save.
    */
   stopDm?: () => Promise<void>
+  /** Sign-out failed after `stopDm`: the account stays signed in, so its messages may run again. */
+  resumeDm?: () => void
 }
 
 /** AuthUser.balance (a number of credits) as the DTOs carry credits. */
@@ -351,7 +353,12 @@ export function createSessionModule(options: SessionModuleOptions) {
       if (isActive) {
         // Keys and session first: if logout fails, the account stays fully signed in.
         await stopDm()
-        await controller.logout()
+        try {
+          await controller.logout()
+        } catch (error) {
+          options.resumeDm?.()
+          throw error
+        }
       } else {
         for (const clear of [clearPrivateKey, clearEncryptionKey, clearEncryptionKeyType, clearTransferKey, clearLoginKey, clearAuthVaultDek]) {
           clear(identityId)

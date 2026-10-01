@@ -15,6 +15,8 @@ export interface DmView {
   rows: ConversationRow[]
   ready: boolean
   error: string | null
+  /** The badge counts, when they are not the rows' (legacy without read receipts has none). */
+  unread?: { unreadTotal: number; unreadConversations: number }
   /** The full timeline of one conversation, oldest first (asked only for changed conversations). */
   messages(key: string): MessageDTO[]
 }
@@ -45,7 +47,7 @@ export function createChangeTracker(options: { emit: DmEmit; coalesceMs?: number
     const changedKeys = [...next.keys()].filter(key => reported.get(key) !== next.get(key))
     for (const key of reported.keys()) if (!next.has(key)) changedKeys.push(key)
     reported = next
-    const status = { ...unreadCounts(view.rows), ready: view.ready, error: view.error }
+    const status = { ...(view.unread ?? unreadCounts(view.rows)), ready: view.ready, error: view.error }
     const statusChanged = status.unreadTotal !== last.unreadTotal || status.unreadConversations !== last.unreadConversations ||
       status.ready !== last.ready || status.error !== last.error
     last = status

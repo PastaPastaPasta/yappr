@@ -7,6 +7,7 @@ import { getDmEngine, MAX_GROUP_MEMBERS, stopDmEngine } from '@/lib/services/dm-
 import { splitText } from '@/lib/services/dm-v5/util'
 import { directMessageService } from '@/lib/services/direct-message-service'
 import { identityService } from '@/lib/services/identity-service'
+import { hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
 import { base58ToBytes, getCurrentUserId } from '@/lib/services/sdk-helpers'
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { logger } from '@/lib/logger'
@@ -20,7 +21,7 @@ import type { ConversationRow } from '../dm/changes'
 import type { ConversationDTO, DmBackendKind, DmGroupAction, DmRetention, DmStatusDTO, MessageDTO } from '../dm/types'
 import type { AppLifecycleState } from '../shims/lifecycle'
 import type { SessionEvents } from './session'
-import type { TicketStore } from '../writes/tickets'
+import { NotSentError, type TicketStore } from '../writes/tickets'
 import type { WriteTicket } from '../writes/types'
 import { avatarFromField, type AuthorDTO, type Page } from './dto'
 
@@ -34,6 +35,12 @@ const RETENTIONS: readonly DmRetention[] = ['30d', '90d', '1y', 'never']
 const AUTHOR_TTL_MS = 10 * 60_000
 /** How long sign-out and account switch wait for the DM state to save. */
 const STOP_FLUSH_WAIT_MS = 10_000
+/** ENGINE.md §9.3: the host holds a backgrounded app for the flush at most this long. */
+const LIFECYCLE_FLUSH_WAIT_MS = 2_000
+/** lib's group name limit (`groups.ts` MAX_NAME_BYTES). */
+const GROUP_NAME_MAX_BYTES = 200
+/** One send is at most this many messages (each part is a paid write; about 80 KB of text). */
+const MAX_SEND_PARTS = 20
 /** A sent message's block time can trail its ticket by this much. */
 const SENT_MATCH_SLACK_MS = 60_000
 
@@ -62,6 +69,22 @@ export type DmUnlockResult =
   | { unlocked: false; reason: 'no-key-on-identity' | 'not-derivable' }
 
 const libEngines: DmEngineSource = { engineFor: getDmEngine, release: stopDmEngine }
+
+interface SendArgs {
+  identityId: string
+  key: string
+  text: string
+  /** My messages in the conversation when it was sent (ids). */
+  before: string[]
+}
+
+/** `work`, but resolving after `ms` at the latest; its failure is logged, never thrown. */
+function bounded(work: Promise<unknown>, ms: number, what: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const limit = new Promise<void>(resolve => { timer = setTimeout(resolve, ms) })
+  const done = work.then(() => undefined, error => logger.warn(`${what} failed:`, error))
+  return Promise.race([done, limit]).finally(() => clearTimeout(timer))
+}
 
 function placeholderAuthor(id: string): AuthorDTO {
   return { id, username: null, displayName: `User ${id.slice(-6)}`, avatar: avatarFromField(undefined, id), resolved: false }
@@ -124,34 +147,65 @@ export function createDmModule(options: DmModuleOptions) {
     return backend
   }
 
-  options.tickets.register<{ identityId: string; key: string; text: string }>('dm.send', {
-    run: ({ identityId, key, text }) => backend.send(identityId, key, text),
+  /** Ticket runs and probes refuse while stopped: a retry must never send on an outgoing account. */
+  function assertRunning(): void {
+    if (halted) throw new NotSentError(new RpcError('Messages are stopped while the account changes', 'RESTART_REQUIRED'))
+  }
+
+  options.tickets.register<SendArgs>('dm.send', {
+    run: ({ identityId, key, text }) => {
+      assertRunning()
+      return backend.send(identityId, key, text)
+    },
     /**
-     * "Check again": the text, in all its parts, among my messages since the
-     * send. Absence proves nothing (the slot may not be read back yet), and
-     * after a restart the text is gone (never persisted), so only `applied`
-     * is ever proved.
+     * "Check again": every part of the text among my messages that were not
+     * there when it was sent (so an earlier identical "ok" never counts).
+     * Absence proves nothing (the slot may not be read back yet), and after a
+     * restart the text is gone (never persisted), so only `applied` is ever
+     * proved. It sees what the backend has read: v5 reads my own streams
+     * while the conversation is open, legacy polls the open conversation.
      */
     async probe(ticket, args) {
       if (!args) return { state: 'unknown', error: new Error('The app restarted before this was confirmed. Open the conversation to see whether it was sent.') }
+      if (halted) return { state: 'unknown', error: new Error('Messages are stopped while the account changes') }
       const since = ticket.createdAt.getTime() - SENT_MATCH_SLACK_MS
-      const mine = new Set((await backend.messages(args.identityId, args.key)).filter(m => m.own && m.at.getTime() >= since).map(m => m.text))
-      const parts = backend.kind === 'v5' ? splitText(args.text.trim()) : [args.text.trim()]
-      return parts.every(part => mine.has(part))
-        ? { state: 'applied' }
-        : { state: 'unknown', error: new Error('Not in the conversation yet. Check again in a moment.') }
+      const before = new Set(args.before)
+      const fresh = (await backend.messages(args.identityId, args.key))
+        .filter(m => m.own && !before.has(m.id) && m.at.getTime() >= since)
+        .map(m => m.text)
+      for (const part of backend.kind === 'v5' ? splitText(args.text.trim()) : [args.text.trim()]) {
+        const index = fresh.indexOf(part)
+        if (index < 0) return { state: 'unknown', error: new Error('Not in the conversation yet. Check again in a moment.') }
+        fresh.splice(index, 1)
+      }
+      return { state: 'applied' }
     },
     persistArgs: false,
   })
   options.tickets.register<{ identityId: string; request: DmGroupAction }>('dm.group', {
-    run: ({ identityId, request }) => v5('Groups').group(identityId, request),
+    run: ({ identityId, request }) => {
+      assertRunning()
+      return v5('Groups').group(identityId, request)
+    },
+    async probe(_ticket, args) {
+      if (!args || halted) return { state: 'unknown', error: new Error('This change can no longer be checked here') }
+      return v5('Groups').probeGroup(args.identityId, args.request)
+    },
     persistArgs: false,
   })
 
   function groupNameOf(value: unknown): string {
     const name = typeof value === 'string' ? value.trim() : ''
-    if (!name || name.length > GROUP_NAME_MAX) throw new RpcError(`A group name is 1 to ${GROUP_NAME_MAX} characters`, 'BAD_REQUEST')
+    if (!name || name.length > GROUP_NAME_MAX || new TextEncoder().encode(name).length > GROUP_NAME_MAX_BYTES) {
+      throw new RpcError(`A group name is 1 to ${GROUP_NAME_MAX} characters`, 'BAD_REQUEST')
+    }
     return name
+  }
+
+  /** Still the session that started an awaited call: nothing may be stored for an account that signed out meanwhile. */
+  function assertStill(identityId: string): void {
+    if (viewer() !== identityId) throw new RpcError('The account changed', 'NOT_SIGNED_IN')
+    if (halted) throw new RpcError('Messages are stopped while the account changes', 'RESTART_REQUIRED')
   }
 
   function groupTicket(request: DmGroupAction): WriteTicket {
@@ -205,8 +259,9 @@ export function createDmModule(options: DmModuleOptions) {
         const before = cursorString(fields.before)
         const at = cursorInt(fields.at)
         const index = all.findIndex(message => message.id === before)
-        // The anchor can go (the retention sweep): fall back to its time.
-        end = index >= 0 ? index : all.filter(message => message.at.getTime() < at).length
+        // The anchor can go (the retention sweep): fall back to its time, keeping messages that share
+        // it (parts of one send often do); the host dedupes by id.
+        end = index >= 0 ? index : all.filter(message => message.at.getTime() <= at).length
       }
       const start = Math.max(0, end - DM_PAGE_SIZE)
       const oldest = all[start]
@@ -232,8 +287,14 @@ export function createDmModule(options: DmModuleOptions) {
       const identityId = session()
       const conversation = keyOf(key)
       if (typeof text !== 'string' || !text.trim()) throw new RpcError('The message is empty', 'BAD_REQUEST')
-      backend.assertSendable(identityId, conversation)
-      return options.tickets.submit({ op: 'dm.send', args: { identityId, key: conversation, text }, target: { conversationKey: conversation } })
+      if (backend.kind === 'v5' && splitText(text.trim()).length > MAX_SEND_PARTS) {
+        throw new RpcError(`The message is too long: at most ${MAX_SEND_PARTS} parts`, 'BAD_REQUEST')
+      }
+      await backend.assertSendable(identityId, conversation)
+      // What is already mine, so "check again" never mistakes an earlier identical message for this one.
+      const before = (await backend.messages(identityId, conversation)).filter(m => m.own).map(m => m.id)
+      assertStill(identityId)
+      return options.tickets.submit<SendArgs>({ op: 'dm.send', args: { identityId, key: conversation, text, before }, target: { conversationKey: conversation } })
     },
 
     /** Open (or find) the 1:1 with `peerId` without writing anything: the first send starts it. Returns its key. */
@@ -291,7 +352,7 @@ export function createDmModule(options: DmModuleOptions) {
 
     /** v5 "Delete conversation": hidden until a newer message arrives (PRD DM-09). Saved at once. */
     async hide(key: string): Promise<void> {
-      v5('Deleting conversations').engine(session()).hide(keyOf(key))
+      await v5('Deleting conversations').hide(session(), keyOf(key))
     },
 
     /** v5: block in Messages (their messages and group invitations are ignored). Saved at once. */
@@ -313,23 +374,29 @@ export function createDmModule(options: DmModuleOptions) {
      * 64 hex; sensitive, never logged): check it against the identity's
      * encryption key and store it (`KEY_INVALID` when it does not match).
      */
-    async unlock(input: { key?: string } = {}): Promise<DmUnlockResult> {
+    async unlock(input: { key?: string } | null = {}): Promise<DmUnlockResult> {
       const identityId = session()
-      if (input.key === undefined) {
-        if (!(await identityService.hasEncryptionKey(identityId))) return { unlocked: false, reason: 'no-key-on-identity' }
+      // A failed read is never "no key": lib's identity read throws on network failures (cached for the checks below).
+      const identity = await identityService.getIdentity(identityId)
+      if (!identity) throw new RpcError('The identity was not found', 'IDENTITY_NOT_FOUND')
+      if (!hasEncryptionKeyOnIdentity(identity.publicKeys)) return { unlocked: false, reason: 'no-key-on-identity' }
+      if (input?.key === undefined) {
         const authKey = getPrivateKey(identityId)
         if (!authKey) return { unlocked: false, reason: 'not-derivable' }
         const derived = deriveEncryptionKey(parsePrivateKey(authKey).privateKey, identityId)
         if (!(await validateDerivedKeyMatchesIdentity(derived, identityId))) return { unlocked: false, reason: 'not-derivable' }
+        assertStill(identityId)
         storeEncryptionKey(identityId, privateKeyToWif(derived, keyNetwork(), true))
         storeEncryptionKeyType(identityId, 'derived')
       } else {
         const key = String(input.key).trim()
         const validation = await validateEncryptionKey(key, identityId)
         if (!validation.isValid) {
+          if (validation.errorType === 'IDENTITY_NOT_FOUND') throw new RpcError(validation.error || 'Could not fetch identity data', 'NETWORK')
           if (validation.noKeyOnIdentity) return { unlocked: false, reason: 'no-key-on-identity' }
           throw new RpcError(validation.error || 'Invalid key', 'KEY_INVALID')
         }
+        assertStill(identityId)
         storeEncryptionKey(identityId, key)
       }
       await options.secureDurable?.()
@@ -344,7 +411,12 @@ export function createDmModule(options: DmModuleOptions) {
         backend.deactivate().catch(error => logger.warn('Stopping messages failed:', error))
       } else if (reason !== 'balance') {
         halted = false
-        backend.activate(current.identityId)
+        // Runs inside the session's announcement: a DM failure must never fail a sign-in.
+        try {
+          backend.activate(current.identityId)
+        } catch (error) {
+          logger.warn('Starting messages failed:', error)
+        }
       }
     },
     /**
@@ -354,12 +426,14 @@ export function createDmModule(options: DmModuleOptions) {
      */
     stop: (): Promise<void> => {
       halted = true
-      let timer: ReturnType<typeof setTimeout> | undefined
-      const bound = new Promise<void>(resolve => { timer = setTimeout(resolve, STOP_FLUSH_WAIT_MS) })
-      return Promise.race([backend.deactivate().catch(error => logger.warn('Stopping messages failed:', error)), bound]).finally(() => clearTimeout(timer))
+      return bounded(backend.deactivate(), STOP_FLUSH_WAIT_MS, 'Stopping messages')
     },
-    /** AppState: `background` resolves once the DM flush is done. */
-    lifecycle: (state: AppLifecycleState): Promise<void> => backend.lifecycle(state),
+    /** The sign-out that `stop` prepared failed: the account stays signed in, and so do its messages. */
+    resume: (): void => {
+      halted = false
+    },
+    /** AppState: `background` resolves once the DM flush is done, or after the host's background budget. */
+    lifecycle: (state: AppLifecycleState): Promise<void> => bounded(backend.lifecycle(state), LIFECYCLE_FLUSH_WAIT_MS, 'The DM lifecycle'),
   }
 
   return { api, hooks }

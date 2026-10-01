@@ -131,6 +131,18 @@ describe('dm on DM v5: session lifecycle', () => {
     expect(user.source.release).toHaveBeenCalledTimes(1)
   })
 
+  it('releases the engine before waiting for its save, so a slow save never stops the next account', async () => {
+    const user = await ready(userOn(ledgerNow(), alice))
+    const engine = user.engine()
+    let finish = () => undefined as void
+    vi.spyOn(engine, 'flush').mockReturnValue(new Promise(resolve => { finish = () => resolve(true) }))
+    const stopping = user.hooks.stop()
+    await settle()
+    expect(user.source.release).toHaveBeenCalledWith(alice, engine)
+    finish()
+    await stopping
+  })
+
   it('saves the self-state before a background lifecycle resolves', async () => {
     const user = await ready(userOn(ledgerNow(), alice))
     const flush = vi.spyOn(user.engine(), 'flush')
@@ -231,6 +243,21 @@ describe('dm on DM v5: 1:1', () => {
     expect((await a.tickets.check(ticket.id))).toMatchObject({ state: 'unconfirmed', error: expect.objectContaining({ code: 'UNKNOWN' }) })
     await a.dm.open(key)
     expect(await a.tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
+  })
+
+  it('never proves a send by an earlier identical message', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.dm.open(key)
+    expect(await a.settled(await a.dm.send(key, 'ok'))).toMatchObject({ state: 'confirmed' })
+    const chain = a.engine().ctx.chain as MemoryChain
+    // Nothing lands this time, and the answer is a timeout.
+    chain.hook = method => (method === 'createMessage' ? { ok: false, failure: 'transport', error: 'Request timeout after 8000ms' } : null)
+    const second = await a.settled(await a.dm.send(key, 'ok'))
+    expect(second.state).toBe('unconfirmed')
+    expect(await a.tickets.check(second.id)).toMatchObject({ state: 'unconfirmed' })
   })
 
   it('pages messages newest first, 50 at a time, with a cursor tied to the conversation', async () => {
@@ -405,7 +432,7 @@ describe('dm on legacy 1:1 (testnet)', () => {
     expect(user.legacy.service.markAsRead).not.toHaveBeenCalled()
     expect((await user.dm.conversations())[0].unread).toBe(0)
 
-    user.legacy.add('C2', carol, 2, 1)
+    user.legacy.add('C2', carol, 3, 1)
     await user.hooks.stop()
     user.hooks.sessionChanged(started(alice))
     useSettingsStore.getState().setSendReadReceipts(true)
@@ -435,6 +462,21 @@ describe('dm on legacy 1:1 (testnet)', () => {
     await user.hooks.lifecycle('active')
     await vi.advanceTimersByTimeAsync(LEGACY_OPEN_POLL_MS + 10)
     expect(user.legacy.service.pollNewMessages.mock.calls.length).toBe(polls + 1)
+  })
+
+  it('keeps a conversation whose page failed, and shows no badge without read receipts', async () => {
+    vi.useFakeTimers()
+    const user = legacyUser()
+    user.legacy.add('C1', bob, 3, 2)
+    useSettingsStore.getState().setSendReadReceipts(true)
+    expect(await user.dm.status()).toMatchObject({ unreadTotal: 2, unreadConversations: 1 })
+    user.legacy.conversations.set('C1', { id: 'C1', participantId: bob, unreadCount: 0, lastMessage: null, updatedAt: new Date() })
+    await vi.advanceTimersByTimeAsync(LEGACY_LIST_TTL_MS + 1_000)
+    expect((await user.dm.conversations())[0]).toMatchObject({ unread: 2, lastMessage: { text: 'm2' } })
+    useSettingsStore.getState().setSendReadReceipts(false)
+    expect(await user.dm.status()).toMatchObject({ unreadTotal: 0, unreadConversations: 0 })
+    expect((await user.dm.conversations())[0].unread).toBe(2)
+    useSettingsStore.getState().setSendReadReceipts(true)
   })
 
   it('keeps the list when lib reports a failed read as empty', async () => {

@@ -42,6 +42,8 @@ interface LegacyState {
   listedAt: number
   listing: Promise<void> | null
   threads: Map<string, Thread>
+  /** Thread loads under way, shared by concurrent `open`/`messages` calls. */
+  loading: Map<string, Promise<Thread>>
   /** Read here without a receipt (or before one lands): newest message time read, per conversation. */
   readUpTo: Map<string, number>
   peerRead: Map<string, number>
@@ -83,7 +85,7 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
   function stateFor(identityId: string): LegacyState {
     if (state?.identityId === identityId) return state
     const next: LegacyState = {
-      identityId, conversations: new Map(), drafts: new Set(), listedAt: 0, listing: null, threads: new Map(),
+      identityId, conversations: new Map(), drafts: new Set(), listedAt: 0, listing: null, threads: new Map(), loading: new Map(),
       readUpTo: new Map(), peerRead: new Map(), openId: null, timer: null, paused: false, error: null,
     }
     replaceState(next)
@@ -97,14 +99,30 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
     return found
   }
 
+  /** `conversationOf`, reading the list first if it has not loaded yet (a key restored after an engine restart). */
+  async function conversationFor(current: LegacyState, key: string): Promise<Conversation> {
+    if (current.listedAt === 0) await refreshList(current)
+    return conversationOf(current, key)
+  }
+
+  /** As web: without read receipts v3's counts can never clear, so there is no badge. */
+  function badge(current: LegacyState): { unreadTotal: number; unreadConversations: number } {
+    return sendReceipts() ? unreadCounts(rowsOf(current)) : { unreadTotal: 0, unreadConversations: 0 }
+  }
+
   function messagesOf(current: LegacyState, conversationId: string): MessageDTO[] {
     return (current.threads.get(conversationId)?.messages ?? []).map(message => toMessageDTO(message, current.identityId))
   }
 
+  /**
+   * v3 counts unread against my read receipt. A conversation whose newest
+   * message is mine has nothing unread (as v4 lib does), and one read here
+   * stays read until a newer message arrives.
+   */
   function unreadOf(current: LegacyState, conversation: Conversation): number {
-    const readAt = current.readUpTo.get(conversation.id) ?? 0
-    const last = conversation.lastMessage?.createdAt.getTime() ?? 0
-    return last <= readAt ? 0 : conversation.unreadCount
+    const last = conversation.lastMessage
+    if (!last || last.senderId === current.identityId) return 0
+    return last.createdAt.getTime() <= (current.readUpTo.get(conversation.id) ?? 0) ? 0 : conversation.unreadCount
   }
 
   function rowsOf(current: LegacyState): ConversationRow[] {
@@ -142,6 +160,7 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
         ready: current.listedAt > 0,
         error: current.error,
         messages: key => messagesOf(current, conversationIdOf(key) ?? ''),
+        unread: badge(current),
       }
     })
   }
@@ -159,6 +178,9 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       }
       for (const conversation of fresh) {
         current.drafts.delete(conversation.id)
+        const held = current.conversations.get(conversation.id)
+        // lib reports a conversation whose page failed as empty ("updated now", 0 unread): keep what we hold.
+        if (!conversation.lastMessage && held?.lastMessage) continue
         const known = current.threads.get(conversation.id)?.messages.at(-1)
         // A message sent or polled here may be newer than the list's page.
         const lastMessage = known && known.createdAt > (conversation.lastMessage?.createdAt ?? new Date(0)) ? known : conversation.lastMessage
@@ -178,11 +200,16 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
     const conversation = current.conversations.get(conversationId)
     const thread = current.threads.get(conversationId)
     if (!conversation || !thread) return
+    const sameSend = (a: DirectMessage, b: DirectMessage) =>
+      a.senderId === b.senderId && a.content === b.content && Math.abs(a.createdAt.getTime() - b.createdAt.getTime()) < OPTIMISTIC_MATCH_MS
     for (const message of incoming) {
       if (thread.messages.some(m => m.id === message.id)) continue
-      const optimistic = thread.messages.findIndex(m =>
-        m.id.startsWith('temp-') && m.senderId === message.senderId && m.content === message.content &&
-        Math.abs(m.createdAt.getTime() - message.createdAt.getTime()) < OPTIMISTIC_MATCH_MS)
+      if (message.id.startsWith('temp-')) {
+        // A send answered without its id, after a poll already read it back.
+        if (!thread.messages.some(m => sameSend(m, message))) thread.messages.push(message)
+        continue
+      }
+      const optimistic = thread.messages.findIndex(m => m.id.startsWith('temp-') && sameSend(m, message))
       if (optimistic >= 0) thread.messages[optimistic] = message
       else thread.messages.push(message)
     }
@@ -194,9 +221,18 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
   }
 
   /** The whole thread: the oldest 100, then every later page (`pollNewMessages` after the last one read). */
-  async function loadThread(current: LegacyState, conversation: Conversation): Promise<Thread> {
+  function loadThread(current: LegacyState, conversation: Conversation): Promise<Thread> {
     const loaded = current.threads.get(conversation.id)
-    if (loaded) return loaded
+    if (loaded) return Promise.resolve(loaded)
+    let loading = current.loading.get(conversation.id)
+    if (!loading) {
+      loading = readThread(current, conversation).finally(() => current.loading.delete(conversation.id))
+      current.loading.set(conversation.id, loading)
+    }
+    return loading
+  }
+
+  async function readThread(current: LegacyState, conversation: Conversation): Promise<Thread> {
     const first = await service.getConversationMessages(conversation.id, current.identityId, conversation.participantId)
     const thread: Thread = { messages: first, cursor: first.at(-1)?.id }
     for (let page = 0; page < MAX_CATCH_UP_PAGES; page++) {
@@ -265,7 +301,8 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       const current = stateFor(identityId)
       await refreshList(current)
       return {
-        backend: 'legacy', locked: false, ready: current.listedAt > 0, ...unreadCounts(rowsOf(current)),
+        backend: 'legacy', locked: false, ready: current.listedAt > 0,
+        ...badge(current),
         capReached: false, retention: null, blocked: [], recovery: null, error: current.error,
       }
     },
@@ -278,14 +315,14 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
 
     async messages(identityId: string, key: string): Promise<MessageDTO[]> {
       const current = stateFor(identityId)
-      const conversation = conversationOf(current, key)
+      const conversation = await conversationFor(current, key)
       await loadThread(current, conversation)
       return messagesOf(current, conversation.id)
     },
 
     async open(identityId: string, key: string | null): Promise<void> {
       const current = stateFor(identityId)
-      const conversation = key === null ? null : conversationOf(current, key)
+      const conversation = key === null ? null : await conversationFor(current, key)
       current.openId = conversation?.id ?? null
       schedule(current)
       changed()
@@ -297,7 +334,7 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
     /** Read here; a receipt is written only with "Read receipts" on, and only when something was unread (as web). */
     async markRead(identityId: string, key: string): Promise<void> {
       const current = stateFor(identityId)
-      const conversation = conversationOf(current, key)
+      const conversation = await conversationFor(current, key)
       const unread = unreadOf(current, conversation)
       current.readUpTo.set(conversation.id, conversation.lastMessage?.createdAt.getTime() ?? Date.now())
       changed()
@@ -306,8 +343,8 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       }
     },
 
-    assertSendable(identityId: string, key: string): void {
-      conversationOf(stateFor(identityId), key)
+    async assertSendable(identityId: string, key: string): Promise<void> {
+      await conversationFor(stateFor(identityId), key)
     },
 
     async send(identityId: string, key: string, text: string): Promise<WriteResult> {
@@ -318,8 +355,12 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       const sent = result.message
       if (state === current) {
         current.drafts.delete(conversation.id)
-        if (!current.threads.has(conversation.id)) current.threads.set(conversation.id, { messages: [], cursor: undefined })
+        // Only into a loaded thread: a stub would hide the history (`loadThread` returns what it holds).
         merge(current, conversation.id, [sent])
+        if (!current.threads.has(conversation.id)) {
+          const held = current.conversations.get(conversation.id)
+          if (held) current.conversations.set(conversation.id, { ...held, lastMessage: sent, updatedAt: sent.createdAt })
+        }
         current.readUpTo.set(conversation.id, sent.createdAt.getTime())
         changed()
       }

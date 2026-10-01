@@ -42,6 +42,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
       tickets,
       secureDurable: runtime.secureDurable,
       stopDm: dm.hooks.stop,
+      resumeDm: dm.hooks.resume,
     }),
     dm: dm.api,
     settings,

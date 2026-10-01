@@ -3,7 +3,7 @@ import { GroupError } from '@/lib/services/dm-v5/groups'
 import { logger } from '@/lib/logger'
 import { RpcError } from '../protocol/envelope'
 import type { AppLifecycleState } from '../shims/lifecycle'
-import type { WriteResult } from '../writes/tickets'
+import type { ProbeResult, WriteResult } from '../writes/tickets'
 import { createChangeTracker, unreadCounts, type ConversationRow, type DmEmit, type DmView } from './changes'
 import type { DmGroupAction, DmStatusDTO, MessageDTO } from './types'
 
@@ -11,8 +11,12 @@ import type { DmGroupAction, DmStatusDTO, MessageDTO } from './types'
 export interface DmEngineSource {
   /** The running engine for the identity (created on first use), or null without an encryption key on this device. */
   engineFor(identityId: string): DmEngine | null
-  /** Forget the engine (lib's `stopDmEngine`). */
-  release(): void
+  /**
+   * Stop and forget `engine` if it is still the identity's current one (lib's
+   * `stopDmEngine`, which starts a flush without waiting for it). Never
+   * touches another identity's engine.
+   */
+  release(identityId: string, engine: DmEngine): void
 }
 
 function toMessageDTO(view: MessageView): MessageDTO {
@@ -77,9 +81,13 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
   function engineOf(identityId: string): DmEngine | null {
     const engine = options.source.engineFor(identityId)
     if (current && (current.identityId !== identityId || current.engine !== engine)) {
-      // lib replaced it (a different key), or the identity changed without a session event.
-      current.unsubscribe()
+      // lib replaced it (a different key), the key is gone, or the identity changed without a
+      // session event: stop the old one (a no-op if lib already did), so it never polls on.
+      const old = current
       current = null
+      old.unsubscribe()
+      old.engine.stop()
+      options.source.release(old.identityId, old.engine)
     }
     if (!engine || current) return engine
     tracker.reset()
@@ -95,6 +103,21 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     return found
   }
 
+  /** Before the saved state loads, a conversation may not be known yet: retry later (`ENGINE_BUSY`). */
+  function readyEngine(identityId: string): DmEngine {
+    const running = engine(identityId)
+    if (!running.getSnapshot().ready) throw new RpcError('Messages are still loading', 'ENGINE_BUSY')
+    return running
+  }
+
+  /** The engine holding conversation `key` (a closed draft is held but not in the snapshot). */
+  function holding(identityId: string, key: string): DmEngine {
+    const running = engine(identityId)
+    if (running.ctx.convs.has(key)) return running
+    if (!running.getSnapshot().ready) throw new RpcError('Messages are still loading', 'ENGINE_BUSY')
+    throw new RpcError('Conversation not found', 'BAD_REQUEST')
+  }
+
   return {
     kind: 'v5' as const,
     engine,
@@ -103,7 +126,11 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       engineOf(identityId)
     },
 
-    /** Stop polling, save pending self-state edits (sign-out, account switch), then drop the engine. */
+    /**
+     * Stop polling and drop the engine (sign-out, account switch), then wait
+     * for its pending self-state save. Released first: a save that outlives
+     * the caller's bound must never stop the next account's engine.
+     */
     async deactivate(): Promise<void> {
       const stopping = current
       current = null
@@ -111,8 +138,8 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       if (!stopping) return
       stopping.unsubscribe()
       stopping.engine.stop()
+      options.source.release(stopping.identityId, stopping.engine)
       await stopping.engine.flush()
-      options.source.release()
     },
 
     /**
@@ -149,22 +176,25 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     },
 
     async messages(identityId: string, key: string): Promise<MessageDTO[]> {
-      return engine(identityId).messages(key).map(toMessageDTO)
+      return holding(identityId, key).messages(key).map(toMessageDTO)
     },
 
     /** The thread on screen: polled now and every 4 s, own streams included, deferred history resumed. `null` closes it. */
     open(identityId: string, key: string | null): Promise<void> {
-      return engine(identityId).openConversation(key)
+      return (key === null ? engine(identityId) : holding(identityId, key)).openConversation(key)
     },
 
     async markRead(identityId: string, key: string): Promise<void> {
-      engine(identityId).markRead(key)
+      holding(identityId, key).markRead(key)
+    },
+
+    async hide(identityId: string, key: string): Promise<void> {
+      holding(identityId, key).hide(key)
     },
 
     /** Refusals known before a ticket is issued; the engine re-checks them, these give the host a code. */
-    assertSendable(identityId: string, key: string): void {
-      const running = engine(identityId)
-      if (!running.ctx.convs.has(key)) throw new RpcError('Conversation not found', 'BAD_REQUEST')
+    async assertSendable(identityId: string, key: string): Promise<void> {
+      const running = holding(identityId, key)
       // A closed draft is in `convs` but not in the snapshot: it passes.
       const found = conversationOf(running, key)
       if (found?.blocked) throw new RpcError('Unblock this person to message them.', 'BAD_REQUEST')
@@ -184,7 +214,8 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
 
     async startDirect(identityId: string, peerId: string): Promise<string> {
       try {
-        return await engine(identityId).startDirect(peerId)
+        // As web: not before the saved conversations are known (an unloaded store would start a duplicate).
+        return await readyEngine(identityId).startDirect(peerId)
       } catch (error) {
         if (error instanceof NoEncryptionKeyError) throw new RpcError(error.message, 'BAD_REQUEST')
         throw error
@@ -214,9 +245,30 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       return { state: 'confirmed' }
     },
 
+    /**
+     * "Check again" for a group change: after a poll, the roster shows it
+     * (renamed, member in or out, ended). Leaving and resending keys leave no
+     * trace here to prove, so they stay unknown.
+     */
+    async probeGroup(identityId: string, request: DmGroupAction): Promise<ProbeResult> {
+      const running = engine(identityId)
+      await running.tick()
+      const found = conversationOf(running, request.key)
+      const applied = (() => {
+        switch (request.action) {
+          case 'rename': return found?.name === request.name
+          case 'add': return found?.memberIds.includes(request.memberId) === true
+          case 'remove': return found !== undefined && !found.memberIds.includes(request.memberId)
+          case 'end': return found?.ended === true
+          default: return false
+        }
+      })()
+      return applied ? { state: 'applied' } : { state: 'unknown', error: new Error('The group does not show this change yet. Check again in a moment.') }
+    },
+
     /** The group a management action targets: it must exist, and only its owner manages members. */
     assertGroupAction(identityId: string, request: DmGroupAction): void {
-      const found = conversationOf(engine(identityId), request.key)
+      const found = conversationOf(readyEngine(identityId), request.key)
       if (found?.kind !== 'group') throw new RpcError('Group not found', 'BAD_REQUEST')
       if (found.ended || found.removed) throw new RpcError('This group is no longer active', 'BAD_REQUEST')
       const ownerOnly = request.action !== 'leave'
