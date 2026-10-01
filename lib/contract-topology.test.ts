@@ -743,7 +743,65 @@ describe('contract topology', () => {
       }
       v10.documentSchemas.likeReply.required = (v10.documentSchemas.likeReply.required as string[]).filter((name) => name !== '$createdAt')
       for (const kind of ['post', 'reply']) v10.documentSchemas[kind].moderatorAbilities = v11.documentSchemas[kind].moderatorAbilities
+      // Design M, undone on the v11 side: moderated tombstoning post/reply, moderated references, preallocated trees.
+      for (const kind of ['post', 'reply']) {
+        const schema = v11.documentSchemas[kind] as Json & { properties: Json; required: string[]; propertyConstraints: Record<string, { anyOf?: unknown[] }> }
+        expect([schema.canBeDeleted, schema.documentsMutable, schema.required.at(-1)], kind).toEqual([false, true, '$updatedAt'])
+        delete schema.canBeDeleted
+        schema.documentsMutable = false
+        schema.required = schema.required.slice(0, -1)
+        delete schema.properties.deleted
+        delete schema.immutable
+        delete schema.propertyConstraints.tombstoneIsBlank
+        const notEmpty = schema.propertyConstraints.notEmpty
+        if (notEmpty?.anyOf) notEmpty.anyOf = notEmpty.anyOf.filter((alternative) => JSON.stringify(alternative) !== '{"present":"deleted"}')
+      }
+      for (const schema of Object.values(v11.documentSchemas)) {
+        for (const property of Object.values((schema.properties ?? {}) as Record<string, { refersTo?: { type: string; documentType?: string } }>)) {
+          if (property.refersTo && ['post', 'reply'].includes(property.refersTo.documentType ?? '')) {
+            expect(property.refersTo.type).toBe('moderatedDocument')
+            property.refersTo.type = 'deletableDocument'
+          }
+        }
+        for (const index of schema.indices ?? []) delete index.preallocated
+      }
       expect(v11).toEqual(v10)
+    })
+
+    it('tombstones posts and replies (design M): frozen keys, cleared content, a flag that never turns back', async () => {
+      const POST_CLEARED = ['content', 'mediaUrl', 'mediaHash', 'mediaFingerprint', 'sensitive', 'encryptedContent', 'keyGeneration', 'nonce', 'embedContractId', 'embedDocType', 'embedId', 'mentionedUserId', 'quotedPostId', 'quotedReplyId', 'quotedPostOwnerId']
+      const REPLY_CLEARED = ['content', 'mediaUrl', 'mediaHash', 'mediaFingerprint', 'sensitive', 'encryptedContent', 'keyGeneration', 'nonce', 'mentionedUserId']
+      type Immutable = string | { property: string; when: unknown }
+      const v11 = await topologyModule('v11')
+      for (const [kind, cleared] of [['post', POST_CLEARED], ['reply', REPLY_CLEARED]] as const) {
+        const schema = V11[kind] as unknown as { immutable: Immutable[]; properties: Record<string, unknown>; propertyConstraints: Record<string, unknown> }
+        const frozen = schema.immutable.filter((entry): entry is string => typeof entry === 'string')
+        const { identifiers, scalars } = v11.tombstonePreservationFor(kind)
+        // What the tombstone carries is exactly what the contract freezes by name.
+        expect([...identifiers, ...scalars].sort(), kind).toEqual([...frozen].sort())
+        expect(schema.immutable).toContainEqual({ property: 'deleted', when: { present: '$old.deleted' } })
+        const conditional = schema.immutable.filter((entry): entry is { property: string; when: unknown } => typeof entry !== 'string' && entry.property !== 'deleted')
+        expect(conditional.map((entry) => entry.property).sort(), kind).toEqual([...cleared].sort())
+        for (const entry of conditional) expect(entry.when).toEqual({ absent: 'deleted' })
+        // Every property is either frozen, cleared by the tombstone, or the flag itself.
+        expect(Object.keys(schema.properties).sort(), kind).toEqual([...frozen, ...cleared, 'deleted'].sort())
+        expect(JSON.stringify(schema.propertyConstraints.tombstoneIsBlank)).toBe(JSON.stringify({ anyOf: [{ absent: 'deleted' }, { allOf: [{ equal: ['deleted', 1] }, ...cleared.map((p) => ({ absent: p }))] }] }))
+      }
+      const flags = async (topology: string) => {
+        const m = await topologyModule(topology)
+        return [m.deletesAreTombstones(), m.tombstoneKeepsEmptyContent(), m.likeTreesArePreallocated(), m.authorDeletesLeaveHoles(), m.repliesOutliveTheirParent(), m.tombstonesAreHidden()]
+      }
+      // A moderator's removal still leaves a hole on v11 (repliesOutliveTheirParent); an author's never does.
+      expect(await flags('v2')).toEqual([false, false, false, false, false, false])
+      expect(await flags('v9')).toEqual([true, true, false, false, false, false])
+      expect(await flags('v10')).toEqual([false, false, false, true, true, false])
+      expect(await flags('v11')).toEqual([true, false, true, false, true, true])
+      // The preallocated trees: every untimed like index (the windows cannot be).
+      for (const docType of ['like', 'likeReply']) {
+        for (const index of V11[docType].indices ?? []) {
+          expect(index.preallocated === true, `${docType}.${index.name}`).toBe(!(index as { timeRange?: unknown }).timeRange)
+        }
+      }
     })
 
     it('keeps every v10 surface but the like shape, and v2, v9 and v10 behave as before', async () => {
@@ -777,10 +835,11 @@ describe('contract topology', () => {
       for (const docType of ['post', 'reply']) expect(elected?.moderatedDocumentTypes[docType], docType).toContain('deleteDocuments')
       // The leader, the elected members (up to 15) and the additions: a rule of three always fits.
       expect(1 + (elected?.maxAddedModerators ?? 0)).toBeGreaterThanOrEqual(3)
-      // Settled documents keep `$createdAt` in required, which the window is measured from.
+      // A replaceable type measures the window from `$updatedAt`, which it must require
+      // (a tombstone, its only replace, opens the window again).
       for (const docType of ['post', 'reply']) {
-        expect(V11[docType].documentsMutable, docType).toBe(false)
-        expect(V11[docType].required, docType).toContain('$createdAt')
+        expect(V11[docType].documentsMutable, docType).toBe(true)
+        expect(V11[docType].required, docType).toEqual(expect.arrayContaining(['$createdAt', '$updatedAt']))
       }
     })
   })

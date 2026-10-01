@@ -494,7 +494,7 @@ const PROBES = [
   { label: 'v11: outlivesDelete on a stored type\'s window (post.quotedPostOwnerRecent)', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.indices.find((i) => i.name === 'quotedPostOwnerRecent').outlivesDelete = true; } },
   { label: 'v11: the trend windows outlive deletes while the author index keeps $createdAt (rows still commit to the time; legal, saves nothing)', file: SOCIAL_V11, expect: 'accepted', mutate: (s) => {
     const index = types(s).like.indices.find((i) => i.name === 'byAuthorPost');
-    index.name = 'byAuthorPostTime'; index.properties.push({ $createdAt: 'asc' });
+    index.name = 'byAuthorPostTime'; index.properties.push({ $createdAt: 'asc' }); delete index.preallocated;
   } },
   { label: 'v11: deleteSettled without deleteWithin', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { delete types(s).post.moderatorAbilities.deleteWithin; } },
   { label: 'v11: deleteSettled with 0 approvals', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteSettled.approvals = 0; } },
@@ -503,7 +503,18 @@ const PROBES = [
   { label: 'v11: a deleteWithin of 0 s', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteWithin = 0; } },
   { label: 'v11: deleteKeepsFields naming $id', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsFields.push('$id'); } },
   { label: 'v11: deleteKeepsFields naming a property post does not have', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsFields.push('nope'); } },
-  { label: 'v11: deleteKeepsFields naming $updatedAt, which post does not require', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsFields.push('$updatedAt'); } },
+  { label: 'v11: deleteKeepsFields naming $transferredAt, which post does not require', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsFields.push('$transferredAt'); } },
+  // Design M: moderated post/reply, moderatedDocument references, preallocated like trees, tombstones.
+  { label: 'v11 M: a deletableDocument reference at the moderated post (like.postId; the preallocated trees refuse it first, the node would also say 40144)', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).like.properties.postId.refersTo.type = 'deletableDocument'; } },
+  { label: 'v11 M: a moderatedDocument reference at an author-deletable post', file: SOCIAL_V11, expect: 'audit', node: '40143', mutate: (s) => { delete types(s).post.canBeDeleted; } },
+  { label: 'v11 M: preallocated byHashtagPost when the removal record does not keep hashtag', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsFields = ['$createdAt']; } },
+  { label: 'v11 M: preallocated on a windowed index (byTrendPost)', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).like.indices.find((i) => i.name === 'byTrendPost').preallocated = true; } },
+  { label: 'v11 M: preallocated on a stored type\'s count index (post.quotesOfPost)', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.indices.find((i) => i.name === 'quotesOfPost').preallocated = true; } },
+  { label: 'v11 M: a tombstone that may be undone (deleted not frozen once set): legal, so the freeze is the cut\'s choice', file: SOCIAL_V11, expect: 'accepted', mutate: (s) => { types(s).post.immutable = types(s).post.immutable.filter((e) => e.property !== 'deleted'); } },
+  { label: 'v11 M: a conditional freeze on the hashtag a preallocated index keys: legal (the trees stay keyed by the created value), so the cut freezes hashtag by name', file: SOCIAL_V11, expect: 'accepted', mutate: (s) => { const t = types(s).post; t.immutable = t.immutable.map((e) => (e === 'hashtag' ? { property: 'hashtag', when: { absent: 'deleted' } } : e)); } },
+  { label: 'v11 M: a derived quote-owner index on a quote that a tombstone clears', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.indices.push({ name: 'probe', properties: [{ $createdAt: 'asc' }, { 'quotedPostId.$ownerId': 'asc' }], timeRange: { on: '$createdAt', range: 302400, step: 302400, ttl: 604800 } }); } },
+  { label: 'v11 M: a derived root-owner index on a reply (rootPostId frozen): legal, not adopted (SOCIAL_V11.md)', file: SOCIAL_V11, expect: 'accepted', mutate: (s) => { types(s).reply.indices.push({ name: 'probe', properties: [{ $createdAt: 'asc' }, { 'rootPostId.$ownerId': 'asc' }], timeRange: { on: '$createdAt', range: 302400, step: 302400, ttl: 604800 } }); } },
+  { label: 'v11 M: a derived post-owner index on the indexOnly like', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).like.indices.push({ name: 'probe', properties: [{ 'postId.$ownerId': 'asc' }, { postId: 'asc' }], terminal: '$ownerId' }); } },
   { label: 'v11: deleteKeepsFields beside deleteKeepsRecord false', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsRecord = false; } },
 
   // Elected declaration (config/moderation/elected.rs): basic-structure rules of the

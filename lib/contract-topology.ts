@@ -377,10 +377,23 @@ const V10_DESCRIPTOR: ContractTopologyDescriptor = {
  *   and like notifications are timeless ({@link likeNotificationsAreTimeless}).
  * - Moderation (not in this descriptor): {@link settledDeletionFor} and
  *   {@link removalKeptFieldsFor}.
+ * - **Moderated posts and replies (design M).** `post` and `reply` are
+ *   `canBeDeleted: false`: only a moderator removes one, leaving a removal
+ *   record, and every reference at them is `moderatedDocument`, so it keeps
+ *   resolving (to the record) after a removal. An author "deletes" with a
+ *   tombstone: a replace setting `deleted` that clears every content field
+ *   ({@link deletesAreTombstones}); a tombstone of a quote or bare repost
+ *   clears its quote too, which frees the one-quote-per-target slot, so
+ *   undoing a repost is a tombstone and redoing it a new post. The like trees
+ *   are preallocated by the post's (reply's) creator
+ *   ({@link likeTreesArePreallocated}).
  */
 const V11_DESCRIPTOR: ContractTopologyDescriptor = {
   ...V10_DESCRIPTOR,
   topology: 'v11',
+  // `hashtag` (and a reply's linkage) is frozen; every other content field is
+  // cleared by the tombstone (`tombstoneIsBlank`), so nothing else is carried.
+  tombstonePreserves: { post: { identifiers: [], scalars: ['hashtag'] }, reply: REPLY_LINKAGE_PRESERVED },
   interactions: {
     post: {
       ...V10_DESCRIPTOR.interactions.post,
@@ -594,10 +607,57 @@ export function referencesAreEnforced(): boolean {
 /**
  * True when post and reply documents are permanent (`canBeDeleted: false`) and a
  * "delete" is therefore an edit that blanks the content and sets `deleted: true`
- * rather than a document removal (v9). On v10 a delete removes the document.
+ * rather than a document removal (v9, v11). On v10 a delete removes the document.
  */
 export function deletesAreTombstones(): boolean {
+  const { topology } = topologyDescriptor()
+  return topology === 'v9' || topology === 'v11'
+}
+
+/**
+ * True when a tombstone keeps an EMPTY `content` (v9: `content: ''`, and
+ * `tombstoneIsBlank` reads its length); false when it leaves every content
+ * field out (v11: `tombstoneIsBlank` requires them absent, and a quote's
+ * `quotedPostId`/`quotedReplyId`/`quotedPostOwnerId` go too).
+ */
+export function tombstoneKeepsEmptyContent(): boolean {
   return topologyDescriptor().topology === 'v9'
+}
+
+/**
+ * True when a reply can outlive its parent (v10, v11): consensus lets a
+ * parent go while the replies naming it stay, so a reader proves the hole and
+ * stubs it instead of dropping the replies under it. On v10 the hole is an
+ * author's delete or a moderator removal; on v11 only a moderator removal
+ * (authors tombstone). False on v2 and v9, which prove no reply-parent holes.
+ * {@link authorDeletesLeaveHoles} says who made a hole, for wording.
+ */
+export function repliesOutliveTheirParent(): boolean {
+  return isV10()
+}
+
+/**
+ * True when an author's tombstone is hidden wherever posts are listed and,
+ * where something must hold its place (a thread parent with live replies, a
+ * quote's target, a direct link), shows as a "deleted by its author" stub
+ * with nothing to interact with (v11). On v9 a tombstone stays in place as a
+ * deleted card. Consensus still accepts likes, replies, quotes and bookmarks
+ * of a tombstone on both, so this is the client's call.
+ */
+export function tombstonesAreHidden(): boolean {
+  return isV11()
+}
+
+/**
+ * True when the like trees of a post or reply are built when it is created,
+ * paid by its creator (`preallocated` on like.byPost/byAuthorPost/
+ * byHashtagPost and likeReply.byReply/byAuthorReply, v11). Every like then
+ * costs the same, and a post with no likes still sits in its trees with a
+ * count of zero: ranked reads and grouped counts can return ZERO-count
+ * groups, which a leaderboard must drop.
+ */
+export function likeTreesArePreallocated(): boolean {
+  return isV11()
 }
 
 /**

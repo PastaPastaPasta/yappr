@@ -223,7 +223,7 @@
           "byteArray": true,
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "post"
           }
         }
@@ -363,7 +363,8 @@
           ],
           "terminal": "$ownerId",
           "rangeCountable": true,
-          "rankedCountable": true
+          "rankedCountable": true,
+          "preallocated": true
         },
         {
           "name": "byHashtagPost",
@@ -383,7 +384,8 @@
               "postId"
             ]
           },
-          "skipIfAbsent": true
+          "skipIfAbsent": true,
+          "preallocated": true
         },
         {
           "name": "byAuthorPost",
@@ -402,7 +404,8 @@
               "postAuthor",
               "postId"
             ]
-          }
+          },
+          "preallocated": true
         },
         {
           "name": "byTrendPost",
@@ -470,7 +473,7 @@
           "contentMediaType": "application/x.dash.dpp.identifier",
           "position": 0,
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "post",
             "where": {
               "hashtag": "hashtag",
@@ -518,7 +521,8 @@
             }
           ],
           "terminal": "$ownerId",
-          "countable": "countable"
+          "countable": "countable",
+          "preallocated": true
         },
         {
           "name": "byAuthorReply",
@@ -530,7 +534,8 @@
               "replyId": "asc"
             }
           ],
-          "terminal": "$ownerId"
+          "terminal": "$ownerId",
+          "preallocated": true
         }
       ],
       "required": [
@@ -546,7 +551,7 @@
           "contentMediaType": "application/x.dash.dpp.identifier",
           "position": 0,
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "reply",
             "where": {
               "$ownerId": "replyAuthor"
@@ -695,7 +700,8 @@
       ],
       "documentsCountable": true,
       "required": [
-        "$createdAt"
+        "$createdAt",
+        "$updatedAt"
       ],
       "properties": {
         "content": {
@@ -718,7 +724,7 @@
           "byteArray": true,
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "post",
             "where": {
               "$ownerId": "quotedPostOwnerId"
@@ -787,7 +793,7 @@
           "byteArray": true,
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "reply",
             "where": {
               "$ownerId": "quotedPostOwnerId"
@@ -825,6 +831,10 @@
           "refersTo": {
             "type": "identity"
           }
+        },
+        "deleted": {
+          "type": "boolean",
+          "position": 16
         }
       },
       "tokenCost": {
@@ -836,7 +846,7 @@
         }
       },
       "additionalProperties": false,
-      "documentsMutable": false,
+      "documentsMutable": true,
       "moderatorAbilities": {
         "delete": true,
         "deleteKeepsFields": [
@@ -981,6 +991,71 @@
             },
             {
               "present": "quotedReplyId"
+            },
+            {
+              "present": "deleted"
+            }
+          ]
+        },
+        "tombstoneIsBlank": {
+          "anyOf": [
+            {
+              "absent": "deleted"
+            },
+            {
+              "allOf": [
+                {
+                  "equal": [
+                    "deleted",
+                    1
+                  ]
+                },
+                {
+                  "absent": "content"
+                },
+                {
+                  "absent": "mediaUrl"
+                },
+                {
+                  "absent": "mediaHash"
+                },
+                {
+                  "absent": "mediaFingerprint"
+                },
+                {
+                  "absent": "sensitive"
+                },
+                {
+                  "absent": "encryptedContent"
+                },
+                {
+                  "absent": "keyGeneration"
+                },
+                {
+                  "absent": "nonce"
+                },
+                {
+                  "absent": "embedContractId"
+                },
+                {
+                  "absent": "embedDocType"
+                },
+                {
+                  "absent": "embedId"
+                },
+                {
+                  "absent": "mentionedUserId"
+                },
+                {
+                  "absent": "quotedPostId"
+                },
+                {
+                  "absent": "quotedReplyId"
+                },
+                {
+                  "absent": "quotedPostOwnerId"
+                }
+              ]
             }
           ]
         }
@@ -996,7 +1071,107 @@
         "mediaFingerprint": [
           "mediaUrl"
         ]
-      }
+      },
+      "canBeDeleted": false,
+      "immutable": [
+        "hashtag",
+        {
+          "property": "deleted",
+          "when": {
+            "present": "$old.deleted"
+          }
+        },
+        {
+          "property": "content",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mediaUrl",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mediaHash",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mediaFingerprint",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "sensitive",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "encryptedContent",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "keyGeneration",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "nonce",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "embedContractId",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "embedDocType",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "embedId",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mentionedUserId",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "quotedPostId",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "quotedReplyId",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "quotedPostOwnerId",
+          "when": {
+            "absent": "deleted"
+          }
+        }
+      ]
     },
     "privateFeedGrant": {
       "type": "object",
@@ -1251,7 +1426,8 @@
       "required": [
         "$createdAt",
         "rootPostId",
-        "parentOwnerId"
+        "parentOwnerId",
+        "$updatedAt"
       ],
       "properties": {
         "content": {
@@ -1274,7 +1450,7 @@
           "byteArray": true,
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "post"
           }
         },
@@ -1286,7 +1462,7 @@
           "byteArray": true,
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "reply",
             "where": {
               "$ownerId": "parentOwnerId"
@@ -1349,6 +1525,10 @@
             "type": "identity"
           },
           "position": 11
+        },
+        "deleted": {
+          "type": "boolean",
+          "position": 12
         }
       },
       "tokenCost": {
@@ -1360,7 +1540,7 @@
         }
       },
       "additionalProperties": false,
-      "documentsMutable": false,
+      "documentsMutable": true,
       "moderatorAbilities": {
         "delete": true,
         "deleteKeepsFields": [
@@ -1421,6 +1601,50 @@
               }
             ]
           }
+        },
+        "tombstoneIsBlank": {
+          "anyOf": [
+            {
+              "absent": "deleted"
+            },
+            {
+              "allOf": [
+                {
+                  "equal": [
+                    "deleted",
+                    1
+                  ]
+                },
+                {
+                  "absent": "content"
+                },
+                {
+                  "absent": "mediaUrl"
+                },
+                {
+                  "absent": "mediaHash"
+                },
+                {
+                  "absent": "mediaFingerprint"
+                },
+                {
+                  "absent": "sensitive"
+                },
+                {
+                  "absent": "encryptedContent"
+                },
+                {
+                  "absent": "keyGeneration"
+                },
+                {
+                  "absent": "nonce"
+                },
+                {
+                  "absent": "mentionedUserId"
+                }
+              ]
+            }
+          ]
         }
       },
       "dependentRequired": {
@@ -1434,7 +1658,73 @@
         "mediaFingerprint": [
           "mediaUrl"
         ]
-      }
+      },
+      "canBeDeleted": false,
+      "immutable": [
+        "rootPostId",
+        "replyToReplyId",
+        "parentOwnerId",
+        {
+          "property": "deleted",
+          "when": {
+            "present": "$old.deleted"
+          }
+        },
+        {
+          "property": "content",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mediaUrl",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mediaHash",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mediaFingerprint",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "sensitive",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "encryptedContent",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "keyGeneration",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "nonce",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mentionedUserId",
+          "when": {
+            "absent": "deleted"
+          }
+        }
+      ]
     },
     "report": {
       "type": "object",
@@ -1537,7 +1827,7 @@
           "byteArray": true,
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "post",
             "where": {
               "$ownerId": "targetOwnerId"
@@ -1552,7 +1842,7 @@
           "byteArray": true,
           "contentMediaType": "application/x.dash.dpp.identifier",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "reply",
             "where": {
               "$ownerId": "targetOwnerId"
