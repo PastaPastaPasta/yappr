@@ -39,13 +39,14 @@ export const engineSupervisor = new EngineSupervisor<EngineLoad>({
     return loadEnginePage(snapshot, simulate);
   },
   onStorage(batch) {
+    const { epoch } = engineSupervisor.getStatus();
     const written = engineStorage.apply(batch);
     // A secret that did not land leaves the engine waiting for its ack (and a sign-in hanging):
-    // say so, and start a fresh engine from what is on disk. Key names only, never values.
+    // say so, and treat it as a crash of that engine (backoff, then failed). Key names only.
     written?.catch((error: unknown) => {
       const keys = batch.ops.map((op) => op[1] ?? 'clear').join(', ');
       appendLog('error', 'host', `Secure write ${batch.seq} failed (${keys}): ${errorMessage(error)}`);
-      engineSupervisor.restart('A secure write failed');
+      engineSupervisor.crashed('a secure write failed', epoch);
     });
     return written;
   },

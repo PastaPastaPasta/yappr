@@ -427,6 +427,8 @@ export class EngineSupervisor<Load = unknown> {
       this.acceptCalls();
       this.update({ state: 'degraded', reason: errorMessage(error) });
       this.log('warn', `Engine boot failed: ${errorMessage(error)}`);
+      // Already online (the network came back while booting): no NetInfo change will retry it.
+      if (this.online) this.after(5000, () => this.connectivity(true).catch(() => undefined));
       this.startPings();
     }
   }

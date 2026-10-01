@@ -113,6 +113,12 @@ export function createEngineStorage(networkKey: string): EngineStorage {
   let snapshotChars = 0;
   /** The last identity with a session: a sign-out's private-feed deletes still belong to it. */
   let lastActive: string | null = null;
+  /**
+   * The account the running engine was booted for. Its secrets stay its own
+   * even after an in-engine account switch changes the session before the
+   * restart; null when it booted signed out (a sign-in then decides).
+   */
+  let epochIdentity: string | null = null;
 
   const opened = () => {
     if (!kv || !indexStore) throw new Error('Engine storage is not open');
@@ -146,8 +152,11 @@ export function createEngineStorage(networkKey: string): EngineStorage {
   const deleteItems = (items: string[]) =>
     Promise.all(items.map((name) => SecureStore.deleteItemAsync(name, secureOptions)));
 
-  const setSecret = async (key: string, value: string) => {
-    const bucket = identityInKey(key) ?? sessionIdentity() ?? SHARED_BUCKET;
+  /** Whose secret a key without an identity is: decided when its batch arrives, not when it is written. */
+  const ownerNow = () => epochIdentity ?? sessionIdentity();
+
+  const setSecret = async (key: string, value: string, owner: string | null) => {
+    const bucket = identityInKey(key) ?? owner ?? SHARED_BUCKET;
     const previous = readIndex()[bucket]?.[key];
     // Write the other slot, then point the index at it: a crash leaves the old value whole.
     const chunks = chunk(value);
@@ -174,7 +183,7 @@ export function createEngineStorage(networkKey: string): EngineStorage {
     for (const key of Object.keys(readIndex()[bucket] ?? {})) await removeFromBucket(bucket, key);
   };
 
-  const deleteSecret = async (key: string) => {
+  const deleteSecret = async (key: string, owner: string | null) => {
     const named = identityInKey(key);
     if (named) {
       await removeFromBucket(named, key);
@@ -184,7 +193,7 @@ export function createEngineStorage(networkKey: string): EngineStorage {
       return;
     }
     const index = readIndex();
-    const bucket = [sessionIdentity(), lastActive, SHARED_BUCKET].find((b) => b !== null && index[b]?.[key]);
+    const bucket = [owner, lastActive, SHARED_BUCKET].find((b) => b !== null && index[b]?.[key]);
     if (bucket !== undefined && bucket !== null) await removeFromBucket(bucket, key);
   };
 
@@ -195,12 +204,12 @@ export function createEngineStorage(networkKey: string): EngineStorage {
     return parts.some((part) => part === null) ? null : parts.join('');
   };
 
-  const applySecure = async (ops: StorageBatch['ops']) => {
+  const applySecure = async (ops: StorageBatch['ops'], owner: string | null) => {
     for (const op of ops) {
-      if (op[0] === 'set') await setSecret(op[1], op[2]);
-      else if (op[0] === 'del') await deleteSecret(op[1]);
+      if (op[0] === 'set') await setSecret(op[1], op[2], owner);
+      else if (op[0] === 'del') await deleteSecret(op[1], owner);
       // localStorage.clear() in the engine: only what the engine holds, the shared and active buckets.
-      else for (const bucket of [SHARED_BUCKET, sessionIdentity()]) if (bucket !== null) await purgeBucket(bucket);
+      else for (const bucket of [SHARED_BUCKET, owner]) if (bucket !== null) await purgeBucket(bucket);
     }
   };
 
@@ -227,6 +236,7 @@ export function createEngineStorage(networkKey: string): EngineStorage {
 
     async snapshot(identityId = sessionIdentity()) {
       await tail;
+      epochIdentity = identityId;
       const plain = opened().kv;
       const local: Record<string, string> = {};
       for (const key of plain.getAllKeys()) {
@@ -257,7 +267,8 @@ export function createEngineStorage(networkKey: string): EngineStorage {
         noteSession();
         return;
       }
-      const written = tail.then(() => applySecure(batch.ops));
+      const owner = ownerNow();
+      const written = tail.then(() => applySecure(batch.ops, owner));
       tail = written.catch(() => undefined);
       return written;
     },
@@ -275,6 +286,7 @@ export function createEngineStorage(networkKey: string): EngineStorage {
       indexStore = null;
       opening = null;
       lastActive = null;
+      epochIdentity = null;
       deleteMMKV(instanceId);
       deleteMMKV(indexId);
       await SecureStore.deleteItemAsync(keyName, MMKV_KEY_OPTIONS);

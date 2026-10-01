@@ -24,7 +24,7 @@ describe('engine page', () => {
   it('loads engine.js after the CSP, the bootstrap and the bundle hash (Android)', () => {
     const page = composeLoaderHtml('BOOT', 'abc');
     expect(page.indexOf('<script>BOOT</script>')).toBeLessThan(page.indexOf('__YAPPR_ENGINE_BUNDLE_HASH__="abc"'));
-    expect(page.indexOf('__YAPPR_ENGINE_BUNDLE_HASH__')).toBeLessThan(page.indexOf('<script src="engine.js">'));
+    expect(page.indexOf('__YAPPR_ENGINE_BUNDLE_HASH__')).toBeLessThan(page.indexOf("s.src='engine.js'"));
   });
 
   it('simulates Lockdown Mode by removing WebAssembly before the engine runs', () => {

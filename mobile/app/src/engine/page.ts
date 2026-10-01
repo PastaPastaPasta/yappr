@@ -40,8 +40,8 @@ async function fetchDev(name: string): Promise<Response> {
  * compilation, as on web.
  */
 const CSP =
-  "default-src 'none'; script-src 'self' file: 'unsafe-inline' 'unsafe-eval'; connect-src https:; " +
-  "worker-src blob:; img-src https: data: blob:; base-uri 'none'; form-action 'none'";
+  `default-src 'none'; script-src ${Platform.OS === 'android' ? "'self' file:" : ''} 'unsafe-inline' 'unsafe-eval'; ` +
+  "connect-src https:; worker-src blob:; img-src https: data: blob:; base-uri 'none'; form-action 'none'";
 
 export type Simulation = 'no-webassembly' | 'old-webview';
 
@@ -91,8 +91,11 @@ export function composeInlineHtml(html: string, bootstrap: string): string {
 export function composeLoaderHtml(bootstrap: string, bundleHash: string): string {
   return (
     `<!doctype html><html><head><meta charset="utf-8">${prelude(bootstrap)}` +
-    `<script>globalThis.__YAPPR_ENGINE_BUNDLE_HASH__=${JSON.stringify(bundleHash)}</script>` +
-    '<script src="engine.js"></script></head><body></body></html>'
+    `<script>globalThis.__YAPPR_ENGINE_BUNDLE_HASH__=${JSON.stringify(bundleHash)};` +
+    // A reload would re-run the engine on a stale snapshot; the supervisor restarts it instead.
+    "if((performance.getEntriesByType('navigation')[0]||{}).type!=='reload'){" +
+    "var s=document.createElement('script');s.src='engine.js';document.head.appendChild(s)}</script>" +
+    '</head><body></body></html>'
   );
 }
 

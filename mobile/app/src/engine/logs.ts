@@ -25,8 +25,8 @@ let nextId = 1;
 const listeners = new Set<() => void>();
 
 export function appendLog(level: LogLevel, source: LogLine['source'], message: string): void {
-  // Redacted before truncation, so a key cut in half at the limit is still caught.
-  const redacted = redact(message);
+  // Redacted before truncation (a key cut at the limit is still caught), on a bounded slice.
+  const redacted = redact(message.slice(0, MAX_LINE + 256));
   const text = redacted.length > MAX_LINE ? `${redacted.slice(0, MAX_LINE)}…` : redacted;
   const line: LogLine = { id: nextId++, at: Date.now(), level, source, message: text };
   lines = [...lines, line].slice(-CAPACITY);
