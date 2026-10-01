@@ -184,6 +184,10 @@ export class EngineSupervisor<Load = unknown> {
   private stopped = false;
   /** Last connectivity NetInfo reported; replayed into every engine after boot (it starts out online). */
   private online = true;
+  /** A boot retry is scheduled: foreground returns and connectivity changes do not stack more. */
+  private bootRetryScheduled = false;
+  /** The boot retry in flight, shared by everyone who asks for one. */
+  private bootInFlight: Promise<void> | null = null;
   private readonly statusListeners = new Set<() => void>();
   private readonly mountListeners = new Set<() => void>();
   private readonly events = new Map<string, Set<(payload: unknown) => void>>();
@@ -297,8 +301,10 @@ export class EngineSupervisor<Load = unknown> {
     this.foreground = foreground;
     if (!foreground) return;
     if (this.status.state === 'failed') this.restart('Back in the foreground');
-    else if (this.status.state === 'degraded') this.retryBoot(0);
-    else this.ping();
+    else {
+      if (this.status.state === 'degraded') this.retryBoot(0);
+      this.ping();
+    }
   }
 
   private launch(epoch: number) {
@@ -450,10 +456,16 @@ export class EngineSupervisor<Load = unknown> {
     if (online && this.status.state === 'degraded') await this.bootAgain(client);
   }
 
-  /** A degraded engine (boot failed: DAPI trouble) retries with backoff while online and in the foreground. */
+  /**
+   * A degraded engine (boot failed: DAPI trouble) retries with backoff while
+   * online and in the foreground. At most one retry is scheduled at a time.
+   */
   private retryBoot(attempt: number) {
+    if (this.bootRetryScheduled) return;
+    this.bootRetryScheduled = true;
     const delay = Math.min(5000 * 2 ** attempt, 60_000);
     this.after(delay, () => {
+      this.bootRetryScheduled = false;
       const client = this.client;
       // Offline or in the background: connectivity() or setForeground() picks it up again.
       if (!client || this.status.state !== 'degraded' || !this.online || !this.foreground) return;
@@ -461,9 +473,17 @@ export class EngineSupervisor<Load = unknown> {
     });
   }
 
-  private async bootAgain(client: EngineClient<EngineApi>) {
-    const info = await client.api.engine.boot();
-    if (this.client === client) this.update({ state: 'ready', reason: null, info });
+  /** One `engine.boot()` at a time: concurrent callers share the call in flight. */
+  private bootAgain(client: EngineClient<EngineApi>): Promise<void> {
+    this.bootInFlight ??= client.api.engine
+      .boot()
+      .then((info) => {
+        if (this.client === client) this.update({ state: 'ready', reason: null, info });
+      })
+      .finally(() => {
+        this.bootInFlight = null;
+      });
+    return this.bootInFlight;
   }
 
   /** iOS without WebAssembly is Lockdown Mode; elsewhere it means an unusable WebView. */
@@ -487,6 +507,9 @@ export class EngineSupervisor<Load = unknown> {
   /** Close the current epoch: the WebView goes, in-flight calls reject (and reads requeue), timers stop. */
   private teardown(reason: string) {
     this.setMount(null);
+    // Timers are cleared below; a boot in flight belongs to the client being closed.
+    this.bootRetryScheduled = false;
+    this.bootInFlight = null;
     this.accepting = false;
     this.stopPings();
     this.timers.forEach(clearTimeout);
