@@ -171,8 +171,9 @@ from the post itself. Either way `postOwnerAndTime` is safe to read as a
 notification source — nobody can inject
 a row into someone else's feed — and a comment on a post that does not exist is
 impossible (40120). `blog-comment-service.ts` still fetches the post before
-commenting, not to decide whom to trust but because the write must carry that id
-verbatim and the caller's copy may be stale. There is deliberately **no writer
+commenting, not to decide whom to trust: up to v5 the write must carry the owner
+id verbatim and the caller's copy may be stale, and on every topology it copies
+the post's `commentsEnabled` into `postCommentsEnabled`. There is deliberately **no writer
 gate** here: anyone may comment on anyone's post — that is the feature.
 
 ```js

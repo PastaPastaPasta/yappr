@@ -26,7 +26,7 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
       ownerId: (doc.$ownerId || doc.ownerId) as string,
       createdAt: new Date((doc.$createdAt || doc.createdAt || Date.now()) as number),
       blogPostId: identifierToBase58(data.blogPostId || doc.blogPostId) || '',
-      blogPostOwnerId: identifierToBase58(data.blogPostOwnerId || doc.blogPostOwnerId) || '',
+      blogPostOwnerId: identifierToBase58(data.blogPostOwnerId || doc.blogPostOwnerId) || undefined,
       content: (data.content || doc.content || '') as string,
     }
   }

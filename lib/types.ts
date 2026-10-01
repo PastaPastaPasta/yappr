@@ -107,8 +107,8 @@ export interface BlogComment {
   ownerId: string
   createdAt: Date
   blogPostId: string
-  /** The post owner a v2–v5 comment copies; empty on v6, which derives it through `blogPostId`. */
-  blogPostOwnerId: string
+  /** The post owner a v2–v5 comment copies; absent on v6, which derives it through `blogPostId`. */
+  blogPostOwnerId?: string
   content: string
 }
 
