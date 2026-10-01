@@ -150,6 +150,12 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
   }
 
   return {
+    /** After a sign-in, sign-out or switch, the next read loads the account signed in now. */
+    sessionChanged({ reason }: { reason: string }): void {
+      if (reason !== 'balance') loadedFor = null
+    },
+
+    api: {
     /**
      * One tab of the viewer's notifications, newest first, 30 a page. The
      * first call per account reads the last 7 days; later calls page what
@@ -198,15 +204,16 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
 
     /** Mark notifications read (a tap on one, `markAsRead`). */
     async markRead(ids: string[]): Promise<void> {
-      requireViewer('Notifications')
       if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) throw badRequest('ids must be strings')
+      // Marks land in this account's read state, never in the one the store held before.
+      await ensureLoaded(requireViewer('Notifications'))
       for (const id of ids) store().markAsRead(id)
       report()
     },
 
     /** "Mark all read": only the visible, enabled types (`markAllAsRead(settings)`; the settled mark-visible-read rule). */
     async markVisibleRead(): Promise<void> {
-      requireViewer('Notifications')
+      await ensureLoaded(requireViewer('Notifications'))
       store().markAllAsRead(settings())
       report()
     },
@@ -216,6 +223,7 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
       const viewer = requireViewer('Notifications')
       await ensureLoaded(viewer)
       return unreadCount()
+    },
     },
   }
 }

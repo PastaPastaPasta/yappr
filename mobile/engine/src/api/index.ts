@@ -7,7 +7,7 @@ import { createNotificationsModule } from './notifications'
 import { createPostWrites, posts } from './posts'
 import { createProfileWrites, profiles } from './profiles'
 import { createSafetyModule } from './safety'
-import { createSessionModule } from './session'
+import { createSessionModule, type SessionEvents } from './session'
 import { settings } from './settings'
 import { createEngineTicketStore, createWritesModule } from './writes'
 import { setNoticeSink } from '../shims/toast'
@@ -21,19 +21,25 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
   const emit = runtime.emit ?? (() => undefined)
   setNoticeSink(notice => emit('engine.notice', notice))
   const tickets = createEngineTicketStore(emit)
+  // Session changes reach the notifications module too: what it holds belongs to one account.
+  const notifications = createNotificationsModule(emit)
+  const sessionEmit: typeof emit = (event, payload) => {
+    if (event === 'session.changed') notifications.sessionChanged(payload as SessionEvents['session.changed'])
+    emit(event, payload)
+  }
   return {
     engine: createEngineModule(runtime),
     feed,
     posts: { ...posts, ...createPostWrites(tickets, emit) },
     engage: { ...engage, ...createEngageWrites(tickets) },
     profiles: { ...profiles, ...createProfileWrites(tickets) },
-    session: createSessionModule({ emit, tickets, secureDurable: runtime.secureDurable }),
+    session: createSessionModule({ emit: sessionEmit, tickets, secureDurable: runtime.secureDurable }),
     settings,
     writes: createWritesModule(tickets),
     graph: { ...graph, ...createGraphWrites(tickets) },
     explore,
     safety: createSafetyModule(tickets),
-    notifications: createNotificationsModule(emit),
+    notifications: notifications.api,
   }
 }
 

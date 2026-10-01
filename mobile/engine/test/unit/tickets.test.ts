@@ -403,21 +403,28 @@ describe('persistence and restart reconciliation', () => {
     await expect(restarted.store.retry('t1')).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
   })
 
-  it('keeps stored arguments through the boot-time rewrite, before any handler registers', async () => {
+  it('rewrites storage at boot only once the API has registered its handlers, and fails closed', async () => {
     const storage = memoryStorage()
+    const storedArgs = () => JSON.parse(storage.items.get(WRITES_STORAGE_KEY) ?? '[]').map((record: { args?: unknown }) => record.args)
     const first = setup({ storage })
     first.store.register('follow', { run: async () => ({ state: 'unconfirmed' }), persistArgs: true })
+    first.store.register('dm.send', { run: async () => ({ state: 'unconfirmed' }), persistArgs: true })
     first.store.submit({ op: 'follow', args: { targetId: 'B' }, documents: [POST] })
+    first.store.submit({ op: 'dm.send', args: { text: 'secret' } })
     await settle()
-    // Two restarts with nothing registered in between: the arguments survive both.
+    // A DM's arguments never reach disk, whatever its handler says.
+    expect(storedArgs()).toEqual([{ targetId: 'B' }, undefined])
+
+    // A restart that registers the handler synchronously keeps the follow's arguments.
+    const second = setup({ storage })
+    second.store.register('follow', { run: async () => ({ state: 'confirmed' }), persistArgs: true })
+    await settle()
+    expect(storedArgs()).toEqual([{ targetId: 'B' }, undefined])
+
+    // An op no handler claims loses them: fail closed.
     setup({ storage })
-    const run = vi.fn(async () => ({ state: 'confirmed' as const }))
-    const second = setup({ storage, documentExists: async () => false })
-    second.store.register('follow', { run, persistArgs: true })
-    await second.store.check('t1')
-    await second.store.retry('t1')
     await settle()
-    expect(run).toHaveBeenCalledWith({ targetId: 'B' }, expect.anything())
+    expect(storedArgs()).toEqual([undefined, undefined])
   })
 
   it('lists the active account\'s open tickets and recent confirmations, newest first', async () => {

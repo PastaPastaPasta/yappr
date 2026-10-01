@@ -146,10 +146,8 @@ export function createTicketStore(options: TicketStoreOptions) {
   const clone = (ticket: WriteTicket): WriteTicket => structuredClone(ticket)
   const allConfirmed = (documents: TicketDocument[]) => documents.map(doc => ({ ...doc, confirmed: true }))
 
-  const keepsArgs = (op: WriteOp) => {
-    const handler = handlers.get(op)
-    return handler ? handler.persistArgs === true : true
-  }
+  /** Fail closed: only a registered handler that opts in, and never a DM (its arguments are message bodies). */
+  const keepsArgs = (op: WriteOp) => handlers.get(op)?.persistArgs === true && !op.startsWith('dm.')
 
   function persist() {
     const cutoff = now() - CONFIRMED_TTL_MS
@@ -173,8 +171,6 @@ export function createTicketStore(options: TicketStoreOptions) {
         updatedAt: ticket.updatedAt.getTime(),
         lastCheckedAt: ticket.lastCheckedAt?.getTime() ?? null,
       },
-      // Args held for an op no handler has claimed yet came from storage (the boot-time rewrite runs
-      // before the API registers its handlers): keep them, or a second restart would strand the ticket.
       ...(args !== undefined && keepsArgs(ticket.op) ? { args } : {}),
     }))
     options.storage.setItem(WRITES_STORAGE_KEY, JSON.stringify(stored))
@@ -340,9 +336,10 @@ export function createTicketStore(options: TicketStoreOptions) {
   }
 
   load()
-  if (records.size > 0) persist()
-  // After construction: the host's subscription (and the entry's dispatcher) exist by then.
+  // After construction: the host's subscription (and the entry's dispatcher) exist by then, and
+  // the API has registered its handlers, so the rewrite keeps the arguments they persist.
   queueMicrotask(() => {
+    if (records.size > 0) persist()
     for (const id of reconciled) {
       const record = records.get(id)
       if (record?.ticket.identityId === options.currentIdentity()) options.emit('write.status', clone(record.ticket))

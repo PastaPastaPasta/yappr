@@ -1,5 +1,5 @@
 import { TtlMap } from '@/lib/caches/ttl-map'
-import { canBookmark, canRepost, repostsAreQuotes, type KindedTarget } from '@/lib/contract-topology'
+import { canBookmark, canRepost, deletesAreTombstones, repostsAreQuotes, type KindedTarget } from '@/lib/contract-topology'
 import { isDuplicateUniqueIndexError } from '@/lib/error-utils'
 import type { OwnQuote } from '@/lib/feed/quote-reposts'
 import { resolveQuoteReference } from '@/lib/feed/resolve-quoted-posts'
@@ -154,12 +154,12 @@ export function createEngageWrites(tickets: TicketStore) {
       const viewer = signer(ctx)
       if (!repostsAreQuotes()) return fromBoolean(await repostService.removeRepost(target.id, viewer))
       if (!quoteId) return { state: 'confirmed' }
-      return fromBoolean(await postService.deletePost(quoteId, viewer))
+      // `use-post-engagement.ts` `removeOwnQuote`: v11 tombstones the quote post (clearing its quote
+      // frees the slot), v10 deletes it.
+      return fromBoolean(await postService.deleteOwnPost(quoteId, viewer))
     },
-    // v10 names the deleted quote post; off v10 the repost document is read back.
-    probe: (ticket, args, kit) => ticket.documents.length > 0
-      ? kit.proveDocuments(ticket.documents)
-      : relation(isReposted, false)(ticket, args, kit),
+    // The slot (or the repost document) read back: a tombstoned quote post still exists, so its id proves nothing.
+    probe: relation(isReposted, false),
   })
   tickets.register<TargetArgs>('bookmark', {
     persistArgs: true,
@@ -209,7 +209,8 @@ export function createEngageWrites(tickets: TicketStore) {
         op: 'unrepost',
         args: { target, quoteId: quote?.id ?? null },
         target,
-        documents: quote ? [socialDoc('post', quote.id, 'delete')] : [],
+        // A real delete names the quote post; a tombstone (v11) leaves it in place.
+        documents: quote && !deletesAreTombstones() ? [socialDoc('post', quote.id, 'delete')] : [],
       })
     },
 

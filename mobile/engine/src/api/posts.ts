@@ -410,12 +410,10 @@ export function createPostWrites(tickets: TicketStore, emit: (event: 'content.cr
     async run({ target }, ctx) {
       const viewer = signer(ctx)
       const { id, kind } = target
-      if (deletesAreTombstones()) {
-        return fromBoolean(kind === 'reply' ? await replyService.tombstoneReply(id, viewer) : await postService.tombstonePost(id, viewer))
-      }
-      return fromBoolean(kind === 'reply' ? await replyService.deleteReply(id, viewer) : await postService.deletePost(id, viewer))
+      // A tombstone where posts are permanent (v9, v11), a delete elsewhere (`deleteOwnPost`).
+      return fromBoolean(kind === 'reply' ? await replyService.deleteOwnReply(id, viewer) : await postService.deleteOwnPost(id, viewer))
     },
-    // A real delete names the document, proved absent; a tombstone (v9) stays, blanked.
+    // A real delete names the document, proved absent; a tombstone (v9, v11) stays, blanked.
     probe: (ticket, args, kit) => deletesAreTombstones()
       ? tombstoned(ticket, args, kit)
       : kit.proveDocuments(ticket.documents),

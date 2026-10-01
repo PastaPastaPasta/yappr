@@ -37,10 +37,10 @@ const m = vi.hoisted(() => ({
   bookmarkService: { bookmarkPost: vi.fn(), removeBookmark: vi.fn(), getBookmark: vi.fn(), getUserBookmarks: vi.fn() },
   repostService: { repostPost: vi.fn(), removeRepost: vi.fn(), isReposted: vi.fn() },
   postService: {
-    createPost: vi.fn(), deletePost: vi.fn(), tombstonePost: vi.fn(), getOwnQuotes: vi.fn(), getPostById: vi.fn(),
+    createPost: vi.fn(), deleteOwnPost: vi.fn(), getOwnQuotes: vi.fn(), getPostById: vi.fn(),
     getPostsByIdsForDisplay: vi.fn(), enrichPostsBatch: vi.fn(async (posts: unknown[]) => posts),
   },
-  replyService: { createReply: vi.fn(), deleteReply: vi.fn(), tombstoneReply: vi.fn(), getReplyById: vi.fn() },
+  replyService: { createReply: vi.fn(), deleteOwnReply: vi.fn(), getReplyById: vi.fn() },
   followService: { followUser: vi.fn(), unfollowUser: vi.fn(), getFollowing: vi.fn(), getFollowStatusBatch: vi.fn(async () => new Map()) },
   blockService: { blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), getUserBlocks: vi.fn(), checkBlockedBatch: vi.fn() },
   reportService: { fileReport: vi.fn(), getOwnReport: vi.fn() },
@@ -241,12 +241,17 @@ describe('engage writes', () => {
     await expect(engage.unrepost(TARGET)).rejects.toThrow('read failed')
 
     m.strict.ownQuoteStrict.mockResolvedValue({ id: id('Bare'), bare: true })
-    m.postService.deletePost.mockRejectedValue(new Error('Request timeout'))
+    m.postService.deleteOwnPost.mockRejectedValue(new Error('Request timeout'))
     const ticket = await outcome(engage.unrepost(TARGET))
-    expect(m.postService.deletePost).toHaveBeenCalledWith(id('Bare'), VIEWER)
+    expect(m.postService.deleteOwnPost).toHaveBeenCalledWith(id('Bare'), VIEWER)
     expect(ticket).toMatchObject({ state: 'unconfirmed', documents: [{ type: 'post', id: id('Bare'), action: 'delete' }] })
-    m.documentExists.mockResolvedValue(false)
+    // The slot read back (on v11 the tombstoned quote post stays, so its id proves nothing).
+    m.strict.repostExists.mockResolvedValue(false)
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
+    expect(m.strict.repostExists).toHaveBeenCalledWith(VIEWER, TARGET.id, 'post')
+
+    m.topology.deletesAreTombstones = true
+    expect((await engage.unrepost(TARGET)).documents).toEqual([])
 
     m.strict.ownQuoteStrict.mockResolvedValue(null)
     expect(await outcome(engage.unrepost(TARGET))).toMatchObject({ state: 'confirmed', documents: [] })
@@ -509,12 +514,12 @@ describe('posts.publish and posts.delete', () => {
     const { tickets, outcome, posts } = engine()
     const own = { ...TARGET, ownerId: VIEWER }
     await expect(posts.delete(TARGET)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    m.postService.deletePost.mockResolvedValue(true)
+    m.postService.deleteOwnPost.mockResolvedValue(true)
     expect(await outcome(posts.delete(own)))
       .toMatchObject({ state: 'confirmed', documents: [{ type: 'post', id: TARGET.id, action: 'delete', confirmed: true }] })
 
     m.topology.deletesAreTombstones = true
-    m.replyService.tombstoneReply.mockRejectedValue(new Error('Request timeout'))
+    m.replyService.deleteOwnReply.mockRejectedValue(new Error('Request timeout'))
     const reply = { ...own, kind: 'reply' as const }
     const ticket = await outcome(posts.delete(reply))
     expect(ticket).toMatchObject({ state: 'unconfirmed', documents: [] })
@@ -536,7 +541,7 @@ describe('notifications', () => {
   })
 
   it('loads once per account, filters by tab, pages by keyset and marks the visible ones read', async () => {
-    const notifications = createNotificationsModule(emit)
+    const notifications = createNotificationsModule(emit).api
     const items = [
       ...Array.from({ length: 35 }, (_, index) => notification(`like${index}`, 'like', 10_000 - index)),
       notification('follow', 'follow', 20_000),
@@ -566,7 +571,8 @@ describe('notifications', () => {
   })
 
   it('starts each account from its own read state, even after a sign-out on the same engine', async () => {
-    const notifications = createNotificationsModule(emit)
+    const module_ = createNotificationsModule(emit)
+    const notifications = module_.api
     m.notificationService.getInitialNotifications.mockResolvedValue({ notifications: [notification('a', 'like', 100)], latestTimestamp: 100 })
     await notifications.list()
     await notifications.markVisibleRead()
@@ -575,11 +581,17 @@ describe('notifications', () => {
     kv.delete(useNotificationStore.persist.getOptions().name ?? '')
     m.viewer = id('Other')
     expect(await notifications.unreadCount()).toBe(1)
+    await notifications.markVisibleRead()
+
+    // The same account signing out and back in on this engine reloads too (session.changed).
+    kv.delete(useNotificationStore.persist.getOptions().name ?? '')
+    module_.sessionChanged({ reason: 'signed-out' })
+    expect(await notifications.unreadCount()).toBe(1)
     expect(m.notificationService.getInitialNotifications).toHaveBeenLastCalledWith(id('Other'), new Set())
   })
 
   it('polls from the watermark and merges what arrived', async () => {
-    const notifications = createNotificationsModule(emit)
+    const notifications = createNotificationsModule(emit).api
     m.notificationService.getInitialNotifications.mockResolvedValue({ notifications: [notification('a', 'like', 100)], latestTimestamp: 100 })
     expect(await notifications.poll()).toEqual({ added: 1, unread: 1 })
     m.notificationService.pollNewNotifications.mockResolvedValue({ notifications: [notification('b', 'follow', 200)], latestTimestamp: 200 })
