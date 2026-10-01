@@ -1,5 +1,5 @@
 // Must stay the first import: it swaps in the storage shim before lib loads.
-import { engineStorage } from './install-shims'
+import { engineStorage, misroutedStorageKeys } from './install-shims'
 import { createEngineApi } from './api'
 import { createDispatcher } from './rpc/dispatcher'
 import { createWebViewTransport } from './rpc/transport'
@@ -25,9 +25,13 @@ const dispatcher = createDispatcher({
     emit: (event, payload) => dispatcher.emit(event, payload),
   }),
   transport: createWebViewTransport(),
+  onStorageAck: seq => engineStorage.ack(seq),
 })
 
-engineStorage.onChange(change => dispatcher.emit('storage.change', change))
+engineStorage.onBatch(batch => dispatcher.storage(batch))
+if (misroutedStorageKeys.length > 0) {
+  dispatcher.log('warn', `Storage snapshot filed ${misroutedStorageKeys.length} key(s) under the wrong area; rerouted by prefix: ${misroutedStorageKeys.join(', ')}`)
+}
 
 function describe(value: unknown): string {
   if (typeof value === 'string') return value

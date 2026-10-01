@@ -73,7 +73,7 @@ export function encode(value: unknown, options: EncodeOptions = {}): unknown {
     if (seen.has(object)) throw new TypeError('encode: value contains a cycle')
     seen.add(object)
     try {
-      if (object instanceof Error) return { $t: 'error', v: serializeError(object, walk, options) } satisfies Tagged
+      if (object instanceof Error || isErrorLike(object)) return { $t: 'error', v: serializeError(object, walk, options) } satisfies Tagged
       if (object instanceof Map) {
         return { $t: 'map', v: Array.from(object, ([k, v]) => [walk(k), walk(v)] as [unknown, unknown]) } satisfies Tagged
       }
@@ -141,6 +141,8 @@ export class RemoteError extends Error {
   kind?: string | number
   isRetriable?: boolean
   data?: Record<string, unknown>
+  /** An own `error` field (SDK errors wrap their inner error there), lifted out of `data` so `consensusCodeOf` finds it. */
+  error?: unknown
   remoteStack?: string
 
   constructor(serialized: SerializedError) {
@@ -153,7 +155,11 @@ export class RemoteError extends Error {
     if (serialized.code !== undefined) this.code = serialized.code
     if (serialized.kind !== undefined) this.kind = serialized.kind
     if (serialized.isRetriable !== undefined) this.isRetriable = serialized.isRetriable
-    if (serialized.data !== undefined) this.data = serialized.data
+    if (serialized.data !== undefined) {
+      const { error, ...rest } = serialized.data
+      if (error !== undefined) this.error = error
+      if (Object.keys(rest).length > 0) this.data = rest
+    }
     if (serialized.stack !== undefined) this.remoteStack = serialized.stack
   }
 }
@@ -230,6 +236,17 @@ function decodeEntries(record: Record<string, unknown>): Record<string, unknown>
   const out: Record<string, unknown> = {}
   for (const [key, item] of Object.entries(record)) define(out, key, decode(item))
   return out
+}
+
+/**
+ * A class instance that reads as an error without extending Error: evo-sdk's
+ * WasmSdkError (prototype getters for `name` and `message`). Plain objects are
+ * never treated as errors, so DTOs that happen to have those keys stay data.
+ */
+function isErrorLike(value: object): boolean {
+  const proto = Object.getPrototypeOf(value)
+  if (proto === Object.prototype || proto === null) return false
+  return typeof read(value, 'name') === 'string' && typeof read(value, 'message') === 'string'
 }
 
 function hasToJSON(value: object): value is { toJSON(): unknown } {

@@ -5,6 +5,7 @@ import {
   RpcErrorCode,
   type EngineHello,
   type Envelope,
+  type KvOp,
   type LogLevel,
 } from '../protocol/envelope'
 import type { Transport } from './transport'
@@ -19,6 +20,8 @@ export interface DispatcherOptions {
   transport: Transport
   /** Include stacks in serialized errors (diagnostics builds). */
   includeStacks?: boolean
+  /** The host acknowledged the `skv` batch `seq`. */
+  onStorageAck?: (seq: number) => void
 }
 
 export interface Dispatcher {
@@ -26,6 +29,8 @@ export interface Dispatcher {
   emit(event: string, payload: unknown): void
   /** Forward a log line to the host. */
   log(level: LogLevel, message: string): void
+  /** Send a storage write-through batch (`kv` for the plain area, `skv` for the secure one). */
+  storage(batch: { area: 'local' | 'secure'; seq: number; ops: KvOp[] }): void
   /** Announce readiness (and again on every ping): the host's client queues calls until it arrives. */
   hello(info: { bundleHash: string }): void
   dispose(): void
@@ -51,7 +56,7 @@ export function resolveMethod(api: ApiTree, path: string): (...args: unknown[]) 
 const newInstanceId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 
 /** Serve `api` over `transport`: one response per request, in completion order. */
-export function createDispatcher({ api, transport, includeStacks = false }: DispatcherOptions): Dispatcher {
+export function createDispatcher({ api, transport, includeStacks = false, onStorageAck }: DispatcherOptions): Dispatcher {
   const instanceId = newInstanceId()
   let helloInfo: EngineHello | null = null
 
@@ -84,7 +89,7 @@ export function createDispatcher({ api, transport, includeStacks = false }: Disp
   const unsubscribe = transport.onMessage((message) => {
     // Decoded in stages, so a request whose arguments cannot be decoded still
     // gets an answer (BAD_ENVELOPE) instead of leaving its caller to time out.
-    let raw: { t?: unknown; v?: unknown; id?: unknown; path?: unknown; args?: unknown }
+    let raw: { t?: unknown; v?: unknown; id?: unknown; path?: unknown; args?: unknown; seq?: unknown; instance?: unknown }
     try {
       raw = JSON.parse(message)
     } catch {
@@ -95,10 +100,18 @@ export function createDispatcher({ api, transport, includeStacks = false }: Disp
       if (helloInfo) emit('engine.hello', helloInfo)
       return
     }
+    if (raw.t === 'kv-ack') {
+      if (typeof raw.seq === 'number') onStorageAck?.(raw.seq)
+      return
+    }
     if (raw.t !== 'req' || typeof raw.id !== 'string') return
     const id = raw.id
     if (raw.v !== PROTOCOL_VERSION) {
       fail(id, new RpcError(`Engine speaks protocol ${PROTOCOL_VERSION}, request used ${String(raw.v)}`, RpcErrorCode.ProtocolMismatch))
+      return
+    }
+    if (raw.instance !== undefined && raw.instance !== instanceId) {
+      fail(id, new RpcError('Request was addressed to a previous engine instance; not run', RpcErrorCode.Restarted))
       return
     }
     let args: unknown
@@ -121,6 +134,9 @@ export function createDispatcher({ api, transport, includeStacks = false }: Disp
     emit,
     log(level, message) {
       send({ t: 'log', v: PROTOCOL_VERSION, level, message })
+    },
+    storage({ area, seq, ops }) {
+      send({ t: area === 'secure' ? 'skv' : 'kv', v: PROTOCOL_VERSION, seq, ops })
     },
     hello({ bundleHash }) {
       helloInfo = { protocol: PROTOCOL_VERSION, bundleHash, instanceId }

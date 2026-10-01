@@ -91,6 +91,24 @@ describe('codec', () => {
     expect(cause.data).toBeUndefined()
   })
 
+  it('sends a WasmSdkError held in a value or an error field as an error, lifting `error` for consensusCodeOf', () => {
+    class WasmSdkError {
+      get name() { return 'WasmSdkError' }
+      get message() { return 'refused' }
+      get code() { return 40132 }
+    }
+    const value = roundTrip({ result: new WasmSdkError() }) as { result: RemoteError }
+    expect(value.result).toBeInstanceOf(RemoteError)
+    expect(value.result).toMatchObject({ name: 'WasmSdkError', message: 'refused', code: 40132 })
+
+    const wrapped = roundTrip(Object.assign(new Error('broadcast failed'), { error: new WasmSdkError(), attempt: 2 })) as RemoteError
+    expect(wrapped.error).toBeInstanceOf(RemoteError)
+    expect((wrapped.error as RemoteError).code).toBe(40132)
+    expect(wrapped.data).toEqual({ attempt: 2 })
+    // A plain object with the same keys stays data.
+    expect(roundTrip({ name: 'n', message: 'm' })).toEqual({ name: 'n', message: 'm' })
+  })
+
   it('survives getters that throw (a freed wasm error) and limits the cause chain', () => {
     const freed = { get message(): string { throw new Error('null pointer passed to rust') } }
     expect(serializeError(freed)).toEqual({ name: 'Error', message: '[object Object]' })

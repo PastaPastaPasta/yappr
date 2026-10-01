@@ -201,6 +201,74 @@ describe('dispatcher + client', () => {
     expect(events).toHaveLength(1)
   })
 
+  it('writes storage through and acknowledges a secure batch once the host wrote it', async () => {
+    const [host, engine] = createInProcessPair()
+    const acks: number[] = []
+    const dispatcher = createDispatcher({ api, transport: engine, onStorageAck: seq => acks.push(seq) })
+    const written: string[] = []
+    let finishSecureWrite!: () => void
+    createEngineClient<Api>(host, {
+      onStorage: (batch) => {
+        written.push(`${batch.area}#${batch.seq}:${JSON.stringify(batch.ops)}`)
+        if (batch.area === 'secure') return new Promise<void>(resolve => { finishSecureWrite = resolve })
+      },
+    })
+    dispatcher.storage({ area: 'local', seq: 1, ops: [['set', 'k', 'v']] })
+    dispatcher.storage({ area: 'secure', seq: 2, ops: [['del', 'yappr_secure_pk_x']] })
+    await vi.waitFor(() => expect(written).toEqual(['local#1:[["set","k","v"]]', 'secure#2:[["del","yappr_secure_pk_x"]]']))
+    await new Promise(resolve => setTimeout(resolve, 5))
+    expect(acks).toEqual([])
+    finishSecureWrite()
+    await vi.waitFor(() => expect(acks).toEqual([2]))
+  })
+
+  it('never acknowledges a secure batch without a writer, or when the write fails', async () => {
+    const [host, engine] = createInProcessPair()
+    const acks: number[] = []
+    const dispatcher = createDispatcher({ api, transport: engine, onStorageAck: seq => acks.push(seq) })
+    createEngineClient<Api>(host)
+    const [host2, engine2] = createInProcessPair()
+    const dispatcher2 = createDispatcher({ api, transport: engine2, onStorageAck: seq => acks.push(seq) })
+    createEngineClient<Api>(host2, { onStorage: () => Promise.reject(new Error('keychain locked')) })
+    dispatcher.storage({ area: 'secure', seq: 1, ops: [['set', 'yappr_secure_a', 'x']] })
+    dispatcher2.storage({ area: 'secure', seq: 1, ops: [['set', 'yappr_secure_a', 'x']] })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(acks).toEqual([])
+  })
+
+  it('makes an engine refuse, unrun, a call stamped for a previous instance', async () => {
+    const [host, engine] = createInProcessPair()
+    const ran = vi.fn(async () => 'ran')
+    createDispatcher({ api: { ran }, transport: engine })
+    const replies: unknown[] = []
+    host.onMessage(message => replies.push(parse(message)))
+    host.send(stringify({ t: 'req', v: PROTOCOL_VERSION, id: '1', path: 'ran', args: [], instance: 'an-older-engine' }))
+    await vi.waitFor(() => expect(replies).toHaveLength(1))
+    expect(replies[0]).toMatchObject({ ok: false, error: { code: 'ENGINE_RESTARTED' } })
+    expect(ran).not.toHaveBeenCalled()
+  })
+
+  it('stamps calls with the instance it last heard from', async () => {
+    const { transport, deliver, requests } = manualEngine()
+    const client = createEngineClient<Api>(transport)
+    deliver(helloMessage(PROTOCOL_VERSION, 'engine-a'))
+    client.api.math.add(1, 1).catch(() => undefined)
+    await vi.waitFor(() => expect(requests()).toHaveLength(1))
+    expect(requests()[0].instance).toBe('engine-a')
+  })
+
+  it('ignores a malformed hello and isolates a throwing event listener', async () => {
+    const { transport, deliver } = manualEngine()
+    const client = createEngineClient<Api>(transport, { helloTimeoutMs: 0 })
+    const seen: unknown[] = []
+    client.on('engine.hello', () => { throw new Error('listener bug') })
+    client.on('engine.hello', payload => seen.push(payload))
+    expect(() => deliver(stringify({ t: 'evt', v: PROTOCOL_VERSION, event: 'engine.hello', payload: null }))).not.toThrow()
+    deliver(helloMessage())
+    await expect(client.ready).resolves.toMatchObject({ instanceId: 'i1' })
+    expect(seen).toHaveLength(1)
+  })
+
   it('does not turn awaiting, coercion or inspection of the proxy into calls', async () => {
     const { client, host } = connect()
     await client.ready

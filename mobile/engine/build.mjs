@@ -91,6 +91,24 @@ const rootAliasPlugin = {
 
 const sha256 = (data) => createHash('sha256').update(data).digest('hex')
 
+/**
+ * Repo directories the bundle may read from. .github/workflows/mobile-engine.yml
+ * watches the same set (plus the root manifests, tsconfig.json and
+ * .env.devnet), so a change anywhere the engine reads triggers its CI.
+ */
+const WATCHED_INPUT_DIRS = ['mobile/engine/', 'lib/', 'types/', 'hooks/', 'vendor/platform-auth/', 'contracts/', 'node_modules/']
+
+/** Fail when a metafile input lies outside WATCHED_INPUT_DIRS: CI would not rebuild on its changes. */
+function assertInputsWatched(metafile) {
+  const unwatched = Object.keys(metafile.inputs)
+    .filter(input => !input.includes(':')) // esbuild-internal namespaces (`<define:…>`, etc.)
+    .map(input => path.relative(root, path.resolve(process.cwd(), input)).split(path.sep).join('/'))
+    .filter(file => !WATCHED_INPUT_DIRS.some(dir => file.startsWith(dir)))
+  if (unwatched.length > 0) {
+    throw new Error(`The bundle reads files the mobile-engine CI does not watch; add their directory to WATCHED_INPUT_DIRS and the workflow paths:\n  ${unwatched.join('\n  ')}`)
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   const outdir = path.resolve(args.outdir ?? path.join(here, 'dist', args.variant))
@@ -132,6 +150,7 @@ async function main() {
     plugins: [rootAliasPlugin],
   })
   const buildMs = Date.now() - started
+  assertInputsWatched(result.metafile)
 
   const js = readFileSync(path.join(outdir, 'engine.js'))
   // engine.inline.html puts the bundle inside <script>: either sequence would end or corrupt it.
