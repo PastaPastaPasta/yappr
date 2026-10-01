@@ -4,6 +4,8 @@ import { queryOptions, type QueryKey } from '@tanstack/react-query';
 import { router, usePathname } from 'expo-router';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
+import { DEFAULT_IPFS_GATEWAY } from '~/ui/media-url';
+
 import { engine, engineNetworkKey, engineSupervisor, type Engine } from './index';
 import type { EngineStatus } from './supervisor';
 
@@ -41,6 +43,17 @@ export function engineQuery<T>(key: QueryKey, read: (api: Remote<EngineApi>) => 
     queryFn: () => read(engine.api),
   });
 }
+
+/** The engine's first path-style IPFS gateway (`engine.info().ipfsGateways`), for MediaUrlProvider. */
+export function useIpfsGateway(): string {
+  const { info } = useEngineStatus();
+  const gateway = info?.ipfsGateways?.find((g) => g.format === 'path');
+  return gateway ? `https://${gateway.domain}/ipfs/` : DEFAULT_IPFS_GATEWAY;
+}
+
+/** DiceBear markup for AvatarSvgProvider, rendered by the engine (`profiles.avatarSvg`). */
+export const resolveAvatarSvg = (identityId: string, style: string, seed: string) =>
+  engine.api.profiles.avatarSvg(identityId, style, seed);
 
 /**
  * Root layout: when the engine cannot run on this device, show why (the

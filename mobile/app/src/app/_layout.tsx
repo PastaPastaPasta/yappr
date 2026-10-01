@@ -10,8 +10,11 @@ import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { EngineHost } from '~/engine/EngineHost';
-import { useUnsupportedEngineRoute } from '~/engine/hooks';
+import { resolveAvatarSvg, useIpfsGateway, useUnsupportedEngineRoute } from '~/engine/hooks';
 import { useAppearance } from '~/state/appearance';
+import { AvatarSvgProvider } from '~/ui/avatar-svg';
+import { MediaUrlProvider } from '~/ui/media-url';
+import { ToastHost } from '~/ui/ToastHost';
 import { persistOptions, queryClient } from '~/state/query-client';
 import { stackScreenOptions } from '~/ui/stack-options';
 import { navigationTheme } from '~/ui/tokens';
@@ -31,7 +34,10 @@ SplashScreen.preventAutoHideAsync().catch(() => {
  * behind one). `transparentModal` (over full screen) keeps it in the window;
  * the screens paint their own opaque background.
  */
-const FULL_SCREEN = { presentation: 'transparentModal', animation: 'slide_from_bottom' } as const;
+const FULL_SCREEN = {
+  presentation: 'transparentModal',
+  animation: 'slide_from_bottom',
+} as const;
 
 /** Upper bound on holding the splash for the theme, in case no Appearance event arrives. */
 const SPLASH_MAX_HOLD_MS = 1000;
@@ -65,51 +71,68 @@ function useSplashUntilThemeSettles(): void {
 export default function RootLayout() {
   useSplashUntilThemeSettles();
   useUnsupportedEngineRoute();
+  const ipfsGateway = useIpfsGateway();
   const dark = useColorScheme().colorScheme === 'dark';
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
         <ThemeProvider value={navigationTheme(dark)}>
-          <BottomSheetModalProvider>
-            <Stack screenOptions={stackScreenOptions}>
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <MediaUrlProvider ipfsGateway={ipfsGateway}>
+            <AvatarSvgProvider resolve={resolveAvatarSvg}>
+              <BottomSheetModalProvider>
+                <Stack screenOptions={stackScreenOptions}>
+                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
 
-              {/* Root modals (UX_SPEC §3.2). Titles come from the screens. */}
-              <Stack.Screen name="compose" options={FULL_SCREEN} />
-              <Stack.Screen name="sign-in" options={{ presentation: 'modal', headerShown: false }} />
-              <Stack.Screen name="profile/edit" options={{ presentation: 'modal' }} />
-              <Stack.Screen name="messages/new" options={{ presentation: 'modal' }} />
-              <Stack.Screen name="messages/new-group" options={{ presentation: 'modal' }} />
-              <Stack.Screen
-                name="media"
-                options={{ presentation: 'transparentModal', headerShown: false }}
-              />
-              <Stack.Screen
-                name="welcome"
-                options={{ ...FULL_SCREEN, headerShown: false }}
-              />
-              <Stack.Screen
-                name="terms-gate"
-                options={{ ...FULL_SCREEN, gestureEnabled: false }}
-              />
-              <Stack.Screen
-                name="lockdown"
-                options={{ ...FULL_SCREEN, gestureEnabled: false, headerShown: false }}
-              />
-              <Stack.Screen
-                name="webview-update"
-                options={{ ...FULL_SCREEN, gestureEnabled: false, headerShown: false }}
-              />
+                  {/* Root modals (UX_SPEC §3.2). Titles come from the screens. */}
+                  <Stack.Screen name="compose" options={FULL_SCREEN} />
+                  <Stack.Screen
+                    name="sign-in"
+                    options={{ presentation: 'modal', headerShown: false }}
+                  />
+                  <Stack.Screen name="profile/edit" options={{ presentation: 'modal' }} />
+                  <Stack.Screen name="messages/new" options={{ presentation: 'modal' }} />
+                  <Stack.Screen name="messages/new-group" options={{ presentation: 'modal' }} />
+                  <Stack.Screen
+                    name="media"
+                    options={{
+                      presentation: 'transparentModal',
+                      headerShown: false,
+                    }}
+                  />
+                  <Stack.Screen name="welcome" options={{ ...FULL_SCREEN, headerShown: false }} />
+                  <Stack.Screen
+                    name="terms-gate"
+                    options={{ ...FULL_SCREEN, gestureEnabled: false }}
+                  />
+                  <Stack.Screen
+                    name="lockdown"
+                    options={{
+                      ...FULL_SCREEN,
+                      gestureEnabled: false,
+                      headerShown: false,
+                    }}
+                  />
+                  <Stack.Screen
+                    name="webview-update"
+                    options={{
+                      ...FULL_SCREEN,
+                      gestureEnabled: false,
+                      headerShown: false,
+                    }}
+                  />
 
-              <Stack.Protected guard={__DEV__}>
-                <Stack.Screen name="__gallery" />
-              </Stack.Protected>
-            </Stack>
-            {/* The engine's hidden WebView: one per app, never unmounted (ENGINE.md §1). */}
-            <EngineHost />
-            <StatusBar style="auto" />
-          </BottomSheetModalProvider>
+                  <Stack.Protected guard={__DEV__}>
+                    <Stack.Screen name="__gallery" />
+                  </Stack.Protected>
+                </Stack>
+                {/* The engine's hidden WebView: one per app, never unmounted (ENGINE.md §1). */}
+                <EngineHost />
+                <ToastHost />
+                <StatusBar style="auto" />
+              </BottomSheetModalProvider>
+            </AvatarSvgProvider>
+          </MediaUrlProvider>
         </ThemeProvider>
       </PersistQueryClientProvider>
     </GestureHandlerRootView>

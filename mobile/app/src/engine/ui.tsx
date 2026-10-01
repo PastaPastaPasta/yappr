@@ -25,7 +25,7 @@ const TONE_COLOR: Record<Tone | 'none', string> = {
 export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <View className="mt-6">
-      <Text variant="muted" className="mb-1 px-4 font-semibold uppercase tracking-wide">
+      <Text variant="captionStrong" tone="secondary" className="mb-1 px-4 uppercase tracking-wide">
         {title}
       </Text>
       <View className="border-y border-gray-200 dark:border-gray-800">{children}</View>
@@ -101,10 +101,10 @@ export function EngineUnavailableScreen({
     <Screen scroll>
       <View className="flex-1 items-center gap-5 px-8 pb-12 pt-24">
         {icon}
-        <Text variant="title" className="text-center">
+        <Text variant="titleLarge" className="text-center">
           {title}
         </Text>
-        <Text variant="muted" className="text-center text-base">
+        <Text tone="secondary" className="text-center">
           {body}
         </Text>
         {children}

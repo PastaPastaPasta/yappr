@@ -154,12 +154,33 @@ same `APP_VARIANT`, or the app refuses to start (`src/config.ts`).
   versions, timings and the redacted log ring buffer.
 - The config plugin `plugins/engine-assets` builds `mobile/engine` for the
   variant at prebuild (root `npm ci` first; `YAPPR_ENGINE_SKIP_BUILD=1` to
-  reuse `dist/`) and ships `engine.inline.html` in the app.
+  reuse `dist/`) and ships it: `engine.inline.html` on iOS (loaded with an
+  https base URL), `engine.js` behind a small loader page on Android, whose
+  WebView silently loads nothing for inline HTML over about 15 MB.
+- Dev builds of the devnet variant have a quick sign-in on the diagnostics
+  screen (paste a WIF or hex key), for testing signed-in screens.
 - **Engine changes without a native rebuild (dev):** rebuild the engine, run
   `APP_VARIANT=testnet npm run engine:serve` (serves `dist/<variant>` on
   127.0.0.1:8092; `adb reverse tcp:8092 tcp:8092` on Android), start Metro with
   `YAPPR_ENGINE_DEV_URL=http://127.0.0.1:8092`, then "Restart engine" in
   diagnostics.
+
+**Native modules in the dev client: adding one requires a lead-approved
+rebuild.** Screen PRs share one dev-client build, so they use only these:
+`expo` and its modules (`expo-application`, `expo-clipboard`,
+`expo-constants`, `expo-crypto`, `expo-dev-client`, `expo-file-system`,
+`expo-haptics`, `expo-image`, `expo-linking`, `expo-local-authentication`,
+`expo-router`, `expo-secure-store`, `expo-sharing`, `expo-splash-screen`,
+`expo-status-bar`, `expo-system-ui`, `expo-web-browser`),
+`@react-native-community/netinfo`, `@react-native-menu/menu` (native
+long-press and dropdown menus; zeego 3 cannot build on RN 0.86),
+`@react-native-segmented-control/segmented-control`,
+`react-native-gesture-handler`, `react-native-mmkv` (+
+`react-native-nitro-modules`), `react-native-reanimated` (+
+`react-native-worklets`), `react-native-safe-area-context`,
+`react-native-screens`, `react-native-svg`, `react-native-webview`, and the
+local `modules/background-flush`. JS-only packages (for example
+`react-native-qrcode-svg`) need no rebuild.
 
 ## Run
 
