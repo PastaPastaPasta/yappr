@@ -42,7 +42,7 @@
  *
  * Setup: put a 64-hex private key in `.seed-treasury.local.key` (chmod 600) and
  * send devnet DASH to its address (printed by --treasury-address) from the
- * devnet faucet (bonsia: https://faucet.bonsia.networks.dash.org/).
+ * devnet faucet (sakura: https://faucet.sakura.networks.dash.org/).
  *
  * Run:
  *   NETWORK=devnet node scripts/seed/provision-seed-identities.mjs --personas <file> \
@@ -773,7 +773,7 @@ if (args.treasuryAddress) {
     console.log(`treasury key generated and written to ${TREASURY_KEY_FILE} (mode 600)`);
   }
   console.log(`treasury address: ${addressOfPrivateKeyHex(loadTreasuryKeyHex())}`);
-  console.log('fund it from the devnet faucet (bonsia: https://faucet.bonsia.networks.dash.org/) — see scripts/seed/README.md for amounts');
+  console.log('fund it from the devnet faucet (sakura: https://faucet.sakura.networks.dash.org/) — see scripts/seed/README.md for amounts');
   process.exit(0);
 }
 

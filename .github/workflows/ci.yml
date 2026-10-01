@@ -222,7 +222,7 @@ jobs:
             test-results/
           retention-days: 7
 
-  # The devnet interaction topology (v10, on bonsia) only exists on the devnet
+  # The devnet interaction topology (v11, on sakura) only exists on the devnet
   # contracts, so the specs that assert it can only run there. Every step is continue-on-error for
   # the same reason deploy.yml's devnet build is: the devnet is disposable and
   # resets without notice, its nodes are a hand-maintained three-machine pool, and
@@ -284,7 +284,7 @@ jobs:
         run: |
           for path in quorums previous masternodes; do
             curl -sS -o /dev/null --max-time 60 \
-              "https://quorums.bonsia.networks.dash.org/$path" || true
+              "https://quorums.sakura.networks.dash.org/$path" || true
           done
 
       - name: Run the devnet topology and username entry specs
