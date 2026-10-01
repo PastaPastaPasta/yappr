@@ -26,6 +26,7 @@ const { createDmModule } = await import('../../src/api/dm')
 const { avatarFromField } = await import('../../src/api/dto')
 const { LEGACY_LIST_TTL_MS, LEGACY_OPEN_POLL_MS } = await import('../../src/dm/legacy')
 const { WRITES_STORAGE_KEY, createTicketStore } = await import('../../src/writes/tickets')
+const { RpcError } = await import('../../src/protocol/envelope')
 const { conversationDTO, dmStatusDTO, messageDTO, page, validate } = await import('../../src/dto/validate')
 type MemoryLedger = InstanceType<typeof MemoryLedger>
 
@@ -68,7 +69,8 @@ function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<type
   const storage = memoryStorage()
   const emit = (event: string, payload: unknown) => { events.push({ event, payload }) }
   let signedIn: string | null = me
-  const tickets = createTicketStore({ storage, emit, currentIdentity: () => signedIn, documentExists: async () => true })
+  const keyRequired = vi.fn()
+  const tickets = createTicketStore({ storage, emit, currentIdentity: () => signedIn, documentExists: async () => true, onKeyRequired: keyRequired })
   const engines = new Map<string, DmEngine>()
   let locked = false
   const source = {
@@ -90,7 +92,7 @@ function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<type
   dm.hooks.sessionChanged(started(me))
   cleanups.push(() => dm.hooks.stop())
   return {
-    dm: dm.api, hooks: dm.hooks, events, storage, source, authors, tickets,
+    dm: dm.api, hooks: dm.hooks, events, storage, source, authors, tickets, keyRequired,
     engine: () => engines.get(me) as DmEngine,
     signOut: () => { signedIn = null },
     /** Whether this device holds no encryption key (the engine source answers null). */
@@ -224,7 +226,7 @@ describe('dm on DM v5: 1:1', () => {
     expect(a.eventsOf('dm.message').map(e => e.message.text)).toEqual(['hi alice'])
   })
 
-  it('leaves a send whose broadcast timed out unconfirmed, and proves it on check once it reads back', async () => {
+  it('leaves a send whose broadcast timed out unconfirmed, and proves it on check by reading the chain', async () => {
     const ledger = ledgerNow()
     const a = await ready(userOn(ledger, alice))
     await ready(userOn(ledger, bob))
@@ -240,8 +242,8 @@ describe('dm on DM v5: 1:1', () => {
     }
     const ticket = await a.settled(await a.dm.send(key, 'maybe'))
     expect(ticket).toMatchObject({ state: 'unconfirmed', retryable: false })
-    expect((await a.tickets.check(ticket.id))).toMatchObject({ state: 'unconfirmed', error: expect.objectContaining({ code: 'UNKNOWN' }) })
-    await a.dm.open(key)
+    // Not held locally, and the conversation is not open: the check reads my streams from the chain.
+    expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['first'])
     expect(await a.tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
   })
 
@@ -258,6 +260,34 @@ describe('dm on DM v5: 1:1', () => {
     const second = await a.settled(await a.dm.send(key, 'ok'))
     expect(second.state).toBe('unconfirmed')
     expect(await a.tickets.check(second.id)).toMatchObject({ state: 'unconfirmed' })
+  })
+
+  it('never proves a send by a concurrent identical send that landed', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'hi'))
+    const chain = a.engine().ctx.chain as MemoryChain
+    let writes = 0
+    // The first "ok" lands; the second never does, and times out.
+    chain.hook = method => (method === 'createMessage' && ++writes === 2 ? { ok: false, failure: 'transport', error: 'Request timeout after 8000ms' } : null)
+    const [first, second] = await Promise.all([a.dm.send(key, 'ok'), a.dm.send(key, 'ok')])
+    expect(await a.settled(first)).toMatchObject({ state: 'confirmed' })
+    expect(await a.settled(second)).toMatchObject({ state: 'unconfirmed' })
+    expect(await a.tickets.check(second.id)).toMatchObject({ state: 'unconfirmed' })
+  })
+
+  it('fails a send that finds the device locked as NO_KEY, and asks for the key', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    // Locked after the ticket was issued (the engine's key lookup answers NO_KEY).
+    vi.spyOn(a.engine(), 'send').mockRejectedValue(new RpcError('Messages are locked', 'NO_KEY'))
+    const ticket = await a.settled(await a.dm.send(key, 'hello'))
+    expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NO_KEY', outcome: 'not-sent' }) })
+    expect(a.keyRequired).toHaveBeenCalledWith(alice)
   })
 
   it('pages messages newest first, 50 at a time, with a cursor tied to the conversation', async () => {
@@ -313,7 +343,11 @@ describe('dm on DM v5: groups', () => {
 
     await expect(a.dm.createGroup('', [bob])).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(a.dm.createGroup('Team', [alice])).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Pick at least one member.' })
-    const { key, failed } = await a.dm.createGroup('Team', [bob, bob])
+    const creating = await a.dm.createGroup('Team', [bob, bob])
+    expect(creating).toMatchObject({ op: 'dm.group', state: 'pending', target: null })
+    await expect(a.dm.createGroup('Team', [bob])).rejects.toMatchObject({ code: 'ENGINE_BUSY' })
+    expect(await a.settled(creating)).toMatchObject({ state: 'confirmed' })
+    const { key, failed } = await a.dm.createdGroup(creating.id) ?? { key: '', failed: ['missing'] }
     expect(failed).toEqual([])
     expect(await a.settled(await a.dm.renameGroup(key, 'Dream team'))).toMatchObject({ op: 'dm.group', state: 'confirmed' })
     expect(await a.settled(await a.dm.addMember(key, carol))).toMatchObject({ state: 'confirmed' })
@@ -338,7 +372,8 @@ describe('dm on DM v5: groups', () => {
     const ledger = ledgerNow()
     const a = await ready(userOn(ledger, alice))
     await ready(userOn(ledger, bob))
-    const { key } = await a.dm.createGroup('Team', [bob])
+    const ticket = await a.settled(await a.dm.createGroup('Team', [bob]))
+    const key = (await a.dm.createdGroup(ticket.id))?.key ?? ''
     const chain = (a.engine().ctx.chain as MemoryChain)
     chain.hook = method => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'Insufficient identity balance' } : null)
     const failed = await a.settled(await a.dm.renameGroup(key, 'Nope'))

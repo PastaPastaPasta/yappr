@@ -347,9 +347,21 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       await conversationFor(stateFor(identityId), key)
     },
 
+    /** Re-read the conversation's messages after the last one read ("check again"). */
+    async readBack(identityId: string, key: string): Promise<void> {
+      const current = stateFor(identityId)
+      const conversation = await conversationFor(current, key)
+      const thread = await loadThread(current, conversation)
+      const page = await service.pollNewMessages(conversation.id, thread.cursor, identityId, conversation.participantId)
+      if (state !== current) return
+      thread.cursor = page.cursor
+      merge(current, conversation.id, page.messages)
+      changed()
+    },
+
     async send(identityId: string, key: string, text: string): Promise<WriteResult> {
       const current = stateFor(identityId)
-      const conversation = conversationOf(current, key)
+      const conversation = await conversationFor(current, key)
       const result = await service.sendMessage(identityId, conversation.participantId, text.trim())
       if (!result.success || !result.message) return { state: 'failed', error: new Error(result.error ?? 'Failed to send message') }
       const sent = result.message

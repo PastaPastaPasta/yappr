@@ -192,6 +192,11 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       holding(identityId, key).hide(key)
     },
 
+    /** Re-read my own messages in `key` from the chain, on the engine's queue ("check again"). */
+    async readBack(identityId: string, key: string): Promise<void> {
+      await holding(identityId, key).pollOwn(key)
+    },
+
     /** Refusals known before a ticket is issued; the engine re-checks them, these give the host a code. */
     async assertSendable(identityId: string, key: string): Promise<void> {
       const running = holding(identityId, key)
@@ -264,6 +269,20 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
         }
       })()
       return applied ? { state: 'applied' } : { state: 'unknown', error: new Error('The group does not show this change yet. Check again in a moment.') }
+    },
+
+    /**
+     * "Check again" for a creation: after a poll, a group I own with this
+     * name and these members that was not mine at submit. Returns its key.
+     */
+    async findCreated(identityId: string, name: string, memberIds: string[], before: string[]): Promise<string | null> {
+      const running = engine(identityId)
+      await running.tick()
+      const known = new Set(before)
+      const found = running.getSnapshot().conversations.find(view =>
+        view.kind === 'group' && view.isOwner && !known.has(view.key) && view.name === name &&
+        memberIds.every(id => view.memberIds.includes(id)))
+      return found?.key ?? null
     },
 
     /** The group a management action targets: it must exist, and only its owner manages members. */

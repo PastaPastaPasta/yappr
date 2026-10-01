@@ -68,7 +68,7 @@ export type DmUnlockResult =
   /** `no-key-on-identity`: the identity has no encryption key at all; `not-derivable`: enter it. */
   | { unlocked: false; reason: 'no-key-on-identity' | 'not-derivable' }
 
-const libEngines: DmEngineSource = { engineFor: getDmEngine, release: stopDmEngine }
+const libEngines: DmEngineSource = { engineFor: getDmEngine, release: (_identityId, engine) => stopDmEngine(engine) }
 
 interface SendArgs {
   identityId: string
@@ -76,6 +76,19 @@ interface SendArgs {
   text: string
   /** My messages in the conversation when it was sent (ids). */
   before: string[]
+}
+
+/** A group's creation: its key and the members who did not get the key yet ("Resend keys"). */
+export interface DmCreatedGroup {
+  key: string
+  failed: string[]
+}
+
+type GroupCreate = { action: 'create'; name: string; memberIds: string[]; /** Groups I held at submit. */ before: string[] }
+
+interface GroupArgs {
+  identityId: string
+  request: DmGroupAction | GroupCreate
 }
 
 /** `work`, but resolving after `ms` at the latest; its failure is logged, never thrown. */
@@ -147,49 +160,100 @@ export function createDmModule(options: DmModuleOptions) {
     return backend
   }
 
-  /** Ticket runs and probes refuse while stopped: a retry must never send on an outgoing account. */
-  function assertRunning(): void {
+  /**
+   * My message ids each `dm.send` ticket accounts for (created by its run, or
+   * proved by its check), so one ticket's message never proves another's.
+   */
+  const claimed = new Map<string, string>()
+  const claimKey = (conversation: string, messageId: string) => `${conversation}\u0000${messageId}`
+  const partsOf = (text: string) => (backend.kind === 'v5' ? splitText(text.trim()) : [text.trim()])
+
+  /** My messages in `key` that are not in `before` and not another ticket's, oldest first. */
+  async function freshOwn(args: SendArgs, ticketId: string, since: number): Promise<MessageDTO[]> {
+    const before = new Set(args.before)
+    return (await backend.messages(args.identityId, args.key)).filter(m => {
+      const owner = claimed.get(claimKey(args.key, m.id))
+      return m.own && !before.has(m.id) && (owner === undefined || owner === ticketId) && m.at.getTime() >= since
+    })
+  }
+
+  /** Claim, for `ticketId`, one fresh message per part; false when a part has none. */
+  function claimParts(args: SendArgs, ticketId: string, fresh: MessageDTO[]): boolean {
+    const pool = [...fresh]
+    const taken: MessageDTO[] = []
+    for (const part of partsOf(args.text)) {
+      const index = pool.findIndex(m => m.text === part)
+      if (index < 0) return false
+      taken.push(...pool.splice(index, 1))
+    }
+    for (const m of taken) claimed.set(claimKey(args.key, m.id), ticketId)
+    return true
+  }
+
+  /** Ticket runs refuse while stopped (a retry must never send on an outgoing account), and ask for a missing key. */
+  async function running<T>(work: () => Promise<T>): Promise<T> {
     if (halted) throw new NotSentError(new RpcError('Messages are stopped while the account changes', 'RESTART_REQUIRED'))
+    try {
+      return await work()
+    } catch (error) {
+      // Locked since the ticket was issued: nothing went out, and the host is asked for the key (NO_KEY).
+      if (error instanceof RpcError && error.code === 'NO_KEY') throw new NotSentError(new Error(`Private key not found: ${error.message}`))
+      throw error
+    }
   }
 
   options.tickets.register<SendArgs>('dm.send', {
-    run: ({ identityId, key, text }) => {
-      assertRunning()
-      return backend.send(identityId, key, text)
-    },
+    run: (args, ctx) => running(async () => {
+      const result = await backend.send(args.identityId, args.key, args.text)
+      // Which of my messages this send made, so no other ticket's check counts them.
+      claimParts(args, ctx.ticket.id, await freshOwn(args, ctx.ticket.id, 0))
+      return result
+    }),
     /**
-     * "Check again": every part of the text among my messages that were not
-     * there when it was sent (so an earlier identical "ok" never counts).
-     * Absence proves nothing (the slot may not be read back yet), and after a
-     * restart the text is gone (never persisted), so only `applied` is ever
-     * proved. It sees what the backend has read: v5 reads my own streams
-     * while the conversation is open, legacy polls the open conversation.
+     * "Check again": re-read my messages in the conversation from the chain,
+     * then look for every part of the text among those that were not there
+     * at submit and that no other send accounts for (an earlier identical "ok"
+     * never counts). Absence proves nothing, and after a restart the text is
+     * gone (never persisted), so only `applied` is ever proved.
      */
     async probe(ticket, args) {
       if (!args) return { state: 'unknown', error: new Error('The app restarted before this was confirmed. Open the conversation to see whether it was sent.') }
       if (halted) return { state: 'unknown', error: new Error('Messages are stopped while the account changes') }
-      const since = ticket.createdAt.getTime() - SENT_MATCH_SLACK_MS
-      const before = new Set(args.before)
-      const fresh = (await backend.messages(args.identityId, args.key))
-        .filter(m => m.own && !before.has(m.id) && m.at.getTime() >= since)
-        .map(m => m.text)
-      for (const part of backend.kind === 'v5' ? splitText(args.text.trim()) : [args.text.trim()]) {
-        const index = fresh.indexOf(part)
-        if (index < 0) return { state: 'unknown', error: new Error('Not in the conversation yet. Check again in a moment.') }
-        fresh.splice(index, 1)
-      }
-      return { state: 'applied' }
+      await backend.readBack(args.identityId, args.key)
+      const fresh = await freshOwn(args, ticket.id, ticket.createdAt.getTime() - SENT_MATCH_SLACK_MS)
+      return claimParts(args, ticket.id, fresh)
+        ? { state: 'applied' }
+        : { state: 'unknown', error: new Error('Not in the conversation yet. Check again in a moment.') }
     },
     persistArgs: false,
   })
-  options.tickets.register<{ identityId: string; request: DmGroupAction }>('dm.group', {
-    run: ({ identityId, request }) => {
-      assertRunning()
-      return v5('Groups').group(identityId, request)
+
+  /** Group creations: their result for `createdGroup`, and the one running (a second waits for it). */
+  const createdGroups = new Map<string, DmCreatedGroup>()
+  let creating: string | null = null
+
+  options.tickets.register<GroupArgs>('dm.group', {
+    run: async ({ identityId, request }, ctx) => {
+      try {
+        return await running(async () => {
+          const groups = v5('Groups')
+          if (request.action !== 'create') return groups.group(identityId, request)
+          createdGroups.set(ctx.ticket.id, await groups.createGroup(identityId, request.name, request.memberIds))
+          return { state: 'confirmed' }
+        })
+      } finally {
+        if (creating === ctx.ticket.id) creating = null
+      }
     },
-    async probe(_ticket, args) {
+    async probe(ticket, args) {
       if (!args || halted) return { state: 'unknown', error: new Error('This change can no longer be checked here') }
-      return v5('Groups').probeGroup(args.identityId, args.request)
+      const groups = v5('Groups')
+      const { request } = args
+      if (request.action !== 'create') return groups.probeGroup(args.identityId, request)
+      const key = await groups.findCreated(args.identityId, request.name, request.memberIds, request.before)
+      if (!key) return { state: 'unknown', error: new Error('The group does not show yet. Check again in a moment.') }
+      createdGroups.set(ticket.id, { key, failed: [] })
+      return { state: 'applied' }
     },
     persistArgs: false,
   })
@@ -212,7 +276,7 @@ export function createDmModule(options: DmModuleOptions) {
     const identityId = session()
     const groups = v5('Groups')
     groups.assertGroupAction(identityId, request)
-    return options.tickets.submit({ op: 'dm.group', args: { identityId, request }, target: { conversationKey: request.key } })
+    return options.tickets.submit<GroupArgs>({ op: 'dm.group', args: { identityId, request }, target: { conversationKey: request.key } })
   }
 
   async function withPeers(rows: ConversationRow[]): Promise<ConversationDTO[]> {
@@ -306,12 +370,14 @@ export function createDmModule(options: DmModuleOptions) {
     },
 
     /**
-     * Create a group of up to 100 members, the creator included. Resolves
-     * when the roster and the grants are written; `failed` lists members who
-     * did not get the key yet ("Resend keys"). Big groups take long: give the
-     * call a generous timeout.
+     * Create a group of up to 100 members, the creator included: a `dm.group`
+     * ticket (many paid writes: the roster, then a grant per member). Once it
+     * is confirmed, `createdGroup(ticket.id)` gives the key and the members who
+     * did not get the key yet ("Resend keys"). One creation at a time: a
+     * second while one runs is `ENGINE_BUSY`, so a repeated tap never makes a
+     * duplicate group.
      */
-    async createGroup(name: string, memberIds: string[]): Promise<{ key: string; failed: string[] }> {
+    async createGroup(name: string, memberIds: string[]): Promise<WriteTicket> {
       const identityId = session()
       const groups = v5('Groups')
       groups.engine(identityId) // A locked device answers NO_KEY before any argument check.
@@ -320,7 +386,17 @@ export function createDmModule(options: DmModuleOptions) {
       const members = Array.from(new Set(memberIds.map(id => identityIdOf(id, 'member ID')))).filter(id => id !== identityId)
       if (members.length === 0) throw new RpcError('Pick at least one member.', 'BAD_REQUEST')
       if (members.length + 1 > MAX_GROUP_MEMBERS) throw new RpcError(`A group can have at most ${MAX_GROUP_MEMBERS} members.`, 'BAD_REQUEST')
-      return groups.createGroup(identityId, groupName, members)
+      if (creating) throw new RpcError('A group is still being created', 'ENGINE_BUSY')
+      const before = (await backend.rows(identityId)).filter(row => row.kind === 'group').map(row => row.key)
+      const request: GroupCreate = { action: 'create', name: groupName, memberIds: members, before }
+      const ticket = options.tickets.submit<GroupArgs>({ op: 'dm.group', args: { identityId, request }, target: null })
+      creating = ticket.id
+      return ticket
+    },
+
+    /** The group a confirmed `createGroup` ticket made, or null (unknown ticket, not done yet, or after a restart). */
+    async createdGroup(ticketId: string): Promise<DmCreatedGroup | null> {
+      return createdGroups.get(ticketId) ?? null
     },
 
     async renameGroup(key: string, name: string): Promise<WriteTicket> {

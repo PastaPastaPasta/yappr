@@ -9,7 +9,7 @@
  * DM v5 has no cheap delete: the messages and the group stay on chain (the
  * retention sweep would reclaim them; it is off for test runs).
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { loadPoolPersonas, type PoolPersona } from '../../../harness/pool'
 import type { ConversationDTO, DmEvents, WriteTicket } from '../../../src/api'
 import { connectEngine } from '../engine'
@@ -65,7 +65,11 @@ describe.skipIf(skip !== null)(`dm on sakura${skip ? ` (skipped: ${skip})` : ''}
   async function settled(ticket: WriteTicket): Promise<WriteTicket> {
     for (let waited = 0; waited < WAIT_MS; waited += 500) {
       const current = await engine.api.writes.get(ticket.id)
-      if (current && current.state !== 'pending') return current
+      if (current && current.state !== 'pending') {
+        // The classified error (code and copy, never message text) tells a refusal from a transient.
+        if (current.error) console.warn(`${ticket.op} ${current.state}: ${current.error.code} ${current.error.userMessage}`)
+        return current
+      }
       await new Promise(resolve => setTimeout(resolve, 500))
     }
     throw new Error(`ticket ${ticket.id} (${ticket.op}) still pending after ${WAIT_MS / 1000} s`)
@@ -113,7 +117,8 @@ describe.skipIf(skip !== null)(`dm on sakura${skip ? ` (skipped: ${skip})` : ''}
     const inbox = await conversation(c => c.peer?.id === alice.identityId && c.lastMessage?.text === HELLO)
     expect(inbox).toMatchObject({ backend: 'v5', kind: 'direct', lastMessage: { own: false } })
     expect(inbox.unread).toBeGreaterThan(0)
-    expect(messageEvents().some(e => e.key === inbox.key && e.message.text.endsWith(RUN))).toBe(true)
+    // dm.message is coalesced with dm.changed (250 ms).
+    await vi.waitFor(() => expect(messageEvents().some(e => e.key === inbox.key && e.message.text.endsWith(RUN))).toBe(true), { timeout: 5_000 })
     await engine.api.dm.markRead(inbox.key)
     expect((await engine.api.dm.conversations()).find(c => c.key === inbox.key)?.unread).toBe(0)
     expect(await settled(await engine.api.dm.send(inbox.key, `reply ${RUN}`))).toMatchObject({ state: 'confirmed' })
@@ -126,8 +131,11 @@ describe.skipIf(skip !== null)(`dm on sakura${skip ? ` (skipped: ${skip})` : ''}
 
   it('group: create, rename, add a member, a member leaves', async () => {
     await become(alice)
-    const { key, failed } = await engine.api.dm.createGroup(`Mobile engine ${RUN}`, [bob.identityId])
-    expect(failed).toEqual([])
+    const creating = await settled(await engine.api.dm.createGroup(`Mobile engine ${RUN}`, [bob.identityId]))
+    expect(creating).toMatchObject({ op: 'dm.group', state: 'confirmed' })
+    const created = await engine.api.dm.createdGroup(creating.id)
+    expect(created?.failed).toEqual([])
+    const key = created?.key ?? ''
     expect(await settled(await engine.api.dm.renameGroup(key, `Renamed ${RUN}`))).toMatchObject({ state: 'confirmed' })
     expect(await settled(await engine.api.dm.addMember(key, carol.identityId))).toMatchObject({ state: 'confirmed' })
     const owned = (await engine.api.dm.conversations()).find(c => c.key === key)
