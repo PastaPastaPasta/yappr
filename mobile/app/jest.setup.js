@@ -2,6 +2,10 @@
 require('react-native-gesture-handler/jestSetup');
 jest.mock('react-native-worklets', () => require('react-native-worklets/lib/module/mock'));
 jest.mock('react-native-reanimated', () => require('react-native-reanimated/mock'));
+// Reanimated's mock leaves out useReducedMotion ("ADD ME IF NEEDED"). Patched
+// on the mock module itself, because expo-router/testing-library re-mocks
+// Reanimated with that same module.
+require('react-native-reanimated/mock').useReducedMotion = () => false;
 jest.mock('@gorhom/bottom-sheet', () => require('@gorhom/bottom-sheet/mock'));
 // react-native-mmkv swaps in an in-memory store under Jest, but still imports
 // Nitro, which looks up its native TurboModule at import time.

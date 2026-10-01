@@ -8,7 +8,9 @@
       "~/*": ["./src/*"],
       "@assets/*": ["./assets/*"],
       "@/*": ["../../*"],
-      "@engine/*": ["../engine/src/*"]
+      "@engine/*": ["../engine/src/*"],
+      "clsx": ["./node_modules/clsx"],
+      "tailwind-merge": ["./node_modules/tailwind-merge"]
     }
   },
   "include": [

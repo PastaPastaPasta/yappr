@@ -15,4 +15,17 @@
  * rejects `lib/` imports everywhere else, and anything not on the lists here.
  * Both lists and this file are append-only (mobile/CLAUDE.md).
  */
-export {};
+// Env-free (PRD §11.1 OQ-10): imports only clsx and tailwind-merge, both in mobile/app/node_modules.
+export {
+  cn,
+  formatNumber,
+  formatTimeCompact,
+  isEmojiOnly,
+  truncateId,
+} from '@/lib/utils/common';
+// Env-free: imports nothing. Tag max length is passed in (engine capabilities), never read from lib/constants.
+export {
+  cashtagDisplayToStorage,
+  hashtagDisplayToStorage,
+  normalizeDpnsUsername,
+} from '@/lib/post-helpers';
