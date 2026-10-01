@@ -72,9 +72,9 @@ function ToastView({ item }: { item: ToastItem }) {
 /**
  * Renders the current toast, top-center below the navigation bar, in the
  * same dark colors in both themes (as web). Mount it once, above the
- * navigator.
+ * navigator. `top` overrides the offset when it is mounted inside a screen.
  */
-export function ToastHost() {
+export function ToastHost({ top }: { top?: number }) {
   const current = useToastStore((s) => s.current);
   const insets = useSafeAreaInsets();
   return (
@@ -82,7 +82,7 @@ export function ToastHost() {
       pointerEvents="box-none"
       style={{
         position: 'absolute',
-        top: insets.top + NAV_BAR_HEIGHT + 8,
+        top: top ?? insets.top + NAV_BAR_HEIGHT + 8,
         left: 16,
         right: 16,
         alignItems: 'center',

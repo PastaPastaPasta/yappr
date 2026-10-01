@@ -1,7 +1,9 @@
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { ScrollView, View } from 'react-native';
 
+import { AvatarSvgProvider } from '~/ui/avatar-svg';
 import { GALLERY_SECTIONS, type GallerySectionId } from '~/ui/gallery/sections';
+import { fixtureAvatarSvg } from '~/ui/post/fixtures';
 import { Screen } from '~/ui/Screen';
 import { FilterChips } from '~/ui/Tabs';
 import { ToastHost } from '~/ui/ToastHost';
@@ -29,24 +31,29 @@ export default function GalleryScreen() {
   const shown = filter === 'all' ? GALLERY_SECTIONS : GALLERY_SECTIONS.filter((s) => s.id === filter);
 
   return (
-    <Screen>
-      <Stack.Screen options={{ title: 'Gallery' }} />
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        stickyHeaderIndices={[0]}
-        contentContainerClassName="pb-16"
-      >
-        <View className={tw.bg}>
-          <FilterChips options={FILTERS} value={filter} onChange={setFilter} testID="gallery-filter" />
-        </View>
-        {shown.map(({ id, Component }) => (
-          <View key={id} testID={`gallery-${id}`}>
-            <Component />
+    // The engine host will provide real DiceBear rendering; the gallery uses fixtures.
+    <AvatarSvgProvider resolve={fixtureAvatarSvg}>
+      <Screen>
+        <Stack.Screen options={{ title: 'Gallery' }} />
+        <ScrollView
+          // A new section starts at the top.
+          key={filter}
+          contentInsetAdjustmentBehavior="automatic"
+          stickyHeaderIndices={[0]}
+          contentContainerClassName="pb-16"
+        >
+          <View className={tw.bg}>
+            <FilterChips options={FILTERS} value={filter} onChange={setFilter} testID="gallery-filter" />
           </View>
-        ))}
-      </ScrollView>
-      {/* The root layout doesn't mount a toast host yet; the gallery brings its own. */}
-      <ToastHost />
-    </Screen>
+          {shown.map(({ id, Component }) => (
+            <View key={id} testID={`gallery-${id}`}>
+              <Component />
+            </View>
+          ))}
+        </ScrollView>
+        {/* The root layout doesn't mount a toast host yet; the gallery brings its own. */}
+        <ToastHost top={8} />
+      </Screen>
+    </AvatarSvgProvider>
   );
 }

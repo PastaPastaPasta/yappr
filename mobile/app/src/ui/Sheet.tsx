@@ -33,9 +33,17 @@ export function Sheet({ open, onClose, title, children, dismissible = true, test
   const c = useColors();
   const dark = useIsDark();
 
+  // Only dismiss what was presented: gorhom ignores a later present() after
+  // dismiss() on a sheet that never opened.
+  const presented = useRef(false);
   useEffect(() => {
-    if (open) ref.current?.present();
-    else ref.current?.dismiss();
+    if (open) {
+      ref.current?.present();
+      presented.current = true;
+    } else if (presented.current) {
+      ref.current?.dismiss();
+      presented.current = false;
+    }
   }, [open]);
 
   useEffect(() => {

@@ -5,6 +5,8 @@ import { SvgXml } from 'react-native-svg';
 
 import { cn } from '~/lib-allowlist';
 
+import { useDicebearSvg } from './avatar-svg';
+import type { CardAvatar } from './post/types';
 import { hitSlopFor, motion, tw } from './tokens';
 
 /** UX_SPEC §2.3. `profile` is the web's 128 scaled for phones. */
@@ -35,7 +37,11 @@ export function svgFromDataUri(uri: string): string | null {
 }
 
 export interface AvatarProps {
-  /** An image URL, or a `data:image/svg+xml` URI (the engine's DiceBear output). */
+  /** The engine's `AvatarDTO`: an image URI, or a DiceBear recipe drawn via `AvatarSvgProvider`. */
+  avatar?: CardAvatar;
+  /** Whose avatar: the engine renders a recipe per identity. */
+  identityId?: string;
+  /** An image URL, or a `data:image/svg+xml` URI. */
   uri?: string;
   /** Raw SVG markup, for a DiceBear avatar the engine handed over as a string. */
   svg?: string;
@@ -60,8 +66,10 @@ function svgMarkup(source: string | undefined): string | null {
  * when there is nothing to show.
  */
 export const Avatar = memo(function Avatar({
-  uri,
-  svg,
+  avatar,
+  identityId,
+  uri: uriProp,
+  svg: svgProp,
   fallback,
   size = 'md',
   name,
@@ -69,6 +77,9 @@ export const Avatar = memo(function Avatar({
   testID,
   className,
 }: AvatarProps) {
+  const recipeSvg = useDicebearSvg(identityId, avatar?.dicebear);
+  const uri = avatar?.uri ?? uriProp ?? undefined;
+  const svg = svgProp ?? recipeSvg;
   const diameter = AVATAR_SIZES[size];
   // The profile avatar's 4 pt ring sits inside its diameter; the picture fills the rest.
   const inner = size === 'profile' ? diameter - 8 : diameter;
@@ -78,7 +89,10 @@ export const Avatar = memo(function Avatar({
   const fallbackMarkup = useMemo(() => svgMarkup(fallback), [fallback]);
 
   let content = null;
+  // DiceBear art is transparent, so it sits on the page color, as on web.
+  let transparent = false;
   if (markup) {
+    transparent = true;
     content = <SvgXml xml={markup} width={inner} height={inner} testID="avatar-svg" />;
   } else if (uri && failedUri !== uri) {
     content = (
@@ -94,6 +108,7 @@ export const Avatar = memo(function Avatar({
       />
     );
   } else if (fallbackMarkup) {
+    transparent = true;
     content = <SvgXml xml={fallbackMarkup} width={inner} height={inner} testID="avatar-fallback" />;
   }
 
@@ -104,7 +119,7 @@ export const Avatar = memo(function Avatar({
       accessibilityElementsHidden={!onPress}
       className={cn(
         'overflow-hidden rounded-full',
-        tw.bgSkeleton,
+        transparent ? tw.bg : tw.bgSkeleton,
         size === 'profile' && 'border-4 border-white dark:border-neutral-900',
         className,
       )}

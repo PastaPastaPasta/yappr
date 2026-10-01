@@ -7,6 +7,7 @@ import { Tag } from './Badge';
 import { Button } from './Button';
 import { Text } from './Text';
 import { handleOf } from './handle';
+import type { CardAvatar } from './post/types';
 import { monoFont, tw, useLargeText } from './tokens';
 
 /** The fields a user row needs; the engine's AuthorDTO / ProfileDTO both carry them. */
@@ -14,7 +15,7 @@ export interface UserRowUser {
   id: string;
   displayName: string;
   username: string | null;
-  avatarUrl?: string;
+  avatar?: CardAvatar;
   bio?: string;
 }
 
@@ -87,7 +88,7 @@ export function UserRow({
       testID={testID}
       className={cn('min-h-[72px] flex-row gap-3 px-4 py-3', tw.pressed)}
     >
-      <Avatar uri={user.avatarUrl} size="md" />
+      <Avatar avatar={user.avatar} identityId={user.id} size="md" />
       <View className="flex-1 gap-0.5">
         <View className="flex-row items-start gap-3">
           <View className="flex-1">

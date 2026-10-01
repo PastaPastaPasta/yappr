@@ -1,3 +1,5 @@
+import { svgFromDataUri } from '../Avatar';
+import type { AvatarSvgResolver } from '../avatar-svg';
 import { FIXTURE_AVATARS } from './fixture-avatars';
 import type { CardAuthor, CardLinkPreview, CardPoll, CardPost } from './types';
 
@@ -10,9 +12,21 @@ const HOUR = 3_600_000;
 const ago = (ms: number) => new Date(Date.now() - ms);
 
 function author(key: keyof typeof FIXTURE_AVATARS, displayName: string, username: string | null): CardAuthor {
-  const { id, uri } = FIXTURE_AVATARS[key];
-  return { id, username, displayName, avatarUrl: uri, resolved: true };
+  const { id } = FIXTURE_AVATARS[key];
+  return {
+    id,
+    username,
+    displayName,
+    avatar: { uri: null, dicebear: { style: 'thumbs', seed: id } },
+    resolved: true,
+  };
 }
+
+/** Stands in for the engine's `profiles.avatarSvg`: each fixture author's DiceBear markup, by seed. */
+export const fixtureAvatarSvg: AvatarSvgResolver = async (_identityId, _style, seed) => {
+  const entry = Object.values(FIXTURE_AVATARS).find((a) => a.id === seed);
+  return entry ? svgFromDataUri(entry.uri) : null;
+};
 
 export const AUTHORS = {
   alice: author('alice', 'Alice', 'alice'),
@@ -32,12 +46,20 @@ export function fixturePost(overrides: Partial<CardPost> = {}): CardPost {
     content: 'Shipping the design system today. #yappr',
     createdAt: ago(3 * HOUR),
     stats: { likes: 48, reposts: 3, replies: 12, quotes: 0 },
-    viewer: { liked: false, reposted: false, bookmarked: false, authorBlocked: false, followsAuthor: true },
+    viewer: {
+      liked: false,
+      reposted: false,
+      bookmarked: false,
+      ownQuoteId: null,
+      authorBlocked: false,
+      followsAuthor: true,
+    },
     media: [],
     sensitive: false,
     deleted: false,
     encrypted: false,
     quotedRemoved: false,
+    bareRepost: false,
     ...overrides,
   };
 }
@@ -81,7 +103,14 @@ export const POSTS = {
     author: AUTHORS.carol,
     content: 'Liked, reposted and bookmarked: the active colors.',
     stats: { likes: 1234, reposts: 56, replies: 7, quotes: 4 },
-    viewer: { liked: true, reposted: true, bookmarked: true, authorBlocked: false, followsAuthor: true },
+    viewer: {
+      liked: true,
+      reposted: true,
+      bookmarked: true,
+      ownQuoteId: null,
+      authorBlocked: false,
+      followsAuthor: true,
+    },
     createdAt: ago(25 * 60_000),
   }),
   repost: fixturePost({

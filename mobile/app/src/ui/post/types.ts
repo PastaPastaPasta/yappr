@@ -1,11 +1,13 @@
 /**
  * What a PostCard renders. `CardPost` mirrors the engine's `PostDTO`
- * (mobile/engine/src/api/dto.ts, PR #610) field for field, so screens hand
- * engine data straight in.
+ * (mobile/engine/src/api/dto.ts) field for field, so screens hand engine
+ * data straight in.
  *
- * TODO(#610): once the engine PR is in this tree, replace these with
- * `import type { PostDTO, AuthorDTO, MediaDTO } from '@engine/api/dto'` and
- * delete the copies.
+ * TODO: import these from `@engine/api/dto` (type-only) instead. Not yet:
+ * dto.ts also imports values from web lib/ (unified-profile-service,
+ * v10-profile, quote-reposts, poll-embed), so a type import makes the app's
+ * tsc check that whole web graph, components included, and fail. It needs
+ * the DTO interfaces in a file with type-only imports.
  */
 
 export type CardKind = 'post' | 'reply';
@@ -16,10 +18,19 @@ export interface CardAuthor {
   username: string | null;
   /** Never empty: the profile name, else the DPNS label, else `User <last 6 of id>`. */
   displayName: string;
-  /** Never empty: the profile avatar, else the default DiceBear avatar (an SVG data URI). */
-  avatarUrl: string;
+  avatar: CardAvatar;
   /** False when the author lookup failed and the fields above are placeholders. */
   resolved: boolean;
+}
+
+/**
+ * `AvatarDTO`: exactly one is set. A DiceBear recipe is drawn from the SVG
+ * the engine renders (`profiles.avatarSvg`), never from a bundled DiceBear.
+ */
+export interface CardAvatar {
+  /** An image as stored: http(s), or ipfs://. */
+  uri: string | null;
+  dicebear: { style: string; seed: string } | null;
 }
 
 export interface CardMedia {
@@ -42,6 +53,8 @@ export interface CardViewer {
   liked: boolean;
   reposted: boolean;
   bookmarked: boolean;
+  /** v10: the viewer's own quote or bare repost of this target (the one slot). */
+  ownQuoteId: string | null;
   authorBlocked: boolean;
   followsAuthor: boolean;
 }
@@ -63,9 +76,14 @@ export interface CardPost {
   quotedPostId?: string;
   quoted?: CardPost;
   quotedRemoved: boolean;
-  repostedBy?: { id: string; username?: string; displayName?: string };
+  /** v10: a bare repost (no text of its own); the screen renders `quoted`, attributed to `author`. */
+  bareRepost: boolean;
+  /** `others`: further reposters collapsed into this card (v10). */
+  repostedBy?: { id: string; username?: string; displayName?: string; others?: number };
   repostTimestamp?: Date;
   embed?: { contractId: string; documentType: string; id: string };
+  /** The Pollr poll this post shows; `linkUrl` is a legacy link web hides from the text. */
+  poll?: { id: string; linkUrl?: string };
 }
 
 /** Link-preview metadata (web `LinkPreviewData`, lib/link-preview/types). */

@@ -23,6 +23,7 @@ import { LoadingState } from '../LoadingState';
 import { NetworkChip } from '../NetworkChip';
 import { PostCard } from '../post/PostCard';
 import { PostStub } from '../post/PostStub';
+import { FIXTURE_AVATARS } from '../post/fixture-avatars';
 import { AUTHORS, POSTS, SAMPLE_POLL, SAMPLE_PREVIEW, VIEWER_ID } from '../post/fixtures';
 import { RadioGroup } from '../RadioGroup';
 import { RichText } from '../rich-text/RichText';
@@ -436,14 +437,24 @@ function PeopleSection() {
     <>
       <Section title="Avatar (DiceBear SVG, image URL, fallback, empty)">
         <Row>
-          <Avatar uri={AUTHORS.alice.avatarUrl} size="xs" />
-          <Avatar uri={AUTHORS.bob.avatarUrl} size="sm" />
-          <Avatar uri={AUTHORS.carol.avatarUrl} size="md" />
-          <Avatar uri="https://picsum.photos/id/64/200/200" size="lg" />
-          <Avatar uri="https://invalid.example/missing.png" fallback={AUTHORS.nameless.avatarUrl} size="xl" />
+          <Avatar avatar={AUTHORS.alice.avatar} identityId={AUTHORS.alice.id} size="xs" />
+          <Avatar avatar={AUTHORS.bob.avatar} identityId={AUTHORS.bob.id} size="sm" />
+          <Avatar avatar={AUTHORS.carol.avatar} identityId={AUTHORS.carol.id} size="md" />
+          <Avatar avatar={{ uri: 'https://picsum.photos/id/64/200/200', dicebear: null }} size="lg" />
+          <Avatar
+            uri="https://invalid.example/missing.png"
+            fallback={FIXTURE_AVATARS.nameless.uri}
+            size="xl"
+          />
           <Avatar size="lg" />
         </Row>
-        <Avatar uri={AUTHORS.alice.avatarUrl} size="profile" name="Alice" onPress={noop} />
+        <Avatar
+          avatar={AUTHORS.alice.avatar}
+          identityId={AUTHORS.alice.id}
+          size="profile"
+          name="Alice"
+          onPress={noop}
+        />
       </Section>
       <View className={`border-b ${tw.border}`}>
         <UserRow

@@ -4,6 +4,7 @@ import { AccessibilityInfo, Alert } from 'react-native';
 import { EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 
 import { Avatar, svgFromDataUri } from './Avatar';
+import { AvatarSvgProvider } from './avatar-svg';
 import { badgeLabel, CountBadge } from './Badge';
 import { Button } from './Button';
 import { ConfirmDialog, confirmAlert } from './Dialog';
@@ -350,6 +351,27 @@ describe('Avatar', () => {
     const image = screen.getByTestId('avatar-image', { includeHiddenElements: true });
     act(() => image.props.onError?.({ nativeEvent: { error: 'HTTP 404' } }));
     expect(screen.getByTestId('avatar-fallback', { includeHiddenElements: true })).toBeTruthy();
+  });
+
+  it('draws a DiceBear recipe from the engine-rendered SVG, cached by style and seed', async () => {
+    const resolve = jest.fn(async () => '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+    const recipe = { uri: null, dicebear: { style: 'thumbs', seed: 'seed-1' } };
+    const { unmount } = render(
+      <AvatarSvgProvider resolve={resolve}>
+        <Avatar avatar={recipe} identityId="id-1" />
+      </AvatarSvgProvider>,
+    );
+    expect(await screen.findByTestId('avatar-svg', { includeHiddenElements: true })).toBeTruthy();
+    expect(resolve).toHaveBeenCalledWith('id-1', 'thumbs', 'seed-1');
+    unmount();
+
+    render(
+      <AvatarSvgProvider resolve={resolve}>
+        <Avatar avatar={recipe} identityId="id-1" />
+      </AvatarSvgProvider>,
+    );
+    expect(screen.getByTestId('avatar-svg', { includeHiddenElements: true })).toBeTruthy();
+    expect(resolve).toHaveBeenCalledTimes(1);
   });
 
   it('is a labelled button only when tappable', () => {

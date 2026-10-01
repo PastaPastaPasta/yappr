@@ -405,7 +405,8 @@ export const PostCard = memo(function PostCard({
       ) : null}
       <View className="flex-row gap-3">
         <Avatar
-          uri={post.author.avatarUrl}
+          avatar={post.author.avatar}
+          identityId={post.author.id}
           size="lg"
           name={post.author.displayName}
           onPress={actions.onAuthorPress}

@@ -47,7 +47,7 @@ export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onPres
       className={cn(FRAME, tw.pressed)}
     >
       <View className="flex-row items-center gap-1.5">
-        <Avatar uri={post.author.avatarUrl} size="xs" />
+        <Avatar avatar={post.author.avatar} identityId={post.author.id} size="xs" />
         <Text variant="subheadStrong" numberOfLines={1} className="shrink">
           {post.author.displayName}
         </Text>

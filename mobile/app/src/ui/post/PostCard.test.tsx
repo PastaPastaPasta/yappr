@@ -135,6 +135,7 @@ describe('PostCard (feed)', () => {
             liked: false,
             reposted: false,
             bookmarked: false,
+            ownQuoteId: null,
             authorBlocked: true,
             followsAuthor: false,
           },
