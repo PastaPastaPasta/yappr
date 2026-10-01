@@ -301,16 +301,22 @@ async function connectSession(config) {
   session.config = config;
 }
 
-/** Runs `fn`, and once more on a fresh instance when the transport collapsed under it. */
+/**
+ * Runs `fn`, again on a fresh instance when the transport collapsed under it. The quorum
+ * service can trail a rotation by a minute or two, so a missing quorum is waited out
+ * (up to 6 tries, 15 s apart) rather than failed at once.
+ */
 async function withReconnect(fn) {
-  try {
-    return await fn();
-  } catch (e) {
-    const reason = describeErr(e);
-    if (!TRANSPORT_COLLAPSE.test(reason)) throw e;
-    console.log(`     (transport collapsed, reconnecting: ${reason.slice(0, 120)})`);
-    await connectSession(session.config);
-    return fn();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const reason = describeErr(e);
+      if (attempt >= 6 || !TRANSPORT_COLLAPSE.test(reason)) throw e;
+      console.log(`     (transport collapsed, reconnecting: ${reason.slice(0, 120)})`);
+      if (attempt > 0) await sleep(15_000);
+      await connectSession(session.config).catch(() => {});
+    }
   }
 }
 
@@ -325,11 +331,13 @@ async function attempt(label, fn, verdict, { idempotent = true } = {}) {
     verdict(value);
   } catch (e) {
     check(label, false, `refused: ${describeErr(e).slice(0, 300)}`);
+    // A write is never resent, but the next check must not inherit a dead instance.
+    if (!idempotent && TRANSPORT_COLLAPSE.test(describeErr(e))) await connectSession(session.config).catch(() => {});
   }
 }
 
 /** One document create; a confirmation-wait fault is not a verdict, so the chain decides. */
-async function createDocument(contractId, who, docType, data) {
+async function createDocument(contractId, who, docType, data, retried = false) {
   const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, entropy: randomIdBytes() });
   const since = Date.now();
   let error = null;
@@ -340,11 +348,22 @@ async function createDocument(contractId, who, docType, data) {
   } catch (e) {
     error = describeErr(e);
     if (CONSENSUS_CODE.test(error)) return { ok: false, error };
+    // A quorum rotation can fault the proof of a write that landed: rebuild the instance and let the chain decide.
+    if (TRANSPORT_COLLAPSE.test(error)) await connectSession(session.config).catch((reconnectError) => console.log(`     (reconnect failed: ${describeErr(reconnectError).slice(0, 120)})`));
   }
   for (let tries = 0; tries < 5; tries++) {
     await sleep(SETTLE_MS);
     const found = await findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data, since }).catch(() => null);
     if (found) return { ok: true, id: found };
+  }
+  // Resend at most once, after a last readback, and never a quote or repost (one per author
+  // per target: a late-landing original would turn the resend into a 40105). A post or reply
+  // whose original lands later still could be counted twice; the readback makes that rare.
+  const unique = docType === 'post' && (data.quotedPostId || data.quotedReplyId);
+  if (error && TRANSPORT_COLLAPSE.test(error) && !retried && !unique) {
+    const late = await findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data, since }).catch(() => null);
+    if (late) return { ok: true, id: late };
+    return createDocument(contractId, who, docType, data, true);
   }
   return { ok: false, error: error ?? 'no document after the write' };
 }
@@ -902,7 +921,8 @@ async function main() {
     const pairsOf = (r, target) => docsOf(r).map(likeOf).map((l) => `${toBase58(l.$ownerId)}>${toBase58(l[target])}`);
     const fromPage = (sourceProperty, field) => ({ source: 'page', sourceProperty, field });
     const ranked = (where, groupBy, extra = {}) => sdk.documents.ranked(q('like', { ...(where ? { where } : {}), groupBy, aggregate: { type: 'count' }, direction: 'desc', limit: 10, ...extra }));
-    const rankedPairs = (r) => r.entries.map((e) => [toBase58(e.groupValue), Number(e.value)]);
+    // Preallocated trees (design M) rank every post, liked or not: a zero is no like, so leaderboards drop it.
+    const rankedPairs = (r) => r.entries.map((e) => [toBase58(e.groupValue), Number(e.value)]).filter(([, value]) => value !== 0);
     const grid = (name) => source.documentSchemas.like.indices.find((index) => index.name === name).timeRange;
     const oldestOf = (name) => ({ timeRange: [{ field: '$createdAt', selector: 'oldest', grid: { range: grid(name).range, step: grid(name).step } }] });
     const trendPosts = () => ranked(null, 'postId', oldestOf('byTrendPost'));
@@ -1095,6 +1115,107 @@ async function main() {
 
   if (v11) await proveOutlives();
   else await proveDesignC();
+
+  // ---- M: design M (moderated posts and replies, tombstones, preallocated like trees) ----
+  async function proveDesignM() {
+    console.log('\n--- M. design M: preallocated trees, tombstones, undo/redo repost, references that outlive a removal ---');
+    const balanceOf = async (who) => BigInt((await sdk.identities.fetch(who.ownerId))?.balance ?? 0);
+    const rankedRaw = (where, groupBy) => sdk.documents.ranked(q('like', { ...(where ? { where } : {}), groupBy, aggregate: { type: 'count' }, direction: 'desc', limit: 100 }));
+    const entriesOf = (r) => r.entries.map((e) => [toBase58(e.groupValue), Number(e.value)]);
+    const replaceDoc = async (who, docType, docId, data) => {
+      const stored = await withReconnect(() => sdk.documents.get(contractId, docType, docId));
+      const revision = BigInt(stored?.revision ?? stored?.toObject?.().$revision ?? 1) + 1n;
+      const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, revision, id: bs58.decode(docId) });
+      try {
+        await sdk.documents.replace({ document, identityKey: who.identityKey, signer: who.signer });
+      } catch (e) {
+        const error = describeErr(e);
+        if (CONSENSUS_CODE.test(error)) return { ok: false, error };
+      }
+      await sleep(SETTLE_MS);
+      const after = await sdk.documents.get(contractId, docType, docId);
+      const landed = BigInt(after?.revision ?? after?.toObject?.().$revision ?? 0) >= revision;
+      return landed ? { ok: true } : { ok: false, error: 'the replace did not land' };
+    };
+    const refusedWith = (label, outcome, pattern) => check(label, !outcome.ok && pattern.test(outcome.error ?? ''), (outcome.error ?? 'ACCEPTED').slice(0, 200));
+    const IMMUTABLE = /\bcode"?\s*[=:]\s*40128\b|immutable/i;
+    const BLANK = /\bcode"?\s*[=:]\s*10422\b.{0,400}tombstoneIsBlank|tombstoneIsBlank/i;
+    const plain = (doc) => doc?.toJSON?.() ?? doc?.toObject?.() ?? {};
+
+    // (pa) preallocated: a fresh post sits in its trees with zero likes; the first like costs what a later one does.
+    const createdBefore = await balanceOf(D);
+    const Pf = await mustCreate('Pf (D, #mproof, fresh)', D, 'post', { content: 'fresh post', hashtag: 'mproof' });
+    console.log(`INFO  M-pa0 a tagged post with its preallocated like trees cost D ${createdBefore - (await balanceOf(D))} credits`);
+    await sleep(SETTLE_MS);
+    await attempt('M-pa1', () => Promise.all([rankedRaw([['postAuthor', '==', D.ownerId]], 'postId'), rankedRaw([['hashtag', '==', 'mproof']], 'postId'), count('like', [['postId', '==', Pf]])]), ([top, tag, n]) =>
+      check('M-pa1 a fresh, unliked post is already in its preallocated trees: profile Top and hashtag Top list it at 0; its like count is 0', entriesOf(top).some(([k, v]) => k === Pf && v === 0) && entriesOf(tag).some(([k, v]) => k === Pf && v === 0) && total(n) === 0, `top ${JSON.stringify(entriesOf(top))} tag ${JSON.stringify(entriesOf(tag))} count ${JSON.stringify(countEntries(n))}`));
+    await attempt('M-pa2', () => count('like', [['postId', 'in', [Pf]]], ['postId']), (m) => console.log(`INFO  M-pa2 grouped count of the fresh post (\`postId in\` + groupBy): ${JSON.stringify(countEntries(m))}`));
+    const costOf = async (who, data) => { const before = await balanceOf(who); await likeWrite(who, 'like', data); await sleep(SETTLE_MS); return before - (await balanceOf(who)); };
+    const firstLike = await costOf(B, { postId: id(Pf), postAuthor: id(D.ownerId), hashtag: 'mproof' });
+    const secondLike = await costOf(C, { postId: id(Pf), postAuthor: id(D.ownerId), hashtag: 'mproof' });
+    check(`M-pa3 the FIRST tagged like of a post costs about what the second does (the post paid the trees; only the trend windows, never preallocated, are new): ${firstLike} vs ${secondLike} credits`, firstLike > 0n && secondLike > 0n && Number(firstLike) <= Number(secondLike) * 1.3);
+
+    // (tb) tombstones: the allowed and the refused cases, on D's post Pt and reply Rt.
+    const Pt = await mustCreate('Pt (D, #mproof, to tombstone)', D, 'post', { content: 'to tombstone', hashtag: 'mproof' });
+    const Rt = await mustCreate('Rt (D replies to Pt)', D, 'reply', { content: 'reply to tombstone', rootPostId: id(Pt), parentOwnerId: id(D.ownerId) });
+    const del = await sdk.documents.delete({ document: { id: Pt, ownerId: D.ownerId, dataContractId: contractId, documentTypeName: 'post' }, identityKey: D.identityKey, signer: D.signer }).then(() => null, (e) => describeErr(e));
+    check('M-tb1 an author cannot delete its post (canBeDeleted false)', del !== null && (await sdk.documents.get(contractId, 'post', Pt)) !== null, (del ?? 'ACCEPTED').slice(0, 200));
+    refusedWith('M-tb2 an edit of the text without the flag is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'edited', hashtag: 'mproof' }), IMMUTABLE);
+    refusedWith('M-tb3 a tombstone keeping the text is refused (10422 tombstoneIsBlank)', await replaceDoc(D, 'post', Pt, { deleted: true, content: 'kept', hashtag: 'mproof' }), BLANK);
+    refusedWith('M-tb4 a tombstone changing the hashtag is refused (40128)', await replaceDoc(D, 'post', Pt, { deleted: true, hashtag: 'other' }), IMMUTABLE);
+    // Adding a field the post never had counts as a change too ("differs" covers a value the stored document lacked).
+    refusedWith('M-tb4b adding a mention the post never had, without the flag, is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'to tombstone', hashtag: 'mproof', mentionedUserId: id(B.ownerId) }), IMMUTABLE);
+    refusedWith('M-tb4c marking it sensitive afterwards is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'to tombstone', hashtag: 'mproof', sensitive: true }), IMMUTABLE);
+    const untagged = await mustCreate('Pu (D, untagged)', D, 'post', { content: 'untagged' });
+    refusedWith('M-tb4d adding a hashtag to an untagged post is refused (40128: frozen by name)', await replaceDoc(D, 'post', untagged, { content: 'untagged', hashtag: 'late' }), IMMUTABLE);
+    const tombBefore = await balanceOf(D);
+    const tombstoned = await replaceDoc(D, 'post', Pt, { deleted: true, hashtag: 'mproof' });
+    const tombCost = tombBefore - (await balanceOf(D));
+    const tomb = plain(await sdk.documents.get(contractId, 'post', Pt));
+    check(`M-tb5 the tombstone lands (deleted, hashtag kept, no content; cost ${tombCost} credits)`, tombstoned.ok && tomb.deleted === true && tomb.hashtag === 'mproof' && tomb.content === undefined, `${tombstoned.error ?? ''} ${JSON.stringify({ deleted: tomb.deleted, hashtag: tomb.hashtag, content: tomb.content ?? null })}`);
+    refusedWith('M-tb6 a tombstone cannot be undone (40128: deleted frozen once set)', await replaceDoc(D, 'post', Pt, { content: 'back', hashtag: 'mproof' }), IMMUTABLE);
+    refusedWith('M-tb7 nor refilled while flagged (10422)', await replaceDoc(D, 'post', Pt, { deleted: true, content: 'back', hashtag: 'mproof' }), BLANK);
+    await attempt('M-tb8', () => Promise.all([sdk.documents.get(contractId, 'reply', Rt), count('reply', [['rootPostId', '==', Pt]])]), ([reply, n]) => check('M-tb8 the reply under the tombstoned post stays, counted', reply !== null && total(n) === 1, JSON.stringify(countEntries(n))));
+    refusedWith('M-tb9 a reply edit without the flag is refused (40128)', await replaceDoc(D, 'reply', Rt, { content: 'edited', rootPostId: id(Pt), parentOwnerId: id(D.ownerId) }), IMMUTABLE);
+    refusedWith('M-tb10 a reply tombstone that drops its thread root is refused (40128: the linkage is frozen)', await replaceDoc(D, 'reply', Rt, { deleted: true, parentOwnerId: id(D.ownerId) }), /\bcode"?\s*[=:]\s*(40128|10101)\b|immutable|required/i);
+    const replyTomb = await replaceDoc(D, 'reply', Rt, { deleted: true, rootPostId: id(Pt), parentOwnerId: id(D.ownerId) });
+    const rt = plain(await sdk.documents.get(contractId, 'reply', Rt));
+    check('M-tb11 the reply tombstone lands, its linkage kept (the thread keeps its shape)', replyTomb.ok && rt.deleted === true && rt.content === undefined && toBase58(rt.rootPostId) === Pt, `${replyTomb.error ?? ''}`);
+
+    // (rp) undo and redo a repost: B's bare repost q2 of T2.
+    const repostsOfT2 = async () => total(await count('post', [['quotedPostId', '==', T2]]));
+    const before = await repostsOfT2();
+    const undo = await replaceDoc(B, 'post', q2, { deleted: true });
+    await attempt('M-rp1', async () => ({ n: await repostsOfT2(), own: ids(await sdk.documents.query(q('post', { where: [['$ownerId', '==', B.ownerId], ['quotedPostId', 'in', [T2]]], orderBy: [['$ownerId', 'asc'], ['quotedPostId', 'asc']], limit: 1 }))) }),
+      ({ n, own }) => check('M-rp1 B undoes its repost of T2 with a tombstone: the quote is cleared, the count drops by one and B\'s own-repost read finds nothing', undo.ok && n === before - 1 && own.length === 0, `${undo.error ?? ''} count ${before} → ${n}, own ${JSON.stringify(own)}`));
+    const redo = await create(B, 'post', { quotedPostId: id(T2), quotedPostOwnerId: id(A.ownerId) });
+    await sleep(SETTLE_MS);
+    await attempt('M-rp2', repostsOfT2, (n) => check('M-rp2 …and reposts T2 again: the one-repost slot is free (no 40105), the count is back', redo.ok && n === before, `${redo.error ?? ''} count ${n}`));
+    const third = await create(B, 'post', { quotedPostId: id(T2), quotedPostOwnerId: id(A.ownerId) });
+    check('M-rp3 a second live repost is still refused (40105)', !third.ok && DUPLICATE_UNIQUE.test(third.error ?? ''), (third.error ?? 'ACCEPTED').slice(0, 160));
+
+    // (mr) a moderator-removed post: its like, reply and quote stay valid and counted; the hashtag ranking keeps it.
+    const Pm = await mustCreate('Pm (D, #mremoved)', D, 'post', { content: 'to be removed', hashtag: 'mremoved' });
+    await likeWrite(B, 'like', { postId: id(Pm), postAuthor: id(D.ownerId), hashtag: 'mremoved' });
+    const Rm = await mustCreate('Rm (C replies to Pm)', C, 'reply', { content: 'reply to removed', rootPostId: id(Pm), parentOwnerId: id(D.ownerId) });
+    const Qm = await mustCreate('Qm (C quotes Pm)', C, 'post', { content: 'quote of removed', quotedPostId: id(Pm), quotedPostOwnerId: id(D.ownerId) });
+    await sleep(SETTLE_MS);
+    const moderatorA = { identity: await sdk.identities.fetch(A.ownerId), signer: A.signer };
+    await attempt('M-mr1', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'post', documentId: Pm, reason: { text: 'M-mr proof' } }), (record) => check('M-mr1 the interim owner removes Pm; the record keeps its hashtag', record?.keptFields?.hashtag === 'mremoved', JSON.stringify(record?.keptFields ?? null, (k, v) => (typeof v === 'bigint' ? String(v) : v))), { idempotent: false });
+    await sleep(SETTLE_MS);
+    await attempt('M-mr2', () => Promise.all([sdk.documents.get(contractId, 'post', Pm), count('like', [['postId', '==', Pm]]), sdk.documents.get(contractId, 'reply', Rm), count('reply', [['rootPostId', '==', Pm]]), sdk.documents.get(contractId, 'post', Qm), count('post', [['quotedPostId', '==', Pm]])]),
+      ([post, likes, reply, replies, quote, quotes]) => check('M-mr2 Pm is gone, but its like (1), its reply (1) and its quote (1) stay, readable and counted', !post && total(likes) === 1 && reply !== null && total(replies) === 1 && quote !== null && total(quotes) === 1, `post ${post ? 'still fetches' : 'gone'}, likes ${total(likes)} replies ${total(replies)} quotes ${total(quotes)}`));
+    await attempt('M-mr3', () => rankedRaw([['hashtag', '==', 'mremoved']], 'postId'), (r) => check('M-mr3 the hashtag ranking (byHashtagPost, keyed by the kept hashtag) still lists the removed post at 1', entriesOf(r).some(([k, v]) => k === Pm && v === 1), JSON.stringify(entriesOf(r))));
+    await likeWrite(C, 'like', { postId: id(Pm), postAuthor: id(D.ownerId), hashtag: 'mremoved' });
+    await sleep(SETTLE_MS);
+    const lateReply = await create(C, 'reply', { content: 'late reply', rootPostId: id(Pm), parentOwnerId: id(D.ownerId) });
+    const likesNow = total(await withReconnect(() => count('like', [['postId', '==', Pm]])));
+    check('M-mr4 after the removal a new like of the post does not land, and a new reply to it is refused', likesNow === 1 && !lateReply.ok, `likes ${likesNow}; reply ${lateReply.ok ? 'ACCEPTED' : (lateReply.error ?? '').slice(0, 140)}`);
+    const qTomb = await replaceDoc(C, 'post', Qm, { deleted: true });
+    const rTomb = await replaceDoc(C, 'reply', Rm, { deleted: true, rootPostId: id(Pm), parentOwnerId: id(D.ownerId) });
+    check('M-mr5 a quote of the removed post and a reply under it can still be tombstoned by their authors (the references resolve to the removal record)', qTomb.ok && rTomb.ok, `${qTomb.error ?? ''} ${rTomb.error ?? ''}`.slice(0, 200));
+  }
+  if (v11) await proveDesignM();
 
   // ---- rm: reply mentions (written last, so no earlier count moves) ----
   console.log('\n--- rm. a reply names one mentioned identity ---');
