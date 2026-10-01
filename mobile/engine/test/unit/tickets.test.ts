@@ -308,6 +308,27 @@ describe('check again', () => {
     expect((await store.check('t1')).state).toBe('confirmed')
   })
 
+  it('lends handler probes the store\'s proof, which never proves an empty list', async () => {
+    const { store, options } = setup()
+    let named: TicketDocument[] = []
+    store.register('unrepost', {
+      run: async () => ({ state: 'unconfirmed' }),
+      probe: (ticket, _args, kit) => kit.proveDocuments(named.length ? ticket.documents : []),
+    })
+    store.submit({ op: 'unrepost', args: null, documents: [{ ...POST, action: 'delete' }] })
+    await settle()
+    expect(await store.check('t1')).toMatchObject({ state: 'unconfirmed', error: { code: 'UNKNOWN' } })
+    named = [POST]
+    vi.mocked(options.documentExists).mockResolvedValue(false)
+    expect((await store.check('t1')).state).toBe('confirmed')
+  })
+
+  it('keeps a delete\'s document across a retry, so the next check can still prove it', async () => {
+    const { store } = await unconfirmedCreate(async () => true, [{ ...POST, action: 'delete' }])
+    expect(await store.check('t1')).toMatchObject({ retryable: true })
+    expect((await store.retry('t1')).documents).toEqual([{ ...POST, action: 'delete' }])
+  })
+
   it('cannot prove a write that named no documents', async () => {
     const { store } = setup()
     store.register('like', { run: async () => ({ state: 'unconfirmed' }) })
@@ -380,6 +401,30 @@ describe('persistence and restart reconciliation', () => {
     restarted.store.register('dm.send', { run: async () => ({ state: 'confirmed' }) })
     expect((await restarted.store.check('t1')).retryable).toBe(true)
     await expect(restarted.store.retry('t1')).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+  })
+
+  it('rewrites storage at boot only once the API has registered its handlers, and fails closed', async () => {
+    const storage = memoryStorage()
+    const storedArgs = () => JSON.parse(storage.items.get(WRITES_STORAGE_KEY) ?? '[]').map((record: { args?: unknown }) => record.args)
+    const first = setup({ storage })
+    first.store.register('follow', { run: async () => ({ state: 'unconfirmed' }), persistArgs: true })
+    first.store.register('dm.send', { run: async () => ({ state: 'unconfirmed' }), persistArgs: true })
+    first.store.submit({ op: 'follow', args: { targetId: 'B' }, documents: [POST] })
+    first.store.submit({ op: 'dm.send', args: { text: 'secret' } })
+    await settle()
+    // A DM's arguments never reach disk, whatever its handler says.
+    expect(storedArgs()).toEqual([{ targetId: 'B' }, undefined])
+
+    // A restart that registers the handler synchronously keeps the follow's arguments.
+    const second = setup({ storage })
+    second.store.register('follow', { run: async () => ({ state: 'confirmed' }), persistArgs: true })
+    await settle()
+    expect(storedArgs()).toEqual([{ targetId: 'B' }, undefined])
+
+    // An op no handler claims loses them: fail closed.
+    setup({ storage })
+    await settle()
+    expect(storedArgs()).toEqual([undefined, undefined])
   })
 
   it('lists the active account\'s open tickets and recent confirmations, newest first', async () => {

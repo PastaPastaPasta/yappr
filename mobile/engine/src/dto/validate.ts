@@ -173,6 +173,21 @@ export const dmStatusDTO = object({
   error: nullable(str),
 })
 
+export const blockedUserDTO = object({ ...authorKeys, message: nullable(nonEmpty) }, { bio: str, followers: count, following: count, viewerFollows: bool })
+
+export const notificationDTO = object(
+  {
+    id: nonEmpty,
+    type: literal('follow', 'mention', 'like', 'repost', 'quote', 'reply', 'privateFeedRequest', 'privateFeedApproved', 'privateFeedRevoked', 'blogPost', 'blogComment'),
+    actor: authorDTO,
+    at: date,
+    read: bool,
+    target: nullable(object({ id, kind: literal('post', 'reply') })),
+    preview: nullable(postDTO),
+  },
+  { blog: object({ blogId: nonEmpty, slug: nonEmpty }) },
+)
+
 /** Every problem with `value`, as `path: message` lines; empty when it is valid. */
 export function validate(check: Check, value: unknown, path = '$'): string[] {
   const errors: string[] = []
