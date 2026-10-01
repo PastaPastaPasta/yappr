@@ -42,6 +42,7 @@ export function Dialog({ open, onClose, children, dismissible = true, testID }: 
         <Animated.View entering={SCALE_IN} style={{ width: '100%', maxWidth: 400 }}>
           <View
             accessibilityViewIsModal
+            onAccessibilityEscape={close}
             testID={testID}
             className="rounded-2xl bg-white p-6 shadow-xl dark:border dark:border-gray-800 dark:bg-neutral-900"
           >

@@ -7,7 +7,7 @@ const SIZES = { xs: 'small', sm: 'small', md: 'large', lg: 'large' } as const;
 
 export interface SpinnerProps {
   size?: keyof typeof SIZES;
-  /** Defaults to `accent`; buttons pass their label color. */
+  /** Defaults to `accent`; a loading button passes its label color. */
   color?: string;
   testID?: string;
 }

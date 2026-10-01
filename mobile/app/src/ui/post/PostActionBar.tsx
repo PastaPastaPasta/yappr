@@ -1,5 +1,4 @@
-import * as Haptics from 'expo-haptics';
-import { useEffect, useRef, type ComponentType } from 'react';
+import { useEffect, useRef } from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import {
   ArrowPathIcon,
@@ -25,9 +24,8 @@ import Animated, {
 import { cn, formatNumber } from '~/lib-allowlist';
 
 import { Text } from '../Text';
-import { motion, useColors, useLargeText, type Tone } from '../tokens';
-
-type IconComponent = ComponentType<{ size?: number; color?: string }>;
+import { lightImpact } from '../haptics';
+import { hitSlopFor, motion, useColors, useLargeText, type IconComponent } from '../tokens';
 
 const ShareGlyph: IconComponent = Platform.OS === 'ios' ? ArrowUpTrayIcon : ShareIcon;
 
@@ -38,7 +36,7 @@ interface ActionProps {
   activeIcon?: IconComponent;
   active?: boolean;
   /** The active color token. */
-  tone?: Tone;
+  tone?: 'like' | 'repost' | 'link';
   count?: number;
   showCount: boolean;
   label: string;
@@ -53,7 +51,7 @@ function Action({
   icon: Icon,
   activeIcon: ActiveIcon = Icon,
   active = false,
-  tone,
+  tone = 'link',
   count,
   showCount,
   label,
@@ -66,18 +64,20 @@ function Action({
   const reduceMotion = useReducedMotion();
   const scale = useSharedValue(1);
   const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
-  const wasActive = useRef(active);
+  // Keyed by test id (which carries the post id), so a recycled cell showing
+  // another, already-liked post doesn't spring.
+  const last = useRef({ testID, active });
 
   useEffect(() => {
-    // Only a change to "on" springs; the initial render and turning off don't.
-    if (bounce && active && !wasActive.current && !reduceMotion) {
+    // Only a change to "on" of the same post springs.
+    const turnedOn = last.current.testID === testID && !last.current.active && active;
+    if (bounce && turnedOn && !reduceMotion) {
       scale.set(withSequence(withSpring(0.8, motion.springLike), withSpring(1, motion.springLike)));
     }
-    wasActive.current = active;
-  }, [active, bounce, reduceMotion, scale]);
+    last.current = { testID, active };
+  }, [active, bounce, reduceMotion, scale, testID]);
 
-  const activeColor = tone === 'like' ? c.like : tone === 'repost' ? c.repost : c.link;
-  const color = active ? activeColor : c.textSecondary;
+  const color = active ? c[tone] : c.textSecondary;
   const Glyph = active ? ActiveIcon : Icon;
 
   return (
@@ -88,8 +88,12 @@ function Action({
       onPress={onPress}
       disabled={disabled}
       testID={testID}
+      hitSlop={hitSlopFor(44)}
       // 44 pt tall, padded beside the 20 pt icon (UX_SPEC §6.4).
-      className={cn('min-h-11 min-w-11 flex-row items-center gap-1 rounded-full px-2', disabled && 'opacity-50')}
+      className={cn(
+        'min-h-11 min-w-11 flex-row items-center gap-1 rounded-full px-2',
+        disabled && 'opacity-50',
+      )}
     >
       <Animated.View style={style}>
         <Glyph size={20} color={color} />
@@ -129,11 +133,7 @@ export interface PostActionBarProps {
 function withLikeHaptic(liked: boolean, onLike?: () => void) {
   if (!onLike) return undefined;
   return () => {
-    if (!liked) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {
-        // Best-effort.
-      });
-    }
+    if (!liked) lightImpact();
     onLike();
   };
 }
@@ -217,7 +217,13 @@ export function PostActionBar({
             testID={`bookmark-btn-${postId}`}
           />
         ) : null}
-        <Action icon={ShareGlyph} showCount={false} label="Share" onPress={onShare} testID={`share-btn-${postId}`} />
+        <Action
+          icon={ShareGlyph}
+          showCount={false}
+          label="Share"
+          onPress={onShare}
+          testID={`share-btn-${postId}`}
+        />
       </View>
     </View>
   );

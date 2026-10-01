@@ -1,19 +1,19 @@
 import { cva, type VariantProps } from 'class-variance-authority';
-import type { ComponentType } from 'react';
-import { ActivityIndicator, View, type PressableProps } from 'react-native';
+import { View, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
 
 import { cn } from '~/lib-allowlist';
 
 import { ScalePressable } from './ScalePressable';
+import { Spinner } from './Spinner';
 import { Text } from './Text';
-import { hitSlopFor, useColors, type SemanticColors } from './tokens';
+import { hitSlopFor, typeScale, useColors, type IconComponent, type SemanticColors } from './tokens';
 
 /**
  * The web's `buttonVariants` (components/ui/button.tsx), class for class,
  * with UX_SPEC §2.1's touch sizes: `min-h` instead of `h` so labels can wrap
  * at large text sizes, and primary fills darkened in light mode (OQ-2).
  */
-export const buttonVariants = cva('flex-row items-center justify-center gap-1.5 rounded-full', {
+const buttonVariants = cva('flex-row items-center justify-center gap-1.5 rounded-full', {
   variants: {
     variant: {
       primary: 'bg-yappr-600 active:bg-yappr-700 dark:bg-yappr-500 dark:active:bg-yappr-600',
@@ -50,10 +50,10 @@ const labelVariants = cva('text-center', {
       link: 'text-yappr-700 dark:text-yappr-400',
     },
     size: {
-      sm: 'text-[13px] leading-4 font-semibold',
-      md: 'text-[15px] leading-5 font-semibold',
-      lg: 'text-[15px] leading-5 font-semibold',
-      block: 'text-[15px] leading-5 font-semibold',
+      sm: typeScale.buttonSm,
+      md: typeScale.button,
+      lg: typeScale.button,
+      block: typeScale.button,
     },
   },
   defaultVariants: { variant: 'primary', size: 'md' },
@@ -73,10 +73,16 @@ export interface ButtonProps extends Omit<PressableProps, 'children' | 'disabled
   variant?: Variant;
   size?: Size;
   /** A Heroicon (or any icon taking `size` and `color`), drawn 16 before the label. */
-  icon?: ComponentType<{ size?: number; color?: string }>;
+  icon?: IconComponent;
   loading?: boolean;
   disabled?: boolean;
+  /** Styles the pressable fill: color, padding, border. */
   className?: string;
+  /**
+   * Layout in the parent (`flex: 1`, `alignSelf`): the button scales inside
+   * a wrapper, so layout classes in `className` don't reach the parent.
+   */
+  layoutStyle?: StyleProp<ViewStyle>;
 }
 
 export function Button({
@@ -87,6 +93,7 @@ export function Button({
   loading = false,
   disabled = false,
   className,
+  layoutStyle,
   accessibilityLabel,
   ...props
 }: ButtonProps) {
@@ -100,8 +107,8 @@ export function Button({
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={{ disabled: inactive, busy: loading }}
       disabled={inactive}
-      hitSlop={size === 'sm' ? hitSlopFor(32) : undefined}
-      wrapperStyle={size === 'block' ? { alignSelf: 'stretch' } : undefined}
+      hitSlop={size === 'sm' ? hitSlopFor(32) : size === 'md' ? hitSlopFor(40) : undefined}
+      wrapperStyle={[size === 'block' ? { alignSelf: 'stretch' } : null, layoutStyle]}
       className={cn(buttonVariants({ variant, size, disabled }), className)}
       {...props}
     >
@@ -111,17 +118,14 @@ export function Button({
           <View className="flex-row items-center gap-1.5" style={loading ? { opacity: 0 } : undefined}>
             {Icon ? <Icon size={16} color={color} /> : null}
             <Text
-              className={cn(
-                labelVariants({ variant, size }),
-                variant === 'link' && pressed && 'underline',
-              )}
+              className={cn(labelVariants({ variant, size }), variant === 'link' && pressed && 'underline')}
             >
               {label}
             </Text>
           </View>
           {loading ? (
             <View className="absolute inset-0 items-center justify-center">
-              <ActivityIndicator size="small" color={color} testID="button-spinner" />
+              <Spinner size="sm" color={color} testID="button-spinner" />
             </View>
           ) : null}
         </>

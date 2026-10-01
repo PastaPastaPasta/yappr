@@ -35,7 +35,13 @@ describe('PostCard (feed)', () => {
   });
 
   it('labels and toggles the actions, with solid active states', () => {
-    const actions = { onLike: jest.fn(), onReply: jest.fn(), onRepost: jest.fn(), onBookmark: jest.fn(), onShare: jest.fn() };
+    const actions = {
+      onLike: jest.fn(),
+      onReply: jest.fn(),
+      onRepost: jest.fn(),
+      onBookmark: jest.fn(),
+      onShare: jest.fn(),
+    };
     const { rerender } = render(<PostCard post={POSTS.basic} actions={actions} />);
 
     const like = byId('like-btn-post-basic');
@@ -94,7 +100,7 @@ describe('PostCard (feed)', () => {
     render(<PostCard post={POSTS.repost} viewerId={VIEWER_ID} replyingTo="carol" actions={{ onLike }} />);
     const card = screen.getByTestId('post-card-post-repost');
     expect(card.props.accessibilityLabel).toBe(
-      'Bob Builder, @bob, 3h. Reposted by Carol. Replying to @carol. Reposted into your feed.. 12 replies, 3 reposts, 48 likes.',
+      'Bob Builder, @bob, 3 hours ago. Reposted by Carol. Replying to @carol. Reposted into your feed.. 12 replies, 3 reposts, 48 likes.',
     );
     fireEvent(card, 'accessibilityAction', { nativeEvent: { actionName: 'like' } });
     expect(onLike).toHaveBeenCalled();
@@ -122,7 +128,19 @@ describe('PostCard (feed)', () => {
   });
 
   it('becomes the blocked stub for a blocked author', () => {
-    render(<PostCard post={fixturePost({ viewer: { liked: false, reposted: false, bookmarked: false, authorBlocked: true, followsAuthor: false } })} />);
+    render(
+      <PostCard
+        post={fixturePost({
+          viewer: {
+            liked: false,
+            reposted: false,
+            bookmarked: false,
+            authorBlocked: true,
+            followsAuthor: false,
+          },
+        })}
+      />,
+    );
     expect(screen.getByText('Post from an account you blocked')).toBeTruthy();
   });
 });
@@ -138,6 +156,13 @@ describe('PostCard gates', () => {
     fireEvent.press(byId('sensitive-show'));
     expect(screen.getByText('Flagged by the author as sensitive.')).toBeTruthy();
     expect(screen.queryByTestId('sensitive-gate')).toBeNull();
+  });
+
+  it('gates a quote by the quoted author, not the quoting one', () => {
+    render(<PostCard post={POSTS.quote} quoteNsfwGated quoteMediaGated />);
+    const card = byId('post-card-post-quote');
+    expect(card.props.accessibilityLabel).toContain('Quote: Carol.');
+    expect(screen.getByTestId('sensitive-gate')).toBeTruthy();
   });
 
   it('respects the caller’s NSFW mode', () => {
@@ -158,7 +183,9 @@ describe('PostCard gates', () => {
     const onOpenPrivate = jest.fn();
     render(<PostCard post={POSTS.private} actions={{ onOpenPrivate }} />);
     expect(screen.getByText('Private post')).toBeTruthy();
-    expect(screen.getByText("Only Carol's private followers can read this. Private feeds aren't in the app yet.")).toBeTruthy();
+    expect(
+      screen.getByText("Only Carol's private followers can read this. Private feeds aren't in the app yet."),
+    ).toBeTruthy();
     expect(screen.queryByTestId('reply-btn-post-private')).toBeNull();
     fireEvent.press(screen.getByText('Open on yap.pr'));
     expect(onOpenPrivate).toHaveBeenCalled();
@@ -184,7 +211,9 @@ describe('PostCard embeds', () => {
 
   it('shows the link preview and drops the link from the text', () => {
     const onLinkPreviewPress = jest.fn();
-    render(<PostCard post={POSTS.linkPreview} linkPreview={SAMPLE_PREVIEW} actions={{ onLinkPreviewPress }} />);
+    render(
+      <PostCard post={POSTS.linkPreview} linkPreview={SAMPLE_PREVIEW} actions={{ onLinkPreviewPress }} />,
+    );
     expect(screen.queryByText('https://www.dash.org/platform/')).toBeNull();
     fireEvent.press(screen.getByTestId('link-preview'));
     expect(onLinkPreviewPress).toHaveBeenCalledWith(SAMPLE_PREVIEW.url);
@@ -220,13 +249,28 @@ describe('PostCard embeds', () => {
 });
 
 describe('PostCard variants', () => {
-  it('optimistic: the write status replaces the action bar', () => {
+  it('optimistic: the write status replaces the action bar, for screen readers too', () => {
     const onRetry = jest.fn();
-    render(<PostCard post={POSTS.optimistic} variant="optimistic" writeStatus={{ status: { state: 'failed' }, onRetry }} />);
+    const onLike = jest.fn();
+    render(
+      <PostCard
+        post={POSTS.optimistic}
+        variant="optimistic"
+        writeStatus={{ status: { state: 'failed' }, onRetry, onEdit: jest.fn() }}
+        actions={{ onLike }}
+      />,
+    );
     expect(screen.queryByTestId('action-bar-post-optimistic')).toBeNull();
     expect(screen.getByText("Couldn't post")).toBeTruthy();
     fireEvent.press(screen.getByText('Retry'));
-    expect(onRetry).toHaveBeenCalled();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+
+    const card = byId('post-card-post-optimistic');
+    const names = card.props.accessibilityActions.map((a: { label: string }) => a.label);
+    expect(names).toEqual(expect.arrayContaining(['Retry', 'Edit']));
+    expect(names).not.toContain('Like');
+    fireEvent(card, 'accessibilityAction', { nativeEvent: { actionName: 'Retry' } });
+    expect(onRetry).toHaveBeenCalledTimes(2);
   });
 
   it('detail: absolute time and the counts row', () => {
@@ -270,7 +314,9 @@ describe('stubs', () => {
 
   it('is one static element with the reason', () => {
     render(<PostStub state="removed" reason="Spam" />);
-    expect(screen.getByLabelText("This post was removed by the contract's moderators. Reason: Spam")).toBeTruthy();
+    expect(
+      screen.getByLabelText("This post was removed by the contract's moderators. Reason: Spam"),
+    ).toBeTruthy();
   });
 });
 

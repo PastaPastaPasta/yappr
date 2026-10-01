@@ -58,12 +58,14 @@ export function RadioGroup<T extends string>({
           <Pressable
             key={option.value}
             accessibilityRole="radio"
+            accessibilityLabel={option.title}
             accessibilityState={{ checked: selected }}
             accessibilityHint={option.description}
             onPress={() => onChange(option.value)}
             testID={testID ? `${testID}-${option.value}` : undefined}
             className={cn(
-              'min-h-14 flex-row items-center gap-3 px-4 py-3 active:bg-gray-50 dark:active:bg-gray-950',
+              'min-h-14 flex-row items-center gap-3 px-4 py-3',
+              tw.pressed,
               index > 0 && cn('border-t', tw.border),
             )}
           >

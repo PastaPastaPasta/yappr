@@ -1,12 +1,13 @@
 import { Pressable, View } from 'react-native';
 
-import { truncateId } from '~/lib-allowlist';
+import { cn } from '~/lib-allowlist';
 
 import { Avatar } from './Avatar';
 import { Tag } from './Badge';
 import { Button } from './Button';
 import { Text } from './Text';
-import { monoFont, useLargeText } from './tokens';
+import { handleOf } from './handle';
+import { monoFont, tw, useLargeText } from './tokens';
 
 /** The fields a user row needs; the engine's AuthorDTO / ProfileDTO both carry them. */
 export interface UserRowUser {
@@ -51,7 +52,7 @@ export function UserRow({
   testID,
 }: UserRowProps) {
   const largeText = useLargeText();
-  const handle = user.username ? `@${user.username}` : truncateId(user.id);
+  const handle = handleOf(user);
   const canFollow = !isSelf && !!onFollowPress && !followLoading;
   const followButton =
     isSelf || !onFollowPress ? null : (
@@ -71,14 +72,20 @@ export function UserRow({
     // following as a custom action.
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={[user.displayName, handle, followsYou && 'follows you', user.bio].filter(Boolean).join(', ')}
-      accessibilityActions={canFollow ? [{ name: 'follow', label: followLabel(following, followsYou) }] : undefined}
+      accessibilityLabel={[user.displayName, handle, followsYou && 'follows you', user.bio]
+        .filter(Boolean)
+        .join(', ')}
+      accessibilityActions={
+        canFollow
+          ? [{ name: 'follow', label: following ? 'Unfollow' : followLabel(false, followsYou) }]
+          : undefined
+      }
       onAccessibilityAction={(e) => {
         if (e.nativeEvent.actionName === 'follow') onFollowPress?.();
       }}
       onPress={onPress}
       testID={testID}
-      className="min-h-[72px] flex-row gap-3 px-4 py-3 active:bg-gray-50 dark:active:bg-gray-950"
+      className={cn('min-h-[72px] flex-row gap-3 px-4 py-3', tw.pressed)}
     >
       <Avatar uri={user.avatarUrl} size="md" />
       <View className="flex-1 gap-0.5">

@@ -1,11 +1,11 @@
 import NativeSegmentedControl from '@react-native-segmented-control/segmented-control';
-import * as Haptics from 'expo-haptics';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { CheckIcon } from 'react-native-heroicons/outline';
 
 import { cn } from '~/lib-allowlist';
 
 import { CountBadge } from './Badge';
+import { selectionTick } from './haptics';
 import { Text } from './Text';
 import { hitSlopFor, tw, useColors } from './tokens';
 
@@ -24,9 +24,7 @@ interface SelectProps<T extends string> {
 /** Every tab, segment and chip change ticks (UX_SPEC §1.9). */
 function select<T extends string>(next: T, current: T, onChange: (value: T) => void) {
   if (next === current) return;
-  Haptics.selectionAsync().catch(() => {
-    // Best-effort: no haptics hardware, or the OS setting is off.
-  });
+  selectionTick();
   onChange(next);
 }
 
@@ -46,12 +44,18 @@ export function TopTabs<T extends string>({ options, value, onChange, testID }: 
             accessibilityState={{ selected: active }}
             onPress={() => select(option.value, value, onChange)}
             testID={testID ? `${testID}-${option.value}` : undefined}
-            className="min-h-12 flex-1 items-center justify-center pt-3 active:bg-gray-50 dark:active:bg-gray-950"
+            className={cn('min-h-12 flex-1 items-center justify-center pt-3', tw.pressed)}
           >
-            <Text variant="subheadStrong" tone={active ? 'emphasis' : 'secondary'} maxFontSizeMultiplier={1.5}>
+            <Text
+              variant="subheadStrong"
+              tone={active ? 'emphasis' : 'secondary'}
+              maxFontSizeMultiplier={1.5}
+            >
               {option.label}
             </Text>
-            <View className={cn('mt-2.5 h-1 w-14 rounded-full', active ? 'bg-yappr-500' : 'bg-transparent')} />
+            <View
+              className={cn('mt-2.5 h-1 w-14 rounded-full', active ? 'bg-yappr-500' : 'bg-transparent')}
+            />
           </Pressable>
         );
       })}
@@ -71,7 +75,10 @@ export function SegmentedControl<T extends string>({ options, value, onChange, t
       <NativeSegmentedControl
         testID={testID}
         values={options.map((o) => o.label)}
-        selectedIndex={Math.max(0, options.findIndex((o) => o.value === value))}
+        selectedIndex={Math.max(
+          0,
+          options.findIndex((o) => o.value === value),
+        )}
         onChange={(e) => {
           const next = options[e.nativeEvent.selectedSegmentIndex];
           if (next) select(next.value, value, onChange);
@@ -94,10 +101,11 @@ export function SegmentedControl<T extends string>({ options, value, onChange, t
             accessibilityState={{ selected: active }}
             onPress={() => select(option.value, value, onChange)}
             testID={testID ? `${testID}-${option.value}` : undefined}
+            hitSlop={hitSlopFor(40)}
             className={cn(
               'min-h-10 flex-1 flex-row items-center justify-center gap-1.5 px-3',
               index > 0 && cn('border-l', tw.borderStrong),
-              active ? tw.bgSelected : 'active:bg-gray-100 dark:active:bg-gray-900',
+              active ? tw.bgSelected : tw.pressedMuted,
             )}
           >
             {active ? <CheckIcon size={16} color={c.textPrimary} /> : null}

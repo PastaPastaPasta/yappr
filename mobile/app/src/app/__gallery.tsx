@@ -5,10 +5,14 @@ import { GALLERY_SECTIONS, type GallerySectionId } from '~/ui/gallery/sections';
 import { Screen } from '~/ui/Screen';
 import { FilterChips } from '~/ui/Tabs';
 import { ToastHost } from '~/ui/ToastHost';
+import { tw } from '~/ui/tokens';
 
 type Filter = GallerySectionId | 'all';
 
-const FILTERS = [{ value: 'all' as const, label: 'All' }, ...GALLERY_SECTIONS.map(({ id, label }) => ({ value: id, label }))];
+const FILTERS = [
+  { value: 'all' as const, label: 'All' },
+  ...GALLERY_SECTIONS.map(({ id, label }) => ({ value: id, label })),
+];
 
 const isFilter = (value: unknown): value is Filter => FILTERS.some((f) => f.value === value);
 
@@ -27,13 +31,17 @@ export default function GalleryScreen() {
   return (
     <Screen>
       <Stack.Screen options={{ title: 'Gallery' }} />
-      <ScrollView contentInsetAdjustmentBehavior="automatic" stickyHeaderIndices={[0]} contentContainerClassName="pb-16">
-        <View className="bg-white dark:bg-neutral-900">
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        stickyHeaderIndices={[0]}
+        contentContainerClassName="pb-16"
+      >
+        <View className={tw.bg}>
           <FilterChips options={FILTERS} value={filter} onChange={setFilter} testID="gallery-filter" />
         </View>
-        {shown.map((s) => (
-          <View key={s.id} testID={`gallery-${s.id}`}>
-            {s.render()}
+        {shown.map(({ id, Component }) => (
+          <View key={id} testID={`gallery-${id}`}>
+            <Component />
           </View>
         ))}
       </ScrollView>

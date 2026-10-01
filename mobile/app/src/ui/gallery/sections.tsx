@@ -38,7 +38,7 @@ import { tw } from '../tokens';
 import { UserRow } from '../UserRow';
 import { WriteStatus } from '../WriteStatus';
 
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <View className={`gap-3 border-b px-4 py-4 ${tw.border}`}>
       <Text variant="captionStrong" tone="secondary" className="uppercase tracking-wider">
@@ -79,7 +79,9 @@ const YAPPR_RAMP = [
 ];
 const THEMES: ThemePreference[] = ['system', 'light', 'dark'];
 /** 30 s, 5 m, 3 h, 2 d and 40 d before the gallery loaded. */
-const TIME_SAMPLES = [30_000, 300_000, 10_800_000, 172_800_000, 3_456_000_000].map((ms) => new Date(Date.now() - ms));
+const TIME_SAMPLES = [30_000, 300_000, 10_800_000, 172_800_000, 3_456_000_000].map(
+  (ms) => new Date(Date.now() - ms),
+);
 const noop = () => undefined;
 
 function TokensSection() {
@@ -214,7 +216,12 @@ function InputsSection() {
     <>
       <Section title="Text fields">
         <TextField label="Display name" placeholder="Your name" value={text} onChangeText={setText} />
-        <TextField label="Username" value="al" error="Usernames are at least 3 characters" onChangeText={noop} />
+        <TextField
+          label="Username"
+          value="al"
+          error="Usernames are at least 3 characters"
+          onChangeText={noop}
+        />
         <TextField label="Private key" secure value={secret} onChangeText={setSecret} />
         <TextField label="Bio" multiline value={bio} onChangeText={setBio} maxLength={30} />
       </Section>
@@ -319,9 +326,28 @@ function FeedbackSection() {
     <>
       <Section title="Toasts (top-center)">
         <Row>
-          <Button label="Success" size="sm" variant="secondary" onPress={() => toast.success('Post created successfully!')} />
-          <Button label="Error" size="sm" variant="secondary" onPress={() => toast.error("Couldn't post. Check your connection.", { action: { label: 'Retry', onPress: noop } })} />
-          <Button label="Info" size="sm" variant="secondary" onPress={() => toast('Link copied to clipboard')} />
+          <Button
+            label="Success"
+            size="sm"
+            variant="secondary"
+            onPress={() => toast.success('Post created successfully!')}
+          />
+          <Button
+            label="Error"
+            size="sm"
+            variant="secondary"
+            onPress={() =>
+              toast.error("Couldn't post. Check your connection.", {
+                action: { label: 'Retry', onPress: noop },
+              })
+            }
+          />
+          <Button
+            label="Info"
+            size="sm"
+            variant="secondary"
+            onPress={() => toast('Link copied to clipboard')}
+          />
         </Row>
       </Section>
       <Section title="Sheet and dialogs">
@@ -333,7 +359,12 @@ function FeedbackSection() {
             size="sm"
             variant="outline"
             onPress={() => {
-              confirmAlert({ title: 'Delete post?', message: "This can't be undone.", confirmText: 'Delete', destructive: true })
+              confirmAlert({
+                title: 'Delete post?',
+                message: "This can't be undone.",
+                confirmText: 'Delete',
+                destructive: true,
+              })
                 .then((ok) => toast(ok ? 'Confirmed' : 'Cancelled'))
                 .catch(noop);
             }}
@@ -416,7 +447,10 @@ function PeopleSection() {
       </Section>
       <View className={`border-b ${tw.border}`}>
         <UserRow
-          user={{ ...AUTHORS.bob, bio: 'Builder of things. Two-line bio clamp keeps rows tidy even when the bio runs long.' }}
+          user={{
+            ...AUTHORS.bob,
+            bio: 'Builder of things. Two-line bio clamp keeps rows tidy even when the bio runs long.',
+          }}
           followsYou
           following={following}
           onFollowPress={() => setFollowing((f) => !f)}
@@ -428,7 +462,9 @@ function PeopleSection() {
       </View>
       <Section title="RichText">
         <RichText
-          text={'Hey @bob.dash, check #DashPlatform and $dash at https://yap.pr/post?id=abc (it works).\n**Bold @mention** and `code` — 👩🏽‍💻 emoji safe.'}
+          text={
+            'Hey @bob.dash, check #DashPlatform and $dash at https://yap.pr/post?id=abc (it works).\n**Bold @mention** and `code` — 👩🏽‍💻 emoji safe.'
+          }
           onMentionPress={(u) => toast(`@${u}`)}
           onHashtagPress={(t) => toast(`#${t}`)}
           onCashtagPress={(t) => toast(t)}
@@ -455,6 +491,9 @@ function PeopleSection() {
 function PostCardsA() {
   return (
     <>
+      <Bleed title="Web parity (testnet post 4NeHEz…)">
+        <PostCard post={POSTS.webParity} actions={{ onPress: noop, onMore: noop }} />
+      </Bleed>
       <Bleed title="Feed card">
         <PostCard post={POSTS.basic} viewerId={VIEWER_ID} actions={{ onPress: noop, onMore: noop }} />
       </Bleed>
@@ -466,7 +505,10 @@ function PostCardsA() {
       </Bleed>
       <Bleed title="Reply, nameless author, resolving author">
         <PostCard post={POSTS.reply} replyingTo="bob" actions={{ onMore: noop }} />
-        <PostCard post={POSTS.nameless} actions={{ onMore: noop, onCopyId: () => toast('Identity ID copied') }} />
+        <PostCard
+          post={POSTS.nameless}
+          actions={{ onMore: noop, onCopyId: () => toast('Identity ID copied') }}
+        />
         <PostCard post={POSTS.basic} authorPending actions={{ onMore: noop }} />
       </Bleed>
       <Bleed title="Markdown, RTL, emoji-only, long (clamped)">
@@ -484,7 +526,10 @@ function PostCardsB() {
       <Bleed title="Quote embed, removed quote, loading quote">
         <PostCard post={POSTS.quote} actions={{ onMore: noop }} />
         <PostCard post={POSTS.quoteRemoved} actions={{ onMore: noop }} />
-        <PostCard post={{ ...POSTS.quoteRemoved, id: 'post-quote-loading', quotedRemoved: false }} quoteLoading />
+        <PostCard
+          post={{ ...POSTS.quoteRemoved, id: 'post-quote-loading', quotedRemoved: false }}
+          quoteLoading
+        />
       </Bleed>
       <Bleed title="Media grid: 1, 2, 3 and 4 items">
         <PostCard post={POSTS.oneImage} actions={{ onMore: noop }} />
@@ -502,7 +547,14 @@ function PostCardsC() {
     <>
       <Bleed title="Link preview, YouTube, loading preview">
         <PostCard post={POSTS.linkPreview} linkPreview={SAMPLE_PREVIEW} actions={{ onMore: noop }} />
-        <PostCard post={POSTS.youtube} linkPreview={{ url: 'https://www.youtube.com/watch?v=jNQXAC9IVRw', title: 'A video', youtubeVideoId: 'jNQXAC9IVRw' }} />
+        <PostCard
+          post={POSTS.youtube}
+          linkPreview={{
+            url: 'https://www.youtube.com/watch?v=jNQXAC9IVRw',
+            title: 'A video',
+            youtubeVideoId: 'jNQXAC9IVRw',
+          }}
+        />
         <PostCard post={{ ...POSTS.linkPreview, id: 'post-link-loading' }} linkPreview="loading" />
       </Bleed>
       <Bleed title="Poll: results, loading, unavailable">
@@ -512,7 +564,12 @@ function PostCardsC() {
       </Bleed>
       <Bleed title="NSFW cover, media gate, private">
         <PostCard post={POSTS.nsfw} actions={{ onMore: noop }} />
-        <PostCard post={POSTS.mediaGated} mediaGated={!revealed} onRevealMedia={() => setRevealed(true)} actions={{ onMore: noop }} />
+        <PostCard
+          post={POSTS.mediaGated}
+          mediaGated={!revealed}
+          onRevealMedia={() => setRevealed(true)}
+          actions={{ onMore: noop }}
+        />
         <PostCard post={POSTS.private} actions={{ onMore: noop, onOpenPrivate: noop }} />
       </Bleed>
       <Bleed title="Stubs: tombstone, removed, deleted, failed, unavailable, blocked">
@@ -525,9 +582,21 @@ function PostCardsC() {
         <PostStub state="blocked" kind="reply" />
       </Bleed>
       <Bleed title="Optimistic: posting, not confirmed, failed">
-        <PostCard post={POSTS.optimistic} variant="optimistic" writeStatus={{ status: { state: 'posting' } }} />
-        <PostCard post={{ ...POSTS.optimistic, id: 'opt-2' }} variant="optimistic" writeStatus={{ status: { state: 'unconfirmed' }, onCheckAgain: noop }} />
-        <PostCard post={{ ...POSTS.optimistic, id: 'opt-3' }} variant="optimistic" writeStatus={{ status: { state: 'failed' }, onRetry: noop, onEdit: noop }} />
+        <PostCard
+          post={POSTS.optimistic}
+          variant="optimistic"
+          writeStatus={{ status: { state: 'posting' } }}
+        />
+        <PostCard
+          post={{ ...POSTS.optimistic, id: 'opt-2' }}
+          variant="optimistic"
+          writeStatus={{ status: { state: 'unconfirmed' }, onCheckAgain: noop }}
+        />
+        <PostCard
+          post={{ ...POSTS.optimistic, id: 'opt-3' }}
+          variant="optimistic"
+          writeStatus={{ status: { state: 'failed' }, onRetry: noop, onEdit: noop }}
+        />
       </Bleed>
       <Bleed title="Detail and compact">
         <PostCard post={POSTS.liked} variant="detail" actions={{ onMore: noop }} />
@@ -539,15 +608,15 @@ function PostCardsC() {
 
 /** The gallery's sections, addressable as `/__gallery?section=<id>` for screenshots. */
 export const GALLERY_SECTIONS = [
-  { id: 'tokens', label: 'Tokens', render: () => <TokensSection /> },
-  { id: 'buttons', label: 'Buttons', render: () => <ButtonsSection /> },
-  { id: 'inputs', label: 'Inputs', render: () => <InputsSection /> },
-  { id: 'navigation', label: 'Tabs & chips', render: () => <NavigationSection /> },
-  { id: 'feedback', label: 'Feedback', render: () => <FeedbackSection /> },
-  { id: 'people', label: 'People & text', render: () => <PeopleSection /> },
-  { id: 'posts', label: 'Posts', render: () => <PostCardsA /> },
-  { id: 'embeds', label: 'Embeds & media', render: () => <PostCardsB /> },
-  { id: 'states', label: 'Post states', render: () => <PostCardsC /> },
+  { id: 'tokens', label: 'Tokens', Component: TokensSection },
+  { id: 'buttons', label: 'Buttons', Component: ButtonsSection },
+  { id: 'inputs', label: 'Inputs', Component: InputsSection },
+  { id: 'navigation', label: 'Tabs & chips', Component: NavigationSection },
+  { id: 'feedback', label: 'Feedback', Component: FeedbackSection },
+  { id: 'people', label: 'People & text', Component: PeopleSection },
+  { id: 'posts', label: 'Posts', Component: PostCardsA },
+  { id: 'embeds', label: 'Embeds & media', Component: PostCardsB },
+  { id: 'states', label: 'Post states', Component: PostCardsC },
 ] as const;
 
 export type GallerySectionId = (typeof GALLERY_SECTIONS)[number]['id'];

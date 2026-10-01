@@ -5,10 +5,10 @@ import { SvgXml } from 'react-native-svg';
 
 import { cn } from '~/lib-allowlist';
 
-import { hitSlopFor, tw } from './tokens';
+import { hitSlopFor, motion, tw } from './tokens';
 
 /** UX_SPEC §2.3. `profile` is the web's 128 scaled for phones. */
-export const AVATAR_SIZES = { xs: 24, sm: 32, md: 40, lg: 48, xl: 64, profile: 88 } as const;
+const AVATAR_SIZES = { xs: 24, sm: 32, md: 40, lg: 48, xl: 64, profile: 88 } as const;
 export type AvatarSize = keyof typeof AVATAR_SIZES;
 
 const SVG_DATA_URI = /^data:image\/svg\+xml(;[^,]*)?,([\s\S]*)$/i;
@@ -26,7 +26,9 @@ export function svgFromDataUri(uri: string): string | null {
     if (!/;base64/i.test(params)) return decodeURIComponent(data);
     // atob yields one char per byte; percent-encode them to decode UTF-8.
     const binary = atob(data);
-    return decodeURIComponent(binary.replace(/[\s\S]/g, (ch) => `%${ch.charCodeAt(0).toString(16).padStart(2, '0')}`));
+    return decodeURIComponent(
+      binary.replace(/[\s\S]/g, (ch) => `%${ch.charCodeAt(0).toString(16).padStart(2, '0')}`),
+    );
   } catch {
     return null;
   }
@@ -68,6 +70,8 @@ export const Avatar = memo(function Avatar({
   className,
 }: AvatarProps) {
   const diameter = AVATAR_SIZES[size];
+  // The profile avatar's 4 pt ring sits inside its diameter; the picture fills the rest.
+  const inner = size === 'profile' ? diameter - 8 : diameter;
   // Keyed by URL, so a recycled cell showing someone else retries.
   const [failedUri, setFailedUri] = useState<string>();
   const markup = useMemo(() => svgMarkup(svg ?? uri), [svg, uri]);
@@ -75,14 +79,14 @@ export const Avatar = memo(function Avatar({
 
   let content = null;
   if (markup) {
-    content = <SvgXml xml={markup} width={diameter} height={diameter} testID="avatar-svg" />;
+    content = <SvgXml xml={markup} width={inner} height={inner} testID="avatar-svg" />;
   } else if (uri && failedUri !== uri) {
     content = (
       <Image
         source={{ uri }}
-        style={{ width: diameter, height: diameter }}
+        style={{ width: inner, height: inner }}
         contentFit="cover"
-        transition={150}
+        transition={motion.fast}
         recyclingKey={uri}
         onError={() => setFailedUri(uri)}
         accessible={false}
@@ -90,7 +94,7 @@ export const Avatar = memo(function Avatar({
       />
     );
   } else if (fallbackMarkup) {
-    content = <SvgXml xml={fallbackMarkup} width={diameter} height={diameter} testID="avatar-fallback" />;
+    content = <SvgXml xml={fallbackMarkup} width={inner} height={inner} testID="avatar-fallback" />;
   }
 
   const circle = (
@@ -115,7 +119,7 @@ export const Avatar = memo(function Avatar({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={name ? `${name}'s profile` : 'Profile'}
-      hitSlop={hitSlopFor(diameter, 44)}
+      hitSlop={hitSlopFor(diameter)}
       onPress={onPress}
       testID={testID}
       className="active:opacity-80"

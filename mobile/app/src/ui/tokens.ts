@@ -1,5 +1,6 @@
 import { DarkTheme, DefaultTheme, type Theme } from 'expo-router';
 import { useColorScheme } from 'nativewind';
+import type { ComponentType } from 'react';
 import { Platform, useWindowDimensions } from 'react-native';
 
 /**
@@ -101,8 +102,6 @@ const dark: SemanticColors = {
   ripple: 'rgba(255,255,255,0.08)',
 };
 
-export const semanticColors = { light, dark } as const;
-
 /** The semantic palette for the effective scheme. */
 export function useColors(): SemanticColors {
   return useIsDark() ? dark : light;
@@ -116,6 +115,10 @@ export function useColors(): SemanticColors {
 export const tw = {
   bg: 'bg-white dark:bg-neutral-900',
   bgSubtle: 'bg-gray-50 dark:bg-gray-950',
+  /** Pressed rows and cards (`bg.subtle` while held). */
+  pressed: 'active:bg-gray-50 dark:active:bg-gray-950',
+  /** Pressed icon buttons and segments (`bg.muted` while held). */
+  pressedMuted: 'active:bg-gray-100 dark:active:bg-gray-900',
   bgMuted: 'bg-gray-100 dark:bg-gray-900',
   bgSkeleton: 'bg-gray-200 dark:bg-gray-800',
   bgSelected: 'bg-yappr-50 dark:bg-yappr-950/30',
@@ -126,6 +129,9 @@ export const tw = {
   errorBg: 'bg-red-50 dark:bg-red-950/30',
   offlineBg: 'bg-amber-50 dark:bg-amber-950',
 } as const;
+
+/** A Heroicon, or any icon taking `size` and `color`. */
+export type IconComponent = ComponentType<{ size?: number; color?: string }>;
 
 /** Text colors (UX_SPEC §1.2). Pass one as `Text`'s `tone`. */
 export const tones = {
@@ -183,8 +189,11 @@ export const motion = {
   springLike: { damping: 12, stiffness: 400, mass: 0.6 },
 } as const;
 
-/** Extra touch area so a smaller visual still meets 44 pt / 48 dp (UX_SPEC §6.4). */
-export function hitSlopFor(visual: number, target = 48) {
+/** The minimum touch target: 44 pt on iOS, 48 dp on Android (UX_SPEC §6.4). */
+export const MIN_TARGET = Platform.OS === 'ios' ? 44 : 48;
+
+/** Extra touch area so a smaller visual still meets the minimum target. */
+export function hitSlopFor(visual: number, target = MIN_TARGET) {
   const pad = Math.max(0, Math.ceil((target - visual) / 2));
   return { top: pad, bottom: pad, left: pad, right: pad };
 }

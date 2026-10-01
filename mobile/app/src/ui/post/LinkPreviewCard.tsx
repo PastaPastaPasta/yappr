@@ -5,9 +5,10 @@ import { PlayIcon } from 'react-native-heroicons/solid';
 
 import { cn } from '~/lib-allowlist';
 
-import { Skeleton } from '../Skeleton';
+import { Skeleton, SkeletonGroup } from '../Skeleton';
 import { Text } from '../Text';
 import { colors, tw } from '../tokens';
+import { EMBED_FRAME } from './embed-frame';
 import { MediaGatePlaceholder } from './MediaGrid';
 import type { CardLinkPreview, Loadable } from './types';
 
@@ -20,7 +21,7 @@ export function displayHost(url: string): string {
   return (match?.[1] ?? url).replace(/^www\./i, '');
 }
 
-const FRAME = cn('mt-3 overflow-hidden rounded-xl border', tw.borderStrong);
+const FRAME = cn(EMBED_FRAME, 'overflow-hidden');
 
 export interface LinkPreviewCardProps {
   preview: Loadable<CardLinkPreview>;
@@ -36,19 +37,25 @@ export interface LinkPreviewCardProps {
  * button over the thumbnail and open outside the app (no inline player in
  * 1.0). A failed fetch renders nothing.
  */
-export function LinkPreviewCard({ preview, mediaGated = false, onRevealMedia, onPress }: LinkPreviewCardProps) {
-  const [imageFailed, setImageFailed] = useState(false);
+export function LinkPreviewCard({
+  preview,
+  mediaGated = false,
+  onRevealMedia,
+  onPress,
+}: LinkPreviewCardProps) {
+  // Keyed by URL, so a recycled cell retries.
+  const [failedImage, setFailedImage] = useState<string>();
 
   if (preview === 'error') return null;
   if (preview === 'loading') {
     return (
-      <View accessible accessibilityLabel="Loading link preview" className={FRAME} testID="link-preview-skeleton">
+      <SkeletonGroup label="Loading link preview" className={FRAME} testID="link-preview-skeleton">
         <View className={cn('aspect-video', tw.bgSkeleton)} />
         <View className="gap-2 p-3">
           <Skeleton width="40%" />
           <Skeleton width="80%" />
         </View>
-      </View>
+      </SkeletonGroup>
     );
   }
 
@@ -60,14 +67,15 @@ export function LinkPreviewCard({ preview, mediaGated = false, onRevealMedia, on
   let imageBox = null;
   if (mediaGated && image) {
     imageBox = <MediaGatePlaceholder onReveal={onRevealMedia} className="rounded-none" />;
-  } else if (image && !imageFailed) {
+  } else if (image && failedImage !== image) {
     imageBox = (
       <View className={cn('aspect-video', youtube ? 'bg-black' : tw.bgSkeleton)}>
         <Image
           source={{ uri: image }}
           style={{ flex: 1 }}
           contentFit="cover"
-          onError={() => setImageFailed(true)}
+          recyclingKey={image}
+          onError={() => setFailedImage(image)}
           accessible={false}
         />
         {youtube ? (
@@ -87,7 +95,7 @@ export function LinkPreviewCard({ preview, mediaGated = false, onRevealMedia, on
       accessibilityLabel={label}
       onPress={onPress && (() => onPress(preview.url))}
       testID="link-preview"
-      className={cn(FRAME, 'active:bg-gray-50 dark:active:bg-gray-950')}
+      className={cn(FRAME, tw.pressed)}
     >
       {imageBox}
       <View className="gap-0.5 px-3 py-2.5">

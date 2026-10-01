@@ -51,7 +51,9 @@ export const useToastStore = create<ToastState>()((set, get) => ({
   current: null,
   show: (kind, message, options) => {
     const id = nextId++;
-    set({ current: { id, kind, message, action: options?.action, duration: toastDuration(message, options) } });
+    set({
+      current: { id, kind, message, action: options?.action, duration: toastDuration(message, options) },
+    });
     return id;
   },
   dismiss: (id) => {

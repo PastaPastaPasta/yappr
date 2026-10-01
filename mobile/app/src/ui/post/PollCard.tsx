@@ -4,12 +4,13 @@ import { ChartBarIcon } from 'react-native-heroicons/outline';
 import { cn, formatNumber } from '~/lib-allowlist';
 
 import { LinkText } from '../LinkText';
-import { Skeleton } from '../Skeleton';
+import { Skeleton, SkeletonGroup } from '../Skeleton';
 import { Text } from '../Text';
 import { tw, useColors } from '../tokens';
+import { EMBED_FRAME } from './embed-frame';
 import type { CardPoll, Loadable } from './types';
 
-const FRAME = cn('mt-3 rounded-xl border p-3', tw.borderStrong);
+const FRAME = cn(EMBED_FRAME, 'p-3');
 
 /** "Ends in 2d" / "Ended" / "No end date" (UX_SPEC §5.3). */
 export function pollEndLabel(endsAt: Date | null, now = Date.now()): string {
@@ -40,11 +41,11 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
 
   if (poll === 'loading') {
     return (
-      <View accessible accessibilityLabel="Loading poll" className={cn(FRAME, 'gap-2')} testID="poll-skeleton">
+      <SkeletonGroup label="Loading poll" className={cn(FRAME, 'gap-2')} testID="poll-skeleton">
         <Skeleton width="66%" height={16} />
         <Skeleton height={32} className="rounded-lg" />
         <Skeleton height={32} className="rounded-lg" />
-      </View>
+      </SkeletonGroup>
     );
   }
   if (poll === 'error') {
@@ -77,7 +78,10 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
               className={cn('overflow-hidden rounded-lg border', tw.border)}
             >
               <View
-                className={cn('absolute bottom-0 left-0 top-0', lead ? 'bg-yappr-500/30' : 'bg-yappr-200 dark:bg-yappr-900')}
+                className={cn(
+                  'absolute bottom-0 left-0 top-0',
+                  lead ? 'bg-yappr-500/30' : 'bg-yappr-200 dark:bg-yappr-900',
+                )}
                 style={{ width: `${percents[i]}%` }}
               />
               <View className="flex-row items-center justify-between gap-3 px-3 py-2">

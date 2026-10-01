@@ -1,7 +1,15 @@
-import { Platform, Pressable, Switch as RNSwitch, View, type SwitchProps as RNSwitchProps } from 'react-native';
+import {
+  Platform,
+  Pressable,
+  Switch as RNSwitch,
+  View,
+  type SwitchProps as RNSwitchProps,
+} from 'react-native';
+
+import { cn } from '~/lib-allowlist';
 
 import { Text } from './Text';
-import { colors, useColors, useIsDark } from './tokens';
+import { colors, tw, useColors } from './tokens';
 
 export type SwitchProps = Omit<RNSwitchProps, 'trackColor' | 'thumbColor' | 'ios_backgroundColor'>;
 
@@ -11,11 +19,10 @@ export type SwitchProps = Omit<RNSwitchProps, 'trackColor' | 'thumbColor' | 'ios
  */
 export function Switch({ disabled, style, ...props }: SwitchProps) {
   const c = useColors();
-  const off = useIsDark() ? colors.gray800 : colors.gray200;
   return (
     <RNSwitch
-      trackColor={{ true: c.accent, false: off }}
-      ios_backgroundColor={off}
+      trackColor={{ true: c.accent, false: c.border }}
+      ios_backgroundColor={c.border}
       thumbColor={Platform.OS === 'android' ? colors.white : undefined}
       disabled={disabled}
       style={[disabled ? { opacity: 0.5 } : null, style]}
@@ -44,7 +51,7 @@ export function SwitchRow({ label, description, value, onValueChange, disabled, 
       disabled={disabled}
       onPress={() => onValueChange(!value)}
       testID={testID}
-      className="min-h-14 flex-row items-center gap-3 px-4 py-3 active:bg-gray-50 dark:active:bg-gray-950"
+      className={cn('min-h-14 flex-row items-center gap-3 px-4 py-3', tw.pressed)}
     >
       <View className="flex-1 gap-0.5">
         <Text variant="bodyStrong">{label}</Text>

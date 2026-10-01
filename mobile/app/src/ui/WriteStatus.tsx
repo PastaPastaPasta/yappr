@@ -1,4 +1,4 @@
-import { Fragment, useEffect } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import { AccessibilityInfo, ActivityIndicator, View } from 'react-native';
 import { ClockIcon, ExclamationCircleIcon } from 'react-native-heroicons/outline';
 
@@ -22,13 +22,36 @@ export interface WriteStatusProps {
   onRetryRest?: () => void;
 }
 
-interface Link {
+export interface WriteStatusLink {
   label: string;
   onPress?: () => void;
 }
 
+/** The actions a state offers, also exposed as the optimistic card's screen-reader actions. */
+export function writeStatusLinks({
+  status,
+  onCheckAgain,
+  onRetry,
+  onEdit,
+  onRetryRest,
+}: WriteStatusProps): WriteStatusLink[] {
+  switch (status.state) {
+    case 'unconfirmed':
+      return [{ label: 'Check again', onPress: onCheckAgain }];
+    case 'failed':
+      return [
+        { label: 'Retry', onPress: onRetry },
+        { label: 'Edit', onPress: onEdit },
+      ];
+    case 'partial':
+      return [{ label: 'Retry the rest', onPress: onRetryRest }];
+    default:
+      return [];
+  }
+}
+
 /** The sentence for a state (UX_SPEC §5.4), also what screen readers announce. */
-export function writeStatusText(status: WriteState): string {
+function writeStatusText(status: WriteState): string {
   switch (status.state) {
     case 'posting':
       return 'Posting…';
@@ -48,25 +71,21 @@ export function writeStatusText(status: WriteState): string {
  * (UX_SPEC §2.4.11): posting, not confirmed · check again, failed · retry ·
  * edit, partly posted · retry the rest. Each change is announced once.
  */
-export function WriteStatus({ status, onCheckAgain, onRetry, onEdit, onRetryRest }: WriteStatusProps) {
+export function WriteStatus(props: WriteStatusProps) {
+  const { status } = props;
   const c = useColors();
   const text = writeStatusText(status);
 
+  // Announce changes only (A11Y-06): not on mount, so scrolling past pending
+  // posts stays quiet.
+  const announced = useRef(text);
   useEffect(() => {
+    if (announced.current === text) return;
+    announced.current = text;
     AccessibilityInfo.announceForAccessibility(text);
   }, [text]);
 
-  const links: Link[] =
-    status.state === 'unconfirmed'
-      ? [{ label: 'Check again', onPress: onCheckAgain }]
-      : status.state === 'failed'
-        ? [
-            { label: 'Retry', onPress: onRetry },
-            { label: 'Edit', onPress: onEdit },
-          ]
-        : status.state === 'partial'
-          ? [{ label: 'Retry the rest', onPress: onRetryRest }]
-          : [];
+  const links = writeStatusLinks(props);
   const busy = status.state === 'posting' || status.state === 'threadProgress';
 
   return (

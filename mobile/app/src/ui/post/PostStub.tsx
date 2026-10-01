@@ -1,10 +1,16 @@
 import { View } from 'react-native';
-import { ExclamationTriangleIcon, NoSymbolIcon, ShieldExclamationIcon, TrashIcon } from 'react-native-heroicons/outline';
+import {
+  ExclamationTriangleIcon,
+  NoSymbolIcon,
+  ShieldExclamationIcon,
+  TrashIcon,
+} from 'react-native-heroicons/outline';
 
 import { cn } from '~/lib-allowlist';
 
 import { Text } from '../Text';
 import { tw, useColors } from '../tokens';
+import { EMBED_FRAME } from './embed-frame';
 import type { CardKind } from './types';
 
 export type StubState = 'removed' | 'deleted' | 'failed' | 'unavailable' | 'blocked';
@@ -64,9 +70,7 @@ export function PostStub({ state, kind = 'post', variant = 'card', reason, kept,
       testID={testID ?? `stub-${state}`}
       className={cn(
         'gap-1',
-        variant === 'embed'
-          ? cn('mt-3 rounded-xl border p-3', tw.borderStrong)
-          : cn('border-b px-4 py-3', tw.border),
+        variant === 'embed' ? cn(EMBED_FRAME, 'p-3') : cn('border-b px-4 py-3', tw.border),
       )}
     >
       <View className="flex-row items-center gap-2">
@@ -81,5 +85,14 @@ export function PostStub({ state, kind = 'post', variant = 'card', reason, kept,
         </Text>
       ) : null}
     </View>
+  );
+}
+
+/** A v9 tombstone's line inside its card or quote: the author deleted it, the document stays. */
+export function DeletedLine({ kind }: { kind: CardKind }) {
+  return (
+    <Text variant="subhead" tone="secondary" className="mt-1 italic">
+      {stubText('deleted', kind)}
+    </Text>
   );
 }

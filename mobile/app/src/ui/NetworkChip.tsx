@@ -24,7 +24,7 @@ const STATE_WORD: Record<EngineState, string> = {
 };
 
 /** UX_SPEC §5.13: "Devnet. Data may be reset. Engine ready." */
-export function networkChipLabel(network: Exclude<ChipNetwork, 'mainnet'>, state: EngineState): string {
+function networkChipLabel(network: Exclude<ChipNetwork, 'mainnet'>, state: EngineState): string {
   const name = network === 'devnet' ? 'Devnet' : 'Testnet';
   return `${name}. Data may be reset. Engine ${STATE_WORD[state]}.`;
 }
@@ -67,7 +67,7 @@ export function NetworkChip({ network, state, onPress }: NetworkChipProps) {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={networkChipLabel(network, state)}
-      hitSlop={hitSlopFor(20, 44)}
+      hitSlop={hitSlopFor(20)}
       onPress={onPress}
       disabled={!onPress}
       testID="network-chip"

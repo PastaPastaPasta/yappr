@@ -1,20 +1,22 @@
 import { Image } from 'expo-image';
 import { Pressable, View } from 'react-native';
 
-import { cn, truncateId } from '~/lib-allowlist';
+import { cn } from '~/lib-allowlist';
 
 import { Avatar } from '../Avatar';
 import { RichText } from '../rich-text/RichText';
-import { Skeleton } from '../Skeleton';
+import { handleOf } from '../handle';
+import { Skeleton, SkeletonGroup } from '../Skeleton';
 import { Text } from '../Text';
 import { tw } from '../tokens';
 import { useRelativeTime } from '../use-relative-time';
 import { PrivatePostPlaceholder } from './PrivatePostPlaceholder';
 import { SensitiveGate, useSensitiveReveal } from './SensitiveGate';
-import { stubText } from './PostStub';
+import { EMBED_FRAME } from './embed-frame';
+import { DeletedLine } from './PostStub';
 import type { CardPost } from './types';
 
-const FRAME = cn('mt-3 rounded-xl border p-3', tw.borderStrong);
+const FRAME = cn(EMBED_FRAME, 'p-3');
 
 export interface QuoteEmbedProps {
   post: CardPost;
@@ -33,7 +35,7 @@ export interface QuoteEmbedProps {
 export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onPress }: QuoteEmbedProps) {
   const time = useRelativeTime(post.createdAt);
   const [revealed, reveal] = useSensitiveReveal(post.id);
-  const handle = post.author.username ? `@${post.author.username}` : truncateId(post.author.id);
+  const handle = handleOf(post.author);
   const thumb = !mediaGated ? post.media[0] : undefined;
 
   return (
@@ -42,7 +44,7 @@ export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onPres
       accessibilityLabel={`Quote: ${post.author.displayName}, ${post.encrypted ? 'private post' : post.content}`}
       onPress={onPress}
       testID="quote-embed"
-      className={cn(FRAME, 'active:bg-gray-50 dark:active:bg-gray-950')}
+      className={cn(FRAME, tw.pressed)}
     >
       <View className="flex-row items-center gap-1.5">
         <Avatar uri={post.author.avatarUrl} size="xs" />
@@ -57,9 +59,7 @@ export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onPres
         </Text>
       </View>
       {post.deleted ? (
-        <Text variant="subhead" tone="secondary" className="mt-1 italic">
-          {stubText('deleted', post.kind)}
-        </Text>
+        <DeletedLine kind={post.kind} />
       ) : post.encrypted ? (
         <PrivatePostPlaceholder name={post.author.displayName} compact />
       ) : (
@@ -73,6 +73,7 @@ export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onPres
                 source={{ uri: thumb.thumbnail ?? thumb.url }}
                 style={{ width: 64, height: 64, borderRadius: 8 }}
                 contentFit="cover"
+                recyclingKey={thumb.url}
                 accessible={false}
               />
             ) : null}
@@ -86,9 +87,9 @@ export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onPres
 /** The quote slot while the quoted post loads: two bars in the frame. */
 export function QuoteSkeleton() {
   return (
-    <View accessible accessibilityLabel="Loading quoted post" className={cn(FRAME, 'gap-2')} testID="quote-skeleton">
+    <SkeletonGroup label="Loading quoted post" className={cn(FRAME, 'gap-2')} testID="quote-skeleton">
       <Skeleton width="50%" />
       <Skeleton width="85%" />
-    </View>
+    </SkeletonGroup>
   );
 }

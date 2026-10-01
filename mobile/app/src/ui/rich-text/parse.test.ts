@@ -16,7 +16,14 @@ describe('parseContent (web PostContent parity)', () => {
 
   it('parses inside bold and italic, but keeps code literal', () => {
     expect(parseContent('**hi #tag** *it* `@not`')).toEqual([
-      { type: 'bold', value: 'hi #tag', children: [{ type: 'text', value: 'hi ' }, { type: 'hashtag', value: '#tag' }] },
+      {
+        type: 'bold',
+        value: 'hi #tag',
+        children: [
+          { type: 'text', value: 'hi ' },
+          { type: 'hashtag', value: '#tag' },
+        ],
+      },
       { type: 'text', value: ' ' },
       { type: 'italic', value: 'it', children: [{ type: 'text', value: 'it' }] },
       { type: 'text', value: ' ' },
@@ -42,7 +49,11 @@ describe('parseContent (web PostContent parity)', () => {
 
 describe('splitUrl', () => {
   it('keeps trailing punctuation outside the link and prefixes www.', () => {
-    expect(splitUrl('www.dash.org.')).toEqual({ href: 'https://www.dash.org', display: 'www.dash.org', trailing: '.' });
+    expect(splitUrl('www.dash.org.')).toEqual({
+      href: 'https://www.dash.org',
+      display: 'www.dash.org',
+      trailing: '.',
+    });
   });
 
   it('keeps balanced parentheses in the target', () => {

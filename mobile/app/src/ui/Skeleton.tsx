@@ -21,7 +21,10 @@ function usePulse() {
   const reduceMotion = useReducedMotion();
   const opacity = useSharedValue(1);
   useEffect(() => {
-    if (reduceMotion) return undefined;
+    if (reduceMotion) {
+      opacity.set(1);
+      return undefined;
+    }
     opacity.set(withRepeat(withTiming(0.5, { duration: motion.pulse / 2, easing: PULSE_EASING }), -1, true));
     return () => cancelAnimation(opacity);
   }, [opacity, reduceMotion]);
@@ -48,10 +51,20 @@ export function Skeleton({ width = '100%', height = 12, circle = false, classNam
   );
 }
 
-/** A loading container: hidden from screen readers except one "Loading" label. */
-function SkeletonGroup({ children, className, testID }: { children: ReactNode; className?: string; testID?: string }) {
+/** A loading container: one "Loading…" element for screen readers instead of its bars. */
+export function SkeletonGroup({
+  children,
+  label = 'Loading',
+  className,
+  testID,
+}: {
+  children: ReactNode;
+  label?: string;
+  className?: string;
+  testID?: string;
+}) {
   return (
-    <View accessible accessibilityLabel="Loading" className={className} testID={testID}>
+    <View accessible accessibilityLabel={label} className={className} testID={testID}>
       {children}
     </View>
   );

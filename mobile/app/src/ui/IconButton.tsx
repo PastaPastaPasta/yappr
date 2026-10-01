@@ -1,18 +1,16 @@
-import type { ComponentType } from 'react';
 import type { PressableProps } from 'react-native';
 
 import { cn } from '~/lib-allowlist';
 
 import { ScalePressable } from './ScalePressable';
-import { hitSlopFor, useColors } from './tokens';
-
-type IconComponent = ComponentType<{ size?: number; color?: string }>;
+import { hitSlopFor, useColors, type IconComponent } from './tokens';
 
 const VARIANTS = {
   default: 'active:bg-gray-100 dark:active:bg-gray-900',
   primary: 'active:bg-yappr-50 dark:active:bg-yappr-950',
   danger: 'active:bg-red-50 dark:active:bg-red-950',
 } as const;
+const TINT = { default: 'textSecondary', primary: 'link', danger: 'destructive' } as const;
 
 export interface IconButtonProps extends Omit<PressableProps, 'children'> {
   icon: IconComponent;
@@ -39,8 +37,7 @@ export function IconButton({
   ...props
 }: IconButtonProps) {
   const c = useColors();
-  const tint =
-    color ?? (variant === 'primary' ? c.link : variant === 'danger' ? c.destructive : c.textSecondary);
+  const tint = color ?? c[TINT[variant]];
 
   return (
     <ScalePressable

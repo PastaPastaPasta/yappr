@@ -44,7 +44,13 @@ export interface SensitiveGateProps {
  * content is laid out underneath at full size, invisible and hidden from
  * screen readers, so revealing it never changes the card's height.
  */
-export function SensitiveGate({ active, revealed, onReveal, variant = 'card', children }: SensitiveGateProps) {
+export function SensitiveGate({
+  active,
+  revealed,
+  onReveal,
+  variant = 'card',
+  children,
+}: SensitiveGateProps) {
   if (!active) return <>{children}</>;
 
   const v = VARIANTS[variant];
@@ -60,34 +66,38 @@ export function SensitiveGate({ active, revealed, onReveal, variant = 'card', ch
         {children}
       </View>
       {revealed ? null : (
-      <View
-        testID="sensitive-gate"
-        // Swallows taps, so the card under it doesn't open; only Show acts.
-        onStartShouldSetResponder={() => true}
-        className="absolute inset-0 flex-row items-center justify-center gap-2 overflow-hidden rounded-xl bg-gray-900 px-3 dark:border dark:border-gray-800 dark:bg-gray-950"
-      >
-        <EyeSlashIcon size={v.icon} color={colors.gray400} />
-        <Text variant="caption" numberOfLines={1} className={cn('shrink', v.text)} style={{ color: colors.gray300 }}>
-          <Text variant="caption" className={cn('font-medium', v.text)} style={{ color: colors.gray100 }}>
-            NSFW
-          </Text>
-          {' · The author flagged this post'}
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Show post flagged as NSFW"
-          hitSlop={hitSlopFor(24, 44)}
-          testID="sensitive-show"
-          onPress={onReveal}
-          className={cn('shrink-0 rounded-full bg-gray-100 active:bg-white', v.button)}
+        <View
+          testID="sensitive-gate"
+          // Swallows taps, so the card under it doesn't open; only Show acts.
+          onStartShouldSetResponder={() => true}
+          className="absolute inset-0 flex-row items-center justify-center gap-2 overflow-hidden rounded-xl bg-gray-900 px-3 dark:border dark:border-gray-800 dark:bg-gray-950"
         >
-          <Text variant="buttonSm" style={{ color: colors.gray900 }}>
-            Show
+          <EyeSlashIcon size={v.icon} color={colors.gray400} />
+          <Text
+            variant="caption"
+            numberOfLines={1}
+            className={cn('shrink', v.text)}
+            style={{ color: colors.gray300 }}
+          >
+            <Text variant="caption" className={cn('font-medium', v.text)} style={{ color: colors.gray100 }}>
+              NSFW
+            </Text>
+            {' · The author flagged this post'}
           </Text>
-        </Pressable>
-      </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Show post flagged as NSFW"
+            hitSlop={hitSlopFor(24)}
+            testID="sensitive-show"
+            onPress={onReveal}
+            className={cn('shrink-0 rounded-full bg-gray-100 active:bg-white', v.button)}
+          >
+            <Text variant="buttonSm" style={{ color: colors.gray900 }}>
+              Show
+            </Text>
+          </Pressable>
+        </View>
       )}
     </View>
   );
 }
-

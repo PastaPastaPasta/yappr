@@ -3,9 +3,10 @@ import { Pressable, View, type AccessibilityActionEvent } from 'react-native';
 import { ArrowPathIcon, EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 import { LockClosedIcon } from 'react-native-heroicons/solid';
 
-import { cn, formatNumber, truncateId } from '~/lib-allowlist';
+import { cn, formatNumber, formatTime, truncateId } from '~/lib-allowlist';
 
 import { Avatar } from '../Avatar';
+import { handleOf } from '../handle';
 import { IconButton } from '../IconButton';
 import { LinkText } from '../LinkText';
 import { RichText, type RichTextHandlers } from '../rich-text/RichText';
@@ -13,12 +14,12 @@ import { Skeleton } from '../Skeleton';
 import { Text } from '../Text';
 import { monoFont, tw, useColors, useLargeText } from '../tokens';
 import { useRelativeTime } from '../use-relative-time';
-import { WriteStatus, type WriteStatusProps } from '../WriteStatus';
+import { WriteStatus, writeStatusLinks, type WriteStatusProps } from '../WriteStatus';
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { MediaGrid } from './MediaGrid';
 import { PollCard } from './PollCard';
 import { PostActionBar } from './PostActionBar';
-import { PostStub, stubText } from './PostStub';
+import { DeletedLine, PostStub, stubText } from './PostStub';
 import { PrivatePostPlaceholder } from './PrivatePostPlaceholder';
 import { QuoteEmbed, QuoteSkeleton } from './QuoteEmbed';
 import { SensitiveGate, useSensitiveReveal } from './SensitiveGate';
@@ -65,6 +66,10 @@ export interface PostCardProps {
   poll?: Loadable<CardPoll>;
   /** The quoted post is still loading (shows the quote skeleton). */
   quoteLoading?: boolean;
+  /** The quoted post under the viewer's NSFW mode; defaults to `post.quoted.sensitive`. */
+  quoteNsfwGated?: boolean;
+  /** The quoted author is media-gated for the viewer (their own follow state, not this author's). */
+  quoteMediaGated?: boolean;
   /** The parent's handle, for "Replying to @carol". */
   replyingTo?: string;
   /** The author's name is still resolving: skeleton bars in the header. */
@@ -114,18 +119,19 @@ function RepostBanner({
 
 function Header({
   post,
+  time,
   pending,
   showMore,
   actions,
 }: {
   post: CardPost;
+  time: string;
   pending: boolean;
   showMore: boolean;
   actions: PostCardActions;
 }) {
   const c = useColors();
   const largeText = useLargeText();
-  const time = useRelativeTime(post.createdAt);
   const { author } = post;
 
   const name = pending ? (
@@ -164,18 +170,16 @@ function Header({
 
   return (
     <View className="min-h-6 flex-row items-start gap-1">
+      {/* At accessibility sizes the handle and time wrap under the name (UX_SPEC §6.1). */}
       <View className={cn('flex-1', largeText ? 'gap-0.5' : 'flex-row items-center gap-1')}>
+        {name}
         {largeText ? (
-          <>
-            {name}
-            <View className="flex-row flex-wrap items-center gap-1">
-              {handle}
-              {timeText}
-            </View>
-          </>
+          <View className="flex-row flex-wrap items-center gap-1">
+            {handle}
+            {timeText}
+          </View>
         ) : (
           <>
-            {name}
             {handle}
             {timeText}
           </>
@@ -200,15 +204,22 @@ function Header({
 }
 
 /** The screen-reader summary of a card (UX_SPEC §6.2). */
-export function postAccessibilityLabel(post: CardPost, time: string, extras: { repostedBy?: string; replyingTo?: string }): string {
-  const who = post.author.username ? `@${post.author.username}` : truncateId(post.author.id);
-  const parts = [`${post.author.displayName}, ${who}, ${time}.`];
+function postAccessibilityLabel(
+  post: CardPost,
+  extras: { repostedBy?: string; replyingTo?: string; quoteCovered: boolean },
+): string {
+  // The spoken form ("5 minutes ago"): "5m" reads as "5 meters".
+  const parts = [`${post.author.displayName}, ${handleOf(post.author)}, ${formatTime(post.createdAt)}.`];
   if (extras.repostedBy) parts.push(`Reposted by ${extras.repostedBy}.`);
   if (extras.replyingTo) parts.push(`Replying to @${extras.replyingTo}.`);
   if (post.deleted) parts.push(stubText('deleted', post.kind));
   else if (post.encrypted) parts.push('Private post.');
   else if (post.content) parts.push(`${post.content}.`);
-  if (post.quoted) parts.push(`Quote: ${post.quoted.author.displayName}, ${post.quoted.content}.`);
+  const { quoted } = post;
+  if (quoted) {
+    const hidden = extras.quoteCovered || quoted.encrypted || quoted.deleted;
+    parts.push(`Quote: ${quoted.author.displayName}${hidden ? '' : `, ${quoted.content}`}.`);
+  }
   for (const media of post.media) parts.push(`Image: ${media.alt || 'image'}.`);
   const { replies, reposts, quotes, likes } = post.stats;
   parts.push(`${replies} replies, ${reposts + quotes} reposts, ${likes} likes.`);
@@ -232,6 +243,8 @@ export const PostCard = memo(function PostCard({
   linkPreview,
   poll,
   quoteLoading = false,
+  quoteNsfwGated,
+  quoteMediaGated = false,
   replyingTo,
   authorPending = false,
   canRepost = true,
@@ -265,23 +278,25 @@ export const PostCard = memo(function PostCard({
 
   let body: ReactNode;
   if (post.deleted) {
-    body = (
-      <Text variant="subhead" tone="secondary" className="mt-1 italic">
-        {stubText('deleted', post.kind)}
-      </Text>
-    );
+    body = <DeletedLine kind={post.kind} />;
   } else if (post.encrypted) {
     body = <PrivatePostPlaceholder name={post.author.displayName} onOpenWeb={actions.onOpenPrivate} />;
   } else {
-    const quoteSlot = post.quoted ? (
-      <QuoteEmbed post={post.quoted} nsfwGated={post.quoted.sensitive} mediaGated={mediaGated} onPress={actions.onQuotePress} />
-    ) : !post.quotedPostId ? null : post.quotedRemoved ? (
-      <PostStub state="removed" variant="embed" />
-    ) : quoteLoading ? (
-      <QuoteSkeleton />
-    ) : (
-      <PostStub state="unavailable" variant="embed" />
-    );
+    let quoteSlot: ReactNode = null;
+    if (post.quoted) {
+      quoteSlot = (
+        <QuoteEmbed
+          post={post.quoted}
+          nsfwGated={quoteNsfwGated ?? post.quoted.sensitive}
+          mediaGated={quoteMediaGated}
+          onPress={actions.onQuotePress}
+        />
+      );
+    } else if (post.quotedPostId) {
+      if (post.quotedRemoved) quoteSlot = <PostStub state="removed" variant="embed" />;
+      else if (quoteLoading) quoteSlot = <QuoteSkeleton />;
+      else quoteSlot = <PostStub state="unavailable" variant="embed" />;
+    }
     body = (
       <>
         {post.content ? (
@@ -311,7 +326,12 @@ export const PostCard = memo(function PostCard({
         ) : null}
         {poll ? <PollCard poll={poll} onVotePress={actions.onVotePress} /> : null}
         {quoteSlot}
-        <MediaGrid media={post.media} gated={mediaGated} onReveal={onRevealMedia} onMediaPress={actions.onMediaPress} />
+        <MediaGrid
+          media={post.media}
+          gated={mediaGated}
+          onReveal={onRevealMedia}
+          onMediaPress={actions.onMediaPress}
+        />
         {linkPreview ? (
           <LinkPreviewCard
             preview={linkPreview}
@@ -325,17 +345,36 @@ export const PostCard = memo(function PostCard({
     );
   }
 
-  const a11yActions: { name: string; label: string; run?: () => void }[] = covered
-    ? [{ name: 'show', label: 'Show', run: reveal }]
-    : [
+  // The card is one screen-reader element, so everything tappable inside it
+  // that is actually shown is offered as a custom action (UX_SPEC §6.2).
+  const a11yActions: { name: string; label: string; run?: () => void }[] = [];
+  if (covered) {
+    a11yActions.push({ name: 'show', label: 'Show', run: reveal });
+  } else {
+    if (showActionBar) {
+      a11yActions.push(
         { name: 'reply', label: 'Reply', run: canReply ? actions.onReply : undefined },
         { name: 'repost', label: 'Repost', run: canRepost ? actions.onRepost : undefined },
         { name: 'like', label: post.viewer?.liked ? 'Unlike' : 'Like', run: actions.onLike },
-        { name: 'bookmark', label: post.viewer?.bookmarked ? 'Remove bookmark' : 'Bookmark', run: canBookmark ? actions.onBookmark : undefined },
+        {
+          name: 'bookmark',
+          label: post.viewer?.bookmarked ? 'Remove bookmark' : 'Bookmark',
+          run: canBookmark ? actions.onBookmark : undefined,
+        },
         { name: 'share', label: 'Share', run: actions.onShare },
-        { name: 'profile', label: 'Open profile', run: actions.onAuthorPress },
-        { name: 'more', label: 'More', run: actions.onMore },
-      ];
+      );
+    }
+    if (variant === 'optimistic' && writeStatus) {
+      for (const link of writeStatusLinks(writeStatus))
+        a11yActions.push({ name: link.label, label: link.label, run: link.onPress });
+    }
+    if (mediaGated && post.media.length > 0)
+      a11yActions.push({ name: 'showMedia', label: 'Show media', run: onRevealMedia });
+  }
+  a11yActions.push(
+    { name: 'profile', label: 'Open profile', run: actions.onAuthorPress },
+    { name: 'more', label: 'More', run: variant === 'compact' ? undefined : actions.onMore },
+  );
   const available = a11yActions.filter((a) => a.run);
   const onAccessibilityAction = (e: AccessibilityActionEvent) => {
     if (e.nativeEvent.actionName === 'activate') actions.onPress?.();
@@ -345,17 +384,21 @@ export const PostCard = memo(function PostCard({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={covered ? 'NSFW post, hidden' : postAccessibilityLabel(post, time, { repostedBy: reposter, replyingTo })}
+      accessibilityLabel={
+        covered
+          ? 'NSFW post, hidden'
+          : postAccessibilityLabel(post, {
+              repostedBy: reposter,
+              replyingTo,
+              quoteCovered: (quoteNsfwGated ?? post.quoted?.sensitive) === true,
+            })
+      }
       accessibilityActions={available.map(({ name, label }) => ({ name, label }))}
       onAccessibilityAction={onAccessibilityAction}
       onPress={actions.onPress}
       onLongPress={actions.onLongPress}
       testID={`post-card-${post.id}`}
-      className={cn(
-        'px-4 pb-1 pt-3 active:bg-gray-50 dark:active:bg-gray-950',
-        variant !== 'compact' && cn('border-b', tw.border),
-        variant === 'compact' && 'pb-3',
-      )}
+      className={cn('px-4 pt-3', tw.pressed, variant === 'compact' ? 'pb-3' : cn('border-b pb-1', tw.border))}
     >
       {post.repostedBy ? (
         <RepostBanner repostedBy={post.repostedBy} viewerId={viewerId} onPress={actions.onReposterPress} />
@@ -369,7 +412,13 @@ export const PostCard = memo(function PostCard({
           testID={`avatar-${post.id}`}
         />
         <View className="min-w-0 flex-1">
-          <Header post={post} pending={authorPending} showMore={variant !== 'compact' && !!actions.onMore} actions={actions} />
+          <Header
+            post={post}
+            time={time}
+            pending={authorPending}
+            showMore={variant !== 'compact' && !!actions.onMore}
+            actions={actions}
+          />
           {replyingTo ? (
             <Text variant="subhead" tone="secondary" numberOfLines={1}>
               Replying to{' '}

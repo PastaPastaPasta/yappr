@@ -10,14 +10,8 @@ import {
 } from '~/lib-allowlist';
 
 import { Text } from '../Text';
-import { monoFont, tones, useIsDark } from '../tokens';
+import { monoFont, tones } from '../tokens';
 import { parseContent, splitUrl, type ContentPart, type InlinePart } from './parse';
-
-/** The `code` token (UX_SPEC §1.2), pink darkened for AA in light mode. */
-const CODE = {
-  light: { backgroundColor: '#f3f4f6', color: '#be185d' },
-  dark: { backgroundColor: '#1f2937', color: '#f472b6' },
-};
 
 export interface RichTextHandlers {
   /** The DPNS label, normalized (lowercase, no `.dash`). */
@@ -96,7 +90,6 @@ export const RichText = memo(function RichText({
   onTextLayout,
   testID,
 }: RichTextProps) {
-  const dark = useIsDark();
   const parts = useMemo(() => {
     const parsed = parseContent(text);
     return hideFirstUrl ? withoutFirstUrl(parsed) : parsed;
@@ -116,19 +109,32 @@ export const RichText = memo(function RichText({
       }
       case 'hashtag':
         return (
-          <LinkSpan key={key} onPress={onHashtagPress && (() => onHashtagPress(hashtagDisplayToStorage(part.value, tagMaxLength)))}>
+          <LinkSpan
+            key={key}
+            onPress={
+              onHashtagPress && (() => onHashtagPress(hashtagDisplayToStorage(part.value, tagMaxLength)))
+            }
+          >
             {part.value}
           </LinkSpan>
         );
       case 'cashtag':
         return (
-          <LinkSpan key={key} onPress={onCashtagPress && (() => onCashtagPress(cashtagDisplayToStorage(part.value, tagMaxLength)))}>
+          <LinkSpan
+            key={key}
+            onPress={
+              onCashtagPress && (() => onCashtagPress(cashtagDisplayToStorage(part.value, tagMaxLength)))
+            }
+          >
             {`$${part.value.slice(1).toUpperCase()}`}
           </LinkSpan>
         );
       case 'mention':
         return (
-          <LinkSpan key={key} onPress={onMentionPress && (() => onMentionPress(normalizeDpnsUsername(part.value.slice(1))))}>
+          <LinkSpan
+            key={key}
+            onPress={onMentionPress && (() => onMentionPress(normalizeDpnsUsername(part.value.slice(1))))}
+          >
             {part.value}
           </LinkSpan>
         );
@@ -156,9 +162,14 @@ export const RichText = memo(function RichText({
         }
         if (part.type === 'code') {
           return (
-            <Text key={i} style={[monoFont, { fontSize: 14 }, dark ? CODE.dark : CODE.light]}>
+            // The `code` token (UX_SPEC §1.2): pink darkened to 700 for AA in light mode.
+            <RNText
+              key={i}
+              className="bg-gray-100 text-pink-700 dark:bg-gray-800 dark:text-pink-400"
+              style={[monoFont, { fontSize: 14 }]}
+            >
               {part.value}
-            </Text>
+            </RNText>
           );
         }
         return inline(part, i);

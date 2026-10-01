@@ -7,7 +7,7 @@ import { cn } from '~/lib-allowlist';
 
 import { Button } from '../Button';
 import { Text } from '../Text';
-import { tw, useColors } from '../tokens';
+import { motion, tw, useColors } from '../tokens';
 import type { CardMedia } from './types';
 
 const VIDEO = 16 / 9;
@@ -32,18 +32,32 @@ export function MediaGatePlaceholder({ onReveal, className }: { onReveal?: () =>
       accessibilityActions={onReveal ? [{ name: 'activate', label: 'Show' }] : undefined}
       onAccessibilityAction={onReveal}
       testID="media-gate"
-      className={cn('aspect-video w-full items-center justify-center gap-2 rounded-xl p-4', tw.bgMuted, className)}
+      className={cn(
+        'aspect-video w-full items-center justify-center gap-2 rounded-xl p-4',
+        tw.bgMuted,
+        className,
+      )}
     >
       <PhotoIcon size={32} color={c.textSecondary} />
       <Text variant="subhead" tone="secondary" className="text-center">
         Media from someone you don&apos;t follow
       </Text>
-      {onReveal ? <Button label="Show" variant="secondary" size="sm" onPress={onReveal} testID="media-gate-show" /> : null}
+      {onReveal ? (
+        <Button label="Show" variant="secondary" size="sm" onPress={onReveal} testID="media-gate-show" />
+      ) : null}
     </View>
   );
 }
 
-function MediaCell({ media, onPress, className }: { media: CardMedia; onPress?: () => void; className?: string }) {
+function MediaCell({
+  media,
+  onPress,
+  className,
+}: {
+  media: CardMedia;
+  onPress?: () => void;
+  className?: string;
+}) {
   const c = useColors();
   const [failedUrl, setFailedUrl] = useState<string>();
   const failed = failedUrl === media.url;
@@ -67,7 +81,7 @@ function MediaCell({ media, onPress, className }: { media: CardMedia; onPress?: 
           source={{ uri: media.thumbnail ?? media.url }}
           style={{ flex: 1 }}
           contentFit="cover"
-          transition={150}
+          transition={motion.fast}
           recyclingKey={media.url}
           onError={() => setFailedUrl(media.url)}
           accessible={false}

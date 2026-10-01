@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { Alert } from 'react-native';
+import { AccessibilityInfo, Alert } from 'react-native';
 import { EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 
 import { Avatar, svgFromDataUri } from './Avatar';
@@ -98,7 +98,9 @@ describe('Tabs', () => {
 
   it('does not re-select the active chip', () => {
     const onChange = jest.fn();
-    render(<FilterChips options={[{ value: 'all', label: 'All', count: 120 }]} value="all" onChange={onChange} />);
+    render(
+      <FilterChips options={[{ value: 'all', label: 'All', count: 120 }]} value="all" onChange={onChange} />,
+    );
     fireEvent.press(screen.getByRole('button', { name: /All/ }));
     expect(onChange).not.toHaveBeenCalled();
     expect(screen.getByText('99+')).toBeTruthy();
@@ -107,7 +109,15 @@ describe('Tabs', () => {
 
 describe('TextField', () => {
   it('shows the error and the counter near the limit', () => {
-    render(<TextField label="Bio" value={'x'.repeat(25)} maxLength={30} error="Too long" onChangeText={jest.fn()} />);
+    render(
+      <TextField
+        label="Bio"
+        value={'x'.repeat(25)}
+        maxLength={30}
+        error="Too long"
+        onChangeText={jest.fn()}
+      />,
+    );
     expect(screen.getByText('Too long')).toBeTruthy();
     expect(screen.getByText('25 / 30')).toBeTruthy();
   });
@@ -138,7 +148,9 @@ describe('badges and chips', () => {
 
   it('names the network and engine state, and hides on mainnet', () => {
     const { rerender } = render(<NetworkChip network="devnet" state="booting" onPress={jest.fn()} />);
-    expect(screen.getByRole('button', { name: 'Devnet. Data may be reset. Engine connecting.' })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Devnet. Data may be reset. Engine connecting.' }),
+    ).toBeTruthy();
     expect(screen.getByTestId('network-dot-booting')).toBeTruthy();
     rerender(<NetworkChip network="mainnet" state="ready" />);
     expect(screen.queryByTestId('network-chip')).toBeNull();
@@ -201,10 +213,29 @@ describe('WriteStatus', () => {
     [{ state: 'failed' } as const, "Couldn't post", ['Retry', 'Edit']],
     [{ state: 'partial', posted: 2, total: 5 } as const, 'Posted 2 of 5', ['Retry the rest']],
   ])('%o reads "%s" with %o', (status, text, links) => {
-    render(<WriteStatus status={status} onCheckAgain={jest.fn()} onRetry={jest.fn()} onEdit={jest.fn()} onRetryRest={jest.fn()} />);
+    render(
+      <WriteStatus
+        status={status}
+        onCheckAgain={jest.fn()}
+        onRetry={jest.fn()}
+        onEdit={jest.fn()}
+        onRetryRest={jest.fn()}
+      />,
+    );
     expect(screen.getByText(text)).toBeTruthy();
     for (const link of links) expect(screen.getByRole('button', { name: link })).toBeTruthy();
     expect(screen.queryAllByRole('button')).toHaveLength(links.length);
+  });
+
+  it('announces state changes, not its first appearance', () => {
+    const announce = jest
+      .spyOn(AccessibilityInfo, 'announceForAccessibility')
+      .mockImplementation(() => undefined);
+    const { rerender } = render(<WriteStatus status={{ state: 'posting' }} />);
+    expect(announce).not.toHaveBeenCalled();
+    rerender(<WriteStatus status={{ state: 'unconfirmed' }} />);
+    expect(announce).toHaveBeenCalledWith('Not confirmed yet');
+    announce.mockRestore();
   });
 
   it('runs the retry action', () => {
@@ -220,7 +251,14 @@ describe('dialogs', () => {
     const onConfirm = jest.fn();
     const onClose = jest.fn();
     const { rerender } = render(
-      <ConfirmDialog isOpen title="Delete post?" message="Gone for good." confirmText="Delete" onConfirm={onConfirm} onClose={onClose} />,
+      <ConfirmDialog
+        isOpen
+        title="Delete post?"
+        message="Gone for good."
+        confirmText="Delete"
+        onConfirm={onConfirm}
+        onClose={onClose}
+      />,
     );
     fireEvent.press(screen.getByRole('button', { name: 'Delete' }));
     fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
@@ -228,7 +266,15 @@ describe('dialogs', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
 
     rerender(
-      <ConfirmDialog isOpen isLoading title="Delete post?" message="Gone for good." confirmText="Delete" onConfirm={onConfirm} onClose={onClose} />,
+      <ConfirmDialog
+        isOpen
+        isLoading
+        title="Delete post?"
+        message="Gone for good."
+        confirmText="Delete"
+        onConfirm={onConfirm}
+        onClose={onClose}
+      />,
     );
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
     fireEvent.press(screen.getByTestId('confirm-dialog-scrim'));
@@ -257,7 +303,12 @@ describe('toasts', () => {
     jest.useFakeTimers();
     const onPress = jest.fn();
     render(
-      <SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 47, left: 0, right: 0, bottom: 34 } }}>
+      <SafeAreaProvider
+        initialMetrics={{
+          frame: { x: 0, y: 0, width: 390, height: 844 },
+          insets: { top: 47, left: 0, right: 0, bottom: 34 },
+        }}
+      >
         <ToastHost />
       </SafeAreaProvider>,
     );
@@ -320,7 +371,9 @@ describe('UserRow', () => {
 
   it('follows from the row, and shows no button on your own row', () => {
     const onFollowPress = jest.fn();
-    const { rerender } = render(<UserRow user={user} followsYou onFollowPress={onFollowPress} testID="row" />);
+    const { rerender } = render(
+      <UserRow user={user} followsYou onFollowPress={onFollowPress} testID="row" />,
+    );
     expect(screen.getByText('Follows you')).toBeTruthy();
     expect(screen.getByText('Follow back')).toBeTruthy();
     fireEvent.press(screen.getByTestId('row-follow'));

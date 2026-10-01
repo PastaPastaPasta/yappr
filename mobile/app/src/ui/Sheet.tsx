@@ -9,7 +9,7 @@ import { BackHandler } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from './Text';
-import { colors, useColors, useIsDark } from './tokens';
+import { useColors, useIsDark } from './tokens';
 
 export interface SheetProps {
   open: boolean;
@@ -74,10 +74,14 @@ export function Sheet({ open, onClose, title, children, dismissible = true, test
         borderWidth: dark ? 1 : 0,
         borderColor: c.border,
       }}
-      handleIndicatorStyle={{ backgroundColor: dark ? colors.gray600 : colors.gray300 }}
+      handleIndicatorStyle={{ backgroundColor: c.textDecorative }}
     >
       <BottomSheetView
         testID={testID}
+        accessibilityViewIsModal
+        onAccessibilityEscape={() => {
+          if (dismissible) ref.current?.dismiss();
+        }}
         style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: insets.bottom + 16, gap: 12 }}
       >
         {title ? (

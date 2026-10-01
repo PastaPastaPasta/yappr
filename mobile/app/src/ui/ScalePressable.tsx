@@ -42,7 +42,8 @@ export function ScalePressable({
           onPressIn?.(e);
         }}
         onPressOut={(e) => {
-          if (animate) scale.set(withTiming(1, { duration: motion.fast }));
+          // Always settle back, even if `disabled` flipped mid-press.
+          scale.set(withTiming(1, { duration: motion.fast }));
           onPressOut?.(e);
         }}
         {...props}

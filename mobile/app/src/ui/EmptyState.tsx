@@ -1,12 +1,10 @@
-import type { ComponentType, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { View } from 'react-native';
 import { ExclamationTriangleIcon, InboxIcon } from 'react-native-heroicons/outline';
 
 import { Button } from './Button';
 import { Text } from './Text';
-import { useColors } from './tokens';
-
-type IconComponent = ComponentType<{ size?: number; color?: string }>;
+import { useColors, type IconComponent } from './tokens';
 
 export interface EmptyStateProps {
   title: string;

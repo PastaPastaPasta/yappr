@@ -6,7 +6,7 @@ import { cn } from '~/lib-allowlist';
 
 import { IconButton } from './IconButton';
 import { Text } from './Text';
-import { useColors } from './tokens';
+import { tw, useColors } from './tokens';
 
 /** The counter shows once the text is this close to `maxLength` (UX_SPEC §2.11). */
 const COUNTER_WITHIN = 20;
@@ -54,20 +54,20 @@ export function TextField({
   const line = BODY_LINE_HEIGHT * useWindowDimensions().fontScale;
   const length = value?.length ?? 0;
   const showCounter = maxLength !== undefined && maxLength - length <= COUNTER_WITHIN;
+  let borderColor: string = tw.borderStrong;
+  if (error) borderColor = 'border-red-600 dark:border-red-400';
+  else if (focused) borderColor = 'border-yappr-500';
 
   return (
     <View className={cn('gap-1.5', className)}>
       {label ? <Text variant="subheadStrong">{label}</Text> : null}
       <View
         className={cn(
-          'flex-row items-center rounded-lg bg-white dark:bg-neutral-900',
+          'flex-row items-center rounded-lg',
+          tw.bg,
           // A 2 pt border with 11 pt padding keeps the text where the 1 pt state has it.
           focused || error ? 'border-2 px-[11px]' : 'border px-3',
-          error
-            ? 'border-red-600 dark:border-red-400'
-            : focused
-              ? 'border-yappr-500'
-              : 'border-gray-300 dark:border-gray-700',
+          borderColor,
           !editable && 'opacity-50',
         )}
       >
@@ -96,7 +96,13 @@ export function TextField({
           className="flex-1 text-gray-900 dark:text-gray-100"
           style={
             multiline
-              ? { fontSize: 16, minHeight: line * 3 + 20, maxHeight: line * 8 + 20, paddingVertical: 10, textAlignVertical: 'top' }
+              ? {
+                  fontSize: 16,
+                  minHeight: line * 3 + 20,
+                  maxHeight: line * 8 + 20,
+                  paddingVertical: 10,
+                  textAlignVertical: 'top',
+                }
               : { fontSize: 16, minHeight: Math.max(42, line + 18), paddingVertical: 0 }
           }
         />

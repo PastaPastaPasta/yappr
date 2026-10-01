@@ -80,7 +80,13 @@ export function ToastHost() {
   return (
     <View
       pointerEvents="box-none"
-      style={{ position: 'absolute', top: insets.top + NAV_BAR_HEIGHT + 8, left: 16, right: 16, alignItems: 'center' }}
+      style={{
+        position: 'absolute',
+        top: insets.top + NAV_BAR_HEIGHT + 8,
+        left: 16,
+        right: 16,
+        alignItems: 'center',
+      }}
     >
       {current ? <ToastView key={current.id} item={current} /> : null}
     </View>
