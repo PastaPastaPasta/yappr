@@ -7,6 +7,7 @@ import toast from 'react-hot-toast'
 import socialContractV2 from '@/contracts/yappr-social-contract-v2.json'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
+import socialContractV11 from '@/contracts/yappr-social-contract-v11.json'
 import { getContractTopology } from '@/lib/constants'
 import { contentLimits } from '@/lib/contract-topology'
 import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
@@ -16,6 +17,7 @@ const CONTRACTS_BY_TOPOLOGY = {
   v2: socialContractV2,
   v9: socialContractV9,
   v10: socialContractV10,
+  v11: socialContractV11,
 }
 const socialContract = CONTRACTS_BY_TOPOLOGY[getContractTopology()]
 const dataContract = {

@@ -88,6 +88,12 @@ function getNotificationUrl(notification: Notification): string | null {
  * doctype, and replies that carry a thread root.
  */
 function notificationMessage(notification: Notification): string {
+  // v11 aggregated like: "Alice and 3 others liked your post".
+  const others = (notification.likerCount ?? 1) - 1
+  if (notification.type === 'like' && others > 0) {
+    const verb = notification.targetKind === 'reply' ? 'liked your reply' : 'liked your post'
+    return `and ${others} ${others === 1 ? 'other' : 'others'} ${verb}`
+  }
   if (notification.targetKind === 'reply') {
     if (notification.type === 'like') return 'liked your reply'
     if (notification.type === 'reply') return 'replied to your reply'
@@ -368,9 +374,12 @@ function NotificationsPage() {
                             </Link>
                             {' '}
                             {notificationMessage(notification)}
-                            <span className="text-gray-500 ml-2">
-                              {formatTimeCompact(notification.createdAt)}
-                            </span>
+                            {/* A v11 like's time is only when this device noticed it: not shown. */}
+                            {!notification.timeless && (
+                              <span className="text-gray-500 ml-2">
+                                {formatTimeCompact(notification.createdAt)}
+                              </span>
+                            )}
                           </p>
 
                           {/* Action buttons for private feed notifications */}

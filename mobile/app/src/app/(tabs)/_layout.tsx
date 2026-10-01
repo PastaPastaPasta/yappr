@@ -36,8 +36,9 @@ const badge = (count: number | undefined) => (count ? count : undefined);
 
 /**
  * ADR-001 E4 / UX_SPEC §3.1: five tabs with labels, Notifications promoted
- * from the web's Menu sheet. Each tab is its own stack (the group layouts),
- * so this navigator shows no header of its own.
+ * from the web's Menu sheet. A JS tab bar with Heroicons and web-matching
+ * styling (lead decision, overriding UX_SPEC §3.1's native tabs). Each tab is
+ * its own stack (the shared group layout), so this navigator has no header.
  */
 export default function TabLayout() {
   const dark = useIsDark();
@@ -68,7 +69,7 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="messages"
+        name="(messages)"
         options={{
           title: 'Messages',
           tabBarIcon: tabIcon(EnvelopeOutline, EnvelopeSolid),

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { logger } from '@/lib/logger'
 import type { Post } from '@/lib/types'
 import { fetchReplyParents, type MissingReplyParent } from '@/lib/feed/resolve-reply-parents'
+import { withoutHiddenTombstones } from '@/lib/feed/hidden-tombstones'
 import { replyToPost } from '@/lib/services/post-service'
 
 const PAGE_SIZE = 50
@@ -57,7 +58,8 @@ export function useProfileReplies(userId: string | null, enrichProgressively: (p
         startAfter: append ? state.cursor : undefined,
       })
       if (state.cancelled) return
-      const next = result.documents.map(replyToPost)
+      // Paged on the cursor, so dropping tombstones here cannot end the list early.
+      const next = withoutHiddenTombstones(result.documents.map(replyToPost))
       state.cursor = result.nextCursor
       setHasMore(!!result.nextCursor)
       const known = new Set(state.posts.map(post => post.id))

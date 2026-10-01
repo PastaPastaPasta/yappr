@@ -22,7 +22,7 @@ export interface ContractBundle {
 }
 
 /** Networks with a snapshot under `./bundled/`. */
-const BUNDLED_NETWORKS: readonly string[] = ['devnet-bonsia-g1', 'testnet'];
+const BUNDLED_NETWORKS: readonly string[] = ['devnet-sakura', 'testnet'];
 
 /** The bundle slot for a network: `devnet-<name>`, or the network's name. */
 export function bundleKey(network: AppNetwork, devnetName?: string): string {

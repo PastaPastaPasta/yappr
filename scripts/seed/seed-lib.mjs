@@ -55,8 +55,15 @@ export const REPORT_FILE = join(REPO_ROOT, '.seed-report.local.json');
 
 export const YAPP_TOKEN_POSITION = 0;
 
-/** The social contract the seeder writes (v10), read once: every limit and cost below comes from it. */
-const SOCIAL_CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v10.json'), 'utf8'));
+/**
+ * The social topologies the seeder writes: v10 and v11. v11 (docs/SOCIAL_V11.md) keeps every
+ * create shape the seeder writes; it differs in deletes (tombstones), unlikes and moderation,
+ * which the seeder never does. Both take their profiles from DashPay plus `yapprProfile`.
+ */
+export const SEEDED_TOPOLOGIES = ['v10', 'v11'];
+/** The social contract the seeder writes (the configured topology's file), read once: every limit and cost below comes from it. */
+const SOCIAL_CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT,
+  `contracts/yappr-social-contract-${SEEDED_TOPOLOGIES.includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY')) ? envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') : 'v10'}.json`), 'utf8'));
 const SOCIAL_DOCUMENT_SCHEMAS = SOCIAL_CONTRACT.documentSchemas;
 
 /**
@@ -105,17 +112,17 @@ export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7
  * contract (NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID) before it.
  */
 export function profileContractId() {
-  if (envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') === 'v10') return DASHPAY_CONTRACT_ID;
+  if (SEEDED_TOPOLOGIES.includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY'))) return DASHPAY_CONTRACT_ID;
   const id = envValue('NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID');
   if (!id) throw new Error('NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID missing from the environment and .env.devnet');
   return id;
 }
 
-// ---- Document shapes (social v10) ---------------------------------------------
+// ---- Document shapes (social v10/v11) -----------------------------------------
 //
-// The seeder writes to the devnet social contract, which is v10
-// (contracts/yappr-social-contract-v10.json, 4.2.0-beta.7); nothing else exists
-// to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
+// The seeder writes to the devnet social contract, v10
+// (contracts/yappr-social-contract-v10.json) or v11 (-v11.json, the same create
+// shapes); nothing else exists to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
 // that is an ABSENT property: an untagged post OMITS `hashtag`, and a like of
 // it OMITS `like.hashtag` too — a `where` entry treats both-absent as
 // agreement, while sending `''` is consensus mismatch 40127. The like's
@@ -128,8 +135,6 @@ export function profileContractId() {
 // and their token costs are `optional` with the contract owner offering the
 // gas — see `actionFeeFor` / `paymentInfo` below.
 
-/** The topology the seeded contract must have (`.env.devnet`). */
-export const SEEDED_TOPOLOGY = 'v10';
 /** `post.hashtag` / `like.hashtag` maxLength (the ranked key-size ceiling). */
 export const HASHTAG_MAX = SOCIAL_DOCUMENT_SCHEMAS.post.properties.hashtag.maxLength;
 
@@ -140,8 +145,8 @@ export const HASHTAG_MAX = SOCIAL_DOCUMENT_SCHEMAS.post.properties.hashtag.maxLe
  */
 export function requireSeededTopology() {
   const configured = envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY');
-  if (configured !== SEEDED_TOPOLOGY) {
-    throw new Error(`NEXT_PUBLIC_CONTRACT_TOPOLOGY is ${configured ?? 'unset'}; the seeder only writes ${SEEDED_TOPOLOGY} documents`);
+  if (!SEEDED_TOPOLOGIES.includes(configured)) {
+    throw new Error(`NEXT_PUBLIC_CONTRACT_TOPOLOGY is ${configured ?? 'unset'}; the seeder only writes ${SEEDED_TOPOLOGIES.join('/')} documents`);
   }
 }
 

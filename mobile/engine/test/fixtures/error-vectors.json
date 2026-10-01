@@ -1,0 +1,715 @@
+{
+  "$comment": "classify() vectors (ENGINE.md 7.3). Messages are quoted from rs-dpp and the SDK as pinned in lib/error-utils.test.ts. userMessage is categorizeError() under the testnet build (topology v2). When web adds a predicate, add its vector here in the same PR.",
+  "vectors": [
+    {
+      "name": "moderation ban (41107 prose)",
+      "error": {
+        "message": "Identity 9t2eeU6CjzJbpckxXWhgaApbdRB4dVDHFNfcEum9KS2H is banned on contract 8Xv3QrLm2nKqP5wYtZcVbNdFgHjJkLpRsTuWxYzAbCdE and can not act on its documents"
+      },
+      "expect": {
+        "code": "MODERATION_BARRED",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Your account has been banned or suspended here by a moderator, so this action isn't allowed right now."
+      }
+    },
+    {
+      "name": "moderation suspension (41108 code only)",
+      "error": {
+        "name": "Protocol",
+        "message": "Failed to broadcast: Protocol error: consensus refusal",
+        "code": 41108
+      },
+      "expect": {
+        "code": "MODERATION_BARRED",
+        "consensusCode": 41108,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Your account has been banned or suspended here by a moderator, so this action isn't allowed right now."
+      }
+    },
+    {
+      "name": "no moderation team seated (41200)",
+      "error": {
+        "message": "Documents of type post on contract 8Xv3 can not be used until a moderation team is seated"
+      },
+      "expect": {
+        "code": "MODERATION_NOT_SEATED",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "This opens once the community elects its moderation team. Nothing was posted."
+      }
+    },
+    {
+      "name": "maxBytes exceeded (10421)",
+      "error": {
+        "message": "Property content is 2140 bytes in UTF-8, over its maxBytes of 2000"
+      },
+      "expect": {
+        "code": "TOO_LONG",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "This is too long for the network once emoji and special characters are counted. Shorten it and try again."
+      }
+    },
+    {
+      "name": "distinctFrom violated (10419, module-private predicate)",
+      "error": {
+        "message": "Document type \"follow\" property \"followingId\" must differ from \"$ownerId\", but the two values are equal"
+      },
+      "expect": {
+        "code": "RULE_VIOLATION",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "The network doesn't allow this combination: you can't do this to yourself."
+      }
+    },
+    {
+      "name": "distinctFrom violated (10419 code only)",
+      "error": {
+        "name": "Protocol",
+        "message": "Failed to broadcast: Protocol error: consensus refusal",
+        "code": 10419
+      },
+      "expect": {
+        "code": "RULE_VIOLATION",
+        "consensusCode": 10419,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "The network doesn't allow this combination: you can't do this to yourself."
+      }
+    },
+    {
+      "name": "propertyConstraints rule broken (10422)",
+      "error": {
+        "message": "A document of type \"listing\" breaks its propertyConstraints rule \"minPrice <= maxPrice\": 30 > 20"
+      },
+      "expect": {
+        "code": "RULE_VIOLATION",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "The network doesn't allow this combination of values. Check what you entered and try again."
+      }
+    },
+    {
+      "name": "once-per-identity grant already claimed (40722)",
+      "error": {
+        "message": "Token claim error: identity '9t2e' already claimed the once-per-identity distribution of token 'AwyQ' at 1790000000000"
+      },
+      "expect": {
+        "code": "ALREADY_CLAIMED",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "You've already claimed this — it can only be claimed once per account."
+      }
+    },
+    {
+      "name": "referenced document too young (40142, module-private predicate)",
+      "error": {
+        "message": "referenced document 8Xv3 for path offer.commitmentId does not meet the reference's requirement minimumAgeBlocks 10"
+      },
+      "expect": {
+        "code": "PARENT_TOO_YOUNG",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "What this depends on was only just published. Wait a minute and try again."
+      }
+    },
+    {
+      "name": "referenced document too young (40142 code only)",
+      "error": {
+        "name": "Protocol",
+        "message": "Failed to broadcast: Protocol error: consensus refusal",
+        "code": 40142
+      },
+      "expect": {
+        "code": "PARENT_TOO_YOUNG",
+        "consensusCode": 40142,
+        "outcome": "refused",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "What this depends on was only just published. Wait a minute and try again."
+      }
+    },
+    {
+      "name": "gas sponsor short (40222)",
+      "error": {
+        "message": "The contract owner 9t2e sponsoring the gas has balance 1200, but 38000 is required"
+      },
+      "expect": {
+        "code": "FEE_UNPAYABLE",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Yappr couldn't cover the network fee for this right now. Try again, or switch to paying in credits."
+      }
+    },
+    {
+      "name": "gas payer not allowed (40129)",
+      "error": {
+        "message": "Document create of type post asks for gas fees paid by contract owner, but the document type only offers document owner"
+      },
+      "expect": {
+        "code": "FEE_UNPAYABLE",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "This action can't be paid for right now. Nothing was charged — try again later."
+      }
+    },
+    {
+      "name": "moderators fee share mismatch (40139)",
+      "error": {
+        "message": "Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 40000000, which is not the seated moderation charter's 60% share of it"
+      },
+      "expect": {
+        "code": "FEE_SHARE_MISMATCH",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "The moderator fee share didn't match what the seated moderation charter takes. Nothing was posted — try again at the full fee."
+      }
+    },
+    {
+      "name": "document expired (40140)",
+      "error": {
+        "message": "Document 8NAdmqQnFw2zcMUe1oWbGnUbA8Q6rj3n3EWtQ5B4Qz1F of type \"savedAddress\" on contract FE6sjAHVyfzQrz9pcEBgbj5wHgEPLLfLuWWnYufuTGFr expired at 1790294008769, its $createdAt plus the type's time to live, which block time 1790294010000 is not before"
+      },
+      "expect": {
+        "code": "EXPIRED",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "This has expired and can no longer be changed. The network removes it shortly."
+      }
+    },
+    {
+      "name": "document expired by code, worded like a timeout (40140)",
+      "error": {
+        "name": "Protocol",
+        "message": "Failed to broadcast: Protocol error: document expired",
+        "code": 40140
+      },
+      "expect": {
+        "code": "EXPIRED",
+        "consensusCode": 40140,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "This has expired and can no longer be changed. The network removes it shortly."
+      }
+    },
+    {
+      "name": "contest full (40141)",
+      "error": {
+        "message": "The vote poll ContestedDocumentResourceVotePoll { contract_id: GWRS, document_type_name: domain, index_name: parentNameAndLabel } already has 1000 contenders, the most a contest accepts"
+      },
+      "expect": {
+        "code": "CONTEST",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Too many people are already competing for this, so the contest is closed to new entries."
+      }
+    },
+    {
+      "name": "contest not paid for (40114)",
+      "error": {
+        "message": "Contest for document 8NAdmqQnFw2zcMUe1oWbGnUbA8Q6rj3n3EWtQ5B4Qz1F was not paid for, needs payment of 20000000000 Credits"
+      },
+      "expect": {
+        "code": "CONTEST",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Joining this contest now costs more than was offered, because others joined first. Try again to pay the current amount."
+      }
+    },
+    {
+      "name": "contested documents before epoch 4 (10418)",
+      "error": {
+        "message": "Contested documents are not allowed until epoch 4. Current epoch is 0"
+      },
+      "expect": {
+        "code": "CONTEST",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "This network does not accept contested names yet. Try again later, or pick a name that is not contested."
+      }
+    },
+    {
+      "name": "fee multiplier not tolerated (40134)",
+      "error": {
+        "message": "Document create of type post agreed to an action fee priced with a fee multiplier of 1000 permille and at most 10% more, but the fee multiplier is 1500 permille"
+      },
+      "expect": {
+        "code": "FEE_CHANGED",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "The network's fee level changed while this was being sent. Nothing was posted — try again."
+      }
+    },
+    {
+      "name": "nonce already present at tip (40204), not an already-exists",
+      "error": {
+        "message": "Identity E2m5VDqxnJ2hyPp8u9MwMjaaCqFLE2Mfq7ScoGpEe5eN is trying to set an invalid identity nonce. The current identity nonce is 133, we are setting 133, error is nonce already present at tip"
+      },
+      "expect": {
+        "code": "NONCE_CONFLICT",
+        "consensusCode": null,
+        "outcome": "unknown",
+        "retryable": false,
+        "state": "unconfirmed",
+        "userMessage": "Another write from your account went out at the same moment, so this one was not saved. Try again."
+      }
+    },
+    {
+      "name": "create not recorded (lib CREATE_NOT_RECORDED_ERROR)",
+      "error": {
+        "message": "This was not saved: the network used its place without recording it. Check, then try again."
+      },
+      "expect": {
+        "code": "NOT_RECORDED",
+        "consensusCode": null,
+        "outcome": "not-recorded",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "This was not saved: the network used its place without recording it. Check, then try again."
+      }
+    },
+    {
+      "name": "earlier write still pending (lib PENDING_WRITE_ERROR)",
+      "error": {
+        "message": "An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again."
+      },
+      "expect": {
+        "code": "PENDING_WRITE",
+        "consensusCode": null,
+        "outcome": "not-sent",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again."
+      }
+    },
+    {
+      "name": "nonce store unavailable (lib NONCE_STORE_ERROR)",
+      "error": {
+        "message": "This browser's storage is full or blocked, so this was not sent. Free up site storage, then try again."
+      },
+      "expect": {
+        "code": "STORAGE",
+        "consensusCode": null,
+        "outcome": "not-sent",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "This browser's storage is full or blocked, so this was not sent. Free up site storage, then try again."
+      }
+    },
+    {
+      "name": "action fee agreement missing (40132)",
+      "error": {
+        "message": "Document create of type post charges an action fee of 1000 credits to the owner and 500 credits to the moderators (fixed pricing), and the transition carries no action fee agreement"
+      },
+      "expect": {
+        "code": "APP_OUTDATED",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "This app is out of date with the network's fee rules. Reload to get the latest version."
+      }
+    },
+    {
+      "name": "invalid document transition id (10405)",
+      "error": {
+        "message": "Invalid document transition id 9t2eeU6CjzJbpckxXWhgaApbdRB4dVDHFNfcEum9KS2H, expected 8Xv3QrLm2nKqP5wYtZcVbNdFgHjJkLpRsTuWxYzAbCdE"
+      },
+      "expect": {
+        "code": "BUILD_DEFECT",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Something went wrong building this action, so the network refused it. Nothing was charged. Please report this."
+      }
+    },
+    {
+      "name": "trailing bytes (10002)",
+      "error": {
+        "message": "Parsing of serialized object failed due to: unable to deserialize dpp::state_transition::StateTransition: 1 bytes left over after the value"
+      },
+      "expect": {
+        "code": "BUILD_DEFECT",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Something went wrong building this action, so the network refused it. Nothing was charged. Please report this."
+      }
+    },
+    {
+      "name": "referenced type not deletable (40131)",
+      "error": {
+        "message": "documents of referenced document type post in contract 8Xv3 can not be deleted; a deletableDocument reference at path postId requires a document type whose documents can be deleted, and a permanentDocument reference is the one for a document type with canBeDeleted: false"
+      },
+      "expect": {
+        "code": "BUILD_DEFECT",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Something went wrong building this action, so the network refused it. Nothing was charged. Please report this."
+      }
+    },
+    {
+      "name": "reference requirement not met (40135)",
+      "error": {
+        "message": "referenced contract 8Xv3 for path storeContractId does not meet the reference's requirement moderation elected"
+      },
+      "expect": {
+        "code": "BUILD_DEFECT",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Something went wrong building this action, so the network refused it. Nothing was charged. Please report this."
+      }
+    },
+    {
+      "name": "vote choice not allowed (40307, module-private predicate)",
+      "error": {
+        "message": "VotePoll V1 does not allow the vote choice Lock"
+      },
+      "expect": {
+        "code": "BUILD_DEFECT",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Something went wrong building this action, so the network refused it. Nothing was charged. Please report this."
+      }
+    },
+    {
+      "name": "immutable property changed (40128)",
+      "error": {
+        "message": "property 'hashtag' of document 9t2eeU6CjzJbpckxXWhgaApbdRB4dVDHFNfcEum9KS2H (type 'post') is immutable and cannot be changed by a replace"
+      },
+      "expect": {
+        "code": "IMMUTABLE",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Part of this post can no longer be changed once it has been published."
+      }
+    },
+    {
+      "name": "referenced identity gone (40120)",
+      "error": {
+        "message": "referenced identity 9t2e not found for path followingId"
+      },
+      "expect": {
+        "code": "TARGET_GONE",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "That account no longer exists on Dash Platform, so this action can't be completed."
+      }
+    },
+    {
+      "name": "write gate by $ownerId (40127)",
+      "error": {
+        "message": "the document's $ownerId does not agree with the referenced document's sellerId (propertyAgreement on orderId)"
+      },
+      "expect": {
+        "code": "NOT_OWNER",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Only the owner of this store, order or listing can do that."
+      }
+    },
+    {
+      "name": "property agreement mismatch (40127)",
+      "error": {
+        "message": "the document's sellerId does not agree with the referenced document's sellerId (propertyAgreement on orderId)"
+      },
+      "expect": {
+        "code": "STALE",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "This is out of date — reload the page and try again."
+      }
+    },
+    {
+      "name": "token account frozen (40702)",
+      "error": {
+        "message": "Identity 9t2e account is frozen for token AwyQ. Action attempted: Document create token payment"
+      },
+      "expect": {
+        "code": "FROZEN",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Your account is suspended (frozen) and can't spend YAPP right now. Contact a moderator to be reinstated."
+      }
+    },
+    {
+      "name": "insufficient YAPP (40700)",
+      "error": {
+        "message": "Identity 9t2e does not have enough token balance, code=40700"
+      },
+      "expect": {
+        "code": "INSUFFICIENT_YAPP",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "You don't have enough YAPP. Buy more to keep posting."
+      }
+    },
+    {
+      "name": "duplicate unique index (40105)",
+      "error": {
+        "message": "Document D1 has duplicate unique properties [\"handle\"] with other documents"
+      },
+      "expect": {
+        "code": "DUPLICATE",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Failed to create post: Document D1 has duplicate unique properties [\"handle\"] with other documents"
+      }
+    },
+    {
+      "name": "already in mempool (DAPI, no consensus code)",
+      "error": {
+        "message": "state transition already in mempool"
+      },
+      "expect": {
+        "code": "DUPLICATE",
+        "consensusCode": null,
+        "outcome": "unknown",
+        "retryable": false,
+        "state": "unconfirmed",
+        "userMessage": "Failed to create post: state transition already in mempool"
+      }
+    },
+    {
+      "name": "DAPI rate limit",
+      "error": {
+        "message": "no available addresses to retry, last error: grpc error: code: 'Some resource has been exhausted', message: \"rate limited\""
+      },
+      "expect": {
+        "code": "RATE_LIMITED",
+        "consensusCode": null,
+        "outcome": "not-sent",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "Dash Platform is temporarily unavailable. Please try again in a few moments."
+      }
+    },
+    {
+      "name": "confirmation wait timed out",
+      "error": {
+        "message": "wait_for_state_transition_result timed out"
+      },
+      "expect": {
+        "code": "TIMEOUT",
+        "consensusCode": null,
+        "outcome": "unknown",
+        "retryable": false,
+        "state": "unconfirmed",
+        "userMessage": "Failed to create post: wait_for_state_transition_result timed out"
+      }
+    },
+    {
+      "name": "gateway deadline expired",
+      "error": {
+        "message": "deadline expired before operation could complete"
+      },
+      "expect": {
+        "code": "TIMEOUT",
+        "consensusCode": null,
+        "outcome": "unknown",
+        "retryable": false,
+        "state": "unconfirmed",
+        "userMessage": "Failed to create post: deadline expired before operation could complete"
+      }
+    },
+    {
+      "name": "no available addresses",
+      "error": {
+        "message": "no available addresses for retry"
+      },
+      "expect": {
+        "code": "NETWORK",
+        "consensusCode": null,
+        "outcome": "not-sent",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "Dash Platform is temporarily unavailable. Please try again in a few moments."
+      }
+    },
+    {
+      "name": "missing response message",
+      "error": {
+        "message": "Missing response message"
+      },
+      "expect": {
+        "code": "NETWORK",
+        "consensusCode": null,
+        "outcome": "not-sent",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "Dash Platform is temporarily unavailable. Please try again in a few moments."
+      }
+    },
+    {
+      "name": "stale trusted context (isConnectionError)",
+      "error": {
+        "message": "invalid quorum: Quorum not found in cache for hash: 00000abc"
+      },
+      "expect": {
+        "code": "NETWORK",
+        "consensusCode": null,
+        "outcome": "not-sent",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "Failed to create post: invalid quorum: Quorum not found in cache for hash: 00000abc"
+      }
+    },
+    {
+      "name": "fetch-level network failure",
+      "error": {
+        "message": "Network request failed"
+      },
+      "expect": {
+        "code": "NETWORK",
+        "consensusCode": null,
+        "outcome": "not-sent",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "Network error. Please check your connection and try again."
+      }
+    },
+    {
+      "name": "private key missing",
+      "error": {
+        "message": "Private key not found for identity 9t2e"
+      },
+      "expect": {
+        "code": "NO_KEY",
+        "consensusCode": null,
+        "outcome": "not-sent",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "Your session has expired. Please log in again."
+      }
+    },
+    {
+      "name": "not logged in",
+      "error": {
+        "message": "Not logged in"
+      },
+      "expect": {
+        "code": "NO_KEY",
+        "consensusCode": null,
+        "outcome": "not-sent",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "Your session has expired. Please log in again."
+      }
+    },
+    {
+      "name": "unrecognised consensus refusal (40106)",
+      "error": {
+        "message": "state transition broadcast error: Document X has invalid revision Some(2). The desired revision is 2 | code=40106"
+      },
+      "expect": {
+        "code": "UNKNOWN",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Failed to create post: state transition broadcast error: Document X has invalid revision Some(2). The desired revision is 2 | code=40106"
+      }
+    },
+    {
+      "name": "expired identity key is not a timeout",
+      "error": {
+        "message": "Identity public key 2 expired at 1790000000000 ms and can no longer sign (block time 1790000000001 ms)"
+      },
+      "expect": {
+        "code": "UNKNOWN",
+        "consensusCode": null,
+        "outcome": "unknown",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Failed to create post: Identity public key 2 expired at 1790000000000 ms and can no longer sign (block time 1790000000001 ms)"
+      }
+    },
+    {
+      "name": "coded refusal whose text mentions a connection is not a network failure",
+      "error": {
+        "message": "Failed to broadcast: Protocol error: invalid revision on connection document",
+        "name": "Protocol",
+        "code": 40106
+      },
+      "expect": {
+        "code": "UNKNOWN",
+        "consensusCode": 40106,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Network error. Please check your connection and try again."
+      }
+    },
+    {
+      "name": "anything else",
+      "error": {
+        "message": "something unexpected happened"
+      },
+      "expect": {
+        "code": "UNKNOWN",
+        "consensusCode": null,
+        "outcome": "unknown",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Failed to create post: something unexpected happened"
+      }
+    }
+  ]
+}

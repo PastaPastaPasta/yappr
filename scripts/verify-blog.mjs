@@ -17,7 +17,12 @@
  * beta.5 re-cut adds `propertyConstraints` (b19: content chunks are contiguous;
  * a gap is refused 10422). The beta.6 re-cut (v5) makes a comment copy its
  * post's `commentsEnabled` (b20: a comment on a comments-off post is refused)
- * and lets only a blog's owner post to it (b21).
+ * and lets only a blog's owner post to it (b21). The 5.0.0-beta.1 re-cut (v6)
+ * drops the copied `blogPostOwnerId`: `postOwnerAndTime` derives the post's
+ * owner through `blogPostId` (b4d), so there is no owner left to forge: a
+ * comment still carrying it is refused (b3d), nobody else's query sees the
+ * comments (b4e), and the derived key is read from a removed post's record
+ * when a comment outlives its post (b15e-g).
  *   node scripts/verify-blog.mjs --self-test   # offline: contract declares what the cases assert
  */
 import bs58 from 'bs58';
@@ -30,6 +35,8 @@ import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, REFERENCE_NOT_FOUND_DELETABLE, caseBan
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 
 const CONTRACT_FILE = 'yappr-blog-contract.json';
+/** A property the type does not declare (`additionalProperties: false`): JSON-schema 10101. */
+const UNKNOWN_PROPERTY = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror|additional ?propert/i;
 
 const COMMENT_COST = 1n;
 const DEFAULT_YAPP = 20n;
@@ -37,14 +44,18 @@ const DEFAULT_YAPP = 20n;
 const TODAY = [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 86400 } }];
 
 const blogData = (run, labels) => ({ name: `Battery ${run}`, description: 'blog battery', ...(labels ? { labels } : {}) });
-// `publishedAt` is `immutable` + `immutableAllowSetting`: a replace must resend the
-// stored value byte-identically, so it is a parameter, not a fresh `Date.now()`.
+// `publishedAt` is frozen once stored (5.0.0-beta.1: the conditional `immutable`
+// entry `{ present: "$old.publishedAt" }`; beta.7 said it with
+// `immutableAllowSetting`): a replace must resend the stored value
+// byte-identically, so it is a parameter, not a fresh `Date.now()`.
 // Passing `null` omits it, which is how a DRAFT is written.
 const postData = ({ blogId, title, slug, publishedAt = Date.now() }) => ({ blogId, title, slug, data0: crypto.getRandomValues(new Uint8Array(64)), ...(publishedAt === null ? {} : { publishedAt }) });
 // v5 (beta.6): `postCommentsEnabled` must equal the post's `commentsEnabled`,
 // absence included (40127). Every fixture post leaves the flag out, so the
 // fixture comments leave it out too; b20 writes the other shapes.
-const commentData = ({ blogPostId, blogPostOwnerId, content, postCommentsEnabled }) => ({ blogPostId, blogPostOwnerId, content, ...(postCommentsEnabled === undefined ? {} : { postCommentsEnabled }) });
+// v6 (5.0.0-beta.1): no `blogPostOwnerId`; `postOwnerAndTime` derives the post's
+// owner through `blogPostId` (`blogPostId.$ownerId`).
+const commentData = ({ blogPostId, content, postCommentsEnabled }) => ({ blogPostId, content, ...(postCommentsEnabled === undefined ? {} : { postCommentsEnabled }) });
 
 // ---- Cases ------------------------------------------------------------------
 
@@ -73,13 +84,12 @@ async function caseB1Fixtures(ctx) {
   for (const [label, who] of [['b1d reader follows the blog', reader], ['b1e stranger follows the blog', stranger]]) {
     await battery.probeCreate(label, null, who, 'blogFollow', { blogId: id32(ctx.blogId) });
   }
-  const owner = id32(author.ownerId);
   for (const [label, who, postId] of [
     ['b1f reader comments on post one', reader, ctx.post1],
     ['b1g stranger comments on post one', stranger, ctx.post1],
     ['b1h reader comments on post two', reader, ctx.post2],
   ]) {
-    const outcome = await battery.probeCreate(label, null, who, 'blogComment', commentData({ blogPostId: id32(postId), blogPostOwnerId: owner, content: `${label} ${run}` }), { tokenCost: COMMENT_COST });
+    const outcome = await battery.probeCreate(label, null, who, 'blogComment', commentData({ blogPostId: id32(postId), content: `${label} ${run}` }), { tokenCost: COMMENT_COST });
     if (outcome.ok && who === reader) ctx.readerComments += 1;
     if (outcome.ok && who === stranger) ctx.strangerCommentId = outcome.id;
   }
@@ -91,17 +101,22 @@ async function caseB2BlogRefs(ctx) {
   await battery.probeCreate('b2a post naming a GHOST blog is rejected (40120)', REFERENCE_NOT_FOUND, author, 'blogPost', postData({ blogId: randomEntropy(), title: `Ghost ${run}`, slug: `ghost-${run}` }));
   await battery.probeCreate('b2b follow naming a GHOST blog is rejected (40120)', REFERENCE_NOT_FOUND, reader, 'blogFollow', { blogId: randomEntropy() });
   // The "a post may attest an author who is not its owner" gap is GONE: there is no
-  // `author` property left to lie in, and b3a proves a comment cannot forge one.
+  // `author` property left to lie in, and from v6 a comment carries no post owner
+  // either: `postOwnerAndTime` reads it from the post (b4d).
 }
 
 async function caseB3Comments(ctx) {
-  const { battery, author, reader, stranger, run } = ctx;
-  console.log('\n--- b3. comments: agreement, ghost post, token payment ---');
+  const { battery, reader, run } = ctx;
+  console.log('\n--- b3. comments: ghost post, token payment ---');
   if (!ctx.post1) { battery.check('b3 comments', false, 'no post fixture'); return; }
-  const comment = (label, expect, data, options = { tokenCost: COMMENT_COST }) => battery.probeCreate(label, expect, reader, 'blogComment', commentData({ blogPostId: id32(ctx.post1), blogPostOwnerId: id32(author.ownerId), ...data }), options);
-  await comment('b3a comment carrying a FORGED blogPostOwnerId is rejected (40127)', PROPERTY_MISMATCH, { blogPostOwnerId: id32(stranger.ownerId), content: `forged ${run}` });
+  const comment = (label, expect, data, options = { tokenCost: COMMENT_COST }) => battery.probeCreate(label, expect, reader, 'blogComment', commentData({ blogPostId: id32(ctx.post1), ...data }), options);
   await comment('b3b comment on a GHOST post is rejected (40120)', REFERENCE_NOT_FOUND, { blogPostId: randomEntropy(), content: `ghost ${run}` });
   await comment('b3c comment WITHOUT a token payment agreement is rejected', TOKEN_AGREEMENT_MISSING, { content: `unpaid ${run}` }, { noPayment: true });
+  // v6 has no `blogPostOwnerId`: a client still on v5 (copying the owner) is refused (10101,
+  // additionalProperties), not silently accepted. The field is spread past commentData(),
+  // which would drop it before it reached the document. A refused write charges no YAPP (b9a).
+  await battery.probeCreate('b3d a v6 comment that still copies blogPostOwnerId is refused (10101)', UNKNOWN_PROPERTY, reader, 'blogComment',
+    { ...commentData({ blogPostId: id32(ctx.post1), content: `stale client ${run}` }), blogPostOwnerId: id32(ctx.author.ownerId) }, { tokenCost: COMMENT_COST });
 }
 
 async function caseB4Counts(ctx) {
@@ -122,13 +137,17 @@ async function caseB4Counts(ctx) {
   battery.check('b4c followerCount is exact', followers === 2, `followers=${followers}`);
 
   // The exact shape notification-service uses; the index serves either direction.
-  const where = [['blogPostOwnerId', '==', ctx.author.ownerId], ['$createdAt', '>', ctx.startedAt]];
+  // v6: the post owner is the derived `blogPostId.$ownerId`, pinned with `==`.
+  const where = [['blogPostId.$ownerId', '==', ctx.author.ownerId], ['$createdAt', '>', ctx.startedAt]];
   const [asc, desc] = await Promise.all([
-    battery.queryDocs('blogComment', { where, orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'asc']], limit: 100 }),
-    battery.queryDocs('blogComment', { where, orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'desc']], limit: 100 }),
+    battery.queryDocs('blogComment', { where, orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100 }),
+    battery.queryDocs('blogComment', { where, orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100 }),
   ]);
   battery.check('b4d postOwnerAndTime serves "comments on my posts" since a timestamp, both directions', asc.length === 3 && desc.length === 3, `asc=${asc.length} desc=${desc.length}`);
-  battery.workingShapes.push({ label: 'comments on my blog posts since last seen', shape: { documentTypeName: 'blogComment', where: [['blogPostOwnerId', '==', '<me>'], ['$createdAt', '>', '<lastSeen>']], orderBy: [['blogPostOwnerId', 'asc'], ['$createdAt', 'desc']] } });
+  // The derived key is the referenced post's own `$ownerId`: nobody else's notification query sees these comments.
+  const foreign = await battery.queryDocs('blogComment', { where: [['blogPostId.$ownerId', '==', ctx.stranger.ownerId], ['$createdAt', '>', ctx.startedAt]], orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100 });
+  battery.check('b4e postOwnerAndTime credits no comment to someone who does not own the post', foreign.length === 0, `stranger rows=${foreign.length}`);
+  battery.workingShapes.push({ label: 'comments on my blog posts since last seen', shape: { documentTypeName: 'blogComment', where: [['blogPostId.$ownerId', '==', '<me>'], ['$createdAt', '>', '<lastSeen>']], orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'desc']] } });
 }
 
 async function caseB5Rankings(ctx) {
@@ -222,30 +241,45 @@ async function caseB12Immutable(ctx) {
   if (!ctx.draftId) { battery.check('b12d draft publish', false, 'no draft fixture'); return; }
   const draftBase = { blogId: id32(ctx.blogId), title: `Draft ${run}`, slug: `draft-${run}` };
   const firstPublish = Date.now();
-  await edit('b12d publishing a DRAFT sets publishedAt for the first time (immutableAllowSetting)', null, ctx.draftId, postData({ ...draftBase, publishedAt: firstPublish }), await battery.revisionOf('blogPost', ctx.draftId));
-  await edit('b12e re-dating the now-published draft is rejected (40128) — allow-setting is once only', IMMUTABLE_CHANGED, ctx.draftId, postData({ ...draftBase, publishedAt: firstPublish + 1000 }), await battery.revisionOf('blogPost', ctx.draftId));
+  await edit('b12d publishing a DRAFT sets publishedAt for the first time (frozen only once stored)', null, ctx.draftId, postData({ ...draftBase, publishedAt: firstPublish }), await battery.revisionOf('blogPost', ctx.draftId));
+  await edit('b12e re-dating the now-published draft is rejected (40128) — publishedAt is set once only', IMMUTABLE_CHANGED, ctx.draftId, postData({ ...draftBase, publishedAt: firstPublish + 1000 }), await battery.revisionOf('blogPost', ctx.draftId));
 }
 
 async function caseB13Ban(ctx) {
-  const { battery, stranger, author, run } = ctx;
-  const comment = () => battery.attemptCreate(stranger, 'blogComment', commentData({ blogPostId: id32(ctx.post1), blogPostOwnerId: id32(author.ownerId), content: `banned ${run} ${Date.now()}` }), { tokenCost: COMMENT_COST });
+  const { battery, stranger, run } = ctx;
+  const comment = () => battery.attemptCreate(stranger, 'blogComment', commentData({ blogPostId: id32(ctx.post1), content: `banned ${run} ${Date.now()}` }), { tokenCost: COMMENT_COST });
   await caseBan(ctx, { prefix: 'b13', target: stranger, writeWhileBanned: comment, writeAfterUnban: comment });
 }
 
 async function caseB14ModeratorDelete(ctx) {
   const { battery, author, reader, run } = ctx;
   // A fresh comment by the reader, then the post it hangs off: the takedown of
-  // the post must leave the comment's `blogPostId` dangling (deletableDocument).
+  // the post leaves the comment's `blogPostId` resolving to the removal record
+  // (a `moderatedDocument` reference from 5.0.0-beta.1).
   const post = await battery.attemptCreate(author, 'blogPost', postData({ blogId: id32(ctx.blogId), title: `Doomed ${run}`, slug: `doomed-${run}`, publishedAt: ctx.publishedAt }));
   if (!post.ok) { battery.check('b14 fixture', false, 'no post to take down'); return; }
-  const comment = await battery.attemptCreate(reader, 'blogComment', commentData({ blogPostId: id32(post.id), blogPostOwnerId: id32(author.ownerId), content: `on the doomed post ${run}` }), { tokenCost: COMMENT_COST });
+  const comment = await battery.attemptCreate(reader, 'blogComment', commentData({ blogPostId: id32(post.id), content: `on the doomed post ${run}` }), { tokenCost: COMMENT_COST });
   if (comment.ok) ctx.readerComments += 1;
+  // A second comment outlives the post's takedown, so b15e-g can show the derived
+  // `blogPostId.$ownerId` being read from the post's removal record (v6).
+  const survivor = await battery.attemptCreate(reader, 'blogComment', commentData({ blogPostId: id32(post.id), content: `outlives the doomed post ${run}` }), { tokenCost: COMMENT_COST });
+  if (survivor.ok) ctx.readerComments += 1;
+  const listedForAuthor = async () => (await battery.queryDocs('blogComment', { where: [['blogPostId.$ownerId', '==', author.ownerId], ['$createdAt', '>', ctx.startedAt]], orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100 }))
+    .some((d) => battery.b58(d.$id ?? d.id) === survivor.id);
   await caseModeratorDelete(ctx, { prefix: 'b14', docType: 'blogComment', documentId: comment.ok ? comment.id : null, ownerId: reader.ownerId });
   await caseModeratorDelete(ctx, {
     prefix: 'b15', docType: 'blogPost', documentId: post.id, ownerId: author.ownerId,
     afterwards: async () => {
-      // A comment on the removed post: the reference no longer resolves.
-      await battery.probeCreate('b15d a comment on the removed post is refused (40120)', REFERENCE_NOT_FOUND_DELETABLE, reader, 'blogComment', commentData({ blogPostId: id32(post.id), blogPostOwnerId: id32(author.ownerId), content: `too late ${run}` }), { tokenCost: COMMENT_COST });
+      // A comment on the removed post: a write must name a document in state,
+      // even through a moderatedDocument reference.
+      await battery.probeCreate('b15d a comment on the removed post is refused (40120)', REFERENCE_NOT_FOUND_DELETABLE, reader, 'blogComment', commentData({ blogPostId: id32(post.id), content: `too late ${run}` }), { tokenCost: COMMENT_COST });
+      if (survivor.ok) {
+        battery.check('b15e postOwnerAndTime still lists a comment whose post was taken down', await listedForAuthor());
+        // The delete clears the derived index entry, so Drive must read the
+        // post's `$ownerId` from the removal record (the post is gone from state).
+        await battery.probeDelete('b15f the commenter deletes that comment after the takedown', null, reader, 'blogComment', survivor.id);
+        battery.check('b15g …and postOwnerAndTime no longer lists it', !(await listedForAuthor()));
+      } else battery.check('b15e-g fixture', false, 'no surviving comment');
       // blog is moderator-deletable too, but the fixture blog carries every
       // other case's documents, so a THROWAWAY blog is what goes.
       const doomedBlog = await battery.attemptCreate(author, 'blog', blogData(`${run}-doomed`));
@@ -255,8 +289,8 @@ async function caseB14ModeratorDelete(ctx) {
 }
 
 async function caseB17Warn(ctx) {
-  const { battery, stranger, author, run } = ctx;
-  const comment = () => battery.attemptCreate(stranger, 'blogComment', commentData({ blogPostId: id32(ctx.post1), blogPostOwnerId: id32(author.ownerId), content: `warned ${run} ${Date.now()}` }), { tokenCost: COMMENT_COST });
+  const { battery, stranger, run } = ctx;
+  const comment = () => battery.attemptCreate(stranger, 'blogComment', commentData({ blogPostId: id32(ctx.post1), content: `warned ${run} ${Date.now()}` }), { tokenCost: COMMENT_COST });
   await caseWarn(ctx, { prefix: 'b17', target: stranger, writeWhileWarned: comment });
 }
 
@@ -301,9 +335,8 @@ async function caseB20CommentsOff(ctx) {
   const post = (title, commentsEnabled) => battery.probeCreate(`b20 fixture post with commentsEnabled ${commentsEnabled}`, null, author, 'blogPost',
     { ...postData({ blogId: id32(ctx.blogId), title: `${title} ${run}`, slug: `${title.toLowerCase()}-${run}` }), commentsEnabled });
   const [on, off] = [await post('Open', true), await post('Closed', false)];
-  const owner = id32(author.ownerId);
   const comment = (label, expect, postId, postCommentsEnabled) => battery.probeCreate(label, expect, reader, 'blogComment',
-    commentData({ blogPostId: id32(postId), blogPostOwnerId: owner, content: `${label} ${run}`, postCommentsEnabled }), { tokenCost: COMMENT_COST });
+    commentData({ blogPostId: id32(postId), content: `${label} ${run}`, postCommentsEnabled }), { tokenCost: COMMENT_COST });
   if (on.ok) {
     const landed = await comment('b20a a comment copying commentsEnabled true lands', null, on.id, true);
     if (landed.ok) ctx.readerComments += 1;
@@ -350,14 +383,15 @@ await runBattery({
   yapp: { default: DEFAULT_YAPP, actors: ['reader', 'stranger'], require: true },
   banner: ({ socialId }) => `; YAPP from ${socialId}`,
   selfTest: () => selfTestModerated(CONTRACT_FILE, {
-    // b3a: the notification key binds to the post's REAL owner. b20: the post's
-    // commentsEnabled is copied, and a copy of `false` is refused (beta.6 v5).
-    blogComment: { where: { blogPostId: { $ownerId: 'blogPostOwnerId', commentsEnabled: 'postCommentsEnabled' } }, moderatorDeletable: true, constraints: DECLARED_RULES[CONTRACT_FILE].blogComment },
+    // b20: the post's commentsEnabled is copied, and a copy of `false` is refused
+    // (beta.6 v5). b4d: the notification key is the post's own $ownerId, derived
+    // through blogPostId (v6), so there is no copied owner to forge.
+    blogComment: { where: { blogPostId: { commentsEnabled: 'postCommentsEnabled' } }, moderatorDeletable: true, constraints: DECLARED_RULES[CONTRACT_FILE].blogComment },
     // b12: blogId frozen, publishedAt write-once. b15: moderators may remove a post.
     // b18: labels are typed string arrays (beta.4 v4).
     // b19: content chunks are contiguous (beta.5).
     // b21: only the blog's owner posts to it (beta.6 v5).
-    blogPost: { where: { blogId: { $ownerId: '$ownerId' } }, immutable: ['blogId', 'publishedAt'], immutableAllowSetting: ['publishedAt'], moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
+    blogPost: { where: { blogId: { $ownerId: '$ownerId' } }, immutable: ['blogId'], immutableWhen: { publishedAt: { present: '$old.publishedAt' } }, moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
     blog: { moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 64, maxLength: 40 } } },
   }, { moderation: { banlist: true, suspensions: true, warnings: true } }),
   setup: async ({ battery, tokenId, reader, args }) => {
