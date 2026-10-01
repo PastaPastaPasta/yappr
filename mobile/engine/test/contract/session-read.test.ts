@@ -22,7 +22,7 @@ describe('session reads on testnet', () => {
   beforeAll(async () => {
     await engine.engine.boot()
     // A real, active identity: the author of the newest For You post.
-    const page = await engine.feed.forYou()
+    const page = await engine.feed.home({ tab: 'forYou' })
     knownIdentity = page.items[0]?.author.id ?? ''
     expect(knownIdentity).not.toBe('')
   })

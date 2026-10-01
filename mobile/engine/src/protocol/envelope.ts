@@ -17,7 +17,7 @@
  */
 export const PROTOCOL_VERSION = 1
 
-/** Host → engine: call `path` (e.g. `feed.forYou`) with `args`. */
+/** Host → engine: call `path` (e.g. `feed.home`) with `args`. */
 export interface RequestEnvelope {
   t: 'req'
   v: number
