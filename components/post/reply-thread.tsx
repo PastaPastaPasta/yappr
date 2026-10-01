@@ -11,6 +11,8 @@ interface ReplyThreadItemProps {
   thread: ReplyThread
   rootPostOwnerId: string
   getPostEnrichment?: (post: Post) => ProgressiveEnrichment | undefined
+  /** Why no reply in this thread can be answered (its root was removed); see PostCard. */
+  replyBlockedReason?: string
 }
 
 /**
@@ -28,7 +30,7 @@ export function flattenReplyThreads(threads: ReplyThread[]): ReplyThread[] {
  * - Author's thread posts show a connecting vertical line
  * - Nested replies are indented with a left border
  */
-export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment }: ReplyThreadItemProps) {
+export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment, replyBlockedReason }: ReplyThreadItemProps) {
   const { content, isAuthorThread, isThreadContinuation, nestedReplies } = thread
   const postLike = replyToPost(content)
 
@@ -60,6 +62,7 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment }: 
           post={postLike}
           enrichment={getPostEnrichment?.(postLike)}
           rootPostOwnerId={rootPostOwnerId}
+          replyBlockedReason={replyBlockedReason}
         />
       )}
 
@@ -72,6 +75,7 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment }: 
               thread={nested}
               rootPostOwnerId={rootPostOwnerId}
               getPostEnrichment={getPostEnrichment}
+              replyBlockedReason={replyBlockedReason}
             />
           ))}
         </div>
@@ -84,7 +88,7 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment }: 
  * Renders a nested reply. The indentation and left border visually indicate
  * the reply hierarchy without explicit "Replying to" text.
  */
-function NestedReply({ thread, rootPostOwnerId, getPostEnrichment }: ReplyThreadItemProps) {
+function NestedReply({ thread, rootPostOwnerId, getPostEnrichment, replyBlockedReason }: ReplyThreadItemProps) {
   const postLike = replyToPost(thread.content)
   const enrichment = getPostEnrichment?.(postLike)
 
@@ -104,6 +108,7 @@ function NestedReply({ thread, rootPostOwnerId, getPostEnrichment }: ReplyThread
         post={postLike}
         enrichment={enrichment}
         rootPostOwnerId={rootPostOwnerId}
+        replyBlockedReason={replyBlockedReason}
       />
 
       {/* Continuation affordance: refocuses the page on this reply, showing its

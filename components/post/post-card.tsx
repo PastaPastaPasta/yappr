@@ -86,6 +86,12 @@ interface PostCardProps {
   onDelete?: (postId: string) => void
   /** Let a saved-post list coordinate removal with its other bookmark mutations. */
   bookmarkAction?: { active: boolean; loading: boolean; onClick: () => void }
+  /**
+   * Why nothing on this card can be replied to, when nothing can: a reply names
+   * its thread's root, and consensus refuses one naming a root a moderator
+   * removed (40120, paid). Set by a thread page whose root is gone.
+   */
+  replyBlockedReason?: string
 }
 
 /**
@@ -248,6 +254,7 @@ function PostCardView({
   missingParent,
   onDelete,
   bookmarkAction,
+  replyBlockedReason,
 }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
@@ -432,6 +439,10 @@ function PostCardView({
   }
   const handleReply = () => {
     if (isTombstoned || !requireAuth()) return
+    if (replyBlockedReason) {
+      toast.error(replyBlockedReason)
+      return
+    }
     if (!canReplyToPrivate) {
       toast.error(cantReplyReason || "Can't reply to this post")
       return
@@ -712,8 +723,8 @@ function PostCardView({
             deleted={isTombstoned}
             reply={{
               count: stats.replies,
-              enabled: canReplyToPrivate && !isTombstoned,
-              reason: isTombstoned ? `This ${isReply ? 'reply' : 'post'} was deleted` : cantReplyReason,
+              enabled: canReplyToPrivate && !isTombstoned && !replyBlockedReason,
+              reason: isTombstoned ? `This ${isReply ? 'reply' : 'post'} was deleted` : replyBlockedReason ?? cantReplyReason,
               onClick: handleReply,
             }}
             repost={{
