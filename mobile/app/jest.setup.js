@@ -17,3 +17,40 @@ jest.mock('expo-constants', () => {
   const expoConfig = jest.requireActual('./app.config.ts').default({ config: {} });
   return { ...actual, __esModule: true, default: { ...actual.default, expoConfig } };
 });
+
+// The engine host's native dependencies. Nothing here talks to an engine: the
+// WebView renders nothing and never says hello, so the supervisor stays in its
+// handshake (tests that need an engine drive src/engine/supervisor directly).
+jest.mock('react-native-webview', () => ({ WebView: require('react-native').View }));
+jest.mock('@react-native-community/netinfo', () =>
+  require('@react-native-community/netinfo/jest/netinfo-mock.js'),
+);
+jest.mock('expo-crypto', () => ({
+  getRandomBytes: (n) => new Uint8Array(require('crypto').randomBytes(n)),
+}));
+// An in-memory Keychain, shared by every test file in a worker; tests reset it with __reset().
+jest.mock('expo-secure-store', () => {
+  const items = new Map();
+  const id = (key, options = {}) => `${options.keychainService ?? ''}:${key}`;
+  return {
+    AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: 'afterFirstUnlockThisDeviceOnly',
+    WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'whenUnlockedThisDeviceOnly',
+    getItemAsync: async (key, options) => items.get(id(key, options)) ?? null,
+    setItemAsync: async (key, value, options) => {
+      if (!/^[A-Za-z0-9._-]+$/.test(key)) throw new Error(`Invalid SecureStore key: ${key}`);
+      items.set(id(key, options), value);
+    },
+    deleteItemAsync: async (key, options) => {
+      items.delete(id(key, options));
+    },
+    __items: items,
+  };
+});
+jest.mock('expo-file-system', () => ({
+  Paths: { bundle: { uri: 'file:///bundle/' } },
+  File: class {
+    async text() {
+      throw new Error('No engine bundle in tests');
+    }
+  },
+}));

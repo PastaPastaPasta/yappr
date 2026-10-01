@@ -2,13 +2,14 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
-    "types": ["jest"],
+    "types": ["jest", "node"],
     "allowImportingTsExtensions": true,
     "paths": {
       "~/*": ["./src/*"],
       "@assets/*": ["./assets/*"],
       "@/*": ["../../*"],
-      "@engine/*": ["../engine/src/*"]
+      "@engine/*": ["../engine/src/*"],
+      "@/components/*": ["./src/engine/web-components.d.ts"]
     }
   },
   "include": [

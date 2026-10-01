@@ -24,5 +24,7 @@ module.exports = {
   ],
   moduleNameMapper: {
     '\\.css$': '<rootDir>/src/__mocks__/style.js',
+    // tsconfig.json `paths`: the engine's dependency-free wire modules.
+    '^@engine/(.*)$': '<rootDir>/../engine/src/$1',
   },
 };
