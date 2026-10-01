@@ -158,6 +158,36 @@ export const tagDTO = object({
 })
 export const rankedUserDTO = object({ user: userSummaryDTO, count, by: literal('likes', 'followers') })
 
+export const messageDTO = object({ id: nonEmpty, sender: id, text: str, at: date, own: bool, pending: bool })
+export const conversationDTO = object({
+  key: nonEmpty, backend: literal('v5', 'legacy'), kind: literal('direct', 'group'), peer: nullable(authorDTO),
+  ownerId: nullable(id), name: nullable(str), members: array(id), isOwner: bool,
+  lastMessage: nullable(object({ text: str, at: date, own: bool })), lastActivity: nullable(date), unread: count,
+  flags: object({ hidden: bool, unreadable: bool, removed: bool, ended: bool, blocked: bool, unsaved: bool, draft: bool }),
+  peerReadAt: nullable(date),
+})
+export const dmStatusDTO = object({
+  backend: literal('v5', 'legacy'), locked: bool, ready: bool, unreadTotal: count, unreadConversations: count, capReached: bool,
+  retention: nullable(literal('30d', '90d', '1y', 'never')), blocked: array(id),
+  recovery: nullable(object({ phase: literal('invites', 'contacts-recent', 'groups', 'contacts-older'), done: count, total: count, found: count })),
+  error: nullable(str),
+})
+
+export const blockedUserDTO = object({ ...authorKeys, message: nullable(nonEmpty) }, { bio: str, followers: count, following: count, viewerFollows: bool })
+
+export const notificationDTO = object(
+  {
+    id: nonEmpty,
+    type: literal('follow', 'mention', 'like', 'repost', 'quote', 'reply', 'privateFeedRequest', 'privateFeedApproved', 'privateFeedRevoked', 'blogPost', 'blogComment'),
+    actor: authorDTO,
+    at: date,
+    read: bool,
+    target: nullable(object({ id, kind: literal('post', 'reply') })),
+    preview: nullable(postDTO),
+  },
+  { blog: object({ blogId: nonEmpty, slug: nonEmpty }) },
+)
+
 /** Every problem with `value`, as `path: message` lines; empty when it is valid. */
 export function validate(check: Check, value: unknown, path = '$'): string[] {
   const errors: string[] = []

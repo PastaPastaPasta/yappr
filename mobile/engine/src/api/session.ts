@@ -71,6 +71,14 @@ export interface SessionModuleOptions {
   secureDurable?: () => Promise<void>
   /** Tests inject a controller with stubbed dependencies. */
   controller?: PlatformAuthController
+  /**
+   * Stops direct messages and saves their pending state, before sign-out or
+   * an account switch takes the keys away (the `dm` module). Default: lib's
+   * `stopDmEngine`, which does not wait for the save.
+   */
+  stopDm?: () => Promise<void>
+  /** Sign-out failed after `stopDm`: the account stays signed in, so its messages may run again. */
+  resumeDm?: () => void
 }
 
 /** AuthUser.balance (a number of credits) as the DTOs carry credits. */
@@ -112,6 +120,7 @@ export function createSessionModule(options: SessionModuleOptions) {
   const storage = options.storage ?? localStorage
   const controller = options.controller ?? createMobileAuthController()
   const registry = createAccountRegistry(storage)
+  const stopDm = options.stopDm ?? (async () => stopDmEngine())
 
   function toDTO(user: AuthUser | null): SessionDTO | null {
     if (!user) return null
@@ -162,16 +171,24 @@ export function createSessionModule(options: SessionModuleOptions) {
     }
   }
 
-  /** Sign-ins run one at a time, so two can never race for lib's single session slot. */
-  let signInQueue: Promise<unknown> = Promise.resolve()
+  /**
+   * Sign-ins and account changes (switch, add, sign-out) run one at a time:
+   * two can never race for lib's single session slot, and none can run while
+   * another waits for direct messages to stop.
+   */
+  let sessionQueue: Promise<unknown> = Promise.resolve()
+  function exclusive<T>(task: () => Promise<T>): Promise<T> {
+    const run = sessionQueue.then(task)
+    sessionQueue = run.catch(() => undefined)
+    return run
+  }
+
   function exclusiveSignIn(identityId: string, login: () => Promise<unknown>, method: SignInMethod): Promise<SessionDTO> {
-    const run = signInQueue.then(async () => {
+    return exclusive(async () => {
       assertSlotFree(identityId)
       await login()
       return signedIn(identityId, method)
     })
-    signInQueue = run.catch(() => undefined)
-    return run
   }
 
   /**
@@ -226,6 +243,35 @@ export function createSessionModule(options: SessionModuleOptions) {
       announce('balance')
     }
   })
+
+  /** The body of `signOut`, run on the session queue. */
+  async function signOutNow(opts: { identityId?: string }): Promise<void> {
+    assertUsable()
+    await restored()
+    const active = registry.activeIdentityId()
+    const identityId = opts.identityId ?? active
+    if (!identityId) return
+    const isActive = identityId === active
+    if (isActive) {
+      // Keys and session first: if logout fails, the account stays fully signed in.
+      await stopDm()
+      assertUsable()
+      try {
+        await controller.logout()
+      } catch (error) {
+        options.resumeDm?.()
+        throw error
+      }
+    } else {
+      for (const clear of [clearPrivateKey, clearEncryptionKey, clearEncryptionKeyType, clearTransferKey, clearLoginKey, clearAuthVaultDek]) {
+        clear(identityId)
+      }
+    }
+    options.tickets?.forgetIdentity(identityId)
+    registry.remove(identityId, { live: isActive })
+    await options.secureDurable?.()
+    if (isActive) announce('signed-out')
+  }
 
   return {
     /** The active session, after the boot restore. */
@@ -309,23 +355,29 @@ export function createSessionModule(options: SessionModuleOptions) {
      * restarts the engine with the target's secrets. The next boot's restore
      * reports `session.changed {reason: 'switched'}`.
      */
-    async switchAccount(identityId: string): Promise<void> {
-      assertUsable()
-      await restored()
-      if (!registry.get(identityId)) throw new RpcError('That account is not signed in on this device', 'BAD_REQUEST')
-      if (registry.activeIdentityId() === identityId) return
-      stopDmEngine()
-      registry.switchTo(identityId)
-      requireRestart()
+    switchAccount(identityId: string): Promise<void> {
+      return exclusive(async () => {
+        assertUsable()
+        await restored()
+        if (!registry.get(identityId)) throw new RpcError('That account is not signed in on this device', 'BAD_REQUEST')
+        if (registry.activeIdentityId() === identityId) return
+        await stopDm()
+        assertUsable()
+        registry.switchTo(identityId)
+        requireRestart()
+      })
     },
 
     /** Park the active account so another can sign in; the host restarts the engine with no secrets next. */
-    async prepareAddAccount(): Promise<void> {
-      assertUsable()
-      await restored()
-      stopDmEngine()
-      registry.switchTo(null)
-      requireRestart()
+    prepareAddAccount(): Promise<void> {
+      return exclusive(async () => {
+        assertUsable()
+        await restored()
+        await stopDm()
+        assertUsable()
+        registry.switchTo(null)
+        requireRestart()
+      })
     },
 
     /**
@@ -334,29 +386,12 @@ export function createSessionModule(options: SessionModuleOptions) {
      * account's secrets are cleared by id (the storage shim forwards deletes
      * of keys it does not hold, so the host removes them from the Keychain).
      */
-    async signOut(opts: { identityId?: string } = {}): Promise<void> {
-      assertUsable()
-      await restored()
-      const active = registry.activeIdentityId()
-      const identityId = opts.identityId ?? active
-      if (!identityId) return
-      const isActive = identityId === active
-      if (isActive) {
-        // Keys and session first: if logout fails, the account stays fully signed in.
-        stopDmEngine()
-        await controller.logout()
-      } else {
-        for (const clear of [clearPrivateKey, clearEncryptionKey, clearEncryptionKeyType, clearTransferKey, clearLoginKey, clearAuthVaultDek]) {
-          clear(identityId)
-        }
-      }
-      options.tickets?.forgetIdentity(identityId)
-      registry.remove(identityId, { live: isActive })
-      await options.secureDurable?.()
-      if (isActive) announce('signed-out')
+    signOut(opts: { identityId?: string } = {}): Promise<void> {
+      return exclusive(() => signOutNow(opts))
     },
 
     async refreshBalance(): Promise<{ credits: bigint }> {
+
       assertUsable()
       await restored()
       if (!controller.getState().user) throw new RpcError('Not signed in', 'NOT_SIGNED_IN')

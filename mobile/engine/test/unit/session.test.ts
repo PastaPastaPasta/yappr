@@ -466,3 +466,54 @@ describe('key exchange request lifetime', () => {
     await expect(kx.await(request.requestId)).rejects.toMatchObject({ code: 'KEY_EXCHANGE_TIMEOUT' })
   })
 })
+
+describe('direct messages around sign-out and account changes', () => {
+  it('runs account changes one at a time: a sign-out queued behind a switch finds the engine waiting for its restart', async () => {
+    const key = secp256k1.utils.randomSecretKey()
+    const id = addIdentity([{ id: 2, purpose: AUTH, securityLevel: HIGH, privateKey: key }])
+    let stopping = 0
+    const stopDm = async () => {
+      stopping++
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    const session = createSessionModule({ emit, controller: createMobileAuthController(), secureDurable: () => engineStorage.secureDurable(), stopDm })
+    await session.restore()
+    await session.signInWithKey({ key: bytesToHex(key) })
+    const parking = session.prepareAddAccount()
+    const signingOut = session.signOut()
+    await parking
+    await expect(signingOut).rejects.toMatchObject({ code: 'RESTART_REQUIRED' })
+    // The sign-out never ran: it did not stop messages a second time or log the parked account out.
+    expect(stopping).toBe(1)
+    expect(localStorage.getItem(`yappr_secure_pk_${id}`)).not.toBeNull()
+    // Clean up for the next case: a restarted engine signs the account out.
+    const restarted = createSessionModule({ emit, controller: createMobileAuthController(), secureDurable: () => engineStorage.secureDurable() })
+    await restarted.restore()
+    await restarted.signOut({ identityId: id })
+  })
+
+  it('stops DMs, and waits for their save, while the keys are still there', async () => {
+    const key = secp256k1.utils.randomSecretKey()
+    const id = addIdentity([{ id: 2, purpose: AUTH, securityLevel: HIGH, privateKey: key }])
+    const stops: string[] = []
+    const stopDm = async () => {
+      await new Promise(resolve => setTimeout(resolve, 5))
+      stops.push(localStorage.getItem(`yappr_secure_pk_${id}`) ? 'key held' : 'key gone')
+    }
+    const open = () => createSessionModule({ emit, controller: createMobileAuthController(), secureDurable: () => engineStorage.secureDurable(), stopDm })
+    const session = open()
+    await session.restore()
+    await session.signInWithKey({ key: bytesToHex(key) })
+    await session.prepareAddAccount()
+    expect(stops).toEqual(['key held'])
+
+    const next = open()
+    await next.restore()
+    await next.switchAccount(id)
+    const restored = open()
+    expect((await restored.restore())?.identityId).toBe(id)
+    await restored.signOut()
+    expect(stops).toEqual(['key held', 'key held', 'key held'])
+    expect(localStorage.getItem(`yappr_secure_pk_${id}`)).toBeNull()
+  })
+})

@@ -81,6 +81,17 @@ export function sampleFeed(): Promise<PostDTO[]> {
   return firstPage
 }
 
+/**
+ * First-page posts that are themselves: not a v10/v11 bare repost (whose
+ * reads resolve to the target, and whose text is empty), not a tombstone or
+ * a private post, and with text to search for.
+ */
+export async function samplePosts(): Promise<PostDTO[]> {
+  const posts = (await sampleFeed()).filter(post => !post.bareRepost && !post.deleted && !post.encrypted && post.content.trim())
+  if (posts.length === 0) throw new Error('no first-page post has text of its own')
+  return posts
+}
+
 /** A sample author with a DPNS name. */
 export async function namedAuthor(): Promise<{ id: string; username: string }> {
   const named = (await sampleFeed()).find(post => post.author.username)?.author

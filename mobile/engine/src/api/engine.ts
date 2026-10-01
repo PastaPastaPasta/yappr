@@ -20,7 +20,7 @@ import { platformInfo, type PlatformInfoDTO } from '../dto/capabilities'
  * the Node harness passes nothing.
  */
 export interface EngineRuntime {
-  lifecycle?: (state: AppLifecycleState) => void
+  lifecycle?: (state: AppLifecycleState) => void | Promise<void>
   connectivity?: (online: boolean) => void
   setLogLevel?: (level: LogLevel) => void
   /** Send an event to the host (`write.status`, `session.changed`, ...). */
@@ -112,7 +112,7 @@ export function createEngineModule(runtime: EngineRuntime) {
 
     /** The host forwards React Native AppState changes here. */
     async lifecycle(state: AppLifecycleState): Promise<void> {
-      runtime.lifecycle?.(state)
+      await runtime.lifecycle?.(state)
     },
 
     /**

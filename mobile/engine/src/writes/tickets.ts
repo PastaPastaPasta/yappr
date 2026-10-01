@@ -42,11 +42,19 @@ export interface WriteRunContext {
   documents(documents: TicketDocument[]): void
 }
 
+/** What the store lends a handler's own probe, so every probe proves documents the same way. */
+export interface ProbeKit {
+  /** The default proof: each unconfirmed document present (create) or absent (delete); a disagreement counts only when a second read agrees. */
+  proveDocuments(documents: TicketDocument[]): Promise<ProbeResult>
+  /** The gap before a second read confirms an absence (`absenceRecheckMs`). */
+  recheckDelay(): Promise<void>
+}
+
 /** How one kind of write runs, and how its outcome is proved. M7b registers one per `WriteOp`. */
 export interface WriteHandler<A = unknown> {
   run(args: A, ctx: WriteRunContext): Promise<WriteResult>
-  /** Default: prove each unconfirmed document in `ticket.documents` (see `createTicketStore`'s `probeDocument`). */
-  probe?(ticket: WriteTicket, args: A | undefined): Promise<ProbeResult>
+  /** Default: prove each unconfirmed document in `ticket.documents` (`ProbeKit.proveDocuments`). */
+  probe?(ticket: WriteTicket, args: A | undefined, kit: ProbeKit): Promise<ProbeResult>
   /**
    * Persist the arguments with the ticket (plain engine kv, MMKV on the
    * host), so a retry still works after an engine restart. Off by default:
@@ -138,6 +146,9 @@ export function createTicketStore(options: TicketStoreOptions) {
   const clone = (ticket: WriteTicket): WriteTicket => structuredClone(ticket)
   const allConfirmed = (documents: TicketDocument[]) => documents.map(doc => ({ ...doc, confirmed: true }))
 
+  /** Fail closed: only a registered handler that opts in, and never a DM (its arguments are message bodies). */
+  const keepsArgs = (op: WriteOp) => handlers.get(op)?.persistArgs === true && !op.startsWith('dm.')
+
   function persist() {
     const cutoff = now() - CONFIRMED_TTL_MS
     for (const [id, { ticket }] of records) {
@@ -160,7 +171,7 @@ export function createTicketStore(options: TicketStoreOptions) {
         updatedAt: ticket.updatedAt.getTime(),
         lastCheckedAt: ticket.lastCheckedAt?.getTime() ?? null,
       },
-      ...(args !== undefined && handlers.get(ticket.op)?.persistArgs === true ? { args } : {}),
+      ...(args !== undefined && keepsArgs(ticket.op) ? { args } : {}),
     }))
     options.storage.setItem(WRITES_STORAGE_KEY, JSON.stringify(stored))
   }
@@ -291,18 +302,18 @@ export function createTicketStore(options: TicketStoreOptions) {
       })
   }
 
-  async function probe(ticket: WriteTicket, args: unknown): Promise<ProbeResult> {
-    const handler = handlers.get(ticket.op)
+  const recheckDelay = () => new Promise<void>(resolve => setTimeout(resolve, absenceRecheckMs))
+
+  async function proveDocuments(documents: TicketDocument[]): Promise<ProbeResult> {
+    // Proving nothing proves nothing: never 'applied' from an empty list.
+    if (documents.length === 0) return { state: 'unknown', error: new Error('Nothing to check: this write named no documents') }
     try {
-      if (handler?.probe) return await handler.probe(clone(ticket), args)
-      if (ticket.documents.length === 0) {
-        return { state: 'unknown', error: new Error('Nothing to check: this write named no documents') }
-      }
-      for (const doc of ticket.documents.filter(doc => !doc.confirmed)) {
+      for (const doc of documents.filter(doc => !doc.confirmed)) {
         let exists = await options.documentExists(doc)
-        // One node can lag: absence of a create counts only when a second read agrees.
-        if (!exists && doc.action === 'create') {
-          await new Promise(resolve => setTimeout(resolve, absenceRecheckMs))
+        // One node can lag, either way: a document a create should have added, or a delete
+        // removed, counts as not applied only when a second read agrees.
+        if (exists !== (doc.action === 'create')) {
+          await recheckDelay()
           exists = await options.documentExists(doc)
         }
         if (exists !== (doc.action === 'create')) return { state: 'not-applied' }
@@ -313,10 +324,23 @@ export function createTicketStore(options: TicketStoreOptions) {
     }
   }
 
+  const kit: ProbeKit = { proveDocuments, recheckDelay }
+
+  async function probe(ticket: WriteTicket, args: unknown): Promise<ProbeResult> {
+    const handler = handlers.get(ticket.op)
+    try {
+      if (handler?.probe) return await handler.probe(clone(ticket), args, kit)
+    } catch (error) {
+      return { state: 'unknown', error }
+    }
+    return proveDocuments(ticket.documents)
+  }
+
   load()
-  if (records.size > 0) persist()
-  // After construction: the host's subscription (and the entry's dispatcher) exist by then.
+  // After construction: the host's subscription (and the entry's dispatcher) exist by then, and
+  // the API has registered its handlers, so the rewrite keeps the arguments they persist.
   queueMicrotask(() => {
+    if (records.size > 0) persist()
     for (const id of reconciled) {
       const record = records.get(id)
       if (record?.ticket.identityId === options.currentIdentity()) options.emit('write.status', clone(record.ticket))
@@ -429,7 +453,8 @@ export function createTicketStore(options: TicketStoreOptions) {
       }
       // The earlier attempt's unproven documents are gone (proved absent, or refused): a fresh
       // nonce gives fresh ids, which the new attempt records. Confirmed ones (thread parts) stay.
-      const documents = ticket.documents.filter(doc => doc.confirmed)
+      // A delete names the same document again, so its id stays for the next check.
+      const documents = ticket.documents.filter(doc => doc.confirmed || doc.action === 'delete')
       const restarted = update(id, { state: 'pending', stage: 'queued', error: null, retryable: false, documents })
       start(id, handler, args)
       return restarted

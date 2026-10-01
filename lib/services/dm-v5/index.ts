@@ -69,9 +69,13 @@ export function getDmEngine(identityId: string): DmEngine | null {
   return engine
 }
 
-/** Stop and forget the engine (logout or a user switch), saving pending self-state edits first. */
-export function stopDmEngine(): void {
-  if (!current) return
+/**
+ * Stop and forget the engine (logout or a user switch), saving pending
+ * self-state edits first. With `only`, nothing happens unless that engine is
+ * still the current one (a caller releasing an engine lib may have replaced).
+ */
+export function stopDmEngine(only?: DmEngine): void {
+  if (!current || (only && current.engine !== only)) return
   const { engine, detach } = current
   current = null
   detach()

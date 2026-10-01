@@ -1,3 +1,4 @@
+import { cacheManager } from '@/lib/cache-manager'
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { likesAreIndexOnly, repostsAreQuotes } from '@/lib/contract-topology'
 import { fetchReplyParents } from '@/lib/feed/resolve-reply-parents'
@@ -13,13 +14,18 @@ import { topLikedPostsHydrated } from '@/lib/services/ranked-likes'
 import { replyService } from '@/lib/services/reply-service'
 import { repostService } from '@/lib/services/repost-service'
 import { loadUserStats } from '@/lib/services/social-stats-service'
-import { DICEBEAR_STYLES, unifiedProfileService } from '@/lib/services/unified-profile-service'
+import { avatarSeedMaxLength, profileTextLimits } from '@/lib/profile/v10-profile'
+import { DICEBEAR_STYLES, unifiedProfileService, type DiceBearStyle, type UpdateUnifiedProfileData } from '@/lib/services/unified-profile-service'
+import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Post } from '@/lib/types'
 import { RpcError } from '../protocol/envelope'
 import {
-  assertAtMost, avatarOf, listToDTOs, loadUserSummaries, notSupported, toPostDTOs, viewerId, visibleDTOs, withLoadingAuthor,
+  assertAtMost, avatarOf, badRequest, isIdentityId, listToDTOs, loadUserSummaries, notSupported, requireViewer, toPostDTOs, viewerId, visibleDTOs, withLoadingAuthor,
 } from '../dto/hydrate'
 import { onePage, pageAfter, pageOfList } from '../dto/paging'
+import { assertMediaUrl, characters, relationProbe, signer } from '../writes/handler-kit'
+import { NotSentError, type TicketStore } from '../writes/tickets'
+import type { WriteTicket } from '../writes/types'
 import {
   toProfileDTO,
   type Page, type PostDTO, type ProfileDTO, type ProfileReplyDTO, type RankingWindow, type UserSummaryDTO,
@@ -35,8 +41,6 @@ export interface ProfilePostsQuery {
   cursor?: string | null
 }
 
-/** Base58 of 32 bytes: 43 or 44 characters. */
-const IDENTITY_ID = /^[1-9A-HJ-NP-Za-km-z]{43,44}$/
 /** `app/user/page.tsx` and `hooks/use-profile-replies.ts`. */
 const POSTS_PAGE = 50
 const REPLIES_PAGE = 50
@@ -137,7 +141,7 @@ export const profiles = {
    */
   async get(identityIdOrName: string): Promise<ProfileDTO | null> {
     const input = identityIdOrName.trim().replace(/^@/, '')
-    const id = IDENTITY_ID.test(input) ? input : await dpnsService.resolveIdentity(input)
+    const id = isIdentityId(input) ? input : await dpnsService.resolveIdentity(input)
     if (!id) return null
     const viewer = viewerId()
     const other = viewer && viewer !== id ? viewer : null
@@ -207,4 +211,130 @@ export const profiles = {
       : (await avatarOf(identityId)).dicebear
     return recipe ? generateAvatarSvg(recipe.style, recipe.seed) : null
   },
+}
+
+/**
+ * A profile edit (`app/user/page.tsx` `handleSaveProfile`, `hooks/use-avatar.ts`):
+ * only the fields given change. `''` (or `null` for the avatar and banner)
+ * clears a field; a blank display name keeps the stored one. The avatar is
+ * an image URL or a DiceBear recipe (`engine.info().avatarStyles`).
+ */
+export interface ProfilePatchDTO {
+  displayName?: string
+  bio?: string
+  location?: string
+  website?: string
+  pronouns?: string
+  avatar?: { uri: string } | { dicebear: { style: string; seed: string } } | null
+  bannerUri?: string | null
+  nsfw?: boolean
+}
+
+const TEXT_FIELDS = ['displayName', 'bio', 'location', 'website', 'pronouns'] as const
+/** Stored as given (trimmed); `''` clears. The display name differs: a blank one keeps the stored name. */
+const EXACT_FIELDS = ['bio', 'location', 'website', 'pronouns', 'bannerUri'] as const
+const PATCH_FIELDS: readonly string[] = [...TEXT_FIELDS, 'avatar', 'bannerUri', 'nsfw']
+
+/** The patch as `updateProfile` takes it, after the checks web's form makes. `BAD_REQUEST` otherwise. */
+function toProfileUpdate(patch: ProfilePatchDTO): UpdateUnifiedProfileData {
+  if (typeof patch !== 'object' || patch === null) throw badRequest('patch must be an object')
+  const unknown = Object.keys(patch).find(key => !PATCH_FIELDS.includes(key))
+  if (unknown) throw badRequest(`Unknown profile field: ${unknown}`)
+  const update: UpdateUnifiedProfileData = {}
+  for (const field of TEXT_FIELDS) {
+    const value = patch[field]
+    if (value === undefined) continue
+    if (typeof value !== 'string') throw badRequest(`${field} must be a string`)
+    update[field] = value
+  }
+  const limits = profileTextLimits()
+  if (update.displayName && characters(update.displayName.trim()) > limits.displayName) {
+    throw badRequest(`Display name must be at most ${limits.displayName} characters`)
+  }
+  if (update.bio && characters(update.bio.trim()) > limits.bio) throw badRequest(`Bio must be at most ${limits.bio} characters`)
+  if (patch.nsfw !== undefined) {
+    if (typeof patch.nsfw !== 'boolean') throw badRequest('nsfw must be a boolean')
+    update.nsfw = patch.nsfw
+  }
+  if (patch.bannerUri !== undefined) {
+    if (patch.bannerUri !== null) assertMediaUrl(patch.bannerUri, 'bannerUri')
+    update.bannerUri = patch.bannerUri ?? ''
+  }
+  if (patch.avatar !== undefined) {
+    if (typeof patch.avatar !== 'object') throw badRequest('avatar must be {uri}, {dicebear} or null')
+    update.avatar = avatarField(patch.avatar)
+  }
+  return update
+}
+
+/** An avatar as stored: the image URI, or the recipe `encodeAvatarData` writes (`use-avatar.ts`). */
+function avatarField(avatar: NonNullable<ProfilePatchDTO['avatar']> | null): string {
+  if (avatar === null) return ''
+  if ('uri' in avatar) {
+    assertMediaUrl(avatar.uri, 'avatar.uri')
+    return avatar.uri
+  }
+  const { style, seed } = avatar.dicebear ?? {}
+  if (typeof style !== 'string' || !(DICEBEAR_STYLES as readonly string[]).includes(style)) throw badRequest(`Unknown avatar style: ${String(style)}`)
+  if (typeof seed !== 'string' || !seed || seed.length > avatarSeedMaxLength()) {
+    throw badRequest(`The avatar seed must be 1 to ${avatarSeedMaxLength()} characters`)
+  }
+  return unifiedProfileService.encodeAvatarData(seed, style as DiceBearStyle)
+}
+
+/**
+ * Whether the stored profile shows the edit, read fresh (lib's profile
+ * cache dropped first). lib reports a failed profile read as "none", so a
+ * missing profile counts only when `profileExists` (which rejects on
+ * failure) agrees.
+ */
+async function profileShows(ownerId: string, update: UpdateUnifiedProfileData): Promise<boolean> {
+  cacheManager.invalidateByTag(`user:${ownerId}`)
+  const profile = await unifiedProfileService.getProfile(ownerId)
+  if (!profile) {
+    if (await unifiedProfileService.profileExists(ownerId)) throw new Error('The profile could not be read')
+    return false
+  }
+  return (!update.displayName?.trim() || profile.displayName === update.displayName.trim()) &&
+    EXACT_FIELDS.every(field => {
+      const next = update[field]
+      return next === undefined || (profile[field] ?? '') === next.trim()
+    }) &&
+    (update.nsfw === undefined || (profile.nsfw === true) === update.nsfw) &&
+    (update.avatar === undefined || ((await unifiedProfileService.getStoredAvatar(ownerId)) ?? '') === update.avatar)
+}
+
+/**
+ * `profiles.update`: the viewer's profile through `updateProfile` (v10: the
+ * DashPay `profile`, then `yapprProfile`; v2: one `profile` document, which
+ * the first save creates). On v10 an image avatar is fingerprinted from its
+ * URL in the engine; where that fails it is stored in the extension only.
+ */
+export function createProfileWrites(tickets: TicketStore) {
+  tickets.register<UpdateUnifiedProfileData>('profile.update', {
+    persistArgs: true,
+    async run(update, ctx) {
+      try {
+        await unifiedProfileService.updateProfile(signer(ctx), update)
+      } catch (error) {
+        // The plan's own refusals (lengths, list limits, URL rules) come before anything is signed.
+        if (error instanceof ListLimitError) throw new NotSentError(badRequest(error.message))
+        throw error
+      }
+      // updateProfile throws on a failure and does not say whether the wait confirmed, as on web.
+      return { state: 'confirmed' }
+    },
+    probe: relationProbe(async ({ viewer, args }) => {
+      if (!args) throw new Error('This edit can no longer be checked')
+      return profileShows(viewer, args)
+    }, true),
+  })
+
+  return {
+    async update(patch: ProfilePatchDTO): Promise<WriteTicket> {
+      const update = toProfileUpdate(patch)
+      const viewer = requireViewer('Editing a profile')
+      return tickets.submit({ op: 'profile.update', args: update, target: { identityId: viewer } })
+    },
+  }
 }

@@ -22,6 +22,9 @@ module.exports = {
     expoNodeModulesPattern.replace('(?!(', `(?!(${TRANSPILE_TOO.join('|')}|`),
     ...expoOtherPatterns,
   ],
+  // Allow-listed web lib/ modules (src/lib-allowlist.ts) resolve their
+  // packages from here, as Metro's nodeModulesPaths does.
+  moduleDirectories: ['node_modules', '<rootDir>/node_modules'],
   moduleNameMapper: {
     '\\.css$': '<rootDir>/src/__mocks__/style.js',
     // tsconfig.json `paths`: the engine's dependency-free wire modules.

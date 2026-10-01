@@ -185,7 +185,8 @@ function validateFile(file, immutable, strictSize, network) {
   for (const problem of problems) console.error(`FAIL  ${problem}`);
   if (problems.length > 0) throw new Error(`${problems.length} rule(s) the node would refuse (see above)`);
   for (const documentType of immutable) {
-    console.log(`    ${documentType}: ${JSON.stringify(contract.documentTypeImmutableProperties(documentType))}`);
+    // 5.0: `immutableWhen` conditions carry numeric literals as BigInt.
+    console.log(`    ${documentType}: ${JSON.stringify(contract.documentTypeImmutableProperties(documentType), (_key, value) => (typeof value === 'bigint' ? value.toString() : value))}`);
   }
   return contract;
 }

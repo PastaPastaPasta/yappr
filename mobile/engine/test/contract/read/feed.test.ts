@@ -6,6 +6,9 @@ import { encodeCursor } from '../../../src/dto/cursor'
 import { page, postDTO } from '../../../src/dto/validate'
 import { capabilities, describeRead, engine, expectCode, expectValid, sampleFeed, timed } from './harness'
 
+/** Pages the end-of-feed test walks before giving up on reaching the end. */
+const MAX_PAGES = 25
+
 describeRead('feed', 'feed', () => {
   it('reads the first For You page: valid, enriched, newest first, signed out', async () => {
     const first = await timed('feed.home forYou', () => engine.feed.home({ tab: 'forYou' }))
@@ -34,17 +37,22 @@ describeRead('feed', 'feed', () => {
   })
 
   it('pages with the cursor without repeats, and ends cleanly past the last post (dashpay/platform#5244)', async () => {
-    const first = await engine.feed.home({ tab: 'forYou' })
-    const seen = new Set(first.items.map(post => post.id))
-    if (first.cursor) {
-      const second = await timed('feed.home forYou page 2', () => engine.feed.home({ tab: 'forYou', cursor: first.cursor }))
-      expectValid(page(postDTO), second, 'page2')
-      expect(second.items.some(post => seen.has(post.id))).toBe(false)
+    // Walk to the end (bounded): the first page's last post is the oldest only on a small network.
+    let current = await engine.feed.home({ tab: 'forYou' })
+    const seen = new Set(current.items.map(post => post.id))
+    let last = current.items[current.items.length - 1]
+    for (let index = 2; current.cursor && index <= MAX_PAGES; index++) {
+      current = await timed(`feed.home forYou page ${index}`, () => engine.feed.home({ tab: 'forYou', cursor: current.cursor }))
+      expectValid(page(postDTO), current, `page${index}`)
+      expect(current.items.filter(post => seen.has(post.id)).map(post => post.id)).toEqual([])
+      for (const post of current.items) seen.add(post.id)
+      last = current.items[current.items.length - 1] ?? last
     }
+    // More than MAX_PAGES pages: the end was not reached, so there is nothing to ask past.
+    if (current.cursor) return
     // Asking past the oldest post: on testnet evo-sdk throws a proof error for
     // this mixed-direction query instead of proving an empty page; the engine
     // reads that as the end.
-    const last = first.items[first.items.length - 1]
     const past = await timed('feed.home forYou past end', () =>
       engine.feed.home({ tab: 'forYou', cursor: encodeCursor(`forYou:${postsHaveLanguage() ? 'en' : ''}`, { after: last.id }) }))
     expect(past).toEqual({ items: [], cursor: null, hasMore: false })

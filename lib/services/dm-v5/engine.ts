@@ -393,6 +393,24 @@ export class DmEngine {
     this.schedule()
   }
 
+  /**
+   * Read my own streams of one conversation now, on the queue, whether or not
+   * it is open: for "check again" after a send whose result was uncertain.
+   */
+  async pollOwn(key: string): Promise<void> {
+    const conv = this.ctx.convs.get(key)
+    if (!conv) return
+    await this.run(async () => {
+      const probing = conv.probeOwn
+      conv.probeOwn = true
+      try {
+        await pollStreams(this.ctx, conv)
+      } finally {
+        conv.probeOwn = probing
+      }
+    })
+  }
+
   /** Mark everything up to the newest message read (§5.5: coalesced into the next self-state save). */
   markRead(key: string): void {
     const conv = this.ctx.convs.get(key)

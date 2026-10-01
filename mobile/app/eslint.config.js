@@ -12,7 +12,12 @@ const boundaries = require('./eslint/import-boundaries');
  * lib/constants or lib/contract-topology (limits and capabilities come from
  * the engine). Append-only; see mobile/CLAUDE.md.
  */
-const LIB_ALLOWLIST = [];
+const LIB_ALLOWLIST = [
+  // cn, formatNumber, formatTimeCompact, truncateId, isEmojiOnly. Imports only clsx and tailwind-merge.
+  'lib/utils/common',
+  // Tag and mention normalizers. No imports at all.
+  'lib/post-helpers',
+];
 /** Allowed for `import type` / `export type` only (erased at build time). */
 const LIB_TYPE_ALLOWLIST = ['lib/types'];
 

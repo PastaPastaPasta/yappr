@@ -31,6 +31,26 @@ export function fromBoolean(ok: boolean, documents?: TicketDocument[]): WriteRes
 }
 
 /**
+ * A document lib's `create()` returned: `__createConfirmed: false` marks a
+ * broadcast whose confirmation wait gave no verdict (`publish-thread.ts`
+ * `wasConfirmed`).
+ */
+export function wasConfirmed(document: unknown): boolean {
+  return (document as { __createConfirmed?: boolean }).__createConfirmed !== false
+}
+
+/**
+ * The document a successful `StateTransitionResult` created: its id is the
+ * result's `transactionHash` (state-transition-service `createDocument`). A
+ * service that found the document already there answers success without one.
+ */
+export function createdDocument(result: StateTransitionResult, contractId: string, type: string): TicketDocument[] {
+  return result.success && result.transactionHash
+    ? [{ contractId, type, id: result.transactionHash, action: 'create', confirmed: result.confirmed !== false }]
+    : []
+}
+
+/**
  * Prove a document present or absent with one proved `documents.get`. A
  * "not found" answer is absence; any other failure throws, because it proves
  * nothing (the same rule as lib's `checkDocumentExists`).

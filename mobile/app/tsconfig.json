@@ -9,7 +9,9 @@
       "@assets/*": ["./assets/*"],
       "@/*": ["../../*"],
       "@engine/*": ["../engine/src/*"],
-      "@/components/*": ["./src/engine/web-components.d.ts"]
+      "@/components/*": ["./src/engine/web-components.d.ts"],
+      "clsx": ["./node_modules/clsx"],
+      "tailwind-merge": ["./node_modules/tailwind-merge"]
     }
   },
   "include": [

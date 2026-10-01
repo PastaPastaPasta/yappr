@@ -208,6 +208,8 @@ export interface CapabilitiesDTO {
   /** v10: the DashPay profile plus the `yapprProfile` extension. */
   dashpayProfile: boolean
   yappLocked: boolean
+  /** Messages: DM v5 (1:1 and groups, no read receipts) or legacy 1:1 with read receipts (`dmIsV5`). */
+  dm: 'v5' | 'legacy'
 }
 
 export interface EngagementCountsDTO {

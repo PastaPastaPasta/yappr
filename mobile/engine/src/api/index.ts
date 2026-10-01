@@ -1,11 +1,14 @@
 import { createEngineModule, type EngineRuntime } from './engine'
-import { engage } from './engage'
+import { createEngageWrites, engage } from './engage'
 import { explore } from './explore'
 import { feed } from './feed'
-import { graph } from './graph'
-import { posts } from './posts'
-import { profiles } from './profiles'
-import { createSessionModule } from './session'
+import { createDmModule } from './dm'
+import { createGraphWrites, graph } from './graph'
+import { createNotificationsModule } from './notifications'
+import { createPostWrites, posts } from './posts'
+import { createProfileWrites, profiles } from './profiles'
+import { createSafetyModule } from './safety'
+import { createSessionModule, type SessionEvents } from './session'
 import { settings } from './settings'
 import { createEngineTicketStore, createWritesModule } from './writes'
 import { setNoticeSink } from '../shims/toast'
@@ -19,17 +22,44 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
   const emit = runtime.emit ?? (() => undefined)
   setNoticeSink(notice => emit('engine.notice', notice))
   const tickets = createEngineTicketStore(emit)
+  const dm = createDmModule({ emit, tickets, secureDurable: runtime.secureDurable })
+  // Session changes reach notifications and direct messages too: what they hold belongs to one account.
+  const notifications = createNotificationsModule(emit)
+  const sessionEmit: typeof emit = (event, payload) => {
+    if (event === 'session.changed') {
+      const change = payload as SessionEvents['session.changed']
+      notifications.sessionChanged(change)
+      dm.hooks.sessionChanged(change)
+    }
+    emit(event, payload)
+  }
   return {
-    engine: createEngineModule(runtime),
+    engine: createEngineModule({
+      ...runtime,
+      // A backgrounded app is held until the DM state is saved (PRD DM-14).
+      lifecycle: async state => {
+        await runtime.lifecycle?.(state)
+        await dm.hooks.lifecycle(state)
+      },
+    }),
     feed,
-    posts,
-    engage,
-    profiles,
-    session: createSessionModule({ emit, tickets, secureDurable: runtime.secureDurable }),
+    posts: { ...posts, ...createPostWrites(tickets, emit) },
+    engage: { ...engage, ...createEngageWrites(tickets) },
+    profiles: { ...profiles, ...createProfileWrites(tickets) },
+    session: createSessionModule({
+      emit: sessionEmit,
+      tickets,
+      secureDurable: runtime.secureDurable,
+      stopDm: dm.hooks.stop,
+      resumeDm: dm.hooks.resume,
+    }),
+    dm: dm.api,
     settings,
     writes: createWritesModule(tickets),
-    graph,
+    graph: { ...graph, ...createGraphWrites(tickets) },
     explore,
+    safety: createSafetyModule(tickets),
+    notifications: notifications.api,
   }
 }
 
@@ -37,6 +67,11 @@ export type EngineApi = ReturnType<typeof createEngineApi>
 
 export type { EngineInfo, EngineRuntime } from './engine'
 export type * from './dto'
+export type * from './dm'
+export type { ContentCreatedEvent, DraftDTO } from './posts'
+export type { ProfilePatchDTO } from './profiles'
+export type * from './safety'
+export type * from './notifications'
 export type * from './session'
 export type * from './settings'
 export type * from './writes'
