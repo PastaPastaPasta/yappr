@@ -28,6 +28,7 @@
 import { DASHPAY_CONTRACT_ID, getContractTopology, type ContractTopology } from './constants'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
+import socialContractV11 from '@/contracts/yappr-social-contract-v11.json'
 
 /**
  * Whether a Post-shaped object is backed by a `post` document or a `reply`
@@ -103,9 +104,10 @@ export interface IndexOnlyLikeShape {
    * consensus `$createdAt` (the delete tuple's timestamp and the like
    * notification's time): v9 `byAuthorTimePost [postAuthor, $createdAt, postId]`
    * / `byAuthorTimeReply`, v10 `byAuthorPostTime [postAuthor, postId,
-   * $createdAt]` / `byAuthorReplyTime`.
+   * $createdAt]` / `byAuthorReplyTime`. Null on v11, where no index keeps a
+   * like's time (see {@link deleteNamesCreatedAt}).
    */
-  authorTimeIndex: string
+  authorTimeIndex: string | null
   /**
    * True when that index keys the target BEFORE `$createdAt` (v10): every read
    * of it pins the target too (`author == A && target == T`, or `target in
@@ -114,6 +116,16 @@ export interface IndexOnlyLikeShape {
    * ({@link likeNotificationsPinTarget}).
    */
   authorTimeKeysTarget: boolean
+  /**
+   * True when an unlike's delete-by-values must carry the like's consensus
+   * `$createdAt` (v9, v10), recovered off {@link authorTimeIndex}. False on
+   * v11: every like index involving `$createdAt` is a trend window marked
+   * `outlivesDelete`, so the row stops committing to the time (the SDK drops
+   * a `$createdAt` passed on such a type; the client passes none). The unlike
+   * names only the like's content properties, and its trend-window entries stay counted until their
+   * window expires (up to 72 h for posts, 24 h for tags).
+   */
+  deleteNamesCreatedAt: boolean
 }
 
 /** The doctypes and fields one target kind's engagements live in. */
@@ -268,13 +280,13 @@ const V2_DESCRIPTOR: ContractTopologyDescriptor = {
 const V9_POST_INTERACTIONS: InteractionSurface = {
   ...V2_INTERACTIONS,
   like: { docType: 'like', field: 'postId', ownerFirst: true, ownerField: 'postAuthor' },
-  indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorTimePost', authorTimeKeysTarget: false },
+  indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorTimePost', authorTimeKeysTarget: false, deleteNamesCreatedAt: true },
   replyCountField: 'rootPostId',
 }
 
 const V9_REPLY_INTERACTIONS: InteractionSurface = {
   like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyAuthor' },
-  indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorTimeReply', authorTimeKeysTarget: false },
+  indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorTimeReply', authorTimeKeysTarget: false, deleteNamesCreatedAt: true },
   repost: null,
   bookmark: null,
   quoteField: 'quotedReplyId',
@@ -341,13 +353,55 @@ const V10_DESCRIPTOR: ContractTopologyDescriptor = {
     post: {
       ...V9_POST_INTERACTIONS,
       like: { docType: 'like', field: 'postId', ownerFirst: false, ownerField: 'postAuthor', ownerIsTerminal: true },
-      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorPostTime', authorTimeKeysTarget: true },
+      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorPostTime', authorTimeKeysTarget: true, deleteNamesCreatedAt: true },
       repost: null,
     },
     reply: {
       ...V9_REPLY_INTERACTIONS,
       like: { docType: 'likeReply', field: 'replyId', ownerFirst: false, ownerField: 'replyAuthor', ownerIsTerminal: true },
-      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorReplyTime', authorTimeKeysTarget: true },
+      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorReplyTime', authorTimeKeysTarget: true, deleteNamesCreatedAt: true },
+    },
+  },
+}
+
+/**
+ * v11 — `contracts/yappr-social-contract-v11.json`, the 5.0.0-beta.1 devnet
+ * (docs/SOCIAL_V11.md). Every v10 surface, with likes made cheaper by
+ * `outlivesDelete` (#5232/#5233):
+ *
+ * - `like.byAuthorPost [postAuthor, postId]` (ranked at `[postAuthor,
+ *   postId]`, the same chain as v10's `byAuthorPostTime`) and
+ *   `likeReply.byAuthorReply [replyAuthor, replyId]` drop `$createdAt`, and
+ *   the two trend windows outlive deletes. No like index keeps a like's time,
+ *   so an unlike names no `$createdAt` ({@link IndexOnlyLikeShape.deleteNamesCreatedAt})
+ *   and like notifications are timeless ({@link likeNotificationsAreTimeless}).
+ * - Moderation (not in this descriptor): {@link settledDeletionFor} and
+ *   {@link removalKeptFieldsFor}.
+ * - **Moderated posts and replies (design M).** `post` and `reply` are
+ *   `canBeDeleted: false`: only a moderator removes one, leaving a removal
+ *   record, and every reference at them is `moderatedDocument`, so it keeps
+ *   resolving (to the record) after a removal. An author "deletes" with a
+ *   tombstone: a replace setting `deleted` that clears every content field
+ *   ({@link deletesAreTombstones}); a tombstone of a quote or bare repost
+ *   clears its quote too, which frees the one-quote-per-target slot, so
+ *   undoing a repost is a tombstone and redoing it a new post. The like trees
+ *   are preallocated by the post's (reply's) creator
+ *   ({@link likeTreesArePreallocated}).
+ */
+const V11_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V10_DESCRIPTOR,
+  topology: 'v11',
+  // `hashtag` (and a reply's linkage) is frozen; every other content field is
+  // cleared by the tombstone (`tombstoneIsBlank`), so nothing else is carried.
+  tombstonePreserves: { post: { identifiers: [], scalars: ['hashtag'] }, reply: REPLY_LINKAGE_PRESERVED },
+  interactions: {
+    post: {
+      ...V10_DESCRIPTOR.interactions.post,
+      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false },
+    },
+    reply: {
+      ...V10_DESCRIPTOR.interactions.reply,
+      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false },
     },
   },
 }
@@ -365,6 +419,7 @@ const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>
   v2: V2_DESCRIPTOR,
   v9: V9_DESCRIPTOR,
   v10: V10_DESCRIPTOR,
+  v11: V11_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -386,13 +441,24 @@ function isDevnetCut(): boolean {
 }
 
 /**
- * True on the 4.2.0-beta.7 cut (v10): real deletes, no `beat`, no
+ * True on the 4.2.0-beta.7 cut (v10) and on its 5.0.0-beta.1 successor (v11),
+ * which keeps every v10 surface: real deletes, no `beat`, no
  * `post.language`, `keyGeneration` for the private feed, media hashes,
  * moderator-resolved reports, the DashPay-based profile and a paused,
- * unpriced YAPP.
+ * unpriced YAPP. What v11 changes on top asks {@link isV11}.
  */
 export function isV10(): boolean {
-  return topologyDescriptor().topology === 'v10'
+  const { topology } = topologyDescriptor()
+  return topology === 'v10' || topology === 'v11'
+}
+
+/**
+ * True on the 5.0.0-beta.1 cut (v11): v10 plus timeless likes
+ * (`outlivesDelete`), removal records that keep fields, and settled posts and
+ * replies only the seated team deletes together.
+ */
+export function isV11(): boolean {
+  return topologyDescriptor().topology === 'v11'
 }
 
 /** How reply documents name their parents on this topology. */
@@ -541,10 +607,57 @@ export function referencesAreEnforced(): boolean {
 /**
  * True when post and reply documents are permanent (`canBeDeleted: false`) and a
  * "delete" is therefore an edit that blanks the content and sets `deleted: true`
- * rather than a document removal (v9). On v10 a delete removes the document.
+ * rather than a document removal (v9, v11). On v10 a delete removes the document.
  */
 export function deletesAreTombstones(): boolean {
+  const { topology } = topologyDescriptor()
+  return topology === 'v9' || topology === 'v11'
+}
+
+/**
+ * True when a tombstone keeps an EMPTY `content` (v9: `content: ''`, and
+ * `tombstoneIsBlank` reads its length); false when it leaves every content
+ * field out (v11: `tombstoneIsBlank` requires them absent, and a quote's
+ * `quotedPostId`/`quotedReplyId`/`quotedPostOwnerId` go too).
+ */
+export function tombstoneKeepsEmptyContent(): boolean {
   return topologyDescriptor().topology === 'v9'
+}
+
+/**
+ * True when a reply can outlive its parent (v10, v11): consensus lets a
+ * parent go while the replies naming it stay, so a reader proves the hole and
+ * stubs it instead of dropping the replies under it. On v10 the hole is an
+ * author's delete or a moderator removal; on v11 only a moderator removal
+ * (authors tombstone). False on v2 and v9, which prove no reply-parent holes.
+ * {@link authorDeletesLeaveHoles} says who made a hole, for wording.
+ */
+export function repliesOutliveTheirParent(): boolean {
+  return isV10()
+}
+
+/**
+ * True when an author's tombstone is hidden wherever posts are listed and,
+ * where something must hold its place (a thread parent with live replies, a
+ * quote's target, a direct link), shows as a "deleted by its author" stub
+ * with nothing to interact with (v11). On v9 a tombstone stays in place as a
+ * deleted card. Consensus still accepts likes, replies, quotes and bookmarks
+ * of a tombstone on both, so this is the client's call.
+ */
+export function tombstonesAreHidden(): boolean {
+  return isV11()
+}
+
+/**
+ * True when the like trees of a post or reply are built when it is created,
+ * paid by its creator (`preallocated` on like.byPost/byAuthorPost/
+ * byHashtagPost and likeReply.byReply/byAuthorReply, v11). Every like then
+ * costs the same, and a post with no likes still sits in its trees with a
+ * count of zero: ranked reads and grouped counts can return ZERO-count
+ * groups, which a leaderboard must drop.
+ */
+export function likeTreesArePreallocated(): boolean {
+  return isV11()
 }
 
 /**
@@ -598,6 +711,18 @@ export function likesAreIndexOnly(): boolean {
  */
 export function likeNotificationsPinTarget(): boolean {
   return indexOnlyLikeShapeFor('post')?.authorTimeKeysTarget === true
+}
+
+/**
+ * True when no like index keeps the time of a like (v11): like notifications
+ * are found by diffing a recent target's likers (`byPost`/`byReply`) against
+ * what this device saw last, and are dated when the app first noticed them.
+ * A new device starts from a baseline (no backlog), and an unlike is a
+ * delete-by-values without `$createdAt`.
+ */
+export function likeNotificationsAreTimeless(): boolean {
+  const shape = indexOnlyLikeShapeFor('post')
+  return shape !== null && !shape.deleteNamesCreatedAt
 }
 
 /**
@@ -702,8 +827,8 @@ export function windowedRankingFor(axis: RankingAxis): WindowedRanking | null {
   if (!windowedRankings) {
     windowedRankings = deepFreeze(isV10()
       ? {
-        posts: windowOf(socialContractV10, 'like', 'byTrendPost', 'oldest', '3 days'),
-        hashtags: windowOf(socialContractV10, 'like', 'byTrendHashtagPost', 'oldest', '24h'),
+        posts: windowOf(devnetContract(), 'like', 'byTrendPost', 'oldest', '3 days'),
+        hashtags: windowOf(devnetContract(), 'like', 'byTrendHashtagPost', 'oldest', '24h'),
         creators: null,
       }
       : {
@@ -1091,6 +1216,14 @@ export interface ModeratorAbilities {
   readonly deleteRefundsOwner?: boolean
   /** Top-level properties only the moderators write (`moderatorChangeDocumentFields`). */
   readonly changeFields?: readonly string[]
+  /** 5.0 (v11): the fields a removal record keeps (`keptFields`), e.g. a post's hashtag and `$createdAt`. */
+  readonly deleteKeepsFields?: readonly string[]
+  /**
+   * 5.0 (v11): who of the seated team must approve deleting a document past
+   * {@link deleteWithin}: `approvals` members, the leader among them when
+   * `leader`. Absent: nobody deletes a settled document.
+   */
+  readonly deleteSettled?: { readonly leader?: boolean; readonly approvals?: number }
 }
 
 interface SocialDocumentSchema {
@@ -1111,10 +1244,11 @@ interface SocialDocumentSchema {
   actionFees?: { pricing?: string } & Partial<Record<DocumentAction, { owner?: number; moderators?: number }>>
 }
 
-type SocialContractJson = typeof socialContractV9 | typeof socialContractV10
+type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11
 
 /** The committed JSON of the configured devnet cut; v2 reads v9's (see above). */
 function devnetContract(): SocialContractJson {
+  if (isV11()) return socialContractV11
   return isV10() ? socialContractV10 : socialContractV9
 }
 
@@ -1224,6 +1358,55 @@ export function moderatorAbilitiesFor(docType: string): ModeratorAbilities | nul
 export function moderatorDeletionKeepsRecord(docType: string): boolean {
   const abilities = moderatorAbilitiesFor(docType)
   return abilities?.delete === true && abilities.deleteKeepsRecord !== false
+}
+
+/**
+ * The fields a moderator's removal record of `docType` keeps (v11: a post's
+ * `hashtag` and `$createdAt`, a reply's `rootPostId` and `$createdAt`), read
+ * from `documentRemovals` entries' `keptFields`. Empty when the type keeps
+ * none (v9, v10) or keeps no record. The records are not indexed by them.
+ */
+export function removalKeptFieldsFor(docType: string): readonly string[] {
+  if (!moderatorDeletionKeepsRecord(docType)) return []
+  return moderatorAbilitiesFor(docType)?.deleteKeepsFields ?? []
+}
+
+/** How a settled document of one type is deleted (v11's `deleteWithin` + `deleteSettled`). */
+export interface SettledDeletionRule {
+  /** Seconds after the document's last change during which any one moderator deletes it. */
+  readonly windowSeconds: number
+  /** Whether the team's leader must be among the approvals. */
+  readonly leaderRequired: boolean
+  /** Approvals the rule asks for, the leader counted (consensus caps it at the team's seats). */
+  readonly approvals: number
+}
+
+/**
+ * The settled-deletion rule of `docType` (v11 post and reply: a week, then
+ * the leader plus two members), or null when moderators may delete it at any
+ * age (no `deleteWithin`) or nobody may delete it once settled (no
+ * `deleteSettled`). Past the window a single moderator's delete is refused
+ * (41116); the team proposes (`moderatorDeleteSettledDocument`, the proposal
+ * is the proposer's approval) and approves (`moderatorApproveTeamAction`)
+ * until `min(approvals, team seats)` approvals meet the rule. A team
+ * deletion can never be restored (41209).
+ */
+export function settledDeletionFor(docType: string): SettledDeletionRule | null {
+  const abilities = moderatorAbilitiesFor(docType)
+  if (!abilities?.delete || abilities.deleteWithin === undefined || !abilities.deleteSettled) return null
+  return {
+    windowSeconds: abilities.deleteWithin,
+    leaderRequired: abilities.deleteSettled.leader === true,
+    approvals: abilities.deleteSettled.approvals ?? 1,
+  }
+}
+
+/**
+ * The window in seconds after a document's last change in which one
+ * moderator may delete it alone, or null when there is no limit (v9, v10).
+ */
+export function moderatorDeleteWindowSeconds(docType: string): number | null {
+  return moderatorAbilitiesFor(docType)?.deleteWithin ?? null
 }
 
 /**

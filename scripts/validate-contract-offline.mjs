@@ -23,8 +23,9 @@
  * 20,480-byte state transition cap (measured here on the create transition,
  * budget 20,000 signed), the moderation declaration's pure-data rules
  * (`ContractModerationConfig::validate`, 10900: election windows, the
- * moderated set, the abilities each list or type backs) and the deletability
- * of a reference's target (40122/40131). Those run on the node, so
+ * moderated set, the abilities each list or type backs) and the one reference
+ * kind a reference's target admits (40122/40131/40143/40144). Those run on
+ * the node, so
  * `auditNodeRules` re-checks the ones Yappr's cuts depend on, together with
  * the index shapes, and `--probes` runs the negative probes.
  *
@@ -50,7 +51,7 @@ import { readFileSync } from 'node:fs';
 import { DataContract, DataContractCreateTransition, Document, PlatformVersion, documentCreateCost, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, { DataContract as NodeRulesDataContract, PlatformVersion as NodeRulesPlatformVersion } from '@dashevo/wasm-dpp2';
 import { renderModeration } from './register-lib.mjs';
-import { CREATE_TRANSITION_BUDGET, STATE_TRANSITION_CAP, auditNodeRules, createTransitionSize, metaSchemaProblems, moderatorsMayDelete, runContractProbes } from './contract-probes.mjs';
+import { CREATE_TRANSITION_BUDGET, STATE_TRANSITION_CAP, auditNodeRules, createTransitionSize, metaSchemaProblems, runContractProbes } from './contract-probes.mjs';
 import { runConstraintCases } from './property-constraint-cases.mjs';
 
 /** Any valid 32-byte identifier; schema validation never looks at it. */
@@ -158,21 +159,17 @@ function validateFile(file, immutable, strictSize, network) {
     .filter(([, schema]) => schema.moderatorAbilities)
     .map(([name, schema]) => `${name} ${JSON.stringify(schema.moderatorAbilities)}`);
   console.log(`    moderator abilities: ${abilities.join('; ') || '(none)'}`);
-  const moderatorDeletable = new Set(Object.entries(source.documentSchemas).filter(([, schema]) => moderatorsMayDelete(schema)).map(([name]) => name));
   const distinct = [...contract.documentDistinctFrom].flatMap(([type, list]) => list.map((d) => `${type}.${d.path}≠${d.distinctFrom}`));
   console.log(`    distinctFrom:     ${distinct.join(', ') || '(none)'}`);
   const typed = [...contract.documentTypedArrays].flatMap(([type, list]) => list.map((a) => `${type}.${a.path}[${a.items.type}≤${a.maxItems}${a.items.refersTo ? `→${a.items.refersTo.type}` : ''}]`));
   console.log(`    typed arrays:     ${typed.join(', ') || '(none)'}`);
-  // `documentTypeReferences` reports the type consensus enforces, so a
-  // permanentDocument reference at a moderator-deletable type — refused at
-  // registration with 40122 — shows up here first.
+  // `documentTypeReferences` reports the reference kind consensus enforces;
+  // whether each target admits it (40122/40131/40143/40144) is audited in
+  // auditNodeRules.
   for (const referrer of Object.keys(source.documentSchemas)) {
     for (const reference of contract.documentTypeReferences(referrer)) {
       if (reference.path === '$ownerId') console.log(`    ownerRefersTo:    ${referrer} → ${describeReference(reference)}`);
       else if (reference.findBy || reference.where) console.log(`    refersTo:         ${referrer}.${reference.path} → ${describeReference(reference)}`);
-      if (moderatorDeletable.has(reference.documentType) && reference.type !== 'deletableDocument') {
-        throw new Error(`${referrer}.${reference.path} references moderator-deletable "${reference.documentType}" as ${reference.type}`);
-      }
     }
   }
   // The node-side rules neither parse runs, for the declarations Yappr uses.

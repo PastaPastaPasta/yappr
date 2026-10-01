@@ -19,6 +19,11 @@ const sdk = vi.hoisted(() => ({
     moderationEntries: vi.fn(),
     moderatorChangeDocumentFields: vi.fn(),
     documentRemovals: vi.fn(),
+    moderatorDeleteSettledDocument: vi.fn(),
+    moderatorApproveTeamAction: vi.fn(),
+    teamActions: vi.fn(),
+    teamActionSigners: vi.fn(),
+    moderationActionCounts: vi.fn(),
   },
   documents: { get: vi.fn() },
   identities: { fetch: vi.fn() },
@@ -28,7 +33,10 @@ const topology = vi.hoisted(() => ({
   moderated: true, lists: ['banlist', 'suspensions'] as string[], deletable: ['post', 'reply'], ownerProtected: true,
   /** v10: reports are resolved (changeFields) and a deleted one keeps no removal record. */
   resolvesReports: false, recordless: [] as string[],
+  /** v11: a week's window on post and reply, then the leader plus two members. */
+  v11: false,
 }))
+const SETTLED_RULE = { windowSeconds: 604800, leaderRequired: true, approvals: 3 }
 const fromBytes = vi.hoisted(() => vi.fn(() => ({ restored: true })))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
@@ -52,6 +60,9 @@ vi.mock('@/lib/contract-topology', () => ({
   electedModeration: () => (topology.moderated ? { ownerProtected: topology.ownerProtected } : null),
   moderatorDeletionKeepsRecord: (type: string) => topology.moderated && topology.deletable.includes(type) && !topology.recordless.includes(type),
   reportsAreResolved: () => topology.moderated && topology.resolvesReports,
+  isV11: () => topology.v11,
+  moderatorDeleteWindowSeconds: (type: string) => (topology.v11 && (type === 'post' || type === 'reply') ? SETTLED_RULE.windowSeconds : null),
+  settledDeletionFor: (type: string) => (topology.v11 && (type === 'post' || type === 'reply') ? SETTLED_RULE : null),
 }))
 
 const storage = new Map<string, string>()
@@ -63,7 +74,10 @@ vi.stubGlobal('localStorage', {
   get length() { return storage.size },
 })
 
-import { missingDocumentState, moderationService, protectedIdentities, resolveModerationTeam, toModerationReason, toRemoval, toWarning } from './moderation-service'
+import {
+  SETTLE_MARGIN_MS, countedSigners, deletionPhase, missingDocumentState, moderationService, neededApprovals, protectedIdentities,
+  postedOnLabel, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
+} from './moderation-service'
 import { removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots'
 
 const MODERATOR = 'Mod111111111111111111111111111111111111111'
@@ -75,6 +89,7 @@ beforeEach(() => {
   topology.lists = ['banlist', 'suspensions']
   topology.resolvesReports = false
   topology.recordless = []
+  topology.v11 = false
   for (const group of [sdk.contracts, sdk.documents, sdk.identities, sdk.moderationCharters]) {
     for (const fn of Object.values(group)) fn.mockReset()
   }
@@ -118,7 +133,7 @@ describe('who moderates (mirrors Drive ContractModerators::may_moderate)', () =>
     expect(await moderationService.isModerator(OWNER)).toBe(true)
 
     const free = vi.fn()
-    sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [{ toBase58: () => MEMBER }], free })
+    sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [{ toBase58: () => MEMBER }], electedMembers: [], seats: () => 2, free })
     // Still cached: the owner reads as a moderator until the cache moves.
     expect(await moderationService.isModerator(OWNER)).toBe(true)
     // A moderation action (here refused, as Drive refuses the owner once seated) drops the cache.
@@ -174,10 +189,10 @@ describe('read shapes', () => {
   it('decodes a removal record with its hash and restoration', () => {
     const removal = toRemoval({
       documentId: 'D1', documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: 'r' },
-      removedAt: BigInt(10), documentHash: 'ab'.repeat(32), restoredAt: BigInt(20), restoredBy: 'M2',
+      removedAt: BigInt(10), documentHash: 'ab'.repeat(32), keptFields: {}, restoredAt: BigInt(20), restoredBy: 'M2',
     })
     expect(removal).toMatchObject({ documentHash: 'ab'.repeat(32), restoredAt: 20, restoredBy: 'M2', removedAt: 10 })
-    expect(toRemoval({ documentId: 'D1', documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: '' }, removedAt: BigInt(10), documentHash: '00' }))
+    expect(toRemoval({ documentId: 'D1', documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: '' }, removedAt: BigInt(10), documentHash: '00', keptFields: {} }))
       .toMatchObject({ restoredAt: null, restoredBy: null })
   })
 })
@@ -185,7 +200,7 @@ describe('read shapes', () => {
 describe('what a missing post or reply may claim', () => {
   const record = (restoredAt: number | null) => toRemoval({
     documentId: 'D1', documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: 'v9 battery takedown' },
-    removedAt: BigInt(10), documentHash: '00', ...(restoredAt === null ? {} : { restoredAt: BigInt(restoredAt), restoredBy: 'M2' }),
+    removedAt: BigInt(10), documentHash: '00', keptFields: {}, ...(restoredAt === null ? {} : { restoredAt: BigInt(restoredAt), restoredBy: 'M2' }),
   })
 
   it('claims a takedown for a standing removal record, proven absent or not', () => {
@@ -324,7 +339,7 @@ describe('remove then restore', () => {
     const result = await moderationService.removeDocument(MODERATOR, 'post', 'D1', 'spam')
     expect(result).toMatchObject({ success: true, snapshotSaved: true })
     expect(sdk.documents.get.mock.invocationCallOrder[0]).toBeLessThan(sdk.contracts.moderatorDeleteDocument.mock.invocationCallOrder[0])
-    const removal = { documentId: 'D1', documentOwnerId: 'O', moderatorId: MODERATOR, reason: 'spam', removedAt: Date.now(), documentHash: removalHashOf(bytes), restoredAt: null, restoredBy: null }
+    const removal = { documentId: 'D1', documentOwnerId: 'O', moderatorId: MODERATOR, reason: 'spam', removedAt: Date.now(), documentHash: removalHashOf(bytes), restoredAt: null, restoredBy: null, kept: {} }
     expect(moderationService.canRestore('post', removal)).toBe(true)
   })
 
@@ -332,7 +347,7 @@ describe('remove then restore', () => {
     sdk.contracts.fetch.mockRejectedValue(new Error('offline'))
     sdk.contracts.moderatorDeleteDocument.mockResolvedValue({})
     expect(await moderationService.removeDocument(MODERATOR, 'post', 'D2', 'spam')).toMatchObject({ success: true, snapshotSaved: false })
-    const removal = { documentId: 'D2', documentOwnerId: 'O', moderatorId: MODERATOR, reason: '', removedAt: Date.now(), documentHash: removalHashOf(bytes), restoredAt: null, restoredBy: null }
+    const removal = { documentId: 'D2', documentOwnerId: 'O', moderatorId: MODERATOR, reason: '', removedAt: Date.now(), documentHash: removalHashOf(bytes), restoredAt: null, restoredBy: null, kept: {} }
     expect(moderationService.canRestore('post', removal)).toBe(false)
   })
 
@@ -369,7 +384,7 @@ describe('remove then restore', () => {
 
   it('offers no restore once restored, past the week, or when the kept bytes do not hash to the record', () => {
     saveSnapshot('post', 'D3', bytes)
-    const removal = { documentId: 'D3', documentOwnerId: 'O', moderatorId: MODERATOR, reason: '', removedAt: Date.now(), documentHash: removalHashOf(bytes), restoredAt: null, restoredBy: null }
+    const removal = { documentId: 'D3', documentOwnerId: 'O', moderatorId: MODERATOR, reason: '', removedAt: Date.now(), documentHash: removalHashOf(bytes), restoredAt: null, restoredBy: null, kept: {} }
     expect(moderationService.canRestore('post', removal)).toBe(true)
     expect(moderationService.canRestore('post', { ...removal, restoredAt: Date.now(), restoredBy: MODERATOR })).toBe(false)
     expect(moderationService.canRestore('post', removal, Date.now() + 8 * 86_400_000)).toBe(false)
@@ -434,7 +449,7 @@ describe('who is protected from moderation (mirrors Drive ContractModerators::pr
   it('reads the team and the declaration for the contract as it stands', async () => {
     const contract = { ownerId: { toBase58: () => OWNER }, config: { moderation: { moderators: elected({ $type: 'contractOwner' }) } } }
     sdk.contracts.fetch.mockResolvedValue(contract)
-    sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [], free: vi.fn() })
+    sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [], electedMembers: [], seats: () => 1, free: vi.fn() })
     expect(await moderationService.getProtectedIdentities()).toEqual(new Set([LEADER, OWNER]))
   })
 })
@@ -570,5 +585,245 @@ describe('removal records are read only for types that keep them', () => {
     expect(sdk.contracts.documentRemovals).not.toHaveBeenCalled()
     await moderationService.getRemovals('post', ['P1'])
     expect(sdk.contracts.documentRemovals).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('removal records that keep fields (v11 deleteKeepsFields)', () => {
+  const entry = (keptFields: Record<string, unknown>) => ({
+    documentId: 'D1', documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: 'spam' }, removedAt: BigInt(10), documentHash: '00', keptFields,
+  })
+
+  it('carries a post\'s hashtag and $createdAt', () => {
+    expect(toRemoval(entry({ hashtag: 'dash', $createdAt: 1759100000000 })).kept).toEqual({ hashtag: 'dash', createdAt: 1759100000000 })
+  })
+
+  it('carries a reply\'s rootPostId and a bigint $createdAt', () => {
+    expect(toRemoval(entry({ rootPostId: 'Root1', $createdAt: BigInt(1759100000000) })).kept).toEqual({ rootPostId: 'Root1', createdAt: 1759100000000 })
+  })
+
+  it('says when a removed post was written, with the year only when it is not this one', () => {
+    const now = new Date(2026, 9, 1).getTime()
+    expect(postedOnLabel(new Date(2026, 8, 30).getTime(), now)).toBe(new Date(2026, 8, 30).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))
+    expect(postedOnLabel(new Date(2025, 8, 30).getTime(), now)).toBe(new Date(2025, 8, 30).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))
+  })
+
+  it('keeps nothing before v11, and leaves out values of an unexpected shape', () => {
+    expect(toRemoval(entry({})).kept).toEqual({})
+    expect(toKeptFields(undefined)).toEqual({})
+    expect(toKeptFields({ hashtag: '', $createdAt: 'soon', rootPostId: null, extra: 1 })).toEqual({})
+    expect(toKeptFields({ hashtag: 7, $createdAt: -1 })).toEqual({})
+  })
+})
+
+describe('settled documents (v11 deleteWithin + deleteSettled)', () => {
+  const WEEK_MS = 604800 * 1000
+  const createdAt = 1_759_000_000_000
+
+  it('places a document against its window, with a minute either side of the end left to the node', () => {
+    expect(deletionPhase(604800, createdAt, createdAt + 1000)).toBe('open')
+    expect(deletionPhase(604800, createdAt, createdAt + WEEK_MS - SETTLE_MARGIN_MS - 1)).toBe('open')
+    expect(deletionPhase(604800, createdAt, createdAt + WEEK_MS - SETTLE_MARGIN_MS)).toBe('closing')
+    expect(deletionPhase(604800, createdAt, createdAt + WEEK_MS + SETTLE_MARGIN_MS)).toBe('closing')
+    expect(deletionPhase(604800, createdAt, createdAt + WEEK_MS + SETTLE_MARGIN_MS + 1)).toBe('settled')
+  })
+
+  it('never settles a type without a window (v2, v9, v10), nor a document whose time is unknown', () => {
+    expect(deletionPhase(null, createdAt, createdAt + 10 * WEEK_MS)).toBe('open')
+    expect(deletionPhase(604800, Number.NaN, createdAt + 10 * WEEK_MS)).toBe('open')
+    expect(moderationService.isSettled('post', new Date(createdAt), createdAt + 10 * WEEK_MS)).toBe(false)
+    topology.v11 = true
+    expect(moderationService.isSettled('post', new Date(createdAt), createdAt + 10 * WEEK_MS)).toBe(true)
+    expect(moderationService.isSettled('reply', createdAt, createdAt + 1000)).toBe(false)
+    expect(moderationService.teamDeletesSettled()).toBe(true)
+  })
+
+  it('needs min(approvals, seats) approvals, and at least one', () => {
+    expect(neededApprovals({ approvals: 3 }, 26)).toBe(3)
+    expect(neededApprovals({ approvals: 3 }, 2)).toBe(2)
+    expect(neededApprovals({ approvals: 3 }, 0)).toBe(1)
+    expect(neededApprovals({ approvals: 3 }, null)).toBe(3)
+  })
+
+  it('routes a removal: alone while open or closing, by proposal once settled, and only for the seated team', () => {
+    const seated = { leaderId: LEADER, members: [MEMBER], electedMembers: [MEMBER], seats: 2 }
+    expect(removalRouteFor('open', SETTLED_RULE, seated, MEMBER)).toEqual({ route: 'single', closing: false })
+    expect(removalRouteFor('closing', SETTLED_RULE, seated, MEMBER)).toEqual({ route: 'single', closing: true })
+    expect(removalRouteFor('settled', null, seated, MEMBER)).toEqual({ route: 'none', why: 'noSettledRule' })
+    expect(removalRouteFor('settled', SETTLED_RULE, null, OWNER)).toEqual({ route: 'none', why: 'noTeamSeated' })
+    expect(removalRouteFor('settled', SETTLED_RULE, seated, OWNER)).toEqual({ route: 'none', why: 'notOnTeam' })
+    expect(removalRouteFor('settled', SETTLED_RULE, seated, MEMBER))
+      .toEqual({ route: 'team', needed: 2, leaderRequired: true, leaderId: LEADER, viewerIsLeader: false, reachable: true })
+    // Seats count unfilled added places: leader + one member can never give three approvals.
+    expect(removalRouteFor('settled', SETTLED_RULE, { ...seated, seats: 12 }, LEADER))
+      .toEqual({ route: 'team', needed: 3, leaderRequired: true, leaderId: LEADER, viewerIsLeader: true, reachable: false })
+  })
+
+  it('a team can approve only with as many people as approvals needed', () => {
+    expect(teamCanApprove(3, { members: [MEMBER] })).toBe(false)
+    expect(teamCanApprove(3, { members: [MEMBER, APPOINTED] })).toBe(true)
+    expect(teamCanApprove(1, { members: [] })).toBe(true)
+  })
+
+  it('reads no seats before v11, so a seats() failure can never break the moderator check', async () => {
+    const seats = vi.fn(() => { throw new Error('boom') })
+    sdk.contracts.fetch.mockResolvedValue({ ownerId: { toBase58: () => OWNER }, config: { moderation: { moderators: elected({ $type: 'contractOwner' }) } } })
+    sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [], electedMembers: [], seats, free: vi.fn() })
+    expect(await moderationService.isModerator(LEADER)).toBe(true)
+    expect(seats).not.toHaveBeenCalled()
+    moderationService.invalidateTeam()
+    topology.v11 = true
+    expect(await moderationService.isModerator(LEADER)).toBe(true)
+    await expect(moderationService.getSeatedTeam()).resolves.toMatchObject({ seats: null })
+  })
+
+  it('reads the seated team\'s seats from the declaration\'s maxAddedModerators, for the route', async () => {
+    topology.v11 = true
+    const seats = vi.fn(() => 12)
+    sdk.contracts.fetch.mockResolvedValue({
+      ownerId: { toBase58: () => OWNER },
+      config: { moderation: { moderators: { ...elected({ $type: 'contractOwner' }), maxAddedModerators: 10 } } },
+    })
+    sdk.moderationCharters.team.mockResolvedValue({
+      leaderId: { toBase58: () => LEADER }, members: [{ toBase58: () => MEMBER }], electedMembers: [{ toBase58: () => MEMBER }], seats, free: vi.fn(),
+    })
+    const route = await moderationService.removalRoute(MEMBER, 'post', createdAt, createdAt + 2 * WEEK_MS)
+    expect(route).toEqual({ route: 'team', needed: 3, leaderRequired: true, leaderId: LEADER, viewerIsLeader: false, reachable: false })
+    expect(seats).toHaveBeenCalledWith(10)
+    await expect(moderationService.getSeatedTeam()).resolves.toEqual({ leaderId: LEADER, members: [MEMBER], electedMembers: [MEMBER], seats: 12 })
+  })
+
+  it('counts only the signers still on the team', () => {
+    expect(countedSigners([LEADER, MEMBER, 'Gone1'], { leaderId: LEADER, members: [MEMBER] })).toEqual([LEADER, MEMBER])
+    expect(countedSigners(['A', 'B'], null)).toEqual(['A', 'B'])
+  })
+
+  it('decodes a team action with the approvals its rule needs', () => {
+    topology.v11 = true
+    const action = toTeamAction({
+      actionId: 'A1', proposerId: MEMBER, proposedAt: BigInt(20), approvalCount: 2,
+      event: { type: 'deleteSettledDocument', documentTypeName: 'post', documentId: 'P1', documentLastModifiedAt: BigInt(10), reason: { text: 'spam', reasonDocumentId: 'RD1' } },
+    }, 'active', 2)
+    expect(action).toEqual({
+      actionId: 'A1', status: 'active', proposerId: MEMBER, proposedAt: 20, documentTypeName: 'post', documentId: 'P1',
+      documentLastModifiedAt: 10, reason: 'spam', reasonDocumentId: 'RD1', approvalCount: 2, neededApprovals: 2, leaderRequired: true,
+    })
+  })
+})
+
+describe('the team\'s settled-deletion writes and reads', () => {
+  beforeEach(() => {
+    topology.v11 = true
+  })
+
+  it('proposes with the charter reason and returns the action id to approve', async () => {
+    sdk.contracts.moderatorDeleteSettledDocument.mockResolvedValue({ actionId: { toBase58: () => 'A1' }, status: 'active' })
+    const result = await moderationService.proposeSettledDeletion(MEMBER, 'post', 'P1', { text: 'spam', reasonDocumentId: 'RD1' })
+    expect(result).toEqual({ success: true, actionId: 'A1', status: 'active' })
+    expect(sdk.contracts.moderatorDeleteSettledDocument).toHaveBeenCalledWith(expect.objectContaining({
+      contractId: expect.any(String), documentTypeName: 'post', documentId: 'P1', reason: { text: 'spam', reasonDocumentId: 'RD1' }, signer: expect.anything(), identity: expect.anything(),
+    }))
+    // No copy is kept: a team deletion is never restored.
+    expect(sdk.documents.get).not.toHaveBeenCalled()
+  })
+
+  it('refuses locally without a charter reason, or where the type sets no settled rule', async () => {
+    expect(await moderationService.proposeSettledDeletion(MEMBER, 'post', 'P1', { text: 'spam' })).toMatchObject({ success: false, errorCode: 'REASON_NOT_LISTED' })
+    topology.v11 = false
+    expect(await moderationService.proposeSettledDeletion(MEMBER, 'post', 'P1', { text: 'spam', reasonDocumentId: 'RD1' }))
+      .toMatchObject({ success: false, errorCode: 'NOT_SETTLED_DELETABLE' })
+    expect(sdk.contracts.moderatorDeleteSettledDocument).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [41206, 'NOT_SETTLED'],
+    [41205, 'TEAM_NOT_SEATED'],
+  ])('maps a proposal refused %s to %s', async (code, errorCode) => {
+    sdk.contracts.moderatorDeleteSettledDocument.mockRejectedValue({ code, message: 'refused' })
+    expect(await moderationService.proposeSettledDeletion(MEMBER, 'post', 'P1', { text: 'x', reasonDocumentId: 'RD1' })).toMatchObject({ success: false, errorCode })
+  })
+
+  it('approves by action id and reports when the approval ran the action', async () => {
+    sdk.contracts.moderatorApproveTeamAction.mockResolvedValue({ actionId: { toBase58: () => 'A1' }, status: 'closed' })
+    expect(await moderationService.approveTeamAction(LEADER, 'A1')).toEqual({ success: true, status: 'closed' })
+    expect(sdk.contracts.moderatorApproveTeamAction).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'A1', contractId: expect.any(String) }))
+  })
+
+  it.each([
+    [41208, 'TEAM_ACTION_ALREADY_SIGNED'],
+    [41210, 'TEAM_ACTION_COMPLETED'],
+    [41211, 'TEAM_ACTION_DOCUMENT_CHANGED'],
+  ])('maps an approval refused %s to %s', async (code, errorCode) => {
+    sdk.contracts.moderatorApproveTeamAction.mockRejectedValue({ code, message: 'refused' })
+    expect(await moderationService.approveTeamAction(LEADER, 'A1')).toMatchObject({ success: false, errorCode })
+  })
+
+  it('a single delete past the window says only the team can remove it now (41116)', async () => {
+    sdk.contracts.fetch.mockResolvedValue(null)
+    sdk.contracts.moderatorDeleteDocument.mockRejectedValue({ code: 41116, message: 'refused' })
+    const result = await moderationService.removeDocument(MODERATOR, 'post', 'P1', 'spam')
+    expect(result).toMatchObject({ success: false, errorCode: 'DELETE_WINDOW_ELAPSED' })
+    expect(result.error).toMatch(/only the seated moderation team/i)
+  })
+
+  it('lists every page of team actions with the needed approvals capped at the seats', async () => {
+    sdk.contracts.fetch.mockResolvedValue({
+      ownerId: { toBase58: () => OWNER },
+      config: { moderation: { moderators: { ...elected({ $type: 'contractOwner' }), maxAddedModerators: 0 } } },
+    })
+    sdk.moderationCharters.team.mockResolvedValue({
+      leaderId: { toBase58: () => LEADER }, members: [{ toBase58: () => MEMBER }], electedMembers: [{ toBase58: () => MEMBER }], seats: () => 2, free: vi.fn(),
+    })
+    const entry = (actionId: string, documentId: string) => ({
+      actionId, proposerId: MEMBER, proposedAt: BigInt(20), approvalCount: 1,
+      event: { type: 'deleteSettledDocument', documentTypeName: 'reply', documentId, documentLastModifiedAt: BigInt(10), reason: { text: 'abuse' } },
+    })
+    sdk.contracts.teamActions
+      .mockResolvedValueOnce({ actions: [entry('A1', 'R1')], nextStartAtActionId: 'A1' })
+      .mockResolvedValueOnce({ actions: [entry('A2', 'R2')] })
+    const { actions, truncated } = await moderationService.listTeamActions('active')
+    expect(truncated).toBe(false)
+    expect(actions.map((action) => action.actionId)).toEqual(['A1', 'A2'])
+    expect(actions[0]).toMatchObject({ documentTypeName: 'reply', approvalCount: 1, neededApprovals: 2, reasonDocumentId: null })
+    expect(sdk.contracts.teamActions).toHaveBeenNthCalledWith(1, { contractId: expect.any(String), status: 'active', limit: 100 })
+    expect(sdk.contracts.teamActions).toHaveBeenNthCalledWith(2, { contractId: expect.any(String), status: 'active', startAtActionId: 'A1', startAtActionIdIncluded: false, limit: 100 })
+
+    sdk.contracts.teamActions.mockResolvedValue({ actions: [entry('A3', 'R3')], nextStartAtActionId: 'A3' })
+    await expect(moderationService.listTeamActions('closed', { max: 1 })).resolves.toMatchObject({ truncated: true })
+
+    // A second proposal for a document would split the approvals: the modal finds the first.
+    sdk.contracts.teamActions.mockResolvedValue({ actions: [entry('A1', 'R1'), entry('A2', 'R2')] })
+    await expect(moderationService.findActiveTeamAction('R2')).resolves.toMatchObject({ actionId: 'A2' })
+    await expect(moderationService.findActiveTeamAction('R9')).resolves.toBeNull()
+  })
+
+  it('says an approval can never run once its document is gone (40101)', async () => {
+    sdk.contracts.moderatorApproveTeamAction.mockRejectedValue({ code: 40101, message: 'refused' })
+    expect(await moderationService.approveTeamAction(LEADER, 'A1')).toMatchObject({ success: false, errorCode: 'DOCUMENT_GONE' })
+  })
+
+  it('reads the signers of an action', async () => {
+    sdk.contracts.teamActionSigners.mockResolvedValue({ signerIds: [LEADER, MEMBER] })
+    await expect(moderationService.teamActionSigners('A1', 'active')).resolves.toEqual([LEADER, MEMBER])
+    expect(sdk.contracts.teamActionSigners).toHaveBeenCalledWith({ contractId: expect.any(String), status: 'active', actionId: 'A1' })
+  })
+
+  it('reads nothing about team actions before v11', async () => {
+    topology.v11 = false
+    await expect(moderationService.listTeamActions('active')).resolves.toEqual({ actions: [], truncated: false })
+    await expect(moderationService.teamActionSigners('A1', 'closed')).resolves.toEqual([])
+    expect(await moderationService.approveTeamAction(LEADER, 'A1')).toMatchObject({ success: false, errorCode: 'NOT_MODERATED' })
+    expect(sdk.contracts.teamActions).not.toHaveBeenCalled()
+    expect(sdk.contracts.teamActionSigners).not.toHaveBeenCalled()
+  })
+
+  it('reads the per-member action counts, and answers null instead of throwing when refused or off v11', async () => {
+    sdk.contracts.moderationActionCounts.mockResolvedValue({ counts: [{ identityId: LEADER, count: 3 }, { identityId: MEMBER, count: 1 }] })
+    await expect(moderationService.getActionCounts()).resolves.toEqual(new Map([[LEADER, 3], [MEMBER, 1]]))
+    sdk.contracts.moderationActionCounts.mockRejectedValue(new Error('contract keeps no moderation action counts'))
+    await expect(moderationService.getActionCounts()).resolves.toBeNull()
+    topology.v11 = false
+    sdk.contracts.moderationActionCounts.mockClear()
+    await expect(moderationService.getActionCounts()).resolves.toBeNull()
+    expect(sdk.contracts.moderationActionCounts).not.toHaveBeenCalled()
   })
 })

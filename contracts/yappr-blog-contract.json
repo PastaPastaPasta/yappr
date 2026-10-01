@@ -157,7 +157,7 @@
           "position": 0,
           "description": "Reference to parent blog document",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "blog",
             "where": {
               "$ownerId": "$ownerId"
@@ -245,13 +245,15 @@
         }
       },
       "additionalProperties": false,
-      "description": "A published post. Permanent for its owner (blog v3 keeps no revision history; the contract's moderators may remove it). The author IS $ownerId: a comment binds its blogPostOwnerId to the post's $ownerId through a system-field propertyAgreement, so no attested copy is carried.",
+      "description": "A published post. Permanent for its owner (blog v3 keeps no revision history; the contract's moderators may remove it). The author IS $ownerId, which a comment's postOwnerAndTime index reads through blogPostId, so no attested copy is carried.",
       "immutable": [
         "blogId",
-        "publishedAt"
-      ],
-      "immutableAllowSetting": [
-        "publishedAt"
+        {
+          "property": "publishedAt",
+          "when": {
+            "present": "$old.publishedAt"
+          }
+        }
       ],
       "moderatorAbilities": {
         "delete": true
@@ -313,7 +315,7 @@
           "name": "postOwnerAndTime",
           "properties": [
             {
-              "blogPostOwnerId": "asc"
+              "blogPostId.$ownerId": "asc"
             },
             {
               "$createdAt": "asc"
@@ -334,7 +336,6 @@
       "required": [
         "$createdAt",
         "blogPostId",
-        "blogPostOwnerId",
         "content"
       ],
       "properties": {
@@ -347,37 +348,27 @@
           "position": 0,
           "description": "Reference to parent blog post document",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "blogPost",
             "where": {
-              "$ownerId": "blogPostOwnerId",
               "commentsEnabled": "postCommentsEnabled"
             }
           }
-        },
-        "blogPostOwnerId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
-          "position": 1,
-          "description": "Owner of the parent post, consensus-bound to its $ownerId"
         },
         "content": {
           "type": "string",
           "minLength": 1,
           "maxLength": 500,
-          "position": 2,
+          "position": 1,
           "description": "Comment content"
         },
         "postCommentsEnabled": {
           "type": "boolean",
-          "position": 3
+          "position": 2
         }
       },
       "additionalProperties": false,
-      "description": "A comment on a post. blogPostId must name a real post whose $ownerId equals this document's blogPostOwnerId, so the notification key cannot be forged and comments on ghost posts are impossible.",
+      "description": "A comment on a post. blogPostId must name a real post, and postOwnerAndTime reads that post's $ownerId through it (blogPostId.$ownerId), so the notification key cannot be forged and comments on ghost posts are impossible.",
       "tokenCost": {
         "create": {
           "contractId": "SOCIAL_CONTRACT_ID",
@@ -484,7 +475,7 @@
           "position": 0,
           "description": "Reference to the blog being followed",
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "moderatedDocument",
             "documentType": "blog"
           }
         }

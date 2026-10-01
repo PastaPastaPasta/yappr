@@ -2,9 +2,10 @@ import type { Reply } from '@/lib/types';
 
 /**
  * The reply ids a flat thread's replies nest under (`replyToReplyId`) that are
- * not among the loaded replies. On v10, where authors delete replies for real,
- * these are the candidates for a deleted parent; the caller proves the
- * absence before stubbing any of them.
+ * not among the loaded replies. Where a reply outlives its parent (v10: an
+ * author's delete or a moderator removal; v11: a moderator removal), these are
+ * the candidates for a gone parent; the caller proves the absence before
+ * stubbing any of them.
  */
 export function unloadedReplyParents(replies: readonly Reply[]): string[] {
   const loaded = new Set(replies.map((reply) => reply.id));
@@ -16,8 +17,10 @@ export function unloadedReplyParents(replies: readonly Reply[]): string[] {
 }
 
 /**
- * Stand-ins for replies proved deleted, so the replies nested under them keep
- * their place instead of dropping out of the thread with their parent.
+ * Stand-ins for replies proved gone (deleted by their author on v10, removed
+ * by the moderators on v10 and v11), so the replies nested under them keep
+ * their place instead of dropping out of the thread with their parent. The
+ * stub resolves who made the hole itself (`RemovedPostStub`).
  *
  * The deleted document is gone, and with it whatever it nested under, so a
  * stub sits at the top of the thread. It takes the earliest child's timestamp,

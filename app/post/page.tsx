@@ -21,6 +21,7 @@ import { replyToPost } from '@/lib/services/post-service'
 import type { Post } from '@/lib/types'
 import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
 import { referencesMayDangle } from '@/lib/contract-topology'
+import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
 
 function PostDetailContent() {
   const router = useRouter()
@@ -101,8 +102,9 @@ function PostDetailContent() {
     // queries resolve against the reply interaction doctypes. Walks every
     // rendered nesting level.
     const replyMap = new Map<string, Post>(
-      // A deleted-parent stub is no document, so there is nothing to enrich.
-      flattenReplyThreads(replyThreads).filter((thread) => !thread.content.deletedStub).map((thread): [string, Post] => [
+      // A deleted-parent stub is no document, and a v11 tombstone renders as a
+      // stub with no counts, so neither has anything to enrich.
+      flattenReplyThreads(replyThreads).filter((thread) => !thread.content.deletedStub && !isHiddenTombstone(thread.content)).map((thread): [string, Post] => [
         thread.content.id,
         replyToPost(thread.content)
       ])

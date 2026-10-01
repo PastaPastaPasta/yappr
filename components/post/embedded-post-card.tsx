@@ -9,7 +9,8 @@ import { PostContent } from './post-content'
 import { PrivateQuotedPostContent, isQuotedPostPrivate } from './private-quoted-post-content'
 import { SensitiveContentGate } from './sensitive-content-gate'
 import { shouldGateSensitive } from '@/lib/sensitive-content'
-import { targetKindOf } from '@/lib/contract-topology'
+import { targetKindOf, tombstonesAreHidden } from '@/lib/contract-topology'
+import { AuthorDeletedStub } from '@/components/moderation/removed-post-stub'
 import { useSettingsStore } from '@/lib/store'
 import { useMediaGate } from '@/hooks/use-media-gate'
 
@@ -30,6 +31,11 @@ export function EmbeddedPostCard({ post, className = '' }: EmbeddedPostCardProps
   // Quoted authors have no enrichment hint here; the shared follow cache and
   // own-post check still lift the gate, otherwise media is click-to-reveal.
   const mediaGate = useMediaGate(post.author.id)
+  // v11: the quoted post's author tombstoned it. Nothing of it is left to
+  // show or open, so the quote says only that.
+  if (post.deleted && tombstonesAreHidden()) {
+    return <AuthorDeletedStub documentId={post.id} kind={targetKindOf(post)} className={className} />
+  }
   if (isQuotedPostPrivate(post)) {
     return <PrivateQuotedPostContent quotedPost={post} className={className} />
   }

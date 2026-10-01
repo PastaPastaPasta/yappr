@@ -14,9 +14,11 @@
  * Server-side `SELECT count(*) GROUP BY postId ORDER BY count DESC LIMIT n`,
  * O(log n + k) with a proof — no scan, no client-side sorting.
  *
- * Zero-count groups are filtered here as a guard: a ranked page on a
- * PREALLOCATED index would carry one for every post (the v9 like indexes are
- * not preallocated, so none are expected). `groupValue` arrives base58 for
+ * Zero-count groups are filtered here, on every topology: a ranked page on a
+ * PREALLOCATED index carries one for every post or author (v11's like trees,
+ * `likeTreesArePreallocated()`), and a fully drained group reports 0 too.
+ * Ranked `desc` puts the zeros last, so they never crowd a liked entry out of
+ * `limit`; a page can only come back shorter. `groupValue` arrives base58 for
  * identifier group keys and `value` is a bigint.
  *
  * v9 only: on v2 the like doctype declares no ranked axes and the node refuses

@@ -18,6 +18,7 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import toast from 'react-hot-toast'
 import { useSettingsStore } from '@/lib/store'
+import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
 
 interface BookmarkedPost {
   id: string
@@ -70,7 +71,8 @@ function BookmarksPage() {
         const postsById = new Map(page.posts.map(post => [post.id, post]))
         const rawPostsWithBookmarkData = bookmarkDocs.map((bookmark) => {
           const post = postsById.get(bookmark.postId)
-          return post ? { post, bookmarkedAt: new Date(bookmark.$createdAt) } : null
+          // v11: a post its author tombstoned has nothing left to keep.
+          return post && !isHiddenTombstone(post) ? { post, bookmarkedAt: new Date(bookmark.$createdAt) } : null
         })
 
         // Filter out deleted posts

@@ -133,7 +133,8 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     setRepostLoading(true)
     try {
       const { postService } = await import('@/lib/services/post-service')
-      if (!(await postService.deletePost(quote.id, viewerId))) throw new Error('Repost operation failed')
+      // v11: a tombstone that clears the quote, freeing the slot for a redo.
+      if (!(await postService.deleteOwnPost(quote.id, viewerId))) throw new Error('Repost operation failed')
       setOwnQuote(null)
       toast.success(quote.bare ? 'Removed repost' : 'Quote deleted')
     } catch (error) {
