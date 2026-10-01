@@ -125,15 +125,23 @@ export interface PostMappingOptions {
 const stripDash = (name: string) => name.replace(/\.dash$/i, '')
 const shortName = (id: string) => `User ${id.slice(-6)}`
 
+/**
+ * lib's `createDefaultUser` stand-in (sdk-helpers.ts), which an author keeps
+ * when a batch author lookup fails (resolvePostAuthorsBatch swallows errors;
+ * quoted posts get their authors that way).
+ */
+const isPlaceholderAuthor = (user: User) => !user.username && user.hasDpns === false && user.displayName === 'Unknown User'
+
 export function toAuthorDTO(user: User, defaultAvatarUrl: (identityId: string) => string): AuthorDTO {
   const username = user.username ? stripDash(user.username) : null
+  const placeholder = isPlaceholderAuthor(user)
   return {
     id: user.id,
     username,
-    displayName: user.displayName || username || shortName(user.id),
+    displayName: (placeholder ? '' : user.displayName) || username || shortName(user.id),
     avatarUrl: user.avatar || defaultAvatarUrl(user.id),
-    // enrichPostsBatch sets hasDpns on success; a failed or skipped lookup leaves it undefined.
-    resolved: user.hasDpns !== undefined,
+    // A successful lookup sets hasDpns; a failed one leaves it undefined (feeds) or the placeholder (batch resolvers).
+    resolved: user.hasDpns !== undefined && !placeholder,
   }
 }
 

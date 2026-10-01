@@ -49,6 +49,13 @@ describe('toPostDTO', () => {
       .toMatchObject({ username: 'bob', displayName: 'bob', resolved: true })
   })
 
+  it('treats lib\'s "Unknown User" placeholder (a failed batch author lookup) as unresolved', () => {
+    const placeholder = { ...author, username: '', displayName: 'Unknown User', avatar: '', hasDpns: false }
+    expect(toPostDTO(post({ author: placeholder }), signedOut).author).toEqual({
+      id: author.id, username: null, displayName: `User ${author.id.slice(-6)}`, avatarUrl: 'dicebear:AA', resolved: false,
+    })
+  })
+
   it('flags private posts and maps quotes, replies, reposts and embeds', () => {
     const dto = toPostDTO(post({
       targetKind: 'reply', parentId: 'parent', rootPostId: 'root',
