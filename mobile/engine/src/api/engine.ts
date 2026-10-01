@@ -10,10 +10,19 @@ import {
 } from '@/lib/constants'
 import { profileBaseSource } from '@/lib/profile/v10-profile'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
-import { PROTOCOL_VERSION } from '../protocol/envelope'
+import { PROTOCOL_VERSION, RpcError, type LogLevel } from '../protocol/envelope'
 import { ENGINE_BUILD, bundleHash } from '../build-info'
-import type { EngineRuntime } from '../runtime'
 import type { AppLifecycleState } from '../shims/lifecycle'
+
+/**
+ * Host-specific hooks the API needs. The WebView entry wires the real shims;
+ * the Node harness passes nothing.
+ */
+export interface EngineRuntime {
+  lifecycle?: (state: AppLifecycleState) => void
+  connectivity?: (online: boolean) => void
+  setLogLevel?: (level: LogLevel) => void
+}
 
 export interface EngineInfo {
   protocol: number
@@ -34,13 +43,14 @@ export interface EngineInfo {
   ready: boolean
   /** WebAssembly is available (false under iOS Lockdown Mode). */
   webAssembly: boolean
-  /** Wall time of the first boot's SDK initialization, once it finished. */
+  /** Wall time of the first successful boot's SDK initialization. */
   bootMs?: number
 }
 
 export function createEngineModule(runtime: EngineRuntime) {
   let bootMs: number | undefined
   let booting: Promise<void> | null = null
+  let bootAttempted = false
 
   const info = (): EngineInfo => ({
     protocol: PROTOCOL_VERSION,
@@ -71,9 +81,10 @@ export function createEngineModule(runtime: EngineRuntime) {
      */
     async boot(): Promise<EngineInfo> {
       if (typeof WebAssembly === 'undefined') {
-        throw Object.assign(new Error('WebAssembly is unavailable (iOS Lockdown Mode?)'), { code: 'NO_WEBASSEMBLY' })
+        throw new RpcError('WebAssembly is unavailable (iOS Lockdown Mode?)', 'NO_WEBASSEMBLY')
       }
       if (!booting) {
+        bootAttempted = true
         const started = performance.now()
         booting = evoSdkService
           .initialize({ network: getConfiguredNetwork(), contractId: YAPPR_CONTRACT_ID })
@@ -98,10 +109,19 @@ export function createEngineModule(runtime: EngineRuntime) {
       runtime.lifecycle?.(state)
     },
 
-    /** The host forwards NetInfo changes here; `online` lets the SDK rebuild a dead instance. */
+    /**
+     * The host forwards NetInfo changes here. Coming back online repairs the
+     * SDK as web's SdkProvider does: it rebuilds an instance that lost its
+     * connection, or finishes a boot that failed while offline.
+     */
     async connectivity(online: boolean): Promise<void> {
       runtime.connectivity?.(online)
-      if (online && booting) await evoSdkService.restoreConnection()
+      if (online && bootAttempted) await evoSdkService.restoreConnection()
+    },
+
+    /** Lowest console level forwarded to the host (default `info`; `debug` is costly over the bridge). */
+    async setLogLevel(level: LogLevel): Promise<void> {
+      runtime.setLogLevel?.(level)
     },
   }
 }

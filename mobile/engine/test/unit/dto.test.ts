@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Post, User } from '@/lib/types'
-import { toPostDTO, toProfileDTO } from '../../src/api/dto'
+import { toPostDTO, toProfileDTO, type PostMappingOptions } from '../../src/api/dto'
 
 const author: User = {
   id: 'A'.repeat(44), username: 'alice.dash', displayName: 'Alice', avatar: 'https://img/a.png',
-  followers: 0, following: 0, joinedAt: new Date(0),
+  followers: 0, following: 0, joinedAt: new Date(0), hasDpns: true,
 }
 
 const post = (overrides: Partial<Post> = {}): Post => ({
@@ -13,15 +13,18 @@ const post = (overrides: Partial<Post> = {}): Post => ({
   ...overrides,
 })
 
+const signedOut: PostMappingOptions = { signedIn: false, defaultAvatarUrl: id => `dicebear:${id.slice(0, 2)}` }
+const signedIn: PostMappingOptions = { ...signedOut, signedIn: true }
+
 describe('toPostDTO', () => {
   it('maps the fields screens render and nothing internal', () => {
     const dto = toPostDTO(post({
       _enrichment: { authorIsBlocked: false, authorIsFollowing: true, authorAvatarUrl: 'x' },
       media: [{ id: 'm', type: 'image', url: 'ipfs://x', hashes: { mediaHash: new Uint8Array(32), mediaFingerprint: new Uint8Array(8) } }],
-    }), false)
+    }), signedOut)
     expect(dto).toEqual({
       id: 'P'.repeat(44), kind: 'post',
-      author: { id: 'A'.repeat(44), username: 'alice', displayName: 'Alice', avatarUrl: 'https://img/a.png' },
+      author: { id: 'A'.repeat(44), username: 'alice', displayName: 'Alice', avatarUrl: 'https://img/a.png', resolved: true },
       content: 'hello', createdAt: new Date(1000),
       stats: { likes: 3, reposts: 1, replies: 2, quotes: 0 },
       media: [{ type: 'image', url: 'ipfs://x' }],
@@ -29,25 +32,38 @@ describe('toPostDTO', () => {
     })
   })
 
-  it('adds viewer marks only when signed in', () => {
-    expect(toPostDTO(post({ liked: true }), true).viewer).toEqual({ liked: true, reposted: false, bookmarked: false })
-    expect(toPostDTO(post({ liked: true }), false).viewer).toBeUndefined()
+  it('adds viewer marks and author relations only when signed in', () => {
+    const marked = post({ liked: true, _enrichment: { authorIsBlocked: true, authorIsFollowing: false, authorAvatarUrl: '' } })
+    expect(toPostDTO(marked, signedIn).viewer).toEqual({
+      liked: true, reposted: false, bookmarked: false, authorBlocked: true, followsAuthor: false,
+    })
+    expect(toPostDTO(marked, signedOut).viewer).toBeUndefined()
   })
 
-  it('flags private posts and maps quotes, replies and embeds', () => {
+  it('falls back to a name and the default avatar, and flags an unresolved author', () => {
+    const blank = { ...author, username: '', displayName: '', avatar: '', hasDpns: undefined }
+    expect(toPostDTO(post({ author: blank }), signedOut).author).toEqual({
+      id: author.id, username: null, displayName: `User ${author.id.slice(-6)}`, avatarUrl: 'dicebear:AA', resolved: false,
+    })
+    expect(toPostDTO(post({ author: { ...blank, username: 'bob.dash', hasDpns: true } }), signedOut).author)
+      .toMatchObject({ username: 'bob', displayName: 'bob', resolved: true })
+  })
+
+  it('flags private posts and maps quotes, replies, reposts and embeds', () => {
     const dto = toPostDTO(post({
       targetKind: 'reply', parentId: 'parent', rootPostId: 'root',
       encryptedContent: new Uint8Array([1]),
       quotedReplyId: 'q', quotedPost: post({ id: 'Q'.repeat(44), content: 'quoted' }),
+      repostedBy: { id: 'R', displayName: 'Rita', username: undefined }, repostTimestamp: new Date(5),
       embedContractId: 'c', embedDocType: 'poll', embedId: 'e',
-      author: { ...author, username: '' },
-    }), false)
+    }), signedOut)
     expect(dto).toMatchObject({
       kind: 'reply', parentId: 'parent', rootPostId: 'root', encrypted: true, quotedPostId: 'q',
       quoted: { id: 'Q'.repeat(44), content: 'quoted' },
+      repostedBy: { id: 'R', displayName: 'Rita' }, repostTimestamp: new Date(5),
       embed: { contractId: 'c', documentType: 'poll', id: 'e' },
-      author: { username: null },
     })
+    expect('username' in (dto.repostedBy ?? {})).toBe(false)
   })
 })
 

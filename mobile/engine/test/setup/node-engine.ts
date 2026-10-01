@@ -8,8 +8,6 @@
  * during SSR) and wasm-sdk takes its Node init path. Nothing in the read API
  * needs `window`.
  */
-import { scopedKey } from '@/lib/storage-scope'
-import { createEngineStorage, installEngineStorage } from '../../src/shims/storage'
 
 for (const key of Object.keys(process.env)) {
   // The contract suite targets testnet, the production web build's defaults;
@@ -17,6 +15,9 @@ for (const key of Object.keys(process.env)) {
   if (key.startsWith('NEXT_PUBLIC_')) delete process.env[key]
 }
 
-const prefix = scopedKey('yappr_secure_')
-export const nodeEngineStorage = createEngineStorage(key => key.startsWith(prefix))
-installEngineStorage(nodeEngineStorage)
+// Imported only now: static imports are hoisted above the loop, and
+// lib/storage-scope reads NEXT_PUBLIC_STORAGE_SCOPE when it loads.
+const { createEngineStorage, installEngineStorage } = await import('../../src/shims/storage')
+installEngineStorage(createEngineStorage())
+
+export {}

@@ -16,10 +16,18 @@ export interface Page<T> {
 
 export interface AuthorDTO {
   id: string
-  /** DPNS name without `.dash`; `null` when the identity has none (or it did not resolve). */
+  /** DPNS name without `.dash`; `null` when the identity has none or it did not resolve. */
   username: string | null
+  /** Never empty: the profile name, else the DPNS label, else `User <last 6 of id>`. */
   displayName: string
+  /** Never empty: the profile avatar, else the default DiceBear avatar. */
   avatarUrl: string
+  /**
+   * The author lookup completed. False when enrichment failed (lib swallows
+   * the error), so the fallbacks above are placeholders, not facts; the host
+   * may show them and re-fetch.
+   */
+  resolved: boolean
 }
 
 export interface MediaDTO {
@@ -38,11 +46,14 @@ export interface PostStatsDTO {
   quotes: number
 }
 
-/** The signed-in viewer's marks; absent when signed out. */
+/** The signed-in viewer's marks and relation to the author; absent when signed out. */
 export interface ViewerStateDTO {
   liked: boolean
   reposted: boolean
   bookmarked: boolean
+  /** The viewer blocked the author (web hides or collapses the card). */
+  authorBlocked: boolean
+  followsAuthor: boolean
 }
 
 export interface PostDTO {
@@ -87,7 +98,12 @@ export interface ProfileDTO {
   usernames: string[]
   displayName: string
   avatarUrl: string
-  /** False when the identity has no profile document (it is optional since #605). */
+  /**
+   * A profile document was read. False when the identity has none (profiles
+   * are optional since #605) OR when the read failed: lib's getProfile
+   * returns null for both. Never treat false alone as "no profile" before an
+   * owner edit; re-check strictly first, as web's /user page does.
+   */
   hasProfile: boolean
   bio?: string
   location?: string
@@ -100,46 +116,60 @@ export interface ProfileDTO {
   stats: ProfileStatsDTO
 }
 
-const stripDash = (name: string) => name.replace(/\.dash$/i, '')
+export interface PostMappingOptions {
+  signedIn: boolean
+  /** The DiceBear placeholder for an identity (unifiedProfileService.getDefaultAvatarUrl). */
+  defaultAvatarUrl: (identityId: string) => string
+}
 
-export function toAuthorDTO(user: User): AuthorDTO {
+const stripDash = (name: string) => name.replace(/\.dash$/i, '')
+const shortName = (id: string) => `User ${id.slice(-6)}`
+
+export function toAuthorDTO(user: User, defaultAvatarUrl: (identityId: string) => string): AuthorDTO {
+  const username = user.username ? stripDash(user.username) : null
   return {
     id: user.id,
-    username: user.username ? stripDash(user.username) : null,
-    displayName: user.displayName,
-    avatarUrl: user.avatar,
+    username,
+    displayName: user.displayName || username || shortName(user.id),
+    avatarUrl: user.avatar || defaultAvatarUrl(user.id),
+    // enrichPostsBatch sets hasDpns on success; a failed or skipped lookup leaves it undefined.
+    resolved: user.hasDpns !== undefined,
   }
 }
 
-export function toPostDTO(post: Post, signedIn: boolean): PostDTO {
-  const dto: PostDTO = {
+export function toPostDTO(post: Post, options: PostMappingOptions): PostDTO {
+  return omitUndefined<PostDTO>({
     id: post.id,
     kind: post.targetKind ?? 'post',
-    author: toAuthorDTO(post.author),
+    author: toAuthorDTO(post.author, options.defaultAvatarUrl),
     content: post.content,
     createdAt: post.createdAt,
     stats: { likes: post.likes, reposts: post.reposts, replies: post.replies, quotes: post.quotes },
+    viewer: options.signedIn
+      ? {
+          liked: post.liked === true,
+          reposted: post.reposted === true,
+          bookmarked: post.bookmarked === true,
+          authorBlocked: post._enrichment?.authorIsBlocked === true,
+          followsAuthor: post._enrichment?.authorIsFollowing === true,
+        }
+      : undefined,
     media: (post.media ?? []).map(({ type, url, thumbnail, alt, width, height }) =>
       omitUndefined({ type, url, thumbnail, alt, width, height })),
     sensitive: post.sensitive === true,
     deleted: post.deleted === true,
     encrypted: post.encryptedContent !== undefined,
+    parentId: post.parentId || undefined,
+    rootPostId: post.rootPostId || undefined,
+    quotedPostId: (post.quotedPostId ?? post.quotedReplyId) || undefined,
+    quoted: post.quotedPost ? toPostDTO(post.quotedPost, options) : undefined,
     quotedRemoved: post.quotedPostRemoved === true,
-  }
-  if (signedIn) {
-    dto.viewer = { liked: post.liked === true, reposted: post.reposted === true, bookmarked: post.bookmarked === true }
-  }
-  if (post.parentId) dto.parentId = post.parentId
-  if (post.rootPostId) dto.rootPostId = post.rootPostId
-  const quotedId = post.quotedPostId ?? post.quotedReplyId
-  if (quotedId) dto.quotedPostId = quotedId
-  if (post.quotedPost) dto.quoted = toPostDTO(post.quotedPost, signedIn)
-  if (post.repostedBy) dto.repostedBy = omitUndefined({ ...post.repostedBy })
-  if (post.repostTimestamp) dto.repostTimestamp = post.repostTimestamp
-  if (post.embedContractId && post.embedDocType && post.embedId) {
-    dto.embed = { contractId: post.embedContractId, documentType: post.embedDocType, id: post.embedId }
-  }
-  return dto
+    repostedBy: post.repostedBy ? omitUndefined(post.repostedBy) : undefined,
+    repostTimestamp: post.repostTimestamp,
+    embed: post.embedContractId && post.embedDocType && post.embedId
+      ? { contractId: post.embedContractId, documentType: post.embedDocType, id: post.embedId }
+      : undefined,
+  })
 }
 
 export function toProfileDTO(input: {
@@ -152,30 +182,27 @@ export function toProfileDTO(input: {
   const { id, profile, stats } = input
   const usernames = input.usernames.map(stripDash)
   const username = usernames[0] ?? null
-  const base: ProfileDTO = {
+  return omitUndefined<ProfileDTO>({
     id,
     username,
     usernames,
     // Without a profile the DPNS label is the name (web's /user does the same since #605).
-    displayName: profile?.displayName || username || `User ${id.slice(-6)}`,
+    displayName: profile?.displayName || username || shortName(id),
     avatarUrl: profile?.avatar || input.defaultAvatarUrl,
     hasProfile: profile !== null,
     stats,
-  }
-  if (!profile) return base
-  return omitUndefined({
-    ...base,
-    bio: profile.bio || undefined,
-    location: profile.location || undefined,
-    website: profile.website || undefined,
-    pronouns: profile.pronouns || undefined,
-    bannerUrl: profile.bannerUri || undefined,
-    nsfw: profile.nsfw,
-    joinedAt: profile.joinedAt,
-    socialLinks: profile.socialLinks?.length ? profile.socialLinks.map(({ platform, handle }) => ({ platform, handle })) : undefined,
+    bio: profile?.bio || undefined,
+    location: profile?.location || undefined,
+    website: profile?.website || undefined,
+    pronouns: profile?.pronouns || undefined,
+    bannerUrl: profile?.bannerUri || undefined,
+    nsfw: profile?.nsfw,
+    joinedAt: profile?.joinedAt,
+    socialLinks: profile?.socialLinks?.length ? profile.socialLinks.map(({ platform, handle }) => ({ platform, handle })) : undefined,
   })
 }
 
-function omitUndefined<T extends object>(value: T): T {
+/** Drop keys whose value is undefined, so optional DTO fields are absent rather than present-and-undefined. */
+function omitUndefined<T extends object>(value: { [K in keyof T]: T[K] | undefined }): T {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as T
 }

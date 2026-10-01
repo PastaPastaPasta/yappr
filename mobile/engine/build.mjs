@@ -46,7 +46,7 @@ function parseArgs(argv) {
 }
 
 /** KEY=VALUE lines; `#` comments; optional single or double quotes. No expansion (the files use none). */
-export function parseEnvFile(text) {
+function parseEnvFile(text) {
   const env = {}
   for (const raw of text.split('\n')) {
     const line = raw.trim()
@@ -64,7 +64,7 @@ export function parseEnvFile(text) {
 }
 
 /** The `process.env.*` values the bundle sees for a variant. */
-export function variantEnv(variant) {
+function variantEnv(variant) {
   const { envFile } = VARIANTS[variant]
   const fileEnv = envFile ? parseEnvFile(readFileSync(path.join(root, envFile), 'utf8')) : {}
   const env = Object.fromEntries(Object.entries(fileEnv).filter(([key]) => key.startsWith('NEXT_PUBLIC_')))
@@ -108,26 +108,34 @@ async function main() {
   }
   for (const [key, value] of Object.entries(env)) define[`process.env.${key}`] = JSON.stringify(value)
 
-  const started = Date.now()
-  const result = await build({
-    entryPoints: [path.join(here, 'src/entry.webview.ts')],
-    outfile: path.join(outdir, 'engine.js'),
+  const common = {
     bundle: true,
     format: 'iife',
     platform: 'browser',
     // DecompressionStream (the inlined wasm is gzip) needs iOS 16.4 / Chrome 80.
     target: ['safari16.4', 'chrome110'],
     minify: true,
+    logLevel: 'warning',
+  }
+
+  const started = Date.now()
+  const result = await build({
+    ...common,
+    entryPoints: [path.join(here, 'src/entry.webview.ts')],
+    outfile: path.join(outdir, 'engine.js'),
     sourcemap: args.sourcemap ? 'linked' : false,
     legalComments: 'none',
     metafile: true,
     define,
     plugins: [rootAliasPlugin],
-    logLevel: 'warning',
   })
   const buildMs = Date.now() - started
 
   const js = readFileSync(path.join(outdir, 'engine.js'))
+  // engine.inline.html puts the bundle inside <script>: either sequence would end or corrupt it.
+  for (const forbidden of [/<\/script/i, /<!--/]) {
+    if (forbidden.test(js.toString('latin1'))) throw new Error(`engine.js contains ${forbidden}; it cannot be inlined into engine.inline.html`)
+  }
   const hash = sha256(js)
   const hashScript = `<script>globalThis.__YAPPR_ENGINE_BUNDLE_HASH__=${JSON.stringify(hash)}</script>`
   const head = `<!doctype html><html><head><meta charset="utf-8"><title>yappr engine</title>${hashScript}`
@@ -136,11 +144,7 @@ async function main() {
   writeFileSync(path.join(outdir, 'meta.json'), JSON.stringify(result.metafile))
 
   // Diagnostics page: an in-page host for browsers nothing can drive (see src/selftest.ts).
-  await build({
-    entryPoints: [path.join(here, 'src/selftest.ts')],
-    outfile: path.join(outdir, 'selftest.js'),
-    bundle: true, format: 'iife', platform: 'browser', target: ['safari16.4', 'chrome110'], minify: true, logLevel: 'warning',
-  })
+  await build({ ...common, entryPoints: [path.join(here, 'src/selftest.ts')], outfile: path.join(outdir, 'selftest.js') })
   writeFileSync(path.join(outdir, 'selftest.html'), `${head}<meta name="viewport" content="width=device-width"></head><body><pre id="out" style="white-space:pre-wrap;font:14px monospace"></pre><script src="selftest.js"></script><script src="engine.js"></script></body></html>\n`)
 
   const manifest = {
@@ -164,9 +168,7 @@ async function main() {
   for (const [file, bytes] of top) console.log(`  ${(bytes / 1e6).toFixed(2)} MB  ${file}`)
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error) => {
-    console.error(error)
-    process.exit(1)
-  })
-}
+main().catch((error) => {
+  console.error(error)
+  process.exit(1)
+})

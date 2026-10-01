@@ -15,14 +15,10 @@ export interface EngineBuild {
 
 declare const __ENGINE_BUILD__: EngineBuild | undefined
 
-declare global {
-  var __YAPPR_ENGINE_BUNDLE_HASH__: string | undefined
-}
-
 export const ENGINE_BUILD: EngineBuild = typeof __ENGINE_BUILD__ !== 'undefined'
   ? __ENGINE_BUILD__
   : { variant: 'source', evoSdkVersion: 'unknown', builtAt: '' }
 
 export function bundleHash(): string {
-  return globalThis.__YAPPR_ENGINE_BUNDLE_HASH__ ?? 'unbundled'
+  return (globalThis as { __YAPPR_ENGINE_BUNDLE_HASH__?: string }).__YAPPR_ENGINE_BUNDLE_HASH__ ?? 'unbundled'
 }

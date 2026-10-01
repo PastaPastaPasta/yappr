@@ -18,6 +18,7 @@ const [hostSide, engineSide] = createInProcessPair()
 const dispatcher = createDispatcher({ api: createEngineApi(), transport: engineSide })
 const client = createEngineClient<EngineApi>(hostSide, { timeoutMs: 120_000 })
 dispatcher.hello({ bundleHash: 'node' })
+
 const engine = client.api
 
 let firstPage: PostDTO[] = []
@@ -53,6 +54,8 @@ describe('engine read API on testnet', () => {
       expect(post.createdAt).toBeInstanceOf(Date)
       expect(post.author.id).toMatch(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/)
       expect(post.author.avatarUrl).not.toBe('')
+      expect(post.author.displayName).not.toBe('')
+      expect(post.author.resolved).toBe(true)
       expect(post.stats).toEqual({
         likes: expect.any(Number), reposts: expect.any(Number), replies: expect.any(Number), quotes: expect.any(Number),
       })
@@ -82,21 +85,33 @@ describe('engine read API on testnet', () => {
     expect(post).toMatchObject({ id: sample.id, content: sample.content, author: { id: sample.author.id } })
   })
 
+  it('gets a reply by id, as web\'s post page falls back to replies', async (ctx) => {
+    // Found through lib directly: the engine API has no thread read yet.
+    const { replyService } = await import('@/lib/services/reply-service')
+    const parent = firstPage.find(post => post.stats.replies > 0)
+    if (!parent) return ctx.skip()
+    const { documents } = await replyService.getReplies(parent.id, { limit: 1, skipEnrichment: true })
+    if (documents.length === 0) return ctx.skip()
+    const reply = await engine.posts.get(documents[0].id)
+    expect(reply).toMatchObject({ id: documents[0].id, kind: 'reply', author: { resolved: true } })
+  })
+
   it('returns null for a post that does not exist', async () => {
     expect(await engine.posts.get('11111111111111111111111111111111111111111111')).toBeNull()
   })
 
   it('gets a profile by identity id and by DPNS name', async () => {
     const named = firstPage.find(post => post.author.username)
-    expect(named).toBeDefined()
-    const byId = await engine.profiles.get(named!.author.id)
-    expect(byId).toMatchObject({ id: named!.author.id, username: named!.author.username })
-    expect(byId!.usernames).toContain(named!.author.username)
-    expect(byId!.stats).toEqual({ posts: expect.any(Number), followers: expect.any(Number), following: expect.any(Number) })
-    expect(byId!.stats.posts).toBeGreaterThan(0)
+    if (!named?.author.username) throw new Error('no first-page author has a DPNS name')
+    const { id, username } = named.author
+    const byId = await engine.profiles.get(id)
+    expect(byId).toMatchObject({ id, username })
+    expect(byId?.usernames).toContain(username)
+    expect(byId?.stats).toEqual({ posts: expect.any(Number), followers: expect.any(Number), following: expect.any(Number) })
+    expect(byId?.stats.posts).toBeGreaterThan(0)
 
-    const byName = await engine.profiles.get(`@${named!.author.username}.dash`)
-    expect(byName?.id).toBe(named!.author.id)
+    const byName = await engine.profiles.get(`@${username}.dash`)
+    expect(byName?.id).toBe(id)
   })
 
   it('returns null for a DPNS name nobody holds', async () => {

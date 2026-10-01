@@ -11,7 +11,7 @@
  * interception, as `source={{ html, baseUrl }}` would). For each it records
  * cold boot, first/second feed page, a post and a profile, and the DAPI
  * responses' CORS headers. Results go to $EVIDENCE_DIR (default
- * /tmp/claude/yappr-mobile/evidence/m2-engine).
+ * mobile/engine/test-results/, gitignored).
  *
  * Read only, against testnet. Run `npm run build:testnet` first.
  */
@@ -25,7 +25,7 @@ import { createHandlerSet, type Transport } from '../../src/rpc/transport'
 import type { EngineApi } from '../../src/api'
 
 const DIST = path.resolve(__dirname, '../../dist/testnet')
-const EVIDENCE_DIR = process.env.EVIDENCE_DIR ?? '/tmp/claude/yappr-mobile/evidence/m2-engine'
+const EVIDENCE_DIR = process.env.EVIDENCE_DIR ?? path.resolve(__dirname, '../../test-results')
 const RUNS = Number(process.env.RUNS ?? 2)
 const HTTPS_BASE = 'https://engine.yap.pr/'
 
@@ -62,6 +62,23 @@ interface RunResult {
 }
 
 const results: RunResult[] = []
+
+/** Run `fn` and return its value with its wall time in whole milliseconds. */
+async function timed<T>(fn: () => Promise<T>): Promise<[T, number]> {
+  const started = performance.now()
+  const value = await fn()
+  return [value, Math.round(performance.now() - started)]
+}
+
+/** Launch a browser for one test and close it whatever happens. */
+async function withBrowser(type: BrowserType, fn: (browser: Browser) => Promise<void>): Promise<void> {
+  const browser = await type.launch()
+  try {
+    await fn(browser)
+  } finally {
+    await browser.close()
+  }
+}
 
 /** The host end of the bridge: inbound messages are fed to `deliver` by an exposed page function. */
 function pageTransport(page: Page): { transport: Transport; deliver: (message: string) => void } {
@@ -100,7 +117,7 @@ async function runOnce(browser: Browser, browserName: string, mode: Mode, run: n
     const { transport, deliver } = pageTransport(page)
     await page.exposeFunction('__engineToHost', deliver)
     if (snapshot) {
-      await page.addInitScript((injected) => { globalThis.__YAPPR_ENGINE_STORAGE__ = injected }, snapshot)
+      await page.addInitScript((injected) => { (window as { __YAPPR_ENGINE_STORAGE__?: unknown }).__YAPPR_ENGINE_STORAGE__ = injected }, snapshot)
     }
     await page.addInitScript(() => {
       const w = window as unknown as {
@@ -162,9 +179,8 @@ async function runOnce(browser: Browser, browserName: string, mode: Mode, run: n
     result.helloMs = Math.round(performance.now() - t0)
     result.origin = await page.evaluate(() => self.origin)
 
-    let t = performance.now()
-    const info = await client.api.engine.boot()
-    result.bootMs = Math.round(performance.now() - t)
+    const [info, bootMs] = await timed(() => client.api.engine.boot())
+    result.bootMs = bootMs
     result.engineBootMs = info.bootMs
     result.probe = await page.evaluate(() => {
       const w = window as unknown as { __probe: NonNullable<RunResult['probe']> }
@@ -172,34 +188,25 @@ async function runOnce(browser: Browser, browserName: string, mode: Mode, run: n
       return { ...w.__probe, jsHeapMB: memory ? Math.round(memory.usedJSHeapSize / 1e6) : undefined }
     })
 
-    t = performance.now()
-    const first = await client.api.feed.forYou()
-    result.firstFeedMs = Math.round(performance.now() - t)
+    const [first, firstFeedMs] = await timed(() => client.api.feed.forYou())
+    result.firstFeedMs = firstFeedMs
     result.coldToFeedMs = Math.round(performance.now() - t0)
     result.firstFeedItems = first.items.length
     expect(first.items.length).toBeGreaterThan(0)
     // lib reads the session from localStorage: viewer marks appear only if the injected snapshot was seen.
     expect(first.items[0].viewer !== undefined).toBe(snapshot !== undefined)
 
-    if (first.hasMore) {
-      t = performance.now()
-      await client.api.feed.forYou({ cursor: first.cursor })
-      result.secondFeedMs = Math.round(performance.now() - t)
-    }
+    if (first.hasMore) [, result.secondFeedMs] = await timed(() => client.api.feed.forYou({ cursor: first.cursor }))
     // Warm re-read of the first page: the steady-state cost of a refresh.
-    t = performance.now()
-    await client.api.feed.forYou()
-    result.refreshFeedMs = Math.round(performance.now() - t)
+    ;[, result.refreshFeedMs] = await timed(() => client.api.feed.forYou())
 
     const sample = first.items[0]
-    t = performance.now()
-    const post = await client.api.posts.get(sample.id)
-    result.postGetMs = Math.round(performance.now() - t)
+    const [post, postGetMs] = await timed(() => client.api.posts.get(sample.id))
+    result.postGetMs = postGetMs
     expect(post?.id).toBe(sample.id)
 
-    t = performance.now()
-    const profile = await client.api.profiles.get(sample.author.id)
-    result.profileGetMs = Math.round(performance.now() - t)
+    const [profile, profileGetMs] = await timed(() => client.api.profiles.get(sample.author.id))
+    result.profileGetMs = profileGetMs
     expect(profile?.id).toBe(sample.author.id)
 
     result.ok = true
@@ -216,47 +223,30 @@ async function runOnce(browser: Browser, browserName: string, mode: Mode, run: n
 const engines: [string, BrowserType][] = [['webkit', webkit], ['chromium', chromium]]
 
 describe.skipIf(!existsSync(path.join(DIST, 'engine.html')))('engine boots in a browser runtime', () => {
+  const runAll = (browser: Browser, name: string, mode: Mode, options?: RunOptions) => async () => {
+    for (let run = 1; run <= RUNS; run++) {
+      const result = await runOnce(browser, name, mode, run, options)
+      expect(result.error ?? null).toBeNull()
+    }
+  }
+
   for (const [name, type] of engines) {
     for (const mode of ['file', 'https'] as Mode[]) {
-      it(`${name} over ${mode}`, async () => {
-        const browser = await type.launch()
-        try {
-          for (let run = 1; run <= RUNS; run++) {
-            const result = await runOnce(browser, name, mode, run)
-            expect(result.error ?? null).toBeNull()
-          }
-        } finally {
-          await browser.close()
-        }
-      })
+      it(`${name} over ${mode}`, () => withBrowser(type, browser => runAll(browser, name, mode)()))
     }
   }
 
   // A rough stand-in for a mid-range Android phone: Chromium with the CPU slowed 4x.
-  it('chromium over file, CPU throttled 4x', async () => {
-    const browser = await chromium.launch()
-    try {
-      for (let run = 1; run <= RUNS; run++) {
-        const result = await runOnce(browser, 'chromium', 'file', run, { cpuThrottle: 4 })
-        expect(result.error ?? null).toBeNull()
-      }
-    } finally {
-      await browser.close()
-    }
-  })
+  it('chromium over file, CPU throttled 4x', () =>
+    withBrowser(chromium, browser => runAll(browser, 'chromium', 'file', { cpuThrottle: 4 })()))
 
   // The host's storage snapshot reaches lib: a session injected before load makes the engine signed in.
-  it('webkit over file, with a host storage snapshot', async () => {
-    const browser = await webkit.launch()
-    try {
-      // A session for an arbitrary, well-formed identity id. Nothing is signed or written.
-      const session = JSON.stringify({ user: { identityId: '4t8Ww2SDcMgLqT2PqGzMSwbeEv6P8r7WFoDA8BmZHRC8' }, timestamp: 0 })
-      const result = await runOnce(browser, 'webkit', 'file', 1, { snapshot: { local: { yappr_session: session } } })
-      expect(result.error ?? null).toBeNull()
-    } finally {
-      await browser.close()
-    }
-  })
+  it('webkit over file, with a host storage snapshot', () => withBrowser(webkit, async (browser) => {
+    // A session for an arbitrary, well-formed identity id. Nothing is signed or written.
+    const session = JSON.stringify({ user: { identityId: '4t8Ww2SDcMgLqT2PqGzMSwbeEv6P8r7WFoDA8BmZHRC8' }, timestamp: 0 })
+    const result = await runOnce(browser, 'webkit', 'file', 1, { snapshot: { local: { yappr_session: session } } })
+    expect(result.error ?? null).toBeNull()
+  }))
 
   afterAll(() => {
     mkdirSync(EVIDENCE_DIR, { recursive: true })

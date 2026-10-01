@@ -5,19 +5,22 @@ import { createDispatcher } from './rpc/dispatcher'
 import { createWebViewTransport } from './rpc/transport'
 import { dispatchConnectivity, dispatchLifecycle } from './shims/lifecycle'
 import { bundleHash } from './build-info'
-import type { LogLevel } from './protocol/envelope'
+import { LOG_LEVELS, type LogLevel } from './protocol/envelope'
 
 /**
  * The engine inside the hidden WebView. Serves the API over the
  * react-native-webview bridge, writes storage through to the host, forwards
- * console output (the WebView console is invisible in release builds) and
- * announces readiness with `engine.hello`.
+ * console output at or above the forwarding level (the WebView console is
+ * invisible in release builds) and announces readiness with `engine.hello`.
  */
+
+let forwardFrom: LogLevel = 'info'
 
 const dispatcher = createDispatcher({
   api: createEngineApi({
-    lifecycle: state => dispatchLifecycle(state),
-    connectivity: online => dispatchConnectivity(online),
+    lifecycle: dispatchLifecycle,
+    connectivity: dispatchConnectivity,
+    setLogLevel: level => { forwardFrom = level },
   }),
   transport: createWebViewTransport(),
 })
@@ -51,6 +54,8 @@ for (const [method, level] of Object.entries(levels) as [keyof typeof levels, Lo
   const original = console[method].bind(console)
   console[method] = (...args: unknown[]) => {
     original(...args)
+    // Filtered before formatting: on devnet (NEXT_PUBLIC_LOG_LEVEL=debug) lib logs a lot.
+    if (LOG_LEVELS.indexOf(level) < LOG_LEVELS.indexOf(forwardFrom)) return
     try {
       dispatcher.log(level, formatConsoleArgs(args))
     } catch {
@@ -58,8 +63,5 @@ for (const [method, level] of Object.entries(levels) as [keyof typeof levels, Lo
     }
   }
 }
-
-window.addEventListener('error', event => dispatcher.log('error', `Uncaught: ${describe(event.error ?? event.message)}`))
-window.addEventListener('unhandledrejection', event => dispatcher.log('error', `Unhandled rejection: ${describe(event.reason)}`))
 
 dispatcher.hello({ bundleHash: bundleHash() })

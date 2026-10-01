@@ -1,4 +1,5 @@
-import { scopedKey } from '@/lib/storage-scope'
+import { stringify } from './protocol/codec'
+import { PROTOCOL_VERSION } from './protocol/envelope'
 import { createEngineStorage, installEngineStorage, takeInjectedSnapshot } from './shims/storage'
 import { installVisibilityOverride } from './shims/lifecycle'
 
@@ -7,12 +8,25 @@ import { installVisibilityOverride } from './shims/lifecycle'
  * import, and esbuild keeps import evaluation order), so module-scope reads of
  * `localStorage` already see the engine's storage, hydrated from the snapshot
  * the host injected before load.
+ *
+ * It also reports uncaught errors straight to the bridge: if a lib module
+ * throws while loading, the bundle stops before the dispatcher exists, and
+ * this log line is the only thing the host hears besides its hello timeout.
  */
 
-/** lib/secure-storage's prefix, after the deployment scope. */
-const SECURE_PREFIX = scopedKey('yappr_secure_')
+function report(prefix: string, reason: unknown) {
+  const text = reason instanceof Error ? reason.stack ?? `${reason.name}: ${reason.message}` : String(reason)
+  try {
+    window.ReactNativeWebView?.postMessage(stringify({ t: 'log', v: PROTOCOL_VERSION, level: 'error', message: `${prefix}: ${text}` }))
+  } catch {
+    // No bridge: nothing to report to.
+  }
+}
 
-export const engineStorage = createEngineStorage(key => key.startsWith(SECURE_PREFIX))
+window.addEventListener('error', event => report('Uncaught', event.error ?? event.message))
+window.addEventListener('unhandledrejection', event => report('Unhandled rejection', event.reason))
+
+export const engineStorage = createEngineStorage()
 
 engineStorage.hydrate(takeInjectedSnapshot())
 installEngineStorage(engineStorage)

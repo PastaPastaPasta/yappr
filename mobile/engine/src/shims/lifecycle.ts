@@ -33,7 +33,12 @@ export function dispatchLifecycle(state: AppLifecycleState, win: Window = window
   else win.dispatchEvent(new Event('pageshow'))
 }
 
-/** Forward connectivity changes; lib's SDK bootstrap rebuilds on `online`. */
+/**
+ * Forward connectivity changes as `online`/`offline` events for any lib code
+ * listening. Rebuilding the SDK is not one of them: on web that listener lives
+ * in contexts/sdk-context.tsx, which the engine does not bundle, so
+ * `engine.connectivity` calls `evoSdkService.restoreConnection()` itself.
+ */
 export function dispatchConnectivity(online: boolean, win: Window = window): void {
   win.dispatchEvent(new Event(online ? 'online' : 'offline'))
 }
