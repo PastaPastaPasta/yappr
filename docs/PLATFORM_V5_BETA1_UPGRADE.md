@@ -162,3 +162,51 @@ The contract checks ran with the scripts from this branch, first against the loc
 - **D1, D3 and D4 are taken in social v11** ([SOCIAL_V11.md](SOCIAL_V11.md)), a separate PR: `outlivesDelete` likes (a like drops from 40.2M to 30.4M credits, and like notifications lose the time of each like), a team-approval deletion window on posts and replies (`deleteWithin` plus `deleteSettled`, with a new election), and removal records that keep `hashtag`/`$createdAt`.
 - **D2 was first declined, then taken as design M in social v11** ([SOCIAL_V11.md](SOCIAL_V11.md)): moderated posts and replies, `moderatedDocument` references, like trees preallocated by the post's creator, and author tombstones. The user accepted the higher post fees.
 - D6 no longer applies.
+
+## Sakura: the /devnet cut-over
+
+bonsia is abandoned. `/devnet` moves to **sakura**, a fresh Platform 5.0.0-beta.1 chain (Core included, created
+2026-10-01), so no bonsia identity, asset lock or contract carries over. Every identity was re-created from a new
+asset lock with the **same keys** (new ids), and every contract was published anew by the new maker into one
+contract group.
+
+| | |
+| --- | --- |
+| Network | Core `devnet-sakura` (dashd 23), Platform chainId `dash-devnet-sakura`, protocol 14, dapi/drive 5.0.0-beta.1, 13 validators |
+| SDK `devnetName` | **`sakura`** (plain, unlike bonsia's `bonsia-g1`) |
+| DAPI | the 13 validators, `https://68.67.122.{86,87,240,241,88,89,90,91,92,93,94,95,232}:1443`. Raw IPs with Let's Encrypt IP-SAN certificates (short-lived, auto-renewed), CORS allows `https://yap.pr`. `seed-1..3.sakura.networks.dash.org` exist but all resolve to one host, so the app lists the validators. |
+| Quorums | `https://quorums.sakura.networks.dash.org`. The SDK's name-derived default is now correct; it is still set explicitly. |
+| Insight | `https://insight.sakura.networks.dash.org/insight-api`. It reports `"network":"testnet"`, so testnet address and WIF prefixes apply. |
+| Explorer / faucet | `explorer.sakura.networks.dash.org` / `faucet.sakura.networks.dash.org` (10 DASH per request, 20 per hour) |
+
+**The double-slash shim is not needed on sakura.** Every gateway answers `//org.dash.platform…` with 200, as
+envoy merges slashes. `lib/services/dapi-path-shim.ts` stays as the narrow safety net described in the beta.7
+document, since the SDK still emits `//`.
+
+### Contracts on sakura
+
+Published 2026-10-01 by the maker `HduDV8Ru5ABpSssDaAiJeEGa7L4JanbvHGBz7Q16MucE` (E2E deployment seed index 9),
+nonces 1-10, all in contract group `7ZXmLYbq614VzFMpiPFCRhRYKAJhCg3zfGvEGy9RQVEY` (registered on the social create).
+
+| nonce | contract | id | source sha256 |
+| ---: | --- | --- | --- |
+| 1 | social v11, design M (topology `v11`, [`SOCIAL_V11.md`](./SOCIAL_V11.md)) | `DzoVNQmCFmLa9e7gsLczDwPs6jYs3oFuZdwgNNzh64GG` | `374745b4…` |
+| 2 | key backup | `7n7YtriN9e58zmWVsEUZRP1ALAhyv46KdnhrrbeoVHZr` | testnet snapshot |
+| 3 | key exchange | `ExSSHFeyLuR41BQoh9XuXbY8DA3s2HJYNZoLi9TXDPmp` | testnet snapshot |
+| 4 | vault | `HkFVngZz9JTRhssjPr66z1hU1x8CtjivjzCkFWwka9Qj` | testnet snapshot |
+| 5 | auth vault | `9Uk6Hc9VHjnUzDk9JNEMojuwuG7SGUqotgPf2Sd94AmP` | testnet snapshot |
+| 6 | storefront v5 (embeds the social id) | `2TUKMoDnGc6mxVJQzuSJkYvZzbVSEESj42VNpcNTxmJj` | `ecd08e76…` |
+| 7 | blog v6 with D5 (topology `v6`, embeds the social id) | `MoYgzFpwnNcJBLfRHekv5cQaztiRraZKw7xadYKhJhU` | `c5a2c9cd…` |
+| 8 | DM v4 | `D3toquRk4Gfe8HK2FLg2e8sHZsiU5p6ez5oHyKpJLZSD` | `7a86b1d2…` |
+| 9 | pollr v4 | `EBWeV8Wk8jUm1Yh2X6ofusARgptHh5auNDcJcV21Zmgb` | `dbc80063…` |
+| 10 | DM v5 | `DkRQ1SdAXGgqXqAUbwdNSywY51hKKmipaZFUYG4zsEYr` | `82c03a3c…` |
+
+- YAPP (social token position 0) is `AL5d14RchQTbusFSCueyXvCRMiHfWzBDN3yiUwDTie2s`: paused, never priced (transfer 40711, purchase 40721).
+- Election E1 seated a team on social: leader `tess1999`, members `alice7-sept` and battery bot 1, reasons SPM/ABU/REP.
+- `lib/contracts/bundled/devnet-sakura.json` snapshots these 10 plus DashPay.
+
+**Blog v6 proved live.** The blog battery's derived-index cases run on sakura:
+- b4d reads "comments on my posts" through `blogPostId.$ownerId`;
+- b4e shows nobody else's query sees them;
+- b15e-g show a comment outliving its post's takedown stays listed for the post owner, its owner can still delete it (Drive reads the derived `$ownerId` from the removal record), and the delete clears the entry;
+- b3d shows a comment that still copies `blogPostOwnerId` is refused (10101).
