@@ -1,9 +1,9 @@
 import { logger } from '@/lib/logger';
 import { Document, PlatformVersion } from '@dashevo/evo-sdk';
 import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
-import type { ContractModerationReason, ContractModerationStatus, ContractWarning } from '@dashevo/wasm-sdk';
+import type { ContractModerationReason, ContractModerationStatus, ContractTeamActionEntry, ContractTeamActionStatus, ContractWarning } from '@dashevo/wasm-sdk';
 import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants';
-import { authorDeletesLeaveHoles, contractIsModerated, contractKeepsWarnings, electedModeration, moderationListsKept, moderatorDeletableTypes, moderatorDeletionKeepsRecord, reportsAreResolved, type TargetKind } from '@/lib/contract-topology';
+import { authorDeletesLeaveHoles, contractIsModerated, contractKeepsWarnings, electedModeration, isV11, moderationListsKept, moderatorDeletableTypes, moderatorDeleteWindowSeconds, moderatorDeletionKeepsRecord, reportsAreResolved, settledDeletionFor, type SettledDeletionRule, type TargetKind } from '@/lib/contract-topology';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import { classifyModerationError, extractErrorMessage, hasConsensusCode, isDocumentExpiredError, isTimeoutError, type ModerationErrorKind } from '@/lib/error-utils';
@@ -58,9 +58,28 @@ import { signerService } from './signer-service';
  * Wraps `sdk.contracts.{banUser, unbanUser, suspendUser, unsuspendUser,
  * warnUser, clearUserWarnings, moderatorDeleteDocument,
  * moderatorRestoreDocument, moderatorChangeDocumentFields, moderationStatus,
- * moderationEntries, documentRemovals, feePots, claimFees}`. Off a moderated topology every
+ * moderationEntries, documentRemovals, feePots, claimFees,
+ * moderatorDeleteSettledDocument, moderatorApproveTeamAction, teamActions,
+ * teamActionSigners, moderationActionCounts}`. Off a moderated topology every
  * write refuses locally and every read answers "nothing"; the warning list is
  * read and written only when the contract keeps one.
+ *
+ * Platform 5.0.0-beta.1 (social v11) adds, again behind what the contract
+ * declares (`removalKeptFieldsFor`, `settledDeletionFor`):
+ *
+ * - **removal records that keep fields** (`deleteKeepsFields`): a removed
+ *   post's record keeps its `hashtag` and `$createdAt`, a reply's its
+ *   `rootPostId` and `$createdAt` (`DocumentRemoval.kept`), so a hole can say
+ *   what it was;
+ * - **settled documents** (`deleteWithin` + `deleteSettled`): one moderator
+ *   deletes a post or reply alone for a week after it was written (41116
+ *   past that); after that only the seated team does, together: a member
+ *   proposes (`moderatorDeleteSettledDocument`, its own approval) and the
+ *   others approve (`moderatorApproveTeamAction`) until the leader and enough
+ *   members agree. Such a deletion is never restored (41209);
+ * - **moderation reads**: the team's actions and who signed each
+ *   (`teamActions`, `teamActionSigners`) and how many counted actions each
+ *   member signed since the pot was last paid out (`moderationActionCounts`).
  *
  * Elected moderation (a `moderators: { $type: "elected" }` declaration, with
  * its team seated through the moderation-charters system contract,
@@ -82,7 +101,7 @@ export interface ModerationResult {
    * DAPI gateway 504s even when a transition lands), so the action may well
    * have happened — the caller says "check again", never "failed".
    */
-  errorCode?: 'NEEDS_CRITICAL_KEY' | 'INVALID_KEY' | 'ALREADY_CLAIMED' | 'NOTHING_TO_CLAIM' | 'NO_SNAPSHOT' | 'MAYBE_APPLIED' | 'NETWORK_ERROR' | ModerationErrorKind;
+  errorCode?: 'NEEDS_CRITICAL_KEY' | 'INVALID_KEY' | 'ALREADY_CLAIMED' | 'NOTHING_TO_CLAIM' | 'NO_SNAPSHOT' | 'MAYBE_APPLIED' | 'NETWORK_ERROR' | 'DOCUMENT_GONE' | ModerationErrorKind;
 }
 
 /**
@@ -140,6 +159,163 @@ export interface DocumentRemoval {
   /** Set once a moderator restored the document; it is live again. */
   restoredAt: number | null;
   restoredBy: string | null;
+  /** What the record keeps of the document (v11 `deleteKeepsFields`); empty before v11. */
+  kept: RemovalKeptFields;
+}
+
+/**
+ * The fields a removal record kept of the removed document, each only when
+ * the record holds it: a post's `hashtag`, a reply's `rootPostId`, and either's
+ * `$createdAt` (ms).
+ */
+export interface RemovalKeptFields {
+  hashtag?: string;
+  rootPostId?: string;
+  createdAt?: number;
+}
+
+/**
+ * Where a document stands against its type's moderator deletion window
+ * (`deleteWithin`, measured by Drive from `$updatedAt`, or `$createdAt` on an
+ * immutable type such as v11's post and reply):
+ *
+ * - `open`: one moderator deletes it alone;
+ * - `closing`: within {@link SETTLE_MARGIN_MS} of the window's end either
+ *   way, where block time and this device's clock may disagree: a single
+ *   deletion is still offered and the node decides (41116 once settled);
+ * - `settled`: past the window; only the seated team deletes it together.
+ *
+ * A type with no window (v2, v9, v10) is always `open`.
+ */
+export type DeletionPhase = 'open' | 'closing' | 'settled';
+
+/** How far block time may sit from this device's clock around a deletion window's end. */
+export const SETTLE_MARGIN_MS = 60_000;
+
+export function deletionPhase(windowSeconds: number | null, createdAtMs: number, now = Date.now()): DeletionPhase {
+  if (windowSeconds === null || !Number.isFinite(createdAtMs)) return 'open';
+  const end = createdAtMs + windowSeconds * 1000;
+  if (now < end - SETTLE_MARGIN_MS) return 'open';
+  return now <= end + SETTLE_MARGIN_MS ? 'closing' : 'settled';
+}
+
+/**
+ * Approvals a settled deletion needs: the rule's, capped at the seats the team
+ * can hold (`team.seats(maxAddedModerators)`), as consensus counts them. With
+ * no seat count read, the rule's own figure.
+ */
+export function neededApprovals(rule: Pick<SettledDeletionRule, 'approvals'>, seats: number | null): number {
+  return seats === null ? rule.approvals : Math.max(1, Math.min(rule.approvals, seats));
+}
+
+/** How the viewer may take down one post or reply now. */
+export type RemovalRoute =
+  /** One moderator's delete; `closing` when the window may close before it lands. */
+  | { route: 'single'; closing: boolean }
+  /**
+   * Settled: the viewer, on the seated team, proposes; `needed` approvals
+   * delete it, the leader's among them when `leaderRequired`. `reachable` is
+   * false while the team has fewer people than `needed` (seats count added
+   * places the leader has not filled), so a proposal could never run.
+   */
+  | { route: 'team'; needed: number; leaderRequired: boolean; leaderId: string; viewerIsLeader: boolean; reachable: boolean }
+  /**
+   * Settled, and the viewer cannot take it down: no team is seated (41205),
+   * the viewer is not on the seated team, or the type sets no settled rule.
+   */
+  | { route: 'none'; why: 'noTeamSeated' | 'notOnTeam' | 'noSettledRule' };
+
+/** The seated team as the settled-deletion flow needs it, copied out of the wasm `ModerationTeam`. */
+export interface SeatedTeamSeats {
+  leaderId: string;
+  /** The members besides the leader, as the team is now. */
+  members: string[];
+  /** The members the charter's election seated, removed since or not: each holds a seat. Empty where nothing is deleted by the team (before v11). */
+  electedMembers: string[];
+  /** The most members the team can hold (`seats(maxAddedModerators)`), leader included; null before v11 or when it could not be counted. */
+  seats: number | null;
+}
+
+/**
+ * True when the team as it sits now has the people to give `needed`
+ * approvals: the leader and its members. A seat count includes added places
+ * the leader has not filled, and a proposal never lapses, so one made while
+ * this is false waits until the leader adds members.
+ */
+export function teamCanApprove(needed: number, seated: Pick<SeatedTeamSeats, 'members'>): boolean {
+  return needed <= 1 + seated.members.length
+}
+
+/** Pure: which {@link RemovalRoute} applies to a document in `phase`. */
+export function removalRouteFor(
+  phase: DeletionPhase,
+  rule: SettledDeletionRule | null,
+  seated: SeatedTeamSeats | null,
+  viewerId: string
+): RemovalRoute {
+  if (phase !== 'settled') return { route: 'single', closing: phase === 'closing' };
+  if (!rule) return { route: 'none', why: 'noSettledRule' };
+  if (!seated) return { route: 'none', why: 'noTeamSeated' };
+  if (seated.leaderId !== viewerId && !seated.members.includes(viewerId)) return { route: 'none', why: 'notOnTeam' };
+  const needed = neededApprovals(rule, seated.seats);
+  return {
+    route: 'team',
+    needed,
+    leaderRequired: rule.leaderRequired,
+    leaderId: seated.leaderId,
+    viewerIsLeader: seated.leaderId === viewerId,
+    // With no seat count read, the cap is unknown: let the node decide.
+    reachable: seated.seats === null || teamCanApprove(needed, seated),
+  };
+}
+
+/** One action the seated team votes on: today, the deletion of a settled post or reply. */
+export interface TeamAction {
+  actionId: string;
+  status: ContractTeamActionStatus;
+  proposerId: string;
+  /** Block time (ms) of the proposal. */
+  proposedAt: number;
+  documentTypeName: string;
+  documentId: string;
+  /** The document's last modification (ms) when proposed: the approvals are of the document as it was then. */
+  documentLastModifiedAt: number;
+  reason: string;
+  reasonDocumentId: string | null;
+  /**
+   * Approvals it holds, the proposer's among them. For an active action an
+   * upper bound: a member who left is counted until a later approval reads the
+   * team. {@link countedSigners} gives the exact figure from the signers.
+   */
+  approvalCount: number;
+  /** Approvals the type's rule needs (`min(approvals, seats)`), or null when the type sets no settled rule. */
+  neededApprovals: number | null;
+  /** Whether the leader must be among them. */
+  leaderRequired: boolean;
+}
+
+export const toTeamAction = (entry: ContractTeamActionEntry, status: ContractTeamActionStatus, seats: number | null): TeamAction => {
+  const rule = settledDeletionFor(entry.event.documentTypeName);
+  return {
+    actionId: entry.actionId,
+    status,
+    proposerId: entry.proposerId,
+    proposedAt: Number(entry.proposedAt),
+    documentTypeName: entry.event.documentTypeName,
+    documentId: entry.event.documentId,
+    documentLastModifiedAt: Number(entry.event.documentLastModifiedAt),
+    reason: entry.event.reason.text,
+    reasonDocumentId: entry.event.reason.reasonDocumentId ?? null,
+    approvalCount: entry.approvalCount,
+    neededApprovals: rule ? neededApprovals(rule, seats) : null,
+    leaderRequired: rule?.leaderRequired === true,
+  };
+};
+
+/** The signers whose approvals count: those still on the team (an active action's `approvalCount` may include some who left). */
+export function countedSigners(signerIds: readonly string[], seated: Pick<SeatedTeamSeats, 'leaderId' | 'members'> | null): string[] {
+  if (!seated) return [...signerIds];
+  return signerIds.filter((id) => id === seated.leaderId || seated.members.includes(id));
 }
 
 export interface FeePotState {
@@ -273,7 +449,40 @@ export const toRemoval = (entry: RemovalEntry): DocumentRemoval => ({
   documentHash: entry.documentHash,
   restoredAt: entry.restoredAt === undefined ? null : Number(entry.restoredAt),
   restoredBy: entry.restoredBy ?? null,
+  kept: toKeptFields(entry.keptFields),
 });
+
+/**
+ * "Sep 30" for a kept `$createdAt` this year, "Sep 30, 2025" for an older one:
+ * how a removed post's hole says when it was written.
+ */
+export function postedOnLabel(createdAtMs: number, now = Date.now()): string {
+  const date = new Date(createdAtMs);
+  const sameYear = date.getFullYear() === new Date(now).getFullYear();
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
+}
+
+/** A kept timestamp, as the document's properties show it (a number, a bigint, or a numeric string), in ms. */
+function keptTime(value: unknown): number | undefined {
+  const ms = typeof value === 'bigint' || typeof value === 'string' ? Number(value) : value instanceof Date ? value.getTime() : value;
+  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms : undefined;
+}
+
+/**
+ * The kept fields the app reads, typed. Anything else the record keeps, or a
+ * value of an unexpected shape, is left out: the hole simply says less.
+ */
+export function toKeptFields(keptFields: Readonly<Record<string, unknown>> | undefined): RemovalKeptFields {
+  if (!keptFields) return {};
+  const kept: RemovalKeptFields = {};
+  const { hashtag, rootPostId, $createdAt: createdAt } = keptFields;
+  if (typeof hashtag === 'string' && hashtag) kept.hashtag = hashtag;
+  const root = rootPostId === undefined || rootPostId === null ? null : identifierToBase58(rootPostId);
+  if (root) kept.rootPostId = root;
+  const at = keptTime(createdAt);
+  if (at !== undefined) kept.createdAt = at;
+  return kept;
+}
 
 /**
  * What the hole a missing post or reply leaves may claim. A takedown needs a
@@ -308,7 +517,7 @@ class ModerationService {
    * per card. Short-lived, because on an elected contract a team can be seated
    * mid-session, which moves moderation from the interim to the team.
    */
-  private team: { promise: Promise<ModerationTeam>; at: number } | null = null;
+  private team: { promise: Promise<{ team: ModerationTeam; seated: SeatedTeamSeats | null }>; at: number } | null = null;
   private static readonly TEAM_TTL_MS = 60_000;
   private standingCache = new Map<string, { standing: ModerationStanding; at: number }>();
   /** Standing rarely changes; a page of cards must not re-query it per card. */
@@ -323,6 +532,21 @@ class ModerationService {
    * moderation.
    */
   async getTeam(): Promise<ModerationTeam | null> {
+    const read = this.readTeam();
+    return read === null ? null : (await read).team;
+  }
+
+  /**
+   * The seated team with its seat count, from the same cached read as
+   * {@link getTeam}: null off a moderated topology or while no team is seated.
+   * Throws when the read fails.
+   */
+  async getSeatedTeam(): Promise<SeatedTeamSeats | null> {
+    const read = this.readTeam();
+    return read === null ? null : (await read).seated;
+  }
+
+  private readTeam(): Promise<{ team: ModerationTeam; seated: SeatedTeamSeats | null }> | null {
     if (!contractIsModerated()) return null;
     if (!this.team || Date.now() - this.team.at >= ModerationService.TEAM_TTL_MS) {
       const promise = (async () => {
@@ -330,8 +554,8 @@ class ModerationService {
         const contract = await sdk.contracts.fetch(YAPPR_CONTRACT_ID);
         if (!contract) throw new Error('Social contract not found');
         const moderators = contract.config.moderation?.moderators;
-        const seated = moderators?.$type === 'elected' ? await this.seatedTeam(sdk) : null;
-        return resolveModerationTeam(contract.ownerId.toBase58(), moderators, seated);
+        const seated = moderators?.$type === 'elected' ? await this.seatedTeam(sdk, moderators.maxAddedModerators ?? 0) : null;
+        return { team: resolveModerationTeam(contract.ownerId.toBase58(), moderators, seated), seated };
       })();
       const entry = { promise, at: Date.now() };
       this.team = entry;
@@ -346,12 +570,28 @@ class ModerationService {
     this.team = null;
   }
 
-  /** The seated team's ids, copied out of the wasm object, which is freed before returning. */
-  private async seatedTeam(sdk: EvoSDK): Promise<SeatedTeamIds | null> {
+  /**
+   * The seated team's ids, copied out of the wasm object, which is freed
+   * before returning. Where the team deletes settled documents (v11) also its
+   * seat count, which caps a settled deletion's approvals, and its elected
+   * members; read in their own try, so a failure there can never break the
+   * moderator checks every topology runs.
+   */
+  private async seatedTeam(sdk: EvoSDK, maxAddedModerators: number): Promise<SeatedTeamSeats | null> {
     const team = await sdk.moderationCharters.team(YAPPR_CONTRACT_ID);
     if (!team) return null;
     try {
-      return { leaderId: team.leaderId.toBase58(), members: team.members.map((id) => id.toBase58()) };
+      let seats: number | null = null;
+      let electedMembers: string[] = [];
+      if (this.teamDeletesSettled()) {
+        try {
+          seats = team.seats(maxAddedModerators);
+          electedMembers = team.electedMembers.map((id) => id.toBase58());
+        } catch (error) {
+          logger.warn('moderationService: could not count the seated team\'s seats', error);
+        }
+      }
+      return { leaderId: team.leaderId.toBase58(), members: team.members.map((id) => id.toBase58()), electedMembers, seats };
     } finally {
       team.free();
     }
@@ -400,6 +640,40 @@ class ModerationService {
     if (now > removal.removedAt + RESTORE_WINDOW_MS) return false;
     const bytes = loadSnapshot(kind, removal.documentId, now);
     return bytes !== null && removalHashOf(bytes) === removal.documentHash;
+  }
+
+  // ---- Settled documents (v11) ------------------------------------------
+
+  /** True when some type's settled documents are deleted by the seated team together (v11 post and reply). */
+  teamDeletesSettled(): boolean {
+    return moderatorDeletableTypes().some((type) => settledDeletionFor(type) !== null);
+  }
+
+  /** Where a `kind` written at `createdAt` stands against its deletion window ({@link DeletionPhase}); always `open` before v11. */
+  deletionPhaseOf(kind: TargetKind, createdAt: Date | number, now = Date.now()): DeletionPhase {
+    return deletionPhase(moderatorDeleteWindowSeconds(kind), createdAt instanceof Date ? createdAt.getTime() : createdAt, now);
+  }
+
+  /**
+   * True when a `kind` written at `createdAt` is clearly past its window, so
+   * no single moderator may delete it (41116). Within a minute of the window's
+   * end it is not yet treated as settled: the single delete is offered and the
+   * node decides.
+   */
+  isSettled(kind: TargetKind, createdAt: Date | number, now = Date.now()): boolean {
+    return this.deletionPhaseOf(kind, createdAt, now) === 'settled';
+  }
+
+  /**
+   * How `viewerId` may take down a `kind` written at `createdAt`: alone while
+   * its window is open, by proposing to the seated team once it settled, or
+   * not at all. Reads the (cached) seated team only for a settled document.
+   */
+  async removalRoute(viewerId: string, kind: TargetKind, createdAt: Date | number, now = Date.now()): Promise<RemovalRoute> {
+    const phase = this.deletionPhaseOf(kind, createdAt, now);
+    if (phase !== 'settled') return removalRouteFor(phase, null, null, viewerId);
+    const rule = settledDeletionFor(kind);
+    return removalRouteFor(phase, rule, rule ? await this.getSeatedTeam() : null, viewerId);
   }
 
   // ---- Reads --------------------------------------------------------------
@@ -520,6 +794,70 @@ class ModerationService {
     return { owner: toState(pots.owner), moderators: toState(pots.moderators) };
   }
 
+  /**
+   * The seated team's actions of `status`, each with the approvals its rule
+   * needs (`min(approvals, seats)` of the team as it now sits). Action ids are
+   * hashes, so their order says nothing about time: every page is read, up to
+   * `max` actions, and `truncated` says when more were left unread. Empty
+   * where no type is deleted by the team (before v11). Throws when a read fails.
+   */
+  async listTeamActions(status: ContractTeamActionStatus, { max = TEAM_ACTIONS_MAX } = {}): Promise<{ actions: TeamAction[]; truncated: boolean }> {
+    if (!this.teamDeletesSettled()) return { actions: [], truncated: false };
+    const sdk = await getEvoSdk();
+    const seated = await this.getSeatedTeam();
+    const actions: TeamAction[] = [];
+    let startAtActionId: string | undefined;
+    for (;;) {
+      const page = await sdk.contracts.teamActions({
+        contractId: YAPPR_CONTRACT_ID,
+        status,
+        ...(startAtActionId ? { startAtActionId, startAtActionIdIncluded: false } : {}),
+        limit: TEAM_ACTIONS_PAGE,
+      });
+      for (const entry of page.actions) actions.push(toTeamAction(entry, status, seated?.seats ?? null));
+      startAtActionId = page.nextStartAtActionId;
+      if (!startAtActionId) return { actions, truncated: false };
+      if (actions.length >= max) return { actions, truncated: true };
+    }
+  }
+
+  /** The active team action proposing the removal of `documentId`, if any: a second proposal would split the team's approvals. */
+  async findActiveTeamAction(documentId: string): Promise<TeamAction | null> {
+    const { actions } = await this.listTeamActions('active');
+    return actions.find((action) => action.documentId === documentId) ?? null;
+  }
+
+  /**
+   * Who approved a team action of `status`, the proposer among them, in
+   * identity id order; empty when no such action has that status. Throws when
+   * the read fails.
+   */
+  async teamActionSigners(actionId: string, status: ContractTeamActionStatus): Promise<string[]> {
+    if (!this.teamDeletesSettled()) return [];
+    const sdk = await getEvoSdk();
+    const { signerIds } = await sdk.contracts.teamActionSigners({ contractId: YAPPR_CONTRACT_ID, status, actionId });
+    return [...signerIds];
+  }
+
+  /**
+   * How many counted moderation actions (bans, suspensions, warnings,
+   * deletions) each seated member signed since the moderators pot was last
+   * paid out: what the action share of a claim splits by. Null where the
+   * contract keeps no counts (not elected, or before v11) and when the node
+   * refuses or the read fails: the pot panel simply shows no counts.
+   */
+  async getActionCounts(): Promise<Map<string, number> | null> {
+    if (!isV11() || electedModeration() === null) return null;
+    try {
+      const sdk = await getEvoSdk();
+      const { counts } = await sdk.contracts.moderationActionCounts(YAPPR_CONTRACT_ID);
+      return new Map(counts.map(({ identityId, count }) => [identityId, count]));
+    } catch (error) {
+      logger.warn('moderationService: moderation action counts read failed', error);
+      return null;
+    }
+  }
+
   // ---- Writes -------------------------------------------------------------
 
   async ban(moderatorId: string, identityId: string, reason: string | ModerationReasonInput): Promise<ModerationResult> {
@@ -605,6 +943,9 @@ class ModerationService {
       dropSnapshot(kind, documentId);
       snapshotSaved = false;
     }
+    if (result.errorCode === 'DELETE_WINDOW_ELAPSED' && settledDeletionFor(kind)) {
+      return { ...result, error: `${result.error}. Only the seated moderation team can remove it now, together.`, snapshotSaved };
+    }
     if (result.errorCode === 'MAYBE_APPLIED') {
       return {
         ...result,
@@ -638,10 +979,79 @@ class ModerationService {
       const document = Document.fromBytes(bytes, contract, kind, PlatformVersion.latest());
       await sdk.contracts.moderatorRestoreDocument({ ...auth, contractId: YAPPR_CONTRACT_ID, documentTypeName: kind, document });
     });
-    if (result.success || result.errorCode === 'ALREADY_RESTORED' || result.errorCode === 'RESTORE_WINDOW_ELAPSED' || result.errorCode === 'RESTORE_HASH_MISMATCH') {
+    if (result.success || result.errorCode === 'ALREADY_RESTORED' || result.errorCode === 'RESTORE_WINDOW_ELAPSED'
+      || result.errorCode === 'RESTORE_HASH_MISMATCH' || result.errorCode === 'SETTLED_DELETION_NOT_RESTORABLE') {
       dropSnapshot(kind, documentId);
     }
     return result;
+  }
+
+  /**
+   * Proposes, as a member of the seated team, the deletion of a SETTLED post
+   * or reply (past its window, v11): the proposal is the proposer's approval
+   * and is kept as a team action the other members approve with
+   * {@link approveTeamAction}. `reason` is required and must cite a reason
+   * document the seated team's proposal lists (41203); it goes on the removal
+   * record when the action runs. Resolves with the action's id and `status`:
+   * `closed` when this proposal alone met the rule (the document is gone).
+   * No copy is kept: a team deletion can never be restored (41209).
+   */
+  async proposeSettledDeletion(
+    moderatorId: string,
+    kind: TargetKind,
+    documentId: string,
+    reason: ModerationReasonInput
+  ): Promise<ModerationResult & { actionId?: string; status?: ContractTeamActionStatus }> {
+    if (!this.canRemove(kind) || !settledDeletionFor(kind)) {
+      return { success: false, error: MODERATION_ERROR_MESSAGES.NOT_SETTLED_DELETABLE, errorCode: 'NOT_SETTLED_DELETABLE' };
+    }
+    if (!reason.reasonDocumentId) {
+      return { success: false, error: 'A team removal must cite a reason the seated team\'s charter lists', errorCode: 'REASON_NOT_LISTED' };
+    }
+    let signed: { actionId: string; status: ContractTeamActionStatus } | undefined;
+    const result = await this.moderate(moderatorId, async (sdk, auth) => {
+      const proposal = await sdk.contracts.moderatorDeleteSettledDocument({
+        ...auth,
+        contractId: YAPPR_CONTRACT_ID,
+        documentTypeName: kind,
+        documentId,
+        reason: reasonOf(reason),
+      });
+      signed = { actionId: proposal.actionId.toBase58(), status: proposal.status };
+    });
+    if (result.errorCode === 'MAYBE_APPLIED') {
+      return { ...result, error: 'The network did not confirm in time: the team removal may have been proposed. Check the team actions before proposing again.' };
+    }
+    return signed ? { ...result, ...signed } : result;
+  }
+
+  /**
+   * Approves, as a member of the seated team, an action another member
+   * proposed (today, a settled deletion). Refused when it does not exist
+   * (41207), this member already approved it (41208), it already ran (41210),
+   * or its document changed since the proposal (41211). Resolves with its
+   * `status`: `closed` when this approval met the rule and the document is gone.
+   */
+  async approveTeamAction(moderatorId: string, actionId: string): Promise<ModerationResult & { status?: ContractTeamActionStatus }> {
+    if (!this.teamDeletesSettled()) {
+      return { success: false, error: 'This contract keeps no team actions', errorCode: 'NOT_MODERATED' };
+    }
+    let status: ContractTeamActionStatus | undefined;
+    let documentGone = false;
+    const result = await this.moderate(moderatorId, async (sdk, auth) => {
+      try {
+        ({ status } = await sdk.contracts.moderatorApproveTeamAction({ ...auth, contractId: YAPPR_CONTRACT_ID, actionId }));
+      } catch (error) {
+        // 40101: the document is gone (another proposal for it ran, or its
+        // author deleted it), so this action can never run.
+        documentGone = isReportGoneError(error);
+        throw error;
+      }
+    });
+    if (documentGone) {
+      return { success: false, error: 'The document is already gone (another proposal removed it, or its author deleted it), so this proposal can never run', errorCode: 'DOCUMENT_GONE' };
+    }
+    return status === undefined ? result : { ...result, status };
   }
 
   /**
@@ -888,6 +1298,10 @@ class ModerationService {
   }
 }
 
+/** Team actions per page, and how many the queue reads at most. */
+const TEAM_ACTIONS_PAGE = 100;
+const TEAM_ACTIONS_MAX = 1000;
+
 const reasonOf = (reason: string | ModerationReasonInput): ContractModerationReason =>
   toModerationReason(typeof reason === 'string' ? { text: reason } : reason);
 
@@ -905,7 +1319,7 @@ const MODERATION_ERROR_MESSAGES: Record<ModerationErrorKind, string> = {
   NOT_MODERATED: 'The contract declares no such moderation',
   TARGET_PROTECTED: 'The contract owner and its moderators cannot be moderated',
   TYPE_NOT_DELETABLE: 'Moderators cannot delete documents of this type',
-  DELETE_WINDOW_ELAPSED: 'The window in which moderators may delete this has passed',
+  DELETE_WINDOW_ELAPSED: 'This has settled: the window in which one moderator may remove it alone has passed',
   NOT_WARNED: 'That identity carries no warnings to clear',
   WARNING_LIMIT: 'That identity already carries the most warnings it can; clear them before warning again',
   NO_REMOVAL_RECORD: 'There is no moderator removal of that document to undo',
@@ -923,6 +1337,14 @@ const MODERATION_ERROR_MESSAGES: Record<ModerationErrorKind, string> = {
   FIELD_NOT_CHANGEABLE: 'Moderators cannot change that field on documents of this type',
   MODERATOR_FIELD: 'Only the moderators may set that field',
   NOTHING_TO_CHANGE: 'The document already reads that way, so there is nothing to change',
+  NOT_SETTLED_DELETABLE: 'Nobody may remove documents of this type once they have settled',
+  TEAM_NOT_SEATED: 'No moderation team is seated, and only a seated team can remove a settled post or reply',
+  NOT_SETTLED: 'This is still within its window, so one moderator removes it directly: no team proposal is needed',
+  TEAM_ACTION_NOT_FOUND: 'The team never proposed that action',
+  TEAM_ACTION_ALREADY_SIGNED: 'You already approved that team action',
+  SETTLED_DELETION_NOT_RESTORABLE: 'The seated team removed this together, and a team removal can never be undone',
+  TEAM_ACTION_COMPLETED: 'That team action already ran',
+  TEAM_ACTION_DOCUMENT_CHANGED: 'The document changed since the removal was proposed, so it can no longer be approved: propose it again',
 };
 
 export const moderationService = new ModerationService();

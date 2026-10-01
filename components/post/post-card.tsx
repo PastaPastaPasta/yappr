@@ -45,6 +45,7 @@ import { PrivatePostContent, isPrivatePost } from './private-post-content'
 import { SensitiveContentGate } from './sensitive-content-gate'
 import { EmbeddedPostCard, EmbeddedPostSkeleton, EmbeddedPostUnavailable } from './embedded-post-card'
 import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
+import { moderationService } from '@/lib/services/moderation-service'
 import { GatedPostMedia } from './gated-media'
 import { PostActionBar, stopAndRun } from './post-action-bar'
 import { PostAuthorLine, hasRealProfile, resolveUsernameState, type UsernameState } from './post-author-line'
@@ -604,7 +605,9 @@ function PostCardView({
                         className={cn(CARD_MENU_ITEM, 'flex items-center gap-2 text-red-500')}
                       >
                         <ShieldExclamationIcon className="h-4 w-4" />
-                        Remove {isReply ? 'reply' : 'post'} (moderator)
+                        {moderationService.isSettled(targetKind, post.createdAt)
+                          ? `Remove ${isReply ? 'reply' : 'post'} (settled: team only)`
+                          : `Remove ${isReply ? 'reply' : 'post'} (moderator)`}
                       </DropdownMenu.Item>
                     )}
                   </DropdownMenu.Content>
