@@ -139,10 +139,14 @@ gated the other way rather than a loosened gate; `immutable` on
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
-| `blog` | `canBeDeleted: false`, `canBeDeletedByModerators` | deletableDocument target (its owner can never delete it; a moderator can) |
-| `blogPost` | `blogId`→blog (deletableDocument); `immutable [blogId, publishedAt]` with `publishedAt` under `immutableAllowSetting`; `canBeDeletedByModerators` | ghost-blog rejection; a post cannot change blogs or be re-dated |
-| `blogComment` | `blogPostId`→blogPost (deletableDocument) with `{blogPostOwnerId: '$ownerId'}`; ranked `commentCount [blogPostId]`; `postOwnerAndTime`; 1 YAPP; `canBeDeletedByModerators` | exact counts, "most discussed", unforgeable "comments on my posts" |
-| `blogFollow` | `blogId`→blog (deletableDocument); ranked `followerCount [blogId]`; `followersByDay [$createdAt, blogId]` on the daily grid with a 7-day ttl | exact follower counts, "most followed", "trending today" |
+| `blog` | `canBeDeleted: false`, `moderatorAbilities.delete` | moderatedDocument target (its owner can never delete it; a moderator can, keeping a removal record) |
+| `blogPost` | `blogId`→blog (moderatedDocument); `immutable [blogId, {publishedAt when present: $old.publishedAt}]`; `moderatorAbilities.delete` | ghost-blog rejection; a post cannot change blogs or be re-dated |
+| `blogComment` | `blogPostId`→blogPost (moderatedDocument) with `where {$ownerId: blogPostOwnerId}`; ranked `commentCount [blogPostId]`; `postOwnerAndTime`; 1 YAPP; `moderatorAbilities.delete` | exact counts, "most discussed", unforgeable "comments on my posts" |
+| `blogFollow` | `blogId`→blog (moderatedDocument); ranked `followerCount [blogId]`; `followersByDay [$createdAt, blogId]` on the daily grid with a 7-day ttl | exact follower counts, "most followed", "trending today" |
+
+The table is the 5.0.0-beta.1 re-cut (blog v6): until beta.7 the references
+were `deletableDocument` and `publishedAt` sat under `immutableAllowSetting`;
+see [PLATFORM_V5_BETA1_UPGRADE.md](./PLATFORM_V5_BETA1_UPGRADE.md).
 
 **v3 (4.2.0-beta.3) is the moderated cut.** The contract config declares
 `moderation: { banlist, suspensions, moderators }` (see `docs/SOCIAL_V8.md`
