@@ -335,9 +335,11 @@ function PostCardView({
   const { open: openDeleteModal } = useDeleteConfirmationModal()
   const { open: openModeratorRemoveModal } = useModeratorRemoveModal()
   // The contract's moderation team may delete someone else's post outright
-  // (v9). Their own posts they tombstone like everyone else.
-  const { isModerator, isProtected } = useModerationRole()
-  const canModerate = isModerator && !isOwnPost && moderatorDeletableTypes().includes(targetKind)
+  // (v9). Their own posts they tombstone like everyone else, and a post by a
+  // protected identity (a moderator, or an ownerProtected owner) nobody
+  // removes: Drive refuses it, paid (41102).
+  const { isModerator, isProtected, protectedIds } = useModerationRole()
+  const canModerate = isModerator && !isOwnPost && !protectedIds.has(post.author.id) && moderatorDeletableTypes().includes(targetKind)
   const { open: openReportModal } = useReportPostModal()
   // Anyone but the author may report a live post or reply to the moderators
   // (v9); consensus refuses a self-report (10419) anyway. A moderator removes
