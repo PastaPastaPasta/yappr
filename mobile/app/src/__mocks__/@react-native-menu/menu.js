@@ -5,7 +5,7 @@ const React = require('react');
 const { View } = require('react-native');
 
 const MenuView = React.forwardRef(function MenuView(props, ref) {
-  React.useImperativeHandle(ref, () => ({ show: () => undefined }));
+  React.useImperativeHandle(ref, () => ({ show: () => undefined }), []);
   return React.createElement(View, props);
 });
 

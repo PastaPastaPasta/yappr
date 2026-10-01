@@ -7,6 +7,7 @@ import {
   useQuery,
   type InfiniteData,
   type QueryKey,
+  type UseInfiniteQueryOptions,
   type UseQueryOptions,
 } from '@tanstack/react-query';
 import { useMemo } from 'react';
@@ -57,11 +58,14 @@ export function useEngineQuery<T, S = T>(
   return useQuery(engineQueryOptions(key, read, options));
 }
 
-export interface EngineInfiniteQueryOptions<T> {
+export interface EngineInfiniteQueryOptions<T>
+  extends Omit<
+    UseInfiniteQueryOptions<Page<T>, Error, InfiniteData<Page<T>>, QueryKey, string | null>,
+    'queryKey' | 'queryFn' | 'initialPageParam' | 'getNextPageParam'
+  > {
+  /** Keep the pages on disk (MMKV); see `EngineQueryOptions.persist`. */
   persist?: boolean;
-  enabled?: boolean;
-  staleTime?: number;
-  /** Identifies an item for de-duplication across pages; default its `id`. */
+  /** Identifies an item for de-duplication across pages; default its `id`. Keep it stable. */
   itemId?: (item: T) => string | undefined;
 }
 
@@ -107,13 +111,13 @@ export function useEngineInfiniteQuery<T>(
   read: (api: EngineRemote, cursor: string | null) => Promise<Page<T>>,
   { persist = false, itemId, ...options }: EngineInfiniteQueryOptions<T> = {},
 ) {
-  const query = useInfiniteQuery({
+  const query = useInfiniteQuery<Page<T>, Error, InfiniteData<Page<T>>, QueryKey, string | null>({
     ...(persist ? persistedQuery : {}),
     ...options,
     queryKey: key,
     queryFn: ({ pageParam }) => read(engine.api, pageParam),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last: Page<T>) => (last.hasMore && last.cursor ? last.cursor : undefined),
+    initialPageParam: null,
+    getNextPageParam: (last) => (last.hasMore && last.cursor ? last.cursor : undefined),
   });
   const items = useMemo(() => flattenPages(query.data, itemId), [query.data, itemId]);
   return { ...query, items };

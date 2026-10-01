@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { ActionSheetIOS, Share } from 'react-native';
+import { ActionSheetIOS, Alert, Share, type AlertButton } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useRemovedPosts } from '~/data/optimistic';
@@ -62,6 +62,7 @@ const selectMenu = (postId: string, id: string) =>
 const toastMessage = () => useToastStore.getState().current?.message;
 
 let sheet: { options: string[]; choose: (label: string) => void } | null = null;
+let alert: { title: string; message?: string; press: (text: string) => void } | null = null;
 
 // Cache updates reach components at once (TanStack batches them on a timer otherwise).
 beforeAll(() => notifyManager.setScheduler((callback) => callback()));
@@ -77,6 +78,10 @@ beforeEach(() => {
   useSignInPrompt.setState({ open: false });
   useRemovedPosts.setState({ ids: new Set() });
   sheet = null;
+  alert = null;
+  jest.spyOn(Alert, 'alert').mockImplementation((title, message, buttons?: AlertButton[]) => {
+    alert = { title, message, press: (text) => buttons?.find((b) => b.text === text)?.onPress?.() };
+  });
   jest.spyOn(ActionSheetIOS, 'showActionSheetWithOptions').mockImplementation((options, callback) => {
     const labels = options.options;
     sheet = { options: labels, choose: (label) => callback(labels.indexOf(label)) };
@@ -150,9 +155,9 @@ describe('PostItem actions', () => {
     fireEvent.press(byId('repost-btn-qt'));
     expect(sheet?.options).toEqual(['Undo repost', 'Cancel']);
     await act(async () => sheet?.choose('Undo repost'));
-    expect(screen.getByText('Delete post?')).toBeTruthy();
+    expect(alert?.title).toBe('Delete post?');
 
-    await act(async () => fireEvent.press(screen.getByText('Delete')));
+    await act(async () => alert?.press('Delete'));
     expect(fakeEngine.method('posts.delete')).toHaveBeenCalledWith({
       id: 'q1',
       kind: 'post',
@@ -242,13 +247,12 @@ describe('PostItem menu', () => {
     expect(menuIds('mine')).toEqual(['engagements', 'copy-link', 'share', 'delete']);
 
     selectMenu('mine', 'delete');
-    expect(screen.getByText('Delete post?')).toBeTruthy();
-    expect(
-      screen.getByText(
+    expect(alert).toMatchObject({
+      title: 'Delete post?',
+      message:
         'This action cannot be undone. The post will be permanently removed from the platform. Replies and quotes stay, and show that it was deleted.',
-      ),
-    ).toBeTruthy();
-    await act(async () => fireEvent.press(screen.getByText('Delete')));
+    });
+    await act(async () => alert?.press('Delete'));
     expect(fakeEngine.method('posts.delete')).toHaveBeenCalledWith(expect.objectContaining({ id: 'mine', ownerId: VIEWER_ID }));
     expect(screen.queryByTestId('post-card-mine')).toBeNull();
     expect(toastMessage()).toBe('Post deleted');
@@ -286,11 +290,20 @@ describe('PostItem bare reposts', () => {
       },
     });
     renderPost(bare);
-    await act(async () => {});
+    // Bare reposts in one render share a batched engage.stats call (on a 0 ms timer).
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
 
     expect(screen.getByText('The original')).toBeTruthy();
     expect(screen.getByTestId('repost-banner')).toHaveTextContent('Bob Builder reposted');
     expect(fakeEngine.method('engage.stats')).toHaveBeenCalledWith([{ id: 'target', kind: 'post' }]);
     expect(byId('like-btn-target')).toHaveAccessibleName('Unlike, 7 likes');
+    // Whether the viewer follows the reposted author is unknown here: no follow item.
+    expect(menuIds('target')).toEqual(['engagements', 'copy-link', 'share', 'block', 'report']);
+  });
+
+  it('shares a reply as its thread with the reply highlighted', async () => {
+    renderPost(fixturePost({ id: 'r1', kind: 'reply', rootPostId: 'root1', parentId: 'root1' }));
+    await act(async () => selectMenu('r1', 'copy-link'));
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith('https://yap.pr/devnet/post?id=root1&reply=r1');
   });
 });

@@ -1,16 +1,15 @@
 import type { PostDTO, TargetRef } from '@engine/api';
 
 import { hidePost, markPostDeleted, setFollowing, setViewerState } from '~/data/optimistic';
-import type { WriteSpec } from '~/data/writes';
+import { errorCode, type WriteSpec } from '~/data/writes';
 
 /**
  * The engagement writes a post's controls make (PRD ENG-01 – ENG-08), as
  * `WriteSpec`s for `submitWrite` / `useWrite`. Each one patches every cached
- * copy of the post at once and is undone if the write fails. Screens that
- * show posts (thread, bookmarks, profile) reuse these rather than their own.
+ * copy of the post at once and is undone if the write fails. An unconfirmed
+ * engagement counts as done (PRD G-3), so none of them announce it. Screens
+ * that show posts (thread, bookmarks, profile) reuse these.
  */
-
-const errorCode = (error: unknown) => (error as { code?: unknown } | null)?.code;
 
 /** The engine's reference to a post or reply. */
 export function targetOf(post: PostDTO): TargetRef {
@@ -22,6 +21,7 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   submit: (api, { post, like }) => (like ? api.engage.like(targetOf(post)) : api.engage.unlike(targetOf(post))),
   optimistic: ({ post, like }) => setViewerState(post.id, { liked: like }),
   noun: 'like',
+  announceUnconfirmed: false,
   failureMessage: 'Failed to update like. Please try again.',
 };
 
@@ -38,14 +38,12 @@ export const repostWrite: WriteSpec<RepostVars> = {
   // Undoing a v10 repost deletes the bare quote, which frees the slot.
   optimistic: ({ post, repost }) => setViewerState(post.id, repost ? { reposted: true } : { reposted: false, ownQuoteId: null }),
   noun: 'repost',
+  announceUnconfirmed: false,
   failureMessage: 'Failed to update repost. Please try again.',
   onRejected: (error, { onQuoteHasText }) => {
-    const code = errorCode(error);
-    if (code === 'QUOTE_HAS_TEXT' && onQuoteHasText) {
-      onQuoteHasText();
-      return true;
-    }
-    return false;
+    if (errorCode(error) !== 'QUOTE_HAS_TEXT' || !onQuoteHasText) return false;
+    onQuoteHasText();
+    return true;
   },
 };
 
@@ -55,6 +53,7 @@ export const bookmarkWrite: WriteSpec<{ post: PostDTO; bookmark: boolean }> = {
     bookmark ? api.engage.bookmark(targetOf(post)) : api.engage.unbookmark(targetOf(post)),
   optimistic: ({ post, bookmark }) => setViewerState(post.id, { bookmarked: bookmark }),
   noun: 'bookmark',
+  announceUnconfirmed: false,
   failureMessage: 'Failed to update bookmark. Please try again.',
 };
 
@@ -63,6 +62,7 @@ export const followWrite: WriteSpec<{ authorId: string; follow: boolean }> = {
   submit: (api, { authorId, follow }) => (follow ? api.graph.follow(authorId) : api.graph.unfollow(authorId)),
   optimistic: ({ authorId, follow }) => setFollowing(authorId, follow),
   noun: 'follow',
+  announceUnconfirmed: false,
   failureMessage: 'Failed to update follow status',
 };
 

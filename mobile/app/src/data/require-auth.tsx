@@ -6,7 +6,7 @@ import { Button } from '~/ui/Button';
 import { Sheet } from '~/ui/Sheet';
 import { Text } from '~/ui/Text';
 
-import { useSessionStore } from './session';
+import { lastIdentity, useSessionStore } from './session';
 
 /** Whether the sign-in sheet is open. */
 export const useSignInPrompt = create<{ open: boolean }>()(() => ({ open: false }));
@@ -19,21 +19,16 @@ export function promptSignIn(): void {
 /**
  * Runs `action` when signed in; signed out, opens the sign-in sheet instead
  * and drops the action (PRD G-8: after sign-in the user is back where they
- * were, and the action is not performed). While the engine is still
- * restoring the session, waits for the answer.
+ * were, and the action is not performed). Before the engine has restored the
+ * session, whoever was signed in last time counts (PRD G-2: a write during
+ * boot is queued and shown at once); if that turns out wrong, the write is
+ * refused with `NOT_SIGNED_IN`, undone, and the sheet opens.
  */
 export function requireAuth(action: () => void): void {
-  const run = (status: string) => (status === 'signed-in' ? action() : promptSignIn());
   const { status } = useSessionStore.getState();
-  if (status !== 'unknown') {
-    run(status);
-    return;
-  }
-  const stop = useSessionStore.subscribe((state) => {
-    if (state.status === 'unknown') return;
-    stop();
-    run(state.status);
-  });
+  const signedIn = status === 'unknown' ? lastIdentity() !== null : status === 'signed-in';
+  if (signedIn) action();
+  else promptSignIn();
 }
 
 /**

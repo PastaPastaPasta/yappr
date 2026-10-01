@@ -1,16 +1,16 @@
-import type { CapabilitiesDTO, PostDTO, TargetRef, ViewerStateDTO } from '@engine/api';
+import type { CapabilitiesDTO, PostDTO, TargetRef } from '@engine/api';
 import { router } from 'expo-router';
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 
 import { queryKeys } from '~/data/keys';
-import { usePostRemoved } from '~/data/optimistic';
+import { EMPTY_VIEWER, usePostRemoved } from '~/data/optimistic';
 import { useEngineQuery } from '~/data/queries';
 import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useViewerId } from '~/data/session';
-import { submitWrite } from '~/data/writes';
+import { sendWrite } from '~/data/writes';
 import { showActionSheet, type SheetAction } from '~/ui/action-sheet';
 import type { MenuItem } from '~/ui/ContextMenu';
-import { ConfirmDialog } from '~/ui/Dialog';
+import { confirmAlert } from '~/ui/Dialog';
 import { lightImpact, mediumImpact } from '~/ui/haptics';
 import { useMediaUrls } from '~/ui/media-url';
 import { PostCard, type PostCardActions, type PostCardMenu, type PostCardProps } from '~/ui/post/PostCard';
@@ -26,6 +26,7 @@ import {
   postWebUrl,
   sharePost,
 } from './post-navigation';
+import { readEngageStats } from './post-stats';
 import { bookmarkWrite, deleteWrite, followWrite, likeWrite, repostWrite, targetOf } from './post-writes';
 
 export interface PostItemProps
@@ -33,13 +34,11 @@ export interface PostItemProps
   post: PostDTO;
 }
 
-/** A pending delete confirmation: the viewer's post or reply, or their v10 quote of this post. */
-interface PendingDelete {
-  target: TargetRef;
-  noun: 'post' | 'reply' | 'quote';
-  /** Set for a quote: the post whose slot it frees. */
-  quotedPostId?: string;
-}
+/**
+ * Plain values in closures throughout: React Compiler reads a closure's
+ * property paths (`target.id`) while rendering, so `target!.id` on a maybe-
+ * undefined value throws during render.
+ */
 
 /**
  * A v10 bare repost shows its target, attributed to the reposter (web
@@ -48,30 +47,20 @@ interface PendingDelete {
  */
 function useShownPost(post: PostDTO): PostDTO {
   const target = post.bareRepost ? post.quoted : undefined;
+  const targetId = target?.id ?? '';
+  const targetKind = target?.kind ?? 'post';
   const { data: fresh } = useEngineQuery(
-    queryKeys.post.stats(target?.id ?? ''),
-    async (api) => {
-      const id = target!.id;
-      const stats = (await api.engage.stats([{ id, kind: target!.kind }]))[id];
-      return stats ? { id, ...stats } : null;
+    queryKeys.post.stats(targetId),
+    async () => {
+      const stats = await readEngageStats(targetId, targetKind);
+      return stats ? { id: targetId, ...stats } : null;
     },
     { enabled: target !== undefined },
   );
   return useMemo(() => {
     if (!target) return post;
-    const viewer: ViewerStateDTO | undefined =
-      fresh?.viewer || target.viewer
-        ? {
-            liked: false,
-            reposted: false,
-            bookmarked: false,
-            ownQuoteId: null,
-            authorBlocked: false,
-            followsAuthor: false,
-            ...target.viewer,
-            ...fresh?.viewer,
-          }
-        : undefined;
+    const viewer =
+      fresh?.viewer || target.viewer ? { ...EMPTY_VIEWER, ...target.viewer, ...fresh?.viewer } : undefined;
     return {
       ...target,
       stats: fresh?.stats ?? target.stats,
@@ -90,9 +79,11 @@ function useShownPost(post: PostDTO): PostDTO {
 /** The read-only poll a post shows (`posts.poll`), as the card renders it. */
 function usePoll(post: PostDTO): Loadable<CardPoll> | undefined {
   const poll = post.poll;
+  const pollId = poll?.id ?? '';
+  const contractId = post.embed?.contractId;
   const { data, isError } = useEngineQuery(
-    queryKeys.post.poll(poll?.id ?? ''),
-    (api) => api.posts.poll({ contractId: post.embed?.contractId, id: poll!.id }),
+    queryKeys.post.poll(pollId),
+    (api) => api.posts.poll({ contractId, id: pollId }),
     { enabled: poll !== undefined },
   );
   return useMemo(() => {
@@ -134,12 +125,12 @@ function repostSheet(
 }
 
 /** The ⋯ and long-press menu (PRD ENG-08), in its order. */
-function menuItems(post: PostDTO, own: boolean): MenuItem[] {
+function menuItems(post: PostDTO, own: boolean, followKnown: boolean): MenuItem[] {
   const handle = post.author.username ? `@${post.author.username}` : post.author.displayName;
   const follows = post.viewer?.followsAuthor === true;
   const noun = post.kind === 'reply' ? 'reply' : 'post';
   const items: MenuItem[] = [];
-  if (!own) {
+  if (!own && followKnown) {
     items.push({
       id: 'follow',
       title: `${follows ? 'Unfollow' : 'Follow'} ${handle}`,
@@ -174,6 +165,23 @@ function deleteMessage(noun: string, capabilities: CapabilitiesDTO | null): stri
 
 const DELETED_TOAST = { post: 'Post deleted', reply: 'Reply deleted', quote: 'Quote deleted' } as const;
 
+/** The native delete confirmation (UX_SPEC §2.13), then the optimistic delete (PRD ENG-06). */
+async function confirmDelete(
+  target: TargetRef,
+  noun: keyof typeof DELETED_TOAST,
+  capabilities: CapabilitiesDTO | null,
+  quotedPostId?: string,
+): Promise<void> {
+  const kind = noun === 'reply' ? 'reply' : 'post';
+  const confirmed = await confirmAlert({
+    title: `Delete ${kind}?`,
+    message: deleteMessage(kind, capabilities),
+    confirmText: 'Delete',
+    destructive: true,
+  });
+  if (confirmed) sendWrite(deleteWrite, { target, quotedPostId }, DELETED_TOAST[noun]);
+}
+
 /**
  * A post wired to the engine: the design system's `PostCard` with every
  * action (PRD ENG-01 – ENG-08). Likes, reposts, bookmarks and follows are
@@ -189,15 +197,13 @@ export const PostItem = memo(function PostItem({ post: listed, ...cardProps }: P
   const viewerId = useViewerId();
   const capabilities = useCapabilities();
   const { external } = useMediaUrls();
-  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
 
   const own = viewerId !== null && viewerId === post.author.id;
+  // A bare repost's target comes without the viewer's follow of its author: offer no follow item then.
+  const followKnown = viewerId === null || !listed.bareRepost || listed.quoted?.viewer !== undefined;
 
   const { actions, menu } = useMemo(() => {
-    const like = () =>
-      requireAuth(() => {
-        submitWrite(likeWrite, { post, like: !post.viewer?.liked }).catch(() => undefined);
-      });
+    const like = () => requireAuth(() => sendWrite(likeWrite, { post, like: !post.viewer?.liked }));
 
     const deleteQuote = () => {
       const quoteId = post.viewer?.ownQuoteId;
@@ -205,20 +211,13 @@ export const PostItem = memo(function PostItem({ post: listed, ...cardProps }: P
         toast.error('Could not load your quote. Try again in a moment.');
         return;
       }
-      setPendingDelete({
-        target: { id: quoteId, kind: 'post', ownerId: viewerId, rootPostId: null },
-        noun: 'quote',
-        quotedPostId: post.id,
-      });
+      const target: TargetRef = { id: quoteId, kind: 'post', ownerId: viewerId, rootPostId: null };
+      confirmDelete(target, 'quote', capabilities, post.id).catch(() => undefined);
     };
 
     const repost = (on: boolean) => {
       mediumImpact();
-      submitWrite(repostWrite, { post, repost: on, onQuoteHasText: deleteQuote })
-        .then((ticket) => {
-          if (ticket) toast.success(on ? 'Reposted!' : 'Removed repost');
-        })
-        .catch(() => undefined);
+      sendWrite(repostWrite, { post, repost: on, onQuoteHasText: deleteQuote }, on ? 'Reposted!' : 'Removed repost');
     };
 
     const quote = () => requireAuth(() => router.push({ pathname: '/compose', params: { quote: post.id } }));
@@ -226,45 +225,38 @@ export const PostItem = memo(function PostItem({ post: listed, ...cardProps }: P
     const bookmark = () =>
       requireAuth(() => {
         const on = !post.viewer?.bookmarked;
-        submitWrite(bookmarkWrite, { post, bookmark: on })
-          .then((ticket) => {
-            if (ticket) toast.success(on ? 'Added to bookmarks' : 'Removed from bookmarks');
-          })
-          .catch(() => undefined);
+        sendWrite(bookmarkWrite, { post, bookmark: on }, on ? 'Added to bookmarks' : 'Removed from bookmarks');
       });
 
     const follow = () =>
       requireAuth(() => {
         const on = post.viewer?.followsAuthor !== true;
         if (on) lightImpact();
-        submitWrite(followWrite, { authorId: post.author.id, follow: on }).catch(() => undefined);
+        sendWrite(followWrite, { authorId: post.author.id, follow: on });
       });
 
-    const onSelect = (id: string) => {
-      switch (id) {
-        case 'follow':
-          return follow();
-        case 'engagements':
-          return router.push({ pathname: '/post/[id]/engagements', params: { id: post.id, kind: post.kind } });
-        case 'copy-link':
-          return copyText(postWebUrl(post.id), 'Link copied to clipboard');
-        case 'share':
-          return sharePost(post);
-        case 'delete':
-          return setPendingDelete({ target: targetOf(post), noun: post.kind });
-        case 'block':
-          return requireAuth(() => router.push({ pathname: '/block/[userId]', params: { userId: post.author.id } }));
-        case 'report':
-          return requireAuth(() =>
-            router.push({ pathname: '/report/[postId]', params: { postId: post.id, kind: post.kind } }),
-          );
-      }
-    };
+    const openOnWeb = () => openExternal(postWebUrl(post));
 
+    const menuActions: Record<string, () => void> = {
+      follow,
+      engagements: () => router.push({ pathname: '/post/[id]/engagements', params: { id: post.id, kind: post.kind } }),
+      'copy-link': () => copyText(postWebUrl(post), 'Link copied to clipboard'),
+      share: () => sharePost(post),
+      delete: () => {
+        confirmDelete(targetOf(post), post.kind, capabilities).catch(() => undefined);
+      },
+      block: () => requireAuth(() => router.push({ pathname: '/block/[userId]', params: { userId: post.author.id } })),
+      report: () =>
+        requireAuth(() => router.push({ pathname: '/report/[postId]', params: { postId: post.id, kind: post.kind } })),
+    };
+    const onSelect = (id: string) => menuActions[id]?.();
+
+    const reposterId = post.repostedBy?.id;
+    const quoted = post.quoted;
     const actions: PostCardActions = {
       onPress: () => openPost(post),
       onAuthorPress: () => openUser(post.author.id),
-      onReposterPress: post.repostedBy ? () => openUser(post.repostedBy!.id) : undefined,
+      onReposterPress: reposterId ? () => openUser(reposterId) : undefined,
       onCopyId: () => copyText(post.author.id, 'Identity ID copied'),
       onReply: () => requireAuth(() => router.push({ pathname: '/compose', params: { replyTo: post.id } })),
       onRepost: () =>
@@ -281,56 +273,32 @@ export const PostItem = memo(function PostItem({ post: listed, ...cardProps }: P
       onLike: like,
       onBookmark: bookmark,
       onShare: () => sharePost(post),
-      onQuotePress: post.quoted ? () => openPost(post.quoted!) : undefined,
+      onQuotePress: quoted ? () => openPost(quoted) : undefined,
       onMediaPress: (index) => router.push({ pathname: '/media', params: { postId: post.id, index: String(index) } }),
       onLinkPress: (url) => openExternal(external(url)),
       onLinkPreviewPress: (url) => openExternal(external(url)),
       onMentionPress: openUser,
       onHashtagPress: openHashtag,
       onCashtagPress: openHashtag,
-      onVotePress: () => openExternal(postWebUrl(post.id)),
-      onOpenPrivate: () => openExternal(postWebUrl(post.id)),
+      onVotePress: openOnWeb,
+      onOpenPrivate: openOnWeb,
     };
-    const menu: PostCardMenu = { items: menuItems(post, own), onSelect };
+    const menu: PostCardMenu = { items: menuItems(post, own, followKnown), onSelect };
     return { actions, menu };
-  }, [post, own, viewerId, capabilities, external]);
+  }, [post, own, followKnown, viewerId, capabilities, external]);
 
   if (removed || shownRemoved) return null;
 
-  const confirmDelete = () => {
-    const pending = pendingDelete;
-    setPendingDelete(null);
-    if (!pending) return;
-    submitWrite(deleteWrite, { target: pending.target, quotedPostId: pending.quotedPostId })
-      .then((ticket) => {
-        if (ticket) toast.success(DELETED_TOAST[pending.noun]);
-      })
-      .catch(() => undefined);
-  };
-  const deleteNoun = pendingDelete?.noun === 'reply' ? 'reply' : 'post';
-
   return (
-    <>
-      <PostCard
-        {...cardProps}
-        post={post}
-        viewerId={viewerId ?? undefined}
-        canRepost={capabilities?.repostable[post.kind] ?? true}
-        canBookmark={capabilities?.bookmarkable[post.kind] ?? true}
-        poll={poll}
-        actions={actions}
-        menu={menu}
-      />
-      {pendingDelete ? (
-        <ConfirmDialog
-          isOpen
-          onClose={() => setPendingDelete(null)}
-          onConfirm={confirmDelete}
-          title={`Delete ${deleteNoun}?`}
-          message={deleteMessage(deleteNoun, capabilities)}
-          confirmText="Delete"
-        />
-      ) : null}
-    </>
+    <PostCard
+      {...cardProps}
+      post={post}
+      viewerId={viewerId ?? undefined}
+      canRepost={capabilities?.repostable[post.kind] ?? true}
+      canBookmark={capabilities?.bookmarkable[post.kind] ?? true}
+      poll={poll}
+      actions={actions}
+      menu={menu}
+    />
   );
 });

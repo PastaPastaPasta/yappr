@@ -16,16 +16,25 @@ import { toast } from '~/ui/toast';
  * (UX_SPEC §3.2); web links use this variant's yap.pr prefix.
  */
 
-/** `https://yap.pr/post?id=…` (devnet: `/devnet/post?id=…`), as web's share link. */
-export function postWebUrl(postId: string): string {
-  return `https://yap.pr${config.webBasePath}/post?id=${encodeURIComponent(postId)}`;
+/**
+ * The post on yap.pr (devnet: under `/devnet`): `/post?id=<id>`, and for a
+ * reply `/post?id=<root>&reply=<id>`, its thread with it highlighted (PRD ENG-05).
+ */
+export function postWebUrl(post: Pick<PostDTO, 'id' | 'kind' | 'rootPostId'> | string): string {
+  const base = `https://yap.pr${config.webBasePath}/post?id=`;
+  if (typeof post === 'string') return base + encodeURIComponent(post);
+  return post.kind === 'reply' && post.rootPostId
+    ? `${base}${encodeURIComponent(post.rootPostId)}&reply=${encodeURIComponent(post.id)}`
+    : base + encodeURIComponent(post.id);
 }
 
 /** Opens a post. The card's data seeds the detail screen, which refetches at once. */
 export function openPost(post: PostDTO | string): void {
   const id = typeof post === 'string' ? post : post.id;
   if (typeof post !== 'string' && queryClient.getQueryData(queryKeys.post.detail(id)) === undefined) {
-    queryClient.setQueryData(queryKeys.post.detail(id), post, { updatedAt: 0 });
+    // A bare repost's card shows its target under the reposter's banner; the detail is the target alone.
+    const { repostedBy: _banner, repostTimestamp: _at, ...detail } = post;
+    queryClient.setQueryData(queryKeys.post.detail(id), detail, { updatedAt: 0 });
   }
   router.push({ pathname: '/post/[id]', params: { id } });
 }
@@ -51,7 +60,7 @@ export function openExternal(url: string | null): void {
 
 /** The native share sheet with the post's yap.pr link and "{name} on Yappr" (PRD ENG-05). */
 export function sharePost(post: PostDTO): void {
-  const url = postWebUrl(post.id);
+  const url = postWebUrl(post);
   const text = `${post.author.displayName} on Yappr`;
   const content = Platform.OS === 'ios' ? { url, message: text } : { message: `${text}\n${url}`, title: text };
   Share.share(content).catch((error: unknown) => appendLog('warn', 'host', `Share failed: ${errorMessage(error)}`));

@@ -49,7 +49,7 @@ describe('session sync', () => {
     expect(result.current).toMatchObject({ status: 'signed-in', identityId: 'alice', signedIn: true });
     expect(fakeEngine.method('session.accounts')).toHaveBeenCalled();
 
-    act(() => fakeEngine.emit('session.changed', { session: null, reason: 'signed-out' }));
+    await act(async () => fakeEngine.emit('session.changed', { session: null, reason: 'signed-out' }));
     expect(result.current).toMatchObject({ status: 'signed-out', identityId: null, signedIn: false });
   });
 
@@ -121,14 +121,17 @@ describe('requireAuth', () => {
     expect(useSignInPrompt.getState().open).toBe(true);
   });
 
-  it('waits for the engine to restore the session', () => {
+  it('counts whoever was signed in last time while the engine restores', () => {
     const action = jest.fn();
     requireAuth(action);
     expect(action).not.toHaveBeenCalled();
-    expect(useSignInPrompt.getState().open).toBe(false);
+    expect(useSignInPrompt.getState().open).toBe(true);
 
-    act(() => useSessionStore.setState({ status: 'signed-in', session: session('alice') }));
+    useSignInPrompt.setState({ open: false });
+    syncStorage.setItem('yappr.session.identity', 'alice');
+    requireAuth(action);
     expect(action).toHaveBeenCalledTimes(1);
+    expect(useSignInPrompt.getState().open).toBe(false);
   });
 });
 
@@ -136,9 +139,12 @@ describe('useEngineEvent', () => {
   it('delivers typed payloads to the latest handler until unmount', async () => {
     const first = jest.fn();
     const second = jest.fn();
-    const { rerender, unmount } = renderHook(({ handler }) => useEngineEvent('notifications.count', handler), {
-      initialProps: { handler: first },
-    });
+    const { rerender, unmount } = renderHook(
+      ({ handler }: { handler: (payload: { unread: number }) => void }) => useEngineEvent('notifications.count', handler),
+      {
+        initialProps: { handler: first },
+      },
+    );
     rerender({ handler: second });
     act(() => fakeEngine.emit('notifications.count', { unread: 3 }));
     expect(first).not.toHaveBeenCalled();

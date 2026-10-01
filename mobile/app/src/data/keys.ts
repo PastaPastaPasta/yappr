@@ -20,6 +20,13 @@ const root = ['engine', engineNetworkKey] as const;
 
 type Sort = 'recent' | 'top';
 
+/** A sorted list's defaults, filled in so `{ tab }` and `{ tab, sort: 'recent' }` share a key. */
+const sorted = <Q extends { sort?: Sort; window?: RankingWindow }>(q: Q) => ({
+  ...q,
+  sort: q.sort ?? 'recent',
+  window: q.window ?? 'all',
+});
+
 export const queryKeys = {
   /** Every engine query on this network. */
   all: root,
@@ -28,10 +35,10 @@ export const queryKeys = {
     all: [...root, 'feed'] as const,
     /** `feed.home`. */
     home: (q: { tab: FeedTab; sort?: Sort; window?: RankingWindow }) =>
-      [...root, 'feed', 'home', { sort: 'recent', window: 'all', ...q }] as const,
+      [...root, 'feed', 'home', sorted(q)] as const,
     /** `feed.hashtag` (storage-form tag). */
     hashtag: (q: { tag: string; sort?: Sort; window?: RankingWindow }) =>
-      [...root, 'feed', 'hashtag', { sort: 'recent', window: 'all', ...q }] as const,
+      [...root, 'feed', 'hashtag', sorted(q)] as const,
   },
 
   post: {

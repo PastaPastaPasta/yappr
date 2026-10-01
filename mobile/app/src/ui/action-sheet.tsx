@@ -2,6 +2,7 @@ import { ActionSheetIOS, Platform, Pressable } from 'react-native';
 import { create } from 'zustand';
 
 import { cn } from '~/lib-allowlist';
+import { useAppearance } from '~/state/appearance';
 
 import { Sheet } from './Sheet';
 import { Text } from './Text';
@@ -30,6 +31,7 @@ const useActionSheet = create<{ request: ActionSheetRequest | null; open: boolea
  */
 export function showActionSheet(request: ActionSheetRequest): void {
   if (Platform.OS === 'ios') {
+    const { theme } = useAppearance.getState();
     const options = [...request.actions.map((a) => a.label), 'Cancel'];
     ActionSheetIOS.showActionSheetWithOptions(
       {
@@ -37,6 +39,8 @@ export function showActionSheet(request: ActionSheetRequest): void {
         options,
         cancelButtonIndex: options.length - 1,
         destructiveButtonIndex: request.actions.flatMap((a, i) => (a.destructive ? [i] : [])),
+        // The app's Light/Dark override, not just the system's.
+        userInterfaceStyle: theme === 'system' ? undefined : theme,
       },
       (index) => request.actions[index]?.onPress(),
     );

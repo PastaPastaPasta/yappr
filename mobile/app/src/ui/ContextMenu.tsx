@@ -15,21 +15,20 @@ export interface MenuItem {
 export interface ContextMenuProps {
   items: MenuItem[];
   onSelect: (id: string) => void;
-  /**
-   * `press`: a dropdown from a "⋯" button (its child must not handle the tap
-   * itself). `longPress`: the iOS context menu, with a preview of the child.
-   */
-  trigger?: 'press' | 'longPress';
+  /** The trigger, a small button. */
   children: ReactNode;
   testID?: string;
 }
 
 /**
- * A native menu (UX_SPEC §2.4.10): UIMenu on iOS, a popup menu on Android
- * (`@react-native-menu/menu`). The ref's `show()` opens it on Android only.
+ * A native dropdown menu (UX_SPEC §2.4.10) opened by tapping its child:
+ * UIMenu on iOS, a popup menu on Android (`@react-native-menu/menu`). The
+ * ref's `show()` opens it from code, on Android only. Wrap only a small
+ * trigger: on iOS the menu view is a UIButton, which takes every tap inside
+ * it, so a wrapped card's own buttons would stop working.
  */
 export const ContextMenu = forwardRef<MenuComponentRef, ContextMenuProps>(function ContextMenu(
-  { items, onSelect, trigger = 'press', children, testID },
+  { items, onSelect, children, testID },
   ref,
 ) {
   const dark = useIsDark();
@@ -47,7 +46,6 @@ export const ContextMenu = forwardRef<MenuComponentRef, ContextMenuProps>(functi
     <MenuView
       ref={ref}
       actions={actions}
-      shouldOpenOnLongPress={trigger === 'longPress'}
       onPressAction={({ nativeEvent }) => onSelect(nativeEvent.event)}
       themeVariant={dark ? 'dark' : 'light'}
       testID={testID}

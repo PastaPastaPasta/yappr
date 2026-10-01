@@ -90,21 +90,33 @@ function accountChanged(previous: string | null, next: string | null): void {
   done.catch((error: unknown) => appendLog('warn', 'host', `Cache reset failed: ${errorMessage(error)}`));
 }
 
+/** The provisional answer before the engine restores: who was signed in last time. */
+export function lastIdentity(): string | null {
+  return syncStorage.getItem(LAST_IDENTITY_KEY);
+}
+
+let accountsRead = 0;
+
 function applySession(session: SessionDTO | null): void {
   const previous = useSessionStore.getState();
-  const previousId =
-    previous.status === 'unknown'
-      ? syncStorage.getItem(LAST_IDENTITY_KEY)
-      : (previous.session?.identityId ?? null);
+  const previousId = previous.status === 'unknown' ? lastIdentity() : (previous.session?.identityId ?? null);
+  const nextId = session?.identityId ?? null;
   useSessionStore.setState({ status: session ? 'signed-in' : 'signed-out', session });
-  accountChanged(previousId, session?.identityId ?? null);
+  accountChanged(previousId, nextId);
+  // The account list changes only with the account (not with a balance refresh).
+  if (previous.status !== 'unknown' && previous.session?.identityId === nextId) return;
+  const read = ++accountsRead;
   engine.api.session
     .accounts()
-    .then((accounts) => useSessionStore.setState({ accounts }))
+    .then((accounts) => {
+      if (read === accountsRead) useSessionStore.setState({ accounts });
+    })
     .catch((error: unknown) => appendLog('warn', 'host', `Reading accounts failed: ${errorMessage(error)}`));
 }
 
 const RETRY_MS = 5000;
+/** The engine restores once per boot, so retrying helps only with a call that never reached it. */
+const MAX_RETRIES = 3;
 
 /**
  * Keeps the session store in step with the engine: `session.changed`, plus
@@ -115,7 +127,7 @@ export function startSessionSync(): () => void {
   let epoch = -1;
   let retry: ReturnType<typeof setTimeout> | undefined;
 
-  const refresh = (forEpoch: number) => {
+  const refresh = (forEpoch: number, attempt = 0) => {
     clearTimeout(retry);
     engine.api.session
       .current()
@@ -124,9 +136,9 @@ export function startSessionSync(): () => void {
       })
       .catch((error: unknown) => {
         appendLog('warn', 'host', `Restoring the session failed: ${errorMessage(error)}`);
-        // Offline boots can't restore yet; try again while this engine runs.
+        if (attempt >= MAX_RETRIES) return;
         retry = setTimeout(() => {
-          if (forEpoch === engineSupervisor.getStatus().epoch) refresh(forEpoch);
+          if (forEpoch === engineSupervisor.getStatus().epoch) refresh(forEpoch, attempt + 1);
         }, RETRY_MS);
       });
   };

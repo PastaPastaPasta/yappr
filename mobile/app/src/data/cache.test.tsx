@@ -68,6 +68,24 @@ describe('setViewerState', () => {
     expect(feed().pages[1].items[0].quoted).toMatchObject({ stats: { likes: 5 } });
   });
 
+  it('undoes only the copies it changed', () => {
+    const stale = fixturePost({ id: 'both' });
+    const fresh = fixturePost({ id: 'both', stats: { ...stale.stats, likes: 49 }, viewer: { ...stale.viewer!, liked: true } });
+    queryClient.setQueryData(queryKeys.feed.home({ tab: 'forYou' }), { pages: [page([stale])], pageParams: [null] });
+    queryClient.setQueryData(queryKeys.post.detail('both'), fresh);
+    const undo = setViewerState('both', { liked: true });
+    expect(queryClient.getQueryData(queryKeys.post.detail('both'))).toBe(fresh);
+    undo();
+    expect(queryClient.getQueryData(queryKeys.post.detail('both'))).toBe(fresh);
+    expect(feed().pages[0].items[0]).toMatchObject({ stats: { likes: 48 }, viewer: { liked: false } });
+  });
+
+  it('keeps a query stale: an optimistic change is not fresh data', () => {
+    queryClient.setQueryData(queryKeys.post.detail('target'), target, { updatedAt: 1000 });
+    setViewerState('target', { liked: true });
+    expect(queryClient.getQueryState(queryKeys.post.detail('target'))?.dataUpdatedAt).toBe(1000);
+  });
+
   it('leaves a copy already in that state alone', () => {
     queryClient.setQueryData(queryKeys.post.detail('liked'), POSTS.liked);
     setViewerState(POSTS.liked.id, { liked: true });

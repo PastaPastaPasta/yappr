@@ -12,7 +12,7 @@ in `src/features/<feature>/**`, next to the routes that use it.
 | `events.ts` | `useEngineEvent(name, handler)`, `onEngineEvent`: typed engine events |
 | `session.ts` | `useSession()`, `useViewerId()`, `useCapabilities()` |
 | `require-auth.tsx` | `requireAuth(action)` / `useRequireAuth()`, and the "Sign in to continue" sheet |
-| `writes.ts` | `submitWrite`, `useWrite`, `checkWrite`, `retryWrite`: tickets, toasts and rollback |
+| `writes.ts` | `submitWrite`, `sendWrite`, `useWrite`, `checkWrite`, `retryWrite`: tickets, toasts and rollback |
 | `optimistic.ts` | `setViewerState`, `setFollowing`, `hidePost`, `markPostDeleted`, `updateCachedPosts` |
 | `sync.ts` | `startDataLayer()`: the root layout starts the app-wide subscriptions once |
 | `testing/fake-engine.ts` | A fake `~/engine` for Jest |
@@ -59,8 +59,10 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
 };
 ```
 
-- **In a list cell:** `submitWrite(likeWrite, vars)`. It doesn't subscribe,
-  and it resolves with the ticket, or null if it was skipped or refused.
+- **In a list cell:** `sendWrite(likeWrite, vars, 'Reposted!')` (the toast
+  is optional and shows once the engine has taken the write), or
+  `submitWrite(spec, vars)`, which resolves with the ticket, or null if it
+  was skipped or refused. Neither subscribes.
 - **On a screen that shows the status:** `const w = useWrite(spec)`, then
   `w.run(vars)`. Read `w.status` (`idle` / `pending` / `confirmed` /
   `unconfirmed` / `failed`) and `w.ticket`; `w.check()` and `w.retry()` act
@@ -75,13 +77,17 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   - `unconfirmed`: the write may have landed, so the change stays (PRD G-3).
     A "Not confirmed yet" toast offers **Check again**. If the check proves
     the write absent, the change is undone and the toast offers **Retry**.
-  - Nothing is retried automatically.
+    Engagements set `announceUnconfirmed: false`: G-3 counts them as done,
+    with no toast.
+  - Nothing is retried automatically. Retry applies only to the latest write
+    for a key, and never while another is in flight.
+  - Signing out or switching accounts forgets every tracked write.
 - **When the engine refuses the call itself.** No ticket is made, and the
   change is undone. `NOT_SIGNED_IN` opens the sign-in sheet. `onRejected`
   can handle a specific code (`QUOTE_HAS_TEXT`). Anything else toasts
   `failureMessage`.
 - **Toasts on the happy path** ("Reposted!", "Added to bookmarks") are the
-  caller's. Show them when `submitWrite` resolves with a ticket.
+  caller's: `sendWrite`'s third argument.
 - **Post engagements already exist.** `src/features/post/post-writes.ts` has
   the like, repost, bookmark, follow and delete specs. Reuse them.
 
@@ -98,8 +104,11 @@ covered without registering it.
   (and its follower count) and user rows.
 - `hidePost(id)` removes a post from every `PostItem` at once.
   `markPostDeleted(id)` turns every cached copy into the "deleted" line.
-- Each helper returns its undo. Untouched objects keep their identity, so
-  memoized cells don't re-render.
+- Each helper returns its undo, which puts back only what it changed.
+  Untouched objects keep their identity, so memoized cells don't
+  re-render. A patched query keeps its age (stale data still refetches),
+  and a fetch already in flight for it is cancelled, so it can't land the
+  pre-write state over the change.
 - Render posts from the cache (a query's data), not from a copy in local
   state, or the optimistic change won't show.
 
@@ -116,8 +125,10 @@ const requireAuth = useRequireAuth();
 - **Signed out:** it opens the "Sign in to continue" sheet, which links to
   `/sign-in`. The action is dropped: after sign-in the user is back where
   they were, and nothing happens.
-- **While the engine is still restoring the session:** it waits for the
-  answer.
+- **While the engine is still restoring the session:** whoever was signed
+  in last time counts, so a write at boot shows at once (PRD G-2). If that
+  account is gone, the engine refuses the write (`NOT_SIGNED_IN`), the change
+  is undone and the sheet opens.
 
 Other session hooks:
 - `useSession()`: `status` (`unknown` / `signed-out` / `signed-in`),
@@ -141,6 +152,14 @@ useEngineEvent('notifications.count', ({ unread }) => setBadge(unread));
   `content.created` (it seeds the new post and invalidates the feeds, the
   author's profile, and the thread or quoted post).
 
+## Gotcha: React Compiler and closures
+
+The app builds with React Compiler, which memoizes callbacks by the property
+paths they read and evaluates those paths while rendering. A closure such as
+`() => read(target!.id)` therefore throws during render when `target` is
+undefined, even if the callback never runs. Read plain values first:
+`const targetId = target?.id ?? ''`, then use `targetId` in the closure.
+
 ## Posts
 
 `src/features/post/PostItem.tsx` is the post cell for every list. It is the
@@ -148,7 +167,10 @@ design system's `PostCard` with all of these wired:
 
 - like, repost (the v10 slot rules, and the `QUOTE_HAS_TEXT` confirm),
   bookmark and follow, all optimistic;
-- share, and the ⋯ / long-press menu, with delete own, block and report;
+- share, and the ⋯ / long-press menu, with delete own (native confirm),
+  block and report. iOS long press shows the menu as an action sheet: the
+  iOS menu view is a UIButton, so wrapping a whole card in it would swallow
+  every tap inside;
 - the navigation: post, author, compose, media, hashtags, mentions and safe
   external links.
 

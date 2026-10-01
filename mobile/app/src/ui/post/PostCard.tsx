@@ -1,5 +1,5 @@
 import type { MenuComponentRef } from '@react-native-menu/menu';
-import { memo, useCallback, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { memo, useCallback, useMemo, useState, type ReactNode } from 'react';
 import { Platform, Pressable, View, type AccessibilityActionEvent, type TextLayoutEvent } from 'react-native';
 import { ArrowPathIcon, EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 import { LockClosedIcon } from 'react-native-heroicons/solid';
@@ -94,9 +94,10 @@ export interface PostCardProps {
   /** The optimistic variant's write status. */
   writeStatus?: WriteStatusProps;
   /**
-   * The post's menu (PRD ENG-08): the "⋯" dropdown, and on long press the
-   * iOS context menu (with the card as its preview) or, on Android, the same
-   * dropdown. Screen readers get it as an action sheet.
+   * The post's menu (PRD ENG-08): the "⋯" dropdown, also opened by a long
+   * press (Android) or shown as an action sheet (iOS long press, screen
+   * readers). Not a card-wide UIContextMenu: the iOS menu view is a
+   * UIButton, which would swallow every tap inside the card.
    */
   menu?: PostCardMenu;
   tagMaxLength?: number;
@@ -108,7 +109,19 @@ export interface PostCardMenu {
   onSelect: (id: string) => void;
 }
 
-/** The menu as an action sheet, for the screen-reader "More" action. */
+const noop = () => undefined;
+
+/** Long press and the screen-reader "More": Android's "⋯" dropdown, or the action sheet. */
+function openPostMenu(menu: PostCardMenu, dropdown: MenuComponentRef | null) {
+  if (Platform.OS === 'android' && dropdown) {
+    lightImpact();
+    dropdown.show();
+  } else {
+    showMenuSheet(menu);
+  }
+}
+
+/** The menu as an action sheet (iOS long press, screen readers). */
 function showMenuSheet({ items, onSelect }: PostCardMenu) {
   showActionSheet({
     actions: items.map((item) => ({
@@ -127,7 +140,7 @@ function MoreButton({
 }: {
   post: CardPost;
   menu?: PostCardMenu;
-  menuRef: RefObject<MenuComponentRef | null>;
+  menuRef: (menu: MenuComponentRef | null) => void;
   onMore?: () => void;
 }) {
   const c = useColors();
@@ -144,20 +157,24 @@ function MoreButton({
       />
     );
   }
-  // The native menu takes the tap, so the button inside is only a picture of one.
+  // The native menu opens on the tap. The touch's JS target is the menu view itself (on iOS a
+  // UIButton, which hides its children from React Native's hit test), so the no-op Pressable
+  // around it is what claims the press: without it the card's own press would open the post.
   return (
-    <ContextMenu ref={menuRef} items={menu.items} onSelect={menu.onSelect} testID={`more-menu-${post.id}`}>
-      <View
-        accessible
-        accessibilityRole="button"
-        accessibilityLabel={label}
-        testID={testID}
-        // 44 pt, like IconButton's hit area (UX_SPEC §6.4), without growing the header.
-        className="-my-2.5 -mr-3 h-11 w-11 items-center justify-center"
-      >
-        <EllipsisHorizontalIcon size={20} color={c.textSecondary} />
-      </View>
-    </ContextMenu>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={noop}
+      testID={testID}
+      // 44 pt, like IconButton's hit area (UX_SPEC §6.4), without growing the header.
+      className="-my-2.5 -mr-3 h-11 w-11"
+    >
+      <ContextMenu ref={menuRef} items={menu.items} onSelect={menu.onSelect} testID={`more-menu-${post.id}`}>
+        <View className="h-11 w-11 items-center justify-center">
+          <EllipsisHorizontalIcon size={20} color={c.textSecondary} />
+        </View>
+      </ContextMenu>
+    </Pressable>
   );
 }
 
@@ -349,7 +366,8 @@ export const PostCard = memo(function PostCard({
   menu,
   actions = {},
 }: PostCardProps) {
-  const menuRef = useRef<MenuComponentRef>(null);
+  // The "⋯" dropdown, held in state (a callback ref) so long press can open it on Android.
+  const [dropdown, setDropdown] = useState<MenuComponentRef | null>(null);
   const [revealed, reveal] = useSensitiveReveal(post.id);
   const { external } = useMediaUrls();
   // Whether the feed text overflowed, keyed by post so a recycled cell re-measures.
@@ -507,10 +525,14 @@ export const PostCard = memo(function PostCard({
       }
     }
   }
-  const hasMore = variant !== 'compact' && (!!menu || !!actions.onMore);
+  const cardMenu = variant === 'compact' ? undefined : menu;
+  const onMore = variant === 'compact' ? undefined : actions.onMore;
+  // Long press and the screen-reader action. Android opens the "⋯" dropdown; iOS can't open a
+  // UIMenu from code, so it gets the same items as an action sheet.
+  const openMenu = cardMenu ? () => openPostMenu(cardMenu, dropdown) : undefined;
   a11yActions.push(
     { name: 'profile', label: 'Open profile', run: actions.onAuthorPress },
-    { name: 'more', label: 'More', run: !hasMore ? undefined : menu ? () => showMenuSheet(menu) : actions.onMore },
+    { name: 'more', label: 'More', run: openMenu ?? onMore },
   );
   const available = a11yActions.filter((a) => a.run);
   const onAccessibilityAction = (e: AccessibilityActionEvent) => {
@@ -518,9 +540,7 @@ export const PostCard = memo(function PostCard({
     else available.find((a) => a.name === e.nativeEvent.actionName)?.run?.();
   };
 
-  // Android has no context-menu preview: a long press opens the "⋯" dropdown.
-  const androidMenu = menu && hasMore && Platform.OS === 'android';
-  const card = (
+  return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={
@@ -536,14 +556,7 @@ export const PostCard = memo(function PostCard({
       accessibilityActions={available.map(({ name, label }) => ({ name, label }))}
       onAccessibilityAction={onAccessibilityAction}
       onPress={actions.onPress}
-      onLongPress={
-        androidMenu
-          ? () => {
-              lightImpact();
-              menuRef.current?.show();
-            }
-          : actions.onLongPress
-      }
+      onLongPress={openMenu ?? actions.onLongPress}
       testID={`post-card-${post.id}`}
       className={cn('px-4 pt-3', tw.pressed, variant === 'compact' ? 'pb-3' : cn('border-b pb-1', tw.border))}
     >
@@ -564,7 +577,7 @@ export const PostCard = memo(function PostCard({
             post={post}
             pending={authorPending}
             more={
-              hasMore ? <MoreButton post={post} menu={menu} menuRef={menuRef} onMore={actions.onMore} /> : null
+              cardMenu || onMore ? <MoreButton post={post} menu={cardMenu} menuRef={setDropdown} onMore={onMore} /> : null
             }
             actions={actions}
           />
@@ -605,15 +618,6 @@ export const PostCard = memo(function PostCard({
       </View>
     </Pressable>
   );
-
-  if (menu && hasMore && Platform.OS === 'ios') {
-    return (
-      <ContextMenu items={menu.items} onSelect={menu.onSelect} trigger="longPress" testID={`post-menu-${post.id}`}>
-        {card}
-      </ContextMenu>
-    );
-  }
-  return card;
 });
 
 /** Detail only: the absolute time and the counts row (UX_SPEC §2.4.4). */

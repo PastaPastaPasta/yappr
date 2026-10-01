@@ -6,11 +6,8 @@ import { queryClient } from '~/state/query-client';
 import { queryKeys } from './keys';
 
 /**
- * Optimistic cache updates (src/data/README.md). An engagement changes a post
- * wherever it is cached: every feed page, profile tab, thread, detail, quote
- * embed and `engage.stats` entry holding that id. The helpers walk the engine
- * queries' data structurally, so a screen's new query shape is covered
- * without registering it, and each returns the change that undoes it.
+ * Optimistic cache updates (src/data/README.md "Optimistic updates"). The
+ * helpers walk every cached engine query structurally and return their undo.
  */
 
 type Json = Record<string, unknown>;
@@ -59,31 +56,42 @@ function mapObjects(value: unknown, visit: (object: Json) => Json): unknown {
   return visit(next);
 }
 
-/** Applies `visit` to every plain object in every cached engine query. */
-function updateCache(visit: (object: Json) => Json): void {
-  for (const [key, data] of queryClient.getQueriesData({ queryKey: queryKeys.all })) {
-    if (data === undefined) continue;
+/**
+ * Applies `visit` to every plain object in the cached engine queries (or only
+ * those named), and returns the hashes of the queries it changed. A changed
+ * query keeps its age, so stale data still refetches, and a fetch already in
+ * flight is cancelled, so it can't land the pre-write state over the change.
+ */
+function updateCache(visit: (object: Json) => Json, only?: ReadonlySet<string>): Set<string> {
+  const changed = new Set<string>();
+  for (const query of queryClient.getQueryCache().findAll({ queryKey: queryKeys.all })) {
+    const data = query.state.data;
+    if (data === undefined || (only && !only.has(query.queryHash))) continue;
     const next = mapObjects(data, visit);
-    if (next !== data) queryClient.setQueryData(key, next);
+    if (next === data) continue;
+    changed.add(query.queryHash);
+    if (query.state.fetchStatus === 'fetching') {
+      queryClient.cancelQueries({ queryKey: query.queryKey, exact: true }, { revert: false }).catch(() => undefined);
+    }
+    queryClient.setQueryData(query.queryKey, next, { updatedAt: query.state.dataUpdatedAt });
   }
+  return changed;
 }
 
-/** Every cached copy of a post, in every engine query. */
-export function updateCachedPosts(postId: string, update: (post: CachedPost) => CachedPost): void {
-  updateCache((object) => (isCachedPost(object) && object.id === postId ? (update(object) as Json & CachedPost) : object));
+/** Every cached copy of a post; returns the hashes of the queries it changed. */
+export function updateCachedPosts(
+  postId: string,
+  update: (post: CachedPost) => CachedPost,
+  only?: ReadonlySet<string>,
+): Set<string> {
+  return updateCache(
+    (object) => (isCachedPost(object) && object.id === postId ? (update(object) as Json & CachedPost) : object),
+    only,
+  );
 }
 
-/** The first cached copy of a post, if any. */
-export function findCachedPost(postId: string): CachedPost | undefined {
-  let found: CachedPost | undefined;
-  updateCache((object) => {
-    if (!found && isCachedPost(object) && object.id === postId) found = object;
-    return object;
-  });
-  return found;
-}
-
-const EMPTY_VIEWER: ViewerStateDTO = {
+/** A signed-in viewer's marks before anything is known: nothing liked, followed or blocked. */
+export const EMPTY_VIEWER: ViewerStateDTO = {
   liked: false,
   reposted: false,
   bookmarked: false,
@@ -95,18 +103,19 @@ const EMPTY_VIEWER: ViewerStateDTO = {
 /** The viewer marks an engagement toggles; the counts follow the flags. */
 export type ViewerPatch = Partial<Pick<ViewerStateDTO, 'liked' | 'reposted' | 'bookmarked' | 'ownQuoteId'>>;
 
-const COUNTED = { liked: 'likes', reposted: 'reposts' } as const;
+const FLAGS = ['liked', 'reposted', 'bookmarked'] as const;
+const COUNTED: Partial<Record<(typeof FLAGS)[number], 'likes' | 'reposts'>> = { liked: 'likes', reposted: 'reposts' };
 
 function applyViewerPatch(post: CachedPost, patch: ViewerPatch): CachedPost {
   const viewer = { ...EMPTY_VIEWER, ...post.viewer };
   const stats = { ...post.stats };
   let changed = false;
-  for (const flag of ['liked', 'reposted', 'bookmarked'] as const) {
+  for (const flag of FLAGS) {
     const value = patch[flag];
     if (value === undefined || viewer[flag] === value) continue;
     viewer[flag] = value;
     changed = true;
-    const count = flag === 'bookmarked' ? null : COUNTED[flag];
+    const count = COUNTED[flag];
     if (count) stats[count] = Math.max(0, stats[count] + (value ? 1 : -1));
   }
   if (patch.ownQuoteId !== undefined && viewer.ownQuoteId !== patch.ownQuoteId) {
@@ -119,17 +128,22 @@ function applyViewerPatch(post: CachedPost, patch: ViewerPatch): CachedPost {
 /**
  * Sets the viewer's marks on every cached copy of a post, moving the like and
  * repost counts with the flags (a copy already in that state is left alone).
- * Returns the undo: the opposite flags and the previous `ownQuoteId`.
+ * The undo puts back what it changed, in the queries it changed.
  */
 export function setViewerState(postId: string, patch: ViewerPatch): () => void {
-  const before = findCachedPost(postId)?.viewer;
-  updateCachedPosts(postId, (post) => applyViewerPatch(post, patch));
+  let previousQuote: string | null | undefined;
+  const changed = updateCachedPosts(postId, (post) => {
+    previousQuote ??= post.viewer?.ownQuoteId ?? null;
+    return applyViewerPatch(post, patch);
+  });
   const undo: ViewerPatch = {};
-  for (const flag of ['liked', 'reposted', 'bookmarked'] as const) {
+  for (const flag of FLAGS) {
     if (patch[flag] !== undefined) undo[flag] = !patch[flag];
   }
-  if (patch.ownQuoteId !== undefined) undo.ownQuoteId = before?.ownQuoteId ?? null;
-  return () => updateCachedPosts(postId, (post) => applyViewerPatch(post, undo));
+  if (patch.ownQuoteId !== undefined) undo.ownQuoteId = previousQuote ?? null;
+  return () => {
+    updateCachedPosts(postId, (post) => applyViewerPatch(post, undo), changed);
+  };
 }
 
 /**
@@ -138,7 +152,7 @@ export function setViewerState(postId: string, patch: ViewerPatch): () => void {
  * count) and user rows (`viewerFollows`). Returns the undo.
  */
 export function setFollowing(authorId: string, follows: boolean): () => void {
-  const apply = (value: boolean) =>
+  const apply = (value: boolean, only?: ReadonlySet<string>) =>
     updateCache((object) => {
       if (isCachedPost(object)) {
         if (object.author?.id !== authorId || object.viewer?.followsAuthor === value) return object;
@@ -161,9 +175,11 @@ export function setFollowing(authorId: string, follows: boolean): () => void {
         return { ...object, viewerFollows: value };
       }
       return object;
-    });
-  apply(follows);
-  return () => apply(!follows);
+    }, only);
+  const changed = apply(follows);
+  return () => {
+    apply(!follows, changed);
+  };
 }
 
 /** Marks every cached copy of a post deleted (the card renders the "deleted" line). */

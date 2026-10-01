@@ -27,6 +27,14 @@ const spec: WriteSpec<TargetRef> = {
 
 const currentToast = () => useToastStore.getState().current;
 
+/** As the engine answers `writes.check` / `retry`: the `write.status` event first, then the result. */
+function answer(path: string, next: WriteTicket) {
+  fakeEngine.method(path).mockImplementationOnce(async () => {
+    fakeEngine.emit('write.status', next);
+    return next;
+  });
+}
+
 /** Submits `spec` with the engine answering `pending`; returns that ticket. */
 async function submitPending(overrides: Partial<WriteTicket> = {}): Promise<WriteTicket> {
   const pending = ticket(overrides);
@@ -68,7 +76,7 @@ describe('submitWrite', () => {
     expect(undo).toHaveBeenCalledTimes(1);
     expect(currentToast()).toMatchObject({ kind: 'error', message: 'Not enough credits.', action: { label: 'Retry' } });
 
-    fakeEngine.method('writes.retry').mockResolvedValueOnce(advance(failed, { state: 'pending', error: null }));
+    answer('writes.retry', advance(failed, { state: 'pending', error: null }));
     await act(async () => currentToast()?.action?.onPress());
     expect(fakeEngine.method('writes.retry')).toHaveBeenCalledWith(pending.id);
     expect(apply).toHaveBeenCalledTimes(2);
@@ -95,24 +103,64 @@ describe('submitWrite', () => {
     expect(undo).not.toHaveBeenCalled();
     expect(currentToast()).toMatchObject({ kind: 'info', message: 'Not confirmed yet', action: { label: 'Check again' } });
 
-    fakeEngine.method('writes.check').mockResolvedValueOnce(advance(unconfirmed, { retryable: true, lastCheckedAt: new Date() }));
+    const show = jest.spyOn(useToastStore.getState(), 'show');
+    answer('writes.check', advance(unconfirmed, { retryable: true, lastCheckedAt: new Date() }));
     await act(async () => currentToast()?.action?.onPress());
     expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(pending.id);
     expect(undo).toHaveBeenCalledTimes(1);
+    // The event and the call's answer are one outcome: one toast.
+    expect(show).toHaveBeenCalledTimes(1);
     expect(currentToast()).toMatchObject({ kind: 'error', message: "Your like didn't go through. Try again.", action: { label: 'Retry' } });
   });
 
-  it('says so again when a check changes nothing', async () => {
+  it('says so again when a check proves nothing either way', async () => {
     const pending = await submitPending();
     const unconfirmed = advance(pending, { state: 'unconfirmed' });
     act(() => fakeEngine.emit('write.status', unconfirmed));
     act(() => useToastStore.setState({ current: null }));
 
-    fakeEngine.method('writes.check').mockResolvedValueOnce(unconfirmed);
+    answer('writes.check', { ...unconfirmed, lastCheckedAt: new Date() });
     await act(async () => {
       await checkWrite(pending.id);
     });
     expect(currentToast()).toMatchObject({ message: 'Not confirmed yet' });
+    expect(undo).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet about an unconfirmed write the spec counts as done', async () => {
+    const pending = ticket();
+    fakeEngine.method('engage.like').mockResolvedValueOnce(pending);
+    await submitWrite({ ...spec, announceUnconfirmed: false }, target);
+    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'unconfirmed' })));
+    expect(currentToast()).toBeNull();
+    expect(undo).not.toHaveBeenCalled();
+  });
+
+  it('keeps a failure that arrived before the call’s pending answer (same millisecond)', async () => {
+    const pending = ticket();
+    fakeEngine.method('engage.like').mockImplementationOnce(async () => {
+      fakeEngine.emit('write.status', { ...pending, state: 'failed', error: null });
+      return pending;
+    });
+    await act(async () => {
+      await submitWrite(spec, target);
+    });
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(currentToast()).toMatchObject({ kind: 'error' });
+    // The key is free again.
+    await submitPending();
+  });
+
+  it('retries only the latest write for a key, and not while another is in flight', async () => {
+    const first = await submitPending();
+    const failed = advance(first, { state: 'failed', retryable: true, error: null });
+    act(() => fakeEngine.emit('write.status', failed));
+    const staleRetry = currentToast()?.action;
+    await submitPending();
+
+    await act(async () => staleRetry?.onPress());
+    expect(fakeEngine.method('writes.retry')).not.toHaveBeenCalled();
+    expect(currentToast()).toMatchObject({ message: 'Already updated' });
   });
 
   it('acts on a status that overtook the call’s answer', async () => {

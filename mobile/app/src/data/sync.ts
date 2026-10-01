@@ -4,8 +4,9 @@ import { queryClient } from '~/state/query-client';
 
 import { onEngineEvent } from './events';
 import { queryKeys } from './keys';
-import { startSessionSync } from './session';
-import { startWriteTracking } from './writes';
+import { useRemovedPosts } from './optimistic';
+import { startSessionSync, useSessionStore } from './session';
+import { resetWriteTracking, startWriteTracking } from './writes';
 
 /**
  * A post or reply this device published: seed its detail and refetch what
@@ -29,6 +30,18 @@ function contentCreated({ post }: ContentCreatedEvent): void {
  * created content. The root layout starts it once; returns the stop.
  */
 export function startDataLayer(): () => void {
-  const stops = [startSessionSync(), startWriteTracking(), onEngineEvent('content.created', contentCreated)];
+  // Another account's writes and deletes mean nothing to the next one.
+  const stopAccount = useSessionStore.subscribe((state, previous) => {
+    if (previous.status !== 'unknown' && state.session?.identityId !== previous.session?.identityId) {
+      resetWriteTracking();
+      useRemovedPosts.setState({ ids: new Set() });
+    }
+  });
+  const stops = [
+    startSessionSync(),
+    startWriteTracking(),
+    onEngineEvent('content.created', contentCreated),
+    stopAccount,
+  ];
   return () => stops.forEach((stop) => stop());
 }
