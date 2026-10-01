@@ -308,6 +308,27 @@ describe('check again', () => {
     expect((await store.check('t1')).state).toBe('confirmed')
   })
 
+  it('lends handler probes the store\'s proof, which never proves an empty list', async () => {
+    const { store, options } = setup()
+    let named: TicketDocument[] = []
+    store.register('unrepost', {
+      run: async () => ({ state: 'unconfirmed' }),
+      probe: (ticket, _args, kit) => kit.proveDocuments(named.length ? ticket.documents : []),
+    })
+    store.submit({ op: 'unrepost', args: null, documents: [{ ...POST, action: 'delete' }] })
+    await settle()
+    expect(await store.check('t1')).toMatchObject({ state: 'unconfirmed', error: { code: 'UNKNOWN' } })
+    named = [POST]
+    vi.mocked(options.documentExists).mockResolvedValue(false)
+    expect((await store.check('t1')).state).toBe('confirmed')
+  })
+
+  it('keeps a delete\'s document across a retry, so the next check can still prove it', async () => {
+    const { store } = await unconfirmedCreate(async () => true, [{ ...POST, action: 'delete' }])
+    expect(await store.check('t1')).toMatchObject({ retryable: true })
+    expect((await store.retry('t1')).documents).toEqual([{ ...POST, action: 'delete' }])
+  })
+
   it('cannot prove a write that named no documents', async () => {
     const { store } = setup()
     store.register('like', { run: async () => ({ state: 'unconfirmed' }) })
@@ -380,6 +401,23 @@ describe('persistence and restart reconciliation', () => {
     restarted.store.register('dm.send', { run: async () => ({ state: 'confirmed' }) })
     expect((await restarted.store.check('t1')).retryable).toBe(true)
     await expect(restarted.store.retry('t1')).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+  })
+
+  it('keeps stored arguments through the boot-time rewrite, before any handler registers', async () => {
+    const storage = memoryStorage()
+    const first = setup({ storage })
+    first.store.register('follow', { run: async () => ({ state: 'unconfirmed' }), persistArgs: true })
+    first.store.submit({ op: 'follow', args: { targetId: 'B' }, documents: [POST] })
+    await settle()
+    // Two restarts with nothing registered in between: the arguments survive both.
+    setup({ storage })
+    const run = vi.fn(async () => ({ state: 'confirmed' as const }))
+    const second = setup({ storage, documentExists: async () => false })
+    second.store.register('follow', { run, persistArgs: true })
+    await second.store.check('t1')
+    await second.store.retry('t1')
+    await settle()
+    expect(run).toHaveBeenCalledWith({ targetId: 'B' }, expect.anything())
   })
 
   it('lists the active account\'s open tickets and recent confirmations, newest first', async () => {

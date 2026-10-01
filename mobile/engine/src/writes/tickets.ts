@@ -146,6 +146,11 @@ export function createTicketStore(options: TicketStoreOptions) {
   const clone = (ticket: WriteTicket): WriteTicket => structuredClone(ticket)
   const allConfirmed = (documents: TicketDocument[]) => documents.map(doc => ({ ...doc, confirmed: true }))
 
+  const keepsArgs = (op: WriteOp) => {
+    const handler = handlers.get(op)
+    return handler ? handler.persistArgs === true : true
+  }
+
   function persist() {
     const cutoff = now() - CONFIRMED_TTL_MS
     for (const [id, { ticket }] of records) {
@@ -168,7 +173,9 @@ export function createTicketStore(options: TicketStoreOptions) {
         updatedAt: ticket.updatedAt.getTime(),
         lastCheckedAt: ticket.lastCheckedAt?.getTime() ?? null,
       },
-      ...(args !== undefined && handlers.get(ticket.op)?.persistArgs === true ? { args } : {}),
+      // Args held for an op no handler has claimed yet came from storage (the boot-time rewrite runs
+      // before the API registers its handlers): keep them, or a second restart would strand the ticket.
+      ...(args !== undefined && keepsArgs(ticket.op) ? { args } : {}),
     }))
     options.storage.setItem(WRITES_STORAGE_KEY, JSON.stringify(stored))
   }
@@ -302,6 +309,8 @@ export function createTicketStore(options: TicketStoreOptions) {
   const recheckDelay = () => new Promise<void>(resolve => setTimeout(resolve, absenceRecheckMs))
 
   async function proveDocuments(documents: TicketDocument[]): Promise<ProbeResult> {
+    // Proving nothing proves nothing: never 'applied' from an empty list.
+    if (documents.length === 0) return { state: 'unknown', error: new Error('Nothing to check: this write named no documents') }
     try {
       for (const doc of documents.filter(doc => !doc.confirmed)) {
         let exists = await options.documentExists(doc)
@@ -326,9 +335,6 @@ export function createTicketStore(options: TicketStoreOptions) {
       if (handler?.probe) return await handler.probe(clone(ticket), args, kit)
     } catch (error) {
       return { state: 'unknown', error }
-    }
-    if (ticket.documents.length === 0) {
-      return { state: 'unknown', error: new Error('Nothing to check: this write named no documents') }
     }
     return proveDocuments(ticket.documents)
   }
@@ -449,7 +455,8 @@ export function createTicketStore(options: TicketStoreOptions) {
       }
       // The earlier attempt's unproven documents are gone (proved absent, or refused): a fresh
       // nonce gives fresh ids, which the new attempt records. Confirmed ones (thread parts) stay.
-      const documents = ticket.documents.filter(doc => doc.confirmed)
+      // A delete names the same document again, so its id stays for the next check.
+      const documents = ticket.documents.filter(doc => doc.confirmed || doc.action === 'delete')
       const restarted = update(id, { state: 'pending', stage: 'queued', error: null, retryable: false, documents })
       start(id, handler, args)
       return restarted
