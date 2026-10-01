@@ -5,10 +5,11 @@ range only. Everything earlier is in [`PLATFORM_BETA7_UPGRADE.md`](./PLATFORM_BE
 
 This PR (`v5b1/blog-v6-tooling`) contains only what 5.0 makes mandatory:
 - the blog contract re-cut, **blog v6**;
-- the contract tooling, which now validates against the 5.0 rules.
+- the contract tooling, which now validates against the 5.0 rules;
+- the SDK pin, **5.0.0-beta.1** for all three `@dashevo` packages.
 
-**No SDK pin change, no client behaviour change, nothing published.** The devnet
-cut-over (new blog id, bundle snapshot, `.env.devnet`) is a separate PR.
+**No client behaviour change, nothing published.** The devnet cut-over to sakura
+(network wiring, new contract ids, bundle snapshot, `.env.devnet`) is a separate PR.
 
 ## Versions and scope
 
@@ -17,19 +18,32 @@ cut-over (new blog id, bundle snapshot, `.env.devnet`) is a separate PR.
 | `v4.2.0-beta.7` | `50d120372788985d9ee97ba04ae6b1e6603dfa0b` | Starting point; see the beta.7 document. |
 | `v5.0.0-beta.1` | `b95849a1767aa26fa794cf69a44d4fc107ee6528` | 20 commits. The 4.2 line was renamed 5.0, so this follows beta.7 directly. Protocol version is still **14**. |
 
-### The SDK pin stays at 4.2.0-beta.7
+### The SDK pin: 5.0.0-beta.1 from npm
 
-On 2026-09-30, npm had no 5.0.0-beta.1. `npm view @dashevo/evo-sdk dist-tags` showed `4.2-beta: 4.2.0-beta.7` and no `5.0-beta` tag, and the same was true for `wasm-sdk` and `wasm-dpp2`. The release run's `build-npm` job had failed, so "Publish NPM packages" was skipped.
+All three packages are pinned to exactly `5.0.0-beta.1`, resolved from `registry.npmjs.org` (dist-tag `5.0-beta`):
 
-The 5.0 checks in this PR therefore ran against the three packages **built locally from the tag**:
+| Package | npm tarball sha256 | npm shasum |
+| --- | --- | --- |
+| `@dashevo/evo-sdk` | `b16da85b309fad857e5ed9dadd79aae334fd39e0be6c5bc7f28da47101c712c6` | `2feddf37c7e9c79c2dc67df081aba1bdc0709892` |
+| `@dashevo/wasm-sdk` | `02d797570d6066270daa5cc58ba7ab15fcb0f4a794950304dcdbb5933dc4fffe` | `e5589287d63dd750800f5d08d4e9dd3dac96e0a5` |
+| `@dashevo/wasm-dpp2` (devDependency) | `94d68e88ce97451567ab5bf87470515ce55068e77be17e5ae30e318f3ee506f7` | `2d2f6f96a1f012a38aab902f8bdfe5fd113ebfa8` |
 
-| Package | sha256 |
+`npm ls @dashevo/wasm-sdk` shows one copy, deduped under evo-sdk.
+
+npm had no 5.0.0-beta.1 on 2026-09-30 (the release run's `build-npm` job had failed), so the contract checks below first ran against the three packages **built locally from the tag** with `yarn pack`:
+
+| Package | local tarball sha256 |
 | --- | --- |
 | `@dashevo/evo-sdk` 5.0.0-beta.1 | `3b66b2912fd181b898c870ea8116d66d3e81ac04f6d4743cd70fd3c82116f8e0` |
 | `@dashevo/wasm-sdk` 5.0.0-beta.1 | `5bc14aea630afb52f17f07999ef98f52c4f75c4250ee7d142b9a7d276c269a72` |
 | `@dashevo/wasm-dpp2` 5.0.0-beta.1 | `cd9a49939f7f570f33f29b24c8fc2b79c40a475ceb430e66c3805a8a40928db9` |
 
-These are `yarn pack` output, not official npm artifacts. When npm publishes `5.0-beta`, bump all three packages together in a separate PR and regenerate the lockfile, as for beta.7.
+**The npm and local builds differ only by build environment.** Every packaged file was compared:
+- the TypeScript declarations hold the same lines in a different order, except for the wasm-bindgen mangling hashes in internal closure names;
+- the `.wasm` binaries and the JS glue therefore differ byte-wise (wasm-sdk 25,026,135 B on npm against 24,998,300 B local);
+- every evo-sdk file except the bundled module and its source map is identical.
+
+No exported API differs, and the checks in "Validation" were re-run on the npm packages with the same results.
 
 ### Lockstep: blog v6, the 5.0 SDK and the 5.0 nodes ship together
 
@@ -38,7 +52,7 @@ These are `yarn pack` output, not official npm artifacts. When npm publishes `5.
 - **Every other Yappr contract parses on both.** That covers social v10, storefront, pollr, DM v4 and v5, key exchange and the vaults. A 5.0 SDK fetched 13 of bonsia's 16 contracts; the 3 failures are the blogs. Proved document reads also work.
 
 So the tooling in this PR is 5.0 tooling.
-- With the installed beta.7 packages, `validate-contract-offline.mjs` refuses `contracts/yappr-blog-contract.json`, and `--probes` reports the five 5.0-only probes as failures. That is expected until the pin moves.
+- With the beta.7 packages, `validate-contract-offline.mjs` refused `contracts/yappr-blog-contract.json`, and `--probes` reported the five 5.0-only probes as failures. On the 5.0 pin both pass.
 - The beta.7 bundle on `/devnet` loses its blog when the nodes upgrade, whatever this PR does. `lib/contracts/bundled/devnet-bonsia-g1.json` still holds the beta.7 blog. The loader falls back per contract, so only blog fails: blog pages error until the cut-over PR publishes v6, points `NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID` at it and re-snapshots the bundle.
 
 ## What changed, grouped by effect on Yappr
@@ -108,7 +122,7 @@ Every other contract file is byte-identical.
 
 ## Validation in this PR
 
-The contract checks ran with the scripts from this branch, resolving `@dashevo/{evo-sdk,wasm-sdk,wasm-dpp2}` to the local 5.0.0-beta.1 builds above. Every other package came from this branch's `npm ci`.
+The contract checks ran with the scripts from this branch, first against the local 5.0.0-beta.1 builds above and again on the npm 5.0.0-beta.1 pin, with the same results.
 
 - `validate-contract-offline.mjs` on every file in `contracts/`:
   - blog v6, social v10, storefront, pollr, profile, DM, DM v5 and key exchange pass;
@@ -120,8 +134,9 @@ The contract checks ran with the scripts from this branch, resolving `@dashevo/{
   - `seed/seed-non-social.mjs --which {storefront,blog,dm,pollr,tips}`;
   - `seed/run-seeder.mjs`;
   - `seed/provision-seed-identities.mjs`.
-- `npm run lint`, `npm run test`, `npm run build` and `npm run lint:dead` pass on the installed beta.7 packages.
-- **Not run:** anything against a 5.0 node. None was available, and nothing was broadcast.
+- `npm run lint`, `npm run test`, `npm run build` and `npm run lint:dead` pass on the 5.0.0-beta.1 pin.
+- **Testnet still reads on 5.0.** A 5.0 SDK fetched every testnet contract the staging and `/testing` builds use: social v2 (`9oDC6xdg…`, and `/testing`'s `2qvaZNJJ…`), profile, DM, storefront, blog, pollr, key backup, key exchange, vault and auth vault.
+- **Against a 5.0 node** (the new devnet sakura, read-only): the 5.0 SDK connects with `devnetName` `sakura`, reports dapi and drive 5.0.0-beta.1 at protocol 14, and fetches the DashPay and DPNS system contracts. Nothing was broadcast from this PR.
 
 ## Pending decisions
 
