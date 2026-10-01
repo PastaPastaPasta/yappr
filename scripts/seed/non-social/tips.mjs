@@ -189,8 +189,8 @@ const planToJson = (tips) => tips.map((tip) => ({ ...tip, amount: tip.amount.toS
 const planFromJson = (tips) => tips.map((tip) => ({ ...tip, amount: BigInt(tip.amount) }));
 
 async function run({ args, handle, battery, socialId }) {
-  if (envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') === 'v10') {
-    throw new Error('tips: social v10 pauses YAPP for good, so a YAPP tip (a token transfer) is refused 40711. Nothing to seed; tips on v10 are credit tips (client follow-up).');
+  if (['v10', 'v11'].includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY'))) {
+    throw new Error('tips: social v10/v11 pause YAPP for good, so a YAPP tip (a token transfer) is refused 40711. Nothing to seed; tips on v10 are credit tips (client follow-up).');
   }
   /** One page of `transfer` rows off a token-history index, newest first — the shape tip-history-service.ts reads with. */
   const transfers = async (tokenId, where, orderBy) => (await battery.queryDocs('transfer', {
