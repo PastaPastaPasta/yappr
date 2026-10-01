@@ -272,7 +272,33 @@ describe('PostItem menu', () => {
   });
 });
 
+describe('PostItem removal', () => {
+  it("shows a deleted post as the deleted line with removal='stub' (threads, detail)", () => {
+    useRemovedPosts.setState({ ids: new Set(['gone']) });
+    queryClient.setQueryData(queryKeys.post.detail('gone'), fixturePost({ id: 'gone', author: AUTHORS.alice }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PostItem post={fixturePost({ id: 'gone', author: AUTHORS.alice })} removal="stub" />
+        <PostItem post={fixturePost({ id: 'gone', author: AUTHORS.alice })} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getAllByTestId('post-card-gone')).toHaveLength(1);
+    expect(screen.getByText('This post was deleted by its author.')).toBeTruthy();
+  });
+});
+
 describe('PostItem bare reposts', () => {
+  it("doesn't act on a bare repost's marks before they load", async () => {
+    let answer: (stats: object) => void = () => undefined;
+    fakeEngine.method('engage.stats').mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const target = fixturePost({ id: 'tgt', author: AUTHORS.carol, viewer: undefined });
+    renderPost(fixturePost({ id: 'br', content: '', bareRepost: true, quoted: target, quotedPostId: 'tgt' }));
+    fireEvent.press(byId('like-btn-tgt'));
+    expect(fakeEngine.method('engage.like')).not.toHaveBeenCalled();
+    expect(toastMessage()).toBe('Loading this post. Try again in a moment.');
+    await act(async () => answer({}));
+  });
+
   it("shows the reposted post under the reposter's banner, with its own fresh counts", async () => {
     const target = fixturePost({ id: 'target', author: AUTHORS.carol, content: 'The original', viewer: undefined });
     const bare = fixturePost({

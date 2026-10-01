@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import { memo, useMemo } from 'react';
 
 import { queryKeys } from '~/data/keys';
-import { EMPTY_VIEWER, usePostRemoved } from '~/data/optimistic';
+import { usePostRemoved } from '~/data/optimistic';
 import { useEngineQuery } from '~/data/queries';
 import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useViewerId } from '~/data/session';
@@ -32,6 +32,13 @@ import { bookmarkWrite, deleteWrite, followWrite, likeWrite, repostWrite, target
 export interface PostItemProps
   extends Omit<PostCardProps, 'post' | 'actions' | 'menu' | 'viewerId' | 'canRepost' | 'canBookmark' | 'poll'> {
   post: PostDTO;
+  /**
+   * A post this device deleted: `hide` (default) leaves lists at once;
+   * `stub` shows the "deleted" line in its place, for threads (replies
+   * below it keep their parent) and detail screens (which should pop when
+   * their root is deleted: `usePostRemoved(id)`).
+   */
+  removal?: 'hide' | 'stub';
 }
 
 /**
@@ -45,7 +52,7 @@ export interface PostItemProps
  * `BareRepostCard`). The target's counts and the viewer's marks on it come
  * from `engage.stats`: a quoted post arrives without them.
  */
-function useShownPost(post: PostDTO): PostDTO {
+function useShownPost(post: PostDTO): { post: PostDTO; marksPending: boolean } {
   const target = post.bareRepost ? post.quoted : undefined;
   const targetId = target?.id ?? '';
   const targetKind = target?.kind ?? 'post';
@@ -57,10 +64,11 @@ function useShownPost(post: PostDTO): PostDTO {
     },
     { enabled: target !== undefined },
   );
-  return useMemo(() => {
+  const shown = useMemo(() => {
     if (!target) return post;
+    // Only what is known: `engage.stats` carries the marks, never the follow or block state.
     const viewer =
-      fresh?.viewer || target.viewer ? { ...EMPTY_VIEWER, ...target.viewer, ...fresh?.viewer } : undefined;
+      fresh?.viewer || target.viewer ? ({ ...target.viewer, ...fresh?.viewer } as PostDTO['viewer']) : undefined;
     return {
       ...target,
       stats: fresh?.stats ?? target.stats,
@@ -74,6 +82,8 @@ function useShownPost(post: PostDTO): PostDTO {
       repostTimestamp: post.createdAt,
     };
   }, [post, target, fresh]);
+  // Until `engage.stats` answers, a bare repost's like, repost and bookmark state is unknown.
+  return { post: shown, marksPending: target !== undefined && fresh === undefined };
 }
 
 /** The read-only poll a post shows (`posts.poll`), as the card renders it. */
@@ -189,21 +199,31 @@ async function confirmDelete(
  * sign-in sheet. Feed, thread, profile and bookmark lists all render this.
  * Pass card props (`variant`, `replyingTo`, ...) through.
  */
-export const PostItem = memo(function PostItem({ post: listed, ...cardProps }: PostItemProps) {
-  const post = useShownPost(listed);
-  const poll = usePoll(post);
-  const removed = usePostRemoved(listed.id);
-  const shownRemoved = usePostRemoved(post.id);
+export const PostItem = memo(function PostItem({ post: listed, removal = 'hide', ...cardProps }: PostItemProps) {
+  const { post: shownPost, marksPending } = useShownPost(listed);
+  const poll = usePoll(shownPost);
+  const listedRemoved = usePostRemoved(listed.id);
+  const shownRemoved = usePostRemoved(shownPost.id);
+  const removed = listedRemoved || shownRemoved;
+  const asStub = removed && removal === 'stub';
+  const post = useMemo(() => (asStub ? { ...shownPost, deleted: true } : shownPost), [asStub, shownPost]);
   const viewerId = useViewerId();
   const capabilities = useCapabilities();
   const { external } = useMediaUrls();
 
   const own = viewerId !== null && viewerId === post.author.id;
   // A bare repost's target comes without the viewer's follow of its author: offer no follow item then.
-  const followKnown = viewerId === null || !listed.bareRepost || listed.quoted?.viewer !== undefined;
+  const followKnown =
+    viewerId === null || !listed.bareRepost || typeof listed.quoted?.viewer?.followsAuthor === 'boolean';
 
   const { actions, menu } = useMemo(() => {
-    const like = () => requireAuth(() => sendWrite(likeWrite, { post, like: !post.viewer?.liked }));
+    // A bare repost's marks are unknown until engage.stats answers: acting on a guess would send a duplicate.
+    const known = (action: () => void) => () => {
+      if (marksPending) toast('Loading this post. Try again in a moment.');
+      else action();
+    };
+
+    const like = known(() => requireAuth(() => sendWrite(likeWrite, { post, like: !post.viewer?.liked })));
 
     const deleteQuote = () => {
       const quoteId = post.viewer?.ownQuoteId;
@@ -222,11 +242,12 @@ export const PostItem = memo(function PostItem({ post: listed, ...cardProps }: P
 
     const quote = () => requireAuth(() => router.push({ pathname: '/compose', params: { quote: post.id } }));
 
-    const bookmark = () =>
+    const bookmark = known(() =>
       requireAuth(() => {
         const on = !post.viewer?.bookmarked;
         sendWrite(bookmarkWrite, { post, bookmark: on }, on ? 'Added to bookmarks' : 'Removed from bookmarks');
-      });
+      }),
+    );
 
     const follow = () =>
       requireAuth(() => {
@@ -259,7 +280,7 @@ export const PostItem = memo(function PostItem({ post: listed, ...cardProps }: P
       onReposterPress: reposterId ? () => openUser(reposterId) : undefined,
       onCopyId: () => copyText(post.author.id, 'Identity ID copied'),
       onReply: () => requireAuth(() => router.push({ pathname: '/compose', params: { replyTo: post.id } })),
-      onRepost: () =>
+      onRepost: known(() =>
         requireAuth(() =>
           showActionSheet({
             actions: repostSheet(post, capabilities, {
@@ -270,6 +291,7 @@ export const PostItem = memo(function PostItem({ post: listed, ...cardProps }: P
             }),
           }),
         ),
+      ),
       onLike: like,
       onBookmark: bookmark,
       onShare: () => sharePost(post),
@@ -285,9 +307,9 @@ export const PostItem = memo(function PostItem({ post: listed, ...cardProps }: P
     };
     const menu: PostCardMenu = { items: menuItems(post, own, followKnown), onSelect };
     return { actions, menu };
-  }, [post, own, followKnown, viewerId, capabilities, external]);
+  }, [post, own, followKnown, marksPending, viewerId, capabilities, external]);
 
-  if (removed || shownRemoved) return null;
+  if (removed && !asStub) return null;
 
   return (
     <PostCard
