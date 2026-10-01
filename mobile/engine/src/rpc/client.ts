@@ -4,6 +4,7 @@ import {
   RpcError,
   RpcErrorCode,
   type EngineHello,
+  type KvOp,
   type LogLevel,
   type SerializedError,
 } from '../protocol/envelope'
@@ -26,6 +27,19 @@ export interface ClientOptions {
   /** How long to wait for the first `engine.hello` before failing the client; 0 waits forever. Default 30 s. */
   helloTimeoutMs?: number
   onLog?: (level: LogLevel, message: string) => void
+  /**
+   * Storage write-through. Apply batches in `seq` order. For a secure batch,
+   * return a Promise that settles once it is written: the client sends the
+   * engine's `kv-ack` when it resolves (none if it rejects, so a sign-in
+   * waiting on durability does not report success).
+   */
+  onStorage?: (batch: StorageBatch) => void | Promise<void>
+}
+
+export interface StorageBatch {
+  area: 'local' | 'secure'
+  seq: number
+  ops: KvOp[]
 }
 
 export interface EngineClient<T> {
@@ -112,6 +126,12 @@ export function createEngineClient<T>(transport: Transport, options: ClientOptio
     ? setTimeout(() => shutdown(new RpcError(`Engine did not say hello within ${helloTimeoutMs} ms`, RpcErrorCode.HelloTimeout)), helloTimeoutMs)
     : undefined
 
+  const isHello = (value: unknown): value is EngineHello => {
+    if (typeof value !== 'object' || value === null) return false
+    const { protocol, instanceId, bundleHash } = value as Partial<EngineHello>
+    return typeof protocol === 'number' && typeof instanceId === 'string' && typeof bundleHash === 'string'
+  }
+
   const onHello = (hello: EngineHello) => {
     if (hello.protocol !== PROTOCOL_VERSION) {
       shutdown(new RpcError(`Engine speaks protocol ${hello.protocol}, host expects ${PROTOCOL_VERSION}`, RpcErrorCode.ProtocolMismatch))
@@ -130,7 +150,10 @@ export function createEngineClient<T>(transport: Transport, options: ClientOptio
   const unsubscribe = transport.onMessage((message) => {
     // Decoded in stages: a response whose value cannot be decoded still
     // settles its call (BAD_ENVELOPE) instead of leaving it to time out.
-    let raw: { t?: unknown; id?: unknown; ok?: unknown; value?: unknown; error?: unknown; event?: unknown; payload?: unknown; level?: unknown; message?: unknown }
+    let raw: {
+      t?: unknown; id?: unknown; ok?: unknown; value?: unknown; error?: unknown; event?: unknown
+      payload?: unknown; level?: unknown; message?: unknown; seq?: unknown; ops?: unknown
+    }
     try {
       raw = JSON.parse(message)
     } catch {
@@ -158,15 +181,49 @@ export function createEngineClient<T>(transport: Transport, options: ClientOptio
         } catch {
           return
         }
-        if (raw.event === 'engine.hello') onHello(payload as EngineHello)
-        listeners.get(raw.event)?.forEach(handler => handler(payload))
+        if (raw.event === 'engine.hello') {
+          if (!isHello(payload)) return
+          onHello(payload)
+        }
+        listeners.get(raw.event)?.forEach((handler) => {
+          try {
+            handler(payload)
+          } catch {
+            // One failing listener must not starve the others.
+          }
+        })
         return
       }
+      case 'kv':
+      case 'skv':
+        if (typeof raw.seq === 'number' && Array.isArray(raw.ops)) onStorageBatch({ area: raw.t === 'skv' ? 'secure' : 'local', seq: raw.seq, ops: raw.ops as KvOp[] })
+        return
       case 'log':
         if (typeof raw.level === 'string' && typeof raw.message === 'string') options.onLog?.(raw.level as LogLevel, raw.message)
         return
     }
   })
+
+  const onStorageBatch = (batch: StorageBatch) => {
+    const ack = () => {
+      if (batch.area !== 'secure' || closed) return
+      try {
+        transport.send(JSON.stringify({ t: 'kv-ack', v: PROTOCOL_VERSION, seq: batch.seq }))
+      } catch {
+        // The engine is gone; it will rehydrate from what was written.
+      }
+    }
+    // No writer: nothing is durable, so nothing is acknowledged.
+    if (!options.onStorage) return
+    let written: void | Promise<void>
+    try {
+      written = options.onStorage(batch)
+    } catch {
+      return
+    }
+    if (written instanceof Promise) written.then(ack, () => undefined)
+    else ack()
+  }
 
   const ping = () => {
     try {
@@ -191,7 +248,7 @@ export function createEngineClient<T>(transport: Transport, options: ClientOptio
     pending.set(id, entry)
     ready
       .then(() => {
-        if (pending.has(id)) transport.send(stringify({ t: 'req', v: PROTOCOL_VERSION, id, path, args }))
+        if (pending.has(id)) transport.send(stringify({ t: 'req', v: PROTOCOL_VERSION, id, path, args, instance: current?.instanceId }))
       })
       .catch((error: unknown) => take(id)?.reject(error))
   })

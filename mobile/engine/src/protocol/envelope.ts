@@ -24,6 +24,12 @@ export interface RequestEnvelope {
   id: string
   path: string
   args: unknown[]
+  /**
+   * The engine instance the host believes it is talking to (its last hello).
+   * An engine with another id refuses the call unrun (ENGINE_RESTARTED), so a
+   * restart-rejected call is known not to have run on the new instance.
+   */
+  instance?: string
 }
 
 /** Host → engine: ask the engine to re-send `engine.hello` (a client created after the first one). */
@@ -54,12 +60,34 @@ export type ResponseEnvelope =
   | { t: 'res'; v: number; id: string; ok: true; value: unknown }
   | { t: 'res'; v: number; id: string; ok: false; error: SerializedError }
 
-/** Engine → host: an unsolicited event (storage write-through, hello). */
+/** Engine → host: an unsolicited event (`engine.hello`, and later domain events). */
 export interface EventEnvelope {
   t: 'evt'
   v: number
   event: string
   payload: unknown
+}
+
+/** One storage write: set a key, delete a key, or clear the area (ENGINE.md §9.1). */
+export type KvOp = ['set', string, string] | ['del', string] | ['clear']
+
+/**
+ * Engine → host: a coalesced storage write-through batch. `kv` is the plain
+ * area (encrypted MMKV), `skv` the secure one (Keychain/Keystore). `seq` is
+ * shared by both and strictly increasing; apply batches in `seq` order.
+ */
+export interface StorageBatchEnvelope {
+  t: 'kv' | 'skv'
+  v: number
+  seq: number
+  ops: KvOp[]
+}
+
+/** Host → engine: the `skv` batch `seq` is written. */
+export interface StorageAckEnvelope {
+  t: 'kv-ack'
+  v: number
+  seq: number
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
@@ -74,7 +102,14 @@ export interface LogEnvelope {
   message: string
 }
 
-export type Envelope = RequestEnvelope | PingEnvelope | ResponseEnvelope | EventEnvelope | LogEnvelope
+export type Envelope =
+  | RequestEnvelope
+  | PingEnvelope
+  | ResponseEnvelope
+  | EventEnvelope
+  | LogEnvelope
+  | StorageBatchEnvelope
+  | StorageAckEnvelope
 
 /** Payload of the `engine.hello` event, sent once the engine can take requests and on every ping. */
 export interface EngineHello {

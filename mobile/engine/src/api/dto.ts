@@ -334,13 +334,21 @@ function authorAvatar(user: User, avatars: ReadonlyMap<string, AvatarDTO>): Avat
   return user.avatar && isImageAvatar(user.avatar) ? { uri: user.avatar, dicebear: null } : avatarFromField(undefined, user.id)
 }
 
+/**
+ * lib's `createDefaultUser` stand-in (sdk-helpers.ts), which an author keeps
+ * when a batch author lookup fails (resolvePostAuthorsBatch swallows errors;
+ * quoted posts get their authors that way).
+ */
+const isPlaceholderAuthor = (user: User) => !user.username && user.hasDpns === false && user.displayName === 'Unknown User'
+
 function toAuthorDTO(user: User, avatars: ReadonlyMap<string, AvatarDTO>): AuthorDTO {
+  const placeholder = isPlaceholderAuthor(user)
   return {
     id: user.id,
-    ...nameOf(user.id, user.displayName, user.username),
+    ...nameOf(user.id, placeholder ? '' : user.displayName, user.username),
     avatar: authorAvatar(user, avatars),
-    // enrichPostsBatch sets hasDpns on success; a failed or skipped lookup leaves it undefined.
-    resolved: user.hasDpns !== undefined,
+    // A successful lookup sets hasDpns; a failed one leaves it undefined (feeds) or the placeholder (batch resolvers).
+    resolved: user.hasDpns !== undefined && !placeholder,
   }
 }
 

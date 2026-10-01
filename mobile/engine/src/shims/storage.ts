@@ -1,31 +1,40 @@
 import { scopedKey } from '@/lib/storage-scope'
+import type { KvOp } from '../protocol/envelope'
 
 /**
- * Synchronous in-memory Web Storage for the engine.
+ * Synchronous in-memory Web Storage for the engine (ENGINE.md §9.1).
  *
  * `lib/` reads and writes `localStorage` synchronously, so the engine cannot
  * hand those calls to async native storage. Each area is a Map, hydrated
- * before lib loads from the snapshot the host injects (`takeInjectedSnapshot`),
- * and every write is reported through `onChange` for the host to write
- * through. Where the host keeps each area (ADR-001 E1, decided for M4):
+ * before lib loads from the snapshot the host injects (`takeInjectedSnapshot`).
+ * Writes apply to the Map at once and are written through in batches: one per
+ * area per microtask, coalesced per key against the value before the batch
+ * (last write wins; a set that leaves the value unchanged, or a key set and
+ * removed while absent before, produces no op). The coalescing matters: the
+ * vendored secret store probes `setItem`/`removeItem('__storage_test__')` on
+ * every access. A removal in the secure area is always forwarded, even for a
+ * key the engine never held (signing out a non-hydrated account).
  *
- *  - `local`: an ENCRYPTED MMKV instance, one per network. Its 32-byte key is
- *    generated on first launch and kept in the Keychain/Keystore
- *    (this-device-only, available after first unlock).
- *  - `secure`: the Keychain/Keystore, one item per key. These are the keys
- *    under `SECURE_KEY_PREFIXES`: lib/secure-storage's private keys, the
- *    private-feed seed and keys, and the upload-provider credentials.
+ * Where the host keeps each area (ADR-001 E1, decided for M4):
+ *  - `local` (`kv` batches): an ENCRYPTED MMKV instance, one per network. Its
+ *    32-byte key is generated on first launch and kept in the
+ *    Keychain/Keystore (this-device-only, available after first unlock).
+ *    Applied on arrival, no acknowledgement.
+ *  - `secure` (`skv` batches): the Keychain/Keystore, one item per key. These
+ *    are the keys under `SECURE_KEY_PREFIXES`. The host acknowledges each
+ *    batch once written (`ack(seq)`); `secureDurable()` waits for that, so a
+ *    sign-in is only reported once its keys are durable.
  *
  * `sessionStorage` is memory-only: a session lasts as long as the engine.
  */
 
 export type StorageArea = 'local' | 'secure'
 
-export interface StorageChange {
+/** One write-through batch. `seq` is shared by both areas and strictly increasing. */
+export interface StorageBatch {
   area: StorageArea
-  key: string
-  /** `null` when the key was removed. */
-  value: string | null
+  seq: number
+  ops: KvOp[]
 }
 
 export interface StorageSnapshot {
@@ -33,7 +42,7 @@ export interface StorageSnapshot {
   secure?: Record<string, string>
 }
 
-type ChangeListener = (change: StorageChange) => void
+type BatchListener = (batch: StorageBatch) => void
 
 /**
  * Key prefixes (before the deployment scope) whose values are secrets and go
@@ -51,13 +60,22 @@ export function isSecureStorageKey(key: string): boolean {
   return scopedSecurePrefixes.some(prefix => key.startsWith(prefix))
 }
 
+/**
+ * Called on every mutation with the value before and after it. A removal of
+ * an absent key arrives as (null, null) only when the store reports those.
+ */
+type WriteObserver = (key: string, previous: string | null, next: string | null) => void
+
 /** A Map-backed implementation of the DOM `Storage` interface. */
 class MemoryStorage implements Storage {
   private readonly items = new Map<string, string>()
   /** `key(i)` loops in lib are O(n) per call without this; dropped on every add or delete. */
   private keyCache: string[] | null = null
 
-  constructor(private readonly onWrite?: (key: string, value: string | null) => void) {}
+  constructor(
+    private readonly onWrite?: WriteObserver,
+    private readonly reportAbsentRemovals = false
+  ) {}
 
   get length(): number {
     return this.items.size
@@ -75,27 +93,37 @@ class MemoryStorage implements Storage {
   setItem(key: string, value: string): void {
     const k = String(key)
     const v = String(value)
-    if (!this.items.has(k)) this.keyCache = null
+    const previous = this.items.get(k) ?? null
+    if (previous === null) this.keyCache = null
     this.items.set(k, v)
-    this.onWrite?.(k, v)
+    this.onWrite?.(k, previous, v)
   }
 
   removeItem(key: string): void {
     const k = String(key)
-    if (!this.items.delete(k)) return
+    const previous = this.items.get(k) ?? null
+    if (previous === null) {
+      if (this.reportAbsentRemovals) this.onWrite?.(k, null, null)
+      return
+    }
+    this.items.delete(k)
     this.keyCache = null
-    this.onWrite?.(k, null)
+    this.onWrite?.(k, previous, null)
   }
 
   clear(): void {
     for (const key of Array.from(this.items.keys())) this.removeItem(key)
   }
 
-  /** Replace the contents without reporting writes (hydration from the host). */
-  load(entries: Record<string, string>): void {
+  /** Add entries without reporting writes (hydration from the host). */
+  load(entries: Iterable<[string, string]>): void {
+    this.keyCache = null
+    for (const [key, value] of entries) this.items.set(key, String(value))
+  }
+
+  reset(): void {
     this.items.clear()
     this.keyCache = null
-    for (const [key, value] of Object.entries(entries)) this.items.set(key, String(value))
   }
 
   entries(): Record<string, string> {
@@ -148,40 +176,121 @@ class RoutedStorage implements Storage {
   [name: string]: unknown
 }
 
+/** The pending state of one key in the current batch. */
+interface PendingKey {
+  before: string | null
+  after: string | null
+  /** A secure removal of a key the engine did not hold: forwarded even though nothing changed here. */
+  forceDelete: boolean
+}
+
+/** Collects one area's writes until the batch is flushed. */
+class AreaBatch {
+  private readonly pending = new Map<string, PendingKey>()
+
+  record(key: string, previous: string | null, next: string | null): void {
+    const entry = this.pending.get(key) ?? { before: previous, after: previous, forceDelete: false }
+    entry.after = next
+    if (previous === null && next === null) entry.forceDelete = true
+    this.pending.set(key, entry)
+  }
+
+  get isEmpty(): boolean {
+    return this.pending.size === 0
+  }
+
+  take(): KvOp[] {
+    const ops: KvOp[] = []
+    for (const [key, { before, after, forceDelete }] of this.pending) {
+      if (after !== before) ops.push(after === null ? ['del', key] : ['set', key, after])
+      else if (forceDelete && after === null) ops.push(['del', key])
+    }
+    this.pending.clear()
+    return ops
+  }
+}
+
 export interface EngineStorage {
   localStorage: Storage
   sessionStorage: Storage
-  /** Replace both persisted areas with the host's snapshot. Reports nothing back. */
-  hydrate(snapshot: StorageSnapshot): void
   /**
-   * Subscribe to write-through changes. Changes made before the first
-   * subscriber (lib modules write while they load) are queued and delivered
-   * to it.
+   * Replace both persisted areas with the host's snapshot, without reporting
+   * writes. Each key is routed by its prefix, whatever area the host filed it
+   * under; the keys filed under the wrong one are returned.
    */
-  onChange(listener: ChangeListener): () => void
+  hydrate(snapshot: StorageSnapshot): { misrouted: string[] }
+  /**
+   * Subscribe to write-through batches. Batches flushed before the first
+   * subscriber are queued and delivered to it.
+   */
+  onBatch(listener: BatchListener): () => void
+  /** The host wrote the secure batch `seq`. */
+  ack(seq: number): void
+  /** Flush now, then resolve once every secure batch so far is acknowledged. */
+  secureDurable(): Promise<void>
   snapshot(): Required<StorageSnapshot>
 }
 
-/** Build the storage pair. `isSecureKey` decides which keys belong to the secure area. */
-export function createEngineStorage(isSecureKey: (key: string) => boolean = isSecureStorageKey): EngineStorage {
-  const listeners = new Set<ChangeListener>()
-  let queued: StorageChange[] | null = []
-  const notify = (change: StorageChange) => {
-    if (queued) queued.push(change)
-    else listeners.forEach(listener => listener(change))
+export interface EngineStorageOptions {
+  isSecureKey?: (key: string) => boolean
+  /** How a flush is scheduled; a microtask by default. */
+  schedule?: (flush: () => void) => void
+}
+
+export function createEngineStorage(options: EngineStorageOptions = {}): EngineStorage {
+  const isSecureKey = options.isSecureKey ?? isSecureStorageKey
+  const schedule = options.schedule ?? queueMicrotask
+  const listeners = new Set<BatchListener>()
+  let queued: StorageBatch[] | null = []
+  let seq = 0
+  let scheduled = false
+  const batches: Record<StorageArea, AreaBatch> = { local: new AreaBatch(), secure: new AreaBatch() }
+  const unacked = new Set<number>()
+  const waiters: { seqs: Set<number>; resolve: () => void }[] = []
+
+  const emit = (batch: StorageBatch) => {
+    if (batch.area === 'secure') unacked.add(batch.seq)
+    if (queued) queued.push(batch)
+    else listeners.forEach(listener => listener(batch))
   }
 
-  const plain = new MemoryStorage((key, value) => notify({ area: 'local', key, value }))
-  const secure = new MemoryStorage((key, value) => notify({ area: 'secure', key, value }))
+  const flush = () => {
+    scheduled = false
+    for (const area of ['local', 'secure'] as const) {
+      if (batches[area].isEmpty) continue
+      const ops = batches[area].take()
+      if (ops.length > 0) emit({ area, seq: ++seq, ops })
+    }
+  }
+
+  const observer = (area: StorageArea): WriteObserver => (key, previous, next) => {
+    batches[area].record(key, previous, next)
+    if (!scheduled) {
+      scheduled = true
+      schedule(flush)
+    }
+  }
+
+  const plain = new MemoryStorage(observer('local'))
+  const secure = new MemoryStorage(observer('secure'), true)
 
   return {
     localStorage: new RoutedStorage(plain, secure, isSecureKey),
     sessionStorage: new MemoryStorage(),
     hydrate(snapshot) {
-      plain.load(snapshot.local ?? {})
-      secure.load(snapshot.secure ?? {})
+      plain.reset()
+      secure.reset()
+      const misrouted: string[] = []
+      for (const [given, entries] of [['local', snapshot.local], ['secure', snapshot.secure]] as const) {
+        for (const [key, value] of Object.entries(entries ?? {})) {
+          const area: StorageArea = isSecureKey(key) ? 'secure' : 'local'
+          if (area !== given) misrouted.push(key)
+          ;(area === 'secure' ? secure : plain).load([[key, value]])
+        }
+      }
+      return { misrouted }
     },
-    onChange(listener) {
+    onBatch(listener) {
       listeners.add(listener)
       if (queued) {
         const backlog = queued
@@ -189,6 +298,18 @@ export function createEngineStorage(isSecureKey: (key: string) => boolean = isSe
         backlog.forEach(listener)
       }
       return () => { listeners.delete(listener) }
+    },
+    ack(acked) {
+      unacked.delete(acked)
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        waiters[i].seqs.delete(acked)
+        if (waiters[i].seqs.size === 0) waiters.splice(i, 1)[0].resolve()
+      }
+    },
+    secureDurable() {
+      flush()
+      if (unacked.size === 0) return Promise.resolve()
+      return new Promise(resolve => waiters.push({ seqs: new Set(unacked), resolve }))
     },
     snapshot() {
       return { local: plain.entries(), secure: secure.entries() }

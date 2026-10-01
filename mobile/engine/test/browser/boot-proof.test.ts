@@ -100,9 +100,11 @@ interface RunOptions {
   cpuThrottle?: number
   /** Injected as `__YAPPR_ENGINE_STORAGE__` before load, as the host's injectedJavaScriptBeforeContentLoaded will. */
   snapshot?: { local?: Record<string, string>; secure?: Record<string, string> }
+  /** The snapshot selects a feed language with no posts, so the first page must come back empty. */
+  expectEmptyFeed?: boolean
 }
 
-async function runOnce(browser: Browser, browserName: string, mode: Mode, run: number, { cpuThrottle = 1, snapshot }: RunOptions = {}): Promise<RunResult> {
+async function runOnce(browser: Browser, browserName: string, mode: Mode, run: number, { cpuThrottle = 1, snapshot, expectEmptyFeed = false }: RunOptions = {}): Promise<RunResult> {
   const result: RunResult = {
     browser: browserName, browserVersion: browser.version(), mode, run, ok: false,
     dapi: [], failedRequests: [], engineErrors: [], cpuThrottle,
@@ -192,6 +194,12 @@ async function runOnce(browser: Browser, browserName: string, mode: Mode, run: n
     result.firstFeedMs = firstFeedMs
     result.coldToFeedMs = Math.round(performance.now() - t0)
     result.firstFeedItems = first.items.length
+    if (expectEmptyFeed) {
+      expect(first.items).toEqual([])
+      result.ok = true
+      client.close()
+      return result
+    }
     expect(first.items.length).toBeGreaterThan(0)
     // lib reads the session from localStorage: viewer marks appear only if the injected snapshot was seen.
     expect(first.items[0].viewer !== undefined).toBe(snapshot !== undefined)
@@ -245,6 +253,14 @@ describe.skipIf(!existsSync(path.join(DIST, 'engine.html')))('engine boots in a 
     // A session for an arbitrary, well-formed identity id. Nothing is signed or written.
     const session = JSON.stringify({ user: { identityId: '4t8Ww2SDcMgLqT2PqGzMSwbeEv6P8r7WFoDA8BmZHRC8' }, timestamp: 0 })
     const result = await runOnce(browser, 'webkit', 'file', 1, { snapshot: { local: { yappr_session: session } } })
+    expect(result.error ?? null).toBeNull()
+  }))
+
+  // Module-scope hydration: lib/store.ts's zustand `persist` reads `yappr-settings` when it loads,
+  // long before boot. A persisted feed language with no posts must empty the v2 For You page.
+  it('webkit over file, with a persisted setting read at module load', () => withBrowser(webkit, async (browser) => {
+    const settings = JSON.stringify({ state: { feedLanguage: 'zz' }, version: 1 })
+    const result = await runOnce(browser, 'webkit', 'file', 1, { snapshot: { local: { 'yappr-settings': settings } }, expectEmptyFeed: true })
     expect(result.error ?? null).toBeNull()
   }))
 

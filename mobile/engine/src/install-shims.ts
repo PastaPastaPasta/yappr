@@ -28,6 +28,12 @@ window.addEventListener('unhandledrejection', event => report('Unhandled rejecti
 
 export const engineStorage = createEngineStorage()
 
-engineStorage.hydrate(takeInjectedSnapshot())
+/** Keys the host filed under the wrong area; the entry logs them once the bridge is up. */
+export const { misrouted: misroutedStorageKeys } = engineStorage.hydrate(takeInjectedSnapshot())
 installEngineStorage(engineStorage)
 installVisibilityOverride()
+
+// Nothing in lib uses IndexedDB (ENGINE.md §9.1), and nothing on the host backs
+// it up: an unexpected user should fail loudly rather than write to an
+// origin store that disappears with the WebView's data.
+Object.defineProperty(window, 'indexedDB', { value: undefined, configurable: true })
