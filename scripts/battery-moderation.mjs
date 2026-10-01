@@ -99,19 +99,37 @@ export async function caseBan(ctx, { prefix, target, writeWhileBanned, writeAfte
   const { battery, contractId, moderator } = ctx;
   const { sdk } = battery;
   console.log(`\n--- ${prefix}. ban ${target.label}: writes refused (41107) until the unban ---`);
+  let banError = null;
   try {
     await sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: target.ownerId, reason: { text: `${prefix} battery ban` }, signer: moderator.signer });
     battery.check(`${prefix}a moderator bans ${target.label}`, true);
   } catch (e) {
+    banError = e;
     battery.check(`${prefix}a moderator bans ${target.label}`, false, describeErr(e).slice(0, 220));
-    return;
+  }
+  const banStatus = () => battery.readback(() => sdk.contracts.moderationStatus({ contractId, identityId: target.ownerId, lists: ['banlist'] }));
+  // A ban whose call threw may still have landed: on sakura the proof of a
+  // ban that executed failed to verify ("Quorum not found in cache"), and
+  // returning here left blog b13's stranger banned. So look before leaving.
+  if (banError) {
+    await sleep(3000);
+    let landed = true;
+    try {
+      landed = (await banStatus()).banned === true;
+    } catch (e) {
+      console.log(`     (${prefix}: could not read the ban back after the failed call, unbanning anyway: ${describeErr(e).slice(0, 160)})`);
+    }
+    if (!landed) return;
+    console.log(`     (${prefix}: the ban landed although the call threw; unbanning)`);
   }
   // A ban outlives the run, so whatever the probes do the unban is attempted.
   try {
-    await sleep(3000);
-    const status = await battery.readback(() => sdk.contracts.moderationStatus({ contractId, identityId: target.ownerId, lists: ['banlist'] }));
-    battery.check(`${prefix}b moderationStatus proves the ban with its reason`, status.banned === true && status.banReason?.text === `${prefix} battery ban`, describeValue(status));
-    battery.expectRejected(`${prefix}c ${target.label}'s create while banned is refused (41107)`, await writeWhileBanned(), BANNED);
+    if (!banError) {
+      await sleep(3000);
+      const status = await banStatus();
+      battery.check(`${prefix}b moderationStatus proves the ban with its reason`, status.banned === true && status.banReason?.text === `${prefix} battery ban`, describeValue(status));
+      battery.expectRejected(`${prefix}c ${target.label}'s create while banned is refused (41107)`, await writeWhileBanned(), BANNED);
+    }
   } finally {
     try {
       await sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: target.ownerId, signer: moderator.signer });
