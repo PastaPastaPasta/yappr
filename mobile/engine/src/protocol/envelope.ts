@@ -26,12 +26,25 @@ export interface RequestEnvelope {
   args: unknown[]
 }
 
-/** An Error carried across the bridge. `message` is verbatim, so lib/error-utils classifiers still match it. */
+/** Host → engine: ask the engine to re-send `engine.hello` (a client created after the first one). */
+export interface PingEnvelope {
+  t: 'ping'
+  v: number
+}
+
+/**
+ * An Error carried across the bridge. `message` is verbatim, so lib/error-utils
+ * classifiers still match it; `code`, `kind` and `isRetriable` are evo-sdk's
+ * WasmSdkError fields (consensus codes, timeout kinds).
+ */
 export interface SerializedError {
   name: string
   message: string
   code?: string | number
+  kind?: string | number
+  isRetriable?: boolean
   stack?: string
+  cause?: SerializedError
   /** Own enumerable fields beyond the standard ones, when they were encodable. */
   data?: Record<string, unknown>
 }
@@ -41,7 +54,7 @@ export type ResponseEnvelope =
   | { t: 'res'; v: number; id: string; ok: true; value: unknown }
   | { t: 'res'; v: number; id: string; ok: false; error: SerializedError }
 
-/** Engine → host: an unsolicited event (storage write-through, lifecycle, hello). */
+/** Engine → host: an unsolicited event (storage write-through, hello). */
 export interface EventEnvelope {
   t: 'evt'
   v: number
@@ -51,6 +64,8 @@ export interface EventEnvelope {
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
+export const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error']
+
 /** Engine → host: a forwarded console line (the WebView console is otherwise invisible). */
 export interface LogEnvelope {
   t: 'log'
@@ -59,12 +74,14 @@ export interface LogEnvelope {
   message: string
 }
 
-export type Envelope = RequestEnvelope | ResponseEnvelope | EventEnvelope | LogEnvelope
+export type Envelope = RequestEnvelope | PingEnvelope | ResponseEnvelope | EventEnvelope | LogEnvelope
 
-/** Payload of the `engine.hello` event, sent once the engine can take requests. */
+/** Payload of the `engine.hello` event, sent once the engine can take requests and on every ping. */
 export interface EngineHello {
   protocol: number
   bundleHash: string
+  /** New on every engine load: a hello with another id means the engine restarted. */
+  instanceId: string
 }
 
 /** Error codes the RPC layer itself produces (SDK errors keep their own). */
@@ -73,11 +90,17 @@ export const RpcErrorCode = {
   UnknownMethod: 'UNKNOWN_METHOD',
   BadEnvelope: 'BAD_ENVELOPE',
   Timeout: 'RPC_TIMEOUT',
+  HelloTimeout: 'ENGINE_HELLO_TIMEOUT',
+  Restarted: 'ENGINE_RESTARTED',
   Disconnected: 'ENGINE_DISCONNECTED',
 } as const
 
-export function isEnvelope(value: unknown): value is Envelope {
-  if (typeof value !== 'object' || value === null) return false
-  const { t, v } = value as { t?: unknown; v?: unknown }
-  return typeof v === 'number' && (t === 'req' || t === 'res' || t === 'evt' || t === 'log')
+export type RpcErrorCodeValue = (typeof RpcErrorCode)[keyof typeof RpcErrorCode]
+
+/** An error raised by the RPC layer or the engine itself, carrying one of `RpcErrorCode` or an engine code. */
+export class RpcError extends Error {
+  constructor(message: string, readonly code: string) {
+    super(message)
+    this.name = 'RpcError'
+  }
 }

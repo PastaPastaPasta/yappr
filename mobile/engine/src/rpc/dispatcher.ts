@@ -1,12 +1,11 @@
-import { parse, serializeError, stringify } from '../protocol/codec'
+import { decode, serializeError, stringify } from '../protocol/codec'
 import {
   PROTOCOL_VERSION,
+  RpcError,
   RpcErrorCode,
-  isEnvelope,
   type EngineHello,
   type Envelope,
   type LogLevel,
-  type RequestEnvelope,
 } from '../protocol/envelope'
 import type { Transport } from './transport'
 
@@ -27,16 +26,9 @@ export interface Dispatcher {
   emit(event: string, payload: unknown): void
   /** Forward a log line to the host. */
   log(level: LogLevel, message: string): void
-  /** Announce readiness: the host's client queues calls until this arrives. */
-  hello(info: Omit<EngineHello, 'protocol'>): void
+  /** Announce readiness (and again on every ping): the host's client queues calls until it arrives. */
+  hello(info: { bundleHash: string }): void
   dispose(): void
-}
-
-class RpcError extends Error {
-  constructor(message: string, readonly code: string) {
-    super(message)
-    this.name = 'RpcError'
-  }
 }
 
 /**
@@ -55,11 +47,19 @@ export function resolveMethod(api: ApiTree, path: string): (...args: unknown[]) 
   return node as (...args: unknown[]) => unknown
 }
 
+/** Distinguishes engine loads; no crypto needed, and `crypto.randomUUID` is absent in insecure contexts. */
+const newInstanceId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+
 /** Serve `api` over `transport`: one response per request, in completion order. */
 export function createDispatcher({ api, transport, includeStacks = false }: DispatcherOptions): Dispatcher {
+  const instanceId = newInstanceId()
+  let helloInfo: EngineHello | null = null
+
   const send = (envelope: Envelope) => {
     transport.send(stringify(envelope, { includeStack: includeStacks }))
   }
+
+  const emit = (event: string, payload: unknown) => send({ t: 'evt', v: PROTOCOL_VERSION, event, payload })
 
   const fail = (id: string, error: unknown) => {
     const serialized = serializeError(error, undefined, { includeStack: includeStacks })
@@ -67,55 +67,64 @@ export function createDispatcher({ api, transport, includeStacks = false }: Disp
       send({ t: 'res', v: PROTOCOL_VERSION, id, ok: false, error: serialized })
     } catch {
       // Extra fields that cannot be encoded never cost the caller its error.
-      send({ t: 'res', v: PROTOCOL_VERSION, id, ok: false, error: { ...serialized, data: undefined } })
+      send({ t: 'res', v: PROTOCOL_VERSION, id, ok: false, error: { ...serialized, data: undefined, cause: undefined } })
     }
   }
 
-  const handle = async (request: RequestEnvelope) => {
-    if (request.v !== PROTOCOL_VERSION) {
-      fail(request.id, new RpcError(
-        `Engine speaks protocol ${PROTOCOL_VERSION}, request used ${request.v}`,
-        RpcErrorCode.ProtocolMismatch
-      ))
-      return
-    }
+  const handle = async (id: string, path: string, args: unknown[]) => {
     try {
-      const method = resolveMethod(api, request.path)
-      const value = await method(...(Array.isArray(request.args) ? request.args : []))
-      try {
-        send({ t: 'res', v: PROTOCOL_VERSION, id: request.id, ok: true, value })
-      } catch (encodeError) {
-        // An unencodable result (a cycle) must still settle the caller.
-        fail(request.id, encodeError)
-      }
+      const value = await resolveMethod(api, path)(...args)
+      // An unencodable result (a cycle) throws here and is reported below.
+      send({ t: 'res', v: PROTOCOL_VERSION, id, ok: true, value })
     } catch (error) {
-      fail(request.id, error)
+      fail(id, error)
     }
   }
 
   const unsubscribe = transport.onMessage((message) => {
-    let envelope: unknown
+    // Decoded in stages, so a request whose arguments cannot be decoded still
+    // gets an answer (BAD_ENVELOPE) instead of leaving its caller to time out.
+    let raw: { t?: unknown; v?: unknown; id?: unknown; path?: unknown; args?: unknown }
     try {
-      envelope = parse(message)
+      raw = JSON.parse(message)
     } catch {
       return
     }
-    if (!isEnvelope(envelope) || envelope.t !== 'req') return
-    if (typeof envelope.id !== 'string' || typeof envelope.path !== 'string') return
-    handle(envelope).catch(() => {
-      // handle() settles every request itself; nothing escapes to here.
+    if (typeof raw !== 'object' || raw === null) return
+    if (raw.t === 'ping') {
+      if (helloInfo) emit('engine.hello', helloInfo)
+      return
+    }
+    if (raw.t !== 'req' || typeof raw.id !== 'string') return
+    const id = raw.id
+    if (raw.v !== PROTOCOL_VERSION) {
+      fail(id, new RpcError(`Engine speaks protocol ${PROTOCOL_VERSION}, request used ${String(raw.v)}`, RpcErrorCode.ProtocolMismatch))
+      return
+    }
+    let args: unknown
+    try {
+      args = decode(raw.args)
+    } catch (error) {
+      fail(id, new RpcError(`Undecodable request: ${error instanceof Error ? error.message : String(error)}`, RpcErrorCode.BadEnvelope))
+      return
+    }
+    if (typeof raw.path !== 'string' || !Array.isArray(args)) {
+      fail(id, new RpcError('Malformed request envelope', RpcErrorCode.BadEnvelope))
+      return
+    }
+    handle(id, raw.path, args).catch(() => {
+      // fail()'s fallback send can still throw if the bridge is gone; nobody is left to tell.
     })
   })
 
   return {
-    emit(event, payload) {
-      send({ t: 'evt', v: PROTOCOL_VERSION, event, payload })
-    },
+    emit,
     log(level, message) {
       send({ t: 'log', v: PROTOCOL_VERSION, level, message })
     },
-    hello(info) {
-      send({ t: 'evt', v: PROTOCOL_VERSION, event: 'engine.hello', payload: { protocol: PROTOCOL_VERSION, ...info } })
+    hello({ bundleHash }) {
+      helloInfo = { protocol: PROTOCOL_VERSION, bundleHash, instanceId }
+      emit('engine.hello', helloInfo)
     },
     dispose: unsubscribe,
   }

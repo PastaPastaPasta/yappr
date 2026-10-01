@@ -16,12 +16,23 @@ const api = {
 }
 type Api = typeof api
 
-function connect(options: { hello?: boolean; onLog?: ClientOptions['onLog'] } = {}) {
+function connect(options: { hello?: boolean } & ClientOptions = {}) {
   const [host, engine] = createInProcessPair()
   const dispatcher = createDispatcher({ api, transport: engine })
-  const client = createEngineClient<Api>(host, { onLog: options.onLog })
+  const client = createEngineClient<Api>(host, options)
   if (options.hello !== false) dispatcher.hello({ bundleHash: 'test' })
   return { client, dispatcher, host, engine }
+}
+
+const helloMessage = (protocol = PROTOCOL_VERSION, instanceId = 'i1') =>
+  stringify({ t: 'evt', v: protocol, event: 'engine.hello', payload: { protocol, bundleHash: 'x', instanceId } })
+
+/** A host transport whose engine side is driven by hand: `deliver` feeds the client, `sent` records requests. */
+function manualEngine() {
+  const inbound = createHandlerSet()
+  const sent: Record<string, unknown>[] = []
+  const transport: Transport = { send: message => { sent.push(JSON.parse(message)) }, onMessage: inbound.onMessage }
+  return { transport, deliver: inbound.deliver, sent, requests: () => sent.filter(m => m.t === 'req') }
 }
 
 describe('resolveMethod', () => {
@@ -80,11 +91,21 @@ describe('dispatcher + client', () => {
     expect((await client.ready).bundleHash).toBe('late')
   })
 
-  it('refuses an engine that speaks another protocol', async () => {
+  it('completes the handshake for a client created after the engine said hello (ping)', async () => {
     const [host, engine] = createInProcessPair()
-    const client = createEngineClient<Api>(host)
-    engine.send(stringify({ t: 'evt', v: PROTOCOL_VERSION + 1, event: 'engine.hello', payload: { protocol: PROTOCOL_VERSION + 1, bundleHash: 'x' } }))
-    await expect(client.api.math.add(1, 1)).rejects.toMatchObject({ code: 'PROTOCOL_MISMATCH' })
+    const dispatcher = createDispatcher({ api, transport: engine })
+    dispatcher.hello({ bundleHash: 'early' })
+    await new Promise(resolve => setTimeout(resolve, 5))
+    const late = createEngineClient<Api>(host)
+    expect(await late.api.math.add(2, 2)).toBe(4)
+  })
+
+  it('refuses an engine that speaks another protocol', async () => {
+    const { transport, deliver } = manualEngine()
+    const client = createEngineClient<Api>(transport)
+    const call = client.api.math.add(1, 1)
+    deliver(helloMessage(PROTOCOL_VERSION + 1))
+    await expect(call).rejects.toMatchObject({ code: 'PROTOCOL_MISMATCH' })
   })
 
   it('makes the engine refuse requests from another protocol version', async () => {
@@ -97,12 +118,64 @@ describe('dispatcher + client', () => {
     expect(replies[0]).toMatchObject({ t: 'res', ok: false, error: { code: 'PROTOCOL_MISMATCH' } })
   })
 
+  it('answers an undecodable request with BAD_ENVELOPE', async () => {
+    const [host, engine] = createInProcessPair()
+    createDispatcher({ api, transport: engine })
+    const replies: unknown[] = []
+    host.onMessage(message => replies.push(parse(message)))
+    host.send(JSON.stringify({ t: 'req', v: PROTOCOL_VERSION, id: '7', path: 'math.add', args: [{ $t: 'nope' }] }))
+    host.send(JSON.stringify({ t: 'req', v: PROTOCOL_VERSION, id: '8', path: 42, args: [] }))
+    await vi.waitFor(() => expect(replies).toHaveLength(2))
+    expect(replies).toEqual([
+      expect.objectContaining({ id: '7', ok: false, error: expect.objectContaining({ code: 'BAD_ENVELOPE' }) }),
+      expect.objectContaining({ id: '8', ok: false, error: expect.objectContaining({ code: 'BAD_ENVELOPE' }) }),
+    ])
+  })
+
+  it('rejects a call whose response cannot be decoded with BAD_ENVELOPE', async () => {
+    const { transport, deliver, requests } = manualEngine()
+    const client = createEngineClient<Api>(transport)
+    deliver(helloMessage())
+    const call = client.api.math.add(1, 1)
+    await vi.waitFor(() => expect(requests()).toHaveLength(1))
+    deliver(JSON.stringify({ t: 'res', v: PROTOCOL_VERSION, id: requests()[0].id, ok: true, value: { $t: 'bytes', v: '!!' } }))
+    await expect(call).rejects.toMatchObject({ code: 'BAD_ENVELOPE' })
+  })
+
   it('times out a call the engine never answers', async () => {
-    const inbound = createHandlerSet()
-    const silent: Transport = { send: () => undefined, onMessage: inbound.onMessage }
-    const client = createEngineClient<Api>(silent, { timeoutMs: 20 })
-    inbound.deliver(stringify({ t: 'evt', v: PROTOCOL_VERSION, event: 'engine.hello', payload: { protocol: PROTOCOL_VERSION, bundleHash: 'x' } }))
+    const { transport, deliver } = manualEngine()
+    const client = createEngineClient<Api>(transport, { timeoutMs: 20 })
+    deliver(helloMessage())
     await expect(client.api.math.add(1, 1)).rejects.toMatchObject({ code: 'RPC_TIMEOUT' })
+  })
+
+  it('counts the call deadline from the call, not from the hello', async () => {
+    const { transport, sent } = manualEngine()
+    const client = createEngineClient<Api>(transport, { timeoutMs: 20, helloTimeoutMs: 0 })
+    await expect(client.api.math.add(1, 1)).rejects.toMatchObject({ code: 'RPC_TIMEOUT' })
+    expect(sent.filter(m => m.t === 'req')).toEqual([])
+  })
+
+  it('fails the client when no hello arrives in time', async () => {
+    const { transport } = manualEngine()
+    const client = createEngineClient<Api>(transport, { timeoutMs: 0, helloTimeoutMs: 20 })
+    await expect(client.api.math.add(1, 1)).rejects.toMatchObject({ code: 'ENGINE_HELLO_TIMEOUT' })
+    await expect(client.ready).rejects.toMatchObject({ code: 'ENGINE_HELLO_TIMEOUT' })
+    await expect(client.api.math.add(1, 1)).rejects.toMatchObject({ code: 'ENGINE_DISCONNECTED' })
+  })
+
+  it('rejects pending calls with ENGINE_RESTARTED when a new engine instance says hello', async () => {
+    const { transport, deliver, requests } = manualEngine()
+    const client = createEngineClient<Api>(transport, { timeoutMs: 0 })
+    deliver(helloMessage(PROTOCOL_VERSION, 'first'))
+    const call = client.api.math.add(1, 1)
+    await vi.waitFor(() => expect(requests()).toHaveLength(1))
+    // A ping's answer from the same instance changes nothing...
+    deliver(helloMessage(PROTOCOL_VERSION, 'first'))
+    await new Promise(resolve => setTimeout(resolve, 5))
+    // ...a reloaded engine fails what the old one was handling.
+    deliver(helloMessage(PROTOCOL_VERSION, 'second'))
+    await expect(call).rejects.toMatchObject({ code: 'ENGINE_RESTARTED' })
   })
 
   it('rejects pending calls and refuses new ones after close', async () => {
@@ -128,10 +201,16 @@ describe('dispatcher + client', () => {
     expect(events).toHaveLength(1)
   })
 
-  it('is not thenable, so awaiting the proxy does not send a call', async () => {
+  it('does not turn awaiting, coercion or inspection of the proxy into calls', async () => {
     const { client, host } = connect()
+    await client.ready
     const sent = vi.spyOn(host, 'send')
+    const feed = (client.api as unknown as { feed: object }).feed
     expect(await (client.api as unknown as Promise<unknown>)).toBe(client.api)
+    expect(() => `${String(feed)}`).toThrow()
+    for (const key of ['then', 'toString', 'valueOf', 'toJSON', 'constructor', '$$typeof']) {
+      expect((feed as Record<string, unknown>)[key], key).toBeUndefined()
+    }
     expect(sent).not.toHaveBeenCalled()
   })
 })

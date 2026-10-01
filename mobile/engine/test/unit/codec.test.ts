@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { RemoteError, decode, encode, parse, stringify } from '../../src/protocol/codec'
+import { RemoteError, decode, encode, parse, serializeError, stringify } from '../../src/protocol/codec'
 
 const roundTrip = <T>(value: T): T => parse(stringify(value)) as T
 
@@ -74,9 +74,46 @@ describe('codec', () => {
     expect(back.remoteStack).toBeUndefined()
   })
 
+  it('carries evo-sdk WasmSdkError, whose fields are prototype getters on a non-Error class', () => {
+    // Shaped like the wasm-bindgen glue: no `extends Error`, getters only, a pointer as the one own field.
+    class WasmSdkError {
+      __wbg_ptr = 42
+      get name() { return 'WasmSdkError' }
+      get message() { return 'Document already exists' }
+      get code() { return 40132 }
+      get kind() { return 'Protocol' }
+      get isRetriable() { return false }
+    }
+    const back = parse(stringify(new Error('outer', { cause: new WasmSdkError() }))) as RemoteError
+    const cause = back.cause as RemoteError
+    expect(cause).toBeInstanceOf(RemoteError)
+    expect(cause).toMatchObject({ name: 'WasmSdkError', message: 'Document already exists', code: 40132, kind: 'Protocol', isRetriable: false })
+    expect(cause.data).toBeUndefined()
+  })
+
+  it('survives getters that throw (a freed wasm error) and limits the cause chain', () => {
+    const freed = { get message(): string { throw new Error('null pointer passed to rust') } }
+    expect(serializeError(freed)).toEqual({ name: 'Error', message: '[object Object]' })
+    let chain: Error = new Error('root')
+    for (let i = 0; i < 10; i++) chain = new Error(`level ${i}`, { cause: chain })
+    let depth = 0
+    for (let node = serializeError(chain); node.cause; node = node.cause) depth++
+    expect(depth).toBe(3)
+  })
+
   it('includes the stack only when asked', () => {
     const back = parse(stringify(new Error('boom'), { includeStack: true })) as RemoteError
     expect(back.remoteStack).toContain('boom')
+  })
+
+  it('keeps a __proto__ key as data and never sets a prototype', () => {
+    const value = JSON.parse('{"__proto__": {"polluted": true}, "a": 1}') as Record<string, unknown>
+    const back = roundTrip(value)
+    expect(Object.getPrototypeOf(back)).toBe(Object.prototype)
+    expect(Object.prototype.hasOwnProperty.call(back, '__proto__')).toBe(true)
+    expect((back as { polluted?: boolean }).polluted).toBeUndefined()
+    const tagLike = JSON.parse('{"__proto__": {"$t": "undef"}}') as Record<string, unknown>
+    expect(Object.prototype.hasOwnProperty.call(roundTrip(tagLike), '__proto__')).toBe(true)
   })
 
   it('cannot be fooled by user data that looks like a tag', () => {

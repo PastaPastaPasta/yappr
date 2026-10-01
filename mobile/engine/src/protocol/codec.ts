@@ -12,7 +12,8 @@ import type { SerializedError } from './envelope'
  *
  * Class instances are sent as their own enumerable properties (after
  * `toJSON()` if they define one); functions and symbols are dropped, as JSON
- * does. Cycles throw.
+ * does. Cycles throw. Keys are written as own data properties, so a
+ * `__proto__` key round-trips as a key and never sets a prototype.
  */
 
 type Tagged =
@@ -26,11 +27,16 @@ type Tagged =
   | { $t: 'error'; v: SerializedError }
   | { $t: 'obj'; v: Record<string, unknown> }
 
-const TAG = '$t'
-
 export interface EncodeOptions {
   /** Include `Error.stack`. Off by default: stacks are large and only useful in diagnostics. */
   includeStack?: boolean
+}
+
+const hasOwn = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key)
+
+/** Set `key` as an own data property, even when it is `__proto__`. */
+function define(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true })
 }
 
 export function encode(value: unknown, options: EncodeOptions = {}): unknown {
@@ -59,7 +65,6 @@ export function encode(value: unknown, options: EncodeOptions = {}): unknown {
       const time = object.getTime()
       return { $t: 'date', v: Number.isNaN(time) ? null : object.toISOString() } satisfies Tagged
     }
-    if (object instanceof Uint8Array) return { $t: 'bytes', v: bytesToBase64(object) } satisfies Tagged
     if (ArrayBuffer.isView(object)) {
       return { $t: 'bytes', v: bytesToBase64(new Uint8Array(object.buffer, object.byteOffset, object.byteLength)) } satisfies Tagged
     }
@@ -80,9 +85,9 @@ export function encode(value: unknown, options: EncodeOptions = {}): unknown {
       const out: Record<string, unknown> = {}
       for (const [key, item] of Object.entries(object)) {
         const encoded = walk(item)
-        if (encoded !== undefined) out[key] = encoded
+        if (encoded !== undefined) define(out, key, encoded)
       }
-      return TAG in out ? ({ $t: 'obj', v: out } satisfies Tagged) : out
+      return hasOwn(out, '$t') ? ({ $t: 'obj', v: out } satisfies Tagged) : out
     } finally {
       seen.delete(object)
     }
@@ -95,7 +100,7 @@ export function decode(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(decode)
   if (typeof value !== 'object' || value === null) return value
   const record = value as Record<string, unknown>
-  if (!(TAG in record)) return decodeEntries(record)
+  if (!hasOwn(record, '$t')) return decodeEntries(record)
 
   const tagged = record as Tagged
   switch (tagged.$t) {
@@ -114,7 +119,7 @@ export function decode(value: unknown): unknown {
     case 'set':
       return new Set(tagged.v.map(decode))
     case 'error':
-      return deserializeError(tagged.v)
+      return new RemoteError(decodeSerializedError(tagged.v))
     case 'obj':
       return decodeEntries(tagged.v)
     default:
@@ -130,47 +135,80 @@ export function parse(text: string): unknown {
   return decode(JSON.parse(text))
 }
 
-/** The error a remote call rejects with: a real Error, with `code` and `data` restored. */
+/** The error a remote call rejects with: a real Error, with the SDK's fields and cause restored. */
 export class RemoteError extends Error {
   code?: string | number
+  kind?: string | number
+  isRetriable?: boolean
   data?: Record<string, unknown>
   remoteStack?: string
 
   constructor(serialized: SerializedError) {
     super(serialized.message)
     this.name = serialized.name
+    // Defined rather than passed to super(): Hermes's Error constructor may ignore the options bag.
+    if (serialized.cause) {
+      Object.defineProperty(this, 'cause', { value: new RemoteError(serialized.cause), writable: true, configurable: true })
+    }
     if (serialized.code !== undefined) this.code = serialized.code
+    if (serialized.kind !== undefined) this.kind = serialized.kind
+    if (serialized.isRetriable !== undefined) this.isRetriable = serialized.isRetriable
     if (serialized.data !== undefined) this.data = serialized.data
     if (serialized.stack !== undefined) this.remoteStack = serialized.stack
   }
 }
 
+/** Fields read by name (they may be prototype getters) rather than copied from own properties. */
+const ERROR_FIELDS = new Set(['name', 'message', 'code', 'kind', 'isRetriable', 'stack', 'cause'])
+const MAX_CAUSE_DEPTH = 3
+
+/** Read a property that may be a getter which throws (a freed wasm error). */
+function read(object: object, key: string): unknown {
+  try {
+    return (object as Record<string, unknown>)[key]
+  } catch {
+    return undefined
+  }
+}
+
 /**
- * Flatten an error into a SerializedError. `walk` maps each extra own field;
- * the default keeps it raw, for callers that encode the result afterwards.
+ * Flatten a thrown value into a SerializedError. Works on real Errors and on
+ * evo-sdk's `WasmSdkError`, which does not extend Error and exposes `name`,
+ * `message`, `code`, `kind` and `isRetriable` as prototype getters. `cause` is
+ * followed a few levels. `walk` maps each extra own field; the default keeps
+ * it raw, for callers that encode the result afterwards.
  */
 export function serializeError(
   error: unknown,
   walk: (value: unknown) => unknown = value => value,
-  options: EncodeOptions = {}
+  options: EncodeOptions = {},
+  depth = 0
 ): SerializedError {
-  if (!(error instanceof Error)) {
-    // Thrown non-Errors (strings, wasm error objects with a message getter).
-    const message = typeof error === 'object' && error !== null && typeof (error as { message?: unknown }).message === 'string'
-      ? (error as { message: string }).message
-      : String(error)
-    return { name: 'Error', message }
+  if (typeof error !== 'object' || error === null) return { name: 'Error', message: String(error) }
+
+  const name = read(error, 'name')
+  const message = read(error, 'message')
+  const out: SerializedError = {
+    name: typeof name === 'string' && name ? name : 'Error',
+    message: typeof message === 'string' ? message : String(error),
   }
-  const out: SerializedError = { name: error.name || 'Error', message: error.message }
-  const code = (error as { code?: unknown }).code
+  const code = read(error, 'code')
   if (typeof code === 'string' || typeof code === 'number') out.code = code
-  if (options.includeStack && error.stack) out.stack = error.stack
+  const kind = read(error, 'kind')
+  if (typeof kind === 'string' || typeof kind === 'number') out.kind = kind
+  const isRetriable = read(error, 'isRetriable')
+  if (typeof isRetriable === 'boolean') out.isRetriable = isRetriable
+  const stack = read(error, 'stack')
+  if (options.includeStack && typeof stack === 'string') out.stack = stack
+  const cause = read(error, 'cause')
+  if (cause !== undefined && depth < MAX_CAUSE_DEPTH) out.cause = serializeError(cause, walk, options, depth + 1)
+
   const data: Record<string, unknown> = {}
-  for (const [key, item] of Object.entries(error)) {
-    if (key === 'name' || key === 'message' || key === 'code' || key === 'stack') continue
+  for (const key of Object.keys(error)) {
+    if (ERROR_FIELDS.has(key) || key === '__wbg_ptr') continue
     try {
-      const encoded = walk(item)
-      if (encoded !== undefined) data[key] = encoded
+      const encoded = walk(read(error, key))
+      if (encoded !== undefined) define(data, key, encoded)
     } catch {
       // A field that cannot cross the bridge is dropped, never the error itself.
     }
@@ -179,14 +217,18 @@ export function serializeError(
   return out
 }
 
-function deserializeError(serialized: SerializedError): RemoteError {
-  const data = serialized.data ? (decodeEntries(serialized.data) as Record<string, unknown>) : undefined
-  return new RemoteError({ ...serialized, ...(data ? { data } : {}) })
+/** Decode the `data` of an encoded SerializedError (and of its causes). */
+function decodeSerializedError(serialized: SerializedError): SerializedError {
+  return {
+    ...serialized,
+    data: serialized.data && decodeEntries(serialized.data),
+    cause: serialized.cause && decodeSerializedError(serialized.cause),
+  }
 }
 
 function decodeEntries(record: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
-  for (const [key, item] of Object.entries(record)) out[key] = decode(item)
+  for (const [key, item] of Object.entries(record)) define(out, key, decode(item))
   return out
 }
 
