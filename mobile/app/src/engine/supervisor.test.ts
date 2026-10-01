@@ -112,11 +112,11 @@ describe('EngineSupervisor', () => {
     const s = setup({
       configure: (engine) => {
         engine.answerPings = false; // say hello only when the test says so
-        engine.handlers['feed.forYou'] = () => ({ items: [], cursor: null });
+        engine.handlers['feed.home'] = () => ({ items: [], cursor: null });
       },
     });
     s.supervisor.start();
-    const early = s.supervisor.call('feed.forYou', [{}]);
+    const early = s.supervisor.call('feed.home', [{}]);
     expect(s.supervisor.getStatus()).toMatchObject({ state: 'starting', queued: 1 });
 
     await settle();
@@ -124,29 +124,29 @@ describe('EngineSupervisor', () => {
     await boot(s);
 
     await expect(early).resolves.toEqual({ items: [], cursor: null });
-    expect(s.engines[1].calls).toEqual(['engine.info', 'engine.boot', 'feed.forYou']);
+    expect(s.engines[1].calls).toEqual(['engine.info', 'engine.boot', 'feed.home']);
     const status = s.supervisor.getStatus();
     expect(status.state).toBe('ready');
     expect(status.hello?.bundleHash).toBe('abc');
     expect(status.timings).toMatchObject({ prepareMs: expect.any(Number), helloMs: expect.any(Number), bootMs: expect.any(Number) });
-    expect(status.timings?.firstCall?.path).toBe('feed.forYou');
+    expect(status.timings?.firstCall?.path).toBe('feed.home');
     s.supervisor.stop();
   });
 
   it('replays an interrupted read once on the restarted engine, and never a write', async () => {
     const s = setup({
       configure: (engine, epoch) => {
-        if (epoch === 1) engine.hold.add('feed.forYou').add('posts.publish');
-        else engine.handlers['feed.forYou'] = () => ({ items: ['replayed'] });
+        if (epoch === 1) engine.hold.add('feed.home').add('posts.publish');
+        else engine.handlers['feed.home'] = () => ({ items: ['replayed'] });
       },
     });
     s.supervisor.start();
     await boot(s);
-    const read = s.supervisor.call('feed.forYou', [{}]);
+    const read = s.supervisor.call('feed.home', [{}]);
     const write = s.supervisor.call('posts.publish', [{ text: 'hi' }]);
     const writeOutcome = write.catch((error: unknown) => error);
     await settle();
-    expect(s.engines[1].held.map((r) => r.path)).toEqual(['feed.forYou', 'posts.publish']);
+    expect(s.engines[1].held.map((r) => r.path)).toEqual(['feed.home', 'posts.publish']);
 
     s.supervisor.crashed('the WebContent process terminated');
     expect(s.supervisor.getStatus()).toMatchObject({ state: 'restarting', restarts: 1 });
@@ -155,21 +155,21 @@ describe('EngineSupervisor', () => {
     await settle(10); // backoff
     await boot(s, 2);
     await expect(read).resolves.toEqual({ items: ['replayed'] });
-    expect(s.engines[2].calls).toEqual(['engine.info', 'engine.boot', 'feed.forYou']);
+    expect(s.engines[2].calls).toEqual(['engine.info', 'engine.boot', 'feed.home']);
     expect(s.engines[2].calls).not.toContain('posts.publish');
     s.supervisor.stop();
   });
 
   it('rejects a read that is interrupted a second time', async () => {
-    const s = setup({ configure: (engine) => engine.hold.add('feed.forYou') });
+    const s = setup({ configure: (engine) => engine.hold.add('feed.home') });
     s.supervisor.start();
     await boot(s);
-    const read = s.supervisor.call('feed.forYou', [{}]).catch((error: unknown) => error);
+    const read = s.supervisor.call('feed.home', [{}]).catch((error: unknown) => error);
     await settle();
     s.supervisor.crashed('first');
     await settle(10);
     await boot(s, 2);
-    expect(s.engines[2].held.map((r) => r.path)).toEqual(['feed.forYou']);
+    expect(s.engines[2].held.map((r) => r.path)).toEqual(['feed.home']);
     s.supervisor.crashed('second');
     expect(await read).toMatchObject({ code: 'ENGINE_RESTARTED' });
     s.supervisor.stop();
@@ -188,7 +188,7 @@ describe('EngineSupervisor', () => {
     s.supervisor.crashed('crash 5');
     expect(s.supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 5 });
     expect(s.supervisor.getMount()).toBeNull();
-    await expect(s.supervisor.call('feed.forYou', [])).rejects.toMatchObject({ code: 'ENGINE_UNAVAILABLE' });
+    await expect(s.supervisor.call('feed.home', [])).rejects.toMatchObject({ code: 'ENGINE_UNAVAILABLE' });
 
     s.supervisor.restart();
     await boot(s, 6);
@@ -210,7 +210,7 @@ describe('EngineSupervisor', () => {
   it('enters Lockdown on iOS when the engine has no WebAssembly', async () => {
     const s = setup({ configure: (engine) => (engine.handlers['engine.info'] = () => ({ webAssembly: false })) });
     s.supervisor.start();
-    const queued = s.supervisor.call('feed.forYou', []);
+    const queued = s.supervisor.call('feed.home', []);
     await boot(s);
     expect(s.supervisor.getStatus()).toMatchObject({ state: 'unsupported', unsupported: 'lockdown' });
     await expect(queued).rejects.toMatchObject({ code: 'ENGINE_UNAVAILABLE' });
@@ -271,8 +271,8 @@ describe('EngineSupervisor', () => {
     const supervisor = new EngineSupervisor(deps, { queueCap: 2 });
     supervisor.start();
     const write = supervisor.call('posts.publish', []);
-    const firstRead = supervisor.call('feed.forYou', []);
-    supervisor.call('feed.forYou', []).catch(() => undefined);
+    const firstRead = supervisor.call('feed.home', []);
+    supervisor.call('feed.home', []).catch(() => undefined);
     await expect(firstRead).rejects.toMatchObject({ code: 'ENGINE_BUSY' });
     expect(supervisor.getStatus().queued).toBe(2);
     supervisor.stop();

@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 
 import { config } from '~/config';
 
-import { appendLog } from './logs';
+import { appendLog, errorMessage } from './logs';
 import { loadEnginePage, type EngineLoad, type Simulation } from './page';
 import { createRemote } from './remote';
 import { createEngineStorage } from './storage/engine-storage';
@@ -14,7 +14,7 @@ import { EngineSupervisor } from './supervisor';
  * The app's one engine (ADR-001 E1, ENGINE.md §1). Screens call it through
  * `engine.api.<module>.<method>()` (typed by the engine's `EngineApi`), most
  * often via the TanStack Query helpers in ./hooks. The hidden WebView that
- * runs it is mounted by `<EngineProvider>` in the root layout.
+ * runs it is mounted by `<EngineHost>` in the root layout.
  */
 
 /** Storage namespace: `testnet`, `mainnet` or `devnet-<name>` (ENGINE.md §9.1). */
@@ -38,9 +38,19 @@ export const engineSupervisor = new EngineSupervisor<EngineLoad>({
     nextSimulation = null;
     return loadEnginePage(snapshot, simulate);
   },
-  onStorage: (batch) => engineStorage.apply(batch),
+  onStorage(batch) {
+    const written = engineStorage.apply(batch);
+    // A secret that did not land leaves the engine waiting for its ack (and a sign-in hanging):
+    // say so, and start a fresh engine from what is on disk. Key names only, never values.
+    written?.catch((error: unknown) => {
+      const keys = batch.ops.map((op) => op[1] ?? 'clear').join(', ');
+      appendLog('error', 'host', `Secure write ${batch.seq} failed (${keys}): ${errorMessage(error)}`);
+      engineSupervisor.restart('A secure write failed');
+    });
+    return written;
+  },
   log: appendLog,
-});
+}, { engineLogLevel: __DEV__ ? 'info' : 'warn' });
 
 export interface Engine {
   api: Remote<EngineApi>;

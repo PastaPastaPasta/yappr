@@ -2,7 +2,8 @@ import type { EngineApi, EngineInfo } from '@engine/api';
 import { RpcError, RpcErrorCode, type EngineHello, type LogLevel } from '@engine/protocol/envelope';
 import { createEngineClient, type EngineClient, type StorageBatch } from '@engine/rpc/client';
 
-import { methodKind, methodTimeoutMs } from './methods';
+import { errorMessage } from './logs';
+import { methodKind, methodTimeoutMs, type MethodKind } from './methods';
 import { createWebViewTransport, type WebViewTransport } from './webview-transport';
 
 /**
@@ -109,6 +110,8 @@ export interface SupervisorOptions {
   queueCap?: number;
   /** Oldest Android WebView the bundle runs on (its esbuild target is chrome110). */
   minChromeMajor?: number;
+  /** Lowest engine console level forwarded (ENGINE.md §4.7: release builds want only warn and error). */
+  engineLogLevel?: LogLevel;
 }
 
 const DEFAULTS: Required<SupervisorOptions> = {
@@ -122,6 +125,7 @@ const DEFAULTS: Required<SupervisorOptions> = {
   maxMissedPings: 3,
   queueCap: 256,
   minChromeMajor: 110,
+  engineLogLevel: 'info',
 };
 
 export const EngineErrorCode = {
@@ -134,7 +138,7 @@ export const EngineErrorCode = {
 interface Job {
   path: string;
   args: unknown[];
-  kind: ReturnType<typeof methodKind>;
+  kind: MethodKind;
   resolve(value: unknown): void;
   reject(error: unknown): void;
   replayed: boolean;
@@ -145,9 +149,11 @@ const ENGINE_GONE = new Set<string>([RpcErrorCode.Restarted, RpcErrorCode.Discon
 
 const errorCode = (error: unknown) =>
   typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
-const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-/** Call `path` on a client's proxy (`client.api.feed.forYou(...)`). */
+/** Status fields that belong to one epoch, cleared on every (re)mount. */
+const FRESH_EPOCH = { reason: null, unsupported: null, hello: null, info: null, caps: null, timings: null } as const;
+
+/** Call `path` on a client's proxy (`client.api.feed.home(...)`). */
 function invoke(client: EngineClient<EngineApi>, path: string, args: unknown[]): Promise<unknown> {
   const method = path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown>)[key], client.api);
   return (method as (...a: unknown[]) => Promise<unknown>)(...args);
@@ -161,18 +167,7 @@ export function parseChromeMajor(userAgent: string): number | null {
 export class EngineSupervisor<Load = unknown> {
   private readonly options: Required<SupervisorOptions>;
   private readonly now: () => number;
-  private status: EngineStatus = {
-    state: 'idle',
-    epoch: 0,
-    reason: null,
-    unsupported: null,
-    hello: null,
-    info: null,
-    caps: null,
-    timings: null,
-    restarts: 0,
-    queued: 0,
-  };
+  private status: EngineStatus = { state: 'idle', epoch: 0, restarts: 0, queued: 0, ...FRESH_EPOCH };
   private mount: EngineMount<Load> | null = null;
   private client: EngineClient<EngineApi> | null = null;
   /** Calls go straight to the client once boot has been sent; until then they wait here. */
@@ -184,6 +179,10 @@ export class EngineSupervisor<Load = unknown> {
   private missedPings = 0;
   private awaitingPong = false;
   private foreground = true;
+  /** stop() was called: calls fail instead of waiting for an engine that is not coming. */
+  private stopped = false;
+  /** Last connectivity NetInfo reported; replayed into every engine after boot (it starts out online). */
+  private online = true;
   private readonly statusListeners = new Set<() => void>();
   private readonly mountListeners = new Set<() => void>();
   private readonly events = new Map<string, Set<(payload: unknown) => void>>();
@@ -244,14 +243,15 @@ export class EngineSupervisor<Load = unknown> {
   /** Mount an engine. A no-op unless idle. */
   start(): void {
     if (this.status.state !== 'idle') return;
+    this.stopped = false;
     this.launch(this.status.epoch + 1);
   }
 
   /** Tear everything down (tests; the app never unmounts the host). */
   stop(): void {
+    this.stopped = true;
     this.teardown('Engine host stopped');
     this.failQueue(new RpcError('Engine host stopped', EngineErrorCode.Unavailable));
-    this.setMount(null);
     this.update({ state: 'idle' });
   }
 
@@ -267,13 +267,19 @@ export class EngineSupervisor<Load = unknown> {
   crashed(cause: string, epoch = this.status.epoch): void {
     if (epoch !== this.status.epoch) return;
     if (['crashed', 'restarting', 'idle', 'failed', 'unsupported'].includes(this.status.state)) return;
+    if (!this.foreground && this.status.state === 'starting') {
+      // prepare() failed in the background (Keychain locked): try again on return, not in a loop.
+      this.log('warn', `Engine start failed in the background: ${cause}`);
+      this.teardown(cause);
+      this.update({ state: 'failed', reason: cause });
+      return;
+    }
     this.log('error', `Engine crashed: ${cause}`);
     this.teardown(`Engine crashed: ${cause}`);
     const now = this.now();
     this.crashes = [...this.crashes.filter((at) => now - at < this.options.failureWindowMs), now];
     this.update({ state: 'crashed', reason: cause, restarts: this.status.restarts + 1 });
     if (this.crashes.length >= this.options.maxFailures) {
-      this.setMount(null);
       this.update({ state: 'failed', reason: `${this.crashes.length} engine failures in a row; last: ${cause}` });
       this.failQueue(new RpcError(`The engine keeps failing (${cause})`, EngineErrorCode.Unavailable));
       return;
@@ -283,23 +289,16 @@ export class EngineSupervisor<Load = unknown> {
     this.after(delay, () => this.launch(this.status.epoch + 1));
   }
 
-  /** AppState: pings pause in the background and run once on return. */
+  /** AppState: pings pause in the background and run once on return; a failed engine gets a fresh try. */
   setForeground(foreground: boolean): void {
     this.foreground = foreground;
-    if (foreground) this.ping();
+    if (!foreground) return;
+    if (this.status.state === 'failed') this.restart('Back in the foreground');
+    else this.ping();
   }
 
   private launch(epoch: number) {
-    this.update({
-      state: 'starting',
-      epoch,
-      reason: null,
-      unsupported: null,
-      hello: null,
-      info: null,
-      caps: null,
-      timings: null,
-    });
+    this.update({ state: 'starting', epoch, ...FRESH_EPOCH });
     const started = this.now();
     this.deps
       .prepare(epoch)
@@ -307,12 +306,8 @@ export class EngineSupervisor<Load = unknown> {
         if (this.status.epoch !== epoch || this.status.state !== 'starting') return;
         this.connect(epoch, load, this.now() - started);
       })
-      .catch((error: unknown) => {
-        if (this.status.epoch !== epoch) return;
-        this.log('error', `Could not prepare the engine: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
-        this.update({ state: 'failed', reason: `Could not prepare the engine: ${errorMessage(error)}` });
-        this.failQueue(new RpcError(errorMessage(error), EngineErrorCode.Unavailable));
-      });
+      // A locked Keychain, a missing page: retried with backoff like a crash.
+      .catch((error: unknown) => this.crashed(`could not prepare the engine: ${errorMessage(error)}`, epoch));
   }
 
   private connect(epoch: number, load: Load, prepareMs: number) {
@@ -327,9 +322,13 @@ export class EngineSupervisor<Load = unknown> {
     this.client = client;
     this.clientUnsubscribers = [
       transport.onMessage((message) => this.onHostMessage(epoch, message)),
-      client.on('engine.hello', () => {
+      client.on('engine.hello', (payload) => {
         this.awaitingPong = false;
         this.missedPings = 0;
+        // A new instance on the same mount: the page reloaded and lost its boot (and its snapshot is stale).
+        const instanceId = (payload as EngineHello).instanceId;
+        const known = this.status.hello?.instanceId;
+        if (known && instanceId !== known) this.crashed('the engine page reloaded', epoch);
       }),
     ];
     for (const event of this.events.keys()) this.forwardEvent(client, event);
@@ -344,7 +343,16 @@ export class EngineSupervisor<Load = unknown> {
 
     client.ready.then(
       (hello) => this.boot(epoch, client, hello),
-      (error: unknown) => this.crashed(`handshake failed: ${errorMessage(error)}`, epoch),
+      (error: unknown) => {
+        if (errorCode(error) === RpcErrorCode.ProtocolMismatch && this.status.epoch === epoch) {
+          // A packaging bug (app and engine bundle out of step): restarting cannot fix it (§3.4).
+          this.teardown(errorMessage(error));
+          this.update({ state: 'failed', reason: errorMessage(error) });
+          this.failQueue(new RpcError(errorMessage(error), EngineErrorCode.Unavailable));
+        } else {
+          this.crashed(`handshake failed: ${errorMessage(error)}`, epoch);
+        }
+      },
     );
   }
 
@@ -361,14 +369,15 @@ export class EngineSupervisor<Load = unknown> {
     }
     if (!message.startsWith('{"t":"host-caps"')) return;
     try {
+      if (this.status.epoch !== epoch) return;
       const raw = JSON.parse(message) as Omit<HostCaps, 'chromeMajor'>;
       const caps: HostCaps = { ...raw, chromeMajor: parseChromeMajor(raw.userAgent) };
-      if (this.status.epoch !== epoch) return;
       this.update({ caps });
-      const outdated =
-        this.deps.platform === 'android' &&
-        (!caps.webAssembly || (caps.chromeMajor !== null && caps.chromeMajor < this.options.minChromeMajor));
-      if (outdated) this.unsupported('webview-outdated', `Android System WebView ${caps.chromeMajor ?? '?'} is too old`);
+      // Decided before the bundle runs: an unusable WebView may never get as far as a hello.
+      if (!caps.webAssembly) this.noWebAssembly('WebAssembly is unavailable');
+      else if (this.deps.platform === 'android' && caps.chromeMajor !== null && caps.chromeMajor < this.options.minChromeMajor) {
+        this.unsupported('webview-outdated', `Android System WebView ${caps.chromeMajor} is too old`);
+      }
     } catch (error) {
       this.log('warn', `Ignoring malformed host caps: ${errorMessage(error)}`);
     }
@@ -387,14 +396,15 @@ export class EngineSupervisor<Load = unknown> {
       if (!current()) return;
       this.update({ info });
       if (!info.webAssembly) {
-        this.unsupported(this.deps.platform === 'ios' ? 'lockdown' : 'webview-outdated', 'WebAssembly is unavailable');
+        this.noWebAssembly('WebAssembly is unavailable');
         return;
       }
+      if (this.options.engineLogLevel !== 'info') await client.api.engine.setLogLevel(this.options.engineLogLevel);
+      if (!this.online) await client.api.engine.connectivity(false);
       const bootStarted = this.now();
       const booted = client.api.engine.boot();
       // Queued calls go out after boot, so the SDK is initializing before any of them runs.
-      this.accepting = true;
-      this.drain();
+      this.acceptCalls();
       const bootInfo = await booted;
       if (!current()) return;
       const readyAt = this.now();
@@ -410,12 +420,11 @@ export class EngineSupervisor<Load = unknown> {
       if (!current()) return;
       if (ENGINE_GONE.has(String(errorCode(error)))) return; // a crash is already being handled
       if (errorCode(error) === 'NO_WEBASSEMBLY') {
-        this.unsupported(this.deps.platform === 'ios' ? 'lockdown' : 'webview-outdated', errorMessage(error));
+        this.noWebAssembly(errorMessage(error));
         return;
       }
       // Offline or DAPI trouble: calls still go through; connectivity retries the boot.
-      this.accepting = true;
-      this.drain();
+      this.acceptCalls();
       this.update({ state: 'degraded', reason: errorMessage(error) });
       this.log('warn', `Engine boot failed: ${errorMessage(error)}`);
       this.startPings();
@@ -424,6 +433,7 @@ export class EngineSupervisor<Load = unknown> {
 
   /** NetInfo: forward connectivity; coming back online finishes a boot that failed. */
   async connectivity(online: boolean): Promise<void> {
+    this.online = online;
     const client = this.client;
     if (!client || !this.accepting) return;
     await client.api.engine.connectivity(online);
@@ -433,17 +443,27 @@ export class EngineSupervisor<Load = unknown> {
     }
   }
 
+  /** iOS without WebAssembly is Lockdown Mode; elsewhere it means an unusable WebView. */
+  private noWebAssembly(detail: string) {
+    this.unsupported(this.deps.platform === 'ios' ? 'lockdown' : 'webview-outdated', detail);
+  }
+
+  private acceptCalls() {
+    this.accepting = true;
+    this.drain();
+  }
+
   private unsupported(reason: UnsupportedReason, detail: string) {
     if (this.status.state === 'unsupported') return;
     this.log('error', `Engine unsupported (${reason}): ${detail}`);
     this.teardown(detail);
-    this.setMount(null);
     this.update({ state: 'unsupported', unsupported: reason, reason: detail });
     this.failQueue(new RpcError(detail, EngineErrorCode.Unavailable));
   }
 
-  /** Close the current epoch: in-flight calls reject (and reads requeue), timers stop. */
+  /** Close the current epoch: the WebView goes, in-flight calls reject (and reads requeue), timers stop. */
   private teardown(reason: string) {
+    this.setMount(null);
     this.accepting = false;
     this.stopPings();
     this.timers.forEach(clearTimeout);
@@ -505,7 +525,7 @@ export class EngineSupervisor<Load = unknown> {
 
   private dispatch(job: Job) {
     const { state } = this.status;
-    if (state === 'failed' || state === 'unsupported') {
+    if (state === 'failed' || state === 'unsupported' || this.stopped) {
       job.reject(new RpcError(this.status.reason ?? 'The engine is unavailable', EngineErrorCode.Unavailable));
       return;
     }
@@ -542,24 +562,28 @@ export class EngineSupervisor<Load = unknown> {
     const started = this.now();
     const epoch = this.status.epoch;
     let settled = false;
+    /** True for the first outcome only (response, failure or deadline). */
+    const settle = () => {
+      clearTimeout(timer);
+      if (settled) return false;
+      settled = true;
+      return true;
+    };
     const timeoutMs = methodTimeoutMs(job.path);
     const timer = setTimeout(() => {
-      settled = true;
-      job.reject(new RpcError(`Engine call ${job.path} timed out after ${timeoutMs} ms`, EngineErrorCode.Timeout));
+      if (settle()) {
+        job.reject(new RpcError(`Engine call ${job.path} timed out after ${timeoutMs} ms`, EngineErrorCode.Timeout));
+      }
     }, timeoutMs);
 
     invoke(client, job.path, job.args).then(
       (value) => {
-        clearTimeout(timer);
-        if (settled) return;
-        settled = true;
+        if (!settle()) return;
         if (job.kind !== 'control') this.recordFirstCall(epoch, job.path, started);
         job.resolve(value);
       },
       (error: unknown) => {
-        clearTimeout(timer);
-        if (settled) return;
-        settled = true;
+        if (!settle()) return;
         if (!ENGINE_GONE.has(String(errorCode(error)))) {
           job.reject(error);
         } else if (job.kind === 'read' && !job.replayed) {
@@ -597,10 +621,8 @@ export class EngineSupervisor<Load = unknown> {
     );
   }
 
-  /** The background flush: hide the engine, then wait for its storage writes to land. */
-  async background(waitForStorage: () => Promise<void>): Promise<void> {
-    if (!this.client || !this.accepting) return;
-    await this.call('engine.lifecycle', ['background']);
-    await waitForStorage();
+  /** Tell a running engine the app went to the background (it fires visibilitychange and pagehide). */
+  async background(): Promise<void> {
+    if (this.client && this.accepting) await this.call('engine.lifecycle', ['background']);
   }
 }

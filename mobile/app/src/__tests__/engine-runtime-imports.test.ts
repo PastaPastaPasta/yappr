@@ -17,10 +17,7 @@ const ENGINE_SRC: string = boundaries.ENGINE_SRC;
 const allowlist = (eslintConfig as unknown as { ENGINE_RUNTIME_ALLOWLIST: string[] }).ENGINE_RUNTIME_ALLOWLIST;
 
 const rel = (file: string) => path.relative(ENGINE_SRC, file).split(path.sep).join('/');
-const isAllowed = (file: string) => {
-  const name = rel(file).replace(/\.ts$/, '');
-  return allowlist.some((entry) => (entry.endsWith('/') ? name.startsWith(entry) : name === entry));
-};
+const isAllowed = (file: string): boolean => boundaries.isEngineRuntimePath(allowlist, file);
 
 function walk(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {

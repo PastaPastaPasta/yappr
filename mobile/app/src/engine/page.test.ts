@@ -1,4 +1,4 @@
-import { bootstrapScript, composeInlineHtml } from './page';
+import { bootstrapScript, composeInlineHtml, composeLoaderHtml } from './page';
 
 describe('engine page', () => {
   const html = '<!doctype html><html><head><meta charset="utf-8"><script>ENGINE</script></head><body></body></html>';
@@ -19,6 +19,12 @@ describe('engine page', () => {
     const json = script.slice('window.__YAPPR_ENGINE_STORAGE__='.length, script.indexOf(';(function'));
     assigned.__YAPPR_ENGINE_STORAGE__ = JSON.parse(json);
     expect(assigned.__YAPPR_ENGINE_STORAGE__).toEqual({ local: { note: '</script><script>alert(1)</script>' }, secure: {} });
+  });
+
+  it('loads engine.js after the CSP, the bootstrap and the bundle hash (Android)', () => {
+    const page = composeLoaderHtml('BOOT', 'abc');
+    expect(page.indexOf('<script>BOOT</script>')).toBeLessThan(page.indexOf('__YAPPR_ENGINE_BUNDLE_HASH__="abc"'));
+    expect(page.indexOf('__YAPPR_ENGINE_BUNDLE_HASH__')).toBeLessThan(page.indexOf('<script src="engine.js">'));
   });
 
   it('simulates Lockdown Mode by removing WebAssembly before the engine runs', () => {

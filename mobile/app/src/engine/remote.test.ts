@@ -2,15 +2,15 @@ import { methodKind, methodTimeoutMs } from './methods';
 import { createRemote } from './remote';
 
 interface Api {
-  feed: { forYou(options: { cursor?: string }): Promise<string[]> };
+  feed: { home(options: { tab: string }): Promise<string[]> };
 }
 
 describe('engine.api proxy', () => {
   it('turns property paths into calls', async () => {
     const call = jest.fn(async (path: string, args: unknown[]) => [path, ...args.map(String)]);
     const api = createRemote<Api>(call);
-    await expect(api.feed.forYou({ cursor: 'c' })).resolves.toEqual(['feed.forYou', '[object Object]']);
-    expect(call).toHaveBeenCalledWith('feed.forYou', [{ cursor: 'c' }]);
+    await expect(api.feed.home({ tab: 'forYou' })).resolves.toEqual(['feed.home', '[object Object]']);
+    expect(call).toHaveBeenCalledWith('feed.home', [{ tab: 'forYou' }]);
   });
 
   it('is not a thenable and sends nothing when inspected', () => {

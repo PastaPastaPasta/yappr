@@ -1,6 +1,6 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
-import { StyleSheet, View } from 'react-native';
-import { WebView, type WebViewMessageEvent } from 'react-native-webview';
+import { Platform, StyleSheet, View } from 'react-native';
+import { WebView } from 'react-native-webview';
 
 import { engineStorage, engineSupervisor } from './index';
 import { bridgeLifecycle } from './lifecycle';
@@ -16,6 +16,8 @@ import type { EngineLoad } from './page';
 export function EngineHost() {
   const mount = useSyncExternalStore(engineSupervisor.subscribeMount, engineSupervisor.getMount);
   const webview = useRef<WebView>(null);
+  /** The epoch whose page has started loading: the engine page loads once, never again (or from the network). */
+  const loadedEpoch = useRef<number | null>(null);
   const transport = mount?.transport;
 
   useEffect(() => {
@@ -49,14 +51,24 @@ export function EngineHost() {
         ref={webview}
         style={styles.hidden}
         source={load.source}
-        injectedJavaScriptBeforeContentLoaded={load.injectedJavaScriptBeforeContentLoaded}
-        allowingReadAccessToURL={load.readAccessUrl}
-        allowFileAccess={load.readAccessUrl !== undefined}
-        originWhitelist={['https://*', 'file://*']}
-        onShouldStartLoadWithRequest={(request) => isEnginePage(load, request.url)}
-        onMessage={(event: WebViewMessageEvent) => {
+        allowFileAccess={load.allowFileAccess}
+        // Everything goes through onShouldStartLoadWithRequest: react-native-webview hands a
+        // non-whitelisted URL to Linking.openURL without asking, which would let the engine open apps.
+        originWhitelist={['*']}
+        onShouldStartLoadWithRequest={(request) => {
+          if (request.url === 'about:blank') return true;
+          if (loadedEpoch.current === epoch || !isEnginePage(load, request.url)) {
+            appendLog('warn', 'host', `Blocked a navigation to ${request.url}`);
+            return false;
+          }
+          loadedEpoch.current = epoch;
+          return true;
+        }}
+        onMessage={(event) => {
           const { url, data } = event.nativeEvent;
-          if (isEnginePage(load, url)) mount.transport.receive(data);
+          // Android reports no URL for a page loaded with a file:// base (the APK's engine assets).
+          const fromEngine = isEnginePage(load, url) || (load.allowFileAccess && (!url || url === 'null'));
+          if (fromEngine) mount.transport.receive(data);
           else appendLog('warn', 'host', `Ignored a message from ${url}`);
         }}
         onContentProcessDidTerminate={() => crashed('the WebContent process terminated')}
@@ -66,6 +78,8 @@ export function EngineHost() {
         setSupportMultipleWindows={false}
         javaScriptCanOpenWindowsAutomatically={false}
         allowsLinkPreview={false}
+        // iOS only: the Android prop is typed differently and a string crashes Fabric there.
+        dataDetectorTypes={Platform.OS === 'ios' ? 'none' : undefined}
         mediaPlaybackRequiresUserAction
         geolocationEnabled={false}
         mixedContentMode="never"
@@ -78,13 +92,13 @@ export function EngineHost() {
 }
 
 /**
- * The page itself (inline: the base URL; file: engine.html). Nothing else may
+ * The page itself (its base URL, see ./page.ts). Nothing else may
  * load or talk to the host. Android reports the base URL without its trailing
  * slash.
  */
 function isEnginePage(load: EngineLoad, url: string | undefined): boolean {
   const trim = (value: string) => value.replace(/\/$/, '');
-  return url !== undefined && (trim(url) === trim(load.pageUrl) || url === 'about:blank');
+  return url !== undefined && trim(url) === trim(load.pageUrl);
 }
 
 const styles = StyleSheet.create({

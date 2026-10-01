@@ -20,6 +20,18 @@ const APP_ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(APP_ROOT, '../..');
 const ENGINE_SRC = path.resolve(APP_ROOT, '../engine/src');
 
+/**
+ * Whether `resolved` (an absolute path) is one of the engine modules on
+ * `allowlist`: `protocol/` allows a directory, `rpc/client` one module
+ * (with or without `.ts`).
+ * @param {string[]} allowlist
+ * @param {string} resolved
+ */
+function isEngineRuntimePath(allowlist, resolved) {
+  const rel = path.relative(ENGINE_SRC, resolved).split(path.sep).join('/').replace(/\.ts$/, '');
+  return allowlist.some((entry) => (entry.endsWith('/') ? rel.startsWith(entry) : rel === entry));
+}
+
 /** Mirrors tsconfig.json `paths`. */
 const ALIASES = [
   ['~/', path.join(APP_ROOT, 'src')],
@@ -84,11 +96,6 @@ const rule = {
     const libTypeAllowlist = new Set(options.libTypeAllowlist ?? []);
     const allowlistFile = path.resolve(APP_ROOT, options.allowlistFile ?? 'src/lib-allowlist.ts');
     const engineRuntime = options.engineRuntimeAllowlist ?? [];
-    /** `protocol/` allows a directory, `rpc/client` one module (with or without `.ts`). */
-    const isEngineRuntime = (/** @type {string} */ resolved) => {
-      const rel = path.relative(ENGINE_SRC, resolved).split(path.sep).join('/').replace(/\.ts$/, '');
-      return engineRuntime.some((entry) => (entry.endsWith('/') ? rel.startsWith(entry) : rel === entry));
-    };
     const filename = context.filename;
 
     /**
@@ -105,7 +112,7 @@ const rule = {
       if (resolved === undefined || isInside(resolved, APP_ROOT)) return;
 
       if (isInside(resolved, ENGINE_SRC)) {
-        if (!typeOnly && !isEngineRuntime(resolved)) {
+        if (!typeOnly && !isEngineRuntimePath(engineRuntime, resolved)) {
           context.report({ node, messageId: 'engineTypeOnly', data: { spec } });
         }
         return;
@@ -199,4 +206,4 @@ const rule = {
   },
 };
 
-module.exports = { rules: { 'import-boundaries': rule }, APP_ROOT, ENGINE_SRC };
+module.exports = { rules: { 'import-boundaries': rule }, APP_ROOT, ENGINE_SRC, isEngineRuntimePath };

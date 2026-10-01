@@ -11,8 +11,8 @@ const NOT_METHODS = new Set([
 ]);
 
 /**
- * The typed `engine.api` proxy: `api.feed.forYou(x)` calls
- * `call('feed.forYou', [x])`, so a new engine method needs no host change.
+ * The typed `engine.api` proxy: `api.feed.home(x)` calls
+ * `call('feed.home', [x])`, so a new engine method needs no host change.
  * Unlike the RPC client's own proxy, this one survives engine restarts: the
  * supervisor behind `call` routes each call to the engine of the moment.
  */

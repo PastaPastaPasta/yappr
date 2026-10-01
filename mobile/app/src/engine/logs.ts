@@ -25,15 +25,19 @@ let nextId = 1;
 const listeners = new Set<() => void>();
 
 export function appendLog(level: LogLevel, source: LogLine['source'], message: string): void {
-  const text = redact(message.length > MAX_LINE ? `${message.slice(0, MAX_LINE)}…` : message);
+  // Redacted before truncation, so a key cut in half at the limit is still caught.
+  const redacted = redact(message);
+  const text = redacted.length > MAX_LINE ? `${redacted.slice(0, MAX_LINE)}…` : redacted;
   const line: LogLine = { id: nextId++, at: Date.now(), level, source, message: text };
-  lines = lines.length >= CAPACITY ? [...lines.slice(lines.length - CAPACITY + 1), line] : [...lines, line];
+  lines = [...lines, line].slice(-CAPACITY);
   if (MIRROR && level !== 'debug') {
     const log = level === 'error' ? console.warn : console.log;
     log(`[engine:${source}] ${level} ${text}`);
   }
   listeners.forEach((listener) => listener());
 }
+
+export const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 export function getLogs(): readonly LogLine[] {
   return lines;

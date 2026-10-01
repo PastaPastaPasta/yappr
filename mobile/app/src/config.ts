@@ -12,8 +12,6 @@ export interface EngineBuildConfig {
   /** Names the engine's storage namespaces: `testnet`, `mainnet` or `devnet-<name>`. */
   networkKey: string;
   topology: string;
-  /** `inline`: engine.inline.html with an https base URL; `file`: engine.html over file://. */
-  load: 'inline' | 'file';
   /** Dev only: read the engine from this URL instead of the app bundle. */
   devUrl?: string;
 }

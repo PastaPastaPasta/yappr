@@ -31,12 +31,18 @@ export function decodeSecureKey(encoded: string): string {
   return decodeURIComponent(encoded.replace(/-([0-9a-f]{2})/g, '%$1'));
 }
 
+/** Two alternating item sets per key, so a value is replaced without ever being half written. */
+export type Slot = 'a' | 'b';
+
 /**
- * The key of chunk `index` of a long value. `-z` never occurs in an encoded
- * key (`z` is not a hex digit), so chunk keys cannot collide with real ones.
+ * The SecureStore item holding chunk `chunk` of `key` in `bucket`'s `slot`.
+ * The bucket is part of the name, so two accounts' values of the same key
+ * (lib's private-feed keys carry no identity) never share an item. `-z` never
+ * occurs in an encoded name (`z` is not a hex digit), so the suffix cannot
+ * collide with another key's name.
  */
-export function chunkKey(encoded: string, index: number): string {
-  return `${encoded}-z${index}`;
+export function secureItemName(bucket: string, key: string, slot: Slot, chunk: number): string {
+  return `${encodeSecureKey(`${bucket}|${key}`)}-z${slot}${chunk}`;
 }
 
 /**
@@ -47,18 +53,23 @@ export function chunkKey(encoded: string, index: number): string {
  */
 export const SECURE_CHUNK_CHARS = 2000;
 
-/** Bucket for secure keys that belong to no identity. */
+/** Bucket for secure keys written while nobody is signed in (a pending key exchange). */
 export const SHARED_BUCKET = '';
 
-/** A Platform identity id: base58, 32 bytes → 43 or 44 characters. */
-const IDENTITY_SUFFIX = /[_:]([1-9A-HJ-NP-Za-km-z]{42,44})$/;
+/** lib's secret store: `yappr_secure_<name>_<identityId>`, a Platform identity id (base58, 43–44 characters). */
+const IDENTITY_KEY = /^yappr_secure_.*_([1-9A-HJ-NP-Za-km-z]{42,44})$/;
 
 /**
- * The identity a secure key belongs to: lib's secret store writes
- * `yappr_secure_<name>_<identityId>`, and identity-scoped private-feed keys
- * end in `:<identityId>`. Anything else goes to the shared bucket, which is
- * hydrated for every account.
+ * The identity a secure key names, if any. lib's secret store keys do; the
+ * private-feed (`yappr:pf:*`) and upload keys do not, and belong to whichever
+ * account was signed in when they were written (mobile/engine/README.md,
+ * `session.signOut`).
  */
-export function identityOfKey(key: string): string {
-  return IDENTITY_SUFFIX.exec(key)?.[1] ?? SHARED_BUCKET;
+export function identityInKey(key: string): string | null {
+  return IDENTITY_KEY.exec(key)?.[1] ?? null;
+}
+
+/** Signing an identity out deletes its auth key; for a non-active identity that is the cue to purge its bucket. */
+export function isAuthKeyOf(key: string, identityId: string): boolean {
+  return key === `yappr_secure_pk_${identityId}`;
 }

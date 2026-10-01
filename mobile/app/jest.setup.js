@@ -14,7 +14,9 @@ jest.mock('expo-application', () => ({
 // Embed the real app config (default variant), as `expo export:embed` does in a build.
 jest.mock('expo-constants', () => {
   const actual = jest.requireActual('expo-constants');
-  const expoConfig = jest.requireActual('./app.config.ts').default({ config: {} });
+  const config = jest.requireActual('./app.config.ts').default({ config: {} });
+  // Tests never depend on whether mobile/engine/dist happens to be built.
+  const expoConfig = { ...config, extra: { ...config.extra, engine: null } };
   return { ...actual, __esModule: true, default: { ...actual.default, expoConfig } };
 });
 
@@ -28,7 +30,7 @@ jest.mock('@react-native-community/netinfo', () =>
 jest.mock('expo-crypto', () => ({
   getRandomBytes: (n) => new Uint8Array(require('crypto').randomBytes(n)),
 }));
-// An in-memory Keychain, shared by every test file in a worker; tests reset it with __reset().
+// An in-memory Keychain, shared by every test file in a worker; tests reach it through __items.
 jest.mock('expo-secure-store', () => {
   const items = new Map();
   const id = (key, options = {}) => `${options.keychainService ?? ''}:${key}`;

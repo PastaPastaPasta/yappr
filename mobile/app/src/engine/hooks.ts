@@ -1,15 +1,13 @@
 import type { EngineApi } from '@engine/api';
 import type { Remote } from '@engine/rpc/client';
 import { queryOptions, type QueryKey } from '@tanstack/react-query';
-import { router } from 'expo-router';
+import { router, usePathname } from 'expo-router';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
-import { config } from '~/config';
-
-import { engine, engineSupervisor, type Engine } from './index';
+import { engine, engineNetworkKey, engineSupervisor, type Engine } from './index';
 import type { EngineStatus } from './supervisor';
 
-/** The engine facade: `useEngine().api.feed.forYou({})`. */
+/** The engine facade: `useEngine().api.feed.home({ tab: 'forYou' })`. */
 export function useEngine(): Engine {
   return engine;
 }
@@ -32,14 +30,14 @@ export function useEngineEvent(event: string, handler: (payload: unknown) => voi
  * TanStack Query options for an engine read. Keys are namespaced by network,
  * so a cache can never serve another network's data:
  *
- *   useQuery(engineQuery(['feed', 'forYou'], (api) => api.feed.forYou({})))
+ *   useQuery(engineQuery(['feed', 'forYou'], (api) => api.feed.home({ tab: 'forYou' })))
  *
  * Calls made before the engine is ready wait in the supervisor's queue; a
  * read interrupted by an engine restart is replayed once.
  */
 export function engineQuery<T>(key: QueryKey, read: (api: Remote<EngineApi>) => Promise<T>) {
   return queryOptions({
-    queryKey: ['engine', config.network, ...key],
+    queryKey: ['engine', engineNetworkKey, ...key],
     queryFn: () => read(engine.api),
   });
 }
@@ -50,10 +48,19 @@ export function engineQuery<T>(key: QueryKey, read: (api: Remote<EngineApi>) => 
  */
 export function useUnsupportedEngineRoute(): void {
   const { state, unsupported } = useEngineStatus();
+  const pathname = usePathname();
+  // Once per unsupported episode: leaving the screen ("Browse saved posts") is the user's choice.
+  const routed = useRef(false);
   useEffect(() => {
-    if (state !== 'unsupported' || !unsupported) return;
-    router.push(unsupported === 'lockdown' ? '/lockdown' : '/webview-update');
-  }, [state, unsupported]);
+    if (state !== 'unsupported' || !unsupported) {
+      routed.current = false;
+      return;
+    }
+    if (routed.current) return;
+    routed.current = true;
+    const route = unsupported === 'lockdown' ? '/lockdown' : '/webview-update';
+    if (pathname !== route) router.push(route);
+  }, [state, unsupported, pathname]);
 }
 
 /** Back to wherever the user was (saved content), or Home for a cold deep link. */

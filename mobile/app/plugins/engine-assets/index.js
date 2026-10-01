@@ -1,15 +1,11 @@
 /**
  * Ships the engine bundle (mobile/engine/dist/<variant>) inside the app
- * (ENGINE.md §2.3; mobile/engine/README.md "Origin and CORS finding").
+ * (ENGINE.md §2.3; src/engine/page.ts says how each platform loads it).
  *
  * At prebuild it builds the engine for the app's variant (skip with
  * YAPPR_ENGINE_SKIP_BUILD=1 when dist/ is already built) and copies it:
- *   iOS      <app>/engine/ as a folder reference in Copy Bundle Resources
- *   Android  app/src/main/assets/engine/
- *
- * `load: 'inline'` (the default) ships engine.inline.html; the host reads it
- * and loads it as `source={{ html, baseUrl: 'https://engine.yap.pr/' }}`.
- * `load: 'file'` ships engine.html + engine.js for a file:// load instead.
+ *   iOS      engine.inline.html into <app>/engine/, a folder reference in Copy Bundle Resources
+ *   Android  engine.js into app/src/main/assets/engine/
  *
  * app.config.ts also calls `engineExtra()` so the JS bundle knows the engine
  * it was built against (`config.engine`): its hash busts the persisted query
@@ -23,11 +19,7 @@ const { IOSConfig, withDangerousMod, withXcodeProject } = require('expo/config-p
 const ENGINE_DIR = path.resolve(__dirname, '../../../engine');
 const FOLDER = 'engine';
 
-/** @typedef {'inline' | 'file'} EngineLoad */
-
-/** @param {EngineLoad} load */
-const filesFor = (load) =>
-  load === 'inline' ? ['engine.inline.html', 'manifest.json'] : ['engine.html', 'engine.js', 'manifest.json'];
+const FILES = { ios: ['engine.inline.html', 'manifest.json'], android: ['engine.js', 'manifest.json'] };
 
 /** @param {string} engineVariant */
 const distDir = (engineVariant) => path.join(ENGINE_DIR, 'dist', engineVariant);
@@ -43,9 +35,8 @@ const engineVariantFor = (appVariant) => (appVariant === 'production' ? 'mainnet
  * What the app needs to know about the engine it ships, from the built
  * manifest; null when the engine has not been built (Jest, a fresh clone).
  * @param {string} appVariant
- * @param {EngineLoad} load
  */
-function engineExtra(appVariant, load = 'inline') {
+function engineExtra(appVariant) {
   const file = path.join(distDir(engineVariantFor(appVariant)), 'manifest.json');
   if (!fs.existsSync(file)) return null;
   const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -58,7 +49,6 @@ function engineExtra(appVariant, load = 'inline') {
     // The storage namespace (ENGINE.md §9.1): a renamed or wiped devnet starts empty.
     networkKey: network === 'devnet' ? `devnet-${manifest.env.NEXT_PUBLIC_DEVNET_NAME ?? 'unnamed'}` : network,
     topology: manifest.topology,
-    load,
     // Dev only: serve dist/<variant> (npm run engine:serve) and the app reads the engine from there.
     // Omitted rather than null: a null in `extra` reaches the app as `{}`.
     ...(process.env.YAPPR_ENGINE_DEV_URL ? { devUrl: process.env.YAPPR_ENGINE_DEV_URL } : {}),
@@ -83,32 +73,35 @@ function ensureBuilt(engineVariant) {
 
 /**
  * @param {string} engineVariant
- * @param {EngineLoad} load
+ * @param {'ios' | 'android'} platform
  * @param {string} target
  */
-function copyEngine(engineVariant, load, target) {
+function copyEngine(engineVariant, platform, target) {
   fs.rmSync(target, { recursive: true, force: true });
   fs.mkdirSync(target, { recursive: true });
-  for (const name of filesFor(load)) fs.copyFileSync(path.join(distDir(engineVariant), name), path.join(target, name));
+  for (const name of FILES[platform]) fs.copyFileSync(path.join(distDir(engineVariant), name), path.join(target, name));
 }
 
-/** @type {import('expo/config-plugins').ConfigPlugin<{ variant: string; load?: EngineLoad }>} */
-const withEngineAssets = (config, { variant, load = 'inline' }) => {
+/** @param {{ modRequest: { projectName?: string; projectRoot: string } }} cfg */
+const iosProjectName = (cfg) =>
+  cfg.modRequest.projectName ?? IOSConfig.XcodeUtils.getProjectName(cfg.modRequest.projectRoot);
+
+/** @type {import('expo/config-plugins').ConfigPlugin<{ variant: string }>} */
+const withEngineAssets = (config, { variant }) => {
   const engineVariant = engineVariantFor(variant);
 
   config = withDangerousMod(config, [
     'ios',
     async (cfg) => {
       ensureBuilt(engineVariant);
-      const projectName = cfg.modRequest.projectName ?? IOSConfig.XcodeUtils.getProjectName(cfg.modRequest.projectRoot);
-      copyEngine(engineVariant, load, path.join(cfg.modRequest.platformProjectRoot, projectName, FOLDER));
+      copyEngine(engineVariant, 'ios', path.join(cfg.modRequest.platformProjectRoot, iosProjectName(cfg), FOLDER));
       return cfg;
     },
   ]);
 
   config = withXcodeProject(config, (cfg) => {
     const project = cfg.modResults;
-    const projectName = cfg.modRequest.projectName ?? IOSConfig.XcodeUtils.getProjectName(cfg.modRequest.projectRoot);
+    const projectName = iosProjectName(cfg);
     const filepath = `${projectName}/${FOLDER}`;
     if (!project.hasFile(filepath)) {
       IOSConfig.XcodeUtils.addResourceFileToGroup({ filepath, groupName: projectName, project, isBuildFile: true });
@@ -127,7 +120,7 @@ const withEngineAssets = (config, { variant, load = 'inline' }) => {
     'android',
     async (cfg) => {
       ensureBuilt(engineVariant);
-      copyEngine(engineVariant, load, path.join(cfg.modRequest.platformProjectRoot, 'app/src/main/assets', FOLDER));
+      copyEngine(engineVariant, 'android', path.join(cfg.modRequest.platformProjectRoot, 'app/src/main/assets', FOLDER));
       return cfg;
     },
   ]);

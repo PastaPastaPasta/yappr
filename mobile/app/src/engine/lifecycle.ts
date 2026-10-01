@@ -3,13 +3,11 @@ import { AppState, type AppStateStatus } from 'react-native';
 
 import { withBackgroundTask } from '../../modules/background-flush';
 
-import { appendLog } from './logs';
+import { appendLog, errorMessage } from './logs';
 import type { EngineSupervisor } from './supervisor';
 
 /** How long the app holds the background window for the engine's flush (ENGINE.md §3.4, §9.3). */
 export const BACKGROUND_FLUSH_MS = 2000;
-
-const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
  * Replays React Native's AppState and NetInfo into the engine:
@@ -31,9 +29,10 @@ export function bridgeLifecycle(supervisor: EngineSupervisor<unknown>, storageId
       const started = Date.now();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const outcome = await Promise.race([
-        supervisor.background(storageIdle).then(
+        // The storage wait runs even if the engine is down: earlier secure writes may still be landing.
+        supervisor.background().then(storageIdle).then(
           () => 'flushed',
-          (error: unknown) => `failed (${message(error)})`,
+          (error: unknown) => `failed (${errorMessage(error)})`,
         ),
         new Promise<string>((resolve) => {
           timer = setTimeout(() => resolve('timed out'), BACKGROUND_FLUSH_MS);
@@ -48,13 +47,13 @@ export function bridgeLifecycle(supervisor: EngineSupervisor<unknown>, storageId
     if (next === 'background' && !backgrounded) {
       backgrounded = true;
       supervisor.setForeground(false);
-      flush().catch((error: unknown) => appendLog('warn', 'host', `Background flush: ${message(error)}`));
+      flush().catch((error: unknown) => appendLog('warn', 'host', `Background flush: ${errorMessage(error)}`));
     } else if (next === 'active' && backgrounded) {
       backgrounded = false;
       supervisor.setForeground(true);
       supervisor
         .call('engine.lifecycle', ['active'])
-        .catch((error: unknown) => appendLog('warn', 'host', `Foreground: ${message(error)}`));
+        .catch((error: unknown) => appendLog('warn', 'host', `Foreground: ${errorMessage(error)}`));
     }
   });
 
@@ -68,7 +67,7 @@ export function bridgeLifecycle(supervisor: EngineSupervisor<unknown>, storageId
     if (first && next) return; // the engine starts out online
     supervisor
       .connectivity(next)
-      .catch((error: unknown) => appendLog('warn', 'host', `Connectivity: ${message(error)}`));
+      .catch((error: unknown) => appendLog('warn', 'host', `Connectivity: ${errorMessage(error)}`));
   });
 
   return () => {
