@@ -19,7 +19,10 @@
  * post's `commentsEnabled` (b20: a comment on a comments-off post is refused)
  * and lets only a blog's owner post to it (b21). The 5.0.0-beta.1 re-cut (v6)
  * drops the copied `blogPostOwnerId`: `postOwnerAndTime` derives the post's
- * owner through `blogPostId` (b4d), so there is no owner left to forge.
+ * owner through `blogPostId` (b4d), so there is no owner left to forge: a
+ * comment still carrying it is refused (b3d), nobody else's query sees the
+ * comments (b4e), and the derived key is read from a removed post's record
+ * when a comment outlives its post (b15e-g).
  *   node scripts/verify-blog.mjs --self-test   # offline: contract declares what the cases assert
  */
 import bs58 from 'bs58';
@@ -32,6 +35,8 @@ import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, REFERENCE_NOT_FOUND_DELETABLE, caseBan
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 
 const CONTRACT_FILE = 'yappr-blog-contract.json';
+/** A property the type does not declare (`additionalProperties: false`): JSON-schema 10101. */
+const UNKNOWN_PROPERTY = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror|additional ?propert/i;
 
 const COMMENT_COST = 1n;
 const DEFAULT_YAPP = 20n;
@@ -107,6 +112,11 @@ async function caseB3Comments(ctx) {
   const comment = (label, expect, data, options = { tokenCost: COMMENT_COST }) => battery.probeCreate(label, expect, reader, 'blogComment', commentData({ blogPostId: id32(ctx.post1), ...data }), options);
   await comment('b3b comment on a GHOST post is rejected (40120)', REFERENCE_NOT_FOUND, { blogPostId: randomEntropy(), content: `ghost ${run}` });
   await comment('b3c comment WITHOUT a token payment agreement is rejected', TOKEN_AGREEMENT_MISSING, { content: `unpaid ${run}` }, { noPayment: true });
+  // v6 has no `blogPostOwnerId`: a client still on v5 (copying the owner) is refused (10101,
+  // additionalProperties), not silently accepted. The field is spread past commentData(),
+  // which would drop it before it reached the document. A refused write charges no YAPP (b9a).
+  await battery.probeCreate('b3d a v6 comment that still copies blogPostOwnerId is refused (10101)', UNKNOWN_PROPERTY, reader, 'blogComment',
+    { ...commentData({ blogPostId: id32(ctx.post1), content: `stale client ${run}` }), blogPostOwnerId: id32(ctx.author.ownerId) }, { tokenCost: COMMENT_COST });
 }
 
 async function caseB4Counts(ctx) {
@@ -134,6 +144,9 @@ async function caseB4Counts(ctx) {
     battery.queryDocs('blogComment', { where, orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100 }),
   ]);
   battery.check('b4d postOwnerAndTime serves "comments on my posts" since a timestamp, both directions', asc.length === 3 && desc.length === 3, `asc=${asc.length} desc=${desc.length}`);
+  // The derived key is the referenced post's own `$ownerId`: nobody else's notification query sees these comments.
+  const foreign = await battery.queryDocs('blogComment', { where: [['blogPostId.$ownerId', '==', ctx.stranger.ownerId], ['$createdAt', '>', ctx.startedAt]], orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100 });
+  battery.check('b4e postOwnerAndTime credits no comment to someone who does not own the post', foreign.length === 0, `stranger rows=${foreign.length}`);
   battery.workingShapes.push({ label: 'comments on my blog posts since last seen', shape: { documentTypeName: 'blogComment', where: [['blogPostId.$ownerId', '==', '<me>'], ['$createdAt', '>', '<lastSeen>']], orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'desc']] } });
 }
 
@@ -247,6 +260,12 @@ async function caseB14ModeratorDelete(ctx) {
   if (!post.ok) { battery.check('b14 fixture', false, 'no post to take down'); return; }
   const comment = await battery.attemptCreate(reader, 'blogComment', commentData({ blogPostId: id32(post.id), content: `on the doomed post ${run}` }), { tokenCost: COMMENT_COST });
   if (comment.ok) ctx.readerComments += 1;
+  // A second comment outlives the post's takedown, so b15e-g can show the derived
+  // `blogPostId.$ownerId` being read from the post's removal record (v6).
+  const survivor = await battery.attemptCreate(reader, 'blogComment', commentData({ blogPostId: id32(post.id), content: `outlives the doomed post ${run}` }), { tokenCost: COMMENT_COST });
+  if (survivor.ok) ctx.readerComments += 1;
+  const listedForAuthor = async () => (await battery.queryDocs('blogComment', { where: [['blogPostId.$ownerId', '==', author.ownerId], ['$createdAt', '>', ctx.startedAt]], orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100 }))
+    .some((d) => battery.b58(d.$id ?? d.id) === survivor.id);
   await caseModeratorDelete(ctx, { prefix: 'b14', docType: 'blogComment', documentId: comment.ok ? comment.id : null, ownerId: reader.ownerId });
   await caseModeratorDelete(ctx, {
     prefix: 'b15', docType: 'blogPost', documentId: post.id, ownerId: author.ownerId,
@@ -254,6 +273,13 @@ async function caseB14ModeratorDelete(ctx) {
       // A comment on the removed post: a write must name a document in state,
       // even through a moderatedDocument reference.
       await battery.probeCreate('b15d a comment on the removed post is refused (40120)', REFERENCE_NOT_FOUND_DELETABLE, reader, 'blogComment', commentData({ blogPostId: id32(post.id), content: `too late ${run}` }), { tokenCost: COMMENT_COST });
+      if (survivor.ok) {
+        battery.check('b15e postOwnerAndTime still lists a comment whose post was taken down', await listedForAuthor());
+        // The delete clears the derived index entry, so Drive must read the
+        // post's `$ownerId` from the removal record (the post is gone from state).
+        await battery.probeDelete('b15f the commenter deletes that comment after the takedown', null, reader, 'blogComment', survivor.id);
+        battery.check('b15g …and postOwnerAndTime no longer lists it', !(await listedForAuthor()));
+      } else battery.check('b15e-g fixture', false, 'no surviving comment');
       // blog is moderator-deletable too, but the fixture blog carries every
       // other case's documents, so a THROWAWAY blog is what goes.
       const doomedBlog = await battery.attemptCreate(author, 'blog', blogData(`${run}-doomed`));
