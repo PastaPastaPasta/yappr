@@ -25,9 +25,6 @@ function resolveVariant(raw: string | undefined): Variant {
   return value;
 }
 
-/** How the hidden WebView loads the engine (plugins/engine-assets). */
-const ENGINE_LOAD = 'inline';
-
 // The icon's own background, so the splash and adaptive icon blend with it.
 const ICON_BACKGROUND = '#1088d2';
 
@@ -59,7 +56,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     plugins: [
       'expo-router',
       'expo-secure-store',
-      ['./plugins/engine-assets', { variant, load: ENGINE_LOAD }],
+      'expo-web-browser',
+      [
+        'expo-local-authentication',
+        { faceIDPermission: 'Allow Yappr to use Face ID to unlock your accounts.' },
+      ],
+      ['./plugins/engine-assets', { variant }],
       [
         'expo-splash-screen',
         {
@@ -76,7 +78,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     extra: {
       variant,
       network: v.network,
-      engine: engineExtra(variant, ENGINE_LOAD),
+      engine: engineExtra(variant),
     },
   };
 };

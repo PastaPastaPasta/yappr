@@ -1,18 +1,19 @@
+import type { LogLevel } from '@engine/protocol/envelope';
 import * as Clipboard from 'expo-clipboard';
 import { Stack } from 'expo-router';
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { Alert, Platform, Text as RNText, View } from 'react-native';
+import { Alert, Platform, Text as RNText, TextInput, View } from 'react-native';
 
 import { config } from '~/config';
-import { useEngineStatus } from '~/engine/hooks';
+import { useEngineEvent, useEngineStatus } from '~/engine/hooks';
 import { engine, engineNetworkKey, engineStorage, engineSupervisor, resetEngineData, simulateOnNextBoot } from '~/engine/index';
 import { getLogs, subscribeLogs } from '~/engine/logs';
 import type { EngineStatus } from '~/engine/supervisor';
-import { ActionButton, Row, Section } from '~/engine/ui';
+import { ActionButton, Row, Section, type Tone } from '~/engine/ui';
 import { clearAccountCache } from '~/state/query-client';
 import { Screen } from '~/ui/Screen';
 
-const STATE_LABEL: Record<EngineStatus['state'], { label: string; tone?: 'ok' | 'warn' | 'bad' }> = {
+const STATE_LABEL: Record<EngineStatus['state'], { label: string; tone?: Tone }> = {
   idle: { label: 'Stopped' },
   starting: { label: 'Booting', tone: 'warn' },
   handshaking: { label: 'Booting', tone: 'warn' },
@@ -26,7 +27,17 @@ const STATE_LABEL: Record<EngineStatus['state'], { label: string; tone?: 'ok' | 
 };
 
 const ms = (value: number | undefined) => (value === undefined ? '—' : `${value.toLocaleString()} ms`);
-const yesNo = (value: boolean | undefined) => (value === undefined ? '—' : value ? 'Yes' : 'No');
+const yesNo = (value: boolean | undefined) => {
+  if (value === undefined) return '—';
+  return value ? 'Yes' : 'No';
+};
+
+const LEVEL_COLOR: Record<LogLevel, string> = {
+  debug: 'text-gray-600 dark:text-gray-400',
+  info: 'text-gray-600 dark:text-gray-400',
+  warn: 'text-amber-600',
+  error: 'text-red-600',
+};
 const short = (value: string | undefined) => (value ? `${value.slice(0, 6)}…${value.slice(-4)}` : '—');
 const errorText = (error: unknown) => (error instanceof Error ? `${error.name}: ${error.message}` : String(error));
 
@@ -66,6 +77,63 @@ function confirm(title: string, message: string, action: string, run: () => void
     { text: 'Cancel', style: 'cancel' },
     { text: action, style: 'destructive', onPress: run },
   ]);
+}
+
+/**
+ * Dev only, devnet only: sign in with a pasted private key (WIF or hex) so
+ * screens can be tested signed in before the real sign-in flow lands. No key
+ * is bundled; the field is cleared as soon as the call returns.
+ */
+function DevSignIn() {
+  const [key, setKey] = useState('');
+  const [session, setSession] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = () => {
+    engine.api.session
+      .current()
+      .then((current) => setSession(current ? `${current.username ?? current.identityId}` : null))
+      .catch((e: unknown) => setError(errorText(e)));
+  };
+  useEffect(refresh, []);
+  useEngineEvent('session.changed', refresh);
+
+  const run = (call: () => Promise<unknown>) => {
+    setError(null);
+    call()
+      .catch((e: unknown) => setError(errorText(e)))
+      .finally(() => {
+        setKey('');
+        refresh();
+      });
+  };
+
+  return (
+    <Section title="Dev sign-in (devnet)">
+      <View className="gap-3 p-4">
+        <Row label="Signed in as" value={session ?? 'nobody'} />
+        <TextInput
+          value={key}
+          onChangeText={setKey}
+          placeholder="Private key (WIF or hex)"
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          testID="dev-sign-in-key"
+          className="rounded-lg border border-gray-300 px-3 py-2 font-mono text-gray-900 dark:border-gray-700 dark:text-white"
+        />
+        <ActionButton
+          label="Sign in"
+          testID="dev-sign-in"
+          onPress={() => run(() => engine.api.session.signInWithKey({ key: key.trim() }))}
+        />
+        {session ? (
+          <ActionButton kind="outline" label="Sign out" onPress={() => run(() => engine.api.session.signOut())} />
+        ) : null}
+        {error ? <Row label="Error" value={error} tone="bad" /> : null}
+      </View>
+    </Section>
+  );
 }
 
 export default function DiagnosticsScreen() {
@@ -179,6 +247,8 @@ export default function DiagnosticsScreen() {
         ) : null}
       </View>
 
+      {__DEV__ && config.variant === 'devnet' ? <DevSignIn /> : null}
+
       {config.variant !== 'production' ? (
         <Section title="Debug calls (temporary)">
           <View className="gap-3 p-4">
@@ -229,7 +299,7 @@ export default function DiagnosticsScreen() {
               <RNText
                 key={line.id}
                 selectable
-                className={`font-mono text-xs ${line.level === 'error' ? 'text-red-600' : line.level === 'warn' ? 'text-amber-600' : 'text-gray-600 dark:text-gray-400'}`}
+                className={`font-mono text-xs ${LEVEL_COLOR[line.level]}`}
               >
                 {new Date(line.at).toISOString().slice(11, 23)} {line.source === 'host' ? 'host ' : ''}
                 {line.message}
