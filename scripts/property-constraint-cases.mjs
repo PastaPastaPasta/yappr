@@ -54,7 +54,8 @@ export const baseOrder = () => ({ storeId: id(), sellerId: id(), encryptedPayloa
 export const baseItem = () => ({ storeId: id(), title: 'constraint probe', status: 'active' });
 export const baseZone = () => ({ storeId: id(), name: 'constraint probe', rateType: 'flat' });
 export const basePoll = () => ({ question: 'constraint probe?', option0: 'a', option1: 'b' });
-export const baseComment = () => ({ blogPostId: id(), blogPostOwnerId: id(), content: 'constraint probe' });
+/** Blog v6 derives the post owner through blogPostId; there is no blogPostOwnerId to send. */
+export const baseComment = () => ({ blogPostId: id(), content: 'constraint probe' });
 export const baseBlogPost = () => ({ blogId: id(), title: 'constraint probe', slug: 'constraint-probe', data0: bytes(16) });
 
 const drop = (fields, ...names) => Object.fromEntries(Object.entries(fields).filter(([key]) => !names.includes(key)));

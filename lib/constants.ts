@@ -162,7 +162,17 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // and only a blog's owner may post to it. v4 has no `postCommentsEnabled`, so
 // a v5 comment would be refused there (and a v4 comment on a v5 contract is
 // refused whenever the post stores the flag).
-export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5'] as const
+//
+// `v6` (5.0.0-beta.1, docs/PLATFORM_V5_BETA1_UPGRADE.md) is v5 in the 5.0
+// grammar plus one write change: a comment no longer carries
+// `blogPostOwnerId`. `postOwnerAndTime` indexes `blogPostId.$ownerId`, a
+// derived index property read through the post reference, so "comments on my
+// posts" pins that name instead, and a v6 comment carrying the old field is
+// refused (and a v5 one without it). Its references at `blog`/`blogPost` are
+// `moderatedDocument` references (after a takedown they resolve to the removal
+// record), and `publishedAt` is frozen by a conditional `immutable` entry
+// instead of `immutableAllowSetting`, which 5.0 refuses.
+export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6'] as const
 export type BlogTopology = (typeof BLOG_TOPOLOGIES)[number]
 export const blogTopology = (): BlogTopology =>
   BLOG_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_BLOG_TOPOLOGY) ?? 'v1'
@@ -173,6 +183,8 @@ const blogTopologyAtLeast = (topology: BlogTopology) => BLOG_TOPOLOGIES.indexOf(
 export const blogLabelsAreTyped = () => blogTopologyAtLeast('v4')
 /** True on v5 and later: a comment carries its post's `commentsEnabled` as `postCommentsEnabled`. */
 export const blogCommentsCopyPostFlag = () => blogTopologyAtLeast('v5')
+/** True on v6 and later: a comment's post owner is derived through `blogPostId`, not copied into `blogPostOwnerId`. */
+export const blogCommentsDerivePostOwner = () => blogTopologyAtLeast('v6')
 // ---- profile topology ----
 // `v1` is the unified profile contract live on testnet/production:
 // `paymentUris` and `socialLinks` are JSON strings. `v2` (4.2.0-beta.4,

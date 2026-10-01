@@ -104,20 +104,28 @@ function printAudit(documentSchemas, dataContract) {
     console.log(`  ${name.padEnd(18)} ${flags.join(' ')}`);
     console.log(`  ${''.padEnd(18)} ${indices.join(' ')}`);
     if (refs.length > 0) console.log(`  ${''.padEnd(18)} refersTo: ${refs.join(' ')}`);
+    // 5.0.0-beta.1 reports `{ immutable, immutableWhen }`: the properties frozen
+    // at creation, and those frozen while a condition holds (`{ property, when }`
+    // entries, which replaced `immutableAllowSetting`).
+    // The parse hands integer literals back as BigInt; both sides are rendered
+    // with them as numbers, so `300000` in the file matches `300000n`.
+    const conditionJson = (value) => JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? Number(v) : v));
     const frozen = dataContract.documentTypeImmutableProperties(name);
-    if (frozen.immutable.length > 0) {
-      const settable = new Set(frozen.immutableAllowSetting);
-      const rendered = frozen.immutable.map((property) => (settable.has(property) ? `${property}(set-once)` : property));
-      console.log(`  ${''.padEnd(18)} immutable: ${rendered.join(' ')}`);
-    }
+    const frozenWhen = frozen.immutableWhen ?? {};
+    const rendered = [...frozen.immutable, ...Object.entries(frozenWhen).map(([property, when]) => `${property}(when ${conditionJson(when)})`)];
+    if (rendered.length > 0) console.log(`  ${''.padEnd(18)} immutable: ${rendered.join(' ')}`);
     // A declared list the parser did not pick up is the failure this audit
     // exists to catch: it would validate offline and be ignored on chain.
     // Compared by CONTENT, not length — a same-length list naming different
     // properties is the same silent divergence. `documentTypeImmutableProperties`
-    // returns its arrays sorted, so the declaration is sorted to match.
-    const declared = [...(schema.immutable ?? [])].sort();
-    if (JSON.stringify(declared) !== JSON.stringify([...frozen.immutable].sort())) {
-      throw new Error(`${name}: schema declares immutable ${JSON.stringify(declared)} but the parsed contract reports ${JSON.stringify(frozen.immutable)}`);
+    // returns both sorted by property, so the declaration is sorted to match.
+    const entries = schema.immutable ?? [];
+    const declared = entries.filter((entry) => typeof entry === 'string').sort();
+    const declaredWhen = entries.filter((entry) => typeof entry !== 'string').sort((a, b) => (a.property < b.property ? -1 : 1));
+    const parsedWhen = Object.entries(frozenWhen).sort(([a], [b]) => (a < b ? -1 : 1));
+    if (JSON.stringify(declared) !== JSON.stringify([...frozen.immutable].sort())
+      || conditionJson(declaredWhen.map(({ property, when }) => [property, when])) !== conditionJson(parsedWhen)) {
+      throw new Error(`${name}: schema declares immutable ${JSON.stringify(entries)} but the parsed contract reports ${conditionJson(frozen)}`);
     }
   }
   auditModeration(documentSchemas, dataContract);

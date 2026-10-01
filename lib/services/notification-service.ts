@@ -451,7 +451,8 @@ class NotificationService {
       );
       return comments.flatMap(comment => {
         const post = posts.get(comment.blogPostId);
-        // `blogPostOwnerId` is pinned by consensus to the post's own `$ownerId`,
+        // The index key is the post's own `$ownerId` (consensus-bound
+        // `blogPostOwnerId` up to v5, derived through `blogPostId` from v6),
         // so a row on this index is by construction a comment on this user's
         // post — this drops only rows whose post did not come back (a read
         // failure), since there is no title or link to render without it.

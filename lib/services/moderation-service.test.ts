@@ -174,10 +174,10 @@ describe('read shapes', () => {
   it('decodes a removal record with its hash and restoration', () => {
     const removal = toRemoval({
       documentId: 'D1', documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: 'r' },
-      removedAt: BigInt(10), documentHash: 'ab'.repeat(32), restoredAt: BigInt(20), restoredBy: 'M2',
+      removedAt: BigInt(10), documentHash: 'ab'.repeat(32), keptFields: {}, restoredAt: BigInt(20), restoredBy: 'M2',
     })
     expect(removal).toMatchObject({ documentHash: 'ab'.repeat(32), restoredAt: 20, restoredBy: 'M2', removedAt: 10 })
-    expect(toRemoval({ documentId: 'D1', documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: '' }, removedAt: BigInt(10), documentHash: '00' }))
+    expect(toRemoval({ documentId: 'D1', documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: '' }, removedAt: BigInt(10), documentHash: '00', keptFields: {} }))
       .toMatchObject({ restoredAt: null, restoredBy: null })
   })
 })
@@ -185,7 +185,7 @@ describe('read shapes', () => {
 describe('what a missing post or reply may claim', () => {
   const record = (restoredAt: number | null) => toRemoval({
     documentId: 'D1', documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: 'v9 battery takedown' },
-    removedAt: BigInt(10), documentHash: '00', ...(restoredAt === null ? {} : { restoredAt: BigInt(restoredAt), restoredBy: 'M2' }),
+    removedAt: BigInt(10), documentHash: '00', keptFields: {}, ...(restoredAt === null ? {} : { restoredAt: BigInt(restoredAt), restoredBy: 'M2' }),
   })
 
   it('claims a takedown for a standing removal record, proven absent or not', () => {
