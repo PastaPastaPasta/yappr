@@ -26,12 +26,14 @@ const skip = skipReason()
 const RUN = Date.now().toString(36)
 const POLL_MS = 5_000
 const WAIT_MS = 180_000
+const HELLO = `hello from the mobile engine ${RUN}`
+const connect = () => connectEngine({ timeoutMs: 300_000 })
 
 describe.skipIf(skip !== null)(`dm on sakura${skip ? ` (skipped: ${skip})` : ''}`, () => {
   let alice: PoolPersona
   let bob: PoolPersona
   let carol: PoolPersona
-  let engine: ReturnType<typeof connectEngine>
+  let engine: ReturnType<typeof connect>
   const signedIn = new Set<string>()
   let addedDocument = false
 
@@ -41,12 +43,12 @@ describe.skipIf(skip !== null)(`dm on sakura${skip ? ` (skipped: ${skip})` : ''}
     if (active?.identityId === persona.identityId) return
     if (signedIn.has(persona.identityId)) {
       await engine.api.session.switchAccount(persona.identityId)
-      engine = connectEngine({ timeoutMs: 300_000 })
+      engine = connect()
       expect((await engine.api.session.restore())?.identityId).toBe(persona.identityId)
     } else {
       if (active) {
         await engine.api.session.prepareAddAccount()
-        engine = connectEngine({ timeoutMs: 300_000 })
+        engine = connect()
         await engine.api.session.restore()
       }
       await engine.api.session.signInWithKey({ key: persona.keyHex('high') })
@@ -86,7 +88,7 @@ describe.skipIf(skip !== null)(`dm on sakura${skip ? ` (skipped: ${skip})` : ''}
       Object.assign(globalThis, { document: Object.assign(new EventTarget(), { visibilityState: 'visible' }) })
       addedDocument = true
     }
-    engine = connectEngine({ timeoutMs: 300_000 })
+    engine = connect()
     await engine.api.engine.boot()
     await engine.api.session.signOut()
     expect((await engine.api.engine.info()).capabilities.dm).toBe('v5')
@@ -100,11 +102,11 @@ describe.skipIf(skip !== null)(`dm on sakura${skip ? ` (skipped: ${skip})` : ''}
   it('1:1 round trip between two pool slots', async () => {
     await become(alice)
     const key = await engine.api.dm.startDirect(bob.identityId)
-    const sent = await settled(await engine.api.dm.send(key, `hello from the mobile engine ${RUN}`))
+    const sent = await settled(await engine.api.dm.send(key, HELLO))
     expect(sent).toMatchObject({ op: 'dm.send', state: 'confirmed' })
 
     await become(bob)
-    const inbox = await conversation(c => c.peer?.id === alice.identityId && c.lastMessage?.text === `hello from the mobile engine ${RUN}`)
+    const inbox = await conversation(c => c.peer?.id === alice.identityId && c.lastMessage?.text === HELLO)
     expect(inbox).toMatchObject({ backend: 'v5', kind: 'direct', lastMessage: { own: false } })
     expect(inbox.unread).toBeGreaterThan(0)
     expect(messageEvents().some(e => e.key === inbox.key && e.message.text.endsWith(RUN))).toBe(true)
@@ -115,7 +117,7 @@ describe.skipIf(skip !== null)(`dm on sakura${skip ? ` (skipped: ${skip})` : ''}
     await become(alice)
     await conversation(c => c.key === key && c.lastMessage?.text === `reply ${RUN}`)
     const page = await engine.api.dm.messages(key)
-    expect(page.items.slice(0, 2).map(m => [m.text, m.own])).toEqual([[`reply ${RUN}`, false], [`hello from the mobile engine ${RUN}`, true]])
+    expect(page.items.slice(0, 2).map(m => [m.text, m.own])).toEqual([[`reply ${RUN}`, false], [HELLO, true]])
   })
 
   it('group: create, rename, add a member, a member leaves', async () => {

@@ -1,10 +1,11 @@
-import { NoEncryptionKeyError, type ConversationView, type DmEngine, type MessageView } from '@/lib/services/dm-v5'
+import { NoEncryptionKeyError, type ConversationView, type DmEngine, type EngineSnapshot, type MessageView } from '@/lib/services/dm-v5'
+import { GroupError } from '@/lib/services/dm-v5/groups'
 import { logger } from '@/lib/logger'
 import { RpcError } from '../protocol/envelope'
 import type { AppLifecycleState } from '../shims/lifecycle'
 import type { WriteResult } from '../writes/tickets'
-import { createChangeTracker, unreadCounts, type DmEmit, type DmView } from './changes'
-import type { ConversationRow, DmGroupAction, DmStatusDTO, MessageDTO } from './types'
+import { createChangeTracker, unreadCounts, type ConversationRow, type DmEmit, type DmView } from './changes'
+import type { DmGroupAction, DmStatusDTO, MessageDTO } from './types'
 
 /** Where the v5 engine comes from: lib's per-identity registry in the app, an in-memory chain in tests. */
 export interface DmEngineSource {
@@ -14,7 +15,7 @@ export interface DmEngineSource {
   release(): void
 }
 
-export function toMessageDTO(view: MessageView): MessageDTO {
+function toMessageDTO(view: MessageView): MessageDTO {
   return { id: view.id, sender: view.senderId, text: view.text, at: new Date(view.createdAt), own: view.own, pending: view.pending }
 }
 
@@ -46,10 +47,15 @@ function toRow(view: ConversationView): ConversationRow {
   }
 }
 
+const rowsOf = (snapshot: EngineSnapshot): ConversationRow[] => snapshot.conversations.map(toRow)
+
+const conversationOf = (engine: DmEngine, key: string): ConversationView | undefined =>
+  engine.getSnapshot().conversations.find(view => view.key === key)
+
 function view(engine: DmEngine): DmView {
   const snapshot = engine.getSnapshot()
   return {
-    rows: snapshot.conversations.map(toRow),
+    rows: rowsOf(snapshot),
     ready: snapshot.ready,
     error: snapshot.error,
     messages: key => engine.messages(key).map(toMessageDTO),
@@ -87,10 +93,6 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     const found = engineOf(identityId)
     if (!found) throw new RpcError('Messages are locked: this device has no encryption key for the account (dm.unlock)', 'NO_KEY')
     return found
-  }
-
-  function row(identityId: string, key: string): ConversationRow | null {
-    return view(engine(identityId)).rows.find(candidate => candidate.key === key) ?? null
   }
 
   return {
@@ -132,7 +134,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
         backend: 'v5',
         locked: !running,
         ready: snapshot?.ready ?? false,
-        ...unreadCounts(snapshot ? snapshot.conversations.map(toRow) : []),
+        ...unreadCounts(snapshot ? rowsOf(snapshot) : []),
         capReached: snapshot?.capReached ?? false,
         // Like web's settings dialog, never show the default in place of a setting not loaded yet.
         retention: snapshot?.ready ? snapshot.retention : null,
@@ -143,7 +145,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     },
 
     async rows(identityId: string): Promise<ConversationRow[]> {
-      return view(engine(identityId)).rows
+      return rowsOf(engine(identityId).getSnapshot())
     },
 
     async messages(identityId: string, key: string): Promise<MessageDTO[]> {
@@ -163,10 +165,11 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     assertSendable(identityId: string, key: string): void {
       const running = engine(identityId)
       if (!running.ctx.convs.has(key)) throw new RpcError('Conversation not found', 'BAD_REQUEST')
-      const found = row(identityId, key)
-      if (found?.flags.blocked) throw new RpcError('Unblock this person to message them.', 'BAD_REQUEST')
-      if (found?.flags.removed) throw new RpcError('You are no longer a member of this group.', 'BAD_REQUEST')
-      if (found?.flags.ended) throw new RpcError('This group has ended.', 'BAD_REQUEST')
+      // A closed draft is in `convs` but not in the snapshot: it passes.
+      const found = conversationOf(running, key)
+      if (found?.blocked) throw new RpcError('Unblock this person to message them.', 'BAD_REQUEST')
+      if (found?.removed) throw new RpcError('You are no longer a member of this group.', 'BAD_REQUEST')
+      if (found?.ended) throw new RpcError('This group has ended.', 'BAD_REQUEST')
     },
 
     /**
@@ -188,6 +191,16 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       }
     },
 
+    /** Resolves after the roster and grants are written; `failed` members did not get the key yet. */
+    async createGroup(identityId: string, name: string, memberIds: string[]): Promise<{ key: string; failed: string[] }> {
+      try {
+        return await engine(identityId).createGroup(name, memberIds)
+      } catch (error) {
+        if (error instanceof GroupError) throw new RpcError(error.message, 'BAD_REQUEST')
+        throw error
+      }
+    },
+
     async group(identityId: string, request: DmGroupAction): Promise<WriteResult> {
       const running = engine(identityId)
       switch (request.action) {
@@ -203,9 +216,9 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
 
     /** The group a management action targets: it must exist, and only its owner manages members. */
     assertGroupAction(identityId: string, request: DmGroupAction): void {
-      const found = row(identityId, request.key)
-      if (!found || found.kind !== 'group') throw new RpcError('Group not found', 'BAD_REQUEST')
-      if (found.flags.ended || found.flags.removed) throw new RpcError('This group is no longer active', 'BAD_REQUEST')
+      const found = conversationOf(engine(identityId), request.key)
+      if (found?.kind !== 'group') throw new RpcError('Group not found', 'BAD_REQUEST')
+      if (found.ended || found.removed) throw new RpcError('This group is no longer active', 'BAD_REQUEST')
       const ownerOnly = request.action !== 'leave'
       if (ownerOnly !== found.isOwner) {
         throw new RpcError(found.isOwner ? 'The owner ends the group instead of leaving it' : 'Only the group owner can do this', 'BAD_REQUEST')
@@ -213,5 +226,3 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     },
   }
 }
-
-export type V5Backend = ReturnType<typeof createV5Backend>

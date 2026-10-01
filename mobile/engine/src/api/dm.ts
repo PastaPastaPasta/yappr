@@ -4,7 +4,6 @@ import { validateEncryptionKey } from '@/lib/crypto/key-validation'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } from '@/lib/secure-storage'
 import { getDmEngine, MAX_GROUP_MEMBERS, stopDmEngine } from '@/lib/services/dm-v5'
-import { GroupError } from '@/lib/services/dm-v5/groups'
 import { splitText } from '@/lib/services/dm-v5/util'
 import { directMessageService } from '@/lib/services/direct-message-service'
 import { identityService } from '@/lib/services/identity-service'
@@ -17,7 +16,8 @@ import { loadUserSummaries, notSupported } from '../dto/hydrate'
 import { nextPage } from '../dto/paging'
 import { createLegacyBackend, type LegacyDmService } from '../dm/legacy'
 import { createV5Backend, type DmEngineSource } from '../dm/v5'
-import type { ConversationDTO, ConversationRow, DmBackendKind, DmGroupAction, DmRetention, DmStatusDTO, MessageDTO } from '../dm/types'
+import type { ConversationRow } from '../dm/changes'
+import type { ConversationDTO, DmBackendKind, DmGroupAction, DmRetention, DmStatusDTO, MessageDTO } from '../dm/types'
 import type { AppLifecycleState } from '../shims/lifecycle'
 import type { SessionEvents } from './session'
 import type { TicketStore } from '../writes/tickets'
@@ -27,7 +27,7 @@ import { avatarFromField, type AuthorDTO, type Page } from './dto'
 export type * from '../dm/types'
 
 /** Newest-first slices (ENGINE.md §6.3). */
-export const DM_PAGE_SIZE = 50
+const DM_PAGE_SIZE = 50
 const GROUP_NAME_MAX = 100
 const RETENTIONS: readonly DmRetention[] = ['30d', '90d', '1y', 'never']
 /** Peer names and avatars are kept this long for the session (web's `useUserDetails` cache). */
@@ -96,14 +96,13 @@ function keyOf(value: unknown): string {
  */
 export function createDmModule(options: DmModuleOptions) {
   const viewer = options.viewer ?? getCurrentUserId
-  const emit = (event: string, payload: unknown) => options.emit(event, payload)
+  const { emit } = options
   const backend = (options.backend ?? (dmIsV5() ? 'v5' : 'legacy')) === 'v5'
     ? createV5Backend({ source: options.v5Source ?? libEngines, emit, coalesceMs: options.coalesceMs })
     : createLegacyBackend({ service: options.legacyService ?? directMessageService, emit, coalesceMs: options.coalesceMs })
   const authors = new TtlMap<string, AuthorDTO>(AUTHOR_TTL_MS)
   const fetchAuthors = options.authors ?? loadAuthors
 
-  /** The signed-in identity, with its backend started (a no-op once it runs; retried while locked). */
   /**
    * Set by `hooks.stop` (sign-out, account switch) until a session starts
    * again: the outgoing account's keys may still be readable for a moment,
@@ -111,6 +110,7 @@ export function createDmModule(options: DmModuleOptions) {
    */
   let halted = false
 
+  /** The signed-in identity, with its backend started (a no-op once it runs; retried while locked). */
   function session(): string {
     const identityId = viewer()
     if (!identityId) throw new RpcError('Messages need a signed-in account', 'NOT_SIGNED_IN')
@@ -148,6 +148,12 @@ export function createDmModule(options: DmModuleOptions) {
     persistArgs: false,
   })
 
+  function groupNameOf(value: unknown): string {
+    const name = typeof value === 'string' ? value.trim() : ''
+    if (!name || name.length > GROUP_NAME_MAX) throw new RpcError(`A group name is 1 to ${GROUP_NAME_MAX} characters`, 'BAD_REQUEST')
+    return name
+  }
+
   function groupTicket(request: DmGroupAction): WriteTicket {
     const identityId = session()
     const groups = v5('Groups')
@@ -157,7 +163,7 @@ export function createDmModule(options: DmModuleOptions) {
 
   async function withPeers(rows: ConversationRow[]): Promise<ConversationDTO[]> {
     authors.prune()
-    const missing = Array.from(new Set(rows.flatMap(row => (row.peerId && !authors.get(row.peerId) ? [row.peerId] : []))))
+    const missing = Array.from(new Set(rows.flatMap(row => (row.peerId && !authors.has(row.peerId) ? [row.peerId] : []))))
     if (missing.length > 0) {
       const found = await fetchAuthors(missing).catch(() => new Map<string, AuthorDTO>())
       for (const [id, author] of found) if (author.resolved) authors.set(id, author)
@@ -246,25 +252,18 @@ export function createDmModule(options: DmModuleOptions) {
      */
     async createGroup(name: string, memberIds: string[]): Promise<{ key: string; failed: string[] }> {
       const identityId = session()
-      const engine = v5('Groups').engine(identityId)
-      const trimmed = typeof name === 'string' ? name.trim() : ''
-      if (!trimmed || trimmed.length > GROUP_NAME_MAX) throw new RpcError(`A group name is 1 to ${GROUP_NAME_MAX} characters`, 'BAD_REQUEST')
+      const groups = v5('Groups')
+      groups.engine(identityId) // A locked device answers NO_KEY before any argument check.
+      const groupName = groupNameOf(name)
       if (!Array.isArray(memberIds)) throw new RpcError('memberIds must be a list', 'BAD_REQUEST')
       const members = Array.from(new Set(memberIds.map(id => identityIdOf(id, 'member ID')))).filter(id => id !== identityId)
       if (members.length === 0) throw new RpcError('Pick at least one member.', 'BAD_REQUEST')
       if (members.length + 1 > MAX_GROUP_MEMBERS) throw new RpcError(`A group can have at most ${MAX_GROUP_MEMBERS} members.`, 'BAD_REQUEST')
-      try {
-        return await engine.createGroup(trimmed, members)
-      } catch (error) {
-        if (error instanceof GroupError) throw new RpcError(error.message, 'BAD_REQUEST')
-        throw error
-      }
+      return groups.createGroup(identityId, groupName, members)
     },
 
     async renameGroup(key: string, name: string): Promise<WriteTicket> {
-      const trimmed = typeof name === 'string' ? name.trim() : ''
-      if (!trimmed || trimmed.length > GROUP_NAME_MAX) throw new RpcError(`A group name is 1 to ${GROUP_NAME_MAX} characters`, 'BAD_REQUEST')
-      return groupTicket({ action: 'rename', key: keyOf(key), name: trimmed })
+      return groupTicket({ action: 'rename', key: keyOf(key), name: groupNameOf(name) })
     },
 
     async addMember(key: string, memberId: string): Promise<WriteTicket> {
@@ -325,12 +324,13 @@ export function createDmModule(options: DmModuleOptions) {
         storeEncryptionKey(identityId, privateKeyToWif(derived, keyNetwork(), true))
         storeEncryptionKeyType(identityId, 'derived')
       } else {
-        const validation = await validateEncryptionKey(String(input.key).trim(), identityId)
+        const key = String(input.key).trim()
+        const validation = await validateEncryptionKey(key, identityId)
         if (!validation.isValid) {
           if (validation.noKeyOnIdentity) return { unlocked: false, reason: 'no-key-on-identity' }
           throw new RpcError(validation.error || 'Invalid key', 'KEY_INVALID')
         }
-        storeEncryptionKey(identityId, String(input.key).trim())
+        storeEncryptionKey(identityId, key)
       }
       await options.secureDurable?.()
       return { unlocked: true, status: await backend.status(session()) }
@@ -356,7 +356,7 @@ export function createDmModule(options: DmModuleOptions) {
       halted = true
       let timer: ReturnType<typeof setTimeout> | undefined
       const bound = new Promise<void>(resolve => { timer = setTimeout(resolve, STOP_FLUSH_WAIT_MS) })
-      return Promise.race([backend.deactivate().catch(() => undefined), bound]).finally(() => clearTimeout(timer))
+      return Promise.race([backend.deactivate().catch(error => logger.warn('Stopping messages failed:', error)), bound]).finally(() => clearTimeout(timer))
     },
     /** AppState: `background` resolves once the DM flush is done. */
     lifecycle: (state: AppLifecycleState): Promise<void> => backend.lifecycle(state),
@@ -364,5 +364,3 @@ export function createDmModule(options: DmModuleOptions) {
 
   return { api, hooks }
 }
-
-export type DmApi = ReturnType<typeof createDmModule>['api']

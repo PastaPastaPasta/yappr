@@ -472,20 +472,21 @@ describe('direct messages around sign-out and account changes', () => {
     const key = secp256k1.utils.randomSecretKey()
     const id = addIdentity([{ id: 2, purpose: AUTH, securityLevel: HIGH, privateKey: key }])
     const stops: string[] = []
-    const stopDm = vi.fn(async () => {
+    const stopDm = async () => {
       await new Promise(resolve => setTimeout(resolve, 5))
       stops.push(localStorage.getItem(`yappr_secure_pk_${id}`) ? 'key held' : 'key gone')
-    })
-    const session = createSessionModule({ emit, controller: createMobileAuthController(), secureDurable: () => engineStorage.secureDurable(), stopDm })
+    }
+    const open = () => createSessionModule({ emit, controller: createMobileAuthController(), secureDurable: () => engineStorage.secureDurable(), stopDm })
+    const session = open()
     await session.restore()
     await session.signInWithKey({ key: bytesToHex(key) })
     await session.prepareAddAccount()
     expect(stops).toEqual(['key held'])
 
-    const next = createSessionModule({ emit, controller: createMobileAuthController(), secureDurable: () => engineStorage.secureDurable(), stopDm })
+    const next = open()
     await next.restore()
     await next.switchAccount(id)
-    const restored = createSessionModule({ emit, controller: createMobileAuthController(), secureDurable: () => engineStorage.secureDurable(), stopDm })
+    const restored = open()
     expect((await restored.restore())?.identityId).toBe(id)
     await restored.signOut()
     expect(stops).toEqual(['key held', 'key held', 'key held'])

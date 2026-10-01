@@ -6,8 +6,8 @@ import type { Conversation, DirectMessage } from '@/lib/types'
 import { RpcError } from '../protocol/envelope'
 import type { AppLifecycleState } from '../shims/lifecycle'
 import type { WriteResult } from '../writes/tickets'
-import { createChangeTracker, unreadCounts, type DmEmit, type DmView } from './changes'
-import type { ConversationRow, DmStatusDTO, MessageDTO } from './types'
+import { createChangeTracker, unreadCounts, type ConversationRow, type DmEmit } from './changes'
+import type { DmStatusDTO, MessageDTO } from './types'
 
 /** The part of lib's `directMessageService` the legacy backend drives (tests pass a fake). */
 export type LegacyDmService = Pick<
@@ -25,7 +25,8 @@ const MAX_CATCH_UP_PAGES = 20
 const OPTIMISTIC_MATCH_MS = 60_000
 
 const KEY_PREFIX = 'l:'
-export const legacyKey = (conversationId: string) => `${KEY_PREFIX}${conversationId}`
+const legacyKey = (conversationId: string) => `${KEY_PREFIX}${conversationId}`
+const conversationIdOf = (key: string) => (key.startsWith(KEY_PREFIX) ? key.slice(KEY_PREFIX.length) : null)
 
 interface Thread {
   messages: DirectMessage[]
@@ -67,32 +68,37 @@ const sendReceipts = () => useSettingsStore.getState().sendReadReceipts
  * Mirrors `components/messages/legacy-messages.tsx` over the same
  * `directMessageService` calls, with the same DTOs as DM v5.
  */
-export function createLegacyBackend(options: { service: LegacyDmService; emit: DmEmit; coalesceMs?: number; now?: () => number }) {
+export function createLegacyBackend(options: { service: LegacyDmService; emit: DmEmit; coalesceMs?: number }) {
   const { service } = options
-  const now = options.now ?? Date.now
-  const tracker = createChangeTracker({ emit: options.emit, coalesceMs: options.coalesceMs, now })
+  const tracker = createChangeTracker({ emit: options.emit, coalesceMs: options.coalesceMs })
   let state: LegacyState | null = null
+
+  /** Drop the current state (its poll timer with it) for `next`. */
+  function replaceState(next: LegacyState | null): void {
+    if (state?.timer) clearTimeout(state.timer)
+    state = next
+    tracker.reset()
+  }
 
   function stateFor(identityId: string): LegacyState {
     if (state?.identityId === identityId) return state
-    stop()
-    tracker.reset()
-    state = {
+    const next: LegacyState = {
       identityId, conversations: new Map(), drafts: new Set(), listedAt: 0, listing: null, threads: new Map(),
       readUpTo: new Map(), peerRead: new Map(), openId: null, timer: null, paused: false, error: null,
     }
-    return state
-  }
-
-  function stop(): void {
-    if (state?.timer) clearTimeout(state.timer)
-    if (state) state.timer = null
+    replaceState(next)
+    return next
   }
 
   function conversationOf(current: LegacyState, key: string): Conversation {
-    const found = key.startsWith(KEY_PREFIX) ? current.conversations.get(key.slice(KEY_PREFIX.length)) : undefined
+    const id = conversationIdOf(key)
+    const found = id === null ? undefined : current.conversations.get(id)
     if (!found) throw new RpcError('Conversation not found', 'BAD_REQUEST')
     return found
+  }
+
+  function messagesOf(current: LegacyState, conversationId: string): MessageDTO[] {
+    return (current.threads.get(conversationId)?.messages ?? []).map(message => toMessageDTO(message, current.identityId))
   }
 
   function unreadOf(current: LegacyState, conversation: Conversation): number {
@@ -131,19 +137,18 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
     tracker.changed(() => {
       const current = state
       if (!current) return null
-      const view: DmView = {
+      return {
         rows: rowsOf(current),
         ready: current.listedAt > 0,
         error: current.error,
-        messages: key => (current.threads.get(key.slice(KEY_PREFIX.length))?.messages ?? []).map(m => toMessageDTO(m, current.identityId)),
+        messages: key => messagesOf(current, conversationIdOf(key) ?? ''),
       }
-      return view
     })
   }
 
-  /** Re-read the conversation list when it is older than the TTL (or `force`). */
-  async function refreshList(current: LegacyState, force = false): Promise<void> {
-    if (!force && current.listedAt > 0 && now() - current.listedAt < LEGACY_LIST_TTL_MS) return
+  /** Re-read the conversation list when it is older than the TTL. */
+  async function refreshList(current: LegacyState): Promise<void> {
+    if (current.listedAt > 0 && Date.now() - current.listedAt < LEGACY_LIST_TTL_MS) return
     current.listing ??= (async () => {
       const fresh = await service.getConversations(current.identityId, { includeParticipantInfo: false })
       if (state !== current) return
@@ -159,7 +164,7 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
         const lastMessage = known && known.createdAt > (conversation.lastMessage?.createdAt ?? new Date(0)) ? known : conversation.lastMessage
         current.conversations.set(conversation.id, { ...conversation, lastMessage, updatedAt: lastMessage?.createdAt ?? conversation.updatedAt })
       }
-      current.listedAt = now()
+      current.listedAt = Date.now()
       current.error = null
     })().finally(() => {
       current.listing = null
@@ -169,27 +174,23 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
   }
 
   /** Merge messages into a thread (by id; a polled one replaces the optimistic copy of the same send). */
-  function merge(current: LegacyState, conversation: Conversation, incoming: DirectMessage[]): DirectMessage[] {
-    const thread = current.threads.get(conversation.id)
-    if (!thread) return []
-    const added: DirectMessage[] = []
+  function merge(current: LegacyState, conversationId: string, incoming: DirectMessage[]): void {
+    const conversation = current.conversations.get(conversationId)
+    const thread = current.threads.get(conversationId)
+    if (!conversation || !thread) return
     for (const message of incoming) {
       if (thread.messages.some(m => m.id === message.id)) continue
       const optimistic = thread.messages.findIndex(m =>
         m.id.startsWith('temp-') && m.senderId === message.senderId && m.content === message.content &&
         Math.abs(m.createdAt.getTime() - message.createdAt.getTime()) < OPTIMISTIC_MATCH_MS)
       if (optimistic >= 0) thread.messages[optimistic] = message
-      else {
-        thread.messages.push(message)
-        added.push(message)
-      }
+      else thread.messages.push(message)
     }
     thread.messages.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     const newest = thread.messages.at(-1)
     if (newest && newest.createdAt >= (conversation.lastMessage?.createdAt ?? new Date(0))) {
       current.conversations.set(conversation.id, { ...conversation, lastMessage: newest, updatedAt: newest.createdAt })
     }
-    return added
   }
 
   /** The whole thread: the oldest 100, then every later page (`pollNewMessages` after the last one read). */
@@ -226,7 +227,7 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
     ])
     if (state !== current || current.openId !== conversation.id) return
     thread.cursor = page.cursor
-    merge(current, current.conversations.get(conversation.id) ?? conversation, page.messages)
+    merge(current, conversation.id, page.messages)
     changed()
   }
 
@@ -250,9 +251,7 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
     },
 
     async deactivate(): Promise<void> {
-      stop()
-      state = null
-      tracker.reset()
+      replaceState(null)
     },
 
     /** No polling in the background (PRD: only the DM flush runs there); the open thread resumes on return. */
@@ -279,8 +278,9 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
 
     async messages(identityId: string, key: string): Promise<MessageDTO[]> {
       const current = stateFor(identityId)
-      const thread = await loadThread(current, conversationOf(current, key))
-      return thread.messages.map(message => toMessageDTO(message, identityId))
+      const conversation = conversationOf(current, key)
+      await loadThread(current, conversation)
+      return messagesOf(current, conversation.id)
     },
 
     async open(identityId: string, key: string | null): Promise<void> {
@@ -299,7 +299,7 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       const current = stateFor(identityId)
       const conversation = conversationOf(current, key)
       const unread = unreadOf(current, conversation)
-      current.readUpTo.set(conversation.id, conversation.lastMessage?.createdAt.getTime() ?? now())
+      current.readUpTo.set(conversation.id, conversation.lastMessage?.createdAt.getTime() ?? Date.now())
       changed()
       if (unread > 0 && sendReceipts() && !current.drafts.has(conversation.id)) {
         await service.markAsRead(conversation.id, identityId)
@@ -319,7 +319,7 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       if (state === current) {
         current.drafts.delete(conversation.id)
         if (!current.threads.has(conversation.id)) current.threads.set(conversation.id, { messages: [], cursor: undefined })
-        merge(current, current.conversations.get(conversation.id) ?? conversation, [sent])
+        merge(current, conversation.id, [sent])
         current.readUpTo.set(conversation.id, sent.createdAt.getTime())
         changed()
       }
@@ -336,7 +336,7 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       if (existing) return legacyKey(existing.id)
       const { conversationId } = await service.getOrCreateConversation(identityId, peerId)
       if (!current.conversations.has(conversationId)) {
-        current.conversations.set(conversationId, { id: conversationId, participantId: peerId, unreadCount: 0, updatedAt: new Date(now()), lastMessage: null })
+        current.conversations.set(conversationId, { id: conversationId, participantId: peerId, unreadCount: 0, updatedAt: new Date(Date.now()), lastMessage: null })
         current.drafts.add(conversationId)
       }
       return legacyKey(conversationId)
@@ -344,4 +344,3 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
   }
 }
 
-export type LegacyBackend = ReturnType<typeof createLegacyBackend>

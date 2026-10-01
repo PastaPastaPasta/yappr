@@ -1,9 +1,12 @@
-import type { ConversationRow, DmEvents, MessageDTO } from './types'
+import type { ConversationDTO, DmEvents, MessageDTO } from './types'
 
 /** ENGINE.md §8: `dm.changed` at most once per 250 ms. */
-export const DM_CHANGED_COALESCE_MS = 250
+const DM_CHANGED_COALESCE_MS = 250
 /** Messages this much older than the session start never raise `dm.message` (clock skew against block time). */
 const NOTIFY_SLACK_MS = 60_000
+
+/** What both backends answer (internal, not a DTO): the module resolves `peerId` to `peer`. */
+export type ConversationRow = Omit<ConversationDTO, 'peer'> & { peerId: string | null }
 
 export type DmEmit = <E extends keyof DmEvents>(event: E, payload: DmEvents[E]) => void
 
@@ -27,12 +30,12 @@ export function unreadCounts(rows: ConversationRow[]): { unreadTotal: number; un
  * and its incoming messages not reported before are new, unless they predate
  * the session (a first load, or a recovery on a new device, is history).
  */
-export function createChangeTracker(options: { emit: DmEmit; coalesceMs?: number; now?: () => number }) {
-  const now = options.now ?? Date.now
+export function createChangeTracker(options: { emit: DmEmit; coalesceMs?: number }) {
   const coalesceMs = options.coalesceMs ?? DM_CHANGED_COALESCE_MS
-  let since = now()
+  let since = Date.now()
   let reported = new Map<string, string>()
-  let last = { unreadTotal: 0, unreadConversations: 0, ready: false, error: null as string | null }
+  let last: { unreadTotal: number; unreadConversations: number; ready: boolean; error: string | null } =
+    { unreadTotal: 0, unreadConversations: 0, ready: false, error: null }
   const notified = new Set<string>()
   let timer: ReturnType<typeof setTimeout> | null = null
   let pending: (() => DmView | null) | null = null
@@ -43,7 +46,8 @@ export function createChangeTracker(options: { emit: DmEmit; coalesceMs?: number
     for (const key of reported.keys()) if (!next.has(key)) changedKeys.push(key)
     reported = next
     const status = { ...unreadCounts(view.rows), ready: view.ready, error: view.error }
-    const statusChanged = (Object.keys(status) as (keyof typeof status)[]).some(field => status[field] !== last[field])
+    const statusChanged = status.unreadTotal !== last.unreadTotal || status.unreadConversations !== last.unreadConversations ||
+      status.ready !== last.ready || status.error !== last.error
     last = status
     if (changedKeys.length > 0 || statusChanged) options.emit('dm.changed', { ...status, changedKeys })
     const cutoff = since - NOTIFY_SLACK_MS
@@ -79,7 +83,7 @@ export function createChangeTracker(options: { emit: DmEmit; coalesceMs?: number
       const changedKeys = [...reported.keys()]
       reported = new Map()
       notified.clear()
-      since = now()
+      since = Date.now()
       const wasEmpty = changedKeys.length === 0 && !last.ready && last.unreadTotal === 0
       last = { unreadTotal: 0, unreadConversations: 0, ready: false, error: null }
       if (!wasEmpty) options.emit('dm.changed', { ...last, changedKeys })

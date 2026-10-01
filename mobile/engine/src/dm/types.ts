@@ -112,6 +112,3 @@ export interface DmEvents {
   /** A new incoming message (never `own`), once per message, for messages newer than the session start. */
   'dm.message': { key: string; message: MessageDTO }
 }
-
-/** What both backends answer; the module adds peers, paging, validation and tickets on top. */
-export type ConversationRow = Omit<ConversationDTO, 'peer'> & { peerId: string | null }

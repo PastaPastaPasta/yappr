@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
 import { VARIANT, capabilities, describeRead, engine, expectCode, expectValid, sampleFeed, timed } from './harness'
 import { conversationDTO, messageDTO } from '../../../src/dto/validate'
+import type { ConversationRow } from '../../../src/dm/changes'
 
 /**
  * dm.* needs a signed-in account, so the unauthenticated suite checks the
@@ -22,7 +23,7 @@ describeRead('dm', 'dm', () => {
     const { directMessageService } = await import('@/lib/services/direct-message-service')
     const backend = createLegacyBackend({ service: directMessageService, emit: () => undefined })
     const candidates = Array.from(new Set((await sampleFeed()).map(post => post.author.id))).slice(0, 8)
-    let found: { identityId: string; rows: Awaited<ReturnType<typeof backend.rows>> } | null = null
+    let found: { identityId: string; rows: ConversationRow[] } | null = null
     for (const identityId of candidates) {
       const rows = await timed('dm.conversations (legacy, public)', () => backend.rows(identityId))
       if (rows.length > 0) {

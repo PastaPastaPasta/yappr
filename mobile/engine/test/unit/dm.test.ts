@@ -24,7 +24,7 @@ const { MapKv, MemoryChain: Chain, MemoryLedger, manualScheduler } = await impor
 const { useSettingsStore } = await import('@/lib/store')
 const { createDmModule } = await import('../../src/api/dm')
 const { avatarFromField } = await import('../../src/api/dto')
-const { LEGACY_OPEN_POLL_MS } = await import('../../src/dm/legacy')
+const { LEGACY_LIST_TTL_MS, LEGACY_OPEN_POLL_MS } = await import('../../src/dm/legacy')
 const { WRITES_STORAGE_KEY, createTicketStore } = await import('../../src/writes/tickets')
 const { conversationDTO, dmStatusDTO, messageDTO, page, validate } = await import('../../src/dto/validate')
 type MemoryLedger = InstanceType<typeof MemoryLedger>
@@ -70,8 +70,10 @@ function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<type
   let signedIn: string | null = me
   const tickets = createTicketStore({ storage, emit, currentIdentity: () => signedIn, documentExists: async () => true })
   const engines = new Map<string, DmEngine>()
+  let locked = false
   const source = {
-    engineFor: vi.fn((id: string) => {
+    engineFor: vi.fn((id: string): DmEngine | null => {
+      if (locked) return null
       let engine = engines.get(id)
       if (!engine) {
         const raw = bs58.decode(id)
@@ -91,6 +93,8 @@ function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<type
     dm: dm.api, hooks: dm.hooks, events, storage, source, authors, tickets,
     engine: () => engines.get(me) as DmEngine,
     signOut: () => { signedIn = null },
+    /** Whether this device holds no encryption key (the engine source answers null). */
+    setLocked: (value: boolean) => { locked = value },
     /** The ticket's last `write.status`, once settled. */
     async settled(ticket: WriteTicket): Promise<WriteTicket> {
       let last: WriteTicket | undefined
@@ -138,16 +142,13 @@ describe('dm on DM v5: session lifecycle', () => {
   })
 
   it('reports locked without an encryption key, and starts once one exists', async () => {
-    const ledger = ledgerNow()
-    let hasKey = false
-    const user = userOn(ledger, alice)
+    const user = userOn(ledgerNow(), alice)
     await user.hooks.stop()
+    user.setLocked(true)
     user.hooks.sessionChanged(started(alice))
-    const real = user.source.engineFor.getMockImplementation() as (id: string) => DmEngine
-    user.source.engineFor.mockImplementation((id: string) => (hasKey ? real(id) : null) as DmEngine)
     expect(await user.dm.status()).toMatchObject({ backend: 'v5', locked: true, ready: false, retention: null })
     await expect(user.dm.conversations()).rejects.toMatchObject({ code: 'NO_KEY' })
-    hasKey = true
+    user.setLocked(false)
     await vi.waitFor(async () => expect(await user.dm.status()).toMatchObject({ locked: false, ready: true, retention: '30d' }))
   })
 
@@ -344,7 +345,7 @@ function fakeLegacy(me: string) {
   } satisfies LegacyDmService
   return {
     service, conversations, threads, message,
-    failNextList: () => { failList = true },
+    failLists: () => { failList = true },
     add(id: string, peer: string, count: number, unread = 0) {
       const list = Array.from({ length: count }, (_, i) => message(id, i, i % 2 ? me : peer, 1_000_000 + i * 1000))
       threads.set(id, list)
@@ -441,8 +442,8 @@ describe('dm on legacy 1:1 (testnet)', () => {
     const user = legacyUser()
     user.legacy.add('C1', bob, 1)
     await user.dm.conversations()
-    user.legacy.failNextList()
-    await vi.advanceTimersByTimeAsync(31_000)
+    user.legacy.failLists()
+    await vi.advanceTimersByTimeAsync(LEGACY_LIST_TTL_MS + 1_000)
     expect((await user.dm.conversations()).map(c => c.key)).toEqual(['l:C1'])
     expect((await user.dm.status()).error).toBe('Could not load conversations')
   })
