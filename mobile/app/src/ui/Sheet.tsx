@@ -1,0 +1,92 @@
+import {
+  BottomSheetBackdrop,
+  BottomSheetModal,
+  BottomSheetView,
+  type BottomSheetBackdropProps,
+} from '@gorhom/bottom-sheet';
+import { useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { BackHandler } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { Text } from './Text';
+import { colors, useColors, useIsDark } from './tokens';
+
+export interface SheetProps {
+  open: boolean;
+  /** Called once the sheet is fully dismissed, by any means. */
+  onClose: () => void;
+  title?: string;
+  children: ReactNode;
+  /** False while a write is in flight: no scrim tap, swipe or back to close (UX_SPEC §2.13). */
+  dismissible?: boolean;
+  testID?: string;
+}
+
+/**
+ * A bottom sheet (UX_SPEC §2.13): `@gorhom/bottom-sheet` sized to its
+ * content, with a grabber, `radius.2xl` top corners, `bg.elevated` and the
+ * `overlay.sheet` scrim. Android's back gesture closes it first.
+ */
+export function Sheet({ open, onClose, title, children, dismissible = true, testID }: SheetProps) {
+  const ref = useRef<BottomSheetModal>(null);
+  const insets = useSafeAreaInsets();
+  const c = useColors();
+  const dark = useIsDark();
+
+  useEffect(() => {
+    if (open) ref.current?.present();
+    else ref.current?.dismiss();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (dismissible) ref.current?.dismiss();
+      return true;
+    });
+    return () => sub.remove();
+  }, [open, dismissible]);
+
+  const backdrop = useCallback(
+    (props: BottomSheetBackdropProps) => (
+      <BottomSheetBackdrop
+        {...props}
+        opacity={0.6}
+        appearsOnIndex={0}
+        disappearsOnIndex={-1}
+        pressBehavior={dismissible ? 'close' : 'none'}
+      />
+    ),
+    [dismissible],
+  );
+
+  return (
+    <BottomSheetModal
+      ref={ref}
+      onDismiss={onClose}
+      enablePanDownToClose={dismissible}
+      backdropComponent={backdrop}
+      backgroundStyle={{
+        backgroundColor: c.bg,
+        borderTopLeftRadius: 16,
+        borderTopRightRadius: 16,
+        // Dark surfaces separate with a border, not a shadow (UX_SPEC §1.5).
+        borderWidth: dark ? 1 : 0,
+        borderColor: c.border,
+      }}
+      handleIndicatorStyle={{ backgroundColor: dark ? colors.gray600 : colors.gray300 }}
+    >
+      <BottomSheetView
+        testID={testID}
+        style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: insets.bottom + 16, gap: 12 }}
+      >
+        {title ? (
+          <Text variant="headline" tone="emphasis" accessibilityRole="header">
+            {title}
+          </Text>
+        ) : null}
+        {children}
+      </BottomSheetView>
+    </BottomSheetModal>
+  );
+}

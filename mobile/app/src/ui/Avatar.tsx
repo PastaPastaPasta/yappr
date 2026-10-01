@@ -1,0 +1,126 @@
+import { Image } from 'expo-image';
+import { memo, useMemo, useState } from 'react';
+import { Pressable, View } from 'react-native';
+import { SvgXml } from 'react-native-svg';
+
+import { cn } from '~/lib-allowlist';
+
+import { hitSlopFor, tw } from './tokens';
+
+/** UX_SPEC §2.3. `profile` is the web's 128 scaled for phones. */
+export const AVATAR_SIZES = { xs: 24, sm: 32, md: 40, lg: 48, xl: 64, profile: 88 } as const;
+export type AvatarSize = keyof typeof AVATAR_SIZES;
+
+const SVG_DATA_URI = /^data:image\/svg\+xml(;[^,]*)?,([\s\S]*)$/i;
+
+/**
+ * The SVG markup inside a `data:image/svg+xml` URI, or null for anything
+ * else. The engine renders DiceBear avatars to base64 data URIs
+ * (lib/services/avatar-generator); they are drawn locally, never fetched.
+ */
+export function svgFromDataUri(uri: string): string | null {
+  const match = SVG_DATA_URI.exec(uri);
+  if (!match) return null;
+  const [, params = '', data = ''] = match;
+  try {
+    if (!/;base64/i.test(params)) return decodeURIComponent(data);
+    // atob yields one char per byte; percent-encode them to decode UTF-8.
+    const binary = atob(data);
+    return decodeURIComponent(binary.replace(/[\s\S]/g, (ch) => `%${ch.charCodeAt(0).toString(16).padStart(2, '0')}`));
+  } catch {
+    return null;
+  }
+}
+
+export interface AvatarProps {
+  /** An image URL, or a `data:image/svg+xml` URI (the engine's DiceBear output). */
+  uri?: string;
+  /** Raw SVG markup, for a DiceBear avatar the engine handed over as a string. */
+  svg?: string;
+  /** Shown if `uri` fails to load: the default DiceBear avatar, as a data URI or markup. */
+  fallback?: string;
+  size?: AvatarSize;
+  /** The person's name; makes a tappable avatar read "{name}'s profile". */
+  name?: string;
+  onPress?: () => void;
+  testID?: string;
+  className?: string;
+}
+
+function svgMarkup(source: string | undefined): string | null {
+  if (!source) return null;
+  return source.trimStart().startsWith('<') ? source : svgFromDataUri(source);
+}
+
+/**
+ * A round avatar (web `UserAvatar`): DiceBear SVG drawn with `SvgXml`, any
+ * other URL through `expo-image`, a `bg.skeleton` circle while it loads and
+ * when there is nothing to show.
+ */
+export const Avatar = memo(function Avatar({
+  uri,
+  svg,
+  fallback,
+  size = 'md',
+  name,
+  onPress,
+  testID,
+  className,
+}: AvatarProps) {
+  const diameter = AVATAR_SIZES[size];
+  // Keyed by URL, so a recycled cell showing someone else retries.
+  const [failedUri, setFailedUri] = useState<string>();
+  const markup = useMemo(() => svgMarkup(svg ?? uri), [svg, uri]);
+  const fallbackMarkup = useMemo(() => svgMarkup(fallback), [fallback]);
+
+  let content = null;
+  if (markup) {
+    content = <SvgXml xml={markup} width={diameter} height={diameter} testID="avatar-svg" />;
+  } else if (uri && failedUri !== uri) {
+    content = (
+      <Image
+        source={{ uri }}
+        style={{ width: diameter, height: diameter }}
+        contentFit="cover"
+        transition={150}
+        recyclingKey={uri}
+        onError={() => setFailedUri(uri)}
+        accessible={false}
+        testID="avatar-image"
+      />
+    );
+  } else if (fallbackMarkup) {
+    content = <SvgXml xml={fallbackMarkup} width={diameter} height={diameter} testID="avatar-fallback" />;
+  }
+
+  const circle = (
+    <View
+      testID={onPress ? undefined : testID}
+      importantForAccessibility={onPress ? undefined : 'no-hide-descendants'}
+      accessibilityElementsHidden={!onPress}
+      className={cn(
+        'overflow-hidden rounded-full',
+        tw.bgSkeleton,
+        size === 'profile' && 'border-4 border-white dark:border-neutral-900',
+        className,
+      )}
+      style={{ width: diameter, height: diameter }}
+    >
+      {content}
+    </View>
+  );
+
+  if (!onPress) return circle;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={name ? `${name}'s profile` : 'Profile'}
+      hitSlop={hitSlopFor(diameter, 44)}
+      onPress={onPress}
+      testID={testID}
+      className="active:opacity-80"
+    >
+      {circle}
+    </Pressable>
+  );
+});
