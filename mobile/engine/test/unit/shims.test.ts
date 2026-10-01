@@ -7,32 +7,48 @@ import {
   takeInjectedSnapshot,
   type EngineStorage,
   type SnapshotInjectionTarget,
-  type StorageChange,
+  type StorageBatch,
 } from '../../src/shims/storage'
 import { dispatchConnectivity, dispatchLifecycle, installVisibilityOverride } from '../../src/shims/lifecycle'
 
-function recordChanges(storage: EngineStorage): StorageChange[] {
-  const changes: StorageChange[] = []
-  storage.onChange(change => changes.push(change))
-  return changes
+function recordBatches(storage: EngineStorage): StorageBatch[] {
+  const batches: StorageBatch[] = []
+  storage.onBatch(batch => batches.push(batch))
+  return batches
 }
 
+/** Let the write-through microtask run. */
+const flushed = () => Promise.resolve()
+
 describe('engine storage', () => {
-  it('is synchronous Web Storage and reports writes for write-through', () => {
+  it('is synchronous Web Storage and writes through one coalesced batch per microtask', async () => {
     const storage = createEngineStorage()
-    const changes = recordChanges(storage)
-    storage.localStorage.setItem('yappr_session', '{"user":1}')
-    expect(storage.localStorage.getItem('yappr_session')).toBe('{"user":1}')
-    storage.localStorage.removeItem('yappr_session')
-    storage.localStorage.removeItem('never-set')
-    expect(storage.localStorage.getItem('yappr_session')).toBeNull()
-    expect(changes).toEqual([
-      { area: 'local', key: 'yappr_session', value: '{"user":1}' },
-      { area: 'local', key: 'yappr_session', value: null },
-    ])
+    const batches = recordBatches(storage)
+    const { localStorage } = storage
+    localStorage.setItem('yappr_session', '{"user":1}')
+    expect(localStorage.getItem('yappr_session')).toBe('{"user":1}')
+    localStorage.setItem('yappr_session', '{"user":2}')
+    localStorage.setItem('gone', 'x')
+    localStorage.removeItem('gone')
+    localStorage.removeItem('never-set')
+    expect(batches).toEqual([])
+    await flushed()
+    expect(batches).toEqual([{ area: 'local', seq: 1, ops: [['set', 'yappr_session', '{"user":2}']] }])
   })
 
-  it('routes private keys, private-feed keys and upload credentials to the secure area', () => {
+  it('drops the secret store\'s availability probe and sets that change nothing', async () => {
+    const storage = createEngineStorage()
+    storage.hydrate({ local: { a: '1' } })
+    const batches = recordBatches(storage)
+    storage.localStorage.setItem('__storage_test__', '__storage_test__')
+    storage.localStorage.removeItem('__storage_test__')
+    storage.localStorage.setItem('a', '2')
+    storage.localStorage.setItem('a', '1')
+    await flushed()
+    expect(batches).toEqual([])
+  })
+
+  it('routes private keys, private-feed keys and upload credentials to the secure area', async () => {
     expect(SECURE_KEY_PREFIXES).toEqual(['yappr_secure_', 'yappr:pf:', 'yappr_pinata_', 'yappr_storacha_'])
     for (const key of ['yappr_secure_pk_abc', 'yappr:pf:feed_seed', 'yappr:pf:path_keys:1', 'yappr_pinata_jwt', 'yappr_storacha_agent']) {
       expect(isSecureStorageKey(key), key).toBe(true)
@@ -42,12 +58,41 @@ describe('engine storage', () => {
     }
 
     const storage = createEngineStorage()
-    const changes = recordChanges(storage)
+    const batches = recordBatches(storage)
     storage.localStorage.setItem('yappr:pf:feed_seed', 'seed')
     storage.localStorage.setItem('plain', 'x')
     expect(storage.localStorage.getItem('yappr:pf:feed_seed')).toBe('seed')
     expect(storage.snapshot()).toEqual({ local: { plain: 'x' }, secure: { 'yappr:pf:feed_seed': 'seed' } })
-    expect(changes.map(change => change.area)).toEqual(['secure', 'local'])
+    await flushed()
+    expect(batches).toEqual([
+      { area: 'local', seq: 1, ops: [['set', 'plain', 'x']] },
+      { area: 'secure', seq: 2, ops: [['set', 'yappr:pf:feed_seed', 'seed']] },
+    ])
+  })
+
+  it('always forwards a secure removal, even of a key the engine does not hold', async () => {
+    const storage = createEngineStorage()
+    const batches = recordBatches(storage)
+    // Signing out an account whose secrets were never hydrated into this engine.
+    storage.localStorage.removeItem('yappr_secure_pk_otherAccount')
+    storage.localStorage.removeItem('plain-never-set')
+    await flushed()
+    expect(batches).toEqual([{ area: 'secure', seq: 1, ops: [['del', 'yappr_secure_pk_otherAccount']] }])
+  })
+
+  it('reports clear() as removals, and keeps seq increasing across batches', async () => {
+    const storage = createEngineStorage()
+    storage.hydrate({ local: { a: '1' }, secure: { yappr_secure_b: '2' } })
+    const batches = recordBatches(storage)
+    storage.localStorage.clear()
+    await flushed()
+    storage.localStorage.setItem('c', '3')
+    await flushed()
+    expect(batches).toEqual([
+      { area: 'local', seq: 1, ops: [['del', 'a']] },
+      { area: 'secure', seq: 2, ops: [['del', 'yappr_secure_b']] },
+      { area: 'local', seq: 3, ops: [['set', 'c', '3']] },
+    ])
   })
 
   it('enumerates both areas through key() and length, and follows additions and removals', () => {
@@ -61,47 +106,65 @@ describe('engine storage', () => {
     expect([localStorage.key(0), localStorage.key(1)]).toEqual(['c', 'yappr_secure_b'])
   })
 
-  it('hydrates without reporting writes, replacing what was there', () => {
+  it('hydrates without writing through, routing each key by prefix and reporting misfiled ones', async () => {
     const storage = createEngineStorage()
-    const changes = recordChanges(storage)
+    const batches = recordBatches(storage)
     storage.localStorage.setItem('old', '1')
-    changes.length = 0
-    storage.hydrate({ local: { fresh: '2' } })
-    expect(changes).toEqual([])
+    await flushed()
+    batches.length = 0
+    const { misrouted } = storage.hydrate({ local: { fresh: '2', yappr_secure_pk_x: 'wif' }, secure: { 'plain-in-secure': 'p' } })
+    await flushed()
+    expect(batches).toEqual([])
+    expect(misrouted.sort()).toEqual(['plain-in-secure', 'yappr_secure_pk_x'])
     expect(storage.localStorage.getItem('old')).toBeNull()
-    expect(storage.localStorage.getItem('fresh')).toBe('2')
+    expect(storage.localStorage.getItem('yappr_secure_pk_x')).toBe('wif')
+    expect(storage.snapshot()).toEqual({ local: { fresh: '2', 'plain-in-secure': 'p' }, secure: { yappr_secure_pk_x: 'wif' } })
+    expect(storage.localStorage.length).toBe(3)
   })
 
-  it('queues writes made before anyone subscribes and hands them to the first subscriber', () => {
+  it('queues batches flushed before anyone subscribes and hands them to the first subscriber', async () => {
     const storage = createEngineStorage()
     storage.localStorage.setItem('written-while-lib-loads', '1')
-    const first = recordChanges(storage)
-    const second = recordChanges(storage)
+    await flushed()
+    const first = recordBatches(storage)
+    const second = recordBatches(storage)
     storage.localStorage.setItem('later', '2')
+    await flushed()
     expect(first).toEqual([
-      { area: 'local', key: 'written-while-lib-loads', value: '1' },
-      { area: 'local', key: 'later', value: '2' },
+      { area: 'local', seq: 1, ops: [['set', 'written-while-lib-loads', '1']] },
+      { area: 'local', seq: 2, ops: [['set', 'later', '2']] },
     ])
-    expect(second).toEqual([{ area: 'local', key: 'later', value: '2' }])
+    expect(second).toEqual([{ area: 'local', seq: 2, ops: [['set', 'later', '2']] }])
   })
 
-  it('clear() reports each removal', () => {
+  it('resolves secureDurable once every secure batch is acknowledged, flushing pending writes first', async () => {
     const storage = createEngineStorage()
-    storage.hydrate({ local: { a: '1' }, secure: { yappr_secure_b: '2' } })
-    const changes = recordChanges(storage)
-    storage.localStorage.clear()
-    expect(changes).toEqual([
-      { area: 'local', key: 'a', value: null },
-      { area: 'secure', key: 'yappr_secure_b', value: null },
-    ])
+    const batches = recordBatches(storage)
+    await expect(storage.secureDurable()).resolves.toBeUndefined()
+
+    storage.localStorage.setItem('yappr_secure_pk_a', 'wif-a')
+    let durable = false
+    const waiting = storage.secureDurable().then(() => { durable = true })
+    // secureDurable flushed synchronously.
+    expect(batches).toEqual([{ area: 'secure', seq: 1, ops: [['set', 'yappr_secure_pk_a', 'wif-a']] }])
+    storage.localStorage.setItem('plain', 'x')
+    await flushed()
+    expect(durable).toBe(false)
+    storage.ack(2) // a seq it was not waiting for
+    await flushed()
+    expect(durable).toBe(false)
+    storage.ack(1)
+    await waiting
+    expect(durable).toBe(true)
   })
 
-  it('keeps sessionStorage in memory only', () => {
+  it('keeps sessionStorage in memory only', async () => {
     const storage = createEngineStorage()
-    const changes = recordChanges(storage)
+    const batches = recordBatches(storage)
     storage.sessionStorage.setItem('s', '1')
     expect(storage.sessionStorage.getItem('s')).toBe('1')
-    expect(changes).toEqual([])
+    await flushed()
+    expect(batches).toEqual([])
   })
 
   it('coerces keys and values to strings, as Web Storage does', () => {
