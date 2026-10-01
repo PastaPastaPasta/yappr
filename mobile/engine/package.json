@@ -9,9 +9,10 @@
     "build:testnet": "node build.mjs --variant testnet",
     "build:devnet": "node build.mjs --variant devnet",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint --max-warnings 0 src test build.mjs",
+    "lint": "eslint --max-warnings 0 src test harness build.mjs aliases.mjs",
     "test": "vitest run --project unit",
     "test:contract": "vitest run --project contract",
+    "test:contract:write": "vitest run --project contract-write",
     "test:browser": "vitest run --project browser"
   },
   "devDependencies": {
