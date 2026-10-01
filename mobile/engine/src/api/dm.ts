@@ -5,6 +5,7 @@ import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } from '@/lib/secure-storage'
 import { getDmEngine, MAX_GROUP_MEMBERS, stopDmEngine } from '@/lib/services/dm-v5'
 import { GroupError } from '@/lib/services/dm-v5/groups'
+import { splitText } from '@/lib/services/dm-v5/util'
 import { directMessageService } from '@/lib/services/direct-message-service'
 import { identityService } from '@/lib/services/identity-service'
 import { base58ToBytes, getCurrentUserId } from '@/lib/services/sdk-helpers'
@@ -18,6 +19,7 @@ import { createLegacyBackend, type LegacyDmService } from '../dm/legacy'
 import { createV5Backend, type DmEngineSource } from '../dm/v5'
 import type { ConversationDTO, ConversationRow, DmBackendKind, DmGroupAction, DmRetention, DmStatusDTO, MessageDTO } from '../dm/types'
 import type { AppLifecycleState } from '../shims/lifecycle'
+import type { SessionEvents } from './session'
 import type { TicketStore } from '../writes/tickets'
 import type { WriteTicket } from '../writes/types'
 import { avatarFromField, type AuthorDTO, type Page } from './dto'
@@ -32,6 +34,8 @@ const RETENTIONS: readonly DmRetention[] = ['30d', '90d', '1y', 'never']
 const AUTHOR_TTL_MS = 10 * 60_000
 /** How long sign-out and account switch wait for the DM state to save. */
 const STOP_FLUSH_WAIT_MS = 10_000
+/** A sent message's block time can trail its ticket by this much. */
+const SENT_MATCH_SLACK_MS = 60_000
 
 export interface DmModuleOptions {
   emit(event: string, payload: unknown): void
@@ -100,9 +104,17 @@ export function createDmModule(options: DmModuleOptions) {
   const fetchAuthors = options.authors ?? loadAuthors
 
   /** The signed-in identity, with its backend started (a no-op once it runs; retried while locked). */
+  /**
+   * Set by `hooks.stop` (sign-out, account switch) until a session starts
+   * again: the outgoing account's keys may still be readable for a moment,
+   * and nothing may restart its messages.
+   */
+  let halted = false
+
   function session(): string {
     const identityId = viewer()
     if (!identityId) throw new RpcError('Messages need a signed-in account', 'NOT_SIGNED_IN')
+    if (halted) throw new RpcError('Messages are stopped while the account changes', 'RESTART_REQUIRED')
     backend.activate(identityId)
     return identityId
   }
@@ -114,6 +126,21 @@ export function createDmModule(options: DmModuleOptions) {
 
   options.tickets.register<{ identityId: string; key: string; text: string }>('dm.send', {
     run: ({ identityId, key, text }) => backend.send(identityId, key, text),
+    /**
+     * "Check again": the text, in all its parts, among my messages since the
+     * send. Absence proves nothing (the slot may not be read back yet), and
+     * after a restart the text is gone (never persisted), so only `applied`
+     * is ever proved.
+     */
+    async probe(ticket, args) {
+      if (!args) return { state: 'unknown', error: new Error('The app restarted before this was confirmed. Open the conversation to see whether it was sent.') }
+      const since = ticket.createdAt.getTime() - SENT_MATCH_SLACK_MS
+      const mine = new Set((await backend.messages(args.identityId, args.key)).filter(m => m.own && m.at.getTime() >= since).map(m => m.text))
+      const parts = backend.kind === 'v5' ? splitText(args.text.trim()) : [args.text.trim()]
+      return parts.every(part => mine.has(part))
+        ? { state: 'applied' }
+        : { state: 'unknown', error: new Error('Not in the conversation yet. Check again in a moment.') }
+    },
     persistArgs: false,
   })
   options.tickets.register<{ identityId: string; request: DmGroupAction }>('dm.group', {
@@ -311,10 +338,14 @@ export function createDmModule(options: DmModuleOptions) {
   }
 
   const hooks = {
-    /** `session.changed`: start the backend for the new identity, or stop it. */
-    sessionChanged(identityId: string | null): void {
-      if (identityId) backend.activate(identityId)
-      else backend.deactivate().catch(error => logger.warn('Stopping messages failed:', error))
+    /** `session.changed`: a session that starts starts messages; none stops them. Balance updates change nothing. */
+    sessionChanged({ session: current, reason }: SessionEvents['session.changed']): void {
+      if (!current) {
+        backend.deactivate().catch(error => logger.warn('Stopping messages failed:', error))
+      } else if (reason !== 'balance') {
+        halted = false
+        backend.activate(current.identityId)
+      }
     },
     /**
      * Before sign-out or an account switch: stop polling and save pending
@@ -322,6 +353,7 @@ export function createDmModule(options: DmModuleOptions) {
      * offline: an unsaved edit stays in the engine's local cache.
      */
     stop: (): Promise<void> => {
+      halted = true
       let timer: ReturnType<typeof setTimeout> | undefined
       const bound = new Promise<void>(resolve => { timer = setTimeout(resolve, STOP_FLUSH_WAIT_MS) })
       return Promise.race([backend.deactivate().catch(() => undefined), bound]).finally(() => clearTimeout(timer))

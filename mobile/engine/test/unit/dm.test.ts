@@ -14,6 +14,7 @@ import type { AuthorDTO } from '../../src/api/dto'
 import type { LegacyDmService } from '../../src/dm/legacy'
 import type { DmEvents, MessageDTO } from '../../src/dm/types'
 import type { WriteTicket } from '../../src/writes/types'
+import type { SessionEvents } from '../../src/api/session'
 
 // lib/store's persisted settings (read receipts) need the engine's storage before lib loads.
 const { createEngineStorage, installEngineStorage } = await import('../../src/shims/storage')
@@ -57,6 +58,10 @@ afterEach(async () => {
   vi.useRealTimers()
 })
 
+/** A `session.changed` for a session that starts. */
+const started = (identityId: string): SessionEvents['session.changed'] =>
+  ({ session: { identityId, network: 'testnet', username: null, credits: 0n, hasEncryptionKey: true, method: 'key' }, reason: 'signed-in' })
+
 /** One user's engine: a dm module over a ticket store, signed in as `me`. */
 function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<typeof createDmModule>[0]> = {}) {
   const events: Event[] = []
@@ -80,10 +85,10 @@ function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<type
   }
   const authors = vi.fn(async (ids: string[]) => new Map(ids.map(id => [id, authorOf(id)])))
   const dm = createDmModule({ emit, tickets, backend: 'v5', v5Source: source, viewer: () => signedIn, authors, coalesceMs: 0, ...extra })
-  dm.hooks.sessionChanged(me)
+  dm.hooks.sessionChanged(started(me))
   cleanups.push(() => dm.hooks.stop())
   return {
-    dm: dm.api, hooks: dm.hooks, events, storage, source, authors,
+    dm: dm.api, hooks: dm.hooks, events, storage, source, authors, tickets,
     engine: () => engines.get(me) as DmEngine,
     signOut: () => { signedIn = null },
     /** The ticket's last `write.status`, once settled. */
@@ -117,7 +122,7 @@ describe('dm on DM v5: session lifecycle', () => {
     expect(flush).toHaveBeenCalled()
     expect(user.source.release).toHaveBeenCalled()
     // Stopping again (the signed-out session.changed) does nothing more.
-    user.hooks.sessionChanged(null)
+    user.hooks.sessionChanged({ session: null, reason: 'signed-out' })
     await settle()
     expect(user.source.release).toHaveBeenCalledTimes(1)
   })
@@ -137,12 +142,24 @@ describe('dm on DM v5: session lifecycle', () => {
     let hasKey = false
     const user = userOn(ledger, alice)
     await user.hooks.stop()
+    user.hooks.sessionChanged(started(alice))
     const real = user.source.engineFor.getMockImplementation() as (id: string) => DmEngine
     user.source.engineFor.mockImplementation((id: string) => (hasKey ? real(id) : null) as DmEngine)
     expect(await user.dm.status()).toMatchObject({ backend: 'v5', locked: true, ready: false, retention: null })
     await expect(user.dm.conversations()).rejects.toMatchObject({ code: 'NO_KEY' })
     hasKey = true
     await vi.waitFor(async () => expect(await user.dm.status()).toMatchObject({ locked: false, ready: true, retention: '30d' }))
+  })
+
+  it('stays stopped through an account change until a session starts again', async () => {
+    const user = await ready(userOn(ledgerNow(), alice))
+    await user.hooks.stop()
+    await expect(user.dm.status()).rejects.toMatchObject({ code: 'RESTART_REQUIRED' })
+    user.hooks.sessionChanged({ ...started(alice), reason: 'balance' })
+    await expect(user.dm.conversations()).rejects.toMatchObject({ code: 'RESTART_REQUIRED' })
+    expect(user.source.release).toHaveBeenCalledTimes(1)
+    user.hooks.sessionChanged({ ...started(alice), reason: 'restored' })
+    expect((await user.dm.status()).locked).toBe(false)
   })
 
   it('rejects every call when signed out', async () => {
@@ -192,6 +209,27 @@ describe('dm on DM v5: 1:1', () => {
     // Each incoming message is announced once; own messages never.
     await settle()
     expect(a.eventsOf('dm.message').map(e => e.message.text)).toEqual(['hi alice'])
+  })
+
+  it('leaves a send whose broadcast timed out unconfirmed, and proves it on check once it reads back', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    const chain = a.engine().ctx.chain as MemoryChain
+    // The write lands, but the answer is a timeout.
+    chain.hook = (method, args) => {
+      if (method !== 'createMessage') return null
+      chain.hook = null
+      chain.createMessage(...(args as [Uint8Array, Uint8Array])).catch(() => undefined)
+      return { ok: false, failure: 'transport', error: 'Request timeout after 8000ms' }
+    }
+    const ticket = await a.settled(await a.dm.send(key, 'maybe'))
+    expect(ticket).toMatchObject({ state: 'unconfirmed', retryable: false })
+    expect((await a.tickets.check(ticket.id))).toMatchObject({ state: 'unconfirmed', error: expect.objectContaining({ code: 'UNKNOWN' }) })
+    await a.dm.open(key)
+    expect(await a.tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
   })
 
   it('pages messages newest first, 50 at a time, with a cursor tied to the conversation', async () => {
@@ -368,7 +406,7 @@ describe('dm on legacy 1:1 (testnet)', () => {
 
     user.legacy.add('C2', carol, 2, 1)
     await user.hooks.stop()
-    user.hooks.sessionChanged(alice)
+    user.hooks.sessionChanged(started(alice))
     useSettingsStore.getState().setSendReadReceipts(true)
     await user.dm.conversations()
     await user.dm.markRead('l:C2')
