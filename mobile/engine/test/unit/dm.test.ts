@@ -278,6 +278,23 @@ describe('dm on DM v5: 1:1', () => {
     expect(await a.tickets.check(second.id)).toMatchObject({ state: 'unconfirmed' })
   })
 
+  it('keeps a delivered send confirmed when recording its messages fails afterwards', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    const engine = a.engine()
+    const send = engine.send.bind(engine)
+    // The message goes out, then the device locks before the run reads it back (NO_KEY).
+    vi.spyOn(engine, 'send').mockImplementation(async (conversation, text) => {
+      await send(conversation, text)
+      a.setLocked(true)
+    })
+    const ticket = await a.settled(await a.dm.send(key, 'delivered'))
+    expect(ticket).toMatchObject({ state: 'confirmed', retryable: false, error: null })
+    expect(a.keyRequired).not.toHaveBeenCalled()
+  })
+
   it('fails a send that finds the device locked as NO_KEY, and asks for the key', async () => {
     const ledger = ledgerNow()
     const a = await ready(userOn(ledger, alice))

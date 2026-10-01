@@ -203,12 +203,18 @@ export function createDmModule(options: DmModuleOptions) {
   }
 
   options.tickets.register<SendArgs>('dm.send', {
-    run: (args, ctx) => running(async () => {
-      const result = await backend.send(args.identityId, args.key, args.text)
-      // Which of my messages this send made, so no other ticket's check counts them.
-      claimParts(args, ctx.ticket.id, await freshOwn(args, ctx.ticket.id, 0))
+    run: async (args, ctx) => {
+      const result = await running(() => backend.send(args.identityId, args.key, args.text))
+      // Which of my messages this send made, so no other ticket's check counts them. Best effort:
+      // the message is out, so a failed read here must never fail the ticket (or start an engine
+      // while messages are stopping).
+      if (!halted) {
+        await freshOwn(args, ctx.ticket.id, 0)
+          .then(fresh => claimParts(args, ctx.ticket.id, fresh))
+          .catch(error => logger.debug('DM send: could not record the sent messages:', error))
+      }
       return result
-    }),
+    },
     /**
      * "Check again": re-read my messages in the conversation from the chain,
      * then look for every part of the text among those that were not there
@@ -231,6 +237,7 @@ export function createDmModule(options: DmModuleOptions) {
   /** Group creations: their result for `createdGroup`, and the one running (a second waits for it). */
   const createdGroups = new Map<string, DmCreatedGroup>()
   let creating: string | null = null
+  const PENDING_CREATE = 'submitting'
 
   options.tickets.register<GroupArgs>('dm.group', {
     run: async ({ identityId, request }, ctx) => {
@@ -387,11 +394,18 @@ export function createDmModule(options: DmModuleOptions) {
       if (members.length === 0) throw new RpcError('Pick at least one member.', 'BAD_REQUEST')
       if (members.length + 1 > MAX_GROUP_MEMBERS) throw new RpcError(`A group can have at most ${MAX_GROUP_MEMBERS} members.`, 'BAD_REQUEST')
       if (creating) throw new RpcError('A group is still being created', 'ENGINE_BUSY')
-      const before = (await backend.rows(identityId)).filter(row => row.kind === 'group').map(row => row.key)
-      const request: GroupCreate = { action: 'create', name: groupName, memberIds: members, before }
-      const ticket = options.tickets.submit<GroupArgs>({ op: 'dm.group', args: { identityId, request }, target: null })
-      creating = ticket.id
-      return ticket
+      // Held across the read below, so a second tap in the meantime is refused too.
+      creating = PENDING_CREATE
+      try {
+        const before = (await backend.rows(identityId)).filter(row => row.kind === 'group').map(row => row.key)
+        const request: GroupCreate = { action: 'create', name: groupName, memberIds: members, before }
+        const ticket = options.tickets.submit<GroupArgs>({ op: 'dm.group', args: { identityId, request }, target: null })
+        creating = ticket.id
+        return ticket
+      } catch (error) {
+        creating = null
+        throw error
+      }
     },
 
     /** The group a confirmed `createGroup` ticket made, or null (unknown ticket, not done yet, or after a restart). */
