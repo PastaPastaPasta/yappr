@@ -10,11 +10,11 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { loadPoolPersonas, type PoolPersona } from '../../../harness/pool'
 import type { CapabilitiesDTO, TargetRef, WriteTicket } from '../../../src/api'
 import { connectEngine } from '../engine'
-import { pollSettled, writeSuiteSkipReason } from './env'
+import { pollSettled, retryQuorum, writeSuiteSkipReason } from './env'
 
 const skipReason = writeSuiteSkipReason()
 const TRANSIENT = ['TIMEOUT', 'NETWORK', 'RATE_LIMITED']
@@ -32,7 +32,7 @@ describe.skipIf(skipReason !== null)(`domain writes on sakura${skipReason ? ` (s
 
   async function signIn(persona: PoolPersona): Promise<void> {
     await engine.api.session.signOut()
-    await engine.api.session.signInWithKey({ key: persona.keyHex('high') })
+    await retryQuorum(() => engine.api.session.signInWithKey({ key: persona.keyHex('high') }))
     const { credits } = await engine.api.session.refreshBalance()
     if (!spend.some(entry => entry.identityId === persona.identityId)) spend.push({ identityId: persona.identityId, before: credits })
   }
@@ -71,8 +71,10 @@ describe.skipIf(skipReason !== null)(`domain writes on sakura${skipReason ? ` (s
     [alice, bob] = loadPoolPersonas().slice(4, 6)
     engine = connectEngine({ timeoutMs: 300_000 })
     caps = (await engine.api.engine.boot()).capabilities
-    await signIn(alice)
   })
+
+  // Every scenario starts as alice, whoever a failed one left signed in.
+  beforeEach(() => signIn(alice))
 
   afterAll(async () => {
     if (!engine) return
@@ -141,6 +143,8 @@ describe.skipIf(skipReason !== null)(`domain writes on sakura${skipReason ? ` (s
   it('likes, reposts and bookmarks another persona\'s post, undoes each, and the author sees the like', async () => {
     await signIn(bob)
     const post = ref(await confirmed(() => engine.api.posts.publish({ parts: [{ text: `bob ${Date.now()}` }] })), bob.identityId)
+    // v11 likes are timeless: a device announces likes it sees appear after its first look (the baseline).
+    await retryQuorum(() => engine.api.notifications.list({ filter: 'like' }))
     await signIn(alice)
 
     await confirmed(() => engine.api.engage.like(post))
@@ -164,7 +168,7 @@ describe.skipIf(skipReason !== null)(`domain writes on sakura${skipReason ? ` (s
 
     await signIn(bob)
     // Read before the unlike: the notification is derived from the like document.
-    const likes = await engine.api.notifications.list({ filter: 'like' })
+    const likes = await retryQuorum(() => engine.api.notifications.list({ filter: 'like' }))
     expect(likes.items.some(item => item.actor.id === alice.identityId && item.target?.id === post.id)).toBe(true)
     await engine.api.notifications.markVisibleRead()
     expect(await engine.api.notifications.unreadCount()).toBe(0)

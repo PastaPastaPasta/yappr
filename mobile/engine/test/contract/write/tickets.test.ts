@@ -8,7 +8,7 @@ import { loadPoolPersonas, type PoolPersona } from '../../../harness/pool'
 import type { createWritesModule } from '../../../src/api/writes'
 import type { TicketStore } from '../../../src/writes/tickets'
 import { connectEngine } from '../engine'
-import { pollSettled, writeSuiteSkipReason } from './env'
+import { pollSettled, retryQuorum, writeSuiteSkipReason } from './env'
 
 const skipReason = writeSuiteSkipReason()
 
@@ -28,7 +28,7 @@ describe.skipIf(skipReason !== null)(`write tickets on sakura${skipReason ? ` (s
     engine = connectEngine({ timeoutMs: 300_000 })
     await engine.api.engine.boot()
     await engine.api.session.signOut()
-    await engine.api.session.signInWithKey({ key: viewer.keyHex('high') })
+    await retryQuorum(() => engine.api.session.signInWithKey({ key: viewer.keyHex('high') }))
 
     const { YAPPR_CONTRACT_ID } = await import('@/lib/constants')
     const { followService } = await import('@/lib/services/follow-service')
