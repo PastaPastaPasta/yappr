@@ -60,3 +60,21 @@ jest.mock('expo-file-system', () => ({
     }
   },
 }));
+// MMKV instances persist by id, as on a device, so "relaunch" and "reinstall" can be simulated
+// (react-native-mmkv's own test mock is a fresh, empty instance on every call).
+jest.mock('react-native-mmkv', () => {
+  const actual = jest.requireActual('react-native-mmkv');
+  const instances = new Map();
+  return {
+    ...actual,
+    createMMKV: (config = {}) => {
+      const id = config.id ?? 'mmkv.default';
+      if (!instances.has(id)) instances.set(id, actual.createMMKV(config));
+      return instances.get(id);
+    },
+    deleteMMKV: (id) => {
+      instances.get(id)?.clearAll();
+      return instances.delete(id);
+    },
+  };
+});

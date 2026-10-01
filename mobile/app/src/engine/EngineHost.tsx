@@ -21,8 +21,9 @@ export function EngineHost() {
   const transport = mount?.transport;
 
   useEffect(() => {
-    engineSupervisor.start();
+    // Bridge first, so a background launch is known before the first start.
     const unbridge = bridgeLifecycle(engineSupervisor, engineStorage.idle);
+    engineSupervisor.start();
     return () => {
       unbridge();
       engineSupervisor.stop();
@@ -57,7 +58,9 @@ export function EngineHost() {
         originWhitelist={['*']}
         onShouldStartLoadWithRequest={(request) => {
           if (request.url === 'about:blank') return true;
-          if (loadedEpoch.current === epoch || !isEnginePage(load, request.url)) {
+          // Android loads the page with loadDataWithBaseURL, which never asks: any request here
+          // is a navigation away from it. iOS asks once for the page itself.
+          if (Platform.OS === 'android' || loadedEpoch.current === epoch || !isEnginePage(load, request.url)) {
             appendLog('warn', 'host', `Blocked a navigation to ${request.url}`);
             return false;
           }

@@ -3,6 +3,7 @@ import type { Remote } from '@engine/rpc/client';
 import { Platform } from 'react-native';
 
 import { config } from '~/config';
+import { clearAccountCache } from '~/state/query-client';
 
 import { appendLog, errorMessage } from './logs';
 import { loadEnginePage, type EngineLoad, type Simulation } from './page';
@@ -75,6 +76,8 @@ export async function resetEngineData(): Promise<void> {
   engineSupervisor.stop();
   try {
     await engineStorage.reset();
+    // The persisted screens' cache belongs to the data just deleted.
+    await clearAccountCache();
   } finally {
     engineSupervisor.start();
   }

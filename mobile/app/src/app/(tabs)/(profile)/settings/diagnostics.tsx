@@ -145,7 +145,7 @@ export default function DiagnosticsScreen() {
   const state = STATE_LABEL[status.state];
   const bundleMismatch = hello && config.engine && hello.bundleHash !== config.engine.bundleHash;
 
-  /** Temporary (engine host PR): call the engine from the UI and show what came back. */
+  /** Dev builds: call the engine from the UI and show what came back. */
   const debugCall = async (label: string, run: () => Promise<string>) => {
     setResult(`${label}…`);
     const started = Date.now();
@@ -249,8 +249,8 @@ export default function DiagnosticsScreen() {
 
       {__DEV__ && config.variant === 'devnet' ? <DevSignIn /> : null}
 
-      {config.variant !== 'production' ? (
-        <Section title="Debug calls (temporary)">
+      {__DEV__ ? (
+        <Section title="Debug calls (dev)">
           <View className="gap-3 p-4">
             <ActionButton
               kind="outline"
@@ -274,13 +274,9 @@ export default function DiagnosticsScreen() {
                 })
               }
             />
-            {__DEV__ ? (
-              <>
-                <ActionButton kind="plain" label="Simulate Lockdown Mode" onPress={() => simulateOnNextBoot('no-webassembly')} />
-                <ActionButton kind="plain" label="Simulate outdated WebView" onPress={() => simulateOnNextBoot('old-webview')} />
-                <ActionButton kind="plain" label="Probe WebView timers" onPress={() => engineSupervisor.probeTimers()} />
-              </>
-            ) : null}
+            <ActionButton kind="plain" label="Simulate Lockdown Mode" onPress={() => simulateOnNextBoot('no-webassembly')} />
+            <ActionButton kind="plain" label="Simulate outdated WebView" onPress={() => simulateOnNextBoot('old-webview')} />
+            <ActionButton kind="plain" label="Probe WebView timers" onPress={() => engineSupervisor.probeTimers()} />
             {result ? (
               <RNText selectable testID="debug-result" className="font-mono text-xs text-gray-900 dark:text-gray-100">
                 {result}

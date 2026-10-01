@@ -1,9 +1,10 @@
 import type { EngineApi, EngineInfo } from '@engine/api';
-import { RpcError, RpcErrorCode, type EngineHello, type LogLevel } from '@engine/protocol/envelope';
+import { LOG_LEVELS, RpcError, RpcErrorCode, type EngineHello, type LogLevel } from '@engine/protocol/envelope';
 import { createEngineClient, type EngineClient, type StorageBatch } from '@engine/rpc/client';
 
 import { errorMessage } from './logs';
 import { methodKind, methodTimeoutMs, type MethodKind } from './methods';
+import { redact } from './redact';
 import { createWebViewTransport, type WebViewTransport } from './webview-transport';
 
 /**
@@ -225,6 +226,8 @@ export class EngineSupervisor<Load = unknown> {
   }
 
   private update(patch: Partial<EngineStatus>) {
+    // `reason` carries engine error text onto screens and into "Copy diagnostics": redact it like a log line.
+    if (patch.reason) patch = { ...patch, reason: redact(patch.reason) };
     this.status = { ...this.status, ...patch, queued: this.queue.length };
     this.statusListeners.forEach((listener) => listener());
   }
@@ -294,6 +297,7 @@ export class EngineSupervisor<Load = unknown> {
     this.foreground = foreground;
     if (!foreground) return;
     if (this.status.state === 'failed') this.restart('Back in the foreground');
+    else if (this.status.state === 'degraded') this.retryBoot(0);
     else this.ping();
   }
 
@@ -316,7 +320,12 @@ export class EngineSupervisor<Load = unknown> {
     const client = createEngineClient<EngineApi>(transport, {
       timeoutMs: 0, // deadlines are per method kind, here
       helloTimeoutMs: this.options.helloTimeoutMs,
-      onLog: (level, message) => this.deps.log(level, 'engine', message),
+      // Also filtered here: the engine forwards `info` until boot lowers its level.
+      onLog: (level, message) => {
+        if (LOG_LEVELS.indexOf(level) >= LOG_LEVELS.indexOf(this.options.engineLogLevel)) {
+          this.deps.log(level, 'engine', message);
+        }
+      },
       onStorage: (batch) => this.deps.onStorage(batch),
     });
     this.client = client;
@@ -427,8 +436,7 @@ export class EngineSupervisor<Load = unknown> {
       this.acceptCalls();
       this.update({ state: 'degraded', reason: errorMessage(error) });
       this.log('warn', `Engine boot failed: ${errorMessage(error)}`);
-      // Already online (the network came back while booting): no NetInfo change will retry it.
-      if (this.online) this.after(5000, () => this.connectivity(true).catch(() => undefined));
+      this.retryBoot(0);
       this.startPings();
     }
   }
@@ -439,10 +447,23 @@ export class EngineSupervisor<Load = unknown> {
     const client = this.client;
     if (!client || !this.accepting) return;
     await client.api.engine.connectivity(online);
-    if (online && this.status.state === 'degraded' && this.client === client) {
-      const info = await client.api.engine.boot();
-      if (this.client === client) this.update({ state: 'ready', reason: null, info });
-    }
+    if (online && this.status.state === 'degraded') await this.bootAgain(client);
+  }
+
+  /** A degraded engine (boot failed: DAPI trouble) retries with backoff while online and in the foreground. */
+  private retryBoot(attempt: number) {
+    const delay = Math.min(5000 * 2 ** attempt, 60_000);
+    this.after(delay, () => {
+      const client = this.client;
+      // Offline or in the background: connectivity() or setForeground() picks it up again.
+      if (!client || this.status.state !== 'degraded' || !this.online || !this.foreground) return;
+      this.bootAgain(client).catch(() => this.retryBoot(attempt + 1));
+    });
+  }
+
+  private async bootAgain(client: EngineClient<EngineApi>) {
+    const info = await client.api.engine.boot();
+    if (this.client === client) this.update({ state: 'ready', reason: null, info });
   }
 
   /** iOS without WebAssembly is Lockdown Mode; elsewhere it means an unusable WebView. */

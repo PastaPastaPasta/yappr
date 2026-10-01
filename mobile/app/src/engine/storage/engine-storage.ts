@@ -3,6 +3,8 @@ import { getRandomBytes } from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { createMMKV, deleteMMKV, type MMKV } from 'react-native-mmkv';
 
+import { wipeKeychainServices } from '../../../modules/background-flush';
+
 import {
   identityInKey,
   isAuthKeyOf,
@@ -55,6 +57,8 @@ type SecureIndex = Record<string, Record<string, Stored>>;
 /** lib's session record (lib/auth/platform-auth-adapters.ts `toStoredSession`). */
 const SESSION_KEY = 'yappr_session';
 const INDEX_KEY = 'index';
+/** Set in the index instance on first launch; app data (and so this marker) goes with an uninstall, Keychain items do not. */
+const INSTALLED_KEY = 'installed';
 
 const MMKV_KEY_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainService: 'pr.yap.app.engine-keys',
@@ -97,12 +101,21 @@ export interface EngineStorage {
   stats(): StorageStats;
 }
 
-export function createEngineStorage(networkKey: string): EngineStorage {
+export interface EngineStorageOptions {
+  /** Deletes every Keychain item of these services (iOS; Android drops its Keystore data on uninstall). */
+  wipeServices?: (services: string[]) => void | Promise<void>;
+}
+
+export function createEngineStorage(
+  networkKey: string,
+  { wipeServices = wipeKeychainServices }: EngineStorageOptions = {},
+): EngineStorage {
   const instanceId = `yappr.engine.${networkKey}`;
   const indexId = `yappr.engine-index.${networkKey}`;
   const keyName = `yappr.mmkv-key.${networkKey}`;
+  const secretsService = `pr.yap.app.secrets.${networkKey}`;
   const secureOptions: SecureStore.SecureStoreOptions = {
-    keychainService: `pr.yap.app.secrets.${networkKey}`,
+    keychainService: secretsService,
     keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
   };
 
@@ -217,8 +230,11 @@ export function createEngineStorage(networkKey: string): EngineStorage {
     open() {
       opening ??= (async () => {
         let key = await SecureStore.getItemAsync(keyName, MMKV_KEY_OPTIONS);
-        if (!key) {
-          // Data written under a lost key is unreadable; start the instances clean.
+        if (!key || !createMMKV({ id: indexId, encryptionKey: key, encryptionType: 'AES-256' }).getBoolean(INSTALLED_KEY)) {
+          // First launch of this install. On iOS, Keychain items outlive an uninstall: any secrets
+          // (and the MMKV key) found now belong to a removed copy whose index is gone, so they
+          // could never be found or deleted again. Wipe them, and start clean with a new key.
+          await wipeServices([secretsService]);
           deleteMMKV(instanceId);
           deleteMMKV(indexId);
           key = newEncryptionKey();
@@ -226,6 +242,7 @@ export function createEngineStorage(networkKey: string): EngineStorage {
         }
         kv = createMMKV({ id: instanceId, encryptionKey: key, encryptionType: 'AES-256' });
         indexStore = createMMKV({ id: indexId, encryptionKey: key, encryptionType: 'AES-256' });
+        indexStore.set(INSTALLED_KEY, true);
         noteSession();
       })().catch((error: unknown) => {
         opening = null;
@@ -268,6 +285,10 @@ export function createEngineStorage(networkKey: string): EngineStorage {
         return;
       }
       const owner = ownerNow();
+      // Signing the boot account out (its auth key deleted) ends the epoch binding: whoever signs
+      // in next in this engine owns the secrets written after it.
+      const bound = epochIdentity;
+      if (bound && batch.ops.some((op) => op[0] === 'del' && isAuthKeyOf(op[1], bound))) epochIdentity = null;
       const written = tail.then(() => applySecure(batch.ops, owner));
       tail = written.catch(() => undefined);
       return written;

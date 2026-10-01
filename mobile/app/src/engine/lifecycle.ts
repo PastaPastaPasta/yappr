@@ -23,14 +23,22 @@ export const BACKGROUND_FLUSH_MS = 2000;
  */
 export function bridgeLifecycle(supervisor: EngineSupervisor<unknown>, storageIdle: () => Promise<void>): () => void {
   let backgrounded = AppState.currentState === 'background';
+  // Launched in the background (iOS prewarm, a background launch): a failed start then waits for
+  // the foreground instead of crash-looping on a locked Keychain.
+  if (backgrounded) supervisor.setForeground(false);
 
   const flush = () =>
     withBackgroundTask(async () => {
       const started = Date.now();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const outcome = await Promise.race([
-        // The storage wait runs even if the engine is down: earlier secure writes may still be landing.
-        supervisor.background().then(storageIdle).then(
+        // The storage wait runs even if the engine is down or the call fails: earlier secure
+        // writes may still be landing.
+        supervisor
+          .background()
+          .catch((error: unknown) => appendLog('warn', 'host', `Background lifecycle: ${errorMessage(error)}`))
+          .then(storageIdle)
+          .then(
           () => 'flushed',
           (error: unknown) => `failed (${errorMessage(error)})`,
         ),
