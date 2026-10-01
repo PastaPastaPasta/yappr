@@ -8,7 +8,7 @@ import { loadPoolPersonas, type PoolPersona } from '../../../harness/pool'
 import type { createWritesModule } from '../../../src/api/writes'
 import type { TicketStore } from '../../../src/writes/tickets'
 import { connectEngine } from '../engine'
-import { writeSuiteSkipReason } from './env'
+import { pollSettled, writeSuiteSkipReason } from './env'
 
 const skipReason = writeSuiteSkipReason()
 
@@ -19,14 +19,7 @@ describe.skipIf(skipReason !== null)(`write tickets on sakura${skipReason ? ` (s
   let store: TicketStore
   let writes: ReturnType<typeof createWritesModule>
 
-  async function settled(ticketId: string) {
-    for (let i = 0; i < 240; i++) {
-      const ticket = store.get(ticketId)
-      if (ticket && ticket.state !== 'pending') return ticket
-      await new Promise(resolve => setTimeout(resolve, 500))
-    }
-    throw new Error(`ticket ${ticketId} still pending after 120 s`)
-  }
+  const settled = (ticketId: string) => pollSettled(id => store.get(id), ticketId)
 
   beforeAll(async () => {
     const personas = loadPoolPersonas()

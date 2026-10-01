@@ -20,10 +20,10 @@ import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Post } from '@/lib/types'
 import { RpcError } from '../protocol/envelope'
 import {
-  assertAtMost, avatarOf, listToDTOs, loadUserSummaries, notSupported, requireViewer, toPostDTOs, viewerId, visibleDTOs, withLoadingAuthor,
+  assertAtMost, avatarOf, badRequest, isIdentityId, listToDTOs, loadUserSummaries, notSupported, requireViewer, toPostDTOs, viewerId, visibleDTOs, withLoadingAuthor,
 } from '../dto/hydrate'
 import { onePage, pageAfter, pageOfList } from '../dto/paging'
-import { badRequest, probeRelation, signer } from '../writes/handler-kit'
+import { assertMediaUrl, characters, relationProbe, signer } from '../writes/handler-kit'
 import { NotSentError, type TicketStore } from '../writes/tickets'
 import type { WriteTicket } from '../writes/types'
 import {
@@ -41,8 +41,6 @@ export interface ProfilePostsQuery {
   cursor?: string | null
 }
 
-/** Base58 of 32 bytes: 43 or 44 characters. */
-const IDENTITY_ID = /^[1-9A-HJ-NP-Za-km-z]{43,44}$/
 /** `app/user/page.tsx` and `hooks/use-profile-replies.ts`. */
 const POSTS_PAGE = 50
 const REPLIES_PAGE = 50
@@ -143,7 +141,7 @@ export const profiles = {
    */
   async get(identityIdOrName: string): Promise<ProfileDTO | null> {
     const input = identityIdOrName.trim().replace(/^@/, '')
-    const id = IDENTITY_ID.test(input) ? input : await dpnsService.resolveIdentity(input)
+    const id = isIdentityId(input) ? input : await dpnsService.resolveIdentity(input)
     if (!id) return null
     const viewer = viewerId()
     const other = viewer && viewer !== id ? viewer : null
@@ -233,8 +231,9 @@ export interface ProfilePatchDTO {
 }
 
 const TEXT_FIELDS = ['displayName', 'bio', 'location', 'website', 'pronouns'] as const
+/** Stored as given (trimmed); `''` clears. The display name differs: a blank one keeps the stored name. */
+const EXACT_FIELDS = ['bio', 'location', 'website', 'pronouns', 'bannerUri'] as const
 const PATCH_FIELDS: readonly string[] = [...TEXT_FIELDS, 'avatar', 'bannerUri', 'nsfw']
-const IMAGE_URI = /^(https?|ipfs):\/\/\S+$/
 
 /** The patch as `updateProfile` takes it, after the checks web's form makes. `BAD_REQUEST` otherwise. */
 function toProfileUpdate(patch: ProfilePatchDTO): UpdateUnifiedProfileData {
@@ -249,18 +248,16 @@ function toProfileUpdate(patch: ProfilePatchDTO): UpdateUnifiedProfileData {
     update[field] = value
   }
   const limits = profileTextLimits()
-  if (update.displayName && Array.from(update.displayName.trim()).length > limits.displayName) {
+  if (update.displayName && characters(update.displayName.trim()) > limits.displayName) {
     throw badRequest(`Display name must be at most ${limits.displayName} characters`)
   }
-  if (update.bio && Array.from(update.bio.trim()).length > limits.bio) throw badRequest(`Bio must be at most ${limits.bio} characters`)
+  if (update.bio && characters(update.bio.trim()) > limits.bio) throw badRequest(`Bio must be at most ${limits.bio} characters`)
   if (patch.nsfw !== undefined) {
     if (typeof patch.nsfw !== 'boolean') throw badRequest('nsfw must be a boolean')
     update.nsfw = patch.nsfw
   }
   if (patch.bannerUri !== undefined) {
-    if (patch.bannerUri !== null && (typeof patch.bannerUri !== 'string' || !IMAGE_URI.test(patch.bannerUri))) {
-      throw badRequest('bannerUri must be an http(s):// or ipfs:// URL')
-    }
+    if (patch.bannerUri !== null) assertMediaUrl(patch.bannerUri, 'bannerUri')
     update.bannerUri = patch.bannerUri ?? ''
   }
   if (patch.avatar !== undefined) {
@@ -274,7 +271,7 @@ function toProfileUpdate(patch: ProfilePatchDTO): UpdateUnifiedProfileData {
 function avatarField(avatar: NonNullable<ProfilePatchDTO['avatar']> | null): string {
   if (avatar === null) return ''
   if ('uri' in avatar) {
-    if (typeof avatar.uri !== 'string' || !IMAGE_URI.test(avatar.uri)) throw badRequest('avatar.uri must be an http(s):// or ipfs:// URL')
+    assertMediaUrl(avatar.uri, 'avatar.uri')
     return avatar.uri
   }
   const { style, seed } = avatar.dicebear ?? {}
@@ -298,10 +295,11 @@ async function profileShows(ownerId: string, update: UpdateUnifiedProfileData): 
     if (await unifiedProfileService.profileExists(ownerId)) throw new Error('The profile could not be read')
     return false
   }
-  const same = (stored: string | undefined, next: string | undefined) => next === undefined || (stored ?? '') === next.trim()
   return (!update.displayName?.trim() || profile.displayName === update.displayName.trim()) &&
-    same(profile.bio, update.bio) && same(profile.location, update.location) && same(profile.website, update.website) &&
-    same(profile.pronouns, update.pronouns) && same(profile.bannerUri, update.bannerUri) &&
+    EXACT_FIELDS.every(field => {
+      const next = update[field]
+      return next === undefined || (profile[field] ?? '') === next.trim()
+    }) &&
     (update.nsfw === undefined || (profile.nsfw === true) === update.nsfw) &&
     (update.avatar === undefined || ((await unifiedProfileService.getStoredAvatar(ownerId)) ?? '') === update.avatar)
 }
@@ -320,15 +318,16 @@ export function createProfileWrites(tickets: TicketStore) {
         await unifiedProfileService.updateProfile(signer(ctx), update)
       } catch (error) {
         // The plan's own refusals (lengths, list limits, URL rules) come before anything is signed.
-        if (error instanceof ListLimitError) throw new NotSentError(new RpcError(error.message, 'BAD_REQUEST'))
+        if (error instanceof ListLimitError) throw new NotSentError(badRequest(error.message))
         throw error
       }
       // updateProfile throws on a failure and does not say whether the wait confirmed, as on web.
       return { state: 'confirmed' }
     },
-    probe: (ticket, update) => update
-      ? probeRelation(() => profileShows(ticket.identityId ?? '', update), true)
-      : Promise.resolve({ state: 'unknown', error: new Error('This edit can no longer be checked') }),
+    probe: relationProbe(async ({ viewer, args }) => {
+      if (!args) throw new Error('This edit can no longer be checked')
+      return profileShows(viewer, args)
+    }, true),
   })
 
   return {

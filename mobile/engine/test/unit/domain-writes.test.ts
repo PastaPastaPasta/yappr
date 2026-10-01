@@ -55,7 +55,6 @@ vi.mock('@/lib/unconfirmed-writes', () => ({
   markUnconfirmed: (_type: string, id: string) => { m.unconfirmed.add(id) },
   settleUnconfirmed: m.settle,
 }))
-vi.mock('../../src/writes/lib-results', async (load) => ({ ...await load<object>(), documentExists: m.documentExists }))
 vi.mock('@/lib/media/image-digest', () => ({ imageDigestForUrl: m.imageDigest }))
 vi.mock('@/lib/services/like-service', () => ({ likeService: m.likeService }))
 vi.mock('@/lib/services/bookmark-service', () => ({ bookmarkService: m.bookmarkService }))
@@ -81,7 +80,6 @@ vi.mock('@/lib/services/unified-profile-service', async (load) => {
 vi.mock('@/lib/services/identity-batch', () => ({ loadIdentityBatch: async () => ({ usernames: new Map(), profiles: [], avatars: new Map() }) }))
 
 const { createTicketStore } = await import('../../src/writes/tickets')
-const { setAbsenceRecheckMs } = await import('../../src/writes/handler-kit')
 const { createEngageWrites } = await import('../../src/api/engage')
 const { createGraphWrites } = await import('../../src/api/graph')
 const { createPostWrites } = await import('../../src/api/posts')
@@ -93,6 +91,7 @@ const { useNotificationStore } = await import('@/lib/stores/notification-store')
 const { ListLimitError } = await import('@/lib/typed-array-codecs')
 const { YAPPR_CONTRACT_ID } = await import('@/lib/constants')
 const { validate, page, postDTO, notificationDTO, blockedUserDTO } = await import('../../src/dto/validate')
+type WriteTicket = import('../../src/writes/types').WriteTicket
 
 /** A 44-character base58 id. */
 const id = (tag: string) => tag.replace(/[0OIl]/g, 'z').padEnd(44, 'x')
@@ -118,6 +117,8 @@ function engine() {
   })
   return {
     tickets,
+    /** A write's ticket once its background run has settled. */
+    outcome: (submitted: Promise<WriteTicket>) => submitted.then(ticket => settled(tickets, ticket.id)),
     engage: createEngageWrites(tickets),
     graph: createGraphWrites(tickets),
     posts: createPostWrites(tickets, emit),
@@ -147,12 +148,11 @@ beforeEach(() => {
   m.settle.mockResolvedValue(true)
   m.documentExists.mockResolvedValue(true)
   emitted = []
-  setAbsenceRecheckMs(0)
 })
 
 describe('engage writes', () => {
   it('likes after settling an unconfirmed target, and maps lib\'s boolean', async () => {
-    const { tickets, engage } = engine()
+    const { tickets, outcome, engage } = engine()
     m.unconfirmed.add(TARGET.id)
     m.likeService.likePost.mockResolvedValue(true)
     const ticket = await engage.like(TARGET)
@@ -164,22 +164,22 @@ describe('engage writes', () => {
     expect(stagesOf(ticket.id)).toEqual(['queued', 'waiting-parent', 'signing', null])
 
     m.likeService.likePost.mockResolvedValue(false)
-    expect(await settled(tickets, (await engage.like(TARGET)).id)).toMatchObject({ state: 'failed', error: { code: 'UNKNOWN' } })
+    expect(await outcome(engage.like(TARGET))).toMatchObject({ state: 'failed', error: { code: 'UNKNOWN' } })
   })
 
   it('refuses to name a target that never confirmed: PARENT_UNCONFIRMED, nothing sent', async () => {
-    const { tickets, engage } = engine()
+    const { outcome, engage } = engine()
     m.unconfirmed.add(TARGET.id)
     m.settle.mockResolvedValue(false)
-    const ticket = await settled(tickets, (await engage.bookmark(TARGET)).id)
+    const ticket = await outcome(engage.bookmark(TARGET))
     expect(ticket).toMatchObject({ state: 'failed', error: { code: 'PARENT_UNCONFIRMED', outcome: 'local' } })
     expect(m.bookmarkService.bookmarkPost).not.toHaveBeenCalled()
   })
 
   it('treats a transport failure inside lib\'s write as "may have landed", and checks it with a relation read', async () => {
-    const { tickets, engage } = engine()
+    const { tickets, outcome, engage } = engine()
     m.likeService.likePost.mockRejectedValue(new Error('Network request failed: connection reset'))
-    const ticket = await settled(tickets, (await engage.like(TARGET)).id)
+    const ticket = await outcome(engage.like(TARGET))
     expect(ticket).toMatchObject({ state: 'unconfirmed', error: { code: 'NETWORK', outcome: 'unknown' }, retryable: false })
     m.likeService.isLiked.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
@@ -187,44 +187,44 @@ describe('engage writes', () => {
   })
 
   it('v10: reposts as a bare quote post, and recovers its own slot from a 40105', async () => {
-    const { tickets, engage } = engine()
+    const { outcome, engage } = engine()
     m.topology.repostsAreQuotes = true
     m.postService.createPost.mockResolvedValue({ ...post(id('Bare')), __createConfirmed: false })
-    const first = await settled(tickets, (await engage.repost(TARGET)).id)
+    const first = await outcome(engage.repost(TARGET))
     expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, '', { quotedPostId: TARGET.id, quotedPostOwnerId: AUTHOR })
     expect(first).toMatchObject({ state: 'unconfirmed', documents: [{ type: 'post', id: id('Bare'), action: 'create', confirmed: false }] })
 
     const duplicate = Object.assign(new Error('duplicate unique properties'), { code: 40105 })
     m.postService.createPost.mockRejectedValue(duplicate)
     m.postService.getOwnQuotes.mockResolvedValue(new Map([[TARGET.id, { id: id('Bare'), bare: true }]]))
-    expect(await settled(tickets, (await engage.repost(TARGET)).id)).toMatchObject({ state: 'confirmed', documents: [{ id: id('Bare') }] })
+    expect(await outcome(engage.repost(TARGET))).toMatchObject({ state: 'confirmed', documents: [{ id: id('Bare') }] })
 
     m.postService.getOwnQuotes.mockResolvedValue(new Map([[TARGET.id, { id: id('Quote'), bare: false }]]))
-    expect(await settled(tickets, (await engage.repost(TARGET)).id)).toMatchObject({ state: 'failed', error: { code: 'DUPLICATE' } })
+    expect(await outcome(engage.repost(TARGET))).toMatchObject({ state: 'failed', error: { code: 'DUPLICATE' } })
   })
 
   it('v10: undoing a repost deletes the bare quote, and refuses a quote with text (QUOTE_HAS_TEXT)', async () => {
-    const { tickets, engage } = engine()
+    const { tickets, outcome, engage } = engine()
     m.topology.repostsAreQuotes = true
     m.postService.getOwnQuotes.mockResolvedValue(new Map([[TARGET.id, { id: id('Quote'), bare: false }]]))
     await expect(engage.unrepost(TARGET)).rejects.toMatchObject({ code: 'QUOTE_HAS_TEXT' })
 
     m.postService.getOwnQuotes.mockResolvedValue(new Map([[TARGET.id, { id: id('Bare'), bare: true }]]))
     m.postService.deletePost.mockRejectedValue(new Error('Request timeout'))
-    const ticket = await settled(tickets, (await engage.unrepost(TARGET)).id)
+    const ticket = await outcome(engage.unrepost(TARGET))
     expect(m.postService.deletePost).toHaveBeenCalledWith(id('Bare'), VIEWER)
     expect(ticket).toMatchObject({ state: 'unconfirmed', documents: [{ type: 'post', id: id('Bare'), action: 'delete' }] })
     m.documentExists.mockResolvedValue(false)
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
 
     m.postService.getOwnQuotes.mockResolvedValue(new Map())
-    expect(await settled(tickets, (await engage.unrepost(TARGET)).id)).toMatchObject({ state: 'confirmed', documents: [] })
+    expect(await outcome(engage.unrepost(TARGET))).toMatchObject({ state: 'confirmed', documents: [] })
   })
 
   it('off v10: repost documents, gated per kind', async () => {
-    const { tickets, engage } = engine()
+    const { outcome, engage } = engine()
     m.repostService.removeRepost.mockResolvedValue(true)
-    expect(await settled(tickets, (await engage.unrepost(TARGET)).id)).toMatchObject({ state: 'confirmed' })
+    expect(await outcome(engage.unrepost(TARGET))).toMatchObject({ state: 'confirmed' })
     expect(m.repostService.removeRepost).toHaveBeenCalledWith(TARGET.id, VIEWER)
     m.topology['repost:reply'] = false
     m.topology['bookmark:reply'] = false
@@ -237,9 +237,9 @@ describe('engage writes', () => {
   })
 
   it('checks a bookmark with a strict read, and pages the bookmarks list', async () => {
-    const { tickets, engage } = engine()
+    const { tickets, outcome, engage } = engine()
     m.bookmarkService.removeBookmark.mockRejectedValue(new Error('Request timeout'))
-    const ticket = await settled(tickets, (await engage.unbookmark(TARGET)).id)
+    const ticket = await outcome(engage.unbookmark(TARGET))
     m.bookmarkService.getBookmark.mockRejectedValue(new Error('read failed'))
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', error: { userMessage: expect.any(String) } })
     expect(m.bookmarkService.getBookmark).toHaveBeenCalledWith(TARGET.id, VIEWER, { throwOnError: true })
@@ -258,24 +258,25 @@ describe('engage writes', () => {
 
 describe('graph and safety writes', () => {
   it('follows, naming the created document, and checks with a strict following read', async () => {
-    const { tickets, graph } = engine()
+    const { tickets, outcome, graph } = engine()
     m.followService.followUser.mockResolvedValue({ success: true, transactionHash: id('Follow'), confirmed: false })
-    const ticket = await settled(tickets, (await graph.follow(AUTHOR)).id)
+    const ticket = await outcome(graph.follow(AUTHOR))
     expect(ticket).toMatchObject({ state: 'unconfirmed', target: { identityId: AUTHOR }, documents: [{ type: 'follow', id: id('Follow'), action: 'create' }] })
     m.followService.getFollowing.mockResolvedValue([{ followingId: AUTHOR }])
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
     expect(m.followService.getFollowing).toHaveBeenCalledWith(VIEWER, { throwOnError: true })
 
     m.followService.unfollowUser.mockResolvedValue({ success: false, error: 'Insufficient balance' })
-    expect(await settled(tickets, (await graph.unfollow(AUTHOR)).id)).toMatchObject({ state: 'failed' })
+    expect(await outcome(graph.unfollow(AUTHOR))).toMatchObject({ state: 'failed' })
     await expect(graph.follow(VIEWER)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
   it('blocks with a message of at most 280 characters, and reports an unblock a followed list overrides', async () => {
-    const { tickets, safety } = engine()
+    const { outcome, safety } = engine()
     await expect(safety.block(AUTHOR, { message: 'x'.repeat(281) })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(safety.block(AUTHOR, { message: 42 as never })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block') })
-    expect(await settled(tickets, (await safety.block(AUTHOR, { message: '  spam  ' })).id)).toMatchObject({ state: 'confirmed' })
+    expect(await outcome(safety.block(AUTHOR, { message: '  spam  ' }))).toMatchObject({ state: 'confirmed' })
     expect(m.blockService.blockUser).toHaveBeenCalledWith(VIEWER, AUTHOR, 'spam')
 
     m.blockService.getUserBlocks.mockResolvedValue([{ blockedId: AUTHOR, message: 'spam' }, { blockedId: id('Other') }])
@@ -285,17 +286,17 @@ describe('graph and safety writes', () => {
 
     m.blockService.unblockUser.mockResolvedValue({ success: true })
     m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: true, isOwnBlock: false, inheritedFrom: id('Lister') })
-    expect(await settled(tickets, (await safety.unblock(AUTHOR)).id)).toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED', outcome: 'local' } })
+    expect(await outcome(safety.unblock(AUTHOR))).toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED', outcome: 'local' } })
   })
 
   it('reports with lib\'s reason rules, gated by the topology', async () => {
-    const { tickets, safety } = engine()
+    const { tickets, outcome, safety } = engine()
     await expect(safety.report(TARGET, 8)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(safety.report(TARGET, 9)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(safety.report(TARGET, 0, 'x'.repeat(501))).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(safety.report({ ...TARGET, ownerId: VIEWER }, 0)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     m.reportService.fileReport.mockResolvedValue({ success: true, transactionHash: id('Report'), confirmed: false })
-    const ticket = await settled(tickets, (await safety.report(TARGET, 8, ' a scam ')).id)
+    const ticket = await outcome(safety.report(TARGET, 8, ' a scam '))
     expect(m.reportService.fileReport).toHaveBeenCalledWith(VIEWER, { kind: 'post', targetId: TARGET.id, targetOwnerId: AUTHOR, reason: 8, note: 'a scam' })
     expect(ticket).toMatchObject({ state: 'unconfirmed', documents: [{ type: 'report', id: id('Report'), contractId: YAPPR_CONTRACT_ID }] })
     m.reportService.getOwnReport.mockResolvedValue({ id: id('Report') })
@@ -321,13 +322,13 @@ describe('profiles.update', () => {
   })
 
   it('reports lib\'s own plan refusals as not sent, and checks an edit by reading the profile back', async () => {
-    const { tickets, profiles } = engine()
+    const { tickets, outcome, profiles } = engine()
     m.profileService.updateProfile.mockRejectedValue(new ListLimitError('Too many links'))
-    expect(await settled(tickets, (await profiles.update({ bio: 'b' })).id))
+    expect(await outcome(profiles.update({ bio: 'b' })))
       .toMatchObject({ state: 'failed', error: { code: 'BAD_REQUEST', userMessage: 'Too many links' } })
 
     m.profileService.updateProfile.mockRejectedValue(new Error('Request timeout'))
-    const ticket = await settled(tickets, (await profiles.update({ bio: 'new bio' })).id)
+    const ticket = await outcome(profiles.update({ bio: 'new bio' }))
     expect(ticket.state).toBe('unconfirmed')
     m.profileService.getProfile.mockResolvedValue({ bio: 'new bio', displayName: 'Ann' })
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
@@ -365,10 +366,10 @@ describe('posts.publish and posts.delete', () => {
   })
 
   it('publishes a thread, naming each part, and resumes it with the posted ids after a failure', async () => {
-    const { tickets, posts } = engine()
+    const { tickets, outcome, posts } = engine()
     creating(2)
     const draft = { parts: [{ text: 'one' }, { text: 'two' }, { text: 'three' }], sensitive: true }
-    const ticket = await settled(tickets, (await posts.publish(draft)).id)
+    const ticket = await outcome(posts.publish(draft))
     expect(ticket).toMatchObject({
       state: 'failed',
       error: { code: 'INSUFFICIENT_YAPP' },
@@ -385,16 +386,16 @@ describe('posts.publish and posts.delete', () => {
     await expect(tickets.retry(ticket.id)).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
     creating()
     m.replyService.createReply.mockClear()
-    const resumed = await settled(tickets, (await posts.publish({ ...draft, resume: { postedIds: [id('post0'), id('reply1'), null] } })).id)
+    const resumed = await outcome(posts.publish({ ...draft, resume: { postedIds: [id('post0'), id('reply1'), null] } }))
     expect(resumed).toMatchObject({ state: 'confirmed', documents: [{ part: 2, type: 'reply' }] })
     expect(m.replyService.createReply).toHaveBeenCalledTimes(1)
     expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'three', { rootPostId: id('post0'), replyToReplyId: id('reply1'), parentOwnerId: VIEWER }, expect.anything())
   })
 
   it('resumes a thread with writes.retry after a retryable refusal, skipping the parts that landed', async () => {
-    const { tickets, posts } = engine()
+    const { tickets, outcome, posts } = engine()
     creating(1, FEE_CHANGED)
-    const ticket = await settled(tickets, (await posts.publish({ parts: [{ text: 'one' }, { text: 'two' }] })).id)
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'one' }, { text: 'two' }] }))
     expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: { code: 'FEE_CHANGED' }, documents: [{ part: 0 }] })
     m.postService.createPost.mockClear()
     m.replyService.createReply.mockClear()
@@ -405,7 +406,7 @@ describe('posts.publish and posts.delete', () => {
   })
 
   it('marks a part the network did not confirm, and proves it with check', async () => {
-    const { tickets, posts } = engine()
+    const { tickets, outcome, posts } = engine()
     m.topology.repostsAreQuotes = true
     creating()
     // references enforced: lib records the part as unconfirmed.
@@ -414,7 +415,7 @@ describe('posts.publish and posts.delete', () => {
       return { ...post(id('Late')), __createConfirmed: false }
     })
     m.postService.getPostById.mockResolvedValue(post(TARGET.id))
-    const ticket = await settled(tickets, (await posts.publish({ parts: [{ text: 'quote' }], quote: TARGET })).id)
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'quote' }], quote: TARGET }))
     expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'quote', expect.objectContaining({ quotedPostId: TARGET.id }))
     expect(ticket).toMatchObject({ state: 'unconfirmed', target: TARGET, documents: [{ type: 'post', id: id('Late'), confirmed: false, part: 0 }] })
     m.documentExists.mockResolvedValue(false)
@@ -423,20 +424,20 @@ describe('posts.publish and posts.delete', () => {
   })
 
   it('replies to a loaded target, refuses a private one, and carries v10 media hashes', async () => {
-    const { tickets, posts } = engine()
+    const { outcome, posts } = engine()
     creating()
     m.postService.getPostById.mockResolvedValue(null)
     m.replyService.getReplyById.mockResolvedValue(null)
-    const gone = await settled(tickets, (await posts.publish({ parts: [{ text: 'hi' }], replyTo: TARGET })).id)
+    const gone = await outcome(posts.publish({ parts: [{ text: 'hi' }], replyTo: TARGET }))
     expect(gone).toMatchObject({ state: 'failed', error: { outcome: 'not-sent' } })
 
     m.postService.getPostById.mockResolvedValue(post(TARGET.id, { encryptedContent: 'x' as never }))
-    expect(await settled(tickets, (await posts.publish({ parts: [{ text: 'hi' }], replyTo: TARGET })).id))
+    expect(await outcome(posts.publish({ parts: [{ text: 'hi' }], replyTo: TARGET })))
       .toMatchObject({ state: 'failed', error: { code: 'NOT_SUPPORTED' } })
 
     m.topology.mediaCarriesHashes = true
     m.imageDigest.mockResolvedValue({ hash: new Uint8Array(32), fingerprint: new Uint8Array(8) })
-    const withMedia = await settled(tickets, (await posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/a.png' })).id)
+    const withMedia = await outcome(posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/a.png' }))
     expect(withMedia.state).toBe('confirmed')
     expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'pic', expect.objectContaining({
       mediaUrl: 'https://img.example/a.png', mediaHashes: { mediaHash: new Uint8Array(32), mediaFingerprint: new Uint8Array(8) },
@@ -444,9 +445,9 @@ describe('posts.publish and posts.delete', () => {
   })
 
   it('emits content.created with the created post as a DTO', async () => {
-    const { tickets, posts } = engine()
+    const { outcome, posts } = engine()
     creating()
-    await settled(tickets, (await posts.publish({ parts: [{ text: 'hello' }] })).id)
+    await outcome(posts.publish({ parts: [{ text: 'hello' }] }))
     await vi.waitFor(() => expect(emitted.find(e => e.event === 'content.created')).toBeTruthy())
     const created = emitted.find(e => e.event === 'content.created')?.payload as { kind: string; id: string; post: unknown }
     expect(created).toMatchObject({ kind: 'post', id: id('post0'), confirmed: true })
@@ -454,17 +455,17 @@ describe('posts.publish and posts.delete', () => {
   })
 
   it('deletes only the viewer\'s own posts: a real delete, or a tombstone', async () => {
-    const { tickets, posts } = engine()
+    const { tickets, outcome, posts } = engine()
     const own = { ...TARGET, ownerId: VIEWER }
     await expect(posts.delete(TARGET)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     m.postService.deletePost.mockResolvedValue(true)
-    expect(await settled(tickets, (await posts.delete(own)).id))
+    expect(await outcome(posts.delete(own)))
       .toMatchObject({ state: 'confirmed', documents: [{ type: 'post', id: TARGET.id, action: 'delete', confirmed: true }] })
 
     m.topology.deletesAreTombstones = true
     m.replyService.tombstoneReply.mockRejectedValue(new Error('Request timeout'))
     const reply = { ...own, kind: 'reply' as const }
-    const ticket = await settled(tickets, (await posts.delete(reply)).id)
+    const ticket = await outcome(posts.delete(reply))
     expect(ticket).toMatchObject({ state: 'unconfirmed', documents: [] })
     m.postService.getPostById.mockResolvedValue(null)
     m.replyService.getReplyById.mockResolvedValue({ ...post(TARGET.id), parentId: id('P'), deleted: true })

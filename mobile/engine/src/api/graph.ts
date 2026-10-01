@@ -4,7 +4,7 @@ import { dpnsService } from '@/lib/services/dpns-service'
 import { followService } from '@/lib/services/follow-service'
 import { assertAtMost, loadUserSummaries, requireViewer } from '../dto/hydrate'
 import { pageOfList } from '../dto/paging'
-import { assertId, badRequest, probeRelation, signer, ticketIdentity } from '../writes/handler-kit'
+import { assertId, badRequest, relationProbe, signer, ticketIdentity } from '../writes/handler-kit'
 import { createdDocument, fromTransitionResult } from '../writes/lib-results'
 import type { TicketStore } from '../writes/tickets'
 import type { WriteTicket } from '../writes/types'
@@ -67,10 +67,10 @@ interface FollowArgs {
  * reads the viewer's following list strictly (a failed read proves nothing).
  */
 export function createGraphWrites(tickets: TicketStore) {
-  const follows = (ticket: WriteTicket) => async () => {
+  const follows = (expected: boolean) => relationProbe<FollowArgs>(async ({ viewer, ticket }) => {
     const targetId = ticketIdentity(ticket)
-    return (await followService.getFollowing(ticket.identityId ?? '', { throwOnError: true })).some(follow => follow.followingId === targetId)
-  }
+    return (await followService.getFollowing(viewer, { throwOnError: true })).some(follow => follow.followingId === targetId)
+  }, expected)
 
   tickets.register<FollowArgs>('follow', {
     persistArgs: true,
@@ -78,14 +78,14 @@ export function createGraphWrites(tickets: TicketStore) {
       const result = await followService.followUser(signer(ctx), targetId)
       return fromTransitionResult(result, createdDocument(result, YAPPR_CONTRACT_ID, 'follow'))
     },
-    probe: ticket => probeRelation(follows(ticket), true),
+    probe: follows(true),
   })
   tickets.register<FollowArgs>('unfollow', {
     persistArgs: true,
     async run({ targetId }, ctx) {
       return fromTransitionResult(await followService.unfollowUser(signer(ctx), targetId))
     },
-    probe: ticket => probeRelation(follows(ticket), false),
+    probe: follows(false),
   })
 
   function submit(op: 'follow' | 'unfollow', targetId: string): WriteTicket {

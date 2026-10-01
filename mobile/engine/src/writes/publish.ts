@@ -3,13 +3,12 @@ import { hasVisibleContent, isOverContentLimit } from '@/lib/compose/limits'
 import { mediaCarriesHashes, threadRootIdOf } from '@/lib/contract-topology'
 import { imageDigestForUrl } from '@/lib/media/image-digest'
 import type { MediaHashes } from '@/lib/media/media-fingerprint'
-import { replyToPost } from '@/lib/services/post-service'
 import type { Post } from '@/lib/types'
 import { isUnconfirmed } from '@/lib/unconfirmed-writes'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { RpcError } from '../protocol/envelope'
-import { assertId, assertTarget, badRequest, proveDocuments, signer, socialDoc } from './handler-kit'
-import { NotSentError, type ProbeResult, type WriteHandler, type WriteResult, type WriteRunContext } from './tickets'
+import { assertId, assertMediaUrl, assertTarget, badRequest, signer, socialDoc } from './handler-kit'
+import { NotSentError, type ProbeKit, type ProbeResult, type WriteHandler, type WriteResult, type WriteRunContext } from './tickets'
 import type { TargetRef, TicketDocument, WriteStage, WriteTicket } from './types'
 
 /**
@@ -21,7 +20,7 @@ import type { TargetRef, TicketDocument, WriteStage, WriteTicket } from './types
  */
 
 /** `compose-modal.tsx` `canAddThread`. */
-export const MAX_THREAD_PARTS = 10
+const MAX_THREAD_PARTS = 10
 
 export interface DraftDTO {
   /** 1–10 parts; a reply or a quote has exactly one. Parts without visible text are skipped, as on web. */
@@ -40,8 +39,6 @@ export interface DraftDTO {
   resume?: { postedIds: (string | null)[] } | null
 }
 
-const MEDIA_URL = /^(https?|ipfs):\/\/\S+$/
-
 /** Check a draft before a ticket exists: a bad one rejects with `BAD_REQUEST`. */
 export function validateDraft(draft: DraftDTO): void {
   if (typeof draft !== 'object' || draft === null || !Array.isArray(draft.parts)) throw badRequest('draft.parts must be an array')
@@ -52,9 +49,7 @@ export function validateDraft(draft: DraftDTO): void {
   if (draft.quote) assertTarget(draft.quote)
   if (draft.replyTo && draft.quote) throw badRequest('A post replies or quotes, not both')
   if ((draft.replyTo || draft.quote) && parts.length > 1) throw badRequest('A reply or a quote cannot be a thread')
-  if (draft.mediaUrl != null && (typeof draft.mediaUrl !== 'string' || !MEDIA_URL.test(draft.mediaUrl))) {
-    throw badRequest('mediaUrl must be an http(s):// or ipfs:// URL')
-  }
+  if (draft.mediaUrl != null) assertMediaUrl(draft.mediaUrl, 'mediaUrl')
   const posted: unknown = draft.resume ? draft.resume.postedIds : []
   if (!Array.isArray(posted) || posted.length > parts.length) throw badRequest('resume.postedIds must name at most one id per part')
   posted.forEach((id, index) => { if (id !== null) assertId(id, `resume.postedIds[${index}]`) })
@@ -176,7 +171,7 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>)
    * unconfirmed; resume the thread (`resume.postedIds`) once the profile shows
    * what posted.
    */
-  async function probe(ticket: WriteTicket, draft: DraftDTO | undefined): Promise<ProbeResult> {
+  async function probe(ticket: WriteTicket, draft: DraftDTO | undefined, kit: ProbeKit): Promise<ProbeResult> {
     if (draft) {
       const posted = postedIds(draft, ticket.documents)
       const missing = draft.parts.findIndex((part, index) => !posted[index] && hasVisibleContent(part.text))
@@ -184,15 +179,8 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>)
         return { state: 'unknown', error: new Error(`Part ${missing + 1} never reported an id, so it cannot be checked: see your profile, then resume the thread`) }
       }
     }
-    return proveDocuments(ticket.documents)
+    return kit.proveDocuments(ticket.documents)
   }
 
   return { run, probe, persistArgs: true }
-}
-
-/** A `post-created` / `reply-created` event's document as lib's `Post`. */
-export function createdPost(kind: 'post' | 'reply', detail: Record<string, unknown>): Post | null {
-  const document = detail[kind]
-  if (!document || typeof document !== 'object') return null
-  return kind === 'reply' ? replyToPost(document as Parameters<typeof replyToPost>[0]) : document as Post
 }

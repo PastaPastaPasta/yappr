@@ -21,9 +21,9 @@ import {
 } from '../dto/hydrate'
 import { emptyPage, endOnProofDirectionBug, nextPage, pageOfList } from '../dto/paging'
 import { assembleFlatThread, assembleV2Thread, flattenThreads, RENDERED_DEPTH, type FlatReply } from '../dto/thread'
-import { assertTarget, badRequest, probeRelation, proveDocuments, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
+import { assertTarget, badRequest, relationProbe, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
 import { fromBoolean } from '../writes/lib-results'
-import { createPublishHandler, createdPost, validateDraft, type DraftDTO } from '../writes/publish'
+import { createPublishHandler, validateDraft, type DraftDTO } from '../writes/publish'
 import type { TicketStore } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
 import {
@@ -74,7 +74,7 @@ const replyPages = new TtlMap<string, { documents: Reply[]; nextCursor?: string 
 const STUB_AUTHOR: AuthorDTO = { id: '', username: null, displayName: '', avatar: { uri: null, dicebear: null }, resolved: false }
 
 /** A post, or a reply as a Post, the way web's post page looks an id up. */
-export async function load(id: string): Promise<Post | null> {
+async function load(id: string): Promise<Post | null> {
   const post = await postService.getPostById(id, { skipEnrichment: true })
   if (post) return post
   // Replies are a separate doctype; web's usePostDetail falls back the same way.
@@ -357,6 +357,13 @@ export interface ContentCreatedEvent {
 }
 
 let contentSink: ((event: ContentCreatedEvent) => void) | null = null
+
+/** A `post-created` / `reply-created` event's document as lib's `Post`. */
+function createdPost(kind: 'post' | 'reply', detail: Record<string, unknown>): Post | null {
+  const document = detail[kind]
+  if (!document || typeof document !== 'object') return null
+  return kind === 'reply' ? replyToPost(document as Reply) : document as Post
+}
 let forwarding = false
 
 /**
@@ -376,9 +383,8 @@ function forwardCreatedContent(emit: (event: ContentCreatedEvent) => void): void
       if (!post) return
       const confirmed = detail.confirmed !== false
       enrichToDTOs([withLoadingAuthor(post)])
-        .then(([dto]) => dto ?? toPostDTO(post, { signedIn: true, avatars: new Map() }))
-        .catch(() => toPostDTO(post, { signedIn: true, avatars: new Map() }))
-        .then(dto => contentSink?.({ kind, id: post.id, confirmed, post: dto }))
+        .catch((): PostDTO[] => [])
+        .then(([dto]) => contentSink?.({ kind, id: post.id, confirmed, post: dto ?? toPostDTO(post, { signedIn: true, avatars: new Map() }) }))
         .catch(() => {
           // A DTO that would not map: feeds pick the post up on their next read.
         })
@@ -392,6 +398,12 @@ function forwardCreatedContent(emit: (event: ContentCreatedEvent) => void): void
  */
 export function createPostWrites(tickets: TicketStore, emit: (event: 'content.created', payload: ContentCreatedEvent) => void) {
   forwardCreatedContent(payload => emit('content.created', payload))
+  const tombstoned = relationProbe<{ target: TargetRef }>(async ({ ticket }) => {
+    const post = await load(ticketTarget(ticket).id)
+    // lib's single reads answer a failure as "absent", and a tombstone is never absent.
+    if (!post) throw new Error('The post could not be read')
+    return post.deleted !== true
+  }, false)
   tickets.register<DraftDTO>('post.publish', createPublishHandler(load))
   tickets.register<{ target: TargetRef }>('post.delete', {
     persistArgs: true,
@@ -404,14 +416,9 @@ export function createPostWrites(tickets: TicketStore, emit: (event: 'content.cr
       return fromBoolean(kind === 'reply' ? await replyService.deleteReply(id, viewer) : await postService.deletePost(id, viewer))
     },
     // A real delete names the document, proved absent; a tombstone (v9) stays, blanked.
-    probe: ticket => deletesAreTombstones()
-      ? probeRelation(async () => {
-          const post = await load(ticketTarget(ticket).id)
-          // lib's single reads answer a failure as "absent", and a tombstone is never absent.
-          if (!post) throw new Error('The post could not be read')
-          return post.deleted !== true
-        }, false)
-      : proveDocuments(ticket.documents),
+    probe: (ticket, args, kit) => deletesAreTombstones()
+      ? tombstoned(ticket, args, kit)
+      : kit.proveDocuments(ticket.documents),
   })
 
   return {

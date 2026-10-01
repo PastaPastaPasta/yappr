@@ -10,12 +10,11 @@ import { repostService } from '@/lib/services/repost-service'
 import { RpcError } from '../protocol/envelope'
 import { assertAtMost, enrichToDTOs, notSupported, requireViewer, viewerId, withLoadingAuthor } from '../dto/hydrate'
 import { pageOfList } from '../dto/paging'
-import {
-  assertTarget, probeRelation, proveDocuments, settleTarget, signer, socialDoc, targetStub, ticketTarget,
-} from '../writes/handler-kit'
+import { assertTarget, relationProbe, settleTarget, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
 import { fromBoolean, wasConfirmed } from '../writes/lib-results'
 import type { TicketStore, WriteResult } from '../writes/tickets'
 import type { TargetRef, WriteOp, WriteTicket } from '../writes/types'
+import type { Post } from '@/lib/types'
 import type { EngageStatsDTO, Page, PostDTO } from './dto'
 
 /** `app/bookmarks/page.tsx` reads every bookmark at once; the engine pages them. */
@@ -71,6 +70,22 @@ async function ownQuote(viewer: string, target: TargetRef): Promise<OwnQuote | n
   return (await postService.getOwnQuotes(viewer, [target.id], target.kind)).get(target.id) ?? null
 }
 
+/** A Post-shaped stand-in for a target named by reference: `resolveQuoteReference` reads only its id, kind and author. */
+function targetStub(target: TargetRef): Post {
+  return {
+    id: target.id,
+    targetKind: target.kind,
+    author: { id: target.ownerId, username: '', displayName: '', avatar: '', followers: 0, following: 0, joinedAt: new Date(0) },
+    content: '',
+    createdAt: new Date(0),
+    likes: 0,
+    reposts: 0,
+    replies: 0,
+    quotes: 0,
+    views: 0,
+  }
+}
+
 /**
  * v10: a bare repost is a content-less quote post, one quote or repost per
  * author and target. A 40105 means the slot is taken: by the viewer's own
@@ -101,7 +116,7 @@ const isReposted = async (viewer: string, target: TargetRef) => repostsAreQuotes
  */
 export function createEngageWrites(tickets: TicketStore) {
   const relation = (present: (viewer: string, target: TargetRef) => Promise<boolean>, expected: boolean) =>
-    (ticket: WriteTicket) => probeRelation(() => present(ticket.identityId ?? '', ticketTarget(ticket)), expected)
+    relationProbe<TargetArgs>(({ viewer, ticket }) => present(viewer, ticketTarget(ticket)), expected)
 
   const liked = (viewer: string, target: TargetRef) => likeService.isLiked(target.id, viewer, target.kind)
   const bookmarked = async (viewer: string, target: TargetRef) =>
@@ -143,9 +158,9 @@ export function createEngageWrites(tickets: TicketStore) {
       return fromBoolean(await postService.deletePost(quoteId, viewer))
     },
     // v10 names the deleted quote post; off v10 the repost document is read back.
-    probe: (ticket) => ticket.documents.length > 0
-      ? proveDocuments(ticket.documents)
-      : relation(isReposted, false)(ticket),
+    probe: (ticket, args, kit) => ticket.documents.length > 0
+      ? kit.proveDocuments(ticket.documents)
+      : relation(isReposted, false)(ticket, args, kit),
   })
   tickets.register<TargetArgs>('bookmark', {
     persistArgs: true,

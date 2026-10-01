@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { loadPoolPersonas, type PoolPersona } from '../../../harness/pool'
 import type { CapabilitiesDTO, TargetRef, WriteTicket } from '../../../src/api'
 import { connectEngine } from '../engine'
-import { writeSuiteSkipReason } from './env'
+import { pollSettled, writeSuiteSkipReason } from './env'
 
 const skipReason = writeSuiteSkipReason()
 const TRANSIENT = ['TIMEOUT', 'NETWORK', 'RATE_LIMITED']
@@ -37,15 +37,7 @@ describe.skipIf(skipReason !== null)(`domain writes on sakura${skipReason ? ` (s
     if (!spend.some(entry => entry.identityId === persona.identityId)) spend.push({ identityId: persona.identityId, before: credits })
   }
 
-  /** The ticket once settled: pending → anything else, waiting up to 2 minutes. */
-  async function settled(ticketId: string): Promise<WriteTicket> {
-    for (let i = 0; i < 240; i++) {
-      const ticket = await engine.api.writes.get(ticketId)
-      if (ticket && ticket.state !== 'pending') return ticket
-      await new Promise(resolve => setTimeout(resolve, 500))
-    }
-    throw new Error(`ticket ${ticketId} still pending after 120 s`)
-  }
+  const settled = (ticketId: string): Promise<WriteTicket> => pollSettled(id => engine.api.writes.get(id), ticketId)
 
   /**
    * Run a write to `confirmed`: an unconfirmed ticket is checked (twice at
@@ -107,6 +99,10 @@ describe.skipIf(skipReason !== null)(`domain writes on sakura${skipReason ? ` (s
     const ticket = await confirmed(() => engine.api.posts.publish({ parts: [{ text: `mobile write suite ${Date.now()}` }] }))
     const target = ref(ticket, alice.identityId)
     expect(engine.events).toContainEqual(expect.objectContaining({ event: 'write.status', payload: expect.objectContaining({ id: ticket.id, state: 'confirmed' }) }))
+    await vi.waitFor(() => expect(engine.events).toContainEqual({
+      event: 'content.created',
+      payload: expect.objectContaining({ kind: 'post', id: target.id, post: expect.objectContaining({ id: target.id }) }),
+    }), { timeout: 30_000 })
     expect((await engine.api.posts.get(target.id))?.author.id).toBe(alice.identityId)
     await confirmed(() => engine.api.posts.delete(target))
     if (!caps.deletesAreTombstones) expect(await engine.api.posts.get(target.id)).toBeNull()

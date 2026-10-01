@@ -5,9 +5,9 @@ import { reportInputProblem, type ReportStatus } from '@/lib/reports'
 import { blockService } from '@/lib/services/block-service'
 import { reportService } from '@/lib/services/report-service'
 import { RpcError } from '../protocol/envelope'
-import { assertAtMost, loadUserSummaries, notSupported, requireViewer } from '../dto/hydrate'
+import { assertAtMost, badRequest, loadUserSummaries, notSupported, requireViewer } from '../dto/hydrate'
 import { pageOfList } from '../dto/paging'
-import { assertId, assertTarget, badRequest, probeRelation, signer, ticketIdentity, ticketTarget } from '../writes/handler-kit'
+import { assertId, assertTarget, characters, relationProbe, signer, ticketIdentity, ticketTarget } from '../writes/handler-kit'
 import { createdDocument, fromTransitionResult } from '../writes/lib-results'
 import type { TicketStore } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
@@ -51,9 +51,6 @@ interface ReportArgs {
 
 const blockLists = new TtlMap<string, { blockedId: string; message?: string }[]>(60_000)
 
-/** Code points, as the contract's `maxLength` counts them. */
-const characters = (text: string) => Array.from(text).length
-
 /**
  * Blocks and reports (`hooks/use-block.ts`, `components/settings/blocked-users.tsx`,
  * `components/moderation/report-post-modal.tsx`). The NSFW and media gates
@@ -61,8 +58,8 @@ const characters = (text: string) => Array.from(text).length
  */
 export function createSafetyModule(tickets: TicketStore) {
   /** The viewer's own block on the ticket's account; `getBlockProvenance` rejects when that list cannot be read. */
-  const ownBlock = (ticket: WriteTicket) => async () =>
-    (await blockService.getBlockProvenance(ticketIdentity(ticket), ticket.identityId ?? '')).isOwnBlock
+  const ownBlock = (expected: boolean) => relationProbe<BlockArgs>(async ({ viewer, ticket }) =>
+    (await blockService.getBlockProvenance(ticketIdentity(ticket), viewer)).isOwnBlock, expected)
 
   tickets.register<BlockArgs>('block', {
     persistArgs: true,
@@ -70,7 +67,7 @@ export function createSafetyModule(tickets: TicketStore) {
       const result = await blockService.blockUser(signer(ctx), targetId, message)
       return fromTransitionResult(result, createdDocument(result, YAPPR_CONTRACT_ID, 'block'))
     },
-    probe: ticket => probeRelation(ownBlock(ticket), true),
+    probe: ownBlock(true),
   })
   tickets.register<BlockArgs>('unblock', {
     persistArgs: true,
@@ -83,7 +80,7 @@ export function createSafetyModule(tickets: TicketStore) {
       if (after?.isBlocked) return { state: 'failed', error: new RpcError(STILL_BLOCKED_BY_LIST, 'STILL_BLOCKED') }
       return fromTransitionResult(result)
     },
-    probe: ticket => probeRelation(ownBlock(ticket), false),
+    probe: ownBlock(false),
   })
   tickets.register<ReportArgs>('report', {
     persistArgs: true,
@@ -94,17 +91,17 @@ export function createSafetyModule(tickets: TicketStore) {
       return fromTransitionResult(result, createdDocument(result, YAPPR_CONTRACT_ID, 'report'))
     },
     // getOwnReport throws on a failed read, so a missing report is a proved absence.
-    probe: ticket => probeRelation(async () => {
+    probe: relationProbe(async ({ viewer, ticket }) => {
       const target = ticketTarget(ticket)
-      return (await reportService.getOwnReport(ticket.identityId ?? '', target.kind, target.id)) !== null
+      return (await reportService.getOwnReport(viewer, target.kind, target.id)) !== null
     }, true),
   })
 
   function submitBlock(op: 'block' | 'unblock', targetId: string, message?: string): WriteTicket {
     assertId(targetId, 'targetId')
-    if (requireViewer('Blocking') === targetId) throw badRequest('You cannot block yourself')
-    const trimmed = message?.trim()
+    if (requireViewer(op === 'block' ? 'Blocking' : 'Unblocking') === targetId) throw badRequest('You cannot block yourself')
     if (message !== undefined && typeof message !== 'string') throw badRequest('message must be a string')
+    const trimmed = message?.trim()
     if (trimmed && characters(trimmed) > BLOCK_MESSAGE_MAX) throw badRequest(`Keep the message to ${BLOCK_MESSAGE_MAX} characters`)
     return tickets.submit<BlockArgs>({ op, args: { targetId, ...(trimmed ? { message: trimmed } : {}) }, target: { identityId: targetId } })
   }

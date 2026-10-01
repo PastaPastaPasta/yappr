@@ -23,6 +23,16 @@ export function devnetEnv(): Record<string, string> {
   return env
 }
 
+/** Poll a ticket until it leaves `pending` (every 500 ms, up to 2 minutes). */
+export async function pollSettled<T extends { state: string }>(get: (id: string) => T | null | Promise<T | null>, ticketId: string): Promise<T> {
+  for (let i = 0; i < 240; i++) {
+    const ticket = await get(ticketId)
+    if (ticket && ticket.state !== 'pending') return ticket
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  throw new Error(`ticket ${ticketId} still pending after 120 s`)
+}
+
 /** Why the sakura write suite cannot run here, or null when it can. */
 export function writeSuiteSkipReason(): string | null {
   const devnet = devnetEnv().NEXT_PUBLIC_DEVNET_NAME ?? '(none)'

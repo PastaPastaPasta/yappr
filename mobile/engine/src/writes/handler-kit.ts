@@ -1,26 +1,20 @@
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { isUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
-import type { Post } from '@/lib/types'
 import { RpcError } from '../protocol/envelope'
-import { documentExists } from './lib-results'
-import type { ProbeResult, WriteRunContext } from './tickets'
+import { badRequest, isIdentityId } from '../dto/hydrate'
+import type { WriteHandler, WriteRunContext } from './tickets'
 import type { TargetRef, TicketDocument, WriteTicket } from './types'
 
 /**
  * What the domain write handlers (M7b) share: input checks, the identity a
  * ticket signs with, the parent-settling gate web runs before a dependent
- * write, and the probes "check again" uses.
+ * write, and the relation probe "check again" uses.
  */
 
-/** Base58 of 32 bytes: 43 or 44 characters. */
-const IDENTITY_ID = /^[1-9A-HJ-NP-Za-km-z]{43,44}$/
-
-export function badRequest(message: string): RpcError {
-  return new RpcError(message, 'BAD_REQUEST')
-}
+export { badRequest }
 
 export function assertId(value: unknown, what: string): asserts value is string {
-  if (typeof value !== 'string' || !IDENTITY_ID.test(value)) throw badRequest(`${what} must be a base58 identifier`)
+  if (!isIdentityId(value)) throw badRequest(`${what} must be a base58 identifier`)
 }
 
 /** A post or reply named by the host: `{id, kind, ownerId, rootPostId}`. */
@@ -32,6 +26,16 @@ export function assertTarget(target: unknown): asserts target is TargetRef {
   if (ref.kind !== 'post' && ref.kind !== 'reply') throw badRequest('target.kind must be "post" or "reply"')
   if (ref.rootPostId !== null && ref.rootPostId !== undefined) assertId(ref.rootPostId, 'target.rootPostId')
 }
+
+const HOSTED_URL = /^(https?|ipfs):\/\/\S+$/
+
+/** An image already hosted somewhere (posts' `mediaUrl`, avatars, banners): http(s):// or ipfs://. */
+export function assertMediaUrl(value: unknown, what: string): asserts value is string {
+  if (typeof value !== 'string' || !HOSTED_URL.test(value)) throw badRequest(`${what} must be an http(s):// or ipfs:// URL`)
+}
+
+/** Code points, as a contract's `maxLength` counts them. */
+export const characters = (text: string): number => Array.from(text).length
 
 /** The identity a ticket signs with (stamped at submit; a retry runs only for the same active account). */
 export function signer(ctx: WriteRunContext): string {
@@ -52,7 +56,7 @@ export function socialDoc(type: string, id: string, action: TicketDocument['acti
  * to a document that is not there. Nothing is sent while it waits, so a
  * failure here is `PARENT_UNCONFIRMED`, never "maybe sent".
  */
-export async function settleTarget(ctx: WriteRunContext, id: string | undefined): Promise<void> {
+export async function settleTarget(ctx: WriteRunContext, id: string): Promise<void> {
   if (!isUnconfirmed(id)) return
   ctx.stage('waiting-parent')
   if (!(await settleUnconfirmed(id))) {
@@ -63,75 +67,30 @@ export async function settleTarget(ctx: WriteRunContext, id: string | undefined)
 }
 
 /**
- * A Post-shaped stand-in for a target the host named by reference, for the
- * lib helpers that read only its id, kind, author and thread root
- * (`resolveQuoteReference`, `replyLinkageTo`).
- */
-export function targetStub(target: TargetRef): Post {
-  return {
-    id: target.id,
-    targetKind: target.kind,
-    ...(target.rootPostId ? { rootPostId: target.rootPostId } : {}),
-    author: { id: target.ownerId, username: '', displayName: '', avatar: '', followers: 0, following: 0, joinedAt: new Date(0) },
-    content: '',
-    createdAt: new Date(0),
-    likes: 0,
-    reposts: 0,
-    replies: 0,
-    quotes: 0,
-    views: 0,
-  }
-}
-
-/** How long a second read waits before an absence counts (as the ticket store's own probe). */
-let absenceRecheckMs = 2_000
-
-/** Tests only: no 2 s wait between the two reads of an absence. */
-export function setAbsenceRecheckMs(ms: number): void {
-  absenceRecheckMs = ms
-}
-
-const pause = () => new Promise(resolve => setTimeout(resolve, absenceRecheckMs))
-
-/**
  * A probe from a relation read (`isLiked`, `getBookmark`, ...): `present`
- * says whether the write's effect is visible, `expected` whether it should
- * be. One node can lag, so an answer that disagrees counts only when a
- * second read agrees with it. A read that throws proves nothing.
+ * says whether the write's effect is visible to the ticket's signer,
+ * `expected` whether it should be. One node can lag, so an answer that
+ * disagrees counts only when a second read agrees with it. A read that
+ * throws proves nothing.
  *
  * Several lib reads report a failed query as "absent". Where only those
  * exist, a not-applied verdict may be wrong; the retry it allows is still
  * safe, because each of those writes checks for an existing document before
  * it creates one, and a unique index refuses a second.
  */
-export async function probeRelation(present: () => Promise<boolean>, expected: boolean): Promise<ProbeResult> {
-  try {
-    if ((await present()) === expected) return { state: 'applied' }
-    await pause()
-    return (await present()) === expected ? { state: 'applied' } : { state: 'not-applied' }
-  } catch (error) {
-    return { state: 'unknown', error }
-  }
-}
-
-/**
- * The ticket store's default proof, for handlers whose probe adds a rule of
- * its own: each unconfirmed document proved present (create) or absent
- * (delete) with proved reads, a create's absence by two reads.
- */
-export async function proveDocuments(documents: TicketDocument[]): Promise<ProbeResult> {
-  try {
-    for (const doc of documents.filter(doc => !doc.confirmed)) {
-      let exists = await documentExists(doc)
-      if (!exists && doc.action === 'create') {
-        await pause()
-        exists = await documentExists(doc)
-      }
-      if (exists !== (doc.action === 'create')) return { state: 'not-applied' }
+export function relationProbe<A>(
+  present: (probe: { viewer: string; ticket: WriteTicket; args: A | undefined }) => Promise<boolean>,
+  expected: boolean,
+): NonNullable<WriteHandler<A>['probe']> {
+  return async (ticket, args, kit) => {
+    const read = () => present({ viewer: ticket.identityId ?? '', ticket, args })
+    try {
+      if ((await read()) === expected) return { state: 'applied' }
+      await kit.recheckDelay()
+      return (await read()) === expected ? { state: 'applied' } : { state: 'not-applied' }
+    } catch (error) {
+      return { state: 'unknown', error }
     }
-    return { state: 'applied' }
-  } catch (error) {
-    return { state: 'unknown', error }
   }
 }
 

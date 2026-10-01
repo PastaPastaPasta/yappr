@@ -6,7 +6,7 @@ import type { Notification } from '@/lib/types'
 import { truncateId } from '@/lib/utils/common'
 import { RpcError } from '../protocol/envelope'
 import { cursorString, decodeCursor } from '../dto/cursor'
-import { avatarsOf, requireViewer, viewerId } from '../dto/hydrate'
+import { avatarsOf, badRequest, requireViewer, viewerId } from '../dto/hydrate'
 import { nextPage } from '../dto/paging'
 import { toPostDTO, toUserSummaryDTO, type AuthorDTO, type Page, type PostDTO } from './dto'
 
@@ -136,7 +136,7 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
      */
     async list(query: { filter?: NotificationFilter; cursor?: string | null } = {}): Promise<Page<NotificationDTO>> {
       const filter = query.filter ?? 'all'
-      if (!FILTERS.includes(filter)) throw new RpcError(`Unknown notification filter: ${String(filter)}`, 'BAD_REQUEST')
+      if (!FILTERS.includes(filter)) throw badRequest(`Unknown notification filter: ${String(filter)}`)
       const viewer = requireViewer('Notifications')
       const after = decodeCursor<{ after: string; at: number }>(query.cursor, `notifications:${filter}`)
       await ensureLoaded(viewer)
@@ -177,7 +177,7 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
     /** Mark notifications read (a tap on one, `markAsRead`). */
     async markRead(ids: string[]): Promise<void> {
       requireViewer('Notifications')
-      if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) throw new RpcError('ids must be strings', 'BAD_REQUEST')
+      if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) throw badRequest('ids must be strings')
       for (const id of ids) store().markAsRead(id)
       report()
     },

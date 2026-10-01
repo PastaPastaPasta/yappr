@@ -40,6 +40,15 @@ export function notSupported(what: string): RpcError {
   return new RpcError(`${what} is not available on this contract topology`, 'NOT_SUPPORTED')
 }
 
+export function badRequest(message: string): RpcError {
+  return new RpcError(message, 'BAD_REQUEST')
+}
+
+/** Base58 of 32 bytes: 43 or 44 characters. */
+const IDENTITY_ID = /^[1-9A-HJ-NP-Za-km-z]{43,44}$/
+
+export const isIdentityId = (value: unknown): value is string => typeof value === 'string' && IDENTITY_ID.test(value)
+
 /**
  * Timeline documents arrive with "Unknown User" placeholders (`hasDpns:
  * false`). Reset them to lib's loading shape (`withLoadingAuthor`), so a
