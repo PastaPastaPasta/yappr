@@ -33,7 +33,8 @@ const TOOLING = [
   'metro.config.js',
   'tailwind.config.js',
 ];
-const TESTS = ['**/*.test.{js,jsx,ts,tsx}', 'src/__tests__/**'];
+/** Only test files, not helpers next to them, which app code could import. */
+const TESTS = ['**/*.test.{js,jsx,ts,tsx}'];
 
 module.exports = defineConfig([
   expoConfig,
