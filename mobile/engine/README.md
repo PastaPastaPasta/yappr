@@ -29,7 +29,7 @@ Run `npm ci` at the repo root first: the bundle resolves `lib/`'s dependencies f
 | `npm run test:contract` | Engine API in Node against **testnet** (read only, unauthenticated) |
 | `npm run test:browser` | Needs `build:testnet`. Boots the bundle in WebKit and Chromium; writes timings to `$EVIDENCE_DIR` (default `test-results/`, gitignored; `RUNS=n` per configuration) |
 
-CI: `.github/workflows/mobile-engine.yml` runs typecheck, lint, unit tests and both bundle builds on changes to `mobile/engine/**`, `lib/**`, `types/**`, `vendor/platform-auth/**`, `contracts/**`, the root manifests and `.env.devnet`, so a web change that breaks the engine fails on the web PR. The contract and browser suites need the live network and run locally for now.
+CI: `.github/workflows/mobile-engine.yml` (read-only token) runs typecheck, lint, unit tests and both bundle builds on changes to `mobile/engine/**`, `lib/**`, `types/**`, `hooks/**`, `vendor/platform-auth/**`, `contracts/**`, the root manifests, `tsconfig.json` and `.env.devnet`, so a web change that breaks the engine fails on the web PR. `build.mjs` fails if the bundle ever reads a file outside those directories (`WATCHED_INPUT_DIRS`), so the filter cannot silently fall behind. The contract and browser suites need the live network and run locally for now.
 
 ### Variants and env
 
@@ -66,8 +66,13 @@ No `next/*` module is reached. If a future lib change pulls in something browser
 - **`localStorage`/`sessionStorage`:** synchronous in-memory maps.
   - **Hydrating `localStorage`:** the host injects `window.__YAPPR_ENGINE_STORAGE__ = { local, secure }` with `injectedJavaScriptBeforeContentLoaded`, and `install-shims.ts` hydrates from it **before any lib module is evaluated**.
   - **Why it can't wait for boot:** `lib/store.ts`'s zustand `persist` reads storage at module scope, so hydrating at `boot()` would be too late.
-  - **The host must assign the snapshot as a property** (`window.__YAPPR_ENGINE_STORAGE__ = …`), not declare it with `var`.
-  - **Write-through:** every write is emitted as the event `storage.change {area, key, value|null}`. Writes lib makes while its modules load (before the entry subscribes) are queued and delivered to the first subscriber.
+  - **The host must assign the snapshot as a property** (`window.__YAPPR_ENGINE_STORAGE__ = …`), not declare it with `var`. Each key is routed by its prefix whatever area the host filed it under; misfiled keys are logged as a warning.
+  - **Write-through** (ENGINE.md §9.1): writes apply to the map at once and go to the host in batches, one per area per microtask: `{t:'kv'|'skv', v, seq, ops}` with `ops` of `['set', key, value]` / `['del', key]`.
+    - **Coalescing:** batches are coalesced per key against the value before the batch: last write wins, an unchanged set is dropped, and a key set and removed while absent before produces nothing. That absorbs the vendored secret store's `__storage_test__` probe on every access.
+    - **Ordering:** `seq` is shared by both areas and strictly increasing.
+    - **Secure removals:** always forwarded, even for a key the engine never held, so signing out a non-hydrated account still clears its Keychain items.
+    - **Acks:** the host acknowledges each `skv` batch with `{t:'kv-ack', v, seq}` once it is written. With `createEngineClient(…, { onStorage })`, the client acks when the returned Promise resolves, and never without a writer or on a failed write. Engine side, `engineStorage.secureDurable()` flushes and resolves once every secure batch so far is acknowledged; the sign-in paths (M5/P6) await it.
+    - **Early writes:** batches flushed before the entry subscribes are queued for it.
   - **Where each area lives (decided; the host side is M4):**
     - `local`: an **encrypted MMKV** instance per network. Its 32-byte key is generated on first launch and kept in the Keychain/Keystore (this-device-only, available after first unlock).
     - `secure`: the Keychain/Keystore, one item per key. These are the keys under `SECURE_KEY_PREFIXES` (exported from `src/shims/storage.ts`, matched after the deployment scope):
@@ -78,6 +83,7 @@ No `next/*` module is reached. If a future lib change pulls in something browser
   - **`sessionStorage`:** memory only.
 - **Lifecycle:** `engine.lifecycle('active'|'background'|'inactive')` replays React Native `AppState` as `visibilitychange` + `pagehide`/`pageshow`. `document.visibilityState` follows the app, not the always-hidden WebView. `engine.connectivity(online)` fires `online`/`offline` and asks the SDK to rebuild a dead instance.
 - **Console:** forwarded to the host as `log` envelopes at or above a level (default `info`; `engine.setLogLevel('debug')` for diagnostics), filtered before formatting because devnet builds log at debug. tslog's `%c` styling is stripped.
+- **IndexedDB:** `window.indexedDB` is set to `undefined` (ENGINE.md §9.1). Nothing in lib uses it and nothing on the host backs it up, so an unexpected user fails loudly.
 - **Early error reporter:** `install-shims.ts` posts uncaught errors and unhandled rejections straight to the bridge. If a lib module throws while loading, the bundle stops before the dispatcher exists, and that log line plus the client's hello timeout are what the host sees.
 
 ## RPC
@@ -88,10 +94,12 @@ No `next/*` module is reached. If a future lib change pulls in something browser
   - `evt {t,v,event,payload}`
   - `log {t,v,level,message}`
   - `ping {t,v}` (host → engine: re-send hello)
+  - `kv` / `skv {t,v,seq,ops}` (engine → host) and `kv-ack {t,v,seq}` (host → engine): storage write-through, above
 - **Handshake:**
   - The engine sends `evt engine.hello {protocol, bundleHash, instanceId}` when it can take calls, and again whenever it receives a `ping`. The client pings on creation, so a client created after the engine loaded still completes the handshake.
   - The client queues calls until the first hello. A hello with another protocol fails the client (`PROTOCOL_MISMATCH`); so does no hello within `helloTimeoutMs` (default 30 s, `ENGINE_HELLO_TIMEOUT`). The engine also refuses requests with a different `v`.
-  - **Restart signal:** a hello with a new `instanceId` means the WebView reloaded. Every pending call is rejected with `ENGINE_RESTARTED`. The supervisor may retry reads; writes go through the unconfirmed-writes rules.
+  - **Restart signal:** a hello with a new `instanceId` means the WebView reloaded. Every pending call is rejected with `ENGINE_RESTARTED`. Each request is stamped with the `instanceId` the client last heard (`instance`), and an engine with another id refuses it **without running it**, so a call rejected this way never ran on the new instance. The supervisor may retry reads; writes go through the unconfirmed-writes rules.
+  - A malformed hello is ignored, and a throwing `on()` listener does not stop delivery to the others.
 - **Deadlines:** each call's `timeoutMs` (default 60 s) counts from the call, including time spent waiting for the hello (`RPC_TIMEOUT`).
 - **Undecodable messages** never leave a caller waiting: the engine answers a request it cannot decode with `BAD_ENVELOPE`, and the client rejects a response it cannot decode with `BAD_ENVELOPE`.
 - **Codec** (`src/protocol/codec.ts`):
@@ -100,6 +108,8 @@ No `next/*` module is reached. If a future lib change pulls in something browser
   - cycles throw.
 - **Errors:** they arrive as `RemoteError {name, message, code?, kind?, isRetriable?, cause?, data?, remoteStack?}`.
   - evo-sdk's `WasmSdkError` does not extend `Error`, and exposes its fields as prototype getters. The engine reads them with guarded reads (a freed error's getters throw), so consensus codes survive the bridge.
+  - **Error-like objects:** any class instance whose `name` and `message` read as strings travels as an error, so one held inside a value (a write result) keeps its fields too. Plain objects stay data.
+  - **Wrapped errors:** an own `error` field is lifted to `RemoteError.error`, where `consensusCodeOf` looks.
   - `cause` is followed up to 3 levels.
   - Messages are verbatim, so `lib/error-utils` classifiers (`consensusCodeOf`, `isTimeoutError`) work on the host.
 - **Bridge:**
@@ -123,7 +133,9 @@ No `next/*` module is reached. If a future lib change pulls in something browser
 
 DTOs live in `src/api/dto.ts`. `boot()` fails with code `NO_WEBASSEMBLY` when WebAssembly is missing (iOS Lockdown Mode).
 
-- **Authors:** `author.displayName` and `author.avatarUrl` are never empty. They fall back to the DPNS label, then `User <last 6>`, and to the default DiceBear avatar. `author.resolved` is false when lib's enrichment failed (it swallows the error), so the host knows the fallbacks are placeholders.
+- **Authors:** `author.displayName` and `author.avatarUrl` are never empty. They fall back to the DPNS label, then `User <last 6>`, and to the default DiceBear avatar.
+  - `author.resolved` is false when lib's lookup failed (it swallows the error), so the host knows the fallbacks are placeholders.
+  - That covers a feed author left in the loading shape and a quoted post's author left as lib's `Unknown User` placeholder, whose name is then dropped in favour of the fallbacks.
 - **Viewer state:** signed in only. Covers `liked`, `reposted`, `bookmarked`, `authorBlocked` and `followsAuthor`.
 - **`ProfileDTO.hasProfile`:** false means either no profile document or a failed read (lib's `getProfile` returns null for both). Re-check strictly before an owner edit, as web's `/user` page does.
 
@@ -134,7 +146,7 @@ DTOs live in `src/api/dto.ts`. `boot()` fails with code `NO_WEBASSEMBLY` when We
 - The rest is wasm-sdk glue (0.5 MB), `lib/` (0.48 MB) and `@dicebear` avatar styles (about 2 MB).
 - The build takes about 0.4 s.
 
-**Browser boot proof:** `npm run test:browser`, 3 cold runs per configuration, each in a fresh browser context. Raw data is in `browser-boot-*.{json,tsv}`; the files for these numbers, the simulator screenshot and the reproducer below were saved **locally** on the build machine under `/tmp/claude/yappr-mobile/evidence/m2-engine/` and are not in the repo. "Boot" is the `engine.boot()` round trip (wasm decompress + compile, SDK connect, contract preload; testnet contracts are seeded from `lib/contracts/bundled`). "Feed" is the first `feed.forYou()` page, enriched.
+**Browser boot proof:** `npm run test:browser`, 3 cold runs per configuration, each in a fresh browser context. Two more WebKit runs check the injected snapshot: a session read at call time (the feed comes back with viewer marks), and a persisted `yappr-settings` `feedLanguage: 'zz'` read by zustand `persist` when `lib/store.ts` loads (the v2 For You page comes back empty). Raw data is in `browser-boot-*.{json,tsv}`; the files for these numbers, the simulator screenshot and the reproducer below were saved **locally** on the build machine under `/tmp/claude/yappr-mobile/evidence/m2-engine/` and are not in the repo. "Boot" is the `engine.boot()` round trip (wasm decompress + compile, SDK connect, contract preload; testnet contracts are seeded from `lib/contracts/bundled`). "Feed" is the first `feed.forYou()` page, enriched.
 
 | Engine (version) | Origin | hello (parse + eval) | boot | first feed | cold start → feed |
 | --- | --- | --- | --- | --- | --- |
@@ -182,7 +194,6 @@ DTOs live in `src/api/dto.ts`. `boot()` fails with code `NO_WEBASSEMBLY` when We
 ## Known gaps
 
 - `posts.get` returns `null` for a failed read as well as for a missing post. That's lib's single-document `get()`, kept as is.
-- The browser test proves the injected snapshot reaches lib through the session (read at call time). It doesn't yet assert a module-scope read, such as a persisted zustand setting. The evaluation order was checked in the bundle by hand, and the review confirmed it.
 - The devnet variant can't boot until `.env.devnet` moves to sakura.
 - The bundle carries all 30 `@dicebear` styles (about 2 MB) because `unified-profile-service` imports the collection. Trimming it would need an alias.
 - **Not yet done** (they belong to M4, the EngineHost): the encrypted-MMKV and Keychain/Keystore write-through on the host side, the supervisor and replay of reads, and memory numbers on devices.
