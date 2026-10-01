@@ -580,7 +580,7 @@ Banners sit directly under the navigation bar of the current screen, push conten
 | Messages | `EnvelopeIcon` | Messages inbox (4.19) | conversations with unread (DM-13) |
 | Profile | `UserIcon` (signed in: the viewer's `xs` avatar with a 1.5 pt `text.emphasis` ring when active) | Own profile (4.12) or signed-out profile placeholder | — |
 
-- Native tab bars: iOS `UITabBar` (on iOS 26 the system's floating glass tab bar), Android Material 3 navigation bar, through expo-router native tabs. Labels shown on both. Active `text.emphasis`, inactive `text.secondary` (web bottom nav colors).
+- **Lead decision (2026-10-01):** the JavaScript tab bar (expo-router `Tabs`) with Heroicons, styled to match the web bottom nav. Not native tabs: those need SF Symbols or drawables and would break visual parity with web. Labels are shown on both platforms. Active is `text.emphasis` and inactive is `text.secondary` (the web bottom nav colors).
 - Re-tapping the active tab pops its stack to the root; re-tapping at the root scrolls to the top (Home also loads pending new posts, FEED-05).
 - Long-press on Profile opens the account switcher (AUTH-10).
 - Each tab keeps its own stack and state.

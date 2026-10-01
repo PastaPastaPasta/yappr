@@ -127,15 +127,14 @@ export function createAccountRegistry(storage: Pick<Storage, 'getItem' | 'setIte
     },
 
     /**
-     * Forget an account: its registry entry and stashes, and for the active
-     * account the live copies of its per-identity stores too.
+     * Forget an account: its registry entry and stashes, and with `live` (it
+     * was the active account) the live copies of its per-identity stores.
      */
-    remove(identityId: string): void {
-      const active = activeIdentityId() === identityId
+    remove(identityId: string, { live }: { live: boolean }): void {
       write(read().filter(account => account.identityId !== identityId))
       for (const [name, key] of Object.entries(STASHED_KEYS)) {
         storage.removeItem(stashKey(identityId, name))
-        if (active) storage.removeItem(key)
+        if (live) storage.removeItem(key)
       }
     },
   }

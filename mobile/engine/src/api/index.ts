@@ -37,7 +37,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     session: createSessionModule({
       emit: (event, payload) => {
         emit(event, payload)
-        if (event === 'session.changed') dm.hooks.sessionChanged((payload as SessionEvents['session.changed']).session?.identityId ?? null)
+        if (event === 'session.changed') dm.hooks.sessionChanged(payload as SessionEvents['session.changed'])
       },
       tickets,
       secureDurable: runtime.secureDurable,

@@ -203,18 +203,23 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
 
   function finish(request: Request, approval: Approval): Promise<KeyExchangeStep<S>> {
     if (active !== request) return Promise.reject(cancelledError())
-    finishing ??= options.complete(approval.identityId, approval.loginKey, approval.keyIndex).then(
-      (session): KeyExchangeStep<S> => {
-        wipe(request)
-        return { status: 'signed-in', session }
-      },
-      (error: unknown) => {
-        finishing = null
-        // Refused outright (another account is signed in): nothing to retry, so the keys go now.
-        if (error instanceof RpcError && error.code === 'BAD_REQUEST') wipe(request)
-        throw error
-      },
-    )
+    if (finishing) return finishing
+    // A copy: `cancel`/`start` may wipe the approval while the sign-in still uses its key.
+    const loginKey = approval.loginKey.slice()
+    finishing = options.complete(approval.identityId, loginKey, approval.keyIndex)
+      .finally(() => clearSensitiveBytes(loginKey))
+      .then(
+        (session): KeyExchangeStep<S> => {
+          wipe(request)
+          return { status: 'signed-in', session }
+        },
+        (error: unknown) => {
+          finishing = null
+          // Refused outright (an account is already signed in): nothing to retry, so the keys go now.
+          if (error instanceof RpcError && error.code === 'BAD_REQUEST') wipe(request)
+          throw error
+        },
+      )
     return finishing
   }
 
@@ -308,25 +313,33 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
           if (error instanceof Error && error.message.startsWith('Timeout')) return pendingStep(request)
           throw error
         }
-        if (active !== request) {
+        // platform-auth's poll checks its signal only between reads, so a superseded or cancelled
+        // poll can still come back with the wallet's answer: it must not touch the request.
+        if (signal.aborted || active !== request) {
           clearSensitiveBytes(decrypted.loginKey)
           throw cancelledError()
         }
-        const identityIdBytes = decodeYapprIdentityId(decrypted.identityId)
-        request.approval = {
-          identityId: decrypted.identityId,
-          loginKey: decrypted.loginKey,
-          keyIndex: decrypted.keyIndex,
-          authKey: deriveYapprAuthKeyFromLogin(decrypted.loginKey, identityIdBytes),
-          encryptionKey: deriveYapprEncryptionKeyFromLogin(decrypted.loginKey, identityIdBytes),
+        if (request.approval) {
+          // Another call already took this request's answer: keep that one.
+          clearSensitiveBytes(decrypted.loginKey)
+        } else {
+          const identityIdBytes = decodeYapprIdentityId(decrypted.identityId)
+          request.approval = {
+            identityId: decrypted.identityId,
+            loginKey: decrypted.loginKey,
+            keyIndex: decrypted.keyIndex,
+            authKey: deriveYapprAuthKeyFromLogin(decrypted.loginKey, identityIdBytes),
+            encryptionKey: deriveYapprEncryptionKeyFromLogin(decrypted.loginKey, identityIdBytes),
+          }
+          // Answered: the ephemeral key has done its job, and nothing past this point is persisted.
+          clearSensitiveBytes(request.ephemeralKey)
+          storage.removeItem(PENDING_REQUEST_KEY)
+          // Registration can take minutes: the window restarts from the approval.
+          request.expiresAt = now() + REQUEST_LIFETIME_MS
+          scheduleExpiry(request)
         }
-        // Answered: the ephemeral key has done its job, and nothing past this point is persisted.
-        clearSensitiveBytes(request.ephemeralKey)
-        storage.removeItem(PENDING_REQUEST_KEY)
-        // Registration can take minutes: the window restarts from the approval.
-        request.expiresAt = now() + REQUEST_LIFETIME_MS
-        scheduleExpiry(request)
       }
+      if (!request.approval) throw cancelledError()
       const approval = request.approval
       return (await keysRegistered(approval)) ? finish(request, approval) : registration(request, approval)
     },

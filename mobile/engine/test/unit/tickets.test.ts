@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { RESTARTED_ERROR, WRITES_STORAGE_KEY, createTicketStore, type TicketStoreOptions, type WriteHandler, type WriteResult } from '../../src/writes/tickets'
+import { NotSentError, RESTARTED_ERROR, WRITES_STORAGE_KEY, createTicketStore, type TicketStoreOptions, type WriteHandler, type WriteResult } from '../../src/writes/tickets'
 import type { TicketDocument, WriteTicket } from '../../src/writes/types'
 import { fromBoolean, fromTransitionResult } from '../../src/writes/lib-results'
 
@@ -174,6 +174,48 @@ describe('safety', () => {
     expect(store.get('t1')).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'NETWORK', outcome: 'unknown' } })
   })
 
+  it('counts a transport failure during run() as maybe sent, unless the handler proves it was not', async () => {
+    const { store } = setup()
+    const network = () => new Error('no available addresses for retry')
+    store.register('like', { async run() { throw network() } })
+    store.register('unlike', { async run() { throw new NotSentError(network()) } })
+    store.register('follow', { async run(_args, ctx) { ctx.stage('waiting-parent'); throw network() } })
+    store.register('unfollow', { async run() { return { state: 'failed', error: new Error('Missing response message') } } })
+    store.register('block', { async run() { throw new NotSentError(new Error('wait timed out')) } })
+    for (const op of ['like', 'unlike', 'follow', 'unfollow', 'block'] as const) store.submit({ op, args: null })
+    await settle()
+    expect(store.get('t1')).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'NETWORK', outcome: 'unknown' } })
+    expect(store.get('t2')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK', outcome: 'not-sent' } })
+    expect(store.get('t3')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK', outcome: 'not-sent' } })
+    expect(store.get('t4')).toMatchObject({ state: 'unconfirmed', error: { code: 'NETWORK', outcome: 'unknown' } })
+    expect(store.get('t5')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'TIMEOUT', outcome: 'not-sent' } })
+  })
+
+  it('does not honour a not-sent claim once the ticket names an unconfirmed document', async () => {
+    const { store } = setup()
+    store.register('post.publish', {
+      async run(_args, ctx) {
+        // Part 1 of a thread went out unconfirmed; part 2 then waits for its parent.
+        ctx.documents([POST])
+        ctx.stage('waiting-parent')
+        throw new Error('no available addresses for retry')
+      },
+    })
+    store.register('like', {
+      async run(_args, ctx) {
+        ctx.documents([POST])
+        throw new NotSentError(new Error('no available addresses for retry'))
+      },
+    })
+    store.submit({ op: 'post.publish', args: {} })
+    store.submit({ op: 'like', args: null })
+    await settle()
+    for (const id of ['t1', 't2']) {
+      expect(store.get(id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'NETWORK', outcome: 'unknown', retryable: false } })
+      await expect(store.retry(id)).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+    }
+  })
+
   it('acts only on the active account\'s tickets', async () => {
     let identity = 'alice'
     const { store } = setup({ currentIdentity: () => identity, documentExists: async () => false })
@@ -280,13 +322,13 @@ describe('persistence and restart reconciliation', () => {
     const storage = memoryStorage()
     const first = setup({ storage })
     const { handler } = controlled()
-    first.store.register('post.publish', handler)
+    first.store.register('post.publish', { ...handler, persistArgs: true })
     first.store.submit({ op: 'post.publish', args: { text: 'hi' }, documents: [POST] })
     await settle()
 
     const run = vi.fn()
     const restarted = setup({ storage, documentExists: async () => false })
-    restarted.store.register('post.publish', { run })
+    restarted.store.register('post.publish', { run, persistArgs: true })
     const ticket = restarted.store.get('t1')
     expect(ticket).toMatchObject({ state: 'unconfirmed', stage: null, retryable: false, error: RESTARTED_ERROR, documents: [POST] })
     // Reported to the host once the API exists.
@@ -304,16 +346,38 @@ describe('persistence and restart reconciliation', () => {
     expect(run).toHaveBeenCalledWith({ text: 'hi' }, expect.anything())
   })
 
-  it('never persists the arguments of a handler that forbids it, so those cannot be retried after a restart', async () => {
+  it('reports reconciled tickets of the active account only', async () => {
+    const storage = memoryStorage()
+    let identity = 'alice'
+    const first = setup({ storage, currentIdentity: () => identity })
+    first.store.register('like', controlled().handler)
+    first.store.submit({ op: 'like', args: null })
+    identity = 'bob'
+    first.store.submit({ op: 'like', args: null })
+    await settle()
+    const restarted = setup({ storage, currentIdentity: () => 'bob' })
+    await settle()
+    expect(restarted.events.map(e => [e.id, e.identityId])).toEqual([['t2', 'bob']])
+  })
+
+  it('refuses everything once an account switch requires a restart', async () => {
+    const { store } = setup()
+    store.register('like', { run: async () => ({ state: 'confirmed' }) })
+    store.requireRestart()
+    expect(() => store.submit({ op: 'like', args: null })).toThrow(expect.objectContaining({ code: 'RESTART_REQUIRED' }))
+    expect(() => store.list()).toThrow(expect.objectContaining({ code: 'RESTART_REQUIRED' }))
+  })
+
+  it('never persists arguments unless the handler opts in, so those cannot be retried after a restart', async () => {
     const storage = memoryStorage()
     const first = setup({ storage })
-    first.store.register('dm.send', { persistArgs: false, run: async () => ({ state: 'unconfirmed', documents: [POST] }) })
+    first.store.register('dm.send', { run: async () => ({ state: 'unconfirmed', documents: [POST] }) })
     first.store.submit({ op: 'dm.send', args: { text: 'secret plaintext' } })
     await settle()
     expect(storage.items.get(WRITES_STORAGE_KEY)).not.toContain('secret plaintext')
 
     const restarted = setup({ storage, documentExists: async () => false })
-    restarted.store.register('dm.send', { persistArgs: false, run: async () => ({ state: 'confirmed' }) })
+    restarted.store.register('dm.send', { run: async () => ({ state: 'confirmed' }) })
     expect((await restarted.store.check('t1')).retryable).toBe(true)
     await expect(restarted.store.retry('t1')).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
   })

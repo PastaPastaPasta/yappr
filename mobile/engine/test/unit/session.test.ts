@@ -71,12 +71,12 @@ function randomId(): string {
 
 /** On-chain identities the stubs serve, by id, with their keys. */
 const identities = new Map<string, IdentityInfo>()
-function addIdentity(keys: { id: number; purpose: number; securityLevel: number; privateKey: Uint8Array }[]): string {
+function addIdentity(keys: { id: number; purpose: number; securityLevel: number; privateKey: Uint8Array; disabledAt?: number }[]): string {
   const id = randomId()
   identities.set(id, {
     id,
     balance: 120_000,
-    publicKeys: keys.map(key => ({ id: key.id, type: SECP256K1, purpose: key.purpose, securityLevel: key.securityLevel, data: secp256k1.getPublicKey(key.privateKey, true), readOnly: false })),
+    publicKeys: keys.map(key => ({ id: key.id, type: SECP256K1, purpose: key.purpose, securityLevel: key.securityLevel, data: secp256k1.getPublicKey(key.privateKey, true), readOnly: false, disabledAt: key.disabledAt })),
   } as unknown as IdentityInfo)
   return id
 }
@@ -143,6 +143,12 @@ describe('private keys', () => {
     await expect(verifySignInKey(bytesToHex(encryption))).rejects.toMatchObject({ code: 'KEY_NOT_ON_IDENTITY' })
     await expect(verifySignInKey(bytesToHex(secp256k1.utils.randomSecretKey()))).rejects.toMatchObject({ code: 'IDENTITY_NOT_FOUND', message: 'No identity uses this key' })
   })
+
+  it('refuses a disabled auth key (lib\'s validatePrivateKey would accept it: #616)', async () => {
+    const disabled = secp256k1.utils.randomSecretKey()
+    addIdentity([{ id: 3, purpose: AUTH, securityLevel: HIGH, privateKey: disabled, disabledAt: 1_790_000_000_000 }])
+    await expect(verifySignInKey(bytesToHex(disabled))).rejects.toMatchObject({ code: 'KEY_NOT_ON_IDENTITY', message: 'This key has been disabled on this identity' })
+  })
 })
 
 describe('accounts: sign in, add, switch, restore, sign out', () => {
@@ -182,13 +188,19 @@ describe('accounts: sign in, add, switch, restore, sign out', () => {
     expect((await signingIn).identityId).toBe(idA)
   })
 
+  it('refuses to sign in again as the active identity', async () => {
+    await expect(session.signInWithKey({ key: bytesToHex(keyA) })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'This account is already signed in' })
+  })
+
   it('refuses a second identity while one is active', async () => {
     await expect(session.signInWithKey({ key: bytesToHex(keyB) })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
-  it('adds a second account through a restart', async () => {
+  it('adds a second account through a restart, refusing calls until then', async () => {
     await session.prepareAddAccount()
     expect(localStorage.getItem('yappr_session')).toBeNull()
+    await expect(session.current()).rejects.toMatchObject({ code: 'RESTART_REQUIRED' })
+    await expect(session.signInWithKey({ key: bytesToHex(keyB) })).rejects.toMatchObject({ code: 'RESTART_REQUIRED' })
     session = boot()
     expect(await session.restore()).toBeNull()
     expect((await session.signInWithKey({ key: privateKeyToWif(keyB, 'testnet') })).identityId).toBe(idB)
@@ -235,6 +247,18 @@ describe('accounts: sign in, add, switch, restore, sign out', () => {
     expect(localStorage.getItem('yappr_session')).toBeNull()
     expect(await session.accounts()).toEqual([])
     expect(emitted).toContainEqual({ event: 'session.changed', payload: { session: null, reason: 'signed-out' } })
+  })
+
+  it('lets only one of two concurrent sign-ins take the session slot', async () => {
+    const results = await Promise.allSettled([
+      session.signInWithKey({ key: bytesToHex(keyA) }),
+      session.signInWithKey({ key: bytesToHex(keyB) }),
+    ])
+    expect(results.map(r => r.status)).toEqual(['fulfilled', 'rejected'])
+    expect(results[1]).toMatchObject({ reason: { code: 'BAD_REQUEST' } })
+    expect((await session.current())?.identityId).toBe(idA)
+    expect((await session.accounts()).map(a => a.identityId)).toEqual([idA])
+    await session.signOut()
   })
 
   it('turns lib\'s login-modal prompt into session.keyRequired', () => {
@@ -386,6 +410,25 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
     // The stored login key is the real one, not a zeroed buffer.
     expect(JSON.parse(localStorage.getItem(`yappr_secure_lk_${identityId}`) ?? '""')).not.toMatch(/^A+=*$/)
     complete.mockRestore()
+  })
+
+  it('drops the answer of a poll that a newer call superseded, and zeroes its key', async () => {
+    const loginKey = crypto.getRandomValues(new Uint8Array(32))
+    const identityId = walletIdentity(loginKey, true)
+    const request = await session.startKeyExchange()
+    await walletApproves(request.uri, identityId, loginKey)
+    // The first poll's read is still in flight when the host calls again.
+    let release: () => void = () => undefined
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const getResponse = keyExchangeService.getResponse
+    const spy = vi.spyOn(keyExchangeService, 'getResponse').mockImplementationOnce(async (...args) => { await gate; return getResponse.call(keyExchangeService, ...args) })
+    const first = session.awaitKeyExchange(request.requestId, { waitMs: 5_000 })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    const second = await session.awaitKeyExchange(request.requestId, { waitMs: 1 })
+    expect(second).toMatchObject({ status: 'signed-in', session: { identityId } })
+    release()
+    await expect(first).rejects.toMatchObject({ code: 'KEY_EXCHANGE_CANCELLED' })
+    expect(spy).toHaveBeenCalled()
   })
 
   it('resumes a request after the engine restarts', async () => {

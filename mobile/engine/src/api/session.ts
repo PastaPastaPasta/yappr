@@ -155,12 +155,44 @@ export function createSessionModule(options: SessionModuleOptions) {
     return restoring
   }
 
-  /** One account at a time: a different identity is added through `prepareAddAccount`. */
-  function assertSlotFor(identityId: string): void {
+  /**
+   * One account at a time: a different identity is added through
+   * `prepareAddAccount`. Signing in again as the active identity is refused
+   * too: a failed wallet re-login would clear that identity's stored keys
+   * (platform-auth's `loginWithLoginKey`). To re-enter a key, sign out first.
+   */
+  function assertSlotFree(identityId: string): void {
     const active = registry.activeIdentityId()
-    if (active && active !== identityId) {
+    if (active === identityId) throw new RpcError('This account is already signed in', 'BAD_REQUEST')
+    if (active) {
       throw new RpcError('Another account is signed in. Add the account (session.prepareAddAccount) and restart the engine first.', 'BAD_REQUEST')
     }
+  }
+
+  /** Sign-ins run one at a time, so two can never race for lib's single session slot. */
+  let signInQueue: Promise<unknown> = Promise.resolve()
+  function exclusiveSignIn(identityId: string, login: () => Promise<unknown>, method: SignInMethod): Promise<SessionDTO> {
+    const run = signInQueue.then(async () => {
+      assertSlotFree(identityId)
+      await login()
+      return signedIn(identityId, method)
+    })
+    signInQueue = run.catch(() => undefined)
+    return run
+  }
+
+  /**
+   * After `switchAccount`/`prepareAddAccount` lib's session slot no longer
+   * matches the controller and the keys in memory: until the host restarts
+   * the engine, session and write calls are refused.
+   */
+  let restartRequired = false
+  function assertUsable(): void {
+    if (restartRequired) throw new RpcError('The engine must restart to finish switching accounts', 'RESTART_REQUIRED')
+  }
+  function requireRestart(): void {
+    restartRequired = true
+    options.tickets?.requireRestart()
   }
 
   async function signedIn(identityId: string, method: SignInMethod): Promise<SessionDTO> {
@@ -176,9 +208,8 @@ export function createSessionModule(options: SessionModuleOptions) {
     controller,
     storage,
     async complete(identityId, loginKey, keyIndex) {
-      assertSlotFor(identityId)
-      await controller.completeYapprKeyExchangeLogin({ identityId, loginKey, keyIndex })
-      return signedIn(identityId, 'key-exchange')
+      assertUsable()
+      return exclusiveSignIn(identityId, () => controller.completeYapprKeyExchangeLogin({ identityId, loginKey, keyIndex }), 'key-exchange')
     },
   })
 
@@ -206,6 +237,7 @@ export function createSessionModule(options: SessionModuleOptions) {
   return {
     /** The active session, after the boot restore. */
     async current(): Promise<SessionDTO | null> {
+      assertUsable()
       await restored()
       return toDTO(controller.getState().user)
     },
@@ -215,7 +247,8 @@ export function createSessionModule(options: SessionModuleOptions) {
      * sign for the identity (`storedKeyBelongsToIdentity`); otherwise the
      * session is dropped and `session.changed {reason: 'key-invalid'}` fires.
      */
-    restore(): Promise<SessionDTO | null> {
+    async restore(): Promise<SessionDTO | null> {
+      assertUsable()
       return restored()
     },
 
@@ -228,14 +261,14 @@ export function createSessionModule(options: SessionModuleOptions) {
 
     /** Sign in with a private key (WIF or hex). Arguments are sensitive: never logged. */
     async signInWithKey(input: { key: string }): Promise<SessionDTO> {
+      assertUsable()
       await restored()
       const verified = await verifySignInKey(input.key)
-      assertSlotFor(verified.identityId)
-      await controller.loginWithAuthKey(verified.identityId, verified.wif, { skipUsernameCheck: true })
-      return signedIn(verified.identityId, 'key')
+      return exclusiveSignIn(verified.identityId, () => controller.loginWithAuthKey(verified.identityId, verified.wif, { skipUsernameCheck: true }), 'key')
     },
 
     async startKeyExchange(): Promise<KeyExchangeRequestDTO> {
+      assertUsable()
       await restored()
       return keyExchange.start()
     },
@@ -246,12 +279,14 @@ export function createSessionModule(options: SessionModuleOptions) {
     },
 
     /** Wait up to `waitMs` (default 45 s, at most 120 s) for the wallet; `pending` means call again. */
-    awaitKeyExchange(requestId: string, opts: { waitMs?: number } = {}): Promise<KeyExchangeResultDTO> {
+    async awaitKeyExchange(requestId: string, opts: { waitMs?: number } = {}): Promise<KeyExchangeResultDTO> {
+      assertUsable()
       return keyExchange.await(requestId, opts.waitMs)
     },
 
     /** After the wallet broadcast the key registration: wait up to `waitMs` for the keys, then sign in. */
-    awaitKeyRegistration(requestId: string, opts: { waitMs?: number } = {}): Promise<KeyExchangeResultDTO> {
+    async awaitKeyRegistration(requestId: string, opts: { waitMs?: number } = {}): Promise<KeyExchangeResultDTO> {
+      assertUsable()
       return keyExchange.awaitRegistration(requestId, opts.waitMs)
     },
 
@@ -282,18 +317,22 @@ export function createSessionModule(options: SessionModuleOptions) {
      * reports `session.changed {reason: 'switched'}`.
      */
     async switchAccount(identityId: string): Promise<void> {
+      assertUsable()
       await restored()
       if (!registry.get(identityId)) throw new RpcError('That account is not signed in on this device', 'BAD_REQUEST')
       if (registry.activeIdentityId() === identityId) return
       await stopDm()
       registry.switchTo(identityId)
+      requireRestart()
     },
 
     /** Park the active account so another can sign in; the host restarts the engine with no secrets next. */
     async prepareAddAccount(): Promise<void> {
+      assertUsable()
       await restored()
       await stopDm()
       registry.switchTo(null)
+      requireRestart()
     },
 
     /**
@@ -303,26 +342,29 @@ export function createSessionModule(options: SessionModuleOptions) {
      * of keys it does not hold, so the host removes them from the Keychain).
      */
     async signOut(opts: { identityId?: string } = {}): Promise<void> {
+      assertUsable()
       await restored()
       const active = registry.activeIdentityId()
       const identityId = opts.identityId ?? active
       if (!identityId) return
-      options.tickets?.forgetIdentity(identityId)
-      registry.remove(identityId)
-      if (identityId === active) {
+      const isActive = identityId === active
+      if (isActive) {
+        // Keys and session first: if logout fails, the account stays fully signed in.
         await stopDm()
         await controller.logout()
-        await options.secureDurable?.()
-        announce('signed-out')
-        return
+      } else {
+        for (const clear of [clearPrivateKey, clearEncryptionKey, clearEncryptionKeyType, clearTransferKey, clearLoginKey, clearAuthVaultDek]) {
+          clear(identityId)
+        }
       }
-      for (const clear of [clearPrivateKey, clearEncryptionKey, clearEncryptionKeyType, clearTransferKey, clearLoginKey, clearAuthVaultDek]) {
-        clear(identityId)
-      }
+      options.tickets?.forgetIdentity(identityId)
+      registry.remove(identityId, { live: isActive })
       await options.secureDurable?.()
+      if (isActive) announce('signed-out')
     },
 
     async refreshBalance(): Promise<{ credits: bigint }> {
+      assertUsable()
       await restored()
       if (!controller.getState().user) throw new RpcError('Not signed in', 'NOT_SIGNED_IN')
       await controller.refreshBalance()
