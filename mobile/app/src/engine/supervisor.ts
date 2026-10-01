@@ -1,9 +1,10 @@
 import type { EngineApi, EngineInfo } from '@engine/api';
-import { RpcError, RpcErrorCode, type EngineHello, type LogLevel } from '@engine/protocol/envelope';
+import { LOG_LEVELS, RpcError, RpcErrorCode, type EngineHello, type LogLevel } from '@engine/protocol/envelope';
 import { createEngineClient, type EngineClient, type StorageBatch } from '@engine/rpc/client';
 
 import { errorMessage } from './logs';
 import { methodKind, methodTimeoutMs, type MethodKind } from './methods';
+import { redact } from './redact';
 import { createWebViewTransport, type WebViewTransport } from './webview-transport';
 
 /**
@@ -183,6 +184,10 @@ export class EngineSupervisor<Load = unknown> {
   private stopped = false;
   /** Last connectivity NetInfo reported; replayed into every engine after boot (it starts out online). */
   private online = true;
+  /** A boot retry is scheduled: foreground returns and connectivity changes do not stack more. */
+  private bootRetryScheduled = false;
+  /** The boot retry in flight, shared by everyone who asks for one. */
+  private bootInFlight: Promise<void> | null = null;
   private readonly statusListeners = new Set<() => void>();
   private readonly mountListeners = new Set<() => void>();
   private readonly events = new Map<string, Set<(payload: unknown) => void>>();
@@ -225,6 +230,8 @@ export class EngineSupervisor<Load = unknown> {
   }
 
   private update(patch: Partial<EngineStatus>) {
+    // `reason` carries engine error text onto screens and into "Copy diagnostics": redact it like a log line.
+    if (patch.reason) patch = { ...patch, reason: redact(patch.reason) };
     this.status = { ...this.status, ...patch, queued: this.queue.length };
     this.statusListeners.forEach((listener) => listener());
   }
@@ -294,7 +301,10 @@ export class EngineSupervisor<Load = unknown> {
     this.foreground = foreground;
     if (!foreground) return;
     if (this.status.state === 'failed') this.restart('Back in the foreground');
-    else this.ping();
+    else {
+      if (this.status.state === 'degraded') this.retryBoot(0);
+      this.ping();
+    }
   }
 
   private launch(epoch: number) {
@@ -316,7 +326,12 @@ export class EngineSupervisor<Load = unknown> {
     const client = createEngineClient<EngineApi>(transport, {
       timeoutMs: 0, // deadlines are per method kind, here
       helloTimeoutMs: this.options.helloTimeoutMs,
-      onLog: (level, message) => this.deps.log(level, 'engine', message),
+      // Also filtered here: the engine forwards `info` until boot lowers its level.
+      onLog: (level, message) => {
+        if (LOG_LEVELS.indexOf(level) >= LOG_LEVELS.indexOf(this.options.engineLogLevel)) {
+          this.deps.log(level, 'engine', message);
+        }
+      },
       onStorage: (batch) => this.deps.onStorage(batch),
     });
     this.client = client;
@@ -427,8 +442,7 @@ export class EngineSupervisor<Load = unknown> {
       this.acceptCalls();
       this.update({ state: 'degraded', reason: errorMessage(error) });
       this.log('warn', `Engine boot failed: ${errorMessage(error)}`);
-      // Already online (the network came back while booting): no NetInfo change will retry it.
-      if (this.online) this.after(5000, () => this.connectivity(true).catch(() => undefined));
+      this.retryBoot(0);
       this.startPings();
     }
   }
@@ -439,10 +453,37 @@ export class EngineSupervisor<Load = unknown> {
     const client = this.client;
     if (!client || !this.accepting) return;
     await client.api.engine.connectivity(online);
-    if (online && this.status.state === 'degraded' && this.client === client) {
-      const info = await client.api.engine.boot();
-      if (this.client === client) this.update({ state: 'ready', reason: null, info });
-    }
+    if (online && this.status.state === 'degraded') await this.bootAgain(client);
+  }
+
+  /**
+   * A degraded engine (boot failed: DAPI trouble) retries with backoff while
+   * online and in the foreground. At most one retry is scheduled at a time.
+   */
+  private retryBoot(attempt: number) {
+    if (this.bootRetryScheduled) return;
+    this.bootRetryScheduled = true;
+    const delay = Math.min(5000 * 2 ** attempt, 60_000);
+    this.after(delay, () => {
+      this.bootRetryScheduled = false;
+      const client = this.client;
+      // Offline or in the background: connectivity() or setForeground() picks it up again.
+      if (!client || this.status.state !== 'degraded' || !this.online || !this.foreground) return;
+      this.bootAgain(client).catch(() => this.retryBoot(attempt + 1));
+    });
+  }
+
+  /** One `engine.boot()` at a time: concurrent callers share the call in flight. */
+  private bootAgain(client: EngineClient<EngineApi>): Promise<void> {
+    this.bootInFlight ??= client.api.engine
+      .boot()
+      .then((info) => {
+        if (this.client === client) this.update({ state: 'ready', reason: null, info });
+      })
+      .finally(() => {
+        this.bootInFlight = null;
+      });
+    return this.bootInFlight;
   }
 
   /** iOS without WebAssembly is Lockdown Mode; elsewhere it means an unusable WebView. */
@@ -466,6 +507,9 @@ export class EngineSupervisor<Load = unknown> {
   /** Close the current epoch: the WebView goes, in-flight calls reject (and reads requeue), timers stop. */
   private teardown(reason: string) {
     this.setMount(null);
+    // Timers are cleared below; a boot in flight belongs to the client being closed.
+    this.bootRetryScheduled = false;
+    this.bootInFlight = null;
     this.accepting = false;
     this.stopPings();
     this.timers.forEach(clearTimeout);

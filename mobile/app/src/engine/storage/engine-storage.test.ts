@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import { deleteMMKV } from 'react-native-mmkv';
 
 import { createEngineStorage } from './engine-storage';
 import { decodeSecureKey, encodeSecureKey, identityInKey, SECURE_CHUNK_CHARS, secureItemName } from './secure-keys';
@@ -107,6 +108,57 @@ describe('engine storage', () => {
     ).rejects.toThrow('killed');
     spy.mockRestore();
     expect((await storage.snapshot(null)).secure).toEqual({ 'yappr:pf:k': 'old' });
+  });
+
+  it('files a new sign-in’s secrets under it after the boot account signs out (same engine)', async () => {
+    storage.apply({ area: 'local', seq: 1, ops: [['set', 'yappr_session', session(ALICE)]] });
+    await storage.apply({ area: 'secure', seq: 2, ops: [['set', `yappr_secure_pk_${ALICE}`, 'a']] });
+    await storage.snapshot(); // the engine boots as ALICE
+    // ALICE signs out, then BOB signs in, without a restart.
+    storage.apply({ area: 'local', seq: 3, ops: [['del', 'yappr_session']] });
+    await storage.apply({ area: 'secure', seq: 4, ops: [['del', `yappr_secure_pk_${ALICE}`]] });
+    storage.apply({ area: 'local', seq: 5, ops: [['set', 'yappr_session', session(BOB)]] });
+    await storage.apply({
+      area: 'secure',
+      seq: 6,
+      ops: [['set', `yappr_secure_pk_${BOB}`, 'b'], ['set', 'yappr:pf:feed_seed', 'bob-seed']],
+    });
+
+    expect((await storage.snapshot(BOB)).secure).toEqual({ [`yappr_secure_pk_${BOB}`]: 'b', 'yappr:pf:feed_seed': 'bob-seed' });
+    expect((await storage.snapshot(ALICE)).secure).toEqual({});
+  });
+
+  it('keeps an in-engine account switch’s late writes with the boot account', async () => {
+    storage.apply({ area: 'local', seq: 1, ops: [['set', 'yappr_session', session(ALICE)]] });
+    await storage.snapshot(); // booted as ALICE
+    // switchAccount puts BOB's session in place before the restart; ALICE's engine still writes.
+    storage.apply({ area: 'local', seq: 2, ops: [['set', 'yappr_session', session(BOB)]] });
+    await storage.apply({ area: 'secure', seq: 3, ops: [['set', 'yappr:pf:cached_cek:x', 'alice-cek']] });
+    expect((await storage.snapshot(ALICE)).secure).toEqual({ 'yappr:pf:cached_cek:x': 'alice-cek' });
+    expect((await storage.snapshot(BOB)).secure).toEqual({});
+  });
+
+  it('wipes what an uninstalled copy left in the Keychain on the first launch of a new install', async () => {
+    await storage.apply({ area: 'secure', seq: 1, ops: [['set', `yappr_secure_pk_${ALICE}`, 'old-key']] });
+    const oldMmkvKey = keychain.get('pr.yap.app.engine-keys:yappr.mmkv-key.testnet');
+    // Relaunch: nothing is wiped.
+    const wipe = jest.fn();
+    await createEngineStorage('testnet', { wipeServices: wipe }).open();
+    expect(wipe).not.toHaveBeenCalled();
+    expect(secretItems()).toHaveLength(1);
+
+    // Uninstall deletes app data (the MMKV files) but not Keychain items; then reinstall.
+    deleteMMKV('yappr.engine.testnet');
+    deleteMMKV('yappr.engine-index.testnet');
+    const wipeServices = jest.fn((services: string[]) => {
+      for (const key of [...keychain.keys()]) if (services.some((s) => key.startsWith(`${s}:`))) keychain.delete(key);
+    });
+    const fresh = createEngineStorage('testnet', { wipeServices });
+    await fresh.open();
+    expect(wipeServices).toHaveBeenCalledWith([SERVICE]);
+    expect(secretItems()).toHaveLength(0);
+    expect(keychain.get('pr.yap.app.engine-keys:yappr.mmkv-key.testnet')).not.toBe(oldMmkvKey);
+    expect(await fresh.snapshot(ALICE)).toEqual({ local: {}, secure: {} });
   });
 
   it('purges every secret of an account signed out while not active', async () => {

@@ -282,6 +282,13 @@ States: `starting → handshaking → booting → ready ⇄ degraded → crashed
 
 ### 4.1 Transport
 
+> **As built (M2 + M4, PR #626).** §4.1–§4.3 below are the original design. The shipped bridge is simpler; mobile/engine/README.md "RPC" is the reference for the envelopes:
+> - **Envelopes** are `{t, v, …}` (`req`, `res`, `evt`, `log`, `ping`, `kv`/`skv`, `kv-ack`); there is **no `sid`**. Epochs are separated instead by a per-mount transport and RPC client (a remount gets new ones, and the old client is closed), plus the engine's `instanceId` in `engine.hello`: a request stamped with another instance is refused unrun, and a hello with a new instance on the same mount counts as a crash.
+> - **Host → engine** is `injectJavaScript("window.__yapprEngineReceive && window.__yapprEngineReceive(<JSON string literal>)")`. The message is data inside a string literal, never code.
+> - **Engine → host** is `window.ReactNativeWebView.postMessage(json)`.
+> - **Hydration** is not `init`/`init-kv` frames: the host prepends a bootstrap script to the page that assigns the whole snapshot (`window.__YAPPR_ENGINE_STORAGE__`, `<` escaped) before the engine runs, and posts the WebView's capabilities (`host-caps`).
+> - **Loading:** iOS loads `engine.inline.html` with the base URL `https://engine.yap.pr/`; Android loads a small loader page whose base is `file:///android_asset/engine/`, which loads `engine.js` (Android System WebView's `loadDataWithBaseURL` yields an empty page above about 15 MB). Both put the host's CSP and bootstrap first. `mobile/app/src/engine/page.ts`.
+
 - **Host → engine:** `webviewRef.current.postMessage(json)`. `react-native-webview` delivers it as a `message` event, on `window` on iOS and on `document` on Android, so the bootstrap listens on both.
 - **Engine → host:** `window.ReactNativeWebView.postMessage(json)`, received by `onMessage`.
 - **Frames.** Every frame is one UTF-8 JSON text whose top level is an envelope object. The values inside are codec-encoded (§5). A frame larger than 4 MiB is a protocol error. The engine pages results so this never happens; DTO pages are designed to stay under 512 KiB. Hydration is the one large payload: the host splits the storage snapshot into `init` plus as many `init-kv` frames as needed, each at most 2 MiB, and the bootstrap loads `engine.js` only after the frame with `more: false`.
@@ -1144,11 +1151,12 @@ These go in the audit scope:
   - `'unsafe-eval'` is required: wasm-bindgen glue calls `new Function` (`wasm_sdk.no_url.js:39665`), and web's CSP has it too (`app/layout.tsx:29`).
   - `connect-src` stays `https:` on every variant. Narrowing it on devnet would block the diagnostics DAPI override (§3.1) and the avatar fingerprint fetch (§10.1), so devnet would behave differently from testnet.
   - **M2 must verify** that `'self'` matches `file:` scripts in both WebViews. If it does not, switch to a `sha256-` hash of `engine.js`, computed at build time.
-- **Bridge checks.**
-  - The host accepts `onMessage` only when `nativeEvent.url` equals the engine URL and the envelope's `sid` matches.
-  - The engine accepts messages only with the matching `sid` (§4.2).
-  - `injectJavaScript` is used only for the `sid` bootstrap, never with data.
+- **Bridge checks (as built).**
+  - The host accepts `onMessage` only from the page's own URL (`https://engine.yap.pr/` on iOS; on Android the `file:` loader page, which reports no URL). Each mount has its own transport and client, so a stale page cannot reach the current epoch's calls.
+  - Navigation: every request goes through `onShouldStartLoadWithRequest` (`originWhitelist={['*']}`, so nothing falls through to `Linking`); iOS allows the page once per mount, Android allows nothing (its page never asks), and `about:blank`.
+  - `injectJavaScript` carries host → engine messages as JSON string literals (data, never code), plus dev-only diagnostics probes.
   - Arguments are data. They are decoded by the codec and never evaluated.
+  - The CSP is the host's `<meta>`, prepended to the page: `script-src 'unsafe-inline' 'unsafe-eval'` (plus `'self' file:` on Android for `engine.js`); the rest as below.
 - **App Review 4.2.** The UI is fully native, and the WebView is invisible and never renders content (ADR E1).
 
 ### 11.4 Lockdown Mode

@@ -1,7 +1,7 @@
 import { parse, stringify } from '@engine/protocol/codec';
 import { PROTOCOL_VERSION, RpcError } from '@engine/protocol/envelope';
 
-import { EngineSupervisor, parseChromeMajor, type SupervisorDeps } from './supervisor';
+import { EngineSupervisor, parseChromeMajor, type SupervisorDeps, type SupervisorOptions } from './supervisor';
 
 /**
  * A stand-in engine on the far side of the WebView transport: it reads what
@@ -23,6 +23,7 @@ class FakeEngine {
   held: { id: string; path: string; args: unknown[] }[] = [];
   hold = new Set<string>();
   answerPings = true;
+  pings = 0;
   calls: string[] = [];
 
   constructor(private readonly receive: (message: string) => void) {}
@@ -60,6 +61,7 @@ class FakeEngine {
   private onMessage(message: string) {
     const envelope = parse(message) as { t: string; id: string; path: string; args: unknown[] };
     if (envelope.t === 'ping') {
+      this.pings += 1;
       if (this.answerPings) this.hello();
       return;
     }
@@ -71,7 +73,13 @@ class FakeEngine {
 }
 
 /** Mounts a FakeEngine for every epoch the supervisor creates. */
-function setup(options: { platform?: 'ios' | 'android'; configure?: (engine: FakeEngine, epoch: number) => void } = {}) {
+function setup(
+  options: {
+    platform?: 'ios' | 'android';
+    configure?: (engine: FakeEngine, epoch: number) => void;
+    supervisor?: SupervisorOptions;
+  } = {},
+) {
   const engines: FakeEngine[] = [];
   const deps: SupervisorDeps<string> = {
     platform: options.platform ?? 'ios',
@@ -79,7 +87,12 @@ function setup(options: { platform?: 'ios' | 'android'; configure?: (engine: Fak
     onStorage: jest.fn(),
     log: jest.fn(),
   };
-  const supervisor = new EngineSupervisor(deps, { backoffMs: [10, 20, 40], pingIntervalMs: 1000, pingTimeoutMs: 100 });
+  const supervisor = new EngineSupervisor(deps, {
+    backoffMs: [10, 20, 40],
+    pingIntervalMs: 1000,
+    pingTimeoutMs: 100,
+    ...options.supervisor,
+  });
   supervisor.subscribeMount(() => {
     const mount = supervisor.getMount();
     if (!mount) return;
@@ -263,6 +276,62 @@ describe('EngineSupervisor', () => {
     await s.supervisor.connectivity(true);
     expect(s.supervisor.getStatus()).toMatchObject({ state: 'ready', reason: null });
     expect(s.engines[1].calls).toContain('engine.connectivity');
+    s.supervisor.stop();
+  });
+
+  it('retries a degraded boot once at a time, however many triggers arrive', async () => {
+    let fail = true;
+    let boots = 0;
+    const s = setup({
+      // Pongs need microtasks, which a long fake-timer jump skips: keep pings out of this test.
+      supervisor: { pingIntervalMs: 600_000 },
+      configure: (engine) => {
+        engine.hold.add('engine.boot');
+        engine.handlers['engine.boot'] = () => {
+          boots += 1;
+          if (fail) throw new RpcError('DAPI 504', 'NETWORK');
+          return { webAssembly: true, ready: true };
+        };
+      },
+    });
+    s.supervisor.start();
+    await boot(s);
+    const engine = s.engines[1];
+    // The first boot fails.
+    const first = engine.held.shift()!;
+    engine.respond(first.id, first.path, first.args);
+    await settle();
+    expect(s.supervisor.getStatus().state).toBe('degraded');
+
+    // Foreground returns and connectivity changes pile up; still one retry, then one boot call.
+    s.supervisor.setForeground(false);
+    s.supervisor.setForeground(true);
+    s.supervisor.setForeground(true);
+    const online = s.supervisor.connectivity(true);
+    const again = s.supervisor.connectivity(true);
+    await settle(5000);
+    expect(engine.held.filter((r) => r.path === 'engine.boot')).toHaveLength(1);
+
+    fail = false;
+    const retry = engine.held.shift()!;
+    engine.respond(retry.id, retry.path, retry.args);
+    await Promise.all([online, again]);
+    await settle();
+    expect(boots).toBe(2);
+    expect(s.supervisor.getStatus().state).toBe('ready');
+    s.supervisor.stop();
+  });
+
+  it('pings as well as retrying when a degraded engine returns to the foreground', async () => {
+    const s = setup({ configure: (engine) => (engine.handlers['engine.boot'] = () => { throw new RpcError('DAPI 504', 'NETWORK'); }) });
+    s.supervisor.start();
+    await boot(s);
+    expect(s.supervisor.getStatus().state).toBe('degraded');
+    const engine = s.engines[1];
+    const pingsBefore = engine.pings;
+    s.supervisor.setForeground(true);
+    await settle();
+    expect(engine.pings).toBe(pingsBefore + 1);
     s.supervisor.stop();
   });
 

@@ -20,6 +20,8 @@ const RULES: [RegExp, (match: string, ...groups: string[]) => string][] = [
   [/(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])/g, (match) => (/[-_]/.test(match) ? '<base64>' : match)],
   // A Uint8Array that went through JSON.stringify: {"0":171,"1":3,...}.
   [/\{"0":\d{1,3}(?:,"\d+":\d{1,3}){7,}\}/g, () => '<bytes>'],
+  // Bytes as a number array (Array.from(bytes)): 32 or more values 0–255 in brackets.
+  [/\[\s*(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\s*,\s*){31,}(?:25[0-5]|2[0-4]\d|1?\d?\d)\s*\]/g, () => '<bytes>'],
 ];
 
 export function redact(text: string): string {
