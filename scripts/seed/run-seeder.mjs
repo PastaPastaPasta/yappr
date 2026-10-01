@@ -3,8 +3,8 @@
  * CORPUS_FORMAT.md) against the devnet social contract as the seed
  * identities provisioned by provision-seed-identities.mjs.
  *
- * The target is the v10 social contract (`.env.devnet`; the run refuses any
- * other NEXT_PUBLIC_CONTRACT_TOPOLOGY). The corpus `''` convention means
+ * The target is the v10 or v11 social contract (`.env.devnet`; the run refuses
+ * any other NEXT_PUBLIC_CONTRACT_TOPOLOGY). The corpus `''` convention means
  * "untagged", and an untagged post/quote/like OMITS the hashtag property
  * (writing `''` is `where` consensus error 40127). A post or reply with a
  * `mediaUrl` carries the sha256 and dHash of the bytes at that URL

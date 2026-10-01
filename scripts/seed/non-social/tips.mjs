@@ -7,12 +7,12 @@
  * app refuses self-tips.
  *
  * Social v10 (4.2.0-beta.7) starts YAPP paused with no way to unpause it, so no transfer can land and there is nothing
- * to seed: the run refuses on a v10 contract before signing anything (tips become credit tips, a client follow-up).
+ * to seed: the run refuses on a v10/v11 contract before signing anything (tips become credit tips, a client follow-up).
  * The plan, --dry-run and --self-test still work, for the v9 devnet and review.
  */
 import bs58 from 'bs58';
 import { normalizeId, reportSelfTest } from '../../battery-lib.mjs';
-import { POST_LINK_BASE, WAIT_MAYBE_LANDED, YAPP_TOKEN_POSITION, describeErr, profileContractId, readback, sleep } from '../seed-lib.mjs';
+import { POST_LINK_BASE, SEEDED_TOPOLOGIES, WAIT_MAYBE_LANDED, YAPP_TOKEN_POSITION, describeErr, profileContractId, readback, sleep } from '../seed-lib.mjs';
 import {
   actorsFor, counts, ensureTokens, envValue, fakeId, loadCheckpoint, network, pick, printTable, rngFrom, saveCheckpoint,
   shuffled, weightedPick,
@@ -189,8 +189,8 @@ const planToJson = (tips) => tips.map((tip) => ({ ...tip, amount: tip.amount.toS
 const planFromJson = (tips) => tips.map((tip) => ({ ...tip, amount: BigInt(tip.amount) }));
 
 async function run({ args, handle, battery, socialId }) {
-  if (envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') === 'v10') {
-    throw new Error('tips: social v10 pauses YAPP for good, so a YAPP tip (a token transfer) is refused 40711. Nothing to seed; tips on v10 are credit tips (client follow-up).');
+  if (SEEDED_TOPOLOGIES.includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY'))) {
+    throw new Error('tips: social v10/v11 pause YAPP for good, so a YAPP tip (a token transfer) is refused 40711. Nothing to seed; tips there are credit tips (client follow-up).');
   }
   /** One page of `transfer` rows off a token-history index, newest first — the shape tip-history-service.ts reads with. */
   const transfers = async (tokenId, where, orderBy) => (await battery.queryDocs('transfer', {
