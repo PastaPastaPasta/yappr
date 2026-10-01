@@ -77,6 +77,11 @@ function PostDetailContent() {
   // not change until a reload, so remember it here to retire the reply prompt.
   const [deletedPostId, setDeletedPostId] = useState<string | null>(null)
   const isDeleted = Boolean(post?.deleted) || (!!post && post.id === deletedPostId)
+  // Every reply names its thread's root, and consensus refuses one whose root
+  // was removed (40120, paid: by moderators, or on v10 by its author), so
+  // nothing on this page can be replied to.
+  const threadRootRemoved = removedChainIds.length > 0
+  const replyBlockedReason = threadRootRemoved ? 'The post that started this thread was removed, so nothing in it can be replied to.' : undefined
 
   useEffect(() => {
     resetReplyEnrichment()
@@ -115,7 +120,7 @@ function PostDetailContent() {
   }, [replyThreads, enrichRepliesProgressively])
 
   const handleReply = () => {
-    if (!post || isDeleted || !canReplyToPrivate) return
+    if (!post || isDeleted || threadRootRemoved || !canReplyToPrivate) return
     setReplyingTo(post)
     setComposeOpen(true)
   }
@@ -177,7 +182,7 @@ function PostDetailContent() {
 
             {/* Main post - the one being viewed */}
             <div className="border-b border-gray-200 dark:border-gray-800">
-              <PostCard post={post} enrichment={postEnrichment} rootPostOwnerId={rootPostOwnerId} onDelete={setDeletedPostId} />
+              <PostCard post={post} enrichment={postEnrichment} rootPostOwnerId={rootPostOwnerId} onDelete={setDeletedPostId} replyBlockedReason={replyBlockedReason} />
             </div>
 
             {/* Proved YAPP tips on this post — one token-history read, detail view only */}
@@ -188,6 +193,10 @@ function PostDetailContent() {
               // deleted post, 40120); either way the post is gone for readers.
               <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
                 <p className="text-gray-500 text-sm">This post was deleted, so it can&apos;t be replied to.</p>
+              </div>
+            ) : threadRootRemoved ? (
+              <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
+                <p className="text-gray-500 text-sm">{replyBlockedReason}</p>
               </div>
             ) : user ? (
               isCheckingAccess ? (
@@ -242,6 +251,7 @@ function PostDetailContent() {
                     thread={thread}
                     rootPostOwnerId={rootPostOwnerId}
                     getPostEnrichment={getReplyEnrichment}
+                    replyBlockedReason={replyBlockedReason}
                   />
                 ))
               )}
