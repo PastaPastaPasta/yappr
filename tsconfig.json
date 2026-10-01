@@ -43,7 +43,6 @@
     "mobile",
     "vendor/platform-auth",
     "e2e",
-    "playwright.config.ts",
-    "mobile"
+    "playwright.config.ts"
   ]
 }
