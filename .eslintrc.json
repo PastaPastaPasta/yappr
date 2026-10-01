@@ -53,6 +53,7 @@
     "*.config.js",
     "*.config.ts",
     "vendor/platform-auth/**",
-    "e2e/**"
+    "e2e/**",
+    "mobile/**"
   ]
 }
