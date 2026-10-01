@@ -1,0 +1,77 @@
+name: Mobile engine
+
+# The engine bundles web lib/ and the pinned evo-sdk, so changes there must
+# rebuild it too: a lib change that breaks the engine fails here, on the web PR.
+on:
+  push:
+    branches: [master, staging]
+    paths:
+      - 'mobile/engine/**'
+      - 'lib/**'
+      - 'types/**'
+      - 'vendor/platform-auth/**'
+      - 'contracts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.env.devnet'
+      - '.github/workflows/mobile-engine.yml'
+  pull_request:
+    paths:
+      - 'mobile/engine/**'
+      - 'lib/**'
+      - 'types/**'
+      - 'vendor/platform-auth/**'
+      - 'contracts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.env.devnet'
+      - '.github/workflows/mobile-engine.yml'
+
+concurrency:
+  group: mobile-engine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    name: Engine (typecheck, lint, unit tests, bundle)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile/engine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            mobile/engine/package-lock.json
+
+      - name: Install root dependencies
+        working-directory: .
+        run: npm ci
+
+      - name: Install engine build tooling
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build bundles (testnet, devnet)
+        run: npm run build
+
+      - name: Upload bundle manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-manifests
+          path: mobile/engine/dist/*/manifest.json

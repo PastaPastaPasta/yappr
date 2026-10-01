@@ -9,6 +9,7 @@
     "build:testnet": "node build.mjs --variant testnet",
     "build:devnet": "node build.mjs --variant devnet",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint --max-warnings 0 src test build.mjs",
     "test": "vitest run --project unit",
     "test:contract": "vitest run --project contract",
     "test:browser": "vitest run --project browser"
