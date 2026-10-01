@@ -1,5 +1,8 @@
 import { createEngineModule, type EngineRuntime } from './engine'
+import { engage } from './engage'
+import { explore } from './explore'
 import { feed } from './feed'
+import { graph } from './graph'
 import { posts } from './posts'
 import { profiles } from './profiles'
 import { createSessionModule } from './session'
@@ -20,10 +23,13 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     engine: createEngineModule(runtime),
     feed,
     posts,
+    engage,
     profiles,
     session: createSessionModule({ emit, tickets, secureDurable: runtime.secureDurable }),
     settings,
     writes: createWritesModule(tickets),
+    graph,
+    explore,
   }
 }
 
@@ -35,3 +41,4 @@ export type * from './session'
 export type * from './settings'
 export type * from './writes'
 export type { EngineNotice } from '../shims/toast'
+export type { PlatformInfoDTO } from '../dto/capabilities'
