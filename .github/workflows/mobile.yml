@@ -53,7 +53,16 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: mobile/app/package-lock.json
+          cache-dependency-path: |
+            mobile/app/package-lock.json
+            package-lock.json
+
+      # The app type-checks against the engine's `EngineApi`, whose types reach
+      # web lib/ and its packages (evo-sdk types, zustand, ...), which resolve
+      # from the root node_modules. Nothing from it is bundled into the app.
+      - name: Install web dependencies (types)
+        working-directory: .
+        run: npm ci --ignore-scripts
 
       - name: Install dependencies
         run: npm ci

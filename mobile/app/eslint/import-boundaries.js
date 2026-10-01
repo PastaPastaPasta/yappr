@@ -7,7 +7,10 @@
  *
  * - `@dashevo/*` is never imported. The engine owns the SDK.
  * - Everything must resolve inside mobile/app, except:
- *   - `mobile/engine/src` (alias `@engine/*`), for types only;
+ *   - `mobile/engine/src` (alias `@engine/*`), for types only, plus runtime
+ *     imports of the dependency-free wire modules on the engine runtime
+ *     allowlist (the protocol, codec and RPC client the host shares with the
+ *     engine; src/__tests__/engine-runtime-imports.test.ts keeps them pure);
  *   - web `lib/` modules on the allowlist, and only from the allowlist file.
  * - Module specifiers must be string literals, so they can be checked.
  */
@@ -16,6 +19,18 @@ const path = require('path');
 const APP_ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(APP_ROOT, '../..');
 const ENGINE_SRC = path.resolve(APP_ROOT, '../engine/src');
+
+/**
+ * Whether `resolved` (an absolute path) is one of the engine modules on
+ * `allowlist`: `protocol/` allows a directory, `rpc/client` one module
+ * (with or without `.ts`).
+ * @param {string[]} allowlist
+ * @param {string} resolved
+ */
+function isEngineRuntimePath(allowlist, resolved) {
+  const rel = path.relative(ENGINE_SRC, resolved).split(path.sep).join('/').replace(/\.ts$/, '');
+  return allowlist.some((entry) => (entry.endsWith('/') ? rel.startsWith(entry) : rel === entry));
+}
 
 /** Mirrors tsconfig.json `paths`. */
 const ALIASES = [
@@ -57,6 +72,7 @@ const rule = {
           libAllowlist: { type: 'array', items: { type: 'string' } },
           libTypeAllowlist: { type: 'array', items: { type: 'string' } },
           allowlistFile: { type: 'string' },
+          engineRuntimeAllowlist: { type: 'array', items: { type: 'string' } },
           allowRepoFiles: { type: 'boolean' },
         },
         additionalProperties: false,
@@ -69,7 +85,8 @@ const rule = {
       libDirect: "'{{spec}}': import web lib/ modules from ~/lib-allowlist, not directly.",
       libNotAllowed: "'{{spec}}' ({{repoPath}}) is not on LIB_ALLOWLIST in eslint.config.js (ADR-001 E2).",
       libTypeOnly: "'{{spec}}' is allow-listed for types only. Use `import type` / `export type`.",
-      engineTypeOnly: "'{{spec}}': only types come from the engine package. Call the engine through ~/engine.",
+      engineTypeOnly:
+        "'{{spec}}': only types come from the engine package, apart from the wire modules on ENGINE_RUNTIME_ALLOWLIST (eslint.config.js). Call the engine through ~/engine.",
       computed: 'Module specifiers must be string literals so the import boundaries can be checked.',
     },
   },
@@ -78,6 +95,7 @@ const rule = {
     const libAllowlist = new Set(options.libAllowlist ?? []);
     const libTypeAllowlist = new Set(options.libTypeAllowlist ?? []);
     const allowlistFile = path.resolve(APP_ROOT, options.allowlistFile ?? 'src/lib-allowlist.ts');
+    const engineRuntime = options.engineRuntimeAllowlist ?? [];
     const filename = context.filename;
 
     /**
@@ -94,7 +112,9 @@ const rule = {
       if (resolved === undefined || isInside(resolved, APP_ROOT)) return;
 
       if (isInside(resolved, ENGINE_SRC)) {
-        if (!typeOnly) context.report({ node, messageId: 'engineTypeOnly', data: { spec } });
+        if (!typeOnly && !isEngineRuntimePath(engineRuntime, resolved)) {
+          context.report({ node, messageId: 'engineTypeOnly', data: { spec } });
+        }
         return;
       }
       if (options.allowRepoFiles && isInside(resolved, REPO_ROOT)) return;
@@ -186,4 +206,4 @@ const rule = {
   },
 };
 
-module.exports = { rules: { 'import-boundaries': rule }, APP_ROOT };
+module.exports = { rules: { 'import-boundaries': rule }, APP_ROOT, ENGINE_SRC, isEngineRuntimePath };

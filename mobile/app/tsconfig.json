@@ -2,13 +2,14 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
-    "types": ["jest"],
+    "types": ["jest", "node"],
     "allowImportingTsExtensions": true,
     "paths": {
       "~/*": ["./src/*"],
       "@assets/*": ["./assets/*"],
       "@/*": ["../../*"],
       "@engine/*": ["../engine/src/*"],
+      "@/components/*": ["./src/engine/web-components.d.ts"],
       "clsx": ["./node_modules/clsx"],
       "tailwind-merge": ["./node_modules/tailwind-merge"]
     }
