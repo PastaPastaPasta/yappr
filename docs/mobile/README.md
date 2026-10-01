@@ -26,8 +26,8 @@ These hold throughout the plan. D1–D3 came from the planning kickoff
 | D2 | **Notifications come two ways, and the relay is opt-in.** By default the device polls on its own schedule (BGAppRefresh / WorkManager) and posts local notifications, with no server involved. Users can switch on a stateless wake-up relay for timely notifications. The relay never sees notification content. |
 | D3 | **Everything lives in this repo for now.** The apps go under `mobile/`, and the shared TypeScript in `lib/` is consumed in place rather than extracted. |
 | D4 | **Networks: bonsia now, testnet later, then mainnet.** Development, internal alpha and Beta 1 run on the bonsia devnet (the `/devnet` staging deploy), the only chain with the v10 contract set. We move to testnet once it runs protocol 14 with the Yappr contract set deployed. See [Networks](#networks-and-environments). |
-| D5 | **No owner-claimable fees.** The mainnet social cut declares elected moderation with `interim: {"$type": "notYetUsable"}`. Posts, replies, reports and `yapprProfile` are refused (41200) until an elected charter is seated; nobody, the contract owner included, can claim the moderators pot, which accumulates for the seated team. The post and reply action fees stay and go to elected moderators only. See [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tipping). |
-| D6 | **Sign-in uses App Connect with per-device, multi-bound keys.** One wallet handoff grants a per-device auth key bound to each contract Yappr writes (social, DM v5, `yappr-push`, DashPay `profile`) plus one encryption key shared by the user's devices. See [WALLET_INTEGRATION.md](WALLET_INTEGRATION.md#key-model-per-device-auth-shared-encryption). |
+| D5 | **No owner-claimable fees.** On testnet and mainnet, the social cut declares elected moderation with `interim: {"$type": "notYetUsable"}`. Posts, replies, reports and `yapprProfile` are refused (41200) until an elected charter is seated; nobody, the contract owner included, can claim the moderators pot, which accumulates for the seated team. The post and reply action fees stay and go to elected moderators only. **Yappr staff do not stand for the charter**, so no fee reaches the developer. Bonsia keeps the owner as interim (as v10 does today) so development is never blocked; the interim is the only difference between the bonsia and the testnet/mainnet files. See [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tipping). |
+| D6 | **Sign-in uses App Connect with per-device, multi-bound keys.** One wallet handoff grants a per-device auth key bound to each contract Yappr writes (social, DM v5, `yappr-push`, DashPay `profile`) plus one encryption key shared by the user's devices. A new contract id (a re-cut, a devnet wipe, or a new 1.x feature contract) needs a re-grant of that binding. See [WALLET_INTEGRATION.md](WALLET_INTEGRATION.md#key-model-per-device-auth-shared-encryption). |
 | D7 | **Reports cover posts, replies, profiles and DMs, on chain.** The next social cut extends the v10 `report` doctype with an identity target (a profile and a user are the same target). A DM report carries the reported conversation's key, encrypted to the moderation team, so moderators can read that conversation. See [COMPLIANCE.md](COMPLIANCE.md#reports). |
 | D8 | **Media become arrays in the next social cut.** A post or reply carries a list of media items (several images, or a video, or a GIF), each with its own hash. Until that cut is live, compose supports one image. |
 | D9 | **No migration for non-wallet web keys.** Mainnet users all sign in from a wallet, so passkey, password-vault and pasted-key identities are a devnet/testnet artefact. Mobile does not handle them. |
@@ -92,7 +92,7 @@ Phase 2                ████████████              DMs, no
 Phase 3                        ████████████      Hardening, audit, compliance → G3 Beta 2 / RC
 Phase 4                                    ████  Store submission, phased rollout → G4 1.0
 Web/contr.   ████████████████████                Yappr web + contract workstream (Y0–Y7)
-⛓ deps       Y0/Y4/Y5 by G1 · Y1/W3/W4/W8 by G2 · P1/Y2/W1/W2 by G3
+⛓ deps       PL2 by G0 · Y0/Y3/Y4/Y5/Y7a by G1 · Y1 by wk 14 · W3/W4/W8/W9/Y7b by G2 · PL1/Y2/M1/W1/W2 by G3
 ```
 
 The phases overlap on purpose. Phase 2 starts during Phase 1, and Phase 3
@@ -115,18 +115,19 @@ sign users in:
 
 | Environment | Used for | Needs |
 | --- | --- | --- |
-| **Bonsia (now)** | Dev, spikes, all automated E2E, internal alpha, Beta 1 | **Y0:** `yappr-push` deployed and mobile pool slots provisioned; **Y1** (the next social cut) deployed by G2. Wallets: the test-wallet harness for automation; **W8** devnet-capable internal/TestFlight wallet builds for human testers. |
-| **Testnet (later)** | Store-wallet interop; Beta 2 if mainnet is not ready | **P0** protocol 14 on testnet; the Yappr contract set (Y1 cut) deployed there. Wallets: DashConnect on testnet (in the stores today); App Connect (W2). |
-| **Mainnet (launch)** | Beta 2 / RC and GA | **P1** protocol 14 on mainnet; **Y2** contracts on mainnet with a seated first charter; **W1/W2** DashConnect/App Connect on mainnet in store wallet builds |
+| **Bonsia (now)** | Dev, spikes, all automated E2E, internal alpha, Beta 1 | **Y0:** `yappr-push` deployed and mobile pool slots provisioned; **Y1** (the next social cut, owner interim) deployed by week 14. Wallets: the test-wallet harness for automation; **W8** devnet-capable internal/TestFlight wallet builds for human testers. |
+| **Testnet (later)** | Store-wallet interop; Beta 2 if mainnet is not ready; the testnet public beta fallback | **PL0** protocol 14 on testnet; the Yappr contract set (Y1 cut with `notYetUsable`, DM v5, `yappr-push`, `key-exchange-v2` while W2 is pending, plus `/testing` copies for E2E) and a **seated testnet charter** (M1). Wallets: DashConnect on testnet (in the stores today); App Connect (W2). |
+| **Mainnet (launch)** | Beta 2 / RC and GA | **PL1** protocol 14 on mainnet; **Y2** contract set on mainnet; a **seated charter** (M1); **W1/W2** DashConnect/App Connect on mainnet in store wallet builds |
 
 **Keeping bonsia usable.** The mobile build reads contract ids and the network
 config at build time from the same `.env.*` files as web, and the pool and
 fixture setup is scripted, so a devnet wipe costs a rebuild and a re-seed,
 not code changes.
 
-**Launch-network go/no-go at G2.** If P1, Y2, W1 and W2 cannot all land by
+**Launch-network go/no-go at G2.** If PL1, Y2, W1 and W2 cannot all land by
 G3, 1.0 ships to the stores as a clearly labelled **testnet public beta**
-(which needs P0), and mainnet GA follows as 1.1 once they do. Mobile
+(which needs PL0 and a seated testnet charter), and mainnet GA follows as 1.1
+once they do. Mobile
 development never waits on mainnet; only the switch of the network flag does.
 
 ## Phases
@@ -144,13 +145,15 @@ development never waits on mainnet; only the switch of the network flag does.
   the encrypted DM-key envelope), each with test vectors. Get sign-off from
   both wallet teams on the first.
 - **Contract design.** Draft the next social cut (Y1): report identity
-  target, DM-key envelope, media arrays, and the mainnet moderation block
-  (`notYetUsable`, mainnet election windows).
+  target, DM-key envelope, media arrays, and the testnet/mainnet moderation
+  block (`notYetUsable` interim, election windows of at least a day, and the
+  seat settings: `seatContestable`, `challengeCoolDown`,
+  `maxAddedModerators`, `electionDelay`, `ownerProtected`).
 - **Design.** Information architecture; tokens extracted from
   `tailwind.config.js`; Figma prototypes of onboarding, feed, compose,
   notifications and DMs; an onboarding usability test with 5+ people.
 - **Dependency asks.** Open requests with the wallet teams (W1–W4, W8, W9),
-  Platform (P0/P1) and legal; set up the organization developer accounts with
+  Platform (PL0/PL1) and legal; set up the organization developer accounts with
   the publishing organization (C1, D12), including Play developer verification
   (in force since 2026-09-30).
 - **Scaffolding.**
@@ -205,9 +208,9 @@ development never waits on mainnet; only the switch of the network flag does.
   - Account deletion in the app, plus `lib/account-deletion.ts` and the web
     `/delete-account` page.
 - **Gate G2:** Beta 1 through TestFlight external and the Play closed track on
-  bonsia (with W8 wallet builds), or on testnet if P0 and the Y1 deploy there
-  have landed, with at least 50 testers per OS. Crash-free sessions ≥ 99.0%
-  (store vitals), the wallet interop matrix green, and the **launch-network
+  bonsia (with W8 wallet builds), or on testnet if PL0 and the Y1 deploy there
+  have landed, with at least 50 testers per OS. The beta crash bar met
+  ([QA_RELEASE.md › Crash metrics](QA_RELEASE.md#crash-metrics)), the wallet interop matrix green, and the **launch-network
   go/no-go** made.
 
 ### Phase 3: Hardening and compliance (weeks 16–22)
@@ -223,8 +226,8 @@ development never waits on mainnet; only the switch of the network flag does.
   - App Review package; **Apple pre-consult on the moderation fee and tips**.
   - Strings ready for localization.
 - **Launch network.** Deploy the Y2 contract set, run the first moderation
-  election and seat the charter, then Beta 2 on mainnet, if the G2 go/no-go
-  allowed it.
+  election (community candidates; Yappr staff do not stand) and seat the
+  charter (M1), then Beta 2 on mainnet, if the G2 go/no-go allowed it.
 - **Gate G3:** no open P0/P1, audit High findings fixed, compliance checklist
   green, and posting open on the launch network (charter seated).
 
@@ -235,8 +238,9 @@ development never waits on mainnet; only the switch of the network flag does.
   20%, 50%, then 100%, with halt criteria.
 - **Launch monitoring.** Store vitals, store reviews and relay health, with a
   hotfix train ready.
-- **Gate G4 (done):** 1.0 live on both stores at 100%, crash-free sessions
-  ≥ 99.5% over 7 days (store vitals), and no open P0.
+- **Gate G4 (done):** 1.0 live on both stores at 100%, the launch crash bar
+  met over 7 days ([QA_RELEASE.md › Crash metrics](QA_RELEASE.md#crash-metrics)),
+  and no open P0.
 
 ### Phase 5: Post-1.0 (1.1–1.3)
 
@@ -265,23 +269,24 @@ Details and fallbacks are in the linked docs.
 
 | # | Owner | Need | Needed by | Fallback if late |
 | --- | --- | --- | --- | --- |
-| P0 | Platform | Testnet at protocol 14 | Testnet move (D4); a testnet public beta | Stay on bonsia; no testnet public beta |
-| P1 | Platform | Protocol 14 active on **mainnet** (App Connect, optional token costs, action fees, elected moderation, limited keys) | G3 | **None for mainnet.** Ship the testnet public beta (needs P0). |
-| P2 | Platform | An `rs-sdk` tag that builds for `aarch64-apple-ios(-sim)`, `aarch64-linux-android` and `x86_64-linux-android`, pinned to the same tag as web's `@dashevo/evo-sdk` (today `v4.2.0-beta.7`, `50d12037`) | G0 | Pin a commit and vendor its lockfile. Expect a pin bump (and a devnet re-cut) per platform beta. |
+| PL0 | Platform | Testnet at protocol 14 | Testnet move (D4); a testnet public beta | Stay on bonsia; no testnet public beta |
+| PL1 | Platform | Protocol 14 active on **mainnet** (App Connect, optional token costs, action fees, elected moderation, limited keys) | G3 | **None for mainnet.** Ship the testnet public beta (needs PL0). |
+| PL2 | Platform | An `rs-sdk` tag that builds for `aarch64-apple-ios(-sim)`, `aarch64-linux-android` and `x86_64-linux-android`, pinned to the same tag as web's `@dashevo/evo-sdk` (today `v4.2.0-beta.7`, `50d12037`) | G0 | Pin a commit and vendor its lockfile. Expect a pin bump (and a devnet re-cut) per platform beta. |
 | W1 | iOS and Android wallets | DashConnect enabled on **mainnet** in a store release | G3 | Testnet public beta |
-| W2 | Wallets + Yappr | App Connect (`H8F9…`) with one-hop provisioning and the per-device, multi-bound key model (D6): keys bound to social, DM v5, `yappr-push` and DashPay `profile` (plus DPNS if names are registered from Yappr); delete-plus-create re-login | G3 | Deploy Yappr `key-exchange-v2` to mainnet; the wallets pin it (dashwallet-ios #1133); DashPay profile edits hand off to the wallet |
+| W2 | Wallets + Yappr | App Connect (`H8F9…`) with one-hop provisioning and the per-device, multi-bound key model (D6): keys bound to social, DM v5, `yappr-push` and DashPay `profile`; delete-plus-create re-login; re-granting a binding when a contract id changes | G3 | Deploy Yappr `key-exchange-v2` to mainnet and the wallets pin it (dashwallet-ios #1133). Mobile then holds the legacy single unbound key set, shared by all of the user's devices, as web does today (see [WALLET_INTEGRATION.md](WALLET_INTEGRATION.md#fallback-key-exchange-v2)) |
 | W3 | Wallets | Same-device return: an optional `cb=` universal/app link, plus error codes | G2 | "Switch back to Yappr" plus polling. It works, but is clumsy. |
 | W4 | iOS wallet | Re-login lookup fix (dashwallet-ios #1137 / platform #4822) | G2 | Moot once App Connect's delete-plus-create re-login ships |
-| W8 | Wallets | Devnet-capable internal/TestFlight builds that accept a custom devnet (DAPI list, quorum URL, devnet name) and run DashConnect/App Connect there | G2 | Beta 1 waits for testnet (P0) |
+| W8 | Wallets | Devnet-capable internal/TestFlight builds that accept a custom devnet (DAPI list, quorum URL, devnet name) and run DashConnect/App Connect there | G2 | Beta 1 waits for testnet (PL0) |
 | W9 | Wallets | Confirm the dHash avatar fingerprint matches DashPay's `avatarFingerprint` | G2 | Yappr writes its own fingerprint only when it sets the avatar |
 | Y0 | Yappr | On bonsia: `yappr-push` deployed; mobile test-pool slots provisioned | G1 | None |
-| Y1 | Yappr | **The next social cut (mainnet candidate)** on bonsia: report identity target and DM-key envelope (D7), media arrays (D8), `interim: notYetUsable` (D5); then on testnet when P0 lands | G2 | Profile/DM reports by email plus the denylist; one image per post |
-| Y2 | Yappr | The Y1 contract set on **mainnet** (mainnet election windows, ≥ 1 day), a first elected charter **seated before App Review**, and a moderation rota with a 24 h SLA | G3 | None. Nobody can post until a charter is seated. |
+| Y1 | Yappr | **The next social cut (mainnet candidate):** report identity target and DM-key envelope (D7), media arrays (D8). On bonsia with the owner as interim; then on testnet with `notYetUsable` (D5), together with DM v5, `yappr-push`, `key-exchange-v2` (while W2 is pending) and `/testing` copies, when PL0 lands | Week 14 (bonsia) | Profile/DM reports by email plus the denylist; one image per post |
+| Y2 | Yappr | The **mainnet** contract set: the Y1 social cut with `notYetUsable`, DM v5, `yappr-push`, `key-exchange-v2` only if W2 is late, and the denylist publishing identity. Plus a moderation rota (denylist and email channel, 24 h SLA) | G3 | None |
+| M1 | Dash community, masternodes | Charter candidates stand and masternodes vote, so a charter is **seated before App Review** on mainnet (and on testnet for a testnet public beta). Yappr recruits candidates and staff do not stand (D5). At protocol 14 a seat is never replaced, so the first charter is long-lived. | G3 | None. Nobody can post until a charter is seated. |
 | Y3 | Yappr | App Connect login support in `vendor/platform-auth`, shared with web | With W2 | Keep the `key-exchange-v2` path |
 | Y4 | Yappr | ENCRYPTION key selection rule in `lib/crypto/encryption-key-lookup.ts` (still returns the first active key): prefer the key bound to the contract in use, then an unbound key, then the newest | G1 | None. Without it, DMs break once identities carry bound keys. |
 | Y5 | Yappr | `lib/` platform seams (see [ARCHITECTURE.md](ARCHITECTURE.md#platform-seams-in-lib-the-minimal-yappr-change)) | Seams 1–2 by G0, 3–5 by G1 | None. Mobile cannot share `lib/` without them. |
 | Y6 | Yappr | DM v5 encryption-key rotation (DM_V5 Appendix A), which enables "Reset messaging keys" after a lost device | 1.x | 1.0 documents the lost-device DM exposure |
-| Y7 | Yappr web | Moderation denylist (hides DashPay profile content, media and identities); `/delete-account` page; `.well-known` app-site association; `/app/connect` page; `lib/push/ping.ts`; profile and DM report UI; zero-tolerance terms and community guidelines | G1 (denylist, terms), G2 (rest) | None. These are store blockers. |
+| Y7 | Yappr web | **Y7a:** moderation denylist (hides DashPay profile content, media and identities); zero-tolerance terms and community guidelines. **Y7b:** `/delete-account` page; `.well-known` app-site association; `/app/connect` page; `lib/push/ping.ts`; profile and DM report UI | Y7a by G1, Y7b by G2 | None. These are store blockers. |
 
 ## Staffing
 
@@ -296,7 +301,7 @@ Suggested team, for sizing:
 | Product designer | 1 in phases 0–2, then 0.5 |
 | QA engineer | 0.5 from phase 1, 1 from phase 2 |
 | Relay / infra | 0.25 |
-| Moderation ops (report queue, 24 h SLA; charter candidates for mainnet) | Rota from Beta 1 |
+| Moderation ops (denylist, email channel and report triage, 24 h SLA; recruiting community charter candidates; staff do not stand) | Rota from Beta 1 |
 | Security audit | External, phase 3 |
 | Product owner (pasta) | Decisions, wallet-team liaison, App Review contact |
 
@@ -314,6 +319,8 @@ What remains is either owned by someone else or settled by data at a gate:
 4. **Moderation-team key for DM reports** (D7): whether reporters encrypt to
    each seated moderator or to one team key the charter publishes. Settled in
    `REPORT_PROFILE.md` at G0.
-5. **Charter continuity** under `notYetUsable` (D5): confirm with Platform
-   what happens to posting if a seated charter later loses its seat, before the
-   Y2 cut is frozen.
+5. **Seat settings** for the testnet/mainnet cut (D5), before Y1 is frozen:
+   `seatContestable`, `challengeCoolDown`, `maxAddedModerators`,
+   `electionDelay` and `ownerProtected`. At protocol 14 a seat is never
+   replaced (challenges come later), so these settings decide how long the
+   first charter governs.

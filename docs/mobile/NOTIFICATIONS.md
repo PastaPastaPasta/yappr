@@ -18,7 +18,7 @@ the same local pipeline, so notifications look the same and are deduplicated.
 
 | Type | Source (unchanged from web) | Channel (Android) / category (iOS) | Default | Grouping |
 | --- | --- | --- | --- | --- |
-| DM | DM v5 streams / v3 `directMessage` | Messages, high importance | On | Per conversation |
+| DM | DM v5 streams; legacy v4 (bonsia) and v3 `directMessage` (testnet) | Messages, high importance | On | Per conversation |
 | Reply | v10: `reply.parentOwnerRecent [$createdAt, parentOwnerId]`, 3.5-day windows kept a week (v2: `reply.parentOwnerId`) | Replies & mentions | On | Per thread |
 | Mention | v10: `post` / `reply.mentionedUserAndTime` (permanent; the first @mention only) (v2: `postMention.mentionedUserId`) | Replies & mentions | On | Per post |
 | Like | v10: per post. One grouped count finds which of the newest 50 own posts and replies gained likes, then reads up to 20 of them since the cursor (`lib/services/like-service.ts`). Likes on older content never notify. | Likes & reposts, low importance | **Summary only** | "@a and 12 others liked your post" |

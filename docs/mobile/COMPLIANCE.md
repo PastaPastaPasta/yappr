@@ -42,7 +42,7 @@ submission.
 | Behavior | Social v2 (testnet prod today) | Social v10 (bonsia) | Mainnet cut (Y2) | iOS 1.0 | Android 1.0 |
 | --- | --- | --- | --- | --- | --- |
 | YAPP charged to create post (10) / reply (3) / like (1) | **Required** by consensus | **Optional**; credits are the alternative | Optional | Credits only; no YAPP anywhere in the UI | Credits only |
-| Post / reply action fee (80M / 16M credits, 0.0008 / 0.00016 DASH) | None | To a moderators pot; the **contract owner is the interim claimant** until a charter is seated | To a moderators pot that **only a seated charter can claim**; posting is closed until one is seated (`notYetUsable`) | Shown as "moderation fee (goes to elected moderators)" | Same |
+| Post / reply action fee (cap 80M / 16M credits, scaled by the fee multiplier; a seated charter may charge a share of it) | None | To a moderators pot; the **contract owner is the interim claimant** until a charter is seated | To a moderators pot that **only a seated charter can claim**; posting is closed until one is seated (`notYetUsable`) | Shown as "moderation fee (goes to elected moderators)", at the charged amount | Same |
 | Buy YAPP with credits | Available | **Refused** (40721; YAPP is locked) | Refused | — | — |
 | YAPP starter grant | Contract-dependent | 100 per identity, once, CRITICAL claim | Same | Not surfaced | Not surfaced |
 | Tips on posts and replies | YAPP transfer | YAPP transfer **refused** (40711); web offers unprovable credit transfers | Proved credit tips (1.x design) | **Hidden** | 1.x |
@@ -64,17 +64,26 @@ submission.
     (16,000,000 for reply), paid into a moderators pot. On v10 the contract
     owner is the interim claimant, which on iOS would be a crypto payment to
     the developer to unlock posting.
-  - **Settled (D5): the mainnet cut uses `interim: {"$type": "notYetUsable"}`.**
+  - **Settled (D5): the testnet and mainnet cuts use `interim: {"$type": "notYetUsable"}`** (bonsia keeps the owner as interim, for development only).
     Until an elected charter is seated, every transition on a moderated type
     (post, reply, report, `yapprProfile`) is refused with 41200, and nobody can
     claim the pot (`ContractFeeClaimNotAllowedError`); it accumulates for the
     team to come (platform book, `data-model/contract-moderation.md`, "The
-    interim block"). After seating, only the seated team claims. Yappr, as
-    contract owner, never does. Likes, follows and the other unmoderated types
-    work from day one.
+    interim block"). After seating, only the seated team claims, split by its
+    proposal's `rewardSplit`. Yappr, as contract owner, never does, and
+    **Yappr staff do not stand for the charter**, so no share of the pot can
+    reach the developer through a seat either. Likes, follows and the other
+    unmoderated types work from day one.
+  - **What the user pays.** The declared 80M / 16M credits are a cap, scaled
+    by the current fee multiplier. A seated charter may charge only a
+    `moderatorsShare` of it; the fee agreement must then match the charter's
+    share (40139 otherwise). The compose cost line and the `TxBuilder` read
+    the seated charter's share at the current multiplier.
   - **Launch consequence.** The first mainnet election (windows of at least
-    one day each) has to seat a charter before App Review, because the
-    reviewer must be able to post. This is Y2, needed by G3.
+    one day each) has to seat a charter of community candidates before App
+    Review, because the reviewer must be able to post (M1, needed by G3). At
+    protocol 14 a seat is never replaced, so that first charter governs until
+    Platform ships challenges; the seat settings are fixed in the cut.
   - The compose cost line (PRODUCT_UX) shows each component by its honest
     name.
 - **[verify]** A fee paid to independently elected moderators, not the
@@ -91,7 +100,7 @@ Ask App Review for guidance through the App Review Board contact / Apple
 developer relations. Topics:
 
 1. Network (processing) fees in credits, plus the moderation fee that only
-   elected moderators can claim.
+   elected community moderators can claim (no Yappr staff on the charter).
 2. Profile tips through `dash:` handoff to another app.
 3. Storefront for physical goods.
 4. The review sign-in approach (see [App Review package](#app-review-package)).
@@ -145,16 +154,25 @@ moderator-written `status` / `resolution` stamped with `$moderatedBy` /
 
 | Change | Spec |
 | --- | --- |
-| Identity target | A third target, `identityId`, alongside `postId` and `replyId` (still exactly one). A profile and a user are the same target: reporting a profile reports the identity. Unique per reporter per target, as today. |
-| DM reports | A DM report targets the other party's identity and carries `dmKeyEnvelope`: the reported conversation's key (DM v5: the key for that conversation's stream, which opens that conversation and nothing else), ECIES-encrypted to the moderation team. The key never goes in clear, because reports are public documents. |
-| Moderation-team key | Whether the envelope is encrypted to each seated moderator or to one team key the charter publishes is settled in `REPORT_PROFILE.md` at G0. |
+| Identity target | A third target alongside `postId` and `replyId` (still exactly one): for identity reports, the existing required `targetOwnerId` *is* the target, and a new `kind` (post, reply, profile, dm) says which. A profile and a user are the same target. |
+| Uniqueness | One report per reporter per target **and kind**, plus the conversation id for DM reports, so a profile report and a DM report of the same person, or reports of two conversations, do not collide. |
+| DM reports, 1:1 | The report carries `dmKeyEnvelope`: the conversation id (`gid`) and its key `K = HKDF(Z, "direct-key"‖gid)`, ECIES-encrypted to the moderation team. That key is static, so it opens the conversation's **past and future** messages until Y6 rotation exists. The key never goes in clear, because reports are public documents. |
+| DM reports, groups | The reporter shares only the per-base, ratcheted keys it holds itself (`lib/dm/keys.ts`), which open the messages it could read. An owner never sends the owner-only group secret. |
+| Moderation-team key | Encrypt to each seated moderator, or to one team key the charter publishes and re-wraps on turnover, so moderators seated later can still read open reports. Settled in `REPORT_PROFILE.md` at G0. |
 | Reasons | Add a dedicated "sexual content involving minors" reason that routes to the urgent path. |
 
 **Disclosure to the reporter.** Reports are signed by the reporter's identity
 and are public; the reported person can see that a report exists and who made
-it. The report sheet says so. For a DM report it also says: "Moderators will be
-able to read this whole conversation." The email channel below is offered as
-the private alternative.
+it. The report sheet says so. A public DM report also reveals that the two
+people have a conversation, which weakens DM v5's unlinkability. For a DM
+report the sheet says: "Moderators will be able to read this conversation,
+including messages sent after this report." The email channel below is
+offered as the private alternative.
+
+**Before a charter is seated.** `report` is a moderated type, so on testnet
+and mainnet it is refused (41200) until seating, while DMs, follows and likes
+already work. In that window, the app routes every report to the email
+channel and the denylist.
 
 - **Moderator queue.** The existing web queue gains profile and DM targets; for
   a DM report it decrypts the envelope with the moderator's key and shows the

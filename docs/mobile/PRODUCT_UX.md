@@ -122,8 +122,9 @@ list:
   - It shows what the post will cost before sending, using
     `lib/payment-preference.ts` `planPayment`. Each part is named honestly: a
     "Network fee ~0.0000x DASH" line for processing, and a "Moderation fee
-    0.0008 DASH (goes to elected moderators)" line for a post (0.00016 for a
-    reply). See [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tipping).
+    (goes to elected moderators)" line at the amount actually charged: the
+    seated charter's share of the post or reply cap (at most 0.0008 / 0.00016
+    DASH at a 1× multiplier). See [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tipping).
   - No YAPP in the UI on either OS. YAPP is optional on the social cut, cannot
     be bought, and the only source is a one-time grant.
   - If credits are too low, it offers "Top up in DashPay" and posting stays
@@ -185,9 +186,11 @@ list:
   omits them (DM_V5 §12.3).
 - **Conversation.** Bubbles, day separators, a "Sending / Sent / Failed"
   state, long press for Copy, Report, Delete for me.
-- **Report.** Reporting a conversation files an identity report that carries
-  that conversation's key for the moderators (D7). The sheet says "Moderators
-  will be able to read this whole conversation" before the user confirms.
+- **Report.** Reporting a conversation files a DM report that carries that
+  conversation's key for the moderators (D7). Before the user confirms, the
+  sheet says "Moderators will be able to read this conversation, including
+  messages sent after this report", and that the report is public. Until a
+  charter is seated, the report goes by email instead.
 - **Groups (DM v5).** Group name, member list, invite, leave.
 - **Key missing.** If the user has no encryption key on the identity, show a
   one-time explainer: "To use messages, DashPay needs to add an encryption key

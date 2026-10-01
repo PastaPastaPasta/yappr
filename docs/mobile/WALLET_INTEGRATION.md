@@ -19,7 +19,7 @@ their store builds, enabled on testnet only (2026-09-30).
 | Recovery phrase, MASTER and CRITICAL identity keys, L1 funds | Wallet | Never leaves the wallet |
 | Identity creation, username (DPNS) registration from zero, credit top-up | Wallet | Onboarding sends users to DashPay to create an identity and username |
 | Adding keys to the identity (`IdentityUpdate`) | Wallet (MASTER) | Done once per device at sign-in |
-| AUTHENTICATION/HIGH keys, one set per device, each bound to one contract (D6) | Yappr, in the Keychain/Keystore | Social (posts, replies, likes, follows, `yapprProfile`, blocks, reports, private feeds), DM v5, `yappr-push`, and DashPay `profile` (name, avatar, bio) |
+| AUTHENTICATION/HIGH keys, one set per device, each bound to one contract (D6) | Yappr, in the Keychain/Keystore | Social (posts, replies, likes, follows, `yapprProfile`, blocks, reports, private feeds), DM v5, `yappr-push`, and DashPay `profile` (name, avatar, bio). DPNS registration stays in the wallet. |
 | ENCRYPTION/MEDIUM key, one per identity and app, shared by the user's devices | Yappr, in the Keychain/Keystore | DM v5 (ECDH plus the `selfRoot` / group-secret HKDFs), private-feed ECIES, background DM decryption, DM-report key envelopes |
 | Starter-grant claim (100 YAPP, CRITICAL) | Wallet, via `dash-st:` | Not surfaced in 1.0 (YAPP is optional on v10; see [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tipping)) |
 | Credit transfers (TRANSFER key) | Wallet, via `dash-st:` | Proved credit tips, 1.x |
@@ -78,20 +78,33 @@ Mobile uses (D6, proposed to the wallets as W2):
 
 | Key | Derivation (wallet side) | Contract bound | Lifetime |
 | --- | --- | --- | --- |
-| Encryption key | `HKDF(loginKey(app, keyIndex=0), salt=identityId, info="encryption")`, unchanged from today, so wallet-QR web users keep the same key | None (read by peers for every Yappr contract) | Stable per identity and app. Never revoked by "disconnect device". Rotated only by an explicit "Reset messaging keys" action (1.x, Y6). |
-| Auth keys | `HKDF(loginKey(app, keyIndex=n), …, info="auth:<contract>")` with a **fresh `n` for each device** (the wallet tracks `n` and the device label in its Connections list) | One key each for social, DM v5, `yappr-push` and DashPay `profile` (plus DPNS if Yappr registers names) | One set per device. Revoking one device leaves the others working. |
+| Encryption key | `HKDF(loginKey(app, keyIndex=k), salt=identityId, info="encryption")`, where `k` is the keyIndex of the identity's **currently active** Yappr encryption key (0 for a first sign-in), so wallet-QR web users keep the key peers already encrypt to | None (read by peers for every Yappr contract) | Stable per identity and app. Never revoked by "disconnect device". Rotated only by an explicit "Reset messaging keys" action (1.x, Y6). |
+| Auth keys | `HKDF(loginKey(app, keyIndex=n), …, info="auth:<contract>")` with a **fresh `n` for each device** (the wallet tracks `n` and the device label in its Connections list) | One key each for social, DM v5, `yappr-push` and DashPay `profile` | One set per device. Revoking one device leaves the others working. |
 
 **Why multi-bound.** A contract-bound key can only sign for its contract: a
 social-bound key writing the DashPay `profile` is refused (20014,
-`lib/profile/v10-profile.ts:323`). On v10 the DashPay `profile` *is* the Yappr
+`lib/profile/v10-profile.ts:325`). On v10 the DashPay `profile` *is* the Yappr
 base profile, and DMs live in their own contract, so one bound key is not
 enough.
 
-Grant payload: `authKey_social ‖ authKey_dm ‖ authKey_push ‖ authKey_dashpay ‖
-encKey` (5 × 32 bytes; this fits App Connect's 60–572-byte, 1–17-key range).
-Platform keeps disabled keys on the identity forever, so the auth-key count
-grows with re-logins. With limited keys (W7), expired auth keys take no
-further action. The old-key count is shown in Settings → Security.
+Grant payload: five 32-byte keys (`authKey_social ‖ authKey_dm ‖
+authKey_push ‖ authKey_dashpay ‖ encKey`) plus the envelope overhead, about
+188 bytes, inside App Connect's 60–572-byte, 1–17-key range. An unbound
+shared encryption key next to bound auth keys departs from Platform's
+"session key plus bindings" model, so it is an explicit point to agree with
+the wallet teams in `APP_CONNECT_PROFILE.md`. Platform keeps disabled keys on
+the identity forever, so the auth-key count grows with re-logins. With limited
+keys (W7), expired auth keys take no further action. The old-key count is
+shown in Settings → Security.
+
+**When a contract id changes.** A binding names one contract id. A social or
+DM re-cut, a devnet wipe, a deploy to a new network, or a 1.x feature that
+writes a new contract (blog, pollr, storefront) leaves every device without a
+valid key for it. The app detects the missing binding, explains why ("Yappr
+moved to a new contract; approve once in DashPay"), and asks the wallet to
+**add the binding** to the device's existing key set. That re-grant is part of
+the App Connect profile and the W2 ask, and every coordinated contract release
+plans for it.
 
 **Encryption key selection (Y4).** `findEncryptionKey`
 (`lib/crypto/encryption-key-lookup.ts:28`) still returns the *first* active
@@ -120,6 +133,19 @@ Yappr owns, and suits other Dash apps too. The cost:
 
 `key-exchange-v2` keeps working for testnet interop until both wallets ship
 App Connect.
+
+### Fallback: key-exchange-v2
+
+If W2 is late, mobile signs in through `key-exchange-v2` the way web does
+today: the wallet derives one `loginKey` per identity and app, and from it one
+**unbound** auth key and the encryption key. Mobile derives those two from the
+response and then discards the `loginKey`. Every device and browser shares
+that key set, so the per-device revoke and the bindings above do not exist on
+this path. Revoking one device signs out all of them, and the lost-phone
+advice in [Sign-out](#sign-out-revocation-lost-phone) applies to the whole
+set. An unbound key can write the DashPay `profile` itself, so no extra
+handoff is needed. Bonsia's Beta 1 runs this path unless the W8 wallet builds
+already have App Connect.
 
 ### Request format and return path
 
@@ -182,20 +208,23 @@ keys are stored under that identity's ID.
 | --- | --- | --- | --- |
 | Tip a profile in DASH | `dash:<address>?amount=<x>&label=Tip%20for%20@bob` (from `yapprProfile.paymentUris`) | Yes, both wallets, mainnet | No callback. Yappr shows "Tip sent?" and checks the address via Insight, as the checkout does (`lib/services/insight-api-service.ts`). |
 | Pay with txid callback (Android) | `dashwallet://?pay=<addr>&amount=<x>&sender=yappr` | Android returns the txid; iOS turns it into a `dash:` payment with no callback | Use it where supported |
-| Sign a CRITICAL or TRANSFER transition | `dash-st:<base58 transition>?n=…&v=1` | DashConnect (testnet) | Yappr polls for the expected state change. 1.0 uses it only for the legacy two-hop login and a missing encryption key. |
+| Sign a MASTER, CRITICAL or TRANSFER transition | `dash-st:<base58 transition>?n=…&v=1` | DashConnect (testnet) | Yappr polls for the expected state change. 1.0 uses it only for the legacy two-hop login's key registration and a missing encryption key, both MASTER-signed `IdentityUpdate`s. |
 | Add as DashPay contact | `dashpay://user?id=<identity>&username=<name>` | iOS parses it (`DashPayUserLink.swift`); Android unverified (W6) | None needed |
 | Top up credits | None today | — | W5; fallback: "Open DashPay" plus instructions |
 
-The **`dash-st:` nonce trap:** an unsigned transition embeds the identity
-contract nonce. Any other write from Yappr in the meantime makes it stale. In
-1.0 this matters only for provisioning a missing encryption key (a
-MASTER-signed `IdentityUpdate`, which uses the identity nonce) and for the
-legacy two-hop login. While a `dash-st:` handoff is outstanding, Yappr:
+The **`dash-st:` nonce trap:** an unsigned transition embeds a nonce, and
+anything else that uses the same nonce in the meantime makes it stale. The two
+1.0 uses are `IdentityUpdate`s, which take the **identity** nonce; Yappr's own
+document writes use per-contract nonces and cannot collide with them, but
+another app or the wallet itself can. So Yappr:
 
-1. Pauses its own write queue.
-2. Builds the transition right before the handoff.
-3. On return, checks the result. If it is stale, it rebuilds and asks again
+1. Builds the transition right before the handoff.
+2. On return, checks the result. If it is stale, it rebuilds and asks again
    rather than failing silently.
+
+Token or credit-transfer handoffs (1.x) take a contract or identity nonce that
+Yappr's own writes can touch; those pause Yappr's write queue while
+outstanding.
 
 ## Key custody on the device
 

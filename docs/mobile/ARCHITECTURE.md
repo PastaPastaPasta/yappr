@@ -82,12 +82,12 @@ still hold at `4.2.0-beta.7` (re-checked 2026-09-30).
 | `contracts` | `fetch`, `getMany`, `addKnown`, `getLatestVersions`, moderation family (`moderatorChangeDocumentFields`, pot claim, `moderationCharters`; web-only in 1.0) |
 | `dpns` | `resolveName`, `isNameAvailable`, `isContestedUsername`, `isValidUsername`, `convertToHomographSafe` (registration goes to the wallet) |
 | `voting` | `contestedResourceVoteState`, `votePollsByEndDate` (read-only; username contests) |
-| `tokens` | `identityBalances`, `calculateId` (read-only; YAPP transfer and purchase are refused on v10, and the grant claim goes to the wallet) |
+| `tokens` | `identityBalances`, `calculateId` (read-only; YAPP transfer and purchase are refused on v10, and 1.0 never claims the grant) |
+| `stateTransitions` | `broadcastStateTransition`, `waitForResponse`, `waitForAffectedState` |
+| `epoch` | `current` |
 
 Call counts drifted between the 2026-09-27 and 2026-09-30 counts; re-count
 at G0.
-| `stateTransitions` | `broadcastStateTransition`, `waitForResponse`, `waitForAffectedState` |
-| `epoch` | `current` |
 
 The mobile 1.0 subset is about 30 methods. Anything moderator-only or
 token-write stays on web.
@@ -107,7 +107,7 @@ device: an iPhone 12 and a Pixel 6a.
 | # | Spike | Timebox | Exit criteria |
 | --- | --- | --- | --- |
 | S1 | `yappr-platform` crate: `documents.query` / `get` / `count` plus `identities.fetch` with proofs, exposed via ubrn in an Expo dev client on both OSes | 6 days | Home-feed query results match web exactly (JSON diff over 50 fixtures); p50 query ≤ 1.2× web; cold init ≤ 800 ms; release binary adds ≤ 25 MB (per ABI) |
-| S2 | Write path through `txBuilder` (see seams): a v10 **post with a `$actionFeeAgreement`** (credits) and one with `$tokenPaymentInfo` (`gasFeesPaidBy: 2`); a DashPay `profile` create plus a `yapprProfile` create/replace, each signed with a key bound to its contract; a real post delete; an indexOnly like delete; and pending-transition replay after a 504. All built and signed in Rust by the native signer. | 8 days | All land on bonsia from both OSes, with document IDs byte-identical to the web builder's for the same inputs; no private key or raw-digest API crosses into JS |
+| S2 | Write path through `txBuilder` (see seams): a v10 **post with a `$actionFeeAgreement`** (credits), once at the declared cap and once at a seated charter's discounted share; a DashPay `profile` create plus a `yapprProfile` create/replace, each signed with a key bound to its contract; a real post delete; an indexOnly like delete; and pending-transition replay after a 504. All built and signed in Rust by the native signer. | 8 days | All land on bonsia from both OSes, with document IDs byte-identical to the web builder's for the same inputs; no private key or raw-digest API crosses into JS |
 | S3 | Headless JS `SyncCore` via `expo-background-task` (BGTaskScheduler / WorkManager), run while the device is locked (encryption key only) | 3 days | A cold background run finishes the v10 request mix ([NOTIFICATIONS.md › Shared pipeline](NOTIFICATIONS.md#shared-pipeline)) plus a DM head check in ≤ 15 s p90, with peak memory ≤ 150 MB |
 | S4 | NSE: RFC 8291 decrypt with an SE P-256 key, secp256k1 **recover** plus hash160 check, App Group SQLite read (read-only, WAL) | 2 days | ≤ 12 MB resident, ≤ 300 ms |
 | S5 | Fallback engine: `PlatformSdk` over a hidden WebView running evo-sdk | 3 days | Same fixtures as S1 pass. Gives us a plan B with numbers. |
@@ -170,7 +170,7 @@ registers its own implementation at startup.
 | Module-scope wasm imports | 16 lib modules import evo-sdk **runtime values** at top level, among them `document-id.ts`, `document-builder-service.ts`, `identity-service.ts`, `signer-service.ts`, `token-service.ts`, `token-*-builder.ts` (3), `moderation-service.ts`, `dm-v5/sdk-chain.ts`, `evo-sdk-service.ts`, `manual-batch.ts`, `identity-nonce.ts`, `identity-update-builder.ts`, `state-transition-service.ts` and `utils/username.ts`. Under Hermes these would load WASM. | Split each into a pure part (shared) and an evo-sdk part (web only, behind `TxBuilder` / `PlatformSdk`). An ESLint `no-restricted-imports` rule keeps `@dashevo/*` value imports out of shared modules. Mobile's Metro config aliases `@dashevo/*` to a stub that throws, so any leak fails loudly. |
 | `lib/platform/signer.ts` | `signer-service.ts` builds a wasm `IdentitySigner` from a WIF | Add `SignerRef` (`{identityId, keyId}`). The web impl wraps the WIF as it does now; the mobile impl is a handle to the native signer, which picks the device key bound to the op's contract (D6). |
 | `lib/platform/secrets.ts` | `secure-storage.ts` reads plaintext `localStorage` | Put the existing browser secret store behind an interface. The mobile impl uses Keychain/Keystore. **This also removes the `typeof window` guard** in `state-transition-service.ts:220`. |
-| `lib/platform/kv.ts` | 18 files call `localStorage` directly, through `storage-scope` or not | Route them through `scopedStorage`, backed by `localStorage` on web and MMKV on mobile. zustand `persist` uses a `createJSONStorage` adapter. |
+| `lib/platform/kv.ts` | 18 files call `localStorage` directly, through `storage-scope` or not (15 in `lib/`, the rest in `components/`, `contexts/`, `hooks/` and `app/`); the seam covers the `lib/` ones, and mobile never loads the rest | Route them through `scopedStorage`, backed by `localStorage` on web and MMKV on mobile. zustand `persist` uses a `createJSONStorage` adapter. |
 | `lib/platform/lifecycle.ts` | DM v5 flushes on `visibilitychange` / `pagehide`; `cache-manager` on `beforeunload`; 2 `window` CustomEvents | Add `onBackground(cb)` / `emit(event)`. The web impl uses the DOM events; mobile uses `AppState` plus background-task hooks. |
 | `lib/crypto/aes-gcm.ts`, `message-encryption.ts`, `vendor/platform-auth/src/key-exchange/yappr-protocol.ts` | `crypto.subtle` AES-GCM and PBKDF2 | Mobile installs `react-native-quick-crypto`, which provides a native `subtle`. **No lib change**, unless S6 shows gaps, in which case switch AES-GCM to `@noble/ciphers/aes`. |
 
@@ -228,7 +228,7 @@ PR 5, which moves every write.
   - `selfRoot = HKDF(encPriv, "self")`, which decrypts all DM self-state;
   - `deriveGroupSecret(encPriv, gid)`, used in `lib/dm/keys.ts:34,74`.
 
-  The secrets seam refactors those call sites (`lib/services/dm-v5/context.ts:86`,
+  The secrets seam refactors those call sites (`lib/services/dm-v5/context.ts:84`,
   `lib/services/dm-v5/groups.ts:69,292,362`) to call `dmHkdf` instead of touching `encPriv`. The
   encryption private key then stays native, although `selfRoot` itself does
   live in the JS heap. The audit scope records this.
@@ -237,7 +237,7 @@ PR 5, which moves every write.
 
 | Store | Tech | Contents | Survives sign-out? |
 | --- | --- | --- | --- |
-| Secrets | Keychain / Keystore | Auth key, encryption key, pending sign-in request | No |
+| Secrets | Keychain / Keystore | Auth keys (one per bound contract), encryption key, pending sign-in request | No |
 | Shared DB | SQLite in the App Group container (iOS) / app files (Android), WAL | Notification cursors and seen table, known-identities cache (for NSE verification), prefs, mutes, DM v5 local cache | No |
 | KV | MMKV, per identity and network | zustand stores (feed settings, drafts, `payWith`), `storage-scope` keys | No |
 | Media cache | `expo-image` disk cache | Avatars, IPFS media | Yes (pruned) |
@@ -282,7 +282,7 @@ PR 5, which moves every write.
 | --- | --- | --- | --- |
 | `dev` | Bonsia (`.env.devnet`), test-wallet harness allowed | `pr.yap.app.dev` | Local, simulators |
 | `beta` | Bonsia now; testnet once it runs protocol 14 with the Yappr contract set (D4) | `pr.yap.app.beta` | TestFlight, Play internal/closed |
-| `prod` | Launch network (see README open decision 1) | `pr.yap.app` | Stores |
+| `prod` | Launch network (see README › Still open, item 2) | `pr.yap.app` | Stores |
 | `foss` (Android) | Same as prod, no FCM, UnifiedPush only | `pr.yap.app` | F-Droid / GitHub releases (1.x; needs Android developer verification from 2026-09-30 in the first regions) |
 
 - **Config at build time.** `lib/constants.ts` reads `NEXT_PUBLIC_*` values.

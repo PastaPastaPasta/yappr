@@ -24,8 +24,8 @@ deliverable. It runs on bonsia (D4), needs Y0, and covers:
 - Every contract mobile writes to is live on bonsia: social v10 (then the Y1
   cut), DM v5, DashPay, and `yappr-push` (Y0). Bonsia is a staging chain, so
   mobile E2E writes there are fine; on testnet, mobile must use `/testing`
-  copies and never production contracts (web DM e2e still writes to
-  production there, TESTING.md §7).
+  copies and never production contracts (TESTING.md §7 warns that DM coverage
+  there would write to production until test copies are registered).
 - Mobile pool slots from the devnet seed (`E2E_DEVNET_SEED_PHRASE`,
   `docs/TESTING.md` §1): at least 6 identities, so that 1:1 DMs, groups of 3
   and blocked/unknown senders can be tested. They are separate from web CI's
@@ -78,6 +78,19 @@ must pass on iOS and Android.
 | Mid (budgets measured here) | iPhone 12 / 13 on iOS 18 | Pixel 6a / Samsung A54 on Android 14–15 |
 | Current | iPhone 16/17 on iOS 26 | Pixel 9/10 on Android 16; Samsung S25 (One UI) |
 | Special | iPhone SE (small screen); Lockdown Mode on | Xiaomi/Oppo (aggressive battery killers); GrapheneOS (no Play services, UnifiedPush); foldable (layout smoke) |
+
+## Crash metrics
+
+There is no crash-reporting SDK (D14), so the gates use what the stores
+report:
+
+| Stage | iOS | Android |
+| --- | --- | --- |
+| Beta (G2) | TestFlight crash reports: at most 1 crash per 100 tester sessions, and no crash signature reported by 3 or more testers | Play Console pre-launch report clean on the device matrix; no crash cluster in the closed-track vitals |
+| Launch (G3, G4) | Xcode Organizer crash counts per 1,000 sessions at or below 5 (≈ 99.5% crash-free); no top signature above 1/1,000 | Play vitals user-perceived crash rate below 1.09% (the bad-behaviour threshold), target 0.5% |
+
+The halt criteria under [Rollout](#rollout-and-halt-criteria) use the launch
+row.
 
 ## Performance and battery budgets
 
@@ -167,8 +180,8 @@ accepted in writing.
 | Stage | When | Audience | Network | Channels | Exit |
 | --- | --- | --- | --- | --- | --- |
 | Internal alpha | G1 (wk 12) | Team, 10–20 | Bonsia | TestFlight internal, Play internal | Core flows green in Maestro, no P0 |
-| Beta 1 | G2 (wk 18) | Yappr web power users and Dash community, 50–200 per OS | Bonsia with W8 wallet builds, or testnet if P0 and the Y1 deploy there have landed | TestFlight external (first build goes through Beta App Review), Play closed | Crash-free ≥ 99.0% (store vitals), feedback triaged, interop green |
-| Beta 2 / RC | G3 (wk 22) | Beta 1 plus an open waitlist, up to 1,000 | **Launch network** (mainnet if Y2/W1/W2/P1 landed and a charter is seated) | TestFlight external, Play open testing | Crash-free ≥ 99.5% (store vitals), audit closed, compliance checklist green |
+| Beta 1 | G2 (wk 18) | Yappr web power users and Dash community, 50–200 per OS | Bonsia with W8 wallet builds, or testnet if PL0, the Y1 deploy and a seated testnet charter have landed | TestFlight external (first build goes through Beta App Review), Play closed | Beta crash bar ([Crash metrics](#crash-metrics)), feedback triaged, interop green |
+| Beta 2 / RC | G3 (wk 22) | Beta 1 plus an open waitlist, up to 1,000 | **Launch network** (mainnet if Y2/M1/W1/W2/PL1 landed) | TestFlight external, Play open testing | Launch crash bar, audit closed, compliance checklist green |
 | GA | G4 (wk 26) | Public | Launch network. If the G2 go/no-go chose testnet, this is a store-listed "testnet public beta" and mainnet GA follows in 1.1. | App Store (phased release, 7 days), Play (staged 5/20/50/100%) | See rollout halt criteria |
 
 **Feedback channels:**
@@ -183,7 +196,7 @@ accepted in writing.
 
 - **Halt triggers:** pause the phased or staged rollout if any of the
   following happens.
-  - Crash-free sessions fall below 99.3% (Xcode Organizer / Play vitals).
+  - Crashes exceed the launch bar in [Crash metrics](#crash-metrics).
   - A P0 is reported.
   - Sign-in failures spike in support reports and store reviews (there is no
     client telemetry).
@@ -213,4 +226,7 @@ accepted in writing.
 - **Contract changes.** A new contract version (for example the social cut
   after the mainnet one) is
   treated as a coordinated web and mobile release. The mobile build refuses to
-  start against a mismatched topology, and shows "Update Yappr" instead.
+  start against a mismatched topology, and shows "Update Yappr" instead. A new
+  contract id also needs every device to re-grant its key binding in the
+  wallet (D6), so the release notes and an in-app prompt explain the one-time
+  approval.
