@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config'
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
+import { ENGINE_ALIASES } from './aliases.mjs'
 
 const root = path.resolve(__dirname, '../..')
 const evoSdkVersion = JSON.parse(readFileSync(path.join(root, 'node_modules/@dashevo/evo-sdk/package.json'), 'utf8')).version
@@ -15,11 +16,10 @@ const evoSdkVersion = JSON.parse(readFileSync(path.join(root, 'node_modules/@das
  */
 export default defineConfig({
   resolve: {
-    // The same module aliases as build.mjs, so tests run what the bundle runs.
+    // The same module substitutions as build.mjs, so tests run what the bundle runs.
     alias: [
       { find: /^@\//, replacement: `${root}/` },
-      { find: /^react-hot-toast$/, replacement: path.resolve(__dirname, 'src/shims/toast.ts') },
-      { find: /^@dashevo\/wasm-sdk\/compressed$/, replacement: path.resolve(__dirname, 'src/shims/wasm-sdk-compressed.ts') },
+      ...Object.entries(ENGINE_ALIASES).map(([name, replacement]) => ({ find: new RegExp(`^${name.replace(/[/.]/g, '\\$&')}$`), replacement })),
     ],
   },
   define: {

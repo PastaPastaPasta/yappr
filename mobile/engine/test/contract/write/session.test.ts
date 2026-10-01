@@ -5,8 +5,11 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest'
 import { loadPoolPersonas, type PoolPersona } from '../../../harness/pool'
-import { connectEngine, MIN_POOL_CREDITS } from './engine'
+import { connectEngine } from '../engine'
 import { writeSuiteSkipReason } from './env'
+
+/** 0.5 DASH in credits (1 DASH = 1e11 credits): below it a pool persona needs a top-up. */
+const MIN_POOL_CREDITS = 50_000_000_000n
 
 const skipReason = writeSuiteSkipReason()
 
@@ -17,7 +20,7 @@ describe.skipIf(skipReason !== null)(`session on sakura${skipReason ? ` (skipped
 
   beforeAll(async () => {
     [alice, bob] = loadPoolPersonas()
-    engine = connectEngine()
+    engine = connectEngine({ timeoutMs: 300_000 })
     await engine.api.engine.boot()
     // A stale session from an aborted run would block the sign-in below.
     await engine.api.session.signOut()
@@ -31,7 +34,7 @@ describe.skipIf(skipReason !== null)(`session on sakura${skipReason ? ` (skipped
   })
 
   it('restores the session after an engine restart', async () => {
-    engine = connectEngine()
+    engine = connectEngine({ timeoutMs: 300_000 })
     expect((await engine.api.session.restore())?.identityId).toBe(alice.identityId)
     expect(engine.events).toContainEqual(expect.objectContaining({ event: 'session.changed', payload: expect.objectContaining({ reason: 'restored' }) }))
   })
@@ -43,13 +46,13 @@ describe.skipIf(skipReason !== null)(`session on sakura${skipReason ? ` (skipped
 
   it('adds a second account, then switches back through a restart', async () => {
     await engine.api.session.prepareAddAccount()
-    engine = connectEngine()
+    engine = connectEngine({ timeoutMs: 300_000 })
     expect(await engine.api.session.restore()).toBeNull()
     expect((await engine.api.session.signInWithKey({ key: bob.keyHex('critical') })).identityId).toBe(bob.identityId)
     expect((await engine.api.session.accounts()).map(a => [a.identityId, a.active])).toEqual([[bob.identityId, true], [alice.identityId, false]])
 
     await engine.api.session.switchAccount(alice.identityId)
-    engine = connectEngine()
+    engine = connectEngine({ timeoutMs: 300_000 })
     expect((await engine.api.session.restore())?.identityId).toBe(alice.identityId)
     expect(engine.events).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ reason: 'switched' }) }))
   })

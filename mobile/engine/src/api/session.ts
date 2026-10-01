@@ -67,6 +67,9 @@ export interface SessionModuleOptions {
   controller?: PlatformAuthController
 }
 
+/** AuthUser.balance (a number of credits) as the DTOs carry credits. */
+const toCredits = (balance: number): bigint => BigInt(Math.trunc(balance))
+
 /**
  * Mobile 1.0 signs in with a wallet (key exchange) or a private key only
  * (ADR-001 E5): no vaults, passwords or passkeys, no username or profile
@@ -110,7 +113,7 @@ export function createSessionModule(options: SessionModuleOptions) {
       identityId: user.identityId,
       network: getConfiguredNetwork(),
       username: user.username ?? null,
-      credits: BigInt(Math.trunc(user.balance)),
+      credits: toCredits(user.balance),
       hasEncryptionKey: hasEncryptionKey(user.identityId),
       method: registry.get(user.identityId)?.method ?? 'key',
     }
@@ -188,8 +191,9 @@ export function createSessionModule(options: SessionModuleOptions) {
 
   return {
     /** The active session, after the boot restore. */
-    current(): Promise<SessionDTO | null> {
-      return restored().then(() => toDTO(controller.getState().user))
+    async current(): Promise<SessionDTO | null> {
+      await restored()
+      return toDTO(controller.getState().user)
     },
 
     /**
@@ -205,7 +209,7 @@ export function createSessionModule(options: SessionModuleOptions) {
     async checkKey(input: { key: string }): Promise<KeyCheckDTO> {
       const verified = await verifySignInKey(input.key)
       const username = await dpnsService.resolveUsername(verified.identityId).catch(() => null)
-      return { identityId: verified.identityId, username: username ?? null, keyId: verified.keyId, securityLevel: verified.securityLevel }
+      return { identityId: verified.identityId, username, keyId: verified.keyId, securityLevel: verified.securityLevel }
     },
 
     /** Sign in with a private key (WIF or hex). Arguments are sensitive: never logged. */
@@ -245,6 +249,7 @@ export function createSessionModule(options: SessionModuleOptions) {
       await restored()
       const active = registry.activeIdentityId()
       return registry.list()
+        .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
         .map(account => ({
           identityId: account.identityId,
           username: account.username,
@@ -252,7 +257,6 @@ export function createSessionModule(options: SessionModuleOptions) {
           lastUsedAt: new Date(account.lastUsedAt),
           active: account.identityId === active,
         }))
-        .sort((a, b) => b.lastUsedAt.getTime() - a.lastUsedAt.getTime())
     },
 
     /**
@@ -303,10 +307,10 @@ export function createSessionModule(options: SessionModuleOptions) {
     },
 
     async refreshBalance(): Promise<{ credits: bigint }> {
-      const session = await restored().then(() => controller.getState().user)
-      if (!session) throw new RpcError('Not signed in', 'NOT_SIGNED_IN')
+      await restored()
+      if (!controller.getState().user) throw new RpcError('Not signed in', 'NOT_SIGNED_IN')
       await controller.refreshBalance()
-      return { credits: BigInt(Math.trunc(controller.getState().user?.balance ?? 0)) }
+      return { credits: toCredits(controller.getState().user?.balance ?? 0) }
     },
   }
 }

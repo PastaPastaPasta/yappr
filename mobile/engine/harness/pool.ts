@@ -13,13 +13,10 @@
  * signs `dash-st:` with it.
  */
 import { readFileSync } from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import slots from '../test/contract/write/slots.json'
 
-export const POOL_ENV_VAR = 'YAPPR_SAKURA_IDENTITIES'
-
-const here = path.dirname(fileURLToPath(import.meta.url))
-const SLOTS_FILE = path.join(here, '../test/contract/write/slots.json')
+const POOL_ENV_VAR = 'YAPPR_SAKURA_IDENTITIES'
+const POOL_UNSET = `${POOL_ENV_VAR} is not set (the sakura ops identities.json; ENGINE.md §12.3)`
 
 /** The fixed key layout of every pool persona. */
 const POOL_KEYS = {
@@ -40,32 +37,24 @@ interface PoolKeyEntry {
 interface PoolIdentityEntry {
   personaIdx: number
   identityId: string
-  handle?: string
   identityKeys: PoolKeyEntry[]
 }
 
 export interface PoolPersona {
   personaIdx: number
   identityId: string
-  handle: string | null
   /** The private key for `role`, as 64 hex characters. Never log it. */
   keyHex(role: PoolKeyRole): string
 }
 
-/** The persona indexes reserved for the mobile write suite. */
-export function poolSlots(): number[] {
-  const { personaIdx } = JSON.parse(readFileSync(SLOTS_FILE, 'utf8')) as { personaIdx: number[] }
-  return personaIdx
-}
-
 /** Why the pool cannot be used here, or null when it can. */
-export function poolUnavailableReason(env: NodeJS.ProcessEnv = process.env): string | null {
-  return env[POOL_ENV_VAR] ? null : `${POOL_ENV_VAR} is not set (the sakura ops identities.json; ENGINE.md §12.3)`
+export function poolUnavailableReason(): string | null {
+  return process.env[POOL_ENV_VAR] ? null : POOL_UNSET
 }
 
 /** Load the reserved personas. Throws without echoing file content or key material. */
 export function loadPoolPersonas(file: string | undefined = process.env[POOL_ENV_VAR]): PoolPersona[] {
-  if (!file) throw new Error(poolUnavailableReason({}) ?? 'pool unavailable')
+  if (!file) throw new Error(POOL_UNSET)
   let root: { identities?: unknown }
   try {
     root = JSON.parse(readFileSync(file, 'utf8')) as { identities?: unknown }
@@ -75,7 +64,7 @@ export function loadPoolPersonas(file: string | undefined = process.env[POOL_ENV
   }
   if (!Array.isArray(root.identities)) throw new Error('The pool file has no identities[] array')
   const entries = root.identities as PoolIdentityEntry[]
-  return poolSlots().map(personaIdx => {
+  return slots.personaIdx.map(personaIdx => {
     const entry = entries.find(candidate => candidate.personaIdx === personaIdx)
     if (!entry || typeof entry.identityId !== 'string' || !Array.isArray(entry.identityKeys)) {
       throw new Error(`Persona ${personaIdx} is missing from the pool or has no identityId/identityKeys`)
@@ -83,7 +72,6 @@ export function loadPoolPersonas(file: string | undefined = process.env[POOL_ENV
     return {
       personaIdx,
       identityId: entry.identityId,
-      handle: entry.handle ?? null,
       keyHex(role) {
         const expected = POOL_KEYS[role]
         const key = entry.identityKeys.find(candidate => candidate.keyId === expected.keyId)

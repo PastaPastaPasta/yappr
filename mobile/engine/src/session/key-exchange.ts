@@ -14,6 +14,7 @@ import {
 } from 'platform-auth'
 import { bytesToHex, hexToBytes } from '@/lib/bytes'
 import { scopedKey } from '@/lib/storage-scope'
+import { readJson } from '../read-json'
 import { RpcError } from '../protocol/envelope'
 
 /**
@@ -32,10 +33,10 @@ import { RpcError } from '../protocol/envelope'
  *    Nothing derived from the wallet's answer is ever persisted.
  */
 
-export const REQUEST_LIFETIME_MS = 10 * 60 * 1000
-export const DEFAULT_WAIT_MS = 45_000
+const REQUEST_LIFETIME_MS = 10 * 60 * 1000
+const DEFAULT_WAIT_MS = 45_000
 const MAX_WAIT_MS = 120_000
-export const REGISTRATION_POLL_MS = 5_000
+const REGISTRATION_POLL_MS = 5_000
 /** Secure area (Keychain/Keystore on the host): the one request still waiting for its wallet. */
 export const PENDING_REQUEST_KEY = scopedKey('yappr_secure_kx_request')
 
@@ -90,7 +91,6 @@ export interface KeyExchangeOptions<S> {
   complete(identityId: string, loginKey: Uint8Array, keyIndex: number): Promise<S>
   now?(): number
   newId?(): string
-  sleep?(ms: number, signal: AbortSignal): Promise<void>
 }
 
 function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -112,56 +112,63 @@ function clampWait(waitMs: number | undefined): number {
   return Math.min(Math.max(waitMs ?? DEFAULT_WAIT_MS, 0), MAX_WAIT_MS)
 }
 
+/** platform-auth's poll and the sleep above reject with this message when aborted. */
+function isCancellation(error: unknown): boolean {
+  return error instanceof Error && error.message === 'Cancelled'
+}
+
+const cancelledError = () => new RpcError('Sign-in was cancelled', 'KEY_EXCHANGE_CANCELLED')
+
+const toRequestDTO = (request: Request): KeyExchangeRequestDTO =>
+  ({ requestId: request.requestId, uri: request.uri, expiresAt: new Date(request.expiresAt) })
+
+const pendingStep = (request: Request): KeyExchangeStep<never> =>
+  ({ status: 'pending', requestId: request.requestId, expiresAt: new Date(request.expiresAt) })
+
 export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
   const { controller, storage } = options
   const now = options.now ?? Date.now
   const newId = options.newId ?? (() => crypto.randomUUID())
-  const sleep = options.sleep ?? abortableSleep
-  const requests = new Map<string, Request>()
+  /** One sign-in at a time: `start` abandons any earlier request. */
+  let active: Request | null = null
+
+  function readStored(): StoredRequest | null {
+    const stored = readJson<StoredRequest | null>(storage, PENDING_REQUEST_KEY, null)
+    return stored && typeof stored.requestId === 'string' && typeof stored.ephemeralKeyHex === 'string' ? stored : null
+  }
 
   function wipe(request: Request): void {
     request.poll?.abort()
-    clearSensitiveBytes(request.ephemeralKey)
-    if (request.approval) {
-      clearSensitiveBytes(request.approval.loginKey)
-      clearSensitiveBytes(request.approval.authKey)
-      clearSensitiveBytes(request.approval.encryptionKey)
+    for (const key of [request.ephemeralKey, request.approval?.loginKey, request.approval?.authKey, request.approval?.encryptionKey]) {
+      if (key) clearSensitiveBytes(key)
     }
-    requests.delete(request.requestId)
+    if (active === request) active = null
     if (readStored()?.requestId === request.requestId) storage.removeItem(PENDING_REQUEST_KEY)
   }
 
-  function readStored(): StoredRequest | null {
-    try {
-      const stored = JSON.parse(storage.getItem(PENDING_REQUEST_KEY) ?? 'null') as StoredRequest | null
-      return stored && typeof stored.requestId === 'string' && typeof stored.ephemeralKeyHex === 'string' ? stored : null
-    } catch {
-      return null
-    }
-  }
-
-  /** The persisted request, back in memory after an engine restart. */
-  function rehydrate(): void {
+  /** The active request; after an engine restart, the persisted one back in memory. */
+  function current(): Request | null {
+    if (active) return active
     const stored = readStored()
-    if (!stored || requests.has(stored.requestId)) return
+    if (!stored) return null
     if (stored.expiresAt <= now()) {
       storage.removeItem(PENDING_REQUEST_KEY)
-      return
+      return null
     }
     const ephemeralKey = hexToBytes(stored.ephemeralKeyHex)
-    requests.set(stored.requestId, {
+    active = {
       requestId: stored.requestId,
       uri: stored.uri,
       expiresAt: stored.expiresAt,
       ephemeralKey,
       pubKeyHash: hash160(getYapprPublicKey(ephemeralKey)),
-    })
+    }
+    return active
   }
 
   function live(requestId: string, expiredCode: 'KEY_EXCHANGE_TIMEOUT' | 'KEY_REGISTRATION_TIMEOUT'): Request {
-    rehydrate()
-    const request = requests.get(requestId)
-    if (!request) throw new RpcError('This sign-in request is no longer available. Start a new one.', expiredCode)
+    const request = current()
+    if (request?.requestId !== requestId) throw new RpcError('This sign-in request is no longer available. Start a new one.', expiredCode)
     if (request.expiresAt <= now()) {
       wipe(request)
       throw new RpcError('This sign-in request expired. Start a new one.', expiredCode)
@@ -177,9 +184,7 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
     return poll.signal
   }
 
-  async function finish(request: Request): Promise<KeyExchangeStep<S>> {
-    const approval = request.approval
-    if (!approval) throw new RpcError('The wallet has not answered this request yet', 'BAD_REQUEST')
+  async function finish(request: Request, approval: Approval): Promise<KeyExchangeStep<S>> {
     const session = await options.complete(approval.identityId, approval.loginKey, approval.keyIndex)
     wipe(request)
     return { status: 'signed-in', session }
@@ -203,13 +208,7 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
         ],
       }
     }
-    return {
-      status: 'needs-registration',
-      requestId: request.requestId,
-      uri: approval.registration.uri,
-      expiresAt: new Date(request.expiresAt),
-      keys: approval.registration.keys,
-    }
+    return { status: 'needs-registration', ...toRequestDTO(request), uri: approval.registration.uri, keys: approval.registration.keys }
   }
 
   function keysRegistered(approval: Approval): Promise<boolean> {
@@ -220,45 +219,39 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
     )
   }
 
-  function cancelled(error: unknown): boolean {
-    return error instanceof Error && error.message === 'Cancelled'
-  }
-
   return {
     /** A new `dash-key:` request. Any earlier request is abandoned (one sign-in at a time). */
     start(): KeyExchangeRequestDTO {
-      rehydrate()
-      for (const request of [...requests.values()]) wipe(request)
+      const previous = current()
+      if (previous) wipe(previous)
       const config = controller.getYapprKeyExchangeConfig()
       const ephemeral = generateYapprEphemeralKeyPair()
-      const uri = buildYapprKeyExchangeUri({
-        appEphemeralPubKey: ephemeral.publicKey,
-        contractId: decodeYapprContractId(config.appContractId),
-        label: config.label,
-      }, config.network)
       const request: Request = {
         requestId: newId(),
-        uri,
+        uri: buildYapprKeyExchangeUri({
+          appEphemeralPubKey: ephemeral.publicKey,
+          contractId: decodeYapprContractId(config.appContractId),
+          label: config.label,
+        }, config.network),
         expiresAt: now() + REQUEST_LIFETIME_MS,
         ephemeralKey: ephemeral.privateKey,
         pubKeyHash: hash160(ephemeral.publicKey),
       }
-      requests.set(request.requestId, request)
+      active = request
       const stored: StoredRequest = {
         requestId: request.requestId,
-        uri,
+        uri: request.uri,
         expiresAt: request.expiresAt,
         ephemeralKeyHex: bytesToHex(ephemeral.privateKey),
       }
       storage.setItem(PENDING_REQUEST_KEY, JSON.stringify(stored))
-      return { requestId: request.requestId, uri, expiresAt: new Date(request.expiresAt) }
+      return toRequestDTO(request)
     },
 
     /** The request still waiting for its wallet, if any (after an app restart: resume it). */
     pending(): KeyExchangeRequestDTO | null {
-      rehydrate()
-      const request = [...requests.values()].find(r => !r.approval && r.expiresAt > now())
-      return request ? { requestId: request.requestId, uri: request.uri, expiresAt: new Date(request.expiresAt) } : null
+      const request = current()
+      return request && !request.approval && request.expiresAt > now() ? toRequestDTO(request) : null
     },
 
     /**
@@ -271,26 +264,24 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
       const request = live(requestId, 'KEY_EXCHANGE_TIMEOUT')
       if (!request.approval) {
         const signal = beginPoll(request)
-        const wait = clampWait(waitMs)
+        // A short wait still polls once, and never sleeps past its deadline.
+        const budget = Math.max(clampWait(waitMs), 1)
         let decrypted
         try {
           decrypted = await controller.pollYapprKeyExchangeResponse(
             request.pubKeyHash,
             request.ephemeralKey,
-            // A short wait still polls once, and never sleeps past its deadline.
-            { timeoutMs: Math.max(wait, 1), pollIntervalMs: Math.min(DEFAULT_YAPPR_KEY_EXCHANGE_CONFIG.pollIntervalMs, Math.max(wait, 1)) },
+            { timeoutMs: budget, pollIntervalMs: Math.min(DEFAULT_YAPPR_KEY_EXCHANGE_CONFIG.pollIntervalMs, budget) },
             { signal },
           )
         } catch (error) {
-          if (cancelled(error)) throw new RpcError('Sign-in was cancelled', 'KEY_EXCHANGE_CANCELLED')
-          if (error instanceof Error && error.message.startsWith('Timeout')) {
-            return { status: 'pending', requestId, expiresAt: new Date(request.expiresAt) }
-          }
+          if (isCancellation(error)) throw cancelledError()
+          if (error instanceof Error && error.message.startsWith('Timeout')) return pendingStep(request)
           throw error
         }
-        if (!requests.has(requestId)) {
+        if (active !== request) {
           clearSensitiveBytes(decrypted.loginKey)
-          throw new RpcError('Sign-in was cancelled', 'KEY_EXCHANGE_CANCELLED')
+          throw cancelledError()
         }
         const identityIdBytes = decodeYapprIdentityId(decrypted.identityId)
         request.approval = {
@@ -307,7 +298,7 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
         request.expiresAt = now() + REQUEST_LIFETIME_MS
       }
       const approval = request.approval
-      return (await keysRegistered(approval)) ? finish(request) : registration(request, approval)
+      return (await keysRegistered(approval)) ? finish(request, approval) : registration(request, approval)
     },
 
     /**
@@ -327,26 +318,21 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
         } catch {
           // Transient read failures keep polling, as the web hook does.
         }
-        if (now() + REGISTRATION_POLL_MS > deadline) {
-          return { status: 'pending', requestId, expiresAt: new Date(request.expiresAt) }
-        }
+        if (now() + REGISTRATION_POLL_MS > deadline) return pendingStep(request)
         try {
-          await sleep(REGISTRATION_POLL_MS, signal)
+          await abortableSleep(REGISTRATION_POLL_MS, signal)
         } catch {
-          throw new RpcError('Sign-in was cancelled', 'KEY_EXCHANGE_CANCELLED')
+          throw cancelledError()
         }
       }
-      if (signal.aborted || !requests.has(requestId)) throw new RpcError('Sign-in was cancelled', 'KEY_EXCHANGE_CANCELLED')
-      return finish(request)
+      if (signal.aborted || active !== request) throw cancelledError()
+      return finish(request, approval)
     },
 
     /** Abandon a request: stop its poll and zero its keys. */
     cancel(requestId: string): void {
-      rehydrate()
-      const request = requests.get(requestId)
-      if (request) wipe(request)
+      const request = current()
+      if (request?.requestId === requestId) wipe(request)
     },
   }
 }
-
-export type KeyExchange<S> = ReturnType<typeof createKeyExchange<S>>

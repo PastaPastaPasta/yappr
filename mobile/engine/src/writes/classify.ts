@@ -50,47 +50,59 @@ export const NOT_DISTINCT_MESSAGE = 'The network doesn\'t allow this combination
 export const TOO_YOUNG_MESSAGE = 'What this depends on was only just published. Wait a minute and try again.'
 export const BUILD_DEFECT_MESSAGE = 'Something went wrong building this action, so the network refused it. Nothing was charged. Please report this.'
 
-type Rule = readonly [EngineErrorCode, retryable: boolean, matches: (error: unknown, userMessage: string) => boolean]
+type Outcome = EngineErrorData['outcome']
 
-/** Stage 1: `categorizeError`'s chain, in its order (lib/error-utils.ts). Every code here is a consensus refusal. */
-const CATEGORIZED: readonly Rule[] = [
-  ['MODERATION_BARRED', false, isModerationBarredError],
-  ['MODERATION_NOT_SEATED', false, isModerationNotYetSeatedError],
-  ['TOO_LONG', false, isPropertyMaxBytesError],
-  ['RULE_VIOLATION', false, (error, message) => message === NOT_DISTINCT_MESSAGE || isDocumentPropertyRuleError(error)],
-  ['ALREADY_CLAIMED', false, isOncePerIdentityAlreadyClaimedError],
-  ['PARENT_TOO_YOUNG', true, (_error, message) => message === TOO_YOUNG_MESSAGE],
-  ['FEE_UNPAYABLE', false, error => isGasSponsorShortError(error) || isGasPayerError(error)],
-  ['FEE_SHARE_MISMATCH', true, isModeratorsShareMismatchError],
-  ['EXPIRED', false, isDocumentExpiredError],
-  ['CONTEST', false, error => isContestFullError(error) || isContestFundError(error) || isContestedDocumentsNotYetAllowedError(error)],
-  ['FEE_CHANGED', true, isFeeMultiplierNotToleratedError],
-  ['NONCE_CONFLICT', true, isIdentityNonceConflictError],
-]
+/** `matches(error, message, userMessage)`: `message` is the error's own text, `userMessage` categorizeError's. */
+type Rule = readonly [EngineErrorCode, Outcome, retryable: boolean, matches: (error: unknown, message: string, userMessage: string) => boolean]
 
-/** Stage 1, after lib's three exact-message errors (handled in `classify`). */
-const CATEGORIZED_TAIL: readonly Rule[] = [
-  ['APP_OUTDATED', false, isActionFeeAgreementError],
-  ['BUILD_DEFECT', false, (error, message) =>
+const exactly = (text: string) => (_error: unknown, message: string) => message === text
+
+/**
+ * In order; the first match wins. Stage 1 is `categorizeError`'s chain, in its
+ * order (lib/error-utils.ts), so a code and its user message always come from
+ * the same branch; all but lib's three exact-message errors are consensus
+ * refusals. Stage 2 splits the cases `categorizeError` leaves generic.
+ */
+const RULES: readonly Rule[] = [
+  // Stage 1
+  ['MODERATION_BARRED', 'refused', false, isModerationBarredError],
+  ['MODERATION_NOT_SEATED', 'refused', false, isModerationNotYetSeatedError],
+  ['TOO_LONG', 'refused', false, isPropertyMaxBytesError],
+  ['RULE_VIOLATION', 'refused', false, (error, _message, userMessage) => userMessage === NOT_DISTINCT_MESSAGE || isDocumentPropertyRuleError(error)],
+  ['ALREADY_CLAIMED', 'refused', false, isOncePerIdentityAlreadyClaimedError],
+  ['PARENT_TOO_YOUNG', 'refused', true, (_error, _message, userMessage) => userMessage === TOO_YOUNG_MESSAGE],
+  ['FEE_UNPAYABLE', 'refused', false, error => isGasSponsorShortError(error) || isGasPayerError(error)],
+  ['FEE_SHARE_MISMATCH', 'refused', true, isModeratorsShareMismatchError],
+  ['EXPIRED', 'refused', false, isDocumentExpiredError],
+  ['CONTEST', 'refused', false, error => isContestFullError(error) || isContestFundError(error) || isContestedDocumentsNotYetAllowedError(error)],
+  ['FEE_CHANGED', 'refused', true, isFeeMultiplierNotToleratedError],
+  ['NONCE_CONFLICT', 'refused', true, isIdentityNonceConflictError],
+  ['NOT_RECORDED', 'not-recorded', true, exactly(CREATE_NOT_RECORDED_ERROR)],
+  ['PENDING_WRITE', 'not-sent', true, exactly(PENDING_WRITE_ERROR)],
+  ['STORAGE', 'not-sent', true, exactly(NONCE_STORE_ERROR)],
+  ['APP_OUTDATED', 'refused', false, isActionFeeAgreementError],
+  ['BUILD_DEFECT', 'refused', false, (error, _message, userMessage) =>
     isInvalidDocumentIdError(error) ||
     isTrailingBytesError(error) ||
     isReferencedTypeNotDeletableError(error) ||
     isReferenceRequirementError(error) ||
-    message === BUILD_DEFECT_MESSAGE],
-  ['IMMUTABLE', false, isImmutablePropertyChangedError],
-  ['TARGET_GONE', false, isReferenceNotFoundError],
-  ['NOT_OWNER', false, isWriteGateError],
-  ['STALE', false, isPropertyAgreementError],
-  ['FROZEN', false, isFrozenBalanceError],
-  ['INSUFFICIENT_YAPP', false, isInsufficientTokenError],
+    userMessage === BUILD_DEFECT_MESSAGE],
+  ['IMMUTABLE', 'refused', false, isImmutablePropertyChangedError],
+  ['TARGET_GONE', 'refused', false, isReferenceNotFoundError],
+  ['NOT_OWNER', 'refused', false, isWriteGateError],
+  ['STALE', 'refused', false, isPropertyAgreementError],
+  ['FROZEN', 'refused', false, isFrozenBalanceError],
+  ['INSUFFICIENT_YAPP', 'refused', false, isInsufficientTokenError],
+  // Stage 2: their userMessage stays categorizeError's generic text, for parity with web.
+  ['DUPLICATE', 'refused', false, isDuplicateUniqueIndexError],
+  ['DUPLICATE', 'unknown', false, isAlreadyExistsError],
+  ['RATE_LIMITED', 'not-sent', true, isRateLimitedError],
+  ['TIMEOUT', 'unknown', false, isTimeoutError],
+  ['NETWORK', 'not-sent', true, (error, message) =>
+    evoSdkService.isConnectionError(error) ||
+    ['no available addresses', 'Missing response message', 'Network', 'connection'].some(marker => message.includes(marker))],
+  ['NO_KEY', 'not-sent', true, (_error, message) => message.includes('Private key not found') || message.includes('Not logged in')],
 ]
-
-/** lib's write errors whose message is the whole signal (error-utils.ts CREATE_NOT_RECORDED_ERROR and siblings). */
-const EXACT: Readonly<Record<string, readonly [EngineErrorCode, EngineErrorData['outcome']]>> = {
-  [CREATE_NOT_RECORDED_ERROR]: ['NOT_RECORDED', 'not-recorded'],
-  [PENDING_WRITE_ERROR]: ['PENDING_WRITE', 'not-sent'],
-  [NONCE_STORE_ERROR]: ['STORAGE', 'not-sent'],
-}
 
 /**
  * Codes the engine raises itself (as `RpcError`) before or instead of lib:
@@ -101,51 +113,22 @@ const ENGINE_CODES: ReadonlySet<string> = new Set<EngineErrorCode>([
   'PARENT_UNCONFIRMED', 'QUOTE_HAS_TEXT', 'PRIVATE_FEED_SYNC_REQUIRED',
 ])
 
-function isConnectionFailure(message: string, error: unknown): boolean {
-  return (
-    evoSdkService.isConnectionError(error) ||
-    message.includes('no available addresses') ||
-    message.includes('Missing response message') ||
-    message.includes('Network') ||
-    message.includes('connection')
-  )
+function isEngineCode(code: unknown): code is EngineErrorCode {
+  return typeof code === 'string' && ENGINE_CODES.has(code)
 }
 
-/**
- * Map any write error to an engine code (ENGINE.md §7.3). Stage 1 walks
- * `categorizeError`'s predicates in its order, so a code and its user message
- * always come from the same branch. Stage 2 splits the cases
- * `categorizeError` leaves generic (duplicate, already exists, rate limit,
- * timeout, network, missing key); their `userMessage` stays web's text.
- */
+/** Map any write error to an engine code (ENGINE.md §7.3), walking `RULES` in order. */
 export function classify(error: unknown): EngineErrorData {
-  const code = readCode(error)
-  if (typeof code === 'string' && ENGINE_CODES.has(code)) {
-    return { code: code as EngineErrorCode, consensusCode: null, outcome: 'local', retryable: false, userMessage: extractErrorMessage(error) }
-  }
-
   const message = extractErrorMessage(error)
-  const consensusCode = consensusCodeOf(error)
+  const code = readCode(error)
+  if (isEngineCode(code)) return { code, consensusCode: null, outcome: 'local', retryable: false, userMessage: message }
+
   const userMessage = categorizeError(error)
-  const result = (code: EngineErrorCode, outcome: EngineErrorData['outcome'], retryable: boolean): EngineErrorData =>
-    ({ code, consensusCode, outcome, retryable, userMessage })
-
-  for (const [code, retryable, matches] of CATEGORIZED) {
-    if (matches(error, userMessage)) return result(code, 'refused', retryable)
-  }
-  const exact = EXACT[message]
-  if (exact) return result(exact[0], exact[1], true)
-  for (const [code, retryable, matches] of CATEGORIZED_TAIL) {
-    if (matches(error, userMessage)) return result(code, 'refused', retryable)
-  }
-
-  if (isDuplicateUniqueIndexError(error)) return result('DUPLICATE', 'refused', false)
-  if (isAlreadyExistsError(error)) return result('DUPLICATE', 'unknown', false)
-  if (isRateLimitedError(error)) return result('RATE_LIMITED', 'not-sent', true)
-  if (isTimeoutError(error)) return result('TIMEOUT', 'unknown', false)
-  if (isConnectionFailure(message, error)) return result('NETWORK', 'not-sent', true)
-  if (message.includes('Private key not found') || message.includes('Not logged in')) return result('NO_KEY', 'not-sent', true)
-  return result('UNKNOWN', isConsensusRefusal(error) ? 'refused' : 'unknown', false)
+  const rule = RULES.find(([, , , matches]) => matches(error, message, userMessage))
+  const consensusCode = consensusCodeOf(error)
+  if (!rule) return { code: 'UNKNOWN', consensusCode, outcome: isConsensusRefusal(error) ? 'refused' : 'unknown', retryable: false, userMessage }
+  const [matched, outcome, retryable] = rule
+  return { code: matched, consensusCode, outcome, retryable, userMessage }
 }
 
 /**

@@ -24,11 +24,19 @@ function notify(level: EngineNotice['level'], message: unknown): string {
   return `engine-notice-${counter}`
 }
 
-const toast = Object.assign((message: unknown) => notify('info', message), {
-  success: (message: unknown) => notify('info', message),
+const info = (message: unknown) => notify('info', message)
+
+/**
+ * lib calls only `toast()`, `.success` and `.error` today. The rest of
+ * react-hot-toast's surface is kept so a future lib call (`toast.loading`,
+ * `toast.dismiss`, ...) degrades to a notice or a no-op instead of throwing
+ * inside a write.
+ */
+const toast = Object.assign(info, {
+  success: info,
   error: (message: unknown) => notify('error', message),
-  loading: (message: unknown) => notify('info', message),
-  custom: (message: unknown) => notify('info', message),
+  loading: info,
+  custom: info,
   dismiss: (): void => undefined,
   remove: (): void => undefined,
 })

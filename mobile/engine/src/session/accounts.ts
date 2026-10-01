@@ -1,4 +1,5 @@
 import { SESSION_STORAGE_KEY, scopedKey } from '@/lib/storage-scope'
+import { readJson } from '../read-json'
 
 /**
  * The engine's account registry (ENGINE.md §6.3 `session.accounts`). lib has
@@ -8,9 +9,9 @@ import { SESSION_STORAGE_KEY, scopedKey } from '@/lib/storage-scope'
  * account's are hydrated into the engine.
  */
 
-export const ACCOUNTS_STORAGE_KEY = 'yappr_engine_accounts'
+const ACCOUNTS_STORAGE_KEY = 'yappr_engine_accounts'
 /** Set by a switch, read once by the next boot's restore so it reports `switched`. */
-export const SWITCH_MARKER_KEY = 'yappr_engine_switch_pending'
+const SWITCH_MARKER_KEY = 'yappr_engine_switch_pending'
 
 export type SignInMethod = 'key' | 'key-exchange' | 'app-connect'
 
@@ -33,12 +34,8 @@ const stashKey = (identityId: string, name: string) => `yappr_engine_stash:${ide
 
 export function createAccountRegistry(storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>, now: () => number = Date.now) {
   function read(): AccountRecord[] {
-    try {
-      const parsed = JSON.parse(storage.getItem(ACCOUNTS_STORAGE_KEY) ?? '[]') as unknown
-      return Array.isArray(parsed) ? parsed as AccountRecord[] : []
-    } catch {
-      return []
-    }
+    const accounts = readJson<unknown>(storage, ACCOUNTS_STORAGE_KEY, [])
+    return Array.isArray(accounts) ? accounts as AccountRecord[] : []
   }
 
   function write(accounts: AccountRecord[]): void {
@@ -47,12 +44,14 @@ export function createAccountRegistry(storage: Pick<Storage, 'getItem' | 'setIte
 
   /** The identity of lib's session slot. */
   function activeIdentityId(): string | null {
-    try {
-      const session = JSON.parse(storage.getItem(SESSION_STORAGE_KEY) ?? 'null') as { user?: { identityId?: unknown } } | null
-      return typeof session?.user?.identityId === 'string' ? session.user.identityId : null
-    } catch {
-      return null
-    }
+    const session = readJson<{ user?: { identityId?: unknown } } | null>(storage, SESSION_STORAGE_KEY, null)
+    return typeof session?.user?.identityId === 'string' ? session.user.identityId : null
+  }
+
+  /** The account is in lib's slot now: it was just used, and has no parked session. */
+  function touch(entry: AccountRecord): void {
+    entry.lastUsedAt = now()
+    delete entry.savedSession
   }
 
   /** Move the active account out of lib's slot: save its session and stash its per-identity stores. */
@@ -74,9 +73,7 @@ export function createAccountRegistry(storage: Pick<Storage, 'getItem' | 'setIte
   }
 
   return {
-    list(): AccountRecord[] {
-      return read()
-    },
+    list: read,
 
     get(identityId: string): AccountRecord | undefined {
       return read().find(account => account.identityId === identityId)
@@ -91,8 +88,7 @@ export function createAccountRegistry(storage: Pick<Storage, 'getItem' | 'setIte
       if (entry) {
         entry.username = patch.username
         if (patch.method) entry.method = patch.method
-        entry.lastUsedAt = now()
-        delete entry.savedSession
+        touch(entry)
       } else {
         accounts.push({ identityId, username: patch.username, method: patch.method ?? 'key', lastUsedAt: now() })
       }
@@ -110,10 +106,9 @@ export function createAccountRegistry(storage: Pick<Storage, 'getItem' | 'setIte
       if (target) {
         const accounts = read()
         const entry = accounts.find(account => account.identityId === target)
-        if (entry?.savedSession) storage.setItem(SESSION_STORAGE_KEY, entry.savedSession)
         if (entry) {
-          entry.lastUsedAt = now()
-          delete entry.savedSession
+          if (entry.savedSession) storage.setItem(SESSION_STORAGE_KEY, entry.savedSession)
+          touch(entry)
           write(accounts)
         }
         for (const [name, key] of Object.entries(STASHED_KEYS)) {
@@ -145,5 +140,3 @@ export function createAccountRegistry(storage: Pick<Storage, 'getItem' | 'setIte
     },
   }
 }
-
-export type AccountRegistry = ReturnType<typeof createAccountRegistry>

@@ -1,4 +1,5 @@
 import { RpcError } from '../protocol/envelope'
+import { readJson } from '../read-json'
 import { classify, ticketStateFor } from './classify'
 import type {
   EngineErrorData,
@@ -100,7 +101,7 @@ export const RESTARTED_ERROR: EngineErrorData = {
   userMessage: 'The app closed before this was confirmed. Check again to see whether it went through.',
 }
 
-export const NOT_FOUND_ERROR: EngineErrorData = {
+const NOT_FOUND_ERROR: EngineErrorData = {
   code: 'NOT_RECORDED',
   consensusCode: null,
   outcome: 'not-recorded',
@@ -113,10 +114,11 @@ export type TicketStore = ReturnType<typeof createTicketStore>
 export function createTicketStore(options: TicketStoreOptions) {
   const now = options.now ?? Date.now
   const newId = options.newId ?? (() => crypto.randomUUID())
-  const handlers = new Map<WriteOp, WriteHandler<never>>()
+  const handlers = new Map<WriteOp, WriteHandler>()
   const records = new Map<string, TicketRecord>()
 
   const clone = (ticket: WriteTicket): WriteTicket => structuredClone(ticket)
+  const allConfirmed = (documents: TicketDocument[]) => documents.map(doc => ({ ...doc, confirmed: true }))
 
   function persist() {
     const cutoff = now() - CONFIRMED_TTL_MS
@@ -126,9 +128,9 @@ export function createTicketStore(options: TicketStoreOptions) {
     // Over the cap, drop the oldest settled tickets; a pending one is never dropped.
     const settled = [...records.values()].filter(r => r.ticket.state !== 'pending')
       .sort((a, b) => a.ticket.updatedAt.getTime() - b.ticket.updatedAt.getTime())
-    while (records.size > MAX_TICKETS && settled.length > 0) {
-      const oldest = settled.shift()
-      if (oldest) records.delete(oldest.ticket.id)
+    for (const { ticket } of settled) {
+      if (records.size <= MAX_TICKETS) break
+      records.delete(ticket.id)
     }
     const stored: StoredRecord[] = [...records.values()].map(({ ticket, args }) => ({
       ticket: {
@@ -143,13 +145,7 @@ export function createTicketStore(options: TicketStoreOptions) {
   }
 
   function load() {
-    let stored: StoredRecord[] = []
-    try {
-      const raw = options.storage.getItem(WRITES_STORAGE_KEY)
-      if (raw) stored = JSON.parse(raw) as StoredRecord[]
-    } catch {
-      // A corrupt store loses its tickets, never the engine.
-    }
+    const stored = readJson<StoredRecord[]>(options.storage, WRITES_STORAGE_KEY, [])
     for (const { ticket, args } of Array.isArray(stored) ? stored : []) {
       const restored: WriteTicket = {
         ...ticket,
@@ -158,20 +154,25 @@ export function createTicketStore(options: TicketStoreOptions) {
         lastCheckedAt: ticket.lastCheckedAt === null ? null : new Date(ticket.lastCheckedAt),
       }
       // Interrupted by a crash or restart: whether it went out is unknown, and it is never re-sent.
-      if (restored.state === 'pending') {
-        Object.assign(restored, { state: 'unconfirmed', stage: null, error: RESTARTED_ERROR, retryable: false, updatedAt: new Date(now()) })
-      }
-      records.set(restored.id, { ticket: restored, args })
+      const reconciled: WriteTicket = restored.state === 'pending'
+        ? { ...restored, state: 'unconfirmed', stage: null, error: RESTARTED_ERROR, retryable: false, updatedAt: new Date(now()) }
+        : restored
+      records.set(reconciled.id, { ticket: reconciled, args })
     }
+  }
+
+  /** Persist the record's ticket and report it. */
+  function commit(record: TicketRecord): WriteTicket {
+    persist()
+    const ticket = clone(record.ticket)
+    options.emit('write.status', ticket)
+    return ticket
   }
 
   function update(id: string, patch: Partial<WriteTicket>): WriteTicket {
     const record = recordOf(id)
     record.ticket = { ...record.ticket, ...patch, updatedAt: new Date(now()) }
-    persist()
-    const ticket = clone(record.ticket)
-    options.emit('write.status', ticket)
-    return ticket
+    return commit(record)
   }
 
   function recordOf(id: string): TicketRecord {
@@ -180,7 +181,9 @@ export function createTicketStore(options: TicketStoreOptions) {
     return record
   }
 
-  function mergeDocuments(current: TicketDocument[], next: TicketDocument[] | undefined): TicketDocument[] {
+  /** The ticket's documents with `next` merged in (by action and id). */
+  function withDocuments(id: string, next: TicketDocument[] | undefined): TicketDocument[] {
+    const current = recordOf(id).ticket.documents
     if (!next) return current
     const merged = new Map(current.map(doc => [`${doc.action}:${doc.id}`, doc]))
     for (const doc of next) merged.set(`${doc.action}:${doc.id}`, doc)
@@ -190,39 +193,38 @@ export function createTicketStore(options: TicketStoreOptions) {
   function fail(id: string, error: unknown, documents?: TicketDocument[]): void {
     const data = classify(error)
     const state = ticketStateFor(data)
-    const ticket = recordOf(id).ticket
-    update(id, {
+    const ticket = update(id, {
       state,
       stage: null,
       error: data,
       retryable: state === 'failed' && data.retryable,
-      documents: mergeDocuments(ticket.documents, documents),
+      documents: withDocuments(id, documents),
     })
     if (data.code === 'NO_KEY') options.onKeyRequired?.(ticket.identityId)
   }
 
   /** Run (or re-run) a ticket's write in the background. Never throws. */
-  function start(id: string, handler: WriteHandler<never>, args: unknown): void {
+  function start(id: string, handler: WriteHandler, args: unknown): void {
     const ctx: WriteRunContext = {
       get ticket() { return clone(recordOf(id).ticket) },
       stage: stage => { update(id, { stage }) },
       progress: (done, total) => { update(id, { progress: { done, total } }) },
-      documents: documents => { update(id, { documents: mergeDocuments(recordOf(id).ticket.documents, documents) }) },
+      documents: documents => { update(id, { documents: withDocuments(id, documents) }) },
     }
     Promise.resolve()
-      .then(() => (handler as WriteHandler<unknown>).run(args, ctx))
+      .then(() => handler.run(args, ctx))
       .then(result => {
         if (result.state === 'failed') {
           fail(id, result.error, result.documents)
           return
         }
-        const documents = mergeDocuments(recordOf(id).ticket.documents, result.documents)
+        const documents = withDocuments(id, result.documents)
         update(id, {
           state: result.state,
           stage: null,
           error: null,
           retryable: false,
-          documents: result.state === 'confirmed' ? documents.map(doc => ({ ...doc, confirmed: true })) : documents,
+          documents: result.state === 'confirmed' ? allConfirmed(documents) : documents,
         })
       })
       .catch(error => fail(id, error))
@@ -231,13 +233,14 @@ export function createTicketStore(options: TicketStoreOptions) {
       })
   }
 
-  async function probeDocuments(ticket: WriteTicket): Promise<ProbeResult> {
-    const open = ticket.documents.filter(doc => !doc.confirmed)
-    if (ticket.documents.length === 0) {
-      return { state: 'unknown', error: new Error('Nothing to check: this write named no documents') }
-    }
+  async function probe(ticket: WriteTicket, args: unknown): Promise<ProbeResult> {
+    const handler = handlers.get(ticket.op)
     try {
-      for (const doc of open) {
+      if (handler?.probe) return await handler.probe(clone(ticket), args)
+      if (ticket.documents.length === 0) {
+        return { state: 'unknown', error: new Error('Nothing to check: this write named no documents') }
+      }
+      for (const doc of ticket.documents.filter(doc => !doc.confirmed)) {
         const exists = await options.documentExists(doc)
         if (exists !== (doc.action === 'create')) return { state: 'not-applied' }
       }
@@ -253,7 +256,7 @@ export function createTicketStore(options: TicketStoreOptions) {
   return {
     /** Register how `op` runs; M7b's write methods each register one. */
     register<A>(op: WriteOp, handler: WriteHandler<A>): void {
-      handlers.set(op, handler as WriteHandler<never>)
+      handlers.set(op, handler)
     },
 
     /**
@@ -264,26 +267,27 @@ export function createTicketStore(options: TicketStoreOptions) {
       const handler = handlers.get(request.op)
       if (!handler) throw new RpcError(`No write handler for ${request.op}`, 'NOT_SUPPORTED')
       const at = new Date(now())
-      const ticket: WriteTicket = {
-        id: newId(),
-        op: request.op,
-        identityId: options.currentIdentity(),
-        state: 'pending',
-        stage: 'queued',
-        target: request.target ?? null,
-        documents: request.documents ?? [],
-        progress: null,
-        error: null,
-        retryable: false,
-        createdAt: at,
-        updatedAt: at,
-        lastCheckedAt: null,
+      const record: TicketRecord = {
+        ticket: {
+          id: newId(),
+          op: request.op,
+          identityId: options.currentIdentity(),
+          state: 'pending',
+          stage: 'queued',
+          target: request.target ?? null,
+          documents: request.documents ?? [],
+          progress: null,
+          error: null,
+          retryable: false,
+          createdAt: at,
+          updatedAt: at,
+          lastCheckedAt: null,
+        },
+        args: request.args,
       }
-      records.set(ticket.id, { ticket, args: request.args })
-      persist()
-      const issued = clone(ticket)
-      options.emit('write.status', issued)
-      start(ticket.id, handler, request.args)
+      records.set(record.ticket.id, record)
+      const issued = commit(record)
+      start(issued.id, handler, request.args)
       return issued
     },
 
@@ -313,20 +317,15 @@ export function createTicketStore(options: TicketStoreOptions) {
     async check(id: string): Promise<WriteTicket> {
       const { ticket, args } = recordOf(id)
       if (ticket.state !== 'unconfirmed') return clone(ticket)
-      const handler = handlers.get(ticket.op) as WriteHandler<unknown> | undefined
-      const result = handler?.probe ? await handler.probe(clone(ticket), args) : await probeDocuments(ticket)
+      const result = await probe(ticket, args)
       const lastCheckedAt = new Date(now())
-      // The ticket may have been dismissed while the probe ran.
-      if (!records.has(id)) return { ...clone(ticket), lastCheckedAt }
+      // Dismissed, retried or checked again while the probe ran: its answer is stale.
+      // (Every update replaces the ticket object, so identity tells whether it changed.)
+      const current = records.get(id)?.ticket
+      if (current !== ticket) return current ? clone(current) : { ...clone(ticket), lastCheckedAt }
       switch (result.state) {
         case 'applied':
-          return update(id, {
-            state: 'confirmed',
-            error: null,
-            retryable: false,
-            lastCheckedAt,
-            documents: recordOf(id).ticket.documents.map(doc => ({ ...doc, confirmed: true })),
-          })
+          return update(id, { state: 'confirmed', error: null, retryable: false, lastCheckedAt, documents: allConfirmed(ticket.documents) })
         case 'not-applied':
           return update(id, { error: NOT_FOUND_ERROR, retryable: true, lastCheckedAt })
         case 'unknown':

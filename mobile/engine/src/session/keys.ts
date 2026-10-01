@@ -1,6 +1,6 @@
 import { keyNetwork } from '@/lib/constants'
 import { publicKeyHashFromWif } from '@/lib/crypto/keys'
-import { parsePrivateKey, privateKeyToWif, validateWifNetwork, wifToPrivateKey } from '@/lib/crypto/wif'
+import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { identityService } from '@/lib/services/identity-service'
 import { keyValidationService } from '@/lib/services/key-validation-service'
 import { RpcError } from '../protocol/envelope'
@@ -25,18 +25,11 @@ export function toNetworkWif(input: string): string {
   } catch {
     throw new RpcError('Invalid private key', 'KEY_INVALID')
   }
-  if (parsed.format === 'hex') return privateKeyToWif(parsed.privateKey, network)
-  const wif = input.trim()
-  if (!validateWifNetwork(wifToPrivateKey(wif).prefix, network)) {
+  if (parsed.format === 'wif' && parsed.network !== network) {
     throw new RpcError('This key is for a different network', 'KEY_WRONG_NETWORK')
   }
-  // Re-encoded compressed: Platform keys are compressed points, and so is what lib derives from a WIF.
+  // Re-encoded compressed for this network: Platform keys are compressed points.
   return privateKeyToWif(parsed.privateKey, network)
-}
-
-/** The identity whose key hashes to `publicKeyHash`, or null (`identities.byPublicKeyHash`, then the non-unique index). */
-export function identityForPublicKeyHash(publicKeyHash: Uint8Array): Promise<string | null> {
-  return identityService.getIdentityIdByPublicKeyHash(publicKeyHash)
 }
 
 export interface VerifiedKey {
@@ -54,7 +47,7 @@ export interface VerifiedKey {
  */
 export async function verifySignInKey(input: string): Promise<VerifiedKey> {
   const wif = toNetworkWif(input)
-  const identityId = await identityForPublicKeyHash(publicKeyHashFromWif(wif))
+  const identityId = await identityService.getIdentityIdByPublicKeyHash(publicKeyHashFromWif(wif))
   if (!identityId) throw new RpcError('No identity uses this key', 'IDENTITY_NOT_FOUND')
   const result = await keyValidationService.validatePrivateKey(wif, identityId, keyNetwork())
   if (!result.isValid || result.keyId === undefined || result.securityLevel === undefined) {

@@ -23,6 +23,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
+import { ENGINE_ALIASES } from './aliases.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(here, '../..')
@@ -127,12 +128,7 @@ async function main() {
     legalComments: 'none',
     metafile: true,
     define,
-    alias: {
-      // lib's toasts become engine.notice events.
-      'react-hot-toast': path.join(here, 'src/shims/toast.ts'),
-      // One WASM instance: the key-registration builder shares evo-sdk's.
-      '@dashevo/wasm-sdk/compressed': path.join(here, 'src/shims/wasm-sdk-compressed.ts'),
-    },
+    alias: ENGINE_ALIASES,
     plugins: [rootAliasPlugin],
   })
   const buildMs = Date.now() - started

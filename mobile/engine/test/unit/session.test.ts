@@ -115,9 +115,7 @@ describe('private keys', () => {
     const mainnet = privateKeyToWif(privateKey, 'mainnet')
     expect(() => toNetworkWif(mainnet)).toThrow(expect.objectContaining({ code: 'KEY_WRONG_NETWORK' }))
     for (const input of ['hunter2', bytesToHex(privateKey).slice(2), `${mainnet}x`]) {
-      let error: unknown
-      try { toNetworkWif(input) } catch (caught) { error = caught }
-      expect(error).toMatchObject({ code: 'KEY_INVALID', message: 'Invalid private key' })
+      expect(() => toNetworkWif(input)).toThrow(expect.objectContaining({ code: 'KEY_INVALID', message: 'Invalid private key' }))
     }
   })
 
@@ -263,8 +261,8 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
   /** An identity the wallet answers for, with Yappr's keys on chain or not. */
   function walletIdentity(loginKey: Uint8Array, registered: boolean): string {
     const id = randomId()
-    identities.set(id, { id, balance: 7, publicKeys: [] } as unknown as IdentityInfo)
     if (registered) registerKeys(id, loginKey)
+    else identities.set(id, { id, balance: 7, publicKeys: [] } as unknown as IdentityInfo)
     return id
   }
 

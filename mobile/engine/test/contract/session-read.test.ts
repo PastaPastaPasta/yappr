@@ -6,21 +6,13 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest'
 import * as secp256k1 from '@noble/secp256k1'
-import { createEngineApi, type EngineApi } from '../../src/api'
-import { createDispatcher } from '../../src/rpc/dispatcher'
-import { createEngineClient } from '../../src/rpc/client'
-import { createInProcessPair } from '../../src/rpc/transport'
-import { identityForPublicKeyHash } from '../../src/session/keys'
+import { connectEngine } from './engine'
 import { hash160 } from '@/lib/crypto/hash'
 import { privateKeyToWif } from '@/lib/crypto/wif'
 import { normalizeBytes, bytesToHex } from '@/lib/bytes'
 import { identityService } from '@/lib/services/identity-service'
 
-const [hostSide, engineSide] = createInProcessPair()
-const dispatcher = createDispatcher({ api: createEngineApi(), transport: engineSide })
-const client = createEngineClient<EngineApi>(hostSide, { timeoutMs: 120_000 })
-dispatcher.hello({ bundleHash: 'node' })
-const engine = client.api
+const engine = connectEngine().api
 
 const ECDSA_SECP256K1 = 0
 
@@ -48,7 +40,7 @@ describe('session reads on testnet', () => {
       .filter(key => key.type === ECDSA_SECP256K1 && key.data?.length === 33)
     expect(keys.length).toBeGreaterThan(0)
     for (const key of keys.slice(0, 2)) {
-      expect(await identityForPublicKeyHash(hash160(key.data as Uint8Array)), bytesToHex(hash160(key.data as Uint8Array))).toBe(knownIdentity)
+      expect(await identityService.getIdentityIdByPublicKeyHash(hash160(key.data as Uint8Array)), bytesToHex(hash160(key.data as Uint8Array))).toBe(knownIdentity)
     }
   })
 

@@ -5,7 +5,9 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { loadPoolPersonas, type PoolPersona } from '../../../harness/pool'
-import { connectEngine } from './engine'
+import type { createWritesModule } from '../../../src/api/writes'
+import type { TicketStore } from '../../../src/writes/tickets'
+import { connectEngine } from '../engine'
 import { writeSuiteSkipReason } from './env'
 
 const skipReason = writeSuiteSkipReason()
@@ -14,8 +16,8 @@ describe.skipIf(skipReason !== null)(`write tickets on sakura${skipReason ? ` (s
   let viewer: PoolPersona
   let target: PoolPersona
   let engine: ReturnType<typeof connectEngine>
-  let store: import('../../../src/writes/tickets').TicketStore
-  let writes: ReturnType<typeof import('../../../src/api/writes').createWritesModule>
+  let store: TicketStore
+  let writes: ReturnType<typeof createWritesModule>
 
   async function settled(ticketId: string) {
     for (let i = 0; i < 240; i++) {
@@ -30,7 +32,7 @@ describe.skipIf(skipReason !== null)(`write tickets on sakura${skipReason ? ` (s
     const personas = loadPoolPersonas()
     viewer = personas[2]
     target = personas[3]
-    engine = connectEngine()
+    engine = connectEngine({ timeoutMs: 300_000 })
     await engine.api.engine.boot()
     await engine.api.session.signOut()
     await engine.api.session.signInWithKey({ key: viewer.keyHex('high') })

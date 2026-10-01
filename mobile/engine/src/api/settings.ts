@@ -19,6 +19,9 @@ export interface SettingsDTO {
 
 export type SettingsPatch = Partial<Omit<SettingsDTO, 'notificationSettings'> & { notificationSettings: Partial<NotificationSettings> }>
 
+const FIELDS = [
+  'linkPreviewsEnabled', 'gateMediaFromNonFollowed', 'sendReadReceipts', 'sensitiveContentMode', 'notificationSettings', 'payWith', 'feedLanguage',
+] as const satisfies readonly (keyof SettingsDTO)[]
 const SENSITIVE_MODES: readonly SensitiveContentMode[] = ['blur', 'show', 'hide']
 const PAY_WITH: readonly PayWith[] = ['yapp', 'credits']
 const NOTIFICATION_KEYS: readonly (keyof NotificationSettings)[] = ['likes', 'reposts', 'replies', 'follows', 'mentions', 'messages', 'blogPosts']
@@ -42,17 +45,16 @@ function invalid(field: string): never {
   throw new RpcError(`Invalid setting: ${field}`, 'BAD_REQUEST')
 }
 
-function requireBoolean(field: string, value: unknown): boolean {
-  return typeof value === 'boolean' ? value : invalid(field)
+function assertBoolean(field: string, value: unknown): void {
+  if (typeof value !== 'boolean') invalid(field)
 }
 
 /** Validate the whole patch before applying any of it, so a bad field changes nothing. */
-function validate(patch: SettingsPatch): SettingsPatch {
+function validate(patch: SettingsPatch): void {
   if (typeof patch !== 'object' || patch === null) invalid('patch')
-  const known = new Set(['linkPreviewsEnabled', 'gateMediaFromNonFollowed', 'sendReadReceipts', 'sensitiveContentMode', 'notificationSettings', 'payWith', 'feedLanguage'])
-  for (const key of Object.keys(patch)) if (!known.has(key)) invalid(key)
+  for (const key of Object.keys(patch)) if (!(FIELDS as readonly string[]).includes(key)) invalid(key)
   for (const key of ['linkPreviewsEnabled', 'gateMediaFromNonFollowed', 'sendReadReceipts'] as const) {
-    if (patch[key] !== undefined) requireBoolean(key, patch[key])
+    if (patch[key] !== undefined) assertBoolean(key, patch[key])
   }
   if (patch.sensitiveContentMode !== undefined && !SENSITIVE_MODES.includes(patch.sensitiveContentMode)) invalid('sensitiveContentMode')
   if (patch.payWith !== undefined && !PAY_WITH.includes(patch.payWith)) invalid('payWith')
@@ -62,10 +64,9 @@ function validate(patch: SettingsPatch): SettingsPatch {
     if (typeof notifications !== 'object' || notifications === null) invalid('notificationSettings')
     for (const [key, value] of Object.entries(notifications)) {
       if (!NOTIFICATION_KEYS.includes(key as keyof NotificationSettings)) invalid(`notificationSettings.${key}`)
-      requireBoolean(`notificationSettings.${key}`, value)
+      assertBoolean(`notificationSettings.${key}`, value)
     }
   }
-  return patch
 }
 
 export const settings = {
@@ -75,15 +76,15 @@ export const settings = {
 
   /** Apply a partial update through the store's own setters; returns the settings after it. */
   async set(patch: SettingsPatch): Promise<SettingsDTO> {
-    const valid = validate(patch)
+    validate(patch)
     const store = useSettingsStore.getState()
-    if (valid.linkPreviewsEnabled !== undefined) store.setLinkPreviewsEnabled(valid.linkPreviewsEnabled)
-    if (valid.gateMediaFromNonFollowed !== undefined) store.setGateMediaFromNonFollowed(valid.gateMediaFromNonFollowed)
-    if (valid.sendReadReceipts !== undefined) store.setSendReadReceipts(valid.sendReadReceipts)
-    if (valid.sensitiveContentMode !== undefined) store.setSensitiveContentMode(valid.sensitiveContentMode)
-    if (valid.notificationSettings !== undefined) store.setNotificationSettings(valid.notificationSettings)
-    if (valid.payWith !== undefined) store.setPayWith(valid.payWith)
-    if (valid.feedLanguage !== undefined) store.setFeedLanguage(valid.feedLanguage)
+    if (patch.linkPreviewsEnabled !== undefined) store.setLinkPreviewsEnabled(patch.linkPreviewsEnabled)
+    if (patch.gateMediaFromNonFollowed !== undefined) store.setGateMediaFromNonFollowed(patch.gateMediaFromNonFollowed)
+    if (patch.sendReadReceipts !== undefined) store.setSendReadReceipts(patch.sendReadReceipts)
+    if (patch.sensitiveContentMode !== undefined) store.setSensitiveContentMode(patch.sensitiveContentMode)
+    if (patch.notificationSettings !== undefined) store.setNotificationSettings(patch.notificationSettings)
+    if (patch.payWith !== undefined) store.setPayWith(patch.payWith)
+    if (patch.feedLanguage !== undefined) store.setFeedLanguage(patch.feedLanguage)
     return read()
   },
 }
