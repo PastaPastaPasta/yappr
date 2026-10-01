@@ -10,6 +10,7 @@ import { createProfileWrites, profiles } from './profiles'
 import { createSafetyModule } from './safety'
 import { createSessionModule, type SessionEvents } from './session'
 import { settings } from './settings'
+import { retryReadsOnStaleQuorum } from './stale-quorum'
 import { createEngineTicketStore, createWritesModule } from './writes'
 import { setNoticeSink } from '../shims/toast'
 
@@ -42,10 +43,11 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
         await dm.hooks.lifecycle(state)
       },
     }),
-    feed,
-    posts: { ...posts, ...createPostWrites(tickets, emit) },
-    engage: { ...engage, ...createEngageWrites(tickets) },
-    profiles: { ...profiles, ...createProfileWrites(tickets) },
+    // The read halves only: a stale quorum cache costs a read one retry, never a write (stale-quorum.ts).
+    feed: retryReadsOnStaleQuorum(feed),
+    posts: { ...retryReadsOnStaleQuorum(posts), ...createPostWrites(tickets, emit) },
+    engage: { ...retryReadsOnStaleQuorum(engage), ...createEngageWrites(tickets) },
+    profiles: { ...retryReadsOnStaleQuorum(profiles), ...createProfileWrites(tickets) },
     session: createSessionModule({
       emit: sessionEmit,
       tickets,
@@ -56,10 +58,10 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     dm: dm.api,
     settings,
     writes: createWritesModule(tickets),
-    graph: { ...graph, ...createGraphWrites(tickets) },
-    explore,
+    graph: { ...retryReadsOnStaleQuorum(graph), ...createGraphWrites(tickets) },
+    explore: retryReadsOnStaleQuorum(explore),
     safety: createSafetyModule(tickets),
-    notifications: notifications.api,
+    notifications: retryReadsOnStaleQuorum(notifications.api),
   }
 }
 
