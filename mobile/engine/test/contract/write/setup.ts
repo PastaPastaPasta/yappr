@@ -17,7 +17,15 @@ if (writeSuiteSkipReason() === null) {
   Object.assign(process.env, devnetEnv())
   const { createEngineStorage, installEngineStorage } = await import('../../../src/shims/storage')
   installEngineStorage(createEngineStorage())
-  Object.assign(globalThis, { window: globalThis })
+  // `window` is the global, as in the WebView, with the event methods lib registers at module
+  // scope (cache-manager's `beforeunload`, dm-v5's `pagehide`); Node's global is no EventTarget.
+  const events = new EventTarget()
+  Object.assign(globalThis, {
+    window: globalThis,
+    addEventListener: events.addEventListener.bind(events),
+    removeEventListener: events.removeEventListener.bind(events),
+    dispatchEvent: events.dispatchEvent.bind(events),
+  })
 }
 
 export {}

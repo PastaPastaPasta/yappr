@@ -54,8 +54,12 @@ describe.skipIf(skip !== null)(`dm on sakura${skip ? ` (skipped: ${skip})` : ''}
       await engine.api.session.signInWithKey({ key: persona.keyHex('high') })
       signedIn.add(persona.identityId)
     }
-    const status = await engine.api.dm.status()
-    if (status.locked) expect(await engine.api.dm.unlock({ key: persona.keyHex('encryption') })).toMatchObject({ unlocked: true })
+    if ((await engine.api.dm.status()).locked) expect(await engine.api.dm.unlock({ key: persona.keyHex('encryption') })).toMatchObject({ unlocked: true })
+    // As the app does: conversations are named only once the saved state has loaded (ENGINE_BUSY before).
+    for (let waited = 0; !(await engine.api.dm.status()).ready; waited += 500) {
+      if (waited >= WAIT_MS) throw new Error(`messages did not load within ${WAIT_MS / 1000} s`)
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
   }
 
   async function settled(ticket: WriteTicket): Promise<WriteTicket> {
