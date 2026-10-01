@@ -44,8 +44,9 @@ interface UsePostDetailResult {
   removedChainIds: string[]
   /**
    * True while a reply is on screen (e.g. from cached navigation data) but its
-   * thread's root has not been looked up yet: whether the thread can still be
-   * replied to is not known, so nothing should be offered to reply to.
+   * thread's root has not been looked up yet, or the lookup failed: whether the
+   * thread can still be replied to is not known, so nothing should be offered
+   * to reply to.
    */
   replyRootPending: boolean
   /** Whether initial load is in progress (false if using cached data) */
@@ -332,8 +333,9 @@ export function usePostDetail({
 
   const [error, setError] = useState<string | null>(null)
   const [removedChainIds, setRemovedChainIds] = useState<string[]>([])
-  // The post id whose thread root has been looked up (or whose load failed): a
-  // refresh of the same post keeps its answer instead of blocking replies again.
+  // The post id whose thread root has been looked up: a refresh of the same post
+  // keeps its answer instead of blocking replies again. A failed load leaves it
+  // unset, so replies stay blocked until a reload verifies the root.
   const [rootCheckedFor, setRootCheckedFor] = useState<string | null>(null)
 
   // Track loaded post to prevent duplicate loads
@@ -517,7 +519,6 @@ export function usePostDetail({
       if (!isCurrent()) return
       logger.error('usePostDetail: Failed to load post:', err)
       setError(err instanceof Error ? err.message : 'Failed to load post')
-      setRootCheckedFor(postId)
       // Only clear state if we don't have navigation data to show
       if (!usedNavigationDataRef.current) {
         setState({ post: null, replies: [], replyThreads: [], replyChain: [] })

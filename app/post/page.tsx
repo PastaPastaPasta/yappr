@@ -82,11 +82,12 @@ function PostDetailContent() {
   // was removed (40120, paid: by moderators, or on v10 by its author), so
   // nothing on this page can be replied to.
   const threadRootRemoved = removedChainIds.length > 0
-  // Until the root has been looked up (a cached reply shows first), whether it
-  // was removed is unknown, so nothing is offered yet either.
+  // Until the root has been looked up (a cached reply shows first, and a failed
+  // load never looks it up), whether it was removed is unknown, so nothing is
+  // offered yet either.
   const replyBlockedReason = threadRootRemoved
     ? 'The post that started this thread was removed, so nothing in it can be replied to.'
-    : replyRootPending ? 'Checking whether this thread can still be replied to…' : undefined
+    : replyRootPending ? 'Replies open once this thread has been checked. Reload the page if this stays.' : undefined
 
   useEffect(() => {
     resetReplyEnrichment()
