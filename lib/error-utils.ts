@@ -100,6 +100,27 @@ export function isTimeoutError(error: unknown): boolean {
 }
 
 /**
+ * The answer to a sent transition could not be VERIFIED: the proof of its
+ * result failed to check (the wasm-sdk's `Proof` errors, sakura's "invalid
+ * quorum: Quorum not found in cache" while the quorum service lags a rotation),
+ * or every node dropped out before answering. Such an error carries no
+ * consensus code (-1), and the transition may well have executed: a moderation
+ * whose proof failed had landed on sakura more than once. Never a verdict, so a
+ * caller says "check again", not "failed".
+ */
+export function isUnverifiedOutcomeError(error: unknown): boolean {
+  if (consensusCodeOf(error) !== null || isConsensusRefusal(error)) return false
+  let name: unknown
+  try {
+    name = (error as { name?: unknown } | null)?.name
+  } catch {
+    name = undefined
+  }
+  if (name === 'Proof') return true
+  return /quorum not found|invalid quorum|context provider error|proof verification|invalid proved response|no available addresses/i.test(extractErrorMessage(error))
+}
+
+/**
  * The DAPI gateway refused the request for volume (gRPC RESOURCE_EXHAUSTED,
  * "rate limited"). Transient: the same request goes through a moment later.
  */
@@ -921,8 +942,15 @@ export type ModerationErrorKind =
   | 'SETTLED_DELETION_NOT_RESTORABLE'
   | 'TEAM_ACTION_COMPLETED'
   | 'TEAM_ACTION_DOCUMENT_CHANGED'
+  | 'ALREADY_BANNED'
+  | 'NOT_BANNED'
+  | 'NOT_SUSPENDED'
+  | 'SUSPENSION_NOT_IN_FUTURE'
+  | 'TARGET_NOT_FOUND'
+  | 'SELF_TARGET'
+  | 'REASON_TOO_LONG'
 
-/** Each kind: its consensus codes and the prose Drive renders (rs-dpp `#[error]`, 4.2.0-beta.4). */
+/** Each kind: its consensus codes and the prose Drive renders (rs-dpp `#[error]`, 4.2.0-beta.4 onwards; the identity-list kinds at the end from v5.0.0-beta.1). */
 const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly number[], RegExp]> = [
   // 41101 IdentityNotContractModeratorError; 41113 ContractFeeClaimNotAllowedError.
   // On an elected contract with a seated team the interim moderators, the owner
@@ -974,6 +1002,20 @@ const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly n
   ['SETTLED_DELETION_NOT_RESTORABLE', [41209], /settleddeletionnotrestorable|a deletion the team agreed on is not restored/i],
   ['TEAM_ACTION_COMPLETED', [41210], /contractteamactionalreadycompleted|team action .* on contract .* already ran/i],
   ['TEAM_ACTION_DOCUMENT_CHANGED', [41211], /contractteamactiondocumentchanged|changed since team action .* proposed its deletion/i],
+  // The identity lists (rs-dpp at v5.0.0-beta.1): 41103 a ban of a banned
+  // identity, 41104 an unban of one that is not banned, 41105 an unsuspend of
+  // one that is not suspended (a lapsed suspension is swept by the identity's
+  // next write), 41106 a suspension ending at or before the block time, 41109
+  // a target identity that does not exist.
+  ['ALREADY_BANNED', [41103], /contractuseralreadybanned|is already banned on contract/i],
+  ['NOT_BANNED', [41104], /contractusernotbanned|is not banned on contract/i],
+  ['NOT_SUSPENDED', [41105], /contractusernotsuspended|is not suspended on contract/i],
+  ['SUSPENSION_NOT_IN_FUTURE', [41106], /contractsuspensionnotinfuture|ends at \d+ which is not after the block time/i],
+  ['TARGET_NOT_FOUND', [41109], /contractmoderationtargetnotfound|moderated on contract .* does not exist/i],
+  // 10901 a moderator naming itself; 10903 a reason text over 1024 BYTES (a
+  // multi-byte character counts more than one).
+  ['SELF_TARGET', [10901], /contractmoderationselftarget|can not moderate itself/i],
+  ['REASON_TOO_LONG', [10903], /contractmoderationreasontoolong|text of a contract moderation reason is \d+ bytes long/i],
 ]
 
 export function classifyModerationError(error: unknown): ModerationErrorKind | null {
