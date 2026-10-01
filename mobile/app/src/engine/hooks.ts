@@ -1,12 +1,9 @@
-import type { EngineApi } from '@engine/api';
-import type { Remote } from '@engine/rpc/client';
-import { queryOptions, type QueryKey } from '@tanstack/react-query';
 import { router, usePathname } from 'expo-router';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 import { DEFAULT_IPFS_GATEWAY } from '~/ui/media-url';
 
-import { engine, engineNetworkKey, engineSupervisor, type Engine } from './index';
+import { engine, engineSupervisor, type Engine } from './index';
 import type { EngineStatus } from './supervisor';
 
 /** The engine facade: `useEngine().api.feed.home({ tab: 'forYou' })`. */
@@ -17,31 +14,6 @@ export function useEngine(): Engine {
 /** Supervisor state, versions and timings; re-renders on every change. */
 export function useEngineStatus(): EngineStatus {
   return useSyncExternalStore(engineSupervisor.subscribeStatus, engineSupervisor.getStatus);
-}
-
-/** Subscribe to an engine event (ENGINE.md §8) for the component's lifetime. */
-export function useEngineEvent(event: string, handler: (payload: unknown) => void): void {
-  const latest = useRef(handler);
-  useEffect(() => {
-    latest.current = handler;
-  });
-  useEffect(() => engine.on(event, (payload) => latest.current(payload)), [event]);
-}
-
-/**
- * TanStack Query options for an engine read. Keys are namespaced by network,
- * so a cache can never serve another network's data:
- *
- *   useQuery(engineQuery(['feed', 'forYou'], (api) => api.feed.home({ tab: 'forYou' })))
- *
- * Calls made before the engine is ready wait in the supervisor's queue; a
- * read interrupted by an engine restart is replayed once.
- */
-export function engineQuery<T>(key: QueryKey, read: (api: Remote<EngineApi>) => Promise<T>) {
-  return queryOptions({
-    queryKey: ['engine', engineNetworkKey, ...key],
-    queryFn: () => read(engine.api),
-  });
 }
 
 /** The engine's first path-style IPFS gateway (`engine.info().ipfsGateways`), for MediaUrlProvider. */

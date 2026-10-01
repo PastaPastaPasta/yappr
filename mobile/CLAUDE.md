@@ -76,6 +76,8 @@ before you change anything here.
 | `src/variants.ts` | The variant table, shared with `app.config.ts`. |
 | `src/ui/` | Tokens (`tokens.ts`), `Screen`, `Text`, `Placeholder`, `ComposeFab` and `stackScreenOptions`. The design-system PR adds the primitives. |
 | `src/state/` | MMKV `syncStorage`, the TanStack Query client and its persister, the appearance store, `useTabBadges`. |
+| `src/data/` | The data layer every screen uses: query keys, engine queries, events, session, writes and optimistic updates (its README). |
+| `src/features/<feature>/` | Feature code, next to the routes that use it. `features/post` holds `PostItem` and the post writes. |
 | `src/engine/` | The engine host (below). |
 | `src/lib-allowlist.ts` | The only door into web `lib/`. |
 | `tailwind.config.js` | NativeWind. It uses the root `tailwind.config.js` as a preset, so `yappr-*`, `neutral-750/850` and `shadow-yappr*` are the web's tokens. The gradients are tokens only, because NativeWind can't render `background-image`. |
@@ -100,17 +102,20 @@ before you change anything here.
     `[conversationId]/info`);
   - `(profile)/profile`, `bookmarks` and `settings/*`.
 - Root modals: `compose`, `sign-in/*`, `welcome`, `terms-gate`, `lockdown`,
-  `media`, `profile/edit`, `messages/new` and `messages/new-group`.
+  `media`, `profile/edit`, `messages/new`, `messages/new-group`, and
+  `block/[userId]` and `report/[postId]` (from a post's menu).
 - Stubs set their header title with `<Stack.Screen options={{ title }} />`
   (inside `Placeholder`), so layouts never list screens.
 
-**Data.**
+**Data.** See `src/data/README.md`.
 
-- **Persisting a query is opt-in.** Spread `persistedQuery` into its options.
+- **Persisting a query is opt-in.** Pass `{ persist: true }` to
+  `useEngineQuery` (it spreads `persistedQuery`).
   Never persist decrypted DMs, notifications or balances, because MMKV is not
   encrypted.
 - The persisted cache is busted by app version + `ENGINE_BUNDLE_HASH` + network.
-- Call `clearAccountCache()` on sign-out and account switch.
+- The session sync (`src/data/session.ts`) calls `clearAccountCache()` on
+  sign-out and account switch.
 
 **Appearance.** Dark mode follows the system.
 `useAppearance().setTheme('light' | 'dark' | 'system')` overrides it app-wide,
@@ -136,9 +141,12 @@ same `APP_VARIANT`, or the app refuses to start (`src/config.ts`).
 
 **Engine host** (`src/engine/`, ENGINE.md §1, §3, §9, §11).
 
-- `engine.api.<module>.<method>()` (`~/engine`) calls the engine; in screens use
-  `useQuery(engineQuery(key, (api) => api.feed.forYou({})))` from
-  `~/engine/hooks`, plus `useEngineStatus()` and `useEngineEvent()`.
+- `engine.api.<module>.<method>()` (`~/engine`) calls the engine. Screens go
+  through the data layer instead (`src/data/README.md`): `queryKeys`,
+  `useEngineQuery` / `useEngineInfiniteQuery`, `useEngineEvent`,
+  `submitWrite` / `useWrite`, `useSession`, `useCapabilities` and
+  `requireAuth`. Posts render with `src/features/post/PostItem.tsx`.
+  `useEngineStatus()` (`~/engine/hooks`) is the supervisor's state.
 - `EngineHost` (mounted by the root layout) renders the one hidden WebView.
   The supervisor (`supervisor.ts`) boots it, queues calls until boot, pings it,
   restarts it on a crash or hang with backoff, and replays an interrupted
