@@ -42,11 +42,19 @@ export interface WriteRunContext {
   documents(documents: TicketDocument[]): void
 }
 
+/** What the store lends a handler's own probe, so every probe proves documents the same way. */
+export interface ProbeKit {
+  /** The default proof: each unconfirmed document present (create) or absent (delete), a create's absence by two reads. */
+  proveDocuments(documents: TicketDocument[]): Promise<ProbeResult>
+  /** The gap before a second read confirms an absence (`absenceRecheckMs`). */
+  recheckDelay(): Promise<void>
+}
+
 /** How one kind of write runs, and how its outcome is proved. M7b registers one per `WriteOp`. */
 export interface WriteHandler<A = unknown> {
   run(args: A, ctx: WriteRunContext): Promise<WriteResult>
-  /** Default: prove each unconfirmed document in `ticket.documents` (see `createTicketStore`'s `probeDocument`). */
-  probe?(ticket: WriteTicket, args: A | undefined): Promise<ProbeResult>
+  /** Default: prove each unconfirmed document in `ticket.documents` (`ProbeKit.proveDocuments`). */
+  probe?(ticket: WriteTicket, args: A | undefined, kit: ProbeKit): Promise<ProbeResult>
   /**
    * Persist the arguments with the ticket (plain engine kv, MMKV on the
    * host), so a retry still works after an engine restart. Off by default:
@@ -291,18 +299,15 @@ export function createTicketStore(options: TicketStoreOptions) {
       })
   }
 
-  async function probe(ticket: WriteTicket, args: unknown): Promise<ProbeResult> {
-    const handler = handlers.get(ticket.op)
+  const recheckDelay = () => new Promise<void>(resolve => setTimeout(resolve, absenceRecheckMs))
+
+  async function proveDocuments(documents: TicketDocument[]): Promise<ProbeResult> {
     try {
-      if (handler?.probe) return await handler.probe(clone(ticket), args)
-      if (ticket.documents.length === 0) {
-        return { state: 'unknown', error: new Error('Nothing to check: this write named no documents') }
-      }
-      for (const doc of ticket.documents.filter(doc => !doc.confirmed)) {
+      for (const doc of documents.filter(doc => !doc.confirmed)) {
         let exists = await options.documentExists(doc)
         // One node can lag: absence of a create counts only when a second read agrees.
         if (!exists && doc.action === 'create') {
-          await new Promise(resolve => setTimeout(resolve, absenceRecheckMs))
+          await recheckDelay()
           exists = await options.documentExists(doc)
         }
         if (exists !== (doc.action === 'create')) return { state: 'not-applied' }
@@ -311,6 +316,21 @@ export function createTicketStore(options: TicketStoreOptions) {
     } catch (error) {
       return { state: 'unknown', error }
     }
+  }
+
+  const kit: ProbeKit = { proveDocuments, recheckDelay }
+
+  async function probe(ticket: WriteTicket, args: unknown): Promise<ProbeResult> {
+    const handler = handlers.get(ticket.op)
+    try {
+      if (handler?.probe) return await handler.probe(clone(ticket), args, kit)
+    } catch (error) {
+      return { state: 'unknown', error }
+    }
+    if (ticket.documents.length === 0) {
+      return { state: 'unknown', error: new Error('Nothing to check: this write named no documents') }
+    }
+    return proveDocuments(ticket.documents)
   }
 
   load()
