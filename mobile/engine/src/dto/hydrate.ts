@@ -1,4 +1,5 @@
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment'
+import { withoutHiddenTombstones } from '@/lib/feed/hidden-tombstones'
 import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts'
 import { blockService } from '@/lib/services/block-service'
 import { dpnsService } from '@/lib/services/dpns-service'
@@ -39,6 +40,15 @@ export function assertAtMost(list: readonly unknown[], max: number, what: string
 export function notSupported(what: string): RpcError {
   return new RpcError(`${what} is not available on this contract topology`, 'NOT_SUPPORTED')
 }
+
+export function badRequest(message: string): RpcError {
+  return new RpcError(message, 'BAD_REQUEST')
+}
+
+/** Base58 of 32 bytes: 43 or 44 characters. */
+const IDENTITY_ID = /^[1-9A-HJ-NP-Za-km-z]{43,44}$/
+
+export const isIdentityId = (value: unknown): value is string => typeof value === 'string' && IDENTITY_ID.test(value)
 
 /**
  * Timeline documents arrive with "Unknown User" placeholders (`hasDpns:
@@ -92,13 +102,16 @@ async function dropBlocked(posts: Post[]): Promise<Post[]> {
 
 /**
  * The viewer filters web applies to browsing lists (feeds, tags, explore,
- * profile tabs) on enriched posts: drop blocked authors, then the NSFW `hide`
+ * profile tabs) on enriched posts: drop v11's author tombstones
+ * (`withoutHiddenTombstones`, as `use-feed-data.ts` and
+ * `use-profile-replies.ts` do), then blocked authors, then the NSFW `hide`
  * preference (`filterHiddenSensitive`; threads and single posts render the
  * gate instead). Then DTOs.
  */
 export async function visibleDTOs(posts: Post[], options: { dropBlocked?: boolean } = {}): Promise<PostDTO[]> {
   // A profile's own tabs keep a blocked author's posts: the page shows the block instead.
-  const unblocked = options.dropBlocked === false ? posts : await dropBlocked(posts)
+  const live = withoutHiddenTombstones(posts)
+  const unblocked = options.dropBlocked === false ? live : await dropBlocked(live)
   const visible = filterHiddenSensitive(unblocked, useSettingsStore.getState().sensitiveContentMode, viewerId())
   return toPostDTOs(visible)
 }

@@ -1,8 +1,13 @@
 import { TtlMap } from '@/lib/caches/ttl-map'
+import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { followService } from '@/lib/services/follow-service'
 import { assertAtMost, loadUserSummaries, requireViewer } from '../dto/hydrate'
 import { pageOfList } from '../dto/paging'
+import { assertId, badRequest, relationProbe, signer, ticketIdentity } from '../writes/handler-kit'
+import { createdDocument, fromTransitionResult } from '../writes/lib-results'
+import type { TicketStore } from '../writes/tickets'
+import type { WriteTicket } from '../writes/types'
 import type { Page, UserSummaryDTO } from './dto'
 
 /** Lists are read whole on web (up to 1000); the engine pages them. */
@@ -51,4 +56,47 @@ export const graph = {
     const status = await followService.getFollowStatusBatch(ids, requireViewer('Follow status'))
     return Object.fromEntries(ids.map(id => [id, status.get(id) === true]))
   },
+}
+
+interface FollowArgs {
+  targetId: string
+}
+
+/**
+ * Follow and unfollow (`hooks/use-follow.ts`), one ticket each. `check`
+ * reads the viewer's following list strictly (a failed read proves nothing).
+ */
+export function createGraphWrites(tickets: TicketStore) {
+  const follows = (expected: boolean) => relationProbe<FollowArgs>(async ({ viewer, ticket }) => {
+    const targetId = ticketIdentity(ticket)
+    return (await followService.getFollowing(viewer, { throwOnError: true })).some(follow => follow.followingId === targetId)
+  }, expected)
+
+  tickets.register<FollowArgs>('follow', {
+    persistArgs: true,
+    async run({ targetId }, ctx) {
+      const result = await followService.followUser(signer(ctx), targetId)
+      return fromTransitionResult(result, createdDocument(result, YAPPR_CONTRACT_ID, 'follow'))
+    },
+    probe: follows(true),
+  })
+  tickets.register<FollowArgs>('unfollow', {
+    persistArgs: true,
+    async run({ targetId }, ctx) {
+      return fromTransitionResult(await followService.unfollowUser(signer(ctx), targetId))
+    },
+    probe: follows(false),
+  })
+
+  function submit(op: 'follow' | 'unfollow', targetId: string): WriteTicket {
+    assertId(targetId, 'targetId')
+    // followUser refuses a self-follow before broadcasting (v9 consensus would too).
+    if (requireViewer('Following') === targetId) throw badRequest('You cannot follow yourself')
+    return tickets.submit<FollowArgs>({ op, args: { targetId }, target: { identityId: targetId } })
+  }
+
+  return {
+    follow: async (targetId: string): Promise<WriteTicket> => submit('follow', targetId),
+    unfollow: async (targetId: string): Promise<WriteTicket> => submit('unfollow', targetId),
+  }
 }

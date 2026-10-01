@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { array, postDTO, rankedUserDTO, tagDTO, userSummaryDTO } from '../../../src/dto/validate'
-import { capabilities, describeRead, engine, expectCode, expectValid, namedAuthor, sampleFeed, timed } from './harness'
+import { capabilities, describeRead, engine, expectCode, expectValid, namedAuthor, samplePosts, timed } from './harness'
 
 describeRead('explore', 'explore', () => {
   it('lists trending tags, counted by likes where rankings exist', async () => {
@@ -30,7 +30,7 @@ describeRead('explore', 'explore', () => {
   it('searches tags and recent posts', async () => {
     const tags = await timed('explore.searchHashtags', () => engine.explore.searchHashtags('#yappr'))
     expectValid(array(tagDTO), tags, 'tags')
-    const sample = (await sampleFeed())[0]
+    const sample = (await samplePosts())[0]
     const word = sample.content.split(/\s+/).find(part => part.length >= 4) ?? sample.content
     const posts = await timed('explore.searchPosts', () => engine.explore.searchPosts(word))
     expectValid(array(postDTO), posts, 'posts')

@@ -1,19 +1,19 @@
 import { expect, it } from 'vitest'
 import { encodeCursor } from '../../../src/dto/cursor'
 import { engagementCountsDTO, engagementPage, pollDTO, postDTO, threadDTO, userSummaryDTO } from '../../../src/dto/validate'
-import { capabilities, describeRead, engine, expectCode, expectValid, sampleFeed, timed } from './harness'
+import { capabilities, describeRead, engine, expectCode, expectValid, sampleFeed, samplePosts, timed } from './harness'
 
 const MISSING = '11111111111111111111111111111111111111111111'
 
 /** A sample post that has replies, likes and reposts on the live network, if any. */
 async function engagedPost() {
-  const posts = await sampleFeed()
+  const posts = await samplePosts()
   return posts.find(post => post.stats.replies > 0 && post.stats.likes > 0) ?? posts[0]
 }
 
 describeRead('posts', 'posts', () => {
   it('gets one post by id, the same post the feed shows', async () => {
-    const sample = (await sampleFeed())[0]
+    const sample = (await samplePosts())[0]
     const post = await timed('posts.get', () => engine.posts.get(sample.id))
     expectValid(postDTO, post, 'post')
     expect(post).toMatchObject({ id: sample.id, content: sample.content, author: { id: sample.author.id, resolved: true } })

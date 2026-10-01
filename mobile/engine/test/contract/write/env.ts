@@ -23,6 +23,35 @@ export function devnetEnv(): Record<string, string> {
   return env
 }
 
+/** Poll a ticket until it leaves `pending` (every 500 ms, up to 2 minutes). */
+export async function pollSettled<T extends { state: string }>(get: (id: string) => T | null | Promise<T | null>, ticketId: string): Promise<T> {
+  for (let i = 0; i < 240; i++) {
+    const ticket = await get(ticketId)
+    if (ticket && ticket.state !== 'pending') return ticket
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  throw new Error(`ticket ${ticketId} still pending after 120 s`)
+}
+
+/**
+ * Sakura's quorum server lists only the newest 4 quorums, so a proof that
+ * names an older one fails "Quorum not found in cache" until the SDK moves
+ * on. Only that failure is retried (3 times, 5 s apart); anything else throws.
+ */
+export async function retryQuorum<T>(call: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await call()
+    } catch (error) {
+      if (attempt >= 3 || !isQuorumMiss(error)) throw error
+      await new Promise(resolve => setTimeout(resolve, 5_000))
+    }
+  }
+}
+
+export const isQuorumMiss = (error: unknown): boolean =>
+  /Quorum not found in cache/i.test(error instanceof Error ? `${error.message} ${(error as { stderr?: unknown }).stderr ?? ''}` : String(error))
+
 /** Why the sakura write suite cannot run here, or null when it can. */
 export function writeSuiteSkipReason(): string | null {
   const devnet = devnetEnv().NEXT_PUBLIC_DEVNET_NAME ?? '(none)'
