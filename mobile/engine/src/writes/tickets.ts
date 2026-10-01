@@ -44,7 +44,7 @@ export interface WriteRunContext {
 
 /** What the store lends a handler's own probe, so every probe proves documents the same way. */
 export interface ProbeKit {
-  /** The default proof: each unconfirmed document present (create) or absent (delete), a create's absence by two reads. */
+  /** The default proof: each unconfirmed document present (create) or absent (delete); a disagreement counts only when a second read agrees. */
   proveDocuments(documents: TicketDocument[]): Promise<ProbeResult>
   /** The gap before a second read confirms an absence (`absenceRecheckMs`). */
   recheckDelay(): Promise<void>
@@ -310,8 +310,9 @@ export function createTicketStore(options: TicketStoreOptions) {
     try {
       for (const doc of documents.filter(doc => !doc.confirmed)) {
         let exists = await options.documentExists(doc)
-        // One node can lag: absence of a create counts only when a second read agrees.
-        if (!exists && doc.action === 'create') {
+        // One node can lag, either way: a document a create should have added, or a delete
+        // removed, counts as not applied only when a second read agrees.
+        if (exists !== (doc.action === 'create')) {
           await recheckDelay()
           exists = await options.documentExists(doc)
         }
