@@ -1,0 +1,19 @@
+{
+  "name": "@yappr/mobile-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless Yappr engine for the mobile apps: evo-sdk + web lib/ in a hidden WebView, behind a domain RPC. See README.md.",
+  "scripts": {
+    "build": "node build.mjs --variant testnet && node build.mjs --variant devnet",
+    "build:testnet": "node build.mjs --variant testnet",
+    "build:devnet": "node build.mjs --variant devnet",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --project unit",
+    "test:contract": "vitest run --project contract",
+    "test:browser": "vitest run --project browser"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.7"
+  }
+}
