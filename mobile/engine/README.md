@@ -8,7 +8,7 @@ mobile/engine/
   src/protocol/          envelope types + JSON codec (dependency-free; the RN app imports these at runtime)
   src/rpc/               transport, dispatcher (engine side), client proxy (host side)
   src/shims/             storage (sync Web Storage, write-through, secure routing), lifecycle events
-  src/api/               engine, feed, posts, engage, profiles, graph, explore: thin calls into lib/; dto.ts
+  src/api/               engine, feed, posts, engage, profiles, graph, explore, safety, notifications: thin calls into lib/; dto.ts
   src/dto/               cursors, paging, enrichment pipeline, thread port, capabilities, DTO validators
   src/entry.webview.ts   the WebView entry; src/install-shims.ts runs before lib loads
   src/selftest.ts        selftest.html: engine + in-page host, for browsers nothing can drive
@@ -195,10 +195,33 @@ Events: `session.changed {session, reason}` (`restored`, `signed-in`, `switched`
 
 **`settings.get()` / `settings.set(patch)`** (`src/api/settings.ts`): link previews, media gate, read receipts, NSFW mode, notification toggles, `payWith` and feed language, through lib's own `useSettingsStore` setters (persisted by its `persist`). A patch is validated whole before any of it applies (`BAD_REQUEST`).
 
+## Domain writes, notifications and safety (M7b)
+
+Every write validates its input first (`BAD_REQUEST`, `NOT_SIGNED_IN`, `NOT_SUPPORTED` where `capabilities` says no; these reject the call, no ticket), then returns a `pending` ticket and runs one registered handler (`src/writes/handler-kit.ts`, `src/writes/publish.ts`). Each handler signs with the ticket's identity, persists its arguments (all of them are public content), and names what `check` proves. Writes that name a post this session created unconfirmed wait for it first, as web does (`settleUnconfirmed`; stage `waiting-parent`, then `signing` before lib's write; `PARENT_UNCONFIRMED` if it never shows).
+
+| Method | Mirrors | Ticket mapping | `check` proves |
+| --- | --- | --- | --- |
+| `posts.publish(draft)` | `compose-modal.tsx` `handlePost` → `planPosts` → `publishThread`: 1–10 parts (a reply or quote: 1), NSFW flag, an image URL (`mediaUrl`, http(s)/ipfs; v10 hashes it in the engine with `imageDigestForUrl`), hashtag and mention indexes per topology (inside `publishThread`). Public only; replying to or quoting a private post is `NOT_SUPPORTED` | `documents[]` name each posted part (`part` index; `post` or `reply` as `publishThread` chained it), `progress` counts parts. `failedAtIndex` → `failed` with the posted parts kept; a timed-out part or an unconfirmed one → `unconfirmed`. `writes.retry` (retryable refusals) resumes past the parts that landed; otherwise publish again with `resume.postedIds` from those documents | Every part named, and none missing: a part that timed out before its id was known stays unprovable |
+| `posts.delete(target)` | `post-card.tsx` `handleDelete`: `deletePost`/`deleteReply`, or `tombstonePost`/`tombstoneReply` (`deletesAreTombstones`). Own posts only | `fromBoolean` | The document absent; a tombstone read back as `deleted` |
+| `engage.like` / `unlike` | `use-post-engagement.ts` `toggleLike` (`likePost`/`unlikePost`, target author passed, its tag read by lib) | `fromBoolean` | `isLiked`, read twice before an absence counts |
+| `engage.repost` / `unrepost` | `toggleRepost`. **v10:** a bare quote post (`createPost(viewer, '', resolveQuoteReference)`); a 40105 whose slot holds the viewer's own bare repost is that repost (`confirmed`), one holding a quote with text is `DUPLICATE`. Undo deletes the bare quote; a quote with text rejects the call with `QUOTE_HAS_TEXT` (confirm, then `posts.delete(viewer.ownQuoteId)`). **Off v10:** `repostPost`/`removeRepost`. Gated by `canRepost` | the created or deleted quote post (v10); `fromBoolean` off v10 | the quote post by id (v10); `isReposted` |
+| `engage.bookmark` / `unbookmark` / `bookmarks(cursor?)` | `toggleBookmark`; `app/bookmarks/page.tsx` (all once, 20 a page, enriched). Gated by `canBookmark` | `fromBoolean` | `getBookmark` with `throwOnError` |
+| `graph.follow` / `unfollow` | `use-follow.ts` (`followUser`/`unfollowUser`; no self-follow) | `fromTransitionResult`, the created `follow` named | `getFollowing` with `throwOnError` |
+| `profiles.update(patch)` | `app/user/page.tsx` `handleSaveProfile`, `use-avatar.ts`: `updateProfile` (v10 DashPay `profile` + `yapprProfile`; v2 `profile`, created by the first save). Avatar `{uri}` or `{dicebear}` (encoded with `encodeAvatarData`), `null`/`''` clears; lengths from `profileTextLimits` | resolve → `confirmed` (lib does not surface an unconfirmed wait); lib's plan refusals (`ListLimitError`) → `BAD_REQUEST`, not sent | the profile read back field by field |
+| `safety.block(id, {message?})` / `unblock(id)` | `use-block.ts`: `blockUser` (message ≤ 280) / `unblockUser`, then the provenance check: still blocked by a followed block list → `failed` `STILL_BLOCKED` | `fromTransitionResult` | the viewer's own block (`getBlockProvenance`) |
+| `safety.blocked(cursor?)` / `isBlocked(ids)` | `blocked-users.tsx` (`getUserBlocks`, up to 100, with each message); `checkBlockedBatch` | — | — |
+| `safety.report(target, reason, note?)` / `ownReport(target)` | `report-post-modal.tsx`: `reportInputProblem` (codes 0–8 from `lib/reports.ts`, "something else" needs a note, note ≤ 500), not one's own post, `fileReport`; `getOwnReport` (throws on a failed read). Gated by `capabilities.reports` | `fromTransitionResult`, the `report` named; a second report is `DUPLICATE` | `getOwnReport` |
+
+**Notifications** (`src/api/notifications.ts`): web's `yappr-notifications` store and `notificationService`, as the sidebar loop and `app/notifications/page.tsx` use them. `list({filter, cursor})`: the first call per account reads the last 7 days (`getInitialNotifications`), then pages what is held, 30 at a time, keyset on time and id; types turned off in `settings.notificationSettings` are left out, and the tabs follow web's grouping (quotes under Reposts, blog comments under Blog). `poll()` merges `pollNewNotifications` from the watermark (RN calls it every 30 s while foregrounded). `markRead(ids)`, `markVisibleRead()` (only visible, enabled types) and `unreadCount()`. `notifications.count {unread}` fires after a load, a poll, a mark, and when a notification toggle changes.
+
+**`content.created {kind, id, confirmed, post}`**: the window `post-created` / `reply-created` events `publishThread` dispatches for a thread's first part, forwarded with the document as a `PostDTO` (enriched when the reads answer).
+
+**Live suite** (`test/contract/write/domain.test.ts`, personas 94–95): post and delete, a 3-part thread failed on purpose at part 3 and resumed, reply and quote, like / repost (v10 slot recovery) / bookmark and their undos with the author reading the like notification, follow, block, report, profile update; retries only on transient codes, credit spend to `$EVIDENCE_DIR/contract-write-domain.json`. It skips with the reason until W-SAKURA. `test/contract/read/notifications.test.ts` reads a public testnet author's notifications read-only (lib's current user stubbed; nothing signed).
+
 ## Measurements (2026-10-01, testnet, evo-sdk 4.2.0-beta.7, Apple Silicon Mac)
 
 **Bundle:**
-- `engine.js` is **14.92 MB**, **9.39 MB gzip**. About 11.8 MB of it is evo-sdk with the inlined wasm.
+- `engine.js` is **15.09 MB**, **9.45 MB gzip** as of M7b (14.92 MB at M2; M7b adds the composer, the notification and report services, and the services index `publishThread` imports). About 11.8 MB of it is evo-sdk with the inlined wasm.
 - The rest is wasm-sdk glue (0.5 MB), `lib/` (0.48 MB) and `@dicebear` avatar styles (about 2 MB).
 - The build takes about 0.4 s.
 
