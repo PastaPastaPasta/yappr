@@ -160,8 +160,11 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>)
     if (outcome.syncRequired) {
       return { state: 'failed', error: new RpcError('Private feed keys need syncing', 'PRIVATE_FEED_SYNC_REQUIRED'), documents }
     }
+    // A part that timed out may have landed with no id known: never `failed` (a retry would post it
+    // again). Unconfirmed, the probe keeps it unprovable and points the user to resume (ENGINE §7.1).
+    if (outcome.timedOut.length > 0) return { state: 'unconfirmed', documents }
     if (outcome.failedAtIndex !== null) return { state: 'failed', error: failureOf(outcome.failureError), documents }
-    const unconfirmed = outcome.timedOut.length > 0 || documents.some(doc => !doc.confirmed)
+    const unconfirmed = documents.some(doc => !doc.confirmed)
     return { state: unconfirmed ? 'unconfirmed' : 'confirmed', documents }
   }
 
@@ -172,12 +175,11 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>)
    * what posted.
    */
   async function probe(ticket: WriteTicket, draft: DraftDTO | undefined, kit: ProbeKit): Promise<ProbeResult> {
-    if (draft) {
-      const posted = postedIds(draft, ticket.documents)
-      const missing = draft.parts.findIndex((part, index) => !posted[index] && hasVisibleContent(part.text))
-      if (missing >= 0) {
-        return { state: 'unknown', error: new Error(`Part ${missing + 1} never reported an id, so it cannot be checked: see your profile, then resume the thread`) }
-      }
+    if (!draft) return { state: 'unknown', error: new Error('This post can no longer be checked: its draft was not kept') }
+    const posted = postedIds(draft, ticket.documents)
+    const missing = draft.parts.findIndex((part, index) => !posted[index] && hasVisibleContent(part.text))
+    if (missing >= 0) {
+      return { state: 'unknown', error: new Error(`Part ${missing + 1} never reported an id, so it cannot be checked: see your profile, then resume the thread`) }
     }
     return kit.proveDocuments(ticket.documents)
   }

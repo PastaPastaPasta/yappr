@@ -12,6 +12,7 @@ import { assertAtMost, enrichToDTOs, notSupported, requireViewer, viewerId, with
 import { pageOfList } from '../dto/paging'
 import { assertTarget, relationProbe, settleTarget, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
 import { fromBoolean, wasConfirmed } from '../writes/lib-results'
+import { likeExists, ownQuoteStrict, repostExists } from '../writes/strict-reads'
 import type { TicketStore, WriteResult } from '../writes/tickets'
 import type { TargetRef, WriteOp, WriteTicket } from '../writes/types'
 import type { Post } from '@/lib/types'
@@ -105,9 +106,6 @@ async function createBareRepost(viewer: string, target: TargetRef): Promise<Writ
   }
 }
 
-const isReposted = async (viewer: string, target: TargetRef) => repostsAreQuotes()
-  ? (await ownQuote(viewer, target))?.bare === true
-  : repostService.isReposted(target.id, viewer)
 
 /**
  * The engagement writes (`hooks/use-post-engagement.ts`), one ticket each.
@@ -118,7 +116,8 @@ export function createEngageWrites(tickets: TicketStore) {
   const relation = (present: (viewer: string, target: TargetRef) => Promise<boolean>, expected: boolean) =>
     relationProbe<TargetArgs>(({ viewer, ticket }) => present(viewer, ticketTarget(ticket)), expected)
 
-  const liked = (viewer: string, target: TargetRef) => likeService.isLiked(target.id, viewer, target.kind)
+  const liked = (viewer: string, target: TargetRef) => likeExists(viewer, target.id, target.kind)
+  const isReposted = (viewer: string, target: TargetRef) => repostExists(viewer, target.id, target.kind)
   const bookmarked = async (viewer: string, target: TargetRef) =>
     (await bookmarkService.getBookmark(target.id, viewer, { throwOnError: true })) !== null
 
@@ -203,7 +202,8 @@ export function createEngageWrites(tickets: TicketStore) {
       const viewer = requireViewer('Undoing a repost')
       if (!canRepost(target.kind)) throw notSupported(`Reposting a ${target.kind}`)
       if (!repostsAreQuotes()) return tickets.submit<UnrepostArgs>({ op: 'unrepost', args: { target, quoteId: null }, target })
-      const quote = await ownQuote(viewer, target)
+      // A read that throws: lib's own lookup answers a failure as "none", which would issue a no-op ticket.
+      const quote = await ownQuoteStrict(viewer, target.id, target.kind)
       if (quote && !quote.bare) throw new RpcError('Your quote of this has text: delete it as a post', 'QUOTE_HAS_TEXT')
       return tickets.submit<UnrepostArgs>({
         op: 'unrepost',

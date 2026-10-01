@@ -5,6 +5,7 @@ import { useNotificationStore } from '@/lib/stores/notification-store'
 import type { Notification } from '@/lib/types'
 import { truncateId } from '@/lib/utils/common'
 import { RpcError } from '../protocol/envelope'
+import { readJson } from '../read-json'
 import { cursorString, decodeCursor } from '../dto/cursor'
 import { avatarsOf, badRequest, requireViewer, viewerId } from '../dto/hydrate'
 import { nextPage } from '../dto/paging'
@@ -99,7 +100,7 @@ async function toNotificationDTOs(notifications: Notification[]): Promise<Notifi
 export function createNotificationsModule(emit: (event: 'notifications.count', payload: NotificationCountEvent) => void) {
   /** The account whose notifications the store holds; a first read per account loads the last 7 days. */
   let loadedFor: string | null = null
-  let loading: Promise<void> | null = null
+  let loading: { viewer: string; token: object; done: Promise<void> } | null = null
 
   const report = () => {
     if (viewerId()) emit('notifications.count', { unread: unreadCount() })
@@ -110,21 +111,42 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
     if (next.notificationSettings !== previous.notificationSettings && loadedFor === viewerId()) report()
   })
 
+  /**
+   * The read state persisted for the account now signed in. Sign-out removes
+   * the stored copy but not zustand's in-memory one, so without this a
+   * sign-in on the same engine would carry the last account's read ids.
+   */
+  function restoreReadState(): void {
+    const stored = readJson<{ state?: { readIds?: unknown; lastFetchTimestamp?: unknown } }>(
+      localStorage, useNotificationStore.persist.getOptions().name ?? '', {})
+    const readIds = Array.isArray(stored.state?.readIds) ? stored.state.readIds.filter((id): id is string => typeof id === 'string') : []
+    const lastFetchTimestamp = typeof stored.state?.lastFetchTimestamp === 'number' ? stored.state.lastFetchTimestamp : 0
+    useNotificationStore.setState({ readIds, lastFetchTimestamp })
+  }
+
   /** The sidebar's first fetch (`getInitialNotifications`, 7 days) for this account. */
   function ensureLoaded(viewer: string): Promise<void> {
     if (loadedFor === viewer) return Promise.resolve()
-    loading ??= (async () => {
+    if (loading?.viewer === viewer) return loading.done
+    loadedFor = null
+    const token = {}
+    const done = (async () => {
+      // Before anything persists the store again, which would write the old account's read ids back.
+      restoreReadState()
       store().clearNotifications()
       const result = await notificationService.getInitialNotifications(viewer, store().getReadIdsSet())
-      // Signed out or switched while it loaded: its result belongs to nobody now.
-      if (viewerId() !== viewer) throw new RpcError('The account changed while notifications loaded', 'NOT_SIGNED_IN')
+      // Signed out, switched, or overtaken by another account's load: its result belongs to nobody now.
+      if (viewerId() !== viewer || loading?.token !== token) throw new RpcError('The account changed while notifications loaded', 'NOT_SIGNED_IN')
       store().setNotifications(result.notifications)
       store().setLastFetchTimestamp(result.latestTimestamp)
       store().setHasFetchedOnce(true)
       loadedFor = viewer
       report()
-    })().finally(() => { loading = null })
-    return loading
+    })().finally(() => {
+      if (loading?.token === token) loading = null
+    })
+    loading = { viewer, token, done }
+    return done
   }
 
   return {

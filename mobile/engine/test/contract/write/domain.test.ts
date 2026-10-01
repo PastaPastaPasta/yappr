@@ -148,6 +148,8 @@ describe.skipIf(skipReason !== null)(`domain writes on sakura${skipReason ? ` (s
     if (caps.repostable.post) {
       const repost = await confirmed(() => engine.api.engage.repost(post))
       if (caps.repostsAreQuotes) {
+        // Cleanup deletes it if the unrepost below fails.
+        created.push({ id: repost.documents[0].id, kind: 'post', ownerId: alice.identityId, rootPostId: null })
         // The slot is taken: a second bare repost recovers it instead of failing.
         const again = await confirmed(() => engine.api.engage.repost(post))
         expect(again.documents[0]?.id).toBe(repost.documents[0]?.id)
@@ -161,13 +163,17 @@ describe.skipIf(skipReason !== null)(`domain writes on sakura${skipReason ? ` (s
     }
 
     await signIn(bob)
+    // Read before the unlike: the notification is derived from the like document.
     const likes = await engine.api.notifications.list({ filter: 'like' })
     expect(likes.items.some(item => item.actor.id === alice.identityId && item.target?.id === post.id)).toBe(true)
     await engine.api.notifications.markVisibleRead()
     expect(await engine.api.notifications.unreadCount()).toBe(0)
+    // Unlike while the post still exists (a like of a deleted post may be refused), then delete it.
+    await signIn(alice)
+    await confirmed(() => engine.api.engage.unlike(post))
+    await signIn(bob)
     await confirmed(() => engine.api.posts.delete(post))
     await signIn(alice)
-    await confirmed(() => engine.api.engage.unlike(post)).catch(() => undefined)
   })
 
   it('follows and unfollows, blocks and unblocks', async () => {
@@ -191,9 +197,14 @@ describe.skipIf(skipReason !== null)(`domain writes on sakura${skipReason ? ` (s
     await signIn(alice)
   })
 
-  it('updates the profile and reads it back', async () => {
+  it('updates the profile, reads it back, and restores it', async () => {
+    const before = await engine.api.profiles.get(alice.identityId)
     const bio = `mobile write suite ${Date.now()}`
     await confirmed(() => engine.api.profiles.update({ bio, avatar: { dicebear: { style: 'bottts', seed: 'suite' } } }))
     expect((await engine.api.profiles.get(alice.identityId))?.bio).toBe(bio)
+    if (before?.hasProfile) {
+      const avatar = before.avatar.uri ? { uri: before.avatar.uri } : before.avatar.dicebear ? { dicebear: before.avatar.dicebear } : null
+      await confirmed(() => engine.api.profiles.update({ bio: before.bio ?? '', avatar }))
+    }
   })
 })

@@ -15,6 +15,15 @@ Object.assign(globalThis, {
   removeEventListener: events.removeEventListener.bind(events),
   dispatchEvent: events.dispatchEvent.bind(events),
 })
+// The engine's Web Storage (the notification store persists its read state).
+const kv = new Map<string, string>()
+Object.assign(globalThis, {
+  localStorage: {
+    getItem: (key: string) => kv.get(key) ?? null,
+    setItem: (key: string, value: string) => { kv.set(key, value) },
+    removeItem: (key: string) => { kv.delete(key) },
+  },
+})
 
 const m = vi.hoisted(() => ({
   viewer: 'V' as string | null,
@@ -23,6 +32,7 @@ const m = vi.hoisted(() => ({
   settle: vi.fn(async () => true),
   documentExists: vi.fn(async () => true),
   imageDigest: vi.fn(),
+  strict: { likeExists: vi.fn(), ownQuoteStrict: vi.fn(), repostExists: vi.fn(), ownBlockExists: vi.fn() },
   likeService: { likePost: vi.fn(), unlikePost: vi.fn(), isLiked: vi.fn() },
   bookmarkService: { bookmarkPost: vi.fn(), removeBookmark: vi.fn(), getBookmark: vi.fn(), getUserBookmarks: vi.fn() },
   repostService: { repostPost: vi.fn(), removeRepost: vi.fn(), isReposted: vi.fn() },
@@ -56,6 +66,17 @@ vi.mock('@/lib/unconfirmed-writes', () => ({
   settleUnconfirmed: m.settle,
 }))
 vi.mock('@/lib/media/image-digest', () => ({ imageDigestForUrl: m.imageDigest }))
+vi.mock('../../src/writes/strict-reads', () => m.strict)
+// One attempt per part: lib's backoff between retries is not what these tests pin.
+vi.mock('@/lib/retry-utils', () => ({
+  retryPostCreation: async (operation: () => Promise<unknown>) => {
+    try {
+      return { success: true, data: await operation(), attempts: 1 }
+    } catch (error) {
+      return { success: false, error, attempts: 1 }
+    }
+  },
+}))
 vi.mock('@/lib/services/like-service', () => ({ likeService: m.likeService }))
 vi.mock('@/lib/services/bookmark-service', () => ({ bookmarkService: m.bookmarkService }))
 vi.mock('@/lib/services/repost-service', () => ({ repostService: m.repostService }))
@@ -181,9 +202,16 @@ describe('engage writes', () => {
     m.likeService.likePost.mockRejectedValue(new Error('Network request failed: connection reset'))
     const ticket = await outcome(engage.like(TARGET))
     expect(ticket).toMatchObject({ state: 'unconfirmed', error: { code: 'NETWORK', outcome: 'unknown' }, retryable: false })
-    m.likeService.isLiked.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    m.strict.likeExists.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
-    expect(m.likeService.isLiked).toHaveBeenCalledTimes(2)
+    expect(m.strict.likeExists).toHaveBeenCalledTimes(2)
+    expect(m.strict.likeExists).toHaveBeenCalledWith(VIEWER, TARGET.id, 'post')
+
+    // A failed read proves nothing, even for an undo that expects "absent".
+    m.likeService.unlikePost.mockRejectedValue(new Error('Request timeout'))
+    const unlike = await outcome(engage.unlike(TARGET))
+    m.strict.likeExists.mockRejectedValue(new Error('read failed'))
+    expect(await tickets.check(unlike.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
   })
 
   it('v10: reposts as a bare quote post, and recovers its own slot from a 40105', async () => {
@@ -206,10 +234,13 @@ describe('engage writes', () => {
   it('v10: undoing a repost deletes the bare quote, and refuses a quote with text (QUOTE_HAS_TEXT)', async () => {
     const { tickets, outcome, engage } = engine()
     m.topology.repostsAreQuotes = true
-    m.postService.getOwnQuotes.mockResolvedValue(new Map([[TARGET.id, { id: id('Quote'), bare: false }]]))
+    m.strict.ownQuoteStrict.mockResolvedValue({ id: id('Quote'), bare: false })
     await expect(engage.unrepost(TARGET)).rejects.toMatchObject({ code: 'QUOTE_HAS_TEXT' })
+    // An unreadable slot rejects the call: never a no-op ticket that reads as "undone".
+    m.strict.ownQuoteStrict.mockRejectedValueOnce(new Error('read failed'))
+    await expect(engage.unrepost(TARGET)).rejects.toThrow('read failed')
 
-    m.postService.getOwnQuotes.mockResolvedValue(new Map([[TARGET.id, { id: id('Bare'), bare: true }]]))
+    m.strict.ownQuoteStrict.mockResolvedValue({ id: id('Bare'), bare: true })
     m.postService.deletePost.mockRejectedValue(new Error('Request timeout'))
     const ticket = await outcome(engage.unrepost(TARGET))
     expect(m.postService.deletePost).toHaveBeenCalledWith(id('Bare'), VIEWER)
@@ -217,7 +248,7 @@ describe('engage writes', () => {
     m.documentExists.mockResolvedValue(false)
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
 
-    m.postService.getOwnQuotes.mockResolvedValue(new Map())
+    m.strict.ownQuoteStrict.mockResolvedValue(null)
     expect(await outcome(engage.unrepost(TARGET))).toMatchObject({ state: 'confirmed', documents: [] })
   })
 
@@ -272,7 +303,7 @@ describe('graph and safety writes', () => {
   })
 
   it('blocks with a message of at most 280 characters, and reports an unblock a followed list overrides', async () => {
-    const { outcome, safety } = engine()
+    const { tickets, outcome, safety } = engine()
     await expect(safety.block(AUTHOR, { message: 'x'.repeat(281) })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(safety.block(AUTHOR, { message: 42 as never })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block') })
@@ -283,6 +314,14 @@ describe('graph and safety writes', () => {
     const blocked = await safety.blocked()
     expect(validate(page(blockedUserDTO), blocked)).toEqual([])
     expect(blocked.items.map(item => [item.id, item.message])).toEqual([[AUTHOR, 'spam'], [id('Other'), null]])
+
+    // check reads the block document itself, never lib's optimistic block cache.
+    m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block'), confirmed: false })
+    const unconfirmed = await outcome(safety.block(AUTHOR))
+    m.strict.ownBlockExists.mockResolvedValue(false)
+    expect(await tickets.check(unconfirmed.id)).toMatchObject({ state: 'unconfirmed', retryable: true })
+    expect(m.strict.ownBlockExists).toHaveBeenCalledWith(VIEWER, AUTHOR)
+    expect(m.blockService.getBlockProvenance).not.toHaveBeenCalled()
 
     m.blockService.unblockUser.mockResolvedValue({ success: true })
     m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: true, isOwnBlock: false, inheritedFrom: id('Lister') })
@@ -405,6 +444,18 @@ describe('posts.publish and posts.delete', () => {
     expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.objectContaining({ rootPostId: id('post0') }), expect.anything())
   })
 
+  it('never fails a thread with a timed-out part: unconfirmed, unprovable, not retryable', async () => {
+    const { tickets, outcome, posts } = engine()
+    m.postService.createPost.mockImplementation(async () => post(id('post0')))
+    m.replyService.createReply
+      .mockRejectedValueOnce(new Error('Request timeout'))
+      .mockRejectedValueOnce(new Error(FEE_CHANGED))
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'one' }, { text: 'two' }, { text: 'three' }] }))
+    expect(ticket).toMatchObject({ state: 'unconfirmed', retryable: false, documents: [{ part: 0 }] })
+    expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { userMessage: expect.any(String) } })
+    await expect(tickets.retry(ticket.id)).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+  })
+
   it('marks a part the network did not confirm, and proves it with check', async () => {
     const { tickets, outcome, posts } = engine()
     m.topology.repostsAreQuotes = true
@@ -512,6 +563,19 @@ describe('notifications', () => {
     expect(await notifications.unreadCount()).toBe(35)
     await notifications.markRead(['like0'])
     expect(emitted.at(-1)).toEqual({ event: 'notifications.count', payload: { unread: 34 } })
+  })
+
+  it('starts each account from its own read state, even after a sign-out on the same engine', async () => {
+    const notifications = createNotificationsModule(emit)
+    m.notificationService.getInitialNotifications.mockResolvedValue({ notifications: [notification('a', 'like', 100)], latestTimestamp: 100 })
+    await notifications.list()
+    await notifications.markVisibleRead()
+    expect(await notifications.unreadCount()).toBe(0)
+    // Sign-out removes the stored copy (session.signOut); another account signs in.
+    kv.delete(useNotificationStore.persist.getOptions().name ?? '')
+    m.viewer = id('Other')
+    expect(await notifications.unreadCount()).toBe(1)
+    expect(m.notificationService.getInitialNotifications).toHaveBeenLastCalledWith(id('Other'), new Set())
   })
 
   it('polls from the watermark and merges what arrived', async () => {

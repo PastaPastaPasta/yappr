@@ -9,6 +9,7 @@ import { assertAtMost, badRequest, loadUserSummaries, notSupported, requireViewe
 import { pageOfList } from '../dto/paging'
 import { assertId, assertTarget, characters, relationProbe, signer, ticketIdentity, ticketTarget } from '../writes/handler-kit'
 import { createdDocument, fromTransitionResult } from '../writes/lib-results'
+import { ownBlockExists } from '../writes/strict-reads'
 import type { TicketStore } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
 import type { Page, UserSummaryDTO } from './dto'
@@ -58,8 +59,8 @@ const blockLists = new TtlMap<string, { blockedId: string; message?: string }[]>
  */
 export function createSafetyModule(tickets: TicketStore) {
   /** The viewer's own block on the ticket's account; `getBlockProvenance` rejects when that list cannot be read. */
-  const ownBlock = (expected: boolean) => relationProbe<BlockArgs>(async ({ viewer, ticket }) =>
-    (await blockService.getBlockProvenance(ticketIdentity(ticket), viewer)).isOwnBlock, expected)
+  // The block document itself: lib's block status answers from a cache its own write fills, even unconfirmed.
+  const ownBlock = (expected: boolean) => relationProbe<BlockArgs>(({ viewer, ticket }) => ownBlockExists(viewer, ticketIdentity(ticket)), expected)
 
   tickets.register<BlockArgs>('block', {
     persistArgs: true,
@@ -108,7 +109,7 @@ export function createSafetyModule(tickets: TicketStore) {
 
   return {
     /** Block an account, with an optional public message (at most 280 characters). */
-    block: async (targetId: string, options: { message?: string } = {}): Promise<WriteTicket> => submitBlock('block', targetId, options.message),
+    block: async (targetId: string, options?: { message?: string } | null): Promise<WriteTicket> => submitBlock('block', targetId, options?.message),
 
     /**
      * Delete the viewer's own block. Fails with `STILL_BLOCKED` when a block
