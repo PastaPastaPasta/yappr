@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { selfTest } from './battery-lib.mjs';
-import { moderatorsMayDelete } from './contract-probes.mjs';
+import { moderatorsMayDelete, referenceKindMismatch } from './contract-probes.mjs';
 import { REPO_ROOT, describeErr, sleep } from './seed/seed-lib.mjs';
 
 /**
@@ -27,7 +27,7 @@ const describeValue = (value) => JSON.stringify(value, (_k, v) => (typeof v === 
 /**
  * battery-lib's offline `selfTest`, extended with the declarations a moderated
  * battery is written against. Per document type, on top of
- * `where`/`immutable`/`immutableAllowSetting`:
+ * `where`/`immutable`/`immutableWhen`:
  *   moderatorDeletable: whether the type's `moderatorAbilities.delete` is set
  *   keepsHistory:       whether it carries `documentsKeepHistory` (a
  *                       moderator-deletable type cannot)
@@ -35,8 +35,10 @@ const describeValue = (value) => JSON.stringify(value, (_k, v) => (typeof v === 
  *                       typed scalar arrays (beta.4) the cases write
  *   distinctFromOwner:  identifier properties declaring distinctFrom $ownerId
  * and, contract-wide, `contract.moderation` = the lists `config.moderation`
- * must keep (banlist, suspensions, warnings). Every reference at a moderator-deletable type must be a
- * `deletableDocument` reference (40122 at registration otherwise).
+ * must keep (banlist, suspensions, warnings). Every same-contract reference must
+ * be of the one kind its target admits (5.0.0-beta.1: `moderatedDocument` at a
+ * type only moderators remove, keeping records; 40122/40131/40143/40144 at
+ * registration otherwise).
  */
 export function selfTestModerated(file, expect, contract = {}) {
   const parsed = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', file), 'utf8'));
@@ -65,13 +67,12 @@ export function selfTestModerated(file, expect, contract = {}) {
       if (schema.properties?.[property]?.distinctFrom !== '$ownerId') problems.push(`${docType}.${property} is not distinctFrom $ownerId`);
     }
   }
-  const deletable = new Set(Object.entries(schemas).filter(([, s]) => moderatorsMayDelete(s)).map(([n]) => n));
   for (const [name, schema] of Object.entries(schemas)) {
     for (const [property, definition] of Object.entries(schema.properties ?? {})) {
       const ref = definition.refersTo;
-      if (ref?.documentType && deletable.has(ref.documentType) && ref.type !== 'deletableDocument') {
-        problems.push(`${name}.${property} references moderator-deletable ${ref.documentType} as ${ref.type}`);
-      }
+      const target = ref?.contractId ? undefined : schemas[ref?.documentType];
+      const mismatch = target && referenceKindMismatch(ref.type, target, parsed.config);
+      if (mismatch) problems.push(`${name}.${property} references ${ref.documentType}, which ${mismatch}`);
     }
   }
   if (contract.moderation) {
