@@ -34,6 +34,8 @@ import { quoteTargetOf } from '@/lib/feed/resolve-quoted-posts'
 import { isBareRepost, type OwnQuote } from '@/lib/feed/quote-reposts'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
 import { logger } from '@/lib/logger'
+import { categorizeError } from '@/lib/error-utils'
+import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
 import { stopPropagation } from '@/lib/utils/events'
 import { IconButton } from '@/components/ui/icon-button'
 import { UserAvatar } from '@/components/ui/avatar-image'
@@ -180,7 +182,8 @@ function BareRepostCard({ post, enrichment, onDelete }: PostCardProps) {
       onDelete?.(post.id)
     } catch (error) {
       logger.error('Remove repost failed:', error)
-      toast.error('Failed to remove the repost. Please try again.')
+      // A banned or suspended author is refused the tombstone (41107/41108): say why.
+      if (!reportBarredWrite(error, viewerId)) toast.error('Failed to remove the repost. Please try again.')
     } finally {
       setRemoving(false)
     }
@@ -447,14 +450,27 @@ function PostCardView({
     if (!authedUser) return
     openDeleteModal(post, async () => {
       let ok: boolean
-      if (isReply) {
-        const { replyService } = await import('@/lib/services/reply-service')
-        ok = await replyService.deleteOwnReply(post.id, authedUser.identityId)
-      } else {
-        const { postService } = await import('@/lib/services/post-service')
-        ok = await postService.deleteOwnPost(post.id, authedUser.identityId)
+      try {
+        if (isReply) {
+          const { replyService } = await import('@/lib/services/reply-service')
+          ok = await replyService.deleteOwnReply(post.id, authedUser.identityId)
+        } else {
+          const { postService } = await import('@/lib/services/post-service')
+          ok = await postService.deleteOwnPost(post.id, authedUser.identityId)
+        }
+      } catch (error) {
+        // v9/v11 delete by tombstone, a replace: a banned or suspended author
+        // is refused it (41107/41108), so say that, with the moderators' reason,
+        // and close the dialog: every retry would be another paid refusal.
+        if (reportBarredWrite(error, authedUser.identityId)) return
+        toast.error(categorizeError(error))
+        throw error
       }
-      if (!ok) throw new Error('Delete operation failed')
+      if (!ok) {
+        // The modal only logs a rejection; without this the user saw nothing.
+        toast.error(`Could not delete this ${isReply ? 'reply' : 'post'}. Please try again.`)
+        throw new Error('Delete operation failed')
+      }
       toast.success(isReply ? 'Reply deleted' : 'Post deleted')
       // Detail and thread callers pass no onDelete, so the card must flip its
       // own rendering, or the pre-delete content would stay until a reload.
