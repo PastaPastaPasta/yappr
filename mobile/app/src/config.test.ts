@@ -8,6 +8,7 @@ describe('resolveAppConfig', () => {
       scheme: 'yappr-beta',
       applicationId: 'pr.yap.app.beta',
       appVersion: '1.2.3',
+      engine: null,
     });
   });
 

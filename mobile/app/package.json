@@ -12,10 +12,12 @@
     "typecheck": "npm run typegen --silent && tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "jest",
-    "bundle": "expo export --platform ios --platform android"
+    "bundle": "expo export --platform ios --platform android",
+    "engine:serve": "python3 -m http.server 8092 --bind 127.0.0.1 --directory ../engine/dist/${APP_VARIANT:-devnet}"
   },
   "dependencies": {
     "@gorhom/bottom-sheet": "^5.2.14",
+    "@react-native-community/netinfo": "12.0.1",
     "@shopify/flash-list": "2.0.2",
     "@tanstack/query-async-storage-persister": "^5.104.0",
     "@tanstack/react-query": "^5.104.0",
@@ -24,7 +26,9 @@
     "expo-application": "~57.0.3",
     "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.20",
+    "expo-crypto": "~57.0.3",
     "expo-dev-client": "~57.0.19",
+    "expo-file-system": "~57.0.7",
     "expo-haptics": "~57.0.3",
     "expo-image": "~57.0.5",
     "expo-linking": "~57.0.11",
@@ -54,6 +58,7 @@
     "@react-native/jest-preset": "0.86.3",
     "@testing-library/react-native": "^13.3.3",
     "@types/jest": "^29.5.14",
+    "@types/node": "~22.20.0",
     "@types/react": "~19.2.2",
     "babel-preset-expo": "~57.0.0",
     "eslint": "^9.39.5",

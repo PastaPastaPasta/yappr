@@ -3,6 +3,21 @@ import Constants from 'expo-constants';
 
 import { VARIANTS, variantForApplicationId, type Network, type Variant } from './variants';
 
+/** The engine bundle this build ships (plugins/engine-assets `engineExtra`). */
+export interface EngineBuildConfig {
+  bundleHash: string;
+  evoSdkVersion: string;
+  builtAt: string;
+  network: string;
+  /** Names the engine's storage namespaces: `testnet`, `mainnet` or `devnet-<name>`. */
+  networkKey: string;
+  topology: string;
+  /** `inline`: engine.inline.html with an https base URL; `file`: engine.html over file://. */
+  load: 'inline' | 'file';
+  /** Dev only: read the engine from this URL instead of the app bundle. */
+  devUrl?: string;
+}
+
 export interface AppConfig {
   variant: Variant;
   network: Network;
@@ -10,6 +25,8 @@ export interface AppConfig {
   scheme: string;
   applicationId: string;
   appVersion: string;
+  /** null when the JS bundle was built without a built engine (tests, a fresh clone). */
+  engine: EngineBuildConfig | null;
 }
 
 /**
@@ -21,7 +38,7 @@ export interface AppConfig {
  */
 export function resolveAppConfig(
   applicationId: string | null,
-  extra: { variant?: unknown } | undefined,
+  extra: { variant?: unknown; engine?: unknown } | undefined,
   appVersion: string | null,
 ): AppConfig {
   const variant = applicationId ? variantForApplicationId(applicationId) : undefined;
@@ -41,6 +58,7 @@ export function resolveAppConfig(
     scheme: v.scheme,
     applicationId,
     appVersion: appVersion ?? '0.0.0',
+    engine: (extra?.engine as EngineBuildConfig | null | undefined) ?? null,
   };
 }
 
