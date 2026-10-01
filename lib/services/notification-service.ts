@@ -7,9 +7,11 @@ import { YAPPR_CONTRACT_ID, blogIsV2 } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
 import { isPublishedBlogPost } from '../blog/content-utils';
-import { likesAreIndexOnly, likeNotificationsPinTarget, likeSurfacesAreSplit, likeIndexFor, mentionDocTypes, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
+import { likesAreIndexOnly, likeNotificationsAreTimeless, likeNotificationsPinTarget, likeSurfacesAreSplit, likeIndexFor, mentionDocTypes, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
 import { quoteNotificationType, quotedTargetIdOf } from '../feed/quote-reposts';
 import { readNotificationWindow } from './notification-windows';
+import { readScoped, scopedKey, writeScoped } from '../storage-scope';
+import { applyLikeObservations, parseLikeSnapshot, targetsToRead, type KindObservation, type LikeBatch } from '../like-notification-snapshot';
 
 // Constants for notification queries
 const NOTIFICATION_QUERY_LIMIT = 100;
@@ -59,8 +61,18 @@ interface RawNotification {
   blogPostSlug?: string;
   /** blogComment only: the comment text, shown instead of the post title. */
   blogCommentContent?: string;
+  /** v11 aggregated like: how many new likers the notification stands for (`fromUserId` is the first). */
+  likerCount?: number;
+  /**
+   * v11 like: `createdAt` is when this device noticed the likes, not an
+   * on-chain time, so it never moves the poll watermark and is not shown.
+   */
+  timeless?: boolean;
   createdAt: number;
 }
+
+/** localStorage key (deployment-scoped) of a user's timeless-like snapshot on this device. */
+const likeSnapshotKey = (userId: string) => `yappr_like_notifications:${userId}`;
 
 /**
  * What a reply was a reply TO — which is what the notification's wording is
@@ -114,6 +126,15 @@ export interface NotificationResult {
  * No separate notification documents are created.
  */
 class NotificationService {
+  /**
+   * Per user, the timeless like batches a completed fetch of this session
+   * already returned (marked only once the fetch resolved, so a failed one
+   * loses nothing). An initial fetch clears it, since its result replaces the
+   * list. Batches another tab created reach this one through the shared
+   * snapshot on its next poll.
+   */
+  private deliveredLikeBatches = new Map<string, Set<string>>();
+
   /**
    * Get new followers since timestamp
    * Uses the followers index: [followingId, $createdAt]
@@ -197,6 +218,7 @@ class NotificationService {
    * (see `likeService.getLikesOnMyPosts`), so `preloaded` is absent.
    */
   async getLikeNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[][]): Promise<RawNotification[]> {
+    if (likeNotificationsAreTimeless()) return this.getTimelessLikeNotifications(userId);
     try {
       const { likeService } = await import('./like-service');
       const since = new Date(sinceTimestamp);
@@ -230,6 +252,85 @@ class NotificationService {
       logger.error('Error fetching like notifications:', error);
       return [];
     }
+  }
+
+  /**
+   * v11: no like index keeps a like's time, so new likes are found by diffing
+   * ({@link diffLikeSnapshot}). Returns the retained batches no completed
+   * fetch of this session has returned yet.
+   */
+  private async getTimelessLikeNotifications(userId: string): Promise<RawNotification[]> {
+    try {
+      const batches = await this.diffLikeSnapshot(userId);
+      const delivered = this.deliveredLikeBatches.get(userId);
+      return batches
+        .filter((batch) => !delivered?.has(batch.id))
+        .map((batch): RawNotification => ({
+          id: batch.id,
+          type: 'like',
+          fromUserId: batch.likers[0],
+          postId: batch.targetId,
+          targetKind: batch.kind,
+          likerCount: batch.total,
+          timeless: true,
+          createdAt: batch.firstSeenMs,
+        }));
+    } catch (error) {
+      logger.error('Error fetching like notifications:', error);
+      return [];
+    }
+  }
+
+  /**
+   * One poll of the v11 like diff. Per kind: the like counts of the user's
+   * recent posts or replies (one composite, as on v10), then the likers of
+   * every target whose count moved (`likeService.getLikersOf`), folded into
+   * this device's snapshot (lib/like-notification-snapshot.ts). A kind whose
+   * reads fail is skipped and retried next poll.
+   *
+   * Read, diff and write run under a Web Lock per user, so two tabs never
+   * diff the same snapshot. Without Web Locks, a snapshot another tab saved
+   * meanwhile wins and this poll's diff is dropped (the next poll redoes it).
+   * A snapshot that did not persist (quota, blocked storage) yields no new
+   * batch, or every poll would announce the same likers again under a new id.
+   * Resolves to the batches the stored snapshot retains.
+   */
+  private async diffLikeSnapshot(userId: string): Promise<LikeBatch[]> {
+    const key = likeSnapshotKey(userId);
+    const run = async (): Promise<LikeBatch[]> => {
+      const { likeService } = await import('./like-service');
+      const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
+      const raw = readScoped(key);
+      const previous = parseLikeSnapshot(raw);
+
+      const observed = (await Promise.all(kinds.map(async (kind): Promise<KindObservation[]> => {
+        try {
+          const targets = await likeService.getRecentTargetLikeCounts(userId, kind);
+          const toRead = targetsToRead(previous, kind, targets);
+          const likers = toRead.length > 0 ? await likeService.getLikersOf(userId, toRead, kind) : new Map<string, { likers: string[]; complete: boolean }>();
+          return [{ kind, targets, likers }];
+        } catch (error) {
+          logger.warn(`Like notifications: reading ${kind} likes failed, retrying next poll:`, error);
+          return [];
+        }
+      }))).flat();
+
+      const { snapshot } = applyLikeObservations(previous, observed, { selfId: userId, nowMs: Date.now() });
+      const current = readScoped(key);
+      if (current !== raw) return parseLikeSnapshot(current)?.batches ?? [];
+      if (!writeScoped(key, JSON.stringify(snapshot))) {
+        logger.warn('Like notifications: the snapshot could not be saved; no new like is announced until it can');
+        return previous?.batches ?? [];
+      }
+      return snapshot.batches;
+    };
+    const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+    if (!locks) return run();
+    // Never wait on another tab: one that hangs (throttled in the background)
+    // would stall this tab's whole poll. Whoever holds the lock diffs; this tab
+    // shows what is stored.
+    return locks.request(scopedKey(`yappr-like-snapshot:${userId}`), { ifAvailable: true }, (lock) =>
+      lock ? run() : Promise.resolve(parseLikeSnapshot(readScoped(key))?.batches ?? []));
   }
 
   /**
@@ -583,6 +684,8 @@ class NotificationService {
         blogId: raw.blogId,
         blogPostSlug: raw.blogPostSlug,
         targetKind: raw.targetKind,
+        ...(raw.likerCount !== undefined ? { likerCount: raw.likerCount } : {}),
+        ...(raw.timeless ? { timeless: true } : {}),
       };
     });
   }
@@ -752,6 +855,8 @@ class NotificationService {
     readIds: Set<string> = new Set()
   ): Promise<NotificationResult> {
     const sinceTimestamp = Date.now() - INITIAL_FETCH_MS;
+    // The initial result replaces the list: every stored like batch belongs in it.
+    this.deliveredLikeBatches.delete(userId);
     return this.fetchNotifications(userId, sinceTimestamp, readIds, Date.now());
   }
 
@@ -795,10 +900,18 @@ class NotificationService {
 
     const notifications = await this.enrichNotifications(rawNotifications, readIds);
 
+    // The fetch completed: its timeless like batches are delivered.
+    const delivered = this.deliveredLikeBatches.get(userId) ?? new Set<string>();
+    for (const raw of allRaw) if (raw.timeless) delivered.add(raw.id);
+    this.deliveredLikeBatches.set(userId, delivered);
+
     // Advance the poll watermark past self-actions too, so filtered-out events
-    // aren't re-fetched on every poll.
-    const latestTimestamp = allRaw.length > 0
-      ? Math.max(...allRaw.map(n => n.createdAt))
+    // aren't re-fetched on every poll. A timeless like's time is the device's
+    // clock, not the chain's: it must not push the watermark past events of
+    // other sources still being committed.
+    const timed = allRaw.filter(n => !n.timeless);
+    const latestTimestamp = timed.length > 0
+      ? Math.max(...timed.map(n => n.createdAt))
       : fallbackTimestamp;
 
     return { notifications, latestTimestamp };
@@ -868,7 +981,8 @@ class NotificationService {
    * window is its own plain query, all in parallel: five requests a poll, plus
    * a page per full window. Likes (like design C) are per recent target,
    * outside the bundle ({@link likeNotificationsPinTarget}): per kind one
-   * composite plus one read.
+   * composite plus one read (v11: plus a liker read only when a count moved,
+   * {@link getTimelessLikeNotifications}).
    */
   private async fetchWindowedSources(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
     const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
