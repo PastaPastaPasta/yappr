@@ -1,0 +1,347 @@
+import { YAPPR_DM_CONTRACT_ID } from '@/lib/constants'
+import { logger } from '@/lib/logger'
+import type { directMessageService } from '@/lib/services/direct-message-service'
+import { useSettingsStore } from '@/lib/store'
+import type { Conversation, DirectMessage } from '@/lib/types'
+import { RpcError } from '../protocol/envelope'
+import type { AppLifecycleState } from '../shims/lifecycle'
+import type { WriteResult } from '../writes/tickets'
+import { createChangeTracker, unreadCounts, type DmEmit, type DmView } from './changes'
+import type { ConversationRow, DmStatusDTO, MessageDTO } from './types'
+
+/** The part of lib's `directMessageService` the legacy backend drives (tests pass a fake). */
+export type LegacyDmService = Pick<
+  typeof directMessageService,
+  'getConversations' | 'getConversationMessages' | 'pollNewMessages' | 'sendMessage' | 'markAsRead' | 'getOrCreateConversation' | 'getParticipantLastRead'
+>
+
+/** `legacy-messages.tsx`: the open conversation is polled every 3 s. */
+export const LEGACY_OPEN_POLL_MS = 3_000
+/** The conversation list is re-read at most this often (the host asks with its 30 s notifications poll). */
+export const LEGACY_LIST_TTL_MS = 30_000
+/** `getConversationMessages` reads the oldest 100; later pages follow with `pollNewMessages`. */
+const MAX_CATCH_UP_PAGES = 20
+/** `legacy-messages.tsx`: a polled message replaces the optimistic one with the same text sent within a minute. */
+const OPTIMISTIC_MATCH_MS = 60_000
+
+const KEY_PREFIX = 'l:'
+export const legacyKey = (conversationId: string) => `${KEY_PREFIX}${conversationId}`
+
+interface Thread {
+  messages: DirectMessage[]
+  /** The last document read from the chain, never a local send: polling continues after it. */
+  cursor: string | undefined
+}
+
+interface LegacyState {
+  identityId: string
+  conversations: Map<string, Conversation>
+  /** Started with `startDirect` and not written to yet. */
+  drafts: Set<string>
+  listedAt: number
+  listing: Promise<void> | null
+  threads: Map<string, Thread>
+  /** Read here without a receipt (or before one lands): newest message time read, per conversation. */
+  readUpTo: Map<string, number>
+  peerRead: Map<string, number>
+  openId: string | null
+  timer: ReturnType<typeof setTimeout> | null
+  paused: boolean
+  error: string | null
+}
+
+const toMessageDTO = (message: DirectMessage, identityId: string): MessageDTO => ({
+  id: message.id,
+  sender: message.senderId,
+  text: message.content,
+  at: message.createdAt,
+  own: message.senderId === identityId,
+  pending: false,
+})
+
+const sendReceipts = () => useSettingsStore.getState().sendReadReceipts
+
+/**
+ * Legacy 1:1 messages behind `dm.*`, for the testnet build (the v3 contract,
+ * PRD DM-11): no groups, no hiding, read receipts per the settings toggle.
+ * Mirrors `components/messages/legacy-messages.tsx` over the same
+ * `directMessageService` calls, with the same DTOs as DM v5.
+ */
+export function createLegacyBackend(options: { service: LegacyDmService; emit: DmEmit; coalesceMs?: number; now?: () => number }) {
+  const { service } = options
+  const now = options.now ?? Date.now
+  const tracker = createChangeTracker({ emit: options.emit, coalesceMs: options.coalesceMs, now })
+  let state: LegacyState | null = null
+
+  function stateFor(identityId: string): LegacyState {
+    if (state?.identityId === identityId) return state
+    stop()
+    tracker.reset()
+    state = {
+      identityId, conversations: new Map(), drafts: new Set(), listedAt: 0, listing: null, threads: new Map(),
+      readUpTo: new Map(), peerRead: new Map(), openId: null, timer: null, paused: false, error: null,
+    }
+    return state
+  }
+
+  function stop(): void {
+    if (state?.timer) clearTimeout(state.timer)
+    if (state) state.timer = null
+  }
+
+  function conversationOf(current: LegacyState, key: string): Conversation {
+    const found = key.startsWith(KEY_PREFIX) ? current.conversations.get(key.slice(KEY_PREFIX.length)) : undefined
+    if (!found) throw new RpcError('Conversation not found', 'BAD_REQUEST')
+    return found
+  }
+
+  function unreadOf(current: LegacyState, conversation: Conversation): number {
+    const readAt = current.readUpTo.get(conversation.id) ?? 0
+    const last = conversation.lastMessage?.createdAt.getTime() ?? 0
+    return last <= readAt ? 0 : conversation.unreadCount
+  }
+
+  function rowsOf(current: LegacyState): ConversationRow[] {
+    return [...current.conversations.values()]
+      // A draft shows only while it is open, as v5's do.
+      .filter(conversation => !current.drafts.has(conversation.id) || current.openId === conversation.id)
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+      .map(conversation => {
+        const last = conversation.lastMessage
+        const peerRead = current.peerRead.get(conversation.id)
+        return {
+          key: legacyKey(conversation.id),
+          backend: 'legacy',
+          kind: 'direct',
+          peerId: conversation.participantId,
+          ownerId: null,
+          name: null,
+          members: [],
+          isOwner: false,
+          lastMessage: last ? { text: last.content, at: last.createdAt, own: last.senderId === current.identityId } : null,
+          lastActivity: last ? last.createdAt : null,
+          unread: unreadOf(current, conversation),
+          flags: { hidden: false, unreadable: false, removed: false, ended: false, blocked: false, unsaved: false, draft: current.drafts.has(conversation.id) },
+          peerReadAt: peerRead !== undefined && sendReceipts() ? new Date(peerRead) : null,
+        }
+      })
+  }
+
+  function changed(): void {
+    tracker.changed(() => {
+      const current = state
+      if (!current) return null
+      const view: DmView = {
+        rows: rowsOf(current),
+        ready: current.listedAt > 0,
+        error: current.error,
+        messages: key => (current.threads.get(key.slice(KEY_PREFIX.length))?.messages ?? []).map(m => toMessageDTO(m, current.identityId)),
+      }
+      return view
+    })
+  }
+
+  /** Re-read the conversation list when it is older than the TTL (or `force`). */
+  async function refreshList(current: LegacyState, force = false): Promise<void> {
+    if (!force && current.listedAt > 0 && now() - current.listedAt < LEGACY_LIST_TTL_MS) return
+    current.listing ??= (async () => {
+      const fresh = await service.getConversations(current.identityId, { includeParticipantInfo: false })
+      if (state !== current) return
+      // lib reports a failed read as an empty list: never let that wipe conversations we hold.
+      if (fresh.length === 0 && [...current.conversations.keys()].some(id => !current.drafts.has(id))) {
+        current.error = 'Could not load conversations'
+        return
+      }
+      for (const conversation of fresh) {
+        current.drafts.delete(conversation.id)
+        const known = current.threads.get(conversation.id)?.messages.at(-1)
+        // A message sent or polled here may be newer than the list's page.
+        const lastMessage = known && known.createdAt > (conversation.lastMessage?.createdAt ?? new Date(0)) ? known : conversation.lastMessage
+        current.conversations.set(conversation.id, { ...conversation, lastMessage, updatedAt: lastMessage?.createdAt ?? conversation.updatedAt })
+      }
+      current.listedAt = now()
+      current.error = null
+    })().finally(() => {
+      current.listing = null
+    })
+    await current.listing
+    changed()
+  }
+
+  /** Merge messages into a thread (by id; a polled one replaces the optimistic copy of the same send). */
+  function merge(current: LegacyState, conversation: Conversation, incoming: DirectMessage[]): DirectMessage[] {
+    const thread = current.threads.get(conversation.id)
+    if (!thread) return []
+    const added: DirectMessage[] = []
+    for (const message of incoming) {
+      if (thread.messages.some(m => m.id === message.id)) continue
+      const optimistic = thread.messages.findIndex(m =>
+        m.id.startsWith('temp-') && m.senderId === message.senderId && m.content === message.content &&
+        Math.abs(m.createdAt.getTime() - message.createdAt.getTime()) < OPTIMISTIC_MATCH_MS)
+      if (optimistic >= 0) thread.messages[optimistic] = message
+      else {
+        thread.messages.push(message)
+        added.push(message)
+      }
+    }
+    thread.messages.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    const newest = thread.messages.at(-1)
+    if (newest && newest.createdAt >= (conversation.lastMessage?.createdAt ?? new Date(0))) {
+      current.conversations.set(conversation.id, { ...conversation, lastMessage: newest, updatedAt: newest.createdAt })
+    }
+    return added
+  }
+
+  /** The whole thread: the oldest 100, then every later page (`pollNewMessages` after the last one read). */
+  async function loadThread(current: LegacyState, conversation: Conversation): Promise<Thread> {
+    const loaded = current.threads.get(conversation.id)
+    if (loaded) return loaded
+    const first = await service.getConversationMessages(conversation.id, current.identityId, conversation.participantId)
+    const thread: Thread = { messages: first, cursor: first.at(-1)?.id }
+    for (let page = 0; page < MAX_CATCH_UP_PAGES; page++) {
+      const next = await service.pollNewMessages(conversation.id, thread.cursor, current.identityId, conversation.participantId)
+      if (next.messages.length === 0 || next.cursor === thread.cursor) break
+      thread.messages.push(...next.messages)
+      thread.cursor = next.cursor
+    }
+    if (state === current) current.threads.set(conversation.id, thread)
+    return thread
+  }
+
+  async function readPeerReceipt(current: LegacyState, conversation: Conversation): Promise<void> {
+    if (!sendReceipts()) return
+    const lastRead = await service.getParticipantLastRead(conversation.id, conversation.participantId)
+    // A failed read is null: keep what was seen; a receipt never moves back.
+    if (lastRead !== null) current.peerRead.set(conversation.id, Math.max(current.peerRead.get(conversation.id) ?? 0, lastRead))
+  }
+
+  /** One poll of the open conversation: new messages after the cursor, and the other side's receipt. */
+  async function pollOpen(current: LegacyState): Promise<void> {
+    const conversation = current.openId ? current.conversations.get(current.openId) : undefined
+    const thread = conversation && current.threads.get(conversation.id)
+    if (!conversation || !thread) return
+    const [page] = await Promise.all([
+      service.pollNewMessages(conversation.id, thread.cursor, current.identityId, conversation.participantId),
+      readPeerReceipt(current, conversation),
+    ])
+    if (state !== current || current.openId !== conversation.id) return
+    thread.cursor = page.cursor
+    merge(current, current.conversations.get(conversation.id) ?? conversation, page.messages)
+    changed()
+  }
+
+  function schedule(current: LegacyState): void {
+    if (current.timer) clearTimeout(current.timer)
+    current.timer = null
+    if (!current.openId || current.paused || state !== current) return
+    current.timer = setTimeout(() => {
+      current.timer = null
+      pollOpen(current)
+        .catch(error => logger.debug('Legacy DM poll failed:', error))
+        .finally(() => schedule(current))
+    }, LEGACY_OPEN_POLL_MS)
+  }
+
+  return {
+    kind: 'legacy' as const,
+
+    activate(identityId: string): void {
+      stateFor(identityId)
+    },
+
+    async deactivate(): Promise<void> {
+      stop()
+      state = null
+      tracker.reset()
+    },
+
+    /** No polling in the background (PRD: only the DM flush runs there); the open thread resumes on return. */
+    async lifecycle(lifecycle: AppLifecycleState): Promise<void> {
+      if (!state || lifecycle === 'inactive') return
+      state.paused = lifecycle === 'background'
+      schedule(state)
+    },
+
+    async status(identityId: string): Promise<DmStatusDTO> {
+      const current = stateFor(identityId)
+      await refreshList(current)
+      return {
+        backend: 'legacy', locked: false, ready: current.listedAt > 0, ...unreadCounts(rowsOf(current)),
+        capReached: false, retention: null, blocked: [], recovery: null, error: current.error,
+      }
+    },
+
+    async rows(identityId: string): Promise<ConversationRow[]> {
+      const current = stateFor(identityId)
+      await refreshList(current)
+      return rowsOf(current)
+    },
+
+    async messages(identityId: string, key: string): Promise<MessageDTO[]> {
+      const current = stateFor(identityId)
+      const thread = await loadThread(current, conversationOf(current, key))
+      return thread.messages.map(message => toMessageDTO(message, identityId))
+    },
+
+    async open(identityId: string, key: string | null): Promise<void> {
+      const current = stateFor(identityId)
+      const conversation = key === null ? null : conversationOf(current, key)
+      current.openId = conversation?.id ?? null
+      schedule(current)
+      changed()
+      if (!conversation) return
+      await Promise.all([loadThread(current, conversation), readPeerReceipt(current, conversation)])
+      changed()
+    },
+
+    /** Read here; a receipt is written only with "Read receipts" on, and only when something was unread (as web). */
+    async markRead(identityId: string, key: string): Promise<void> {
+      const current = stateFor(identityId)
+      const conversation = conversationOf(current, key)
+      const unread = unreadOf(current, conversation)
+      current.readUpTo.set(conversation.id, conversation.lastMessage?.createdAt.getTime() ?? now())
+      changed()
+      if (unread > 0 && sendReceipts() && !current.drafts.has(conversation.id)) {
+        await service.markAsRead(conversation.id, identityId)
+      }
+    },
+
+    assertSendable(identityId: string, key: string): void {
+      conversationOf(stateFor(identityId), key)
+    },
+
+    async send(identityId: string, key: string, text: string): Promise<WriteResult> {
+      const current = stateFor(identityId)
+      const conversation = conversationOf(current, key)
+      const result = await service.sendMessage(identityId, conversation.participantId, text.trim())
+      if (!result.success || !result.message) return { state: 'failed', error: new Error(result.error ?? 'Failed to send message') }
+      const sent = result.message
+      if (state === current) {
+        current.drafts.delete(conversation.id)
+        if (!current.threads.has(conversation.id)) current.threads.set(conversation.id, { messages: [], cursor: undefined })
+        merge(current, current.conversations.get(conversation.id) ?? conversation, [sent])
+        current.readUpTo.set(conversation.id, sent.createdAt.getTime())
+        changed()
+      }
+      const documents = sent.id.startsWith('temp-')
+        ? []
+        : [{ contractId: YAPPR_DM_CONTRACT_ID, type: 'directMessage', id: sent.id, action: 'create' as const, confirmed: true }]
+      return { state: 'confirmed', documents }
+    },
+
+    async startDirect(identityId: string, peerId: string): Promise<string> {
+      const current = stateFor(identityId)
+      await refreshList(current)
+      const existing = [...current.conversations.values()].find(c => c.participantId === peerId)
+      if (existing) return legacyKey(existing.id)
+      const { conversationId } = await service.getOrCreateConversation(identityId, peerId)
+      if (!current.conversations.has(conversationId)) {
+        current.conversations.set(conversationId, { id: conversationId, participantId: peerId, unreadCount: 0, updatedAt: new Date(now()), lastMessage: null })
+        current.drafts.add(conversationId)
+      }
+      return legacyKey(conversationId)
+    },
+  }
+}
+
+export type LegacyBackend = ReturnType<typeof createLegacyBackend>

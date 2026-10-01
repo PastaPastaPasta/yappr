@@ -71,6 +71,12 @@ export interface SessionModuleOptions {
   secureDurable?: () => Promise<void>
   /** Tests inject a controller with stubbed dependencies. */
   controller?: PlatformAuthController
+  /**
+   * Stops direct messages and saves their pending state, before sign-out or
+   * an account switch takes the keys away (the `dm` module). Default: lib's
+   * `stopDmEngine`, which does not wait for the save.
+   */
+  stopDm?: () => Promise<void>
 }
 
 /** AuthUser.balance (a number of credits) as the DTOs carry credits. */
@@ -112,6 +118,7 @@ export function createSessionModule(options: SessionModuleOptions) {
   const storage = options.storage ?? localStorage
   const controller = options.controller ?? createMobileAuthController()
   const registry = createAccountRegistry(storage)
+  const stopDm = options.stopDm ?? (async () => stopDmEngine())
 
   function toDTO(user: AuthUser | null): SessionDTO | null {
     if (!user) return null
@@ -278,14 +285,14 @@ export function createSessionModule(options: SessionModuleOptions) {
       await restored()
       if (!registry.get(identityId)) throw new RpcError('That account is not signed in on this device', 'BAD_REQUEST')
       if (registry.activeIdentityId() === identityId) return
-      stopDmEngine()
+      await stopDm()
       registry.switchTo(identityId)
     },
 
     /** Park the active account so another can sign in; the host restarts the engine with no secrets next. */
     async prepareAddAccount(): Promise<void> {
       await restored()
-      stopDmEngine()
+      await stopDm()
       registry.switchTo(null)
     },
 
@@ -303,7 +310,7 @@ export function createSessionModule(options: SessionModuleOptions) {
       options.tickets?.forgetIdentity(identityId)
       registry.remove(identityId)
       if (identityId === active) {
-        stopDmEngine()
+        await stopDm()
         await controller.logout()
         await options.secureDurable?.()
         announce('signed-out')
