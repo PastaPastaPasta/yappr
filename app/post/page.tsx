@@ -38,6 +38,7 @@ function PostDetailContent() {
     replyThreads,
     replyChain,
     removedChainIds,
+    replyRootPending,
     isLoading,
     isLoadingReplies,
     hasMoreReplies,
@@ -81,7 +82,11 @@ function PostDetailContent() {
   // was removed (40120, paid: by moderators, or on v10 by its author), so
   // nothing on this page can be replied to.
   const threadRootRemoved = removedChainIds.length > 0
-  const replyBlockedReason = threadRootRemoved ? 'The post that started this thread was removed, so nothing in it can be replied to.' : undefined
+  // Until the root has been looked up (a cached reply shows first), whether it
+  // was removed is unknown, so nothing is offered yet either.
+  const replyBlockedReason = threadRootRemoved
+    ? 'The post that started this thread was removed, so nothing in it can be replied to.'
+    : replyRootPending ? 'Checking whether this thread can still be replied to…' : undefined
 
   useEffect(() => {
     resetReplyEnrichment()
@@ -120,7 +125,7 @@ function PostDetailContent() {
   }, [replyThreads, enrichRepliesProgressively])
 
   const handleReply = () => {
-    if (!post || isDeleted || threadRootRemoved || !canReplyToPrivate) return
+    if (!post || isDeleted || replyBlockedReason || !canReplyToPrivate) return
     setReplyingTo(post)
     setComposeOpen(true)
   }
@@ -199,7 +204,7 @@ function PostDetailContent() {
                 <p className="text-gray-500 text-sm">{replyBlockedReason}</p>
               </div>
             ) : user ? (
-              isCheckingAccess ? (
+              isCheckingAccess || replyRootPending ? (
                 <div className="p-4 border-b border-gray-200 dark:border-gray-800">
                   <Button
                     variant="outline"
