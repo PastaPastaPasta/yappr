@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest'
 import socialContractV2 from '@/contracts/yappr-social-contract-v2.json'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
+import socialContractV11 from '@/contracts/yappr-social-contract-v11.json'
 import { CONTRACT_TOPOLOGIES } from './constants'
 
 type Schemas = Record<string, {
@@ -42,6 +43,7 @@ type Schemas = Record<string, {
 
 const V9 = socialContractV9.documentSchemas as unknown as Schemas
 const V10 = socialContractV10.documentSchemas as unknown as Schemas
+const V11 = socialContractV11.documentSchemas as unknown as Schemas
 const V2 = socialContractV2.documentSchemas as unknown as Schemas
 
 /**
@@ -56,7 +58,7 @@ async function topologyModule(topology: string) {
 
 describe('contract topology', () => {
   it('declares exactly the social contract shapes the repo carries', () => {
-    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10'])
+    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11'])
     // e2e/write/topology.spec.ts runs on whichever devnet cut .env.devnet names
     // (every topology but v2); a devnet env naming v2 would silently skip it.
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
@@ -118,7 +120,7 @@ describe('contract topology', () => {
   })
 
   it('names like fields and indexes that exist on each contract', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const like = m.likeIndexFor(kind)
@@ -144,7 +146,8 @@ describe('contract topology', () => {
       for (const kind of ['post', 'reply'] as const) {
         const like = m.likeIndexFor(kind)
         const shape = m.indexOnlyLikeShapeFor(kind)
-        if (!shape) throw new Error(`${topology} ${kind} likes must be indexOnly`)
+        if (!shape?.authorTimeIndex) throw new Error(`${topology} ${kind} likes must be indexOnly with an author-time index`)
+        expect(shape.deleteNamesCreatedAt, `${topology} ${kind}`).toBe(true)
         // The author-time index: author, then (v10) the target, and $createdAt,
         // with the liker as the terminal.
         const authorTime = indexOf(schemas, like.docType, shape.authorTimeIndex)
@@ -167,6 +170,7 @@ describe('contract topology', () => {
         }
       }
       expect(m.likeNotificationsPinTarget()).toBe(topology === 'v10')
+      expect(m.likeNotificationsAreTimeless()).toBe(false)
     }
 
     // v10: byAuthorPostTime replaces byAuthorPost and byAuthorTimePost, keeping
@@ -176,7 +180,24 @@ describe('contract topology', () => {
     expect(authorPostTime?.rankedCountable).toEqual({ at: ['postAuthor', 'postId'] })
     expect(V10.likeReply.indices?.map((index) => index.name)).toEqual(['byReply', 'byAuthorReplyTime'])
     const v2 = await topologyModule('v2')
-    expect([v2.likeNotificationsPinTarget(), v2.likeIndexFor('post').ownerIsTerminal]).toEqual([false, undefined])
+    expect([v2.likeNotificationsPinTarget(), v2.likeNotificationsAreTimeless(), v2.likeIndexFor('post').ownerIsTerminal]).toEqual([false, false, undefined])
+
+    // v11: the author index loses $createdAt, so no like index keeps a like's
+    // time; the liked state and the ranked chain are v10's.
+    const v11 = await topologyModule('v11')
+    for (const [kind, docType, author, target, index] of [['post', 'like', 'postAuthor', 'postId', 'byAuthorPost'], ['reply', 'likeReply', 'replyAuthor', 'replyId', 'byAuthorReply']] as const) {
+      const shape = v11.indexOnlyLikeShapeFor(kind)
+      expect([shape?.authorTimeIndex, shape?.deleteNamesCreatedAt, shape?.authorTimeKeysTarget], kind).toEqual([null, false, true])
+      expect(v11.likeIndexFor(kind)).toEqual({ ...v11.likeIndexFor(kind), docType, field: target, ownerFirst: false, ownerIsTerminal: true })
+      expect(keys(indexOf(V11, docType, index)), `v11 ${index}`).toEqual([author, target])
+      expect(indexOf(V11, docType, index)?.terminal).toBe('$ownerId')
+      const timed = (V11[docType].indices as Index[]).filter((entry) => keys(entry)?.includes('$createdAt'))
+      expect(timed.every((entry) => (entry as { outlivesDelete?: boolean }).outlivesDelete === true), `v11 ${docType}: every index on $createdAt outlives deletes`).toBe(true)
+    }
+    expect(indexOf(V11, 'like', 'byAuthorPost')?.rankedCountable).toEqual({ at: ['postAuthor', 'postId'] })
+    expect(indexOf(V11, 'like', 'byAuthorPost')?.rangeCountable).toBe(true)
+    expect(V11.likeReply.required).toEqual(['replyId', 'replyAuthor'])
+    expect([v11.likeNotificationsPinTarget(), v11.likeNotificationsAreTimeless()]).toEqual([true, true])
   })
 
   it.each(['post', 'reply'] as const)(
@@ -636,6 +657,7 @@ describe('contract topology', () => {
       // A descriptor resolves on first use, so each module is read before the next loads.
       const inline: boolean[] = []
       for (const topology of ['v2', 'v9', 'v10']) inline.push((await topologyModule(topology)).mentionsAreInline())
+      expect((await topologyModule('v11')).mentionsAreInline()).toBe(true)
       expect(inline).toEqual([false, false, true])
       expect(V9.postMention).toBeDefined()
     })
@@ -696,6 +718,69 @@ describe('contract topology', () => {
           const expected = optional.length > 0 && index.name !== 'byStatus' && index.name !== 'repliesOf'
           expect(index.skipIfAbsent === true, `${docType}.${index.name}`).toBe(expected)
         }
+      }
+    })
+  })
+
+  describe('v11 (5.0.0-beta.1)', () => {
+    type Json = Record<string, unknown>
+    const LIKE_INDEXES = { like: ['byAuthorPostTime', 'byAuthorPost'], likeReply: ['byAuthorReplyTime', 'byAuthorReply'] } as const
+
+    it('is v10 but for the like author indexes, outlivesDelete on the trend windows and the post/reply moderator abilities', () => {
+      const v10 = structuredClone(socialContractV10) as unknown as { documentSchemas: Record<string, Json & { indices?: Json[] }> }
+      const v11 = structuredClone(socialContractV11) as unknown as typeof v10
+      for (const [docType, [before, after]] of Object.entries(LIKE_INDEXES)) {
+        const was = v10.documentSchemas[docType].indices?.find((index) => index.name === before)
+        const now = v11.documentSchemas[docType].indices?.find((index) => index.name === after)
+        expect((was?.properties as Array<Record<string, string>>).map((entry) => Object.keys(entry)[0]).slice(0, 2), docType)
+          .toEqual((now?.properties as Array<Record<string, string>>).map((entry) => Object.keys(entry)[0]))
+        Object.assign(was ?? {}, { name: after, properties: now?.properties })
+      }
+      for (const name of ['byTrendPost', 'byTrendHashtagPost']) {
+        const index = v11.documentSchemas.like.indices?.find((entry) => entry.name === name)
+        expect(index?.outlivesDelete, name).toBe(true)
+        delete index?.outlivesDelete
+      }
+      v10.documentSchemas.likeReply.required = (v10.documentSchemas.likeReply.required as string[]).filter((name) => name !== '$createdAt')
+      for (const kind of ['post', 'reply']) v10.documentSchemas[kind].moderatorAbilities = v11.documentSchemas[kind].moderatorAbilities
+      expect(v11).toEqual(v10)
+    })
+
+    it('keeps every v10 surface but the like shape, and v2, v9 and v10 behave as before', async () => {
+      const read = async (topology: string) => {
+        const m = await topologyModule(topology)
+        return {
+          linkage: m.replyLinkage(),
+          kinds: (['post', 'reply'] as const).map((kind) => [m.likeIndexFor(kind), m.repostIndexFor(kind), m.bookmarkIndexFor(kind), m.quoteFieldFor(kind), m.replyCountFieldFor(kind)]),
+          rankings: (['posts', 'hashtags', 'creators'] as const).map((axis) => m.windowedRankingFor(axis)),
+          windows: (['reply', 'quote'] as const).map((source) => m.notificationWindowFor(source)),
+          flags: [m.isV10(), m.repostsAreQuotes(), m.mentionsAreInline(), m.notificationsAreWindowed(), m.reportsAreResolved(), m.yappIsLocked(), m.likesAreIndexOnly()],
+          isV11: m.isV11(),
+          settled: (['post', 'reply', 'report'] as const).map((docType) => [m.settledDeletionFor(docType), m.removalKeptFieldsFor(docType), m.moderatorDeleteWindowSeconds(docType)]),
+          elected: m.electedModeration(),
+        }
+      }
+      const [v2, v9, v10, v11] = [await read('v2'), await read('v9'), await read('v10'), await read('v11')]
+      expect({ ...v11, isV11: false, settled: v10.settled }).toEqual(v10)
+      expect([v2.isV11, v9.isV11, v10.isV11, v11.isV11]).toEqual([false, false, false, true])
+      for (const before of [v2, v9, v10]) expect(before.settled.flat(2).every((value) => value === null || (Array.isArray(value) && value.length === 0))).toBe(true)
+      expect(v11.settled).toEqual([
+        [{ windowSeconds: 604_800, leaderRequired: true, approvals: 3 }, ['hashtag', '$createdAt'], 604_800],
+        [{ windowSeconds: 604_800, leaderRequired: true, approvals: 3 }, ['rootPostId', '$createdAt'], 604_800],
+        [null, [], null],
+      ])
+    })
+
+    it('lets the elected team delete what it may approve: deleteDocuments on post and reply, and seats for three approvals', async () => {
+      const v11 = await topologyModule('v11')
+      const elected = v11.electedModeration()
+      for (const docType of ['post', 'reply']) expect(elected?.moderatedDocumentTypes[docType], docType).toContain('deleteDocuments')
+      // The leader, the elected members (up to 15) and the additions: a rule of three always fits.
+      expect(1 + (elected?.maxAddedModerators ?? 0)).toBeGreaterThanOrEqual(3)
+      // Settled documents keep `$createdAt` in required, which the window is measured from.
+      for (const docType of ['post', 'reply']) {
+        expect(V11[docType].documentsMutable, docType).toBe(false)
+        expect(V11[docType].required, docType).toContain('$createdAt')
       }
     })
   })

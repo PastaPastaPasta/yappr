@@ -332,6 +332,15 @@ export function keyNetwork(): KeyNetwork {
 // The v9 JSON stays in the tree while the client learns v10: moutai (v9) is
 // retired, but nothing may read a topology whose contract file is gone.
 //
+// `v11` — the 5.0.0-beta.1 devnet (sakura), `contracts/yappr-social-contract-v11.json`
+// (docs/SOCIAL_V11.md). Every v10 surface, plus three 5.0 keywords: the like
+// trend windows `outlivesDelete`, so no like index carries `$createdAt` any
+// more (an unlike names no time, and like notifications are timeless); a
+// moderator removal of a post or reply keeps its hashtag or thread root and
+// its `$createdAt` (`deleteKeepsFields`); and a post or reply older than a
+// week is deleted only by the seated team's leader plus two members
+// (`deleteWithin` + `deleteSettled`).
+//
 // The intermediate cuts (v3–v8) are gone: none exists on any chain any more,
 // and the repo does not keep contracts, generators or batteries that cannot be
 // registered. Recover them from git history.
@@ -339,7 +348,7 @@ export function keyNetwork(): KeyNetwork {
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 

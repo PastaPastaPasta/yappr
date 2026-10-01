@@ -145,6 +145,9 @@ export const CONSTRAINT_CASES = {
   ],
 };
 
+// Social v11 (5.0.0-beta.1) changes no propertyConstraints rule: its cases are v10's, run against its own file.
+for (const table of [DECLARED_RULES, CONSTRAINT_CASES]) table['yappr-social-contract-v11.json'] = table['yappr-social-contract-v10.json'];
+
 /**
  * The rejection a live write breaking `rule` must produce: the node's 10422
  * `DocumentPropertyConstraintViolatedError` message naming exactly this rule

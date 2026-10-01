@@ -261,6 +261,10 @@ function auditElected(elected, moderation, schemas, { network }) {
     if (moderatorsMayChangeFields(schema) && !(moderated[docType] ?? []).includes('changeDocumentFields')) {
       problems.push(`"${docType}" lists moderatorAbilities.changeFields but the moderated set does not give the team changeDocumentFields on it (10900)`);
     }
+    // #5215 (5.0): a settled document is deleted only by the team, so the team must be able to delete it.
+    if (schema.moderatorAbilities?.deleteSettled && !(moderated[docType] ?? []).includes('deleteDocuments')) {
+      problems.push(`"${docType}" sets moderatorAbilities.deleteSettled but the moderated set does not give the team deleteDocuments on it (10900)`);
+    }
   }
   const interim = elected.interim?.$type;
   if (!INTERIM_KINDS.includes(interim)) problems.push(`interim $type "${interim}" is not one of ${INTERIM_KINDS.join(', ')}`);
@@ -354,6 +358,11 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
     } else if (moderators.$type === 'elected') {
       problems.push(...auditElected(moderators, moderation, schemas, { network }));
     }
+    if (moderators.$type !== 'elected') {
+      for (const [docType, schema] of Object.entries(schemas)) {
+        if (schema.moderatorAbilities?.deleteSettled) problems.push(`"${docType}" sets moderatorAbilities.deleteSettled, which needs an elected team (10231)`);
+      }
+    }
   }
 
   problems.push(...auditIndexShapes(schemas));
@@ -423,6 +432,7 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
 // ---- Negative probes ---------------------------------------------------------
 
 const SOCIAL_V10 = 'contracts/yappr-social-contract-v10.json';
+const SOCIAL_V11 = 'contracts/yappr-social-contract-v11.json';
 const SOCIAL_V9 = 'contracts/yappr-social-contract-v9.json';
 const STOREFRONT = 'contracts/yappr-storefront-contract.json';
 const PROFILE = 'contracts/yappr-profile-contract.json';
@@ -442,6 +452,7 @@ const identifier = (position, refersTo) => ({ type: 'array', byteArray: true, mi
  */
 const PROBES = [
   { label: 'control: social v10 as committed', file: SOCIAL_V10, mutate: () => {}, expect: 'accepted' },
+  { label: 'control: social v11 as committed', file: SOCIAL_V11, mutate: () => {}, expect: 'accepted' },
   { label: 'control: storefront as committed', file: STOREFRONT, mutate: () => {}, expect: 'accepted' },
   { label: 'control: blog as committed', file: BLOG, mutate: () => {}, expect: 'accepted' },
   { label: 'control: pollr as committed', file: 'contracts/pollr-contract.json', mutate: () => {}, expect: 'accepted' },
@@ -472,6 +483,28 @@ const PROBES = [
   { label: 'blog postOwnerAndTime deriving through a deletableDocument reference', file: BLOG, expect: 'wasm', mutate: (s) => {
     types(s).blogPost.canBeDeleted = true; types(s).blogComment.properties.blogPostId.refersTo.type = 'deletableDocument';
   } },
+
+  // Social v11 (5.0.0-beta.1): outlivesDelete (#5232/#5233), deleteKeepsFields (#5219),
+  // deleteWithin + deleteSettled (#5215). index-only.md and deletion.md list the rules.
+  { label: 'v11: outlivesDelete on a window whose key holds no cleared index key ([$createdAt] → $ownerId)', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => {
+    types(s).like.indices.push({ name: 'probe', properties: [{ $createdAt: 'asc' }], terminal: '$ownerId', countable: 'countable', timeRange: { on: '$createdAt', range: 3600, step: 3600, ttl: 3600 }, outlivesDelete: true });
+  } },
+  { label: 'v11: outlivesDelete on a window without a ttl', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { delete types(s).like.indices.find((i) => i.name === 'byTrendPost').timeRange.ttl; } },
+  { label: 'v11: outlivesDelete on an index with no timeRange (byPost)', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).like.indices.find((i) => i.name === 'byPost').outlivesDelete = true; } },
+  { label: 'v11: outlivesDelete on a stored type\'s window (post.quotedPostOwnerRecent)', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.indices.find((i) => i.name === 'quotedPostOwnerRecent').outlivesDelete = true; } },
+  { label: 'v11: the trend windows outlive deletes while the author index keeps $createdAt (rows still commit to the time; legal, saves nothing)', file: SOCIAL_V11, expect: 'accepted', mutate: (s) => {
+    const index = types(s).like.indices.find((i) => i.name === 'byAuthorPost');
+    index.name = 'byAuthorPostTime'; index.properties.push({ $createdAt: 'asc' });
+  } },
+  { label: 'v11: deleteSettled without deleteWithin', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { delete types(s).post.moderatorAbilities.deleteWithin; } },
+  { label: 'v11: deleteSettled with 0 approvals', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteSettled.approvals = 0; } },
+  { label: 'v11: deleteSettled asking for 27 approvals (the leader, 15 elected and 10 added hold 26)', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteSettled.approvals = 27; } },
+  { label: 'v11: deleteSettled on a type the elected team may not delete', file: SOCIAL_V11, expect: 'audit', node: '10900', mutate: (s) => { elected(s).moderatedDocumentTypes.post = ['ban', 'suspend', 'warn']; } },
+  { label: 'v11: a deleteWithin of 0 s', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteWithin = 0; } },
+  { label: 'v11: deleteKeepsFields naming $id', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsFields.push('$id'); } },
+  { label: 'v11: deleteKeepsFields naming a property post does not have', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsFields.push('nope'); } },
+  { label: 'v11: deleteKeepsFields naming $updatedAt, which post does not require', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsFields.push('$updatedAt'); } },
+  { label: 'v11: deleteKeepsFields beside deleteKeepsRecord false', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsRecord = false; } },
 
   // Elected declaration (config/moderation/elected.rs): basic-structure rules of the
   // create transition, refused by the node with 10900. The one-day floor is mainnet's only
