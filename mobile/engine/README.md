@@ -8,7 +8,8 @@ mobile/engine/
   src/protocol/          envelope types + JSON codec (dependency-free; the RN app imports these at runtime)
   src/rpc/               transport, dispatcher (engine side), client proxy (host side)
   src/shims/             storage (sync Web Storage, write-through, secure routing), lifecycle events
-  src/api/               engine, feed, posts, engage, profiles, graph, explore: thin calls into lib/; dto.ts
+  src/api/               engine, feed, posts, engage, profiles, graph, explore, session, writes, settings, dm: thin calls into lib/; dto.ts
+  src/dm/                the DM backends (v5, legacy), their DTOs and the event diff
   src/dto/               cursors, paging, enrichment pipeline, thread port, capabilities, DTO validators
   src/entry.webview.ts   the WebView entry; src/install-shims.ts runs before lib loads
   src/selftest.ts        selftest.html: engine + in-page host, for browsers nothing can drive
@@ -194,6 +195,32 @@ Events: `session.changed {session, reason}` (`restored`, `signed-in`, `switched`
 - `classify(err)` (`src/writes/classify.ts`) walks `categorizeError`'s predicates in its order, then the cases it leaves generic (duplicate, already exists, rate limit, timeout, network, missing key). `userMessage` is always `categorizeError`'s text. lib's three module-private predicates are recognised by the string `categorizeError` produces for them. `test/fixtures/error-vectors.json` pins 49 real messages (code, outcome, retryable, ticket state, user message); add one with every new web predicate.
 
 **`settings.get()` / `settings.set(patch)`** (`src/api/settings.ts`): link previews, media gate, read receipts, NSFW mode, notification toggles, `payWith` and feed language, through lib's own `useSettingsStore` setters (persisted by its `persist`). A patch is validated whole before any of it applies (`BAD_REQUEST`).
+
+## Direct messages (M-DM)
+
+**`dm.*`** (`src/api/dm.ts`, `src/dm/`): one surface and one set of DTOs (`ConversationDTO`, `MessageDTO`, `DmStatusDTO`) over two backends, picked by `dmIsV5()` and reported as `engine.info().capabilities.dm`:
+
+- **`v5`** (devnet build): lib's `DmEngine` (`lib/services/dm-v5`), one per signed-in identity, which runs its own loop (30 s; 4 s while a conversation is open). Mirrors `components/messages/messages-v5.tsx`. Keys `d:…` / `g:…:…`.
+- **`legacy`** (testnet build, the v3 contract): `directMessageService`, 1:1 only, mirroring `legacy-messages.tsx`: the open conversation polls every 3 s, the list is re-read at most every 30 s (when the host asks), and `markRead` writes a read receipt only with "Read receipts" on and something unread. Keys `l:<conversationId>`. Group, hide, block and retention calls reject `NOT_SUPPORTED`. Web's merge of v3/v4 history into the v5 inbox is not ported: sakura is a fresh chain with no legacy history.
+
+| Method | What it does | Returns |
+| --- | --- | --- |
+| `status()` | Readiness, `locked` (no encryption key on the device: PRD DM-02), unread messages and conversations (the badge), and on v5 the cap notice, retention, Messages block list and recovery progress | `DmStatusDTO` |
+| `conversations()` / `search(q)` | The inbox by last activity, hidden ones flagged; 1:1 peers as `AuthorDTO` (cached 10 min). `search` matches group name, peer name, username, id and the preview | `ConversationDTO[]` |
+| `messages(key, cursor?)` | Newest first, 50 a page; the cursor pages back in time | `Page<MessageDTO>` |
+| `open(key \| null)` | The conversation on screen (fast polling, own streams, history) | — |
+| `markRead(key)` | Read position (v5: coalesced into the next self-state save) | — |
+| `send(key, text)` | `dm.send` ticket. v5 splits text over 4081 bytes. Refused before a ticket: empty text, unknown conversation, blocked peer, a group I left or that ended (`BAD_REQUEST`) | `WriteTicket` |
+| `startDirect(peerId)` | Opens (or finds) the 1:1 without writing; the first send starts it. A draft shows only while open | key |
+| `createGroup(name, ids)` | v5: up to 100 members with the creator; resolves after the roster and grants (`failed`: resend keys). Big groups take long: use a long call timeout | `{key, failed}` |
+| `renameGroup` / `addMember` / `removeMember` / `resendKeys` / `endGroup` (owner), `leaveGroup` (member) | `dm.group` tickets | `WriteTicket` |
+| `hide(key)` / `setBlocked(id, bool)` / `setRetention(r)` | v5 "Delete conversation", block in Messages (the encrypted self-state, separate from `safety.block`), "Reclaim message fees"; saved at once | — |
+| `unlock({key?})` | PRD DM-02, web's encryption-key modal: without `key`, derive it from the sign-in key; with `key` (WIF or hex, sensitive), check it against the identity and store it | `{unlocked, status}` or `{unlocked: false, reason}` |
+
+- **Lifecycle.** The backend starts on `session.changed` with a session (`restored`, `signed-in`, `switched`), and on any `dm.*` call (so it starts once a key appears, as web's `retry`). Sign-out and account switch call the session's `stopDm` before the keys go: the loop stops and the self-state flush is awaited (at most 10 s, since sign-out works offline), then nothing restarts messages (`RESTART_REQUIRED`) until a session starts again. `engine.lifecycle('background')` resolves once the DM flush is done (PRD DM-14); `active` polls at once. The v5 loop itself keeps its 30 s timer in the background (lib has no pause); the host's WebView suspension bounds it.
+- **Events.** `dm.changed {unreadTotal, unreadConversations, changedKeys, ready, error}`, coalesced to one per 250 ms from row diffs, and `dm.message {key, message}` once per new incoming message newer than the session start (history and recovery never notify).
+- **Tickets.** `dm.send` and `dm.group` never persist their arguments (message text, group names). A v5 send resolves as `confirmed` (`DmEngine.send` reads uncertain broadcasts back itself); a transport failure is `unconfirmed`, and its "check again" is `applied` once every part reads back as mine. After a restart the text is gone, so such a ticket stays unconfirmed: send again.
+- **Tests.** `test/unit/dm.test.ts` runs both backends offline: v5 on lib's in-memory test chain with three users on one ledger (round trip, events, paging, groups, block, hide, retention, lifecycle, the unconfirmed send), legacy over a fake service. `test/contract/read/dm.test.ts` checks the session gate and, on testnet, lists a public legacy inbox (v3 invites name both sides in the clear) without decrypting anything. `test/contract/write/dm.test.ts` is the sakura suite on personas 94–96 (1:1 round trip; group create, rename, add, leave, through account switches); it skips with the W-SAKURA reason until the cutover.
 
 ## Measurements (2026-10-01, testnet, evo-sdk 4.2.0-beta.7, Apple Silicon Mac)
 
