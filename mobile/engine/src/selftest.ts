@@ -35,7 +35,7 @@ async function run() {
   const info = await client.api.engine.boot()
   print(`boot ${since(t)} ms (sdk init ${info.bootMs} ms) ${info.network}/${info.topology} evo-sdk ${info.evoSdkVersion}`)
   t = performance.now()
-  const page = await client.api.feed.forYou()
+  const page = await client.api.feed.home({ tab: 'forYou' })
   print(`feed ${since(t)} ms, ${page.items.length} posts; cold start to feed ${since(t0)} ms`)
   const sample = page.items[0]
   if (sample) {
