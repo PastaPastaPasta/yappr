@@ -1,0 +1,17 @@
+{
+  "name": "yappr-mobile-tools",
+  "private": true,
+  "type": "module",
+  "description": "Test-wallet responder: answers dash-key: and dash-st: requests for sakura pool identities",
+  "scripts": {
+    "build": "node build.mjs",
+    "responder": "node test-wallet-responder.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.7",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}
