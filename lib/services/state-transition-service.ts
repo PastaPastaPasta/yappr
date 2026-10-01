@@ -992,7 +992,8 @@ class StateTransitionService {
    * indexOnly doctypes (v9 `like`/`likeReply`) store nothing under the document
    * id — the index entries ARE the rows — so the identifier-only delete path is
    * useless there. Drive instead needs every property value plus the consensus
-   * `$createdAt` to recompute and remove each index entry, which means the
+   * `$createdAt` (when the row commits to it) to recompute and remove each
+   * index entry, which means the
    * delete must be handed a fully-populated Document (the from_document /
    * index-only-delete route in the SDK), the call shape the social batteries
    * prove live on moutai.
@@ -1010,8 +1011,13 @@ class StateTransitionService {
     tuple: {
       /** The document id to put on the transition ($id from a covering query projection). */
       documentId: string;
-      /** The consensus `$createdAt` (ms) recovered from a covering index projection. */
-      createdAtMs: number;
+      /**
+       * The consensus `$createdAt` (ms) recovered from a covering index
+       * projection. Omitted where the row does not commit to it (v11 likes,
+       * whose `$createdAt` indexes all outlive deletes; the SDK drops one
+       * passed on such a type).
+       */
+      createdAtMs?: number;
       /** Every content property, with identifier fields as raw `Uint8Array` bytes. */
       data: Record<string, unknown>;
     }

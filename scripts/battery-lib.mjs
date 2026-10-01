@@ -602,7 +602,10 @@ export async function runBattery(spec) {
  * `expect` is keyed by document type:
  *   where: { <property>: { <referenced>: <referring>, … } }  exact match, in
  *          the beta.7 orientation (the referenced document's property is the key)
- *   immutable / immutableAllowSetting: property names, order-insensitive
+ *   immutable:     the names `immutable` freezes unconditionally, order-insensitive
+ *   immutableWhen: { <property>: <condition> } for its conditional
+ *                  `{ property, when }` entries (5.0.0-beta.1, which refuses
+ *                  the `immutableAllowSetting` they replaced), exact match
  *
  * Returns a process exit code.
  */
@@ -629,9 +632,13 @@ export function selfTest(file, expect) {
       compare(`${docType}.${property} where`,
         sortedPairs(schema.properties?.[property]?.refersTo?.where), sortedPairs(where));
     }
-    for (const key of ['immutable', 'immutableAllowSetting']) {
-      if (rules[key] === undefined) continue;
-      compare(`${docType} ${key}`, sortedNames(schema[key]), sortedNames(rules[key]));
+    const frozen = schema.immutable ?? [];
+    if (rules.immutable !== undefined) {
+      compare(`${docType} immutable`, sortedNames(frozen.filter((entry) => typeof entry === 'string')), sortedNames(rules.immutable));
+    }
+    if (rules.immutableWhen !== undefined) {
+      const conditional = Object.fromEntries(frozen.filter((entry) => typeof entry !== 'string').map(({ property, when }) => [property, when]));
+      compare(`${docType} conditional immutable`, sortedPairs(conditional), sortedPairs(rules.immutableWhen));
     }
     // The names of the propertyConstraints rules (property-constraint-cases.mjs holds their cases).
     if (rules.constraints !== undefined) {

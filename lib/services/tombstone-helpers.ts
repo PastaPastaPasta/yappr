@@ -1,8 +1,8 @@
 /**
  * Tombstone-by-edit: the "delete" path for permanent documents.
  *
- * The v9 topology declares `post` and `reply` as `canBeDeleted: false` (so that
- * every `refersTo` reference to them stays resolvable forever) and
+ * The v9 and v11 topologies declare `post` and `reply` as `canBeDeleted: false`
+ * (so that every `refersTo` reference to them stays resolvable forever) and
  * `documentsMutable: true`. Consensus therefore rejects a delete outright, and
  * removing a post means *replacing* it with an empty one flagged `deleted: true`.
  *
@@ -20,7 +20,7 @@
  */
 
 import { logger } from '@/lib/logger';
-import { clearableReferencesFor, type TombstonePreservation } from '@/lib/contract-topology';
+import { clearableReferencesFor, tombstoneKeepsEmptyContent, type TombstonePreservation } from '@/lib/contract-topology';
 import { isImmutablePropertyChangedError, isReferenceNotFoundError, referencedPathFromError } from '@/lib/error-utils';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
@@ -46,9 +46,29 @@ export interface TombstoneParams {
 }
 
 /**
- * Replace a document with a tombstone: empty content, `deleted: true`, and
- * nothing else beyond the named required fields. Returns false (without
- * throwing) when the document cannot be read or the replace is rejected.
+ * The part of every tombstone that is not carried over from the stored
+ * document. v9's `tombstoneIsBlank` reads the length of `content`, which is
+ * `minLength: 0` there, so the tombstone writes it EMPTY (absent and blank are
+ * different documents). v11's requires every clearable field ABSENT, so it
+ * writes `deleted` alone; consensus reads the boolean as 1, which is what the
+ * rule's `equal: [deleted, 1]` names.
+ */
+function tombstoneBase(): Record<string, unknown> {
+  return tombstoneKeepsEmptyContent() ? { content: '', deleted: true } : { deleted: true };
+}
+
+/**
+ * Replace a document with a tombstone: `deleted: true` ({@link tombstoneBase}:
+ * plus an empty `content` on v9) and nothing else beyond the named preserved
+ * fields. Returns false (without throwing) when the document cannot be read or
+ * the replace is rejected.
+ *
+ * On v11 every content field, the quote graph and the embed are cleared; a
+ * tombstoned quote or bare repost therefore stops holding its author's
+ * one-quote-per-target slot and stops counting as a quote. References at a
+ * post are `moderatedDocument` there and keep resolving after a removal, so
+ * the dead-reference retry below never fires
+ * ({@link clearableReferencesFor} is empty).
  *
  * On v9 the references a post carries are `deletableDocument` references,
  * and a replace re-validates every one of them: a quote of a post a moderator
@@ -78,11 +98,11 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
     const raw = documentToPlainObject(existing);
     const data = (raw.data || raw) as Record<string, unknown>;
     const revision = Number(raw.$revision ?? 0);
+    // Already a tombstone (a stale card, or a repost undone on another tab):
+    // the outcome asked for holds, and a second replace would only cost fees.
+    if ((data.deleted ?? raw.deleted) === true) return true;
 
-    // content is `minLength: 0` on both doctypes, so the empty string is a valid
-    // value rather than a removal — which matters, because `content` being absent
-    // and `content` being blank are different documents.
-    const replacement: Record<string, unknown> = { content: '', deleted: true };
+    const replacement = tombstoneBase();
 
     for (const field of params.preserve.identifiers) {
       const stored = data[field] ?? raw[field];

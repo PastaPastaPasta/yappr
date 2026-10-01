@@ -55,10 +55,10 @@ export interface HomepageSnapshot {
 
 const FEATURED_LIMIT = 5;
 /**
- * The like indexes are not preallocated (a moderator-deletable post is not a
- * permanentDocument target), so ranked pages hold liked posts only — but a
- * moderator-removed post drops out of the hydrated page, so a little headroom
- * keeps five featured cards.
+ * Ranked pages hold liked posts only: v11's preallocated like trees list every
+ * post, but `topLikedPosts` drops the zero-count groups, which rank last. A
+ * moderator-removed (or v11 tombstoned) post drops out of the hydrated page,
+ * so a little headroom is read for five featured cards.
  */
 const RANKED_LIMIT = FEATURED_LIMIT + 2;
 const TOP_USERS_LIMIT = 6;

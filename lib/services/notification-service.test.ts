@@ -160,3 +160,119 @@ describe('v10 windowed notification sources', () => {
     ])
   })
 })
+
+describe('v11 timeless like notifications', () => {
+  const store = new Map<string, string>()
+  const likes = { counts: vi.fn(), likers: vi.fn() }
+
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v11')
+    store.clear()
+    // readScoped needs a window; the reply source's cache wires listeners on it.
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('localStorage', { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => store.set(key, value) })
+    vi.doMock('./like-service', () => ({ likeService: { getRecentTargetLikeCounts: likes.counts, getLikersOf: likes.likers } }))
+    likes.counts.mockReset()
+    likes.likers.mockReset()
+  })
+  afterEach(() => {
+    vi.doUnmock('./like-service')
+    vi.unstubAllGlobals()
+  })
+
+  /** Each poll's per-kind counts and likers (only the targets asked for come back). */
+  function chainSays(posts: Record<string, string[]>, replies: Record<string, string[]> = {}) {
+    const of = (kind: string) => (kind === 'post' ? posts : replies)
+    likes.counts.mockImplementation(async (_user: string, kind: string) => new Map(Object.entries(of(kind)).map(([target, likers]) => [target, { count: likers.length, createdAtMs: 1_000 }])))
+    likes.likers.mockImplementation(async (_user: string, targets: string[], kind: string) => new Map(targets.map((target) => [target, { likers: of(kind)[target], complete: true }])))
+  }
+
+  it('baselines silently on the first poll, then aggregates new likers into one undated notification per target that does not move the watermark', async () => {
+    const { notificationService } = await import('./notification-service')
+
+    chainSays({ P1: ['alice'] }, { R1: ['bob'] })
+    expect(await notificationService.getLikeNotifications('me', 0)).toEqual([])
+    expect(likes.likers).toHaveBeenCalledWith('me', ['P1'], 'post')
+    expect(likes.likers).toHaveBeenCalledWith('me', ['R1'], 'reply')
+    expect([...store.keys()]).toEqual(['yappr_like_notifications:me'])
+
+    likes.likers.mockClear()
+    chainSays({ P1: ['alice', 'carol', 'dave', 'me'] }, { R1: ['bob'] })
+    vi.spyOn(Date, 'now').mockReturnValue(5_000)
+    const raw = await notificationService.getLikeNotifications('me', 0)
+
+    // Only the moved target is re-read.
+    expect(likes.likers.mock.calls).toEqual([['me', ['P1'], 'post']])
+    expect(raw).toEqual([{
+      id: 'like:post:P1:5000', type: 'like', fromUserId: 'carol', postId: 'P1', targetKind: 'post',
+      likerCount: 2, timeless: true, createdAt: 5_000,
+    }])
+    // Retained, not re-created: the next diff finds nothing new and returns the same batch.
+    expect(await notificationService.getLikeNotifications('me', 0)).toEqual(raw)
+  })
+
+  it('announces nothing new when the snapshot cannot be saved, so a full storage does not repeat a batch every poll', async () => {
+    const { notificationService } = await import('./notification-service')
+    chainSays({ P1: ['alice'] })
+    await notificationService.getLikeNotifications('me', 0)
+
+    vi.stubGlobal('localStorage', { getItem: (key: string) => store.get(key) ?? null, setItem: () => { throw new Error('QuotaExceededError') } })
+    chainSays({ P1: ['alice', 'carol'] })
+    expect(await notificationService.getLikeNotifications('me', 0)).toEqual([])
+  })
+
+  it('keeps a snapshot another tab saved during the diff and drops its own', async () => {
+    const { notificationService } = await import('./notification-service')
+    chainSays({ P1: ['alice'] })
+    await notificationService.getLikeNotifications('me', 0)
+    const saved = store.get('yappr_like_notifications:me')
+
+    const theirs = JSON.stringify({ ...JSON.parse(saved ?? '{}'), horizons: { post: 2_000 } })
+    chainSays({ P1: ['alice', 'carol'] })
+    // The other tab writes while this one reads the chain.
+    likes.likers.mockImplementationOnce(async () => {
+      store.set('yappr_like_notifications:me', theirs)
+      return new Map([['P1', { likers: ['alice', 'carol'], complete: true }]])
+    })
+    expect(await notificationService.getLikeNotifications('me', 0)).toEqual([])
+    expect(store.get('yappr_like_notifications:me')).toBe(theirs)
+  })
+
+  it('keeps the batch for the next initial fetch and leaves the watermark to timed sources', async () => {
+    const { loadIdentityBatch } = await import('./identity-batch')
+    vi.mocked(loadIdentityBatch).mockResolvedValue({ usernames: new Map(), profiles: [], avatars: new Map() } as unknown as Awaited<ReturnType<typeof loadIdentityBatch>>)
+    const { getEvoSdk } = await import('./evo-sdk-service')
+    vi.mocked(getEvoSdk).mockResolvedValue({ documents: { query: vi.fn().mockResolvedValue([]) } } as unknown as Awaited<ReturnType<typeof getEvoSdk>>)
+    const { notificationService } = await import('./notification-service')
+    vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])
+    vi.spyOn(notificationService, 'getBlogCommentNotifications').mockResolvedValue([])
+
+    chainSays({ P1: ['alice'] })
+    await notificationService.pollNewNotifications('me', 1_000)
+    chainSays({ P1: ['alice', 'carol'] })
+    const polled = await notificationService.pollNewNotifications('me', 1_000)
+
+    expect(polled.notifications.map(({ id, type, likerCount, timeless }) => ({ id, type, likerCount, timeless })))
+      .toEqual([{ id: expect.stringMatching(/^like:post:P1:\d+$/), type: 'like', likerCount: 1, timeless: true }])
+    // The like's time is the device clock: the watermark stays where it was.
+    expect(polled.latestTimestamp).toBe(1_000)
+
+    // A completed poll delivered it: the next poll does not repeat it, an initial fetch does.
+    chainSays({ P1: ['alice', 'carol'] })
+    expect((await notificationService.pollNewNotifications('me', 1_000)).notifications).toEqual([])
+    const initial = await notificationService.getInitialNotifications('me')
+    expect(initial.notifications.map(({ id }) => id)).toEqual(polled.notifications.map(({ id }) => id))
+  })
+
+  it('skips a kind whose reads fail and retries it next poll, without losing its baseline', async () => {
+    const { notificationService } = await import('./notification-service')
+    chainSays({ P1: ['alice'] })
+    await notificationService.getLikeNotifications('me', 0)
+
+    likes.counts.mockRejectedValue(new Error('DAPI unavailable'))
+    expect(await notificationService.getLikeNotifications('me', 0)).toEqual([])
+
+    chainSays({ P1: ['alice', 'erin'] })
+    expect((await notificationService.getLikeNotifications('me', 0)).map(({ fromUserId }) => fromUserId)).toEqual(['erin'])
+  })
+})
