@@ -345,6 +345,26 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
     expect(await session.awaitKeyRegistration(request.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in', session: { identityId } })
   })
 
+  it('signs in once when two calls race to complete the same approval', async () => {
+    const loginKey = crypto.getRandomValues(new Uint8Array(32))
+    const identityId = walletIdentity(loginKey, false)
+    const request = await session.startKeyExchange()
+    await walletApproves(request.uri, identityId, loginKey)
+    expect((await session.awaitKeyExchange(request.requestId, { waitMs: 1 })).status).toBe('needs-registration')
+    registerKeys(identityId, loginKey)
+    const complete = vi.spyOn(auth.PlatformAuthController.prototype, 'completeYapprKeyExchangeLogin')
+    const [first, second] = await Promise.all([
+      session.awaitKeyExchange(request.requestId, { waitMs: 1 }),
+      session.awaitKeyExchange(request.requestId, { waitMs: 1 }),
+    ])
+    expect(complete).toHaveBeenCalledTimes(1)
+    expect(first).toEqual(second)
+    expect(first).toMatchObject({ status: 'signed-in', session: { identityId } })
+    // The stored login key is the real one, not a zeroed buffer.
+    expect(JSON.parse(localStorage.getItem(`yappr_secure_lk_${identityId}`) ?? '""')).not.toMatch(/^A+=*$/)
+    complete.mockRestore()
+  })
+
   it('resumes a request after the engine restarts', async () => {
     const loginKey = crypto.getRandomValues(new Uint8Array(32))
     const identityId = walletIdentity(loginKey, true)

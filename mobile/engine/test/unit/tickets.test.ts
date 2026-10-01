@@ -26,6 +26,7 @@ function setup(overrides: Partial<TicketStoreOptions> & { storage?: ReturnType<t
     documentExists: vi.fn(async () => true),
     now: () => clock,
     newId: () => `t${++ids}`,
+    absenceRecheckMs: 0,
     ...overrides,
   }
   const store = createTicketStore(options)
@@ -96,7 +97,8 @@ describe('write tickets', () => {
     await settle()
     expect(store.get('t1')).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'TIMEOUT', outcome: 'unknown' } })
     expect(store.get('t2')).toMatchObject({ state: 'failed', retryable: false, error: { code: 'INSUFFICIENT_YAPP', outcome: 'refused' } })
-    expect(store.get('t3')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NONCE_CONFLICT', retryable: true } })
+    // A nonce refusal may be this very write landing first: check, never retry blind.
+    expect(store.get('t3')).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'NONCE_CONFLICT', outcome: 'unknown' } })
   })
 
   it('asks for a key when a write fails without one', async () => {
@@ -155,6 +157,68 @@ describe('retry: never blindly', () => {
     await settle()
     expect(store.get('t1')?.state).toBe('confirmed')
     expect(events.map(e => e.state)).toEqual(['pending', 'failed', 'pending', 'confirmed'])
+  })
+})
+
+describe('safety', () => {
+  it('treats a transport failure after the broadcast as unconfirmed, not as never sent', async () => {
+    const { store } = setup()
+    store.register('like', {
+      async run(_args, ctx) {
+        ctx.stage('broadcasting')
+        throw new Error('no available addresses for retry')
+      },
+    })
+    store.submit({ op: 'like', args: null })
+    await settle()
+    expect(store.get('t1')).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'NETWORK', outcome: 'unknown' } })
+  })
+
+  it('acts only on the active account\'s tickets', async () => {
+    let identity = 'alice'
+    const { store } = setup({ currentIdentity: () => identity, documentExists: async () => false })
+    store.register('like', { run: async () => ({ state: 'unconfirmed', documents: [POST] }) })
+    store.submit({ op: 'like', args: null })
+    await settle()
+    await store.check('t1')
+    identity = 'bob'
+    expect(store.get('t1')).toBeNull()
+    await expect(store.retry('t1')).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(store.check('t1')).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(store.dismiss('t1')).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('drops the previous attempt\'s unproven documents on retry, so a later check proves the new attempt', async () => {
+    let attempt = 0
+    const exists = new Set<string>()
+    const { store } = setup({ documentExists: async doc => exists.has(doc.id) })
+    store.register('post.publish', { run: async () => ({ state: 'unconfirmed', documents: [{ ...POST, id: `P${++attempt}` }] }) })
+    store.submit({ op: 'post.publish', args: {} })
+    await settle()
+    await store.check('t1')
+    await store.retry('t1')
+    await settle()
+    expect(store.get('t1')?.documents.map(d => d.id)).toEqual(['P2'])
+    exists.add('P2')
+    expect((await store.check('t1')).state).toBe('confirmed')
+  })
+
+  it('ignores a probe answer that a retry overtook', async () => {
+    let answer: (exists: boolean) => void = () => undefined
+    let calls = 0
+    const { store } = setup({ documentExists: () => (++calls <= 2 ? Promise.resolve(false) : new Promise(resolve => { answer = resolve })) })
+    const { handler } = controlled()
+    store.register('post.publish', { ...handler, run: async () => ({ state: 'unconfirmed', documents: [POST] }) })
+    store.submit({ op: 'post.publish', args: {} })
+    await settle()
+    expect((await store.check('t1')).retryable).toBe(true)
+    // A second check is still probing when the user retries.
+    const checking = store.check('t1')
+    store.register('post.publish', handler)
+    await store.retry('t1')
+    answer(true)
+    expect((await checking).state).toBe('pending')
+    expect(store.get('t1')?.state).toBe('pending')
   })
 })
 
@@ -225,6 +289,9 @@ describe('persistence and restart reconciliation', () => {
     restarted.store.register('post.publish', { run })
     const ticket = restarted.store.get('t1')
     expect(ticket).toMatchObject({ state: 'unconfirmed', stage: null, retryable: false, error: RESTARTED_ERROR, documents: [POST] })
+    // Reported to the host once the API exists.
+    await settle()
+    expect(restarted.events.map(e => [e.id, e.state])).toEqual([['t1', 'unconfirmed']])
     expect(ticket?.createdAt).toBeInstanceOf(Date)
     expect(run).not.toHaveBeenCalled()
     // The reconciliation is persisted at once, so a second crash finds it settled.
@@ -303,6 +370,8 @@ describe('persistence and restart reconciliation', () => {
   it('survives a corrupt store', () => {
     const storage = memoryStorage()
     storage.setItem(WRITES_STORAGE_KEY, '{not json')
+    expect(setup({ storage }).store.list()).toEqual([])
+    storage.setItem(WRITES_STORAGE_KEY, '[null, {"args": 1}, 7]')
     expect(setup({ storage }).store.list()).toEqual([])
   })
 })

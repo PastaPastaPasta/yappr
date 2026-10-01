@@ -131,6 +131,17 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
   const newId = options.newId ?? (() => crypto.randomUUID())
   /** One sign-in at a time: `start` abandons any earlier request. */
   let active: Request | null = null
+  /** The active request's sign-in, shared by overlapping callers so the login key is used once, before it is zeroed. */
+  let finishing: Promise<KeyExchangeStep<S>> | null = null
+  /** Wipes the active request when it expires, even if the host never calls back (ENGINE.md §11.1: keys live per operation). */
+  let expiry: ReturnType<typeof setTimeout> | null = null
+
+  function scheduleExpiry(request: Request): void {
+    if (expiry) clearTimeout(expiry)
+    expiry = setTimeout(() => { if (active === request) wipe(request) }, Math.max(request.expiresAt - now(), 0))
+    // Never what keeps a Node test process alive.
+    if (typeof expiry === 'object' && 'unref' in expiry) expiry.unref()
+  }
 
   function readStored(): StoredRequest | null {
     const stored = readJson<StoredRequest | null>(storage, PENDING_REQUEST_KEY, null)
@@ -142,7 +153,12 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
     for (const key of [request.ephemeralKey, request.approval?.loginKey, request.approval?.authKey, request.approval?.encryptionKey]) {
       if (key) clearSensitiveBytes(key)
     }
-    if (active === request) active = null
+    if (active === request) {
+      active = null
+      finishing = null
+      if (expiry) clearTimeout(expiry)
+      expiry = null
+    }
     if (readStored()?.requestId === request.requestId) storage.removeItem(PENDING_REQUEST_KEY)
   }
 
@@ -163,6 +179,7 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
       ephemeralKey,
       pubKeyHash: hash160(getYapprPublicKey(ephemeralKey)),
     }
+    scheduleExpiry(active)
     return active
   }
 
@@ -184,10 +201,21 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
     return poll.signal
   }
 
-  async function finish(request: Request, approval: Approval): Promise<KeyExchangeStep<S>> {
-    const session = await options.complete(approval.identityId, approval.loginKey, approval.keyIndex)
-    wipe(request)
-    return { status: 'signed-in', session }
+  function finish(request: Request, approval: Approval): Promise<KeyExchangeStep<S>> {
+    if (active !== request) return Promise.reject(cancelledError())
+    finishing ??= options.complete(approval.identityId, approval.loginKey, approval.keyIndex).then(
+      (session): KeyExchangeStep<S> => {
+        wipe(request)
+        return { status: 'signed-in', session }
+      },
+      (error: unknown) => {
+        finishing = null
+        // Refused outright (another account is signed in): nothing to retry, so the keys go now.
+        if (error instanceof RpcError && error.code === 'BAD_REQUEST') wipe(request)
+        throw error
+      },
+    )
+    return finishing
   }
 
   async function registration(request: Request, approval: Approval): Promise<KeyExchangeStep<S>> {
@@ -238,6 +266,7 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
         pubKeyHash: hash160(ephemeral.publicKey),
       }
       active = request
+      scheduleExpiry(request)
       const stored: StoredRequest = {
         requestId: request.requestId,
         uri: request.uri,
@@ -296,6 +325,7 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
         storage.removeItem(PENDING_REQUEST_KEY)
         // Registration can take minutes: the window restarts from the approval.
         request.expiresAt = now() + REQUEST_LIFETIME_MS
+        scheduleExpiry(request)
       }
       const approval = request.approval
       return (await keysRegistered(approval)) ? finish(request, approval) : registration(request, approval)

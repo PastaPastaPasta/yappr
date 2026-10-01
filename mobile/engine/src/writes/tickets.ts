@@ -91,6 +91,8 @@ export interface TicketStoreOptions {
   documentExists(document: TicketDocument): Promise<boolean>
   now?(): number
   newId?(): string
+  /** Gap before a second read confirms a document's absence (default 2 s, as `waitForDocument`). */
+  absenceRecheckMs?: number
 }
 
 export const RESTARTED_ERROR: EngineErrorData = {
@@ -116,6 +118,7 @@ export function createTicketStore(options: TicketStoreOptions) {
   const newId = options.newId ?? (() => crypto.randomUUID())
   const handlers = new Map<WriteOp, WriteHandler>()
   const records = new Map<string, TicketRecord>()
+  const absenceRecheckMs = options.absenceRecheckMs ?? 2_000
 
   const clone = (ticket: WriteTicket): WriteTicket => structuredClone(ticket)
   const allConfirmed = (documents: TicketDocument[]) => documents.map(doc => ({ ...doc, confirmed: true }))
@@ -125,9 +128,12 @@ export function createTicketStore(options: TicketStoreOptions) {
     for (const [id, { ticket }] of records) {
       if (ticket.state === 'confirmed' && ticket.updatedAt.getTime() < cutoff) records.delete(id)
     }
-    // Over the cap, drop the oldest settled tickets; a pending one is never dropped.
+    // Over the cap, drop settled tickets: confirmed, then failed, then unconfirmed
+    // (those still need a check), oldest first. A pending one is never dropped.
+    const dropOrder = { confirmed: 0, failed: 1, unconfirmed: 2 } as const
     const settled = [...records.values()].filter(r => r.ticket.state !== 'pending')
-      .sort((a, b) => a.ticket.updatedAt.getTime() - b.ticket.updatedAt.getTime())
+      .sort((a, b) => dropOrder[a.ticket.state as keyof typeof dropOrder] - dropOrder[b.ticket.state as keyof typeof dropOrder] ||
+        a.ticket.updatedAt.getTime() - b.ticket.updatedAt.getTime())
     for (const { ticket } of settled) {
       if (records.size <= MAX_TICKETS) break
       records.delete(ticket.id)
@@ -144,9 +150,13 @@ export function createTicketStore(options: TicketStoreOptions) {
     options.storage.setItem(WRITES_STORAGE_KEY, JSON.stringify(stored))
   }
 
+  /** Tickets a restart left pending, reported once the API exists. */
+  const reconciled: string[] = []
+
   function load() {
-    const stored = readJson<StoredRecord[]>(options.storage, WRITES_STORAGE_KEY, [])
-    for (const { ticket, args } of Array.isArray(stored) ? stored : []) {
+    const stored = readJson<unknown>(options.storage, WRITES_STORAGE_KEY, [])
+    const valid = (Array.isArray(stored) ? stored : []).filter((r): r is StoredRecord => typeof r?.ticket?.id === 'string')
+    for (const { ticket, args } of valid) {
       const restored: WriteTicket = {
         ...ticket,
         createdAt: new Date(ticket.createdAt),
@@ -154,10 +164,13 @@ export function createTicketStore(options: TicketStoreOptions) {
         lastCheckedAt: ticket.lastCheckedAt === null ? null : new Date(ticket.lastCheckedAt),
       }
       // Interrupted by a crash or restart: whether it went out is unknown, and it is never re-sent.
-      const reconciled: WriteTicket = restored.state === 'pending'
-        ? { ...restored, state: 'unconfirmed', stage: null, error: RESTARTED_ERROR, retryable: false, updatedAt: new Date(now()) }
-        : restored
-      records.set(reconciled.id, { ticket: reconciled, args })
+      if (restored.state === 'pending') {
+        Object.assign(restored, { state: 'unconfirmed', stage: null, error: RESTARTED_ERROR, retryable: false, updatedAt: new Date(now()) } satisfies Partial<WriteTicket>)
+        reconciled.push(restored.id)
+      }
+      // Without its arguments (never persisted) a write cannot be re-run.
+      if (args === undefined) restored.retryable = false
+      records.set(restored.id, { ticket: restored, args })
     }
   }
 
@@ -181,6 +194,15 @@ export function createTicketStore(options: TicketStoreOptions) {
     return record
   }
 
+  /** A ticket the host may act on: the active account's own (a retry would sign with the active account's key). */
+  function ownRecord(id: string): TicketRecord {
+    const record = recordOf(id)
+    if (record.ticket.identityId !== options.currentIdentity()) {
+      throw new RpcError('This write belongs to another account', 'BAD_REQUEST')
+    }
+    return record
+  }
+
   /** The ticket's documents with `next` merged in (by action and id). */
   function withDocuments(id: string, next: TicketDocument[] | undefined): TicketDocument[] {
     const current = recordOf(id).ticket.documents
@@ -191,7 +213,12 @@ export function createTicketStore(options: TicketStoreOptions) {
   }
 
   function fail(id: string, error: unknown, documents?: TicketDocument[]): void {
-    const data = classify(error)
+    const classified = classify(error)
+    // A transport failure once the transition left the device says nothing about whether it landed.
+    const sent = ['broadcasting', 'confirming'].includes(recordOf(id).ticket.stage ?? '')
+    const data: EngineErrorData = sent && (classified.code === 'NETWORK' || classified.code === 'RATE_LIMITED')
+      ? { ...classified, outcome: 'unknown', retryable: false }
+      : classified
     const state = ticketStateFor(data)
     const ticket = update(id, {
       state,
@@ -241,7 +268,12 @@ export function createTicketStore(options: TicketStoreOptions) {
         return { state: 'unknown', error: new Error('Nothing to check: this write named no documents') }
       }
       for (const doc of ticket.documents.filter(doc => !doc.confirmed)) {
-        const exists = await options.documentExists(doc)
+        let exists = await options.documentExists(doc)
+        // One node can lag: absence of a create counts only when a second read agrees.
+        if (!exists && doc.action === 'create') {
+          await new Promise(resolve => setTimeout(resolve, absenceRecheckMs))
+          exists = await options.documentExists(doc)
+        }
         if (exists !== (doc.action === 'create')) return { state: 'not-applied' }
       }
       return { state: 'applied' }
@@ -252,6 +284,13 @@ export function createTicketStore(options: TicketStoreOptions) {
 
   load()
   if (records.size > 0) persist()
+  // After construction: the host's subscription (and the entry's dispatcher) exist by then.
+  queueMicrotask(() => {
+    for (const id of reconciled) {
+      const record = records.get(id)
+      if (record) options.emit('write.status', clone(record.ticket))
+    }
+  })
 
   return {
     /** Register how `op` runs; M7b's write methods each register one. */
@@ -305,7 +344,7 @@ export function createTicketStore(options: TicketStoreOptions) {
 
     get(id: string): WriteTicket | null {
       const record = records.get(id)
-      return record ? clone(record.ticket) : null
+      return record && record.ticket.identityId === options.currentIdentity() ? clone(record.ticket) : null
     },
 
     /**
@@ -315,7 +354,7 @@ export function createTicketStore(options: TicketStoreOptions) {
      * probe's error. Any other state is returned unchanged.
      */
     async check(id: string): Promise<WriteTicket> {
-      const { ticket, args } = recordOf(id)
+      const { ticket, args } = ownRecord(id)
       if (ticket.state !== 'unconfirmed') return clone(ticket)
       const result = await probe(ticket, args)
       const lastCheckedAt = new Date(now())
@@ -339,7 +378,7 @@ export function createTicketStore(options: TicketStoreOptions) {
      * unconfirmed one a check proved absent. Otherwise `NOT_RETRYABLE`.
      */
     async retry(id: string): Promise<WriteTicket> {
-      const { ticket, args } = recordOf(id)
+      const { ticket, args } = ownRecord(id)
       const handler = handlers.get(ticket.op)
       if (ticket.state === 'pending' || !ticket.retryable) {
         throw new RpcError('This write cannot be retried now', 'NOT_RETRYABLE')
@@ -347,15 +386,18 @@ export function createTicketStore(options: TicketStoreOptions) {
       if (!handler || args === undefined) {
         throw new RpcError('This write can no longer be retried: start it again', 'NOT_RETRYABLE')
       }
-      const restarted = update(id, { state: 'pending', stage: 'queued', error: null, retryable: false })
+      // The earlier attempt's unproven documents are gone (proved absent, or refused): a fresh
+      // nonce gives fresh ids, which the new attempt records. Confirmed ones (thread parts) stay.
+      const documents = ticket.documents.filter(doc => doc.confirmed)
+      const restarted = update(id, { state: 'pending', stage: 'queued', error: null, retryable: false, documents })
       start(id, handler, args)
       return restarted
     },
 
     /** Forget a settled ticket. A pending one cannot be dismissed. */
     async dismiss(id: string): Promise<void> {
-      const record = records.get(id)
-      if (!record) return
+      if (!records.has(id)) return
+      const record = ownRecord(id)
       if (record.ticket.state === 'pending') throw new RpcError('A pending write cannot be dismissed', 'BAD_REQUEST')
       records.delete(id)
       persist()

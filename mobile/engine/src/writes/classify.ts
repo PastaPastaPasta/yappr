@@ -76,7 +76,9 @@ const RULES: readonly Rule[] = [
   ['EXPIRED', 'refused', false, isDocumentExpiredError],
   ['CONTEST', 'refused', false, error => isContestFullError(error) || isContestFundError(error) || isContestedDocumentsNotYetAllowedError(error)],
   ['FEE_CHANGED', 'refused', true, isFeeMultiplierNotToleratedError],
-  ['NONCE_CONFLICT', 'refused', true, isIdentityNonceConflictError],
+  // Refused for its nonce: by another write, or by this very transition executing before an
+  // SDK re-broadcast. Only a proof tells which (lib never rebuilds it), so: check, never retry blind.
+  ['NONCE_CONFLICT', 'unknown', false, isIdentityNonceConflictError],
   ['NOT_RECORDED', 'not-recorded', true, exactly(CREATE_NOT_RECORDED_ERROR)],
   ['PENDING_WRITE', 'not-sent', true, exactly(PENDING_WRITE_ERROR)],
   ['STORAGE', 'not-sent', true, exactly(NONCE_STORE_ERROR)],
@@ -132,12 +134,13 @@ export function classify(error: unknown): EngineErrorData {
 }
 
 /**
- * The ticket state a classified error leaves a write in: a timeout or an
- * already-exists may well have landed, so they are `unconfirmed` (check
- * again), never `failed`.
+ * The ticket state a classified error leaves a write in: one that may well
+ * have landed (a timeout, an already-exists, a nonce refusal, a transport
+ * failure after the broadcast) is `unconfirmed` (check again), never `failed`.
+ * An unrecognised error stays `failed`.
  */
 export function ticketStateFor(error: EngineErrorData): Extract<WriteState, 'failed' | 'unconfirmed'> {
-  return error.outcome === 'unknown' && (error.code === 'TIMEOUT' || error.code === 'DUPLICATE') ? 'unconfirmed' : 'failed'
+  return error.outcome === 'unknown' && error.code !== 'UNKNOWN' ? 'unconfirmed' : 'failed'
 }
 
 function readCode(error: unknown): unknown {

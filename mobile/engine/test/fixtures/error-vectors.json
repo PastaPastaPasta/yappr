@@ -283,9 +283,9 @@
       "expect": {
         "code": "NONCE_CONFLICT",
         "consensusCode": null,
-        "outcome": "refused",
-        "retryable": true,
-        "state": "failed",
+        "outcome": "unknown",
+        "retryable": false,
+        "state": "unconfirmed",
         "userMessage": "Another write from your account went out at the same moment, so this one was not saved. Try again."
       }
     },
