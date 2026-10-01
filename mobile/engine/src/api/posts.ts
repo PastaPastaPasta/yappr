@@ -1,8 +1,8 @@
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { POLLR_CONTRACT_ID } from '@/lib/constants'
 import {
-  authorDeletesLeaveHoles, canRepost, hasFlatThreads, referencesMayDangle, repostsAreQuotes, targetKindOf, threadRootIdOf,
-  type TargetKind,
+  authorDeletesLeaveHoles, canRepost, deletesAreTombstones, hasFlatThreads, referencesMayDangle, repostsAreQuotes, targetKindOf,
+  threadRootIdOf, type TargetKind,
 } from '@/lib/contract-topology'
 import { deletedReplyStubs, unloadedReplyParents } from '@/lib/feed/deleted-reply-stubs'
 import { provenAbsent } from '@/lib/feed/prove-absent'
@@ -17,13 +17,22 @@ import { loadEngagementCounts } from '@/lib/services/social-stats-service'
 import type { Post, Reply } from '@/lib/types'
 import { cursorInt, decodeCursor } from '../dto/cursor'
 import {
-  enrichToDTOs, loadUserSummaries, notSupported, searchUserSummaries, toPostDTOs, viewerId, withLoadingAuthor,
+  enrichToDTOs, loadUserSummaries, notSupported, requireViewer, searchUserSummaries, toPostDTOs, viewerId, withLoadingAuthor,
 } from '../dto/hydrate'
 import { emptyPage, endOnProofDirectionBug, nextPage, pageOfList } from '../dto/paging'
 import { assembleFlatThread, assembleV2Thread, flattenThreads, RENDERED_DEPTH, type FlatReply } from '../dto/thread'
-import type {
-  AuthorDTO, EngagementCountsDTO, EngagementDTO, EngagementPage, PollDTO, PostDTO, ThreadDTO, ThreadReplyDTO, UserSummaryDTO,
+import { assertTarget, badRequest, probeRelation, proveDocuments, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
+import { fromBoolean } from '../writes/lib-results'
+import { createPublishHandler, createdPost, validateDraft, type DraftDTO } from '../writes/publish'
+import type { TicketStore } from '../writes/tickets'
+import type { TargetRef, WriteTicket } from '../writes/types'
+import {
+  toPostDTO,
+  type AuthorDTO, type EngagementCountsDTO, type EngagementDTO, type EngagementPage, type PollDTO, type PostDTO, type ThreadDTO,
+  type ThreadReplyDTO, type UserSummaryDTO,
 } from './dto'
+
+export type { DraftDTO } from '../writes/publish'
 
 /** What an engagement or count read targets: the id and the doctype it lives in. */
 export interface TargetQuery {
@@ -65,7 +74,7 @@ const replyPages = new TtlMap<string, { documents: Reply[]; nextCursor?: string 
 const STUB_AUTHOR: AuthorDTO = { id: '', username: null, displayName: '', avatar: { uri: null, dicebear: null }, resolved: false }
 
 /** A post, or a reply as a Post, the way web's post page looks an id up. */
-async function load(id: string): Promise<Post | null> {
+export async function load(id: string): Promise<Post | null> {
   const post = await postService.getPostById(id, { skipEnrichment: true })
   if (post) return post
   // Replies are a separate doctype; web's usePostDetail falls back the same way.
@@ -336,4 +345,105 @@ export const posts = {
     if (query.length < MENTION_MIN_LENGTH) return []
     return searchUserSummaries(query, MENTION_LIMIT)
   },
+}
+
+/** `content.created`: a post or reply this engine published, for feeds to insert at once (`use-feed-data.ts`). */
+export interface ContentCreatedEvent {
+  kind: 'post' | 'reply'
+  id: string
+  /** False when the network had not confirmed it yet (the DAPI wait timed out). */
+  confirmed: boolean
+  post: PostDTO
+}
+
+let contentSink: ((event: ContentCreatedEvent) => void) | null = null
+let forwarding = false
+
+/**
+ * Forward the window `post-created` / `reply-created` events `publishThread`
+ * dispatches for a thread's first part as `content.created`, with the
+ * document as a `PostDTO`: enriched where the reads answer, else as created.
+ * One listener per bundle; the latest engine API receives them.
+ */
+function forwardCreatedContent(emit: (event: ContentCreatedEvent) => void): void {
+  contentSink = emit
+  if (forwarding || typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
+  forwarding = true
+  for (const kind of ['post', 'reply'] as const) {
+    window.addEventListener(`${kind}-created`, (event) => {
+      const detail = ((event as CustomEvent).detail ?? {}) as Record<string, unknown>
+      const post = createdPost(kind, detail)
+      if (!post) return
+      const confirmed = detail.confirmed !== false
+      enrichToDTOs([withLoadingAuthor(post)])
+        .then(([dto]) => dto ?? toPostDTO(post, { signedIn: true, avatars: new Map() }))
+        .catch(() => toPostDTO(post, { signedIn: true, avatars: new Map() }))
+        .then(dto => contentSink?.({ kind, id: post.id, confirmed, post: dto }))
+        .catch(() => {
+          // A DTO that would not map: feeds pick the post up on their next read.
+        })
+    })
+  }
+}
+
+/**
+ * `posts.publish` and `posts.delete` (ENGINE.md §6.3), on the ticket store.
+ * `emit` receives `content.created`.
+ */
+export function createPostWrites(tickets: TicketStore, emit: (event: 'content.created', payload: ContentCreatedEvent) => void) {
+  forwardCreatedContent(payload => emit('content.created', payload))
+  tickets.register<DraftDTO>('post.publish', createPublishHandler(load))
+  tickets.register<{ target: TargetRef }>('post.delete', {
+    persistArgs: true,
+    async run({ target }, ctx) {
+      const viewer = signer(ctx)
+      const { id, kind } = target
+      if (deletesAreTombstones()) {
+        return fromBoolean(kind === 'reply' ? await replyService.tombstoneReply(id, viewer) : await postService.tombstonePost(id, viewer))
+      }
+      return fromBoolean(kind === 'reply' ? await replyService.deleteReply(id, viewer) : await postService.deletePost(id, viewer))
+    },
+    // A real delete names the document, proved absent; a tombstone (v9) stays, blanked.
+    probe: ticket => deletesAreTombstones()
+      ? probeRelation(async () => {
+          const post = await load(ticketTarget(ticket).id)
+          // lib's single reads answer a failure as "absent", and a tombstone is never absent.
+          if (!post) throw new Error('The post could not be read')
+          return post.deleted !== true
+        }, false)
+      : proveDocuments(ticket.documents),
+  })
+
+  return {
+    /**
+     * Publish a post, a reply, a quote or a thread of up to 10 parts
+     * (`DraftDTO`), as web's composer does through `publishThread`. The
+     * ticket's `progress` counts parts, and its `documents` name each posted
+     * part by `part` index. After a partial failure, `writes.retry` resumes
+     * where a retry is allowed; otherwise publish again with
+     * `resume.postedIds` from those documents.
+     */
+    async publish(draft: DraftDTO): Promise<WriteTicket> {
+      validateDraft(draft)
+      requireViewer('Posting')
+      return tickets.submit<DraftDTO>({ op: 'post.publish', args: draft, target: draft.replyTo ?? draft.quote ?? null })
+    },
+
+    /**
+     * Delete the viewer's own post or reply (`post-card.tsx` `handleDelete`):
+     * a real delete, or a tombstone where the topology keeps them
+     * (`capabilities.deletesAreTombstones`).
+     */
+    async delete(target: TargetRef): Promise<WriteTicket> {
+      assertTarget(target)
+      if (requireViewer('Deleting') !== target.ownerId) throw badRequest('Only your own posts can be deleted')
+      const tombstone = deletesAreTombstones()
+      return tickets.submit({
+        op: 'post.delete',
+        args: { target },
+        target,
+        documents: tombstone ? [] : [socialDoc(target.kind, target.id, 'delete')],
+      })
+    },
+  }
 }

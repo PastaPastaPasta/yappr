@@ -16,6 +16,8 @@ export type EngineErrorCode =
   | 'FEE_CHANGED' | 'NONCE_CONFLICT' | 'NOT_RECORDED' | 'PENDING_WRITE' | 'STORAGE' | 'APP_OUTDATED'
   | 'BUILD_DEFECT' | 'IMMUTABLE' | 'TARGET_GONE' | 'NOT_OWNER' | 'STALE' | 'FROZEN' | 'INSUFFICIENT_YAPP'
   | 'DUPLICATE' | 'QUOTE_HAS_TEXT' | 'RATE_LIMITED' | 'TIMEOUT' | 'NETWORK' | 'PRIVATE_FEED_SYNC_REQUIRED' | 'UNKNOWN'
+  // domain writes (M7b): the own block is gone, a followed block list still blocks
+  | 'STILL_BLOCKED'
 
 /**
  * What is known about a write that did not confirm:
@@ -62,6 +64,8 @@ export interface TicketDocument {
   /** `create` names a document the write adds; `delete` one it removes. `check` proves each. */
   action: 'create' | 'delete'
   confirmed: boolean
+  /** `post.publish`: the index of the thread part this document is (`DraftDTO.parts`). */
+  part?: number
 }
 
 export interface WriteTicket {
