@@ -3,6 +3,7 @@ import {
   followRankingsAvailable, hasFlatThreads, hashtagsAreInline, likesAreIndexOnly, postsHaveLanguage,
   prefixRankingsAvailable, reportsAreResolved, repostsAreQuotes, windowedRankingsAvailable, yappIsLocked,
 } from '@/lib/contract-topology'
+import { dmIsV5 } from '@/lib/constants'
 import { avatarSeedMaxLength, profileTextLimits } from '@/lib/profile/v10-profile'
 import { DICEBEAR_STYLES, DICEBEAR_STYLE_LABELS, DEFAULT_AVATAR_STYLE } from '@/lib/services/unified-profile-service'
 import { IPFS_GATEWAYS } from '@/lib/utils/ipfs-gateway'
@@ -38,6 +39,7 @@ export function platformInfo(): PlatformInfoDTO {
       profileLimits: { ...profileTextLimits() },
       dashpayProfile: dashpayProfileExtension() !== null,
       yappLocked: yappIsLocked(),
+      dm: dmIsV5() ? 'v5' : 'legacy',
     },
     ipfsGateways: IPFS_GATEWAYS.map(({ domain, format }) => ({ domain, format })),
     avatarStyles: {

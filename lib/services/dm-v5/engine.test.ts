@@ -122,6 +122,28 @@ describe('DmEngine views', () => {
   })
 })
 
+describe('DmEngine.pollOwn', () => {
+  it('reads back my own message that landed although its send reported a failure, without the thread open', async () => {
+    const ledger = new MemoryLedger()
+    const chain = new MemoryChain(ledger, ALICE_ID)
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV, new MapKv(), chain))
+    engine(ledger, BOB_ID, BOB_PRIV)
+    const key = await alice.startDirect(bob58)
+    await alice.send(key, 'first')
+    // The write lands, but the answer is a transport failure: nothing is held locally.
+    chain.hook = (method, args) => {
+      if (method !== 'createMessage') return null
+      chain.hook = null
+      chain.createMessage(...(args as [Uint8Array, Uint8Array])).catch(() => undefined)
+      return { ok: false, failure: 'transport', error: 'Request timeout after 8000ms' }
+    }
+    await expect(alice.send(key, 'second')).rejects.toThrow(/timeout/)
+    expect(alice.messages(key).map((m) => m.text)).toEqual(['first'])
+    await alice.pollOwn(key)
+    expect(alice.messages(key).map((m) => m.text)).toEqual(['first', 'second'])
+  })
+})
+
 describe('DmEngine self-state edits across a reload (§5.5)', () => {
   /** What a fresh device reads from the chain. */
   async function savedState(ledger: MemoryLedger, id: Uint8Array, priv: Uint8Array) {
