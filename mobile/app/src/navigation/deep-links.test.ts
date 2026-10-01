@@ -93,6 +93,8 @@ describe('toAppRoute: other app routes', () => {
     'yappr://settings/app-lock',
     'yappr://settings/accounts',
     `yappr://media?postId=${X}&index=0`,
+    `yappr://block/${X}`,
+    `yappr://report/${X}?kind=post`,
   ];
 
   it.each([...sensitive, 'yappr-dev:///__gallery', 'yappr://settings/privacy', 'yappr://messages/new'])(

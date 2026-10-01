@@ -138,6 +138,8 @@ describe('app shell', () => {
     ['/sign-in/key', 'sign-in'],
     ['/welcome', 'sign-in'],
     ['/__gallery', null],
+    ['/block/abc123', 'safety'],
+    ['/report/abc123?kind=post', 'safety'],
   ])('%s has a stub', async (url, pr) => {
     const app = await renderApp('/');
     act(() => router.push(url as Href));
