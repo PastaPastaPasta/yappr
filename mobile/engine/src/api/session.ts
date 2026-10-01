@@ -63,6 +63,12 @@ export interface SessionModuleOptions {
   emit<E extends keyof SessionEvents>(event: E, payload: SessionEvents[E]): void
   tickets?: TicketStore
   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+  /**
+   * Resolves once the host has written every secure batch so far. Sign-in
+   * and sign-out wait for it, so a reported sign-in is durable and a
+   * reported sign-out has removed the keys (ENGINE.md §9.1). Absent in Node.
+   */
+  secureDurable?: () => Promise<void>
   /** Tests inject a controller with stubbed dependencies. */
   controller?: PlatformAuthController
 }
@@ -153,6 +159,7 @@ export function createSessionModule(options: SessionModuleOptions) {
   async function signedIn(identityId: string, method: SignInMethod): Promise<SessionDTO> {
     const user = controller.getState().user
     registry.upsert(identityId, { username: user?.username ?? null, method })
+    await options.secureDurable?.()
     const session = announce('signed-in')
     if (!session) throw new RpcError('Sign-in did not establish a session', 'NOT_SIGNED_IN')
     return session
@@ -298,12 +305,14 @@ export function createSessionModule(options: SessionModuleOptions) {
       if (identityId === active) {
         stopDmEngine()
         await controller.logout()
+        await options.secureDurable?.()
         announce('signed-out')
         return
       }
       for (const clear of [clearPrivateKey, clearEncryptionKey, clearEncryptionKeyType, clearTransferKey, clearLoginKey, clearAuthVaultDek]) {
         clear(identityId)
       }
+      await options.secureDurable?.()
     },
 
     async refreshBalance(): Promise<{ credits: bigint }> {

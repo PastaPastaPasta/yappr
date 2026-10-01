@@ -10,7 +10,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import bs58 from 'bs58'
 import * as secp256k1 from '@noble/secp256k1'
-import type { StorageChange } from '../../src/shims/storage'
 
 const chain = vi.hoisted(() => ({
   keysRegistered: (() => Promise.resolve(true)) as (identityId: string, auth: Uint8Array, enc: Uint8Array) => Promise<boolean>,
@@ -33,8 +32,19 @@ const { createEngineStorage, installEngineStorage } = await import('../../src/sh
 const engineStorage = createEngineStorage()
 installEngineStorage(engineStorage)
 Object.assign(globalThis, { window: globalThis })
-const changes: StorageChange[] = []
-engineStorage.onChange(change => changes.push(change))
+/** Write-through as the host sees it, one entry per op; secure batches are acknowledged unless `holdAcks`. */
+const changes: { area: 'local' | 'secure'; key: string; value: string | null }[] = []
+let holdAcks = false
+const heldAcks: number[] = []
+engineStorage.onBatch(batch => {
+  for (const op of batch.ops) {
+    if (op[0] === 'set') changes.push({ area: batch.area, key: op[1], value: op[2] })
+    if (op[0] === 'del') changes.push({ area: batch.area, key: op[1], value: null })
+  }
+  if (batch.area !== 'secure') return
+  if (holdAcks) heldAcks.push(batch.seq)
+  else queueMicrotask(() => engineStorage.ack(batch.seq))
+})
 
 const auth = await import('platform-auth')
 const { createSessionModule, createMobileAuthController } = await import('../../src/api/session')
@@ -76,7 +86,7 @@ const emit = (event: string, payload: unknown) => { emitted.push({ event, payloa
 
 /** A fresh engine boot over the same storage: a new controller and module, as after a restart. */
 function boot(): Session {
-  return createSessionModule({ emit, controller: createMobileAuthController() })
+  return createSessionModule({ emit, controller: createMobileAuthController(), secureDurable: () => engineStorage.secureDurable() })
 }
 
 const secureKeys = () => Object.keys(engineStorage.snapshot().secure)
@@ -157,6 +167,19 @@ describe('accounts: sign in, add, switch, restore, sign out', () => {
     // Never in the plain area, and never the raw hex anywhere.
     expect(changes.filter(c => c.area === 'local').map(c => c.value ?? '').join()).not.toContain(bytesToHex(keyA))
     expect(await session.current()).toEqual(signedIn)
+  })
+
+  it('reports a sign-in only once the host has acknowledged its keys', async () => {
+    await session.signOut()
+    holdAcks = true
+    let settled = false
+    const signingIn = session.signInWithKey({ key: bytesToHex(keyA) }).then(result => { settled = true; return result })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(heldAcks.length).toBeGreaterThan(0)
+    expect(settled).toBe(false)
+    holdAcks = false
+    heldAcks.splice(0).forEach(seq => engineStorage.ack(seq))
+    expect((await signingIn).identityId).toBe(idA)
   })
 
   it('refuses a second identity while one is active', async () => {

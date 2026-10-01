@@ -21,7 +21,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     feed,
     posts,
     profiles,
-    session: createSessionModule({ emit, tickets }),
+    session: createSessionModule({ emit, tickets, secureDurable: runtime.secureDurable }),
     settings,
     writes: createWritesModule(tickets),
   }

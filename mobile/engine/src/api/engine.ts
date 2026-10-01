@@ -24,6 +24,8 @@ export interface EngineRuntime {
   setLogLevel?: (level: LogLevel) => void
   /** Send an event to the host (`write.status`, `session.changed`, ...). */
   emit?: (event: string, payload: unknown) => void
+  /** Resolves once the host has acknowledged every secure-storage batch so far (ENGINE.md §9.1). */
+  secureDurable?: () => Promise<void>
 }
 
 export interface EngineInfo {
