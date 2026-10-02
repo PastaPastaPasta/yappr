@@ -35,26 +35,32 @@ type ListData = InfiniteData<Page<NotificationDTO>>;
 const refetchLists = () =>
   queryClient.invalidateQueries({ queryKey: queryKeys.notificationsAll }).catch(() => undefined);
 
-let polling: { viewer: string | null; done: Promise<void> } | null = null;
+let polling: { viewer: string | null; done: Promise<number | null> } | null = null;
 
 /**
  * One poll (`notifications.poll`) for `viewer`: merges what arrived since
  * the last one, updates the badge, and refetches the lists when something
  * new came. A poll already running for the same account is joined, not
- * repeated; one left over from another account is not.
+ * repeated; one left over from another account is not. Resolves with how
+ * many arrived (the lists are refetched by then), or null when it failed
+ * or belongs to an account no longer polled.
  */
-export function pollNotifications(viewer: string | null): Promise<void> {
+export function pollNotifications(viewer: string | null): Promise<number | null> {
   if (polling?.viewer === viewer) return polling.done;
   const current = {
     viewer,
     done: engine.api.notifications
       .poll()
-      .then(({ added, unread }) => {
-        if (polling !== current) return undefined;
+      .then(async ({ added, unread }) => {
+        if (polling !== current) return null;
         setUnread(unread);
-        return added > 0 ? refetchLists() : undefined;
+        if (added > 0) await refetchLists();
+        return added;
       })
-      .catch((error: unknown) => appendLog('warn', 'host', `Notifications poll failed: ${errorMessage(error)}`))
+      .catch((error: unknown) => {
+        appendLog('warn', 'host', `Notifications poll failed: ${errorMessage(error)}`);
+        return null;
+      })
       .finally(() => {
         if (polling === current) polling = null;
       }),
@@ -130,9 +136,19 @@ function patchRead(ids: ReadonlySet<string> | 'all'): number {
   return changed.size;
 }
 
+/** After a refused read mark: the lists and badge go back to what the engine holds. */
+function resyncAfterFailedMark(): void {
+  refetchLists();
+  engine.api.notifications
+    .unreadCount()
+    .then(setUnread)
+    .catch(() => undefined);
+}
+
 /**
  * A tapped row's notifications are read (NOTIF-01). Shown at once; the
- * engine's `notifications.count` then settles the badge.
+ * engine's `notifications.count` then settles the badge. A refused mark is
+ * undone quietly: the row opened anyway, and it shows unread again.
  */
 export function markNotificationsRead(ids: readonly string[]): void {
   if (ids.length === 0) return;
@@ -140,7 +156,7 @@ export function markNotificationsRead(ids: readonly string[]): void {
   if (unread > 0) setUnread(useNotificationBadge.getState().unread - unread);
   engine.api.notifications.markRead([...ids]).catch((error: unknown) => {
     appendLog('warn', 'host', `Marking notifications read failed: ${errorMessage(error)}`);
-    refetchLists();
+    resyncAfterFailedMark();
   });
 }
 
@@ -156,7 +172,7 @@ export async function markAllNotificationsRead(): Promise<void> {
   } catch (error) {
     appendLog('warn', 'host', `Mark all as read failed: ${errorMessage(error)}`);
     toast.error("Couldn't mark notifications as read. Try again.");
-    refetchLists();
+    resyncAfterFailedMark();
   }
 }
 

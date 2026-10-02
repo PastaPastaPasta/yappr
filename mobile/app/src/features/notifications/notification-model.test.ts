@@ -150,9 +150,9 @@ describe('destinationOf', () => {
     notification({ id: 'b2', type: 'blogPost' }),
   ]);
 
-  it('opens the post, seeding it with the preview', () => {
-    expect(destinationOf(like)).toEqual({ kind: 'post', id: 'mine', post: like.preview });
-    expect(destinationOf(reply)).toEqual({ kind: 'post', id: 'their-reply', post: null });
+  it('opens the post by id, never seeding it with the preview', () => {
+    expect(destinationOf(like)).toEqual({ kind: 'post', id: 'mine' });
+    expect(destinationOf(reply)).toEqual({ kind: 'post', id: 'their-reply' });
   });
 
   it('opens the actor for a follow', () => {

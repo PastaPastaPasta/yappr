@@ -6,10 +6,12 @@ import { Platform, Pressable, RefreshControl, View } from 'react-native';
 import { BellIcon, CheckIcon, Cog6ToothIcon } from 'react-native-heroicons/outline';
 
 import { config } from '~/config';
+import { queryKeys } from '~/data/keys';
 import { lastIdentity, useSession } from '~/data/session';
 import { engineSupervisor } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
 import { openExternal, openPost, openUser } from '~/features/post/post-navigation';
+import { queryClient } from '~/state/query-client';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { IconButton } from '~/ui/IconButton';
@@ -45,6 +47,7 @@ import { readErrorMessage, UNAVAILABLE_MESSAGE } from './read-error';
 /** UX_SPEC §5.8 (NOTIF-07): reply and quote sources are 3.5-day windows on the dev contract. */
 export const WINDOWED_FOOTER = 'Older replies and quotes may not appear here.';
 const OFFLINE_MESSAGE = "You're offline";
+const REFRESH_FAILED = "Couldn't refresh notifications. Try again.";
 
 function SignedOut() {
   return (
@@ -123,6 +126,12 @@ export function NotificationsScreen() {
   const c = useColors();
   const params = useLocalSearchParams<{ filter?: string }>();
   const [chosen, setChosen] = useState<MobileFilter>(() => parseFilter(params.filter));
+  // The tab stays mounted: a later `?filter=` link changes the filter too (set during render, as React advises).
+  const [linkedFilter, setLinkedFilter] = useState(params.filter);
+  if (params.filter !== linkedFilter) {
+    setLinkedFilter(params.filter);
+    if (params.filter !== undefined) setChosen(parseFilter(params.filter));
+  }
   const { status, identityId } = useSession();
   // Before the engine restores the session, whoever was signed in last time counts (PRD G-2).
   const signedIn = status === 'signed-in' || (status === 'unknown' && lastIdentity() !== null);
@@ -146,7 +155,7 @@ export function NotificationsScreen() {
     markNotificationsRead(row.unreadIds);
     const destination = destinationOf(row);
     if (!destination) return;
-    if (destination.kind === 'post') openPost(destination.post ?? destination.id);
+    if (destination.kind === 'post') openPost(destination.id);
     else if (destination.kind === 'user') openUser(destination.id);
     else openExternal(`https://yap.pr${config.webBasePath}${destination.path}`);
   }, []);
@@ -159,9 +168,15 @@ export function NotificationsScreen() {
       return;
     }
     setRefreshing(true);
+    // A poll that brought something has refetched the lists already.
     pollNotifications(viewerId)
-      .then(() => refetch())
-      .catch(() => undefined)
+      .then((added) => (added ? undefined : refetch()))
+      .then(() => {
+        if (queryClient.getQueryState(queryKeys.notifications(filter))?.status === 'error') {
+          toast.error(REFRESH_FAILED);
+        }
+      })
+      .catch(() => toast.error(REFRESH_FAILED))
       .finally(() => setRefreshing(false));
   };
 

@@ -1,14 +1,15 @@
 import type { NotificationDTO, Page, SessionDTO, SettingsDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, renderHook, screen } from '@testing-library/react-native';
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { renderRouter } from 'expo-router/testing-library';
 import type { ReactNode } from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
+import { AppState, RefreshControl, type AppStateStatus } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
+import { engineSupervisor } from '~/engine';
 import { openPost, openUser } from '~/features/post/post-navigation';
 import { queryClient } from '~/state/query-client';
 import { AUTHORS, fixturePost } from '~/ui/post/fixtures';
@@ -18,7 +19,10 @@ import { NotificationSettingsScreen } from './NotificationSettingsScreen';
 import { NotificationsScreen, WINDOWED_FOOTER } from './NotificationsScreen';
 import { POLL_INTERVAL_MS, useNotificationBadge, useNotificationsBadge } from './notifications-data';
 
-jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
+jest.mock('~/engine', () => {
+  const { engineModule } = jest.requireActual('~/data/testing/fake-engine');
+  return { ...engineModule, engineSupervisor: { ...engineModule.engineSupervisor, restart: jest.fn() } };
+});
 jest.mock('~/features/post/post-navigation', () => ({
   openPost: jest.fn(),
   openUser: jest.fn(),
@@ -173,17 +177,32 @@ describe('Notifications', () => {
 
     await act(async () => fireEvent.press(screen.getByTestId('notification-likes:my-post')));
     expect(fakeEngine.method('notifications.markRead')).toHaveBeenCalledWith(['like-1', 'like-2']);
-    expect(openPost).toHaveBeenCalledWith(myPost);
+    // By id: the preview's stats and viewer marks are placeholders, never seeded as the post.
+    expect(openPost).toHaveBeenCalledWith('my-post');
     expect(screen.getAllByTestId('unread-dot')).toHaveLength(1);
     expect(useNotificationBadge.getState().unread).toBe(1);
 
     await act(async () => fireEvent.press(screen.getByTestId('notification-reply-1')));
-    expect(openPost).toHaveBeenLastCalledWith(theirReply);
+    expect(openPost).toHaveBeenLastCalledWith('their-reply');
     // Already read: nothing to mark.
     expect(fakeEngine.method('notifications.markRead')).toHaveBeenCalledTimes(1);
 
     await act(async () => fireEvent.press(screen.getByTestId('notification-follow-1')));
     expect(openUser).toHaveBeenCalledWith(AUTHORS.nameless.id);
+  });
+
+  it('puts the row and the badge back when a read mark is refused', async () => {
+    signIn();
+    useNotificationBadge.setState({ unread: 3 });
+    list().mockResolvedValue(page(NOTIFICATIONS));
+    fakeEngine.method('notifications.markRead').mockRejectedValue(new Error('nope'));
+    fakeEngine.method('notifications.unreadCount').mockResolvedValue(3);
+    await renderScreen();
+
+    await act(async () => fireEvent.press(screen.getByTestId('notification-likes:my-post')));
+    expect(openPost).toHaveBeenCalledWith('my-post');
+    expect(useNotificationBadge.getState().unread).toBe(3);
+    expect(screen.getAllByTestId('unread-dot')).toHaveLength(2);
   });
 
   it('opens the actor from the avatar', async () => {
@@ -209,6 +228,33 @@ describe('Notifications', () => {
     expect(screen.queryByTestId('notifications-mark-all')).toBeNull();
   });
 
+  it('says so and restores the badge when mark all as read is refused', async () => {
+    signIn();
+    useNotificationBadge.setState({ unread: 3 });
+    list().mockResolvedValue(page(NOTIFICATIONS));
+    fakeEngine.method('notifications.markVisibleRead').mockRejectedValue(new Error('nope'));
+    fakeEngine.method('notifications.unreadCount').mockResolvedValue(3);
+    await renderScreen();
+
+    await act(async () => fireEvent.press(screen.getByTestId('notifications-mark-all')));
+    expect(useToastStore.getState().current?.message).toBe("Couldn't mark notifications as read. Try again.");
+    expect(useNotificationBadge.getState().unread).toBe(3);
+    expect(screen.getAllByTestId('unread-dot')).toHaveLength(2);
+  });
+
+  it('falls back to All when the selected filter\'s type is turned off (NOTIF-02)', async () => {
+    signIn();
+    list().mockImplementation(({ filter }: { filter: string }) => Promise.resolve(page(filter === 'all' ? NOTIFICATIONS : [])));
+    await renderScreen();
+
+    await act(async () => fireEvent.press(screen.getByTestId('notifications-filters-like')));
+    expect(list()).toHaveBeenLastCalledWith({ filter: 'like', cursor: null });
+    expect(screen.getByText('No notifications yet')).toBeTruthy();
+    await act(async () => queryClient.setQueryData(queryKeys.settings, settings({ likes: false })));
+    expect(screen.queryByTestId('notifications-filters-like')).toBeNull();
+    expect(screen.getByText(/started following you$/)).toBeTruthy();
+  });
+
   it('filters, hiding the types turned off, with the empty copy (NOTIF-02)', async () => {
     signIn();
     fakeEngine.method('settings.get').mockResolvedValue(settings({ likes: false }));
@@ -230,6 +276,55 @@ describe('Notifications', () => {
     await renderScreen('/?filter=follow');
 
     expect(list()).toHaveBeenCalledWith({ filter: 'follow', cursor: null });
+
+    // The tab stays mounted: a later link changes the filter.
+    await act(async () => router.setParams({ filter: 'reply' }));
+    expect(list()).toHaveBeenLastCalledWith({ filter: 'reply', cursor: null });
+  });
+
+  describe('pull to refresh', () => {
+    const pull = () => act(async () => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
+
+    it('polls, then refetches the list once', async () => {
+      signIn();
+      list().mockResolvedValue(page(NOTIFICATIONS));
+      await renderScreen();
+      expect(list()).toHaveBeenCalledTimes(1);
+
+      await pull();
+      expect(fakeEngine.method('notifications.poll')).toHaveBeenCalledTimes(1);
+      expect(list()).toHaveBeenCalledTimes(2);
+
+      // A poll that brought something refetched the lists itself: no second fetch.
+      fakeEngine.method('notifications.poll').mockResolvedValue({ added: 1, unread: 1 });
+      await pull();
+      expect(list()).toHaveBeenCalledTimes(3);
+      expect(useToastStore.getState().current).toBeNull();
+    });
+
+    it('says so when the refresh fails', async () => {
+      signIn();
+      list()
+        .mockResolvedValueOnce(page(NOTIFICATIONS))
+        .mockRejectedValueOnce(Object.assign(new Error('timeout'), { code: 'RPC_TIMEOUT' }));
+      await renderScreen();
+
+      await pull();
+      expect(useToastStore.getState().current?.message).toBe("Couldn't refresh notifications. Try again.");
+      // What was shown stays.
+      expect(screen.getByText(/started following you$/)).toBeTruthy();
+    });
+  });
+
+  it('offers a restart when the engine is down', async () => {
+    signIn();
+    fakeEngine.setStatus({ state: 'failed' });
+    list().mockReturnValue(new Promise(() => undefined));
+    await renderScreen();
+
+    expect(screen.getByTestId('notifications-engine-down')).toBeTruthy();
+    await act(async () => fireEvent.press(screen.getByText('Try again')));
+    expect(engineSupervisor.restart).toHaveBeenCalled();
   });
 
   it('pages, and offers Load More after a failed page', async () => {

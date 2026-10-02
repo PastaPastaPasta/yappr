@@ -178,7 +178,7 @@ export function snippetOf(
 }
 
 export type Destination =
-  | { kind: 'post'; id: string; post: PostDTO | null }
+  | { kind: 'post'; id: string }
   | { kind: 'user'; id: string }
   | { kind: 'web'; path: string }
   | null;
@@ -198,7 +198,8 @@ export function destinationOf(row: NotificationRowModel): Destination {
     };
   }
   if (row.target) {
-    return { kind: 'post', id: row.target.id, post: row.preview?.id === row.target.id ? row.preview : null };
+    // Only the id: a preview's stats and viewer marks are placeholders, not a post to seed the thread with.
+    return { kind: 'post', id: row.target.id };
   }
   const actor = row.actors[0];
   return actor ? { kind: 'user', id: actor.id } : null;

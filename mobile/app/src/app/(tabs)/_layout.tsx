@@ -17,6 +17,7 @@ import {
 } from 'react-native-heroicons/solid';
 
 import { useTabBadges } from '~/state/tab-badges';
+import { badgeLabel } from '~/ui/Badge';
 import { colors, useIsDark } from '~/ui/tokens';
 
 type HeroIcon = ComponentType<{ size?: number; color?: ColorValue }>;
@@ -31,8 +32,8 @@ function tabIcon(Outline: HeroIcon, Solid: HeroIcon) {
   return TabIcon;
 }
 
-/** A count of 0 shows no badge. */
-const badge = (count: number | undefined) => (count ? count : undefined);
+/** A count of 0 shows no badge; past 99 it reads "99+" (NOTIF-03). */
+const badge = (count: number | undefined) => (count ? badgeLabel(count) : undefined);
 
 /**
  * ADR-001 E4 / UX_SPEC §3.1: five tabs with labels, Notifications promoted
