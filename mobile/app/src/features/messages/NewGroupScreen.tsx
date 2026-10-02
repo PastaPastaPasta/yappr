@@ -71,7 +71,8 @@ export function NewGroupScreen() {
   // queue a second creation behind the first (a second group), so the form locks at the tap.
   const submitting = useRef(false);
   const [awaitingTicket, setAwaitingTicket] = useState(false);
-  const busy = awaitingTicket || create.status === 'pending' || unconfirmed;
+  // Confirmed is final: the form stays locked while the new group is looked up and opened.
+  const busy = awaitingTicket || create.status === 'pending' || create.status === 'confirmed' || unconfirmed;
   const canCreate = !busy && name.trim().length > 0 && members.length > 0;
   const selected = new Set(members.map((m) => m.id));
 
@@ -134,7 +135,12 @@ export function NewGroupScreen() {
           });
         }
       })
-      .catch((error: unknown) => appendLog('warn', 'host', `dm.createdGroup failed: ${errorMessage(error)}`));
+      .catch((error: unknown) => {
+        // The group exists; only finding it failed. The inbox lists it.
+        appendLog('warn', 'host', `dm.createdGroup failed: ${errorMessage(error)}`);
+        toast.success('Group created');
+        router.dismissTo('/messages');
+      });
   }, [create.status, ticketId]);
 
   const createButton = (
@@ -142,7 +148,7 @@ export function NewGroupScreen() {
       label="Create group"
       size={Platform.OS === 'ios' ? 'sm' : 'block'}
       disabled={!canCreate}
-      loading={awaitingTicket || create.status === 'pending'}
+      loading={awaitingTicket || create.status === 'pending' || create.status === 'confirmed'}
       onPress={submit}
       testID="new-group-create"
     />

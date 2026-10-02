@@ -246,7 +246,12 @@ describe('submitWrite', () => {
   });
 
   it('keeps the change when the engine restarts under the call, then adopts the restored ticket', async () => {
-    const matching = { ...spec, matches: (t: WriteTicket, vars: TargetRef) => t.op === 'like' && t.target === vars };
+    const onAdopted = jest.fn();
+    const matching = {
+      ...spec,
+      matches: (t: WriteTicket, vars: TargetRef) => t.op === 'like' && t.target === vars,
+      onAdopted,
+    };
     fakeEngine.method('engage.like').mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'ENGINE_RESTARTED' }));
     const result = await runWrite(matching, target);
     expect(result.status).toBe('unknown');
@@ -259,6 +264,7 @@ describe('submitWrite', () => {
     await act(async () => {
       await adoptRestoredWrites();
     });
+    expect(onAdopted).toHaveBeenCalledWith(restored, target);
     act(() => fakeEngine.emit('write.status', advance(restored, { retryable: true, lastCheckedAt: new Date() })));
     expect(undo).toHaveBeenCalledTimes(1);
     expect(currentToast()).toMatchObject({ message: "Your like didn't go through. Try again." });

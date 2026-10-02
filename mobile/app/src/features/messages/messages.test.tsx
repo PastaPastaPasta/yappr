@@ -400,6 +400,45 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(fakeEngine.method('dm.send')).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the composer off until the first messages arrive', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status());
+    fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: KEY })]);
+    let load: (p: Page<MessageDTO>) => void = () => undefined;
+    fakeEngine.method('dm.messages').mockReturnValue(
+      new Promise((resolve) => {
+        load = resolve;
+      }),
+    );
+    await renderAt(`/messages/${encodeURIComponent(KEY)}`);
+    expect(screen.getByTestId('dm-composer').props.editable).toBe(false);
+    await act(async () => {
+      load(page([theirs]));
+    });
+    expect(screen.getByTestId('dm-composer').props.editable).toBe(true);
+  });
+
+  it('follows the restored ticket of a send an engine restart cut short', async () => {
+    await openConversation();
+    fakeEngine.method('dm.send').mockRejectedValue(Object.assign(new Error('gone'), { code: 'ENGINE_RESTARTED' }));
+    fireEvent.changeText(screen.getByTestId('dm-composer'), 'still there?');
+    fireEvent.press(screen.getByTestId('dm-send'));
+    await act(async () => {});
+    expect(screen.getByText('Not confirmed · Tap to check')).toBeTruthy();
+    expect(useOutbox.getState().entries[0].ticketId).toBeNull();
+
+    // The next engine restores it; the bubble now checks that ticket.
+    const restored = ticket({ op: 'dm.send', state: 'unconfirmed', target: { conversationKey: KEY } });
+    await act(async () => {
+      fakeEngine.emit('write.status', restored);
+    });
+    expect(useOutbox.getState().entries[0].ticketId).toBe(restored.id);
+    fakeEngine.method('writes.check').mockResolvedValue(restored);
+    fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
+    await act(async () => {});
+    expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(restored.id);
+  });
+
   it('shows the empty conversation copy', async () => {
     await openConversation([]);
     expect(screen.getByText('No messages yet. Start the conversation!')).toBeTruthy();
@@ -628,6 +667,34 @@ describe('New group (DM-06)', () => {
     await act(async () => {});
     expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(created.id);
     expect(pathname()).toBe('/messages/g:builders');
+  });
+
+  it('stays locked once confirmed, and goes to the inbox when finding the new group fails', async () => {
+    await fillForm();
+    const created = ticket({ op: 'dm.group' });
+    fakeEngine.method('dm.createGroup').mockResolvedValue(created);
+    let fail: (error: Error) => void = () => undefined;
+    fakeEngine.method('dm.createdGroup').mockReturnValue(
+      new Promise((_, reject) => {
+        fail = reject;
+      }),
+    );
+    fakeEngine.method('dm.conversations').mockResolvedValue([]);
+    fireEvent.press(screen.getByTestId('new-group-create'));
+    await act(async () => {});
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(created, { state: 'confirmed' }));
+    });
+    fireEvent.press(screen.getByTestId('new-group-create'));
+    await act(async () => {});
+    expect(fakeEngine.method('dm.createGroup')).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fail(new Error('gone'));
+    });
+    await act(async () => {});
+    expect(useToastStore.getState().current?.message).toBe('Group created');
+    expect(pathname()).toBe('/messages');
   });
 
   it('goes back to the inbox when the engine no longer knows the new group', async () => {

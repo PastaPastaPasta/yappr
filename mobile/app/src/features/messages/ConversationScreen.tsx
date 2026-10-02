@@ -364,7 +364,8 @@ export function ConversationScreen() {
         {blockedReason ? (
           <ComposerBanner text={blockedReason} />
         ) : (
-          <Composer value={draft} onChangeText={setDraft} onSend={send} disabled={!conversation && !messages.data} />
+          // Sends wait for the first page: a send's baseline is the messages held when it was sent.
+          <Composer value={draft} onChangeText={setDraft} onSend={send} disabled={!messages.data} />
         )}
       </Animated.View>
     </Screen>

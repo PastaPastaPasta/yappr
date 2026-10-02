@@ -93,6 +93,8 @@ const sendSpec: WriteSpec<SendVars> = {
   announceUnconfirmed: false,
   matches: (ticket, { key }) =>
     ticket.op === 'dm.send' && !!ticket.target && 'conversationKey' in ticket.target && ticket.target.conversationKey === key,
+  // The cut-short send's bubble follows the restored ticket: "Tap to check" and retry act on it.
+  onAdopted: (ticket, { entryId }) => applyTicket(entryId, ticket),
   onRejected: (error) => {
     // Refused before anything went out: the text is back in the composer, and the lock asks for the key.
     if (errorCode(error) === 'NO_KEY') {
@@ -151,8 +153,11 @@ export async function sendMessage(identityId: string, key: string, text: string)
       useDrafts.getState().restore(identityId, key, text);
       return;
     case 'unknown':
-      // The engine restarted under the call: it may have gone out. A check settles it.
-      update(entry.id, { state: 'unconfirmed' });
+      // The engine restarted under the call: it may have gone out. A check settles it, once the
+      // tracker adopts the ticket the engine restores (`onAdopted`), unless it already has.
+      if (useOutbox.getState().entries.find((e) => e.id === entry.id)?.ticketId === null) {
+        update(entry.id, { state: 'unconfirmed' });
+      }
       return;
     case 'queued':
       return;
