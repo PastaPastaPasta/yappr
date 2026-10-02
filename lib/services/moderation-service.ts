@@ -318,6 +318,32 @@ export const toTeamAction = (entry: ContractTeamActionEntry, status: ContractTea
   };
 };
 
+/** Whether an active team action can still run against its document as it stands now. */
+export type TeamActionTargetState = 'live' | 'changed' | 'gone';
+
+/** The two document times Drive reads for an action's 41211 check, as the SDK's Document carries them. */
+export interface TeamActionTargetTimes {
+  updatedAt?: bigint | number | null;
+  createdAt?: bigint | number | null;
+}
+
+/**
+ * Where an active action's document stands. Drive refuses an approval once the
+ * document is gone (40101) or was modified after the proposal (41211: its
+ * `$updatedAt`, or `$createdAt` without one, differs from the action's
+ * `documentLastModifiedAt`). On v11 its author's tombstone is such a change, and
+ * so is a replace that changes nothing. Neither kind of action ever lapses, so
+ * the queue has to say itself that it can never run. `doc` null = proved absent.
+ */
+export function teamActionTargetState(action: Pick<TeamAction, 'documentLastModifiedAt'>, doc: TeamActionTargetTimes | null): TeamActionTargetState {
+  if (!doc) return 'gone';
+  // Drive's `updated_at().or(created_at()).unwrap_or(0)`. It also compares
+  // `$revision`, which only a moderator's field change moves without
+  // `$updatedAt`; no type the team deletes (post, reply) declares changeFields.
+  const modified = Number(doc.updatedAt ?? doc.createdAt ?? 0);
+  return modified !== action.documentLastModifiedAt ? 'changed' : 'live';
+}
+
 /** The signers whose approvals count: those still on the team (an active action's `approvalCount` may include some who left). */
 export function countedSigners(signerIds: readonly string[], seated: Pick<SeatedTeamSeats, 'leaderId' | 'members'> | null): string[] {
   if (!seated) return [...signerIds];
@@ -835,10 +861,48 @@ class ModerationService {
     }
   }
 
-  /** The active team action proposing the removal of `documentId`, if any: a second proposal would split the team's approvals. */
+  /**
+   * The active team action proposing the removal of `documentId` that can still
+   * run, if any: a second proposal would split the team's approvals. Drive takes
+   * any number of proposals per document and none lapses, so one made before the
+   * document changed (41211 on every approval) or before another removed it is
+   * skipped; when the document cannot be read, the first proposal found is
+   * returned, as before.
+   */
   async findActiveTeamAction(documentId: string): Promise<TeamAction | null> {
     const { actions } = await this.listTeamActions('active');
-    return actions.find((action) => action.documentId === documentId) ?? null;
+    const proposals = actions.filter((action) => action.documentId === documentId);
+    if (proposals.length === 0) return null;
+    const states = await this.readTeamActionTargets(proposals);
+    if (states.size === 0) return proposals[0];
+    return proposals.find((action) => states.get(action.actionId) === 'live') ?? null;
+  }
+
+  /**
+   * {@link teamActionTargetState} for each of `actions`, from one proved `$id in`
+   * read per document type. An action of a type that failed to read is left out:
+   * nothing is claimed for it.
+   */
+  async readTeamActionTargets(actions: readonly TeamAction[]): Promise<Map<string, TeamActionTargetState>> {
+    const states = new Map<string, TeamActionTargetState>();
+    const byKind = new Map<string, TeamAction[]>();
+    for (const action of actions) byKind.set(action.documentTypeName, [...(byKind.get(action.documentTypeName) ?? []), action]);
+    await Promise.all([...byKind].map(async ([kind, group]) => {
+      try {
+        const sdk = await getEvoSdk();
+        const found = new Map<string, TeamActionTargetTimes>();
+        const ids = Array.from(new Set(group.map((action) => action.documentId)));
+        for (let start = 0; start < ids.length; start += TEAM_TARGETS_PER_READ) {
+          const batch = ids.slice(start, start + TEAM_TARGETS_PER_READ);
+          const page = await sdk.documents.query({ dataContractId: YAPPR_CONTRACT_ID, documentTypeName: kind, where: [['$id', 'in', batch]], limit: batch.length });
+          for (const [id, doc] of page) if (doc) found.set(String(id), { updatedAt: doc.updatedAt, createdAt: doc.createdAt });
+        }
+        for (const action of group) states.set(action.actionId, teamActionTargetState(action, found.get(action.documentId) ?? null));
+      } catch (error) {
+        logger.warn(`moderationService: could not read the ${kind} documents of the team's actions`, error);
+      }
+    }));
+    return states;
   }
 
   /**
@@ -1094,7 +1158,13 @@ class ModerationService {
       }
     });
     if (documentGone) {
-      return { success: false, error: 'The document is already gone (another proposal removed it, or its author deleted it), so this proposal can never run', errorCode: 'DOCUMENT_GONE' };
+      return { success: false, error: `The document is already gone (another proposal removed it${authorDeletesLeaveHoles() ? ', or its author deleted it' : ''}), so this proposal can never run`, errorCode: 'DOCUMENT_GONE' };
+    }
+    if (result.errorCode === 'TEAM_ACTION_DOCUMENT_CHANGED') {
+      // Any replace by its author moves `$updatedAt` (on v11 the tombstone, or a
+      // replace that changes nothing), which also restarts the window in which
+      // one moderator removes it alone (Drive measures it from `$updatedAt`).
+      return { ...result, error: 'The document changed after this removal was proposed (its author deleted or re-saved it), so this proposal can never run. If its author deleted it, nothing is left to remove. Otherwise the change restarted its window: until that passes one moderator removes it alone, and after it, propose it again.' };
     }
     return status === undefined ? result : { ...result, status };
   }
@@ -1373,6 +1443,9 @@ class ModerationService {
 
 /** Refusals that prove the cached standing of their target stale, or may have changed it. */
 const STANDING_STALE = new Set<ModerationResult['errorCode']>(['ALREADY_BANNED', 'NOT_BANNED', 'NOT_SUSPENDED', 'MAYBE_APPLIED']);
+
+/** Document ids per `$id in` read of the team actions' targets (Drive's `in` limit). */
+const TEAM_TARGETS_PER_READ = 100;
 
 /** Team actions per page, and how many the queue reads at most. */
 const TEAM_ACTIONS_PAGE = 100;

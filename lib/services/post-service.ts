@@ -384,6 +384,9 @@ class PostService extends BaseDocumentService<Post> {
    * tombstone clears the bare repost's quote, which frees the author's
    * one-quote-per-target slot (`ownerAndQuotedPost`), so reposting again is a
    * new bare repost.
+   *
+   * Throws the refusal when the author is banned or suspended (41107/41108,
+   * {@link tombstoneDocument}); false for any other failure.
    */
   async deleteOwnPost(postId: string, ownerId: string): Promise<boolean> {
     return deletesAreTombstones() ? this.tombstonePost(postId, ownerId) : this.deletePost(postId, ownerId);
